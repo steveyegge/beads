@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,7 +29,7 @@ const (
 // OpenSQL opens an doltlite database at dir. The returned cleanup
 // function closes the *sql.DB.
 func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func() error, error) {
-	dbPath, err := buildDSN(dir, database)
+	dbPath, err := buildBranchDSN(dir, database, branch)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -57,6 +58,10 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 }
 
 func buildDSN(dir, database string) (string, error) {
+	return buildBranchDSN(dir, database, "")
+}
+
+func buildBranchDSN(dir, database, branch string) (string, error) {
 	if strings.TrimSpace(database) != "" {
 		if !validIdentifier.MatchString(database) {
 			return "", fmt.Errorf("doltlite: invalid database name: %q", database)
@@ -64,7 +69,11 @@ func buildDSN(dir, database string) (string, error) {
 	} else {
 		database = "beads"
 	}
-	path := filepath.Join(dir, database+".db")
+	filename := database + ".db"
+	if strings.TrimSpace(branch) != "" {
+		filename = fmt.Sprintf("%s__%s.db", database, url.QueryEscape(branch))
+	}
+	path := filepath.Join(dir, filename)
 	if os.PathSeparator == '\\' {
 		path = strings.ReplaceAll(path, `\`, `/`)
 	}

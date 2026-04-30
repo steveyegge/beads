@@ -4,9 +4,13 @@ package doltlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,6 +148,25 @@ func (s *DoltliteStore) openPersistentDB(ctx context.Context) error {
 	s.db = db
 	s.dbCleanup = cleanup
 	return nil
+}
+
+func (s *DoltliteStore) closePersistentDB() error {
+	s.dbMu.Lock()
+	cleanup := s.dbCleanup
+	s.db = nil
+	s.dbCleanup = nil
+	s.dbMu.Unlock()
+	if cleanup != nil {
+		return cleanup()
+	}
+	return nil
+}
+
+func (s *DoltliteStore) resetPersistentDB(ctx context.Context) error {
+	if err := s.closePersistentDB(); err != nil {
+		return err
+	}
+	return s.openPersistentDB(ctx)
 }
 
 func (s *DoltliteStore) activeDB(ctx context.Context) (*sql.DB, func() error, error) {
@@ -332,15 +355,118 @@ func (s *DoltliteStore) initSchema(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := s.ensureVersionControlTables(ctx, db); err != nil {
+		return err
+	}
 	if applied > 0 {
-		if _, err := db.ExecContext(ctx, "SELECT dolt_commit('-A', '-m', 'schema: apply migrations')"); err != nil {
-			if !strings.Contains(err.Error(), "nothing to commit") {
-				return fmt.Errorf("dolt commit after migrations: %w", err)
-			}
+		if err := s.recordSyntheticCommit(ctx, db, "schema: apply migrations"); err != nil {
+			return fmt.Errorf("record migration commit: %w", err)
 		}
 	}
 
 	return nil
+}
+
+func (s *DoltliteStore) ensureVersionControlTables(ctx context.Context, db *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS doltlite_commits (
+			hash TEXT PRIMARY KEY,
+			branch TEXT NOT NULL,
+			committer TEXT NOT NULL,
+			email TEXT NOT NULL,
+			date TEXT NOT NULL,
+			message TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_doltlite_commits_branch_date
+			ON doltlite_commits(branch, date DESC)`,
+		`CREATE TABLE IF NOT EXISTS doltlite_refs (
+			branch TEXT PRIMARY KEY,
+			head_hash TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS dolt_remotes (
+			name TEXT PRIMARY KEY,
+			url TEXT NOT NULL
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("ensure version-control metadata: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *DoltliteStore) recordSyntheticCommit(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, message string) error {
+	if message == "" {
+		message = "doltlite: snapshot"
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	sum := sha256.Sum256([]byte(strings.Join([]string{s.branch, now, message}, "\x00")))
+	hash := hex.EncodeToString(sum[:])
+
+	var current string
+	err := db.QueryRowContext(ctx, "SELECT head_hash FROM doltlite_refs WHERE branch = ?", s.branch).Scan(&current)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if current == hash {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO doltlite_commits (hash, branch, committer, email, date, message)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, hash, s.branch, commitName, commitEmail, now, message); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO doltlite_refs (branch, head_hash) VALUES (?, ?)
+		ON CONFLICT(branch) DO UPDATE SET head_hash = excluded.head_hash
+	`, s.branch, hash)
+	return err
+}
+
+func (s *DoltliteStore) branchDBPath(branch string) (string, error) {
+	dsn, err := buildBranchDSN(s.dataDir, s.database, branch)
+	if err != nil {
+		return "", err
+	}
+	path := strings.SplitN(dsn, "?", 2)[0]
+	return path, nil
+}
+
+func branchFromDBFilename(database, name string) (string, bool) {
+	prefix := database + "__"
+	suffix := ".db"
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return "", false
+	}
+	encoded := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	branch, err := url.QueryUnescape(encoded)
+	if err != nil || branch == "" {
+		return "", false
+	}
+	return branch, true
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 // ensureIgnoredTables creates dolt_ignore'd wisp tables if they don't exist.
@@ -613,9 +739,12 @@ func (s *DoltliteStore) CommitPending(ctx context.Context, actor string) (bool, 
 
 func (s *DoltliteStore) GetCurrentCommit(ctx context.Context) (string, error) {
 	var hash string
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		return db.QueryRowContext(ctx, "SELECT dolt_hashof('HEAD')").Scan(&hash)
+	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT head_hash FROM doltlite_refs WHERE branch = ?", s.branch).Scan(&hash)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
 	return hash, err
 }
 

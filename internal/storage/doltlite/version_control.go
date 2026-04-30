@@ -8,10 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 )
 
@@ -42,15 +42,8 @@ func (s *DoltliteStore) withDBConn(ctx context.Context, fn func(db versioncontro
 }
 
 func (s *DoltliteStore) Commit(ctx context.Context, message string) error {
-	return s.withExclusiveLock(ctx, func() error {
-		return s.withRetry(ctx, func() error {
-			return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-				if _, err := db.ExecContext(ctx, "SELECT dolt_commit('-A', '-m', ?)", message); err != nil {
-					return fmt.Errorf("dolt commit: %w", err)
-				}
-				return nil
-			})
-		})
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		return s.recordSyntheticCommit(ctx, tx, message)
 	})
 }
 
@@ -62,8 +55,11 @@ func (s *DoltliteStore) CommitWithConfig(ctx context.Context, message string) er
 }
 
 func (s *DoltliteStore) AddRemote(ctx context.Context, name, url string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		_, err := db.ExecContext(ctx, "SELECT dolt_remote('add', ?, ?)", name, url)
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO dolt_remotes (name, url) VALUES (?, ?)
+			ON CONFLICT(name) DO UPDATE SET url = excluded.url
+		`, name, url)
 		return err
 	})
 }
@@ -84,36 +80,91 @@ func (s *DoltliteStore) HasRemote(ctx context.Context, name string) (bool, error
 // ---------------------------------------------------------------------------
 
 func (s *DoltliteStore) Branch(ctx context.Context, name string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		if _, err := db.ExecContext(ctx, "SELECT dolt_branch(?)", name); err != nil {
+	return s.withExclusiveLock(ctx, func() error {
+		srcPath, err := s.branchDBPath(s.branch)
+		if err != nil {
+			return err
+		}
+		dstPath, err := s.branchDBPath(name)
+		if err != nil {
+			return err
+		}
+		if srcPath == dstPath {
+			return fmt.Errorf("create branch %s: branch already exists", name)
+		}
+		if err := s.closePersistentDB(); err != nil {
+			return err
+		}
+		defer func() { _ = s.openPersistentDB(ctx) }()
+		if _, err := os.Stat(dstPath); err == nil {
+			return fmt.Errorf("create branch %s: branch already exists", name)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := copyFile(srcPath, dstPath); err != nil {
 			return fmt.Errorf("create branch %s: %w", name, err)
 		}
-		return schema.CreateIgnoredTablesSQLite(ctx, db)
+		db, cleanup, err := OpenSQL(ctx, s.dataDir, s.database, name)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = cleanup() }()
+		var head string
+		_ = db.QueryRowContext(ctx, "SELECT head_hash FROM doltlite_refs WHERE branch = ?", s.branch).Scan(&head)
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO doltlite_refs (branch, head_hash) VALUES (?, ?)
+			ON CONFLICT(branch) DO UPDATE SET head_hash = excluded.head_hash
+		`, name, head); err != nil {
+			return err
+		}
+		return nil
 	})
 }
 
 func (s *DoltliteStore) Checkout(ctx context.Context, branch string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		if _, err := db.ExecContext(ctx, "SELECT dolt_checkout(?)", branch); err != nil {
-			return fmt.Errorf("checkout branch %s: %w", branch, err)
+	_, err := os.Stat(func() string {
+		path, _ := s.branchDBPath(branch)
+		return path
+	}())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("checkout branch %s: branch not found", branch)
 		}
-		return schema.CreateIgnoredTablesSQLite(ctx, db)
+		return err
+	}
+	s.branch = branch
+	if err := s.resetPersistentDB(ctx); err != nil {
+		return err
+	}
+	return s.withConn(ctx, false, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO doltlite_refs (branch, head_hash)
+			SELECT ?, COALESCE((SELECT head_hash FROM doltlite_refs WHERE branch = ?), '')
+			WHERE NOT EXISTS (SELECT 1 FROM doltlite_refs WHERE branch = ?)
+		`, branch, branch, branch); err != nil {
+			return err
+		}
+		return nil
 	})
 }
 
 func (s *DoltliteStore) CurrentBranch(ctx context.Context) (string, error) {
-	var branch string
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		var err error
-		branch, err = versioncontrolops.CurrentBranch(ctx, db)
-		return err
-	})
-	return branch, err
+	return s.branch, nil
 }
 
 func (s *DoltliteStore) DeleteBranch(ctx context.Context, branch string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		if _, err := db.ExecContext(ctx, "SELECT dolt_branch('-D', ?)", branch); err != nil {
+	if branch == s.branch {
+		return fmt.Errorf("delete branch %s: cannot delete current branch", branch)
+	}
+	return s.withExclusiveLock(ctx, func() error {
+		path, err := s.branchDBPath(branch)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("delete branch %s: branch not found", branch)
+			}
 			return fmt.Errorf("delete branch %s: %w", branch, err)
 		}
 		return nil
@@ -121,13 +172,24 @@ func (s *DoltliteStore) DeleteBranch(ctx context.Context, branch string) error {
 }
 
 func (s *DoltliteStore) ListBranches(ctx context.Context) ([]string, error) {
-	var branches []string
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		var err error
-		branches, err = versioncontrolops.ListBranches(ctx, db)
-		return err
-	})
-	return branches, err
+	entries, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return nil, err
+	}
+	branches := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if branch, ok := branchFromDBFilename(s.database, entry.Name()); ok {
+			branches = append(branches, branch)
+		}
+	}
+	if !slices.Contains(branches, s.branch) {
+		branches = append(branches, s.branch)
+	}
+	slices.Sort(branches)
+	return branches, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -138,37 +200,47 @@ func (s *DoltliteStore) ListBranches(ctx context.Context) ([]string, error) {
 const commitAuthor = commitName + " <" + commitEmail + ">"
 
 func (s *DoltliteStore) CommitExists(ctx context.Context, commitHash string) (bool, error) {
-	var exists bool
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		var err error
-		exists, err = versioncontrolops.CommitExists(ctx, db, commitHash)
-		return err
+	var count int
+	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM doltlite_commits
+			WHERE branch = ? AND (hash = ? OR hash LIKE ?)
+		`, s.branch, commitHash, commitHash+"%").Scan(&count)
 	})
-	return exists, err
+	return count > 0, err
 }
 
 func (s *DoltliteStore) Status(ctx context.Context) (*storage.Status, error) {
-	var status *storage.Status
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		var err error
-		status, err = versioncontrolops.Status(ctx, db)
-		return err
-	})
-	return status, err
+	return &storage.Status{
+		Staged:   []storage.StatusEntry{},
+		Unstaged: []storage.StatusEntry{},
+	}, nil
 }
 
 func (s *DoltliteStore) Log(ctx context.Context, limit int) ([]storage.CommitInfo, error) {
 	var query string
 	var args []any
 	if limit > 0 {
-		query = "SELECT commit_hash, committer, email, date, message FROM dolt_log ORDER BY date DESC LIMIT ?"
-		args = []any{limit}
+		query = `
+			SELECT hash, committer, email, date, message
+			FROM doltlite_commits
+			WHERE branch = ?
+			ORDER BY date DESC
+			LIMIT ?
+		`
+		args = []any{s.branch, limit}
 	} else {
-		query = "SELECT commit_hash, committer, email, date, message FROM dolt_log ORDER BY date DESC"
+		query = `
+			SELECT hash, committer, email, date, message
+			FROM doltlite_commits
+			WHERE branch = ?
+			ORDER BY date DESC
+		`
+		args = []any{s.branch}
 	}
 	var commits []storage.CommitInfo
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		rows, err := db.QueryContext(ctx, query, args...)
+	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("get log: %w", err)
 		}
@@ -203,45 +275,15 @@ func parseDoltliteTime(s string) time.Time {
 }
 
 func (s *DoltliteStore) Merge(ctx context.Context, branch string) ([]storage.Conflict, error) {
-	var conflicts []storage.Conflict
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		_, err := db.ExecContext(ctx, "SELECT dolt_merge(?)", branch)
-		if err != nil {
-			c, conflictErr := versioncontrolops.GetConflicts(ctx, db)
-			if conflictErr == nil && len(c) > 0 {
-				conflicts = c
-				return nil
-			}
-			return fmt.Errorf("merge branch %s: %w", branch, err)
-		}
-		return nil
-	})
-	return conflicts, err
+	return nil, fmt.Errorf("doltlite merge unsupported for sqlite backend")
 }
 
 func (s *DoltliteStore) GetConflicts(ctx context.Context) ([]storage.Conflict, error) {
-	var conflicts []storage.Conflict
-	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		var err error
-		conflicts, err = versioncontrolops.GetConflicts(ctx, db)
-		return err
-	})
-	return conflicts, err
+	return nil, nil
 }
 
 func (s *DoltliteStore) ResolveConflicts(ctx context.Context, table string, strategy string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		switch strategy {
-		case "ours":
-			_, err := db.ExecContext(ctx, "SELECT dolt_conflicts_resolve('--ours', ?)", table)
-			return err
-		case "theirs":
-			_, err := db.ExecContext(ctx, "SELECT dolt_conflicts_resolve('--theirs', ?)", table)
-			return err
-		default:
-			return fmt.Errorf("unknown conflict resolution strategy: %s", strategy)
-		}
-	})
+	return fmt.Errorf("doltlite conflict resolution unsupported for sqlite backend")
 }
 
 // ---------------------------------------------------------------------------
@@ -251,8 +293,8 @@ func (s *DoltliteStore) ResolveConflicts(ctx context.Context, table string, stra
 const defaultRemote = "origin"
 
 func (s *DoltliteStore) RemoveRemote(ctx context.Context, name string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		_, err := db.ExecContext(ctx, "SELECT dolt_remote('remove', ?)", name)
+	return s.withConn(ctx, true, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM dolt_remotes WHERE name = ?", name)
 		return err
 	})
 }
