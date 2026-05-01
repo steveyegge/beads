@@ -114,13 +114,14 @@ func (s *DoltliteStore) AddFederationPeer(ctx context.Context, peer *storage.Fed
 	}
 
 	if err := s.withConn(ctx, true, func(tx *sql.Tx) error {
-		if err := issueops.AddFederationPeerInTx(ctx, tx, peer, encryptedPwd); err != nil {
-			return err
-		}
-		// Also add the Dolt remote.
-		return issueops.AddRemoteIfNotExists(ctx, tx, peer.Name, peer.RemoteURL)
+		return issueops.AddFederationPeerInTx(ctx, tx, peer, encryptedPwd)
 	}); err != nil {
 		return err
+	}
+	if peer.RemoteURL != "" {
+		if err := s.AddRemote(ctx, peer.Name, peer.RemoteURL); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -268,23 +269,28 @@ func (s *DoltliteStore) SyncStatus(ctx context.Context, peer string) (*storage.S
 		Peer: peer,
 	}
 
-	// Get ahead/behind counts by comparing refs.
-	// Dolt's AS OF requires a literal ref, not a parameterized expression.
+	// Doltlite does not expose a historical dolt_log slice. Report exact zeroes
+	// only when refs match; otherwise keep counts unknown.
 	remoteRef := peer + "/" + s.branch
 	if err := issueops.ValidateRef(remoteRef); err != nil {
 		status.LocalAhead = -1
 		status.LocalBehind = -1
 	} else if err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		query := fmt.Sprintf(`
-			SELECT
-				(SELECT COUNT(*) FROM dolt_log WHERE commit_hash NOT IN
-					(SELECT commit_hash FROM dolt_log AS OF '%s')) as ahead,
-				(SELECT COUNT(*) FROM dolt_log AS OF '%s' WHERE commit_hash NOT IN
-					(SELECT commit_hash FROM dolt_log)) as behind
-		`, remoteRef, remoteRef)
-		if err := db.QueryRowContext(ctx, query).
-			Scan(&status.LocalAhead, &status.LocalBehind); err != nil {
-			// Remote branch may not exist locally yet.
+		var localHash, remoteHash string
+		if err := db.QueryRowContext(ctx, "SELECT dolt_hashof('HEAD')").Scan(&localHash); err != nil {
+			status.LocalAhead = -1
+			status.LocalBehind = -1
+			return nil
+		}
+		if err := db.QueryRowContext(ctx, "SELECT dolt_hashof(?)", remoteRef).Scan(&remoteHash); err != nil {
+			status.LocalAhead = -1
+			status.LocalBehind = -1
+			return nil
+		}
+		if localHash == remoteHash {
+			status.LocalAhead = 0
+			status.LocalBehind = 0
+		} else {
 			status.LocalAhead = -1
 			status.LocalBehind = -1
 		}

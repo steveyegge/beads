@@ -4,13 +4,9 @@ package doltlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +119,13 @@ func New(ctx context.Context, beadsDir, database, branch string, opts ...Option)
 	if err := s.openPersistentDB(ctx); err != nil {
 		return nil, fmt.Errorf("doltlite: open database: %w", err)
 	}
+	if s.branch == "" {
+		branch, err := s.CurrentBranch(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("doltlite: get current branch: %w", err)
+		}
+		s.branch = branch
+	}
 
 	// Ensure dolt_ignore'd wisp tables exist in the working set.
 	// After a clone or branch switch, these tables are absent because
@@ -148,25 +151,6 @@ func (s *DoltliteStore) openPersistentDB(ctx context.Context) error {
 	s.db = db
 	s.dbCleanup = cleanup
 	return nil
-}
-
-func (s *DoltliteStore) closePersistentDB() error {
-	s.dbMu.Lock()
-	cleanup := s.dbCleanup
-	s.db = nil
-	s.dbCleanup = nil
-	s.dbMu.Unlock()
-	if cleanup != nil {
-		return cleanup()
-	}
-	return nil
-}
-
-func (s *DoltliteStore) resetPersistentDB(ctx context.Context) error {
-	if err := s.closePersistentDB(); err != nil {
-		return err
-	}
-	return s.openPersistentDB(ctx)
 }
 
 func (s *DoltliteStore) activeDB(ctx context.Context) (*sql.DB, func() error, error) {
@@ -355,118 +339,13 @@ func (s *DoltliteStore) initSchema(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.ensureVersionControlTables(ctx, db); err != nil {
-		return err
-	}
 	if applied > 0 {
-		if err := s.recordSyntheticCommit(ctx, db, "schema: apply migrations"); err != nil {
-			return fmt.Errorf("record migration commit: %w", err)
+		if err := commitAllNative(ctx, db, "schema: apply migrations"); err != nil {
+			return fmt.Errorf("commit migration: %w", err)
 		}
 	}
 
 	return nil
-}
-
-func (s *DoltliteStore) ensureVersionControlTables(ctx context.Context, db *sql.DB) error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS doltlite_commits (
-			hash TEXT PRIMARY KEY,
-			branch TEXT NOT NULL,
-			committer TEXT NOT NULL,
-			email TEXT NOT NULL,
-			date TEXT NOT NULL,
-			message TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_doltlite_commits_branch_date
-			ON doltlite_commits(branch, date DESC)`,
-		`CREATE TABLE IF NOT EXISTS doltlite_refs (
-			branch TEXT PRIMARY KEY,
-			head_hash TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS dolt_remotes (
-			name TEXT PRIMARY KEY,
-			url TEXT NOT NULL
-		)`,
-	}
-	for _, stmt := range stmts {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("ensure version-control metadata: %w", err)
-		}
-	}
-	return nil
-}
-
-func (s *DoltliteStore) recordSyntheticCommit(ctx context.Context, db interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, message string) error {
-	if message == "" {
-		message = "doltlite: snapshot"
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	sum := sha256.Sum256([]byte(strings.Join([]string{s.branch, now, message}, "\x00")))
-	hash := hex.EncodeToString(sum[:])
-
-	var current string
-	err := db.QueryRowContext(ctx, "SELECT head_hash FROM doltlite_refs WHERE branch = ?", s.branch).Scan(&current)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if current == hash {
-		return nil
-	}
-
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO doltlite_commits (hash, branch, committer, email, date, message)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, hash, s.branch, commitName, commitEmail, now, message); err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO doltlite_refs (branch, head_hash) VALUES (?, ?)
-		ON CONFLICT(branch) DO UPDATE SET head_hash = excluded.head_hash
-	`, s.branch, hash)
-	return err
-}
-
-func (s *DoltliteStore) branchDBPath(branch string) (string, error) {
-	dsn, err := buildBranchDSN(s.dataDir, s.database, branch)
-	if err != nil {
-		return "", err
-	}
-	path := strings.SplitN(dsn, "?", 2)[0]
-	return path, nil
-}
-
-func branchFromDBFilename(database, name string) (string, bool) {
-	prefix := database + "__"
-	suffix := ".db"
-	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
-		return "", false
-	}
-	encoded := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-	branch, err := url.QueryUnescape(encoded)
-	if err != nil || branch == "" {
-		return "", false
-	}
-	return branch, true
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Sync()
 }
 
 // ensureIgnoredTables creates dolt_ignore'd wisp tables if they don't exist.
@@ -645,42 +524,110 @@ func (s *DoltliteStore) Close() error {
 // DoltGC runs Dolt garbage collection to reclaim disk space.
 func (s *DoltliteStore) DoltGC(ctx context.Context) error {
 	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		_, err := db.ExecContext(ctx, "SELECT dolt_gc()")
-		return err
+		if _, err := db.ExecContext(ctx, "SELECT dolt_gc()"); err != nil {
+			return fmt.Errorf("doltlite gc: %w", err)
+		}
+		return nil
 	})
 }
 
-// Flatten squashes all Dolt commit history into a single commit.
-// Pins a single *sql.Conn for session-scoped stored procedures.
+// Flatten squashes all doltlite commit history into a single commit.
 func (s *DoltliteStore) Flatten(ctx context.Context) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		if pooled, ok := db.(*sql.DB); ok {
-			conn, err := pooled.Conn(ctx)
-			if err != nil {
-				return err
-			}
-			defer conn.Close()
-			return versioncontrolops.Flatten(ctx, conn)
+	return s.withDBWrite(ctx, func(db versioncontrolops.DBConn) error {
+		var initialHash string
+		if err := db.QueryRowContext(ctx,
+			"SELECT commit_hash FROM dolt_log ORDER BY date ASC LIMIT 1",
+		).Scan(&initialHash); err != nil {
+			return fmt.Errorf("find initial commit: %w", err)
 		}
-		return versioncontrolops.Flatten(ctx, db)
+
+		var commitCount int
+		if err := db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM dolt_log",
+		).Scan(&commitCount); err != nil {
+			return fmt.Errorf("count commits: %w", err)
+		}
+		if commitCount <= 1 {
+			return nil
+		}
+
+		steps := []struct {
+			name  string
+			query string
+			args  []any
+		}{
+			{"create temp branch", "SELECT dolt_branch('flatten-tmp')", nil},
+			{"checkout temp branch", "SELECT dolt_checkout('flatten-tmp')", nil},
+			{"soft reset to initial", "SELECT dolt_reset('--soft', ?)", []any{initialHash}},
+			{"commit flattened snapshot", "SELECT dolt_commit('-A', '-m', 'flatten: squash all history into single commit')", nil},
+			{"checkout main", "SELECT dolt_checkout('main')", nil},
+			{"reset main to flattened", "SELECT dolt_reset('--hard', 'flatten-tmp')", nil},
+			{"delete temp branch", "SELECT dolt_branch('-D', 'flatten-tmp')", nil},
+		}
+		for _, step := range steps {
+			if _, err := db.ExecContext(ctx, step.query, step.args...); err != nil {
+				return fmt.Errorf("flatten step %q: %w", step.name, err)
+			}
+		}
+		return nil
 	})
 }
 
-// Compact squashes old Dolt commits while preserving recent ones.
-// Pins a single *sql.Conn for session-scoped stored procedures.
+// Compact squashes old doltlite commits while preserving recent ones.
 func (s *DoltliteStore) Compact(ctx context.Context, initialHash, boundaryHash string, oldCommits int, recentHashes []string) error {
-	return s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
-		// withDBConn returns *sql.DB; pin a single connection for
-		// session-scoped operations (checkout, reset, cherry-pick).
-		if pooled, ok := db.(*sql.DB); ok {
-			conn, err := pooled.Conn(ctx)
-			if err != nil {
+	return s.withDBWrite(ctx, func(db versioncontrolops.DBConn) (retErr error) {
+		branchCreated := false
+		defer func() {
+			if retErr != nil && branchCreated {
+				_, _ = db.ExecContext(ctx, "SELECT dolt_checkout('main')")
+				_, _ = db.ExecContext(ctx, "SELECT dolt_branch('-D', 'compact-tmp')")
+			}
+		}()
+
+		execSQL := func(name, query string, args ...any) error {
+			if _, err := db.ExecContext(ctx, query, args...); err != nil {
+				return fmt.Errorf("compact step %q: %w", name, err)
+			}
+			return nil
+		}
+
+		if err := execSQL("create temp branch", "SELECT dolt_branch('compact-tmp', ?)", boundaryHash); err != nil {
+			return err
+		}
+		branchCreated = true
+
+		if err := execSQL("checkout temp", "SELECT dolt_checkout('compact-tmp')"); err != nil {
+			return err
+		}
+		if err := execSQL("soft reset to initial", "SELECT dolt_reset('--soft', ?)", initialHash); err != nil {
+			return err
+		}
+		msg := fmt.Sprintf("compact: squash %d commits into base snapshot", oldCommits)
+		if err := execSQL("commit squashed base", "SELECT dolt_commit('-A', '-m', ?)", msg); err != nil {
+			return err
+		}
+
+		for _, hash := range recentHashes {
+			label := hash
+			if len(label) > 8 {
+				label = label[:8]
+			}
+			if err := execSQL("cherry-pick "+label, "SELECT dolt_cherry_pick(?)", hash); err != nil {
 				return err
 			}
-			defer conn.Close()
-			return versioncontrolops.Compact(ctx, conn, initialHash, boundaryHash, oldCommits, recentHashes)
 		}
-		return versioncontrolops.Compact(ctx, db, initialHash, boundaryHash, oldCommits, recentHashes)
+
+		if err := execSQL("checkout main", "SELECT dolt_checkout('main')"); err != nil {
+			return err
+		}
+		if err := execSQL("reset main to compacted", "SELECT dolt_reset('--hard', 'compact-tmp')"); err != nil {
+			return err
+		}
+		if err := execSQL("delete temp branch", "SELECT dolt_branch('-D', 'compact-tmp')"); err != nil {
+			return err
+		}
+
+		return nil
 	})
 }
 
@@ -695,7 +642,11 @@ func (s *DoltliteStore) CLIDir() string {
 	if s.dataDir == "" {
 		return ""
 	}
-	return filepath.Join(s.dataDir, s.database)
+	dsn, err := buildDSN(s.dataDir, s.database)
+	if err != nil {
+		return ""
+	}
+	return strings.SplitN(dsn, "?", 2)[0]
 }
 
 // ---------------------------------------------------------------------------
@@ -703,7 +654,7 @@ func (s *DoltliteStore) CLIDir() string {
 // ---------------------------------------------------------------------------
 
 // Branch, Checkout, CurrentBranch, DeleteBranch, ListBranches are
-// implemented in version_control.go via versioncontrolops.
+// implemented in version_control.go.
 
 func (s *DoltliteStore) CommitPending(ctx context.Context, actor string) (bool, error) {
 	var hasPending bool
@@ -715,7 +666,7 @@ func (s *DoltliteStore) CommitPending(ctx context.Context, actor string) (bool, 
 			return err
 		}
 		if hasPending {
-			msg = issueops.BuildBatchCommitMessage(ctx, tx, actor)
+			msg = buildDoltliteBatchCommitMessage(ctx, tx, actor)
 		}
 		return nil
 	})
@@ -735,12 +686,12 @@ func (s *DoltliteStore) CommitPending(ctx context.Context, actor string) (bool, 
 	return true, nil
 }
 
-// CommitExists is implemented in version_control.go via versioncontrolops.
+// CommitExists is implemented in version_control.go.
 
 func (s *DoltliteStore) GetCurrentCommit(ctx context.Context) (string, error) {
 	var hash string
-	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT head_hash FROM doltlite_refs WHERE branch = ?", s.branch).Scan(&hash)
+	err := s.withDBConn(ctx, func(db versioncontrolops.DBConn) error {
+		return db.QueryRowContext(ctx, "SELECT dolt_hashof('HEAD')").Scan(&hash)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -749,7 +700,7 @@ func (s *DoltliteStore) GetCurrentCommit(ctx context.Context) (string, error) {
 }
 
 // Status, Log, Merge, GetConflicts, ResolveConflicts are implemented in
-// version_control.go via versioncontrolops.
+// version_control.go.
 
 // ---------------------------------------------------------------------------
 // storage.HistoryViewer
@@ -759,7 +710,7 @@ func (s *DoltliteStore) History(ctx context.Context, issueID string) ([]*storage
 	var result []*storage.HistoryEntry
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
 		var err error
-		result, err = issueops.HistoryInTx(ctx, tx, issueID)
+		result, err = doltliteHistoryInTx(ctx, tx, issueID)
 		return err
 	})
 	return result, err
@@ -769,7 +720,7 @@ func (s *DoltliteStore) AsOf(ctx context.Context, issueID string, ref string) (*
 	var result *types.Issue
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
 		var err error
-		result, err = issueops.AsOfInTx(ctx, tx, issueID, ref)
+		result, err = doltliteAsOfInTx(ctx, tx, issueID, ref)
 		return err
 	})
 	return result, err
@@ -779,7 +730,7 @@ func (s *DoltliteStore) Diff(ctx context.Context, fromRef, toRef string) ([]*sto
 	var result []*storage.DiffEntry
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
 		var err error
-		result, err = issueops.DiffInTx(ctx, tx, fromRef, toRef)
+		result, err = doltliteDiffInTx(ctx, tx, fromRef, toRef)
 		return err
 	})
 	return result, err
@@ -790,7 +741,7 @@ func (s *DoltliteStore) Diff(ctx context.Context, fromRef, toRef string) ([]*sto
 // ---------------------------------------------------------------------------
 
 // RemoveRemote, ListRemotes, Push, Pull, ForcePush, Fetch, PushTo, PullFrom
-// are implemented in version_control.go via versioncontrolops.
+// are implemented in version_control.go.
 
 // ---------------------------------------------------------------------------
 // storage.SyncStore

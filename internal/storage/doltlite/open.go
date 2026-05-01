@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,7 +28,7 @@ const (
 // OpenSQL opens an doltlite database at dir. The returned cleanup
 // function closes the *sql.DB.
 func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func() error, error) {
-	dbPath, err := buildBranchDSN(dir, database, branch)
+	dbPath, err := buildDSN(dir, database)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -54,14 +53,20 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 		return nil, nil, err
 	}
 
+	if branch = strings.TrimSpace(branch); branch != "" {
+		if _, err := db.ExecContext(ctx, "SELECT dolt_checkout(?)", branch); err != nil {
+			closeErr := cleanup()
+			if closeErr != nil {
+				return nil, nil, fmt.Errorf("%w; close: %v", err, closeErr)
+			}
+			return nil, nil, fmt.Errorf("doltlite: checkout branch %s: %w", branch, err)
+		}
+	}
+
 	return db, cleanup, nil
 }
 
 func buildDSN(dir, database string) (string, error) {
-	return buildBranchDSN(dir, database, "")
-}
-
-func buildBranchDSN(dir, database, branch string) (string, error) {
 	if strings.TrimSpace(database) != "" {
 		if !validIdentifier.MatchString(database) {
 			return "", fmt.Errorf("doltlite: invalid database name: %q", database)
@@ -70,16 +75,9 @@ func buildBranchDSN(dir, database, branch string) (string, error) {
 		database = "beads"
 	}
 	filename := database + ".db"
-	if strings.TrimSpace(branch) != "" {
-		filename = fmt.Sprintf("%s__%s.db", database, url.QueryEscape(branch))
-	}
 	path := filepath.Join(dir, filename)
 	if os.PathSeparator == '\\' {
 		path = strings.ReplaceAll(path, `\`, `/`)
 	}
 	return fmt.Sprintf("%s?_busy_timeout=%d", path, defaultBusyTimeout), nil
-}
-
-func sqlStringLiteral(s string) string {
-	return "'" + strings.ReplaceAll(strings.TrimSpace(s), "'", "''") + "'"
 }
