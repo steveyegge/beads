@@ -145,6 +145,42 @@ func isRemoteNotFoundErr(err error) bool {
 	return strings.Contains(msg, "remote") && strings.Contains(msg, "not found")
 }
 
+// isAuthFailureErr checks whether the error indicates SSH/authentication
+// failure when pushing to a git+ssh:// or DoltHub remote. Without this
+// classification, auth failures get reported as remote-not-found and the
+// user sees a "Supported remote URLs:" hint that misdirects them away from
+// the real cause (ssh-agent dropped, key not loaded, expired credentials).
+func isAuthFailureErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "publickey") ||
+		strings.Contains(msg, "authentication failed") ||
+		strings.Contains(msg, "auth failed") ||
+		strings.Contains(msg, "could not read from remote repository") ||
+		strings.Contains(msg, "401 unauthorized") ||
+		strings.Contains(msg, "403 forbidden")
+}
+
+// printAuthFailureGuidance prints a clear, actionable error and recovery
+// hints when a push/pull fails due to authentication.
+func printAuthFailureGuidance(operation string) {
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Authentication failed for the configured Dolt remote.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "For git+ssh:// remotes (GitHub, GitLab, etc.):")
+	fmt.Fprintln(os.Stderr, "  • Verify ssh-agent has your key loaded:  ssh-add -l")
+	fmt.Fprintln(os.Stderr, "  • Reload it if missing:                   ssh-add ~/.ssh/id_ed25519")
+	fmt.Fprintln(os.Stderr, "  • Test the connection:                    ssh -T git@github.com")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "For Hosted Dolt / DoltHub remotes:")
+	fmt.Fprintln(os.Stderr, "  • Verify DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD are set in your environment.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Once authentication is restored, retry: bd dolt "+operation)
+}
+
 // isDivergedHistoryErr checks whether the error indicates that local and remote
 // Dolt histories have diverged. This happens when independent pushes create
 // separate commit histories with no common merge base (e.g., two agents
@@ -208,7 +244,9 @@ uncommitted changes in its working set).`,
 		if force {
 			if err := st.ForcePush(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				if isRemoteNotFoundErr(err) {
+				if isAuthFailureErr(err) {
+					printAuthFailureGuidance("push --force")
+				} else if isRemoteNotFoundErr(err) {
 					fmt.Fprintln(os.Stderr, "")
 					fmt.Fprintln(os.Stderr, "No remote is configured for this database.")
 					fmt.Fprintln(os.Stderr, "")
@@ -231,7 +269,9 @@ uncommitted changes in its working set).`,
 		} else {
 			if err := st.Push(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				if isRemoteNotFoundErr(err) {
+				if isAuthFailureErr(err) {
+					printAuthFailureGuidance("push")
+				} else if isRemoteNotFoundErr(err) {
 					fmt.Fprintln(os.Stderr, "")
 					fmt.Fprintln(os.Stderr, "No remote is configured for this database.")
 					fmt.Fprintln(os.Stderr, "")
@@ -274,7 +314,9 @@ variables for authentication.`,
 		fmt.Println("Pulling from Dolt remote...")
 		if err := st.Pull(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			if isRemoteNotFoundErr(err) {
+			if isAuthFailureErr(err) {
+				printAuthFailureGuidance("pull")
+			} else if isRemoteNotFoundErr(err) {
 				fmt.Fprintf(os.Stderr, "Hint: use 'bd dolt remote add <name> <url>' (not 'dolt remote add').\n")
 				fmt.Fprintf(os.Stderr, "  Running 'dolt remote add' directly may add the remote to the wrong directory.\n")
 				fmt.Fprintf(os.Stderr, "  Use 'bd dolt remote list' to check for discrepancies.\n")

@@ -1038,6 +1038,35 @@ func TestIsRemoteNotFoundErr(t *testing.T) {
 	}
 }
 
+func TestIsAuthFailureErr(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"unrelated error", fmt.Errorf("connection refused"), false},
+		{"remote not found is not auth", fmt.Errorf("remote 'origin' not found"), false},
+		{"diverged history is not auth", fmt.Errorf("no common ancestor"), false},
+		{"github ssh permission denied", fmt.Errorf("git@ssh.github.com: Permission denied (publickey)."), true},
+		{"publickey only", fmt.Errorf("publickey"), true},
+		{"authentication failed", fmt.Errorf("authentication failed for 'origin'"), true},
+		{"could not read repo", fmt.Errorf("could not read from remote repository"), true},
+		{"401 unauthorized", fmt.Errorf("401 Unauthorized"), true},
+		{"403 forbidden", fmt.Errorf("403 Forbidden"), true},
+		{"wrapped auth error", fmt.Errorf("push to origin: %w", fmt.Errorf("Permission denied (publickey)")), true},
+		{"mixed case", fmt.Errorf("PERMISSION DENIED (publickey)"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isAuthFailureErr(tt.err)
+			if got != tt.want {
+				t.Errorf("isAuthFailureErr(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPrintDivergedHistoryGuidance(t *testing.T) {
 	// Capture stderr output
 	oldStderr := os.Stderr
