@@ -74,6 +74,13 @@ Expected state:
   must use native `SELECT dolt_*` functions and per-table TVFs. Do not recreate
   branch-per-file databases or synthetic `doltlite_commits` / `doltlite_refs`
   tables in the Beads adapter.
+- 2026-05-01: the active Gas Town `beads-doltlite` rig had
+  `.beads/doltlite/bd.db` on disk but `.beads/metadata.json` still declared
+  `backend=dolt` and `dolt_mode=server`, causing `bd` to chase stale Dolt port
+  env vars. Updating the rig-local metadata to `backend=doltlite`,
+  `database=doltlite`, and `dolt_mode=embedded` made both `./bd ready --json`
+  and installed `bd ready --json` open doltlite successfully even with stale
+  `BEADS_DOLT_*` env vars present.
 
 ## Next Checks
 
