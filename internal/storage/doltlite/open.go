@@ -4,6 +4,7 @@ package doltlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"os"
@@ -11,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 )
 
 // validIdentifier matches safe SQL identifiers (letters, digits, underscores).
@@ -23,7 +24,16 @@ const (
 	commitName         = "beads"
 	commitEmail        = "beads@local"
 	defaultBusyTimeout = 10000
+	driverName         = "sqlite3_doltlite"
 )
+
+func init() {
+	sql.Register(driverName, &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return conn.RegisterFunc("UUID", newUUID, true)
+		},
+	})
+}
 
 // OpenSQL opens an doltlite database at dir. The returned cleanup
 // function closes the *sql.DB.
@@ -32,7 +42,7 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(driverName, dbPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -64,6 +74,23 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 	}
 
 	return db, cleanup, nil
+}
+
+func newUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf(
+		"%x-%x-%x-%x-%x",
+		b[0:4],
+		b[4:6],
+		b[6:8],
+		b[8:10],
+		b[10:16],
+	), nil
 }
 
 func buildDSN(dir, database string) (string, error) {
