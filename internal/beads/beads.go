@@ -501,6 +501,14 @@ func FindDatabasePath() string {
 		// Return empty string and let the caller handle it
 	}
 
+	// 1a. Gas City sessions can advertise the authoritative repo root via
+	// GC_BEADS_SCOPE_ROOT even when cwd is a polecat worktree scaffold.
+	if beadsDir := getGCScopeRootBeadsDir(); beadsDir != "" {
+		if dbPath := findDatabaseInBeadsDir(beadsDir, false); dbPath != "" {
+			return dbPath
+		}
+	}
+
 	// 2. Check BEADS_DB environment variable (deprecated but still supported)
 	if envDB := os.Getenv("BEADS_DB"); envDB != "" {
 		absDB := utils.CanonicalizePath(envDB)
@@ -656,6 +664,24 @@ func hasBeadsDatabase(beadsDir string) bool {
 	return false
 }
 
+// getGCScopeRootBeadsDir resolves the rig-local .beads directory advertised by
+// Gas City sessions. GC_BEADS_SCOPE_ROOT points at the authoritative repo root
+// for beads commands even when the process cwd is inside a polecat worktree
+// that only contains scaffolding artifacts.
+func getGCScopeRootBeadsDir() string {
+	scopeRoot := strings.TrimSpace(os.Getenv("GC_BEADS_SCOPE_ROOT"))
+	if scopeRoot == "" {
+		return ""
+	}
+
+	beadsDir := canonicalizeBeadsDirPath(filepath.Join(scopeRoot, ".beads"))
+	if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+		return FollowRedirect(beadsDir)
+	}
+
+	return ""
+}
+
 // FindBeadsDir finds the .beads/ directory in the current directory tree.
 // Returns empty string if not found.
 //
@@ -686,6 +712,14 @@ func FindBeadsDir() string {
 			if hasBeadsProjectFiles(absBeadsDir) {
 				return absBeadsDir
 			}
+		}
+	}
+
+	// 1a. Gas City sessions can advertise the authoritative repo root via
+	// GC_BEADS_SCOPE_ROOT even when cwd is a polecat worktree scaffold.
+	if beadsDir := getGCScopeRootBeadsDir(); beadsDir != "" {
+		if hasBeadsProjectFiles(beadsDir) {
+			return beadsDir
 		}
 	}
 

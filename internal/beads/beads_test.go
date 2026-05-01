@@ -45,6 +45,102 @@ func TestFindDatabasePathEnvVar(t *testing.T) {
 	}
 }
 
+func TestFindBeadsDirGCScopeRoot(t *testing.T) {
+	originalBeadsDir := os.Getenv("BEADS_DIR")
+	originalScopeRoot := os.Getenv("GC_BEADS_SCOPE_ROOT")
+	t.Cleanup(func() {
+		if originalBeadsDir != "" {
+			os.Setenv("BEADS_DIR", originalBeadsDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		if originalScopeRoot != "" {
+			os.Setenv("GC_BEADS_SCOPE_ROOT", originalScopeRoot)
+		} else {
+			os.Unsetenv("GC_BEADS_SCOPE_ROOT")
+		}
+	})
+	os.Unsetenv("BEADS_DIR")
+
+	tmpDir := t.TempDir()
+	scopeRoot := filepath.Join(tmpDir, "rig")
+	beadsDir := filepath.Join(scopeRoot, ".beads")
+	if err := os.MkdirAll(filepath.Join(beadsDir, "doltlite"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"backend":"doltlite","database":"doltlite"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Setenv("GC_BEADS_SCOPE_ROOT", scopeRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := filepath.Join(tmpDir, "workspace", "nested")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+
+	result := FindBeadsDir()
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	expectedResolved, _ := filepath.EvalSymlinks(beadsDir)
+	if resultResolved != expectedResolved {
+		t.Errorf("FindBeadsDir() = %q, want %q from GC_BEADS_SCOPE_ROOT", result, beadsDir)
+	}
+}
+
+func TestFindDatabasePathGCScopeRoot(t *testing.T) {
+	originalBeadsDir := os.Getenv("BEADS_DIR")
+	originalBeadsDB := os.Getenv("BEADS_DB")
+	originalScopeRoot := os.Getenv("GC_BEADS_SCOPE_ROOT")
+	t.Cleanup(func() {
+		if originalBeadsDir != "" {
+			os.Setenv("BEADS_DIR", originalBeadsDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		if originalBeadsDB != "" {
+			os.Setenv("BEADS_DB", originalBeadsDB)
+		} else {
+			os.Unsetenv("BEADS_DB")
+		}
+		if originalScopeRoot != "" {
+			os.Setenv("GC_BEADS_SCOPE_ROOT", originalScopeRoot)
+		} else {
+			os.Unsetenv("GC_BEADS_SCOPE_ROOT")
+		}
+	})
+	os.Unsetenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DB")
+
+	tmpDir := t.TempDir()
+	scopeRoot := filepath.Join(tmpDir, "rig")
+	beadsDir := filepath.Join(scopeRoot, ".beads")
+	doltliteDir := filepath.Join(beadsDir, "doltlite")
+	if err := os.MkdirAll(doltliteDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"backend":"doltlite","database":"doltlite"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Setenv("GC_BEADS_SCOPE_ROOT", scopeRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := filepath.Join(tmpDir, "workspace", "nested")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+
+	result := FindDatabasePath()
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	expectedResolved, _ := filepath.EvalSymlinks(doltliteDir)
+	if resultResolved != expectedResolved {
+		t.Errorf("FindDatabasePath() = %q, want %q from GC_BEADS_SCOPE_ROOT", result, doltliteDir)
+	}
+}
+
 func TestFindDatabasePathInTree(t *testing.T) {
 	// Save original env vars
 	originalDB := os.Getenv("BEADS_DB")

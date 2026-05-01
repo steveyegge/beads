@@ -51,6 +51,11 @@ Expected state:
 
 ## Findings
 
+- 2026-05-02: `internal/beads` discovery now honors `GC_BEADS_SCOPE_ROOT`
+  before cwd/worktree auto-discovery, so polecat sessions launched from
+  scaffolding worktrees resolve the rig's authoritative `.beads/` instead of
+  the packaged city `.beads/`. This prevents `bd` from opening the wrong
+  doltlite store or hanging on unrelated lock files when `BEADS_DIR` is unset.
 - 2026-05-01: deacon startup after `gc prime` carried stale Dolt env overrides
   (`BEADS_DOLT_PORT=35819`, `BEADS_DOLT_SERVER_PORT=35819`, `GC_DOLT_PORT=35819`)
   even though `gc doctor` and `gc dolt health` showed the live doltlite server
