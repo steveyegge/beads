@@ -67,7 +67,8 @@ func initGitRepoAt(t *testing.T, dir string) {
 		{"init"},
 		{"config", "user.email", "test@test.com"},
 		{"config", "user.name", "Test"},
-		{"config", "core.hooksPath", "/dev/null"},
+		// Force repo-local hooks so tests ignore any global hooksPath override.
+		{"config", "core.hooksPath", ".git/hooks"},
 	} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
