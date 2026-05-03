@@ -51,6 +51,14 @@ Expected state:
 
 ## Findings
 
+- 2026-05-03: audit bead `bd-d74` confirmed the new `issueops` dialect wrappers
+  still default Dolt callers to `SQLDialectDolt`, so the storage-selection and
+  SQL-dialect shims reviewed in this pass do not appear to alter existing Dolt
+  backend query shapes. The same audit also found a live doltlite regression:
+  `internal/storage/doltlite/open.go` still runs `SELECT dolt_checkout(?)` on
+  open and `internal/storage/doltlite/version_control.go` / `commit_pending.go`
+  still call raw `dolt_*` SQL functions even though the local `sqlite3_doltlite`
+  driver only registers `UUID()`. Track fix in `bd-31j`.
 - 2026-05-02: `internal/beads` discovery now honors `GC_BEADS_SCOPE_ROOT`
   before cwd/worktree auto-discovery, so polecat sessions launched from
   scaffolding worktrees resolve the rig's authoritative `.beads/` instead of
