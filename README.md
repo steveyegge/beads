@@ -36,6 +36,17 @@ bd setup factory  # Factory.ai Droid - creates/updates AGENTS.md
 
 Manual copy-paste is only for unsupported agents, existing projects where you cannot rerun `bd init`/`bd setup`, or custom instruction files. In those cases, run `bd onboard` and paste the printed snippet into the file your agent reads.
 
+If your agent is not covered by `bd setup`, add this minimal `AGENTS.md` section:
+
+```markdown
+This project uses bd (beads) for issue tracking.
+
+- Run `bd prime` for workflow context and command guidance.
+- Use `bd ready`, `bd show <id>`, `bd update <id> --claim`, and `bd close <id>`.
+- Use `bd remember "insight"` for persistent project memory; do not create MEMORY.md files.
+- Do not use markdown TODO lists for task tracking.
+```
+
 ## 🛠 Features
 
 * **[Dolt](https://github.com/dolthub/dolt)-Powered:** Version-controlled SQL database with cell-level merge, native branching, and built-in sync via Dolt remotes.
@@ -54,6 +65,8 @@ Manual copy-paste is only for unsupported agents, existing projects where you ca
 | `bd update <id> --claim` | Atomically claim a task (sets assignee + in_progress). |
 | `bd dep add <child> <parent>` | Link tasks (blocks, related, parent-child). |
 | `bd show <id>` | View task details and audit trail. |
+| `bd prime` | Print agent workflow context and persistent memories. |
+| `bd remember "insight"` | Store project memory that `bd prime` injects later. |
 
 ## 🔗 Hierarchy & Workflow
 
