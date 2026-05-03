@@ -778,6 +778,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			ProxiedServer:   initProxiedServer,
 			CreateIfMissing: true, // bd init is the only path that should create databases
 			AutoStart:       initServerMode && os.Getenv("BEADS_DOLT_AUTO_START") != "0",
+			ServerTLS:       os.Getenv("BEADS_DOLT_SERVER_TLS") != "0",
 		}
 		if serverHost != "" {
 			doltCfg.ServerHost = serverHost
