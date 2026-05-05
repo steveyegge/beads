@@ -31,6 +31,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"sync"
 	"testing"
@@ -40,6 +41,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
+
+// safeDBName guards the per-test database name against accidental SQL
+// identifier injection if the dbName construction ever changes. Today
+// dbName = "bd_test_" + hex(crypto/rand 8 bytes), which always matches.
+var safeDBName = regexp.MustCompile(`^bd_test_[a-f0-9]+$`)
 
 // EnvDSN is consulted before reaching for testcontainers. Set this to a
 // cluster-admin DSN (typically pointing at the `postgres` database) so the
@@ -138,17 +144,23 @@ func runAdminSQL(adminDSN, sql string) error {
 }
 
 // createDatabase issues a CREATE DATABASE statement against the cluster.
-// pgx does not parameterize DDL, so the database name is interpolated; it
-// is constrained to a hex suffix from crypto/rand to avoid injection.
+// pgx does not parameterize DDL, so the database name is interpolated; the
+// safeDBName regex asserts the constrained form before the fmt happens.
 func createDatabase(adminDSN, dbName string) error {
-	return runAdminSQL(adminDSN, fmt.Sprintf("CREATE DATABASE %q", dbName))
+	if !safeDBName.MatchString(dbName) {
+		return fmt.Errorf("refusing unsafe db name %q", dbName)
+	}
+	return runAdminSQL(adminDSN, fmt.Sprintf(`CREATE DATABASE "%s"`, dbName))
 }
 
 // dropDatabaseForce uses PG14's `WITH (FORCE)` clause to evict lingering
 // connections. v1 of bd's PG backend requires PG14+, so the FORCE syntax
 // is always available.
 func dropDatabaseForce(adminDSN, dbName string) error {
-	return runAdminSQL(adminDSN, fmt.Sprintf("DROP DATABASE IF EXISTS %q WITH (FORCE)", dbName))
+	if !safeDBName.MatchString(dbName) {
+		return fmt.Errorf("refusing unsafe db name %q", dbName)
+	}
+	return runAdminSQL(adminDSN, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s" WITH (FORCE)`, dbName))
 }
 
 // swapDatabaseInDSN re-marshals a parsed DSN with a different database

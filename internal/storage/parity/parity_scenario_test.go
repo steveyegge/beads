@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/steveyegge/beads/internal/storage/postgres/testfixture"
 )
 
@@ -290,31 +291,15 @@ func runBDEnv(bd, dir string, extraEnv, args []string) (string, string, error) {
 // extractPasswordFromDSN returns the password component of a postgres URI
 // or keyword DSN, or "" if absent. Used to thread BEADS_POSTGRES_PASSWORD
 // to subprocess invocations after init has stripped the credential from
-// metadata.json.
+// metadata.json. Delegates to pgconn.ParseConfig so URL-decoding and the
+// full DSN syntax (including keyword forms with quoted values) are handled
+// correctly.
 func extractPasswordFromDSN(rawDSN string) string {
-	// Quick path: URI form.
-	if strings.HasPrefix(rawDSN, "postgres://") || strings.HasPrefix(rawDSN, "postgresql://") {
-		// Parse out user:pass@host
-		rest := strings.TrimPrefix(rawDSN, "postgres://")
-		rest = strings.TrimPrefix(rest, "postgresql://")
-		atIdx := strings.Index(rest, "@")
-		if atIdx < 0 {
-			return ""
-		}
-		creds := rest[:atIdx]
-		colonIdx := strings.Index(creds, ":")
-		if colonIdx < 0 {
-			return ""
-		}
-		return creds[colonIdx+1:]
+	cfg, err := pgconn.ParseConfig(rawDSN)
+	if err != nil {
+		return ""
 	}
-	// Keyword form: scan for `password=...`.
-	for _, kv := range strings.Fields(rawDSN) {
-		if strings.HasPrefix(kv, "password=") {
-			return strings.TrimPrefix(kv, "password=")
-		}
-	}
-	return ""
+	return cfg.Password
 }
 
 // normalizeOutput applies the documented normalization passes so byte
