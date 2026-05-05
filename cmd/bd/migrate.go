@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -8,7 +10,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt/migrations"
+	"github.com/steveyegge/beads/internal/storage/migration"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -32,10 +36,22 @@ Subcommands:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		updateRepoID, _ := cmd.Flags().GetBool("update-repo-id")
 		inspect, _ := cmd.Flags().GetBool("inspect")
+		toBackend, _ := cmd.Flags().GetString("to")
+		dsn, _ := cmd.Flags().GetString("dsn")
+		force, _ := cmd.Flags().GetBool("force")
+		source, _ := cmd.Flags().GetString("source")
+		includeEvents, _ := cmd.Flags().GetBool("include-events")
 
 		// Block writes in readonly mode (migration modifies data, --inspect is read-only)
 		if !dryRun && !inspect {
 			CheckReadonly("migrate")
+		}
+
+		// Handle cross-backend migration (Dolt → Postgres) before the legacy
+		// in-place metadata-update path.
+		if toBackend != "" {
+			handleCrossBackendMigrate(toBackend, dsn, source, force, dryRun, includeEvents)
+			return
 		}
 
 		// Handle --update-repo-id first
@@ -263,6 +279,130 @@ func truncateID(id string, maxLen int) string {
 		return id
 	}
 	return id[:maxLen]
+}
+
+// handleCrossBackendMigrate runs the Dolt → Postgres data copy for
+// `bd migrate --to=postgres`. The implementation lives in
+// internal/storage/migration; this wrapper handles flag validation,
+// source/destination opening, error formatting, and JSON output.
+func handleCrossBackendMigrate(toBackend, dsn, source string, force, dryRun, includeEvents bool) {
+	ctx := rootCtx
+	if toBackend != "postgres" {
+		emitMigrateError("invalid_target_backend",
+			fmt.Sprintf("--to=%s not supported (only 'postgres' in v1)", toBackend))
+		os.Exit(1)
+	}
+	if dsn == "" {
+		emitMigrateError("missing_dsn", "--dsn is required when --to=postgres")
+		os.Exit(1)
+	}
+
+	srcStore, srcCloser, err := openMigrateSource(ctx, source)
+	if err != nil {
+		emitMigrateError("source_open_failed", err.Error())
+		os.Exit(1)
+	}
+	defer srcCloser()
+
+	dst, err := storage.Open(ctx, storage.BackendPostgres, storage.ConnectionConfig{DSN: dsn})
+	if err != nil {
+		emitMigrateError("destination_open_failed", err.Error())
+		os.Exit(1)
+	}
+	defer func() { _ = dst.Close() }()
+
+	result, err := migration.Migrate(ctx, srcStore, dst, migration.Options{
+		Force:         force,
+		DryRun:        dryRun,
+		IncludeEvents: includeEvents,
+		Stderr:        os.Stderr,
+	})
+	if err != nil {
+		emitCrossBackendMigrateError(err)
+		os.Exit(1)
+	}
+
+	emitCrossBackendMigrateSuccess(result)
+}
+
+// openMigrateSource opens the source store. When source is empty we use the
+// active workspace's already-open store; otherwise we open a fresh
+// read-only Dolt store rooted at source. The returned closer is no-op for
+// the active-workspace path so the deferred close in the handler does not
+// double-close the global store.
+func openMigrateSource(ctx context.Context, source string) (storage.Storage, func(), error) {
+	if source == "" {
+		s := getStore()
+		if s == nil {
+			return nil, func() {}, errors.New("no active beads workspace; pass --source=<beads-dir>")
+		}
+		return s, func() {}, nil
+	}
+	s, err := storage.Open(ctx, storage.BackendDolt, storage.ConnectionConfig{
+		BeadsDir: source,
+		ReadOnly: true,
+	})
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("open --source=%s: %w", source, err)
+	}
+	return s, func() { _ = s.Close() }, nil
+}
+
+func emitCrossBackendMigrateSuccess(result *migration.Result) {
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"status":               "success",
+			"dry_run":              result.DryRun,
+			"tables_cleared":       result.TablesCleared,
+			"rows_by_table":        result.RowsByTable,
+			"audit_events_skipped": result.AuditEventsSkipped,
+		})
+		return
+	}
+	if result.DryRun {
+		fmt.Println("Dry run — no changes written.")
+	}
+	if len(result.TablesCleared) > 0 {
+		fmt.Printf("Cleared destination tables: %s\n", strings.Join(result.TablesCleared, ", "))
+	}
+	totalRows := 0
+	for _, n := range result.RowsByTable {
+		totalRows += n
+	}
+	if result.DryRun {
+		fmt.Printf("Source rows: %d across %d tables\n", totalRows, len(result.RowsByTable))
+	} else {
+		fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Migrated %d rows across %d tables", totalRows, len(result.RowsByTable))))
+	}
+	if result.AuditEventsSkipped > 0 {
+		fmt.Printf("Audit-trail events not migrated: %d (see docs/AUDIT_TRAIL_POSTGRES.md)\n", result.AuditEventsSkipped)
+	}
+}
+
+// emitCrossBackendMigrateError translates the migration package's typed
+// errors into either a friendly stderr message or a JSON envelope that bd
+// agents can parse.
+func emitCrossBackendMigrateError(err error) {
+	var notEmpty *migration.ErrDestinationNotEmpty
+	switch {
+	case errors.As(err, &notEmpty):
+		emitMigrateError("destination_not_empty", err.Error())
+	case errors.Is(err, migration.ErrUnimplementedFeature):
+		emitMigrateError("feature_not_implemented", err.Error())
+	default:
+		emitMigrateError("migration_failed", err.Error())
+	}
+}
+
+func emitMigrateError(code, msg string) {
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"error":   code,
+			"message": msg,
+		})
+		return
+	}
+	fmt.Fprintf(os.Stderr, "error: %s\n", msg)
 }
 
 // loadOrCreateConfig loads metadata.json or creates default if not found
@@ -662,6 +802,15 @@ func init() {
 	migrateCmd.Flags().Bool("update-repo-id", false, "Update repository ID (use after changing git remote)")
 	migrateCmd.Flags().Bool("inspect", false, "Show migration plan and database state for AI agent analysis")
 	migrateCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output migration statistics in JSON format")
+
+	// Cross-backend migration flags (be-6fk.5). When --to is set the command
+	// runs a Dolt → Postgres data copy; otherwise the existing in-place
+	// metadata path runs.
+	migrateCmd.Flags().String("to", "", "Target backend for data migration (currently only 'postgres')")
+	migrateCmd.Flags().String("dsn", "", "Destination DSN (required when --to=postgres)")
+	migrateCmd.Flags().Bool("force", false, "TRUNCATE destination tables before copy (required for non-empty destinations)")
+	migrateCmd.Flags().String("source", "", "Path to source .beads directory (defaults to the active workspace)")
+	migrateCmd.Flags().Bool("include-events", false, "Include audit-trail events (reserved; v1 returns ErrUnimplemented)")
 
 	migrateSyncCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
 	migrateSyncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")

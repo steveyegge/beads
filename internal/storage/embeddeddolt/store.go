@@ -70,6 +70,18 @@ func (s *EmbeddedDoltStore) IsClosed() bool {
 	return s.closed.Load()
 }
 
+// BorrowSourceDB opens a fresh long-lived SQL connection for use by the
+// migration package. The caller MUST call the returned release function
+// when finished — unlike the per-method connections used elsewhere in
+// this package, this connection is held for the duration of the
+// migration. Returns errClosed if the store has been closed.
+func (s *EmbeddedDoltStore) BorrowSourceDB(ctx context.Context) (*sql.DB, func() error, error) {
+	if s.closed.Load() {
+		return nil, nil, errClosed
+	}
+	return OpenSQL(ctx, s.dataDir, s.database, s.branch)
+}
+
 // newStore creates an EmbeddedDoltStore using the embedded Dolt engine.
 // beadsDir is the .beads/ root; the data directory is derived as <beadsDir>/embeddeddolt/.
 // The database is created automatically if it doesn't exist (initSchema handles this).

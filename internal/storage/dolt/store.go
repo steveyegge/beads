@@ -1637,6 +1637,15 @@ func (s *DoltStore) UnderlyingDB() *sql.DB {
 	return s.db
 }
 
+// BorrowSourceDB returns the underlying *sql.DB and a no-op release for use
+// by the migration package. DoltStore owns the connection lifecycle
+// itself, so the returned release does nothing — closing it would tear
+// down the live store. EmbeddedDoltStore implements the same interface
+// but opens a fresh connector that the caller MUST release.
+func (s *DoltStore) BorrowSourceDB(_ context.Context) (*sql.DB, func() error, error) {
+	return s.db, func() error { return nil }, nil
+}
+
 // =============================================================================
 // Version Control Operations (Dolt-specific extensions)
 // =============================================================================

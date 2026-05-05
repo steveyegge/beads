@@ -68,3 +68,11 @@ func (s *PostgresStore) Close() error {
 func (s *PostgresStore) IsClosed() bool {
 	return s.closed.Load()
 }
+
+// Pool returns the underlying pgxpool. Internal-package callers (notably the
+// migration package) need direct pgx access for COPY FROM, which is not
+// expressible through the generic Storage interface. Do not retain the
+// pointer past the lifetime of the store.
+func (s *PostgresStore) Pool() *pgxpool.Pool {
+	return s.pool
+}
