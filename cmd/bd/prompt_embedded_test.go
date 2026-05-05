@@ -12,6 +12,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 func TestEmbeddedPromptCapture(t *testing.T) {
@@ -90,7 +91,7 @@ func TestEmbeddedPromptCapture(t *testing.T) {
 	if metadata["summary"] != "Build prompt capture" {
 		t.Errorf("metadata summary: got %q", metadata["summary"])
 	}
-	if metadata["cwd"] != dir {
+	if !utils.PathsEqual(metadata["cwd"], dir) {
 		t.Errorf("metadata cwd: got %q, want %q", metadata["cwd"], dir)
 	}
 

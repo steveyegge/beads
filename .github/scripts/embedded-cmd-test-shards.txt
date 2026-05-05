@@ -100,6 +100,7 @@
 20 12 TestEmbeddedOrphansConcurrent
 20 13 TestEmbeddedPrime
 20 14 TestEmbeddedPrimeConcurrent
+20 17 TestEmbeddedPromptCapture
 20 15 TestEmbeddedPromote
 20 16 TestEmbeddedPromoteCLI
 20 17 TestEmbeddedPromoteCLIConcurrent
