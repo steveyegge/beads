@@ -4,10 +4,10 @@ exit: 0
 stdout:
 {
   "created_at": "<TIMESTAMP>",
-  "created_by": "beads--builder",
+  "created_by": "parity-author",
   "id": "<ID>",
   "issue_type": "task",
-  "owner": "jim@wordelman.name",
+  "owner": "parity@bd.test",
   "priority": 1,
   "schema_version": 1,
   "status": "open",
@@ -24,10 +24,10 @@ exit: 0
 stdout:
 {
   "created_at": "<TIMESTAMP>",
-  "created_by": "beads--builder",
+  "created_by": "parity-author",
   "id": "<ID>",
   "issue_type": "task",
-  "owner": "jim@wordelman.name",
+  "owner": "parity@bd.test",
   "priority": 2,
   "schema_version": 1,
   "status": "open",
@@ -58,9 +58,9 @@ stdout:
     "status": "open",
     "priority": 1,
     "issue_type": "task",
-    "owner": "jim@wordelman.name",
+    "owner": "parity@bd.test",
     "created_at": "<TIMESTAMP>",
-    "created_by": "beads--builder",
+    "created_by": "parity-author",
     "updated_at": "<TIMESTAMP>",
     "dependency_count": 0,
     "dependent_count": 1,
@@ -83,9 +83,9 @@ stdout:
     "priority": 1,
     "issue_type": "task",
     "assignee": "tester",
-    "owner": "jim@wordelman.name",
+    "owner": "parity@bd.test",
     "created_at": "<TIMESTAMP>",
-    "created_by": "beads--builder",
+    "created_by": "parity-author",
     "updated_at": "<TIMESTAMP>",
     "started_at": "<TIMESTAMP>"
   }
@@ -116,8 +116,8 @@ stderr:
 $ bd export
 exit: 0
 stdout:
-{"_type":"issue","id":"<ID>","title":"Child issue","status":"open","priority":2,"issue_type":"task","owner":"jim@wordelman.name","created_at": "<TIMESTAMP>","created_by":"beads--builder","updated_at": "<TIMESTAMP>","dependencies":[{"issue_id":"<ID>","depends_on_id":"<ID>","type":"blocks","created_at": "<TIMESTAMP>"}],"dependency_count":1,"dependent_count":0,"comment_count":0}
-{"_type":"issue","id":"<ID>","title":"Parent issue","status":"closed","priority":1,"issue_type":"task","assignee":"tester","owner":"jim@wordelman.name","created_at": "<TIMESTAMP>","created_by":"beads--builder","updated_at": "<TIMESTAMP>","started_at": "<TIMESTAMP>","closed_at": "<TIMESTAMP>","close_reason":"scenario complete","comments":[{"id":"<UUID>","issue_id":"<ID>","author":"beads--builder","text":"parity scenario comment","created_at": "<TIMESTAMP>"}],"dependency_count":0,"dependent_count":1,"comment_count":1}
+{"_type":"issue","id":"<ID>","title":"Child issue","status":"open","priority":2,"issue_type":"task","owner":"parity@bd.test","created_at": "<TIMESTAMP>","created_by":"parity-author","updated_at": "<TIMESTAMP>","dependencies":[{"issue_id":"<ID>","depends_on_id":"<ID>","type":"blocks","created_at": "<TIMESTAMP>"}],"dependency_count":1,"dependent_count":0,"comment_count":0}
+{"_type":"issue","id":"<ID>","title":"Parent issue","status":"closed","priority":1,"issue_type":"task","assignee":"tester","owner":"parity@bd.test","created_at": "<TIMESTAMP>","created_by":"parity-author","updated_at": "<TIMESTAMP>","started_at": "<TIMESTAMP>","closed_at": "<TIMESTAMP>","close_reason":"scenario complete","comments":[{"id":"<UUID>","issue_id":"<ID>","author":"parity-author","text":"parity scenario comment","created_at": "<TIMESTAMP>"}],"dependency_count":0,"dependent_count":1,"comment_count":1}
 
 stderr:
 

@@ -130,8 +130,21 @@ func runParityScenario(t *testing.T, bd string) (string, error) {
 	// authenticate via BEADS_POSTGRES_PASSWORD. metadata.json carries the
 	// stripped form by design (see store_factory.go).
 	password := extractPasswordFromDSN(rawDSN)
-	t.Logf("rawDSN=%q password=%q", rawDSN, password)
-	extraEnv := []string{"BEADS_DOLT_AUTO_START=0"}
+	t.Logf("rawDSN=%q password=<redacted>", rawDSN)
+	// Deterministic identity: parity goldens must be byte-identical across
+	// rigs/CI/dev. The bd CLI derives created_by/owner/author from
+	// BEADS_ACTOR, BD_ACTOR, GIT_AUTHOR_EMAIL, etc. Inheriting them from the
+	// caller's shell contaminates the golden — see runBDEnv where these are
+	// scrubbed from the inherited environment.
+	extraEnv := []string{
+		"BEADS_DOLT_AUTO_START=0",
+		"BEADS_ACTOR=parity-author",
+		"BD_ACTOR=parity-author",
+		"GIT_AUTHOR_EMAIL=parity@bd.test",
+		"GIT_AUTHOR_NAME=parity-author",
+		"GIT_COMMITTER_EMAIL=parity@bd.test",
+		"GIT_COMMITTER_NAME=parity-author",
+	}
 	if password != "" {
 		extraEnv = append(extraEnv, "BEADS_POSTGRES_PASSWORD="+password)
 	}
@@ -229,12 +242,26 @@ func extractIDFromJSON(stdout string) (string, error) {
 }
 
 // runBDEnv invokes bd with args + caller-supplied env additions. The
-// environment scrubs BEADS_DIR (so subprocess uses the supplied dir) so
-// the test's subprocess never resolves a real ~/.beads on the host.
+// environment scrubs BEADS_DIR (so subprocess uses the supplied dir) and
+// every identity-bearing var so the parity golden stays byte-identical
+// across rigs/CI/dev. extraEnv (set by runParityScenario) replaces the
+// scrubbed identity vars with deterministic values.
 func runBDEnv(bd, dir string, extraEnv, args []string) (string, string, error) {
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = dir
-	cmd.Env = append(filterEnv(os.Environ(), "BEADS_DIR"), extraEnv...)
+	scrub := []string{
+		"BEADS_DIR",
+		"BEADS_ACTOR",
+		"BD_ACTOR",
+		"GIT_AUTHOR_EMAIL",
+		"GIT_AUTHOR_NAME",
+		"GIT_COMMITTER_EMAIL",
+		"GIT_COMMITTER_NAME",
+		"USER",
+		"LOGNAME",
+		"EMAIL",
+	}
+	cmd.Env = append(filterEnv(os.Environ(), scrub...), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
