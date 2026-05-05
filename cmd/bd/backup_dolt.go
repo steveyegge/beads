@@ -124,11 +124,15 @@ Run 'bd backup init <path>' first to configure a destination.`,
 			return fmt.Errorf("storage backend does not support backup operations")
 		}
 
-		// First, commit any pending changes so they're included in the backup
-		if err := dVC(store).Commit(ctx, "bd: pre-backup commit"); err != nil && !isDoltNothingToCommit(err) {
-			fmt.Fprintf(os.Stderr, "Warning: failed to commit pending changes: %v\n", err)
+		// First, commit any pending changes so they're included in the backup.
+		// Skip silently on backends without VersionControl — they auto-flush
+		// at the storage layer (PG transactions commit per-statement).
+		if vc, ok := storage.UnwrapStore(store).(storage.VersionControl); ok {
+			if err := vc.Commit(ctx, "bd: pre-backup commit"); err != nil && !isDoltNothingToCommit(err) {
+				fmt.Fprintf(os.Stderr, "Warning: failed to commit pending changes: %v\n", err)
+			}
+			commandDidExplicitDoltCommit = true
 		}
-		commandDidExplicitDoltCommit = true
 
 		start := time.Now()
 

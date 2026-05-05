@@ -83,13 +83,18 @@ func maybeAutoImportJSONL(ctx context.Context, s storage.Storage, beadsDir strin
 	}
 
 	// Commit the imported data to Dolt history (fallback path only).
+	// Skip silently on backends without VersionControl — PG-backed projects
+	// take a different startup path (see main.go PersistentPreRun PG branch)
+	// and never reach this fallback, but defensively gate anyway.
 	commitMsg := fmt.Sprintf("auto-import: %d issues from %s (upgrade recovery, GH#2994)", result.Issues, filepath.Base(jsonlPath))
 	if result.Memories > 0 {
 		commitMsg = fmt.Sprintf("auto-import: %d issues, %d memories from %s (upgrade recovery, GH#2994)", result.Issues, result.Memories, filepath.Base(jsonlPath))
 	}
-	if err := dVC(s).Commit(ctx, commitMsg); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: auto-import: dolt commit failed: %v\n", err)
-		return
+	if vc, ok := storage.UnwrapStore(s).(storage.VersionControl); ok {
+		if err := vc.Commit(ctx, commitMsg); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: auto-import: dolt commit failed: %v\n", err)
+			return
+		}
 	}
 
 	if result.Memories > 0 {

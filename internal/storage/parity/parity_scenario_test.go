@@ -44,10 +44,22 @@ type scenarioStep struct {
 	captureID int
 	// json controls whether stdout is parsed as JSON for ID extraction.
 	json bool
+	// extraEnv holds step-scoped environment additions appended to the
+	// scenario-wide extraEnv. Used to exercise env-driven gates (e.g.
+	// BD_BACKUP_ENABLED=true to trigger the be-xz4 PostRun path).
+	extraEnv []string
 }
 
 // scenario is the canonical bd CLI sequence exercised in both legs.
 // Order matters; later steps reference IDs captured by earlier steps.
+//
+// The "backup-status-fresh" and "auto-backup-trigger" steps exercise
+// the be-xz4 gating sweep. Without the gates, `bd create` with
+// BD_BACKUP_ENABLED=true fatal-exits on PG with "Dolt backend required"
+// from PersistentPostRun → maybeAutoBackup → dVC.GetCurrentCommit.
+// The auto-backup-trigger step is invoked with backup.enabled set via
+// the environment (see runParityScenario) so no on-disk config.yaml is
+// required.
 var scenario = []scenarioStep{
 	{name: "create-parent", args: []string{"create", "Parent issue", "-t", "task", "-p", "1", "--json"}, captureID: 1, json: true},
 	{name: "create-child", args: []string{"create", "Child issue", "-t", "task", "-p", "2", "--json"}, captureID: 2, json: true},
@@ -57,6 +69,8 @@ var scenario = []scenarioStep{
 	{name: "comment", args: []string{"comment", "{ID1}", "parity scenario comment"}},
 	{name: "close-parent", args: []string{"close", "{ID1}", "--reason", "scenario complete"}},
 	{name: "export", args: []string{"export"}},
+	{name: "backup-status-fresh", args: []string{"backup", "status", "--json"}, extraEnv: []string{"BD_BACKUP_ENABLED=true"}},
+	{name: "auto-backup-trigger", args: []string{"create", "Post-backup-enable issue", "-t", "task", "-p", "3", "--json"}, captureID: 3, json: true, extraEnv: []string{"BD_BACKUP_ENABLED=true"}},
 }
 
 // scenarioState carries values captured during the scenario for use in
@@ -169,7 +183,11 @@ func runParityScenario(t *testing.T, bd string) (string, error) {
 
 	for _, step := range scenario {
 		args := interpolate(step.args, state)
-		stdout, stderr, err := runBDEnv(bd, dir, extraEnv, args)
+		stepEnv := extraEnv
+		if len(step.extraEnv) > 0 {
+			stepEnv = append(append([]string{}, extraEnv...), step.extraEnv...)
+		}
+		stdout, stderr, err := runBDEnv(bd, dir, stepEnv, args)
 		exit := 0
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {

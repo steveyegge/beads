@@ -122,9 +122,18 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 		return nil, err
 	}
 
+	// Backend capability gates. BackupStore + VersionControl are Dolt-only
+	// today; PG has neither. Refuse cleanly when BackupStore is missing;
+	// skip change-detection / watermark when VersionControl is missing.
+	bs, ok := storage.UnwrapStore(store).(storage.BackupStore)
+	if !ok {
+		return nil, fmt.Errorf("storage backend does not support backup operations")
+	}
+	vc, _ := storage.UnwrapStore(store).(storage.VersionControl)
+
 	// Change detection: skip if nothing changed (unless forced)
-	if !force {
-		currentCommit, err := dVC(store).GetCurrentCommit(ctx)
+	if !force && vc != nil {
+		currentCommit, err := vc.GetCurrentCommit(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get current commit: %w", err)
 		}
@@ -134,21 +143,18 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 		}
 	}
 
-	bs, ok := storage.UnwrapStore(store).(storage.BackupStore)
-	if !ok {
-		return nil, fmt.Errorf("storage backend does not support backup operations")
-	}
-
 	if err := bs.BackupDatabase(ctx, dir); err != nil {
 		return nil, err
 	}
 
 	// Update watermarks
-	currentCommit, err := dVC(store).GetCurrentCommit(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current commit for state: %w", err)
+	if vc != nil {
+		currentCommit, err := vc.GetCurrentCommit(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current commit for state: %w", err)
+		}
+		state.LastDoltCommit = currentCommit
 	}
-	state.LastDoltCommit = currentCommit
 	state.Timestamp = time.Now().UTC()
 
 	if err := saveBackupState(dir, state); err != nil {

@@ -13,7 +13,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -24,8 +23,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"golang.org/x/term"
 )
-
-var resolveBootstrapAuthoritativeMetadata = fix.ResolveAuthoritativeServerMetadata
 
 type bootstrapServerProbeConfig struct {
 	host     string
@@ -184,12 +181,24 @@ Examples:
 			cfg = configfile.DefaultConfig()
 		}
 
-		resolvedCfg, repairMsg, err := applyBootstrapMetadataRepair(beadsDir, cfg, !dryRun)
-		if err != nil {
-			FatalError("failed to reconcile shared-server metadata: %v", err)
-		}
-		if resolvedCfg != nil {
-			cfg = resolvedCfg
+		// bd bootstrap is a Dolt-clone-based recovery artifact (clones from
+		// remote, restores from .beads/backup/, imports from issues.jsonl).
+		// PG-backed projects don't have these mechanisms — users provision
+		// the database via `bd init --backend=postgres --dsn=…`. Refuse
+		// cleanly rather than fall through and create a Dolt store
+		// alongside the configured PG store. (be-xz4)
+		if cfg.GetBackend() == configfile.BackendPostgres {
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"action": "none",
+					"error":  "bd bootstrap is not supported on the postgres backend",
+					"hint":   "use 'bd init --backend=postgres --dsn=<dsn>' to provision a postgres-backed project",
+				})
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "Error: bd bootstrap is not supported on the postgres backend\n")
+			fmt.Fprintf(os.Stderr, "Hint: use 'bd init --backend=postgres --dsn=<dsn>' to provision a postgres-backed project\n")
+			os.Exit(1)
 		}
 
 		// Determine action based on state
@@ -201,9 +210,6 @@ Examples:
 				return
 			}
 		} else {
-			if repairMsg != "" {
-				fmt.Fprintf(os.Stderr, "Bootstrap metadata repair: %s\n", repairMsg)
-			}
 			printBootstrapPlan(plan)
 			if plan.Action == "none" || dryRun {
 				return
@@ -215,23 +221,6 @@ Examples:
 			FatalError("Bootstrap failed: %v", err)
 		}
 	},
-}
-
-func applyBootstrapMetadataRepair(beadsDir string, cfg *configfile.Config, apply bool) (*configfile.Config, string, error) {
-	if beadsDir == "" {
-		return cfg, "", nil
-	}
-	if _, err := os.Stat(beadsDir); err != nil {
-		return cfg, "", nil
-	}
-	resolved, msg, err := resolveBootstrapAuthoritativeMetadata(filepath.Dir(beadsDir), apply)
-	if err != nil {
-		return nil, "", err
-	}
-	if resolved == nil {
-		return cfg, msg, nil
-	}
-	return resolved, msg, nil
 }
 
 // BootstrapPlan describes what bootstrap will do.

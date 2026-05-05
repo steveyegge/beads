@@ -122,3 +122,44 @@ stdout:
 stderr:
 
 
+### step: backup-status-fresh
+$ bd backup status --json
+exit: 0
+stdout:
+{
+  "backup": {
+    "last_dolt_commit": "",
+    "timestamp": "0001-01-01T00:00:00Z"
+  },
+  "database_size": {
+    "bytes": 0,
+    "human": "0 B"
+  },
+  "dolt": {
+    "configured": false
+  }
+}
+
+stderr:
+
+
+### step: auto-backup-trigger
+$ bd create Post-backup-enable issue -t task -p 3 --json
+exit: 0
+stdout:
+{
+  "created_at": "<TIMESTAMP>",
+  "created_by": "parity-author",
+  "id": "<ID>",
+  "issue_type": "task",
+  "owner": "parity@bd.test",
+  "priority": 3,
+  "schema_version": 1,
+  "status": "open",
+  "title": "Post-backup-enable issue",
+  "updated_at": "<TIMESTAMP>"
+}
+
+stderr:
+
+

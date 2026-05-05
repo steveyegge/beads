@@ -41,6 +41,13 @@ func maybeAutoBackup(ctx context.Context) {
 	if lm, ok := storage.UnwrapStore(store).(storage.LifecycleManager); ok && lm.IsClosed() {
 		return
 	}
+	// Auto-backup is Dolt-clone-based; PG-backed projects have no commit
+	// graph to back up via this path (see ADR be-l7t.7 / docs/AUDIT_TRAIL_POSTGRES.md).
+	// Skip silently rather than fatal-exiting from PersistentPostRun.
+	vc, vcOK := storage.UnwrapStore(store).(storage.VersionControl)
+	if !vcOK {
+		return
+	}
 
 	dir, err := backupDir()
 	if err != nil {
@@ -66,7 +73,7 @@ func maybeAutoBackup(ctx context.Context) {
 	}
 
 	// Change detection: skip if nothing changed
-	currentCommit, err := dVC(store).GetCurrentCommit(ctx)
+	currentCommit, err := vc.GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: failed to get current commit: %v\n", err)
 		return

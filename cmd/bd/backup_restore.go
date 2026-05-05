@@ -92,9 +92,13 @@ func runBackupRestore(ctx context.Context, s storage.Storage, dir string, force 
 	// `bd backup sync` works immediately without a separate `bd backup add`.
 	registerBackupRemote(ctx, bs, dir)
 
-	if err := dVC(s).Commit(ctx, "bd backup restore"); err != nil {
-		if !strings.Contains(err.Error(), "nothing to commit") {
-			return fmt.Errorf("failed to commit restore: %w", err)
+	// Post-restore commit is Dolt-only; PG transactions are already
+	// committed by the storage layer, no separate commit step needed.
+	if vc, ok := storage.UnwrapStore(s).(storage.VersionControl); ok {
+		if err := vc.Commit(ctx, "bd backup restore"); err != nil {
+			if !strings.Contains(err.Error(), "nothing to commit") {
+				return fmt.Errorf("failed to commit restore: %w", err)
+			}
 		}
 	}
 
