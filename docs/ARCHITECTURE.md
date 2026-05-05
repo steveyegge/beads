@@ -191,6 +191,13 @@ Core types in `internal/types/types.go`:
 | **Comment** | Discussion | IssueID, Author, Content, Timestamp |
 | **Event** | Audit trail | IssueID, Type, Data, Timestamp |
 
+> **Backend note:** The `events` audit trail is written at the application
+> layer from inside each storage mutation's transaction. On Dolt, this is
+> augmented by Dolt's native commit graph (one Dolt commit per write). On
+> Postgres there is no commit-graph analog; the strategy and `RunInTransaction`
+> commit-message handling for the PG backend are documented in
+> [docs/AUDIT_TRAIL_POSTGRES.md](AUDIT_TRAIL_POSTGRES.md).
+
 ### Dependency Types
 
 | Type | Semantic | Affects `bd ready`? |
