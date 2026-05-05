@@ -61,11 +61,6 @@ func Migrate(ctx context.Context, src, dst storage.Storage, opts Options) (*Resu
 	if !ok {
 		return nil, errors.New("migration: source backend does not expose BorrowSourceDB (need a Dolt-backed source)")
 	}
-	pool, ok := pgxPoolFrom(dst)
-	if !ok {
-		return nil, errors.New("migration: destination backend is not Postgres-backed")
-	}
-
 	srcDB, releaseSrc, err := borrower.BorrowSourceDB(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("borrow source db: %w", err)
@@ -73,6 +68,26 @@ func Migrate(ctx context.Context, src, dst storage.Storage, opts Options) (*Resu
 	defer func() { _ = releaseSrc() }()
 	if srcDB == nil {
 		return nil, errors.New("migration: source backend returned nil *sql.DB")
+	}
+	return MigrateFromDB(ctx, srcDB, dst, opts)
+}
+
+// MigrateFromDB performs the same Dolt → Postgres copy as Migrate but takes
+// a pre-opened source *sql.DB. Use this when the caller has obtained the
+// source DB outside the storage registry — for example, when bypassing the
+// env-driven dolt server selection for explicit --source paths (be-b0h).
+//
+// The caller owns srcDB lifecycle.
+func MigrateFromDB(ctx context.Context, srcDB *sql.DB, dst storage.Storage, opts Options) (*Result, error) {
+	if opts.IncludeEvents {
+		return nil, fmt.Errorf("%w: --include-events", ErrUnimplementedFeature)
+	}
+	pool, ok := pgxPoolFrom(dst)
+	if !ok {
+		return nil, errors.New("migration: destination backend is not Postgres-backed")
+	}
+	if srcDB == nil {
+		return nil, errors.New("migration: source DB is nil")
 	}
 
 	auditEvents, err := countAuditEvents(ctx, srcDB)
@@ -196,6 +211,12 @@ func (e *ErrDestinationNotEmpty) Error() string {
 type sourceDBBorrower interface {
 	BorrowSourceDB(ctx context.Context) (*sql.DB, func() error, error)
 }
+
+// SourceDBBorrower is the public face of sourceDBBorrower for callers that
+// need to open the source DB themselves and pass it to MigrateFromDB. The
+// migration source must implement this contract (every Dolt-backed store
+// already does).
+type SourceDBBorrower = sourceDBBorrower
 
 // pgxPoolFrom returns the pgx pool from a Postgres-backed storage. The
 // migration package depends on the *postgres.PostgresStore.Pool() method via

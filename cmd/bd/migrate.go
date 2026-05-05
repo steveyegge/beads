@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt/migrations"
+	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/storage/migration"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -297,7 +300,7 @@ func handleCrossBackendMigrate(toBackend, dsn, source string, force, dryRun, inc
 		os.Exit(1)
 	}
 
-	srcStore, srcCloser, err := openMigrateSource(ctx, source)
+	srcDB, srcCloser, err := openMigrateSourceDB(ctx, source)
 	if err != nil {
 		emitMigrateError("source_open_failed", err.Error())
 		os.Exit(1)
@@ -311,7 +314,7 @@ func handleCrossBackendMigrate(toBackend, dsn, source string, force, dryRun, inc
 	}
 	defer func() { _ = dst.Close() }()
 
-	result, err := migration.Migrate(ctx, srcStore, dst, migration.Options{
+	result, err := migration.MigrateFromDB(ctx, srcDB, dst, migration.Options{
 		Force:         force,
 		DryRun:        dryRun,
 		IncludeEvents: includeEvents,
@@ -325,27 +328,76 @@ func handleCrossBackendMigrate(toBackend, dsn, source string, force, dryRun, inc
 	emitCrossBackendMigrateSuccess(result)
 }
 
-// openMigrateSource opens the source store. When source is empty we use the
-// active workspace's already-open store; otherwise we open a fresh
-// read-only Dolt store rooted at source. The returned closer is no-op for
-// the active-workspace path so the deferred close in the handler does not
-// double-close the global store.
-func openMigrateSource(ctx context.Context, source string) (storage.Storage, func(), error) {
+// openMigrateSourceDB returns the *sql.DB to read the Dolt source from, plus
+// a teardown function the caller must call.
+//
+// When source is empty (active-workspace path) we borrow from the already-open
+// global store. The teardown is a no-op so the deferred close in the handler
+// does not double-close the global store.
+//
+// When source is provided we open the dolt files directly via the embedded
+// driver, deliberately bypassing the `BackendDolt` registry path. The latter
+// honors `BEADS_DOLT_SERVER_PORT` (and central-config server settings) and
+// would silently connect to whatever dolt server is running on that port,
+// even when its data_dir does not match the requested --source. That hits
+// migration on a completely different database than the user intended; see
+// be-b0h for the reproduction.
+func openMigrateSourceDB(ctx context.Context, source string) (*sql.DB, func(), error) {
 	if source == "" {
 		s := getStore()
 		if s == nil {
 			return nil, func() {}, errors.New("no active beads workspace; pass --source=<beads-dir>")
 		}
-		return s, func() {}, nil
+		borrower, ok := storage.UnwrapStore(s).(migration.SourceDBBorrower)
+		if !ok {
+			return nil, func() {}, errors.New("active beads workspace does not expose a migration source DB (expected a Dolt-backed store)")
+		}
+		db, release, err := borrower.BorrowSourceDB(ctx)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("borrow active source db: %w", err)
+		}
+		return db, func() { _ = release() }, nil
 	}
-	s, err := storage.Open(ctx, storage.BackendDolt, storage.ConnectionConfig{
-		BeadsDir: source,
-		ReadOnly: true,
-	})
+
+	dataDir, database, err := resolveDoltSourceDataDir(source)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	db, release, err := embeddeddolt.OpenSQL(ctx, dataDir, database, "")
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("open --source=%s: %w", source, err)
 	}
-	return s, func() { _ = s.Close() }, nil
+	return db, func() { _ = release() }, nil
+}
+
+// resolveDoltSourceDataDir returns the (dataDir, database) tuple that the
+// embedded dolt driver needs to read the dolt repository at source. Server
+// mode keeps data at <source>/dolt/<db>; embedded mode at
+// <source>/embeddeddolt/<db>. We prefer server-mode layout when both exist
+// because that is the canonical clone target.
+func resolveDoltSourceDataDir(source string) (string, string, error) {
+	abs, err := filepath.Abs(source)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve --source=%s: %w", source, err)
+	}
+	cfg, err := configfile.Load(abs)
+	if err != nil {
+		return "", "", fmt.Errorf("read --source metadata.json: %w", err)
+	}
+	database := configfile.DefaultDoltDatabase
+	if cfg != nil {
+		database = cfg.GetDoltDatabase()
+	}
+	for _, candidate := range []string{
+		filepath.Join(abs, "dolt"),
+		filepath.Join(abs, "embeddeddolt"),
+	} {
+		dbPath := filepath.Join(candidate, database, ".dolt")
+		if info, err := os.Stat(dbPath); err == nil && info.IsDir() {
+			return candidate, database, nil
+		}
+	}
+	return "", "", fmt.Errorf("--source=%s: no dolt database %q under dolt/ or embeddeddolt/", source, database)
 }
 
 func emitCrossBackendMigrateSuccess(result *migration.Result) {

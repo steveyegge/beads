@@ -16,6 +16,9 @@ const bdSchemaMigrationLockID int64 = 0x6265616473736370
 //go:embed migrations/0001_initial.up.sql
 var initialUpSQL string
 
+//go:embed migrations/0002_drop_child_counters_fk.up.sql
+var dropChildCountersFKSQL string
+
 // embeddedMigration carries a versioned SQL body. The slice below is the
 // authoritative migration list; order matters.
 type embeddedMigration struct {
@@ -25,6 +28,7 @@ type embeddedMigration struct {
 
 var embeddedMigrations = []embeddedMigration{
 	{Version: 1, Body: initialUpSQL},
+	{Version: 2, Body: dropChildCountersFKSQL},
 }
 
 // runMigrations brings the database schema up to the latest embedded version.
