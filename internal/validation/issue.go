@@ -61,6 +61,26 @@ func NotPinned(force bool) IssueValidator {
 	}
 }
 
+// AssigneeMatches validates that the actor has authority to close the issue.
+// Authority means the issue is unassigned or the actor matches the current
+// assignee. Returns an error on mismatch unless force is true.
+//
+// This guards against the silent-success bug where actor A closes a bead that
+// was concurrently re-claimed by actor B: storage accepts the close (id-only
+// WHERE clause), so without this check bd reports "✓ Closed" even though A had
+// no authority over the bead. (be-035)
+func AssigneeMatches(actor string, force bool) IssueValidator {
+	return func(id string, issue *types.Issue) error {
+		if issue == nil || force {
+			return nil
+		}
+		if issue.Assignee == "" || issue.Assignee == actor {
+			return nil
+		}
+		return fmt.Errorf("cannot close %s: assignee is %q, actor is %q; reclaim or use --force to override", id, issue.Assignee, actor)
+	}
+}
+
 // NotClosed validates that an issue is not already closed.
 func NotClosed() IssueValidator {
 	return func(id string, issue *types.Issue) error {
