@@ -108,6 +108,8 @@ beads-perf-*.prof
 bench-cpu-*.prof
 bd-profile-*.prof
 bd-trace-*.out
+# Benchmark artifacts (make bench-postgres -> bench/postgres-<sha>.txt)
+bench/
 # AI planning documents (ephemeral)
 history/
 

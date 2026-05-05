@@ -63,11 +63,15 @@ var (
 // AdminDSN returns the cluster-level admin DSN. Tests typically prefer
 // ForTest, which builds on top of this. Returns t.Skipf with a descriptive
 // message when neither EnvDSN nor testcontainers is available.
-func AdminDSN(t *testing.T) string {
-	t.Helper()
+//
+// Accepts testing.TB so both *testing.T and *testing.B (benchmark) callers
+// share the same fixture. The benchmark suite under benchmark_test.go
+// drives the same per-database lifecycle as the integration tests.
+func AdminDSN(tb testing.TB) string {
+	tb.Helper()
 	sharedOnce.Do(initShared)
 	if sharedErr != nil {
-		t.Skipf("PG fixture unavailable (no docker socket and no %s env): %v", EnvDSN, sharedErr)
+		tb.Skipf("PG fixture unavailable (no docker socket and no %s env): %v", EnvDSN, sharedErr)
 	}
 	return sharedDSN
 }
@@ -77,18 +81,22 @@ func AdminDSN(t *testing.T) string {
 // cleanup (using PG14's `DROP DATABASE ... WITH (FORCE)` to evict any
 // lingering connections), and the returned DSN substitutes the per-test
 // database name.
-func ForTest(t *testing.T) string {
-	t.Helper()
-	admin := AdminDSN(t)
-	dbName := "bd_test_" + randomSuffix(t)
+//
+// Accepts testing.TB so the same helper drives benchmarks as well as
+// tests; *testing.B implements TB, and Cleanup is invoked at end-of-bench
+// so each Benchmark gets a fresh database.
+func ForTest(tb testing.TB) string {
+	tb.Helper()
+	admin := AdminDSN(tb)
+	dbName := "bd_test_" + randomSuffix(tb)
 
 	if err := createDatabase(admin, dbName); err != nil {
-		t.Fatalf("create database %s: %v", dbName, err)
+		tb.Fatalf("create database %s: %v", dbName, err)
 	}
 
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if err := dropDatabaseForce(admin, dbName); err != nil {
-			t.Logf("teardown: drop database %s: %v", dbName, err)
+			tb.Logf("teardown: drop database %s: %v", dbName, err)
 		}
 	})
 
@@ -217,11 +225,11 @@ func marshalConfig(cfg *pgconn.Config) string {
 	return u.String()
 }
 
-func randomSuffix(t *testing.T) string {
-	t.Helper()
+func randomSuffix(tb testing.TB) string {
+	tb.Helper()
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		t.Fatalf("rand: %v", err)
+		tb.Fatalf("rand: %v", err)
 	}
 	return hex.EncodeToString(buf[:])
 }
