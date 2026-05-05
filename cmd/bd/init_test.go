@@ -2038,17 +2038,70 @@ func TestInitBackendFlag(t *testing.T) {
 	t.Run("unknown_backend_errors", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		cmd := exec.Command(bd, "init", "--backend", "postgres", "--quiet")
+		cmd := exec.Command(bd, "init", "--backend", "mongo", "--quiet")
 		cmd.Dir = tmpDir
 		cmd.Env = os.Environ()
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			t.Fatal("Expected non-zero exit for --backend=postgres, but command succeeded")
+			t.Fatal("Expected non-zero exit for --backend=mongo, but command succeeded")
 		}
 
 		outStr := string(out)
 		if !strings.Contains(outStr, "unknown backend") {
 			t.Errorf("Expected 'unknown backend' error, got: %s", outStr)
+		}
+	})
+
+	t.Run("postgres_without_dsn_errors", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "postgres", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatal("Expected non-zero exit for --backend=postgres without --dsn, but command succeeded")
+		}
+		outStr := string(out)
+		if !strings.Contains(outStr, "--dsn") || !strings.Contains(outStr, "postgres") {
+			t.Errorf("Expected error mentioning --dsn requirement, got: %s", outStr)
+		}
+		if _, statErr := os.Stat(filepath.Join(tmpDir, ".beads")); statErr == nil {
+			t.Error(".beads directory should not be created when --dsn is missing")
+		}
+	})
+
+	t.Run("dolt_with_dsn_errors", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "dolt",
+			"--dsn", "postgres://bd@localhost/beads", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatal("Expected non-zero exit for --backend=dolt --dsn=..., but command succeeded")
+		}
+		outStr := string(out)
+		if !strings.Contains(outStr, "--dsn") {
+			t.Errorf("Expected error mentioning --dsn, got: %s", outStr)
+		}
+	})
+
+	t.Run("postgres_with_server_flag_errors", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "postgres",
+			"--dsn", "postgres://bd@localhost/beads", "--server", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatal("Expected non-zero exit for --backend=postgres --server, but command succeeded")
+		}
+		outStr := string(out)
+		if !strings.Contains(outStr, "--server") {
+			t.Errorf("Expected error mentioning --server conflict, got: %s", outStr)
 		}
 	})
 

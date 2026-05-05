@@ -80,8 +80,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
 		initRemote, _ := cmd.Flags().GetString("remote")
 		initRemoteChanged := cmd.Flags().Changed("remote")
-		// Dolt server connection flags
+		// Backend selection + Postgres DSN
 		backendFlag, _ := cmd.Flags().GetString("backend")
+		dsnFlag, _ := cmd.Flags().GetString("dsn")
+		// Dolt server connection flags
 		initServerMode, _ := cmd.Flags().GetBool("server")
 		serverHost, _ := cmd.Flags().GetString("server-host")
 		serverPort, _ := cmd.Flags().GetInt("server-port")
@@ -102,20 +104,42 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		sharedServer, _ := cmd.Flags().GetBool("shared-server")
 		externalServer, _ := cmd.Flags().GetBool("external")
 
-		// Handle --backend flag: "dolt" is the only supported backend.
-		// "sqlite" is accepted for backward compatibility but prints a
-		// deprecation notice and exits with an error.
-		if backendFlag == "sqlite" {
+		// Handle --backend flag: "dolt" (default), "postgres", or "sqlite"
+		// (deprecated). Validate flag combinations before any side effects so
+		// refusals exit cleanly without writing partial state.
+		switch strings.ToLower(strings.TrimSpace(backendFlag)) {
+		case "sqlite":
 			fmt.Fprintf(os.Stderr, "%s The SQLite backend has been removed.\n\n", ui.RenderWarn("⚠ DEPRECATED:"))
-			fmt.Fprintf(os.Stderr, "Dolt is now the default (and only) storage backend for beads.\n")
+			fmt.Fprintf(os.Stderr, "Dolt is now the default storage backend for beads.\n")
 			fmt.Fprintf(os.Stderr, "To initialize with Dolt:\n")
 			fmt.Fprintf(os.Stderr, "  bd init\n\n")
+			fmt.Fprintf(os.Stderr, "To initialize with Postgres:\n")
+			fmt.Fprintf(os.Stderr, "  bd init --backend=postgres --dsn='postgres://user:pw@host/db'\n\n")
 			fmt.Fprintf(os.Stderr, "To import issues from an existing JSONL export:\n")
 			fmt.Fprintf(os.Stderr, "  bd init --from-jsonl\n\n")
 			fmt.Fprintf(os.Stderr, "See: https://github.com/steveyegge/beads/blob/main/docs/DOLT-BACKEND.md\n")
 			os.Exit(1)
-		} else if backendFlag != "" && backendFlag != "dolt" {
-			FatalError("unknown backend %q: only \"dolt\" is supported", backendFlag)
+		case "", "dolt":
+			if dsnFlag != "" {
+				FatalError("%v", errUnexpectedDSN)
+			}
+		case "postgres":
+			if dsnFlag == "" {
+				FatalError("%v", errMissingDSN)
+			}
+			if initServerMode || sharedServer {
+				FatalError("%v", errFlagConflict)
+			}
+			if err := runPostgresInit(rootCtx, postgresInitInput{
+				dsn:        dsnFlag,
+				prefixFlag: prefix,
+				quiet:      quiet,
+			}); err != nil {
+				FatalError("%v", err)
+			}
+			return
+		default:
+			FatalError("unknown backend %q: available backends are \"dolt\" and \"postgres\"", backendFlag)
 		}
 
 		// Validate --database format early, before any side effects.
@@ -1435,8 +1459,10 @@ func init() {
 	initCmd.Flags().Bool("non-interactive", false, "Skip all interactive prompts (auto-detected in CI or non-TTY environments)")
 	initCmd.Flags().String("role", "", "Set beads role without prompting: \"maintainer\" or \"contributor\"")
 
-	// Backend selection (dolt is the only supported backend; sqlite accepted for deprecation notice)
-	initCmd.Flags().String("backend", "", "Storage backend (default: dolt). --backend=sqlite prints deprecation notice.")
+	// Backend selection. Default: dolt. --backend=postgres requires --dsn.
+	// --backend=sqlite still prints the deprecation notice from the old SQLite path.
+	initCmd.Flags().String("backend", "", "Storage backend: dolt (default) or postgres")
+	initCmd.Flags().String("dsn", "", "Postgres connection string (required with --backend=postgres). The password is stripped before persistence to metadata.json; supply it at runtime via BEADS_POSTGRES_PASSWORD.")
 
 	// Dolt server connection flags
 	initCmd.Flags().Bool("server", false, "Use external dolt sql-server instead of embedded engine")

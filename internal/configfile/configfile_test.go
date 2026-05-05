@@ -392,23 +392,26 @@ func TestIsDoltServerModeEnvVar(t *testing.T) {
 	})
 }
 
-// TestGetBackendAlwaysDolt tests that GetBackend always returns "dolt".
-func TestGetBackendAlwaysDolt(t *testing.T) {
+// TestGetBackend tests that GetBackend reflects the configured backend
+// with case normalization, defaulting to "dolt" for legacy/empty configs.
+func TestGetBackend(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  *Config
+		want string
 	}{
-		{name: "explicit dolt", cfg: &Config{Backend: BackendDolt}},
-		{name: "empty backend", cfg: &Config{Backend: ""}},
-		{name: "legacy config", cfg: &Config{}},
-		{name: "stale sqlite value", cfg: &Config{Backend: "sqlite"}},
-		{name: "unknown backend", cfg: &Config{Backend: "postgres"}},
+		{name: "explicit dolt", cfg: &Config{Backend: BackendDolt}, want: BackendDolt},
+		{name: "empty backend", cfg: &Config{Backend: ""}, want: BackendDolt},
+		{name: "legacy config", cfg: &Config{}, want: BackendDolt},
+		{name: "explicit postgres", cfg: &Config{Backend: BackendPostgres}, want: BackendPostgres},
+		{name: "uppercase postgres", cfg: &Config{Backend: "Postgres"}, want: BackendPostgres},
+		{name: "uppercase dolt", cfg: &Config{Backend: "DOLT"}, want: BackendDolt},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.cfg.GetBackend(); got != BackendDolt {
-				t.Errorf("GetBackend() = %q, want %q", got, BackendDolt)
+			if got := tt.cfg.GetBackend(); got != tt.want {
+				t.Errorf("GetBackend() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -426,12 +429,17 @@ func TestDatabasePathAlwaysDolt(t *testing.T) {
 	}
 }
 
-// TestCapabilitiesForBackend tests that CapabilitiesForBackend returns
-// single-process-only by default.
+// TestCapabilitiesForBackend covers the single-process-only invariant for
+// Dolt (the default) and the multi-process allowance for Postgres.
 func TestCapabilitiesForBackend(t *testing.T) {
-	caps := CapabilitiesForBackend("anything")
-	if !caps.SingleProcessOnly {
-		t.Error("CapabilitiesForBackend().SingleProcessOnly = false, want true")
+	if !CapabilitiesForBackend("dolt").SingleProcessOnly {
+		t.Error("CapabilitiesForBackend(\"dolt\").SingleProcessOnly = false, want true")
+	}
+	if !CapabilitiesForBackend("anything-unknown").SingleProcessOnly {
+		t.Error("CapabilitiesForBackend(unknown).SingleProcessOnly = false, want true")
+	}
+	if CapabilitiesForBackend("postgres").SingleProcessOnly {
+		t.Error("CapabilitiesForBackend(\"postgres\").SingleProcessOnly = true, want false")
 	}
 }
 

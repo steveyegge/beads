@@ -17,7 +17,16 @@ const ConfigFileName = "metadata.json"
 
 type Config struct {
 	Database string `json:"database"`
-	Backend  string `json:"backend,omitempty"` // Deprecated: always "dolt". Kept for JSON compat.
+
+	// Backend names the storage backend. "dolt" (default) or "postgres".
+	// Empty in legacy configs is treated as "dolt" for back-compat.
+	Backend string `json:"backend,omitempty"`
+
+	// PostgresDSN holds the credential-stripped DSN persisted at
+	// `bd init --backend=postgres` time. Composed with BEADS_POSTGRES_PASSWORD
+	// at runtime so plaintext passwords never land in metadata.json. Set only
+	// when Backend == "postgres".
+	PostgresDSN string `json:"postgres_dsn,omitempty"`
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
@@ -175,7 +184,8 @@ func (c *Config) GetStaleClosedIssuesDays() int {
 
 // Backend constants
 const (
-	BackendDolt = "dolt"
+	BackendDolt     = "dolt"
+	BackendPostgres = "postgres"
 )
 
 // BackendCapabilities describes behavioral constraints for a storage backend.
@@ -193,9 +203,11 @@ type BackendCapabilities struct {
 }
 
 // CapabilitiesForBackend returns capabilities for a backend string.
-// Dolt is the only supported backend. Returns SingleProcessOnly=true by default;
-// use Config.GetCapabilities() to properly handle server mode.
-func CapabilitiesForBackend(_ string) BackendCapabilities {
+// Postgres natively supports multi-process access; Dolt requires server mode.
+func CapabilitiesForBackend(backend string) BackendCapabilities {
+	if strings.ToLower(backend) == BackendPostgres {
+		return BackendCapabilities{SingleProcessOnly: false}
+	}
 	return BackendCapabilities{SingleProcessOnly: true}
 }
 
@@ -211,9 +223,14 @@ func (c *Config) GetCapabilities() BackendCapabilities {
 	return CapabilitiesForBackend(backend)
 }
 
-// GetBackend returns the backend type. Always returns "dolt".
+// GetBackend returns the configured backend name. Defaults to BackendDolt
+// for legacy configs that don't have the field set. Reads are case-insensitive
+// so a hand-edited "Postgres" or "DOLT" is accepted; bd init writes lowercase.
 func (c *Config) GetBackend() string {
-	return BackendDolt
+	if c == nil || c.Backend == "" {
+		return BackendDolt
+	}
+	return strings.ToLower(c.Backend)
 }
 
 // Dolt mode constants
