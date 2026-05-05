@@ -58,6 +58,20 @@ Expected state:
   surfaced in `ScaleCheckCounts`, wake decisions, or trace output. Wiring the
   standalone path through `buildStandaloneRigStores(...)` restores the same
   rig-scoped demand visibility the persistent controller runtime already had.
+- 2026-05-06: fresh manual probe with the installed `bd` binary showed the
+  doltlite SQL surface is present when the binary is linked correctly. Evidence:
+  `go version -m "$(command -v bd)"` reported `-tags=gms_pure_go,libsqlite3`,
+  `CGO_ENABLED=1`, `CGO_CFLAGS=-I/data/projects/doltlite/build`, and
+  `CGO_LDFLAGS=/data/projects/doltlite/libdoltlite.a ...`; then
+  `bd init --backend doltlite --prefix bd31j --skip-hooks --skip-agents
+  --non-interactive` succeeded in a fresh temp repo, `bd branch --json`
+  returned `main`, and `bd create` plus `bd flatten --dry-run` reported 4
+  commits instead of the earlier embedded `store.Log()==0` failure shape.
+  This means the older “`sqlite3_doltlite` only registers `UUID()`” diagnosis
+  was too broad: native `dolt_*` functions and virtual tables do work in a
+  correctly linked build. Treat `bd-31j` as a linkage-diagnostics / direct-path
+  reproducibility question, not proof that Beads must stop using native
+  doltlite `dolt_*` SQL.
 - 2026-05-03: audit bead `bd-d74` confirmed the new `issueops` dialect wrappers
   still default Dolt callers to `SQLDialectDolt`, so the storage-selection and
   SQL-dialect shims reviewed in this pass do not appear to alter existing Dolt
