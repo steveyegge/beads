@@ -37,6 +37,16 @@ func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir s
 		return // no JSONL file or empty — nothing to import
 	}
 
+	// Bail if the database already has issues. The embedded path's
+	// ImportJSONLData has its own atomic emptiness check inside a
+	// transaction (race-safe), but the server-mode fallback —
+	// importFromLocalJSONLFull — does not. Without this guard, every
+	// non-readonly bd command in server mode re-parses and re-imports
+	// the entire JSONL file, thrashing the Dolt server.
+	if stats, err := s.GetStatistics(ctx); err == nil && stats.TotalIssues > 0 {
+		return
+	}
+
 	// Parse the JSONL file without touching the store.
 	issues, configEntries, err := parseJSONLFile(jsonlPath)
 	if err != nil {
