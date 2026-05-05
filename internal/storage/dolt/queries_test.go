@@ -2387,6 +2387,85 @@ func TestCounterMode_AlreadySeeded(t *testing.T) {
 	}
 }
 
+// TestSearchIssues_NoDuplicatesWithMultipleBlockers verifies that
+// SearchIssues returns an issue exactly once even when it has multiple
+// blocks dependencies. GH#3567.
+func TestSearchIssues_NoDuplicatesWithMultipleBlockers(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create an epic parent and two blocker issues.
+	epic := &types.Issue{
+		ID:        "dup-epic",
+		Title:     "Epic parent",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	blockerA := &types.Issue{
+		ID:        "dup-blocker-a",
+		Title:     "Blocker A",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	blockerB := &types.Issue{
+		ID:        "dup-blocker-b",
+		Title:     "Blocker B",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	blocked := &types.Issue{
+		ID:        "dup-blocked",
+		Title:     "Blocked issue with two blockers",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, iss := range []*types.Issue{epic, blockerA, blockerB, blocked} {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", iss.ID, err)
+		}
+	}
+
+	// blocked is a child of epic and blocked by both A and B.
+	deps := []*types.Dependency{
+		{IssueID: blocked.ID, DependsOnID: epic.ID, Type: types.DepParentChild},
+		{IssueID: blocked.ID, DependsOnID: blockerA.ID, Type: types.DepBlocks},
+		{IssueID: blocked.ID, DependsOnID: blockerB.ID, Type: types.DepBlocks},
+	}
+	for _, dep := range deps {
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("failed to add dependency %s -> %s: %v", dep.IssueID, dep.DependsOnID, err)
+		}
+	}
+
+	results, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idCounts := make(map[string]int)
+	for _, iss := range results {
+		idCounts[iss.ID]++
+	}
+
+	for id, count := range idCounts {
+		if count > 1 {
+			t.Errorf("issue %s appeared %d times (expected 1)", id, count)
+		}
+	}
+
+	if idCounts[blocked.ID] != 1 {
+		t.Errorf("blocked issue %s appeared %d times (expected exactly 1)", blocked.ID, idCounts[blocked.ID])
+	}
+}
+
 // TestSearchIssues_StableOrdering verifies that SearchIssues returns
 // deterministic ordering when multiple issues share the same priority
 // and created_at timestamp. The id column acts as a tiebreaker.

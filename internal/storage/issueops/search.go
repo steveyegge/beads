@@ -85,12 +85,17 @@ func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 	}
 
 	var issues []*types.Issue
+	seen := make(map[string]bool)
 	for rows.Next() {
 		issue, scanErr := ScanIssueFrom(rows)
 		if scanErr != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("search %s: scan: %w", tables.Main, scanErr)
 		}
+		if seen[issue.ID] {
+			continue // GH#3567: skip duplicate rows from dependency subqueries
+		}
+		seen[issue.ID] = true
 		issues = append(issues, issue)
 	}
 	_ = rows.Close()

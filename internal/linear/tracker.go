@@ -14,6 +14,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+var _ tracker.BatchPushTracker = (*Tracker)(nil)
+
 func init() {
 	tracker.Register("linear", func() tracker.IssueTracker {
 		return &Tracker{}
@@ -253,6 +255,251 @@ func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *typ
 	return &ti, nil
 }
 
+// BatchPush implements tracker.BatchPushTracker. It partitions issues into
+// creates and updates, uses issueBatchCreate for new issues (chunked at 50),
+// and falls back to per-issue UpdateIssue for updates (since issueBatchUpdate
+// applies the same fields to all IDs, which doesn't fit per-issue field diffs).
+//
+// Skip semantics: existing issues are fetched and compared with PushFieldsEqual
+// before updating; unchanged issues are skipped. forceIDs bypasses this check.
+//
+// Multi-team: state IDs are resolved using the per-team workflow state cache,
+// so updates to issues belonging to different teams use the correct state list.
+//
+// Result mapping: batch-create results are matched by title rather than array
+// index, since Linear's API does not guarantee response order matches input order.
+func (t *Tracker) BatchPush(ctx context.Context, issues []*types.Issue, forceIDs map[string]bool) (*tracker.BatchPushResult, error) {
+	client := t.primaryClient()
+	if client == nil {
+		return nil, fmt.Errorf("no Linear client available")
+	}
+
+	// Build per-team state caches so that updates to issues belonging to different
+	// teams resolve workflow state IDs against the correct team's state list.
+	teamCaches := make(map[string]*StateCache, len(t.teamIDs))
+	for _, teamID := range t.teamIDs {
+		teamClient := t.clients[teamID]
+		if teamClient == nil {
+			continue
+		}
+		cache, err := BuildStateCache(ctx, teamClient)
+		if err != nil {
+			return nil, fmt.Errorf("building state cache for team %s: %w", teamID, err)
+		}
+		teamCaches[teamID] = cache
+	}
+
+	// The primary team's cache is used for creates, which always target the primary team.
+	primaryCache := teamCaches[t.teamIDs[0]]
+	if primaryCache == nil {
+		return nil, fmt.Errorf("building state cache: no cache for primary team %s", t.teamIDs[0])
+	}
+
+	result := &tracker.BatchPushResult{}
+
+	var toCreate []*types.Issue
+	var toUpdate []*types.Issue
+
+	for _, issue := range issues {
+		extRef := ""
+		if issue.ExternalRef != nil {
+			extRef = *issue.ExternalRef
+		}
+		if extRef == "" || !IsLinearExternalRef(extRef) {
+			toCreate = append(toCreate, issue)
+		} else {
+			toUpdate = append(toUpdate, issue)
+		}
+	}
+
+	// Batch create new issues.
+	if len(toCreate) > 0 {
+		// Partition into unique-title (safe for batch) and duplicate-title (single-create).
+		// Title-based result correlation is only safe when titles are unique in the batch.
+		titleCount := make(map[string]int, len(toCreate))
+		for _, issue := range toCreate {
+			titleCount[issue.Title]++
+		}
+
+		var batchIssues []*types.Issue
+		var singleIssues []*types.Issue
+		for _, issue := range toCreate {
+			if titleCount[issue.Title] > 1 {
+				singleIssues = append(singleIssues, issue)
+			} else {
+				batchIssues = append(batchIssues, issue)
+			}
+		}
+
+		// Single-create path for duplicate-title issues using idempotency markers.
+		for _, issue := range singleIssues {
+			priority := PriorityToLinear(issue.Priority, t.config)
+			stateID, stateErr := ResolveStateIDForBeadsStatus(primaryCache, issue.Status, t.config)
+			if stateErr != nil {
+				result.Errors = append(result.Errors, tracker.BatchPushError{
+					LocalID: issue.ID,
+					Message: fmt.Sprintf("resolving state for status %s: %v", issue.Status, stateErr),
+				})
+				continue
+			}
+
+			marker := GenerateIdempotencyMarker(issue.ID, issue.CreatedBy, issue.CreatedAt.UnixNano())
+			var labelIDs []string
+			created, _, createErr := client.CreateIssueIdempotent(ctx, issue.Title, issue.Description, priority, stateID, labelIDs, marker)
+			if createErr != nil {
+				result.Errors = append(result.Errors, tracker.BatchPushError{
+					LocalID: issue.ID,
+					Message: fmt.Sprintf("single create (dup title) for %q: %v", issue.Title, createErr),
+				})
+				continue
+			}
+			result.Created = append(result.Created, tracker.BatchPushItem{
+				LocalID:     issue.ID,
+				ExternalRef: created.URL,
+			})
+		}
+
+		// Batch-create path for unique-title issues.
+		var inputs []IssueCreateInput
+		titleToIssue := make(map[string]*types.Issue, len(batchIssues))
+		for _, issue := range batchIssues {
+			priority := PriorityToLinear(issue.Priority, t.config)
+			stateID, stateErr := ResolveStateIDForBeadsStatus(primaryCache, issue.Status, t.config)
+			if stateErr != nil {
+				result.Errors = append(result.Errors, tracker.BatchPushError{
+					LocalID: issue.ID,
+					Message: fmt.Sprintf("resolving state for status %s: %v", issue.Status, stateErr),
+				})
+				continue
+			}
+
+			marker := GenerateIdempotencyMarker(issue.ID, issue.CreatedBy, issue.CreatedAt.UnixNano())
+			desc := AppendIdempotencyMarker(issue.Description, marker)
+
+			input := IssueCreateInput{
+				TeamID:      client.TeamID,
+				Title:       issue.Title,
+				Description: desc,
+				Priority:    priority,
+				StateID:     stateID,
+			}
+			if client.ProjectID != "" {
+				input.ProjectID = client.ProjectID
+			}
+			titleToIssue[issue.Title] = issue
+			inputs = append(inputs, input)
+		}
+
+		if len(inputs) > 0 {
+			created, createErr := client.BatchCreateIssues(ctx, inputs)
+			if createErr != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("batch create partial error: %v", createErr))
+			}
+			matched := make(map[string]bool, len(created))
+			for _, li := range created {
+				localIssue, ok := titleToIssue[li.Title]
+				if !ok {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("batch create: response contained unexpected title %q", li.Title))
+					continue
+				}
+				matched[li.Title] = true
+				result.Created = append(result.Created, tracker.BatchPushItem{
+					LocalID:     localIssue.ID,
+					ExternalRef: li.URL,
+				})
+			}
+			for title, localIssue := range titleToIssue {
+				if !matched[title] {
+					result.Errors = append(result.Errors, tracker.BatchPushError{
+						LocalID: localIssue.ID,
+						Message: fmt.Sprintf("not returned in batch create response (title: %q)", title),
+					})
+				}
+			}
+		}
+	}
+
+	// Update existing issues individually (each has different field values).
+	for _, issue := range toUpdate {
+		extRef := *issue.ExternalRef
+		externalID := ExtractLinearIdentifier(extRef)
+		if externalID == "" {
+			externalID = extRef
+		}
+
+		routeClient := t.clientForExternalID(ctx, externalID)
+		if routeClient == nil {
+			result.Errors = append(result.Errors, tracker.BatchPushError{
+				LocalID: issue.ID,
+				Message: fmt.Sprintf("cannot determine Linear team for %s", externalID),
+			})
+			continue
+		}
+
+		// Use the per-team state cache so that multi-team setups resolve state IDs
+		// against the correct team's workflow states, not the primary team's.
+		teamCache, ok := teamCaches[routeClient.TeamID]
+		if !ok || teamCache == nil {
+			teamCache = primaryCache // defensive fallback
+		}
+
+		// Skip issues that haven't changed since the last push, unless forced.
+		// This mirrors the ContentEqual / UpdatedAt skip logic in the single-issue
+		// push path (engine.go doPush) to avoid redundant API writes.
+		var remoteIssue *Issue
+		if !forceIDs[issue.ID] {
+			fetched, lookupErr := routeClient.FetchIssueByIdentifier(ctx, externalID)
+			if lookupErr == nil && fetched != nil {
+				remoteIssue = fetched
+				if PushFieldsEqual(issue, remoteIssue, t.config) {
+					result.Skipped = append(result.Skipped, issue.ID)
+					continue
+				}
+			}
+		}
+
+		mapper := t.FieldMapper()
+		updates := mapper.IssueToTracker(issue)
+
+		stateID, stateErr := ResolveStateIDForBeadsStatus(teamCache, issue.Status, t.config)
+		if stateErr != nil {
+			result.Errors = append(result.Errors, tracker.BatchPushError{
+				LocalID: issue.ID,
+				Message: fmt.Sprintf("resolving state for status %s: %v", issue.Status, stateErr),
+			})
+			continue
+		}
+		if stateID != "" {
+			updates["stateId"] = stateID
+		}
+
+		// Prefer the UUID obtained during the skip-check fetch; fall back to a
+		// fresh lookup only when the skip check was bypassed (forceIDs).
+		issueUUID := externalID
+		if remoteIssue != nil {
+			issueUUID = remoteIssue.ID
+		} else if li, lookupErr := routeClient.FetchIssueByIdentifier(ctx, externalID); lookupErr == nil && li != nil {
+			issueUUID = li.ID
+		}
+
+		updated, updateErr := routeClient.UpdateIssue(ctx, issueUUID, updates)
+		if updateErr != nil {
+			result.Errors = append(result.Errors, tracker.BatchPushError{
+				LocalID: issue.ID,
+				Message: fmt.Sprintf("updating %s: %v", externalID, updateErr),
+			})
+			continue
+		}
+
+		result.Updated = append(result.Updated, tracker.BatchPushItem{
+			LocalID:     issue.ID,
+			ExternalRef: updated.URL,
+		})
+	}
+
+	return result, nil
+}
+
 func (t *Tracker) FieldMapper() tracker.FieldMapper {
 	return &linearFieldMapper{config: t.config}
 }
@@ -423,6 +670,14 @@ func linearToTrackerIssue(li *Issue) tracker.TrackerIssue {
 	if li.Parent != nil {
 		ti.ParentID = li.Parent.Identifier
 		ti.ParentInternalID = li.Parent.ID
+	}
+
+	if li.ProjectMilestone != nil {
+		ti.Metadata = map[string]interface{}{
+			"linear": map[string]interface{}{
+				"project_milestone": li.ProjectMilestone,
+			},
+		}
 	}
 
 	if t, err := time.Parse(time.RFC3339, li.CreatedAt); err == nil {

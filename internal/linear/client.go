@@ -83,6 +83,13 @@ const issuesQuery = `
 					id
 					identifier
 				}
+				projectMilestone {
+					id
+					name
+					description
+					progress
+					targetDate
+				}
 				relations {
 					nodes {
 						id
@@ -882,6 +889,207 @@ func (c *Client) UpdateIssue(ctx context.Context, issueID string, updates map[st
 	return &updateResp.IssueUpdate.Issue, nil
 }
 
+// BatchCreateIssues creates multiple issues in Linear using the issueBatchCreate mutation.
+// Inputs are chunked into groups of BatchSize (50).
+//
+// On ambiguous failure (API error or success=false), this method does NOT blindly
+// retry the full chunk—Linear may have partially applied the mutation. Instead it
+// searches for each issue's idempotency marker (embedded in the description) to
+// discover which issues were actually created, and returns an error for the rest.
+func (c *Client) BatchCreateIssues(ctx context.Context, inputs []IssueCreateInput) ([]Issue, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		mutation BatchCreateIssues($input: [IssueCreateInput!]!) {
+			issueBatchCreate(input: $input) {
+				success
+				issues {
+					id
+					identifier
+					title
+					url
+					priority
+					state {
+						id
+						name
+						type
+					}
+					createdAt
+					updatedAt
+				}
+			}
+		}
+	`
+
+	var allIssues []Issue
+	for start := 0; start < len(inputs); start += BatchSize {
+		end := start + BatchSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		chunk := inputs[start:end]
+
+		req := &GraphQLRequest{
+			Query: query,
+			Variables: map[string]interface{}{
+				"input": chunk,
+			},
+		}
+
+		data, err := c.Execute(ctx, req)
+		if err != nil {
+			found, recoverErr := c.recoverAfterAmbiguousBatch(ctx, chunk)
+			if recoverErr != nil {
+				return allIssues, fmt.Errorf("batch create failed and recovery search also failed: %w (batch error: %v)", recoverErr, err)
+			}
+			allIssues = append(allIssues, found...)
+			if len(found) < len(chunk) {
+				return allIssues, fmt.Errorf("batch create failed; %d of %d issues unconfirmed (batch error: %v)", len(chunk)-len(found), len(chunk), err)
+			}
+			continue
+		}
+
+		var batchResp IssueBatchCreateResponse
+		if err := json.Unmarshal(data, &batchResp); err != nil {
+			return allIssues, fmt.Errorf("failed to parse batch create response: %w", err)
+		}
+
+		if !batchResp.IssueBatchCreate.Success {
+			found, recoverErr := c.recoverAfterAmbiguousBatch(ctx, chunk)
+			if recoverErr != nil {
+				return allIssues, fmt.Errorf("batch create unsuccessful and recovery search also failed: %w", recoverErr)
+			}
+			allIssues = append(allIssues, found...)
+			if len(found) < len(chunk) {
+				return allIssues, fmt.Errorf("batch create unsuccessful; %d of %d issues unconfirmed", len(chunk)-len(found), len(chunk))
+			}
+			continue
+		}
+
+		allIssues = append(allIssues, batchResp.IssueBatchCreate.Issues...)
+	}
+
+	return allIssues, nil
+}
+
+// recoverAfterAmbiguousBatch searches Linear for each issue in a failed batch
+// chunk to determine which were actually created. It looks for the idempotency
+// marker (<!-- bd-idempotency: ... -->) embedded in each input's description.
+// Returns only the issues confirmed to exist in Linear.
+func (c *Client) recoverAfterAmbiguousBatch(ctx context.Context, chunk []IssueCreateInput) ([]Issue, error) {
+	var found []Issue
+	for _, input := range chunk {
+		marker := extractIdempotencyMarker(input.Description)
+		if marker == "" {
+			continue
+		}
+		existing, err := c.FindIssueByDescriptionContains(ctx, marker)
+		if err != nil {
+			return found, fmt.Errorf("recovery search failed for %q: %w", input.Title, err)
+		}
+		if existing != nil {
+			found = append(found, *existing)
+		}
+	}
+	return found, nil
+}
+
+// extractIdempotencyMarker extracts the bd-idempotency HTML comment from a
+// description string. Returns "" if no marker is found.
+func extractIdempotencyMarker(description string) string {
+	idx := strings.Index(description, idempotencyPrefix)
+	if idx < 0 {
+		return ""
+	}
+	end := strings.Index(description[idx:], idempotencySuffix)
+	if end < 0 {
+		return ""
+	}
+	return description[idx : idx+end+len(idempotencySuffix)]
+}
+
+// BatchUpdateIssues updates multiple issues in Linear using the issueBatchUpdate mutation.
+// This applies the SAME update to all specified issue IDs per call. IDs are chunked
+// into groups of BatchSize (50). If a batch call fails, it falls back to per-issue
+// UpdateIssue for that chunk.
+func (c *Client) BatchUpdateIssues(ctx context.Context, ids []string, updates map[string]interface{}) ([]Issue, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		mutation BatchUpdateIssues($ids: [UUID!]!, $input: IssueUpdateInput!) {
+			issueBatchUpdate(ids: $ids, input: $input) {
+				success
+				issues {
+					id
+					identifier
+					title
+					url
+					priority
+					state {
+						id
+						name
+						type
+					}
+					updatedAt
+				}
+			}
+		}
+	`
+
+	var allIssues []Issue
+	for start := 0; start < len(ids); start += BatchSize {
+		end := start + BatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+
+		req := &GraphQLRequest{
+			Query: query,
+			Variables: map[string]interface{}{
+				"ids":   chunk,
+				"input": updates,
+			},
+		}
+
+		data, err := c.Execute(ctx, req)
+		if err != nil {
+			for _, id := range chunk {
+				issue, updateErr := c.UpdateIssue(ctx, id, updates)
+				if updateErr != nil {
+					return allIssues, fmt.Errorf("batch update failed, single-issue fallback also failed for %s: %w (batch error: %v)", id, updateErr, err)
+				}
+				allIssues = append(allIssues, *issue)
+			}
+			continue
+		}
+
+		var batchResp IssueBatchUpdateResponse
+		if err := json.Unmarshal(data, &batchResp); err != nil {
+			return allIssues, fmt.Errorf("failed to parse batch update response: %w", err)
+		}
+
+		if !batchResp.IssueBatchUpdate.Success {
+			for _, id := range chunk {
+				issue, updateErr := c.UpdateIssue(ctx, id, updates)
+				if updateErr != nil {
+					return allIssues, fmt.Errorf("batch update unsuccessful, single-issue fallback also failed for %s: %w", id, updateErr)
+				}
+				allIssues = append(allIssues, *issue)
+			}
+			continue
+		}
+
+		allIssues = append(allIssues, batchResp.IssueBatchUpdate.Issues...)
+	}
+
+	return allIssues, nil
+}
+
 // FetchIssueByIdentifier retrieves a single issue from Linear by its identifier (e.g., "TEAM-123").
 // Returns nil if the issue is not found.
 func (c *Client) FetchIssueByIdentifier(ctx context.Context, identifier string) (*Issue, error) {
@@ -911,6 +1119,17 @@ func (c *Client) FetchIssueByIdentifier(ctx context.Context, identifier string) 
 							id
 							name
 						}
+					}
+					parent {
+						id
+						identifier
+					}
+					projectMilestone {
+						id
+						name
+						description
+						progress
+						targetDate
 					}
 					createdAt
 					updatedAt
