@@ -163,6 +163,16 @@ bd create "Issue title" --id worker1-100 -p 1 --json
 bd create "Issue title" -t bug -p 1 -l bug,critical --json
 bd create "Issue title" -t bug -p 1 --label bug,critical --json
 
+# Capture a raw user prompt as a traceability bead
+echo 'Please build prompt capture' | bd prompt capture \
+  --title "Capture prompt request" \
+  --summary "Build prompt capture" \
+  --session "$BEADS_SESSION_ID" \
+  --source-tool codex \
+  --parent <parent-id> \
+  --stdin \
+  --json
+
 # Examples with special characters (all require quoting):
 bd create "Fix: auth doesn't validate tokens" -t bug -p 1 --json
 bd create "Add support for OAuth 2.0" -d "Implement RFC 6749 (OAuth 2.0 spec)" --json
