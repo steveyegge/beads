@@ -2,6 +2,8 @@
 
 Common questions about bd (beads) and how to use it effectively.
 
+For a one-screen overview of how cross-machine sync works (plus anti-patterns), see [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md).
+
 ## General Questions
 
 ### What is bd?
