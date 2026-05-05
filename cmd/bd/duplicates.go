@@ -230,7 +230,7 @@ func countStructuralRelationships(groups [][]*types.Issue) map[string]*issueScor
 	}
 
 	// Batch query for dependency counts
-	depCounts, err := store.GetDependencyCounts(ctx, issueIDs)
+	depCounts, err := mustDeps(store).GetDependencyCounts(ctx, issueIDs)
 	if err != nil {
 		// On error, return empty scores - fallback to text refs only
 		return scores

@@ -45,12 +45,12 @@ type ImportResult struct {
 
 // importIssuesCore imports issues into the Dolt store.
 // This is a bridge function that delegates to the Dolt store's batch creation.
-func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
+func importIssuesCore(ctx context.Context, _ string, store storage.Storage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
 	if opts.DryRun || len(issues) == 0 {
 		return &ImportResult{Skipped: len(issues)}, nil
 	}
 
-	err := store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
+	err := mustBulk(store).CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
 		OrphanHandling:       storage.OrphanAllow,
 		SkipPrefixValidation: opts.SkipPrefixValidation,
 	})
@@ -77,7 +77,7 @@ type memoryRecord struct {
 // importFromLocalJSONL imports issues (and memories) from a local JSONL file on disk
 // into the Dolt store. Returns the number of issues imported and any error.
 // This is a convenience wrapper around importFromLocalJSONLFull.
-func importFromLocalJSONL(ctx context.Context, store storage.DoltStorage, localPath string) (int, error) {
+func importFromLocalJSONL(ctx context.Context, store storage.Storage, localPath string) (int, error) {
 	result, err := importFromLocalJSONLFull(ctx, store, localPath)
 	if err != nil {
 		return 0, err
@@ -161,7 +161,7 @@ func parseJSONLFile(path string) ([]*types.Issue, map[string]string, error) {
 // importFromLocalJSONLFull imports issues and memories from a local JSONL file.
 // It detects memory records (lines with "_type":"memory") and imports them
 // via SetConfig, while routing regular issue records through the normal path.
-func importFromLocalJSONLFull(ctx context.Context, store storage.DoltStorage, localPath string) (*importLocalResult, error) {
+func importFromLocalJSONLFull(ctx context.Context, store storage.Storage, localPath string) (*importLocalResult, error) {
 	issues, configEntries, err := parseJSONLFile(localPath)
 	if err != nil {
 		return nil, err

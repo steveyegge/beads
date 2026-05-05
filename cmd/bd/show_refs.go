@@ -16,7 +16,7 @@ func showIssueRefs(ctx context.Context, args []string, jsonOut bool) {
 	allRefs := make(map[string][]*types.IssueWithDependencyMetadata)
 
 	// Process each issue
-	processIssue := func(issueID string, issueStore storage.DoltStorage) error {
+	processIssue := func(issueID string, issueStore storage.Storage) error {
 		refs, err := issueStore.GetDependentsWithMetadata(ctx, issueID)
 		if err != nil {
 			return err

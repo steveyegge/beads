@@ -81,7 +81,7 @@ func TestWhereCommand_ReadsPrefixFromEmbeddedStore(t *testing.T) {
 	jsonOutput = true
 	rootCtx = context.Background()
 
-	if err := withStorage(rootCtx, nil, dbDir, func(currentStore storage.DoltStorage) error {
+	if err := withStorage(rootCtx, nil, dbDir, func(currentStore storage.Storage) error {
 		prefix, err := currentStore.GetConfig(rootCtx, "issue_prefix")
 		if err != nil {
 			return err

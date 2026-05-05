@@ -66,7 +66,7 @@ func maybeAutoBackup(ctx context.Context) {
 	}
 
 	// Change detection: skip if nothing changed
-	currentCommit, err := store.GetCurrentCommit(ctx)
+	currentCommit, err := dVC(store).GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: failed to get current commit: %v\n", err)
 		return

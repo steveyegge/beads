@@ -124,7 +124,7 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 
 	// Change detection: skip if nothing changed (unless forced)
 	if !force {
-		currentCommit, err := store.GetCurrentCommit(ctx)
+		currentCommit, err := dVC(store).GetCurrentCommit(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get current commit: %w", err)
 		}
@@ -144,7 +144,7 @@ func runBackupExport(ctx context.Context, force bool) (*backupState, error) {
 	}
 
 	// Update watermarks
-	currentCommit, err := store.GetCurrentCommit(ctx)
+	currentCommit, err := dVC(store).GetCurrentCommit(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current commit for state: %w", err)
 	}

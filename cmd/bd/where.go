@@ -77,7 +77,7 @@ Examples:
 		if prefix := config.GetString("issue-prefix"); prefix != "" {
 			result.Prefix = prefix
 		} else if dbPath != "" && shouldReadWherePrefixFromStore(beadsDir) {
-			_ = withStorage(getRootContext(), nil, dbPath, func(currentStore storage.DoltStorage) error {
+			_ = withStorage(getRootContext(), nil, dbPath, func(currentStore storage.Storage) error {
 				prefix, err := currentStore.GetConfig(getRootContext(), "issue_prefix")
 				if err == nil && prefix != "" {
 					result.Prefix = prefix

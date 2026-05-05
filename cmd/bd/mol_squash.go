@@ -208,7 +208,7 @@ func generateDigest(root *types.Issue, children []*types.Issue) string {
 // If summary is provided (non-empty), it's used as the digest content.
 // Otherwise, generateDigest() creates a basic concatenation.
 // This enables agents to provide AI-generated summaries while keeping bd as a pure tool.
-func squashMolecule(ctx context.Context, s storage.DoltStorage, root *types.Issue, children []*types.Issue, keepChildren bool, summary string, actorName string) (*SquashResult, error) {
+func squashMolecule(ctx context.Context, s storage.Storage, root *types.Issue, children []*types.Issue, keepChildren bool, summary string, actorName string) (*SquashResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}

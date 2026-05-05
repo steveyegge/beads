@@ -1,10 +1,16 @@
 // Package storage — hook_decorator.go
 //
-// HookFiringStore is a decorator around DoltStorage that automatically
+// HookFiringStore is a decorator around Storage that automatically
 // fires on_create/on_update/on_close hooks after successful mutations.
 // This moves hook responsibility from individual CLI commands into the
 // storage layer, ensuring ALL mutations fire hooks — including future
 // commands that haven't been written yet.
+//
+// The decorator embeds the narrow Storage interface (not DoltStorage), so
+// it does not satisfy DoltStorage even when wrapping a Dolt-backed store.
+// Consumers that need a Dolt-only capability call UnwrapStore to reach the
+// concrete inner store and then type-assert to the desired capability
+// (or use a Require<X> helper from capabilities.go). See ADR be-l7t.1 §5.
 //
 // Usage:
 //
@@ -22,34 +28,38 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// HookFiringStore wraps a DoltStorage and fires hooks after mutations.
+// HookFiringStore wraps a Storage and fires hooks after mutations.
 // Non-mutation methods pass through to the inner store unchanged.
+//
+// HookFiringStore intentionally embeds the narrow Storage interface so it
+// does not pretend to satisfy capabilities its inner store may or may not
+// implement. Capability access flows through UnwrapStore + type assertion.
 type HookFiringStore struct {
-	DoltStorage             // embed for passthrough of non-overridden methods
-	inner       DoltStorage // the real store
-	runner      *hooks.Runner
+	Storage         // embed for passthrough of non-overridden methods
+	inner   Storage // the real store
+	runner  *hooks.Runner
 }
 
 // NewHookFiringStore wraps store with automatic hook firing.
 // If runner is nil, hooks are silently skipped (passthrough only).
-func NewHookFiringStore(store DoltStorage, runner *hooks.Runner) *HookFiringStore {
+func NewHookFiringStore(store Storage, runner *hooks.Runner) *HookFiringStore {
 	return &HookFiringStore{
-		DoltStorage: store,
-		inner:       store,
-		runner:      runner,
+		Storage: store,
+		inner:   store,
+		runner:  runner,
 	}
 }
 
 // Inner returns the underlying store, useful for type assertions
 // (e.g., StoreLocator, RawDBAccessor).
-func (h *HookFiringStore) Inner() DoltStorage { return h.inner }
+func (h *HookFiringStore) Inner() Storage { return h.inner }
 
 // UnwrapStore returns the underlying concrete store if s is a
 // HookFiringStore decorator, otherwise returns s unchanged.
 // Use this before type assertions to optional interfaces
 // (StoreLocator, BackupStore, Flattener, etc.) so the assertion
 // reaches the concrete store rather than the decorator.
-func UnwrapStore(s DoltStorage) DoltStorage {
+func UnwrapStore(s Storage) Storage {
 	if h, ok := s.(*HookFiringStore); ok {
 		return h.inner
 	}
@@ -323,7 +333,7 @@ func (t *hookTrackingTransaction) DeleteIssue(ctx context.Context, id string) er
 }
 
 // Ensure compile-time interface satisfaction.
-var _ DoltStorage = (*HookFiringStore)(nil)
+var _ Storage = (*HookFiringStore)(nil)
 var _ Transaction = (*hookTrackingTransaction)(nil)
 
 // Ensure HookFiringStore's mutation methods are used (not the embedded passthrough).

@@ -14,7 +14,7 @@ import (
 // DOLT_COMMIT occurred, preventing the redundant maybeAutoCommit in
 // PersistentPostRun. Use this instead of calling store.RunInTransaction
 // directly from command handlers.
-func transact(ctx context.Context, s storage.DoltStorage, commitMsg string, fn func(tx storage.Transaction) error) error {
+func transact(ctx context.Context, s storage.Storage, commitMsg string, fn func(tx storage.Transaction) error) error {
 	err := s.RunInTransaction(ctx, commitMsg, fn)
 	if err == nil {
 		commandDidExplicitDoltCommit = true
@@ -66,7 +66,7 @@ func maybeAutoCommitStore(ctx context.Context, st storage.DoltStorage, p doltAut
 		msg = formatDoltAutoCommitMessage(p.Command, getActor(), p.IssueIDs)
 	}
 
-	if err := st.Commit(ctx, msg); err != nil {
+	if err := dVC(st).Commit(ctx, msg); err != nil {
 		if isDoltNothingToCommit(err) {
 			return nil
 		}

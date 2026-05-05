@@ -58,7 +58,7 @@ Examples:
 		}
 
 		// Promote: copy from wisps to issues table, preserving labels/deps/events/comments
-		if err := store.PromoteFromEphemeral(ctx, fullID, actor); err != nil {
+		if err := mustBulk(store).PromoteFromEphemeral(ctx, fullID, actor); err != nil {
 			FatalErrorRespectJSON("promoting %s: %v", fullID, err)
 		}
 
@@ -68,7 +68,7 @@ Examples:
 		if reason != "" {
 			comment += ": " + reason
 		}
-		if err := store.AddComment(ctx, fullID, actor, comment); err != nil {
+		if err := mustAnnot(store).AddComment(ctx, fullID, actor, comment); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, err)
 		}
 

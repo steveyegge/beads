@@ -383,7 +383,7 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 
 // burnWisps deletes all wisp issues atomically within a single transaction.
 // If any delete fails, the entire operation is rolled back to prevent partial deletion.
-func burnWisps(ctx context.Context, s storage.DoltStorage, ids []string) (*BurnResult, error) {
+func burnWisps(ctx context.Context, s storage.Storage, ids []string) (*BurnResult, error) {
 	result := &BurnResult{
 		DeletedIDs: make([]string, 0, len(ids)),
 	}

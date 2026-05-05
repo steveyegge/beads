@@ -62,7 +62,7 @@ Example:
 			moleculeID = moleculeIDs[0]
 		}
 
-		stats, err := store.GetMoleculeProgress(ctx, moleculeID)
+		stats, err := mustAdvanced(store).GetMoleculeProgress(ctx, moleculeID)
 		if err != nil {
 			FatalError("%v", err)
 		}
@@ -103,7 +103,7 @@ Example:
 
 // findInProgressMoleculeIDs finds molecule IDs with in_progress steps for an agent.
 // This is a lightweight version that only returns IDs without loading subgraphs.
-func findInProgressMoleculeIDs(ctx context.Context, s storage.DoltStorage, agent string) []string {
+func findInProgressMoleculeIDs(ctx context.Context, s storage.Storage, agent string) []string {
 	// Query for in_progress issues
 	status := types.StatusInProgress
 	filter := types.IssueFilter{Status: &status}

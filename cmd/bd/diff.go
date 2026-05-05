@@ -30,7 +30,7 @@ Examples:
 		toRef := args[1]
 
 		// Get diff between refs
-		entries, err := store.Diff(ctx, fromRef, toRef)
+		entries, err := dHistory(store).Diff(ctx, fromRef, toRef)
 		if err != nil {
 			FatalErrorRespectJSON("failed to get diff: %v", err)
 		}

@@ -77,7 +77,7 @@ func runRename(cmd *cobra.Command, args []string) error {
 	// Update the issue ID
 	oldIssue.ID = newID
 	actor := getActorWithGit()
-	if err := store.UpdateIssueID(ctx, oldID, newID, oldIssue, actor); err != nil {
+	if err := mustBulk(store).UpdateIssueID(ctx, oldID, newID, oldIssue, actor); err != nil {
 		return fmt.Errorf("failed to rename issue: %w", err)
 	}
 
@@ -95,7 +95,7 @@ func runRename(cmd *cobra.Command, args []string) error {
 }
 
 // updateReferencesInAllIssues updates text references to the old ID in all issues
-func updateReferencesInAllIssues(ctx context.Context, store storage.DoltStorage, oldID, newID, actor string) error {
+func updateReferencesInAllIssues(ctx context.Context, store storage.Storage, oldID, newID, actor string) error {
 	// Get all issues
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {

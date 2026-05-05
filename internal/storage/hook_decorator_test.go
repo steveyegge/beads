@@ -47,9 +47,10 @@ func (m *mockHookRunner) get(i int) hookInvocation {
 // tracking mechanism and verify the overall architecture works.
 
 func TestHookFiringStoreCompileTimeChecks(t *testing.T) {
-	// Verify the decorator satisfies DoltStorage at compile time.
-	// This is also checked via var _ declarations in the source.
-	var _ storage.DoltStorage = (*storage.HookFiringStore)(nil)
+	// Verify the decorator satisfies the narrow Storage interface at compile time.
+	// Post be-l7t.1 the decorator embeds Storage (not DoltStorage), so capability
+	// access flows through UnwrapStore + type-assert at the consumer side.
+	var _ storage.Storage = (*storage.HookFiringStore)(nil)
 }
 
 func TestHookTrackingTransactionAccumulatesEvents(t *testing.T) {

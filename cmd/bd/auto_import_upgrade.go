@@ -29,7 +29,7 @@ type jsonlImporter interface {
 //
 // The function is best-effort: failures are logged as warnings but do not
 // prevent the store from being used.
-func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string) {
+func maybeAutoImportJSONL(ctx context.Context, s storage.Storage, beadsDir string) {
 	// Quick check: does the JSONL file exist and have content?
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	info, err := os.Stat(jsonlPath)
@@ -87,7 +87,7 @@ func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir s
 	if result.Memories > 0 {
 		commitMsg = fmt.Sprintf("auto-import: %d issues, %d memories from %s (upgrade recovery, GH#2994)", result.Issues, result.Memories, filepath.Base(jsonlPath))
 	}
-	if err := s.Commit(ctx, commitMsg); err != nil {
+	if err := dVC(s).Commit(ctx, commitMsg); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: auto-import: dolt commit failed: %v\n", err)
 		return
 	}

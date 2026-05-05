@@ -17,7 +17,7 @@ func showIssueChildren(ctx context.Context, args []string, jsonOut bool, shortMo
 	allChildren := make(map[string][]*types.IssueWithDependencyMetadata)
 
 	// Process each issue to get its children
-	processIssue := func(issueID string, issueStore storage.DoltStorage) error {
+	processIssue := func(issueID string, issueStore storage.Storage) error {
 		// Initialize entry so "no children" message can be shown
 		if _, exists := allChildren[issueID]; !exists {
 			allChildren[issueID] = []*types.IssueWithDependencyMetadata{}
@@ -87,7 +87,7 @@ func showIssueChildren(ctx context.Context, args []string, jsonOut bool, shortMo
 func showIssueAsOf(ctx context.Context, args []string, ref string, shortMode bool) {
 	var allIssues []*types.Issue
 	for idx, id := range args {
-		issue, err := store.AsOf(ctx, id, ref)
+		issue, err := dHistory(store).AsOf(ctx, id, ref)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error fetching %s as of %s: %v\n", id, ref, err)
 			continue

@@ -18,10 +18,10 @@ import (
 // staleLockAge is the maximum age of a lock file before it's considered stale.
 const staleLockAge = 5 * time.Minute
 
-// StoreOpener is a function that opens a DoltStorage from a beads directory.
+// StoreOpener is a function that opens a Storage from a beads directory.
 // This is injected by the cmd layer to abstract over build-tag-specific
 // store construction (embedded vs server).
-type StoreOpener func(ctx context.Context, beadsDir string) (storage.DoltStorage, error)
+type StoreOpener func(ctx context.Context, beadsDir string) (storage.Storage, error)
 
 // Cache manages local clones of remote Dolt databases.
 // Each remote URL maps to a directory under Dir named by CacheKey(url).
@@ -158,7 +158,7 @@ func (c *Cache) Push(ctx context.Context, remoteURL string) error {
 	return nil
 }
 
-// OpenStore opens a DoltStorage from the cached clone using the provided
+// OpenStore opens a Storage from the cached clone using the provided
 // StoreOpener. The cache entry directory is used as the beads directory.
 // The caller is responsible for calling Close() on the returned store.
 //
@@ -166,7 +166,7 @@ func (c *Cache) Push(ctx context.Context, remoteURL string) error {
 // no concurrent Ensure() or Push() is running against the same remoteURL,
 // as those modify the underlying dolt database. This is safe for single-
 // process CLI use but not for concurrent multi-process access.
-func (c *Cache) OpenStore(ctx context.Context, remoteURL string, opener StoreOpener) (storage.DoltStorage, error) {
+func (c *Cache) OpenStore(ctx context.Context, remoteURL string, opener StoreOpener) (storage.Storage, error) {
 	entry := c.entryDir(remoteURL)
 	if !c.doltExists(c.cloneTarget(remoteURL)) {
 		return nil, fmt.Errorf("no cached clone for %s — run Ensure first", remoteURL)

@@ -136,8 +136,8 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) {
 
 // findRepliesTo finds the parent ID that this issue replies to via replies-to dependency.
 // Returns empty string if no parent found.
-func findRepliesTo(ctx context.Context, issueID string, store storage.DoltStorage) string {
-	deps, err := store.GetDependencyRecords(ctx, issueID)
+func findRepliesTo(ctx context.Context, issueID string, store storage.Storage) string {
+	deps, err := mustDeps(store).GetDependencyRecords(ctx, issueID)
 	if err != nil {
 		return ""
 	}
@@ -150,7 +150,7 @@ func findRepliesTo(ctx context.Context, issueID string, store storage.DoltStorag
 }
 
 // findReplies finds all issues that reply to this issue via replies-to dependency.
-func findReplies(ctx context.Context, issueID string, store storage.DoltStorage) []*types.Issue {
+func findReplies(ctx context.Context, issueID string, store storage.Storage) []*types.Issue {
 	deps, err := store.GetDependentsWithMetadata(ctx, issueID)
 	if err != nil {
 		return nil

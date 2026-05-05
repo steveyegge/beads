@@ -140,7 +140,7 @@ func runConventionsStale() []doctorCheck {
 
 	ctx := rootCtx
 	filter := types.StaleFilter{Days: 14, Limit: 100}
-	staleIssues, err := store.GetStaleIssues(ctx, filter)
+	staleIssues, err := mustAdvanced(store).GetStaleIssues(ctx, filter)
 	if err != nil {
 		return []doctorCheck{{
 			Name:     "conventions.stale",

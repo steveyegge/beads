@@ -22,7 +22,7 @@ import (
 // If the issue routes to a different database, a routed store is returned
 // and must be closed by the caller via the returned cleanup function.
 // If the issue is in the local store, cleanup is a no-op.
-func resolveIDWithRouting(ctx context.Context, localStore storage.DoltStorage, id string) (resolvedID string, targetStore storage.DoltStorage, cleanup func(), err error) {
+func resolveIDWithRouting(ctx context.Context, localStore storage.Storage, id string) (resolvedID string, targetStore storage.Storage, cleanup func(), err error) {
 	result, err := resolveAndGetIssueWithRouting(ctx, localStore, id)
 	if err != nil {
 		return "", nil, func() {}, fmt.Errorf("resolving issue ID %s: %w", id, err)
@@ -55,11 +55,11 @@ func isChildOf(childID, parentID string) bool {
 }
 
 // warnIfCyclesExist checks for dependency cycles and prints a warning if found.
-func warnIfCyclesExist(s storage.DoltStorage) {
+func warnIfCyclesExist(s storage.Storage) {
 	if s == nil {
 		return // Skip cycle check if store is not available
 	}
-	cycles, err := s.DetectCycles(rootCtx)
+	cycles, err := mustDeps(s).DetectCycles(rootCtx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
 		return
@@ -159,7 +159,7 @@ Examples:
 			}
 
 			if isEmbeddedMode() && fromStore != nil {
-				if err := fromStore.Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
+				if err := dVC(fromStore).Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
 					FatalErrorRespectJSON("failed to commit: %v", err)
 				}
 			}
@@ -341,7 +341,7 @@ Examples:
 		}
 
 		if isEmbeddedMode() && fromStore != nil {
-			if err := fromStore.Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
+			if err := dVC(fromStore).Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
 				FatalErrorRespectJSON("failed to commit: %v", err)
 			}
 		}
@@ -374,7 +374,7 @@ type bulkDepEdge struct {
 	IssueID     string
 	DependsOnID string
 	Type        types.DependencyType
-	Store       storage.DoltStorage
+	Store       storage.Storage
 	StoreKey    string
 	Cleanups    []func()
 }
@@ -591,7 +591,7 @@ func bulkDepValidationError(errs []string) error {
 	return fmt.Errorf("bulk dependency validation failed:\n  %s", strings.Join(errs, "\n  "))
 }
 
-func dependencyStoreKey(s storage.DoltStorage) string {
+func dependencyStoreKey(s storage.Storage) string {
 	if locator, ok := storage.UnwrapStore(s).(storage.StoreLocator); ok {
 		if cliDir := strings.TrimSpace(locator.CLIDir()); cliDir != "" {
 			return "cli:" + filepath.Clean(cliDir)
@@ -639,7 +639,7 @@ Examples:
 		// fatal behavior for backward compatibility.
 		type resolvedID struct {
 			fullID string
-			store  storage.DoltStorage
+			store  storage.Storage
 			result *RoutedResult
 		}
 		var resolved []resolvedID
@@ -704,7 +704,7 @@ Examples:
 				for i, r := range resolved {
 					ids[i] = r.fullID
 				}
-				depMap, err := firstStore.GetDependencyRecordsForIssues(ctx, ids)
+				depMap, err := mustDeps(firstStore).GetDependencyRecordsForIssues(ctx, ids)
 				if err == nil {
 					// Flatten and filter.
 					var allDeps []*types.Dependency
@@ -863,7 +863,7 @@ var depRemoveCmd = &cobra.Command{
 		}
 
 		if isEmbeddedMode() && fromStore != nil {
-			if err := fromStore.Commit(ctx, fmt.Sprintf("bd: dep remove (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
+			if err := dVC(fromStore).Commit(ctx, fmt.Sprintf("bd: dep remove (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
 				FatalErrorRespectJSON("failed to commit: %v", err)
 			}
 		}
@@ -1018,7 +1018,7 @@ var depCyclesCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 
 		ctx := rootCtx
-		cycles, err := store.DetectCycles(ctx)
+		cycles, err := mustDeps(store).DetectCycles(ctx)
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}

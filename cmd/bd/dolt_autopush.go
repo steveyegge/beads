@@ -143,7 +143,7 @@ func maybeAutoPush(ctx context.Context) {
 	}
 
 	// Change detection: skip if nothing changed since last push
-	currentCommit, err := st.GetCurrentCommit(ctx)
+	currentCommit, err := dVC(st).GetCurrentCommit(ctx)
 	if err != nil {
 		debug.Logf("dolt auto-push: failed to get current commit: %v\n", err)
 		return
@@ -164,7 +164,7 @@ func maybeAutoPush(ctx context.Context) {
 	defer pushCancel()
 
 	debug.Logf("dolt auto-push: pushing to origin (timeout %s)...\n", pushTimeout)
-	if err := pushWithContext(pushCtx, st); err != nil {
+	if err := pushWithContext(pushCtx, mustAs[autoPushTarget](st)); err != nil {
 		if !isQuiet() && !jsonOutput {
 			if pushCtx.Err() == context.DeadlineExceeded {
 				fmt.Fprintf(os.Stderr, "Warning: dolt auto-push timed out after %s (remote may be unreachable)\n", pushTimeout)

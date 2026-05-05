@@ -164,7 +164,7 @@ Examples:
 		storageKey := kvPrefix + key
 
 		ctx := rootCtx
-		if err := store.DeleteConfig(ctx, storageKey); err != nil {
+		if err := mustConfig(store).DeleteConfig(ctx, storageKey); err != nil {
 			FatalErrorRespectJSON("deleting key: %v", err)
 		}
 

@@ -616,7 +616,7 @@ func runWispGC(cmd *cobra.Command, args []string) {
 	var abandoned []*types.Issue
 	for _, issue := range issues {
 		// Never GC infrastructure beads (configured via types.infra)
-		if store.IsInfraTypeCtx(ctx, issue.IssueType) {
+		if mustConfig(store).IsInfraTypeCtx(ctx, issue.IssueType) {
 			continue
 		}
 
@@ -639,7 +639,7 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		for i, issue := range abandoned {
 			parentIDs[i] = issue.ID
 		}
-		childIDs, err := store.FindWispDependentsRecursive(ctx, parentIDs)
+		childIDs, err := mustDeps(store).FindWispDependentsRecursive(ctx, parentIDs)
 		if err != nil {
 			// Log but don't fail the GC — partial cascade is better than none
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: cascade expansion incomplete: %v\n", err)
@@ -661,7 +661,7 @@ func runWispGC(cmd *cobra.Command, args []string) {
 						continue
 					}
 					// Never cascade to infra types
-					if store.IsInfraTypeCtx(ctx, child.IssueType) {
+					if mustConfig(store).IsInfraTypeCtx(ctx, child.IssueType) {
 						continue
 					}
 					abandoned = append(abandoned, child)
@@ -741,7 +741,7 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 			pinnedCount++
 			continue
 		}
-		if store.IsInfraTypeCtx(ctx, issue.IssueType) {
+		if mustConfig(store).IsInfraTypeCtx(ctx, issue.IssueType) {
 			infraCount++
 			continue
 		}

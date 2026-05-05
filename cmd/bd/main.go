@@ -38,7 +38,7 @@ var (
 	changeDir  string
 	dbPath     string
 	actor      string
-	store      storage.DoltStorage
+	store      storage.Storage
 	jsonOutput bool
 
 	// Signal-aware context for graceful cancellation
@@ -1219,7 +1219,7 @@ func flushBatchCommitOnShutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := st.Commit(ctx, "bd: flush pending changes on shutdown"); err != nil {
+	if err := dVC(st).Commit(ctx, "bd: flush pending changes on shutdown"); err != nil {
 		if !isDoltNothingToCommit(err) {
 			fmt.Fprintf(os.Stderr, "\nWarning: failed to flush batch commit on shutdown: %v\n", err)
 		}
@@ -1252,7 +1252,7 @@ func validateWorkspaceIdentity(ctx context.Context, beadsDir string) {
 	}
 
 	// Get project_id from database
-	dbProjectID, err := store.GetMetadata(ctx, "_project_id")
+	dbProjectID, err := mustConfig(store).GetMetadata(ctx, "_project_id")
 	if err != nil || dbProjectID == "" {
 		return // No project_id in DB (new or pre-identity database)
 	}

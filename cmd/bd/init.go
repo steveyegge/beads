@@ -786,9 +786,9 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// they cause every Dolt fetch to fail and leak tmp_pack_* files
 		// that can consume 100+ GB of disk space (GH#3354, GH#3356).
 		if shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig) {
-			hasRemote, _ := store.HasRemote(ctx, "origin")
+			hasRemote, _ := dRemote(store).HasRemote(ctx, "origin")
 			if !hasRemote {
-				if err := store.AddRemote(ctx, "origin", syncURL); err != nil {
+				if err := dRemote(store).AddRemote(ctx, "origin", syncURL); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to add remote 'origin': %v\n", err)
 					// Non-fatal — user can add manually with: bd dolt remote add origin <url>
 				} else if !quiet {
@@ -880,7 +880,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			// fail on subsequent pulls.
 			if cfg.ProjectID == "" {
 				if store != nil && (database != "" || bootstrappedFromRemote) {
-					if existingID, err := store.GetMetadata(ctx, "_project_id"); err == nil && existingID != "" {
+					if existingID, err := mustConfig(store).GetMetadata(ctx, "_project_id"); err == nil && existingID != "" {
 						cfg.ProjectID = existingID
 						if !quiet {
 							fmt.Printf("  %s Adopted project identity from existing database\n", ui.RenderPass("✓"))
@@ -949,7 +949,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 
 			// Write project identity to database for cross-project verification (GH#2372)
 			if cfg.ProjectID != "" && store != nil {
-				if err := store.SetMetadata(ctx, "_project_id", cfg.ProjectID); err != nil {
+				if err := mustConfig(store).SetMetadata(ctx, "_project_id", cfg.ProjectID); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to write project ID to database: %v\n", err)
 				}
 			}
@@ -999,7 +999,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// This prevents bd doctor from reporting "No last_import_time recorded in database"
 		// after init completes. Sets the metadata to current time in RFC3339 format.
 		// (mybd-9gw: sync divergence fix)
-		if err := store.SetMetadata(ctx, "last_import_time", time.Now().Format(time.RFC3339)); err != nil {
+		if err := mustConfig(store).SetMetadata(ctx, "last_import_time", time.Now().Format(time.RFC3339)); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to initialize last_import_time: %v\n", err)
 			// Non-fatal - continue anyway
 		}
@@ -1118,7 +1118,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 
 		// Auto-commit Dolt state so bd doctor doesn't warn about uncommitted
 		// changes and users don't need a separate "bd vc commit" step.
-		if err := store.Commit(ctx, "bd init"); err != nil {
+		if err := dVC(store).Commit(ctx, "bd init"); err != nil {
 			// Non-fatal: some setups (e.g. no tables yet) may have nothing to commit
 			if !strings.Contains(err.Error(), "nothing to commit") {
 				fmt.Fprintf(os.Stderr, "Warning: failed to commit initial state: %v\n", err)
@@ -1950,8 +1950,8 @@ func isEmptyRemoteCloneError(err error) bool {
 
 // verifyMetadata writes a metadata field and verifies the write succeeded.
 // Returns true if write+verify succeeded, false with warning if either failed.
-func verifyMetadata(ctx context.Context, store storage.DoltStorage, key, value string) bool {
-	if err := store.SetMetadata(ctx, key, value); err != nil {
+func verifyMetadata(ctx context.Context, store storage.Storage, key, value string) bool {
+	if err := mustConfig(store).SetMetadata(ctx, key, value); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write %s metadata: %v\n", key, err)
 		if !isEmbeddedMode() {
 			fmt.Fprintf(os.Stderr, "  Run 'bd doctor --fix' to repair.\n")
@@ -1959,7 +1959,7 @@ func verifyMetadata(ctx context.Context, store storage.DoltStorage, key, value s
 		return false
 	}
 	// Verify read-back
-	readBack, err := store.GetMetadata(ctx, key)
+	readBack, err := mustConfig(store).GetMetadata(ctx, key)
 	if err != nil || readBack != value {
 		fmt.Fprintf(os.Stderr, "Warning: %s metadata write did not persist (wrote %q, read %q)\n", key, value, readBack)
 		if !isEmbeddedMode() {
@@ -2004,9 +2004,9 @@ func initGlobalDatabaseConfig(ctx context.Context, projectCfg *dolt.Config, quie
 	}
 
 	// Set well-known project ID for the global database
-	existingID, _ := globalStore.GetMetadata(ctx, "_project_id")
+	existingID, _ := mustConfig(globalStore).GetMetadata(ctx, "_project_id")
 	if existingID == "" {
-		if err := globalStore.SetMetadata(ctx, "_project_id", doltserver.GlobalProjectID); err != nil {
+		if err := mustConfig(globalStore).SetMetadata(ctx, "_project_id", doltserver.GlobalProjectID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to set global project ID: %v\n", err)
 		}
 	}

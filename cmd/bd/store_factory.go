@@ -42,7 +42,7 @@ func isEmbeddedMode() bool {
 // When cfg.ServerMode is true, connects to an external dolt sql-server;
 // otherwise uses the embedded Dolt engine (default).
 // Used by bd init and PersistentPreRun.
-func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
+func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.Storage, error) {
 	if cfg.ServerMode {
 		return dolt.New(ctx, cfg)
 	}
@@ -76,7 +76,7 @@ func acquireEmbeddedLock(beadsDir string, serverMode bool) (util.Unlocker, error
 //
 // For embedded mode, legacy hyphenated database names (pre-GH#2142) are
 // auto-sanitized to underscores and the fix is persisted to metadata.json.
-func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
+func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.Storage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
@@ -140,7 +140,7 @@ func migrateHyphenatedDB(beadsDir string, cfg *configfile.Config, oldName, newNa
 // For embedded mode, invalid characters (hyphens, dots) are sanitized in-memory
 // only — no directory renames or metadata.json writes. This prevents cross-repo
 // hydration from mutating foreign projects (GH#3231).
-func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
+func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.Storage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})

@@ -21,7 +21,7 @@ func TestWithStorage_ReopensUsingMetadata(t *testing.T) {
 	newTestStoreIsolatedDB(t, testDBPath, "cfg")
 
 	var gotPrefix string
-	err := withStorage(ctx, nil, testDBPath, func(s storage.DoltStorage) error {
+	err := withStorage(ctx, nil, testDBPath, func(s storage.Storage) error {
 		var err error
 		gotPrefix, err = s.GetConfig(ctx, "issue_prefix")
 		return err

@@ -119,7 +119,7 @@ Force: Delete and orphan dependents
 			connectedIssues[dependent.ID] = dependent
 		}
 		// Get dependency records (outgoing) to count how many we'll remove
-		depRecords, err := activeStore.GetDependencyRecords(ctx, issueID)
+		depRecords, err := mustDeps(activeStore).GetDependencyRecords(ctx, issueID)
 		if err != nil {
 			FatalError("getting dependency records: %v", err)
 		}
@@ -250,7 +250,7 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 	// Verify all issues exist (using routing for prefix resolution)
 	issues := make(map[string]*types.Issue)
 	notFound := []string{}
-	var routedStore storage.DoltStorage
+	var routedStore storage.Storage
 	for _, id := range issueIDs {
 		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 		if err != nil {
@@ -281,7 +281,7 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 	}
 	// Dry-run or preview mode
 	if dryRun || !force {
-		result, err := batchStore.DeleteIssues(ctx, issueIDs, cascade, false, true)
+		result, err := mustBulk(batchStore).DeleteIssues(ctx, issueIDs, cascade, false, true)
 		if err != nil {
 			// Try to show preview even if there are dependency issues
 			showDeletionPreview(issueIDs, issues, cascade, err)
@@ -335,7 +335,7 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 		}
 	}
 	// Actually delete
-	result, err := batchStore.DeleteIssues(ctx, issueIDs, cascade, force, false)
+	result, err := mustBulk(batchStore).DeleteIssues(ctx, issueIDs, cascade, force, false)
 	if err != nil {
 		FatalError("%v", err)
 	}
@@ -449,7 +449,7 @@ func deleteBatchFallback(issueIDs []string, force bool, dryRun bool, cascade boo
 
 	for _, issueID := range issueIDs {
 		// Remove dependencies (outgoing)
-		depRecords, err := store.GetDependencyRecords(ctx, issueID)
+		depRecords, err := mustDeps(store).GetDependencyRecords(ctx, issueID)
 		if err == nil {
 			for _, dep := range depRecords {
 				if err := store.RemoveDependency(ctx, dep.IssueID, dep.DependsOnID, deleteActor); err == nil {

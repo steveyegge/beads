@@ -17,6 +17,18 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// compactStore is the local view of `compact.compactableStore` (the
+// internal interface in the compact package). After be-l7t.1 the cmd/bd
+// global Store is the narrow Storage; we assemble this composite via
+// UnwrapStore + type-assert at the call site (mustAs[compactStore]).
+type compactStore interface {
+	CheckEligibility(ctx context.Context, issueID string, tier int) (bool, string, error)
+	GetIssue(ctx context.Context, issueID string) (*types.Issue, error)
+	UpdateIssue(ctx context.Context, issueID string, updates map[string]interface{}, actor string) error
+	ApplyCompaction(ctx context.Context, issueID string, tier int, originalSize int, compactedSize int, commitHash string) error
+	AddComment(ctx context.Context, issueID, actor, comment string) error
+}
+
 var (
 	compactDryRun  bool
 	compactTier    int
@@ -187,7 +199,7 @@ Examples:
 				DryRun:      compactDryRun,
 			}
 
-			compactor, err := compact.New(store, apiKey, compactCfg)
+			compactor, err := compact.New(mustAs[compactStore](store), apiKey, compactCfg)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to create compactor: %v\n", err)
 				os.Exit(1)
@@ -203,11 +215,11 @@ Examples:
 	},
 }
 
-func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store storage.DoltStorage, issueID string) {
+func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store storage.Storage, issueID string) {
 	start := time.Now()
 
 	if !compactForce {
-		eligible, reason, err := store.CheckEligibility(ctx, issueID, compactTier)
+		eligible, reason, err := mustCompaction(store).CheckEligibility(ctx, issueID, compactTier)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to check eligibility: %v\n", err)
 			os.Exit(1)
@@ -312,12 +324,12 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store s
 	fmt.Printf("  Time: %v\n", elapsed)
 }
 
-func runCompactAll(ctx context.Context, compactor *compact.Compactor, store storage.DoltStorage) {
+func runCompactAll(ctx context.Context, compactor *compact.Compactor, store storage.Storage) {
 	start := time.Now()
 
 	var candidates []string
 	if compactTier == 1 {
-		tier1, err := store.GetTier1Candidates(ctx)
+		tier1, err := mustCompaction(store).GetTier1Candidates(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
 			os.Exit(1)
@@ -326,7 +338,7 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 			candidates = append(candidates, c.IssueID)
 		}
 	} else {
-		tier2, err := store.GetTier2Candidates(ctx)
+		tier2, err := mustCompaction(store).GetTier2Candidates(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
 			os.Exit(1)
@@ -466,14 +478,14 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store stor
 	}
 }
 
-func runCompactStats(ctx context.Context, store storage.DoltStorage) {
-	tier1, err := store.GetTier1Candidates(ctx)
+func runCompactStats(ctx context.Context, store storage.Storage) {
+	tier1, err := mustCompaction(store).GetTier1Candidates(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to get Tier 1 candidates: %v\n", err)
 		os.Exit(1)
 	}
 
-	tier2, err := store.GetTier2Candidates(ctx)
+	tier2, err := mustCompaction(store).GetTier2Candidates(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to get Tier 2 candidates: %v\n", err)
 		os.Exit(1)
@@ -520,7 +532,7 @@ func runCompactStats(ctx context.Context, store storage.DoltStorage) {
 	}
 }
 
-func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
+func runCompactAnalyze(ctx context.Context, store storage.Storage) {
 	type Candidate struct {
 		ID                 string `json:"id"`
 		Title              string `json:"title"`
@@ -567,9 +579,9 @@ func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
 		var tierCandidates []*types.CompactionCandidate
 		var err error
 		if compactTier == 1 {
-			tierCandidates, err = store.GetTier1Candidates(ctx)
+			tierCandidates, err = mustCompaction(store).GetTier1Candidates(ctx)
 		} else {
-			tierCandidates, err = store.GetTier2Candidates(ctx)
+			tierCandidates, err = mustCompaction(store).GetTier2Candidates(ctx)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
@@ -640,7 +652,7 @@ func runCompactAnalyze(ctx context.Context, store storage.DoltStorage) {
 	fmt.Printf("\nSummary: %d candidates, %d bytes total content\n", len(candidates), totalSize)
 }
 
-func runCompactApply(ctx context.Context, store storage.DoltStorage) {
+func runCompactApply(ctx context.Context, store storage.Storage) {
 	start := time.Now()
 
 	// Read summary
@@ -676,7 +688,7 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 
 	// Check eligibility unless --force
 	if !compactForce {
-		eligible, reason, err := store.CheckEligibility(ctx, compactID, compactTier)
+		eligible, reason, err := mustCompaction(store).CheckEligibility(ctx, compactID, compactTier)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to check eligibility: %v\n", err)
 			os.Exit(1)
@@ -714,7 +726,7 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	}
 
 	commitHash := compact.GetCurrentCommitHash()
-	if err := store.ApplyCompaction(ctx, compactID, compactTier, originalSize, compactedSize, commitHash); err != nil {
+	if err := mustCompaction(store).ApplyCompaction(ctx, compactID, compactTier, originalSize, compactedSize, commitHash); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to apply compaction: %v\n", err)
 		os.Exit(1)
 	}
@@ -722,7 +734,7 @@ func runCompactApply(ctx context.Context, store storage.DoltStorage) {
 	savingBytes := originalSize - compactedSize
 	reductionPct := float64(savingBytes) / float64(originalSize) * 100
 	eventData := fmt.Sprintf("Tier %d compaction: %d → %d bytes (saved %d, %.1f%%)", compactTier, originalSize, compactedSize, savingBytes, reductionPct)
-	if err := store.AddComment(ctx, compactID, actor, eventData); err != nil {
+	if err := mustAnnot(store).AddComment(ctx, compactID, actor, eventData); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to record event: %v\n", err)
 		os.Exit(1)
 	}

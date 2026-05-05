@@ -115,7 +115,7 @@ type orphanIssueOutput struct {
 	LatestCommitMessage string `json:"latest_commit_message,omitempty"`
 }
 
-// doltStoreProvider wraps storage.DoltStorage to implement types.IssueProvider.
+// doltStoreProvider wraps storage.Storage to implement types.IssueProvider.
 type doltStoreProvider struct {
 	labels    []string // AND semantics: issue must have ALL these labels
 	labelsAny []string // OR semantics: issue must have AT LEAST ONE of these labels

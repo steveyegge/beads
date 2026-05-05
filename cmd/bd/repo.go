@@ -120,13 +120,13 @@ that came from the removed repository.`,
 
 		// Delete issues from the removed repo before removing from config
 		// The source_repo field uses the original path (e.g., "~/foo")
-		deletedCount, err := store.DeleteIssuesBySourceRepo(ctx, repoPath)
+		deletedCount, err := mustBulk(store).DeleteIssuesBySourceRepo(ctx, repoPath)
 		if err != nil {
 			return fmt.Errorf("failed to delete issues from repo: %w", err)
 		}
 
 		// Also clear the mtime cache entry
-		if err := store.ClearRepoMtime(ctx, repoPath); err != nil {
+		if err := mustAdvanced(store).ClearRepoMtime(ctx, repoPath); err != nil {
 			// Non-fatal: just log a warning
 			fmt.Fprintf(os.Stderr, "Warning: failed to clear mtime cache: %v\n", err)
 		}
@@ -279,7 +279,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 					issue.SourceRepo = repoPath
 				}
 				if len(issues) > 0 {
-					if importErr := store.CreateIssuesWithFullOptions(ctx, issues, "repo-sync", storage.BatchCreateOptions{
+					if importErr := mustBulk(store).CreateIssuesWithFullOptions(ctx, issues, "repo-sync", storage.BatchCreateOptions{
 						OrphanHandling:       storage.OrphanAllow,
 						SkipPrefixValidation: true,
 					}); importErr != nil {
@@ -321,7 +321,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 
 			// Check mtime cache — skip if JSONL hasn't changed
 			currentMtime := info.ModTime().UnixNano()
-			cachedMtime, _ := store.GetRepoMtime(ctx, absPath)
+			cachedMtime, _ := mustAdvanced(store).GetRepoMtime(ctx, absPath)
 			if cachedMtime == currentMtime {
 				if verbose {
 					fmt.Fprintf(os.Stderr, "Skipping %s: JSONL unchanged\n", repoPath)
@@ -350,7 +350,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 			}
 
 			// Import with prefix validation skipped (cross-prefix hydration)
-			if err := store.CreateIssuesWithFullOptions(ctx, issues, "repo-sync", storage.BatchCreateOptions{
+			if err := mustBulk(store).CreateIssuesWithFullOptions(ctx, issues, "repo-sync", storage.BatchCreateOptions{
 				OrphanHandling:       storage.OrphanAllow,
 				SkipPrefixValidation: true,
 			}); err != nil {
@@ -359,7 +359,7 @@ Also triggers Dolt push/pull if a remote is configured.`,
 			}
 
 			// Update mtime cache
-			if err := store.SetRepoMtime(ctx, absPath, jsonlPath, currentMtime); err != nil {
+			if err := mustAdvanced(store).SetRepoMtime(ctx, absPath, jsonlPath, currentMtime); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update mtime cache for %s: %v\n", repoPath, err)
 			}
 

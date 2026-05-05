@@ -95,7 +95,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if !exportAll && !exportIncludeInfra {
 		var infraTypes []string
 		if store != nil {
-			infraSet := store.GetInfraTypes(ctx)
+			infraSet := mustConfig(store).GetInfraTypes(ctx)
 			if len(infraSet) > 0 {
 				for t := range infraSet {
 					infraTypes = append(infraTypes, t)
@@ -147,11 +147,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 		issueIDs[i] = issue.ID
 	}
 
-	labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-	allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
-	commentsMap, _ := store.GetCommentsForIssues(ctx, issueIDs)
-	commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
-	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+	labelsMap, _ := mustAnnot(store).GetLabelsForIssues(ctx, issueIDs)
+	allDeps, _ := mustDeps(store).GetDependencyRecordsForIssues(ctx, issueIDs)
+	commentsMap, _ := mustAnnot(store).GetCommentsForIssues(ctx, issueIDs)
+	commentCounts, _ := mustAnnot(store).GetCommentCounts(ctx, issueIDs)
+	depCounts, _ := mustDeps(store).GetDependencyCounts(ctx, issueIDs)
 
 	// Populate relational data on each issue
 	for _, issue := range issues {

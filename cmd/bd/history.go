@@ -27,7 +27,7 @@ Examples:
 		issueID := args[0]
 
 		// Get issue history
-		history, err := store.History(ctx, issueID)
+		history, err := dHistory(store).History(ctx, issueID)
 		if err != nil {
 			FatalErrorRespectJSON("failed to get history: %v", err)
 		}

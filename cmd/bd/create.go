@@ -351,7 +351,7 @@ var createCmd = &cobra.Command{
 
 		// Switch to target repo for multi-repo support (bd-6x6g)
 		// When routing to a different repo, we use direct storage access
-		var targetStore storage.DoltStorage
+		var targetStore storage.Storage
 		var remoteCache *remotecache.Cache // non-nil when routing to a remote URL
 		if repoPath != "." {
 			if remotecache.IsRemoteURL(repoPath) {
@@ -418,7 +418,7 @@ var createCmd = &cobra.Command{
 				}
 				FatalError("failed to check parent issue: %v", err)
 			}
-			childID, err := store.GetNextChildID(ctx, parentID)
+			childID, err := mustBulk(store).GetNextChildID(ctx, parentID)
 			if err != nil {
 				FatalError("%v", err)
 			}
@@ -673,7 +673,7 @@ var createCmd = &cobra.Command{
 		// everything together at the end.
 		if isEmbeddedMode() || postCreateWrites {
 			commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
-			if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+			if err := dVC(store).Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 				WarnError("failed to commit: %v", err)
 			}
 		}
@@ -683,7 +683,7 @@ var createCmd = &cobra.Command{
 		// DoltHub remotes. Per-create pushes caused 22GB of git-remote-cache
 		// bloat with dozens of agents creating wisps constantly (hq-glw).
 		if repoPath != "." && targetStore != nil {
-			if err := targetStore.Commit(ctx, fmt.Sprintf("bd: create (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
+			if err := dVC(targetStore).Commit(ctx, fmt.Sprintf("bd: create (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
 				debug.Logf("warning: failed to commit routed repo: %v", err)
 			}
 		}
@@ -877,7 +877,7 @@ func formatTimeForRPC(t *time.Time) string {
 // ensureBeadsDirForPath ensures a beads directory exists at the target path.
 // If the .beads directory doesn't exist, it creates it and initializes with
 // the same prefix as the source store (T010, T012: prefix inheritance).
-func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore storage.DoltStorage) error {
+func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore storage.Storage) error {
 	beadsDir := filepath.Join(targetPath, ".beads")
 	metadataPath := filepath.Join(beadsDir, "metadata.json")
 

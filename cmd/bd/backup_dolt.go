@@ -125,7 +125,7 @@ Run 'bd backup init <path>' first to configure a destination.`,
 		}
 
 		// First, commit any pending changes so they're included in the backup
-		if err := store.Commit(ctx, "bd: pre-backup commit"); err != nil && !isDoltNothingToCommit(err) {
+		if err := dVC(store).Commit(ctx, "bd: pre-backup commit"); err != nil && !isDoltNothingToCommit(err) {
 			fmt.Fprintf(os.Stderr, "Warning: failed to commit pending changes: %v\n", err)
 		}
 		commandDidExplicitDoltCommit = true

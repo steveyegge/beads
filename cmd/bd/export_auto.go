@@ -67,7 +67,7 @@ func maybeAutoExport(ctx context.Context) {
 	}
 
 	// Change detection via Dolt commit hash
-	currentCommit, err := store.GetCurrentCommit(ctx)
+	currentCommit, err := dVC(store).GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to get current commit: %v\n", err)
 		return
@@ -145,7 +145,7 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 	filter := types.IssueFilter{Limit: 0}
 	var infraTypes []string
 	if store != nil {
-		infraSet := store.GetInfraTypes(ctx)
+		infraSet := mustConfig(store).GetInfraTypes(ctx)
 		if len(infraSet) > 0 {
 			for t := range infraSet {
 				infraTypes = append(infraTypes, t)
@@ -177,11 +177,11 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
 		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-		allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
-		commentsMap, _ := store.GetCommentsForIssues(ctx, issueIDs)
-		commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
-		depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+		labelsMap, _ := mustAnnot(store).GetLabelsForIssues(ctx, issueIDs)
+		allDeps, _ := mustDeps(store).GetDependencyRecordsForIssues(ctx, issueIDs)
+		commentsMap, _ := mustAnnot(store).GetCommentsForIssues(ctx, issueIDs)
+		commentCounts, _ := mustAnnot(store).GetCommentCounts(ctx, issueIDs)
+		depCounts, _ := mustDeps(store).GetDependencyCounts(ctx, issueIDs)
 
 		for _, issue := range issues {
 			issue.Labels = labelsMap[issue.ID]

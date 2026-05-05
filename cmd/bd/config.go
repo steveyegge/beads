@@ -452,7 +452,7 @@ var configUnsetCmd = &cobra.Command{
 		}
 
 		ctx := rootCtx
-		if err := store.DeleteConfig(ctx, key); err != nil {
+		if err := mustConfig(store).DeleteConfig(ctx, key); err != nil {
 			fmt.Fprintf(os.Stderr, "Error deleting config: %v\n", err)
 			os.Exit(1)
 		}

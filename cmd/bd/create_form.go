@@ -96,7 +96,7 @@ func parseCreateFormInput(raw *createFormRawInput) *createFormValues {
 // It returns the created issue and any error that occurred.
 // This function handles parent-child relationships, labels, dependencies,
 // and source_repo inheritance.
-func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *createFormValues, actor string) (*types.Issue, error) {
+func CreateIssueFromFormValues(ctx context.Context, s storage.Storage, fv *createFormValues, actor string) (*types.Issue, error) {
 	// If parent is specified, validate it exists and generate child ID
 	var explicitID string
 	var inheritedLabels []string
@@ -108,7 +108,7 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 			}
 			return nil, fmt.Errorf("failed to check parent issue: %w", err)
 		}
-		childID, err := s.GetNextChildID(ctx, fv.ParentID)
+		childID, err := mustBulk(s).GetNextChildID(ctx, fv.ParentID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate child ID: %w", err)
 		}
@@ -265,7 +265,7 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 	// push, sync, or server restart (GH#2009).
 	if postCreateWrites {
 		commitMsg := fmt.Sprintf("bd: create %s (metadata)", issue.ID)
-		if err := s.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+		if err := dVC(s).Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 			WarnError("failed to commit post-create metadata: %v", err)
 		}
 	}

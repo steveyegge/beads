@@ -30,6 +30,19 @@ var _ storage.GarbageCollector = (*EmbeddedDoltStore)(nil)
 var _ storage.Flattener = (*EmbeddedDoltStore)(nil)
 var _ storage.Compactor = (*EmbeddedDoltStore)(nil)
 
+// MUST-capability assertions (be-l7t.1 §8): every supported backend
+// implements this set. Asserted explicitly so a future driver that drops one
+// fails the build rather than the runtime type-assertion.
+var (
+	_ storage.BulkIssueStore       = (*EmbeddedDoltStore)(nil)
+	_ storage.DependencyQueryStore = (*EmbeddedDoltStore)(nil)
+	_ storage.AnnotationStore      = (*EmbeddedDoltStore)(nil)
+	_ storage.ConfigMetadataStore  = (*EmbeddedDoltStore)(nil)
+	_ storage.CompactionStore      = (*EmbeddedDoltStore)(nil)
+	_ storage.AdvancedQueryStore   = (*EmbeddedDoltStore)(nil)
+	_ storage.LifecycleManager     = (*EmbeddedDoltStore)(nil)
+)
+
 // EmbeddedDoltStore implements storage.DoltStorage backed by the embedded Dolt engine.
 // Each method call opens a short-lived connection, executes within an explicit
 // SQL transaction, and closes the connection immediately. This minimizes the

@@ -189,7 +189,7 @@ Returns exit code 0 if the graph is clean, 1 if issues are found.`,
 		result := GraphCheckResult{Clean: true}
 
 		// Detect cycles
-		cycles, err := store.DetectCycles(ctx)
+		cycles, err := mustDeps(store).DetectCycles(ctx)
 		if err != nil {
 			FatalErrorRespectJSON("cycle detection failed: %v", err)
 		}
@@ -253,7 +253,7 @@ func init() {
 
 // loadGraphSubgraph loads an issue and its subgraph for visualization
 // Unlike template loading, this includes ALL dependency types (not just parent-child)
-func loadGraphSubgraph(ctx context.Context, s storage.DoltStorage, issueID string) (*TemplateSubgraph, error) {
+func loadGraphSubgraph(ctx context.Context, s storage.Storage, issueID string) (*TemplateSubgraph, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
@@ -313,7 +313,7 @@ func loadGraphSubgraph(ctx context.Context, s storage.DoltStorage, issueID strin
 
 	// Load all dependencies within the subgraph
 	for _, issue := range subgraph.Issues {
-		deps, err := s.GetDependencyRecords(ctx, issue.ID)
+		deps, err := mustDeps(s).GetDependencyRecords(ctx, issue.ID)
 		if err != nil {
 			continue
 		}
@@ -354,7 +354,7 @@ func loadGraphSubgraph(ctx context.Context, s storage.DoltStorage, issueID strin
 
 // loadAllGraphSubgraphs loads all open issues and groups them by connected component
 // Each component is a subgraph of issues that share dependencies
-func loadAllGraphSubgraphs(ctx context.Context, s storage.DoltStorage) ([]*TemplateSubgraph, error) {
+func loadAllGraphSubgraphs(ctx context.Context, s storage.Storage) ([]*TemplateSubgraph, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
@@ -386,7 +386,7 @@ func loadAllGraphSubgraphs(ctx context.Context, s storage.DoltStorage) ([]*Templ
 	// Load all dependencies between these issues
 	allDeps := make([]*types.Dependency, 0)
 	for _, issue := range allIssues {
-		deps, err := s.GetDependencyRecords(ctx, issue.ID)
+		deps, err := mustDeps(s).GetDependencyRecords(ctx, issue.ID)
 		if err != nil {
 			continue
 		}

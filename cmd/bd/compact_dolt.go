@@ -51,7 +51,7 @@ Examples:
 		}
 
 		// Get commit log via store interface
-		logEntries, logErr := store.Log(ctx, 0)
+		logEntries, logErr := dVC(store).Log(ctx, 0)
 		if logErr != nil {
 			FatalError("failed to read commit log: %v", logErr)
 		}

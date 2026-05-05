@@ -21,10 +21,10 @@ import (
 )
 
 // storageExecutor handles operations that need a store connection
-type storageExecutor func(store storage.DoltStorage) error
+type storageExecutor func(store storage.Storage) error
 
 // withStorage executes an operation with either the direct store or a read-only store
-func withStorage(ctx context.Context, store storage.DoltStorage, dbPath string, fn storageExecutor) error {
+func withStorage(ctx context.Context, store storage.Storage, dbPath string, fn storageExecutor) error {
 	if store != nil {
 		return fn(store)
 	} else if dbPath != "" {
@@ -76,10 +76,10 @@ func readyWorkFilterFromIssueFilter(filter types.IssueFilter) types.WorkFilter {
 
 // getHierarchicalChildren handles the --tree --parent combination logic.
 // baseFilter carries CLI filters (--type, --status, etc.) through the recursive walk.
-func getHierarchicalChildren(ctx context.Context, store storage.DoltStorage, dbPath string, parentID string, baseFilter types.IssueFilter) ([]*types.Issue, error) {
+func getHierarchicalChildren(ctx context.Context, store storage.Storage, dbPath string, parentID string, baseFilter types.IssueFilter) ([]*types.Issue, error) {
 	// First verify that the parent issue exists
 	var parentIssue *types.Issue
-	err := withStorage(ctx, store, dbPath, func(s storage.DoltStorage) error {
+	err := withStorage(ctx, store, dbPath, func(s storage.Storage) error {
 		var err error
 		parentIssue, err = s.GetIssue(ctx, parentID)
 		return err
@@ -119,9 +119,9 @@ func getHierarchicalChildren(ctx context.Context, store storage.DoltStorage, dbP
 
 // findAllDescendants recursively finds all descendants using parent filtering.
 // baseFilter carries CLI filters (--type, --status, etc.) so the tree respects them.
-func findAllDescendants(ctx context.Context, store storage.DoltStorage, dbPath string, parentID string, baseFilter types.IssueFilter, result map[string]*types.Issue) error {
+func findAllDescendants(ctx context.Context, store storage.Storage, dbPath string, parentID string, baseFilter types.IssueFilter, result map[string]*types.Issue) error {
 	var children []*types.Issue
-	err := withStorage(ctx, store, dbPath, func(s storage.DoltStorage) error {
+	err := withStorage(ctx, store, dbPath, func(s storage.Storage) error {
 		filter := baseFilter
 		filter.ParentID = &parentID
 		filter.Limit = 0 // unlimited per level to avoid truncating the tree walk
@@ -153,7 +153,7 @@ type watchListDependencyStore interface {
 	GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error)
 }
 
-func loadWatchedIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool) ([]*types.Issue, error) {
+func loadWatchedIssues(ctx context.Context, store storage.Storage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool) ([]*types.Issue, error) {
 	if ready {
 		issues, err := store.GetReadyWork(ctx, readyWorkFilterFromIssueFilter(filter))
 		if err != nil {
@@ -193,7 +193,7 @@ func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore
 	displayPrettyListWithDeps(issues, true, allDeps)
 }
 
-func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool, effectiveLimit int) {
+func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueFilter, ready bool, parentID string, sortBy string, reverse bool, effectiveLimit int) {
 	// Initial display
 	issues, err := loadWatchedIssues(ctx, store, filter, ready, parentID, sortBy, reverse)
 	if err != nil {
@@ -204,7 +204,7 @@ func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.Is
 	if truncated {
 		issues = issues[:effectiveLimit]
 	}
-	displayWatchedIssueList(ctx, store, issues)
+	displayWatchedIssueList(ctx, mustDeps(store), issues)
 	printTruncationHint(truncated, effectiveLimit)
 	lastSnapshot := issueSnapshot(issues)
 
@@ -237,7 +237,7 @@ func watchIssues(ctx context.Context, store storage.DoltStorage, filter types.Is
 			snap := issueSnapshot(issues)
 			if snap != lastSnapshot {
 				lastSnapshot = snap
-				displayWatchedIssueList(ctx, store, issues)
+				displayWatchedIssueList(ctx, mustDeps(store), issues)
 				printTruncationHint(truncated, effectiveLimit)
 				fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 			}
@@ -534,7 +534,7 @@ var listCmd = &cobra.Command{
 			statusParts := strings.Split(status, ",")
 			var customStatuses []string
 			if store != nil {
-				cs, err := store.GetCustomStatuses(rootCtx)
+				cs, err := mustConfig(store).GetCustomStatuses(rootCtx)
 				if err != nil {
 					if !jsonOutput {
 						fmt.Fprintf(os.Stderr, "%s Could not load custom statuses from database: %v (falling back to config)\n", ui.RenderWarn("!"), err)
@@ -573,7 +573,7 @@ var listCmd = &cobra.Command{
 		if status == "" && !allFlag && !readyFlag && !pinnedFlag {
 			excludeStatuses := []types.Status{types.StatusClosed, types.StatusPinned}
 			if store != nil {
-				if detailed, err := store.GetCustomStatusesDetailed(rootCtx); err == nil {
+				if detailed, err := mustConfig(store).GetCustomStatusesDetailed(rootCtx); err == nil {
 					for _, cs := range detailed {
 						if cs.Category == types.CategoryDone || cs.Category == types.CategoryFrozen {
 							excludeStatuses = append(excludeStatuses, types.Status(cs.Name))
@@ -600,7 +600,7 @@ var listCmd = &cobra.Command{
 			// Validate --type value (bd-ttno)
 			var customTypes []string
 			if store != nil {
-				ct, _ := store.GetCustomTypes(rootCtx)
+				ct, _ := mustConfig(store).GetCustomTypes(rootCtx)
 				customTypes = ct
 			}
 			if len(customTypes) == 0 {
@@ -760,7 +760,7 @@ var listCmd = &cobra.Command{
 		// Use --include-infra or --type=agent to show infra beads.
 		infraTypes := storage.DefaultInfraTypes()
 		if store != nil {
-			infraSet := store.GetInfraTypes(rootCtx)
+			infraSet := mustConfig(store).GetInfraTypes(rootCtx)
 			infraTypes = make([]string, 0, len(infraSet))
 			for t := range infraSet {
 				infraTypes = append(infraTypes, t)
@@ -768,7 +768,7 @@ var listCmd = &cobra.Command{
 		}
 		isInfra := func(t string) bool {
 			if store != nil {
-				return store.IsInfraTypeCtx(rootCtx, types.IssueType(t))
+				return mustConfig(store).IsInfraTypeCtx(rootCtx, types.IssueType(t))
 			}
 			return storage.IsInfraType(types.IssueType(t))
 		}
@@ -941,7 +941,7 @@ var listCmd = &cobra.Command{
 
 				// Load dependencies for tree structure
 				// Best effort: display gracefully degrades with empty data
-				allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
+				allDeps, _ := mustDeps(activeStore).GetAllDependencyRecords(ctx)
 				displayPrettyListWithDeps(treeIssues, false, allDeps)
 				return
 			}
@@ -949,7 +949,7 @@ var listCmd = &cobra.Command{
 			// Regular tree display (no parent filter)
 			// Load dependencies for tree structure
 			// Best effort: display gracefully degrades with empty data
-			allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
+			allDeps, _ := mustDeps(activeStore).GetAllDependencyRecords(ctx)
 			displayPrettyListWithDeps(issues, false, allDeps)
 			printTruncationHint(truncated, effectiveLimit)
 			return
@@ -971,10 +971,10 @@ var listCmd = &cobra.Command{
 				issueIDs[i] = issue.ID
 			}
 			// Best effort: display gracefully degrades with empty data
-			labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
-			depCounts, _ := activeStore.GetDependencyCounts(ctx, issueIDs)
-			allDeps, _ := activeStore.GetDependencyRecordsForIssues(ctx, issueIDs)
-			commentCounts, _ := activeStore.GetCommentCounts(ctx, issueIDs)
+			labelsMap, _ := mustAnnot(activeStore).GetLabelsForIssues(ctx, issueIDs)
+			depCounts, _ := mustDeps(activeStore).GetDependencyCounts(ctx, issueIDs)
+			allDeps, _ := mustDeps(activeStore).GetDependencyRecordsForIssues(ctx, issueIDs)
+			commentCounts, _ := mustAnnot(activeStore).GetCommentCounts(ctx, issueIDs)
 
 			// Populate labels and dependencies for JSON output
 			for _, issue := range issues {
@@ -1019,13 +1019,13 @@ var listCmd = &cobra.Command{
 			issueIDs[i] = issue.ID
 		}
 		// Best effort: display gracefully degrades with empty data
-		labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
+		labelsMap, _ := mustAnnot(activeStore).GetLabelsForIssues(ctx, issueIDs)
 
 		// Load blocking info for displayed issues only (bd-7di).
 		// Previously loaded ALL dependency records which was O(total_issues) and took 2-4s.
 		// Now scoped to only the displayed issues, making it O(displayed_issues).
 		// Best effort: display gracefully degrades with empty data
-		blockedByMap, blocksMap, parentMap, _ := activeStore.GetBlockingInfoForIssues(ctx, issueIDs)
+		blockedByMap, blocksMap, parentMap, _ := mustDeps(activeStore).GetBlockingInfoForIssues(ctx, issueIDs)
 
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder

@@ -155,6 +155,18 @@ var _ storage.GarbageCollector = (*DoltStore)(nil)
 var _ storage.Flattener = (*DoltStore)(nil)
 var _ storage.Compactor = (*DoltStore)(nil)
 
+// MUST-capability assertions (be-l7t.1 §8): every supported backend
+// implements this set. Asserted explicitly so a future driver that drops one
+// fails the build rather than the runtime type-assertion.
+var (
+	_ storage.BulkIssueStore       = (*DoltStore)(nil)
+	_ storage.DependencyQueryStore = (*DoltStore)(nil)
+	_ storage.AnnotationStore      = (*DoltStore)(nil)
+	_ storage.ConfigMetadataStore  = (*DoltStore)(nil)
+	_ storage.CompactionStore      = (*DoltStore)(nil)
+	_ storage.AdvancedQueryStore   = (*DoltStore)(nil)
+)
+
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
 	db            *sql.DB

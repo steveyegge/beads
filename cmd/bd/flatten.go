@@ -52,7 +52,7 @@ Examples:
 
 		// Get commit count and initial hash for reporting.
 		// Use store.Log() which works across both backends.
-		logEntries, logErr := store.Log(ctx, 0)
+		logEntries, logErr := dVC(store).Log(ctx, 0)
 		if logErr != nil {
 			FatalError("failed to read commit log: %v", logErr)
 		}

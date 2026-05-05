@@ -382,7 +382,7 @@ func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
 		FatalError("creating issues from markdown: %v", err)
 	}
 	commitMsg := fmt.Sprintf("bd: create %d issue(s) from %s", len(templates), filepath)
-	if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+	if err := dVC(store).Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 		WarnError("failed to commit: %v", err)
 	}
 	createdIssues = append(createdIssues, issues...)

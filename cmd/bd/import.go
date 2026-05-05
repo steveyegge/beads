@@ -234,7 +234,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		commitMsg += fmt.Sprintf(", %d memories", result.Memories)
 	}
 	commitMsg += fmt.Sprintf(" from %s", filepath.Base(source))
-	if err := store.Commit(ctx, commitMsg); err != nil {
+	if err := dVC(store).Commit(ctx, commitMsg); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 
@@ -256,7 +256,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 }
 
 // filterDuplicatesByTitle removes issues whose title matches an existing open issue.
-func filterDuplicatesByTitle(ctx context.Context, st storage.DoltStorage, issues []*types.Issue) ([]*types.Issue, int) {
+func filterDuplicatesByTitle(ctx context.Context, st storage.Storage, issues []*types.Issue) ([]*types.Issue, int) {
 	existing, err := st.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return issues, 0

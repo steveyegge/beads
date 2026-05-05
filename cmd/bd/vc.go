@@ -43,7 +43,7 @@ Examples:
 		branchName := args[0]
 
 		// Perform merge
-		conflicts, err := store.Merge(ctx, branchName)
+		conflicts, err := dVC(store).Merge(ctx, branchName)
 		if err != nil {
 			FatalErrorRespectJSON("failed to merge branch: %v", err)
 		}
@@ -57,7 +57,7 @@ Examples:
 					if table == "" {
 						table = "issues" // Default to issues table
 					}
-					if err := store.ResolveConflicts(ctx, table, vcMergeStrategy); err != nil {
+					if err := dVC(store).ResolveConflicts(ctx, table, vcMergeStrategy); err != nil {
 						FatalErrorRespectJSON("failed to resolve conflicts: %v", err)
 					}
 				}
@@ -135,7 +135,7 @@ Examples:
 
 		// We are explicitly creating a Dolt commit; avoid redundant auto-commit in PersistentPostRun.
 		commandDidExplicitDoltCommit = true
-		if err := store.Commit(ctx, vcCommitMessage); err != nil {
+		if err := dVC(store).Commit(ctx, vcCommitMessage); err != nil {
 			if isDoltNothingToCommit(err) {
 				if jsonOutput {
 					outputJSON(map[string]interface{}{"committed": false, "message": "nothing to commit"})
@@ -148,7 +148,7 @@ Examples:
 		}
 
 		// Get the new commit hash
-		hash, err := store.GetCurrentCommit(ctx)
+		hash, err := dVC(store).GetCurrentCommit(ctx)
 		if err != nil {
 			hash = "(unknown)"
 		}
@@ -176,12 +176,12 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 
-		currentBranch, err := store.CurrentBranch(ctx)
+		currentBranch, err := dVC(store).CurrentBranch(ctx)
 		if err != nil {
 			FatalErrorRespectJSON("failed to get current branch: %v", err)
 		}
 
-		currentCommit, err := store.GetCurrentCommit(ctx)
+		currentCommit, err := dVC(store).GetCurrentCommit(ctx)
 		if err != nil {
 			currentCommit = "(unknown)"
 		}

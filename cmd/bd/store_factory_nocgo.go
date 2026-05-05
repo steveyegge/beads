@@ -20,7 +20,7 @@ func isEmbeddedMode() bool {
 
 // newDoltStore creates a server-mode storage backend. Embedded Dolt is not
 // available without CGO.
-func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
+func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.Storage, error) {
 	if !cfg.ServerMode {
 		return nil, fmt.Errorf("%s", nocgoEmbeddedErrMsg)
 	}
@@ -33,7 +33,7 @@ func acquireEmbeddedLock(_ string, _ bool) (util.Unlocker, error) {
 }
 
 // newDoltStoreFromConfig creates a server-mode storage backend from config.
-func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
+func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.Storage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfig(ctx, beadsDir)
@@ -42,7 +42,7 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltS
 }
 
 // newReadOnlyStoreFromConfig creates a read-only server-mode storage backend.
-func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
+func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.Storage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err == nil && cfg != nil && cfg.IsDoltServerMode() {
 		return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{ReadOnly: true})

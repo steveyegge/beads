@@ -47,7 +47,7 @@ This is read-only and does not modify the database.`,
 		}
 
 		// Query Dolt history for the pre-compaction version
-		history, err := store.History(ctx, issueID)
+		history, err := dHistory(store).History(ctx, issueID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to query history: %v\n", err)
 			os.Exit(1)

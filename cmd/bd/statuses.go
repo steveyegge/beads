@@ -57,7 +57,7 @@ Examples:
 		var customStatuses []types.CustomStatus
 		ctx := context.Background()
 		if store != nil {
-			if cs, err := store.GetCustomStatusesDetailed(ctx); err == nil {
+			if cs, err := mustConfig(store).GetCustomStatusesDetailed(ctx); err == nil {
 				customStatuses = cs
 			}
 		}

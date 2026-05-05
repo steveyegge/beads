@@ -184,7 +184,7 @@ Examples:
 		}
 
 		// Analyze the epic structure
-		analysis, err := analyzeEpicForSwarm(ctx, store, epic)
+		analysis, err := analyzeEpicForSwarm(ctx, mustAs[SwarmStorage](store), epic)
 		if err != nil {
 			FatalErrorRespectJSON("failed to analyze epic: %v", err)
 		}
@@ -640,7 +640,7 @@ Examples:
 		// Check if it's a swarm molecule - if so, follow the link to the epic
 		if issue.IssueType == "molecule" && issue.MolType == types.MolTypeSwarm {
 			// Find linked epic via relates-to dependency
-			deps, err := store.GetDependencyRecords(ctx, issue.ID)
+			deps, err := mustDeps(store).GetDependencyRecords(ctx, issue.ID)
 			if err != nil {
 				FatalErrorRespectJSON("failed to get swarm dependencies: %v", err)
 			}
@@ -663,7 +663,7 @@ Examples:
 		}
 
 		// Get swarm status
-		status, err := getSwarmStatus(ctx, store, epic)
+		status, err := getSwarmStatus(ctx, mustAs[SwarmStorage](store), epic)
 		if err != nil {
 			FatalErrorRespectJSON("failed to get swarm status: %v", err)
 		}
@@ -966,7 +966,7 @@ Examples:
 		}
 
 		// Check for existing swarm molecule
-		existingSwarm, err := findExistingSwarm(ctx, store, epicID)
+		existingSwarm, err := findExistingSwarm(ctx, mustAs[SwarmStorage](store), epicID)
 		if err != nil {
 			FatalErrorRespectJSON("failed to check for existing swarm: %v", err)
 		}
@@ -990,7 +990,7 @@ Examples:
 			FatalErrorRespectJSON("failed to get epic: %v", err)
 		}
 
-		analysis, err := analyzeEpicForSwarm(ctx, store, epic)
+		analysis, err := analyzeEpicForSwarm(ctx, mustAs[SwarmStorage](store), epic)
 		if err != nil {
 			FatalErrorRespectJSON("failed to analyze epic: %v", err)
 		}
@@ -1123,7 +1123,7 @@ Examples:
 			}
 
 			// Find linked epic via relates-to dependency
-			deps, err := store.GetDependencyRecords(ctx, swarm.ID)
+			deps, err := mustDeps(store).GetDependencyRecords(ctx, swarm.ID)
 			if err == nil {
 				for _, dep := range deps {
 					if dep.Type == types.DepRelatesTo {
@@ -1132,7 +1132,7 @@ Examples:
 						if err == nil && epic != nil {
 							item.EpicTitle = epic.Title
 							// Get swarm status for this epic
-							status, err := getSwarmStatus(ctx, store, epic)
+							status, err := getSwarmStatus(ctx, mustAs[SwarmStorage](store), epic)
 							if err == nil {
 								item.Total = status.TotalIssues
 								item.Completed = len(status.Completed)

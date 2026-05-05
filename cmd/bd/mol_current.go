@@ -96,7 +96,7 @@ Use --limit or --range to view specific steps:
 			}
 
 			// Check child count first for large molecule detection
-			stats, err := store.GetMoleculeProgress(ctx, moleculeID)
+			stats, err := mustAdvanced(store).GetMoleculeProgress(ctx, moleculeID)
 			if err != nil {
 				FatalError("loading molecule: %v", err)
 			}
@@ -162,7 +162,7 @@ Use --limit or --range to view specific steps:
 }
 
 // getMoleculeProgress loads a molecule and computes progress
-func getMoleculeProgress(ctx context.Context, s storage.DoltStorage, moleculeID string) (*MoleculeProgress, error) {
+func getMoleculeProgress(ctx context.Context, s storage.Storage, moleculeID string) (*MoleculeProgress, error) {
 	subgraph, err := loadTemplateSubgraph(ctx, s, moleculeID)
 	if err != nil {
 		return nil, err
@@ -241,7 +241,7 @@ func getMoleculeProgress(ctx context.Context, s storage.DoltStorage, moleculeID 
 }
 
 // findInProgressMolecules finds molecules with in_progress steps for an agent
-func findInProgressMolecules(ctx context.Context, s storage.DoltStorage, agent string) []*MoleculeProgress {
+func findInProgressMolecules(ctx context.Context, s storage.Storage, agent string) []*MoleculeProgress {
 	var inProgressIssues []*types.Issue
 
 	status := types.StatusInProgress
@@ -297,7 +297,7 @@ func findInProgressMolecules(ctx context.Context, s storage.DoltStorage, agent s
 // findHookedMolecules finds molecules bonded to hooked issues for an agent.
 // This is a fallback when no in_progress steps exist but a molecule is attached
 // to the agent's hooked work via a "blocks" dependency.
-func findHookedMolecules(ctx context.Context, s storage.DoltStorage, agent string) []*MoleculeProgress {
+func findHookedMolecules(ctx context.Context, s storage.Storage, agent string) []*MoleculeProgress {
 	// Query for hooked issues assigned to the agent
 	status := types.StatusHooked
 	filter := types.IssueFilter{Status: &status}
@@ -324,7 +324,7 @@ func findHookedMolecules(ctx context.Context, s storage.DoltStorage, agent strin
 			}
 		}
 
-		deps, err := s.GetDependencyRecords(ctx, issue.ID)
+		deps, err := mustDeps(s).GetDependencyRecords(ctx, issue.ID)
 		if err != nil {
 			continue
 		}
@@ -384,7 +384,7 @@ func findHookedMolecules(ctx context.Context, s storage.DoltStorage, agent strin
 // in a loop, issuing GetDependencyRecords + GetIssue per level per issue.
 // Instead, this walks parent-child chains level-by-level using batch queries,
 // reducing O(N * depth) round-trips to O(depth). (bd-hn4q)
-func findParentMolecules(ctx context.Context, s storage.DoltStorage, issueIDs []string) map[string]string {
+func findParentMolecules(ctx context.Context, s storage.Storage, issueIDs []string) map[string]string {
 	if len(issueIDs) == 0 {
 		return nil
 	}
@@ -411,7 +411,7 @@ func findParentMolecules(ctx context.Context, s storage.DoltStorage, issueIDs []
 		}
 
 		// Batch fetch parent-child deps for all current ancestors
-		allDeps, err := s.GetDependencyRecordsForIssues(ctx, toCheck)
+		allDeps, err := mustDeps(s).GetDependencyRecordsForIssues(ctx, toCheck)
 		if err != nil {
 			return nil
 		}
@@ -490,7 +490,7 @@ func findParentMolecules(ctx context.Context, s storage.DoltStorage, issueIDs []
 
 // findParentMolecule walks up the parent-child chain to find the root molecule
 // for a single issue. Returns "" if the issue is not part of a molecule.
-func findParentMolecule(ctx context.Context, s storage.DoltStorage, issueID string) string {
+func findParentMolecule(ctx context.Context, s storage.Storage, issueID string) string {
 	roots := findParentMolecules(ctx, s, []string{issueID})
 	return roots[issueID]
 }
@@ -590,7 +590,7 @@ type ContinueResult struct {
 // guard against TOCTOU races where multiple agents identify and try to claim the
 // same step concurrently.
 // Returns nil if the issue is not part of a molecule.
-func AdvanceToNextStep(ctx context.Context, s storage.DoltStorage, closedStepID string, autoClaim bool, actorName string) (*ContinueResult, error) {
+func AdvanceToNextStep(ctx context.Context, s storage.Storage, closedStepID string, autoClaim bool, actorName string) (*ContinueResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}

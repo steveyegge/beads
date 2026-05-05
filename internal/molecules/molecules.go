@@ -47,11 +47,11 @@ type LoadResult struct {
 
 // Loader handles loading molecule catalogs from hierarchical locations.
 type Loader struct {
-	store storage.DoltStorage
+	store storage.Storage
 }
 
 // NewLoader creates a new molecule loader for the given storage.
-func NewLoader(store storage.DoltStorage) *Loader {
+func NewLoader(store storage.Storage) *Loader {
 	return &Loader{store: store}
 }
 
@@ -152,7 +152,8 @@ func (l *Loader) loadMolecules(ctx context.Context, molecules []*types.Issue) (i
 		SkipPrefixValidation: true, // Molecules use their own prefix
 		OrphanHandling:       storage.OrphanAllow,
 	}
-	if err := l.store.CreateIssuesWithFullOptions(ctx, newMolecules, "molecules-loader", opts); err != nil {
+	bulk := storage.UnwrapStore(l.store).(storage.BulkIssueStore)
+	if err := bulk.CreateIssuesWithFullOptions(ctx, newMolecules, "molecules-loader", opts); err != nil {
 		return 0, fmt.Errorf("batch create molecules: %w", err)
 	}
 	return len(newMolecules), nil

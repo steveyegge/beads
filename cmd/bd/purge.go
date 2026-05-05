@@ -181,7 +181,7 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 
 	// Dry-run: show stats preview
 	if dryRun {
-		result, err := store.DeleteIssues(ctx, issueIDs, false, false, true)
+		result, err := mustBulk(store).DeleteIssues(ctx, issueIDs, false, false, true)
 		if jsonOutput {
 			stats := map[string]interface{}{
 				"dry_run":            true,
@@ -233,7 +233,7 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 	}
 
 	// Actually purge
-	result, err := store.DeleteIssues(ctx, issueIDs, false, true, false)
+	result, err := mustBulk(store).DeleteIssues(ctx, issueIDs, false, true, false)
 	if err != nil {
 		FatalError("%s failed: %v", scope.cmdName, err)
 	}

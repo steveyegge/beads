@@ -196,7 +196,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 
 		if claimReady {
-			claimed, err := activeStore.ClaimReadyIssue(ctx, filter, actor)
+			claimed, err := mustBulk(activeStore).ClaimReadyIssue(ctx, filter, actor)
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
 			}
@@ -340,7 +340,7 @@ var blockedCmd = &cobra.Command{
 
 // buildParentEpicMap builds a map from child issue ID to parent epic title.
 // Only includes parents that are epics.
-func buildParentEpicMap(ctx context.Context, s storage.DoltStorage, issues []*types.Issue) map[string]string {
+func buildParentEpicMap(ctx context.Context, s storage.Storage, issues []*types.Issue) map[string]string {
 	if len(issues) == 0 {
 		return nil
 	}
@@ -348,7 +348,7 @@ func buildParentEpicMap(ctx context.Context, s storage.DoltStorage, issues []*ty
 	for i, issue := range issues {
 		issueIDs[i] = issue.ID
 	}
-	allDeps, err := s.GetDependencyRecordsForIssues(ctx, issueIDs)
+	allDeps, err := mustDeps(s).GetDependencyRecordsForIssues(ctx, issueIDs)
 	if err != nil {
 		return nil
 	}
@@ -409,7 +409,7 @@ func displayReadyList(issues []*types.Issue, parentEpicMap map[string]string) {
 	fmt.Println("Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred")
 }
 
-func buildReadyIssueOutput(ctx context.Context, s storage.DoltStorage, issues []*types.Issue) []*types.IssueWithCounts {
+func buildReadyIssueOutput(ctx context.Context, s storage.Storage, issues []*types.Issue) []*types.IssueWithCounts {
 	if issues == nil {
 		issues = []*types.Issue{}
 	}
@@ -419,10 +419,10 @@ func buildReadyIssueOutput(ctx context.Context, s storage.DoltStorage, issues []
 	}
 
 	// Best effort: display gracefully degrades with empty data.
-	labelsMap, _ := s.GetLabelsForIssues(ctx, issueIDs)
-	depCounts, _ := s.GetDependencyCounts(ctx, issueIDs)
-	allDeps, _ := s.GetDependencyRecordsForIssues(ctx, issueIDs)
-	commentCounts, _ := s.GetCommentCounts(ctx, issueIDs)
+	labelsMap, _ := mustAnnot(s).GetLabelsForIssues(ctx, issueIDs)
+	depCounts, _ := mustDeps(s).GetDependencyCounts(ctx, issueIDs)
+	allDeps, _ := mustDeps(s).GetDependencyRecordsForIssues(ctx, issueIDs)
+	commentCounts, _ := mustAnnot(s).GetCommentCounts(ctx, issueIDs)
 
 	for _, issue := range issues {
 		issue.Labels = labelsMap[issue.ID]
@@ -480,17 +480,17 @@ func runReadyExplain(_ *cobra.Command) {
 	for i, issue := range readyIssues {
 		readyIDs[i] = issue.ID
 	}
-	depCounts, err := activeStore.GetDependencyCounts(ctx, readyIDs)
+	depCounts, err := mustDeps(activeStore).GetDependencyCounts(ctx, readyIDs)
 	if err != nil {
 		debug.Logf("warning: failed to get dependency counts: %v", err)
 	}
-	allDeps, err := activeStore.GetDependencyRecordsForIssues(ctx, readyIDs)
+	allDeps, err := mustDeps(activeStore).GetDependencyRecordsForIssues(ctx, readyIDs)
 	if err != nil {
 		debug.Logf("warning: failed to get dependency records: %v", err)
 	}
 
 	// Detect cycles
-	cycles, err := activeStore.DetectCycles(ctx)
+	cycles, err := mustDeps(activeStore).DetectCycles(ctx)
 	if err != nil {
 		debug.Logf("warning: failed to detect cycles: %v", err)
 	}

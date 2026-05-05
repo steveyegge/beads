@@ -16,7 +16,7 @@ import (
 // while preserving repo-local metadata such as dolt_database and the resolved
 // Dolt server port. Falls back to deriving the beads directory from the dbPath
 // parent when no matching metadata.json can be found.
-func openReadOnlyStoreForDBPath(ctx context.Context, dbPath string) (storage.DoltStorage, error) {
+func openReadOnlyStoreForDBPath(ctx context.Context, dbPath string) (storage.Storage, error) {
 	if dbPath == "" {
 		return nil, fmt.Errorf("no database path available")
 	}

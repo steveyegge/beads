@@ -226,7 +226,7 @@ Examples:
 				issueIDs[i] = issue.ID
 			}
 			var err error
-			labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
+			labelsMap, err = mustAnnot(store).GetLabelsForIssues(ctx, issueIDs)
 			if err != nil {
 				FatalError("getting labels: %v", err)
 			}

@@ -67,7 +67,7 @@ var bondedIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 // =============================================================================
 
 // loadTemplateSubgraph loads a template epic and all its descendants
-func loadTemplateSubgraph(ctx context.Context, s storage.DoltStorage, templateID string) (*TemplateSubgraph, error) {
+func loadTemplateSubgraph(ctx context.Context, s storage.Storage, templateID string) (*TemplateSubgraph, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
@@ -95,7 +95,7 @@ func loadTemplateSubgraph(ctx context.Context, s storage.DoltStorage, templateID
 
 	// Load all dependencies within the subgraph
 	for _, issue := range subgraph.Issues {
-		deps, err := s.GetDependencyRecords(ctx, issue.ID)
+		deps, err := mustDeps(s).GetDependencyRecords(ctx, issue.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get dependencies for %s: %w", issue.ID, err)
 		}
@@ -117,7 +117,7 @@ func loadTemplateSubgraph(ctx context.Context, s storage.DoltStorage, templateID
 //
 // The visited set tracks IDs already expanded to detect cycles (GH#2719).
 // Without this, cyclic parent-child dependencies cause unbounded recursion leading to OOM.
-func loadDescendants(ctx context.Context, s storage.DoltStorage, subgraph *TemplateSubgraph, parentID string, visited map[string]bool) error {
+func loadDescendants(ctx context.Context, s storage.Storage, subgraph *TemplateSubgraph, parentID string, visited map[string]bool) error {
 	// Track children we've already added to avoid duplicates
 	addedChildren := make(map[string]bool)
 
@@ -181,7 +181,7 @@ func loadDescendants(ctx context.Context, s storage.DoltStorage, subgraph *Templ
 		// Check if this hierarchical child has been reparented to a different parent (GH#2476).
 		// If it has an explicit parent-child dependency pointing elsewhere, skip it —
 		// the ID pattern match is stale and the child belongs to another molecule.
-		depRecs, err := s.GetDependencyRecords(ctx, child.ID)
+		depRecs, err := mustDeps(s).GetDependencyRecords(ctx, child.ID)
 		if err == nil {
 			reparented := false
 			for _, dep := range depRecs {
@@ -212,7 +212,7 @@ func loadDescendants(ctx context.Context, s storage.DoltStorage, subgraph *Templ
 
 // findHierarchicalChildren finds issues with IDs that match the pattern parentID.N
 // This catches hierarchical children that may be missing parent-child dependencies.
-func findHierarchicalChildren(ctx context.Context, s storage.DoltStorage, parentID string) ([]*types.Issue, error) {
+func findHierarchicalChildren(ctx context.Context, s storage.Storage, parentID string) ([]*types.Issue, error) {
 	pattern := parentID + "."
 	candidates, err := s.SearchIssues(ctx, "", types.IssueFilter{IDPrefix: pattern})
 	if err != nil {
@@ -238,7 +238,7 @@ func findHierarchicalChildren(ctx context.Context, s storage.DoltStorage, parent
 // It first tries to resolve as an ID (via ResolvePartialID).
 // If that fails, it searches for protos with matching titles.
 // Returns the proto ID if found, or an error if not found or ambiguous.
-func resolveProtoIDOrTitle(ctx context.Context, s storage.DoltStorage, input string) (string, error) {
+func resolveProtoIDOrTitle(ctx context.Context, s storage.Storage, input string) (string, error) {
 	// Strategy 1: Try to resolve as an ID
 	protoID, err := utils.ResolvePartialID(ctx, s, input)
 	if err == nil {
@@ -484,7 +484,7 @@ func getRelativeID(oldID, rootID string) string {
 // issues with types like "gate" (for async coordination beads) that are
 // not in the default type whitelist. Without this, cloneSubgraph fails
 // with "invalid issue type" on the first non-built-in bead. (GH#3213)
-func ensureSubgraphCustomTypes(ctx context.Context, s storage.DoltStorage, subgraph *TemplateSubgraph) error {
+func ensureSubgraphCustomTypes(ctx context.Context, s storage.Storage, subgraph *TemplateSubgraph) error {
 	// Collect non-built-in types used by the subgraph.
 	needed := make(map[string]bool)
 	for _, issue := range subgraph.Issues {
@@ -551,7 +551,7 @@ func ensureSubgraphCustomTypes(ctx context.Context, s storage.DoltStorage, subgr
 
 // cloneSubgraph creates new issues from the template with variable substitution.
 // Uses CloneOptions to control all spawn/bond behavior including dynamic bonding.
-func cloneSubgraph(ctx context.Context, s storage.DoltStorage, subgraph *TemplateSubgraph, opts CloneOptions) (*InstantiateResult, error) {
+func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSubgraph, opts CloneOptions) (*InstantiateResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}

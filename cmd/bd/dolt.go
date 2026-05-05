@@ -226,7 +226,7 @@ The remote must already exist (see 'bd dolt remote add').`,
 		remote, _ := cmd.Flags().GetString("remote")
 		if remote != "" {
 			fmt.Printf("Pushing to Dolt remote %q...\n", remote)
-			if err := st.PushRemote(ctx, remote, force); err != nil {
+			if err := dRemote(st).PushRemote(ctx, remote, force); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				if isRemoteNotFoundErr(err) {
 					fmt.Fprintf(os.Stderr, "\nRemote %q is not configured.\n", remote)
@@ -244,9 +244,9 @@ The remote must already exist (see 'bd dolt remote add').`,
 
 		var pushErr error
 		if force {
-			pushErr = st.ForcePush(ctx)
+			pushErr = dRemote(st).ForcePush(ctx)
 		} else {
-			pushErr = st.Push(ctx)
+			pushErr = dRemote(st).Push(ctx)
 		}
 		if pushErr != nil {
 			if isRemoteNotFoundErr(pushErr) {
@@ -288,7 +288,7 @@ The remote must already exist (see 'bd dolt remote add').`,
 		remote, _ := cmd.Flags().GetString("remote")
 		if remote != "" {
 			fmt.Printf("Pulling from Dolt remote %q...\n", remote)
-			if err := st.PullRemote(ctx, remote); err != nil {
+			if err := dRemote(st).PullRemote(ctx, remote); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				if isRemoteNotFoundErr(err) {
 					fmt.Fprintf(os.Stderr, "\nRemote %q is not configured.\n", remote)
@@ -303,7 +303,7 @@ The remote must already exist (see 'bd dolt remote add').`,
 			return
 		}
 		fmt.Println("Pulling from Dolt remote...")
-		if err := st.Pull(ctx); err != nil {
+		if err := dRemote(st).Pull(ctx); err != nil {
 			if isRemoteNotFoundErr(err) {
 				printNoRemoteGuidance()
 				return
@@ -342,7 +342,7 @@ For more options (--stdin, custom messages), see: bd vc commit`,
 		if msg == "" {
 			msg = fmt.Sprintf("bd: dolt commit (auto-commit) by %s", getActor())
 		}
-		if err := st.Commit(ctx, msg); err != nil {
+		if err := dVC(st).Commit(ctx, msg); err != nil {
 			if isDoltNothingToCommit(err) {
 				fmt.Println("Nothing to commit.")
 				return
@@ -873,7 +873,7 @@ var doltRemoteAddCmd = &cobra.Command{
 		embedded := isEmbeddedMode()
 
 		// Check existing remotes on both surfaces
-		sqlRemotes, _, cliRemotes, _ := listRemoteSurfaces(ctx, st, dbPath, embedded)
+		sqlRemotes, _, cliRemotes, _ := listRemoteSurfaces(ctx, dRemote(st), dbPath, embedded)
 		sqlURL := findRemoteURL(sqlRemotes, name)
 		cliURL := findRemoteURL(cliRemotes, name)
 
@@ -886,7 +886,7 @@ var doltRemoteAddCmd = &cobra.Command{
 				return
 			}
 			// Remove existing SQL remote before re-adding
-			if err := st.RemoveRemote(ctx, name); err != nil {
+			if err := dRemote(st).RemoveRemote(ctx, name); err != nil {
 				fmt.Fprintf(os.Stderr, "Error removing existing SQL remote: %v\n", err)
 				os.Exit(1)
 			}
@@ -904,7 +904,7 @@ var doltRemoteAddCmd = &cobra.Command{
 
 		// Add to SQL server (skip if already correct)
 		if sqlURL != url {
-			if err := st.AddRemote(ctx, name, url); err != nil {
+			if err := dRemote(st).AddRemote(ctx, name, url); err != nil {
 				if jsonOutput {
 					outputJSONError(err, "remote_add_failed")
 				} else {
@@ -977,7 +977,7 @@ var doltRemoteListCmd = &cobra.Command{
 		dbPath := locator.CLIDir()
 		embedded := isEmbeddedMode()
 
-		sqlRemotes, sqlErr, cliRemotes, cliErr := listRemoteSurfaces(ctx, st, dbPath, embedded)
+		sqlRemotes, sqlErr, cliRemotes, cliErr := listRemoteSurfaces(ctx, dRemote(st), dbPath, embedded)
 		if sqlErr != nil {
 			if jsonOutput {
 				outputJSONError(sqlErr, "remote_list_failed")
@@ -1097,7 +1097,7 @@ var doltRemoteRemoveCmd = &cobra.Command{
 		embedded := isEmbeddedMode()
 
 		// Check both surfaces for conflicts
-		sqlRemotes, _, cliRemotes, _ := listRemoteSurfaces(ctx, st, dbPath, embedded)
+		sqlRemotes, _, cliRemotes, _ := listRemoteSurfaces(ctx, dRemote(st), dbPath, embedded)
 		sqlURL := findRemoteURL(sqlRemotes, name)
 		cliURL := findRemoteURL(cliRemotes, name)
 
@@ -1113,7 +1113,7 @@ var doltRemoteRemoveCmd = &cobra.Command{
 
 		// Remove from SQL server
 		if sqlURL != "" {
-			if err := st.RemoveRemote(ctx, name); err != nil {
+			if err := dRemote(st).RemoveRemote(ctx, name); err != nil {
 				if jsonOutput {
 					outputJSONError(err, "remote_remove_failed")
 				} else {
@@ -1323,7 +1323,7 @@ func showDoltConfig(testConnection bool) {
 	st := getStore()
 	var sqlRemotes []string
 	if st != nil {
-		if remotes, err := st.ListRemotes(ctx); err == nil {
+		if remotes, err := dRemote(st).ListRemotes(ctx); err == nil {
 			for _, r := range remotes {
 				sqlRemotes = append(sqlRemotes, fmt.Sprintf("  %-16s %s", r.Name, r.URL))
 			}
@@ -1343,7 +1343,7 @@ func showDoltConfig(testConnection bool) {
 		if cliErr == nil {
 			sqlNames := map[string]bool{}
 			if st != nil {
-				if remotes, err := st.ListRemotes(ctx); err == nil {
+				if remotes, err := dRemote(st).ListRemotes(ctx); err == nil {
 					for _, r := range remotes {
 						sqlNames[r.Name] = true
 					}
@@ -1584,7 +1584,7 @@ func testDoltConnection() {
 		return
 	}
 	ctx := context.Background()
-	remotes, err := st.ListRemotes(ctx)
+	remotes, err := dRemote(st).ListRemotes(ctx)
 	if err != nil || len(remotes) == 0 {
 		return
 	}

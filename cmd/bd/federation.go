@@ -129,7 +129,7 @@ func init() {
 	rootCmd.AddCommand(federationCmd)
 }
 
-func getFederatedStore() (storage.DoltStorage, error) {
+func getFederatedStore() (storage.Storage, error) {
 	if store == nil {
 		return nil, fmt.Errorf("no store available")
 	}
@@ -155,7 +155,7 @@ func runFederationSync(cmd *cobra.Command, args []string) {
 		peers = []string{federationPeer}
 	} else {
 		// Get all configured remotes
-		remotes, err := ds.ListRemotes(ctx)
+		remotes, err := dRemote(ds).ListRemotes(ctx)
 		if err != nil {
 			FatalErrorRespectJSON("failed to list peers: %v", err)
 		}
@@ -178,7 +178,7 @@ func runFederationSync(cmd *cobra.Command, args []string) {
 			fmt.Printf("%s Syncing with %s...\n", ui.RenderAccent("🔄"), peer)
 		}
 
-		result, err := ds.Sync(ctx, peer, federationStrategy)
+		result, err := dSync(ds).Sync(ctx, peer, federationStrategy)
 		results = append(results, result)
 
 		if err != nil {
@@ -236,7 +236,7 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 	}
 
 	// Get all remotes for URL lookup
-	allRemotes, err := ds.ListRemotes(ctx)
+	allRemotes, err := dRemote(ds).ListRemotes(ctx)
 	if err != nil {
 		FatalErrorRespectJSON("failed to list remotes: %v", err)
 	}
@@ -268,7 +268,7 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 	}
 
 	// Get pending local changes
-	doltStatus, _ := ds.Status(ctx) // Best effort: nil status means federation not available
+	doltStatus, _ := dVC(ds).Status(ctx) // Best effort: nil status means federation not available
 	pendingChanges := 0
 	if doltStatus != nil {
 		pendingChanges = len(doltStatus.Staged) + len(doltStatus.Unstaged)
@@ -289,15 +289,15 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 		}
 
 		// Get sync status
-		status, _ := ds.SyncStatus(ctx, peer) // Best effort: nil status means sync info unavailable
+		status, _ := dSync(ds).SyncStatus(ctx, peer) // Best effort: nil status means sync info unavailable
 		ps.Status = status
 
 		// Test connectivity by attempting a fetch
-		fetchErr := ds.Fetch(ctx, peer)
+		fetchErr := dRemote(ds).Fetch(ctx, peer)
 		if fetchErr == nil {
 			ps.Reachable = true
 			// Re-get status after successful fetch for accurate ahead/behind
-			status, _ = ds.SyncStatus(ctx, peer) // Best effort: nil status means sync info unavailable
+			status, _ = dSync(ds).SyncStatus(ctx, peer) // Best effort: nil status means sync info unavailable
 			ps.Status = status
 		} else {
 			ps.ReachError = fetchErr.Error()
@@ -389,12 +389,12 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) {
 			Password:    password,
 			Sovereignty: sov,
 		}
-		if err := store.AddFederationPeer(ctx, peer); err != nil {
+		if err := dFederation(store).AddFederationPeer(ctx, peer); err != nil {
 			FatalErrorRespectJSON("failed to add peer: %v", err)
 		}
 	} else {
 		// No credentials, just add the remote
-		if err := store.AddRemote(ctx, name, url); err != nil {
+		if err := dRemote(store).AddRemote(ctx, name, url); err != nil {
 			FatalErrorRespectJSON("failed to add peer: %v", err)
 		}
 	}
@@ -423,7 +423,7 @@ func runFederationRemovePeer(cmd *cobra.Command, args []string) {
 
 	name := args[0]
 
-	if err := store.RemoveRemote(ctx, name); err != nil {
+	if err := dRemote(store).RemoveRemote(ctx, name); err != nil {
 		FatalErrorRespectJSON("failed to remove peer: %v", err)
 	}
 
@@ -440,7 +440,7 @@ func runFederationRemovePeer(cmd *cobra.Command, args []string) {
 func runFederationListPeers(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
-	remotes, err := store.ListRemotes(ctx)
+	remotes, err := dRemote(store).ListRemotes(ctx)
 	if err != nil {
 		FatalErrorRespectJSON("failed to list peers: %v", err)
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 // runTeamWizard guides the user through team workflow setup
-func runTeamWizard(ctx context.Context, store storage.DoltStorage) error {
+func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Printf("\n%s %s\n\n", ui.RenderBold("bd"), ui.RenderBold("Team Workflow Setup Wizard"))
 	fmt.Println("This wizard will configure beads for team collaboration.")
 	fmt.Println()

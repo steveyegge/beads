@@ -25,12 +25,12 @@ Examples:
 
 		// If no args, list branches
 		if len(args) == 0 {
-			branches, err := store.ListBranches(ctx)
+			branches, err := dVC(store).ListBranches(ctx)
 			if err != nil {
 				FatalErrorRespectJSON("failed to list branches: %v", err)
 			}
 
-			currentBranch, err := store.CurrentBranch(ctx)
+			currentBranch, err := dVC(store).CurrentBranch(ctx)
 			if err != nil {
 				// Non-fatal, just don't show current marker
 				currentBranch = ""
@@ -58,7 +58,7 @@ Examples:
 
 		// Create new branch
 		branchName := args[0]
-		if err := store.Branch(ctx, branchName); err != nil {
+		if err := dVC(store).Branch(ctx, branchName); err != nil {
 			FatalErrorRespectJSON("failed to create branch: %v", err)
 		}
 

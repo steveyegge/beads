@@ -48,7 +48,7 @@ create, update, show, or close operation).`,
 			status, _ := cmd.Flags().GetString("status")
 			var customStatuses []string
 			if store != nil {
-				cs, err := store.GetCustomStatuses(rootCtx)
+				cs, err := mustConfig(store).GetCustomStatuses(rootCtx)
 				if err != nil {
 					if !jsonOutput {
 						fmt.Fprintf(os.Stderr, "%s Failed to get custom statuses: %v\n", ui.RenderWarn("!"), err)
@@ -314,7 +314,7 @@ create, update, show, or close operation).`,
 
 			// Handle claim operation atomically using compare-and-swap semantics
 			if claimFlag {
-				if err := issueStore.ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
+				if err := mustBulk(issueStore).ClaimIssue(ctx, result.ResolvedID, actor); err != nil {
 					fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
 					result.Close()
 					continue
@@ -417,7 +417,7 @@ create, update, show, or close operation).`,
 				}
 
 				// Find and remove existing parent-child dependency
-				deps, err := issueStore.GetDependencyRecords(ctx, result.ResolvedID)
+				deps, err := mustDeps(issueStore).GetDependencyRecords(ctx, result.ResolvedID)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error getting dependencies for %s: %v\n", id, err)
 					result.Close()

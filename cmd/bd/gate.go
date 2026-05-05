@@ -304,7 +304,7 @@ Examples:
 		// CreateIssue commits the issue row. AddDependency writes to the
 		// working set and needs a follow-up commit.
 		commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
-		if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+		if err := dVC(store).Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 			FatalError("failed to commit: %v", err)
 		}
 

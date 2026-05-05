@@ -33,10 +33,10 @@ func isNotFoundErr(err error) bool {
 // RoutedResult contains the result of a routed issue lookup
 type RoutedResult struct {
 	Issue      *types.Issue
-	Store      storage.DoltStorage // The store that contains this issue (may be routed)
-	Routed     bool                // true if the issue was found via routing
-	ResolvedID string              // The resolved (full) issue ID
-	closeFn    func()              // Function to close routed storage (if any)
+	Store      storage.Storage // The store that contains this issue (may be routed)
+	Routed     bool            // true if the issue was found via routing
+	ResolvedID string          // The resolved (full) issue ID
+	closeFn    func()          // Function to close routed storage (if any)
 }
 
 // Close closes any routed storage. Safe to call if Routed is false.
@@ -52,7 +52,7 @@ func (r *RoutedResult) Close() {
 //
 // Returns a RoutedResult containing the issue, resolved ID, and the store to use.
 // The caller MUST call result.Close() when done to release any routed storage.
-func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.DoltStorage, id string) (*RoutedResult, error) {
+func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.Storage, id string) (*RoutedResult, error) {
 	// Try local store first.
 	result, err := resolveAndGetFromStore(ctx, localStore, id, false)
 	if err == nil {
@@ -79,7 +79,7 @@ func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.DoltS
 }
 
 // resolveAndGetFromStore resolves a partial ID and gets the issue from a specific store.
-func resolveAndGetFromStore(ctx context.Context, s storage.DoltStorage, id string, routed bool) (*RoutedResult, error) {
+func resolveAndGetFromStore(ctx context.Context, s storage.Storage, id string, routed bool) (*RoutedResult, error) {
 	// First, resolve the partial ID
 	resolvedID, err := utils.ResolvePartialID(ctx, s, id)
 	if err != nil {
@@ -103,7 +103,7 @@ func resolveAndGetFromStore(ctx context.Context, s storage.DoltStorage, id strin
 // resolveViaAutoRouting attempts to find an issue using contributor auto-routing.
 // This is the fallback when the local store doesn't have the issue (GH#2345).
 // Returns a RoutedResult if the issue is found in the auto-routed store.
-func resolveViaAutoRouting(ctx context.Context, localStore storage.DoltStorage, id string) (*RoutedResult, error) {
+func resolveViaAutoRouting(ctx context.Context, localStore storage.Storage, id string) (*RoutedResult, error) {
 	routedStore, routed, err := openRoutedReadStore(ctx, localStore)
 	if err != nil || !routed {
 		return nil, fmt.Errorf("no auto-routed store available")
@@ -274,7 +274,7 @@ func readDoltDatabase(beadsDir string) string {
 //
 // Returns a RoutedResult containing the issue and the store to use for related queries.
 // The caller MUST call result.Close() when done to release any routed storage.
-func getIssueWithRouting(ctx context.Context, localStore storage.DoltStorage, id string) (*RoutedResult, error) {
+func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id string) (*RoutedResult, error) {
 	// Try local store first.
 	issue, err := localStore.GetIssue(ctx, id)
 	if err == nil {

@@ -228,7 +228,7 @@ Examples:
 			os.Exit(1)
 		}
 
-		if err := store.DeleteConfig(ctx, storageKey); err != nil {
+		if err := mustConfig(store).DeleteConfig(ctx, storageKey); err != nil {
 			FatalErrorRespectJSON("forgetting memory: %v", err)
 		}
 		commandDidWrite.Store(true)

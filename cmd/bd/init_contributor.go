@@ -15,7 +15,7 @@ import (
 )
 
 // runContributorWizard guides the user through OSS contributor setup
-func runContributorWizard(ctx context.Context, store storage.DoltStorage) error {
+func runContributorWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Printf("\n%s %s\n\n", ui.RenderBold("bd"), ui.RenderBold("Contributor Workflow Setup Wizard"))
 	fmt.Println("This wizard will configure beads for OSS contribution.")
 	fmt.Println()

@@ -180,7 +180,7 @@ The --reason flag provides context for the event bead (recommended).`,
 
 		var eventID string
 		// Get next child ID for the event
-		childID, err := store.GetNextChildID(ctx, fullID)
+		childID, err := mustBulk(store).GetNextChildID(ctx, fullID)
 		if err != nil {
 			FatalErrorRespectJSON("generating child ID: %v", err)
 		}

@@ -211,7 +211,7 @@ type issueSort struct {
 // repairPrefixes consolidates multiple prefixes into a single target prefix
 // Issues with the correct prefix are left unchanged.
 // Issues with incorrect prefixes get new hash-based IDs.
-func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName string, targetPrefix string, issues []*types.Issue, prefixes map[string]int, dryRun bool) error {
+func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, targetPrefix string, issues []*types.Issue, prefixes map[string]int, dryRun bool) error {
 
 	// Separate issues into correct and incorrect prefix groups
 	var correctIssues []*types.Issue
@@ -316,7 +316,7 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 		}
 
 		// Update the issue in the database
-		if err := st.UpdateIssueID(ctx, oldID, newID, issue, actorName); err != nil {
+		if err := mustBulk(st).UpdateIssueID(ctx, oldID, newID, issue, actorName); err != nil {
 			return fmt.Errorf("failed to update issue %s -> %s: %w", oldID, newID, err)
 		}
 
@@ -326,7 +326,7 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 	// Update all dependencies to use new prefix
 	for oldPrefix := range prefixes {
 		if oldPrefix != targetPrefix {
-			if err := st.RenameDependencyPrefix(ctx, oldPrefix, targetPrefix); err != nil {
+			if err := mustDeps(st).RenameDependencyPrefix(ctx, oldPrefix, targetPrefix); err != nil {
 				return fmt.Errorf("failed to update dependencies for prefix %s: %w", oldPrefix, err)
 			}
 		}
@@ -335,7 +335,7 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 	// Update counters for all old prefixes
 	for oldPrefix := range prefixes {
 		if oldPrefix != targetPrefix {
-			if err := st.RenameCounterPrefix(ctx, oldPrefix, targetPrefix); err != nil {
+			if err := mustBulk(st).RenameCounterPrefix(ctx, oldPrefix, targetPrefix); err != nil {
 				return fmt.Errorf("failed to update counter for prefix %s: %w", oldPrefix, err)
 			}
 		}
@@ -396,16 +396,16 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 			issue.Notes = oldPrefixPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
 		}
 
-		if err := store.UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
+		if err := mustBulk(store).UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
 			return fmt.Errorf("failed to update issue %s: %w", oldID, err)
 		}
 	}
 
-	if err := store.RenameDependencyPrefix(ctx, oldPrefix, newPrefix); err != nil {
+	if err := mustDeps(store).RenameDependencyPrefix(ctx, oldPrefix, newPrefix); err != nil {
 		return fmt.Errorf("failed to update dependencies: %w", err)
 	}
 
-	if err := store.RenameCounterPrefix(ctx, oldPrefix, newPrefix); err != nil {
+	if err := mustBulk(store).RenameCounterPrefix(ctx, oldPrefix, newPrefix); err != nil {
 		return fmt.Errorf("failed to update counter: %w", err)
 	}
 

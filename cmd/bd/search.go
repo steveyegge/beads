@@ -249,17 +249,17 @@ Examples:
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
-			labelsMap, err := store.GetLabelsForIssues(ctx, issueIDs)
+			labelsMap, err := mustAnnot(store).GetLabelsForIssues(ctx, issueIDs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to get labels: %v\n", err)
 				labelsMap = make(map[string][]string)
 			}
-			depCounts, err := store.GetDependencyCounts(ctx, issueIDs)
+			depCounts, err := mustDeps(store).GetDependencyCounts(ctx, issueIDs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to get dependency counts: %v\n", err)
 				depCounts = make(map[string]*types.DependencyCounts)
 			}
-			commentCounts, err := store.GetCommentCounts(ctx, issueIDs)
+			commentCounts, err := mustAnnot(store).GetCommentCounts(ctx, issueIDs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to get comment counts: %v\n", err)
 				commentCounts = make(map[string]int)
@@ -293,7 +293,7 @@ Examples:
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
 		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
+		labelsMap, _ := mustAnnot(store).GetLabelsForIssues(ctx, issueIDs)
 		for _, issue := range issues {
 			issue.Labels = labelsMap[issue.ID]
 		}

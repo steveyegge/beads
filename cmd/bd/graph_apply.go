@@ -94,7 +94,7 @@ func validateGraphApplyPlan(plan *GraphApplyPlan) error {
 	// Load custom types so user-configured types (spec, session, etc.) are accepted.
 	var customTypes []string
 	if store != nil {
-		ct, _ := store.GetCustomTypes(rootCtx)
+		ct, _ := mustConfig(store).GetCustomTypes(rootCtx)
 		customTypes = ct
 	}
 	if len(customTypes) == 0 {

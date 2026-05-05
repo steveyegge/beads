@@ -37,7 +37,7 @@ Examples:
 			FatalError("molecule '%s' not found", args[0])
 		}
 
-		activity, err := store.GetMoleculeLastActivity(ctx, moleculeID)
+		activity, err := mustAdvanced(store).GetMoleculeLastActivity(ctx, moleculeID)
 		if err != nil {
 			FatalError("%v", err)
 		}

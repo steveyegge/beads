@@ -64,7 +64,7 @@ func init() {
 }
 
 // runBackupRestore restores the database from a Dolt-native backup.
-func runBackupRestore(ctx context.Context, s storage.DoltStorage, dir string, force bool) error {
+func runBackupRestore(ctx context.Context, s storage.Storage, dir string, force bool) error {
 	if s == nil {
 		return fmt.Errorf("database is not initialized. Run 'bd init' first")
 	}
@@ -92,7 +92,7 @@ func runBackupRestore(ctx context.Context, s storage.DoltStorage, dir string, fo
 	// `bd backup sync` works immediately without a separate `bd backup add`.
 	registerBackupRemote(ctx, bs, dir)
 
-	if err := s.Commit(ctx, "bd backup restore"); err != nil {
+	if err := dVC(s).Commit(ctx, "bd backup restore"); err != nil {
 		if !strings.Contains(err.Error(), "nothing to commit") {
 			return fmt.Errorf("failed to commit restore: %w", err)
 		}
@@ -119,8 +119,8 @@ func registerBackupRemote(ctx context.Context, bs storage.BackupStore, dir strin
 
 // syncProjectIDFromDB reads _project_id from the restored database and
 // updates metadata.json to match, preventing identity mismatch errors.
-func syncProjectIDFromDB(ctx context.Context, s storage.DoltStorage) error {
-	dbID, err := s.GetMetadata(ctx, "_project_id")
+func syncProjectIDFromDB(ctx context.Context, s storage.Storage) error {
+	dbID, err := mustConfig(s).GetMetadata(ctx, "_project_id")
 	if err != nil || dbID == "" {
 		return err
 	}

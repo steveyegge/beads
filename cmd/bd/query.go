@@ -153,7 +153,7 @@ Examples:
 				for i, issue := range issues {
 					issueIDs[i] = issue.ID
 				}
-				labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
+				labelsMap, _ := mustAnnot(store).GetLabelsForIssues(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
 				for _, issue := range issues {
 					issue.Labels = labelsMap[issue.ID]
 				}
@@ -184,9 +184,9 @@ Examples:
 				for i, issue := range issues {
 					issueIDs[i] = issue.ID
 				}
-				labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)   // Best effort: display gracefully degrades with empty data
-				depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)  // Best effort: display gracefully degrades with empty data
-				commentCounts, _ := store.GetCommentCounts(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
+				labelsMap, _ := mustAnnot(store).GetLabelsForIssues(ctx, issueIDs)   // Best effort: display gracefully degrades with empty data
+				depCounts, _ := mustDeps(store).GetDependencyCounts(ctx, issueIDs)   // Best effort: display gracefully degrades with empty data
+				commentCounts, _ := mustAnnot(store).GetCommentCounts(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
 
 				for _, issue := range issues {
 					issue.Labels = labelsMap[issue.ID]
@@ -218,7 +218,7 @@ Examples:
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
-			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
+			labelsMap, _ := mustAnnot(store).GetLabelsForIssues(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
 			for _, issue := range issues {
 				issue.Labels = labelsMap[issue.ID]
 			}

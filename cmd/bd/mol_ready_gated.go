@@ -103,7 +103,7 @@ func runMolReadyGated(cmd *cobra.Command, args []string) {
 // 3. Check if that step is now ready (unblocked)
 // 4. Find the parent molecule
 // 5. Filter out molecules that are already hooked by someone
-func findGateReadyMolecules(ctx context.Context, s storage.DoltStorage) ([]*GatedMolecule, error) {
+func findGateReadyMolecules(ctx context.Context, s storage.Storage) ([]*GatedMolecule, error) {
 	// Step 1: Find all closed gate beads
 	gateType := types.IssueType("gate")
 	closedStatus := types.StatusClosed

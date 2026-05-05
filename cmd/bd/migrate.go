@@ -100,8 +100,8 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, dryRun bool) {
 
 	// Check current state of all metadata fields
 	currentVersion, _ := store.GetLocalMetadata(ctx, "bd_version")
-	currentRepoID, _ := store.GetMetadata(ctx, "repo_id")
-	currentCloneID, _ := store.GetMetadata(ctx, "clone_id")
+	currentRepoID, _ := mustConfig(store).GetMetadata(ctx, "repo_id")
+	currentCloneID, _ := mustConfig(store).GetMetadata(ctx, "clone_id")
 
 	needsVersionUpdate := currentVersion != Version
 	needsRepoID := currentRepoID == ""
@@ -204,7 +204,7 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, dryRun bool) {
 				fmt.Fprintf(os.Stderr, "Warning: could not compute repo_id: %v\n", err)
 			}
 		} else {
-			if err := store.SetMetadata(ctx, "repo_id", computed); err != nil {
+			if err := mustConfig(store).SetMetadata(ctx, "repo_id", computed); err != nil {
 				if !jsonOutput {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set repo_id: %v\n", err)
 				}
@@ -225,7 +225,7 @@ func handleDoltMetadataUpdate(cfg *configfile.Config, dryRun bool) {
 				fmt.Fprintf(os.Stderr, "Warning: could not compute clone_id: %v\n", err)
 			}
 		} else {
-			if err := store.SetMetadata(ctx, "clone_id", computed); err != nil {
+			if err := mustConfig(store).SetMetadata(ctx, "clone_id", computed); err != nil {
 				if !jsonOutput {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set clone_id: %v\n", err)
 				}
@@ -314,7 +314,7 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 
 	// Get old repo ID
 	ctx := rootCtx
-	oldRepoID, err := store.GetMetadata(ctx, "repo_id")
+	oldRepoID, err := mustConfig(store).GetMetadata(ctx, "repo_id")
 	if err != nil && err.Error() != "metadata key not found: repo_id" {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -362,7 +362,7 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 	}
 
 	// Update repo ID
-	if err := store.SetMetadata(ctx, "repo_id", newRepoID); err != nil {
+	if err := mustConfig(store).SetMetadata(ctx, "repo_id", newRepoID); err != nil {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"error":   "update_failed",

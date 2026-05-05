@@ -38,7 +38,7 @@ This helps identify:
 		// Direct mode
 		ctx := rootCtx
 
-		issues, err := store.GetStaleIssues(ctx, filter)
+		issues, err := mustAdvanced(store).GetStaleIssues(ctx, filter)
 		if err != nil {
 			FatalError("%v", err)
 		}

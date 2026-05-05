@@ -49,7 +49,7 @@ Examples:
 		var customTypes []string
 		ctx := context.Background()
 		if store != nil {
-			if ct, err := store.GetCustomTypes(ctx); err == nil {
+			if ct, err := mustConfig(store).GetCustomTypes(ctx); err == nil {
 				customTypes = ct
 			}
 		}

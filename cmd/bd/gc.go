@@ -138,7 +138,7 @@ Examples:
 		}
 
 		commitCount := 0
-		logEntries, logErr := store.Log(ctx, 0)
+		logEntries, logErr := dVC(store).Log(ctx, 0)
 		if logErr != nil {
 			WarnError("could not read Dolt commit log: %v", logErr)
 		} else {

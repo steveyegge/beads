@@ -60,7 +60,7 @@ func initTipRand() {
 
 // maybeShowTip selects and displays an eligible tip based on priority and probability
 // Respects --json and --quiet flags
-func maybeShowTip(store storage.DoltStorage) {
+func maybeShowTip(store storage.Storage) {
 	// Skip tips in JSON output mode or quiet mode
 	if jsonOutput || quietFlag {
 		return
@@ -84,7 +84,7 @@ func maybeShowTip(store storage.DoltStorage) {
 
 // selectNextTip finds the next tip to show based on conditions, frequency, priority, and probability
 // Returns nil if no tip should be shown
-func selectNextTip(store storage.DoltStorage) *Tip {
+func selectNextTip(store storage.Storage) *Tip {
 	if store == nil {
 		return nil
 	}
@@ -134,7 +134,7 @@ func selectNextTip(store storage.DoltStorage) *Tip {
 
 // getLastShown retrieves the timestamp when a tip was last shown
 // Returns zero time if never shown
-func getLastShown(store storage.DoltStorage, tipID string) time.Time {
+func getLastShown(store storage.Storage, tipID string) time.Time {
 	key := fmt.Sprintf("tip_%s_last_shown", tipID)
 	value, err := store.GetLocalMetadata(context.Background(), key)
 	if err != nil || value == "" {
@@ -151,7 +151,7 @@ func getLastShown(store storage.DoltStorage, tipID string) time.Time {
 }
 
 // recordTipShown records the timestamp when a tip was shown
-func recordTipShown(store storage.DoltStorage, tipID string) {
+func recordTipShown(store storage.Storage, tipID string) {
 	if store == nil || tipID == "" {
 		return
 	}
