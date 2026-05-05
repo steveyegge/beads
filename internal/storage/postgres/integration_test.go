@@ -266,5 +266,85 @@ func TestRoundtripIdempotency(t *testing.T) {
 	}
 }
 
+// TestAddCommentWritesEvent regression-tests be-b8p Finding #1: prior to the
+// fix, AddIssueComment used s.pool.QueryRow directly without opening a
+// transaction or recording an EventCommented row. The fix wraps the insert
+// in RunInTransaction and writes the event from inside the same tx, so a
+// rollback in either step rolls back both. We assert the event lands by
+// counting events of type EventCommented before/after a single AddComment.
+func TestAddCommentWritesEvent(t *testing.T) {
+	dsn, stop := startPG(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	store, err := openStore(ctx, storage.ConnectionConfig{DSN: dsn})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("set issue_prefix: %v", err)
+	}
+
+	issue := &types.Issue{Title: "for comment test", IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	commentedBefore := countEventsOfType(t, ctx, store, issue.ID, types.EventCommented)
+	if _, err := store.AddIssueComment(ctx, issue.ID, "tester", "audited"); err != nil {
+		t.Fatalf("add issue comment: %v", err)
+	}
+	commentedAfter := countEventsOfType(t, ctx, store, issue.ID, types.EventCommented)
+	if commentedAfter != commentedBefore+1 {
+		t.Errorf("expected one new EventCommented row, before=%d after=%d", commentedBefore, commentedAfter)
+	}
+
+	if err := store.AddComment(ctx, issue.ID, "tester", "second"); err != nil {
+		t.Fatalf("add comment: %v", err)
+	}
+	if c := countEventsOfType(t, ctx, store, issue.ID, types.EventCommented); c != commentedAfter+1 {
+		t.Errorf("AnnotationStore.AddComment did not write event, got %d expected %d", c, commentedAfter+1)
+	}
+}
+
+func countEventsOfType(t *testing.T, ctx context.Context, store *PostgresStore, issueID string, kind types.EventType) int {
+	t.Helper()
+	var n int
+	err := store.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM events WHERE issue_id = $1 AND event_type = $2`,
+		issueID, string(kind)).Scan(&n)
+	if err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	return n
+}
+
+// TestConnectionUsesUTC asserts ADR be-l7t.3 §3.5: every new pool connection
+// has its session timezone set to UTC by AfterConnect, so NOW() and
+// CURRENT_TIMESTAMP write UTC into our timezone-naive TIMESTAMP columns and
+// round-trip the same value across processes regardless of the host's
+// configured TZ.
+func TestConnectionUsesUTC(t *testing.T) {
+	dsn, stop := startPG(t)
+	defer stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	store, err := openStore(ctx, storage.ConnectionConfig{DSN: dsn})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+
+	var tz string
+	if err := store.pool.QueryRow(ctx, "SHOW TIME ZONE").Scan(&tz); err != nil {
+		t.Fatalf("show time zone: %v", err)
+	}
+	if tz != "UTC" {
+		t.Errorf("expected session timezone UTC, got %q", tz)
+	}
+}
+
 // avoid unused-import errors when the test build tag is off
 var _ = strings.HasPrefix

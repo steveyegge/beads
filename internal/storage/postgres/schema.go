@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"time"
 )
 
 // bdSchemaMigrationLockID identifies the advisory lock used for first-connect
@@ -61,8 +62,13 @@ func (s *PostgresStore) runMigrations(ctx context.Context, readOnly bool) error 
 	defer func() {
 		// Release on the same connection that acquired it; pool releasing
 		// returns the connection to the pool with the session lock still
-		// held, so we explicitly release.
-		_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", bdSchemaMigrationLockID)
+		// held, so we explicitly release. Use a fresh context with a short
+		// timeout — if the caller canceled the parent ctx mid-migration,
+		// reusing it would no-op the unlock and leak the lock to the next
+		// process that tries to migrate.
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", bdSchemaMigrationLockID)
 	}()
 
 	// Ensure bookkeeping table exists.

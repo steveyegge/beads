@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// AddIssueComment writes a comment row and returns the persisted record. Used
-// by `bd comment add`.
+// AddIssueComment writes a comment row and an EventCommented audit row in a
+// single transaction so the comment and its event survive (or fail) together.
+// Used by `bd comment add`.
 func (s *PostgresStore) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
 	c := &types.Comment{
 		IssueID:   issueID,
@@ -17,9 +19,21 @@ func (s *PostgresStore) AddIssueComment(ctx context.Context, issueID, author, te
 		Text:      text,
 		CreatedAt: time.Now().UTC(),
 	}
-	q := `INSERT INTO comments (issue_id, author, text, created_at) VALUES ($1, $2, $3, $4) RETURNING id`
-	if err := s.pool.QueryRow(ctx, q, issueID, author, text, c.CreatedAt).Scan(&c.ID); err != nil {
-		return nil, wrapErr("add issue comment", err)
+	err := s.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+		ptx := tx.(*pgxTransaction)
+		commentTable, eventTable := commentTablesForID(ctx, ptx.tx, issueID)
+		//nolint:gosec // commentTable is allowlisted via guardTable inside commentTablesForID
+		q := fmt.Sprintf(
+			`INSERT INTO %s (issue_id, author, text, created_at) VALUES ($1, $2, $3, $4) RETURNING id`,
+			commentTable,
+		)
+		if err := ptx.tx.QueryRow(ctx, q, issueID, author, text, c.CreatedAt).Scan(&c.ID); err != nil {
+			return wrapErr("add issue comment", err)
+		}
+		return recordEvent(ctx, ptx.tx, eventTable, issueID, types.EventCommented, author, "", text)
+	})
+	if err != nil {
+		return nil, err
 	}
 	return c, nil
 }

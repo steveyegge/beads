@@ -270,7 +270,8 @@ func (t *pgxTransaction) AddDependency(ctx context.Context, dep *types.Dependenc
 	if err := addDependencyRow(ctx, t.tx, dep, t.opts.SkipPrefixValidation); err != nil {
 		return err
 	}
-	return recordEvent(ctx, t.tx, "events", dep.IssueID, types.EventDependencyAdded, actor, "", dep.DependsOnID)
+	_, eventTable := dependencyTablesForID(ctx, t.tx, dep.IssueID)
+	return recordEvent(ctx, t.tx, eventTable, dep.IssueID, types.EventDependencyAdded, actor, "", dep.DependsOnID)
 }
 
 // AddDependencyWithOptions allows per-call cycle-check skipping.
@@ -278,7 +279,8 @@ func (t *pgxTransaction) AddDependencyWithOptions(ctx context.Context, dep *type
 	if err := addDependencyRow(ctx, t.tx, dep, opts.SkipCycleCheck); err != nil {
 		return err
 	}
-	return recordEvent(ctx, t.tx, "events", dep.IssueID, types.EventDependencyAdded, actor, "", dep.DependsOnID)
+	_, eventTable := dependencyTablesForID(ctx, t.tx, dep.IssueID)
+	return recordEvent(ctx, t.tx, eventTable, dep.IssueID, types.EventDependencyAdded, actor, "", dep.DependsOnID)
 }
 
 // RemoveDependency drops the dep edge and writes an event.
@@ -286,7 +288,8 @@ func (t *pgxTransaction) RemoveDependency(ctx context.Context, issueID, dependsO
 	if err := removeDependencyRow(ctx, t.tx, issueID, dependsOnID); err != nil {
 		return err
 	}
-	return recordEvent(ctx, t.tx, "events", issueID, types.EventDependencyRemoved, actor, dependsOnID, "")
+	_, eventTable := dependencyTablesForID(ctx, t.tx, issueID)
+	return recordEvent(ctx, t.tx, eventTable, issueID, types.EventDependencyRemoved, actor, dependsOnID, "")
 }
 
 // GetDependencyRecords returns dep records for one issue from inside the tx.
@@ -296,23 +299,27 @@ func (t *pgxTransaction) GetDependencyRecords(ctx context.Context, issueID strin
 
 // AddLabel attaches a label.
 func (t *pgxTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	if err := addLabelRow(ctx, t.tx, "labels", issueID, label); err != nil {
+	labelTable, eventTable := labelTablesForID(ctx, t.tx, issueID)
+	if err := addLabelRow(ctx, t.tx, labelTable, issueID, label); err != nil {
 		return err
 	}
-	return recordEvent(ctx, t.tx, "events", issueID, types.EventLabelAdded, actor, "", label)
+	return recordEvent(ctx, t.tx, eventTable, issueID, types.EventLabelAdded, actor, "", label)
 }
 
 // RemoveLabel detaches a label.
 func (t *pgxTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	if err := removeLabelRow(ctx, t.tx, "labels", issueID, label); err != nil {
+	labelTable, eventTable := labelTablesForID(ctx, t.tx, issueID)
+	if err := removeLabelRow(ctx, t.tx, labelTable, issueID, label); err != nil {
 		return err
 	}
-	return recordEvent(ctx, t.tx, "events", issueID, types.EventLabelRemoved, actor, label, "")
+	return recordEvent(ctx, t.tx, eventTable, issueID, types.EventLabelRemoved, actor, label, "")
 }
 
-// GetLabels reads labels in-tx.
+// GetLabels reads labels in-tx, picking the correct table based on whether
+// issueID is an active wisp.
 func (t *pgxTransaction) GetLabels(ctx context.Context, issueID string) ([]string, error) {
-	return getLabelsFromTable(ctx, t.tx, "labels", issueID)
+	labelTable, _ := labelTablesForID(ctx, t.tx, issueID)
+	return getLabelsFromTable(ctx, t.tx, labelTable, issueID)
 }
 
 // SetConfig / GetConfig pass through.
@@ -341,14 +348,16 @@ func (t *pgxTransaction) GetLocalMetadata(ctx context.Context, key string) (stri
 
 // AddComment / ImportIssueComment / GetIssueComments — tx-scoped.
 func (t *pgxTransaction) AddComment(ctx context.Context, issueID, actor, comment string) error {
-	_, err := t.tx.Exec(ctx,
-		`INSERT INTO comments (issue_id, author, text, created_at) VALUES ($1, $2, $3, NOW())`,
-		issueID, actor, comment,
+	commentTable, eventTable := commentTablesForID(ctx, t.tx, issueID)
+	//nolint:gosec // commentTable is allowlisted via guardTable inside commentTablesForID
+	stmt := fmt.Sprintf(
+		`INSERT INTO %s (issue_id, author, text, created_at) VALUES ($1, $2, $3, NOW())`,
+		commentTable,
 	)
-	if err != nil {
+	if _, err := t.tx.Exec(ctx, stmt, issueID, actor, comment); err != nil {
 		return wrapErr("add comment in tx", err)
 	}
-	return recordEvent(ctx, t.tx, "events", issueID, types.EventCommented, actor, "", comment)
+	return recordEvent(ctx, t.tx, eventTable, issueID, types.EventCommented, actor, "", comment)
 }
 
 func (t *pgxTransaction) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
@@ -358,17 +367,22 @@ func (t *pgxTransaction) ImportIssueComment(ctx context.Context, issueID, author
 		Text:      text,
 		CreatedAt: createdAt,
 	}
-	if err := t.tx.QueryRow(ctx,
-		`INSERT INTO comments (issue_id, author, text, created_at) VALUES ($1, $2, $3, $4) RETURNING id`,
-		issueID, author, text, createdAt,
-	).Scan(&c.ID); err != nil {
+	commentTable, _ := commentTablesForID(ctx, t.tx, issueID)
+	//nolint:gosec // commentTable is allowlisted via guardTable inside commentTablesForID
+	stmt := fmt.Sprintf(
+		`INSERT INTO %s (issue_id, author, text, created_at) VALUES ($1, $2, $3, $4) RETURNING id`,
+		commentTable,
+	)
+	if err := t.tx.QueryRow(ctx, stmt, issueID, author, text, createdAt).Scan(&c.ID); err != nil {
 		return nil, wrapErr("import comment in tx", err)
 	}
 	return c, nil
 }
 
 func (t *pgxTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
-	q := `SELECT id::text, issue_id, author, text, created_at FROM comments WHERE issue_id = $1 ORDER BY created_at ASC`
+	commentTable, _ := commentTablesForID(ctx, t.tx, issueID)
+	//nolint:gosec // commentTable is allowlisted via guardTable inside commentTablesForID
+	q := fmt.Sprintf(`SELECT id::text, issue_id, author, text, created_at FROM %s WHERE issue_id = $1 ORDER BY created_at ASC`, commentTable)
 	rows, err := t.tx.Query(ctx, q, issueID)
 	if err != nil {
 		return nil, wrapErr("get comments in tx", err)

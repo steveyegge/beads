@@ -36,6 +36,7 @@ func addDependencyRow(ctx context.Context, c pgxConn, dep *types.Dependency, ski
 	if dep.CreatedAt.IsZero() {
 		dep.CreatedAt = time.Now().UTC()
 	}
+	depTable, _ := dependencyTablesForID(ctx, c, dep.IssueID)
 	if !skipCycleCheck && dep.Type.AffectsReadyWork() {
 		hasCycle, err := wouldCreateCycle(ctx, c, dep.IssueID, dep.DependsOnID)
 		if err != nil {
@@ -45,8 +46,10 @@ func addDependencyRow(ctx context.Context, c pgxConn, dep *types.Dependency, ski
 			return fmt.Errorf("postgres: AddDependency: would create cycle (%s → %s)", dep.IssueID, dep.DependsOnID)
 		}
 	}
-	stmt := `
-		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+	depTable = guardTable(depTable)
+	//nolint:gosec // depTable is allowlisted via dependencyTablesForID + guardTable
+	stmt := fmt.Sprintf(`
+		INSERT INTO %s (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (issue_id, depends_on_id) DO UPDATE SET
 			type = EXCLUDED.type,
@@ -54,7 +57,7 @@ func addDependencyRow(ctx context.Context, c pgxConn, dep *types.Dependency, ski
 			created_by = EXCLUDED.created_by,
 			metadata = EXCLUDED.metadata,
 			thread_id = EXCLUDED.thread_id
-	`
+	`, depTable)
 	if _, err := c.Exec(ctx, stmt,
 		dep.IssueID, dep.DependsOnID, string(dep.Type), dep.CreatedAt,
 		dep.CreatedBy, jsonbMetadata([]byte(dep.Metadata)), dep.ThreadID,
@@ -93,9 +96,11 @@ func (s *PostgresStore) RemoveDependency(ctx context.Context, issueID, dependsOn
 }
 
 func removeDependencyRow(ctx context.Context, c pgxConn, issueID, dependsOnID string) error {
-	if _, err := c.Exec(ctx,
-		`DELETE FROM dependencies WHERE issue_id = $1 AND depends_on_id = $2`, issueID, dependsOnID,
-	); err != nil {
+	depTable, _ := dependencyTablesForID(ctx, c, issueID)
+	depTable = guardTable(depTable)
+	//nolint:gosec // depTable is allowlisted via dependencyTablesForID + guardTable
+	stmt := fmt.Sprintf(`DELETE FROM %s WHERE issue_id = $1 AND depends_on_id = $2`, depTable)
+	if _, err := c.Exec(ctx, stmt, issueID, dependsOnID); err != nil {
 		return wrapErr("remove dependency", err)
 	}
 	return nil
