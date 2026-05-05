@@ -1,10 +1,9 @@
+//go:build cgo && integration && dolt_only
+
 // contributor_routing_e2e_test.go - E2E tests for contributor routing
 //
 // These tests verify that issues are correctly routed to the planning repo
 // when the user is detected as a contributor with auto-routing enabled.
-
-//go:build cgo && integration
-// +build cgo,integration
 
 package main
 

@@ -39,7 +39,7 @@ jobs:
           # GitHub Actions (known issue, see scripts/repro-dolt-hang/).
           # Non-Docker integration tests still run via the installed dolt binary.
           BEADS_TEST_SKIP: dolt
-        run: go test -v -race -tags=integration,gms_pure_go -coverprofile=coverage.out -timeout=30m ./...
+        run: go test -v -race -tags=integration,gms_pure_go,dolt_only -coverprofile=coverage.out -timeout=30m ./...
 
       - name: Check coverage threshold
         run: |

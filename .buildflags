@@ -15,7 +15,12 @@ export CGO_ENABLED
 # Build tag that tells go-mysql-server to use Go's stdlib regex instead of
 # the ICU-backed go-icu-regex. Exported so callers can compose with extra
 # tags: `go test -tags=regression,$BEADS_BUILD_TAGS ...`
-export BEADS_BUILD_TAGS="gms_pure_go"
+#
+# dolt_only gates test files that intrinsically depend on Dolt's
+# versioning/federation surface so the PG leg can compile cleanly with
+# -tags=gms_pure_go,integration_pg without silent skips. Production code
+# is never tagged dolt_only, so adding it here is a no-op for `go build`.
+export BEADS_BUILD_TAGS="gms_pure_go,dolt_only"
 
 # Propagate the tag via GOFLAGS so every subsequent bare `go` invocation
 # picks it up automatically. Idempotent: re-sourcing is a no-op.

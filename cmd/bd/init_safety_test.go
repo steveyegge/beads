@@ -1,3 +1,5 @@
+//go:build dolt_only
+
 package main
 
 // Init-safety guard matrix + end-to-end subprocess tests.

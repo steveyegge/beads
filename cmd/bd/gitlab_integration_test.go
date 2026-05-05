@@ -1,5 +1,4 @@
-//go:build cgo && integration
-// +build cgo,integration
+//go:build cgo && integration && dolt_only
 
 // Package main provides the bd CLI commands.
 package main

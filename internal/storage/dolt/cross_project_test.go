@@ -1,3 +1,5 @@
+//go:build dolt_only
+
 // Package dolt provides cross-project data isolation tests for shared Dolt servers.
 //
 // These tests validate that when multiple projects share a single Dolt server

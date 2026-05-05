@@ -1,4 +1,4 @@
-//go:build cgo && integration
+//go:build cgo && integration && dolt_only
 
 package main
 

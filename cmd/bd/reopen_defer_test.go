@@ -1,6 +1,6 @@
-// reopen_defer_test.go - Test that reopen clears defer_until.
+//go:build cgo && integration && dolt_only
 
-//go:build cgo && integration
+// reopen_defer_test.go - Test that reopen clears defer_until.
 
 package main
 

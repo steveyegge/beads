@@ -1,6 +1,6 @@
-// reparent_test.go - Test that reparented issues don't appear under old parent.
+//go:build cgo && integration && dolt_only
 
-//go:build cgo && integration
+// reparent_test.go - Test that reparented issues don't appear under old parent.
 
 package main
 

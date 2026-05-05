@@ -47,6 +47,13 @@ endif
 # opt-in ICU regex path).
 BUILD_TAGS := gms_pure_go
 
+# DOLT_TEST_TAGS is the tag set for the Dolt test leg. Adds dolt_only on top
+# of the production build tag — used by `make test` and the Dolt bench targets
+# that intentionally exercise Dolt-tagged tests. The PG leg targets explicitly
+# do NOT inherit DOLT_TEST_TAGS; they compose with `BUILD_TAGS` instead so the
+# PG leg compiles cleanly without dolt_only-gated files.
+DOLT_TEST_TAGS := gms_pure_go,dolt_only
+
 # Build the bd binary
 build:
 	@echo "Building bd..."
@@ -116,14 +123,14 @@ test-migration: build
 bench:
 	@echo "Running performance benchmarks (Dolt backend)..."
 	@echo ""
-	go test -tags "$(BUILD_TAGS)" -bench=. -benchtime=1s -benchmem -run=^$$ ./internal/storage/dolt/ -timeout=30m
+	go test -tags "$(DOLT_TEST_TAGS)" -bench=. -benchtime=1s -benchmem -run=^$$ ./internal/storage/dolt/ -timeout=30m
 	@echo ""
 	@echo "Benchmark complete."
 
 # Run quick benchmarks (shorter benchtime for faster feedback)
 bench-quick:
 	@echo "Running quick performance benchmarks..."
-	go test -tags "$(BUILD_TAGS)" -bench=. -benchtime=100ms -benchmem -run=^$$ ./internal/storage/dolt/ -timeout=15m
+	go test -tags "$(DOLT_TEST_TAGS)" -bench=. -benchtime=100ms -benchmem -run=^$$ ./internal/storage/dolt/ -timeout=15m
 
 # Run performance benchmarks against the PostgreSQL storage backend.
 # Requires either:

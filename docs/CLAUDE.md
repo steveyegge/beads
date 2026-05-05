@@ -90,6 +90,35 @@ bd ready
 - Script-based tests in `cmd/bd/testdata/*.txt` (see `scripttest_test.go`)
 - RPC layer has extensive isolation and edge case coverage
 
+### Build-tag conventions
+
+Test files use a small set of composable build tags:
+
+- **`gms_pure_go`** — always required. Avoids the ICU dependency from
+  go-mysql-server (see `docs/ICU-POLICY.md`). Set in `.buildflags` and
+  enforced by `scripts/check-build-tags.sh`.
+- **`cgo`** — gates files that need the embedded Dolt engine (which
+  requires CGO). Auto-set when `CGO_ENABLED=1`.
+- **`integration`** — opts the file into the slow integration leg run by
+  `nightly.yml` and `scripts/test.sh -tags=integration`.
+- **`dolt_only`** — gates test files that intrinsically depend on Dolt's
+  versioning/federation surface (sql-server lifecycle, federation
+  queries, `dVC().Commit`, `GetCurrentCommit`, embedded `EmbeddedDoltStore`
+  fixtures). The Postgres CI leg compiles with
+  `-tags=gms_pure_go,integration_pg` and **does not** include
+  `dolt_only`, so dolt_only-tagged files are cleanly excluded from the
+  PG leg without runtime skips.
+- **`integration_pg`** / **`integration_parity`** — opt files into the
+  Postgres integration leg or the cross-backend parity scenario.
+
+When adding a new test file, default to no extra tag for pure unit
+tests. Add `cgo` if the file opens `EmbeddedDoltStore` or pulls in
+any cgo-only dependency. Add `dolt_only` on top if the file calls
+into Dolt's versioning/federation surface or relies on a Dolt-only
+test fixture (`newTestStore`, `openStore`, `setupTestDB` from
+`cmd/bd/test_helpers_test.go`, etc.). Production code is never
+`dolt_only`-tagged — the tag exists only to gate test files.
+
 ## Important Notes
 
 - **Always read AGENTS.md first** - it has the complete workflow

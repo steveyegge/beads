@@ -1,3 +1,5 @@
+//go:build dolt_only
+
 // Package dolt provides concurrency tests for embedded Dolt with multiple writers.
 //
 // These tests validate that an orchestrator can safely run multiple workers concurrently,

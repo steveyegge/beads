@@ -1,4 +1,4 @@
-//go:build cgo && e2e
+//go:build cgo && e2e && dolt_only
 
 package main
 

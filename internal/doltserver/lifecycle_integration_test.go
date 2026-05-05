@@ -1,4 +1,4 @@
-//go:build integration && !windows
+//go:build integration && !windows && dolt_only
 
 package doltserver_test
 

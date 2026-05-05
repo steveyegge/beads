@@ -184,11 +184,11 @@ jobs:
           gotestsum \
             --junitfile junit.xml \
             --format testdox \
-            -- -tags gms_pure_go -race -short -coverprofile=coverage.out -skip '^TestEmbedded' ./...
+            -- -tags 'gms_pure_go dolt_only' -race -short -coverprofile=coverage.out -skip '^TestEmbedded' ./...
 
       - name: Test
         if: ${{ !matrix.coverage }}
-        run: go test -tags gms_pure_go ${{ matrix.test-flags }} -skip '^TestEmbedded' ./...
+        run: go test -tags 'gms_pure_go dolt_only' ${{ matrix.test-flags }} -skip '^TestEmbedded' ./...
 
       - name: Upload coverage to Codecov
         if: matrix.coverage && !cancelled()
@@ -232,10 +232,10 @@ jobs:
         run: go build -tags gms_pure_go -race -o /tmp/bd-embedded-test ./cmd/bd/
 
       - name: Build embedded storage test binary
-        run: go test -tags gms_pure_go -race -c -o /tmp/embeddeddolt-test ./internal/storage/embeddeddolt/
+        run: go test -tags 'gms_pure_go dolt_only' -race -c -o /tmp/embeddeddolt-test ./internal/storage/embeddeddolt/
 
       - name: Build embedded cmd test binary
-        run: go test -tags gms_pure_go -race -c -o /tmp/bd-cmd-test ./cmd/bd/
+        run: go test -tags 'gms_pure_go dolt_only' -race -c -o /tmp/bd-cmd-test ./cmd/bd/
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

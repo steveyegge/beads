@@ -1,5 +1,4 @@
-//go:build integration
-// +build integration
+//go:build integration && dolt_only
 
 package beads_test
 

@@ -1,3 +1,5 @@
+//go:build dolt_only
+
 // Package dolt provides performance benchmarks for the Dolt storage backend.
 // Run with: go test -bench=. -benchmem ./internal/storage/dolt/...
 //

@@ -1,3 +1,5 @@
+//go:build dolt_only
+
 package dolt
 
 import (

@@ -1,5 +1,4 @@
-//go:build cgo && integration
-// +build cgo,integration
+//go:build cgo && integration && dolt_only
 
 package compact
 
