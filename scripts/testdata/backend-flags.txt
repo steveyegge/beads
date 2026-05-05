@@ -1,0 +1,689 @@
+# bd backend flag-tree fixture (be-6fk.6 FR-7 enforcement)
+# Excluded: init migrate
+# Regenerate via: scripts/check-backend-flags.sh --update
+
+## admin
+--help
+
+## ado
+--help
+
+## assign
+--help
+
+## audit
+--help
+
+## backup
+--help
+
+## batch
+--dry-run
+--file
+--help
+--message
+
+## blocked
+--help
+--parent
+
+## bootstrap
+--dry-run
+--help
+--non-interactive
+--yes
+
+## branch
+--help
+
+## children
+--help
+
+## close
+--claim-next
+--continue
+--force
+--help
+--no-auto
+--reason
+--reason-file
+--session
+--suggest-next
+
+## comment
+--file
+--help
+--stdin
+
+## comments
+--help
+--local-time
+
+## compact
+--days
+--dry-run
+--force
+--help
+
+## completion
+--help
+
+## config
+--help
+
+## context
+--help
+
+## cook
+--dry-run
+--force
+--help
+--mode
+--persist
+--prefix
+--search-path
+--var
+
+## count
+--assignee
+--by-assignee
+--by-label
+--by-priority
+--by-status
+--by-type
+--closed-after
+--closed-before
+--created-after
+--created-before
+--desc-contains
+--empty-description
+--help
+--id
+--label
+--label-any
+--no-assignee
+--no-labels
+--notes-contains
+--priority
+--priority-max
+--priority-min
+--status
+--title
+--title-contains
+--type
+--updated-after
+--updated-before
+
+## create
+--acceptance
+--append-notes
+--assignee
+--body-file
+--context
+--defer
+--deps
+--description
+--design
+--design-file
+--dry-run
+--due
+--ephemeral
+--estimate
+--event-actor
+--event-category
+--event-payload
+--event-target
+--external-ref
+--file
+--force
+--graph
+--help
+--id
+--labels
+--metadata
+--mol-type
+--no-history
+--no-inherit-labels
+--notes
+--parent
+--priority
+--repo
+--silent
+--skills
+--spec-id
+--stdin
+--title
+--type
+--validate
+--waits-for
+--waits-for-gate
+--wisp-type
+
+## create-form
+--help
+--parent
+
+## defer
+--help
+--until
+
+## delete
+--cascade
+--dry-run
+--force
+--from-file
+--help
+
+## dep
+--blocks
+--help
+--no-cycle-check
+
+## diff
+--help
+
+## doctor
+--agent
+--check
+--check-health
+--clean
+--deep
+--dry-run
+--fix
+--fix-child-parent
+--help
+--interactive
+--migration
+--orchestrator
+--orchestrator-duplicates-threshold
+--output
+--perf
+--server
+--verbose
+--yes
+
+## dolt
+--help
+
+## duplicate
+--help
+--of
+
+## duplicates
+--auto-merge
+--dry-run
+--help
+
+## edit
+--acceptance
+--description
+--design
+--help
+--notes
+--title
+
+## epic
+--help
+
+## export
+--all
+--help
+--include-infra
+--no-memories
+--output
+--scrub
+
+## federation
+--help
+
+## find-duplicates
+--help
+--limit
+--method
+--model
+--status
+--threshold
+
+## flatten
+--dry-run
+--force
+--help
+
+## forget
+--help
+
+## formula
+--help
+
+## gate
+--help
+
+## gc
+--dry-run
+--force
+--help
+--older-than
+--skip-decay
+--skip-dolt
+
+## github
+--help
+
+## gitlab
+--help
+
+## graph
+--all
+--box
+--compact
+--dot
+--help
+--html
+
+## help
+--all
+--doc
+--help
+--list
+
+## history
+--help
+--limit
+
+## hooks
+--help
+
+## human
+--help
+
+## import
+--dedup
+--dry-run
+--help
+--input
+
+## info
+--help
+--json
+--schema
+--thanks
+--whats-new
+
+## init-safety
+--help
+
+## jira
+--help
+
+## kv
+--help
+
+## label
+--help
+
+## linear
+--help
+
+## link
+--help
+--type
+
+## lint
+--help
+--status
+--type
+
+## list
+--all
+--assignee
+--closed-after
+--closed-before
+--created-after
+--created-before
+--defer-after
+--defer-before
+--deferred
+--desc-contains
+--due-after
+--due-before
+--empty-description
+--exclude-label
+--exclude-type
+--flat
+--format
+--has-metadata-key
+--help
+--id
+--include-gates
+--include-infra
+--include-templates
+--label
+--label-any
+--label-pattern
+--label-regex
+--limit
+--long
+--metadata-field
+--mol-type
+--no-assignee
+--no-labels
+--no-pager
+--no-parent
+--no-pinned
+--notes-contains
+--overdue
+--parent
+--pinned
+--pretty
+--priority
+--priority-max
+--priority-min
+--ready
+--reverse
+--sort
+--spec
+--status
+--title
+--title-contains
+--tree
+--type
+--updated-after
+--updated-before
+--watch
+--wisp-type
+
+## mail
+--help
+
+## memories
+--help
+
+## merge-slot
+--help
+
+## mol
+--help
+
+## note
+--file
+--help
+--stdin
+
+## notion
+--help
+
+## onboard
+--help
+
+## orphans
+--details
+--fix
+--help
+--label
+--label-any
+
+## ping
+--help
+
+## preflight
+--check
+--fix
+--help
+--json
+--skip-lint
+
+## prime
+--export
+--full
+--help
+--mcp
+--stealth
+
+## priority
+--help
+
+## promote
+--help
+--reason
+
+## prune
+--dry-run
+--force
+--help
+--older-than
+--pattern
+
+## purge
+--dry-run
+--force
+--help
+--older-than
+--pattern
+
+## q
+--help
+--labels
+--priority
+--type
+
+## query
+--all
+--help
+--limit
+--long
+--parse-only
+--reverse
+--sort
+
+## quickstart
+--help
+
+## ready
+--assignee
+--claim
+--exclude-label
+--exclude-type
+--explain
+--gated
+--has-metadata-key
+--help
+--include-deferred
+--include-ephemeral
+--label
+--label-any
+--limit
+--metadata-field
+--mol
+--mol-type
+--parent
+--plain
+--pretty
+--priority
+--sort
+--type
+--unassigned
+
+## recall
+--help
+
+## remember
+--help
+--key
+
+## rename
+--help
+
+## rename-prefix
+--dry-run
+--help
+--repair
+
+## reopen
+--help
+--reason
+
+## repo
+--help
+
+## restore
+--help
+--json
+
+## rules
+--help
+
+## search
+--assignee
+--closed-after
+--closed-before
+--created-after
+--created-before
+--desc-contains
+--empty-description
+--external-contains
+--has-metadata-key
+--help
+--label
+--label-any
+--limit
+--long
+--metadata-field
+--no-assignee
+--no-labels
+--notes-contains
+--priority-max
+--priority-min
+--query
+--reverse
+--sort
+--status
+--type
+--updated-after
+--updated-before
+
+## set-state
+--help
+--reason
+
+## setup
+--add
+--check
+--global
+--help
+--list
+--output
+--print
+--project
+--remove
+--stealth
+
+## ship
+--dry-run
+--force
+--help
+
+## show
+--as-of
+--children
+--current
+--help
+--id
+--local-time
+--long
+--refs
+--short
+--thread
+--watch
+
+## sql
+--csv
+--help
+
+## stale
+--days
+--help
+--limit
+--status
+
+## state
+--help
+
+## status
+--all
+--assigned
+--help
+--no-activity
+
+## statuses
+--help
+
+## supersede
+--help
+--with
+
+## swarm
+--help
+
+## tag
+--help
+
+## todo
+--help
+
+## types
+--help
+
+## undefer
+--help
+
+## update
+--acceptance
+--add-label
+--allow-empty-description
+--append-notes
+--assignee
+--await-id
+--body-file
+--claim
+--defer
+--description
+--design
+--design-file
+--due
+--ephemeral
+--estimate
+--external-ref
+--help
+--history
+--metadata
+--no-history
+--notes
+--parent
+--persistent
+--priority
+--remove-label
+--session
+--set-labels
+--set-metadata
+--spec-id
+--status
+--stdin
+--title
+--type
+--unset-metadata
+
+## upgrade
+--help
+
+## vc
+--help
+
+## version
+--help
+
+## where
+--help
+
+## worktree
+--help
+

@@ -831,7 +831,17 @@ var rootCmd = &cobra.Command{
 			// Use public API to find database (same logic as extensions)
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
-			} else {
+			} else if beadsDir := beads.FindBeadsDir(); beadsDir != "" {
+				// Postgres-backed projects have no on-disk database path —
+				// the database lives in the PG cluster, addressed via the
+				// stripped DSN in metadata.json. Treat the .beads dir
+				// itself as the workspace root so resolveCommandBeadsDir
+				// produces the right beadsDir downstream.
+				if cfg, _ := configfile.Load(beadsDir); cfg != nil && cfg.GetBackend() == configfile.BackendPostgres {
+					dbPath = utils.CanonicalizePath(filepath.Join(beadsDir, beads.CanonicalDatabaseName))
+				}
+			}
+			if dbPath == "" {
 				// No database found — allow some commands to run without a database
 				// - import: auto-initializes database if missing
 				// - setup: creates editor integration files (no DB needed)
@@ -904,6 +914,43 @@ var rootCmd = &cobra.Command{
 
 		// Initialize direct storage access
 		var err error
+
+		// Postgres-backed projects open via the registry (which composes the
+		// runtime DSN from BEADS_POSTGRES_PASSWORD + the stripped form on
+		// metadata.json). Dolt-specific bootstrap (server flags, embedded
+		// data dir, federation remote, JSONL auto-import) is intentionally
+		// skipped — those code paths assume the on-disk Dolt layout that
+		// PG installations don't have.
+		if cfg, _ := configfile.Load(beadsDir); cfg != nil && cfg.GetBackend() == configfile.BackendPostgres {
+			pgStore, openErr := newStoreFromConfig(rootCtx, beadsDir)
+			if openErr != nil {
+				FatalError("failed to open postgres database: %v", openErr)
+			}
+			setStore(pgStore)
+			storeMutex.Lock()
+			storeIsReadOnly = useReadOnly
+			storeActive = true
+			storeMutex.Unlock()
+
+			if !useReadOnly && !globalFlag && os.Getenv("BEADS_SKIP_IDENTITY_CHECK") != "1" {
+				validateWorkspaceIdentity(rootCtx, beadsDir)
+			}
+
+			hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+			if hookRunner != nil && !config.GetBool("no-hooks") {
+				setStore(storage.NewHookFiringStore(getStore(), hookRunner))
+			}
+
+			if cmd.Name() != "import" {
+				loader := molecules.NewLoader(getStore())
+				if _, err := loader.LoadAll(rootCtx, beadsDir); err != nil {
+					debug.Logf("warning: failed to load molecules: %v", err)
+				}
+			}
+
+			syncCommandContext()
+			return
+		}
 
 		// Create Dolt storage config — resolve dolt data dir which may be
 		// on a different filesystem (e.g., ext4 for performance on WSL).

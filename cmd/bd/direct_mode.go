@@ -30,7 +30,7 @@ func ensureStoreActive() error {
 
 	// Use the factory to create the appropriate backend
 	// based on metadata.json configuration and build tags
-	store, err := newDoltStoreFromConfig(getRootContext(), beadsDir)
+	store, err := newStoreFromConfig(getRootContext(), beadsDir)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w\nHint: %s", err, diagHint())
 	}

@@ -1,0 +1,124 @@
+### step: create-parent
+$ bd create Parent issue -t task -p 1 --json
+exit: 0
+stdout:
+{
+  "created_at": "<TIMESTAMP>",
+  "created_by": "beads--builder",
+  "id": "<ID>",
+  "issue_type": "task",
+  "owner": "jim@wordelman.name",
+  "priority": 1,
+  "schema_version": 1,
+  "status": "open",
+  "title": "Parent issue",
+  "updated_at": "<TIMESTAMP>"
+}
+
+stderr:
+
+
+### step: create-child
+$ bd create Child issue -t task -p 2 --json
+exit: 0
+stdout:
+{
+  "created_at": "<TIMESTAMP>",
+  "created_by": "beads--builder",
+  "id": "<ID>",
+  "issue_type": "task",
+  "owner": "jim@wordelman.name",
+  "priority": 2,
+  "schema_version": 1,
+  "status": "open",
+  "title": "Child issue",
+  "updated_at": "<TIMESTAMP>"
+}
+
+stderr:
+
+
+### step: dep-add
+$ bd dep add <ID> <ID> --type blocks
+exit: 0
+stdout:
+✓ Added dependency: <ID> (Child issue) depends on <ID> (Parent issue) (blocks)
+
+stderr:
+
+
+### step: ready
+$ bd ready --json
+exit: 0
+stdout:
+[
+  {
+    "id": "<ID>",
+    "title": "Parent issue",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "jim@wordelman.name",
+    "created_at": "<TIMESTAMP>",
+    "created_by": "beads--builder",
+    "updated_at": "<TIMESTAMP>",
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0
+  }
+]
+
+stderr:
+
+
+### step: claim-parent
+$ bd update <ID> --claim --assignee tester --json
+exit: 0
+stdout:
+[
+  {
+    "id": "<ID>",
+    "title": "Parent issue",
+    "status": "in_progress",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "tester",
+    "owner": "jim@wordelman.name",
+    "created_at": "<TIMESTAMP>",
+    "created_by": "beads--builder",
+    "updated_at": "<TIMESTAMP>",
+    "started_at": "<TIMESTAMP>"
+  }
+]
+
+stderr:
+
+
+### step: comment
+$ bd comment <ID> parity scenario comment
+exit: 0
+stdout:
+✓ Comment added to <ID> — Parent issue
+
+stderr:
+
+
+### step: close-parent
+$ bd close <ID> --reason scenario complete
+exit: 0
+stdout:
+✓ Closed <ID> — Parent issue: scenario complete
+
+stderr:
+
+
+### step: export
+$ bd export
+exit: 0
+stdout:
+{"_type":"issue","id":"<ID>","title":"Child issue","status":"open","priority":2,"issue_type":"task","owner":"jim@wordelman.name","created_at": "<TIMESTAMP>","created_by":"beads--builder","updated_at": "<TIMESTAMP>","dependencies":[{"issue_id":"<ID>","depends_on_id":"<ID>","type":"blocks","created_at": "<TIMESTAMP>"}],"dependency_count":1,"dependent_count":0,"comment_count":0}
+{"_type":"issue","id":"<ID>","title":"Parent issue","status":"closed","priority":1,"issue_type":"task","assignee":"tester","owner":"jim@wordelman.name","created_at": "<TIMESTAMP>","created_by":"beads--builder","updated_at": "<TIMESTAMP>","started_at": "<TIMESTAMP>","closed_at": "<TIMESTAMP>","close_reason":"scenario complete","comments":[{"id":"<UUID>","issue_id":"<ID>","author":"beads--builder","text":"parity scenario comment","created_at": "<TIMESTAMP>"}],"dependency_count":0,"dependent_count":1,"comment_count":1}
+
+stderr:
+
+

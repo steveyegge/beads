@@ -5,49 +5,26 @@ package postgres
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/postgres/testfixture"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// pgDSNEnv lets CI hand us a pre-provisioned PG instance and skip
-// testcontainers startup. Matches the architect's plan in P6.
-const pgDSNEnv = "BEADS_TEST_POSTGRES_DSN"
-
-// startPG spins up postgres:14-alpine via testcontainers-go (or returns the
-// pre-configured DSN when BEADS_TEST_POSTGRES_DSN is set).
+// startPG returns a per-test PG DSN. It delegates to the shared testfixture
+// helper, which spins up postgres:14-alpine via testcontainers-go (or
+// honors BEADS_TEST_POSTGRES_DSN when CI provides a service container) and
+// creates a fresh `bd_test_<rand>` database with DROP-on-cleanup.
+//
+// The returned closure is now a no-op — fixture cleanup is registered
+// directly with t.Cleanup by ForTest. Callers may still call it to keep
+// pre-helper call sites readable.
 func startPG(t *testing.T) (string, func()) {
 	t.Helper()
-	if dsn := os.Getenv(pgDSNEnv); dsn != "" {
-		return dsn, func() {}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	container, err := tcpostgres.Run(ctx, "postgres:14-alpine",
-		tcpostgres.WithDatabase("bd_test"),
-		tcpostgres.WithUsername("bd"),
-		tcpostgres.WithPassword("bd"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Skipf("testcontainers-go could not start postgres:14-alpine (no docker?): %v", err)
-	}
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		_ = container.Terminate(ctx)
-		t.Fatalf("connection string: %v", err)
-	}
-	return dsn, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = container.Terminate(ctx)
-	}
+	return testfixture.ForTest(t), func() {}
 }
 
 // TestSmokePath runs the bd command-equivalent sequence end-to-end against PG

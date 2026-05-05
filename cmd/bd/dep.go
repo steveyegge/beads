@@ -158,8 +158,8 @@ Examples:
 				warnIfCyclesExist(fromStore)
 			}
 
-			if isEmbeddedMode() && fromStore != nil {
-				if err := dVC(fromStore).Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
+			if vc, ok := storage.UnwrapStore(fromStore).(storage.VersionControl); ok && isEmbeddedMode() && fromStore != nil {
+				if err := vc.Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
 					FatalErrorRespectJSON("failed to commit: %v", err)
 				}
 			}
@@ -340,8 +340,8 @@ Examples:
 			warnIfCyclesExist(fromStore)
 		}
 
-		if isEmbeddedMode() && fromStore != nil {
-			if err := dVC(fromStore).Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
+		if vc, ok := storage.UnwrapStore(fromStore).(storage.VersionControl); ok && isEmbeddedMode() && fromStore != nil {
+			if err := vc.Commit(ctx, fmt.Sprintf("bd: dep add (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
 				FatalErrorRespectJSON("failed to commit: %v", err)
 			}
 		}
@@ -862,8 +862,8 @@ var depRemoveCmd = &cobra.Command{
 			FatalErrorRespectJSON("%v", err)
 		}
 
-		if isEmbeddedMode() && fromStore != nil {
-			if err := dVC(fromStore).Commit(ctx, fmt.Sprintf("bd: dep remove (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
+		if vc, ok := storage.UnwrapStore(fromStore).(storage.VersionControl); ok && isEmbeddedMode() && fromStore != nil {
+			if err := vc.Commit(ctx, fmt.Sprintf("bd: dep remove (auto-commit) by %s", actor)); err != nil && !isDoltNothingToCommit(err) {
 				FatalErrorRespectJSON("failed to commit: %v", err)
 			}
 		}

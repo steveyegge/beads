@@ -90,11 +90,16 @@ func ConfigToConnString(cfg *pgconn.Config) string {
 			q.Set(k, cfg.RuntimeParams[k])
 		}
 	}
-	if cfg.TLSConfig != nil {
-		// pgconn collapses sslmode into TLSConfig — restore the original
-		// query parameter when present so the persisted form is informative.
-		// Best-effort: we cannot reconstruct cert paths from *tls.Config.
-		if _, ok := cfg.RuntimeParams["sslmode"]; !ok {
+	if _, ok := cfg.RuntimeParams["sslmode"]; !ok {
+		// pgconn collapses sslmode into TLSConfig and removes it from
+		// RuntimeParams. Reconstruct an approximation so the persisted
+		// form survives the round-trip: nil TLSConfig ⇒ sslmode=disable
+		// (matches pgconn semantics for sslmode=disable inputs);
+		// non-nil ⇒ sslmode=require (cert paths are not recoverable from
+		// *tls.Config so we cannot do better than the pgconn-default).
+		if cfg.TLSConfig == nil {
+			q.Set("sslmode", "disable")
+		} else {
 			q.Set("sslmode", "require")
 		}
 	}

@@ -66,15 +66,22 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	// Change detection via Dolt commit hash
-	currentCommit, err := dVC(store).GetCurrentCommit(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to get current commit: %v\n", err)
-		return
-	}
-	if currentCommit == state.LastDoltCommit && state.LastDoltCommit != "" {
-		debug.Logf("auto-export: no changes since last export\n")
-		return
+	// Change detection via Dolt commit hash. Postgres backend has no
+	// commit graph (audit trail lives in events/wisp_events tables);
+	// fall back to running the export every interval rather than
+	// fataling on a missing VersionControl capability.
+	var currentCommit string
+	if vc, ok := storage.UnwrapStore(store).(storage.VersionControl); ok {
+		var err error
+		currentCommit, err = vc.GetCurrentCommit(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to get current commit: %v\n", err)
+			return
+		}
+		if currentCommit == state.LastDoltCommit && state.LastDoltCommit != "" {
+			debug.Logf("auto-export: no changes since last export\n")
+			return
+		}
 	}
 
 	// Determine output path

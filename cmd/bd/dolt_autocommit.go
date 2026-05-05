@@ -61,12 +61,21 @@ func maybeAutoCommitStore(ctx context.Context, st storage.DoltStorage, p doltAut
 		return nil
 	}
 
+	// Postgres-backed projects have no Dolt commit graph; the audit trail
+	// is wired through events/wisp_events row writes from the mutating
+	// transaction (be-6fk.3 / ADR be-l7t.3 §0.1). Skip the auto-commit
+	// rather than emitting "Dolt backend required for this command".
+	vc, ok := storage.UnwrapStore(st).(storage.VersionControl)
+	if !ok {
+		return nil
+	}
+
 	msg := p.MessageOverride
 	if strings.TrimSpace(msg) == "" {
 		msg = formatDoltAutoCommitMessage(p.Command, getActor(), p.IssueIDs)
 	}
 
-	if err := dVC(st).Commit(ctx, msg); err != nil {
+	if err := vc.Commit(ctx, msg); err != nil {
 		if isDoltNothingToCommit(err) {
 			return nil
 		}

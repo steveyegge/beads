@@ -671,9 +671,14 @@ var createCmd = &cobra.Command{
 		// a separate commit. In EmbeddedDoltStore mode, CreateIssue writes
 		// to the working set without a Dolt commit, so we always commit
 		// everything together at the end.
-		if isEmbeddedMode() || postCreateWrites {
+		//
+		// Postgres backend audit-trail is wired through events/wisp_events
+		// row writes inside the same transaction (be-6fk.3 / ADR be-l7t.3
+		// §0.1) — there is no separate commit step. Skip the VC commit
+		// rather than emitting "Dolt backend required for this command".
+		if vc, ok := storage.UnwrapStore(store).(storage.VersionControl); ok && (isEmbeddedMode() || postCreateWrites) {
 			commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
-			if err := dVC(store).Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
+			if err := vc.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 				WarnError("failed to commit: %v", err)
 			}
 		}

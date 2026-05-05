@@ -3,23 +3,16 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/postgres/testfixture"
 )
-
-// pgDSNEnv lets CI hand a pre-provisioned PG instance and skip
-// testcontainers startup. Matches the architect's plan in P6.
-const pgInitDSNEnv = "BEADS_TEST_POSTGRES_DSN"
 
 // filterTestEnv returns a copy of env with any KEY=... entries dropped for
 // the supplied keys. Used to scrub host BEADS_DIR / BEADS_DOLT_* leakage so
@@ -52,41 +45,12 @@ func isolatedTempDir(t *testing.T) string {
 	return dir
 }
 
-func startPGForInit(t *testing.T) (string, func()) {
-	t.Helper()
-	if dsn := os.Getenv(pgInitDSNEnv); dsn != "" {
-		return dsn, func() {}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	container, err := tcpostgres.Run(ctx, "postgres:14-alpine",
-		tcpostgres.WithDatabase("bd_init_test"),
-		tcpostgres.WithUsername("bd"),
-		tcpostgres.WithPassword("bdpass"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Skipf("testcontainers-go could not start postgres:14-alpine (no docker?): %v", err)
-	}
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		_ = container.Terminate(ctx)
-		t.Fatalf("connection string: %v", err)
-	}
-	return dsn, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = container.Terminate(ctx)
-	}
-}
-
 // TestInitPostgresPersistsStrippedDSN verifies that `bd init --backend=postgres`
 // (a) successfully connects, (b) runs first-connect schema migrations, and
 // (c) writes a stripped DSN (no password) to metadata.json.
 func TestInitPostgresPersistsStrippedDSN(t *testing.T) {
 	bd := buildBDForInitTests(t)
-	rawDSN, stop := startPGForInit(t)
-	defer stop()
+	rawDSN := testfixture.ForTest(t)
 
 	tmpDir := isolatedTempDir(t)
 
@@ -127,8 +91,7 @@ func TestInitPostgresPersistsStrippedDSN(t *testing.T) {
 // PG database is a no-op (migrations bookkeeping table is idempotent).
 func TestInitPostgresIdempotent(t *testing.T) {
 	bd := buildBDForInitTests(t)
-	rawDSN, stop := startPGForInit(t)
-	defer stop()
+	rawDSN := testfixture.ForTest(t)
 
 	tmpDir := isolatedTempDir(t)
 
