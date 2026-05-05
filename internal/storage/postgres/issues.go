@@ -1,0 +1,409 @@
+package postgres
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/types"
+)
+
+// CreateIssue inserts a single issue (and its events row) atomically.
+func (s *PostgresStore) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
+	if issue == nil {
+		return errors.New("postgres: CreateIssue: issue must not be nil")
+	}
+	return s.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+		return tx.CreateIssue(ctx, issue, actor)
+	})
+}
+
+// CreateIssues is a thin wrapper over CreateIssuesWithFullOptions that uses
+// the legacy "allow orphans, validate prefix" defaults.
+func (s *PostgresStore) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	return s.CreateIssuesWithFullOptions(ctx, issues, actor, storage.BatchCreateOptions{
+		OrphanHandling:       storage.OrphanAllow,
+		SkipPrefixValidation: false,
+	})
+}
+
+// CreateIssuesWithFullOptions creates a batch of issues atomically.
+func (s *PostgresStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	return s.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+		ptx := tx.(*pgxTransaction)
+		ptx.opts = opts
+		for _, issue := range issues {
+			if err := ptx.CreateIssue(ctx, issue, actor); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// insertIssueRow performs the INSERT itself. Used both by single-issue create
+// and the batch path.
+func insertIssueRow(ctx context.Context, c pgxConn, table string, issue *types.Issue) error {
+	table = guardTable(table)
+	//nolint:gosec // table is allowlisted via guardTable
+	stmt := fmt.Sprintf(`
+		INSERT INTO %s (
+			id, content_hash, title, description, design, acceptance_criteria, notes,
+			status, priority, issue_type, assignee, estimated_minutes,
+			created_at, created_by, owner, updated_at, started_at, closed_at, external_ref, spec_id,
+			compaction_level, compacted_at, compacted_at_commit, original_size,
+			sender, ephemeral, no_history, wisp_type, pinned, is_template,
+			mol_type, work_type, source_system, source_repo, close_reason,
+			event_kind, actor, target, payload,
+			await_type, await_id, timeout_ns, waiters,
+			due_at, defer_until, metadata
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10, $11, $12,
+			$13, $14, $15, $16, $17, $18, $19, $20,
+			$21, $22, $23, $24,
+			$25, $26, $27, $28, $29, $30,
+			$31, $32, $33, $34, $35,
+			$36, $37, $38, $39,
+			$40, $41, $42, $43,
+			$44, $45, $46
+		)
+		ON CONFLICT (id) DO UPDATE SET
+			content_hash = EXCLUDED.content_hash,
+			title = EXCLUDED.title,
+			description = EXCLUDED.description,
+			design = EXCLUDED.design,
+			acceptance_criteria = EXCLUDED.acceptance_criteria,
+			notes = EXCLUDED.notes,
+			status = EXCLUDED.status,
+			priority = EXCLUDED.priority,
+			issue_type = EXCLUDED.issue_type,
+			assignee = EXCLUDED.assignee,
+			estimated_minutes = EXCLUDED.estimated_minutes,
+			updated_at = EXCLUDED.updated_at,
+			started_at = EXCLUDED.started_at,
+			closed_at = EXCLUDED.closed_at,
+			external_ref = EXCLUDED.external_ref,
+			source_repo = EXCLUDED.source_repo,
+			close_reason = EXCLUDED.close_reason,
+			metadata = EXCLUDED.metadata
+	`, table)
+
+	waitersJSON := ""
+	if len(issue.Waiters) > 0 {
+		if data, err := json.Marshal(issue.Waiters); err == nil {
+			waitersJSON = string(data)
+		}
+	}
+
+	_, err := c.Exec(ctx, stmt,
+		issue.ID, nullString(issue.ContentHash), issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
+		string(issue.Status), issue.Priority, string(issue.IssueType), nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
+		issue.CreatedAt, nullString(issue.CreatedBy), nullString(issue.Owner), issue.UpdatedAt, issue.StartedAt, issue.ClosedAt,
+		nullStringPtr(issue.ExternalRef), nullString(issue.SpecID),
+		issue.CompactionLevel, issue.CompactedAt, nullStringPtr(issue.CompactedAtCommit), nullIntVal(issue.OriginalSize),
+		nullString(issue.Sender), issue.Ephemeral, issue.NoHistory, nullString(string(issue.WispType)), issue.Pinned, issue.IsTemplate,
+		nullString(string(issue.MolType)), nullString(string(issue.WorkType)), nullString(issue.SourceSystem), nullString(issue.SourceRepo), nullString(issue.CloseReason),
+		nullString(issue.EventKind), nullString(issue.Actor), nullString(issue.Target), nullString(issue.Payload),
+		nullString(issue.AwaitType), nullString(issue.AwaitID), issue.Timeout.Nanoseconds(), nullString(waitersJSON),
+		issue.DueAt, issue.DeferUntil, jsonbMetadata(issue.Metadata),
+	)
+	if err != nil {
+		return wrapErr(fmt.Sprintf("insert into %s", table), err)
+	}
+	return nil
+}
+
+// recordEvent appends an audit-trail row from inside a transaction.
+func recordEvent(ctx context.Context, c pgxConn, eventTable, issueID string, kind types.EventType, actor, oldVal, newVal string) error {
+	eventTable = guardTable(eventTable)
+	//nolint:gosec // table is allowlisted via guardTable
+	stmt := fmt.Sprintf(`
+		INSERT INTO %s (issue_id, event_type, actor, old_value, new_value)
+		VALUES ($1, $2, $3, $4, $5)
+	`, eventTable)
+	_, err := c.Exec(ctx, stmt, issueID, string(kind), actor, oldVal, newVal)
+	if err != nil {
+		return wrapErr(fmt.Sprintf("record event in %s", eventTable), err)
+	}
+	return nil
+}
+
+// GetIssue returns a single issue by ID. Returns storage.ErrNotFound (wrapped)
+// if the row does not exist in either the issues or wisps table.
+func (s *PostgresStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
+	issue, err := getIssueFrom(ctx, s.pool, "issues", id)
+	if err == nil {
+		issue.Labels, _ = getLabelsFromTable(ctx, s.pool, "labels", id)
+		return issue, nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return nil, err
+	}
+	wisp, werr := getIssueFrom(ctx, s.pool, "wisps", id)
+	if werr == nil {
+		wisp.Labels, _ = getLabelsFromTable(ctx, s.pool, "wisp_labels", id)
+		return wisp, nil
+	}
+	return nil, err
+}
+
+func getIssueFrom(ctx context.Context, c pgxConn, table, id string) (*types.Issue, error) {
+	table = guardTable(table)
+	//nolint:gosec // table allowlisted
+	q := fmt.Sprintf(`SELECT %s FROM %s WHERE id = $1`, issueColumns, table)
+	issue, err := scanIssue(c.QueryRow(ctx, q, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, id)
+		}
+		return nil, wrapErr(fmt.Sprintf("get issue from %s", table), err)
+	}
+	return issue, nil
+}
+
+// GetIssueByExternalRef looks up an issue by external_ref. Searches the
+// issues table only; ephemeral issues do not carry stable external refs.
+func (s *PostgresStore) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
+	q := fmt.Sprintf(`SELECT %s FROM issues WHERE external_ref = $1`, issueColumns)
+	issue, err := scanIssue(s.pool.QueryRow(ctx, q, externalRef))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: external_ref=%s", storage.ErrNotFound, externalRef)
+		}
+		return nil, wrapErr("get issue by external ref", err)
+	}
+	issue.Labels, _ = getLabelsFromTable(ctx, s.pool, "labels", issue.ID)
+	return issue, nil
+}
+
+// GetIssuesByIDs returns all issues with IDs in the given slice. Missing IDs
+// are silently dropped; callers compare returned IDs to the input set.
+func (s *PostgresStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	placeholders := joinPlaceholders(1, len(ids))
+	//nolint:gosec // placeholders are bound parameters, not user input
+	q := fmt.Sprintf(`SELECT %s FROM issues WHERE id IN (%s)`, issueColumns, placeholders)
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, wrapErr("get issues by ids", err)
+	}
+	issues, err := scanIssues(rows)
+	if err != nil {
+		return nil, wrapErr("scan issues by ids", err)
+	}
+	if len(issues) == 0 {
+		// Try wisps as a fallback (matches Dolt behavior for mixed lookups).
+		//nolint:gosec // placeholders are bound parameters
+		q2 := fmt.Sprintf(`SELECT %s FROM wisps WHERE id IN (%s)`, issueColumns, placeholders)
+		wrows, werr := s.pool.Query(ctx, q2, args...)
+		if werr != nil {
+			return nil, wrapErr("get wisps by ids", werr)
+		}
+		issues, err = scanIssues(wrows)
+		if err != nil {
+			return nil, wrapErr("scan wisps by ids", err)
+		}
+	}
+	return issues, nil
+}
+
+// UpdateIssue applies a map of column updates and emits an event row.
+// Only the fields present in updates are touched.
+func (s *PostgresStore) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	return s.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+		return tx.UpdateIssue(ctx, id, updates, actor)
+	})
+}
+
+// updateIssueRow runs a partial UPDATE inside a transaction.
+func updateIssueRow(ctx context.Context, c pgxConn, table, id string, updates map[string]interface{}) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	table = guardTable(table)
+	cols := make([]string, 0, len(updates))
+	args := make([]any, 0, len(updates)+1)
+	for k, v := range updates {
+		if !validUpdateColumn(k) {
+			return fmt.Errorf("postgres: refused to update unknown column %q", k)
+		}
+		args = append(args, v)
+		cols = append(cols, fmt.Sprintf("%s = $%d", k, len(args)))
+	}
+	args = append(args, id)
+	//nolint:gosec // column names allowlisted
+	stmt := fmt.Sprintf(`UPDATE %s SET %s WHERE id = $%d`, table, strings.Join(cols, ", "), len(args))
+	tag, err := c.Exec(ctx, stmt, args...)
+	if err != nil {
+		return wrapErr(fmt.Sprintf("update %s", table), err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: %s", storage.ErrNotFound, id)
+	}
+	return nil
+}
+
+// validUpdateColumn lists the columns that UpdateIssue may touch directly.
+// Anything else is rejected so updates cannot smuggle in unsanitized
+// identifiers via the map keys.
+func validUpdateColumn(name string) bool {
+	switch name {
+	case "title", "description", "design", "acceptance_criteria", "notes",
+		"status", "priority", "issue_type", "assignee", "estimated_minutes",
+		"owner", "updated_at", "started_at", "closed_at", "external_ref",
+		"spec_id", "source_repo", "close_reason", "due_at", "defer_until",
+		"metadata", "ephemeral", "no_history", "wisp_type", "pinned",
+		"is_template", "mol_type", "work_type", "source_system",
+		"event_kind", "actor", "target", "payload",
+		"await_type", "await_id", "timeout_ns", "waiters",
+		"closed_by_session", "content_hash":
+		return true
+	}
+	return false
+}
+
+// ReopenIssue clears closed_at + close_reason and sets status=open.
+func (s *PostgresStore) ReopenIssue(ctx context.Context, id, reason, actor string) error {
+	return s.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+		updates := map[string]interface{}{
+			"status":       string(types.StatusOpen),
+			"closed_at":    nil,
+			"close_reason": "",
+			"updated_at":   time.Now().UTC(),
+		}
+		return tx.UpdateIssue(ctx, id, updates, actor)
+	})
+}
+
+// UpdateIssueType is a typed helper for changing issue_type without rebuilding
+// a full updates map at the call site.
+func (s *PostgresStore) UpdateIssueType(ctx context.Context, id, issueType, actor string) error {
+	return s.UpdateIssue(ctx, id, map[string]interface{}{
+		"issue_type": issueType,
+		"updated_at": time.Now().UTC(),
+	}, actor)
+}
+
+// CloseIssue sets status=closed and writes an event.
+func (s *PostgresStore) CloseIssue(ctx context.Context, id, reason, actor, session string) error {
+	return s.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+		now := time.Now().UTC()
+		updates := map[string]interface{}{
+			"status":            string(types.StatusClosed),
+			"closed_at":         now,
+			"closed_by_session": session,
+			"close_reason":      reason,
+			"updated_at":        now,
+		}
+		return tx.UpdateIssue(ctx, id, updates, actor)
+	})
+}
+
+// DeleteIssue removes the issue row and cascades dependent rows via FK.
+func (s *PostgresStore) DeleteIssue(ctx context.Context, id string) error {
+	return s.RunInTransaction(ctx, "", func(tx storage.Transaction) error {
+		return tx.DeleteIssue(ctx, id)
+	})
+}
+
+// SearchIssues runs a flexible filter query against the issues table.
+// Supports the subset of types.IssueFilter that the smoke path needs;
+// less-common filters return ErrNotImplemented sentinels.
+func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	clauses := []string{}
+	args := []any{}
+	next := 1
+	add := func(clause string, vals ...any) {
+		clauses = append(clauses, clause)
+		args = append(args, vals...)
+		next += len(vals)
+	}
+
+	if query != "" {
+		add(fmt.Sprintf("(title ILIKE $%d OR description ILIKE $%d)", next, next), "%"+query+"%")
+	}
+	if filter.Status != nil {
+		add(fmt.Sprintf("status = $%d", next), string(*filter.Status))
+	}
+	if len(filter.Statuses) > 0 {
+		ph := joinPlaceholders(next, len(filter.Statuses))
+		statuses := make([]any, len(filter.Statuses))
+		for i, st := range filter.Statuses {
+			statuses[i] = string(st)
+		}
+		add(fmt.Sprintf("status IN (%s)", ph), statuses...)
+	}
+	if filter.Priority != nil {
+		add(fmt.Sprintf("priority = $%d", next), *filter.Priority)
+	}
+	if filter.IssueType != nil {
+		add(fmt.Sprintf("issue_type = $%d", next), string(*filter.IssueType))
+	}
+	if filter.Assignee != nil {
+		add(fmt.Sprintf("assignee = $%d", next), *filter.Assignee)
+	}
+	if filter.IDPrefix != "" {
+		add(fmt.Sprintf("id LIKE $%d", next), filter.IDPrefix+"%")
+	}
+	if len(filter.IDs) > 0 {
+		ph := joinPlaceholders(next, len(filter.IDs))
+		ids := make([]any, len(filter.IDs))
+		for i, id := range filter.IDs {
+			ids[i] = id
+		}
+		add(fmt.Sprintf("id IN (%s)", ph), ids...)
+	}
+	if len(filter.ExcludeStatus) > 0 {
+		ph := joinPlaceholders(next, len(filter.ExcludeStatus))
+		excl := make([]any, len(filter.ExcludeStatus))
+		for i, st := range filter.ExcludeStatus {
+			excl[i] = string(st)
+		}
+		add(fmt.Sprintf("status NOT IN (%s)", ph), excl...)
+	}
+	if filter.Ephemeral != nil {
+		add(fmt.Sprintf("ephemeral = $%d", next), *filter.Ephemeral)
+	} else {
+		// default: only persistent rows from the issues table
+		clauses = append(clauses, "(ephemeral = FALSE OR ephemeral IS NULL)")
+	}
+
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	limit := ""
+	if filter.Limit > 0 {
+		limit = fmt.Sprintf(" LIMIT %d", filter.Limit)
+	}
+	//nolint:gosec // clauses use only parameter placeholders, identifiers are static
+	q := fmt.Sprintf(`SELECT %s FROM issues%s ORDER BY created_at DESC%s`, issueColumns, where, limit)
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, wrapErr("search issues", err)
+	}
+	issues, err := scanIssues(rows)
+	if err != nil {
+		return nil, wrapErr("scan issues", err)
+	}
+	for _, issue := range issues {
+		issue.Labels, _ = getLabelsFromTable(ctx, s.pool, "labels", issue.ID)
+	}
+	return issues, nil
+}
