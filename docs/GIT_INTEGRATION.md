@@ -346,6 +346,7 @@ This configures Jujutsu to invoke `bd merge` as its merge tool, restricted to `.
 
 ## See Also
 
+- [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md) - One-screen overview of cross-machine sync + anti-patterns
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
 - [PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md) - Protected branch workflows
 - [MULTI_REPO_MIGRATION.md](MULTI_REPO_MIGRATION.md) - Multi-repo patterns

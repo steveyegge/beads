@@ -542,6 +542,7 @@ rm .beads/*.backup-*.db
 
 ## See Also
 
+- [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md) - One-screen overview of cross-machine sync + anti-patterns
 - [SYNC_SETUP.md](SYNC_SETUP.md) - Setting up sync across multiple computers
 - [CONFIG.md](CONFIG.md) - Full configuration reference
 - [DEPENDENCIES.md](DEPENDENCIES.md) - Dependencies and gates

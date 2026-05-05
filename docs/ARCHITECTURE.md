@@ -2,6 +2,8 @@
 
 This document describes bd's overall architecture - the data model, sync mechanism, and how components fit together. For internal implementation details (FlushManager, Blocked Cache), see [INTERNALS.md](INTERNALS.md).
 
+> **Looking for the short version first?** [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md) is a one-screen overview of how cross-machine sync works (Dolt + `refs/dolt/data` + JSONL-as-export) plus a list of common anti-patterns.
+
 ## The Two-Layer Data Model
 
 bd's core design enables a distributed, Dolt-powered issue tracker that feels like a centralized database. The architecture has two synchronized layers:
@@ -354,6 +356,7 @@ The `bd mol squash` command uses hard delete intentionally - tombstones would be
 
 ## Related Documentation
 
+- [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md) - One-screen overview of cross-machine sync + anti-patterns (read first)
 - [MOLECULES.md](MOLECULES.md) - Molecular chemistry metaphor (protos, pour, bond, squash, burn)
 - [INTERNALS.md](INTERNALS.md) - FlushManager, Blocked Cache implementation details
 - [ADVANCED.md](ADVANCED.md) - Advanced features and configuration

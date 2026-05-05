@@ -2,6 +2,8 @@
 
 Set up beads with Dolt sync so your issues follow you across computers.
 
+> **New here?** Read [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md) first for a one-screen overview of *what* cross-machine sync is doing under the hood. This page is the *how*.
+
 ## Prerequisites
 
 You need two tools installed on every machine:
@@ -246,6 +248,7 @@ bd dolt start
 
 ## See Also
 
+- [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md) — One-screen overview of how cross-machine sync works + anti-patterns
 - [QUICKSTART.md](QUICKSTART.md) — Getting started with beads
 - [DOLT.md](DOLT.md) — Dolt backend details, server modes, federation
 - [DOLT-BACKEND.md](DOLT-BACKEND.md) — Remote types, sync modes, advanced usage
