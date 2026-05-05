@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	_ "github.com/steveyegge/beads/internal/storage/doltdriver" // self-registers BackendDolt with the storage registry
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -70,6 +71,46 @@ func Open(ctx context.Context, dbPath string) (Storage, error) {
 // beadsDir is the path to the .beads directory.
 func OpenFromConfig(ctx context.Context, beadsDir string) (Storage, error) {
 	return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{CreateIfMissing: true})
+}
+
+// BackendType names a storage driver registered with the pluggable backend
+// registry. See OpenWithBackend.
+type BackendType = storage.BackendType
+
+// Built-in backend identifiers. BackendDolt is registered automatically when
+// this package is imported. BackendPostgres requires the consumer to also
+// blank-import github.com/steveyegge/beads/internal/storage/postgres so the
+// driver self-registers.
+const (
+	BackendDolt     = storage.BackendDolt
+	BackendPostgres = storage.BackendPostgres
+)
+
+// ConnectionConfig is the small configuration surface accepted by every
+// registered backend. Drivers interpret the fields they care about and
+// ignore the rest — Dolt reads BeadsDir/Database/ReadOnly; Postgres reads
+// DSN/ReadOnly.
+type ConnectionConfig = storage.ConnectionConfig
+
+// ErrUnknownBackend is returned by OpenWithBackend when no driver has been
+// registered under the requested name. Available enumerates the registered
+// set in sorted order.
+type ErrUnknownBackend = storage.ErrUnknownBackend
+
+// RegisteredBackends returns the names of all currently registered backends
+// in sorted order.
+func RegisteredBackends() []BackendType {
+	return storage.RegisteredBackends()
+}
+
+// OpenWithBackend opens a beads database via the registered driver named by
+// `name`. Use BackendDolt or BackendPostgres for the built-in backends, or
+// any name returned by RegisteredBackends for third-party drivers.
+//
+// Open and OpenFromConfig remain Dolt-direct shortcuts and do not consult
+// the registry; use OpenWithBackend when the backend choice is dynamic.
+func OpenWithBackend(ctx context.Context, name BackendType, cfg ConnectionConfig) (Storage, error) {
+	return storage.Open(ctx, name, cfg)
 }
 
 // FindDatabasePath finds the beads database in the current directory tree

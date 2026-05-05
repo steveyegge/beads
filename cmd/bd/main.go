@@ -28,6 +28,7 @@ import (
 	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	_ "github.com/steveyegge/beads/internal/storage/doltdriver" // self-registers BackendDolt with the storage registry
 	"github.com/steveyegge/beads/internal/telemetry"
 	"github.com/steveyegge/beads/internal/utils"
 	"go.opentelemetry.io/otel/attribute"
