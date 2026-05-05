@@ -51,6 +51,13 @@ Expected state:
 
 ## Findings
 
+- 2026-05-05: `gc start` one-shot standalone reconciliation was dropping
+  `rigStores`, `AssignedWorkBeads`, and `workSet` when calling
+  `buildDesiredStateWithSessionBeads` / `reconcileSessionBeadsAtPath`, so
+  routed ready work that only exists in rig-local doltlite stores never
+  surfaced in `ScaleCheckCounts`, wake decisions, or trace output. Wiring the
+  standalone path through `buildStandaloneRigStores(...)` restores the same
+  rig-scoped demand visibility the persistent controller runtime already had.
 - 2026-05-03: audit bead `bd-d74` confirmed the new `issueops` dialect wrappers
   still default Dolt callers to `SQLDialectDolt`, so the storage-selection and
   SQL-dialect shims reviewed in this pass do not appear to alter existing Dolt
