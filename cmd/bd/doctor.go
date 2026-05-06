@@ -184,18 +184,6 @@ Examples:
   bd doctor --migration=post   # Validate Dolt migration completed
   bd doctor --migration=pre --json  # Machine-parseable migration validation`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if isEmbeddedMode() {
-			fmt.Fprintln(os.Stderr, "Note: 'bd doctor' is not yet supported in embedded mode.")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "For embedded mode troubleshooting:")
-			fmt.Fprintln(os.Stderr, "  • Verify database exists:  ls -la .beads/embeddeddolt/")
-			fmt.Fprintln(os.Stderr, "  • Check bd version:        bd version")
-			fmt.Fprintln(os.Stderr, "  • Reinitialize if needed:  bd init --force")
-			fmt.Fprintln(os.Stderr, "  • Switch to server mode:   bd init --server")
-			os.Exit(0)
-		}
-		// Use global jsonOutput set by PersistentPreRun
-
 		// Determine path to check
 		// Precedence: explicit arg > BEADS_DIR (parent) > CWD
 		var checkPath string
@@ -224,7 +212,8 @@ Examples:
 			)
 		}
 
-		// Run performance diagnostics if --perf flag is set
+		// --perf and --check-health are mode-agnostic; run them before the
+		// embedded-mode gate.
 		if perfMode {
 			if err := doctor.RunPerformanceDiagnostics(absPath); err != nil {
 				FatalError("performance diagnostics: %v", err)
@@ -232,30 +221,45 @@ Examples:
 			return
 		}
 
-		// Run quick health check if --check-health flag is set
 		if checkHealthMode {
 			runCheckHealth(absPath)
 			return
 		}
 
-		// Run specific check if --check flag is set
+		// --check=* dispatch. GH#3597: artifacts (filesystem-only),
+		// conventions (lint+stale+orphans), and pollution all work in embedded
+		// mode, so they run before the embedded-mode gate. Validate still
+		// requires raw SQL via a server connection and stays gated.
 		if doctorCheckFlag != "" {
 			switch doctorCheckFlag {
-			case "pollution":
-				runPollutionCheck(absPath, doctorClean, doctorYes)
-				return
-			case "validate":
-				runValidateCheck(absPath)
-				return
 			case "artifacts":
 				runArtifactsCheck(absPath, doctorClean, doctorYes)
 				return
 			case "conventions":
 				runConventionsCheck(absPath)
 				return
+			case "pollution":
+				runPollutionCheck(absPath, doctorClean, doctorYes)
+				return
+			case "validate":
+				if isEmbeddedMode() {
+					printEmbeddedUnsupported("doctor --check=validate")
+					return
+				}
+				runValidateCheck(absPath)
+				return
 			default:
 				FatalErrorWithHint(fmt.Sprintf("unknown check %q", doctorCheckFlag), "Available checks: artifacts, conventions, pollution, validate")
 			}
+		}
+
+		// Bare `bd doctor` and the remaining mode-specific flags (--deep,
+		// --server, --migration) are not yet implemented for embedded mode.
+		// Emit structured JSON when --json/--agent so tooling can detect
+		// "unsupported" without text-matching the prose stub (GH#3597).
+		if isEmbeddedMode() {
+			printEmbeddedUnsupported("doctor")
+			return
 		}
 
 		// Run deep validation if --deep flag is set
@@ -340,6 +344,43 @@ func init() {
 
 func shouldSkipDoctorNetworkChecks() bool {
 	return jsonOutput || !ui.IsTerminal()
+}
+
+// printEmbeddedUnsupported reports that a doctor variant is not yet wired up
+// for embedded mode. Emits a structured payload when --json or --agent is set
+// so downstream tooling can detect the gap without parsing prose, and the
+// existing prose stub otherwise (GH#3597).
+func printEmbeddedUnsupported(commandLabel string) {
+	hints := []string{
+		"Verify database exists:  ls -la .beads/embeddeddolt/",
+		"Check bd version:        bd version",
+		"Reinitialize if needed:  bd init --reinit-local",
+		"Switch to server mode:   bd init --server",
+	}
+	supported := []string{"artifacts", "conventions", "pollution"}
+
+	if jsonOutput || doctorAgent {
+		outputJSON(map[string]interface{}{
+			"error":                             fmt.Sprintf("'bd %s' is not yet supported in embedded mode", commandLabel),
+			"unsupported":                       true,
+			"mode":                              "embedded",
+			"command":                           commandLabel,
+			"checks_supported_in_embedded_mode": supported,
+			"hints":                             hints,
+		})
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Note: 'bd %s' is not yet supported in embedded mode.\n\n", commandLabel)
+	fmt.Fprintln(os.Stderr, "For embedded mode troubleshooting:")
+	for _, h := range hints {
+		fmt.Fprintf(os.Stderr, "  • %s\n", h)
+	}
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Checks available in embedded mode:")
+	fmt.Fprintln(os.Stderr, "  • bd doctor --check=artifacts")
+	fmt.Fprintln(os.Stderr, "  • bd doctor --check=conventions")
+	fmt.Fprintln(os.Stderr, "  • bd doctor --check=pollution")
 }
 
 func runDiagnostics(path string) doctorResult {
