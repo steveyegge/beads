@@ -196,6 +196,7 @@ bd setup codex --global # Global Beads skill + global AGENTS.md guidance
 - Restart Codex if it's already running to pick up the new instructions.
 - The plugin package under `plugins/beads/` is separate from `bd setup codex`. The setup command writes a small setup-only skill and managed guidance into the target repository or user-level `.agents` directory.
 - In worktree/shared/`BEADS_DIR` setups, use `bd where` to confirm the resolved workspace; the integration does not require a local `./.beads`.
+- `bd setup codex` uses its own marker pair (`BEGIN/END BEADS CODEX SETUP`), distinct from the `BEGIN/END BEADS INTEGRATION` markers used by `bd setup factory` and `bd setup mux`. Running both `bd setup codex` and `bd setup factory`/`mux` against the same `AGENTS.md` will leave two managed sections side by side; each `bd setup … --check` only inspects its own section, and `bd setup … --remove` only removes its own section.
 
 ## Mux
 
