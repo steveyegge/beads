@@ -122,6 +122,18 @@ Type Filtering (--push only):
   --parent TICKET           Only push this ticket and its descendants
   --relations               Import Linear relations as bd dependencies on pull
 
+Persistent push-direction ID filters (workflow artifacts, sandbox beads, etc.):
+  bd config set linear.exclude_id_prefix "hw-mol-"
+  bd config set linear.exclude_id_patterns "-wisp-,sandbox-,scratch-"
+
+  exclude_id_prefix is a single case-sensitive prefix on the bead ID.
+  exclude_id_patterns is a comma-separated list of case-sensitive substrings
+  (matched anywhere in the ID). Both are combined as a union: a bead
+  matching either rule is skipped from push (no create, no update). Beads
+  with an existing external_ref that NOW match are silently skipped on
+  future syncs; the Linear-side issue persists — archive/delete it manually
+  if desired.
+
 Conflict Resolution:
   By default, newer timestamp wins. Override with:
   --prefer-local    Always prefer local beads version
@@ -346,6 +358,28 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 	}
 	for _, t := range excludeTypes {
 		opts.ExcludeTypes = append(opts.ExcludeTypes, types.IssueType(strings.ToLower(t)))
+	}
+	// Read config linear.exclude_id_prefix — single string. Beads whose ID
+	// starts with this prefix are excluded from push (case-sensitive). Used
+	// to filter workflow-artifact beads (e.g. "hw-mol-") that aren't
+	// type-tagged consistently. A bead that previously synced (has
+	// external_ref) and now matches will have NO further updates pushed —
+	// the Linear-side issue persists; users who want it removed must
+	// archive/delete it manually.
+	if v, _ := store.GetConfig(ctx, "linear.exclude_id_prefix"); v != "" {
+		opts.ExcludeIDPrefix = strings.TrimSpace(v)
+	}
+	// Read config linear.exclude_id_patterns — comma-separated list of
+	// substrings. Beads whose ID contains any listed substring are excluded
+	// from push. Substring is case-sensitive, anywhere in the ID. Combined
+	// with exclude_id_prefix as a union.
+	if v, _ := store.GetConfig(ctx, "linear.exclude_id_patterns"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				opts.ExcludeIDPatterns = append(opts.ExcludeIDPatterns, p)
+			}
+		}
 	}
 	if !includeEphemeral {
 		opts.ExcludeEphemeral = true
