@@ -50,6 +50,15 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		return issues[0].ID, nil
 	}
 
+	// Wisp fallback (be-szr): SearchIssues only consults the issues table,
+	// but on the Postgres backend wisps live in a separate table. GetIssue's
+	// PG implementation falls through to wisps on NotFound, so try it next
+	// for full IDs. This makes `bd show <wisp-id>` and `gc mail peek/read`
+	// work against PG-backed rigs.
+	if issue, err := store.GetIssue(ctx, input); err == nil && issue != nil {
+		return issue.ID, nil
+	}
+
 	// Get the configured prefix
 	prefix, err := store.GetConfig(ctx, "issue_prefix")
 	if err != nil || prefix == "" {
