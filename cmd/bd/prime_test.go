@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -290,5 +291,86 @@ func TestPrimeGlobalFallback_Missing(t *testing.T) {
 	got := resolveGlobalPrimePath(tmpDir)
 	if got != "" {
 		t.Errorf("resolveGlobalPrimePath = %q, want empty for missing file", got)
+	}
+}
+
+// hookJSONEnvelope mirrors the JSON shape produced by outputHookJSON —
+// kept in test code so the assertion fails loudly if the production shape
+// drifts.
+type hookJSONEnvelope struct {
+	HookSpecificOutput struct {
+		HookEventName     string `json:"hookEventName"`
+		AdditionalContext string `json:"additionalContext"`
+	} `json:"hookSpecificOutput"`
+}
+
+func TestOutputHookJSON_ShapeWithContent(t *testing.T) {
+	var buf bytes.Buffer
+	const payload = "# Hello\n\nbd ready\n"
+	if err := outputHookJSON(&buf, payload); err != nil {
+		t.Fatalf("outputHookJSON: %v", err)
+	}
+
+	// json.Encoder.Encode appends a trailing newline; the JSON itself must
+	// still be valid.
+	out := strings.TrimRight(buf.String(), "\n")
+
+	var env hookJSONEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if env.HookSpecificOutput.HookEventName != "SessionStart" {
+		t.Errorf("hookEventName = %q, want SessionStart", env.HookSpecificOutput.HookEventName)
+	}
+	if env.HookSpecificOutput.AdditionalContext != payload {
+		t.Errorf("additionalContext = %q, want %q", env.HookSpecificOutput.AdditionalContext, payload)
+	}
+}
+
+func TestOutputHookJSON_EmptyContent(t *testing.T) {
+	// Empty envelope is the contract for "nothing to inject" — the hook host
+	// still requires valid JSON on stdout, so we cannot just emit nothing.
+	var buf bytes.Buffer
+	if err := outputHookJSON(&buf, ""); err != nil {
+		t.Fatalf("outputHookJSON: %v", err)
+	}
+
+	var env hookJSONEnvelope
+	if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if env.HookSpecificOutput.HookEventName != "SessionStart" {
+		t.Errorf("hookEventName = %q, want SessionStart", env.HookSpecificOutput.HookEventName)
+	}
+	if env.HookSpecificOutput.AdditionalContext != "" {
+		t.Errorf("additionalContext = %q, want empty", env.HookSpecificOutput.AdditionalContext)
+	}
+}
+
+// TestPrime_RawMarkdown_NotJSON_WithoutFlag is a regression guard: without
+// --hook-json, prime output must remain raw markdown (used by CLI users and
+// any hook-free integrations). It would be a regression if the JSON envelope
+// leaked into the default path.
+func TestPrime_RawMarkdown_NotJSON_WithoutFlag(t *testing.T) {
+	defer stubIsEphemeralBranch(false)()
+	defer stubPrimeHasGitRemote(true)()
+
+	var buf bytes.Buffer
+	if err := outputPrimeContext(&buf, false, false); err != nil {
+		t.Fatalf("outputPrimeContext: %v", err)
+	}
+
+	output := buf.String()
+	if strings.HasPrefix(strings.TrimSpace(output), "{") {
+		preview := output
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		t.Fatalf("prime output without --gemini-hook should be raw markdown, got JSON-looking content: %q", preview)
+	}
+	// Best-effort: confirm the raw markdown contract holds.
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &envelope); err == nil {
+		t.Fatal("prime output without --gemini-hook should not be valid JSON (regression guard)")
 	}
 }
