@@ -57,6 +57,10 @@ func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir s
 		fmt.Fprintf(os.Stderr, "warning: auto-import: failed to check issue count: %v\n", err)
 		return
 	}
+	if stats == nil {
+		fmt.Fprintf(os.Stderr, "warning: auto-import: issue count unavailable\n")
+		return
+	}
 	if stats.TotalIssues > 0 {
 		return // database is not empty — nothing to do
 	}

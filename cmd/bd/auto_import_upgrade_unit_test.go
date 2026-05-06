@@ -20,9 +20,13 @@ import (
 type fakeFallbackStore struct {
 	storage.DoltStorage // nil — panics on any non-overridden method
 	statsTotalIssues    int
+	statsNil            bool
 }
 
 func (f *fakeFallbackStore) GetStatistics(_ context.Context) (*types.Statistics, error) {
+	if f.statsNil {
+		return nil, nil
+	}
 	return &types.Statistics{TotalIssues: f.statsTotalIssues}, nil
 }
 
@@ -75,6 +79,22 @@ func TestMaybeAutoImportJSONL_ServerModeFallback_SkipsWhenNonEmpty(t *testing.T)
 
 	if got := count.Load(); got != 0 {
 		t.Fatalf("regression: server-mode fallback importer was invoked %d time(s) on a non-empty store; expected 0 (top-level emptiness guard missing or broken)", got)
+	}
+}
+
+// TestMaybeAutoImportJSONL_ServerModeFallback_SkipsWhenStatisticsNil covers
+// the defensive nil-statistics guard: if the store reports no error but also
+// no counts, auto-import should skip rather than panic or assume emptiness.
+func TestMaybeAutoImportJSONL_ServerModeFallback_SkipsWhenStatisticsNil(t *testing.T) {
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONL(t, dir)
+	count := swapFallbackImporter(t, errors.New("test importer should not run"))
+
+	store := &fakeFallbackStore{statsNil: true}
+	maybeAutoImportJSONL(context.Background(), store, dir)
+
+	if got := count.Load(); got != 0 {
+		t.Fatalf("server-mode fallback importer was invoked %d time(s) when statistics were nil; expected 0", got)
 	}
 }
 
