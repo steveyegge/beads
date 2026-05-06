@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -783,6 +784,10 @@ func TestGitRemoteEmbeddedHasRemote(t *testing.T) {
 //
 // Mirrors PR #3626 / GH#3340 (the commit-side sibling) at the push site.
 func TestGitRemotePushSkipsUserPrePushHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hook script uses POSIX shell; the bug + fix are platform-agnostic but this assertion isn't")
+	}
+
 	store, setup, cleanup := setupEmbeddedGitRemote(t)
 	defer cleanup()
 

@@ -2014,13 +2014,7 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 	if s.isS3Remote(ctx, remote) {
 		applyS3ChecksumEnvToCmd(cmd)
 	}
-	// Disable git client-side hooks (notably pre-push) for the internal
-	// `git push refs/dolt/data` against Dolt's git-remote-cache mirror.
-	// Without this, a user's `init.templateDir`-installed pre-push hook
-	// runs against the bare-style cache mirror and fails with "must be run
-	// in a work tree" (GH#3724). Same family as the commit-side fix in
-	// PR #3626 (GH#3340) — different commit site.
-	applyNoGitHooksToCmd(cmd)
+	applyNoGitHooksToCmd(cmd) // GH#3724
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("dolt push failed: %s: %w", strings.TrimSpace(string(out)), err)
