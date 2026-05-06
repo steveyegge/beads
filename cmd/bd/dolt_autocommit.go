@@ -40,7 +40,11 @@ type doltAutoCommitParams struct {
 //   - Uses Dolt's "commit all" behavior under the hood (DOLT_COMMIT -Am).
 //   - Treats "nothing to commit" as a no-op.
 func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) error {
-	return maybeAutoCommitStore(ctx, getStore(), p)
+	s, err := storage.RequireDoltStorage(getStore())
+	if err != nil {
+		return nil // non-Dolt backend → auto-commit is a no-op per semantics above
+	}
+	return maybeAutoCommitStore(ctx, s, p)
 }
 
 func maybeAutoCommitStore(ctx context.Context, st storage.DoltStorage, p doltAutoCommitParams) error {

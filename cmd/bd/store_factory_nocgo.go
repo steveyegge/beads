@@ -9,9 +9,9 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/db/util"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/doltdriver"
-	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/storage/postgres/dsn"
 )
 
@@ -31,8 +31,8 @@ func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.Storage, error
 }
 
 // acquireEmbeddedLock returns a no-op lock in non-CGO builds.
-func acquireEmbeddedLock(_ string, _ bool) (embeddeddolt.Unlocker, error) {
-	return embeddeddolt.NoopLock{}, nil
+func acquireEmbeddedLock(_ string, _ bool) (util.Unlocker, error) {
+	return util.NoopLock{}, nil
 }
 
 // newStoreFromConfig opens a store for the backend recorded in metadata.json.
