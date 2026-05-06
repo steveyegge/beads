@@ -9,12 +9,7 @@ import (
 
 // TestCheckHooksDriftNotGitRepo verifies hooks check skips when not in a git repo.
 func TestCheckHooksDriftNotGitRepo(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer os.Chdir(origDir) //nolint:errcheck
+	t.Chdir(t.TempDir())
 
 	items := checkHooksDrift()
 	if len(items) != 1 {
@@ -30,12 +25,7 @@ func TestCheckHooksDriftNotGitRepo(t *testing.T) {
 
 // TestCheckServerDriftNoBeadsDir verifies server check skips when no .beads exists.
 func TestCheckServerDriftNoBeadsDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer os.Chdir(origDir) //nolint:errcheck
+	t.Chdir(t.TempDir())
 
 	items := checkServerDrift()
 	if len(items) != 1 {
@@ -48,12 +38,7 @@ func TestCheckServerDriftNoBeadsDir(t *testing.T) {
 
 // TestCheckRemoteDriftNoBeadsDir verifies remote check skips when no .beads exists.
 func TestCheckRemoteDriftNoBeadsDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer os.Chdir(origDir) //nolint:errcheck
+	t.Chdir(t.TempDir())
 
 	items := checkRemoteDrift()
 	if len(items) != 1 {
@@ -132,12 +117,7 @@ func TestDriftItemStatuses(t *testing.T) {
 // TestRunDriftChecksReturnsResults verifies the aggregator returns results from all checks.
 func TestRunDriftChecksReturnsResults(t *testing.T) {
 	// When run from a non-beads directory, we should still get results (skipped checks)
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer os.Chdir(origDir) //nolint:errcheck
+	t.Chdir(t.TempDir())
 
 	items := runDriftChecks()
 	if len(items) == 0 {
