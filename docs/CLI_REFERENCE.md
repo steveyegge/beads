@@ -41,6 +41,8 @@ Reference for bd Latest. Generated from `bd help --all`.
 - [bd note](#bd-note) — Append a note to an issue
 - [bd priority](#bd-priority) — Set the priority of an issue
 - [bd promote](#bd-promote) — Promote a wisp to a permanent bead
+- [bd prompt](#bd-prompt) — Capture user prompts as traceable beads
+  - [bd prompt capture](#bd-prompt-capture) — Capture a raw user prompt as a bead
 - [bd q](#bd-q) — Quick capture: create issue and output only ID
 - [bd query](#bd-query) — Query issues using a simple query language
 - [bd reopen](#bd-reopen) — Reopen one or more closed issues
@@ -1090,6 +1092,37 @@ bd promote <wisp-id> [flags]
 
 ```
   -r, --reason string   Reason for promotion
+```
+
+### bd prompt
+
+Capture user prompts as traceable beads
+
+```
+bd prompt
+```
+
+#### bd prompt capture
+
+Capture a raw user prompt as a bead
+
+```
+bd prompt capture [flags]
+```
+
+**Flags:**
+
+```
+      --body-file string     Read raw prompt text from file (use - for stdin)
+  -d, --description string   Raw prompt text
+  -l, --labels strings       Additional labels
+      --parent string        Parent issue ID for hierarchical child
+      --session string       Agent/session identifier
+      --silent               Output only the issue ID
+      --source-tool string   Tool or agent that captured the prompt
+      --stdin                Read raw prompt text from stdin
+      --summary string       Short normalized summary of the prompt
+      --title string         Prompt bead title
 ```
 
 ### bd q

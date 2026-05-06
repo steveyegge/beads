@@ -9,7 +9,7 @@ sidebar_position: 0
 <!-- AUTO-GENERATED: do not edit manually -->
 Reference for bd Latest. Generated from `bd help --list` and `bd help --doc <command>`.
 
-This reference covers all 106 live top-level `bd` commands. Regenerate it with:
+This reference covers all 107 live top-level `bd` commands. Regenerate it with:
 
 ```bash
 ./scripts/generate-cli-docs.sh
@@ -87,6 +87,7 @@ This reference covers all 106 live top-level `bd` commands. Regenerate it with:
 - [`bd prime`](./prime.md)
 - [`bd priority`](./priority.md)
 - [`bd promote`](./promote.md)
+- [`bd prompt`](./prompt.md)
 - [`bd prune`](./prune.md)
 - [`bd purge`](./purge.md)
 - [`bd q`](./q.md)
