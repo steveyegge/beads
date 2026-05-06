@@ -2379,8 +2379,32 @@ Memory records (lines with "_type":"memory") are automatically detected and
 imported as persistent memories (equivalent to 'bd remember'). This makes
 'bd export | bd import' a full round-trip for both issues and memories.
 
-Each JSONL line should map to an issue with at minimum "title". Optional
-fields: description, issue_type (type), priority, acceptance_criteria.
+Each JSONL line should map to an issue. The importer accepts every field
+'bd export' emits — see 'bd export' output for the canonical schema. Only
+"title" is required; everything else is optional.
+
+Common fields:
+  title                  Required. Short summary.
+  description            Long-form body.
+  design, notes,         Additional content sections.
+    acceptance_criteria
+  issue_type             bug | feature | task | epic | chore | ...
+  priority               0-4 (0 = critical). 0 is preserved (no omitempty).
+  status                 open | in_progress | blocked | closed | ...
+                         (rows with status "tombstone" are skipped)
+  assignee, owner,       Ownership metadata.
+    created_by
+  labels                 Array of strings.
+  dependencies           Array of &#123;issue_id, depends_on_id, type, ...&#125;.
+  comments               Array of comment objects.
+  external_ref,          Cross-system identifiers (e.g. "gh-9").
+    source_system
+  due_at, defer_until    RFC3339 timestamps for scheduling.
+  metadata               Arbitrary JSON object preserved verbatim.
+
+Timestamps (created_at, updated_at, started_at, closed_at) are preserved
+when present in the JSONL and otherwise filled in by the importer. The
+legacy "wisp" boolean is accepted as an alias for "ephemeral".
 
 EXAMPLES:
   bd import                        # Import from .beads/issues.jsonl
@@ -4846,6 +4870,18 @@ Type Filtering (--push only):
   --include-ephemeral       Include ephemeral issues (wisps, etc.); default is to exclude
   --parent TICKET           Only push this ticket and its descendants
   --relations               Import Linear relations as bd dependencies on pull
+
+Persistent push-direction ID filters (workflow artifacts, sandbox beads, etc.):
+  bd config set linear.exclude_id_prefix "hw-mol-"
+  bd config set linear.exclude_id_patterns "-wisp-,sandbox-,scratch-"
+
+  exclude_id_prefix is a single case-sensitive prefix on the bead ID.
+  exclude_id_patterns is a comma-separated list of case-sensitive substrings
+  (matched anywhere in the ID). Both are combined as a union: a bead
+  matching either rule is skipped from push (no create, no update). Beads
+  with an existing external_ref that NOW match are silently skipped on
+  future syncs; the Linear-side issue persists — archive/delete it manually
+  if desired.
 
 Conflict Resolution:
   By default, newer timestamp wins. Override with:
