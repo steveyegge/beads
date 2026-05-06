@@ -20,12 +20,15 @@ import (
 )
 
 var (
-	primeFullMode       bool
-	primeMCPMode        bool
-	primeStealthMode    bool
-	primeExportMode     bool
+	primeFullMode     bool
+	primeMCPMode      bool
+	primeStealthMode  bool
+	primeExportMode   bool
 	primeHookJSONMode bool
+	primeMemoriesOnly bool
 )
+
+const primeTruncationDirective = "[bd prime] If this output is truncated by your host, read the full persisted hook output before continuing; it may contain project memories and session rules not visible in the preview.\n\n"
 
 // resolveGlobalPrimePath returns the path to ~/.config/beads/PRIME.md if it
 // exists. configDirOverride is used for testing; pass "" for production.
@@ -144,7 +147,7 @@ Config options:
 		// Output workflow context (adaptive based on MCP and stealth mode).
 		// Buffer first so we can wrap in the hook JSON envelope as a single field.
 		var buf bytes.Buffer
-		if err := outputPrimeContext(&buf, mcpMode, stealthMode); err != nil {
+		if err := outputPrimeContextWithOptions(&buf, mcpMode, stealthMode, primeMemoriesOnly); err != nil {
 			// Suppress all errors - silent exit with success.
 			// Never write to stderr (breaks Windows compatibility).
 			// Under --hook-json still emit the empty envelope so stdout
@@ -164,6 +167,7 @@ func init() {
 	primeCmd.Flags().BoolVar(&primeStealthMode, "stealth", false, "Stealth mode (no git operations, flush only)")
 	primeCmd.Flags().BoolVar(&primeExportMode, "export", false, "Output default content (ignores PRIME.md override)")
 	primeCmd.Flags().BoolVar(&primeHookJSONMode, "hook-json", false, "Wrap output in the SessionStart hook JSON envelope (Claude Code, Gemini CLI, Codex)")
+	primeCmd.Flags().BoolVar(&primeMemoriesOnly, "memories-only", false, "Output only persistent memories for compact hook contexts")
 	rootCmd.AddCommand(primeCmd)
 }
 
@@ -272,10 +276,30 @@ func getRedirectNotice(verbose bool) string {
 
 // outputPrimeContext outputs workflow context in markdown format
 func outputPrimeContext(w io.Writer, mcpMode bool, stealthMode bool) error {
+	_, _ = fmt.Fprint(w, primeTruncationDirective)
 	if mcpMode {
 		return outputMCPContext(w, stealthMode)
 	}
 	return outputCLIContext(w, stealthMode)
+}
+
+// outputPrimeContextWithOptions extends outputPrimeContext with a memoriesOnly path.
+func outputPrimeContextWithOptions(w io.Writer, mcpMode bool, stealthMode bool, memoriesOnly bool) error {
+	if memoriesOnly {
+		return outputMemoriesOnlyContext(w)
+	}
+	return outputPrimeContext(w, mcpMode, stealthMode)
+}
+
+// outputMemoriesOnlyContext outputs only the persistent memories section.
+func outputMemoriesOnlyContext(w io.Writer) error {
+	_, _ = fmt.Fprint(w, primeTruncationDirective)
+	if mem := formatMemoriesForPrime(false); mem != "" {
+		_, _ = fmt.Fprint(w, mem)
+		return nil
+	}
+	_, _ = fmt.Fprint(w, "# Beads Persistent Memories\n\nNo memories stored. Use `bd remember \"insight\"` to add one.\n")
+	return nil
 }
 
 // formatMemoriesForPrime queries memories from the k/v store and formats them for injection.
@@ -399,9 +423,18 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 	redirectNotice := getRedirectNotice(false)
 
-	context := `# Beads Issue Tracker Active
+	header := `# Beads Issue Tracker Active
 
-` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice
+
+	_, _ = fmt.Fprint(w, header)
+
+	// Inject memories before session protocol (compact for MCP)
+	if mem := formatMemoriesForPrime(true); mem != "" {
+		_, _ = fmt.Fprint(w, mem)
+	}
+
+	rest := `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 ` + closeProtocol + `
 
@@ -414,12 +447,7 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 Start: Check ` + "`ready`" + ` tool for available work.
 `
-	_, _ = fmt.Fprint(w, context)
-
-	// Inject memories (compact for MCP)
-	if mem := formatMemoriesForPrime(true); mem != "" {
-		_, _ = fmt.Fprint(w, mem)
-	}
+	_, _ = fmt.Fprint(w, rest)
 
 	return nil
 }
@@ -508,12 +536,21 @@ git push                    # Push to remote
 
 	redirectNotice := getRedirectNotice(true)
 
-	context := `# Beads Workflow Context
+	header := `# Beads Workflow Context
 
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
 > Hooks auto-call this in Claude Code when a beads workspace is resolved
 
-` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice
+
+	_, _ = fmt.Fprint(w, header)
+
+	// Inject memories before session protocol (full format for CLI)
+	if mem := formatMemoriesForPrime(false); mem != "" {
+		_, _ = fmt.Fprint(w, mem)
+	}
+
+	context := `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 **CRITICAL**: Before saying "done" or "complete", you MUST run this checklist:
 
@@ -605,11 +642,6 @@ bd dep add beads-yyy beads-xxx  # Tests depend on Feature (Feature blocks tests)
 ` + "```" + `
 `
 	_, _ = fmt.Fprint(w, context)
-
-	// Inject memories (full format for CLI)
-	if mem := formatMemoriesForPrime(false); mem != "" {
-		_, _ = fmt.Fprint(w, mem)
-	}
 
 	return nil
 }
