@@ -329,4 +329,41 @@ func TestMergeSubgraphsForHTML_SingleDOCTYPE(t *testing.T) {
 	if !strings.Contains(output, "comp-b") {
 		t.Error("merged HTML should contain comp-b")
 	}
+
+	// links must be [] not null — null breaks d3.forceLink (GH#3592)
+	if strings.Contains(output, "const links = null") {
+		t.Error("links must be [] not null for d3 compatibility")
+	}
+	if !strings.Contains(output, "const links = []") {
+		t.Error("empty links should serialize as [] not null")
+	}
+}
+
+func TestRenderGraphHTML_EmptyEdgesNotNull(t *testing.T) {
+	// Verify that a single-node graph emits [] not null for links (GH#3592)
+	issue := &types.Issue{
+		ID: "solo-1", Title: "Solo node", Status: types.StatusOpen,
+		Priority: 2, IssueType: types.TypeTask,
+	}
+
+	subgraph := &TemplateSubgraph{
+		Root:     issue,
+		Issues:   []*types.Issue{issue},
+		IssueMap: map[string]*types.Issue{"solo-1": issue},
+	}
+	layout := computeLayout(subgraph)
+
+	output := captureGraphOutput(func() {
+		renderGraphHTML(layout, subgraph)
+	})
+
+	if strings.Contains(output, "const links = null") {
+		t.Error("single-node graph must emit const links = [] not null")
+	}
+	if !strings.Contains(output, "const links = []") {
+		t.Error("single-node graph should have const links = []")
+	}
+	if strings.Contains(output, "const nodes = null") {
+		t.Error("nodes must never be null")
+	}
 }

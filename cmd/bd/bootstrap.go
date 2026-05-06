@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -23,6 +24,8 @@ import (
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"golang.org/x/term"
 )
+
+var resolveBootstrapAuthoritativeMetadata = fix.ResolveAuthoritativeServerMetadata
 
 type bootstrapServerProbeConfig struct {
 	host     string
@@ -181,6 +184,14 @@ Examples:
 			cfg = configfile.DefaultConfig()
 		}
 
+		resolvedCfg, repairMsg, err := applyBootstrapMetadataRepair(beadsDir, cfg, !dryRun)
+		if err != nil {
+			FatalError("failed to reconcile shared-server metadata: %v", err)
+		}
+		if resolvedCfg != nil {
+			cfg = resolvedCfg
+		}
+
 		// Determine action based on state
 		plan := detectBootstrapAction(beadsDir, cfg)
 
@@ -190,6 +201,9 @@ Examples:
 				return
 			}
 		} else {
+			if repairMsg != "" {
+				fmt.Fprintf(os.Stderr, "Bootstrap metadata repair: %s\n", repairMsg)
+			}
 			printBootstrapPlan(plan)
 			if plan.Action == "none" || dryRun {
 				return
@@ -201,6 +215,23 @@ Examples:
 			FatalError("Bootstrap failed: %v", err)
 		}
 	},
+}
+
+func applyBootstrapMetadataRepair(beadsDir string, cfg *configfile.Config, apply bool) (*configfile.Config, string, error) {
+	if beadsDir == "" {
+		return cfg, "", nil
+	}
+	if _, err := os.Stat(beadsDir); err != nil {
+		return cfg, "", nil
+	}
+	resolved, msg, err := resolveBootstrapAuthoritativeMetadata(filepath.Dir(beadsDir), apply)
+	if err != nil {
+		return nil, "", err
+	}
+	if resolved == nil {
+		return cfg, msg, nil
+	}
+	return resolved, msg, nil
 }
 
 // BootstrapPlan describes what bootstrap will do.

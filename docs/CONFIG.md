@@ -324,7 +324,7 @@ Configuration keys use dot-notation namespaces to organize settings:
 
 ### Core Namespaces
 
-- `compact_*` - Compaction settings (see EXTENDING.md)
+- `compact_*` - Compaction settings (used by `bd admin compact`)
 - `issue_prefix` - Issue ID prefix (managed by `bd init`)
 - `issue_id_mode` - ID generation mode: `hash` (default) or `counter` (sequential integers)
 - `max_collision_prob` - Maximum collision probability for adaptive hash IDs (default: 0.25)
@@ -742,6 +742,9 @@ bd linear sync --pull-if-stale --threshold 5m
 # Pull issues and Linear relations as bd dependencies
 bd linear sync --pull --relations
 
+# Pull and rebuild Linear project milestones as local epic parents
+bd linear sync --pull --milestones
+
 # Push only (export to Linear)
 bd linear sync --push
 
@@ -981,4 +984,4 @@ External integration scripts can read configuration to sync with Jira, Linear, G
 ## See Also
 
 - [README.md](../README.md) - Main documentation
-- [EXTENDING.md](EXTENDING.md) - Database schema and compaction config
+- [ADVANCED.md](ADVANCED.md) - Extensible Database section and other advanced topics
