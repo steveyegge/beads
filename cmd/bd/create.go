@@ -58,7 +58,8 @@ var createCmd = &cobra.Command{
 			if len(args) > 0 {
 				FatalError("cannot specify both title and --graph flag")
 			}
-			createIssuesFromGraph(graphFile)
+			graphDryRun, _ := cmd.Flags().GetBool("dry-run")
+			createIssuesFromGraph(graphFile, graphDryRun)
 			return
 		}
 
