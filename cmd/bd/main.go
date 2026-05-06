@@ -285,13 +285,13 @@ func selectedNoDBBeadsDir(cmd *cobra.Command) string {
 			return selectedBeadsDir
 		}
 	}
-	if os.Getenv("BEADS_DIR") != "" {
-		if selectedBeadsDir := beads.FindBeadsDir(); selectedBeadsDir != "" {
+	if dbPath != "" {
+		if selectedBeadsDir := resolveCommandBeadsDir(dbPath); selectedBeadsDir != "" {
 			return selectedBeadsDir
 		}
 	}
-	if dbPath != "" {
-		if selectedBeadsDir := resolveCommandBeadsDir(dbPath); selectedBeadsDir != "" {
+	if os.Getenv("BEADS_DIR") != "" {
+		if selectedBeadsDir := beads.FindBeadsDir(); selectedBeadsDir != "" {
 			return selectedBeadsDir
 		}
 	}

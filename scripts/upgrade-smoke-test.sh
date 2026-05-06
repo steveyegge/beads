@@ -67,7 +67,7 @@ if [ -n "${1:-}" ]; then
     PREV_VERSION="$1"
 else
     # Default: fetch the latest release tag before the current version
-    CURRENT_VERSION=$(grep 'Version = ' "$PROJECT_ROOT/cmd/bd/root.go" \
+    CURRENT_VERSION=$(grep 'Version = ' "$PROJECT_ROOT/cmd/bd/version.go" \
         | head -1 | sed 's/.*"\(.*\)".*/\1/')
     # Try to get the previous release tag from git
     PREV_VERSION=$(git -C "$PROJECT_ROOT" tag --sort=-version:refname \
