@@ -74,7 +74,7 @@ var BuiltinRecipes = map[string]Recipe{
 	"gemini": {
 		Name:        "Gemini CLI",
 		Type:        TypeHooks,
-		Description: "Gemini CLI hooks (SessionStart, PreCompress)",
+		Description: "Gemini CLI hooks (SessionStart)",
 		GlobalPath:  "~/.gemini/settings.json",
 		ProjectPath: ".gemini/settings.json",
 	},

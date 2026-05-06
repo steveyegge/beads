@@ -950,8 +950,8 @@ bd setup mux --global        # Also install ~/.mux/AGENTS.md global layer
 - **Factory.ai** (`bd setup factory`): Creates or updates AGENTS.md with beads workflow instructions (full profile — works with multiple AI tools using the AGENTS.md standard)
 - **Codex CLI** (`bd setup codex`): Creates or updates AGENTS.md with beads workflow instructions for Codex (full profile)
 - **Mux** (`bd setup mux`): Creates or updates AGENTS.md with beads workflow instructions for Mux workspaces (full profile)
-- **Claude Code** (`bd setup claude`): Adds hooks to Claude Code's settings.json that run `bd prime` on SessionStart and PreCompact events and manages a minimal-profile beads section in `CLAUDE.md`
-- **Gemini CLI** (`bd setup gemini`): Adds hooks to Gemini's settings.json that run `bd prime` on SessionStart and PreCompress events and manages a minimal-profile beads section in `GEMINI.md`
+- **Claude Code** (`bd setup claude`): Adds hooks to Claude Code's settings.json that run `bd prime --hook-json` on SessionStart and PreCompact events and manages a minimal-profile beads section in `CLAUDE.md`
+- **Gemini CLI** (`bd setup gemini`): Adds hooks to Gemini's settings.json that run `bd prime --hook-json` on the SessionStart event and manages a minimal-profile beads section in `GEMINI.md`
 - **Cursor** (`bd setup cursor`): Creates `.cursor/rules/beads.mdc` with workflow instructions
 - **Aider** (`bd setup aider`): Creates `.aider.conf.yml` with bd workflow instructions
 
