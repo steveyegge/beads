@@ -164,7 +164,7 @@ All `examples/*/README.md` files are narrative tutorials. Classification: unifor
 |------|-------|---------|------------|
 | `examples/README.md` | a | Examples index. | low. |
 | `examples/bash-agent/README.md` | a | Bash agent walkthrough. | med. |
-| `examples/bd-example-extension-go/README.md` | a / **broken link** | References `docs/EXTENDING.md` **which does not exist in this tree** — already drifted. | high (because of the dead link). |
+| `examples/bd-example-extension-go/README.md` | a / legacy SQLite example | Legacy custom-table extension example. It now points at `docs/ADVANCED.md#extensible-database` for current Dolt-era guidance instead of relying on the old missing extension guide. | med — legacy SQLite pattern can drift from current Dolt guidance. |
 | `examples/claude-desktop-mcp/README.md` | a | Claude Desktop MCP example. | med. |
 | `examples/compaction/README.md` | a | Compaction examples. | low. |
 | `examples/contributor-workflow/README.md` | a | OSS contributor workflow. | med. |
@@ -434,7 +434,7 @@ After maintainer reviews this inventory, Phase 2 candidates:
 - **`docs/CLI_REFERENCE.md` `Version: 0.21.0+` header** — this is exactly the GH#3683 issue PR #3704 fixes; included here for completeness.
 - **`docs/DOLT.md` and `docs/DOLT-BACKEND.md`** — two Dolt-backend overview docs at different lengths. Possible duplication or scope-bleed.
 - **`docs/RELEASING.md` and root `RELEASING.md`** — same content, different files. Possible duplication.
-- **`examples/bd-example-extension-go/README.md` references `docs/EXTENDING.md`** — that file does not exist in upstream/main. Dead cross-reference.
+- **`examples/bd-example-extension-go/README.md` used to reference the old extension guide** — that file does not exist in upstream/main. The example now carries a legacy SQLite note and links to `docs/ADVANCED.md#extensible-database`.
 - **A second hand-written CLI reference lives at `plugins/beads/skills/beads/resources/CLI_REFERENCE.md`** — separate from `docs/CLI_REFERENCE.md`. PR #3704 only fixes one of them.
 - **`docs/dev-notes/`** contains five resolved/historical audit reports. They're (c) historical, but it's worth deciding whether to archive them or leave them where they are.
 - **`docs/LINTING.md`'s "22 issues as of Nov 6 2025"** — date-stamped snapshot inside narrative prose; likely already wrong.
@@ -443,5 +443,5 @@ After maintainer reviews this inventory, Phase 2 candidates:
 
 - **Versioned docs:** treated as "snapshots that should not have a freshness mechanism" — a stale snapshot for v1.0.0 is correct behaviour, not drift. Confirm this matches Docusaurus norm.
 - **Plugin command files** (`plugins/beads/skills/beads/commands/*.md`) classified as (b). They're part of a published Claude Code skill bundle; regenerating them upstream may collide with downstream skill packaging. The recommendation is to coordinate with the skill maintainers before adding a generator.
-- **`docs/EXTENDING.md` is missing.** Either it should be written (and the example link unbroken) or the example reference should be removed. Out of scope for Phase 1.
+- **The old extension guide is missing.** The live example reference has been removed; do not reintroduce links to it unless a focused extension guide is added.
 - **Boundary between (a) and (b) for docs with mixed content** (e.g., `docs/LABELS.md`, `docs/ADVANCED.md`, `docs/TROUBLESHOOTING.md`) — classified as primarily (a) when narrative dominates but flagged as having (b)-style sections. Phase 2 may want to split these or use partial-generation block markers.
