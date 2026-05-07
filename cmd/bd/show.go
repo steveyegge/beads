@@ -158,25 +158,7 @@ var showCmd = &cobra.Command{
 				// shape (counts, types, status flags) without the heavy fields
 				// (Description, Design, Notes, AcceptanceCriteria, etc.).
 				rawDependents, _ := issueStore.GetDependentsWithMetadata(ctx, issue.ID) // Best effort
-				if len(rawDependents) > 0 {
-					shallow := make([]*types.IssueWithDependencyMetadata, 0, len(rawDependents))
-					for _, dep := range rawDependents {
-						if dep == nil {
-							continue
-						}
-						shallow = append(shallow, &types.IssueWithDependencyMetadata{
-							Issue: types.Issue{
-								ID:        dep.Issue.ID,
-								Status:    dep.Issue.Status,
-								IssueType: dep.Issue.IssueType,
-								Priority:  dep.Issue.Priority,
-								Title:     dep.Issue.Title,
-							},
-							DependencyType: dep.DependencyType,
-						})
-					}
-					details.Dependents = shallow
-				}
+				details.Dependents = shallowDependentsForJSON(rawDependents)
 
 				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID) // Best effort: show issue even if comments unavailable
 
@@ -417,6 +399,46 @@ var showCmd = &cobra.Command{
 			SetLastTouchedID(args[0])
 		}
 	},
+}
+
+// shallowDependentsForJSON returns a copy of raw with each embedded Issue
+// stripped down to identity-and-shape fields (ID, Status, IssueType, Priority,
+// Title). The heavy fields (Description, Design, Notes, AcceptanceCriteria,
+// metadata blobs, etc.) are dropped.
+//
+// be-4d36f2: hub beads with thousands of dependents previously caused
+// `bd show --json <hub>` to allocate 5-13 GB while marshaling full Issue
+// records into JSON. The shallow shape preserves what callers actually
+// consume (counts, status, type) and drops what they don't (free-form
+// text fields). On a 4-dependent hub this trims output ~60%; on a hub
+// with thousands of dependents, savings scale linearly.
+//
+// Callers that need the full Issue for a specific dependent should fetch
+// it explicitly via `bd show --json <dependent-id>`.
+//
+// Returns nil if raw is empty or nil (matches caller expectations of an
+// omitempty `dependents` field in IssueDetails).
+func shallowDependentsForJSON(raw []*types.IssueWithDependencyMetadata) []*types.IssueWithDependencyMetadata {
+	if len(raw) == 0 {
+		return nil
+	}
+	shallow := make([]*types.IssueWithDependencyMetadata, 0, len(raw))
+	for _, dep := range raw {
+		if dep == nil {
+			continue
+		}
+		shallow = append(shallow, &types.IssueWithDependencyMetadata{
+			Issue: types.Issue{
+				ID:        dep.Issue.ID,
+				Status:    dep.Issue.Status,
+				IssueType: dep.Issue.IssueType,
+				Priority:  dep.Issue.Priority,
+				Title:     dep.Issue.Title,
+			},
+			DependencyType: dep.DependencyType,
+		})
+	}
+	return shallow
 }
 
 func init() {
