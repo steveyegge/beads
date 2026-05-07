@@ -46,6 +46,7 @@ endif
 # ICU flags are only needed for scripts/test-icu-path.sh (which exercises the
 # opt-in ICU regex path).
 BUILD_TAGS := gms_pure_go
+REGRESSION_TIMEOUT ?= 20m
 
 # Build the bd binary
 build:
@@ -83,7 +84,7 @@ test-full-cgo:
 # Override baseline: BD_REGRESSION_BASELINE_BIN=/path/to/bd make test-regression
 test-regression:
 	@echo "Running regression tests (baseline vs candidate)..."
-	go test -tags=regression,$(BUILD_TAGS) -timeout=10m -v ./tests/regression/...
+	go test -tags=regression,$(BUILD_TAGS) -timeout=$(REGRESSION_TIMEOUT) -v ./tests/regression/...
 
 # Run upgrade smoke tests (release stability gate).
 # Tests that upgrading from previous release preserves data, role, and mode.

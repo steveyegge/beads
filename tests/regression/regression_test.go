@@ -13,6 +13,7 @@ package regression
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -21,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -249,6 +251,7 @@ func newWorkspace(t *testing.T, bdPath string) *workspace {
 	t.Helper()
 	dir := t.TempDir()
 	w := &workspace{dir: dir, bdPath: bdPath, t: t}
+	w.cleanupBaselineDaemon()
 
 	w.git("init")
 	w.git("config", "user.name", "regression-test")
@@ -269,6 +272,31 @@ func newWorkspace(t *testing.T, bdPath string) *workspace {
 	w.run("init", "--prefix", prefix, "--quiet")
 
 	return w
+}
+
+func (w *workspace) cleanupBaselineDaemon() {
+	w.t.Helper()
+	if baselineBin == "" || w.bdPath != baselineBin {
+		return
+	}
+
+	w.t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, w.bdPath, "daemon", "stop")
+		cmd.Dir = w.dir
+		cmd.Env = w.runEnv()
+		_ = cmd.Run()
+
+		if pkill, err := exec.LookPath("pkill"); err == nil {
+			pkillCtx, pkillCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer pkillCancel()
+
+			pattern := "^" + regexp.QuoteMeta(w.bdPath) + " daemon start$"
+			_ = exec.CommandContext(pkillCtx, pkill, "-f", pattern).Run()
+		}
+	})
 }
 
 func (w *workspace) runEnv() []string {
