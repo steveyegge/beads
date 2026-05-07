@@ -16,11 +16,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - **Dolt** in `storage/dolt/` — version-controlled SQL database with cell-level merge
    - Common types and interfaces in `storage.go`
 
-2. **RPC Layer** (`internal/rpc/`)
-   - Client/server architecture using Unix domain sockets (Windows named pipes)
-   - Protocol defined in `protocol.go`
-   - Server split into focused files: `server_core.go`, `server_issues_epics.go`, `server_labels_deps_comments.go`, etc.
-   - Used by Dolt server mode for multi-writer access
+2. **Database Runtime Layer**
+   - Embedded mode runs Dolt in-process through `internal/storage/embeddeddolt/`
+   - Server mode uses `internal/doltserver/` and `internal/storage/db/`
+   - Proxy and pidfile helpers live under `internal/storage/db/`
+   - Storage-facing server adapters live under `internal/storage/doltserver/`
 
 3. **CLI Layer** (`cmd/bd/`)
    - Cobra-based commands (one file per command: `create.go`, `list.go`, etc.)
@@ -41,13 +41,14 @@ Remote (Dolt remotes: DoltHub, S3, GCS, etc.)
 
 - **Write path**: CLI → Dolt → auto-commit to Dolt history
 - **Read path**: Direct SQL queries against Dolt
-- **Sync**: Dolt handles versioning and sync natively; `bd export` available for data portability, `bd init --from-jsonl` for bootstrapping
+- **Sync**: Dolt handles versioning and sync natively via `bd dolt push` / `bd dolt pull`
 - **Hash-based IDs**: Automatic collision prevention (v0.20+)
 
 Core implementation:
 - Dolt storage: `internal/storage/dolt/`
-- Export: `cmd/bd/export.go`
-- Sync: `cmd/bd/sync_git.go`
+- Embedded runtime: `internal/storage/embeddeddolt/`
+- Server runtime: `internal/doltserver/`, `internal/storage/db/`, and `internal/storage/doltserver/`
+- Sync commands: `cmd/bd/dolt_*.go`, `cmd/bd/sync_*.go`
 
 ### Key Data Types
 
@@ -103,8 +104,8 @@ bd ready
 - **AGENTS.md** - Complete workflow and development guide (READ THIS!)
 - **README.md** - User-facing documentation
 - **ADVANCED.md** - Advanced features (rename, merge, compaction)
-- **LABELS.md** - Complete label system guide
-- **CONFIG.md** - Configuration system
+- **docs/LABELS.md** - Complete label system guide
+- **docs/CONFIG.md** - Configuration system
 
 ## When Adding Features
 

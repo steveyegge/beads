@@ -93,7 +93,7 @@ bd hooks install
 
 ### Git Integration
 
-**Dolt sync**: Dolt handles sync natively via `bd dolt push` / `bd dolt pull`. No JSONL export/import needed.
+**Dolt sync**: Dolt handles sync natively via `bd dolt push` / `bd dolt pull`. No export/import round-trip needed for normal sync.
 
 **Protected branches**: Dolt stores data under `refs/dolt/data`, separate from standard Git refs. See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md).
 
@@ -301,6 +301,97 @@ This installs:
 **Note:** Hooks are embedded in the bd binary and work for all bd users (not just source repo users).
 
 ## Common Development Tasks
+
+### Visual Design System
+
+When adding CLI output features, follow these design principles for consistent,
+cognitively friendly visuals.
+
+#### No Emoji-Style Icons
+
+Do not use large colored emoji icons like red/orange/yellow/blue/white circles
+for priorities or status. They cause cognitive overload and break visual
+consistency.
+
+Use small Unicode symbols with semantic colors applied via lipgloss:
+
+- Status: `○ ◐ ● ✓ ❄`
+- Priority: `●` (filled circle with color)
+
+#### Status Icons
+
+Use these symbols consistently across all commands:
+
+```text
+○ open        - Available to work (white/default)
+◐ in_progress - Currently being worked (yellow)
+● blocked     - Waiting on dependencies (red)
+✓ closed      - Completed (muted gray)
+❄ deferred    - Scheduled for later (blue/muted)
+```
+
+#### Priority Icons and Colors
+
+Format priority as `● P0` (filled circle icon plus label, colored by priority):
+
+- `● P0`: Red + bold (critical)
+- `● P1`: Orange (high)
+- `● P2-P4`: Default text (normal)
+
+#### Issue Type Colors
+
+- `bug`: Red (problems need attention)
+- `epic`: Purple (larger scope)
+- Others: Default text
+
+#### Design Principles
+
+1. Small Unicode symbols only; avoid emoji blobs.
+2. Semantic colors only for actionable items; do not color everything.
+3. Closed items fade using muted gray.
+4. Prefer icons over text labels for scanability.
+5. Keep icons consistent across list, graph, show, and related commands.
+6. Use tree connectors (`├──`, `└──`, `│`) for hierarchies.
+7. Reduce cognitive noise; do not show `needs:1` when it is just the parent epic.
+
+#### Semantic Styles
+
+Use exported styles from `internal/ui/styles.go`:
+
+```go
+// Status styles
+ui.StatusInProgressStyle  // Yellow - active work
+ui.StatusBlockedStyle     // Red - needs attention
+ui.StatusClosedStyle      // Muted gray - done
+
+// Priority styles
+ui.PriorityP0Style        // Red + bold
+ui.PriorityP1Style        // Orange
+
+// Type styles
+ui.TypeBugStyle           // Red
+ui.TypeEpicStyle          // Purple
+
+// General styles
+ui.PassStyle, ui.WarnStyle, ui.FailStyle
+ui.MutedStyle, ui.AccentStyle
+ui.RenderMuted(text), ui.RenderAccent(text)
+```
+
+Example:
+
+```go
+switch issue.Status {
+case types.StatusOpen:
+    icon = "○"
+case types.StatusInProgress:
+    icon = ui.StatusInProgressStyle.Render("◐")
+case types.StatusBlocked:
+    icon = ui.StatusBlockedStyle.Render("●")
+case types.StatusClosed:
+    icon = ui.StatusClosedStyle.Render("✓")
+}
+```
 
 ### CLI Design Principles
 
