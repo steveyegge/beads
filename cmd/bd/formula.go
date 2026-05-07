@@ -36,8 +36,16 @@ Search paths (in order):
   4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
 
 Commands:
-  list   List available formulas from all search paths
-  show   Show formula details, steps, and composition rules`,
+  list    List available formulas from all search paths
+  show    Show formula details, steps, and composition rules
+  schema  Show the formula primitive index (alias: primitives)
+
+Discovering primitives:
+  bd formula schema                 # list every primitive an agent can write
+  bd formula schema loop            # show LoopSpec fields, types, and tags
+  bd formula primitives on_complete # alias; same handler as 'schema'
+  examples/formulas/primitives/     # curated, smoke-tested fixtures
+  website/docs/workflows/formulas.md  # narrative reference`,
 }
 
 // formulaListCmd lists all available formulas.
@@ -53,6 +61,9 @@ Search paths (in order of priority):
   4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
 
 Formulas in earlier paths shadow those with the same name in later paths.
+
+To list the formula primitives an agent can write inside a .formula.toml,
+use 'bd formula schema' (alias: 'bd formula primitives').
 
 Examples:
   bd formula list
@@ -74,6 +85,9 @@ Displays:
   - Steps with dependencies
   - Composition rules (extends, aspects, expansions)
   - Bond points for external composition
+
+To inspect the structure of an individual primitive (e.g. LoopSpec, Gate)
+rather than a user-authored formula, use 'bd formula schema <primitive>'.
 
 Examples:
   bd formula show shiny
