@@ -522,11 +522,15 @@ func (m *mockDB) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row
 	panic("not called")
 }
 
-func TestRunMigrationsStderrOutput(t *testing.T) {
+func TestRunMigrationsProgressOutput(t *testing.T) {
 	var buf bytes.Buffer
-	orig := stderr
-	stderr = &buf
-	defer func() { stderr = orig }()
+	orig := progressOut
+	progressOut = &buf
+	defer func() { progressOut = orig }()
+
+	origCounter := issueRowCounter
+	issueRowCounter = func(_ context.Context, _ DBConn) (int64, error) { return 0, nil }
+	defer func() { issueRowCounter = origCounter }()
 
 	n, err := runMigrations(context.Background(), &mockDB{}, 0)
 	if err != nil {
@@ -537,11 +541,12 @@ func TestRunMigrationsStderrOutput(t *testing.T) {
 	}
 
 	got := buf.String()
-	if !strings.Contains(got, "migrating schema: ") {
-		t.Errorf("expected stderr to contain 'migrating schema: ', got: %q", got)
+	if !strings.Contains(got, "Applying migration") {
+		t.Errorf("expected output to contain 'Applying migration', got: %q", got)
 	}
+	// Each migration emits two lines ("Applying…" and "  done…"), so total lines = 2*n.
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
-	if len(lines) != n {
-		t.Errorf("expected %d stderr lines, got %d", n, len(lines))
+	if len(lines) != 2*n {
+		t.Errorf("expected %d output lines, got %d", 2*n, len(lines))
 	}
 }

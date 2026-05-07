@@ -17,12 +17,51 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/steveyegge/beads/internal/storage/dberrors"
 )
 
-// stderr is the writer for migration progress messages. Overridable in tests.
-var stderr io.Writer = os.Stderr
+// progressOut is where migration progress lines are written. Defaults to
+// os.Stderr so that JSON pipelines on stdout (e.g. bd list --json | jq) are
+// not polluted. Unexported so tests in this package can swap it without
+// leaking a setter into production API.
+var progressOut io.Writer = os.Stderr
+
+const largeRigThreshold = 10000
+
+// issueRowCounter returns the current issues-table row count, or an error if
+// the table is unreachable (fresh install → table doesn't exist yet). The
+// caller uses the error as the "no warning" signal. Variable so tests in this
+// package that exercise runMigrations against a non-DB mock can stub out the
+// query without panicking on QueryRowContext.
+var issueRowCounter = func(ctx context.Context, db DBConn) (int64, error) {
+	var n int64
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues").Scan(&n)
+	return n, err
+}
+
+// emitLargeRigNotice writes the one-line large-rig warning to out when the
+// issues count exceeds largeRigThreshold. An error from the counter is
+// treated as "fresh install / table missing" and suppresses the warning —
+// see be-8ja for the UX rationale.
+func emitLargeRigNotice(out io.Writer, count int64, err error) {
+	if err != nil || count <= largeRigThreshold {
+		return
+	}
+	fmt.Fprintf(out, "Large rig detected (%d issues). This migration may take up to 60 seconds; do not interrupt.\n", count)
+}
+
+// humanMigrationName turns "0033_add_date_indexes.up.sql" into
+// "add_date_indexes" for the progress line.
+func humanMigrationName(filename string) string {
+	s := strings.TrimSuffix(filename, ".up.sql")
+	parts := strings.SplitN(s, "_", 2)
+	if len(parts) < 2 {
+		return s
+	}
+	return parts[1]
+}
 
 // DBConn is the minimal interface satisfied by *sql.DB, *sql.Tx, and *sql.Conn.
 // It provides query and exec methods needed by the migration runner.
@@ -759,6 +798,12 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
 // runMigrations applies all migration files with version > minVersion. It is
 // package-private so tests can call it directly without needing a live cursor table.
 func runMigrations(ctx context.Context, db DBConn, minVersion int) (int, error) {
+	// One-shot large-rig notice. Treats a missing issues table as "fresh
+	// install" and emits nothing — on a first-ever run there is no rig to
+	// warn about, and the COUNT(*) query would error on the missing table.
+	rowCount, rowCountErr := issueRowCounter(ctx, db)
+	emitLargeRigNotice(progressOut, rowCount, rowCountErr)
+
 	count := 0
 	for _, mf := range mainSource.list() {
 		if mf.version <= minVersion {
@@ -769,13 +814,16 @@ func runMigrations(ctx context.Context, db DBConn, minVersion int) (int, error) 
 			return count, fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
 
-		fmt.Fprintf(stderr, "migrating schema: %s\n", mf.name)
+		fmt.Fprintf(progressOut, "Applying migration %04d: %s…\n", mf.version, humanMigrationName(mf.name))
+		start := time.Now()
+
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
 			return count, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
 		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+mainSource.cursorTable+" (version) VALUES (?)", mf.version); err != nil {
 			return count, fmt.Errorf("recording %s in %s: %w", mf.name, mainSource.cursorTable, err)
 		}
+		fmt.Fprintf(progressOut, "  done (%.1fs)\n", time.Since(start).Seconds())
 		count++
 	}
 	return count, nil
