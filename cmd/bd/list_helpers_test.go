@@ -322,6 +322,23 @@ func TestLoadWatchedIssues_WithParentIncludesHierarchyAndStableOrder(t *testing.
 	}
 }
 
+func TestReadyWorkFilterFromIssueFilterIncludesDeferredAndEphemeral(t *testing.T) {
+	includeEphemeral := true
+	filter := types.IssueFilter{
+		Deferred:  true,
+		Ephemeral: &includeEphemeral,
+	}
+
+	wf := readyWorkFilterFromIssueFilter(filter)
+
+	if !wf.IncludeDeferred {
+		t.Fatalf("expected ready work filter to include deferred issues")
+	}
+	if !wf.IncludeEphemeral {
+		t.Fatalf("expected ready work filter to include ephemeral issues")
+	}
+}
+
 func TestLoadWatchedIssues_ReadyWithParentPreservesReadySemantics(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()

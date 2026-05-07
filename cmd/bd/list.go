@@ -68,6 +68,9 @@ func readyWorkFilterFromIssueFilter(filter types.IssueFilter) types.WorkFilter {
 	if filter.NoAssignee {
 		wf.Unassigned = true
 	}
+	if filter.Deferred {
+		wf.IncludeDeferred = true
+	}
 	if filter.Ephemeral != nil && *filter.Ephemeral {
 		wf.IncludeEphemeral = true
 	}
