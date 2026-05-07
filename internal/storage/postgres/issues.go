@@ -322,6 +322,30 @@ func (s *PostgresStore) DeleteIssue(ctx context.Context, id string) error {
 	})
 }
 
+// pgGlobToLikePattern mirrors issueops.globToLikePattern: convert shell-style
+// glob (* / ?) to a SQL LIKE pattern, escaping literal % / _ / | with '|' so
+// they don't act as LIKE wildcards. Callers MUST emit the matching ESCAPE '|'
+// clause. Mirrored locally to keep the postgres package free of a hard
+// dependency on issueops.
+func pgGlobToLikePattern(pattern string) string {
+	var b strings.Builder
+	b.Grow(len(pattern))
+	for _, c := range pattern {
+		switch c {
+		case '%', '_', '|':
+			b.WriteByte('|')
+			b.WriteRune(c)
+		case '*':
+			b.WriteByte('%')
+		case '?':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
 // SearchIssues runs a flexible filter query against the issues table.
 // Supports the subset of types.IssueFilter that the smoke path needs;
 // less-common filters return ErrNotImplemented sentinels.
@@ -382,6 +406,32 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 	} else {
 		// default: only persistent rows from the issues table
 		clauses = append(clauses, "(ephemeral = FALSE OR ephemeral IS NULL)")
+	}
+
+	// be-ucslk4: previously these were silently dropped — `bd list --label X`
+	// and friends returned the full open queue against PG-backed cities.
+	if filter.TitleContains != "" {
+		add(fmt.Sprintf("title ILIKE $%d", next), "%"+filter.TitleContains+"%")
+	}
+	for _, label := range filter.Labels {
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label = $%d)", next), label)
+	}
+	if len(filter.LabelsAny) > 0 {
+		ph := joinPlaceholders(next, len(filter.LabelsAny))
+		labels := make([]any, len(filter.LabelsAny))
+		for i, l := range filter.LabelsAny {
+			labels[i] = l
+		}
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label IN (%s))", ph), labels...)
+	}
+	for _, label := range filter.ExcludeLabels {
+		add(fmt.Sprintf("NOT EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label = $%d)", next), label)
+	}
+	if filter.LabelPattern != "" {
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label LIKE $%d ESCAPE '|')", next), pgGlobToLikePattern(filter.LabelPattern))
+	}
+	if filter.LabelRegex != "" {
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label ~ $%d)", next), filter.LabelRegex)
 	}
 
 	where := ""
