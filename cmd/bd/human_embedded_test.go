@@ -65,28 +65,14 @@ func TestEmbeddedHuman(t *testing.T) {
 
 	t.Run("human_respond_and_dismiss", func(t *testing.T) {
 		// Create a bead
-		cmd := exec.Command(bd, "create", "Human test issue", "--type", "task")
+		cmd := exec.Command(bd, "create", "Human test issue", "--type", "task", "--silent")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("create failed: %v\n%s", err, out)
 		}
-
-		// Extract ID (e.g., "th-a3f2")
-		lines := strings.Split(string(out), "\n")
-		var id string
-		for _, line := range lines {
-			if strings.Contains(line, "Created issue:") {
-				parts := strings.Fields(line)
-				for i, p := range parts {
-					if p == "issue:" && i+1 < len(parts) {
-						id = parts[i+1]
-						break
-					}
-				}
-			}
-		}
+		id := strings.TrimSpace(string(out))
 		if id == "" {
 			t.Fatalf("could not find issue ID in output: %s", out)
 		}
@@ -112,33 +98,33 @@ func TestEmbeddedHuman(t *testing.T) {
 		cmd = exec.Command(bd, "show", id)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		showOut, _ := cmd.CombinedOutput()
+		showOut, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("show failed: %v\n%s", err, showOut)
+		}
 		if !strings.Contains(string(showOut), "CLOSED") {
 			t.Errorf("expected issue %s to be closed after respond:\n%s", id, showOut)
 		}
 
 		// Create another for Dismiss
-		cmd = exec.Command(bd, "create", "Dismiss test issue")
+		cmd = exec.Command(bd, "create", "Dismiss test issue", "--silent")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, _ = cmd.CombinedOutput()
-		id2 := ""
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.Contains(line, "Created issue:") {
-				parts := strings.Fields(line)
-				for i, p := range parts {
-					if p == "issue:" && i+1 < len(parts) {
-						id2 = parts[i+1]
-						break
-					}
-				}
-			}
+		out, err = cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("create failed: %v\n%s", err, out)
+		}
+		id2 := strings.TrimSpace(string(out))
+		if id2 == "" {
+			t.Fatalf("could not find issue ID in output: %s", out)
 		}
 
 		cmd = exec.Command(bd, "label", "add", id2, "human")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		_, _ = cmd.CombinedOutput()
+		if out, err = cmd.CombinedOutput(); err != nil {
+			t.Fatalf("label add failed: %v\n%s", err, out)
+		}
 
 		// Test Dismiss
 		bdHuman(t, bd, dir, "dismiss", id2, "--reason", "Not needed")
@@ -147,7 +133,10 @@ func TestEmbeddedHuman(t *testing.T) {
 		cmd = exec.Command(bd, "show", id2)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		showOut2, _ := cmd.CombinedOutput()
+		showOut2, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("show failed: %v\n%s", err, showOut2)
+		}
 		if !strings.Contains(string(showOut2), "CLOSED") {
 			t.Errorf("expected issue %s to be closed after dismiss:\n%s", id2, showOut2)
 		}
