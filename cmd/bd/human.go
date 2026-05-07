@@ -191,6 +191,11 @@ Examples:
 		ctx := rootCtx
 		issueID := args[0]
 
+		// Direct mode
+		if err := ensureStoreActive(); err != nil {
+			FatalErrorRespectJSON("responding to human bead: %v", err)
+		}
+
 		// Resolve partial ID and get issue
 		result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
 		if err != nil {
@@ -262,6 +267,11 @@ Examples:
 
 		ctx := rootCtx
 		issueID := args[0]
+
+		// Direct mode
+		if err := ensureStoreActive(); err != nil {
+			FatalErrorRespectJSON("dismissing human bead: %v", err)
+		}
 
 		// Resolve partial ID and get issue
 		result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
