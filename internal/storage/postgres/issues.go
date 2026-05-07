@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -347,8 +348,10 @@ func pgGlobToLikePattern(pattern string) string {
 }
 
 // SearchIssues runs a flexible filter query against the issues table.
-// Supports the subset of types.IssueFilter that the smoke path needs;
-// less-common filters return ErrNotImplemented sentinels.
+// Mirrors the canonical clause set in
+// internal/storage/issueops/filters.go::BuildIssueFilterClauses, translated
+// to Postgres syntax (positional $N placeholders, EXISTS subqueries against
+// labels/dependencies, jsonb operators for metadata).
 func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
 	clauses := []string{}
 	args := []any{}
@@ -432,6 +435,112 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 	}
 	if filter.LabelRegex != "" {
 		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label ~ $%d)", next), filter.LabelRegex)
+	}
+
+	// be-jdeief: extend coverage to the rest of the canonical filter set.
+	// The Dolt analog at internal/storage/issueops/filters.go is the
+	// reference shape. PG idioms differ:
+	//  - EXISTS over labels/dependencies subqueries (matches the be-ucslk4
+	//    pattern in this function and queries.go::GetReadyWork)
+	//  - ILIKE for case-insensitive substring (no LOWER() needed)
+	//  - jsonb operators (`->>` for value lookup, `?` for key existence)
+	//  - boolean comparison via TRUE/FALSE literals against BOOLEAN columns
+
+	if filter.NoLabels {
+		clauses = append(clauses, "NOT EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id)")
+	}
+
+	if len(filter.ExcludeTypes) > 0 {
+		ph := joinPlaceholders(next, len(filter.ExcludeTypes))
+		excl := make([]any, len(filter.ExcludeTypes))
+		for i, t := range filter.ExcludeTypes {
+			excl[i] = string(t)
+		}
+		add(fmt.Sprintf("issue_type NOT IN (%s)", ph), excl...)
+	}
+
+	if filter.IsTemplate != nil {
+		if *filter.IsTemplate {
+			clauses = append(clauses, "is_template = TRUE")
+		} else {
+			clauses = append(clauses, "(is_template = FALSE OR is_template IS NULL)")
+		}
+	}
+
+	if filter.Pinned != nil {
+		if *filter.Pinned {
+			clauses = append(clauses, "pinned = TRUE")
+		} else {
+			clauses = append(clauses, "(pinned = FALSE OR pinned IS NULL)")
+		}
+	}
+
+	if len(filter.MetadataFields) > 0 {
+		// AND semantics: every key=value pair must match. Sort for deterministic SQL.
+		keys := make([]string, 0, len(filter.MetadataFields))
+		for k := range filter.MetadataFields {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if err := storage.ValidateMetadataKey(k); err != nil {
+				return nil, err
+			}
+			add(fmt.Sprintf("metadata->>%s = $%d", quoteJSONLit(k), next), filter.MetadataFields[k])
+		}
+	}
+	if filter.HasMetadataKey != "" {
+		if err := storage.ValidateMetadataKey(filter.HasMetadataKey); err != nil {
+			return nil, err
+		}
+		add(fmt.Sprintf("metadata ? $%d", next), filter.HasMetadataKey)
+	}
+
+	if filter.ParentID != nil {
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM dependencies d WHERE d.issue_id = issues.id AND d.type = 'parent-child' AND d.depends_on_id = $%d)", next), *filter.ParentID)
+	}
+	if filter.NoParent {
+		clauses = append(clauses, "NOT EXISTS (SELECT 1 FROM dependencies d WHERE d.issue_id = issues.id AND d.type = 'parent-child')")
+	}
+
+	if filter.MolType != nil {
+		add(fmt.Sprintf("mol_type = $%d", next), string(*filter.MolType))
+	}
+	if filter.WispType != nil {
+		add(fmt.Sprintf("wisp_type = $%d", next), string(*filter.WispType))
+	}
+
+	if filter.Deferred {
+		// Mirrors Dolt: surface anything scheduled later — defer_until set OR explicit deferred status.
+		add(fmt.Sprintf("(defer_until IS NOT NULL OR status = $%d)", next), string(types.StatusDeferred))
+	}
+	if filter.DeferAfter != nil {
+		add(fmt.Sprintf("defer_until > $%d", next), filter.DeferAfter.UTC())
+	}
+	if filter.DeferBefore != nil {
+		add(fmt.Sprintf("defer_until < $%d", next), filter.DeferBefore.UTC())
+	}
+	if filter.DueAfter != nil {
+		add(fmt.Sprintf("due_at > $%d", next), filter.DueAfter.UTC())
+	}
+	if filter.DueBefore != nil {
+		add(fmt.Sprintf("due_at < $%d", next), filter.DueBefore.UTC())
+	}
+	if filter.Overdue {
+		add(fmt.Sprintf("(due_at IS NOT NULL AND due_at < NOW() AND status != $%d)", next), string(types.StatusClosed))
+	}
+
+	if filter.TitleSearch != "" {
+		add(fmt.Sprintf("title ILIKE $%d", next), "%"+filter.TitleSearch+"%")
+	}
+	if filter.DescriptionContains != "" {
+		add(fmt.Sprintf("description ILIKE $%d", next), "%"+filter.DescriptionContains+"%")
+	}
+	if filter.NotesContains != "" {
+		add(fmt.Sprintf("notes ILIKE $%d", next), "%"+filter.NotesContains+"%")
+	}
+	if filter.ExternalRefContains != "" {
+		add(fmt.Sprintf("external_ref ILIKE $%d", next), "%"+filter.ExternalRefContains+"%")
 	}
 
 	where := ""
