@@ -87,6 +87,7 @@ Follow-up automation should replace marker-only checks with generated or
 | `OBSERVABILITY.md` | Keep | User-facing OTel guide; data-model reference owns schema tables. |
 | `PERFORMANCE_TESTING.md` | Keep | Maintainer testing guide. |
 | `PLUGIN.md` | Keep | User-facing plugin guide. |
+| `PROJECT_CHARTER.md` | Keep | Canonical product scope and boundary policy. |
 | `PROTECTED_BRANCHES.md` | Keep | User-facing protected-branch workflow. |
 | `QUICKSTART.md` | Keep pointer | Short pointer to website quickstart; low drift. |
 | `README_TESTING.md` | Consolidated pointer | Old duplicate staged; active path points to `TESTING.md` and `TESTING_PHILOSOPHY.md`. |

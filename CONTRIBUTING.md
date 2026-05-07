@@ -89,6 +89,13 @@ CI will automatically run linting on all pull requests.
 
 ## Making Changes
 
+### Project Scope
+
+Before adding new feature surface area, read
+[docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md). Beads owns issue tracking
+primitives. It should not encode orchestration-layer policy, become a storage
+engine, or expand the database schema when issue metadata is sufficient.
+
 ### Workflow
 
 1. Fork the repository

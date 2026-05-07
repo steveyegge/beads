@@ -14,9 +14,17 @@ expected and should not be flagged.
 
 - **Issue Tracking** - How to use bd for work management
 - **Development Guidelines** - Code standards and testing
+- **Project Scope** - Read [docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md) before adding new feature surface area
 - **Visual Design System** - Status icons, colors, and semantic styling for CLI output
 - **Contributor Protection** - Read [CONTRIBUTING.md](CONTRIBUTING.md) before handling external PRs
 - **Maintainer PR Guidelines** - Read [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md) before triaging, landing, or closing PRs
+
+## Project Scope
+
+Before adding new feature surface area, read
+[docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md). Beads owns issue tracking
+primitives and should not encode orchestration-layer policy, become a storage
+engine, or casually expand the database schema when metadata would work.
 
 ## PR Safety for Agents
 
@@ -50,25 +58,13 @@ See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for full development guidelin
 
 ## Storage Boundary
 
+The canonical storage boundary is in
+[docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md#storage-boundary). In short:
 Beads talks to storage through a driver interface (`dolthub/driver` for Dolt).
-Beads code should not reach across that boundary — no flocks, no engine
-introspection, no storage-engine-specific retry or crash-recovery logic in
-beads packages. Concurrency, locking, and crash-safety are the driver's job.
-
-If you find yourself adding storage-implementation details to beads code —
-especially anywhere on the public SDK surface (`OpenBestAvailable`, the
-`Storage` interface, return types crossing `pkg/`) — stop and reconsider.
-That is a signal the driver interface needs widening, not that beads needs
-more storage logic.
-
-**Roadmap target:** all storage interaction lives behind the driver. Beads
-stays storage-agnostic.
-
-**Filing storage issues is still encouraged** — but flag them clearly so
-they can be routed to the driver (`dolthub/driver`) rather than patched
-beads-side. Reflexive workarounds in beads (extra locks, retries, schema
-poking) are exactly the kind of cross-boundary leak this direction is
-removing. When in doubt, file the issue and ask which side owns the fix.
+Do not add beads-side flocks, engine introspection, storage-specific retry or
+crash-recovery logic, or public SDK return types that leak driver internals.
+If the boundary is too narrow, widen the interface or route the issue to the
+driver instead of patching around it in beads.
 
 ## Agent Warning: Interactive Commands
 
