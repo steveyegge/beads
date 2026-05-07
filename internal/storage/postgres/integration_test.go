@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -321,6 +322,163 @@ func TestConnectionUsesUTC(t *testing.T) {
 	if tz != "UTC" {
 		t.Errorf("expected session timezone UTC, got %q", tz)
 	}
+}
+
+// TestSearchIssuesFilters is the regression guard for be-ucslk4. Six
+// WHERE-clause cases (Labels, LabelsAny, ExcludeLabels, LabelPattern,
+// LabelRegex, TitleContains) had previously been silent no-ops on the PG
+// path; the fix at 1f12523af wired them through PostgresStore.SearchIssues.
+// Each subtest seeds the same corpus and asserts BOTH inclusion and
+// exclusion — the prior bug would have passed any inclusion-only assertion
+// because the filter was dropped and the full queue was returned.
+//
+// Bead: be-8skfsh.
+func TestSearchIssuesFilters(t *testing.T) {
+	dsn, stop := startPG(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	store, err := openStore(ctx, storage.ConnectionConfig{DSN: dsn})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("set issue_prefix: %v", err)
+	}
+
+	// Corpus: 6 beads with mixed labels/titles. Designed so each filter has
+	// at least one matching and one non-matching bead, and so the OR-vs-AND
+	// distinction is observable for LabelsAny (ids[0] has only backend,
+	// ids[1] has only frontend, ids[2] has both — an AND interpretation
+	// would surface only ids[2]).
+	type seed struct {
+		title  string
+		labels []string
+	}
+	corpus := []seed{
+		{"alpha with foo bar", []string{"backend"}},               // 0
+		{"beta has FoOd inside", []string{"frontend"}},            // 1
+		{"gamma neutral", []string{"backend", "frontend"}},        // 2
+		{"delta back-end test", []string{"back-end", "back-log"}}, // 3
+		{"epsilon random", []string{"random"}},                    // 4
+		{"zeta no labels", nil},                                   // 5
+	}
+	ids := make([]string, len(corpus))
+	for i, s := range corpus {
+		issue := &types.Issue{
+			Title:     s.title,
+			IssueType: types.TypeTask,
+			Status:    types.StatusOpen,
+			Priority:  2,
+			Labels:    s.labels,
+		}
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		if issue.ID == "" {
+			t.Fatalf("issue %d: ID was not assigned", i)
+		}
+		ids[i] = issue.ID
+	}
+
+	runSearch := func(t *testing.T, filter types.IssueFilter) map[string]bool {
+		t.Helper()
+		got, err := store.SearchIssues(ctx, "", filter)
+		if err != nil {
+			t.Fatalf("SearchIssues: %v", err)
+		}
+		out := make(map[string]bool, len(got))
+		for _, issue := range got {
+			out[issue.ID] = true
+		}
+		return out
+	}
+
+	assertSet := func(t *testing.T, name string, got map[string]bool, want, notWant []string) {
+		t.Helper()
+		for _, id := range want {
+			if !got[id] {
+				t.Errorf("%s: expected %s in result, got %v", name, id, sortedKeys(got))
+			}
+		}
+		for _, id := range notWant {
+			if got[id] {
+				t.Errorf("%s: did NOT expect %s in result, got %v", name, id, sortedKeys(got))
+			}
+		}
+	}
+
+	t.Run("Labels_single", func(t *testing.T) {
+		// --label=backend: only beads with the backend label.
+		got := runSearch(t, types.IssueFilter{Labels: []string{"backend"}})
+		assertSet(t, "Labels=[backend]", got,
+			[]string{ids[0], ids[2]},
+			[]string{ids[1], ids[3], ids[4], ids[5]},
+		)
+	})
+
+	t.Run("LabelsAny_OR", func(t *testing.T) {
+		// --label-any=backend,frontend: OR semantics. ids[0] has only
+		// backend, ids[1] has only frontend, ids[2] has both — all three
+		// must appear. ids[3..5] have neither and must be excluded.
+		got := runSearch(t, types.IssueFilter{LabelsAny: []string{"backend", "frontend"}})
+		assertSet(t, "LabelsAny=[backend,frontend]", got,
+			[]string{ids[0], ids[1], ids[2]},
+			[]string{ids[3], ids[4], ids[5]},
+		)
+	})
+
+	t.Run("ExcludeLabels", func(t *testing.T) {
+		// --exclude-label=backend: no bead carrying the backend label.
+		got := runSearch(t, types.IssueFilter{ExcludeLabels: []string{"backend"}})
+		assertSet(t, "ExcludeLabels=[backend]", got,
+			[]string{ids[1], ids[3], ids[4], ids[5]},
+			[]string{ids[0], ids[2]},
+		)
+	})
+
+	t.Run("LabelPattern_glob", func(t *testing.T) {
+		// --label-pattern='back*': any label starting with back —
+		// matches backend, back-end, back-log; rejects frontend, random.
+		got := runSearch(t, types.IssueFilter{LabelPattern: "back*"})
+		assertSet(t, "LabelPattern=back*", got,
+			[]string{ids[0], ids[2], ids[3]},
+			[]string{ids[1], ids[4], ids[5]},
+		)
+	})
+
+	t.Run("LabelRegex_anchored", func(t *testing.T) {
+		// --label-regex='^back-(end|log)$': anchored POSIX ERE. Matches
+		// the hyphenated back-end and back-log on ids[3]; the unhyphenated
+		// "backend" on ids[0]/ids[2] must NOT match the anchored hyphen.
+		got := runSearch(t, types.IssueFilter{LabelRegex: "^back-(end|log)$"})
+		assertSet(t, "LabelRegex=^back-(end|log)$", got,
+			[]string{ids[3]},
+			[]string{ids[0], ids[1], ids[2], ids[4], ids[5]},
+		)
+	})
+
+	t.Run("TitleContains_caseInsensitive", func(t *testing.T) {
+		// --title-contains=foo: ILIKE substring. The mixed-case "FoOd"
+		// on ids[1] proves the case-insensitivity contract.
+		got := runSearch(t, types.IssueFilter{TitleContains: "foo"})
+		assertSet(t, "TitleContains=foo", got,
+			[]string{ids[0], ids[1]},
+			[]string{ids[2], ids[3], ids[4], ids[5]},
+		)
+	})
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // avoid unused-import errors when the test build tag is off
