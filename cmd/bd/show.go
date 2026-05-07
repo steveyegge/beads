@@ -140,13 +140,43 @@ var showCmd = &cobra.Command{
 			}
 
 			if jsonOutput {
-				// Include labels, dependencies (with metadata), dependents (with metadata), and comments in JSON output
+				// Include labels, dependencies (with metadata), dependents (shallow), and comments in JSON output.
+				//
+				// be-4d36f2: Dependents are returned SHALLOW (ID + DependencyType + Status only)
+				// to avoid GB-scale RAM bloat on hub beads (e.g. session beads with thousands of
+				// child dep edges). Full Issue records for each dependent could push memory into
+				// the 5-13 GB range during JSON marshaling. Callers that need full dependent
+				// records should fetch them per-id with `bd show <id>`.
 				details := &types.IssueDetails{Issue: *issue}
 				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID) // Best effort: show issue even if label fetch fails
 
 				// Get dependencies with metadata (dependency_type field)
 				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID) // Best effort: show issue even if deps unavailable
-				details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)     // Best effort: show issue even if dependents unavailable
+
+				// Dependents: full fetch is GB-scale on hub beads. Pull, then strip every
+				// embedded Issue down to ID + Status + IssueType so callers still get the
+				// shape (counts, types, status flags) without the heavy fields
+				// (Description, Design, Notes, AcceptanceCriteria, etc.).
+				rawDependents, _ := issueStore.GetDependentsWithMetadata(ctx, issue.ID) // Best effort
+				if len(rawDependents) > 0 {
+					shallow := make([]*types.IssueWithDependencyMetadata, 0, len(rawDependents))
+					for _, dep := range rawDependents {
+						if dep == nil {
+							continue
+						}
+						shallow = append(shallow, &types.IssueWithDependencyMetadata{
+							Issue: types.Issue{
+								ID:        dep.Issue.ID,
+								Status:    dep.Issue.Status,
+								IssueType: dep.Issue.IssueType,
+								Priority:  dep.Issue.Priority,
+								Title:     dep.Issue.Title,
+							},
+							DependencyType: dep.DependencyType,
+						})
+					}
+					details.Dependents = shallow
+				}
 
 				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID) // Best effort: show issue even if comments unavailable
 
