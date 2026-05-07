@@ -14,9 +14,10 @@ import (
 
 // printTruncationHint emits a one-line notice to stderr when the list output
 // was truncated by --limit, so users and agents can't mistake a partial view
-// for a complete one (GH#3212, GH#788).
+// for a complete one (GH#3212, GH#788). Suppressed in --json mode so
+// programmatic consumers see only the JSON payload (be-acnquj).
 func printTruncationHint(truncated bool, effectiveLimit int) {
-	if !truncated || effectiveLimit <= 0 {
+	if !truncated || effectiveLimit <= 0 || jsonOutput {
 		return
 	}
 	msg := fmt.Sprintf("\nShowing %d issues; more results matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.\n", effectiveLimit)
