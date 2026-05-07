@@ -386,8 +386,14 @@ func ParseBeadsStatus(s string) types.Status {
 		return types.StatusInProgress
 	case "blocked":
 		return types.StatusBlocked
-	case "closed":
+	case "closed", "done":
 		return types.StatusClosed
+	case "deferred":
+		return types.StatusDeferred
+	case "pinned":
+		return types.StatusPinned
+	case "hooked":
+		return types.StatusHooked
 	default:
 		return types.StatusOpen
 	}

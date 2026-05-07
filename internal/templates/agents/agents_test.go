@@ -28,6 +28,37 @@ func TestEmbeddedDefault(t *testing.T) {
 	}
 }
 
+// TestEmbeddedDefaultArchitectureSummary guards GH#3683: agents reading the
+// generated AGENTS.md need an architecture statement at the top so they don't
+// build wrong mental models (treating JSONL as source of truth, manually
+// running bd import, etc.) and have to discover the four deeper architecture
+// docs the hard way. The summary must appear before the Quick Reference and
+// link to the canonical SYNC_CONCEPTS.md entry-point.
+func TestEmbeddedDefaultArchitectureSummary(t *testing.T) {
+	content := EmbeddedDefault()
+
+	required := []string{
+		"Architecture in one line",
+		"refs/dolt/data",
+		"passive export",
+		"SYNC_CONCEPTS.md",
+	}
+	for _, want := range required {
+		if !strings.Contains(content, want) {
+			t.Errorf("EmbeddedDefault() missing architecture-summary fragment %q", want)
+		}
+	}
+
+	archIdx := strings.Index(content, "Architecture in one line")
+	quickRefIdx := strings.Index(content, "## Quick Reference")
+	if archIdx == -1 || quickRefIdx == -1 {
+		t.Fatal("missing required anchors")
+	}
+	if archIdx > quickRefIdx {
+		t.Error("architecture summary should appear before Quick Reference (so agents see it first)")
+	}
+}
+
 func TestEmbeddedBeadsSection(t *testing.T) {
 	section := EmbeddedBeadsSection()
 

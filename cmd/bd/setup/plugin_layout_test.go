@@ -24,9 +24,9 @@ func TestPluginLayoutUsesSharedBeadsRoot(t *testing.T) {
 	}
 
 	var claudeManifest struct {
-		Skills   string `json:"skills"`
-		Commands string `json:"commands"`
-		Agents   string `json:"agents"`
+		Skills   string  `json:"skills"`
+		Commands string  `json:"commands"`
+		Agents   *string `json:"agents"`
 	}
 	readJSONFile(t, filepath.Join(root, "plugins", "beads", ".claude-plugin", "plugin.json"), &claudeManifest)
 	if claudeManifest.Skills != "./skills/" {
@@ -35,8 +35,8 @@ func TestPluginLayoutUsesSharedBeadsRoot(t *testing.T) {
 	if claudeManifest.Commands != "./skills/beads/commands/" {
 		t.Fatalf("Claude commands path = %q, want ./skills/beads/commands/", claudeManifest.Commands)
 	}
-	if claudeManifest.Agents != "./skills/beads/agents/" {
-		t.Fatalf("Claude agents path = %q, want ./skills/beads/agents/", claudeManifest.Agents)
+	if claudeManifest.Agents != nil {
+		t.Fatalf("Claude agents path = %q, want unset (default ./agents/) so the loader does not scan codex yaml as agents", *claudeManifest.Agents)
 	}
 
 	var codexManifest struct {
@@ -49,7 +49,7 @@ func TestPluginLayoutUsesSharedBeadsRoot(t *testing.T) {
 
 	requireRepoFile(t, root, "plugins", "beads", "skills", "beads", "SKILL.md")
 	requireRepoFile(t, root, "plugins", "beads", "skills", "beads", "agents", "openai.yaml")
-	requireRepoFile(t, root, "plugins", "beads", "skills", "beads", "agents", "task-agent.md")
+	requireRepoFile(t, root, "plugins", "beads", "agents", "task-agent.md")
 	requireRepoFile(t, root, "plugins", "beads", "skills", "beads", "commands", "ready.md")
 }
 

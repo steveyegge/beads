@@ -60,6 +60,7 @@ jobs:
             --include-fragments
             --timeout 30
             --root-dir website/link-check-root
+            --fallback-extensions html
             --exclude-path 'website/build/search/**'
             website/build
           fail: true

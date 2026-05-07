@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // YamlOnlyKeys are configuration keys that must be stored in config.yaml
@@ -65,7 +64,6 @@ var YamlOnlyKeys = map[string]bool{
 	"backup.git-repo": true,
 
 	// Dolt server settings
-	"dolt.idle-timeout":  true, // Idle auto-stop timeout (default "30m", "0" disables)
 	"dolt.shared-server": true, // Shared Dolt server at ~/.beads/shared-server/ (GH#2377)
 	"dolt.max-conns":     true, // Connection pool size override (default 10, GH#3140)
 
@@ -517,13 +515,6 @@ func validateYamlConfigValue(key, value string) error {
 		}
 		if depth < 1 {
 			return fmt.Errorf("hierarchy.max-depth must be at least 1, got %d", depth)
-		}
-	case "dolt.idle-timeout":
-		// "0" disables, otherwise must be a valid Go duration
-		if value != "0" {
-			if _, err := time.ParseDuration(value); err != nil {
-				return fmt.Errorf("dolt.idle-timeout must be a duration (e.g. \"30m\", \"1h\") or \"0\" to disable, got %q", value)
-			}
 		}
 	case "dolt.shared-server":
 		lower := strings.ToLower(value)

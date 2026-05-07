@@ -62,7 +62,7 @@ func (s *EmbeddedDoltStore) IsClosed() bool {
 // The database is created automatically if it doesn't exist (initSchema handles this).
 //
 // The dolthub/driver handles its own concurrency internally. File-level locking
-// is only used during bd init (via TryLock in the init command) to protect
+// is only used during bd init (via util.TryLock in the init command) to protect
 // one-time initialization steps — the store itself does not hold any lock.
 func newStore(ctx context.Context, beadsDir, database, branch string) (*EmbeddedDoltStore, error) {
 	if database == "" {

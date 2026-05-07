@@ -1402,7 +1402,7 @@ func TestGetStringFromDir(t *testing.T) {
 
 	t.Run("non-existent key returns empty string", func(t *testing.T) {
 		dir := t.TempDir()
-		writeConfig(t, dir, "dolt:\n  idle-timeout: 30m\n")
+		writeConfig(t, dir, "dolt:\n  shared-server: true\n")
 		if got := GetStringFromDir(dir, "dolt.auto-start"); got != "" {
 			t.Errorf("got %q, want %q", got, "")
 		}

@@ -753,8 +753,14 @@ func installHooksWithOptions(hookNames []string, force bool, shared bool, chain 
 		}
 	}
 
-	// Create hooks directory if it doesn't exist
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+	// Create hooks directory if it doesn't exist.
+	// Directories inside .beads/ use BeadsDirPerm (0700); git-managed hook
+	// dirs (.git/hooks, .beads-hooks) use 0755 so git can execute them.
+	hooksDirPerm := os.FileMode(0755)
+	if beadsHooks {
+		hooksDirPerm = config.BeadsDirPerm
+	}
+	if err := os.MkdirAll(hooksDir, hooksDirPerm); err != nil {
 		return fmt.Errorf("failed to create hooks directory: %w", err)
 	}
 
@@ -1381,6 +1387,58 @@ func exportSubprocessDir(beadsDir string) string {
 	return filepath.Dir(beadsDir)
 }
 
+// importJSONLForSync imports .beads/issues.jsonl into Dolt after a git
+// pull/merge/branch-checkout, so issues created on other machines enter
+// the local database before the next auto-export overwrites the JSONL
+// with our (possibly stale) view. Symmetric to exportJSONLForCommit.
+//
+// Errors are logged as warnings but never block the merge/checkout. The
+// import is upsert; running it on an unchanged JSONL is a no-op (bd
+// import returns "Error 1105: nothing to commit", which we tolerate).
+//
+// See GH#3729.
+func importJSONLForSync(reason string) {
+	if !config.GetBool("import.auto") {
+		return
+	}
+
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return
+	}
+
+	exportPath := config.GetString("export.path")
+	if exportPath == "" {
+		exportPath = "issues.jsonl"
+	}
+	fullPath := filepath.Join(beadsDir, exportPath)
+
+	if info, err := os.Stat(fullPath); err != nil || info.Size() == 0 {
+		return
+	}
+
+	debug.Logf("%s: importing JSONL from %s\n", reason, fullPath)
+
+	// Shell out to `bd import` — same pattern as exportJSONLForCommit.
+	// Clear BD_GIT_HOOK so the subprocess's own hook-detection logic
+	// doesn't suppress its work.
+	cmd := exec.Command("bd", "import", "--quiet", fullPath)
+	cmd.Dir = exportSubprocessDir(beadsDir)
+	cmd.Env = filterEnv(os.Environ(), "BD_GIT_HOOK")
+
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return
+	}
+	// Tolerate the no-op case: when JSONL matches Dolt exactly, bd import
+	// produces "nothing to commit" from the underlying Dolt commit. That
+	// is success for our purposes.
+	if strings.Contains(string(out), "nothing to commit") {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "beads: %s import warning: %v\n%s", reason, err, out)
+}
+
 // filterEnv returns a copy of env with entries matching the given key removed.
 func filterEnv(env []string, key string) []string {
 	prefix := key + "="
@@ -1393,7 +1451,11 @@ func filterEnv(env []string, key string) []string {
 	return out
 }
 
-// runPostMergeHook runs chained hooks after merge.
+// runPostMergeHook runs chained hooks after merge, then auto-imports
+// .beads/issues.jsonl into Dolt so issues created on other machines (and
+// just landed via git pull) enter the local database before the next
+// auto-export overwrites the JSONL with our stale view. See GH#3729.
+//
 // Returns 0 on success (or if not applicable).
 //
 //nolint:unparam // Always returns 0 by design - warnings don't block merges
@@ -1402,6 +1464,7 @@ func runPostMergeHook() int {
 	if exitCode := runChainedHook("post-merge", nil); exitCode != 0 {
 		return exitCode
 	}
+	importJSONLForSync("post-merge")
 	return 0
 }
 
@@ -1415,7 +1478,11 @@ func runPrePushHook(args []string) int {
 	return 0
 }
 
-// runPostCheckoutHook runs chained hooks after branch checkout.
+// runPostCheckoutHook runs chained hooks after branch checkout, then
+// auto-imports .beads/issues.jsonl into Dolt when the checkout was a
+// branch switch (flag=1). File-mode checkouts (flag=0) are skipped to
+// avoid spurious imports on `git checkout -- <file>`. See GH#3729.
+//
 // args: [previous-HEAD, new-HEAD, flag] where flag=1 for branch checkout
 // Returns 0 on success (or if not applicable).
 //
@@ -1424,6 +1491,9 @@ func runPostCheckoutHook(args []string) int {
 	// Run chained hook first (if exists)
 	if exitCode := runChainedHook("post-checkout", args); exitCode != 0 {
 		return exitCode
+	}
+	if len(args) >= 3 && args[2] == "1" {
+		importJSONLForSync("post-checkout")
 	}
 	return 0
 }

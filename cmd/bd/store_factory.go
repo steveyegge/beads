@@ -10,7 +10,9 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/db/util"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
@@ -51,12 +53,21 @@ func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, e
 // directory derived from beadsDir. The caller must defer lock.Unlock().
 // Returns a no-op lock when serverMode is true (the server handles its own
 // concurrency).
-func acquireEmbeddedLock(beadsDir string, serverMode bool) (embeddeddolt.Unlocker, error) {
+func acquireEmbeddedLock(beadsDir string, serverMode bool) (util.Unlocker, error) {
 	if serverMode {
-		return embeddeddolt.NoopLock{}, nil
+		return util.NoopLock{}, nil
 	}
 	dataDir := filepath.Join(beadsDir, "embeddeddolt")
-	return embeddeddolt.TryLock(dataDir)
+	lock, err := util.TryLock(filepath.Join(dataDir, ".lock"))
+	if err != nil {
+		if lockfile.IsLocked(err) {
+			return nil, fmt.Errorf("embeddeddolt: another process holds the exclusive lock on %s; "+
+				"the embedded backend supports only one writer at a time — "+
+				"use the dolt server backend for concurrent access", dataDir)
+		}
+		return nil, fmt.Errorf("embeddeddolt: acquiring lock: %w", err)
+	}
+	return lock, nil
 }
 
 // newDoltStoreFromConfig creates a storage backend from the beads directory's

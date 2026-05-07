@@ -8,8 +8,8 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/db/util"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
 
 // isEmbeddedMode returns false in non-CGO builds since embedded Dolt
@@ -28,8 +28,8 @@ func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, e
 }
 
 // acquireEmbeddedLock returns a no-op lock in non-CGO builds.
-func acquireEmbeddedLock(_ string, _ bool) (embeddeddolt.Unlocker, error) {
-	return embeddeddolt.NoopLock{}, nil
+func acquireEmbeddedLock(_ string, _ bool) (util.Unlocker, error) {
+	return util.NoopLock{}, nil
 }
 
 // newDoltStoreFromConfig creates a server-mode storage backend from config.

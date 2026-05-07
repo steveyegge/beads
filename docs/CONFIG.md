@@ -47,7 +47,6 @@ Tool-level settings you can configure:
 | `dolt.auto-push` | - | `BD_DOLT_AUTO_PUSH` | `false` | Auto-push to Dolt remote after writes (explicit opt-in) |
 | `dolt.auto-push-interval` | - | `BD_DOLT_AUTO_PUSH_INTERVAL` | `5m` | Minimum time between auto-pushes |
 | `dolt.shared-server` | `--shared-server` | `BEADS_DOLT_SHARED_SERVER` | `false` | Share a single Dolt server across all projects at `~/.beads/shared-server/` |
-| `dolt.idle-timeout` | - | - | `30m` | Idle auto-stop timeout (`"0"` disables) |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
 | `actor` | `--actor` | `BEADS_ACTOR` | `git config user.name` | Actor name for audit trail (see below) |
 
@@ -324,7 +323,7 @@ Configuration keys use dot-notation namespaces to organize settings:
 
 ### Core Namespaces
 
-- `compact_*` - Compaction settings (see EXTENDING.md)
+- `compact_*` - Compaction settings (used by `bd admin compact`)
 - `issue_prefix` - Issue ID prefix (managed by `bd init`)
 - `issue_id_mode` - ID generation mode: `hash` (default) or `counter` (sequential integers)
 - `max_collision_prob` - Maximum collision probability for adaptive hash IDs (default: 0.25)
@@ -984,4 +983,4 @@ External integration scripts can read configuration to sync with Jira, Linear, G
 ## See Also
 
 - [README.md](../README.md) - Main documentation
-- [EXTENDING.md](EXTENDING.md) - Database schema and compaction config
+- [ADVANCED.md](ADVANCED.md) - Extensible Database section and other advanced topics

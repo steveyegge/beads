@@ -247,6 +247,12 @@ func Initialize() error {
 	v.SetDefault("export.path", "issues.jsonl") // relative to .beads/; canonical name
 	v.SetDefault("export.git-add", true)
 
+	// Auto-import: pull JSONL into Dolt after git merge/checkout so issues
+	// created on other machines enter the local database before the next
+	// auto-export overwrites the JSONL with our (possibly stale) view.
+	// Symmetric to export.auto. Closes the JSONL-in-git sync gap (GH#3729).
+	v.SetDefault("import.auto", true)
+
 	// AI configuration defaults
 	v.SetDefault("ai.model", "claude-haiku-4-5-20251001")
 

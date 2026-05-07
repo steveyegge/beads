@@ -34,6 +34,14 @@ jobs:
           dolt config --global --add user.email "ci@beads.test"
           dolt version
 
+      - name: Pull Dolt sql-server image
+        # Without this, isDoltImageCached() returns false in TestMain and the
+        # regression suite falls back to embedded Dolt with HOME=<tmpdir>, which
+        # has a known cleanup race (see beads issue: TestCreateWithParentFlag
+        # TempDir RemoveAll "directory not empty" flake). Keep the tag in sync
+        # with internal/testutil/testdoltcommon.go:DoltDockerImage.
+        run: docker pull dolthub/dolt-sql-server:1.86.0
+
       - name: Cache baseline binary
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:

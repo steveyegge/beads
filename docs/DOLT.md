@@ -354,9 +354,6 @@ dolt:
   # at ~/.beads/shared-server/. Each project uses its own database (prefix-based).
   # Eliminates port conflicts and reduces resource usage on multi-project machines.
   shared-server: false   # true | false
-
-  # Idle auto-stop timeout for the Dolt server (default: "30m", "0" disables)
-  idle-timeout: 30m
 ```
 
 ### Environment Variables

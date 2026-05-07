@@ -279,6 +279,11 @@ func TestParseBeadsStatus(t *testing.T) {
 		{"blocked", types.StatusBlocked},
 		{"closed", types.StatusClosed},
 		{"CLOSED", types.StatusClosed},
+		{"done", types.StatusClosed},
+		{"Done", types.StatusClosed},
+		{"deferred", types.StatusDeferred},
+		{"pinned", types.StatusPinned},
+		{"hooked", types.StatusHooked},
 		{"unknown", types.StatusOpen}, // Default
 	}
 

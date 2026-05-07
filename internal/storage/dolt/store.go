@@ -2014,6 +2014,7 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 	if s.isS3Remote(ctx, remote) {
 		applyS3ChecksumEnvToCmd(cmd)
 	}
+	applyNoGitHooksToCmd(cmd) // GH#3724
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("dolt push failed: %s: %w", strings.TrimSpace(string(out)), err)

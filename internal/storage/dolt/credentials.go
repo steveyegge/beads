@@ -476,6 +476,27 @@ func applyS3ChecksumEnvToCmd(cmd *exec.Cmd) {
 	setCmdEnv(cmd, awsResponseChecksumValidationEnv, "when_required")
 }
 
+// applyNoGitHooksToCmd disables git client-side hooks (notably pre-push) for
+// any git invocation made by the subprocess. bd-internal git ops — in
+// particular the `git push --porcelain --force-with-lease=… refs/dolt/data`
+// that Dolt runs against its embedded `git-remote-cache/<hash>/repo.git/`
+// mirror during `dolt push` — must not run user-installed hooks.
+//
+// The cache-mirror is a bare-style repo with no work tree, but `git init`
+// still honors the user's `init.templateDir` and copies template hooks
+// into its `hooks/` dir. When the user's templated `pre-push` hook calls
+// `git diff` / `git status` (e.g. via the pre-commit framework's
+// staged_files_only setup) it fails with `fatal: this operation must be
+// run in a work tree` and bd's push fails with it.
+//
+// `GIT_CONFIG_PARAMETERS='core.hooksPath=/dev/null'` tells every git
+// invocation in the subprocess to look for hooks in `/dev/null` — i.e. to
+// skip them. Same intent as the `--no-verify` fix on the commit side
+// (GH#3340 / GH#3598 / PR #3626), applied at the push site (GH#3724).
+func applyNoGitHooksToCmd(cmd *exec.Cmd) {
+	setCmdEnv(cmd, "GIT_CONFIG_PARAMETERS", "'core.hooksPath=/dev/null'")
+}
+
 // setFederationCredentials sets DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD env vars.
 // Returns a cleanup function that must be called (typically via defer) to unset them.
 // The caller must hold federationEnvMutex.

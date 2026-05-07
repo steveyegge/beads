@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 // printTruncationHint emits a one-line notice to stderr when the list output
@@ -18,7 +19,8 @@ func printTruncationHint(truncated bool, effectiveLimit int) {
 	if !truncated || effectiveLimit <= 0 {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\nShowing %d issues; more results matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.\n", effectiveLimit)
+	msg := fmt.Sprintf("\nShowing %d issues; more results matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.\n", effectiveLimit)
+	fmt.Fprint(os.Stderr, ui.RenderWarn(msg))
 }
 
 // outputDotFormat outputs issues in Graphviz DOT format

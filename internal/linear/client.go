@@ -902,7 +902,7 @@ func (c *Client) BatchCreateIssues(ctx context.Context, inputs []IssueCreateInpu
 	}
 
 	query := `
-		mutation BatchCreateIssues($input: [IssueCreateInput!]!) {
+		mutation BatchCreateIssues($input: IssueBatchCreateInput!) {
 			issueBatchCreate(input: $input) {
 				success
 				issues {
@@ -934,7 +934,9 @@ func (c *Client) BatchCreateIssues(ctx context.Context, inputs []IssueCreateInpu
 		req := &GraphQLRequest{
 			Query: query,
 			Variables: map[string]interface{}{
-				"input": chunk,
+				"input": map[string]interface{}{
+					"issues": chunk,
+				},
 			},
 		}
 

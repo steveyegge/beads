@@ -461,7 +461,11 @@ func findParentMolecules(ctx context.Context, s storage.DoltStorage, issueIDs []
 
 	isMolecule := make(map[string]bool, len(rootIssues))
 	for _, issue := range rootIssues {
-		if issue.IssueType == types.TypeEpic {
+		// `bd mol pour` creates roots with TypeMolecule (no template label),
+		// while distilled-from-epic templates use TypeEpic + BeadsTemplateLabel.
+		// Both shapes must be recognized so --continue can advance through
+		// poured molecules. See gastownhall/beads#3719.
+		if issue.IssueType == types.TypeEpic || issue.IssueType == types.TypeMolecule {
 			isMolecule[issue.ID] = true
 			continue
 		}

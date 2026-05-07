@@ -124,6 +124,7 @@ Add cycle detection for dependency graphs
 - Update documentation as needed
 - Ensure CI passes before requesting review
 - Respond to review feedback promptly
+- Lead the PR with a brief plain-language `What` and `Why` so reviewers can grasp the goal without reading the diff. `.github/PULL_REQUEST_TEMPLATE.md` is a starting scaffold — replace, expand, or delete sections to fit your change.
 
 ### ZFC (Zero Framework Cognition)
 

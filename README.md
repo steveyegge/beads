@@ -24,11 +24,28 @@ curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/inst
 cd your-project
 bd init
 
-# Tell your agent
-echo "Use 'bd' for task tracking" >> AGENTS.md
+# Optional: install richer instructions for your agent
+bd setup codex    # Codex CLI - creates/updates AGENTS.md
+bd setup claude   # Claude Code - installs hooks/settings
+bd setup factory  # Factory.ai Droid - creates/updates AGENTS.md
 ```
 
 **Note:** Beads is a CLI tool you install once and use everywhere. You don't need to clone this repository into your project.
+
+`bd init` creates or updates `AGENTS.md` by default so agents can discover the beads workflow. It skips agent files only when you pass `--skip-agents` or `--stealth`, or when you configure a custom agent file. Use `bd setup --list` to see supported integrations, including `bd setup codex`, `bd setup factory`, `bd setup claude`, `bd setup mux`, `bd setup cursor`, and more. See [Agent and IDE setup](docs/SETUP.md).
+
+Manual copy-paste is only for unsupported agents, existing projects where you cannot rerun `bd init`/`bd setup`, or custom instruction files. In those cases, run `bd onboard` and paste the printed snippet into the file your agent reads.
+
+If your agent is not covered by `bd setup`, add this minimal `AGENTS.md` section:
+
+```markdown
+This project uses bd (beads) for issue tracking.
+
+- Run `bd prime` for workflow context and command guidance.
+- Use `bd ready`, `bd show <id>`, `bd update <id> --claim`, and `bd close <id>`.
+- Use `bd remember "insight"` for persistent project memory; do not create MEMORY.md files.
+- Do not use markdown TODO lists for task tracking.
+```
 
 ## 🛠 Features
 
@@ -48,6 +65,8 @@ echo "Use 'bd' for task tracking" >> AGENTS.md
 | `bd update <id> --claim` | Atomically claim a task (sets assignee + in_progress). |
 | `bd dep add <child> <parent>` | Link tasks (blocks, related, parent-child). |
 | `bd show <id>` | View task details and audit trail. |
+| `bd prime` | Print agent workflow context and persistent memories. |
+| `bd remember "insight"` | Store project memory that `bd prime` injects later. |
 
 ## 🔗 Hierarchy & Workflow
 
