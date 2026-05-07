@@ -13,7 +13,7 @@ import (
 func runConventionsCheck(path string) {
 	// doctor is in noDbCommands so PersistentPreRun doesn't open the store.
 	// The lint/stale/orphans primitives all require the global store, so
-	// initialise it lazily here. ensureDirectMode routes to embedded or
+	// initialize it lazily here. ensureDirectMode routes to embedded or
 	// server based on metadata.json (GH#3597).
 	if err := ensureDirectMode("conventions check requires direct mode"); err != nil {
 		FatalError("%v", err)
