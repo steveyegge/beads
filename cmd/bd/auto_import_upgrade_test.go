@@ -248,3 +248,74 @@ func bdListJSONAllowError(t *testing.T, bd, dir string, args ...string) []*types
 	}
 	return issues
 }
+
+// TestEmbeddedAutoImportJSONLSkipsViaEnvVar verifies that BEADS_NO_AUTO_IMPORT=1
+// fully skips the auto-import path even when a populated issues.jsonl is
+// present and the store is empty. This is the orchestrator escape hatch for
+// callers like Gas Town that own the upgrade lifecycle.
+func TestEmbeddedAutoImportJSONLSkipsViaEnvVar(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+
+	// Fresh empty store with a populated JSONL alongside it.
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "skip")
+
+	jsonlIssues := []types.Issue{
+		{ID: "skip-1", Title: "Should NOT be imported", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "skip-2", Title: "Also should NOT be imported", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	}
+	var lines []string
+	for _, issue := range jsonlIssues {
+		b, _ := json.Marshal(issue)
+		lines = append(lines, string(b))
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run "bd list --json" with BEADS_NO_AUTO_IMPORT=1 — auto-import should
+	// be skipped, returning an empty issue list even though JSONL has data.
+	cmd := exec.Command(bd, "list", "--json")
+	cmd.Dir = dir
+	cmd.Env = append(bdEnv(dir), "BEADS_NO_AUTO_IMPORT=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bd list --json failed: %v\n%s", err, out)
+	}
+
+	s := string(out)
+	start := strings.Index(s, "[")
+	if start < 0 {
+		t.Fatalf("expected JSON array in output, got: %s", s)
+	}
+	var issues []*types.IssueWithCounts
+	if err := json.Unmarshal([]byte(s[start:]), &issues); err != nil {
+		t.Fatalf("decoding issue list: %v\n%s", err, out)
+	}
+	if len(issues) != 0 {
+		t.Errorf("expected 0 issues (auto-import skipped via env var), got %d: %v", len(issues), issues)
+	}
+
+	// Sanity check: clearing the env var should now trigger the import on the
+	// next invocation, proving the JSONL was preserved and intact.
+	cmd2 := exec.Command(bd, "list", "--json")
+	cmd2.Dir = dir
+	cmd2.Env = bdEnv(dir)
+	out2, err := cmd2.CombinedOutput()
+	if err != nil {
+		t.Fatalf("follow-up bd list --json failed: %v\n%s", err, out2)
+	}
+	s2 := string(out2)
+	start2 := strings.Index(s2, "[")
+	var issues2 []*types.IssueWithCounts
+	if err := json.Unmarshal([]byte(s2[start2:]), &issues2); err != nil {
+		t.Fatalf("decoding follow-up issue list: %v\n%s", err, out2)
+	}
+	if len(issues2) != 2 {
+		t.Errorf("expected 2 issues after env var cleared (auto-import resumed), got %d", len(issues2))
+	}
+}

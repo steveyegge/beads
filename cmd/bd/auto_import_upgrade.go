@@ -29,7 +29,20 @@ type jsonlImporter interface {
 //
 // The function is best-effort: failures are logged as warnings but do not
 // prevent the store from being used.
+//
+// Set BEADS_NO_AUTO_IMPORT=1 to skip the auto-import path entirely. This is
+// the orchestrator escape hatch for environments like Gas Town where bd is
+// invoked from sub-shells with tight timeouts (e.g., a 60-second `gt mail
+// send` cannot tolerate a multi-MB JSONL import on the first call after a
+// version upgrade). Orchestrators that opt out are expected to detect the
+// upgrade themselves and run `bd import` (or equivalent) once at install
+// time, before any time-sensitive command needs the data.
 func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string) {
+	// Explicit env-var opt-out (orchestrator escape hatch).
+	if v := os.Getenv("BEADS_NO_AUTO_IMPORT"); v == "1" || v == "true" {
+		return
+	}
+
 	// Quick check: does the JSONL file exist and have content?
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	info, err := os.Stat(jsonlPath)
