@@ -120,10 +120,10 @@ func (s *PostgresStore) RenameCounterPrefix(ctx context.Context, oldPrefix, newP
 }
 
 // prepareIssueForInsert mirrors issueops.PrepareIssueForInsert (timestamps,
-// content hash, validation). Validation falls back to the built-in surface;
-// custom statuses/types live in the config table and are not needed for the
-// PG smoke path.
-func prepareIssueForInsert(issue *types.Issue) error {
+// content hash, validation). Custom statuses and types are passed in by the
+// caller (loaded inside the active transaction) so validation accepts the
+// project's full configured surface, not just built-in types.
+func prepareIssueForInsert(issue *types.Issue, customStatuses, customTypes []string) error {
 	now := nowUTC()
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
@@ -139,7 +139,7 @@ func prepareIssueForInsert(issue *types.Issue) error {
 		closedAt := issue.UpdatedAt
 		issue.ClosedAt = &closedAt
 	}
-	if err := issue.Validate(); err != nil {
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 		return fmt.Errorf("validation failed for issue %s: %w", issue.ID, err)
 	}
 	if issue.ContentHash == "" {

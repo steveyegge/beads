@@ -60,7 +60,11 @@ func (t *pgxTransaction) CreateIssue(ctx context.Context, issue *types.Issue, ac
 	if issue == nil {
 		return errors.New("postgres: CreateIssue: nil issue")
 	}
-	if err := prepareIssueForInsert(issue); err != nil {
+	customStatuses, customTypes, err := loadCustomConfigInTx(ctx, t.tx)
+	if err != nil {
+		return wrapErr("load custom config for validation", err)
+	}
+	if err := prepareIssueForInsert(issue, customStatuses, customTypes); err != nil {
 		return err
 	}
 
@@ -477,4 +481,39 @@ func trimSuffix(s, suffix string) string {
 		return s[:len(s)-len(suffix)]
 	}
 	return s
+}
+
+// loadCustomConfigInTx reads custom_statuses and custom_types within the
+// supplied transaction. Used by CreateIssue to populate ValidateWithCustom so
+// project-defined types (e.g. "session", "molecule") aren't rejected as
+// "invalid issue type". Querying inside the same tx ensures we see config
+// writes made earlier in the same transaction (e.g. by bd init flows that
+// set types and immediately create infra issues).
+func loadCustomConfigInTx(ctx context.Context, tx pgx.Tx) ([]string, []string, error) {
+	statuses, err := scanNameRows(ctx, tx, `SELECT name FROM custom_statuses ORDER BY name`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("custom_statuses: %w", err)
+	}
+	customTypes, err := scanNameRows(ctx, tx, `SELECT name FROM custom_types ORDER BY name`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("custom_types: %w", err)
+	}
+	return statuses, customTypes, nil
+}
+
+func scanNameRows(ctx context.Context, tx pgx.Tx, query string) ([]string, error) {
+	rows, err := tx.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
