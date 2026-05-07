@@ -712,6 +712,11 @@ var createCmd = &cobra.Command{
 
 		// Track as last touched issue
 		SetLastTouchedID(issue.ID)
+
+		// Auto-convoy hook: when a crew member creates a bead, attach an HQ
+		// tracking convoy so the Mayor can see the work without polling. No-op
+		// outside the crew context. See cmd/bd/auto_convoy.go.
+		maybeAutoConvoy(cmd, issue)
 	},
 }
 
@@ -861,6 +866,10 @@ func init() {
 	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
 	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
 	createCmd.Flags().String("metadata", "", "Set custom metadata (JSON string or @file.json to read from file)")
+	// Auto-convoy opt-out flag: when a crew member runs `bd create`, an HQ
+	// tracking convoy is attached automatically for Mayor visibility. Pass
+	// --no-convoy to skip that for sub-tasks or internal tracking beads.
+	createCmd.Flags().Bool("no-convoy", false, "Skip auto-convoy creation (crew context only; no-op for non-crew actors)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }
