@@ -88,6 +88,13 @@ func bdEnv(dir string) []string {
 	return append(env, "HOME="+dir, "BEADS_DOLT_AUTO_START=0", "BEADS_NO_DAEMON=1")
 }
 
+func isEmbeddedLockOutput(out string) bool {
+	out = strings.ToLower(out)
+	return strings.Contains(out, "one writer at a time") ||
+		strings.Contains(out, "database is locked") ||
+		strings.Contains(out, "locked by another dolt process")
+}
+
 // bdRunWithFlockRetry runs a bd command with retry on flock contention.
 // Returns the combined output and nil on success, or the last output and error
 // after all retries are exhausted or a non-flock error occurs.
@@ -103,7 +110,7 @@ func bdRunWithFlockRetry(t *testing.T, bd, dir string, args ...string) ([]byte, 
 		if err == nil {
 			return out, nil
 		}
-		if !strings.Contains(string(out), "one writer at a time") {
+		if !isEmbeddedLockOutput(string(out)) {
 			return out, err
 		}
 		t.Logf("bd %s: flock contention (attempt %d/10), retrying...", args[0], attempt+1)
@@ -1024,7 +1031,7 @@ func TestEmbeddedInitConcurrent(t *testing.T) {
 		}
 		if r.err == nil {
 			successes++
-		} else if strings.Contains(r.out, "one writer at a time") {
+		} else if isEmbeddedLockOutput(r.out) {
 			lockErrors++
 		} else {
 			t.Errorf("process %d failed with unexpected error: %v\n%s", r.idx, r.err, r.out)
