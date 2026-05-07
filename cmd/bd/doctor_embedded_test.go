@@ -10,24 +10,32 @@ import (
 	"testing"
 )
 
+// doctorTestEnv extends bdEnv by forcing legacy JSON output (BD_JSON_ENVELOPE=0)
+// so the test assertions can read top-level keys regardless of whether the
+// developer's shell exports envelope mode.
+func doctorTestEnv(dir string) []string {
+	return append(bdEnv(dir), "BD_JSON_ENVELOPE=0")
+}
+
 // runBDCombined runs `bd <args...>` in the given dir with the test embedded
 // env and returns combined stdout+stderr.
 func runBDCombined(t *testing.T, bd, dir string, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = dir
-	cmd.Env = bdEnv(dir)
+	cmd.Env = doctorTestEnv(dir)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-// runBDStdout runs `bd <args...>` capturing stdout separately so JSON output
-// can be parsed without stderr noise (deprecation notes, etc.).
-func runBDStdout(t *testing.T, bd, dir string, args ...string) (stdout, stderr string, err error) {
+// runBDSplit runs `bd <args...>` capturing stdout and stderr separately so
+// each stream can be asserted independently. The bd JSON contract puts errors
+// (including embedded-unsupported stubs) on stderr per docs/JSON_SCHEMA.md.
+func runBDSplit(t *testing.T, bd, dir string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = dir
-	cmd.Env = bdEnv(dir)
+	cmd.Env = doctorTestEnv(dir)
 	var stdoutBuf, stderrBuf strings.Builder
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
@@ -96,22 +104,30 @@ func TestDoctorEmbeddedUnsupportedJSON(t *testing.T) {
 		{"bare_doctor_json", []string{"doctor", "--json"}, "doctor"},
 		{"agent_json", []string{"doctor", "--agent", "--json"}, "doctor"},
 		{"validate_json", []string{"doctor", "--check=validate", "--json"}, "doctor --check=validate"},
+		{"perf_json", []string{"doctor", "--perf", "--json"}, "doctor --perf"},
 	}
 
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			stdout, stderr, err := runBDStdout(t, bd, dir, tc.args...)
+			stdout, stderr, err := runBDSplit(t, bd, dir, tc.args...)
 			if err != nil {
 				t.Fatalf("bd %s failed: %v\nstdout:\n%s\nstderr:\n%s",
 					strings.Join(tc.args, " "), err, stdout, stderr)
 			}
 
+			// JSON error payloads are written to stderr per the bd JSON
+			// contract (docs/JSON_SCHEMA.md). Stdout should be empty so
+			// stdout-only consumers don't accidentally swallow the stub.
+			if strings.TrimSpace(stdout) != "" {
+				t.Errorf("expected empty stdout for embedded-unsupported stub, got:\n%s", stdout)
+			}
+
 			var result map[string]interface{}
-			if err := json.Unmarshal([]byte(stdout), &result); err != nil {
-				t.Fatalf("bd %s did not emit valid JSON on stdout: %v\nstdout:\n%s\nstderr:\n%s",
-					strings.Join(tc.args, " "), err, stdout, stderr)
+			if err := json.Unmarshal([]byte(stderr), &result); err != nil {
+				t.Fatalf("bd %s did not emit valid JSON on stderr: %v\nstderr:\n%s",
+					strings.Join(tc.args, " "), err, stderr)
 			}
 
 			if result["unsupported"] != true {
@@ -122,6 +138,9 @@ func TestDoctorEmbeddedUnsupportedJSON(t *testing.T) {
 			}
 			if result["command"] != tc.wantCommand {
 				t.Errorf("expected command=%q, got %v", tc.wantCommand, result["command"])
+			}
+			if result["code"] != "embedded_unsupported" {
+				t.Errorf("expected code=embedded_unsupported, got %v", result["code"])
 			}
 			errStr, _ := result["error"].(string)
 			if !strings.Contains(errStr, "not yet supported in embedded mode") {

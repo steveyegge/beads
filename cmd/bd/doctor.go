@@ -212,17 +212,26 @@ Examples:
 			)
 		}
 
-		// --perf and --check-health are mode-agnostic; run them before the
-		// embedded-mode gate.
-		if perfMode {
-			if err := doctor.RunPerformanceDiagnostics(absPath); err != nil {
-				FatalError("performance diagnostics: %v", err)
-			}
+		// --check-health degrades gracefully in embedded mode (hook-only path),
+		// so it runs before the embedded-mode gate.
+		if checkHealthMode {
+			runCheckHealth(absPath)
 			return
 		}
 
-		if checkHealthMode {
-			runCheckHealth(absPath)
+		// --perf needs a live MySQL connection (RunDoltPerformanceDiagnostics
+		// opens a server-mode connection), so it stays gated behind the
+		// embedded check. Pre-PR this branch ran below the early-return and
+		// silently no-op'd in embedded mode; preserve that surface as a
+		// structured stub instead of letting it hard-error (GH#3597).
+		if perfMode {
+			if isEmbeddedMode() {
+				printEmbeddedUnsupported("doctor --perf")
+				return
+			}
+			if err := doctor.RunPerformanceDiagnostics(absPath); err != nil {
+				FatalError("performance diagnostics: %v", err)
+			}
 			return
 		}
 
@@ -347,9 +356,13 @@ func shouldSkipDoctorNetworkChecks() bool {
 }
 
 // printEmbeddedUnsupported reports that a doctor variant is not yet wired up
-// for embedded mode. Emits a structured payload when --json or --agent is set
-// so downstream tooling can detect the gap without parsing prose, and the
-// existing prose stub otherwise (GH#3597).
+// for embedded mode. Emits a structured payload to stderr when --json or
+// --agent is set so downstream tooling can detect the gap without parsing
+// prose, and the existing prose stub otherwise (GH#3597).
+//
+// Follows the bd error-JSON contract (docs/JSON_SCHEMA.md): stderr, includes
+// a `code` field, and is wrapped with schema_version. Exit code stays 0 to
+// preserve the pre-PR stub's "benign refusal" semantics.
 func printEmbeddedUnsupported(commandLabel string) {
 	hints := []string{
 		"Verify database exists:  ls -la .beads/embeddeddolt/",
@@ -358,16 +371,22 @@ func printEmbeddedUnsupported(commandLabel string) {
 		"Switch to server mode:   bd init --server",
 	}
 	supported := []string{"artifacts", "conventions", "pollution"}
+	unsupported := []string{"validate"}
 
 	if jsonOutput || doctorAgent {
-		outputJSON(map[string]interface{}{
-			"error":                             fmt.Sprintf("'bd %s' is not yet supported in embedded mode", commandLabel),
-			"unsupported":                       true,
-			"mode":                              "embedded",
-			"command":                           commandLabel,
-			"checks_supported_in_embedded_mode": supported,
-			"hints":                             hints,
-		})
+		payload := map[string]interface{}{
+			"error":                               fmt.Sprintf("'bd %s' is not yet supported in embedded mode", commandLabel),
+			"code":                                "embedded_unsupported",
+			"unsupported":                         true,
+			"mode":                                "embedded",
+			"command":                             commandLabel,
+			"checks_supported_in_embedded_mode":   supported,
+			"checks_unsupported_in_embedded_mode": unsupported,
+			"hints":                               hints,
+		}
+		encoder := json.NewEncoder(os.Stderr)
+		encoder.SetIndent("", "  ")
+		_ = encoder.Encode(wrapWithSchemaVersion(payload))
 		return
 	}
 
