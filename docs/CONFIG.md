@@ -1,9 +1,14 @@
 # Configuration System
 
+Last reviewed: 2026-05-08
+
+Freshness source: `cmd/bd/main.go`, `cmd/bd/config.go`, and
+`internal/configfile/`.
+
 bd has two complementary configuration systems:
 
-1. **Tool-level configuration** (Viper): User preferences for tool behavior (flags, output format)
-2. **Project-level configuration** (`bd config`): Integration data and project-specific settings
+1. **Tool-level configuration** (Viper): startup settings, flags, output format, and other CLI behaviour
+2. **Project-level configuration** (`bd config`): integration data and project-specific settings; startup-sensitive keys are routed to `config.yaml`
 
 ## Tool-Level Configuration (Viper)
 
@@ -14,19 +19,24 @@ Tool preferences control how `bd` behaves globally or per-user. These are stored
 **Configuration precedence** (highest to lowest):
 1. Command-line flags (`--json`, `--dolt-auto-commit`, etc.)
 2. Environment variables (`BD_JSON`, `BD_DOLT_AUTO_COMMIT`, etc.)
-3. Config file (`~/.config/bd/config.yaml` or `.beads/config.yaml`)
+3. Merged config files (`~/.beads/config.yaml`, `~/.config/bd/config.yaml`, `.beads/config.yaml`, and `BEADS_DIR/config.yaml`)
 4. Defaults
 
 ### Config File Locations
 
-Viper searches for `config.yaml` in these locations (in order):
-1. `.beads/config.yaml` - Project-specific tool settings (version-controlled)
-2. `~/.config/bd/config.yaml` - User-specific tool settings
-3. `~/.beads/config.yaml` - Legacy user settings
+Config files are merged from lowest to highest priority:
+
+1. `~/.beads/config.yaml` - legacy user settings
+2. `~/.config/bd/config.yaml` - user settings; this path is checked explicitly even on platforms whose native user-config directory differs
+3. `.beads/config.yaml` - project-specific tool settings, discovered by walking up from the current directory
+4. `BEADS_DIR/config.yaml` - highest-priority runtime workspace override when `BEADS_DIR` points at a different `.beads` directory
+
+When a project config exists, `.beads/config.local.yaml` is merged last for
+machine-specific overrides that should not be committed.
 
 ### Supported Settings
 
-Tool-level settings you can configure:
+Common tool-level settings you can configure:
 
 | Setting | Flag | Environment Variable | Default | Description |
 |---------|------|---------------------|---------|-------------|
@@ -46,6 +56,7 @@ Tool-level settings you can configure:
 | `backup.interval` | - | `BD_BACKUP_INTERVAL` | `15m` | Minimum time between auto-backups |
 | `dolt.auto-push` | - | `BD_DOLT_AUTO_PUSH` | `false` | Auto-push to Dolt remote after writes (explicit opt-in) |
 | `dolt.auto-push-interval` | - | `BD_DOLT_AUTO_PUSH_INTERVAL` | `5m` | Minimum time between auto-pushes |
+| `dolt.auto-push-timeout` | - | `BD_DOLT_AUTO_PUSH_TIMEOUT` | `30s` | Timeout for a single auto-push attempt |
 | `dolt.shared-server` | `--shared-server` | `BEADS_DOLT_SHARED_SERVER` | `false` | Share a single Dolt server across all projects at `~/.beads/shared-server/` |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
 | `actor` | `--actor` | `BEADS_ACTOR` | `git config user.name` | Actor name for audit trail (see below) |
@@ -108,6 +119,7 @@ By default, `bd` does not push automatically after write commands. Auto-push is 
 dolt:
   auto-push: false      # Explicit opt-in only; set true for single-writer setups
   auto-push-interval: 5m  # Minimum time between auto-pushes
+  auto-push-timeout: 30s  # Bound one push attempt when the remote is unreachable
 ```
 
 **How it works:**

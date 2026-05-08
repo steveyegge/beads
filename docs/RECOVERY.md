@@ -1,5 +1,10 @@
 # Recovery Playbooks
 
+Last reviewed: 2026-05-08
+
+Freshness source: `cmd/bd/init.go`, `cmd/bd/init_safety.go`, and
+`cmd/bd/init_safety_test.go`.
+
 This document lives next to the ADRs and matches the structure of `bd`'s
 error messages: each named refusal in `bd init` points here to a labeled
 anchor with step-by-step recovery instructions.

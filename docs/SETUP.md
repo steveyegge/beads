@@ -1,7 +1,12 @@
 # Setup Command Reference
 
+Last reviewed: 2026-05-08
+
+Freshness source: `cmd/bd/setup*.go` and `internal/recipes/`.
+
 **For:** Setting up beads integration with AI coding tools
-**Version:** 0.30.0+
+**Version:** current CLI behaviour; verify recipe lists against the freshness
+source above.
 
 ## Overview
 

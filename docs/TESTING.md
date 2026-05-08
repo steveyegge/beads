@@ -2,14 +2,15 @@
 
 ## Overview
 
-The beads project has a comprehensive test suite with **~41,000 lines of code** across **205 files** in `cmd/bd` alone.
+The beads project uses Go tests plus repository wrapper scripts. Prefer the
+wrapper scripts for local validation because they apply the same skip and
+timeout policy as CI.
 
 ## Test Performance
 
-- **Total test time:** ~3 minutes (excluding broken tests)
-- **Package count:** 20+ packages with tests
-- **Compilation overhead:** ~180 seconds (most of the total time)
-- **Individual test time:** Only ~3.8 seconds combined for all 313 tests in cmd/bd
+- Go compilation dominates full-suite runtime.
+- Target package/test runs are usually the fastest way to validate focused changes.
+- Docker-backed Dolt integration tests auto-detect prerequisites and skip when unavailable.
 
 ## Running Tests
 
@@ -108,12 +109,12 @@ starting a container. Port 3307 is hardcoded as production and always rejected.
 
 ## Known Broken Tests
 
-Tests in `.test-skip` are automatically skipped. Current broken tests:
+Tests in `.test-skip` are automatically skipped by `scripts/test.sh`.
 
-1. **TestFallbackToDirectModeEnablesFlush** (GH #355)
-   - Location: `cmd/bd/direct_mode_test.go:14`
-   - Issue: Database deadlock, hangs for 5 minutes
-   - Impact: Makes test suite extremely slow
+At the time of this review, `.test-skip` contains only comments and no active
+test-name patterns. Treat any new skip as a temporary exception: file the
+upstream issue first, record it in `.test-skip`, and remove the skip when the
+test is fixed.
 
 ## For Claude Code / AI Agents
 

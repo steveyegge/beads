@@ -1,5 +1,10 @@
 # Linting Policy
 
+Last reviewed: 2026-05-08
+
+Freshness source: `.golangci.yml` and current `golangci-lint run ./...`
+output.
+
 This document explains our approach to `golangci-lint` warnings in this codebase.
 
 ## Current Status

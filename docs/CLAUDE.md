@@ -59,43 +59,25 @@ See `internal/types/types.go`:
 - `Comment`: Threaded discussions
 - `Event`: Full audit trail
 
-## Common Development Commands
+## Development Command Source
 
-```bash
-# Build and install bd to ~/.local/bin (canonical location)
-make install
-
-# Test
-make test
-go test -tags gms_pure_go -coverprofile=coverage.out ./...
-
-# Run linter (baseline warnings documented in docs/LINTING.md)
-golangci-lint run ./...
-
-# Version management
-./scripts/bump-version.sh 0.9.3 --commit
-
-# Verify installed binary
-bd init --prefix test
-bd create "Test issue" -p 1
-bd ready
-```
+Use [AGENT_INSTRUCTIONS.md](../AGENT_INSTRUCTIONS.md#testing-commands-no-ambiguity)
+for the current command policy. This file should not duplicate command matrices
+or version-management workflows.
 
 > **Do NOT** use `go build -o bd` or `go install` directly — they create
 > stale binaries that shadow `~/.local/bin/bd`. Always use `make install`.
 
 ## Testing Philosophy
 
-- Unit tests live next to implementation (`*_test.go`)
-- Integration tests use real Dolt databases (via server in temp dirs)
-- Script-based tests in `cmd/bd/testdata/*.txt` (see `scripttest_test.go`)
-- RPC layer has extensive isolation and edge case coverage
+Testing guidance lives in [TESTING.md](TESTING.md) and
+[TESTING_PHILOSOPHY.md](TESTING_PHILOSOPHY.md). Architecture-specific notes for
+Claude are limited to where tests touch agent setup, hooks, or instruction-file
+generation.
 
 ## Important Notes
 
 - **Always read AGENTS.md first** - it has the complete workflow
-- Install git hooks: `bd hooks install`
-- Use `bd dolt push` / `bd dolt pull` for remote sync
 - Check for duplicates proactively: `bd duplicates --auto-merge`
 - Use `--json` flags for all programmatic use
 

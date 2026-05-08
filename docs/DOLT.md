@@ -173,7 +173,7 @@ Both directions preserve full Dolt commit history.
 - The backup directory is a full Dolt backup — it can be on a local drive, NAS, or DoltHub
 - You can also migrate via Dolt remotes (`bd dolt push` / `bd dolt pull`) if both projects share a remote
 
-See also [DOLT-BACKEND.md](DOLT-BACKEND.md#migrating-between-backends).
+The sections below are the canonical backend migration reference.
 
 ## Federation (Peer-to-Peer Sync)
 
