@@ -283,23 +283,42 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Ambiguous config warning: dolt.host is set to a remote address but
-		// server mode is not enabled. This helps users who configured a host
-		// but forgot to set dolt.mode: server.
+		// Hard fail: if dolt.host or dolt.port are configured, server mode
+		// MUST be active — embedded mode has no host/port. This catches
+		// misconfigurations where a user set dolt.host/dolt.port but forgot
+		// dolt.mode: server (or --server).
 		if !initServerMode {
 			configHost := config.GetYamlConfig("dolt.host")
+			configPort := config.GetYamlConfig("dolt.port")
 			envHost := os.Getenv("BEADS_DOLT_SERVER_HOST")
+			envPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
+
 			remoteHost := ""
 			if envHost != "" && !isLocalHost(envHost) {
 				remoteHost = envHost
 			} else if configHost != "" && !isLocalHost(configHost) {
 				remoteHost = configHost
 			}
-			if remoteHost != "" && !quiet {
-				fmt.Fprintf(os.Stderr, "Warning: dolt.host is configured (%s) but server mode is not enabled.\n", remoteHost)
-				fmt.Fprintf(os.Stderr, "  bd init will create an embedded local database, ignoring the remote host.\n")
-				fmt.Fprintf(os.Stderr, "  To use the remote server, set dolt.mode: server in %s\n", config.UserConfigYamlPath())
-				fmt.Fprintf(os.Stderr, "  or pass --server to bd init.\n")
+
+			hasPort := envPort != "" || configPort != ""
+
+			if remoteHost != "" || hasPort {
+				src := "config.yaml"
+				if envHost != "" || envPort != "" {
+					src = "environment"
+				}
+				detail := ""
+				if remoteHost != "" && hasPort {
+					detail = fmt.Sprintf("dolt.host (%s) and dolt.port are", remoteHost)
+				} else if remoteHost != "" {
+					detail = fmt.Sprintf("dolt.host (%s) is", remoteHost)
+				} else {
+					detail = "dolt.port is"
+				}
+				FatalError("%s set via %s but server mode is not enabled.\n"+
+					"  Embedded mode has no host/port — these settings require server mode.\n"+
+					"  Set dolt.mode: server in %s or pass --server to bd init.",
+					detail, src, config.UserConfigYamlPath())
 			}
 		}
 

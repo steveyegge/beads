@@ -1328,13 +1328,12 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
-	t.Run("ambiguous_host_warning", func(t *testing.T) {
+	t.Run("remote_host_without_server_mode_fails", func(t *testing.T) {
 		// When dolt.host is set to a remote address but server mode is not
-		// enabled, bd init should emit a warning on stderr.
+		// enabled, bd init must hard-fail (not fall through to embedded).
 		dir := t.TempDir()
 		initGitRepoAt(t, dir)
 
-		// Create ~/.config/bd/config.yaml with a remote host but no dolt.mode
 		xdgDir := filepath.Join(dir, ".config", "bd")
 		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
@@ -1344,27 +1343,25 @@ func TestEmbeddedInit(t *testing.T) {
 			t.Fatalf("write config.yaml: %v", err)
 		}
 
-		// Run without --quiet so the warning is visible
 		cmd := exec.Command(bd, "init", "--prefix", "ambi", "--non-interactive")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
 		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd init failed: %v\n%s", err, out)
+		if err == nil {
+			t.Fatalf("expected bd init to fail with remote host and no server mode, but it succeeded:\n%s", out)
 		}
 		output := string(out)
-		if !strings.Contains(output, "Warning: dolt.host is configured (100.111.197.110)") {
-			t.Errorf("expected ambiguous-host warning in output, got:\n%s", output)
+		if !strings.Contains(output, "server mode is not enabled") {
+			t.Errorf("expected error about server mode not enabled, got:\n%s", output)
 		}
-		if !strings.Contains(output, "dolt.mode: server") {
-			t.Errorf("warning should mention dolt.mode: server remediation, got:\n%s", output)
+		if !strings.Contains(output, "100.111.197.110") {
+			t.Errorf("error should mention the configured host, got:\n%s", output)
 		}
-		// Verify it still created an embedded database (fallback behavior)
-		requireFile(t, filepath.Join(dir, ".beads", "embeddeddolt"))
 	})
 
-	t.Run("ambiguous_host_quiet_suppresses_warning", func(t *testing.T) {
-		// With --quiet, the ambiguous-host warning should be suppressed.
+	t.Run("port_only_without_server_mode_fails", func(t *testing.T) {
+		// When dolt.port is set but dolt.mode is not server, bd init must
+		// hard-fail — embedded mode has no port.
 		dir := t.TempDir()
 		initGitRepoAt(t, dir)
 
@@ -1373,13 +1370,20 @@ func TestEmbeddedInit(t *testing.T) {
 			t.Fatalf("mkdir: %v", err)
 		}
 		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
-			[]byte("dolt.host: 100.111.197.110\n"), 0o600); err != nil {
+			[]byte("dolt.port: 3306\n"), 0o600); err != nil {
 			t.Fatalf("write config.yaml: %v", err)
 		}
 
-		_, _, out := bdInit(t, bd, "--prefix", "ahq")
-		if strings.Contains(out, "Warning: dolt.host") {
-			t.Errorf("--quiet should suppress ambiguous-host warning, got:\n%s", out)
+		cmd := exec.Command(bd, "init", "--prefix", "ponly", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected bd init to fail with port set and no server mode, but it succeeded:\n%s", out)
+		}
+		output := string(out)
+		if !strings.Contains(output, "server mode is not enabled") {
+			t.Errorf("expected error about server mode not enabled, got:\n%s", output)
 		}
 	})
 
