@@ -347,12 +347,67 @@ func pgGlobToLikePattern(pattern string) string {
 	return b.String()
 }
 
-// SearchIssues runs a flexible filter query against the issues table.
-// Mirrors the canonical clause set in
-// internal/storage/issueops/filters.go::BuildIssueFilterClauses, translated
-// to Postgres syntax (positional $N placeholders, EXISTS subqueries against
-// labels/dependencies, jsonb operators for metadata).
+// searchTables identifies the (main, labels, dependencies) table tuple
+// used by searchTable. The two instances cover the persistent issues path
+// and the wisps path; SearchIssues calls searchTable once or twice
+// depending on filter.Ephemeral. Mirrors Dolt's WispsFilterTables /
+// IssuesFilterTables in internal/storage/issueops.
+type searchTables struct {
+	issues       string // "issues" or "wisps"
+	labels       string // "labels" or "wisp_labels"
+	dependencies string // "dependencies" or "wisp_dependencies"
+}
+
+var (
+	issuesSearchTables = searchTables{issues: "issues", labels: "labels", dependencies: "dependencies"}
+	wispsSearchTables  = searchTables{issues: "wisps", labels: "wisp_labels", dependencies: "wisp_dependencies"}
+)
+
+// SearchIssues runs a flexible filter query against the issues table and,
+// when filter.Ephemeral is nil (default) or false, also against the wisps
+// table — merging results so NoHistory beads (stored in wisps with
+// ephemeral=0 per GH#3649 / GH#3659) survive the non-ephemeral guard.
+// Mirrors Dolt's SearchIssuesInTx at internal/storage/issueops/search.go:40-56
+// (be-2clc). The clause builder lives in searchTable; this wrapper handles
+// table routing and merge-by-ID.
 func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	results, err := s.searchTable(ctx, query, filter, issuesSearchTables)
+	if err != nil {
+		return nil, err
+	}
+
+	if filter.Ephemeral == nil || !*filter.Ephemeral {
+		wispResults, werr := s.searchTable(ctx, query, filter, wispsSearchTables)
+		if werr != nil {
+			return nil, werr
+		}
+		if len(wispResults) > 0 {
+			seen := make(map[string]bool, len(results))
+			for _, issue := range results {
+				seen[issue.ID] = true
+			}
+			for _, w := range wispResults {
+				if !seen[w.ID] {
+					results = append(results, w)
+				}
+			}
+		}
+	}
+	return results, nil
+}
+
+// searchTable runs SearchIssues' filter set against a single table tuple
+// (issues+labels+dependencies, or wisps+wisp_labels+wisp_dependencies).
+// All EXISTS subqueries are parameterized on tables.labels /
+// tables.dependencies so the same builder works for both paths. The
+// per-row "(ephemeral = FALSE OR ephemeral IS NULL)" guard applied when
+// filter.Ephemeral is nil is what keeps NoHistory beads in the wisps
+// merge while filtering out true ephemeral wisps.
+func (s *PostgresStore) searchTable(ctx context.Context, query string, filter types.IssueFilter, tables searchTables) ([]*types.Issue, error) {
+	mainTable := guardTable(tables.issues)
+	labelsTable := guardTable(tables.labels)
+	depsTable := guardTable(tables.dependencies)
+
 	clauses := []string{}
 	args := []any{}
 	next := 1
@@ -407,7 +462,10 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 	if filter.Ephemeral != nil {
 		add(fmt.Sprintf("ephemeral = $%d", next), *filter.Ephemeral)
 	} else {
-		// default: only persistent rows from the issues table
+		// default: drop true ephemeral wisps. On the issues table this is
+		// a no-op (every row has ephemeral=false); on the wisps table this
+		// is the guard that lets NoHistory beads (ephemeral=false) surface
+		// while filtering out true ephemeral wisps (ephemeral=true).
 		clauses = append(clauses, "(ephemeral = FALSE OR ephemeral IS NULL)")
 	}
 
@@ -417,7 +475,7 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 		add(fmt.Sprintf("title ILIKE $%d", next), "%"+filter.TitleContains+"%")
 	}
 	for _, label := range filter.Labels {
-		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label = $%d)", next), label)
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM %s l WHERE l.issue_id = %s.id AND l.label = $%d)", labelsTable, mainTable, next), label)
 	}
 	if len(filter.LabelsAny) > 0 {
 		ph := joinPlaceholders(next, len(filter.LabelsAny))
@@ -425,16 +483,16 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 		for i, l := range filter.LabelsAny {
 			labels[i] = l
 		}
-		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label IN (%s))", ph), labels...)
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM %s l WHERE l.issue_id = %s.id AND l.label IN (%s))", labelsTable, mainTable, ph), labels...)
 	}
 	for _, label := range filter.ExcludeLabels {
-		add(fmt.Sprintf("NOT EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label = $%d)", next), label)
+		add(fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s l WHERE l.issue_id = %s.id AND l.label = $%d)", labelsTable, mainTable, next), label)
 	}
 	if filter.LabelPattern != "" {
-		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label LIKE $%d ESCAPE '|')", next), pgGlobToLikePattern(filter.LabelPattern))
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM %s l WHERE l.issue_id = %s.id AND l.label LIKE $%d ESCAPE '|')", labelsTable, mainTable, next), pgGlobToLikePattern(filter.LabelPattern))
 	}
 	if filter.LabelRegex != "" {
-		add(fmt.Sprintf("EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id AND l.label ~ $%d)", next), filter.LabelRegex)
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM %s l WHERE l.issue_id = %s.id AND l.label ~ $%d)", labelsTable, mainTable, next), filter.LabelRegex)
 	}
 
 	// be-jdeief: extend coverage to the rest of the canonical filter set.
@@ -447,7 +505,7 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 	//  - boolean comparison via TRUE/FALSE literals against BOOLEAN columns
 
 	if filter.NoLabels {
-		clauses = append(clauses, "NOT EXISTS (SELECT 1 FROM labels l WHERE l.issue_id = issues.id)")
+		clauses = append(clauses, fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s l WHERE l.issue_id = %s.id)", labelsTable, mainTable))
 	}
 
 	if len(filter.ExcludeTypes) > 0 {
@@ -497,10 +555,10 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 	}
 
 	if filter.ParentID != nil {
-		add(fmt.Sprintf("EXISTS (SELECT 1 FROM dependencies d WHERE d.issue_id = issues.id AND d.type = 'parent-child' AND d.depends_on_id = $%d)", next), *filter.ParentID)
+		add(fmt.Sprintf("EXISTS (SELECT 1 FROM %s d WHERE d.issue_id = %s.id AND d.type = 'parent-child' AND d.depends_on_id = $%d)", depsTable, mainTable, next), *filter.ParentID)
 	}
 	if filter.NoParent {
-		clauses = append(clauses, "NOT EXISTS (SELECT 1 FROM dependencies d WHERE d.issue_id = issues.id AND d.type = 'parent-child')")
+		clauses = append(clauses, fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s d WHERE d.issue_id = %s.id AND d.type = 'parent-child')", depsTable, mainTable))
 	}
 
 	if filter.MolType != nil {
@@ -551,18 +609,18 @@ func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter t
 	if filter.Limit > 0 {
 		limit = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
-	//nolint:gosec // clauses use only parameter placeholders, identifiers are static
-	q := fmt.Sprintf(`SELECT %s FROM issues%s ORDER BY created_at DESC%s`, issueColumns, where, limit)
+	//nolint:gosec // mainTable/labelsTable/depsTable are allowlisted via guardTable; clauses use bound parameters
+	q := fmt.Sprintf(`SELECT %s FROM %s%s ORDER BY created_at DESC%s`, issueColumns, mainTable, where, limit)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, wrapErr("search issues", err)
+		return nil, wrapErr(fmt.Sprintf("search %s", mainTable), err)
 	}
 	issues, err := scanIssues(rows)
 	if err != nil {
-		return nil, wrapErr("scan issues", err)
+		return nil, wrapErr(fmt.Sprintf("scan %s", mainTable), err)
 	}
 	for _, issue := range issues {
-		issue.Labels, _ = getLabelsFromTable(ctx, s.pool, "labels", issue.ID)
+		issue.Labels, _ = getLabelsFromTable(ctx, s.pool, labelsTable, issue.ID)
 	}
 	return issues, nil
 }
