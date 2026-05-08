@@ -1618,6 +1618,18 @@ func (s *DoltStore) Commit(ctx context.Context, message string) (retErr error) {
 		}
 	}
 
+	// Skip DOLT_COMMIT if nothing was actually staged. dolt_status may include
+	// dolt_ignore'd tables (wisps, etc.) that fail DOLT_ADD silently above;
+	// calling DOLT_COMMIT with nothing staged generates a server warning and
+	// wastes CPU at scale (GH#3409).
+	var nStaged int
+	if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM dolt_status WHERE staged = 1").Scan(&nStaged); err != nil {
+		nStaged = 1 // fail open: attempt commit and surface any error naturally
+	}
+	if nStaged == 0 {
+		return nil
+	}
+
 	// NOTE: In SQL procedure mode, Dolt defaults author to the authenticated SQL user
 	// (e.g. root@localhost). Always pass an explicit author for deterministic history.
 	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)", message, s.commitAuthorString()); err != nil {
