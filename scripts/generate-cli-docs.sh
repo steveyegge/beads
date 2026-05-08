@@ -83,6 +83,7 @@ This reference covers all ${count} live top-level \`bd\` commands. Regenerate it
 EOF
 
     while IFS= read -r cmd; do
+        cmd="${cmd%$'\r'}"
         local doc_id
         doc_id="$(command_doc_id "$cmd")"
         printf -- "- [\`bd %s\`](./%s.md)\n" "$cmd" "$doc_id" >> "$out_dir/index.md"
@@ -99,9 +100,10 @@ generate_cli_dir() {
     generate_index "$out_dir" "$commands_file" "$version_label"
 
     while IFS= read -r cmd; do
+        cmd="${cmd%$'\r'}"
         local doc_id
         doc_id="$(command_doc_id "$cmd")"
-        "$BD" help --doc "$cmd" > "$out_dir/$doc_id.md"
+        "$BD" help --doc "$cmd" < /dev/null > "$out_dir/$doc_id.md"
         trim_trailing_blank_lines "$out_dir/$doc_id.md"
     done < "$commands_file"
 }
