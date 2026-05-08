@@ -1001,5 +1001,89 @@ func TestSearchIssuesAppliesExternalRefContains(t *testing.T) {
 	)
 }
 
+// === be-2clc: TestSearchIssuesMergesWisps_NoHistory =================
+//
+// PostgresStore.SearchIssues currently queries only the issues table.
+// Dolt's SearchIssuesInTx (internal/storage/issueops/search.go:40-56)
+// also queries the wisps table and merges results when filter.Ephemeral
+// is nil or *filter.Ephemeral == false, so NoHistory beads (stored in
+// the wisps table with ephemeral=0 per GH#3649 / GH#3659) survive the
+// default non-ephemeral guard. The PG path lacks that merge, so
+// label-filtered listings silently drop NoHistory beads on PG-backed
+// cities.
+//
+// This test pins the regression in CI under integration_pg. Each
+// subtest fails on the pre-fix code with "expected <id> in result, got
+// [...]" for the NoHistory wisp(s) that should have surfaced. Sibling
+// existing tests (TestSearchIssuesFilters, TestSearchIssuesApplies*)
+// continue to pass without modification — they exercise the issues
+// table only.
+//
+// Bead: be-2clc. Spec: bd show be-2clc; mirror at
+// internal/storage/issueops/search.go:40-56.
+func TestSearchIssuesMergesWisps_NoHistory(t *testing.T) {
+	store, ctx := newSearchStore(t)
+
+	// Persistent issues table — control rows.
+	persistent := createForSearch(t, ctx, store, []*types.Issue{
+		{Title: "persistent labeled", IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2, Labels: []string{"needs-pm"}},
+		{Title: "persistent unlabeled", IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2},
+	})
+	persistentLabeled := persistent[0]
+	persistentUnlabeled := persistent[1]
+
+	// Wisps table — exercises both NoHistory (ephemeral=0) and true
+	// ephemeral (ephemeral=1) rows so the merge correctness can be
+	// observed against the per-row ephemeral guard.
+	wisps := createForSearch(t, ctx, store, []*types.Issue{
+		{Title: "no-history labeled", IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2, NoHistory: true, Labels: []string{"needs-pm"}},
+		{Title: "no-history unlabeled", IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2, NoHistory: true},
+		{Title: "true ephemeral labeled", IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2, Ephemeral: true, Labels: []string{"needs-pm"}},
+	})
+	noHistoryLabeled := wisps[0]
+	noHistoryUnlabeled := wisps[1]
+	trueEphemeralLabeled := wisps[2]
+
+	t.Run("NilEphemeral_LabelFilter_MergesNoHistoryWisp", func(t *testing.T) {
+		// Default search (filter.Ephemeral == nil) with --label needs-pm.
+		// Must surface the persistent labeled issue AND the NoHistory
+		// labeled wisp. Must NOT surface the true ephemeral wisp (default
+		// non-ephemeral guard) nor any unlabeled bead. This is the
+		// user-visible repro from the bead: `bd list --label X` on a
+		// PG-backed city silently drops NoHistory beads pre-fix.
+		runSearchAssertingSet(t, ctx, store, "Labels=[needs-pm],Ephemeral=nil",
+			types.IssueFilter{Labels: []string{"needs-pm"}},
+			[]string{persistentLabeled, noHistoryLabeled},
+			[]string{persistentUnlabeled, noHistoryUnlabeled, trueEphemeralLabeled},
+		)
+	})
+
+	t.Run("EphemeralFalse_LabelFilter_MergesNoHistoryWisp", func(t *testing.T) {
+		// Explicit Ephemeral=false. Symmetric with the nil case: NoHistory
+		// rows (ephemeral=0) MUST appear; true ephemeral wisps
+		// (ephemeral=1) MUST be filtered out by the per-row ephemeral
+		// column check applied uniformly to issues and wisps queries.
+		eph := false
+		runSearchAssertingSet(t, ctx, store, "Labels=[needs-pm],Ephemeral=false",
+			types.IssueFilter{Labels: []string{"needs-pm"}, Ephemeral: &eph},
+			[]string{persistentLabeled, noHistoryLabeled},
+			[]string{persistentUnlabeled, noHistoryUnlabeled, trueEphemeralLabeled},
+		)
+	})
+
+	t.Run("NilEphemeral_NoLabelFilter_MergesNoHistoryWisp", func(t *testing.T) {
+		// No filters beyond the default ephemeral guard. Both persistent
+		// rows AND both NoHistory rows must surface; true ephemeral wisps
+		// must be filtered out by the per-row ephemeral check. Catches
+		// the broader gap where any unfiltered SearchIssues call (e.g.
+		// `bd list`) misses NoHistory beads on PG.
+		runSearchAssertingSet(t, ctx, store, "Ephemeral=nil",
+			types.IssueFilter{},
+			[]string{persistentLabeled, persistentUnlabeled, noHistoryLabeled, noHistoryUnlabeled},
+			[]string{trueEphemeralLabeled},
+		)
+	})
+}
+
 // avoid unused-import errors when the test build tag is off
 var _ = strings.HasPrefix
