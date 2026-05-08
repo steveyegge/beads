@@ -1308,6 +1308,14 @@ type IssueFilter struct {
 	// Performance escape hatches
 	SkipWisps  bool // Q2: skip wisps table merge entirely (for callers that never return ephemeral results)
 	NoIDShrink bool // Q3: force Pattern A (full 47-col scan) even when Limit > 0
+
+	// Sort selection (currently honored by SearchIssueSummaries; SearchIssues
+	// keeps its hardcoded order and is sorted Go-side by callers that need it).
+	// Field names match the --sort flag in `bd list`: priority, created, updated,
+	// closed, status, id, title, type, assignee. Empty defaults to the priority/
+	// created_at/id ordering used historically.
+	SortBy      string
+	SortReverse bool
 }
 
 // SortPolicy determines how ready work is ordered

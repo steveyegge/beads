@@ -9,6 +9,64 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// BuildSummaryOrderBy returns the ORDER BY clause for SearchIssueSummaries.
+// An empty sortBy preserves the historical default "priority ASC, created_at
+// DESC, id ASC". Named sortBy values mirror the --sort flag in `bd list`. The
+// id ASC tiebreaker keeps row order deterministic for equal sort keys.
+//
+// Direction matches the previous Go-side sortSummaries: priority/status/id/
+// title/type/assignee default ASC; created/updated/closed default DESC. Reverse
+// flips the primary direction; the id tiebreaker stays ASC so result order
+// remains stable run-to-run.
+//
+// MySQL/Dolt's native NULL ordering aligns with the previous Go behavior:
+// NULLs sort first for ASC and last for DESC, matching how nil ClosedAt rows
+// were placed by sortSummaries.
+func BuildSummaryOrderBy(sortBy string, reverse bool) (string, error) {
+	if sortBy == "" {
+		return "ORDER BY priority ASC, created_at DESC, id ASC", nil
+	}
+	col, dir, ok := summarySortColumn(sortBy)
+	if !ok {
+		return "", fmt.Errorf("invalid sort field %q", sortBy)
+	}
+	if reverse {
+		if dir == "ASC" {
+			dir = "DESC"
+		} else {
+			dir = "ASC"
+		}
+	}
+	if col == "id" {
+		return fmt.Sprintf("ORDER BY id %s", dir), nil
+	}
+	return fmt.Sprintf("ORDER BY %s %s, id ASC", col, dir), nil
+}
+
+func summarySortColumn(sortBy string) (col, dir string, ok bool) {
+	switch sortBy {
+	case "priority":
+		return "priority", "ASC", true
+	case "created":
+		return "created_at", "DESC", true
+	case "updated":
+		return "updated_at", "DESC", true
+	case "closed":
+		return "closed_at", "DESC", true
+	case "status":
+		return "status", "ASC", true
+	case "id":
+		return "id", "ASC", true
+	case "title":
+		return "lower(title)", "ASC", true
+	case "type":
+		return "issue_type", "ASC", true
+	case "assignee":
+		return "assignee", "ASC", true
+	}
+	return "", "", false
+}
+
 // SearchIssueSummariesInTx executes a filtered search within an existing
 // transaction and returns narrow IssueSummary rows. Mirrors SearchIssuesInTx
 // (filter resolution, wisp admission, label hydration) but selects only
@@ -73,9 +131,14 @@ func searchSummaryTableInTx(ctx context.Context, tx *sql.Tx, query string, filte
 		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
-	//nolint:gosec // G201: whereSQL contains column comparisons with ?, limitSQL is a safe integer
-	querySQL := fmt.Sprintf(`SELECT %s FROM %s %s ORDER BY priority ASC, created_at DESC, id ASC %s`,
-		IssueSummaryColumns, tables.Main, whereSQL, limitSQL)
+	orderSQL, err := BuildSummaryOrderBy(filter.SortBy, filter.SortReverse)
+	if err != nil {
+		return nil, err
+	}
+
+	//nolint:gosec // G201: whereSQL contains column comparisons with ?, orderSQL is built from a fixed allowlist, limitSQL is a safe integer
+	querySQL := fmt.Sprintf(`SELECT %s FROM %s %s %s%s`,
+		IssueSummaryColumns, tables.Main, whereSQL, orderSQL, limitSQL)
 
 	rows, err := tx.QueryContext(ctx, querySQL, args...)
 	if err != nil {

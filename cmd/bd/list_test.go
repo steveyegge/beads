@@ -854,13 +854,13 @@ func TestFormatIssueCompact(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		issue  *types.Issue
+		issue  *types.IssueSummary
 		labels []string
 		want   string
 	}{
 		{
 			name: "basic issue",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-123",
 				Title:     "Test Issue",
 				Priority:  1,
@@ -872,7 +872,7 @@ func TestFormatIssueCompact(t *testing.T) {
 		},
 		{
 			name: "issue with assignee",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-456",
 				Title:     "Assigned Issue",
 				Priority:  2,
@@ -885,7 +885,7 @@ func TestFormatIssueCompact(t *testing.T) {
 		},
 		{
 			name: "issue with labels",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-789",
 				Title:     "Labeled Issue",
 				Priority:  0,
@@ -897,7 +897,7 @@ func TestFormatIssueCompact(t *testing.T) {
 		},
 		{
 			name: "closed issue",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-def",
 				Title:     "Closed Issue",
 				Priority:  3,
@@ -1044,14 +1044,14 @@ func TestFormatIssueCompactWithDependencies(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
-		issue     *types.Issue
+		issue     *types.IssueSummary
 		blockedBy []string
 		blocks    []string
 		want      string
 	}{
 		{
 			name: "issue with blocked by",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-123",
 				Title:     "Blocked Issue",
 				Priority:  1,
@@ -1064,7 +1064,7 @@ func TestFormatIssueCompactWithDependencies(t *testing.T) {
 		},
 		{
 			name: "issue with blocks",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-456",
 				Title:     "Blocking Issue",
 				Priority:  1,
@@ -1077,7 +1077,7 @@ func TestFormatIssueCompactWithDependencies(t *testing.T) {
 		},
 		{
 			name: "issue with both",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-789",
 				Title:     "Middle Issue",
 				Priority:  1,
@@ -1090,7 +1090,7 @@ func TestFormatIssueCompactWithDependencies(t *testing.T) {
 		},
 		{
 			name: "issue with no dependencies",
-			issue: &types.Issue{
+			issue: &types.IssueSummary{
 				ID:        "test-abc",
 				Title:     "Independent Issue",
 				Priority:  1,
@@ -1121,7 +1121,7 @@ func TestFormatIssueCompactBlockedIcon(t *testing.T) {
 	t.Parallel()
 
 	t.Run("open issue with blockers shows blocked icon", func(t *testing.T) {
-		issue := &types.Issue{
+		issue := &types.IssueSummary{
 			ID:        "test-blocked",
 			Title:     "Blocked by dependency",
 			Priority:  2,
@@ -1141,7 +1141,7 @@ func TestFormatIssueCompactBlockedIcon(t *testing.T) {
 	})
 
 	t.Run("open issue without blockers shows open icon", func(t *testing.T) {
-		issue := &types.Issue{
+		issue := &types.IssueSummary{
 			ID:        "test-open",
 			Title:     "Normal open issue",
 			Priority:  2,
@@ -1157,7 +1157,7 @@ func TestFormatIssueCompactBlockedIcon(t *testing.T) {
 	})
 
 	t.Run("in_progress issue with blockers keeps in_progress icon", func(t *testing.T) {
-		issue := &types.Issue{
+		issue := &types.IssueSummary{
 			ID:        "test-wip",
 			Title:     "In progress with blocker",
 			Priority:  2,
@@ -1532,7 +1532,7 @@ func TestFormatDependencyInfoWithParent(t *testing.T) {
 // TestFormatIssueCompactWithParent tests compact format renders parent correctly (bd-hcxu)
 func TestFormatIssueCompactWithParent(t *testing.T) {
 	t.Parallel()
-	issue := &types.Issue{
+	issue := &types.IssueSummary{
 		ID:        "test-child",
 		Title:     "Child Task",
 		Priority:  2,

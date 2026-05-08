@@ -80,10 +80,10 @@ func TestSearchIssueSummaries_IDParity(t *testing.T) {
 }
 
 // TestSearchIssueSummaries_PinnedFixturePresent asserts the fixture contains
-// both a pinned permanent issue AND a pinned wisp. The render-parity hard gate
-// (exercised in cmd/bd/list_format_test.go) relies on these being present
-// so pinIndicator / pinIndicatorSummary both run. Losing the pinned wisp in
-// the fixture would silently weaken render parity coverage.
+// both a pinned permanent issue AND a pinned wisp. SearchIssueSummaries must
+// surface Pinned for both shapes (the wide path admits wisps via merge); a
+// missing pinned wisp would silently weaken the ID-parity gate above when a
+// future reviewer extended it with a Pinned filter case.
 func TestSearchIssueSummaries_PinnedFixturePresent(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
