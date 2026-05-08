@@ -176,7 +176,7 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 			}
 		}
 		fmt.Printf("\nStructure:\n")
-		printFormulaStepsTree(f.Steps, "")
+		printFormulaStepsTree(f.Steps, "", false)
 		return
 	}
 

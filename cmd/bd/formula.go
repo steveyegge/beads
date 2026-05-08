@@ -75,9 +75,12 @@ Displays:
   - Composition rules (extends, aspects, expansions)
   - Bond points for external composition
 
+Use --full to emit each step's description below its title — the form
+formula-driven agents need to execute the recipe.
+
 Examples:
   bd formula show shiny
-  bd formula show rule-of-five
+  bd formula show rule-of-five --full
   bd formula show security-audit --json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runFormulaShow,
@@ -183,6 +186,7 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 
 func runFormulaShow(cmd *cobra.Command, args []string) {
 	name := args[0]
+	full, _ := cmd.Flags().GetBool("full")
 
 	// Create parser with default search paths
 	parser := formula.NewParser()
@@ -260,13 +264,13 @@ func runFormulaShow(cmd *cobra.Command, args []string) {
 	// Print steps
 	if len(f.Steps) > 0 {
 		fmt.Printf("\n%s Steps (%d):\n", ui.RenderPass("🌲"), countSteps(f.Steps))
-		printFormulaStepsTree(f.Steps, "   ")
+		printFormulaStepsTree(f.Steps, "   ", full)
 	}
 
 	// Print template (for expansion formulas)
 	if len(f.Template) > 0 {
 		fmt.Printf("\n%s Template (%d steps):\n", ui.RenderAccent("📐"), len(f.Template))
-		printFormulaStepsTree(f.Template, "   ")
+		printFormulaStepsTree(f.Template, "   ", full)
 	}
 
 	// Print advice rules
@@ -422,8 +426,10 @@ func getTypeIcon(t string) string {
 	}
 }
 
-// printFormulaStepsTree prints steps in a tree format.
-func printFormulaStepsTree(steps []*formula.Step, indent string) {
+// printFormulaStepsTree prints steps in a tree format. When full is true,
+// each step's description is emitted below its title, indented under the
+// step's children-continuation column.
+func printFormulaStepsTree(steps []*formula.Step, indent string, full bool) {
 	for i, step := range steps {
 		connector := "├──"
 		if i == len(steps)-1 {
@@ -454,14 +460,23 @@ func printFormulaStepsTree(steps []*formula.Step, indent string) {
 
 		fmt.Printf("%s%s %s: %s%s%s\n", indent, connector, step.ID, step.Title, typeStr, depStr)
 
-		if len(step.Children) > 0 {
-			childIndent := indent
-			if i == len(steps)-1 {
-				childIndent += "    "
-			} else {
-				childIndent += "│   "
+		// childIndent is shared by --full description rendering and child
+		// step rendering: both should sit under the step's content column.
+		childIndent := indent
+		if i == len(steps)-1 {
+			childIndent += "    "
+		} else {
+			childIndent += "│   "
+		}
+
+		if full && step.Description != "" {
+			for _, line := range strings.Split(strings.TrimRight(step.Description, "\n"), "\n") {
+				fmt.Printf("%s%s\n", childIndent, line)
 			}
-			printFormulaStepsTree(step.Children, childIndent)
+		}
+
+		if len(step.Children) > 0 {
+			printFormulaStepsTree(step.Children, childIndent, full)
 		}
 	}
 }
@@ -745,6 +760,7 @@ func fixIntegerFields(m map[string]interface{}) {
 
 func init() {
 	formulaListCmd.Flags().String("type", "", "Filter by type (workflow, expansion, aspect, convoy)")
+	formulaShowCmd.Flags().Bool("full", false, "Emit each step's description below its title (formula-driven agents need this to execute the recipe)")
 	formulaConvertCmd.Flags().BoolVar(&convertAll, "all", false, "Convert all JSON formulas")
 	formulaConvertCmd.Flags().BoolVar(&convertDelete, "delete", false, "Delete JSON file after conversion")
 	formulaConvertCmd.Flags().BoolVar(&convertStdout, "stdout", false, "Print TOML to stdout instead of file")
