@@ -401,7 +401,14 @@ var doltStopCmd = &cobra.Command{
 	Long: `Stop the dolt sql-server managed by beads for the current project.
 
 This sends a graceful shutdown signal. The server will restart automatically
-on the next bd command unless auto-start is disabled.`,
+on the next bd command unless auto-start is disabled.
+
+For externally-managed servers — shared-server mode (dolt.shared-server: true
+in config.yaml or BEADS_DOLT_SHARED_SERVER=1), dolt_mode=server with a remote
+host, or a local server with auto-start disabled — bd does not own the server
+lifecycle and cannot terminate the process. In that case, this command
+diagnoses reachability via an SQL probe and prints guidance for a manual stop
+(bd dolt killall or kill <pid>).`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if isEmbeddedMode() {
 			fmt.Fprintln(os.Stderr, "Error: 'bd dolt stop' is not supported in embedded mode (no Dolt server)")
@@ -414,11 +421,29 @@ on the next bd command unless auto-start is disabled.`,
 		serverDir := doltserver.ResolveServerDir(beadsDir)
 		force, _ := cmd.Flags().GetBool("force")
 
-		if err := doltserver.StopWithForce(serverDir, force); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+		err := doltserver.StopWithForce(serverDir, force)
+		if err == nil {
+			fmt.Println("Dolt server stopped.")
+			return
 		}
-		fmt.Println("Dolt server stopped.")
+		// When the PID-file path reports "not running", check whether this is
+		// actually an externally-managed server (shared server, remote host,
+		// or local server bd does not own). If so, surface a diagnostic via
+		// SQL probe instead of the misleading "not running" error — which
+		// fires even when CRUD commands successfully reach the server because
+		// no bd PID file exists for it (GH#3687).
+		if errors.Is(err, doltserver.ErrServerNotRunning) {
+			cfg, cfgErr := configfile.Load(beadsDir)
+			if cfgErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: cannot load .beads config (%v); falling back to PID-file stop path\n", cfgErr)
+			}
+			if shouldUseExternalDoltStop(cfg, doltserver.IsAutoStartDisabled(), doltserver.IsSharedServerMode()) {
+				runExternalDoltStop(beadsDir, cfg)
+				os.Exit(1)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	},
 }
 
@@ -627,6 +652,160 @@ func runExternalDoltStatus(beadsDir string, cfg *configfile.Config) {
 		fmt.Printf("  Error:    %v\n", connErr)
 	}
 }
+
+// shouldUseExternalDoltStop reports whether bd dolt stop should treat the
+// server as externally-managed and probe via SQL for a diagnostic instead
+// of returning the "not running" error from the local PID-file path.
+//
+// Returns true when ANY of the following is true (bd is not the sole
+// owner of the server lifecycle, so the absence of a bd PID file does
+// not imply the server isn't running):
+//   - sharedServerMode (config.yaml dolt.shared-server: true OR
+//     BEADS_DOLT_SHARED_SERVER env): bd may have started the shared
+//     server in another process (or a previous version with different
+//     state-file paths), and the PID file may have been lost. The
+//     server is reachable on the well-known shared port (GH#3687).
+//   - dolt_mode=server with a non-local host: PID file is on a
+//     different machine.
+//   - dolt_mode=server with a local host but bd auto-start is disabled:
+//     server lifecycle is owned by something outside bd (orchestrator,
+//     systemd, manual dolt sql-server invocation).
+//
+// When false, the caller surfaces the existing ErrServerNotRunning
+// message from StopWithForce. When true, the caller routes through
+// runExternalDoltStop which probes the configured endpoint via SQL and
+// prints a diagnostic with a manual-stop hint.
+//
+// autoStartDisabled and sharedServerMode are passed in (rather than read
+// here) so the predicate is pure and unit-testable without manipulating
+// package-level config or environment.
+func shouldUseExternalDoltStop(cfg *configfile.Config, autoStartDisabled, sharedServerMode bool) bool {
+	if sharedServerMode {
+		return true
+	}
+	if cfg == nil || !cfg.IsDoltServerMode() {
+		return false
+	}
+	if !isLocalHost(cfg.GetDoltServerHost()) {
+		return true
+	}
+	return autoStartDisabled
+}
+
+// runExternalDoltStop probes the configured Dolt server via SQL and
+// prints a diagnostic when bd does not own the server lifecycle.
+//
+// bd intentionally does NOT kill processes it did not start — that's
+// what `bd dolt killall` exists for, and it has its own per-data-dir
+// guard rails. Instead, this function tells the operator:
+//   - whether the configured server is reachable
+//   - the host/port to target
+//   - the safe ways to stop it manually (`bd dolt killall` for orphan
+//     dolt sql-servers in this project's data dir, or `kill <pid>` /
+//     a service-manager command for externally-managed processes)
+//
+// Returns true if the configured server was reachable (so the caller
+// should still exit with non-zero — no stop was performed). Returns
+// false if the server was not reachable (still non-zero exit, since
+// the user invoked stop expecting some action).
+//
+// Does NOT call os.Exit so the caller controls exit semantics and the
+// function is unit-testable.
+func runExternalDoltStop(beadsDir string, cfg *configfile.Config) bool {
+	host := DefaultExternalDoltStopHost
+	port := doltserver.DefaultConfig(beadsDir).Port
+	user := configfile.DefaultDoltServerUser
+	database := configfile.DefaultDoltDatabase
+	tls := false
+	password := ""
+	if cfg != nil {
+		host = cfg.GetDoltServerHost()
+		user = cfg.GetDoltServerUser()
+		database = cfg.GetDoltDatabase()
+		tls = cfg.GetDoltServerTLS()
+		password = cfg.GetDoltServerPasswordForPort(port)
+	}
+
+	dsn := doltutil.ServerDSN{
+		Host:     host,
+		Port:     port,
+		User:     user,
+		Password: password,
+		TLS:      tls,
+		Timeout:  5 * time.Second,
+	}.String()
+
+	result := map[string]interface{}{
+		"mode":     "external",
+		"action":   "stop",
+		"host":     host,
+		"port":     port,
+		"user":     user,
+		"database": database,
+		"tls":      tls,
+		"stopped":  false,
+	}
+
+	db, openErr := sql.Open("mysql", dsn)
+	var running bool
+	var connErr error
+	if openErr == nil {
+		defer db.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if pingErr := db.PingContext(ctx); pingErr != nil {
+			connErr = pingErr
+		} else {
+			running = true
+		}
+	} else {
+		connErr = openErr
+	}
+
+	result["running"] = running
+	if connErr != nil {
+		result["error"] = connErr.Error()
+	}
+
+	if jsonOutput {
+		outputJSON(result)
+		return running
+	}
+
+	if !running {
+		fmt.Fprintln(os.Stderr, "Dolt server: not reachable (external)")
+		fmt.Fprintf(os.Stderr, "  Host: %s\n", host)
+		fmt.Fprintf(os.Stderr, "  Port: %d\n", port)
+		if connErr != nil {
+			fmt.Fprintf(os.Stderr, "  Error: %v\n", connErr)
+		}
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "No bd-tracked PID file is present and the configured endpoint did not respond.")
+		fmt.Fprintln(os.Stderr, "If the server is genuinely stopped, no action is needed.")
+		return false
+	}
+
+	fmt.Fprintln(os.Stderr, "Dolt server: reachable but not bd-managed (external)")
+	fmt.Fprintf(os.Stderr, "  Host: %s\n", host)
+	fmt.Fprintf(os.Stderr, "  Port: %d\n", port)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "bd cannot stop a server it did not start (no PID file at the expected location).")
+	fmt.Fprintln(os.Stderr, "To stop manually:")
+	fmt.Fprintln(os.Stderr, "  - For an orphan bd-started dolt sql-server in this data directory:")
+	fmt.Fprintln(os.Stderr, "      bd dolt killall")
+	fmt.Fprintf(os.Stderr, "  - To find the PID listening on %s:%d:\n", host, port)
+	fmt.Fprintf(os.Stderr, "      lsof -i :%d        # macOS/Linux\n", port)
+	fmt.Fprintf(os.Stderr, "      ss -ltnp | grep :%d  # Linux\n", port)
+	fmt.Fprintf(os.Stderr, "      netstat -ano | findstr :%d  # Windows\n", port)
+	fmt.Fprintln(os.Stderr, "  - Then: kill <pid>  (or your service manager's stop command)")
+	return true
+}
+
+// DefaultExternalDoltStopHost is the host fallback used by runExternalDoltStop
+// when no config is loadable. Mirrors configfile.DefaultDoltServerHost without
+// importing the constant directly to avoid a tighter coupling for what is
+// only a diagnostic display value.
+const DefaultExternalDoltStopHost = "127.0.0.1"
 
 // showEmbeddedDoltStatus reports Dolt engine status when running in
 // embedded mode. There is no separate server process; the engine runs

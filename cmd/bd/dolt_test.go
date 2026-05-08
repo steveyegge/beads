@@ -1551,3 +1551,201 @@ func TestRenderLocalDoltStatus(t *testing.T) {
 		}
 	})
 }
+
+// TestShouldUseExternalDoltStop covers the routing predicate for `bd dolt
+// stop`. The predicate decides whether ErrServerNotRunning from the local
+// PID-file path should be replaced with an SQL probe + diagnostic message
+// (externally-managed server) or surfaced as the existing "not running"
+// error (bd-managed server is genuinely stopped). Externally-managed cases
+// include shared-server mode (config.yaml or env), dolt_mode=server with
+// a non-local host, and dolt_mode=server with a local host but auto-start
+// disabled (GH#3687).
+func TestShouldUseExternalDoltStop(t *testing.T) {
+	tests := []struct {
+		name              string
+		cfg               *configfile.Config
+		autoStartDisabled bool
+		sharedServerMode  bool
+		want              bool
+	}{
+		{
+			name:              "nothing set falls back to PID-file path",
+			cfg:               nil,
+			autoStartDisabled: false,
+			sharedServerMode:  false,
+			want:              false,
+		},
+		{
+			name:              "shared-server mode always routes to external (covers config.yaml-only setup)",
+			cfg:               nil,
+			autoStartDisabled: false,
+			sharedServerMode:  true,
+			want:              true,
+		},
+		{
+			name:              "shared-server mode wins even when cfg is embedded",
+			cfg:               &configfile.Config{Backend: "dolt", DoltMode: "embedded"},
+			autoStartDisabled: false,
+			sharedServerMode:  true,
+			want:              true,
+		},
+		{
+			name:              "embedded mode without shared-server stays on PID-file path",
+			cfg:               &configfile.Config{Backend: "dolt", DoltMode: "embedded"},
+			autoStartDisabled: true,
+			sharedServerMode:  false,
+			want:              false,
+		},
+		{
+			name: "server mode + remote host always routes to external",
+			cfg: &configfile.Config{
+				Backend:        "dolt",
+				DoltMode:       "server",
+				DoltServerHost: "dolt.example.com",
+			},
+			autoStartDisabled: false,
+			sharedServerMode:  false,
+			want:              true,
+		},
+		{
+			name: "server mode + local host + auto-start enabled keeps PID-file path",
+			cfg: &configfile.Config{
+				Backend:        "dolt",
+				DoltMode:       "server",
+				DoltServerHost: "127.0.0.1",
+			},
+			autoStartDisabled: false,
+			sharedServerMode:  false,
+			want:              false,
+		},
+		{
+			name: "server mode + local host + auto-start disabled routes to external",
+			cfg: &configfile.Config{
+				Backend:        "dolt",
+				DoltMode:       "server",
+				DoltServerHost: "127.0.0.1",
+			},
+			autoStartDisabled: true,
+			sharedServerMode:  false,
+			want:              true,
+		},
+	}
+
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "")
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldUseExternalDoltStop(tc.cfg, tc.autoStartDisabled, tc.sharedServerMode)
+			if got != tc.want {
+				t.Errorf("shouldUseExternalDoltStop(cfg=%+v, autoStartDisabled=%v, sharedServerMode=%v) = %v, want %v",
+					tc.cfg, tc.autoStartDisabled, tc.sharedServerMode, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunExternalDoltStop_Unreachable exercises the SQL-probe diagnostic
+// path of bd dolt stop against an unreachable port. Covers the two
+// terminal branches (text + JSON) and asserts that:
+//   - returns false (server was not reachable)
+//   - text output names the host/port and clarifies "not reachable"
+//   - JSON output uses mode=external, action=stop, running=false
+//
+// Does not require a running Dolt server; uses port 1 + 127.0.0.1 so the
+// connect() RSTs immediately and the 5s DSN timeout is not exercised.
+func TestRunExternalDoltStop_Unreachable(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "1")
+	beadsDir := t.TempDir()
+	cfg := &configfile.Config{
+		DoltMode:       "server",
+		DoltServerHost: "127.0.0.1",
+		DoltServerUser: "root",
+		DoltDatabase:   "beads_ext",
+		DoltServerTLS:  true,
+	}
+
+	t.Run("text output prints not-reachable diagnostic", func(t *testing.T) {
+		orig := jsonOutput
+		defer func() { jsonOutput = orig }()
+		jsonOutput = false
+
+		var reachable bool
+		out := captureStderr(t, func() {
+			reachable = runExternalDoltStop(beadsDir, cfg)
+		})
+
+		if reachable {
+			t.Errorf("runExternalDoltStop returned true (reachable) for port 1, want false")
+		}
+		for _, want := range []string{
+			"not reachable (external)",
+			"Host:",
+			"127.0.0.1",
+			"Port: 1",
+			"Error:",
+			"No bd-tracked PID file is present",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("json output emits external-stop shape", func(t *testing.T) {
+		orig := jsonOutput
+		defer func() { jsonOutput = orig }()
+		jsonOutput = true
+
+		var reachable bool
+		out := captureStdout(t, func() error {
+			reachable = runExternalDoltStop(beadsDir, cfg)
+			return nil
+		})
+
+		if reachable {
+			t.Errorf("runExternalDoltStop returned true (reachable) for port 1, want false")
+		}
+		var result map[string]any
+		if err := json.Unmarshal([]byte(out), &result); err != nil {
+			t.Fatalf("expected valid JSON output, got error %v, raw: %s", err, out)
+		}
+		if result["mode"] != "external" {
+			t.Errorf("mode = %v, want %q", result["mode"], "external")
+		}
+		if result["action"] != "stop" {
+			t.Errorf("action = %v, want %q", result["action"], "stop")
+		}
+		if result["running"] != false {
+			t.Errorf("running = %v, want false", result["running"])
+		}
+		if result["stopped"] != false {
+			t.Errorf("stopped = %v, want false", result["stopped"])
+		}
+		if result["host"] != "127.0.0.1" {
+			t.Errorf("host = %v, want %q", result["host"], "127.0.0.1")
+		}
+		if _, ok := result["error"]; !ok {
+			t.Error("expected 'error' field in JSON output for unreachable server")
+		}
+	})
+
+	t.Run("nil cfg falls back to defaults without panicking", func(t *testing.T) {
+		orig := jsonOutput
+		defer func() { jsonOutput = orig }()
+		jsonOutput = false
+
+		var reachable bool
+		out := captureStderr(t, func() {
+			reachable = runExternalDoltStop(beadsDir, nil)
+		})
+
+		if reachable {
+			t.Errorf("runExternalDoltStop returned true with nil cfg + port 1, want false")
+		}
+		if !strings.Contains(out, "not reachable") {
+			t.Errorf("expected not-reachable output, got:\n%s", out)
+		}
+	})
+}
