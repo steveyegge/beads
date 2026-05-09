@@ -71,6 +71,22 @@ func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir s
 	}
 
 	// Fallback for non-embedded stores: multi-call path (original behavior).
+	//
+	// Defensive empty check (gastownhall/beads dc-4dix). Without this, every
+	// `bd <write-command>` against an external Dolt SQL server (TCP or unix
+	// socket) re-imports the full JSONL into a database that already has all
+	// the data — costing ~3 minutes per call on rigs with thousands of issues.
+	// The single-transaction fast-path above (jsonlImporter) does this check
+	// atomically inside the import; the fallback path historically did not,
+	// because the original GH#2994 use case was a fresh `embeddeddolt/`
+	// database, which is reliably empty on first run. External-server setups
+	// did not exist at that time but are now common (one shared Dolt server
+	// per workspace, multiple bd processes connecting via SQL).
+	if stats, err := s.GetStatistics(ctx); err == nil && stats != nil && stats.TotalIssues > 0 {
+		// Database already has data — no upgrade-recovery import needed.
+		return
+	}
+
 	fmt.Fprintf(os.Stderr, "auto-importing %d bytes from %s into empty database...\n", info.Size(), jsonlPath)
 
 	result, err := importFromLocalJSONLFull(ctx, s, jsonlPath)
