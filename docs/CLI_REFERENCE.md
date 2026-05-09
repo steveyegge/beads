@@ -3576,42 +3576,60 @@ Setup integration files for AI editors and coding assistants.
 Recipes define where beads workflow instructions are written. Built-in recipes
 include cursor, claude, gemini, aider, factory, codex, mux, opencode, junie, windsurf, cody, and kilocode.
 
-Examples:
-  bd setup cursor          # Install Cursor IDE integration
-  bd setup codex           # Install Codex skill + AGENTS.md guidance
-  bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
-  bd setup copilot         # Install Copilot CLI global instructions
-  bd setup copilot --project  # Install Copilot CLI project hooks + instructions
-  bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
-  bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
-  bd setup mux --project --global  # Install both Mux layers
-  bd setup --list          # Show all available recipes
-  bd setup --print         # Print the template to stdout
-  bd setup -o rules.md     # Write template to custom path
-  bd setup --add myeditor .myeditor/rules.md  # Add custom recipe
+```bash
+# Setup editor integration (choose based on your editor)
+bd setup factory  # Factory.ai Droid - creates/updates AGENTS.md (universal standard)
+bd setup codex    # Codex CLI - creates/updates AGENTS.md
+bd setup mux      # Mux - creates/updates AGENTS.md
+bd setup claude   # Claude Code - installs hooks + manages CLAUDE.md (minimal profile)
+bd setup copilot  # GitHub Copilot CLI - installs .copilot-plugin/plugin.json + .github/copilot-instructions.md
+bd setup gemini   # Gemini CLI - installs hooks + manages GEMINI.md (minimal profile)
+bd setup cursor   # Cursor IDE - creates .cursor/rules/beads.mdc
+bd setup aider    # Aider - creates .aider.conf.yml
 
-Use 'bd setup &lt;recipe&gt; --check' to verify installation status.
-Use 'bd setup &lt;recipe&gt; --remove' to uninstall.
+# Check if integration is installed
+bd setup factory --check
+bd setup codex --check
+bd setup mux --check
+bd setup claude --check
+bd setup copilot --check
+bd setup gemini --check
+bd setup cursor --check
+bd setup aider --check
 
-```
-bd setup [recipe] [flags]
-```
-
-**Flags:**
-
-```
-      --add string      Add a custom recipe with given name
-      --check           Check if integration is installed
-      --global          Install globally (claude/codex/mux; writes to ~/.claude/settings.json, $CODEX_HOME/AGENTS.md or ~/.codex/AGENTS.md, or ~/.mux/AGENTS.md)
-      --list            List all available recipes
-  -o, --output string   Write template to custom path
-      --print           Print the template to stdout
-      --project         Install for this project only (gemini/mux)
-      --remove          Remove the integration
-      --stealth         Use stealth mode (claude/copilot/gemini)
+# Remove integration
+bd setup factory --remove
+bd setup codex --remove
+bd setup mux --remove
+bd setup claude --remove
+bd setup copilot --remove
+bd setup gemini --remove
+bd setup cursor --remove
+bd setup aider --remove
 ```
 
-### bd where
+**Claude Code options:**
+```bash
+bd setup claude              # Install globally (~/.claude/settings.json)
+bd setup claude --project    # Install for this project only
+bd setup claude --stealth    # Use stealth mode (flush only, no git operations)
+bd setup copilot             # Install .copilot-plugin/plugin.json + .github/copilot-instructions.md
+bd setup gemini              # Install globally (~/.gemini/settings.json)
+bd setup gemini --project    # Install for this project only
+bd setup gemini --stealth    # Use stealth mode (flush only, no git operations)
+bd setup mux --project       # Also install .mux/AGENTS.md workspace layer
+bd setup mux --global        # Also install ~/.mux/AGENTS.md global layer
+```
+
+**What each setup does:**
+- **Factory.ai** (`bd setup factory`): Creates or updates AGENTS.md with beads workflow instructions (full profile — works with multiple AI tools using the AGENTS.md standard)
+- **Codex CLI** (`bd setup codex`): Creates or updates AGENTS.md with beads workflow instructions for Codex (full profile)
+- **Mux** (`bd setup mux`): Creates or updates AGENTS.md with beads workflow instructions for Mux workspaces (full profile)
+- **Claude Code** (`bd setup claude`): Adds hooks to Claude Code's settings.json that run `bd prime` on SessionStart and PreCompact events and manages a minimal-profile beads section in `CLAUDE.md`
+- **GitHub Copilot CLI** (`bd setup copilot`): Installs a native Copilot plugin manifest in `.copilot-plugin/plugin.json` plus repository instructions in `.github/copilot-instructions.md`. The plugin manifest runs `bd prime` on `SessionStart` and `PreCompact`
+- **Gemini CLI** (`bd setup gemini`): Adds hooks to Gemini's settings.json that run `bd prime` on SessionStart and PreCompress events and manages a minimal-profile beads section in `GEMINI.md`
+- **Cursor** (`bd setup cursor`): Creates `.cursor/rules/beads.mdc` with workflow instructions
+- **Aider** (`bd setup aider`): Creates `.aider.conf.yml` with bd workflow instructions
 
 Show the active beads database location, including redirect information.
 

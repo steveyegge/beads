@@ -38,7 +38,7 @@ Hook-enabled agents (Claude, Copilot CLI, Gemini) use the `minimal` profile beca
 | `cody` | `.cody/rules/beads.md` | Rules file |
 | `kilocode` | `.kilocode/rules/beads.md` | Rules file |
 | `claude` | `~/.claude/settings.json` + `CLAUDE.md` | SessionStart/PreCompact hooks + minimal section |
-| `copilot` | `~/.copilot/copilot-instructions.md` + `~/.copilot/hooks/beads-copilot.json` or `.github/hooks/beads-copilot.json` + `.github/copilot-instructions.md` | global hooks + instructions or project hooks + minimal section |
+| `copilot` | `.copilot-plugin/plugin.json` + `.github/copilot-instructions.md` | native Copilot plugin hooks + repository instructions |
 | `gemini` | `~/.gemini/settings.json` + `GEMINI.md` | SessionStart/PreCompress hooks + minimal section |
 | `factory` | `AGENTS.md` | Marked section |
 | `codex` | `.agents/skills/beads/SKILL.md` + `AGENTS.md` | Beads agent skill + generated skill guidance |
@@ -56,8 +56,7 @@ bd setup cursor     # Cursor IDE
 bd setup windsurf   # Windsurf
 bd setup kilocode   # Kilo Code
 bd setup claude     # Claude Code
-bd setup copilot    # GitHub Copilot CLI global instructions
-bd setup copilot --project  # GitHub Copilot CLI project hooks + instructions
+bd setup copilot    # GitHub Copilot CLI plugin + instructions
 bd setup gemini     # Gemini CLI
 bd setup factory    # Factory.ai Droid
 bd setup codex      # Beads agent skill + AGENTS.md guidance

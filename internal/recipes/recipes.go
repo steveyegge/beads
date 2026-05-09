@@ -31,10 +31,12 @@ type Recipe struct {
 	Path        string     `toml:"path"`        // Primary file path (for TypeFile)
 	Type        RecipeType `toml:"type"`        // How to install
 	Description string     `toml:"description"` // Brief description
+	Content     string     `toml:"-"`           // Optional static content for TypeFile
 	// Optional fields for complex recipes
-	GlobalPath  string   `toml:"global_path"`  // Global settings path (for hooks)
-	ProjectPath string   `toml:"project_path"` // Project settings path (for hooks)
-	Paths       []string `toml:"paths"`        // Multiple paths (for multifile)
+	GlobalPath  string            `toml:"global_path"`  // Global settings path (for hooks)
+	ProjectPath string            `toml:"project_path"` // Project settings path (for hooks)
+	Paths       []string          `toml:"paths"`        // Multiple paths (for multifile)
+	Contents    map[string]string `toml:"-"`            // Optional static contents for TypeMultiFile
 }
 
 // BuiltinRecipes contains the default recipe definitions.
@@ -80,10 +82,16 @@ var BuiltinRecipes = map[string]Recipe{
 	},
 	"copilot": {
 		Name:        "GitHub Copilot CLI",
-		Type:        TypeHooks,
-		Description: "Copilot CLI global instructions or project hooks + instructions",
-		GlobalPath:  "~/.copilot/copilot-instructions.md",
-		ProjectPath: ".github/copilot-instructions.md",
+		Type:        TypeMultiFile,
+		Description: "Copilot CLI plugin manifest + instructions",
+		Paths: []string{
+			".copilot-plugin/plugin.json",
+			".github/copilot-instructions.md",
+		},
+		Contents: map[string]string{
+			".copilot-plugin/plugin.json":     CopilotPluginManifestTemplate,
+			".github/copilot-instructions.md": CopilotInstructionsTemplate,
+		},
 	},
 	"factory": {
 		Name:        "Factory.ai (Droid)",

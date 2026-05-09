@@ -189,17 +189,11 @@ func TestRunRecipe_BuiltinFileRecipeWorksWithoutWorkspace(t *testing.T) {
 	}
 }
 
-func TestRunRecipe_CopilotGlobalWorksWithoutWorkspace(t *testing.T) {
+func TestRunRecipe_CopilotWorksWithoutWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
-	homeDir := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(homeDir, 0o755); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
 
 	t.Chdir(tmpDir)
 	t.Setenv("BEADS_DIR", "")
-	t.Setenv("HOME", homeDir)
-	t.Setenv("USERPROFILE", homeDir)
 	resetSetupResolutionCaches(t)
 	resetSetupGlobals(t)
 
@@ -208,46 +202,62 @@ func TestRunRecipe_CopilotGlobalWorksWithoutWorkspace(t *testing.T) {
 		return nil
 	})
 
-	if !strings.Contains(out, "global instructions installed") {
-		t.Fatalf("expected global copilot install output, got:\n%s", out)
+	if !strings.Contains(out, "GitHub Copilot CLI integration installed") {
+		t.Fatalf("expected copilot install output, got:\n%s", out)
 	}
 
-	if _, err := os.Stat(filepath.Join(homeDir, ".copilot", "copilot-instructions.md")); err != nil {
-		t.Fatalf("expected global copilot instructions: %v", err)
+	if _, err := os.Stat(filepath.Join(tmpDir, ".copilot-plugin", "plugin.json")); err != nil {
+		t.Fatalf("expected copilot plugin manifest: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, ".copilot", "hooks", "beads-copilot.json")); err != nil {
-		t.Fatalf("expected global copilot hooks: %v", err)
+	if _, err := os.Stat(filepath.Join(tmpDir, ".github", "copilot-instructions.md")); err != nil {
+		t.Fatalf("expected copilot instructions: %v", err)
 	}
 }
 
-func TestRunRecipe_CopilotProjectWorksWithoutWorkspace(t *testing.T) {
+func TestRunRecipe_CopilotCheckWorksWithoutWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
-	homeDir := filepath.Join(tmpDir, "home")
-	if err := os.MkdirAll(homeDir, 0o755); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
 
 	t.Chdir(tmpDir)
 	t.Setenv("BEADS_DIR", "")
-	t.Setenv("HOME", homeDir)
-	t.Setenv("USERPROFILE", homeDir)
 	resetSetupResolutionCaches(t)
 	resetSetupGlobals(t)
-	setupProject = true
+
+	runRecipe("copilot")
+
+	resetSetupGlobals(t)
+	setupCheck = true
 
 	out := captureStdout(t, func() error {
 		runRecipe("copilot")
 		return nil
 	})
 
-	if !strings.Contains(out, "project integration installed") {
-		t.Fatalf("expected project copilot install output, got:\n%s", out)
+	if !strings.Contains(out, ".copilot-plugin/plugin.json") {
+		t.Fatalf("expected plugin manifest in check output, got:\n%s", out)
 	}
+	if !strings.Contains(out, ".github/copilot-instructions.md") {
+		t.Fatalf("expected instructions file in check output, got:\n%s", out)
+	}
+}
 
-	if _, err := os.Stat(filepath.Join(tmpDir, ".github", "copilot-instructions.md")); err != nil {
-		t.Fatalf("expected project copilot instructions: %v", err)
+func TestRunRecipe_CopilotRemoveWorksWithoutWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Chdir(tmpDir)
+	t.Setenv("BEADS_DIR", "")
+	resetSetupResolutionCaches(t)
+	resetSetupGlobals(t)
+
+	runRecipe("copilot")
+
+	resetSetupGlobals(t)
+	setupRemove = true
+	runRecipe("copilot")
+
+	if _, err := os.Stat(filepath.Join(tmpDir, ".copilot-plugin", "plugin.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected plugin manifest to be removed, got err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, ".github", "hooks", "beads-copilot.json")); err != nil {
-		t.Fatalf("expected project copilot hooks: %v", err)
+	if _, err := os.Stat(filepath.Join(tmpDir, ".github", "copilot-instructions.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected copilot instructions to be removed, got err=%v", err)
 	}
 }
