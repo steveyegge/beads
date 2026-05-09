@@ -132,10 +132,13 @@ if [ -f "$CLI_REF" ]; then
             echo "PASS: docs/CLI_REFERENCE.md covers all live top-level CLI commands"
         fi
 
-        WEBSITE_DIRS=(
-            "$PROJECT_ROOT/website/docs/cli-reference"
-            "$PROJECT_ROOT/website/versioned_docs/version-1.0.0/cli-reference"
-        )
+        WEBSITE_DIRS=("$PROJECT_ROOT/website/docs/cli-reference")
+        if [ -d "$PROJECT_ROOT/website/versioned_docs" ]; then
+            for vdir in "$PROJECT_ROOT"/website/versioned_docs/version-*; do
+                [ -d "$vdir" ] || continue
+                WEBSITE_DIRS+=("$vdir/cli-reference")
+            done
+        fi
         for dir in "${WEBSITE_DIRS[@]}"; do
             if [ ! -d "$dir" ]; then
                 continue

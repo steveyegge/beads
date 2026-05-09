@@ -92,7 +92,7 @@ const config: Config = {
           editUrl: `https://github.com/${orgName}/${projectName}/tree/main/website/`,
           showLastUpdateTime: true,
           // Default site view is the latest released snapshot, not unreleased "Next"
-          lastVersion: '1.0.0',
+          lastVersion: '1.0.4',
           versions: {
             current: {
               label: 'Next',

@@ -1,7 +1,7 @@
 # Beads Documentation (Complete)
 
 > This file contains the complete beads documentation for LLM consumption.
-> Generated automatically from the documentation source files (version: 1.0.0).
+> Generated automatically from the documentation source files (version: 1.0.4).
 > For the web version, visit: https://gastownhall.github.io/beads/
 
 ---
@@ -97,40 +97,85 @@ The magic is automatic synchronization via Dolt's version-controlled database wi
 <document path="docs/getting-started/ide-setup.md">
 
 
-# IDE Setup
+# IDE Setup for AI Agents
 
-Configure your editor for beads integration. All integrations use `bd prime` to inject ~1-2k tokens of workflow context on session start.
+Configure your IDE for optimal beads integration.
 
 ## Claude Code
 
+The recommended approach for Claude Code:
+
 ```bash
+# Setup Claude Code integration
 bd setup claude
-bd setup claude --check  # Verify
 ```
 
-Installs SessionStart hook (`bd prime`).
+This installs:
+- **SessionStart hook** - Runs `bd prime` when Claude Code starts
+- **SessionStart compact refresh** - Runs `bd prime` after context compaction
+
+**How it works:**
+1. SessionStart hook runs `bd prime` automatically
+2. `bd prime` injects ~1-2k tokens of workflow context
+3. You use `bd` CLI commands directly
+4. Git hooks auto-sync the database
+
+**Verify installation:**
+```bash
+bd setup claude --check
+```
+
+### Manual Setup
+
+If you prefer manual configuration, add to your Claude Code hooks:
+
+```json
+{
+  "hooks": {
+    "SessionStart": ["bd prime"],
+    "SessionStart": ["bd prime"]
+  }
+}
+```
 
 ## Cursor IDE
 
 ```bash
+# Setup Cursor integration
 bd setup cursor
-bd setup cursor --check  # Verify
 ```
 
-Creates `.cursor/rules/beads.mdc` with beads-aware rules.
+This creates `.cursor/rules/beads.mdc` with beads-aware rules.
+
+**Verify:**
+```bash
+bd setup cursor --check
+```
 
 ## Aider
 
 ```bash
+# Setup Aider integration
 bd setup aider
-bd setup aider --check  # Verify
 ```
 
-Creates/updates `.aider.conf.yml` with beads context.
+This creates/updates `.aider.conf.yml` with beads context.
 
-## GitHub Copilot (VS Code)
+**Verify:**
+```bash
+bd setup aider --check
+```
 
-Use the MCP server. Install with `uv tool install beads-mcp`, then create `.vscode/mcp.json`:
+## GitHub Copilot
+
+For VS Code with GitHub Copilot, use the MCP server:
+
+```bash
+# Install MCP server
+uv tool install beads-mcp
+```
+
+Create `.vscode/mcp.json` in your project:
 
 ```json
 {
@@ -142,17 +187,87 @@ Use the MCP server. Install with `uv tool install beads-mcp`, then create `.vsco
 }
 ```
 
-See [GitHub Copilot Integration](/integrations/github-copilot) for platform-specific paths and detailed setup.
+**For all projects:** Add to VS Code user-level MCP config:
 
-## MCP Server (Claude Desktop, no shell)
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/Code/User/mcp.json` |
+| Linux | `~/.config/Code/User/mcp.json` |
+| Windows | `%APPDATA%\Code\User\mcp.json` |
 
-For environments without CLI access:
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Initialize beads and reload VS Code:
 
 ```bash
+bd init --quiet
+```
+
+See [GitHub Copilot Integration](/integrations/github-copilot) for detailed setup.
+
+## Context Injection with `bd prime`
+
+All integrations use `bd prime` to inject context:
+
+```bash
+bd prime
+```
+
+This outputs a compact (~1-2k tokens) workflow reference including:
+- Available commands
+- Current project status
+- Workflow patterns
+- Best practices
+- Persistent memories from `bd remember`
+
+`bd prime` prints memories near the top and starts with a truncation warning. If your host stores the full hook output in a file and only shows a preview, have the agent read the full file before continuing.
+
+For memory-only hooks:
+
+```bash
+bd prime --memories-only
+```
+
+**Why context efficiency matters:**
+- Compute cost scales with tokens
+- Latency increases with context size
+- Models attend better to smaller, focused contexts
+
+## MCP Server (Alternative)
+
+For MCP-only environments (Claude Desktop, no shell access):
+
+```bash
+# Install MCP server
 pip install beads-mcp
 ```
 
-See [MCP Server](/integrations/mcp-server) for configuration.
+Add to Claude Desktop config:
+```json
+{
+  "mcpServers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+**Trade-offs:**
+- Works in MCP-only environments
+- Higher context overhead (10-50k tokens for tool schemas)
+- Additional latency from MCP protocol
+
+See [MCP Server](/integrations/mcp-server) for detailed configuration.
 
 ## Git Hooks
 
@@ -160,16 +275,34 @@ Ensure git hooks are installed for auto-sync:
 
 ```bash
 bd hooks install
+```
+
+This installs:
+- **pre-commit** - Validates changes before commit
+- **post-merge** - Imports changes after pull
+- **pre-push** - Ensures sync before push
+
+**Check hook status:**
+```bash
 bd info  # Shows warnings if hooks are outdated
 ```
 
-## Verify Setup
+## Verifying Your Setup
+
+Run a complete health check:
 
 ```bash
+# Check version
 bd version
+
+# Check project health
 bd doctor
+
+# Check hooks
 bd hooks status
-bd setup claude --check  # or cursor, aider
+
+# Check editor integration
+bd setup claude --check   # or cursor, aider
 ```
 
 </document>
@@ -179,6 +312,8 @@ bd setup claude --check  # or cursor, aider
 
 # Installing bd
 
+Complete installation guide for all platforms.
+
 ## Quick Install (Recommended)
 
 ### Homebrew (macOS/Linux)
@@ -187,29 +322,243 @@ bd setup claude --check  # or cursor, aider
 brew install beads
 ```
 
-### Install Script (macOS/Linux/FreeBSD)
+**Why Homebrew?**
+- Simple one-command install
+- Automatic updates via `brew upgrade`
+- No need to install Go
+- Handles PATH setup automatically
+
+### Quick Install Script (All Platforms)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash
 ```
 
-### PowerShell (Windows)
+The installer will:
+- Detect your platform (macOS/Linux/FreeBSD, amd64/arm64)
+- Fall back to the supported `go install` modes if Go is available
+- Fall back to building from source if needed
+- Guide you through PATH setup if necessary
+
+## Go Install and Build Dependencies
+
+Use Homebrew, npm, or the install script if you do not specifically need `go install`.
+
+`go install` has two supported modes:
+
+- **Server-mode only:** `CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest`
+- **Embedded-capable:** `CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest`
+
+ICU headers are not required. The embedded-capable command uses `gms_pure_go` so go-mysql-server uses Go's stdlib regexp instead of ICU.
+
+## Platform-Specific Installation
+
+### macOS
+
+**Via Homebrew** (recommended):
+```bash
+brew install beads
+```
+
+**Via go install** (server-mode only):
+```bash
+CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+**Via go install** (embedded-capable):
+```bash
+CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+**From source**:
+```bash
+git clone https://github.com/gastownhall/beads
+cd beads
+make build
+sudo mv bd /usr/local/bin/
+```
+
+### Linux
+
+**Via Homebrew** (works on Linux too):
+```bash
+brew install beads
+```
+
+**Arch Linux** (AUR):
+```bash
+# Install from AUR
+yay -S beads-git
+# or
+paru -S beads-git
+```
+
+**Via go install** (server-mode only):
+```bash
+CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+**Via go install** (embedded-capable):
+```bash
+CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+### FreeBSD
+
+**Via quick install script**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash
+```
+
+**Via go install** (server-mode only):
+```bash
+CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+### Windows 11
+
+Beads ships with native Windows support—no MSYS or MinGW required.
+
+**Prerequisites:**
+- [Go 1.24+](https://go.dev/dl/) installed (add `%USERPROFILE%\go\bin` to your `PATH`)
+- Git for Windows
+
+**Via PowerShell script**:
+```pwsh
+irm https://raw.githubusercontent.com/gastownhall/beads/main/install.ps1 | iex
+```
+
+The script installs a prebuilt Windows release if available. Go is only required for `go install` or building from source.
+
+**Via go install** (server-mode only):
+```pwsh
+$env:CGO_ENABLED="0"; go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+**Via go install** (embedded-capable):
+```pwsh
+$env:CGO_ENABLED="1"; $env:GOFLAGS="-tags=gms_pure_go"; go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+## IDE and Editor Integrations
+
+### CLI + Hooks (Recommended)
+
+The recommended approach for Claude Code, Cursor, Windsurf, and other editors with shell access:
+
+```bash
+# 1. Install bd CLI (see Quick Install above)
+brew install beads
+
+# 2. Initialize in your project
+cd your-project
+bd init --quiet
+
+# 3. Setup editor integration (choose one)
+bd setup claude   # Claude Code - installs SessionStart hooks
+bd setup cursor   # Cursor IDE - creates .cursor/rules/beads.mdc
+bd setup aider    # Aider - creates .aider.conf.yml
+bd setup codex    # Codex CLI - installs Beads skill, AGENTS.md guidance, and native hooks
+bd setup factory  # Factory.ai Droid - creates/updates AGENTS.md
+bd setup mux      # Mux - creates/updates AGENTS.md
+```
+
+**How it works:**
+- `bd init` creates or updates `AGENTS.md` by default unless you use `--skip-agents` or `--stealth`
+- Editor hooks/rules inject `bd prime` automatically on session start
+- Codex 0.129.0+ uses native `/hooks` for startup and compaction-aware context refresh
+- `bd prime` provides ~1-2k tokens of workflow context
+- You use `bd` CLI commands directly
+- Git hooks (installed by `bd init`) auto-sync the database
+- `bd onboard` prints the small manual snippet for unsupported agents or custom instruction files
+
+**Why this is recommended:**
+- **Context efficient** - ~1-2k tokens vs 10-50k for MCP tool schemas
+- **Lower latency** - Direct CLI calls, no MCP protocol overhead
+- **Universal** - Works with any editor that has shell access
+
+### MCP Server (Alternative)
+
+Use MCP only when CLI is unavailable (Claude Desktop, Sourcegraph Amp without shell):
+
+```bash
+# Using uv (recommended)
+uv tool install beads-mcp
+
+# Or using pip
+pip install beads-mcp
+```
+
+**Configuration for Claude Desktop** (macOS):
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+## Verifying Installation
+
+After installing, verify bd is working:
+
+```bash
+bd version
+bd help
+```
+
+## Troubleshooting
+
+### `bd: command not found`
+
+bd is not in your PATH:
+
+```bash
+# Check if installed
+go list -f {{.Target}} github.com/steveyegge/beads/cmd/bd
+
+# Add Go bin to PATH (add to ~/.bashrc or ~/.zshrc)
+export PATH="$PATH:$(go env GOPATH)/bin"
+
+# Or reinstall with the recommended installer
+curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash
+```
+
+### `zsh: killed bd` or crashes on macOS
+
+This is typically caused by CGO/SQLite compatibility issues:
+
+```bash
+# Install an embedded-capable build
+CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+## Updating bd
+
+### Quick install script (macOS/Linux/FreeBSD)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash
+```
+
+### PowerShell installer (Windows)
 
 ```pwsh
 irm https://raw.githubusercontent.com/gastownhall/beads/main/install.ps1 | iex
 ```
 
-### npm
+### Homebrew
 
 ```bash
-npm install -g @beads/bd
+brew upgrade beads
 ```
 
-## Platform-Specific Notes
-
-### macOS
-
-Homebrew is recommended. If you specifically need `go install`, use one of the supported modes below.
+### go install
 
 ```bash
 # Server-mode only
@@ -219,49 +568,15 @@ CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest
 CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
-### Linux
-
-Homebrew works on Linux. For Arch Linux: `yay -S beads-git` or `paru -S beads-git` (AUR).
-
-### Windows
-
-Native Windows support - no MSYS or MinGW required. The PowerShell installer above is the recommended path. Go is only required for building from source.
-
-## Verifying Installation
-
-```bash
-bd version
-bd help
-```
-
-If you see `bd: command not found`, ensure your install location is in PATH. For Homebrew and npm this is automatic. For `go install`, add `$(go env GOPATH)/bin` to your PATH.
-
-## Building from Source
-
-Building from source requires Go, git, and a C compiler for embedded Dolt. ICU headers are not required; builds use `gms_pure_go`.
-
-| Platform | Command |
-|----------|---------|
-| macOS | `brew install zstd` |
-| Debian/Ubuntu | `sudo apt-get install -y libzstd-dev` |
-| Fedora/RHEL | `sudo dnf install -y libzstd-devel` |
-
-```bash
-git clone https://github.com/gastownhall/beads
-cd beads
-make build
-```
-
-See [CONTRIBUTING.md](https://github.com/gastownhall/beads/blob/main/CONTRIBUTING.md) for full developer setup.
+For post-upgrade steps (hooks, migrations), see [Upgrading](/getting-started/upgrading).
 
 ## Next Steps
 
-1. **Initialize a project**: `cd your-project && bd init`
-2. **Learn the basics**: [Quick Start](/getting-started/quickstart)
-3. **Configure your agent**: `bd init` creates or updates `AGENTS.md` by default; run `bd setup --list` for integrations like `bd setup codex`, `bd setup factory`, `bd setup claude`, and `bd setup mux`
-4. **Upgrading later**: [Upgrading](/getting-started/upgrading)
+After installation:
 
-Use `bd onboard` only as the manual snippet fallback for unsupported agents, custom instruction files, or existing projects where you cannot rerun `bd init`/`bd setup`.
+1. **Initialize a project**: `cd your-project && bd init`
+2. **Learn the basics**: See [Quick Start](/getting-started/quickstart)
+3. **Configure your agent**: See [IDE Setup](/getting-started/ide-setup), or run `bd setup --list`
 
 </document>
 
@@ -270,12 +585,21 @@ Use `bd onboard` only as the manual snippet fallback for unsupported agents, cus
 
 # Beads Quick Start
 
-Get up and running with beads in a few minutes.
+Get up and running with Beads in a few minutes.
 
 ## Why Beads?
 
-Flat issue trackers show you all open items. You pick one - but if it depends on something else that isn't done yet, you've wasted time. Beads tracks **dependencies between issues** and computes a **ready queue** - only items with no active blockers appear.
+Flat issue trackers (GitHub Issues, Jira, etc.) show you a list of open items. You pick one. But if that item depends on something else that isn't done yet, you've wasted time. Multiply this across a team of AI agents and humans, and you get thrashing.
 
+Beads tracks **dependencies between issues** and computes a **ready queue** — only items with no active blockers appear. Here's the difference:
+
+**Flat tracker (GitHub Issues):**
+```
+Open issues: Set up database, Create API, Add authentication
+→ An agent picks "Add authentication" and gets stuck immediately
+```
+
+**Beads:**
 ```bash
 $ bd ready
 1. [P1] [task] bd-1: Set up database
@@ -288,95 +612,341 @@ $ bd ready --explain --json | jq '.blocked[0]'
 }
 ```
 
-The agent picks the right task every time.
+The agent picks the right task every time. No wasted cycles.
+
+## Installation
+
+Install `bd` using [the full installation guide](/getting-started/installation) (Homebrew, install script, npm, or `go install`).
+
+**Developing in a clone of this repository:** use `make install` so the binary gets correct build metadata and a consistent install path. Avoid ad-hoc `go build` / `go install` without the Makefile unless you know what you are doing — see the repository `README` and `AGENTS.md`.
+
+```bash
+bd --help
+```
 
 ## Initialize
 
+First time in a repository:
+
 ```bash
-cd your-project
-bd init          # Interactive setup (prompts for role)
-bd init --quiet  # Non-interactive (for AI agents)
+# Basic setup (prompts for contributor mode)
+bd init
+
+# For AI agents (non-interactive)
+bd init --quiet
+
+# OSS contributor (fork workflow with separate planning repo)
+bd init --contributor
+
+# Team member (branch workflow for collaboration)
+bd init --team
+
+# Protected main branch (GitHub/GitLab)
+# Note: Dolt stores data under refs/dolt/data, separate from
+# Git refs, so no --branch flag is needed.
 ```
 
-The wizard creates `.beads/`, sets up the embedded Dolt database, and optionally installs git hooks. During init, you'll be asked whether you're a maintainer or contributor - this determines how beads routes issues. You can change it later with `git config beads.role`.
+The wizard will:
+- Create `.beads/` directory and embedded Dolt database
+- **Prompt for your role** (maintainer or contributor) unless a flag is provided
+- Import existing issues from git (if any)
+- Prompt to install git hooks (recommended)
+- Prompt to configure git merge driver (recommended)
 
-## Create Issues and Dependencies
+Notes:
+- Dolt is the default (and only) storage backend. Data is stored in `.beads/embeddeddolt/`.
+- By default, Dolt runs in **embedded mode** (in-process, no server needed).
+- For multi-writer setups, use `bd init --server` to connect to a `dolt sql-server` instead.
+- To import issues from an older installation, run `bd init --from-jsonl`.
+
+### Role configuration
+
+During `bd init`, you'll be asked: "Contributing to someone else's repo? [y/N]"
+
+- Answer **Y** if you're contributing to a fork (runs contributor wizard)
+- Answer **N** if you're the maintainer or have push access
+
+This sets `git config beads.role` which determines how beads routes issues:
+
+| Role | Use case | Issue storage |
+|------|----------|---------------|
+| `maintainer` | Repo owner, team with push access | In-repo `.beads/` |
+| `contributor` | Fork contributor, OSS contributor | Separate planning repo |
+
+You can also configure manually:
 
 ```bash
-# Create issues
+# Set as contributor
+git config beads.role contributor
+
+# Set as maintainer
+git config beads.role maintainer
+
+# Check current role
+git config --get beads.role
+```
+
+**Note:** If `beads.role` is not configured, beads falls back to URL-based detection (deprecated). Run `bd doctor` to check configuration status.
+
+## Your first issues
+
+```bash
+# Create a few issues
 bd create "Set up database" -p 1 -t task
 bd create "Create API" -p 2 -t feature
 bd create "Add authentication" -p 2 -t feature
 
-# Add dependencies (API needs database, auth needs API)
-bd dep add bd-2 bd-1
-bd dep add bd-3 bd-2
-
-# View the dependency tree
-bd dep tree bd-3
+# List them
+bd list
 ```
 
-Issue IDs are hash-based (e.g., `bd-a1b2`) to prevent collisions when multiple agents work concurrently.
+**Note:** Issue IDs are hash-based (e.g., `bd-a1b2`, `bd-f14c`) to prevent collisions when multiple agents/branches work concurrently.
 
-## Find and Work the Ready Queue
+## Hierarchical issues (epics)
 
-```bash
-# What's unblocked right now?
-bd ready
-
-# Why is something blocked?
-bd ready --explain
-
-# Claim and complete work
-bd update bd-1 --claim
-bd close bd-1 --reason "Database setup complete"
-
-# Now bd-2 is ready
-bd ready
-```
-
-`bd ready` is not the same as `bd list --status open` - the list command shows all open issues regardless of blockers. The ready command computes the dependency graph and only shows truly unblocked work.
-
-## Epics
-
-Group related work under an epic:
+For large features, use hierarchical IDs to organize work:
 
 ```bash
-bd create "Auth System" -t epic -p 1       # Returns: bd-a3f8e9
-bd create "Design login UI" -p 1 --parent bd-a3f8e9
-bd create "Backend validation" -p 1 --parent bd-a3f8e9
+# Create epic (generates parent hash ID)
+bd create "Auth System" -t epic -p 1
+# Returns: bd-a3f8e9
+
+# Create child tasks (use --parent to attach to the epic)
+bd create "Design login UI" -p 1 --parent bd-a3f8e9       # bd-a3f8e9.1
+bd create "Backend validation" -p 1 --parent bd-a3f8e9    # bd-a3f8e9.2
+bd create "Integration tests" -p 1 --parent bd-a3f8e9     # bd-a3f8e9.3
+
+# View hierarchy
 bd dep tree bd-a3f8e9
 ```
 
-## Team Sync
+Output:
+```
+Dependency tree for bd-a3f8e9:
 
-Share issues using Dolt remotes (works over the same Git remote):
+> bd-a3f8e9: Auth System [epic] [P1] (open)
+  > bd-a3f8e9.1: Design login UI [P1] (open)
+  > bd-a3f8e9.2: Backend validation [P1] (open)
+  > bd-a3f8e9.3: Integration tests [P1] (open)
+```
+
+## Add dependencies
 
 ```bash
+# API depends on database
+bd dep add bd-2 bd-1
+
+# Auth depends on API
+bd dep add bd-3 bd-2
+
+# View the tree
+bd dep tree bd-3
+```
+
+Output:
+```
+Dependency tree for bd-3:
+
+> bd-3: Add authentication [P2] (open)
+  > bd-2: Create API [P2] (open)
+    > bd-1: Set up database [P1] (open)
+```
+
+**Dependency visibility:** `bd list` shows blocking dependencies inline:
+```
+○ bd-a1b2 [P1] [task] - Set up database
+○ bd-f14c [P2] [feature] - Create API (blocked by: bd-a1b2)
+○ bd-g25d [P2] [feature] - Add authentication (blocked by: bd-f14c)
+```
+
+## Find ready work
+
+```bash
+bd ready
+```
+
+Output:
+```
+Ready work (1 issues with no blockers):
+
+1. [P1] bd-1: Set up database
+```
+
+Only bd-1 is ready because bd-2 and bd-3 are blocked.
+
+**Understanding why:** Use `--explain` to see the full graph reasoning:
+
+```bash
+bd ready --explain
+```
+
+Output:
+```
+Ready Work Explanation
+
+● Ready (1 issues):
+
+  bd-1 [P1] Set up database
+    Reason: no blocking dependencies
+    Unblocks: 1 issue(s)
+
+● Blocked (2 issues):
+
+  bd-2 [P2] Create API
+    ← blocked by bd-1: Set up database [open]
+
+  bd-3 [P2] Add authentication
+    ← blocked by bd-2: Create API [open]
+
+─ Summary: 1 ready, 2 blocked
+```
+
+**Note:** `bd ready` is not the same as `bd list --status open`. The `list` command shows all open issues regardless of blockers. The `ready` command computes the dependency graph and only shows truly unblocked work.
+
+## Work the queue
+
+```bash
+# Start working on bd-1
+bd update bd-1 --claim
+
+# Complete it
+bd close bd-1 --reason "Database setup complete"
+
+# Check ready work again
+bd ready
+```
+
+Now bd-2 is ready.
+
+## Track progress
+
+```bash
+# See blocked issues
+bd blocked
+
+# View statistics
+bd stats
+```
+
+## Team sync
+
+Share issues with your team using Dolt remotes. Dolt stores data under `refs/dolt/data` on the same Git remote, separate from standard Git refs.
+
+```bash
+# Add a remote (GitHub example — also supports DoltHub, S3, GCS, local paths)
 bd dolt remote add origin git+ssh://git@github.com/org/repo.git
+
+# Push your issues
 bd dolt push
+
+# Pull teammates' changes
 bd dolt pull
 ```
 
-When a teammate clones the repo, `bd bootstrap` auto-detects the existing database. See [`bd dolt`](/cli-reference/dolt) for sync commands.
+When a teammate clones the repo, `bd bootstrap` auto-detects the existing database on `refs/dolt/data` and clones it — no manual remote setup needed.
 
-## Track Progress
+See [`bd dolt`](/cli-reference/dolt) for CLI details. For remote configuration and federation, see the repository docs [DOLT.md](https://github.com/gastownhall/beads/blob/main/docs/DOLT.md) and [FEDERATION-SETUP.md](https://github.com/gastownhall/beads/blob/main/FEDERATION-SETUP.md).
+
+## Optional: Notion sync
+
+If you keep project issues in Notion, save an integration token first:
 
 ```bash
-bd blocked    # See blocked issues
-bd stats      # Project statistics
-bd list       # All issues
-bd doctor     # Health check
+bd config set notion.token <your-token>
 ```
 
-## Next Steps
+Then either create a new Beads database under a parent page or connect to an existing target:
+
+```bash
+bd notion init --parent <page-id>
+# or
+bd notion connect --url <notion-database-or-data-source-url>
+```
+
+The same auth value can also come from `NOTION_TOKEN`. Directly setting `notion.data_source_id` remains available as an escape hatch for advanced setups.
+
+Check which auth source is active and whether the target schema is ready:
+
+```bash
+bd notion status
+bd notion status --json
+```
+
+Preview or run sync:
+
+```bash
+bd notion sync --dry-run
+bd notion sync
+bd notion sync --pull
+bd notion sync --push
+```
+
+## Database location
+
+By default (embedded mode), data is stored in `.beads/embeddeddolt/` within your repository.
+In server mode, data is managed by the external `dolt sql-server`.
+
+## Migrating databases
+
+After upgrading bd, use `bd migrate` to check for and migrate old database files:
+
+```bash
+# Inspect migration plan (AI agents)
+bd migrate --inspect --json
+
+# Check schema and config
+bd info --schema --json
+
+# Preview migration changes
+bd migrate --dry-run
+
+# Migrate old databases to beads.db
+bd migrate
+
+# Migrate and clean up old files
+bd migrate --cleanup --yes
+```
+
+**AI agents:** Use `--inspect` to analyze migration safety before running. The system verifies required config keys and data integrity invariants.
+
+## Database maintenance
+
+As your project accumulates closed issues, the database grows. Manage size with these commands:
+
+```bash
+# View compaction statistics
+bd admin compact --stats
+
+# Preview compaction candidates (30+ days closed)
+bd admin compact --analyze --json
+
+# Apply agent-generated summary
+bd admin compact --apply --id bd-42 --summary summary.txt
+
+# Immediately delete closed issues (CAUTION: permanent!)
+bd admin cleanup --force
+```
+
+**When to compact:**
+- Database file > 10MB with many old closed issues
+- After major project milestones when old issues are no longer relevant
+- Before archiving a project phase
+
+**Note:** Compaction is permanent graceful decay. Original content is discarded but viewable via `bd restore <id>` from git history.
+
+## Next steps
 
 - Add labels: `bd create "Task" -l "backend,urgent"`
 - Filter ready work: `bd ready --priority 1`
+- Explain the graph: `bd ready --explain`
 - Check graph integrity: `bd graph check`
+- Search issues: `bd list --status open`
+- Detect cycles: `bd dep cycles`
 - Gates for PR/CI sync: [`bd gate`](/cli-reference/gate)
-- IDE integration: [IDE Setup](/getting-started/ide-setup)
+- More sync scenarios: [`bd dolt`](/cli-reference/dolt)
 - Full command list: [CLI Reference](/cli-reference)
+
+See the [repository README](https://github.com/gastownhall/beads/blob/main/README.md) for an overview and links to deeper docs.
 
 </document>
 
@@ -385,37 +955,219 @@ bd doctor     # Health check
 
 # Upgrading bd
 
-## Upgrade Commands
+How to upgrade bd and keep your projects in sync.
 
-Use the command that matches your install method:
+## Checking for Updates
 
-| Install method | Command |
-|---|---|
-| Homebrew | `brew upgrade beads` |
-| Install script (macOS/Linux) | `curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh \| bash` |
-| PowerShell (Windows) | `irm https://raw.githubusercontent.com/gastownhall/beads/main/install.ps1 \| iex` |
-| npm | `npm update -g @beads/bd` |
-| go install (server-mode only) | `CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest` |
-| go install (embedded-capable) | `CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest` |
+```bash
+# Current version
+bd version
+
+# What's new in recent versions
+bd info --whats-new
+bd info --whats-new --json  # Machine-readable
+```
+
+## Upgrading
+
+Use the command that matches your install method.
+
+| Install method | Platforms | Command |
+|---|---|---|
+| Quick install script | macOS, Linux, FreeBSD | `curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh \| bash` |
+| PowerShell installer | Windows | `irm https://raw.githubusercontent.com/gastownhall/beads/main/install.ps1 \| iex` |
+| Homebrew | macOS, Linux | `brew upgrade beads` |
+| go install (server-mode only) | macOS, Linux, FreeBSD, Windows | `CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest` |
+| go install (embedded-capable) | macOS, Linux, Windows | `CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest` |
+| npm | macOS, Linux, Windows | `npm update -g @beads/bd` |
+| bun | macOS, Linux, Windows | `bun install -g --trust @beads/bd` |
+| From source (Unix shell) | macOS, Linux, FreeBSD | `git pull && make build` |
+
+### Quick install script (macOS/Linux/FreeBSD)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash
+```
+
+### PowerShell installer (Windows)
+
+```pwsh
+irm https://raw.githubusercontent.com/gastownhall/beads/main/install.ps1 | iex
+```
+
+### Homebrew
+
+```bash
+brew upgrade beads
+```
+
+### go install
+
+```bash
+# Server-mode only
+CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@latest
+
+# Embedded-capable
+CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+### From Source
+
+```bash
+cd beads
+git pull
+make build
+sudo mv bd /usr/local/bin/
+```
 
 ## After Upgrading
 
+**Important:** After upgrading, update your hooks:
+
 ```bash
-bd info --whats-new     # Check what changed
-bd hooks install        # Update git hooks to match new version
-bd migrate --dry-run    # Check for database migrations
-bd migrate              # Apply if needed
+# 1. Check what changed
+bd info --whats-new
+
+# 2. Update git hooks to match new version
+bd hooks install
+
+# 3. Check for any outdated hooks
+bd info  # Shows warnings if hooks are outdated
+
+# 4. If using Dolt backend, restart the server
+bd dolt stop && bd dolt start
 ```
 
-Git hooks are versioned with bd - outdated hooks may miss auto-sync features. If using Dolt server mode, restart with `bd dolt stop && bd dolt start`.
+**Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss new auto-sync features or bug fixes.
 
-## Recovery
+## Database Migrations
 
-If an upgrade causes issues:
+After major upgrades, check for database migrations:
 
 ```bash
-bd dolt pull                        # Restore from remote
-bd backup restore [path] --force    # Or restore from backup
+# Inspect migration plan (AI agents)
+bd migrate --inspect --json
+
+# Preview migration changes
+bd migrate --dry-run
+
+# Apply migrations
+bd migrate
+
+# Migrate and clean up old files
+bd migrate --cleanup --yes
+```
+
+## Cross-era Upgrades
+
+If you're upgrading from a much older version of bd, your project may use a different storage backend. bd has gone through several storage eras:
+
+| Era | Versions | Storage |
+|---|---|---|
+| SQLite | v0.30–v0.50 | `.beads/beads.db` |
+| Dolt server | v0.50–v0.58 | `.beads/dolt/` (external server) |
+| Embedded Dolt (old) | v0.59–v0.63.2 | `.beads/dolt/` (in-process) |
+| Embedded Dolt (current) | v0.63.3+ | `.beads/embeddeddolt/` |
+
+### From v0.63.3+ (current era)
+
+No special steps needed. Just upgrade the binary and run:
+
+```bash
+bd migrate
+```
+
+### From v0.59–v0.63.2 (old embedded)
+
+Direct upgrade works automatically:
+
+```bash
+# Just use the new binary — it handles the conversion
+bd list
+```
+
+### From v0.50–v0.58 (Dolt server era)
+
+The old binary used an external Dolt SQL server. The new binary uses an embedded engine.
+
+```bash
+# 1. Export your data while the old binary still works
+bd list --json -n 0 --all > .beads/issues.jsonl
+
+# 2. Stop the Dolt server
+dolt sql-server --stop  # or kill the process
+
+# 3. Remove stale server metadata and old storage directories
+rm -f .beads/metadata.json .beads/config.json
+rm -rf .beads/dolt .beads/embeddeddolt
+
+# 4. Initialize with the new binary
+bd init --from-jsonl --quiet
+
+# 5. Verify
+bd list --all
+```
+
+### From v0.30–v0.50 (SQLite era)
+
+The old binary stored data in SQLite. The new binary uses Dolt.
+
+**Recommended: use the migration script** (requires `sqlite3` and `jq`):
+
+```bash
+# Download the script from the beads repo
+curl -fsSLO https://raw.githubusercontent.com/gastownhall/beads/main/scripts/migrate-sqlite-to-current.sh
+chmod +x migrate-sqlite-to-current.sh
+
+# Run it in your project directory
+./migrate-sqlite-to-current.sh
+```
+
+The script exports issues, dependencies, and labels from SQLite, handles type normalization, and imports everything into the new Dolt backend.
+
+**Alternative: manual export with the old binary.** Old binaries are always available on [GitHub Releases](https://github.com/gastownhall/beads/releases). Download the version that matches your project, then:
+
+```bash
+# 1. Export with the old binary
+./bd-old list --json -n 0 --all > .beads/issues.jsonl
+
+# 2. Import with the current binary
+bd init --from-jsonl --quiet
+
+# 3. Verify
+bd list --all
+```
+
+> **Note:** The manual export preserves issue content but not dependencies or labels. Use the migration script for a more complete transfer.
+
+## Troubleshooting Upgrades
+
+### Hooks out of date
+
+```bash
+bd hooks install
+```
+
+### Database schema changed
+
+```bash
+bd migrate --dry-run
+bd migrate
+```
+
+### Recovery after upgrade
+
+If you need to restore from a backup:
+
+```bash
+bd init
+bd backup restore [path] --force
+```
+
+Or pull from a Dolt remote:
+
+```bash
+bd dolt pull
 ```
 
 </document>
@@ -1027,7 +1779,7 @@ For these use cases, consider GitHub Issues, Linear, or Jira.
 # CLI Reference
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --list` and `bd help --doc <command>`.
+Reference for bd v1.0.4. Generated from `bd help --list` and `bd help --doc <command>`.
 
 This reference covers all 106 live top-level `bd` commands. Regenerate it with:
 
@@ -1150,7 +1902,7 @@ This reference covers all 106 live top-level `bd` commands. Regenerate it with:
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc admin` (bd version 1.0.3)
+Generated from `bd help --doc admin`
 
 ## bd admin
 
@@ -1310,7 +2062,7 @@ bd admin reset [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc ado` (bd version 1.0.3)
+Generated from `bd help --doc ado`
 
 ## bd ado
 
@@ -1427,7 +2179,7 @@ bd ado sync [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc assign` (bd version 1.0.3)
+Generated from `bd help --doc assign`
 
 ## bd assign
 
@@ -1449,7 +2201,7 @@ bd assign <id> <name>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc audit` (bd version 1.0.3)
+Generated from `bd help --doc audit`
 
 ## bd audit
 
@@ -1508,7 +2260,7 @@ bd audit record [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc backup` (bd version 1.0.3)
+Generated from `bd help --doc backup`
 
 ## bd backup
 
@@ -1616,7 +2368,7 @@ bd backup sync
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc batch` (bd version 1.0.3)
+Generated from `bd help --doc batch`
 
 ## bd batch
 
@@ -1680,7 +2432,7 @@ bd batch [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc blocked` (bd version 1.0.3)
+Generated from `bd help --doc blocked`
 
 ## bd blocked
 
@@ -1702,7 +2454,7 @@ bd blocked [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc bootstrap` (bd version 1.0.3)
+Generated from `bd help --doc bootstrap`
 
 ## bd bootstrap
 
@@ -1751,7 +2503,7 @@ bd bootstrap [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc branch` (bd version 1.0.3)
+Generated from `bd help --doc branch`
 
 ## bd branch
 
@@ -1774,7 +2526,7 @@ bd branch [name]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc children` (bd version 1.0.3)
+Generated from `bd help --doc children`
 
 ## bd children
 
@@ -1799,7 +2551,7 @@ bd children <parent-id>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc close` (bd version 1.0.3)
+Generated from `bd help --doc close`
 
 ## bd close
 
@@ -1833,7 +2585,7 @@ bd close [id...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc comment` (bd version 1.0.3)
+Generated from `bd help --doc comment`
 
 ## bd comment
 
@@ -1864,7 +2616,7 @@ bd comment <id> [text...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc comments` (bd version 1.0.3)
+Generated from `bd help --doc comments`
 
 ## bd comments
 
@@ -1929,7 +2681,7 @@ bd comments list
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc compact` (bd version 1.0.3)
+Generated from `bd help --doc compact`
 
 ## bd compact
 
@@ -1973,7 +2725,7 @@ bd compact [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc completion` (bd version 1.0.3)
+Generated from `bd help --doc completion`
 
 ## bd completion
 
@@ -2108,7 +2860,7 @@ bd completion zsh [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc config` (bd version 1.0.3)
+Generated from `bd help --doc config`
 
 ## bd config
 
@@ -2334,7 +3086,7 @@ bd config validate
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc context` (bd version 1.0.3)
+Generated from `bd help --doc context`
 
 ## bd context
 
@@ -2359,7 +3111,7 @@ bd context
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc cook` (bd version 1.0.3)
+Generated from `bd help --doc cook`
 
 ## bd cook
 
@@ -2433,7 +3185,7 @@ bd cook <formula-file> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc count` (bd version 1.0.3)
+Generated from `bd help --doc count`
 
 ## bd count
 
@@ -2495,7 +3247,7 @@ bd count [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc create-form` (bd version 1.0.3)
+Generated from `bd help --doc create-form`
 
 ## bd create-form
 
@@ -2529,7 +3281,7 @@ bd create-form [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc create` (bd version 1.0.3)
+Generated from `bd help --doc create`
 
 ## bd create
 
@@ -2594,7 +3346,7 @@ bd create [title] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc defer` (bd version 1.0.3)
+Generated from `bd help --doc defer`
 
 ## bd defer
 
@@ -2628,7 +3380,7 @@ bd defer [id...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc delete` (bd version 1.0.3)
+Generated from `bd help --doc delete`
 
 ## bd delete
 
@@ -2679,7 +3431,7 @@ bd delete <issue-id> [issue-id...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc dep` (bd version 1.0.3)
+Generated from `bd help --doc dep`
 
 ## bd dep
 
@@ -2864,7 +3616,7 @@ bd dep unrelate <id1> <id2>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc diff` (bd version 1.0.3)
+Generated from `bd help --doc diff`
 
 ## bd diff
 
@@ -2890,7 +3642,7 @@ bd diff <from-ref> <to-ref>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc doctor` (bd version 1.0.3)
+Generated from `bd help --doc doctor`
 
 ## bd doctor
 
@@ -3042,7 +3794,7 @@ bd doctor [path] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc dolt` (bd version 1.0.3)
+Generated from `bd help --doc dolt`
 
 ## bd dolt
 
@@ -3299,9 +4051,10 @@ Show the status of the Dolt engine for the current project.
 In embedded mode, reports that the Dolt engine runs in-process and shows
 the on-disk data directory. For beads-managed (local) servers, displays
 PID, port, and data directory from the local PID file. For externally-
-hosted servers (dolt_mode=server with a remote dolt_server_host), pings
-the configured endpoint via SQL and reports reachability, server version,
-and database.
+managed servers — either a remote dolt_server_host or a local server
+managed outside bd (dolt.auto-start: false, e.g. an orchestrator-shared
+sql-server) — pings the configured endpoint via SQL and reports
+reachability, server version, and database.
 
 ```
 bd dolt status
@@ -3344,7 +4097,7 @@ bd dolt test
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc duplicate` (bd version 1.0.3)
+Generated from `bd help --doc duplicate`
 
 ## bd duplicate
 
@@ -3372,7 +4125,7 @@ bd duplicate <id> --of <canonical> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc duplicates` (bd version 1.0.3)
+Generated from `bd help --doc duplicates`
 
 ## bd duplicates
 
@@ -3404,7 +4157,7 @@ bd duplicates [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc edit` (bd version 1.0.3)
+Generated from `bd help --doc edit`
 
 ## bd edit
 
@@ -3439,7 +4192,7 @@ bd edit [id] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc epic` (bd version 1.0.3)
+Generated from `bd help --doc epic`
 
 ## bd epic
 
@@ -3483,7 +4236,7 @@ bd epic status [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc export` (bd version 1.0.3)
+Generated from `bd help --doc export`
 
 ## bd export
 
@@ -3531,7 +4284,7 @@ bd export [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc federation` (bd version 1.0.3)
+Generated from `bd help --doc federation`
 
 ## bd federation
 
@@ -3554,7 +4307,7 @@ bd federation
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc find-duplicates` (bd version 1.0.3)
+Generated from `bd help --doc find-duplicates`
 
 ## bd find-duplicates
 
@@ -3606,7 +4359,7 @@ bd find-duplicates [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc flatten` (bd version 1.0.3)
+Generated from `bd help --doc flatten`
 
 ## bd flatten
 
@@ -3649,7 +4402,7 @@ bd flatten [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc forget` (bd version 1.0.3)
+Generated from `bd help --doc forget`
 
 ## bd forget
 
@@ -3671,7 +4424,7 @@ bd forget <key>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc formula` (bd version 1.0.3)
+Generated from `bd help --doc formula`
 
 ## bd formula
 
@@ -3687,8 +4440,9 @@ The Rig → Cook → Run lifecycle:
 
 Search paths (in order):
   1. &lt;resolved-beads-dir&gt;/formulas/ (active project)
-  2. ~/.beads/formulas/ (user)
-  3. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
+  2. &lt;checkout-root&gt;/.beads/formulas/ (repo-local formulas)
+  3. ~/.beads/formulas/ (user)
+  4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
 
 Commands:
   list   List available formulas from all search paths
@@ -3735,8 +4489,9 @@ List all formulas from search paths.
 
 Search paths (in order of priority):
   1. &lt;resolved-beads-dir&gt;/formulas/ (active project - highest priority)
-  2. ~/.beads/formulas/ (user)
-  3. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
+  2. &lt;checkout-root&gt;/.beads/formulas/ (repo-local formulas)
+  3. ~/.beads/formulas/ (user)
+  4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
 
 Formulas in earlier paths shadow those with the same name in later paths.
 
@@ -3782,7 +4537,7 @@ bd formula show <formula-name>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc gate` (bd version 1.0.3)
+Generated from `bd help --doc gate`
 
 ## bd gate
 
@@ -3988,7 +4743,7 @@ bd gate show <gate-id>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc gc` (bd version 1.0.3)
+Generated from `bd help --doc gc`
 
 ## bd gc
 
@@ -4030,7 +4785,7 @@ bd gc [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc github` (bd version 1.0.3)
+Generated from `bd help --doc github`
 
 ## bd github
 
@@ -4130,7 +4885,7 @@ bd github sync [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc gitlab` (bd version 1.0.3)
+Generated from `bd help --doc gitlab`
 
 ## bd gitlab
 
@@ -4237,7 +4992,7 @@ bd gitlab sync [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc graph` (bd version 1.0.3)
+Generated from `bd help --doc graph`
 
 ## bd graph
 
@@ -4300,7 +5055,7 @@ bd graph check
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc history` (bd version 1.0.3)
+Generated from `bd help --doc history`
 
 ## bd history
 
@@ -4327,7 +5082,7 @@ bd history <id> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc hooks` (bd version 1.0.3)
+Generated from `bd help --doc hooks`
 
 ## bd hooks
 
@@ -4417,7 +5172,7 @@ bd hooks uninstall
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc human` (bd version 1.0.3)
+Generated from `bd help --doc human`
 
 ## bd human
 
@@ -4519,7 +5274,7 @@ bd human stats
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc import` (bd version 1.0.3)
+Generated from `bd help --doc import`
 
 ## bd import
 
@@ -4534,8 +5289,32 @@ Memory records (lines with "_type":"memory") are automatically detected and
 imported as persistent memories (equivalent to 'bd remember'). This makes
 'bd export | bd import' a full round-trip for both issues and memories.
 
-Each JSONL line should map to an issue with at minimum "title". Optional
-fields: description, issue_type (type), priority, acceptance_criteria.
+Each JSONL line should map to an issue. The importer accepts every field
+'bd export' emits — see 'bd export' output for the canonical schema. Only
+"title" is required; everything else is optional.
+
+Common fields:
+  title                  Required. Short summary.
+  description            Long-form body.
+  design, notes,         Additional content sections.
+    acceptance_criteria
+  issue_type             bug | feature | task | epic | chore | ...
+  priority               0-4 (0 = critical). 0 is preserved (no omitempty).
+  status                 open | in_progress | blocked | closed | ...
+                         (rows with status "tombstone" are skipped)
+  assignee, owner,       Ownership metadata.
+    created_by
+  labels                 Array of strings.
+  dependencies           Array of &#123;issue_id, depends_on_id, type, ...&#125;.
+  comments               Array of comment objects.
+  external_ref,          Cross-system identifiers (e.g. "gh-9").
+    source_system
+  due_at, defer_until    RFC3339 timestamps for scheduling.
+  metadata               Arbitrary JSON object preserved verbatim.
+
+Timestamps (created_at, updated_at, started_at, closed_at) are preserved
+when present in the JSONL and otherwise filled in by the importer. The
+legacy "wisp" boolean is accepted as an alias for "ephemeral".
 
 EXAMPLES:
   bd import                        # Import from .beads/issues.jsonl
@@ -4565,7 +5344,7 @@ bd import [file|-] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc info` (bd version 1.0.3)
+Generated from `bd help --doc info`
 
 ## bd info
 
@@ -4604,7 +5383,7 @@ bd info [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc init-safety` (bd version 1.0.3)
+Generated from `bd help --doc init-safety`
 
 ## bd init-safety
 
@@ -4681,7 +5460,7 @@ bd init-safety
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc init` (bd version 1.0.3)
+Generated from `bd help --doc init`
 
 ## bd init
 
@@ -4761,7 +5540,7 @@ bd init [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc jira` (bd version 1.0.3)
+Generated from `bd help --doc jira`
 
 ## bd jira
 
@@ -4883,7 +5662,7 @@ bd jira sync [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc kv` (bd version 1.0.3)
+Generated from `bd help --doc kv`
 
 ## bd kv
 
@@ -4960,7 +5739,7 @@ bd kv set <key> <value>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc label` (bd version 1.0.3)
+Generated from `bd help --doc label`
 
 ## bd label
 
@@ -5016,7 +5795,7 @@ bd label remove [issue-id...] [label]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc linear` (bd version 1.0.3)
+Generated from `bd help --doc linear`
 
 ## bd linear
 
@@ -5154,6 +5933,9 @@ Team Selection:
   Falls back to linear.team_id for backward compatibility.
   Push requires explicit --team when multiple teams are configured.
 
+Pull Options:
+  --milestones       Reconstruct Linear project milestones as local epic parents
+
 Type Filtering (--push only):
   --type task,feature       Only sync issues of these types
   --exclude-type wisp       Exclude issues of these types
@@ -5190,6 +5972,7 @@ bd linear sync [flags]
       --exclude-type strings   Exclude issues of these types (can be repeated)
       --include-ephemeral      Include ephemeral issues (wisps, etc.) when pushing to Linear
       --issues string          Comma-separated bead IDs to sync selectively (e.g., bd-abc,bd-def). Mutually exclusive with --parent.
+      --milestones             Reconstruct Linear project milestones as local epic parents when pulling
       --no-wait                Fail immediately if another sync is running instead of waiting
       --parent string          Limit push to this beads ticket and its descendants
       --prefer-linear          Prefer Linear version on conflicts
@@ -5225,7 +6008,7 @@ bd linear teams
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc link` (bd version 1.0.3)
+Generated from `bd help --doc link`
 
 ## bd link
 
@@ -5255,7 +6038,7 @@ bd link <id1> <id2> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc lint` (bd version 1.0.3)
+Generated from `bd help --doc lint`
 
 ## bd lint
 
@@ -5295,7 +6078,7 @@ bd lint [issue-id...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc list` (bd version 1.0.3)
+Generated from `bd help --doc list`
 
 ## bd list
 
@@ -5372,7 +6155,7 @@ bd list [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc mail` (bd version 1.0.3)
+Generated from `bd help --doc mail`
 
 ## bd mail
 
@@ -5407,7 +6190,7 @@ bd mail [subcommand] [args...]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc memories` (bd version 1.0.3)
+Generated from `bd help --doc memories`
 
 ## bd memories
 
@@ -5428,7 +6211,7 @@ bd memories [search]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc merge-slot` (bd version 1.0.3)
+Generated from `bd help --doc merge-slot`
 
 ## bd merge-slot
 
@@ -5526,7 +6309,7 @@ bd merge-slot release [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc migrate` (bd version 1.0.3)
+Generated from `bd help --doc migrate`
 
 ## bd migrate
 
@@ -5652,7 +6435,7 @@ bd migrate sync <branch> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc mol` (bd version 1.0.3)
+Generated from `bd help --doc mol`
 
 ## bd mol
 
@@ -5843,7 +6626,8 @@ Variable syntax (both work - we detect which side is the concrete value):
 
 Output locations (first writable wins):
   1. &lt;resolved-beads-dir&gt;/formulas/ (project-level, default)
-  2. ~/.beads/formulas/     (user-level, if project not writable)
+  2. &lt;checkout-root&gt;/.beads/formulas/ (repo-local formulas)
+  3. ~/.beads/formulas/     (user-level, if project not writable)
 
 Examples:
   bd mol distill bd-o5xe my-workflow
@@ -5976,8 +6760,9 @@ attempting to spawn work from a formula.
 
 Formula search paths (checked in order):
   1. &lt;resolved-beads-dir&gt;/formulas/ (active project)
-  2. ~/.beads/formulas/ (user level)
-  3. $GT_ROOT/.beads/formulas/ (orchestrator level, if GT_ROOT set)
+  2. &lt;checkout-root&gt;/.beads/formulas/ (repo-local formulas)
+  3. ~/.beads/formulas/ (user level)
+  4. $GT_ROOT/.beads/formulas/ (orchestrator level, if GT_ROOT set)
 
 Examples:
   bd mol seed mol-feature                 # Verify specific formula
@@ -6262,7 +7047,7 @@ bd mol wisp list [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc note` (bd version 1.0.3)
+Generated from `bd help --doc note`
 
 ## bd note
 
@@ -6293,7 +7078,7 @@ bd note <id> [text...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc notion` (bd version 1.0.3)
+Generated from `bd help --doc notion`
 
 ## bd notion
 
@@ -6404,7 +7189,7 @@ bd notion sync [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc onboard` (bd version 1.0.3)
+Generated from `bd help --doc onboard`
 
 ## bd onboard
 
@@ -6434,7 +7219,7 @@ bd onboard
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc orphans` (bd version 1.0.3)
+Generated from `bd help --doc orphans`
 
 ## bd orphans
 
@@ -6469,7 +7254,7 @@ bd orphans [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc ping` (bd version 1.0.3)
+Generated from `bd help --doc ping`
 
 ## bd ping
 
@@ -6497,7 +7282,7 @@ bd ping
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc preflight` (bd version 1.0.3)
+Generated from `bd help --doc preflight`
 
 ## bd preflight
 
@@ -6537,7 +7322,7 @@ bd preflight [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc prime` (bd version 1.0.3)
+Generated from `bd help --doc prime`
 
 ## bd prime
 
@@ -6547,7 +7332,7 @@ Automatically detects if MCP server is active and adapts output:
 - MCP mode: Brief workflow reminders (~50 tokens)
 - CLI mode: Full command reference (~1-2k tokens)
 
-Designed for Claude Code hooks (SessionStart, PreCompact) to prevent
+Designed for Claude Code, Gemini CLI, and Codex SessionStart hooks to prevent
 agents from forgetting bd workflow after context compaction.
 
 Config options:
@@ -6558,6 +7343,7 @@ Config options:
 	Workflow customization:
 	- Place a .beads/PRIME.md file in the local clone or resolved workspace to override the default output entirely.
 	- Use --export to dump the default content for customization.
+	- Use --memories-only for hook contexts that should inject only persistent memories.
 
 ```
 bd prime [flags]
@@ -6566,10 +7352,12 @@ bd prime [flags]
 **Flags:**
 
 ```
-      --export    Output default content (ignores PRIME.md override)
-      --full      Force full CLI output (ignore MCP detection)
-      --mcp       Force MCP mode (minimal output)
-      --stealth   Stealth mode (no git operations, flush only)
+      --export          Output default content (ignores PRIME.md override)
+      --full            Force full CLI output (ignore MCP detection)
+      --hook-json       Wrap output in the SessionStart hook JSON envelope (Claude Code, Gemini CLI, Codex)
+      --mcp             Force MCP mode (minimal output)
+      --memories-only   Output only persistent memories for compact hook contexts
+      --stealth         Stealth mode (no git operations, flush only)
 ```
 
 </document>
@@ -6578,7 +7366,7 @@ bd prime [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc priority` (bd version 1.0.3)
+Generated from `bd help --doc priority`
 
 ## bd priority
 
@@ -6607,7 +7395,7 @@ bd priority <id> <n>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc promote` (bd version 1.0.3)
+Generated from `bd help --doc promote`
 
 ## bd promote
 
@@ -6639,7 +7427,7 @@ bd promote <wisp-id> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc prune` (bd version 1.0.3)
+Generated from `bd help --doc prune`
 
 ## bd prune
 
@@ -6688,7 +7476,7 @@ bd prune [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc purge` (bd version 1.0.3)
+Generated from `bd help --doc purge`
 
 ## bd purge
 
@@ -6732,7 +7520,7 @@ bd purge [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc q` (bd version 1.0.3)
+Generated from `bd help --doc q`
 
 ## bd q
 
@@ -6762,7 +7550,7 @@ bd q [title] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc query` (bd version 1.0.3)
+Generated from `bd help --doc query`
 
 ## bd query
 
@@ -6845,7 +7633,7 @@ bd query [expression] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc quickstart` (bd version 1.0.3)
+Generated from `bd help --doc quickstart`
 
 ## bd quickstart
 
@@ -6861,7 +7649,7 @@ bd quickstart
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc ready` (bd version 1.0.3)
+Generated from `bd help --doc ready`
 
 ## bd ready
 
@@ -6920,7 +7708,7 @@ bd ready [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc recall` (bd version 1.0.3)
+Generated from `bd help --doc recall`
 
 ## bd recall
 
@@ -6940,7 +7728,7 @@ bd recall <key>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc remember` (bd version 1.0.3)
+Generated from `bd help --doc remember`
 
 ## bd remember
 
@@ -6970,7 +7758,7 @@ bd remember "<insight>" [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc rename-prefix` (bd version 1.0.3)
+Generated from `bd help --doc rename-prefix`
 
 ## bd rename-prefix
 
@@ -7019,7 +7807,7 @@ bd rename-prefix <new-prefix> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc rename` (bd version 1.0.3)
+Generated from `bd help --doc rename`
 
 ## bd rename
 
@@ -7047,7 +7835,7 @@ bd rename <old-id> <new-id>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc reopen` (bd version 1.0.3)
+Generated from `bd help --doc reopen`
 
 ## bd reopen
 
@@ -7070,7 +7858,7 @@ bd reopen [id...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc repo` (bd version 1.0.3)
+Generated from `bd help --doc repo`
 
 ## bd repo
 
@@ -7182,7 +7970,7 @@ bd repo sync [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc restore` (bd version 1.0.3)
+Generated from `bd help --doc restore`
 
 ## bd restore
 
@@ -7210,7 +7998,7 @@ bd restore <issue-id> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc rules` (bd version 1.0.3)
+Generated from `bd help --doc rules`
 
 ## bd rules
 
@@ -7258,7 +8046,7 @@ bd rules compact [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc search` (bd version 1.0.3)
+Generated from `bd help --doc search`
 
 ## bd search
 
@@ -7323,7 +8111,7 @@ bd search [query] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc set-state` (bd version 1.0.3)
+Generated from `bd help --doc set-state`
 
 ## bd set-state
 
@@ -7362,7 +8150,7 @@ bd set-state <issue-id> <dimension>=<value> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc setup` (bd version 1.0.3)
+Generated from `bd help --doc setup`
 
 ## bd setup
 
@@ -7373,6 +8161,8 @@ include cursor, claude, gemini, aider, factory, codex, mux, opencode, junie, win
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
+  bd setup codex           # Install Codex skill + AGENTS.md guidance
+  bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
   bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
   bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
   bd setup mux --project --global  # Install both Mux layers
@@ -7393,7 +8183,7 @@ bd setup [recipe] [flags]
 ```
       --add string      Add a custom recipe with given name
       --check           Check if integration is installed
-      --global          Install globally (claude/mux; writes to ~/.claude/settings.json or ~/.mux/AGENTS.md)
+      --global          Install globally (claude/codex/mux; writes to ~/.claude/settings.json, $CODEX_HOME/AGENTS.md or ~/.codex/AGENTS.md, or ~/.mux/AGENTS.md)
       --list            List all available recipes
   -o, --output string   Write template to custom path
       --print           Print the template to stdout
@@ -7408,7 +8198,7 @@ bd setup [recipe] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc ship` (bd version 1.0.3)
+Generated from `bd help --doc ship`
 
 ## bd ship
 
@@ -7447,7 +8237,7 @@ bd ship <capability> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc show` (bd version 1.0.3)
+Generated from `bd help --doc show`
 
 ## bd show
 
@@ -7480,7 +8270,7 @@ bd show [id...] [--id=<id>...] [--current] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc sql` (bd version 1.0.3)
+Generated from `bd help --doc sql`
 
 ## bd sql
 
@@ -7516,7 +8306,7 @@ bd sql <query> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc stale` (bd version 1.0.3)
+Generated from `bd help --doc stale`
 
 ## bd stale
 
@@ -7544,7 +8334,7 @@ bd stale [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc state` (bd version 1.0.3)
+Generated from `bd help --doc state`
 
 ## bd state
 
@@ -7589,7 +8379,7 @@ bd state list <issue-id>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc status` (bd version 1.0.3)
+Generated from `bd help --doc status`
 
 ## bd status
 
@@ -7635,7 +8425,7 @@ bd status [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc statuses` (bd version 1.0.3)
+Generated from `bd help --doc statuses`
 
 ## bd statuses
 
@@ -7669,7 +8459,7 @@ bd statuses
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc supersede` (bd version 1.0.3)
+Generated from `bd help --doc supersede`
 
 ## bd supersede
 
@@ -7697,7 +8487,7 @@ bd supersede <id> --with <new> [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc swarm` (bd version 1.0.3)
+Generated from `bd help --doc swarm`
 
 ## bd swarm
 
@@ -7820,7 +8610,7 @@ bd swarm validate [epic-id] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc tag` (bd version 1.0.3)
+Generated from `bd help --doc tag`
 
 ## bd tag
 
@@ -7842,7 +8632,7 @@ bd tag <id> <label>
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc todo` (bd version 1.0.3)
+Generated from `bd help --doc todo`
 
 ## bd todo
 
@@ -7909,7 +8699,7 @@ bd todo list [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc types` (bd version 1.0.3)
+Generated from `bd help --doc types`
 
 ## bd types
 
@@ -7933,7 +8723,7 @@ bd types
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc undefer` (bd version 1.0.3)
+Generated from `bd help --doc undefer`
 
 ## bd undefer
 
@@ -7956,7 +8746,7 @@ bd undefer [id...]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc update` (bd version 1.0.3)
+Generated from `bd help --doc update`
 
 ## bd update
 
@@ -8013,7 +8803,7 @@ bd update [id...] [flags]
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc upgrade` (bd version 1.0.3)
+Generated from `bd help --doc upgrade`
 
 ## bd upgrade
 
@@ -8088,7 +8878,7 @@ bd upgrade status
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc vc` (bd version 1.0.3)
+Generated from `bd help --doc vc`
 
 ## bd vc
 
@@ -8163,7 +8953,7 @@ bd vc status
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc version` (bd version 1.0.3)
+Generated from `bd help --doc version`
 
 ## bd version
 
@@ -8179,7 +8969,7 @@ bd version
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc where` (bd version 1.0.3)
+Generated from `bd help --doc where`
 
 ## bd where
 
@@ -8203,7 +8993,7 @@ bd where
 
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc worktree` (bd version 1.0.3)
+Generated from `bd help --doc worktree`
 
 ## bd worktree
 
@@ -8324,19 +9114,19 @@ Beads provides powerful workflow primitives for complex, multi-step processes.
 
 ## Chemistry Metaphor
 
-Beads uses a molecular chemistry metaphor for workflow phases:
+Beads uses a molecular chemistry metaphor:
 
-| Phase | Command | Synced | Use Case |
+| Phase | Storage | Synced | Use Case |
 |-------|---------|--------|----------|
-| **Proto** (solid) | `bd cook` | N/A | Compiled template, reusable |
-| **Mol** (liquid) | `bd mol pour` | Yes | Persistent work with audit trail |
-| **Wisp** (vapor) | `bd mol wisp` | No | Ephemeral operations |
+| **Proto** (solid) | Built-in | N/A | Reusable templates |
+| **Mol** (liquid) | `.beads/` | Yes | Persistent work |
+| **Wisp** (vapor) | `.beads-wisp/` | No | Ephemeral operations |
 
 ## Core Concepts
 
 ### Formulas
 
-Declarative workflow templates in TOML or JSON. Support variables, conditional steps, loops, inheritance, and composition.
+Declarative workflow templates in TOML or JSON:
 
 ```toml
 formula = "feature-workflow"
@@ -8354,14 +9144,10 @@ title = "Implement the feature"
 needs = ["design"]
 ```
 
-### Cooking
-
-`bd cook` compiles a formula into a resolved proto. Two modes: compile-time (keeps `{{var}}` placeholders for planning) and runtime (substitutes all variables for final output).
-
 ### Molecules
 
 Work graphs with parent-child relationships:
-- Created by instantiating formulas with `bd mol pour`
+- Created by instantiating formulas with `bd pour`
 - Steps have dependencies (`needs`)
 - Progress tracked via issue status
 
@@ -8374,57 +9160,42 @@ Async coordination primitives:
 
 ### Wisps
 
-Ephemeral operations that don't sync:
-- Created with `bd mol wisp`
-- Stored locally with `Ephemeral=true`
-- Lifecycle: squash (promote), burn (discard), or GC (auto-clean)
-
-### Swarms
-
-Parallel execution across an epic's dependency graph:
-- Analyze epic structure for parallelism: `bd swarm validate`
-- Create coordinated swarm from epic: `bd swarm create`
-- Monitor progress across waves: `bd swarm status`
+Ephemeral operations that don't sync to git:
+- Created with `bd wisp`
+- Stored in `.beads-wisp/` (gitignored)
+- Auto-expire after completion
 
 ## Workflow Commands
 
 | Command | Description |
 |---------|-------------|
-| `bd cook` | Compile formula into proto |
-| `bd mol pour` | Instantiate formula as persistent molecule |
-| `bd mol wisp` | Create ephemeral wisp from formula |
+| `bd pour` | Instantiate formula as molecule |
+| `bd wisp` | Create ephemeral wisp |
 | `bd mol list` | List molecules |
-| `bd mol squash` | Promote wisp to persistent molecule |
-| `bd mol burn` | Delete wisp without trace |
-| `bd mol wisp gc` | Garbage collect old wisps |
-| `bd mol bond` | Bond formulas together with phase control |
-| `bd swarm validate` | Analyze epic for parallel execution |
-| `bd swarm create` | Create swarm from epic |
-| `bd swarm status` | Show swarm progress |
-| `bd swarm list` | List all swarm molecules |
-| `bd formula list` | List available formulas |
+| `bd pin` | Pin work to agent |
+| `bd hook` | Show pinned work |
 
 ## Simple Example
 
 ```bash
 # Create a release workflow
-bd mol pour release --var version=1.0.0
+bd pour release --var version=1.0.0
 
 # View the molecule
-bd dep tree bd-xyz
+bd mol show release-1.0.0
 
 # Work through steps
-bd update bd-xyz.1 --claim
-bd close bd-xyz.1
+bd update release-1.0.0.1 --claim
+bd close release-1.0.0.1
 # Next step becomes ready...
 ```
 
 ## Navigation
 
 - [Molecules](/workflows/molecules) - Work graphs and execution
-- [Formulas](/workflows/formulas) - Declarative templates (types, variables, inheritance, loops, conditions)
+- [Formulas](/workflows/formulas) - Declarative templates
 - [Gates](/workflows/gates) - Async coordination
-- [Wisps](/workflows/wisps) - Ephemeral operations (squash, burn, GC lifecycle)
+- [Wisps](/workflows/wisps) - Ephemeral operations
 
 </document>
 
@@ -8510,32 +9281,6 @@ needs = ["review"]
 | `workflow` | Standard step sequence |
 | `expansion` | Template for expansion operator |
 | `aspect` | Cross-cutting concerns |
-| `convoy` | Multi-agent coordination (parallel workers) |
-
-### Convoy Formulas
-
-Convoy formulas coordinate multiple agents working in parallel. Use them for code review with multiple reviewers, design review sessions, or any workflow requiring parallel human or agent coordination.
-
-```toml
-formula = "multi-reviewer"
-description = "Parallel code review with multiple reviewers"
-version = 1
-type = "convoy"
-
-[vars.reviewers]
-description = "Comma-separated reviewer names"
-required = true
-
-[[steps]]
-id = "review-setup"
-title = "Prepare review artifacts"
-
-[[steps]]
-id = "collect"
-title = "Collect reviews"
-needs = ["review-setup"]
-waits_for = "all-children"
-```
 
 ## Variables
 
@@ -8600,159 +9345,6 @@ title = "Deploy"
 needs = ["test-unit", "test-integration"]  # Waits for both
 ```
 
-## Conditional Steps
-
-Steps can be made conditional based on a variable:
-
-```toml
-[vars.run_security_scan]
-description = "Whether to run security scan"
-default = "true"
-
-[[steps]]
-id = "security-scan"
-title = "Run security scan"
-condition = "{{run_security_scan}}"
-
-[[steps]]
-id = "deploy"
-title = "Deploy to production"
-condition = "{{environment}} == production"
-```
-
-Condition formats:
-- `"{{var}}"` - truthy (non-empty, non-false)
-- `"!{{var}}"` - negated
-- `"{{var}} == value"` - equality
-- `"{{var}} != value"` - inequality
-
-Conditions are evaluated at cook/pour time. Steps that don't match are removed from the workflow.
-
-## Loops and Iteration
-
-Steps can iterate using the `loop` field:
-
-### Fixed Count
-
-```toml
-[[steps]]
-id = "retry"
-title = "Attempt {{i}}"
-
-[steps.loop]
-count = 3
-var = "i"
-
-[[steps.loop.body]]
-id = "try-{{i}}"
-title = "Attempt {{i}}"
-```
-
-### Range
-
-```toml
-[[steps]]
-id = "phases"
-title = "Phase iteration"
-
-[steps.loop]
-range = "1..5"
-var = "phase_num"
-
-[[steps.loop.body]]
-id = "phase-{{phase_num}}"
-title = "Execute phase {{phase_num}}"
-```
-
-Range supports expressions: `"1..2^{disks}"`, `"{start}..{count}"`.
-
-### Until (Conditional)
-
-```toml
-[steps.loop]
-until = "step.status == 'complete'"
-max = 10
-var = "attempt"
-
-[[steps.loop.body]]
-id = "attempt-{{attempt}}"
-title = "Attempt {{attempt}}"
-```
-
-The `max` field is required for `until` loops to prevent unbounded iteration.
-
-## Runtime Expansion (on_complete)
-
-Steps can trigger dynamic work when they complete using `on_complete` with `for_each`:
-
-```toml
-[[steps]]
-id = "survey"
-title = "Survey available workers"
-
-[steps.on_complete]
-for_each = "output.workers"
-bond = "worker-arm"
-parallel = true
-
-[steps.on_complete.vars]
-worker_name = "{item.name}"
-rig = "{item.rig}"
-```
-
-This creates a new molecule from the `worker-arm` formula for each item in the `output.workers` array. Use `sequential = true` instead of `parallel` to run them one at a time.
-
-## Formula Inheritance
-
-Formulas can inherit from parent formulas using `extends`:
-
-```toml
-formula = "secure-release"
-description = "Release with security audit"
-version = 1
-type = "workflow"
-extends = ["release"]
-
-# Inherits all vars and steps from "release"
-# Add new steps or override existing ones by ID:
-[[steps]]
-id = "security-audit"
-title = "Security audit"
-needs = ["test"]
-
-# Override parent step
-[[steps]]
-id = "publish"
-title = "Publish release (with audit)"
-needs = ["tag", "security-audit"]
-```
-
-Child formulas inherit all vars, steps, and compose rules from parents. Child definitions with the same ID override parent definitions.
-
-## Cooking Formulas
-
-`bd cook` compiles a formula into a resolved proto. Two modes:
-
-### Compile-time (default)
-
-Produces a proto with `{{variable}}` placeholders intact. Useful for modeling, estimation, and planning.
-
-```bash
-bd cook feature-workflow                    # Template with placeholders
-bd cook feature-workflow --dry-run          # Preview steps
-```
-
-### Runtime
-
-Produces a fully-resolved proto with variables substituted. Requires all variables to have values.
-
-```bash
-bd cook feature-workflow --var feature_name=auth      # Substitute vars
-bd cook feature-workflow --mode=runtime --var name=x  # Explicit runtime
-```
-
-For most workflows, prefer using `bd pour` or `bd mol wisp` directly - they cook the formula inline.
-
 ## Gates
 
 Add gates for async coordination:
@@ -8773,8 +9365,6 @@ title = "Deploy to production"
 needs = ["approval"]
 ```
 
-Gate types: `human`, `timer`, `gh:run` (GitHub Actions), `gh:pr` (pull request).
-
 ## Aspects (Cross-cutting)
 
 Apply transformations to matching steps:
@@ -8791,43 +9381,31 @@ id = "security-scan-{step.id}"
 title = "Security scan before {step.title}"
 ```
 
-Aspects support `before`, `after`, and `around` advice. Apply aspects to a formula via `compose.aspects`:
-
-```toml
-[compose]
-aspects = ["security-scan", "logging"]
-```
-
 ## Formula Locations
 
 Formulas are searched in order:
 1. `.beads/formulas/` (project-level)
 2. `~/.beads/formulas/` (user-level)
+3. Built-in formulas
 
 ## Using Formulas
 
 ```bash
 # List available formulas
-bd formula list
+bd mol list
 
-# Cook (compile) a formula
-bd cook <formula-name> [--var key=value]
-
-# Pour formula into molecule (persistent)
-bd mol pour <formula-name> --var key=value
-
-# Create wisp from formula (ephemeral)
-bd mol wisp <formula-name> --var key=value
+# Pour formula into molecule
+bd pour <formula-name> --var key=value
 
 # Preview what would be created
-bd mol pour <formula-name> --dry-run
+bd pour <formula-name> --dry-run
 ```
 
 ## Creating Custom Formulas
 
 1. Create file: `.beads/formulas/my-workflow.formula.toml`
 2. Define structure (see examples above)
-3. Use with: `bd mol pour my-workflow`
+3. Use with: `bd pour my-workflow`
 
 ## Example: Release Formula
 
@@ -9264,100 +9842,60 @@ Wisps are ephemeral workflows that don't sync to git.
 
 ## What are Wisps?
 
-Wisps are "vapor phase" molecules - issues stored with `Ephemeral=true` in the main database. They are local-only and not synced via Dolt push/pull.
+Wisps are "vapor phase" molecules:
+- Stored in `.beads-wisp/` (gitignored)
+- Don't sync with git
+- Auto-expire after completion
+- Perfect for temporary operations
 
 ## Use Cases
 
 | Scenario | Why Wisp? |
 |----------|-----------|
-| Release workflows | One-time execution, no audit trail needed |
-| Operational loops | Recurring cycles that auto-clean up |
-| Health checks | Diagnostics that shouldn't clutter history |
-| Local experiments | Quick throwaway work |
-| Agent coordination | Local-only parallel coordination |
+| Local experiments | No need to pollute git history |
+| CI/CD pipelines | Ephemeral by nature |
+| Scratch workflows | Quick throwaway work |
+| Agent coordination | Local-only coordination |
 
 ## Creating Wisps
 
 ```bash
 # Create wisp from formula
-bd mol wisp <formula> [--var key=value]
+bd wisp create <formula> [--var key=value]
 
-# Examples
-bd mol wisp quick-check
-bd mol wisp release --var version=1.0.0
+# Example
+bd wisp create quick-check --var target=auth-module
 ```
-
-Formulas can recommend wisp usage with `phase = "vapor"` in the formula definition. If you use `bd mol pour` on a vapor-phase formula, you'll get a warning suggesting `bd mol wisp` instead.
-
-## Wisp Lifecycle
-
-```
-Formula (template)
-    | bd mol wisp
-    v
-Wisp (ephemeral, Ephemeral=true)
-    | normal bd operations
-    v
-Completed Wisp
-    |
-    +---> bd mol squash  (promote to persistent molecule)
-    +---> bd mol burn    (delete without trace)
-    +---> bd mol wisp gc (garbage collect old wisps)
-```
-
-### Squash (Promote to Persistent)
-
-Convert a wisp into a regular persistent molecule. Clears the `Ephemeral` flag so the issue syncs to git. Use when ephemeral work turns out to be worth preserving.
-
-```bash
-bd mol squash <wisp-id>
-```
-
-### Burn (Delete Without Trace)
-
-Delete a wisp and all its children without creating a digest or summary. Use for discarding failed or abandoned ephemeral work.
-
-```bash
-bd mol burn <wisp-id>
-```
-
-### Garbage Collection
-
-Clean up old, orphaned, or completed wisps automatically:
-
-```bash
-# List all wisps (flags old ones > 24h)
-bd mol wisp list
-
-# Garbage collect orphaned wisps
-bd mol wisp gc
-```
-
-Wisps older than 24 hours are flagged as "old" in list output.
 
 ## Wisp Commands
 
 ```bash
-bd mol wisp <formula>       # Create wisp from formula
-bd mol wisp list             # List all wisps
-bd mol wisp list --json      # List in JSON format
-bd mol wisp gc               # Garbage collect old wisps
-bd mol squash <wisp-id>      # Promote to persistent
-bd mol burn <wisp-id>        # Delete without digest
+# List wisps
+bd wisp list
+bd wisp list --json
+
+# Show wisp details
+bd wisp show <wisp-id>
+
+# Delete wisp
+bd wisp delete <wisp-id>
+
+# Delete all completed wisps
+bd wisp cleanup
 ```
 
 ## Wisp vs Molecule
 
-| Aspect | Molecule (pour) | Wisp |
-|--------|-----------------|------|
-| Phase | Liquid | Vapor |
-| Persistence | Permanent, syncs via Dolt | Ephemeral, local-only |
-| Use case | Tracked work, audit trail | Temporary ops, one-time runs |
-| Cleanup | Manual close/archive | Squash, burn, or GC |
+| Aspect | Molecule | Wisp |
+|--------|----------|------|
+| Storage | `.beads/` | `.beads-wisp/` |
+| Git sync | Yes | No |
+| Persistence | Permanent | Ephemeral |
+| Use case | Tracked work | Temporary ops |
 
 ## Phase Control
 
-Use `bd mol bond` to control phase when bonding formulas together:
+Use `bd mol bond` to control phase:
 
 ```bash
 # Force liquid (persistent molecule)
@@ -9367,13 +9905,60 @@ bd mol bond <formula> <target> --pour
 bd mol bond <formula> <target> --wisp
 ```
 
+## Example: Quick Check Workflow
+
+Create a wisp for running checks:
+
+```toml
+# .beads/formulas/quick-check.formula.toml
+formula = "quick-check"
+description = "Quick local checks"
+
+[[steps]]
+id = "lint"
+title = "Run linter"
+
+[[steps]]
+id = "test"
+title = "Run tests"
+needs = ["lint"]
+
+[[steps]]
+id = "build"
+title = "Build project"
+needs = ["test"]
+```
+
+Use as wisp:
+
+```bash
+bd wisp create quick-check
+# Work through steps...
+bd wisp cleanup  # Remove when done
+```
+
+## Auto-Expiration
+
+Wisps can auto-expire:
+
+```toml
+[wisp]
+expires_after = "24h"  # Auto-delete after 24 hours
+```
+
+Or cleanup manually:
+
+```bash
+bd wisp cleanup --all  # Remove all wisps
+bd wisp cleanup --completed  # Remove only completed
+```
+
 ## Best Practices
 
-1. **Default to wisp for operational work** - releases, checks, diagnostics
-2. **Use pour for tracked work** - features, bugs, anything worth preserving
-3. **Squash if work becomes valuable** - promote ephemeral to persistent
-4. **Burn failed experiments** - clean up without cluttering history
-5. **Run GC periodically** - `bd mol wisp gc` keeps the database lean
+1. **Use wisps for local-only work** - Don't sync to git
+2. **Clean up regularly** - `bd wisp cleanup`
+3. **Use molecules for tracked work** - Wisps are ephemeral
+4. **Consider CI/CD wisps** - Perfect for pipeline steps
 
 </document>
 
@@ -9865,7 +10450,7 @@ Add to your Claude Code hooks configuration:
 {
   "hooks": {
     "SessionStart": ["bd prime"],
-    "PreCompact": ["bd prime"]
+    "SessionStart": ["bd prime"]
   }
 }
 ```
@@ -10020,6 +10605,33 @@ bd init --quiet
 
 - [MCP Server](/integrations/mcp-server) - For MCP-only environments
 - [IDE Setup](/getting-started/ide-setup) - Other editors
+
+</document>
+
+<document path="docs/integrations/codex.md">
+
+
+# Codex Integration
+
+Use Beads with Codex through the `beads` skill, managed `AGENTS.md` guidance, and native Codex hooks.
+
+```bash
+bd setup codex
+bd setup codex --check
+```
+
+Codex 0.129.0+ supports `/hooks`, compact lifecycle hooks, and hook-provided developer context. Beads uses that lifecycle to inject `bd prime` on session start and recover context after compaction.
+
+## Hook Lifecycle
+
+- `SessionStart` (`startup|resume|clear`) injects full `bd prime` output.
+- `PreCompact` (`manual|auto`) checks `bd prime --memories-only` and warns if Beads context is unavailable.
+- `PostCompact` (`manual|auto`) records that the session needs a Beads refresh.
+- `UserPromptSubmit` injects full `bd prime` once after compaction, then clears the refresh marker.
+
+`PreCompact` alone does not inject context because Codex ignores plain stdout from compact hooks. The post-compact marker plus first-prompt refresh is the reliable recovery path.
+
+The Beads Codex plugin declares `"hooks": "./hooks/hooks.json"`. Without the plugin, `bd setup codex` installs the same hook config in `.codex/hooks.json` and enables `[features].hooks = true`.
 
 </document>
 
@@ -11069,153 +11681,251 @@ bd list
 
 Complete configuration reference for beads.
 
+beads has two complementary configuration systems:
+
+1. **Tool-level configuration** (YAML, managed by [Viper](https://github.com/spf13/viper)) — startup flags and tool behavior, stored in `config.yaml` files.
+2. **Project-level configuration** (managed by `bd config`) — integration credentials, status maps, and project-specific settings, stored in the Dolt database. Some keys are routed to `config.yaml` instead (see [YAML-only keys](#yaml-only-keys-startup-settings) below).
+
+For a deeper treatment of every namespace and its semantics, see [docs/CONFIG.md](https://github.com/gastownhall/beads/blob/main/docs/CONFIG.md).
+
 ## Configuration Locations
 
-1. **Project config**: `.beads/config.toml` (highest priority)
-2. **User config**: `~/.beads/config.toml`
-3. **Environment variables**: `BEADS_*`
-4. **Command-line flags**: (highest priority)
+`config.yaml` is searched in this order, with later files overriding earlier ones:
+
+1. `~/.beads/config.yaml` (legacy user-level, lowest priority)
+2. `~/.config/bd/config.yaml` (XDG user-level)
+3. `<repo>/.beads/config.yaml` (project-level, walked up from the current directory)
+4. `$BEADS_DIR/config.yaml` (highest priority, when `BEADS_DIR` is set)
+
+A `config.local.yaml` next to the project `config.yaml` is also merged in last for machine-specific overrides that should not be committed.
+
+## Precedence
+
+For Viper-managed (YAML) keys, highest to lowest:
+
+1. **Command-line flags** (e.g. `--json`, `--db`, `--actor`)
+2. **Environment variables** (`BD_*`, plus a small set of legacy `BEADS_*` names — see below)
+3. **`config.yaml`** files (in the order listed above)
+4. **Built-in defaults**
+
+Project-level keys written via `bd config set` (Jira, Linear, GitHub, status maps, etc.) live in the Dolt database. They are read at command time and have no env var override.
 
 ## Managing Configuration
 
 ```bash
-# Get config value
-bd config get import.orphan_handling
+# Set a value (auto-routes to config.yaml or the database)
+bd config set jira.url "https://company.atlassian.net"
+bd config set validation.on-create warn   # YAML-only key
 
-# Set config value
-bd config set import.orphan_handling allow
+# Set many values in one go
+bd config set-many jira.url=https://example.atlassian.net jira.project=PROJ
 
-# List all config
+# Get a value
+bd config get jira.url
+
+# List all database-stored config (with override warnings)
 bd config list
 
-# Reset to default
-bd config reset import.orphan_handling
+# Show all effective config with provenance (env / config.yaml / default / database)
+bd config show
+bd config show --source config.yaml
+bd config show --json
+
+# Validate sync-related configuration
+bd config validate
+
+# Remove a value
+bd config unset jira.url
 ```
 
-## Configuration Options
+`bd config set` automatically routes the write to the right location: keys in the YAML namespace (see below) are written to the project `config.yaml`; everything else is written to the Dolt database. `beads.role` is stored in git config.
 
-### Database
+## YAML-only Keys (Startup Settings)
 
-```toml
-[database]
-# Embedded mode (default): data stored in .beads/embeddeddolt/
-# Server mode: connects to dolt sql-server (bd init --server)
-```
+These keys must live in `config.yaml`, not the database, because they are read before the database is opened. Writing them with `bd config set` automatically updates `config.yaml`.
 
-### ID Generation
+The full namespaces routed to YAML are:
 
-```toml
-[id]
-prefix = "bd"                 # Issue ID prefix
-hash_length = 4               # Hash length in IDs
-```
+`routing.*`, `sync.*`, `git.*`, `directory.*`, `repos.*`, `external_projects.*`, `validation.*`, `hierarchy.*`, `ai.*`, `backup.*`, `export.*`, `dolt.*`, `federation.*`
 
-**Issue ID mode** controls whether new issues get hash-based or sequential IDs:
+Plus these individual keys:
 
-```bash
-# Use sequential IDs: bd-1, bd-2, bd-3, ...
-bd config set issue_id_mode counter
+`no-db`, `json`, `db`, `actor`, `identity`, `no-push`, `no-git-ops`, `create.require-description`, `github.token`, `linear.api_key`, `linear.oauth_client_id`, `linear.oauth_client_secret`.
 
-# Use hash-based IDs (default): bd-a3f2, bd-7f3a8, ...
-bd config set issue_id_mode hash
-```
+Secrets in this list are refused on git-tracked `config.yaml` files unless you pass `--force-git-tracked`; export the value as an environment variable instead (e.g. `LINEAR_API_KEY`).
 
-| Mode | Example ID | Best for |
-|------|-----------|----------|
-| `hash` (default) | `bd-a3f2` | Multi-agent, multi-branch workflows |
-| `counter` | `bd-1` | Single-writer, project-management UIs |
+## Tool-Level Settings (config.yaml)
 
-Counter IDs are sequential and human-friendly. Hash IDs are collision-free across concurrent
-branches. See [CONFIG.md](https://github.com/gastownhall/beads/blob/main/docs/CONFIG.md) for migration guidance and full details.
+| Setting | Flag | Env Var | Default | Description |
+|---|---|---|---|---|
+| `json` | `--json` | `BD_JSON` | `false` | JSON output for scripting |
+| `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
+| `actor` | `--actor` | `BEADS_ACTOR` | `git config user.name` | Actor name for audit trail |
+| `identity` | `--identity` | `BEADS_IDENTITY` | (git user / hostname) | Sender identity for `bd mail` |
+| `no-db` | `--no-db` | `BD_NO_DAEMON` (related) | `false` | Run without opening the database |
+| `no-push` | `--no-push` | — | `false` | Skip pushing to Dolt remote |
+| `no-git-ops` | — | — | `false` | Disable git ops in `bd prime` close protocol |
+| `dolt.auto-commit` | `--dolt-auto-commit` | `BD_DOLT_AUTO_COMMIT` | `on` | Create a Dolt history commit after each successful write |
+| `dolt.auto-push` | — | `BD_DOLT_AUTO_PUSH` | `false` | Auto-push to Dolt remote after writes (opt-in) |
+| `dolt.shared-server` | `--shared-server` | `BEADS_DOLT_SHARED_SERVER` | `false` | Share one Dolt server at `~/.beads/shared-server/` |
+| `dolt.max-conns` | — | `BEADS_DOLT_MAX_CONNS` | `10` | Connection pool size |
+| `git.author` | — | — | (none) | Override commit author for beads commits |
+| `git.no-gpg-sign` | — | — | `false` | Disable GPG signing for beads commits |
+| `create.require-description` | — | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description on `bd create` |
+| `validation.on-create` | — | `BD_VALIDATION_ON_CREATE` | `none` | Template validation: `none`, `warn`, `error` |
+| `validation.on-close` | — | `BD_VALIDATION_ON_CLOSE` | `none` | Template validation on close |
+| `validation.on-sync` | — | `BD_VALIDATION_ON_SYNC` | `none` | Template validation before sync |
+| `validation.metadata.mode` | — | — | `none` | Metadata schema validation |
+| `hierarchy.max-depth` | — | — | `3` | Max hierarchical ID nesting depth |
+| `backup.enabled` | — | `BD_BACKUP_ENABLED` | `false` | Enable periodic Dolt-native backup |
+| `backup.interval` | — | `BD_BACKUP_INTERVAL` | `15m` | Minimum time between auto-backups |
+| `backup.git-push` | — | — | `false` | Auto-push backup repo |
+| `backup.git-repo` | — | `BD_BACKUP_GIT_REPO` | (none) | Backup git repo URL |
+| `export.auto` | — | — | `true` | Refresh `.beads/issues.jsonl` after every write |
+| `export.path` | — | — | `issues.jsonl` | Output filename relative to `.beads/` |
+| `export.interval` | — | — | `60s` | Minimum time between auto-exports |
+| `export.git-add` | — | — | `true` | Run `git add` on the export file |
+| `routing.mode` | — | — | (none) | Multi-repo routing: `auto`, `maintainer`, `contributor`, `explicit` |
+| `routing.default` | — | — | `.` | Default routing target |
+| `routing.maintainer` | — | — | `.` | Maintainer-routed path |
+| `routing.contributor` | — | — | `~/.beads-planning` | Contributor-routed path |
+| `federation.remote` | — | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL (`dolthub://`, `gs://`, `s3://`, `az://`, `file://`) |
+| `federation.sovereignty` | — | `BD_FEDERATION_SOVEREIGNTY` | (none) | Sovereignty tier: `T1`, `T2`, `T3`, `T4` |
+| `federation.allowed-remote-patterns` | — | — | `[]` | Glob patterns restricting allowed remote URLs |
+| `federation.exclude_types` | — | — | `[wisp]` | Issue types excluded from federation push |
+| `sync.require_confirmation_on_mass_delete` | — | — | `false` | Prompt before pushing >50% issue deletions |
+| `directory.labels` | — | — | `{}` | Map directory patterns → labels for monorepos |
+| `external_projects` | — | — | `{}` | Map project names → paths for cross-project deps |
+| `output.title-length` | — | — | `255` | Title display in feedback (`0` hides) |
+| `ai.model` | — | `BD_AI_MODEL` | `claude-haiku-4-5-20251001` | Default AI model |
+| `agents.file` | — | — | `AGENTS.md` | Agents instruction filename |
 
-### Import
+`bd config show` is the source of truth for what's currently effective on your machine, including provenance.
 
-```toml
-[import]
-orphan_handling = "allow"     # allow|resurrect|skip|strict
-dedupe_on_import = false      # Run duplicate detection after import
-```
+## Project-Level Settings (Database)
 
-| Mode | Behavior |
-|------|----------|
-| `allow` | Import orphans without validation (default) |
-| `resurrect` | Restore deleted parents as tombstones |
-| `skip` | Skip orphaned children with warning |
-| `strict` | Fail if parent missing |
+These are written to the Dolt database by `bd config set` and have no env var override. Common namespaces:
 
-### Export
+| Namespace | Purpose |
+|---|---|
+| `jira.*` | Jira integration (URL, project, status_map, type_map) |
+| `linear.*` | Linear integration (team_id, state_map, label_type_map, relation_map) |
+| `github.*` | GitHub integration (org, repo, label_map) |
+| `ado.*` | Azure DevOps integration (org, project, state_map, type_map) |
+| `custom.*` | User-defined / custom integrations |
+| `status.custom` | Comma-separated list of custom statuses |
+| `types.custom` | Comma-separated list of custom issue types |
+| `types.infra` | Infra types routed to wisps table |
+| `import.orphan_handling` | `allow` (default) \| `resurrect` \| `skip` \| `strict` |
+| `compact_*` | Compaction tuning (see `docs/EXTENDING.md`) |
+| `issue_id_mode` | `hash` (default) \| `counter` (sequential) |
+| `min_hash_length`, `max_hash_length` | Adaptive ID bounds (defaults `4` and `8`) |
+| `max_collision_prob` | Hash ID collision tolerance (default `0.25`) |
+| `doctor.suppress.*` | Suppress specific `bd doctor` warnings by check slug |
 
-```toml
-[export]
-path = ".beads/issues.jsonl"  # Default export file path (for bd export command)
-```
-
-### Git
-
-```toml
-[git]
-auto_commit = true            # Auto-commit on sync
-auto_push = true              # Auto-push on sync
-commit_message = "bd: auto-commit"  # Default commit message
-```
-
-### Hooks
-
-```toml
-[hooks]
-pre_commit = true             # Enable pre-commit hook
-post_merge = true             # Enable post-merge hook
-pre_push = true               # Enable pre-push hook
-```
-
-### Deletions
-
-```toml
-[deletions]
-retention_days = 30           # Keep deletion records for N days
-prune_on_sync = true          # Auto-prune old records
-```
+Issue prefix (`issue_prefix`) is **not** settable via `bd config set` — use `bd init --prefix`, `bd bootstrap`, or `bd rename-prefix`.
 
 ## Environment Variables
 
+The Viper env prefix is `BD_`. Config keys map to env vars by upper-casing and replacing `.` and `-` with `_` (e.g. `dolt.auto-commit` → `BD_DOLT_AUTO_COMMIT`, `validation.on-create` → `BD_VALIDATION_ON_CREATE`).
+
+Selected commonly-used variables:
+
 | Variable | Description |
-|----------|-------------|
-| `BEADS_DB` | Database path |
-| `BEADS_LOG_LEVEL` | Log level |
-| `BEADS_CONFIG` | Config file path |
+|---|---|
+| `BD_DB`, `BEADS_DB` | Database path (legacy `BEADS_DB` still honored) |
+| `BD_JSON` | Force JSON output |
+| `BD_DOLT_AUTO_COMMIT` | Override `dolt.auto-commit` (`on`/`off`) |
+| `BD_DOLT_AUTO_PUSH` | Override `dolt.auto-push` |
+| `BD_BACKUP_ENABLED`, `BD_BACKUP_INTERVAL`, `BD_BACKUP_GIT_REPO` | Override backup settings |
+| `BD_AI_MODEL` | Override AI model |
+| `BD_FEDERATION_REMOTE`, `BD_FEDERATION_SOVEREIGNTY` | Override federation settings |
+| `BD_VALIDATION_ON_CREATE` / `_ON_CLOSE` / `_ON_SYNC` | Override validation modes |
+| `BD_NO_PAGER`, `BD_PAGER` | Pager behavior |
+| `BD_NON_INTERACTIVE` | Disable prompts |
+| `BD_DEBUG` | Enable debug logging |
+| `BEADS_DIR` | Force the active beads workspace directory |
+| `BEADS_ACTOR` | Actor identity (preferred over `BD_ACTOR`, which is a deprecated alias) |
+| `BEADS_IDENTITY` | Sender identity for `bd mail` |
+| `BEADS_DOLT_SERVER_MODE`, `BEADS_DOLT_SHARED_SERVER`, `BEADS_DOLT_DATA_DIR`, `BEADS_DOLT_PORT`, ... | Embedded/server Dolt overrides |
+
+Secrets like API tokens follow integration-specific conventions: `LINEAR_API_KEY`, `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, `AZURE_DEVOPS_PAT`. These are preferred over storing the value in `config.yaml` for git-tracked projects.
+
+`bd config show` will display the source of every effective key, making overrides explicit.
+
+## Example `.beads/config.yaml`
+
+```yaml
+# Default JSON output for scripting
+json: true
+
+# Dolt history & sync
+dolt:
+  auto-commit: on    # Create a Dolt commit after each successful write
+  auto-push: false   # Opt-in for single-writer setups
+
+# Issue creation policies
+create:
+  require-description: true
+
+validation:
+  on-create: warn    # Warn when creating issues missing required sections
+  on-close: none
+  on-sync: none
+
+# Git commit signing for beads commits (GH#600)
+git:
+  author: "beads-bot <beads@example.com>"
+  no-gpg-sign: true
+
+# Periodic Dolt-native backup to .beads/backup/
+backup:
+  enabled: true
+  interval: 15m
+
+# Auto-export issues.jsonl after writes (default settings shown for clarity)
+export:
+  auto: true
+  path: issues.jsonl
+  interval: 60s
+  git-add: true
+
+# Optional Dolt federation
+federation:
+  remote: dolthub://myorg/beads
+  sovereignty: T2
+
+# Directory-aware label scoping for monorepos (GH#541)
+directory:
+  labels:
+    packages/maverick: maverick
+    packages/agency: agency
+
+# Cross-project dependency resolution (bd-h807)
+external_projects:
+  beads: ../beads
+  other-project: /absolute/path/to/other-project
+
+output:
+  title-length: 255
+```
+
+For machine-specific overrides that should not be committed, drop them in `.beads/config.local.yaml`; it is merged in last.
 
 ## Per-Command Override
 
 ```bash
-# Override database
-bd --db /tmp/test.db list
-```
-
-## Example Configuration
-
-`.beads/config.toml`:
-
-```toml
-[id]
-prefix = "myproject"
-hash_length = 6
-
-[import]
-orphan_handling = "resurrect"
-dedupe_on_import = true
-
-[git]
-auto_commit = true
-auto_push = true
-
-[deletions]
-retention_days = 90
+bd --db /tmp/test.db list           # Override database for one command
+bd --json --actor "ci-bot" create "Fix things"  # Multiple flags
 ```
 
 ## Viewing Active Configuration
 
 ```bash
-bd info --json | jq '.config'
+bd config show                # Effective config with provenance
+bd config show --json         # Machine-readable
+bd config list                # Database-stored config
+bd info --json | jq '.config' # Quick snapshot
 ```
 
 </document>
@@ -11397,7 +12107,7 @@ Data storage and sync are handled by Dolt (a version-controlled SQL database).
 
 ```
 .beads/
-├── config.toml        # Project config (git-tracked)
+├── config.yaml        # Project config (git-tracked)
 ├── metadata.json      # Backend metadata (git-tracked)
 └── dolt/              # Dolt database and server data (gitignored)
 ```
