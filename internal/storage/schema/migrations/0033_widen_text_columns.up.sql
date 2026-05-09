@@ -6,7 +6,7 @@
 -- (256x capacity) and is metadata-only on Dolt's prolly-tree storage --
 -- existing rows are preserved without rewrite.
 --
--- 12 ALTER statements covering 11 unique columns (issues.notes + events x3 +
+-- 12 ALTER statements covering 12 unique columns (issues.notes + events x3 +
 -- comments.text + wisps.notes + wisp_events x3 + wisp_comments.text +
 -- issue_snapshots x2). The wisps.notes widening preserves schema parity
 -- with issues.notes per TestSchemaParityIssuesVsWisps.
