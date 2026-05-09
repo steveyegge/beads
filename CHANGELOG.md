@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Schema migration: widen TEXT columns to MEDIUMTEXT for large per-row content** — Migration `0033_widen_text_columns` raises the column-size cap on `issues.notes`, `events.{old_value, new_value, comment}`, `comments.text`, `wisps.notes`, `wisp_events.{old_value, new_value, comment}`, `wisp_comments.text`, and `issue_snapshots.{original_content, archived_events}` from MySQL TEXT (65,535-byte cap) to MEDIUMTEXT (16 MiB cap). Resolves silent truncation on cumulative `bd note` appends and large state-snapshot rows on high-volume issues. 12 ALTER statements covering 11 unique columns; metadata-only on Dolt's prolly-tree storage (no content rewrite). The `0033_widen_text_columns.down.sql` companion is provided for symmetry but is operationally one-way for any database that has accumulated rows >65,535 bytes under a widened column (silent truncation on column-narrowing).
+
 ### Fixed
 
 - **`bd dolt status` reports externally-managed local servers truthfully** - when a rig is configured as `dolt_mode: server` pointing at a local host but `dolt.auto-start: false` (so an orchestrator or systemd owns the sql-server lifecycle), `bd dolt status` previously said `not running` because no PID file existed. It now SQL-probes the configured endpoint, matching the path already used for non-local hosts, and reports `running (external)` with host/port/database/version when the server answers. **JSON output shape change**: on affected rigs, `bd dolt status --json` now emits `{"running": true, "mode": "external", ...}` instead of `{"running": false, "pid": 0, ...}`. Automation that parsed the old `running:false` as a "needs restart" sentinel should switch to checking `running` directly. (be-0eyj, [#3550](https://github.com/gastownhall/beads/pull/3550))
