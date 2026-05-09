@@ -359,28 +359,7 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 	for _, t := range excludeTypes {
 		opts.ExcludeTypes = append(opts.ExcludeTypes, types.IssueType(strings.ToLower(t)))
 	}
-	// Read config linear.exclude_id_prefix — single string. Beads whose ID
-	// starts with this prefix are excluded from push (case-sensitive). Used
-	// to filter workflow-artifact beads (e.g. "hw-mol-") that aren't
-	// type-tagged consistently. A bead that previously synced (has
-	// external_ref) and now matches will have NO further updates pushed —
-	// the Linear-side issue persists; users who want it removed must
-	// archive/delete it manually.
-	if v, _ := store.GetConfig(ctx, "linear.exclude_id_prefix"); v != "" {
-		opts.ExcludeIDPrefix = strings.TrimSpace(v)
-	}
-	// Read config linear.exclude_id_patterns — comma-separated list of
-	// substrings. Beads whose ID contains any listed substring are excluded
-	// from push. Substring is case-sensitive, anywhere in the ID. Combined
-	// with exclude_id_prefix as a union.
-	if v, _ := store.GetConfig(ctx, "linear.exclude_id_patterns"); v != "" {
-		for _, p := range strings.Split(v, ",") {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				opts.ExcludeIDPatterns = append(opts.ExcludeIDPatterns, p)
-			}
-		}
-	}
+	applyLinearExcludeIDConfig(ctx, store, &opts)
 	if !includeEphemeral {
 		opts.ExcludeEphemeral = true
 	}
@@ -1177,6 +1156,37 @@ func getLinearIDMode(ctx context.Context) string {
 		return "hash"
 	}
 	return mode
+}
+
+// linearConfigReader is the minimal slice of storage.Storage that the
+// linear-config helpers depend on. Lets tests inject a fake without
+// spinning up a Dolt server.
+type linearConfigReader interface {
+	GetConfig(ctx context.Context, key string) (string, error)
+}
+
+// applyLinearExcludeIDConfig reads linear.exclude_id_prefix and
+// linear.exclude_id_patterns from the given config reader and applies them
+// to opts. Both keys are push-direction-only filters; see the help text on
+// linearSyncCmd for the user-facing semantics.
+//
+// Empty values are no-ops. Patterns are comma-split, trimmed, with empty
+// entries dropped. If reader is nil (no store configured), this is a no-op.
+func applyLinearExcludeIDConfig(ctx context.Context, reader linearConfigReader, opts *tracker.SyncOptions) {
+	if reader == nil || opts == nil {
+		return
+	}
+	if v, _ := reader.GetConfig(ctx, "linear.exclude_id_prefix"); v != "" {
+		opts.ExcludeIDPrefix = strings.TrimSpace(v)
+	}
+	if v, _ := reader.GetConfig(ctx, "linear.exclude_id_patterns"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				opts.ExcludeIDPatterns = append(opts.ExcludeIDPatterns, p)
+			}
+		}
+	}
 }
 
 // getLinearHashLength returns the configured hash length for Linear imports.
