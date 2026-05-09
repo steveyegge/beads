@@ -504,7 +504,7 @@ grep 'vendorHash = ' default.nix
 [[steps]]
 id = "stamp-changelog"
 title = "Stamp changelog with release date"
-needs = ["update-vendorhash"]
+needs = ["snapshot-docs"]
 description = """
 Add the release date to the [Unreleased] section header.
 
@@ -525,6 +525,50 @@ Note: The update-changelog step handles the content; this step just adds the dat
 Verify:
 ```bash
 grep -A2 '\\[Unreleased\\]' CHANGELOG.md
+```
+"""
+
+[[steps]]
+id = "snapshot-docs"
+title = "Snapshot versioned documentation"
+needs = ["update-vendorhash"]
+description = """
+Create or verify the Docusaurus snapshot for {{version}} so the published docs
+version dropdown, default docs route, and llms-full artifact match the release.
+
+Install website dependencies if needed:
+```bash
+cd website
+npm ci
+```
+
+Create the release snapshot if it does not exist yet:
+```bash
+test -d versioned_docs/version-{{version}} || npx docusaurus docs:version {{version}}
+cd ..
+```
+
+Ensure `website/docusaurus.config.ts` selects the new release snapshot:
+```bash
+# macOS
+sed -i '' "s/lastVersion: '[^']*'/lastVersion: '{{version}}'/" website/docusaurus.config.ts
+
+# Linux
+sed -i "s/lastVersion: '[^']*'/lastVersion: '{{version}}'/" website/docusaurus.config.ts
+```
+
+Regenerate docs artifacts from the release snapshot:
+```bash
+CGO_ENABLED=0 go build -tags gms_pure_go -o ./bd-docs ./cmd/bd/
+./scripts/generate-cli-docs.sh ./bd-docs
+./scripts/generate-llms-full.sh
+```
+
+Verify:
+```bash
+./scripts/check-docs-version.sh
+./scripts/check-doc-flags.sh ./bd-docs
+rm -f ./bd-docs
 ```
 """
 

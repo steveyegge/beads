@@ -65,6 +65,12 @@ check_version "npm-package/package.json" \
 
 echo ""
 
+if ! ./scripts/check-docs-version.sh; then
+    MISMATCH=1
+fi
+
+echo ""
+
 if [ $MISMATCH -eq 1 ]; then
     echo -e "${RED}❌ Version mismatch detected!${NC}"
     echo ""
