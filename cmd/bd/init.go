@@ -28,6 +28,39 @@ import (
 	"golang.org/x/term"
 )
 
+// defaultDoltSocketPath is the standard path Dolt's sql-server uses for its
+// unix domain socket. Declared as a var (not const) so init tests can swap
+// it for a temp-dir socket without depending on a real Dolt instance.
+var defaultDoltSocketPath = "/tmp/mysql.sock"
+
+// detectDefaultDoltSocket returns the standard Dolt unix socket path if a
+// unix socket is currently listening there, otherwise returns "". Used by
+// `bd init` to opt new beads dirs into unix-socket transport when the
+// machine clearly has Dolt running locally.
+//
+// Rationale: short-lived `bd` invocations over TCP loopback create a
+// TIME_WAIT entry per close that lingers ~30s on macOS (2*MSL with
+// MSL=15s). Across crew sessions, mayor, refinery, polecats, and daemons
+// the count climbs past port-monitor alert thresholds and risks port
+// exhaustion. Unix-socket transport bypasses TIME_WAIT entirely. Setting
+// the key at init time means new rigs/clones inherit the correct config
+// from the start instead of needing a post-init fixer script.
+//
+// Conservative semantics: only sets when the socket is *currently
+// present* at init time. Machines without a running Dolt server (or with
+// a non-default socket path) fall through to the existing TCP behavior.
+// Users with a custom path can still pass `--socket` explicitly.
+func detectDefaultDoltSocket() string {
+	info, err := os.Stat(defaultDoltSocketPath)
+	if err != nil {
+		return ""
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return ""
+	}
+	return defaultDoltSocketPath
+}
+
 var initCmd = &cobra.Command{
 	Use:     "init",
 	GroupID: "setup",
@@ -857,6 +890,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				fmt.Fprintf(os.Stderr, "Warning: failed to load existing metadata.json: %v\n", err)
 			}
 
+			freshInit := existingCfg == nil
+
 			var cfg *configfile.Config
 			if existingCfg != nil {
 				// Preserve existing config
@@ -936,6 +971,15 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				}
 				if serverSocket != "" {
 					cfg.DoltServerSocket = serverSocket
+				} else if freshInit && cfg.DoltServerSocket == "" {
+					// Fresh init + no explicit --socket flag: probe the standard
+					// Dolt unix socket and adopt it if present. Eliminates TCP
+					// TIME_WAIT churn from short-lived bd invocations on busy
+					// rigs (rationale on detectDefaultDoltSocket). Falls back
+					// silently to TCP when the socket is absent.
+					if sock := detectDefaultDoltSocket(); sock != "" {
+						cfg.DoltServerSocket = sock
+					}
 				}
 				if serverUser != "" {
 					cfg.DoltServerUser = serverUser
