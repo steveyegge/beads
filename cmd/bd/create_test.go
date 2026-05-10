@@ -179,6 +179,53 @@ func TestCreateSuite(t *testing.T) {
 		}
 	})
 
+	t.Run("CreateWithLabelsAtomic", func(t *testing.T) {
+		// Regression for stg-u81 / GH#3865: create-with-labels must persist
+		// labels in the same transaction as the issue insert. The previous
+		// shape (CreateIssue with empty Labels, then N AddLabel calls) emitted
+		// a label_added event per label.
+		issue := &types.Issue{
+			Title:     "Atomic labels at create",
+			Labels:    []string{"alpha", "beta", "gamma"},
+			Priority:  1,
+			Status:    types.StatusOpen,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+		}
+
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+
+		got, err := s.GetLabels(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("failed to get labels: %v", err)
+		}
+		if len(got) != 3 {
+			t.Errorf("expected 3 labels persisted, got %d: %v", len(got), got)
+		}
+
+		events, err := s.GetEvents(ctx, issue.ID, 100)
+		if err != nil {
+			t.Fatalf("failed to get events: %v", err)
+		}
+		var created, labelAdded int
+		for _, e := range events {
+			switch e.EventType {
+			case types.EventCreated:
+				created++
+			case types.EventLabelAdded:
+				labelAdded++
+			}
+		}
+		if created != 1 {
+			t.Errorf("expected 1 created event, got %d (events: %v)", created, events)
+		}
+		if labelAdded != 0 {
+			t.Errorf("expected 0 label_added events (labels should land in the create tx), got %d (events: %v)", labelAdded, events)
+		}
+	})
+
 	t.Run("WithDependencies", func(t *testing.T) {
 		parent := &types.Issue{
 			Title:     "Parent issue",

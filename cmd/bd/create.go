@@ -528,31 +528,10 @@ var createCmd = &cobra.Command{
 			// If error getting parent or parent has no source_repo, continue with default
 		}
 
-		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			FatalError("%v", err)
-		}
-
-		// Track whether any post-create writes occurred. CreateIssue commits
-		// the issue to Dolt internally, but subsequent AddDependency/AddLabel
-		// calls only write to the working set. A follow-up Dolt commit is
-		// needed to persist them (GH#2009).
-		postCreateWrites := false
-
-		// If parent was specified, add parent-child dependency
-		if parentID != "" {
-			dep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: parentID,
-				Type:        types.DepParentChild,
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				WarnError("failed to add parent-child dependency %s -> %s: %v", issue.ID, parentID, err)
-			} else {
-				postCreateWrites = true
-			}
-		}
-
 		// Merge inherited parent labels with user-specified labels (GH#2100)
+		// and attach them to the issue so they're persisted in the same
+		// transaction as the insert. Previously a post-create AddLabel loop
+		// emitted N extra update events per create (stg-u81).
 		if len(inheritedLabels) > 0 {
 			seen := make(map[string]bool)
 			for _, l := range labels {
@@ -564,11 +543,27 @@ var createCmd = &cobra.Command{
 				}
 			}
 		}
+		issue.Labels = labels
 
-		// Add labels if specified
-		for _, label := range labels {
-			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
-				WarnError("failed to add label %s: %v", label, err)
+		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+			FatalError("%v", err)
+		}
+
+		// Track whether any post-create writes occurred. CreateIssue commits
+		// the issue (and labels) to Dolt internally, but subsequent
+		// AddDependency calls only write to the working set. A follow-up
+		// Dolt commit is needed to persist them (GH#2009).
+		postCreateWrites := false
+
+		// If parent was specified, add parent-child dependency
+		if parentID != "" {
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: parentID,
+				Type:        types.DepParentChild,
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				WarnError("failed to add parent-child dependency %s -> %s: %v", issue.ID, parentID, err)
 			} else {
 				postCreateWrites = true
 			}
