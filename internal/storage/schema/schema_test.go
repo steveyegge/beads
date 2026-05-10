@@ -41,12 +41,18 @@ func TestMigration0032ToleratesMissingAppliedAtColumn(t *testing.T) {
 		},
 	}
 
+	// Start from version 31 to exercise migration 0032's applied_at-drop
+	// tolerance. As subsequent migrations are added, the applied count grows;
+	// the assertion below tracks LatestVersion()-31 to stay accurate, while
+	// the recorded check verifies 0032 specifically was recorded after the
+	// missing-column error (the regression this test was authored to catch).
 	applied, err := runMigrations(context.Background(), db, 31, false)
 	if err != nil {
 		t.Fatalf("runMigrations returned error for already-missing applied_at: %v", err)
 	}
-	if applied != 1 {
-		t.Fatalf("applied migrations = %d, want 1", applied)
+	wantApplied := LatestVersion() - 31
+	if applied != wantApplied {
+		t.Fatalf("applied migrations = %d, want %d (LatestVersion=%d)", applied, wantApplied, LatestVersion())
 	}
 	if !recorded {
 		t.Fatal("migration 0032 was not recorded after already-missing applied_at")

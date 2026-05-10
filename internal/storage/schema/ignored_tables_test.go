@@ -32,6 +32,12 @@ func TestIgnoredTableDDL(t *testing.T) {
 	if !strings.Contains(combined, "idx_wisp_events_created_at") {
 		t.Error("IgnoredTableDDL missing idx_wisp_events_created_at index")
 	}
+
+	// Verify the 0033 widening (TEXT -> MEDIUMTEXT) on wisp tables is present.
+	// Case-insensitive match accommodates either case in the splitter output.
+	if !strings.Contains(strings.ToUpper(combined), "MEDIUMTEXT") {
+		t.Error("IgnoredTableDDL missing MEDIUMTEXT — migration 0033 not included?")
+	}
 }
 
 func TestReadMigrationSQL(t *testing.T) {
