@@ -249,7 +249,13 @@ type workspace struct {
 
 func newWorkspace(t *testing.T, bdPath string) *workspace {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "bd-regression-workspace-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		removeWorkspaceDir(t, dir)
+	})
 	w := &workspace{dir: dir, bdPath: bdPath, t: t}
 	w.cleanupBaselineDaemon()
 
@@ -272,6 +278,22 @@ func newWorkspace(t *testing.T, bdPath string) *workspace {
 	w.run("init", "--prefix", prefix, "--quiet")
 
 	return w
+}
+
+func removeWorkspaceDir(t *testing.T, dir string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var err error
+	for {
+		err = os.RemoveAll(dir)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("remove workspace dir %s: %v", dir, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (w *workspace) cleanupBaselineDaemon() {
@@ -304,6 +326,10 @@ func (w *workspace) runEnv() []string {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + w.dir,
 		"BEADS_TEST_MODE=1",
+		// The pinned v0.49.6 baseline still has daemon mode. Disable it
+		// up front so it cannot race t.TempDir cleanup by writing .beads files.
+		"BD_NO_DAEMON=1",
+		"BEADS_NO_DAEMON=1",
 		"GIT_CONFIG_NOSYSTEM=1",
 	}
 	if testDoltServerPort != 0 {
