@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 )
 
 // isBackupAutoEnabled returns whether backup should run.
@@ -64,6 +67,23 @@ func maybeAutoBackup(ctx context.Context) {
 			time.Since(state.Timestamp).Round(time.Second), interval)
 		return
 	}
+
+	// Serialize concurrent auto-backups across bd CLI forks. In server mode
+	// multiple bd processes share one Dolt sql-server; without this lock,
+	// PersistentPostRun fires per fork and all forks race past the throttle
+	// window into BackupDatabase's rm-then-add, producing duplicate
+	// CALL DOLT_BACKUP traffic. Non-blocking: if another fork holds the lock,
+	// this one skips — the holder's run already covers our changes.
+	lock, err := util.TryLock(filepath.Join(dir, ".backup.lock"))
+	if err != nil {
+		if lockfile.IsLocked(err) {
+			debug.Logf("backup: another process is backing up, skipping\n")
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Warning: auto-backup skipped: %v\n", err)
+		return
+	}
+	defer lock.Unlock()
 
 	// Change detection: skip if nothing changed
 	currentCommit, err := store.GetCurrentCommit(ctx)
