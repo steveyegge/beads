@@ -233,6 +233,13 @@ func loadServerModeFromBeadsDir(beadsDir string) {
 	}
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
+		sm := doltserver.IsSharedServerMode()
+		serverMode = sm
+		proxiedServerMode = false
+		if cmdCtx != nil {
+			cmdCtx.ServerMode = sm
+			cmdCtx.ProxiedServerMode = false
+		}
 		return
 	}
 	repairSharedServerEmbeddedMismatch(beadsDir, cfg)
@@ -256,6 +263,27 @@ func loadServerModeFromBeadsDir(beadsDir string) {
 // skip full DB init but still need to know the mode.
 func loadServerModeFromConfig() {
 	loadServerModeFromBeadsDir(beads.FindBeadsDir())
+}
+
+func applyRuntimeSharedServerMode(doltCfg *dolt.Config) {
+	if doltCfg == nil || doltCfg.ServerMode || doltCfg.ProxiedServer {
+		return
+	}
+	if doltserver.IsSharedServerMode() {
+		doltCfg.ServerMode = true
+	}
+}
+
+func publishRuntimeStoreMode(doltCfg *dolt.Config) {
+	if doltCfg == nil {
+		return
+	}
+	serverMode = doltCfg.ServerMode
+	proxiedServerMode = doltCfg.ProxiedServer
+	if cmdCtx != nil {
+		cmdCtx.ServerMode = doltCfg.ServerMode
+		cmdCtx.ProxiedServerMode = doltCfg.ProxiedServer
+	}
 }
 
 func preserveRedirectSourceDatabase(beadsDir string) {
@@ -897,6 +925,9 @@ var rootCmd = &cobra.Command{
 		// Read-only commands open the store in read-only mode to avoid modifying
 		// the database (which breaks file watchers).
 		useReadOnly := isReadOnlyCommand(cmd.Name())
+		if cmd.Name() == "sql" && len(args) > 0 && isReadOnlySQLQuery(args[0]) {
+			useReadOnly = true
+		}
 
 		// Auto-migrate database on version bump (bd-jgxi).
 		// Runs for ALL commands (including read-only ones) because the migration
@@ -930,17 +961,6 @@ var rootCmd = &cobra.Command{
 			}
 
 			doltCfg.ServerMode = cfg.IsDoltServerMode()
-			// Shared server mode (dolt.shared-server in config.yaml) is a
-			// form of server mode. Override metadata.json if it still says
-			// embedded — handles installs created before GH#2946 fix. Skip
-			// this for proxied-server: it's its own backend, not server.
-			if !doltCfg.ServerMode && !doltCfg.ProxiedServer && doltserver.IsSharedServerMode() {
-				doltCfg.ServerMode = true
-			}
-			serverMode = doltCfg.ServerMode
-			if cmdCtx != nil {
-				cmdCtx.ServerMode = doltCfg.ServerMode
-			}
 
 			// Always set database name (needed for bootstrap to find
 			// prefix-based databases like "beads_hq"; see #1669)
@@ -973,6 +993,12 @@ var rootCmd = &cobra.Command{
 		if doltCfg.Database == "" {
 			doltCfg.Database = configfile.DefaultDoltDatabase
 		}
+		// Shared server mode (dolt.shared-server in config.yaml or
+		// BEADS_DOLT_SHARED_SERVER) is a form of server mode. Apply this after
+		// the cfg nil/default path too, otherwise metadata-free shared-server
+		// workspaces and --global can silently fall back to embedded storage.
+		applyRuntimeSharedServerMode(doltCfg)
+		publishRuntimeStoreMode(doltCfg)
 		doltCfg.SyncRemote = resolveSyncRemote()
 
 		// --global flag: switch to the global shared-server database.

@@ -10,6 +10,16 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
+func isReadOnlySQLQuery(query string) bool {
+	trimmed := strings.TrimSpace(strings.ToUpper(query))
+	return strings.HasPrefix(trimmed, "SELECT") ||
+		strings.HasPrefix(trimmed, "EXPLAIN") ||
+		strings.HasPrefix(trimmed, "PRAGMA") ||
+		strings.HasPrefix(trimmed, "SHOW") ||
+		strings.HasPrefix(trimmed, "DESCRIBE") ||
+		strings.HasPrefix(trimmed, "WITH")
+}
+
 var sqlCmd = &cobra.Command{
 	Use:     "sql <query>",
 	GroupID: "maint",
@@ -53,16 +63,7 @@ WARNING: Direct database access bypasses the storage layer. Use with caution.`,
 
 		ctx := rootCtx
 
-		// Detect if it's a read query (SELECT, EXPLAIN, PRAGMA, SHOW, DESCRIBE, WITH)
-		trimmed := strings.TrimSpace(strings.ToUpper(query))
-		isRead := strings.HasPrefix(trimmed, "SELECT") ||
-			strings.HasPrefix(trimmed, "EXPLAIN") ||
-			strings.HasPrefix(trimmed, "PRAGMA") ||
-			strings.HasPrefix(trimmed, "SHOW") ||
-			strings.HasPrefix(trimmed, "DESCRIBE") ||
-			strings.HasPrefix(trimmed, "WITH")
-
-		if isRead {
+		if isReadOnlySQLQuery(query) {
 			rows, err := db.QueryContext(ctx, query)
 			if err != nil {
 				FatalErrorRespectJSON("query error: %v", err)
