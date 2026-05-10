@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/metric"
@@ -61,21 +62,23 @@ func Enabled() bool {
 //
 // Traces are exported only when BD_OTEL_STDOUT=true (stdout, for local debugging).
 // Metrics are exported to BD_OTEL_METRICS_URL and/or stdout.
-func Init(ctx context.Context, serviceName, version string) error {
+//
+// prefix, when non-empty, is captured as bd.prefix on the resource and stamped
+// as a per-measurement attribute on every emitted metric so dashboards can
+// split bd.* series per beads project. The issue prefix (visible in every
+// issue ID like "myproject-123") is the project-level identifier in beads.
+// captureBaseAttrs runs unconditionally so BaseAttrs() reports the configured
+// prefix even when telemetry is disabled — call sites get a stable contract.
+func Init(ctx context.Context, serviceName, version, prefix string) error {
+	captureBaseAttrs(prefix)
+
 	if !Enabled() {
 		otel.SetTracerProvider(tracenoop.NewTracerProvider())
 		otel.SetMeterProvider(metricnoop.NewMeterProvider())
 		return nil
 	}
 
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceNameKey.String(serviceName),
-			semconv.ServiceVersionKey.String(version),
-		),
-		resource.WithHost(),
-		resource.WithProcess(),
-	)
+	res, err := buildResource(ctx, serviceName, version, prefix)
 	if err != nil {
 		return fmt.Errorf("telemetry: resource: %w", err)
 	}
@@ -101,6 +104,30 @@ func Init(ctx context.Context, serviceName, version string) error {
 	shutdownFns = append(shutdownFns, mp.Shutdown)
 
 	return nil
+}
+
+// buildResource assembles the OTel Resource describing this bd process.
+//
+// prefix, when non-empty, is stamped as a custom bd.prefix attribute. The
+// issue prefix is the project-level identifier in beads (it shows in every
+// issue ID), so dashboards split on it. We deliberately use a custom
+// attribute rather than service.namespace: OTel k8s resource detectors and
+// the OTel Operator both populate service.namespace from the kubernetes
+// namespace, so reusing it here would either be overwritten or clash with
+// cluster conventions.
+func buildResource(ctx context.Context, serviceName, version, prefix string) (*resource.Resource, error) {
+	attrs := []attribute.KeyValue{
+		semconv.ServiceNameKey.String(serviceName),
+		semconv.ServiceVersionKey.String(version),
+	}
+	if prefix != "" {
+		attrs = append(attrs, attribute.String("bd.prefix", prefix))
+	}
+	return resource.New(ctx,
+		resource.WithAttributes(attrs...),
+		resource.WithHost(),
+		resource.WithProcess(),
+	)
 }
 
 func buildTraceProvider(_ context.Context, res *resource.Resource) (*sdktrace.TracerProvider, error) {
