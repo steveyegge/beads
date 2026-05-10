@@ -1,9 +1,11 @@
 package dolt
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -73,6 +75,59 @@ func TestGetAllEventsSince_UnionBothTables(t *testing.T) {
 			t.Errorf("events not in chronological order: [%d] %v > [%d] %v",
 				i-1, events[i-1].CreatedAt, i, events[i].CreatedAt)
 		}
+	}
+}
+
+// TestDeleteIssue_CascadesRelatedTables verifies that DeleteIssue via
+// RunInTransaction delegates to issueops.DeleteIssueInTx, which cascades to
+// related tables (labels, events, comments, dependencies). Regression guard
+// for the parity gap where the dolt path did a raw DELETE with no cascade,
+// mirroring the embedded path at internal/storage/embeddeddolt/transaction.go:78-84.
+func TestDeleteIssue_CascadesRelatedTables(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issue := &types.Issue{
+		ID:        "ev-delete-1",
+		Title:     "Issue to delete",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+
+	// Add a label so we can verify cascade cleanup happened
+	if err := store.AddLabel(ctx, issue.ID, "to-delete", "tester"); err != nil {
+		t.Fatalf("AddLabel: %v", err)
+	}
+
+	// Delete via transaction — exercises doltTransaction.DeleteIssue
+	err := store.RunInTransaction(ctx, "test: delete issue", func(tx storage.Transaction) error {
+		return tx.DeleteIssue(ctx, issue.ID)
+	})
+	if err != nil {
+		t.Fatalf("RunInTransaction/DeleteIssue: %v", err)
+	}
+
+	// Issue must be gone
+	_, getErr := store.GetIssue(ctx, issue.ID)
+	if !errors.Is(getErr, storage.ErrNotFound) {
+		t.Errorf("expected ErrNotFound after DeleteIssue, got %v", getErr)
+	}
+
+	// Labels must be cascade-cleaned — the raw-SQL path only deleted from issues,
+	// leaving label rows orphaned. Delegation to DeleteIssueInTx removes them.
+	labels, err := store.GetLabels(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("GetLabels after delete: %v", err)
+	}
+	if len(labels) != 0 {
+		t.Errorf("expected no labels after DeleteIssue, got %v (cascade did not run)", labels)
 	}
 }
 

@@ -616,17 +616,21 @@ func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason stri
 
 // DeleteIssue deletes an issue within the transaction
 func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
-	table := "issues"
-	if t.isActiveWisp(ctx, id) {
-		table = "wisps"
+	isWisp := t.isActiveWisp(ctx, id)
+	issueTable, labelTable, eventTable, depTable := issueops.WispTableRouting(isWisp)
+	commentTable := "comments"
+	if isWisp {
+		commentTable = "wisp_comments"
 	}
-
-	//nolint:gosec // G201: table is hardcoded
-	_, err := t.tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ?", table), id)
-	if err == nil {
-		t.dirty.MarkDirty(table)
+	if err := issueops.DeleteIssueInTx(ctx, t.tx, id); err != nil {
+		return wrapExecError("delete issue in tx", err)
 	}
-	return wrapExecError("delete issue in tx", err)
+	t.dirty.MarkDirty(issueTable)
+	t.dirty.MarkDirty(depTable)
+	t.dirty.MarkDirty(labelTable)
+	t.dirty.MarkDirty(commentTable)
+	t.dirty.MarkDirty(eventTable)
+	return nil
 }
 
 // AddDependency adds a dependency within the transaction.
