@@ -604,21 +604,11 @@ var rootCmd = &cobra.Command{
 		// pending batch commits before canceling the context.
 		rootCtx, rootCancel = setupGracefulShutdown()
 
-		// Initialize OTel (no-op unless BD_OTEL_METRICS_URL or BD_OTEL_STDOUT=true).
-		// Must run before any DB access so SQL spans nest under command spans.
-		if err := telemetry.Init(rootCtx, "bd", Version); err != nil {
-			debug.Logf("warning: telemetry init failed: %v", err)
-		}
-
-		// Start root span for this command. rootCtx now carries the span, so
-		// all downstream DB and AI calls become child spans automatically.
-		rootCtx, commandSpan = telemetry.Tracer("bd").Start(rootCtx, "bd.command."+cmd.Name(),
-			oteltrace.WithAttributes(
-				attribute.String("bd.command", cmd.Name()),
-				attribute.String("bd.version", Version),
-				attribute.String("bd.args", strings.Join(os.Args[1:], " ")),
-			),
-		)
+		// Initialize OTel and start the root bd.command.<name> span. Telemetry
+		// is opt-in — startCommandTelemetry is a noop unless BD_OTEL_ENABLED=true
+		// or a legacy BD_OTEL_* selector is set. Must run before any DB access
+		// so SQL spans nest under the command span.
+		rootCtx, commandSpan = startCommandTelemetry(rootCtx, cmd.Name(), Version, os.Args[1:])
 
 		// Apply verbosity flags early (before any output)
 		debug.SetVerbose(verboseFlag)
