@@ -249,16 +249,18 @@ func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) (
 // paths, an arbitrary immediate parent is recorded (the CTE has no ORDER BY, so which
 // parent is chosen is non-deterministic). Seeds are batched to stay under SQL
 // parameter limits; each batch's CTE recurses fully, so no descendants are missed.
+// Pass includeWisps=true only when ephemeral issues are in scope; false skips the
+// wisp_dependencies table scan (which can be large) to avoid query timeouts.
 //
 //nolint:gosec // G201: edgeSQL built from hardcoded table names; placeholders use ? params
-func GetTransitiveDescendantsWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []string) (map[string]string, error) {
+func GetTransitiveDescendantsWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []string, includeWisps bool) (map[string]string, error) {
 	if len(parentIDs) == 0 {
 		return nil, nil
 	}
 
-	doQuery := func(includeWisps bool) (map[string]string, error) {
+	doQuery := func(withWisps bool) (map[string]string, error) {
 		edgeSQL := `SELECT issue_id, depends_on_id FROM dependencies WHERE type = 'parent-child'`
-		if includeWisps {
+		if withWisps {
 			edgeSQL += ` UNION ALL SELECT issue_id, depends_on_id FROM wisp_dependencies WHERE type = 'parent-child'`
 		}
 
@@ -290,13 +292,13 @@ func GetTransitiveDescendantsWithParentsInTx(ctx context.Context, tx *sql.Tx, pa
 				return nil, err
 			}
 			for rows.Next() {
-				var childID, parentID string
-				if err := rows.Scan(&childID, &parentID); err != nil {
+				var descendantID, parentID string
+				if err := rows.Scan(&descendantID, &parentID); err != nil {
 					_ = rows.Close()
 					return nil, fmt.Errorf("transitive descendants: scan: %w", err)
 				}
-				if _, exists := result[childID]; !exists {
-					result[childID] = parentID
+				if _, exists := result[descendantID]; !exists {
+					result[descendantID] = parentID
 				}
 			}
 			_ = rows.Close()
@@ -307,6 +309,9 @@ func GetTransitiveDescendantsWithParentsInTx(ctx context.Context, tx *sql.Tx, pa
 		return result, nil
 	}
 
+	if !includeWisps {
+		return doQuery(false)
+	}
 	result, err := doQuery(true)
 	if err != nil {
 		if isTableNotExistError(err) {
@@ -459,12 +464,12 @@ func GetBlockedIssuesInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 	}
 
 	// Step 2: Include ALL transitive descendants of blocked parents (GH#1495 + recursive extension).
-	childToParent, childErr := GetTransitiveDescendantsWithParentsInTx(ctx, tx, blockedIDList)
+	childToParent, childErr := GetTransitiveDescendantsWithParentsInTx(ctx, tx, blockedIDList, filter.IncludeEphemeral)
 	if childErr == nil {
-		for childID := range childToParent {
-			if activeIDs[childID] && !blockedSet[childID] {
-				blockedSet[childID] = true
-				blockedIDList = append(blockedIDList, childID)
+		for descendantID := range childToParent {
+			if activeIDs[descendantID] && !blockedSet[descendantID] {
+				blockedSet[descendantID] = true
+				blockedIDList = append(blockedIDList, descendantID)
 			}
 		}
 	}

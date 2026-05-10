@@ -191,10 +191,10 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		// Also exclude ALL transitive descendants of blocked parents (GH#1495):
 		// If a parent/epic is blocked, grandchildren and deeper must also be
 		// excluded — not just direct children.
-		descendantsOfBlocked, descErr := s.getTransitiveDescendantsOfIssues(ctx, blockedIDs)
+		descendantsOfBlocked, descErr := s.getTransitiveDescendantsOfIssues(ctx, blockedIDs, filter.IncludeEphemeral)
 		if descErr == nil {
-			for childID := range descendantsOfBlocked {
-				blockedIDs = append(blockedIDs, childID)
+			for descendantID := range descendantsOfBlocked {
+				blockedIDs = append(blockedIDs, descendantID)
 			}
 		}
 
@@ -451,11 +451,12 @@ func (s *DoltStore) getChildrenOfIssues(ctx context.Context, parentIDs []string)
 
 // getTransitiveDescendantsOfIssues returns all transitive parent-child descendants
 // (grandchildren, great-grandchildren, etc.) of the given issue IDs, with cycle detection.
-func (s *DoltStore) getTransitiveDescendantsOfIssues(ctx context.Context, parentIDs []string) (map[string]string, error) {
+// Pass includeWisps=true only when ephemeral issues are in scope.
+func (s *DoltStore) getTransitiveDescendantsOfIssues(ctx context.Context, parentIDs []string, includeWisps bool) (map[string]string, error) {
 	result := make(map[string]string)
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var txErr error
-		result, txErr = issueops.GetTransitiveDescendantsWithParentsInTx(ctx, tx, parentIDs)
+		result, txErr = issueops.GetTransitiveDescendantsWithParentsInTx(ctx, tx, parentIDs, includeWisps)
 		return txErr
 	})
 	return result, err

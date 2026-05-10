@@ -169,10 +169,10 @@ func GetReadyWorkInTx(
 	blockedIDs, err := computeBlockedFn(ctx, tx, filter.IncludeEphemeral)
 	if err == nil && len(blockedIDs) > 0 {
 		// Also exclude ALL transitive descendants of blocked parents.
-		descendants, childErr := GetTransitiveDescendantsWithParentsInTx(ctx, tx, blockedIDs)
+		descendants, childErr := GetTransitiveDescendantsWithParentsInTx(ctx, tx, blockedIDs, filter.IncludeEphemeral)
 		if childErr == nil {
-			for childID := range descendants {
-				blockedIDs = append(blockedIDs, childID)
+			for descendantID := range descendants {
+				blockedIDs = append(blockedIDs, descendantID)
 			}
 		}
 
