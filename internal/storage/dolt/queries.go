@@ -448,18 +448,6 @@ func (s *DoltStore) getChildrenOfIssues(ctx context.Context, parentIDs []string)
 	return result, err
 }
 
-// getChildrenWithParents returns a map of childID -> parentID for direct children
-// (parent-child deps) of the given parent IDs.
-func (s *DoltStore) getChildrenWithParents(ctx context.Context, parentIDs []string) (map[string]string, error) {
-	var result map[string]string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		result, err = issueops.GetChildrenWithParentsInTx(ctx, tx, parentIDs)
-		return err
-	})
-	return result, err
-}
-
 func (s *DoltStore) getDescendantIDs(ctx context.Context, rootID string) ([]string, error) {
 	var result []string
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
