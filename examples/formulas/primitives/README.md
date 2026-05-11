@@ -14,6 +14,7 @@ and exercises exactly one primitive.
 | `branch-fanin.formula.toml`   | `ComposeRules.branch` | Fork-join: parallel steps fan in to a single join step. |
 | `condition.formula.toml`      | `Step.condition`   | Variable-driven step inclusion at cook time. |
 | `gate-timer.formula.toml`     | `Step.gate`        | Sibling `gate`-typed issue with `await_type` blocks the target step. |
+| `on-complete-fanout.formula.toml` | `OnCompleteSpec` | Runtime fanout: at close time the step iterates `metadata.output.<path>` and bonds the named formula once per item, substituting `{item}` / `{item.field}` / `{index}` into spec vars. |
 
 For the full primitive index — every exported struct an agent can write
 inside a `.formula.toml`/`.formula.json`, with field types and tags —
@@ -42,9 +43,6 @@ go test -tags gms_pure_go -run TestFormulaPrimitiveExamples ./cmd/bd/
 
 ## What's NOT here
 
-* `on_complete` — runtime no-op for every valid configuration as of
-  v1.0.3 (tracked in `beads-i02`). Its fixture and smoke test ship with
-  that issue's resolution PR, not here.
 * Anything in `internal/formula/types.go` without a verified end-to-end
   parse → cook → pour audit. New primitives earn a fixture once they're
   empirically wired, not when they're declared.

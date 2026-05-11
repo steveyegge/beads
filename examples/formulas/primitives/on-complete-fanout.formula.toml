@@ -1,0 +1,20 @@
+formula = "on-complete-fanout"
+version = 1
+type = "workflow"
+description = "Demonstrates on_complete runtime fanout. At cook time the spec round-trips through the subgraph; at close time (not exercised by the smoke harness — see cmd/bd/cook_c7g_test.go for the end-to-end test) the executor reads metadata.output.<path> the step itself populated, then bonds the named formula once per item with placeholder-substituted vars."
+
+[[steps]]
+id = "survey"
+title = "Survey items for fanout"
+type = "task"
+
+# After this step closes with metadata.output.items populated, the runtime
+# spawns one worker-arm molecule per element, with {item.name} substituted
+# into the spawned mol's worker_name var.
+[steps.on_complete]
+for_each = "output.items"
+bond = "worker-arm"
+parallel = true
+
+[steps.on_complete.vars]
+worker_name = "{item.name}"

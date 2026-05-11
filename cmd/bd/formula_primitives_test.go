@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,30 @@ func TestFormulaPrimitiveExamples(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "on-complete-fanout",
+			assert: func(t *testing.T, sg *TemplateSubgraph) {
+				// Smoke-level assertion: the OnCompleteSpec round-trips through
+				// cook and lands on issue.Metadata as a serialized JSON blob
+				// under the "on_complete" key (GH#3782). The runtime fanout is
+				// exercised end-to-end in cmd/bd/cook_c7g_test.go.
+				meta := metadataMap(t, sg, "on-complete-fanout.survey")
+				oc, ok := meta["on_complete"].(map[string]interface{})
+				if !ok {
+					t.Fatalf("survey step missing metadata.on_complete; metadata=%v", meta)
+				}
+				if oc["for_each"] != "output.items" {
+					t.Errorf("for_each = %v, want %q", oc["for_each"], "output.items")
+				}
+				if oc["bond"] != "worker-arm" {
+					t.Errorf("bond = %v, want %q", oc["bond"], "worker-arm")
+				}
+				vars, _ := oc["vars"].(map[string]interface{})
+				if vars["worker_name"] != "{item.name}" {
+					t.Errorf("vars.worker_name = %v, want %q", vars["worker_name"], "{item.name}")
+				}
+			},
+		},
 	}
 
 	registered := map[string]bool{}
@@ -225,6 +250,25 @@ func allIssueTitles(sg *TemplateSubgraph) []string {
 		out = append(out, i.Title)
 	}
 	return out
+}
+
+func metadataMap(t *testing.T, sg *TemplateSubgraph, issueID string) map[string]interface{} {
+	t.Helper()
+	for _, i := range sg.Issues {
+		if i.ID != issueID {
+			continue
+		}
+		if len(i.Metadata) == 0 {
+			t.Fatalf("issue %q has empty metadata", issueID)
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal(i.Metadata, &m); err != nil {
+			t.Fatalf("issue %q metadata is not JSON object: %v", issueID, err)
+		}
+		return m
+	}
+	t.Fatalf("issue %q not in subgraph; have %v", issueID, allIssueIDs(sg))
+	return nil
 }
 
 func allDeps(sg *TemplateSubgraph) []string {
