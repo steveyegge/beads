@@ -597,21 +597,14 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 
 // CloseIssue closes an issue within the transaction
 func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
-	table := "issues"
-	if t.isActiveWisp(ctx, id) {
-		table = "wisps"
+	result, err := issueops.CloseIssueInTx(ctx, t.tx, id, reason, actor, session)
+	if err != nil {
+		return wrapExecError("close issue in tx", err)
 	}
-
-	now := time.Now().UTC()
-	//nolint:gosec // G201: table is hardcoded
-	_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
-		UPDATE %s SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
-		WHERE id = ?
-	`, table), types.StatusClosed, now, now, reason, session, id)
-	if err == nil {
-		t.dirty.MarkDirty(table)
-	}
-	return wrapExecError("close issue in tx", err)
+	issueTable, _, eventTable, _ := issueops.WispTableRouting(result.IsWisp)
+	t.dirty.MarkDirty(issueTable)
+	t.dirty.MarkDirty(eventTable)
+	return nil
 }
 
 // DeleteIssue deletes an issue within the transaction
@@ -719,19 +712,14 @@ func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, depends
 
 // AddLabel adds a label within the transaction
 func (t *doltTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	table := "labels"
-	if t.isActiveWisp(ctx, issueID) {
-		table = "wisp_labels"
+	isWisp := t.isActiveWisp(ctx, issueID)
+	_, labelTable, eventTable, _ := issueops.WispTableRouting(isWisp)
+	if err := issueops.AddLabelInTx(ctx, t.tx, labelTable, eventTable, issueID, label, actor); err != nil {
+		return wrapExecError("add label in tx", err)
 	}
-
-	//nolint:gosec // G201: table is hardcoded
-	_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)
-	`, table), issueID, label)
-	if err == nil {
-		t.dirty.MarkDirty(table)
-	}
-	return wrapExecError("add label in tx", err)
+	t.dirty.MarkDirty(labelTable)
+	t.dirty.MarkDirty(eventTable)
+	return nil
 }
 
 func (t *doltTransaction) GetLabels(ctx context.Context, issueID string) ([]string, error) {
@@ -759,19 +747,14 @@ func (t *doltTransaction) GetLabels(ctx context.Context, issueID string) ([]stri
 
 // RemoveLabel removes a label within the transaction
 func (t *doltTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	table := "labels"
-	if t.isActiveWisp(ctx, issueID) {
-		table = "wisp_labels"
+	isWisp := t.isActiveWisp(ctx, issueID)
+	_, labelTable, eventTable, _ := issueops.WispTableRouting(isWisp)
+	if err := issueops.RemoveLabelInTx(ctx, t.tx, labelTable, eventTable, issueID, label, actor); err != nil {
+		return wrapExecError("remove label in tx", err)
 	}
-
-	//nolint:gosec // G201: table is hardcoded
-	_, err := t.tx.ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s WHERE issue_id = ? AND label = ?
-	`, table), issueID, label)
-	if err == nil {
-		t.dirty.MarkDirty(table)
-	}
-	return wrapExecError("remove label in tx", err)
+	t.dirty.MarkDirty(labelTable)
+	t.dirty.MarkDirty(eventTable)
+	return nil
 }
 
 // SetConfig sets a config value within the transaction
