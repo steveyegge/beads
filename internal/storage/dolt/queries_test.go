@@ -738,6 +738,83 @@ func TestGetReadyWork_FutureDeferredIssueExcluded(t *testing.T) {
 	}
 }
 
+func TestGetReadyWork_LabelsAnyFilter(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	alpha := &types.Issue{
+		ID:        "rw-alpha-1",
+		Title:     "alpha-1",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	beta := &types.Issue{
+		ID:        "rw-beta-1",
+		Title:     "beta-1",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	gamma := &types.Issue{
+		ID:        "rw-gamma-1",
+		Title:     "gamma-1",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, iss := range []*types.Issue{alpha, beta, gamma} {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", iss.ID, err)
+		}
+	}
+
+	if err := store.AddLabel(ctx, alpha.ID, "repo:alpha", "tester"); err != nil {
+		t.Fatalf("failed to add label to alpha: %v", err)
+	}
+	if err := store.AddLabel(ctx, beta.ID, "repo:beta", "tester"); err != nil {
+		t.Fatalf("failed to add label to beta: %v", err)
+	}
+
+	// Filter with LabelsAny matching both alpha and beta
+	work, err := store.GetReadyWork(ctx, types.WorkFilter{LabelsAny: []string{"repo:alpha", "repo:beta"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(work) != 2 {
+		t.Fatalf("expected 2 results with LabelsAny [repo:alpha, repo:beta], got %d", len(work))
+	}
+	ids := map[string]bool{}
+	for _, w := range work {
+		ids[w.ID] = true
+	}
+	if !ids[alpha.ID] {
+		t.Errorf("expected alpha-1 in results")
+	}
+	if !ids[beta.ID] {
+		t.Errorf("expected beta-1 in results")
+	}
+	if ids[gamma.ID] {
+		t.Errorf("gamma-1 should not appear in results")
+	}
+
+	// Filter with LabelsAny matching only alpha
+	work, err = store.GetReadyWork(ctx, types.WorkFilter{LabelsAny: []string{"repo:alpha"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("expected 1 result with LabelsAny [repo:alpha], got %d", len(work))
+	}
+	if work[0].ID != alpha.ID {
+		t.Errorf("expected alpha-1, got %s", work[0].ID)
+	}
+}
+
 // =============================================================================
 // GetBlockedIssues tests
 // =============================================================================

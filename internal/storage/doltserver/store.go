@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -333,11 +334,30 @@ func (s *DoltServerStore) GetIssuesByLabel(ctx context.Context, label string) ([
 // Storage — work queries
 
 func (s *DoltServerStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
-	panic("unimplemented")
+	var result []*types.Issue
+	err := s.withReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetReadyWorkInTx(ctx, tx, filter, doltServerComputeBlockedIDs)
+		return err
+	})
+	return result, err
+}
+
+// doltServerComputeBlockedIDs adapts ComputeBlockedIDsInTx to the callback
+// signature expected by GetReadyWorkInTx.
+func doltServerComputeBlockedIDs(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error) {
+	ids, _, err := issueops.ComputeBlockedIDsInTx(ctx, tx, includeWisps)
+	return ids, err
 }
 
 func (s *DoltServerStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
-	panic("unimplemented")
+	var result []*types.BlockedIssue
+	err := s.withReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetBlockedIssuesInTx(ctx, tx, filter)
+		return err
+	})
+	return result, err
 }
 
 func (s *DoltServerStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
