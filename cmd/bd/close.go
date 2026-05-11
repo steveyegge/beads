@@ -173,6 +173,14 @@ create, update, show, or close operation).`,
 			}
 			mutatedStores[activeStore] = struct{}{}
 
+			// Fire on_complete runtime fanout if the closed issue has a
+			// persisted OnCompleteSpec (GH#3782). A hard error (e.g. missing
+			// output) surfaces as a stderr warning rather than reverting
+			// the close — the close already happened.
+			if err := executeOnCompleteFanout(ctx, activeStore, id, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "%s\n", err)
+			}
+
 			// Audit log the close (survives Dolt GC flatten)
 			oldStatus := "open"
 			if issue != nil {

@@ -571,9 +571,20 @@ func processStepToIssue(step *formula.Step, parentID string) *types.Issue {
 		issue.Labels = append(issue.Labels, gateLabel)
 	}
 
-	// Carry step metadata through to the issue (GH#3341).
-	if len(step.Metadata) > 0 {
-		if metaJSON, err := json.Marshal(step.Metadata); err == nil {
+	// Carry step metadata + on_complete spec through to the issue.
+	// step.Metadata (GH#3341) is merged with the OnCompleteSpec under the
+	// reserved key "on_complete"; close-time fanout reads it back from there
+	// (GH#3782). bd update --metadata deep-merges, so an agent populating
+	// output.<path> at runtime won't wipe the persisted spec.
+	metaMap := make(map[string]interface{}, len(step.Metadata)+1)
+	for k, v := range step.Metadata {
+		metaMap[k] = v
+	}
+	if step.OnComplete != nil {
+		metaMap["on_complete"] = step.OnComplete
+	}
+	if len(metaMap) > 0 {
+		if metaJSON, err := json.Marshal(metaMap); err == nil {
 			issue.Metadata = metaJSON
 		}
 	}
