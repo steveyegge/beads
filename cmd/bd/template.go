@@ -618,6 +618,16 @@ func cloneSubgraph(ctx context.Context, s storage.DoltStorage, subgraph *Templat
 				return fmt.Errorf("failed to create issue from %s: %w", oldIssue.ID, err)
 			}
 
+			// Persist labels separately - tx.CreateIssue does not handle the
+			// Labels field (storage keeps labels in a separate table). Without
+			// this, labels on the in-memory subgraph (e.g. the gate:<await>
+			// label cook generates from waits_for) silently vanish on pour.
+			for _, label := range oldIssue.Labels {
+				if err := tx.AddLabel(ctx, newIssue.ID, label, opts.Actor); err != nil {
+					return fmt.Errorf("failed to add label %q to %s: %w", label, newIssue.ID, err)
+				}
+			}
+
 			idMapping[oldIssue.ID] = newIssue.ID
 		}
 
