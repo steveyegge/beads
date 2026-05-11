@@ -249,6 +249,34 @@ func applyResolvedConfig(beadsDir string, fileCfg *configfile.Config, cfg *Confi
 	}
 }
 
+// ApplyCentralConfigDefaults exports applyCentralConfigDefaults for cmd/bd's PersistentPreRun.
+func ApplyCentralConfigDefaults(fileCfg *configfile.Config) {
+	applyCentralConfigDefaults(fileCfg)
+}
+
+// ApplyEnvAndCentralDefaults fills server-connection fields from env vars
+// and ~/.config/beads/server.json. Used by bd init (before metadata.json exists).
+// Explicit CLI flags win — this only fills empty fields.
+func ApplyEnvAndCentralDefaults(cfg *Config) {
+	fileCfg := configfile.DefaultConfig()
+	applyCentralConfigDefaults(fileCfg)
+	if cfg.ServerHost == "" {
+		cfg.ServerHost = fileCfg.GetDoltServerHost()
+	}
+	if cfg.ServerPort == 0 {
+		cfg.ServerPort = fileCfg.DoltServerPort
+	}
+	if cfg.ServerUser == "" {
+		cfg.ServerUser = fileCfg.GetDoltServerUser()
+	}
+	if cfg.ServerPassword == "" {
+		cfg.ServerPassword = fileCfg.GetDoltServerPasswordForPort(cfg.ServerPort)
+	}
+	if !cfg.ServerTLS {
+		cfg.ServerTLS = fileCfg.GetDoltServerTLS()
+	}
+}
+
 // applyCentralConfigDefaults loads the central server config from
 // ~/.config/beads/server.json (or BEADS_CENTRAL_CONFIG env var) and
 // applies its server fields as defaults to the per-project config.

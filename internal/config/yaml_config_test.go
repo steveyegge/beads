@@ -946,3 +946,76 @@ func TestSetAndUnsetYamlConfig_WithBEADS_DIR_FromOutsideRepo(t *testing.T) {
 		t.Fatalf("expected runtime config to preserve other settings, got:\n%s", contentStr)
 	}
 }
+
+func TestGetDirectoryLabels(t *testing.T) {
+	tests := []struct {
+		name    string
+		subdir  string // subdirectory under the temp root to chdir into
+		dirName string // name of the directory that the config pattern matches
+		want    []string
+	}{
+		{
+			name:    "ExactMatch",
+			subdir:  "",
+			dirName: "myrepo",
+			want:    []string{"repo:myprefix"},
+		},
+		{
+			name:    "SubdirectoryMatch",
+			subdir:  "subdir",
+			dirName: "myrepo",
+			want:    []string{"repo:myprefix"},
+		},
+		{
+			name:    "NoMatch",
+			subdir:  "",
+			dirName: "otherrepo",
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			previousV := v
+			previousOverrides := overriddenKeys
+			defer func() {
+				v = previousV
+				overriddenKeys = previousOverrides
+			}()
+
+			v = viper.New()
+			overriddenKeys = map[string]bool{}
+			v.Set("directory.labels.myrepo", "repo:myprefix")
+
+			tmpDir := filepath.Join(t.TempDir(), tt.dirName)
+			if tt.subdir != "" {
+				tmpDir = filepath.Join(tmpDir, tt.subdir)
+			}
+			if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
+			}
+
+			oldWd, _ := os.Getwd()
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatalf("failed to chdir: %v", err)
+			}
+			defer os.Chdir(oldWd)
+
+			got := GetDirectoryLabels()
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("GetDirectoryLabels() = %v, want nil", got)
+				}
+			} else {
+				if len(got) != len(tt.want) {
+					t.Fatalf("GetDirectoryLabels() = %v, want %v", got, tt.want)
+				}
+				for i := range tt.want {
+					if got[i] != tt.want[i] {
+						t.Fatalf("GetDirectoryLabels()[%d] = %q, want %q", i, got[i], tt.want[i])
+					}
+				}
+			}
+		})
+	}
+}

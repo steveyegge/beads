@@ -923,6 +923,12 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "warning: failed to load beads config from %s: %v\n", beadsDir, cfgErr)
 		}
 		if cfg != nil {
+			// Apply central config (~/.config/beads/server.json) defaults to cfg
+			// before reading values via cfg.Get* below. NewFromConfigWithCLIOptions
+			// does this for the helper paths (bd doctor etc.), but the runtime
+			// PersistentPreRun path historically didn't, silently ignoring central
+			// config for the main CLI commands. See docs/INIT_TLS_BUG.md.
+			dolt.ApplyCentralConfigDefaults(cfg)
 			doltCfg.ProxiedServer = cfg.IsDoltProxiedServerMode()
 			proxiedServerMode = doltCfg.ProxiedServer
 			if cmdCtx != nil {

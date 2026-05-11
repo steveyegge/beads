@@ -232,6 +232,23 @@ func TestDoltCLIRequiresExplicitDirInGenericExternalServerMode(t *testing.T) {
 	}
 }
 
+func TestApplyEnvAndCentralDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	serverJSON := filepath.Join(tmpDir, "server.json")
+	if err := os.WriteFile(serverJSON, []byte(`{"dolt_server_tls": true}`), 0o644); err != nil {
+		t.Fatalf("failed to write server.json: %v", err)
+	}
+
+	t.Setenv("BEADS_CENTRAL_CONFIG", serverJSON)
+
+	cfg := Config{}
+	ApplyEnvAndCentralDefaults(&cfg)
+
+	if !cfg.ServerTLS {
+		t.Fatal("ServerTLS = false, want true after central config with dolt_server_tls: true")
+	}
+}
+
 func TestApplyResolvedConfig(t *testing.T) {
 	t.Run("fills server config for legacy metadata without dolt_mode", func(t *testing.T) {
 		beadsDir := t.TempDir()

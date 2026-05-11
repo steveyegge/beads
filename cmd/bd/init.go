@@ -811,6 +811,15 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
+		// Resolve env vars + central config (~/.config/beads/server.json) onto
+		// the manually-built doltCfg. metadata.json doesn't exist yet, so init
+		// can't go through the normal NewFromConfigWithCLIOptions path that
+		// applies these. Without this call, BEADS_DOLT_SERVER_TLS,
+		// BEADS_DOLT_PASSWORD, BEADS_DOLT_SERVER_HOST/USER, and central config
+		// are silently ignored at init time, breaking init against any
+		// TLS-required Dolt server (e.g. Hosted DoltDB, RDS).
+		dolt.ApplyEnvAndCentralDefaults(doltCfg)
+
 		store, err := newDoltStore(ctx, doltCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt store: %v\n", err)
