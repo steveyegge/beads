@@ -498,6 +498,12 @@ func IsDoltNothingToCommit(err error) bool {
 
 // ReadConfigPrefix reads and normalizes issue_prefix from the config table.
 func ReadConfigPrefix(ctx context.Context, tx *sql.Tx) (string, error) {
+	// In shared-server mode the DB's issue_prefix is a global default that
+	// may not match the current repo. The per-repo config.yaml issue-prefix
+	// key takes precedence (matches the validation path in create.go:451).
+	if yamlPrefix := config.GetString("issue-prefix"); yamlPrefix != "" {
+		return strings.TrimSuffix(yamlPrefix, "-"), nil
+	}
 	var configPrefix string
 	err := tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {

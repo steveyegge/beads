@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd create` uses per-repo prefix in shared-server mode** — `ReadConfigPrefix` now reads `issue_prefix` from `metadata.json` before falling back to the DB `config` table. In shared-server setups where multiple repos share one Dolt database, the global `issue_prefix` row no longer overrides per-repo prefixes. Precedence: config.yaml `issue-prefix` > metadata.json `issue_prefix` > DB config table.
+- **`bd ready` honors `LabelsAny` filter** — `GetReadyWork` in all three store implementations (DoltStore, EmbeddedDoltStore, DoltServerStore) now applies `WorkFilter.LabelsAny`, fixing `directory.labels`-based auto-scoping for `bd ready` (was already working for `bd list`).
+- **TLS and central config propagated at init and runtime** — `bd init --dolt-mode server` and runtime commands now read TLS, host, port, user from `~/.config/beads/server.json` and environment variables.
+- **`DoltServerStore.GetReadyWork` implemented** — was `panic("unimplemented")`, blocking `bd ready` in server mode entirely.
 - **`bd dolt status` reports externally-managed local servers truthfully** - when a rig is configured as `dolt_mode: server` pointing at a local host but `dolt.auto-start: false` (so an orchestrator or systemd owns the sql-server lifecycle), `bd dolt status` previously said `not running` because no PID file existed. It now SQL-probes the configured endpoint, matching the path already used for non-local hosts, and reports `running (external)` with host/port/database/version when the server answers. **JSON output shape change**: on affected rigs, `bd dolt status --json` now emits `{"running": true, "mode": "external", ...}` instead of `{"running": false, "pid": 0, ...}`. Automation that parsed the old `running:false` as a "needs restart" sentinel should switch to checking `running` directly. (be-0eyj, [#3550](https://github.com/gastownhall/beads/pull/3550))
 
 ## [1.0.4] - 2026-05-07

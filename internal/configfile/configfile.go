@@ -16,8 +16,9 @@ import (
 const ConfigFileName = "metadata.json"
 
 type Config struct {
-	Database string `json:"database"`
-	Backend  string `json:"backend,omitempty"` // Deprecated: always "dolt". Kept for JSON compat.
+	Database    string `json:"database"`
+	Backend     string `json:"backend,omitempty"`      // Deprecated: always "dolt". Kept for JSON compat.
+	IssuePrefix string `json:"issue_prefix,omitempty"` // Per-repo issue ID prefix (e.g. "quarry", "biff")
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)

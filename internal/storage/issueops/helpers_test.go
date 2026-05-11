@@ -1,8 +1,10 @@
 package issueops
 
 import (
+	"context"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -303,4 +305,68 @@ func TestTableRouting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReadConfigPrefix_ConfigShortcut verifies that ReadConfigPrefix returns the
+// viper issue-prefix value without querying the database. A nil *sql.Tx is
+// passed intentionally: if the function tried to query the DB it would panic,
+// proving the config shortcut is taken.
+func TestReadConfigPrefix_ConfigShortcut(t *testing.T) {
+	// Not parallel: mutates global viper state.
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+	t.Cleanup(config.ResetForTesting)
+
+	tests := []struct {
+		name   string
+		value  string
+		expect string
+	}{
+		{name: "plain prefix", value: "quarry", expect: "quarry"},
+		{name: "trailing hyphen stripped", value: "biff-", expect: "biff"},
+		{name: "no trailing hyphen", value: "punt-labs", expect: "punt-labs"},
+		{name: "multi-segment trailing hyphen", value: "my-project-", expect: "my-project"},
+		{name: "single char prefix", value: "x", expect: "x"},
+		{name: "only hyphen becomes empty", value: "-", expect: ""},
+		{name: "whitespace-only still uses config path", value: " ", expect: " "},
+		{name: "config matches hypothetical DB value", value: "shared", expect: "shared"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			config.Set("issue-prefix", tc.value)
+			t.Cleanup(func() { config.Set("issue-prefix", "") })
+
+			got, err := ReadConfigPrefix(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("ReadConfigPrefix() error = %v", err)
+			}
+			if got != tc.expect {
+				t.Errorf("ReadConfigPrefix() = %q, want %q", got, tc.expect)
+			}
+		})
+	}
+}
+
+// TestReadConfigPrefix_FallsThrough verifies that when issue-prefix is empty,
+// ReadConfigPrefix attempts the database query (not short-circuited). Passing
+// a nil tx triggers a panic from tx.QueryRowContext, which proves the config
+// shortcut was not taken.
+func TestReadConfigPrefix_FallsThrough(t *testing.T) {
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+	t.Cleanup(config.ResetForTesting)
+
+	// Ensure issue-prefix is empty so the config shortcut is not taken.
+	config.Set("issue-prefix", "")
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("ReadConfigPrefix() with nil tx and no config prefix should panic on DB query, but did not")
+		}
+	}()
+
+	_, _ = ReadConfigPrefix(context.Background(), nil)
 }
