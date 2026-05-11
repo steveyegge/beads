@@ -49,10 +49,6 @@ import (
 // DefaultSQLPort is the default port for dolt sql-server.
 const DefaultSQLPort = 3307
 
-// EnvDoltCLIDir points bd at the local Dolt database directory used for
-// subprocess CLI operations when the SQL server is externally managed.
-const EnvDoltCLIDir = "BEADS_DOLT_CLI_DIR"
-
 // testDatabasePrefixes are name prefixes that indicate a test database.
 // Used by isTestDatabaseName to prevent test databases from being created
 // on the production Dolt server (Clown Shows #12-#18).
@@ -195,7 +191,6 @@ type DoltStore struct {
 	remoteUser     string // Remote auth user for Hosted Dolt push/pull (optional)
 	remotePassword string // Remote auth password for Hosted Dolt push/pull (optional)
 	serverMode     bool   // true when connected to external dolt sql-server (not embedded)
-	serverOwner    doltserver.ServerMode
 
 	// autoStartedServerDir is set when this store triggered a dolt sql-server
 	// auto-start. Close() uses it to stop the server when the last store
@@ -1110,7 +1105,6 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remoteUser:           cfg.RemoteUser,
 		remotePassword:       cfg.RemotePassword,
 		serverMode:           true,
-		serverOwner:          doltserver.ResolveServerMode(beadsDir),
 		readOnly:             cfg.ReadOnly,
 		autoStartedServerDir: autoStartedDir,
 	}
@@ -1542,36 +1536,13 @@ func (s *DoltStore) Path() string {
 // Use this instead of Path() when running dolt CLI commands that target the
 // actual database (e.g., remote add/remove, push, pull).
 func (s *DoltStore) CLIDir() string {
-	if dir := strings.TrimSpace(os.Getenv(EnvDoltCLIDir)); dir != "" {
-		return filepath.Clean(dir)
-	}
 	if s.serverMode && doltserver.IsSharedServerMode() && s.beadsDir != "" {
 		return filepath.Join(doltserver.ResolveDoltDir(s.beadsDir), s.database)
-	}
-	if s.requiresExplicitCLIDir() {
-		return ""
 	}
 	if s.dbPath == "" {
 		return ""
 	}
 	return filepath.Join(s.dbPath, s.database)
-}
-
-func (s *DoltStore) requiresExplicitCLIDir() bool {
-	return s.serverMode &&
-		s.serverOwner == doltserver.ServerModeExternal &&
-		!doltserver.IsSharedServerMode()
-}
-
-func (s *DoltStore) requireCLIDir(operation string) (string, error) {
-	dir := s.CLIDir()
-	if dir != "" {
-		return dir, nil
-	}
-	if s.requiresExplicitCLIDir() {
-		return "", fmt.Errorf("%s requires a local Dolt CLI database directory in external-server mode; set %s to the local Dolt database path or use a remote type supported by SQL DOLT_PUSH/DOLT_PULL", operation, EnvDoltCLIDir)
-	}
-	return "", fmt.Errorf("%s requires a local Dolt CLI database directory, but none is configured", operation)
 }
 
 // DoltGC runs Dolt garbage collection to reclaim disk space.
@@ -1878,9 +1849,6 @@ func (s *DoltStore) isGitProtocolRemote(ctx context.Context, remote string) bool
 				if !doltutil.IsGitProtocolURL(r.URL) {
 					return false
 				}
-				if s.requiresExplicitCLIDir() && s.CLIDir() == "" {
-					return true
-				}
 				// Verify remote exists in CLI directory before routing to CLI push/pull.
 				// When the dolt sql-server is externally managed, remotes may exist only
 				// on the server's filesystem, not in the local dbPath.
@@ -1986,10 +1954,6 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 	if err := s.prePushFSCK(ctx); err != nil {
 		return err
 	}
-	cliDir, err := s.requireCLIDir("dolt push")
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
 	defer cancel()
 	args := []string{"push"}
@@ -1998,7 +1962,7 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 	}
 	args = append(args, remote, s.branch)
 	cmd := exec.CommandContext(ctx, "dolt", args...) // #nosec G204 -- fixed command with validated remote/branch
-	cmd.Dir = cliDir
+	cmd.Dir = s.CLIDir()
 	creds.applyToCmd(cmd)
 	if s.isS3Remote(ctx, remote) {
 		applyS3ChecksumEnvToCmd(cmd)
@@ -2015,14 +1979,10 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 // Used for git-protocol remotes where CALL DOLT_PULL times out through the SQL connection.
 // If creds is non-nil, credentials are set on the subprocess environment only.
 func (s *DoltStore) doltCLIPull(ctx context.Context, remote string, creds *remoteCredentials) error {
-	cliDir, err := s.requireCLIDir("dolt pull")
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "dolt", "pull", remote, s.branch) // #nosec G204 -- fixed command
-	cmd.Dir = cliDir
+	cmd.Dir = s.CLIDir()
 	creds.applyToCmd(cmd)
 	if s.isS3Remote(ctx, remote) {
 		applyS3ChecksumEnvToCmd(cmd)
@@ -2088,20 +2048,12 @@ func (s *DoltStore) pushToRemote(ctx context.Context, remote string, force bool)
 	if s.shouldUseCLIForCredentials(ctx, remote, creds) {
 		return s.doltCLIPush(ctx, remote, force, creds)
 	}
-	if !creds.empty() && s.requiresExplicitCLIDir() && s.CLIDir() == "" {
-		_, err := s.requireCLIDir("dolt push")
-		return err
-	}
 	// Cloud auth CLI routing: when cloud storage env vars (AZURE_*, AWS_*,
 	// etc.) are set and we're in server mode, route through CLI so the dolt
 	// subprocess inherits the current env. The SQL server may not have these
 	// vars if it was started in a different context (GH#6).
 	if s.shouldUseCLIForCloudAuth(remote) {
 		return s.doltCLIPush(ctx, remote, force, creds)
-	}
-	if s.requiresExplicitCLIDir() && s.CLIDir() == "" && s.hasCloudAuthForSQLRemote(ctx, remote) {
-		_, err := s.requireCLIDir("dolt push")
-		return err
 	}
 	// If the same remote exists in the local Dolt directory, prefer CLI push.
 	// This matches direct `dolt push` behavior and avoids sql-server mediated
@@ -2202,17 +2154,9 @@ func (s *DoltStore) pullFromRemote(ctx context.Context, remote string) (retErr e
 		}
 		return nil
 	}
-	if !creds.empty() && s.requiresExplicitCLIDir() && s.CLIDir() == "" {
-		_, err := s.requireCLIDir("dolt pull")
-		return err
-	}
 	// Cloud auth CLI routing (GH#6).
 	if s.shouldUseCLIForCloudAuth(remote) {
 		return s.doltCLIPull(ctx, remote, creds)
-	}
-	if s.requiresExplicitCLIDir() && s.CLIDir() == "" && s.hasCloudAuthForSQLRemote(ctx, remote) {
-		_, err := s.requireCLIDir("dolt pull")
-		return err
 	}
 	if s.remoteUser != "" && remote == s.remote {
 		return withRemoteOperationEnv(creds, s.isS3Remote(ctx, remote), func() error {
