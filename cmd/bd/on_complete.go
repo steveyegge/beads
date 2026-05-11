@@ -170,7 +170,7 @@ func bondOneForOnComplete(ctx context.Context, s storage.DoltStorage, closedIssu
 		ctx, s, subgraph, subgraph.Root, closedIssue,
 		types.BondTypeParallel, // siblings under the closed step
 		itemVars,
-		"",    // childRef: random hash by default; future spec field could add naming
+		"", // childRef: random hash by default; future spec field could add naming
 		actor,
 		false, // ephemeral
 		true,  // pour: children persist
