@@ -276,6 +276,44 @@ func TestEmbeddedCreate(t *testing.T) {
 		}
 	})
 
+	t.Run("labels_atomic", func(t *testing.T) {
+		// Regression for stg-u81 / gastownhall/beads#3868: `bd create
+		// --labels A,B,C` must persist labels in the create transaction,
+		// not via N post-create AddLabel calls. The bug was in CLI
+		// plumbing (buildCreateIssue did not propagate labels onto the
+		// *Issue), so a storage-layer test would not catch a regression.
+		// This test runs the CLI as a subprocess and inspects the events
+		// table directly.
+		dir, beadsDir, _ := bdInit(t, bd, "--prefix", "la")
+		issue := bdCreate(t, bd, dir, "Atomic labels via CLI",
+			"-l", "alpha,beta,gamma")
+
+		dataDir := filepath.Join(beadsDir, "embeddeddolt")
+		db, cleanup, err := embeddeddolt.OpenSQL(t.Context(), dataDir, "la", "main")
+		if err != nil {
+			t.Fatalf("OpenSQL: %v", err)
+		}
+		defer cleanup()
+
+		var created, labelAdded int
+		if err := db.QueryRowContext(t.Context(),
+			"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = 'created'",
+			issue.ID).Scan(&created); err != nil {
+			t.Fatalf("query created events: %v", err)
+		}
+		if err := db.QueryRowContext(t.Context(),
+			"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = 'label_added'",
+			issue.ID).Scan(&labelAdded); err != nil {
+			t.Fatalf("query label_added events: %v", err)
+		}
+		if created != 1 {
+			t.Errorf("expected 1 created event, got %d", created)
+		}
+		if labelAdded != 0 {
+			t.Errorf("expected 0 label_added events (labels should land in the create tx), got %d", labelAdded)
+		}
+	})
+
 	t.Run("explicit_id", func(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "ei")
 		issue := bdCreate(t, bd, dir, "Explicit ID", "--id", "ei-custom42")

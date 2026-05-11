@@ -180,10 +180,13 @@ func TestCreateSuite(t *testing.T) {
 	})
 
 	t.Run("CreateWithLabelsAtomic", func(t *testing.T) {
-		// Regression for stg-u81 / GH#3865: create-with-labels must persist
-		// labels in the same transaction as the issue insert. The previous
-		// shape (CreateIssue with empty Labels, then N AddLabel calls) emitted
-		// a label_added event per label.
+		// Contract test for the storage-layer invariant the cmd/bd fix
+		// for stg-u81 (gastownhall/beads#3868) relies on: when *Issue
+		// has Labels populated, CreateIssue persists them in the same
+		// transaction (one created event, zero label_added events).
+		// The CLI-level regression test that catches a recurrence of
+		// the actual bug lives in cmd/bd/create_embedded_test.go
+		// (TestEmbeddedCreate / labels_atomic).
 		issue := &types.Issue{
 			Title:     "Atomic labels at create",
 			Labels:    []string{"alpha", "beta", "gamma"},

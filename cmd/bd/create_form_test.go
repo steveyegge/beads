@@ -301,6 +301,52 @@ func TestCreateIssueFromFormValues(t *testing.T) {
 		}
 	})
 
+	t.Run("WithLabelsAtomic", func(t *testing.T) {
+		// Regression for stg-u81 / gastownhall/beads#3868: the form path
+		// must persist labels in the create transaction, not via N
+		// post-create AddLabel calls. Parallel to the CLI fix in
+		// cmd/bd/create.go; same shape, same call site for the bug.
+		fv := &createFormValues{
+			Title:     "Atomic labels via form",
+			Priority:  1,
+			IssueType: "task",
+			Labels:    []string{"alpha", "beta", "gamma"},
+		}
+
+		issue, err := CreateIssueFromFormValues(ctx, s, fv, "test")
+		if err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+
+		got, err := s.GetLabels(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("get labels: %v", err)
+		}
+		if len(got) != 3 {
+			t.Errorf("expected 3 labels persisted, got %d: %v", len(got), got)
+		}
+
+		events, err := s.GetEvents(ctx, issue.ID, 100)
+		if err != nil {
+			t.Fatalf("get events: %v", err)
+		}
+		var created, labelAdded int
+		for _, e := range events {
+			switch e.EventType {
+			case types.EventCreated:
+				created++
+			case types.EventLabelAdded:
+				labelAdded++
+			}
+		}
+		if created != 1 {
+			t.Errorf("expected 1 created event, got %d", created)
+		}
+		if labelAdded != 0 {
+			t.Errorf("expected 0 label_added events (labels should land in the create tx), got %d", labelAdded)
+		}
+	})
+
 	t.Run("WithDependencies", func(t *testing.T) {
 		// Create a parent issue first
 		parentFv := &createFormValues{

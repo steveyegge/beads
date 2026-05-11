@@ -171,31 +171,10 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 		}
 	}
 
-	if err := s.CreateIssue(ctx, issue, actor); err != nil {
-		return nil, fmt.Errorf("failed to create issue: %w", err)
-	}
-
-	// Track whether any post-create writes occurred. CreateIssue commits
-	// the issue to Dolt internally, but subsequent AddDependency/AddLabel
-	// calls only write to the working set. A follow-up Dolt commit is
-	// needed to persist them (GH#2009).
-	postCreateWrites := false
-
-	// If parent was specified, add parent-child dependency (GH#1983)
-	if fv.ParentID != "" {
-		dep := &types.Dependency{
-			IssueID:     issue.ID,
-			DependsOnID: fv.ParentID,
-			Type:        types.DepParentChild,
-		}
-		if err := s.AddDependency(ctx, dep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add parent-child dependency %s -> %s: %v\n", issue.ID, fv.ParentID, err)
-		} else {
-			postCreateWrites = true
-		}
-	}
-
 	// Merge inherited parent labels with user-specified labels (GH#2100)
+	// and attach them to the issue so they're persisted in the same
+	// transaction as the insert. Previously a post-create AddLabel loop
+	// emitted N extra update events per create (stg-u81).
 	if len(inheritedLabels) > 0 {
 		seen := make(map[string]bool)
 		for _, l := range fv.Labels {
@@ -207,12 +186,27 @@ func CreateIssueFromFormValues(ctx context.Context, s storage.DoltStorage, fv *c
 			}
 		}
 	}
+	issue.Labels = fv.Labels
 
-	// Add labels if specified
-	for _, label := range fv.Labels {
-		if err := s.AddLabel(ctx, issue.ID, label, actor); err != nil {
-			// Log warning but don't fail the entire operation
-			fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
+	if err := s.CreateIssue(ctx, issue, actor); err != nil {
+		return nil, fmt.Errorf("failed to create issue: %w", err)
+	}
+
+	// Track whether any post-create writes occurred. CreateIssue commits
+	// the issue (and labels) to Dolt internally, but subsequent
+	// AddDependency calls only write to the working set. A follow-up
+	// Dolt commit is needed to persist them (GH#2009).
+	postCreateWrites := false
+
+	// If parent was specified, add parent-child dependency (GH#1983)
+	if fv.ParentID != "" {
+		dep := &types.Dependency{
+			IssueID:     issue.ID,
+			DependsOnID: fv.ParentID,
+			Type:        types.DepParentChild,
+		}
+		if err := s.AddDependency(ctx, dep, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add parent-child dependency %s -> %s: %v\n", issue.ID, fv.ParentID, err)
 		} else {
 			postCreateWrites = true
 		}
