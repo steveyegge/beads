@@ -1396,6 +1396,79 @@ func TestShouldUseExternalDoltStatus(t *testing.T) {
 	}
 }
 
+// TestDoltPullVerboseFlagRegistered verifies --verbose is declared on bd dolt pull.
+func TestDoltPullVerboseFlagRegistered(t *testing.T) {
+	f := doltPullCmd.Flag("verbose")
+	if f == nil {
+		t.Fatal("expected --verbose flag to be registered on bd dolt pull")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--verbose default = %q, want %q", f.DefValue, "false")
+	}
+}
+
+// TestDoltPullStreamingFnOverridable verifies doltPullStreamingFn can be
+// swapped in tests (injectable var pattern, same as listDoltCLIRemotes).
+func TestDoltPullStreamingFnOverridable(t *testing.T) {
+	original := doltPullStreamingFn
+	defer func() { doltPullStreamingFn = original }()
+
+	called := false
+	doltPullStreamingFn = func(_ context.Context, _, _ string) error {
+		called = true
+		return nil
+	}
+	_ = doltPullStreamingFn(context.Background(), "/fake", "origin")
+	if !called {
+		t.Fatal("expected overridden doltPullStreamingFn to be called")
+	}
+}
+
+// TestDoltDefaultRemoteFromRepoState verifies doltDefaultRemote reads the
+// first remote name from .dolt/repo_state.json when the file exists.
+func TestDoltDefaultRemoteFromRepoState(t *testing.T) {
+	dir := t.TempDir()
+	doltDir := filepath.Join(dir, ".dolt")
+	if err := os.MkdirAll(doltDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	repoState := `{"remotes": {"nas": {"name": "nas", "url": "file:///vol/nas"}}}`
+	if err := os.WriteFile(filepath.Join(doltDir, "repo_state.json"), []byte(repoState), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got := doltDefaultRemote(dir)
+	if got != "nas" {
+		t.Errorf("doltDefaultRemote = %q, want %q", got, "nas")
+	}
+}
+
+// TestDoltDefaultRemoteFallback verifies doltDefaultRemote returns "origin"
+// when repo_state.json is absent or malformed.
+func TestDoltDefaultRemoteFallback(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"missing file", ""},
+		{"no remotes key", `{"head": "main"}`},
+		{"empty remotes", `{"remotes": {}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.content != "" {
+				doltDir := filepath.Join(dir, ".dolt")
+				_ = os.MkdirAll(doltDir, 0o755)
+				_ = os.WriteFile(filepath.Join(doltDir, "repo_state.json"), []byte(tc.content), 0o644)
+			}
+			got := doltDefaultRemote(dir)
+			if got != "origin" {
+				t.Errorf("doltDefaultRemote = %q, want %q", got, "origin")
+			}
+		})
+	}
+}
+
 // TestRenderLocalDoltStatus exercises the bd-managed (PID-file) output
 // path that doltStatusCmd takes when bd owns the server lifecycle. The
 // externally-managed path is covered by TestRunExternalDoltStatus_Unreachable;

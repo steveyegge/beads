@@ -303,7 +303,7 @@ silently ignored.`,
 					} else {
 						fmt.Println("Pulling from Dolt remote...")
 					}
-					if err := doltPullStreaming(ctx, cliDir, remote); err != nil {
+					if err := doltPullStreamingFn(ctx, cliDir, remote); err != nil {
 						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 						if isRemoteNotFoundErr(err) {
 							if remote != "" {
@@ -358,6 +358,10 @@ silently ignored.`,
 		fmt.Println("Pull complete.")
 	},
 }
+
+// doltPullStreamingFn is the function used by --verbose to stream dolt pull
+// output. Overridable in tests to avoid shelling out to the dolt binary.
+var doltPullStreamingFn = doltPullStreaming
 
 // doltPullStreaming runs dolt pull as a subprocess with stdout and stderr
 // piped directly to the terminal, so transfer progress is visible in real time.
