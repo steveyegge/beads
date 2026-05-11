@@ -50,32 +50,36 @@ bd init [flags]
 **Flags:**
 
 ```
-      --agents-file string       Custom filename for agent instructions (default: AGENTS.md)
-      --agents-profile string    AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
-      --agents-template string   Path to custom AGENTS.md template (overrides embedded default)
-      --backend string           Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
-      --contributor              Run OSS contributor setup wizard
-      --database string          Use existing server database name (overrides prefix-based naming)
-      --destroy-token string     Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
-      --discard-remote           Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
-      --external                 Server is externally managed (skip server startup); use with --shared-server or --server
-      --force                    Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
-      --from-jsonl               Import issues from .beads/issues.jsonl instead of git history
-      --non-interactive          Skip all interactive prompts (auto-detected in CI or non-TTY environments)
-  -p, --prefix string            Issue prefix (default: current directory name)
-  -q, --quiet                    Suppress output (quiet mode)
-      --reinit-local             Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
-      --remote string            Dolt remote URL to clone from and persist as sync.remote
-      --role string              Set beads role without prompting: "maintainer" or "contributor"
-      --server                   Use external dolt sql-server instead of embedded engine
-      --server-host string       Dolt server host (default: 127.0.0.1)
-      --server-port int          Dolt server port (default: 3307)
-      --server-socket string     Unix domain socket path (overrides host/port)
-      --server-user string       Dolt server MySQL user (default: root)
-      --setup-exclude            Configure .git/info/exclude to keep beads files local (for forks)
-      --shared-server            Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
-      --skip-agents              Skip AGENTS.md and Claude settings generation
-      --skip-hooks               Skip git hooks installation
-      --stealth                  Enable stealth mode: global gitattributes and gitignore, no local repo tracking
-      --team                     Run team workflow setup wizard
+      --agents-file string                Custom filename for agent instructions (default: AGENTS.md)
+      --agents-profile string             AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
+      --agents-template string            Path to custom AGENTS.md template (overrides embedded default)
+      --backend string                    Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
+      --contributor                       Run OSS contributor setup wizard
+      --database string                   Use existing server database name (overrides prefix-based naming)
+      --destroy-token string              Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
+      --discard-remote                    Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
+      --external                          Server is externally managed (skip server startup); use with --shared-server or --server
+      --force                             Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
+      --from-jsonl                        Import issues from .beads/issues.jsonl instead of git history
+      --non-interactive                   Skip all interactive prompts (auto-detected in CI or non-TTY environments)
+  -p, --prefix string                     Issue prefix (default: current directory name)
+      --proxied-server                    [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
+      --proxied-server-config string      [EXPERIMENTAL] Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.
+      --proxied-server-log-path string    [EXPERIMENTAL] Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.
+      --proxied-server-root-path string   [EXPERIMENTAL] Directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it.
+  -q, --quiet                             Suppress output (quiet mode)
+      --reinit-local                      Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
+      --remote string                     Dolt remote URL to clone from and persist as sync.remote
+      --role string                       Set beads role without prompting: "maintainer" or "contributor"
+      --server                            Use external dolt sql-server instead of embedded engine
+      --server-host string                Dolt server host (default: 127.0.0.1)
+      --server-port int                   Dolt server port (default: 3307)
+      --server-socket string              Unix domain socket path (overrides host/port)
+      --server-user string                Dolt server MySQL user (default: root)
+      --setup-exclude                     Configure .git/info/exclude to keep beads files local (for forks)
+      --shared-server                     Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
+      --skip-agents                       Skip AGENTS.md and Claude settings generation
+      --skip-hooks                        Skip git hooks installation
+      --stealth                           Enable stealth mode: global gitattributes and gitignore, no local repo tracking
+      --team                              Run team workflow setup wizard
 ```
