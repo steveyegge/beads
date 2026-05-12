@@ -49,7 +49,7 @@ func emitLargeRigNotice(out io.Writer, count int64, err error) {
 	if err != nil || count <= largeRigThreshold {
 		return
 	}
-	fmt.Fprintf(out, "Large rig detected (%d issues). This migration may take up to 60 seconds; do not interrupt.\n", count)
+	fmt.Fprintf(out, "Large rig detected (%d issues). This migration may take up to 90 seconds; do not interrupt.\n", count)
 }
 
 // humanMigrationName turns "0033_add_date_indexes.up.sql" into
