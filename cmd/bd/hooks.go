@@ -1349,6 +1349,7 @@ func exportJSONLForCommit() {
 	fullPath := filepath.Join(beadsDir, exportPath)
 
 	debug.Logf("pre-commit: exporting JSONL to %s\n", fullPath)
+	warnJSONLWithoutDoltRemote("pre-commit auto-export")
 
 	// Shell out to `bd export` which initializes its own store.
 	// Clear BD_GIT_HOOK from the subprocess env so that its
@@ -1388,9 +1389,9 @@ func exportSubprocessDir(beadsDir string) string {
 }
 
 // importJSONLForSync imports .beads/issues.jsonl into Dolt after a git
-// pull/merge/branch-checkout, so issues created on other machines enter
-// the local database before the next auto-export overwrites the JSONL
-// with our (possibly stale) view. Symmetric to exportJSONLForCommit.
+// pull/merge/branch-checkout only for legacy projects with no Dolt remote.
+// When sync.remote is configured, Dolt remains the source of truth and JSONL
+// import is skipped because upsert-only import cannot reconcile stale exports.
 //
 // Errors are logged as warnings but never block the merge/checkout. The
 // import is upsert; running it on an unchanged JSONL is a no-op (bd
@@ -1399,6 +1400,10 @@ func exportSubprocessDir(beadsDir string) string {
 // See GH#3729.
 func importJSONLForSync(reason string) {
 	if !config.GetBool("import.auto") {
+		return
+	}
+	if resolveSyncRemote() != "" {
+		debug.Logf("%s: skipping JSONL import because sync.remote is configured\n", reason)
 		return
 	}
 
@@ -1418,6 +1423,7 @@ func importJSONLForSync(reason string) {
 	}
 
 	debug.Logf("%s: importing JSONL from %s\n", reason, fullPath)
+	warnJSONLWithoutDoltRemote(reason + " JSONL import")
 
 	// Shell out to `bd import` — same pattern as exportJSONLForCommit.
 	// Clear BD_GIT_HOOK so the subprocess's own hook-detection logic
@@ -1439,6 +1445,19 @@ func importJSONLForSync(reason string) {
 	fmt.Fprintf(os.Stderr, "beads: %s import warning: %v\n%s", reason, err, out)
 }
 
+func warnJSONLWithoutDoltRemote(reason string) {
+	if config.GetBool("no-git-ops") || resolveSyncRemote() != "" || !isGitRepo() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "beads: %s warning: no Dolt remote configured.\n", reason)
+	fmt.Fprintln(os.Stderr, "beads: .beads/issues.jsonl is an export, not cross-machine sync or source of truth.")
+	if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
+		fmt.Fprintf(os.Stderr, "beads: repair: bd dolt remote add origin %s && bd dolt push\n", normalizeRemoteURL(originURL))
+		return
+	}
+	fmt.Fprintln(os.Stderr, "beads: repair: add a git origin, then run 'bd dolt remote add origin <git-remote-url>' and 'bd dolt push'.")
+}
+
 // filterEnv returns a copy of env with entries matching the given key removed.
 func filterEnv(env []string, key string) []string {
 	prefix := key + "="
@@ -1451,10 +1470,8 @@ func filterEnv(env []string, key string) []string {
 	return out
 }
 
-// runPostMergeHook runs chained hooks after merge, then auto-imports
-// .beads/issues.jsonl into Dolt so issues created on other machines (and
-// just landed via git pull) enter the local database before the next
-// auto-export overwrites the JSONL with our stale view. See GH#3729.
+// runPostMergeHook runs chained hooks after merge, then runs the legacy
+// JSONL import fallback only when no Dolt remote is configured. See GH#3729.
 //
 // Returns 0 on success (or if not applicable).
 //
@@ -1478,10 +1495,10 @@ func runPrePushHook(args []string) int {
 	return 0
 }
 
-// runPostCheckoutHook runs chained hooks after branch checkout, then
-// auto-imports .beads/issues.jsonl into Dolt when the checkout was a
-// branch switch (flag=1). File-mode checkouts (flag=0) are skipped to
-// avoid spurious imports on `git checkout -- <file>`. See GH#3729.
+// runPostCheckoutHook runs chained hooks after branch checkout, then runs
+// the legacy JSONL import fallback when the checkout was a branch switch
+// (flag=1) and no Dolt remote is configured. File-mode checkouts (flag=0)
+// are skipped to avoid spurious imports on `git checkout -- <file>`. See GH#3729.
 //
 // args: [previous-HEAD, new-HEAD, flag] where flag=1 for branch checkout
 // Returns 0 on success (or if not applicable).

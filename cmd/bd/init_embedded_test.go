@@ -329,19 +329,61 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
-	t.Run("plain_git_origin_not_registered_as_dolt_remote", func(t *testing.T) {
+	t.Run("git_origin_registered_as_dolt_remote", func(t *testing.T) {
 		bareDir := filepath.Join(t.TempDir(), "plain.git")
-		runGitForBootstrapTest(t, "", "init", "--bare", bareDir)
+		runGitForBootstrapTest(t, "", "init", "--bare", "-b", "main", bareDir)
+
+		seedDir := t.TempDir()
+		initGitRepoAt(t, seedDir)
+		runGitForBootstrapTest(t, seedDir, "branch", "-M", "main")
+		runGitForBootstrapTest(t, seedDir, "commit", "--allow-empty", "-m", "init")
+		runGitForBootstrapTest(t, seedDir, "remote", "add", "origin", "file://"+bareDir)
+		runGitForBootstrapTest(t, seedDir, "push", "-u", "origin", "main")
 
 		dir := t.TempDir()
 		initGitRepoAt(t, dir)
-		runGitForBootstrapTest(t, dir, "remote", "add", "origin", bareDir)
+		remoteURL := "file://" + bareDir
+		runGitForBootstrapTest(t, dir, "remote", "add", "origin", remoteURL)
 
 		runBDInit(t, bd, dir, "--prefix", "pg", "--skip-hooks", "--skip-agents")
 
 		out := bdDolt(t, bd, dir, "remote", "list")
+		if !strings.Contains(out, "origin") || !strings.Contains(out, remoteURL) {
+			t.Fatalf("git origin should be registered as a Dolt remote %q; remote list:\n%s", remoteURL, out)
+		}
+
+		configYAML, err := os.ReadFile(filepath.Join(dir, ".beads", "config.yaml"))
+		if err != nil {
+			t.Fatalf("read config.yaml: %v", err)
+		}
+		if !strings.Contains(string(configYAML), remoteURL) {
+			t.Fatalf("git origin should be persisted as sync.remote; config.yaml:\n%s", configYAML)
+		}
+
+		bdDolt(t, bd, dir, "push")
+		ls := exec.Command("git", "ls-remote", remoteURL, "refs/dolt/data")
+		lsOut, err := ls.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git ls-remote refs/dolt/data failed: %v\n%s", err, lsOut)
+		}
+		if !strings.Contains(string(lsOut), "refs/dolt/data") {
+			t.Fatalf("bd dolt push did not publish refs/dolt/data:\n%s", lsOut)
+		}
+	})
+
+	t.Run("stealth_skips_git_origin_remote_synthesis", func(t *testing.T) {
+		bareDir := filepath.Join(t.TempDir(), "stealth.git")
+		runGitForBootstrapTest(t, "", "init", "--bare", "-b", "main", bareDir)
+
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+		runGitForBootstrapTest(t, dir, "remote", "add", "origin", "file://"+bareDir)
+
+		runBDInit(t, bd, dir, "--prefix", "st", "--stealth", "--skip-agents")
+
+		out := bdDolt(t, bd, dir, "remote", "list")
 		if strings.Contains(out, "origin") {
-			t.Fatalf("plain git origin should not be registered as a Dolt remote; remote list:\n%s", out)
+			t.Fatalf("stealth init should not synthesize a Dolt remote; remote list:\n%s", out)
 		}
 
 		configYAML, err := os.ReadFile(filepath.Join(dir, ".beads", "config.yaml"))
@@ -349,7 +391,7 @@ func TestEmbeddedInit(t *testing.T) {
 			t.Fatalf("read config.yaml: %v", err)
 		}
 		if strings.Contains(string(configYAML), "sync.remote:") || strings.Contains(string(configYAML), "sync-remote:") {
-			t.Fatalf("plain git origin should not be persisted as sync.remote; config.yaml:\n%s", configYAML)
+			t.Fatalf("stealth init should not persist sync.remote; config.yaml:\n%s", configYAML)
 		}
 	})
 

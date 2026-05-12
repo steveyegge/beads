@@ -89,7 +89,7 @@ bd info  # Shows warnings if hooks are outdated
 bd dolt stop && bd dolt start
 ```
 
-**Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss new auto-sync features or bug fixes.
+**Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss export refresh, legacy fallback, or safety fixes.
 
 ## Database Migrations
 
@@ -122,11 +122,30 @@ If you're upgrading from a much older version of bd, your project may use a diff
 
 ### From v0.63.3+ (current era)
 
-No special steps needed. Just upgrade the binary and run:
+Upgrade the binary and run:
 
 ```bash
 bd migrate
 ```
+
+If the project was initialized before `bd init` automatically wired git origin
+as the Dolt remote, verify the remote after upgrading:
+
+```bash
+bd dolt remote list
+```
+
+When the list is empty, fix it on the machine whose local database is
+authoritative:
+
+```bash
+bd export -o .beads/issues.pre-remote.jsonl   # optional audit backup
+bd dolt remote add origin git+ssh://git@github.com/org/repo.git
+bd dolt push
+```
+
+Commit the resulting `.beads/config.yaml` change so other clones can run
+`bd bootstrap` or `bd dolt pull`.
 
 ### From v0.59–v0.63.2 (old embedded)
 

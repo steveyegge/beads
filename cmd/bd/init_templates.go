@@ -38,7 +38,7 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 %s
 
 # Use no-db mode: JSONL-only, no Dolt database
-# When true, bd will use .beads/issues.jsonl as the source of truth
+# When true, .beads/issues.jsonl is the only local store
 %s
 
 # Enable JSON output by default
@@ -66,7 +66,7 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 #     - ~/work-planning   # Work planning repo
 
 # JSONL backup (periodic export for off-machine recovery)
-# Auto-enabled when a git remote exists. Override explicitly:
+# This is backup/export only. Cross-machine sync uses Dolt remotes.
 # backup:
 #   enabled: false     # Disable auto-backup entirely
 #   interval: 15m      # Minimum time between auto-exports
@@ -138,7 +138,7 @@ Issues in Beads are:
 - **Git-native**: Stored in Dolt database with version control and branching
 - **AI-friendly**: CLI-first design works perfectly with AI coding agents
 - **Branch-aware**: Issues can follow your branch workflow
-- **Always in sync**: Auto-syncs with your commits
+- **Sync-ready**: Uses Dolt remotes for backup and team sharing
 
 ## Why Beads?
 
@@ -153,7 +153,7 @@ Issues in Beads are:
 - Fast, lightweight, and stays out of your way
 
 🔧 **Git Integration**
-- Automatic sync with git commits
+- Dolt-native sync via bd dolt push / bd dolt pull
 - Branch-aware issue tracking
 - Dolt-native three-way merge resolution
 

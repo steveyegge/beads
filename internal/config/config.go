@@ -237,20 +237,17 @@ func Initialize() error {
 	v.SetDefault("backup.git-push", false)
 	v.SetDefault("backup.git-repo", "")
 
-	// Auto-export: write git-tracked JSONL after mutations for portability
-	// When no Dolt remote is configured, this is the primary way to share
-	// beads state (issues + memories) across machines via git.  Enabled by
-	// default so that viewers (bv) and git-based workflows see fresh data
-	// without extra configuration (GH#2973).
+	// Auto-export: write JSONL after mutations for viewers, interchange, and
+	// backup. It is not cross-machine sync; Dolt remotes are the source of
+	// truth for sync. Enabled by default so tools like bv see fresh data.
 	v.SetDefault("export.auto", true)
 	v.SetDefault("export.interval", "60s")
 	v.SetDefault("export.path", "issues.jsonl") // relative to .beads/; canonical name
 	v.SetDefault("export.git-add", true)
 
-	// Auto-import: pull JSONL into Dolt after git merge/checkout so issues
-	// created on other machines enter the local database before the next
-	// auto-export overwrites the JSONL with our (possibly stale) view.
-	// Symmetric to export.auto. Closes the JSONL-in-git sync gap (GH#3729).
+	// Auto-import: legacy compatibility fallback for projects that have not
+	// configured a Dolt remote yet. Hook code skips this path when sync.remote
+	// is configured because JSONL import is upsert-only, not reconciliation.
 	v.SetDefault("import.auto", true)
 
 	// AI configuration defaults

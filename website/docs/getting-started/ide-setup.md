@@ -25,7 +25,7 @@ This installs:
 1. SessionStart hook runs `bd prime` automatically
 2. `bd prime` injects ~1-2k tokens of workflow context
 3. You use `bd` CLI commands directly
-4. Git hooks auto-sync the database
+4. Git hooks refresh exports and legacy fallbacks; Dolt remotes handle sync
 
 **Verify installation:**
 ```bash
@@ -178,7 +178,7 @@ See [MCP Server](/integrations/mcp-server) for detailed configuration.
 
 ## Git Hooks
 
-Ensure git hooks are installed for auto-sync:
+Ensure git hooks are installed for export refresh and legacy fallback behavior:
 
 ```bash
 bd hooks install

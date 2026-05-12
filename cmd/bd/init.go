@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/templates/agents"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -54,7 +55,8 @@ Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv) and git-based workflows up to date without extra steps.
+viewers (bv), interchange, and backups up to date without extra steps.
+Cross-machine sync uses Dolt remotes, not JSONL import/export.
 To disable: bd config set export.auto false
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
@@ -359,7 +361,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				// back to a fresh local init against a new remote.
 			} else if earlyRemoteSource == initSyncRemoteConfigured {
 				earlyRemoteHasDoltData = true // sync.remote configured = user intends bootstrap
-			} else if earlyRemoteSource == initSyncRemoteNone && isGitRepo() && !isBareGitRepo() {
+			} else if earlyRemoteSource == initSyncRemoteNone && !stealth && isGitRepo() && !isBareGitRepo() {
 				if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
 					earlySyncURL = normalizeRemoteURL(originURL)
 					earlyRemoteHasDoltData = gitOriginHasDoltDataRef()
@@ -627,6 +629,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		syncURLFromConfig := syncURL != "" && syncRemoteSource != initSyncRemoteNone // true when URL came from explicit user config
 		bootstrappedFromRemote := false
 		syncFromRemote := false
+		syncURLFromGitOrigin := false
 		remoteHasDoltData := false
 
 		if syncURL != "" {
@@ -637,9 +640,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			// http:// to git+http:// and break Dolt remotesapi endpoints
 			// configured explicitly by the user (GH#3339).
 			syncFromRemote = true
-		} else if syncRemoteSource == initSyncRemoteNone && isGitRepo() && !isBareGitRepo() {
+		} else if syncRemoteSource == initSyncRemoteNone && !stealth && isGitRepo() && !isBareGitRepo() {
 			if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
 				syncURL = normalizeRemoteURL(originURL)
+				syncURLFromGitOrigin = true
 				remoteHasDoltData = gitOriginHasDoltDataRef()
 
 				decision := CheckRemoteSafety(RemoteSafetyInput{
@@ -824,23 +828,13 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			initGlobalDatabaseConfig(ctx, doltCfg, quiet)
 		}
 
-		// Configure the remote in the Dolt store so bd dolt push/pull
-		// work immediately after bootstrap. Only register the remote when
-		// the URL came from explicit config (sync.remote) or the remote
-		// was confirmed to have Dolt data (refs/dolt/data). Auto-detected
-		// git origin URLs for plain source repos must NOT be registered —
-		// they cause every Dolt fetch to fail and leak tmp_pack_* files
-		// that can consume 100+ GB of disk space (GH#3354, GH#3356).
-		if shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig) {
-			hasRemote, _ := store.HasRemote(ctx, "origin")
-			if !hasRemote {
-				if err := store.AddRemote(ctx, "origin", syncURL); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to add remote 'origin': %v\n", err)
-					// Non-fatal — user can add manually with: bd dolt remote add origin <url>
-				} else if !quiet {
-					fmt.Printf("  %s Configured Dolt remote: origin → %s\n", ui.RenderPass("✓"), syncURL)
-				}
-			}
+		// Configure the remote in the Dolt store so bd dolt push/pull work
+		// immediately after init/bootstrap. A git origin is a valid Dolt
+		// remote even before refs/dolt/data exists; the first bd dolt push
+		// creates that ref. This keeps the default path durable without
+		// falling back to JSONL-as-sync.
+		if shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin) {
+			configureInitDoltRemote(ctx, store, syncURL, quiet)
 		}
 
 		// === CONFIGURATION METADATA (Pattern A: Fatal) ===
@@ -1027,10 +1021,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			// Persist sync.remote to config.yaml so fresh clones can
 			// bootstrap from it (the Dolt database is gitignored).
 			// Must run AFTER createConfigYaml which creates the file.
-			// Only persist when the URL is from explicit config or a
-			// confirmed Dolt remote — not an auto-detected git origin
-			// for a plain source repo (GH#3356).
-			if err := persistInitSyncRemote(beadsDir, initRemote, syncURL, syncFromRemote, syncURLFromConfig); err != nil {
+			// Persist the effective remote so future bootstrap and hooks know
+			// Dolt, not JSONL, is the cross-machine sync path. Plain git
+			// origins are valid here: the first push creates refs/dolt/data.
+			if err := persistInitSyncRemote(beadsDir, initRemote, syncURL, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin); err != nil {
 				FatalError("failed to persist sync.remote to config.yaml: %v", err)
 			}
 
@@ -1326,7 +1320,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					fmt.Printf("  Skipping %s generation in bare repository\n", resolvedAgentsFile)
 				}
 			} else {
-				renderOpts := agents.RenderOpts{HasRemote: shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig)}
+				renderOpts := agents.RenderOpts{HasRemote: shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin)}
 				addAgentsInstructions(resolvedAgentsFile, !quiet, agentsTemplate, agentsProfile, renderOpts)
 			}
 		}
@@ -1397,6 +1391,9 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				fmt.Fprintf(os.Stderr, "\n%s Git upstream not configured\n", ui.RenderWarn("⚠"))
 				fmt.Fprintf(os.Stderr, "  For sync workflows, set your upstream with:\n")
 				fmt.Fprintf(os.Stderr, "  %s\n\n", ui.RenderAccent("git remote add upstream <repo-url>"))
+			}
+			if !stealth && !initRemoteChanged && !shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin) {
+				printInitNoDoltRemoteWarning()
 			}
 		}
 
@@ -1933,7 +1930,7 @@ func promptContributorMode() (isContributor bool, err error) {
 // Returns true to keep it enabled, false to disable.
 func promptAutoExport() (bool, error) {
 	fmt.Printf("\n%s Auto-export keeps .beads/issues.jsonl up to date after every write command.\n", ui.RenderAccent("▶"))
-	fmt.Println("  This is useful for viewers (bv) and git-based sync workflows.")
+	fmt.Println("  This is useful for viewers (bv), interchange, and backups. Dolt remotes handle sync.")
 	fmt.Print("\nEnable auto-export? [Y/n]: ")
 
 	reader := bufio.NewReader(os.Stdin)
@@ -1950,10 +1947,57 @@ func promptAutoExport() (bool, error) {
 	return response == "" || response == "y" || response == "yes", nil
 }
 
-func shouldWireInitRemote(syncURL string, syncFromRemote, syncURLFromConfig bool) bool {
-	// Auto-detected plain git origins are not Dolt remotes. Only wire origin
-	// when it was explicitly configured or proven to carry refs/dolt/data.
-	return syncURL != "" && (syncFromRemote || syncURLFromConfig)
+func shouldWireInitRemote(syncURL string, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin bool) bool {
+	// A git origin is a valid Dolt remote even before refs/dolt/data exists:
+	// the first `bd dolt push` creates the Dolt ref on that git remote. We
+	// still keep explicit empty --remote as an opt-out because that leaves
+	// syncURL empty and syncURLFromGitOrigin false.
+	return syncURL != "" && (syncFromRemote || syncURLFromConfig || syncURLFromGitOrigin)
+}
+
+func configureInitDoltRemote(ctx context.Context, store storage.DoltStorage, syncURL string, quiet bool) {
+	hasRemote, _ := store.HasRemote(ctx, "origin")
+	if !hasRemote {
+		if err := store.AddRemote(ctx, "origin", syncURL); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add remote 'origin': %v\n", err)
+			// Non-fatal — user can add manually with: bd dolt remote add origin <url>
+		} else if !quiet {
+			fmt.Printf("  %s Configured Dolt remote: origin → %s\n", ui.RenderPass("✓"), syncURL)
+		}
+	}
+
+	// Server-mode git remotes often need a matching CLI remote so push/pull can
+	// use the user's local SSH keys or credential helpers instead of the SQL
+	// server process environment.
+	if !usesSQLServer() {
+		return
+	}
+	locator, ok := storage.UnwrapStore(store).(storage.StoreLocator)
+	if !ok {
+		return
+	}
+	dbPath := locator.CLIDir()
+	if dbPath == "" || doltutil.FindCLIRemote(dbPath, "origin") != "" {
+		return
+	}
+	if err := doltutil.AddCLIRemote(dbPath, "origin", syncURL); err != nil && !quiet {
+		fmt.Fprintf(os.Stderr, "Warning: failed to add CLI remote 'origin': %v\n", err)
+	}
+}
+
+func printInitNoDoltRemoteWarning() {
+	fmt.Fprintf(os.Stderr, "\n%s No Dolt remote configured\n", ui.RenderWarn("⚠"))
+	fmt.Fprintln(os.Stderr, "  Issues are stored in local Dolt. .beads/issues.jsonl is an export,")
+	fmt.Fprintln(os.Stderr, "  not cross-machine sync or the source of truth.")
+	if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
+		fmt.Fprintln(os.Stderr, "  To use your git origin for durable sync, run:")
+		fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt remote add origin "+normalizeRemoteURL(originURL)))
+		fmt.Fprintf(os.Stderr, "    %s\n\n", ui.RenderAccent("bd dolt push"))
+		return
+	}
+	fmt.Fprintln(os.Stderr, "  To enable durable sync, add a git origin and then run:")
+	fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt remote add origin <git-remote-url>"))
+	fmt.Fprintf(os.Stderr, "    %s\n\n", ui.RenderAccent("bd dolt push"))
 }
 
 type initSyncRemoteSource int
@@ -2010,11 +2054,11 @@ func initTimeCloneConfig(serverMode bool, serverHost string, serverPort int, ser
 	return cfg
 }
 
-func persistInitSyncRemote(beadsDir, initRemote, syncURL string, syncFromRemote, syncURLFromConfig bool) error {
+func persistInitSyncRemote(beadsDir, initRemote, syncURL string, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin bool) error {
 	if initRemote != "" {
 		return config.SetYamlConfigInDir(beadsDir, "sync.remote", initRemote)
 	}
-	if !shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig) {
+	if !shouldWireInitRemote(syncURL, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin) {
 		return nil
 	}
 	if existing := config.GetStringFromDir(beadsDir, "sync.remote"); existing != "" {

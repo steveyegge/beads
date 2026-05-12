@@ -299,7 +299,7 @@ These flags apply to all commands:
       --profile                   Generate CPU profile for performance analysis
   -q, --quiet                     Suppress non-essential output (errors only)
       --readonly                  Read-only mode: block write operations (for worker sandboxes)
-      --sandbox                   Sandbox mode: disables auto-sync
+      --sandbox                   Sandbox mode: disables Dolt auto-push
   -v, --verbose                   Enable verbose/debug output
 ```
 
@@ -2524,7 +2524,7 @@ Unlike 'bd init --force', bootstrap will never delete existing issues.
 
 Bootstrap auto-detects the right action:
   • If sync.remote is configured: clones from the remote
-  • If git origin has Dolt data (refs/dolt/data): clones from git
+  • If git origin has Dolt data (refs/dolt/data): clones from git and wires origin for future push/pull
   • If .beads/backup/*.jsonl exists: restores from backup
   • If .beads/issues.jsonl exists: imports from git-tracked JSONL
   • If no database exists: creates a fresh one
@@ -2575,7 +2575,8 @@ Common namespaces:
 
 Auto-Export (config.yaml):
   Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv) and git-based sync.
+  Enabled by default. Useful for viewers (bv), interchange, and backup.
+  It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
 
   Keys:
     export.auto       Enable/disable auto-export (default: true)
@@ -3333,7 +3334,8 @@ Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv) and git-based workflows up to date without extra steps.
+viewers (bv), interchange, and backups up to date without extra steps.
+Cross-machine sync uses Dolt remotes, not JSONL import/export.
 To disable: bd config set export.auto false
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
@@ -3818,7 +3820,7 @@ Examples:
   bd doctor --fix -i     # Confirm each fix individually
   bd doctor --fix --fix-child-parent  # Also fix child→parent deps (opt-in)
   bd doctor --fix --force # Force repair even when database can't be opened
-  bd doctor --fix --source=jsonl # Rebuild database from JSONL (source of truth)
+  bd doctor --fix --source=jsonl # Rebuild database from a JSONL export
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file

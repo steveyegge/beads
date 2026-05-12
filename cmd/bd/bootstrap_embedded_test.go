@@ -201,6 +201,43 @@ func TestEmbeddedBootstrap(t *testing.T) {
 			t.Errorf("expected 'Imported' in output: %s", out)
 		}
 	})
+
+	t.Run("bootstrap_from_git_origin_wires_remote", func(t *testing.T) {
+		bareDir := filepath.Join(t.TempDir(), "origin.git")
+		runGitForBootstrapTest(t, "", "init", "--bare", "--initial-branch=main", bareDir)
+		remoteURL := "file://" + bareDir
+
+		sourceDir := t.TempDir()
+		initGitRepoAt(t, sourceDir)
+		runGitForBootstrapTest(t, sourceDir, "branch", "-M", "main")
+		runGitForBootstrapTest(t, sourceDir, "remote", "add", "origin", remoteURL)
+		runGitForBootstrapTest(t, sourceDir, "commit", "--allow-empty", "-m", "init")
+		runGitForBootstrapTest(t, sourceDir, "push", "-u", "origin", "main")
+		runBDInit(t, bd, sourceDir, "--prefix", "beads", "--skip-hooks", "--skip-agents")
+		bdCreate(t, bd, sourceDir, "Seed remote data", "--type", "task")
+		bdDolt(t, bd, sourceDir, "push")
+
+		cloneDir := t.TempDir()
+		runGitForBootstrapTest(t, cloneDir, "init", "-b", "main")
+		runGitForBootstrapTest(t, cloneDir, "remote", "add", "origin", remoteURL)
+
+		out := bdBootstrap(t, bd, cloneDir, "--yes")
+		if !strings.Contains(out, "clone from remote") {
+			t.Fatalf("expected bootstrap sync plan, got:\n%s", out)
+		}
+
+		remotes := bdDolt(t, bd, cloneDir, "remote", "list")
+		if !strings.Contains(remotes, "origin") || !strings.Contains(remotes, remoteURL) {
+			t.Fatalf("bootstrap should leave origin configured as a Dolt remote %q; remote list:\n%s", remoteURL, remotes)
+		}
+		configYAML, err := os.ReadFile(filepath.Join(cloneDir, ".beads", "config.yaml"))
+		if err != nil {
+			t.Fatalf("read config.yaml: %v", err)
+		}
+		if !strings.Contains(string(configYAML), remoteURL) {
+			t.Fatalf("bootstrap should persist sync.remote; config.yaml:\n%s", configYAML)
+		}
+	})
 }
 
 // TestEmbeddedBootstrapConcurrent exercises bootstrap --dry-run concurrently.

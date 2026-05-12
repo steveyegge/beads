@@ -63,7 +63,7 @@ bd doctor --fix
 
 ## Protected Branches
 
-Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed.
+Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed. On new projects with a git `origin`, `bd init` configures that origin as the Dolt remote automatically.
 
 ## Git Worktrees
 

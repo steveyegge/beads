@@ -37,7 +37,7 @@ Git worktrees share the same `.git` directory and `.beads` database:
 Sync with remotes using Dolt's native push/pull:
 
 ```bash
-bd init --remote http://myserver:7007/mydb  # First setup or clone from a Dolt remote
+bd init         # Auto-wires git origin as a Dolt remote when origin exists
 bd dolt push    # Push changes to Dolt remote
 bd dolt pull    # Pull changes from Dolt remote
 ```
@@ -191,7 +191,9 @@ bd hooks install --beads
 - Runs pre-commit checks for beads data consistency
 
 **post-merge hook:**
-- Ensures Dolt database is current after pull/merge operations
+- Runs chained user hooks, then uses JSONL import only as a legacy fallback
+  when no Dolt remote is configured. With `sync.remote` configured, use
+  `bd dolt pull` for canonical issue sync.
 
 ### Hook Timeout
 

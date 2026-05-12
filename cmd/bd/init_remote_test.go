@@ -44,7 +44,7 @@ func TestInitExplicitRemoteDrivesCloneAndPersistence(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("# Beads Config\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := persistInitSyncRemote(beadsDir, remote, syncURL, syncFromRemote, syncURLFromConfig); err != nil {
+	if err := persistInitSyncRemote(beadsDir, remote, syncURL, syncFromRemote, syncURLFromConfig, false); err != nil {
 		t.Fatalf("persistInitSyncRemote failed: %v", err)
 	}
 	configBytes, err := os.ReadFile(filepath.Join(beadsDir, "config.yaml"))
@@ -115,7 +115,7 @@ func TestPersistInitSyncRemoteExplicitRemoteWritesTargetDir(t *testing.T) {
 	}
 
 	const remote = "git+ssh://git@example.com/right/repo.git"
-	if err := persistInitSyncRemote(targetBeadsDir, remote, remote, false, true); err != nil {
+	if err := persistInitSyncRemote(targetBeadsDir, remote, remote, false, true, false); err != nil {
 		t.Fatalf("persistInitSyncRemote failed: %v", err)
 	}
 

@@ -246,8 +246,9 @@ When someone clones a repository that uses Dolt backend:
 
 If `sync.remote` is set in `.beads/config.yaml`, that takes precedence
 over auto-detection. Any Dolt-compatible remote URL is supported (DoltHub,
-S3, GCS, file, or git). `bd init` will warn if it detects `refs/dolt/data`
-on origin and suggest using `bd bootstrap` instead.
+S3, GCS, file, or git). On brand-new projects, `bd init` auto-detects
+`git origin` and persists it as `sync.remote`, so the first `bd dolt push`
+publishes Dolt history to `refs/dolt/data` on the same git remote.
 
 ### Verifying Bootstrap Worked
 

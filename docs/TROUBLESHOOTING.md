@@ -686,7 +686,7 @@ git worktree prune
 
 See [WORKTREES.md](WORKTREES.md) for details on how beads uses worktrees.
 
-### Auto-sync not working
+### Dolt remote sync not working
 
 Check if Dolt server is running and configured:
 
@@ -948,7 +948,7 @@ bd dolt push
 
 | Flag | Purpose | When to use | Risk |
 |------|---------|-------------|------|
-| `--sandbox` | Use embedded mode, disable auto-sync | Sandboxed environments (Codex, containers) | Low - safe for sandboxes |
+| `--sandbox` | Use embedded mode, disable Dolt auto-push | Sandboxed environments (Codex, containers) | Low - safe for sandboxes |
 | `bd doctor --fix` | Force metadata update | Stuck staleness loop | Low - updates metadata only |
 
 **Related:**

@@ -163,7 +163,7 @@ bd setup mux      # Mux - creates/updates AGENTS.md
 - Codex 0.129.0+ uses native `/hooks` for startup and compaction-aware context refresh
 - `bd prime` provides ~1-2k tokens of workflow context
 - You use `bd` CLI commands directly
-- Git hooks (installed by `bd init`) auto-sync the database
+- Git hooks (installed by `bd init`) refresh exports and legacy fallbacks; `bd dolt push/pull` syncs the database
 - `bd onboard` prints the small manual snippet for unsupported agents or custom instruction files
 
 **Why this is recommended:**

@@ -93,7 +93,7 @@ Creates or updates `AGENTS.md` in your project root with:
 - Issue tracking workflow instructions
 - Quick command reference
 - Issue types and priorities
-- Auto-sync explanation
+- Dolt remote sync explanation
 - Important rules for AI agents
 
 The beads section is wrapped in HTML comments (`<!-- BEGIN/END BEADS INTEGRATION -->`) with metadata for safe updates. The begin marker includes profile and hash metadata (e.g., `<!-- BEGIN BEADS INTEGRATION profile:full hash:d4f96305 -->`) for freshness detection. Legacy markers without metadata are auto-upgraded on the next install or update.

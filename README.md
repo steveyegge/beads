@@ -119,6 +119,11 @@ Dolt runs in-process — no external server needed. Data lives in
 `.beads/embeddeddolt/`. Single-writer only (file locking enforced).
 This is the recommended mode for most users.
 
+When the git repo has an `origin` remote, `bd init` configures a Dolt remote
+named `origin` automatically. Cross-machine sync uses `bd dolt push` and
+`bd dolt pull` against `refs/dolt/data`; `.beads/issues.jsonl` is an export
+for viewers, interchange, and backup, not the source of truth.
+
 ### Server Mode
 
 ```bash
@@ -198,5 +203,5 @@ For daemon mode without git, use `bd daemon start --local`
 
 ## 📝 Documentation
 
-* [Documentation site](https://gastownhall.github.io/beads/) (versioned) | [Installing](docs/INSTALLING.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Copilot Setup](docs/COPILOT_INTEGRATION.md) | [Articles](ARTICLES.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
+* [Documentation site](https://gastownhall.github.io/beads/) (versioned) | [Installing](docs/INSTALLING.md) | [Sync Concepts](docs/SYNC_CONCEPTS.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Copilot Setup](docs/COPILOT_INTEGRATION.md) | [Articles](ARTICLES.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
 * [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gastownhall/beads)

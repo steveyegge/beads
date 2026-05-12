@@ -108,6 +108,7 @@ func maybeAutoExport(ctx context.Context) {
 		_ = os.Remove(fullPath)
 		return
 	}
+	warnJSONLWithoutDoltRemote("auto-export")
 
 	// Optional git add — skip when no-git-ops is set (GH#3314), when not in a
 	// git repo (standalone BEADS_DIR flow), or when export.git-add is false.

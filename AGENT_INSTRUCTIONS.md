@@ -86,7 +86,7 @@ This enables `bd doctor` to detect **orphaned issues** - work that was committed
 
 bd uses **Dolt** as its primary database. Changes are committed to Dolt history automatically (one Dolt commit per write command).
 
-**Install git hooks** for automatic sync:
+**Install git hooks** for commit integration and legacy fallback behavior:
 ```bash
 bd hooks install
 ```
@@ -296,7 +296,7 @@ bd dolt push
 This installs:
 
 - **pre-commit** — Commits pending Dolt changes
-- **post-merge** — Pulls remote Dolt changes after git merge
+- **post-merge** — Runs chained hooks and a legacy JSONL import fallback only when no Dolt remote is configured
 
 **Note:** Hooks are embedded in the bd binary and work for all bd users (not just source repo users).
 
