@@ -1232,3 +1232,130 @@ func BenchmarkCountIssuesGroupedBy_label_10K(b *testing.B) {
 func BenchmarkCountIssuesGroupedBy_label_50K(b *testing.B) {
 	benchmarkCountIssuesGroupedBy(b, 50000, "label")
 }
+
+// =============================================================================
+// Pre-D1 alternative-path comparison benchmarks (PR #3461 review feedback)
+// =============================================================================
+//
+// These benchmark the path bd count took before D1: SearchIssues(filter) for
+// the total and SearchIssues + Go-side aggregation for grouped output. They
+// share seedForSummaryBench with the new-SQL benchmarks above so the speedup
+// is visible on a single `go test -bench=CountIssues -benchmem` run.
+
+// benchmarkCountIssuesViaSearchIssues is the pre-D1 no-grouping path: one
+// SearchIssues call, len(rows). This is the "current/alternative" the
+// reviewer asked the new SELECT COUNT(*) path to beat.
+func benchmarkCountIssuesViaSearchIssues(b *testing.B, totalN int) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	seedForSummaryBench(b, store, totalN)
+
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			b.Fatalf("SearchIssues: %v", err)
+		}
+		_ = len(rows)
+	}
+}
+
+func BenchmarkCountIssues_ViaSearchIssues_1K(b *testing.B) {
+	benchmarkCountIssuesViaSearchIssues(b, 1000)
+}
+func BenchmarkCountIssues_ViaSearchIssues_10K(b *testing.B) {
+	benchmarkCountIssuesViaSearchIssues(b, 10000)
+}
+func BenchmarkCountIssues_ViaSearchIssues_50K(b *testing.B) {
+	benchmarkCountIssuesViaSearchIssues(b, 50000)
+}
+
+// benchmarkCountIssuesGroupedByStatusViaSearchIssues is the pre-D1 scalar
+// group-by path: SearchIssues + Go-side aggregation on a single column.
+// status stands in for priority / issue_type / assignee — same big-O shape,
+// same hydration cost; the new SQL path collapses all four into one
+// SELECT col, COUNT(*) GROUP BY col query.
+func benchmarkCountIssuesGroupedByStatusViaSearchIssues(b *testing.B, totalN int) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	seedForSummaryBench(b, store, totalN)
+
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			b.Fatalf("SearchIssues: %v", err)
+		}
+		counts := make(map[string]int, 4)
+		for _, iss := range rows {
+			counts[string(iss.Status)]++
+		}
+		_ = counts
+	}
+}
+
+func BenchmarkCountIssuesGroupedBy_status_ViaSearchIssues_1K(b *testing.B) {
+	benchmarkCountIssuesGroupedByStatusViaSearchIssues(b, 1000)
+}
+func BenchmarkCountIssuesGroupedBy_status_ViaSearchIssues_10K(b *testing.B) {
+	benchmarkCountIssuesGroupedByStatusViaSearchIssues(b, 10000)
+}
+func BenchmarkCountIssuesGroupedBy_status_ViaSearchIssues_50K(b *testing.B) {
+	benchmarkCountIssuesGroupedByStatusViaSearchIssues(b, 50000)
+}
+
+// benchmarkCountIssuesGroupedByLabelViaSearchIssues is the pre-D1 label
+// group-by path: SearchIssues + GetLabelsForIssues bulk hydrate + Go-side
+// label aggregation. Different shape from scalar group-by (multi-valued
+// labels per issue) so it gets its own benchmark; the new SQL path is
+// two-phase (filteredIDs + GetLabelsForIssuesInTx) and skips the full
+// row hydration.
+func benchmarkCountIssuesGroupedByLabelViaSearchIssues(b *testing.B, totalN int) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	seedForSummaryBench(b, store, totalN)
+
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			b.Fatalf("SearchIssues: %v", err)
+		}
+		ids := make([]string, len(rows))
+		for j, iss := range rows {
+			ids[j] = iss.ID
+		}
+		labelMap, err := store.GetLabelsForIssues(ctx, ids)
+		if err != nil {
+			b.Fatalf("GetLabelsForIssues: %v", err)
+		}
+		counts := make(map[string]int)
+		for _, iss := range rows {
+			labels := labelMap[iss.ID]
+			if len(labels) == 0 {
+				counts[""]++
+				continue
+			}
+			for _, lb := range labels {
+				counts[lb]++
+			}
+		}
+		_ = counts
+	}
+}
+
+func BenchmarkCountIssuesGroupedBy_label_ViaSearchIssues_1K(b *testing.B) {
+	benchmarkCountIssuesGroupedByLabelViaSearchIssues(b, 1000)
+}
+func BenchmarkCountIssuesGroupedBy_label_ViaSearchIssues_10K(b *testing.B) {
+	benchmarkCountIssuesGroupedByLabelViaSearchIssues(b, 10000)
+}
+func BenchmarkCountIssuesGroupedBy_label_ViaSearchIssues_50K(b *testing.B) {
+	benchmarkCountIssuesGroupedByLabelViaSearchIssues(b, 50000)
+}
