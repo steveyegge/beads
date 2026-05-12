@@ -942,10 +942,7 @@ func TestEmbeddedCreateConcurrent(t *testing.T) {
 			var ids []string
 			for i := 0; i < issuesPerWorker; i++ {
 				title := fmt.Sprintf("worker-%d-issue-%d", worker, i)
-				cmd := exec.Command(bd, "create", "--silent", title)
-				cmd.Dir = dir
-				cmd.Env = bdEnv(dir)
-				out, err := cmd.CombinedOutput()
+				out, err := bdRunWithFlockRetry(t, bd, dir, "create", "--silent", title)
 				if err != nil {
 					results[worker] = result{worker: worker, err: fmt.Errorf("issue %d: %v\n%s", i, err, out)}
 					return

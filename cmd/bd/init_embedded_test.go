@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -97,8 +98,8 @@ func isEmbeddedLockOutput(out string) bool {
 }
 
 // bdRunWithFlockRetry runs a bd command with retry on flock contention.
-// Returns the combined output and nil on success, or the last output and error
-// after all retries are exhausted or a non-flock error occurs.
+// Returns stdout and nil on success, or combined stdout/stderr and the last
+// error after retries are exhausted or a non-flock error occurs.
 func bdRunWithFlockRetry(t *testing.T, bd, dir string, args ...string) ([]byte, error) {
 	t.Helper()
 	var out []byte
@@ -107,10 +108,14 @@ func bdRunWithFlockRetry(t *testing.T, bd, dir string, args ...string) ([]byte, 
 		cmd := exec.Command(bd, args...)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err = cmd.CombinedOutput()
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err = cmd.Run()
 		if err == nil {
-			return out, nil
+			return stdout.Bytes(), nil
 		}
+		out = append(stdout.Bytes(), stderr.Bytes()...)
 		if !isEmbeddedLockOutput(string(out)) {
 			return out, err
 		}

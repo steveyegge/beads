@@ -745,10 +745,7 @@ func TestEmbeddedListConcurrent(t *testing.T) {
 			for i := 0; i < issuesPerWorker; i++ {
 				// Create
 				title := fmt.Sprintf("w%d-issue-%d", worker, i)
-				cmd := exec.Command(bd, "create", "--silent", title)
-				cmd.Dir = dir
-				cmd.Env = bdEnv(dir)
-				out, err := cmd.CombinedOutput()
+				out, err := bdRunWithFlockRetry(t, bd, dir, "create", "--silent", title)
 				if err != nil {
 					r.err = fmt.Errorf("create %d: %v\n%s", i, err, out)
 					results[worker] = r
@@ -766,14 +763,16 @@ func TestEmbeddedListConcurrent(t *testing.T) {
 				listCmd := exec.Command(bd, "list", "--json", "--limit", "0")
 				listCmd.Dir = dir
 				listCmd.Env = bdEnv(dir)
-				listOut, err := listCmd.CombinedOutput()
-				if err != nil {
-					r.err = fmt.Errorf("list after create %d: %v\n%s", i, err, listOut)
+				var listStdout, listStderr bytes.Buffer
+				listCmd.Stdout = &listStdout
+				listCmd.Stderr = &listStderr
+				if err := listCmd.Run(); err != nil {
+					r.err = fmt.Errorf("list after create %d: %v\nstdout:\n%s\nstderr:\n%s", i, err, listStdout.String(), listStderr.String())
 					results[worker] = r
 					return
 				}
 				// Parse JSON array to count issues
-				s := string(listOut)
+				s := listStdout.String()
 				start := strings.Index(s, "[")
 				if start < 0 {
 					r.listCounts = append(r.listCounts, 0)
@@ -781,7 +780,7 @@ func TestEmbeddedListConcurrent(t *testing.T) {
 				}
 				var issues []json.RawMessage
 				if jsonErr := json.Unmarshal([]byte(s[start:]), &issues); jsonErr != nil {
-					r.err = fmt.Errorf("list parse after create %d: %v\nraw: %s", i, jsonErr, s)
+					r.err = fmt.Errorf("list parse after create %d: %v\nstdout:\n%s\nstderr:\n%s", i, jsonErr, s, listStderr.String())
 					results[worker] = r
 					return
 				}

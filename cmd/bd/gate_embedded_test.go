@@ -619,10 +619,7 @@ func TestEmbeddedGateConcurrent(t *testing.T) {
 
 			// Each worker: create a gate, add a waiter, resolve it
 			title := fmt.Sprintf("w%d-gate", worker)
-			cmd := exec.Command(bd, "create", "--silent", title, "--type", "gate")
-			cmd.Dir = dir
-			cmd.Env = bdEnv(dir)
-			out, err := cmd.CombinedOutput()
+			out, err := bdRunWithFlockRetry(t, bd, dir, "create", "--silent", title, "--type", "gate")
 			if err != nil {
 				r.err = fmt.Errorf("create gate: %v\n%s", err, out)
 				results[worker] = r
@@ -631,7 +628,7 @@ func TestEmbeddedGateConcurrent(t *testing.T) {
 			gateID := strings.TrimSpace(string(out))
 
 			// Add waiter
-			cmd = exec.Command(bd, "gate", "add-waiter", gateID, fmt.Sprintf("agent-%d", worker))
+			cmd := exec.Command(bd, "gate", "add-waiter", gateID, fmt.Sprintf("agent-%d", worker))
 			cmd.Dir = dir
 			cmd.Env = bdEnv(dir)
 			out, err = cmd.CombinedOutput()
