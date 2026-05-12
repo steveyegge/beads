@@ -56,3 +56,48 @@ this PR carries only the D1 diff on top of #3458's HEAD.
 **PASS** — commit gate markdown to `release/be-d0z`; push to `fork`
 (origin is locked for quad341 per `release/be-eqw` / #3453 precedent);
 open PR against `gastownhall/beads:main`, stacking on #3458.
+
+---
+
+## Round 2 — be-9t7 feedback addressed
+
+- **Trigger:** PR #3461 received `CHANGES_REQUESTED` from @coffeegoddd
+  on 2026-05-07 with three asks: push the optimization to issueops,
+  add a benchmark beating the prior SQL, strip app-layer special-casing.
+- **Source bead:** be-9t7 (closed) — builder work on this round.
+- **Review bead:** be-21rb — reviewer recorded `PASS` on commit
+  `f33b4fbd1` at 2026-05-12T03:50Z.
+- **HEAD evaluated:** `f33b4fbd1` (release/be-d0z), already pushed to
+  `fork/release/be-d0z`, matches the PR #3461 head OID.
+- **Commits since round 1:**
+  - `83a94f5a4` — `fix(cmd): move sanitizeDBName out of cgo-only file`
+    (unblocks `CGO_ENABLED=0` build; cross-cuts be-pp0).
+  - `f33b4fbd1` — `test(bench): add CountIssues vs SearchIssues
+    comparison benchmarks (be-9t7)` — the benchmark @coffeegoddd asked
+    for.
+
+### Gate criteria — round 2
+
+| # | Criterion | Verdict | Evidence |
+|---|-----------|---------|----------|
+| 1 | Review PASS present | **PASS** | be-21rb notes record `Review verdict: PASS` on `f33b4fbd1`. Reviewer walked all three @coffeegoddd asks and confirmed each addressed: issueops layer (`internal/storage/issueops/count.go`, 296 LOC), benchmark (`internal/storage/dolt/dolt_benchmark_test.go` — 1K speedups 13.6× / 11.3× / 3.5×), app-layer special-casing stripped from `cmd/bd/count.go`. Gemini second-pass disabled per project policy. |
+| 2 | Acceptance criteria met | **PASS** | All three reviewer asks addressed (see above). Original D1 acceptance (filter-parity, grouped-by parity, allowlist rejects, wisp admission, byte-for-byte CLI parity) re-validated by reviewer against `f33b4fbd1`. |
+| 3 | Tests pass | **PASS** | Deployer re-ran on `f33b4fbd1`: `go build ./...` clean; `go vet ./...` clean; `go test ./internal/storage/issueops/` PASS (0.005s); `go test ./cmd/bd/ -run 'TestCount(Reference\|MetadataKeys\|ExistingIssues_Worktree(Fallback\|LocalBeadsPreferred))'` PASS (0.263s); `go test -run '^$' ./internal/storage/dolt/` confirms the benchmark file compiles (Dolt container tests gated on Docker, skipped in this env; reviewer ran the container-dependent parity suites and recorded PASS). |
+| 4 | No high-severity review findings open | **PASS** | be-21rb lists zero HIGH findings. Two taste-level minors (two-snapshot read inconsistency in `cmd/bd/count.go` groupBy path; local `itoa` to avoid `strconv` import) explicitly called non-blocking by reviewer. |
+| 5 | Final branch is clean | **PASS** | `git status` on `release/be-d0z` shows only worktree-scaffolding untracked paths (`.gc/`, `.gitkeep`) that are never staged. |
+| 6 | Branch diverges cleanly from main | **PASS (stacked)** | Same stack structure as round 1: `release/be-eqw` (#3453) → `release/be-nu4.3-stack` (#3458) → `release/be-d0z` (this PR). GitHub reports `CONFLICTING` against `main` because #3453/#3458 are still open; once they merge this becomes a clean diff. No new conflicts introduced by round-2 commits. |
+
+### Pre-existing failures (not introduced)
+
+- `cmd/bd/doctor/fix/TestFixMissingMetadata_DoltRepair` — `bd_version`
+  drift (0.48 vs 0.49.6); pre-dates this PR.
+- `cmd/bd/TestCountExistingIssues_WorktreeNoBeadsAnywhere` — fails on
+  hosts with `~/.beads/` because `FindBeadsDir()` falls back to it
+  (introduced 2026-04-08 by Osamu Okano, commit `614d925868`).
+
+### Verdict — round 2
+
+**PASS** — branch is already on `fork/release/be-d0z` at `f33b4fbd1`,
+matching the PR head. Commit this gate addendum, push the new commit
+to `fork/release/be-d0z` so the PR picks it up, then hand the bead
+back closed. Stays stacked on #3458; nothing to open or re-open.
