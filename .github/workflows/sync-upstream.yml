@@ -1,0 +1,70 @@
+name: Sync upstream
+
+# Weekly rebase of our event-emission changes onto upstream main.
+# Opens a PR for operator approval rather than auto-merging — protects
+# against breakage on upstream API changes.
+
+on:
+  schedule:
+    - cron: '0 8 * * 1' # Mondays 08:00 UTC
+  workflow_dispatch: # manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/gastownhall/beads.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Check if upstream has new commits
+        id: check
+        run: |
+          AHEAD=$(git rev-list --count HEAD..upstream/main)
+          echo "ahead=$AHEAD" >> $GITHUB_OUTPUT
+          echo "Upstream is $AHEAD commits ahead of our main"
+
+      - name: Create or update sync branch
+        if: steps.check.outputs.ahead != '0'
+        run: |
+          git checkout -B sync-upstream upstream/main
+          git push --force-with-lease origin sync-upstream
+
+      - name: Open or update PR
+        if: steps.check.outputs.ahead != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # If a PR already exists, gh pr create exits non-zero — fall back to comment
+          if ! gh pr view sync-upstream --json number 2>/dev/null; then
+            gh pr create \
+              --base main \
+              --head sync-upstream \
+              --title "chore: sync upstream beads (${{ steps.check.outputs.ahead }} commits)" \
+              --body "Automated weekly sync from \`gastownhall/beads\` main.
+
+          Upstream is ${{ steps.check.outputs.ahead }} commits ahead.
+
+          **Before merging:** review for breaking changes that affect our event-emission patches. If CI passes and there are no API changes in the handlers we've patched (\`create\`, \`update\`, \`close\`, \`dep add\`, \`claim\`), this is safe to merge.
+
+          After merge, rebase our event-emission branch onto the new main."
+          else
+            gh pr comment sync-upstream --body "Updated to upstream main (${{ steps.check.outputs.ahead }} new commits since last check). Re-review and merge when ready."
+          fi
