@@ -1,7 +1,9 @@
 package schema
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"os"
@@ -503,5 +505,43 @@ func TestUnstageIgnoredTablesResetsExistingIgnoredTables(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+type mockDB struct{}
+
+func (m *mockDB) ExecContext(_ context.Context, _ string, _ ...any) (sql.Result, error) {
+	return nil, nil
+}
+
+func (m *mockDB) QueryContext(_ context.Context, _ string, _ ...any) (*sql.Rows, error) {
+	panic("not called")
+}
+
+func (m *mockDB) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row {
+	panic("not called")
+}
+
+func TestRunMigrationsStderrOutput(t *testing.T) {
+	var buf bytes.Buffer
+	orig := stderr
+	stderr = &buf
+	defer func() { stderr = orig }()
+
+	n, err := runMigrations(context.Background(), &mockDB{}, 0)
+	if err != nil {
+		t.Fatalf("runMigrations: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("expected at least one migration to run")
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "migrating schema: ") {
+		t.Errorf("expected stderr to contain 'migrating schema: ', got: %q", got)
+	}
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(lines) != n {
+		t.Errorf("expected %d stderr lines, got %d", n, len(lines))
 	}
 }
