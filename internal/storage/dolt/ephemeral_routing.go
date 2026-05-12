@@ -396,7 +396,11 @@ func applyUpdatesToIssueStruct(issue *types.Issue, updates map[string]interface{
 				issue.AcceptanceCriteria = v
 			}
 		case "external_ref":
-			if v, ok := value.(string); ok {
+			// nil clears the ref (CLI passes nil for --external-ref ""); non-nil
+			// string sets it. GH#3902.
+			if value == nil {
+				issue.ExternalRef = nil
+			} else if v, ok := value.(string); ok {
 				issue.ExternalRef = &v
 			}
 		case "spec_id":

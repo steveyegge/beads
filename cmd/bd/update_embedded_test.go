@@ -268,6 +268,36 @@ func TestEmbeddedUpdate(t *testing.T) {
 		}
 	})
 
+	// GH#3902: --external-ref "" must clear to SQL NULL (matching buildCreateIssue's
+	// pointer semantics), not write an empty string. Otherwise sync/tracker code
+	// that checks ExternalRef == nil silently misclassifies cleared refs as still
+	// tracked, and two cleared issues round-trip with different JSON shapes
+	// (cleared via CLI emits "external_ref":"" while never-set issues omit the field).
+	t.Run("update_external_ref_clear", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "ExtRef clear A", "--type", "task", "--external-ref", "ref-a")
+		b := bdCreate(t, bd, dir, "ExtRef clear B", "--type", "task", "--external-ref", "ref-b")
+
+		bdUpdate(t, bd, dir, a.ID, "--external-ref", "")
+		// Repeat clear must succeed for a second issue — historical UNIQUE
+		// constraint repro from the issue report.
+		bdUpdate(t, bd, dir, b.ID, "--external-ref", "")
+
+		gotA := bdShow(t, bd, dir, a.ID)
+		gotB := bdShow(t, bd, dir, b.ID)
+		if gotA.ExternalRef != nil {
+			t.Errorf("expected A.external_ref to be nil after clear, got %q", *gotA.ExternalRef)
+		}
+		if gotB.ExternalRef != nil {
+			t.Errorf("expected B.external_ref to be nil after clear, got %q", *gotB.ExternalRef)
+		}
+
+		// JSON output: cleared ref should be omitted via omitempty, not emitted as "".
+		rawA := bdShowJSON(t, bd, dir, a.ID)
+		if strings.Contains(rawA, `"external_ref"`) {
+			t.Errorf("expected external_ref field to be omitted from JSON after clear, got: %s", rawA)
+		}
+	})
+
 	t.Run("update_spec_id", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "SpecID test", "--type", "task")
 		bdUpdate(t, bd, dir, issue.ID, "--spec-id", "RFC-007")

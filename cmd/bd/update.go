@@ -126,7 +126,14 @@ create, update, show, or close operation).`,
 		}
 		if cmd.Flags().Changed("external-ref") {
 			externalRef, _ := cmd.Flags().GetString("external-ref")
-			updates["external_ref"] = externalRef
+			// Empty string clears the ref to SQL NULL, mirroring buildCreateIssue's
+			// nil-when-empty pointer semantics so cleared refs round-trip as a
+			// missing field (omitempty) instead of an empty string. GH#3902.
+			if externalRef == "" {
+				updates["external_ref"] = nil
+			} else {
+				updates["external_ref"] = externalRef
+			}
 		}
 		if cmd.Flags().Changed("spec-id") {
 			specID, _ := cmd.Flags().GetString("spec-id")
