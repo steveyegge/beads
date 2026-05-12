@@ -80,13 +80,20 @@ func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
+	selectCols := IssueSelectColumns
+	scanFn := ScanIssueFrom
+	if filter.Lite {
+		selectCols = IssueSelectColumnsLite
+		scanFn = ScanIssueLiteFrom
+	}
+
 	selectSQL := "SELECT "
 	if labelDriven {
 		selectSQL = "SELECT DISTINCT "
 	}
 	//nolint:gosec // G201: SQL fragments are built from fixed table/column names and parameterized filters.
 	querySQL := fmt.Sprintf(`%s%s FROM %s %s ORDER BY priority ASC, created_at DESC, id ASC %s`,
-		selectSQL, IssueSelectColumns, fromSQL, whereSQL, limitSQL)
+		selectSQL, selectCols, fromSQL, whereSQL, limitSQL)
 
 	rows, err := tx.QueryContext(ctx, querySQL, args...)
 	if err != nil {
@@ -96,7 +103,7 @@ func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 	var issues []*types.Issue
 	seen := make(map[string]bool)
 	for rows.Next() {
-		issue, scanErr := ScanIssueFrom(rows)
+		issue, scanErr := scanFn(rows)
 		if scanErr != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("search %s: scan: %w", tables.Main, scanErr)
