@@ -21,19 +21,14 @@ var formulaCmd = &cobra.Command{
 	Short: "Manage workflow formulas",
 	Long: `Manage workflow formulas - the source layer for molecule templates.
 
-Formulas are YAML/JSON files that define workflows with composition rules.
-They are "cooked" into proto beads which can then be poured or wisped.
-
-The Rig → Cook → Run lifecycle:
-  - Rig: Compose formulas (extends, compose)
-  - Cook: Transform to proto (bd cook expands macros, applies aspects)
-  - Run: Agents execute poured mols or wisps
+Formulas are TOML/JSON files that define workflows with composition rules.
+Define formulas, cook them into protos, then pour or wisp them into work.
 
 Search paths (in order):
   1. <resolved-beads-dir>/formulas/ (active project)
   2. <checkout-root>/.beads/formulas/ (repo-local formulas)
   3. ~/.beads/formulas/ (user)
-  4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
+  4. $GT_ROOT/.beads/formulas/ (shared workspace root, if GT_ROOT set)
 
 Commands:
   list   List available formulas from all search paths
@@ -50,7 +45,7 @@ Search paths (in order of priority):
   1. <resolved-beads-dir>/formulas/ (active project - highest priority)
   2. <checkout-root>/.beads/formulas/ (repo-local formulas)
   3. ~/.beads/formulas/ (user)
-  4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
+  4. $GT_ROOT/.beads/formulas/ (shared workspace root, if GT_ROOT set)
 
 Formulas in earlier paths shadow those with the same name in later paths.
 
