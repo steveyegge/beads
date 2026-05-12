@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -20,6 +21,11 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dberrors"
 )
 
+// stderr is the writer for migration progress messages. Overridable in tests.
+var stderr io.Writer = os.Stderr
+
+// DBConn is the minimal interface satisfied by *sql.DB, *sql.Tx, and *sql.Conn.
+// It provides query and exec methods needed by the migration runner.
 type DBConn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -747,20 +753,28 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
 		return 0, nil
 	}
 
+	return runMigrations(ctx, db, current)
+}
+
+// runMigrations applies all migration files with version > minVersion. It is
+// package-private so tests can call it directly without needing a live cursor table.
+func runMigrations(ctx context.Context, db DBConn, minVersion int) (int, error) {
 	count := 0
-	for _, mf := range m.list() {
-		if mf.version <= current {
+	for _, mf := range mainSource.list() {
+		if mf.version <= minVersion {
 			continue
 		}
-		data, err := m.files.ReadFile(m.dir + "/" + mf.name)
+		data, err := mainSource.files.ReadFile(mainSource.dir + "/" + mf.name)
 		if err != nil {
 			return count, fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
+
+		fmt.Fprintf(stderr, "migrating schema: %s\n", mf.name)
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
 			return count, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
-		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+m.cursorTable+" (version) VALUES (?)", mf.version); err != nil {
-			return count, fmt.Errorf("recording %s in %s: %w", mf.name, m.cursorTable, err)
+		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+mainSource.cursorTable+" (version) VALUES (?)", mf.version); err != nil {
+			return count, fmt.Errorf("recording %s in %s: %w", mf.name, mainSource.cursorTable, err)
 		}
 		count++
 	}
