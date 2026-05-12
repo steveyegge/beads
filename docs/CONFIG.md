@@ -992,6 +992,42 @@ Some bd commands automatically use configuration:
 
 External integration scripts can read configuration to sync with Jira, Linear, GitHub, etc.
 
+## Profiling
+
+### CPU Profiling
+
+```bash
+bd list --profile              # writes bd-profile-list-<timestamp>.prof + .out trace
+go tool pprof bd-profile-list-*.prof
+```
+
+### Heap / Memory Profiling
+
+Use `--mem-profile` or the `BEADS_MEM_PROFILE` env var to write a heap profile on exit:
+
+```bash
+bd list --mem-profile /tmp/h.prof
+go tool pprof /tmp/h.prof
+
+# Env var form (useful in scripts)
+BEADS_MEM_PROFILE=/tmp/h.prof bd list
+```
+
+By default a `runtime.GC()` fires before writing so the profile shows live objects.
+To capture peak allocation instead, set `BEADS_MEM_PROFILE_NOGC=1`:
+
+```bash
+BEADS_MEM_PROFILE=/tmp/h.prof BEADS_MEM_PROFILE_NOGC=1 bd list
+```
+
+For a quick one-line summary without opening pprof:
+
+```bash
+BEADS_MEM_STATS=/tmp/stats.txt bd list
+cat /tmp/stats.txt
+# HeapAlloc=12345 HeapSys=67890 HeapInuse=34567 HeapObjects=890
+```
+
 ## See Also
 
 - [README.md](../README.md) - Main documentation
