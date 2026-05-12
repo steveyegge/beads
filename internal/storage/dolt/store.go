@@ -1191,6 +1191,13 @@ func (s *DoltStore) verifyProjectIdentity(ctx context.Context, beadsDir string) 
 		return nil // can't verify without knowing beadsDir
 	}
 
+	// Global database: skip identity verification. The global shared-server
+	// database uses a sentinel project_id that intentionally differs from any
+	// project's metadata.json UUID (GH#3818).
+	if s.database == doltserver.GlobalDatabaseName {
+		return nil
+	}
+
 	// Load local project ID from metadata.json
 	metaCfg, err := configfile.Load(beadsDir)
 	if err != nil || metaCfg == nil {
@@ -1205,6 +1212,13 @@ func (s *DoltStore) verifyProjectIdentity(ctx context.Context, beadsDir string) 
 	dbID, err := s.GetMetadata(ctx, "_project_id")
 	if err != nil || dbID == "" {
 		return nil // old database without project_id — skip
+	}
+
+	// Global sentinel in DB: skip verification. If the database contains the
+	// well-known global project ID, this is a global database accessed from a
+	// project directory — identity verification is not meaningful (GH#3818).
+	if dbID == doltserver.GlobalProjectID {
+		return nil
 	}
 
 	if localID != dbID {
