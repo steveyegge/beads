@@ -53,6 +53,6 @@ bd update [id...] [flags]
   -s, --status string                New status
       --stdin                        Read description from stdin (alias for --body-file -)
       --title string                 New title
-  -t, --type string                  New type (bug|feature|task|epic|chore|decision); custom types require types.custom config
+  -t, --type string                  New type (bug|feature|task|epic|chore|decision|spike|story|milestone); custom types require types.custom config; aliases: enhancement/feat→feature, dec/adr→decision, investigation/timebox→spike, user-story→story, ms→milestone
       --unset-metadata stringArray   Remove metadata key (repeatable, e.g., --unset-metadata team)
 ```

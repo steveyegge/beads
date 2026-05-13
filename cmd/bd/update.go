@@ -588,7 +588,7 @@ func init() {
 	updateCmd.Flags().StringP("status", "s", "", "New status")
 	registerPriorityFlag(updateCmd, "")
 	updateCmd.Flags().String("title", "", "New title")
-	updateCmd.Flags().StringP("type", "t", "", "New type (bug|feature|task|epic|chore|decision); custom types require types.custom config")
+	updateCmd.Flags().StringP("type", "t", "", "New type (bug|feature|task|epic|chore|decision|spike|story|milestone); custom types require types.custom config; aliases: enhancement/feat→feature, dec/adr→decision, investigation/timebox→spike, user-story→story, ms→milestone")
 	registerCommonIssueFlags(updateCmd)
 	updateCmd.Flags().Bool("allow-empty-description", false, "Allow empty description replacement when reading from stdin or file")
 	updateCmd.Flags().String("spec-id", "", "Link to specification document")
