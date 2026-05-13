@@ -2,10 +2,13 @@ package github
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -283,6 +286,51 @@ func TestGetConfig_YamlOnlyKeyBypassesStore(t *testing.T) {
 			t.Errorf("getConfig(github.token) = %q, want empty", got)
 		}
 	})
+}
+
+// TestGetConfig_YamlOnlyKeyReadsFromYaml is the positive case for the fix:
+// when github.token is present in .beads/config.yaml, getConfig must return
+// that value (and not depend on GITHUB_TOKEN being set). This is the primary
+// behavior the PR restores; the BypassesStore test only proves the env-var
+// fallback path. Together they cover both branches of the yaml-only handler.
+func TestGetConfig_YamlOnlyKeyReadsFromYaml(t *testing.T) {
+	const wantToken = "yaml-config-token-value"
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	yamlBody := "github.token: \"" + wantToken + "\"\n"
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(yamlBody), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	// Isolate from the developer's environment so we read only the temp yaml.
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("BEADS_DIR", "")
+	t.Setenv("BEADS_TEST_IGNORE_REPO_CONFIG", "1")
+	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Chdir(tmpDir)
+
+	config.ResetForTesting()
+	t.Cleanup(config.ResetForTesting)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+
+	// Sanity-check that the yaml actually loaded — otherwise a getConfig
+	// failure could be mistaken for a tracker bug.
+	if got := config.GetString("github.token"); got != wantToken {
+		t.Fatalf("config.GetString(github.token) = %q, want %q (yaml not loaded?)", got, wantToken)
+	}
+
+	tr := &Tracker{store: nil}
+	got := tr.getConfig(context.Background(), "github.token", "GITHUB_TOKEN")
+	if got != wantToken {
+		t.Errorf("getConfig(github.token) = %q, want %q (yaml value)", got, wantToken)
+	}
 }
 
 func TestValidate(t *testing.T) {
