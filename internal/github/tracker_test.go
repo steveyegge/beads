@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -252,6 +253,36 @@ func TestFieldMapperIssueToBeads_NilRaw(t *testing.T) {
 	if conv != nil {
 		t.Error("IssueToBeads with nil Raw should return nil")
 	}
+}
+
+// TestGetConfig_YamlOnlyKeyBypassesStore is a regression test for the bug where
+// `bd github sync` errored "GitHub token not configured" even though the token
+// was set in .beads/config.yaml. The github tracker's getConfig used to read
+// every key from the Dolt store, but github.token is a yaml-only secret key
+// (never written to the DB). The fix routes yaml-only keys through config.yaml
+// and env var, skipping the store entirely.
+//
+// We verify the store-bypass by passing a nil store: before the fix this would
+// panic on the store deref; after the fix it falls through to GITHUB_TOKEN.
+func TestGetConfig_YamlOnlyKeyBypassesStore(t *testing.T) {
+	ctx := context.Background()
+	tr := &Tracker{store: nil}
+
+	t.Run("falls back to env var", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "env-token-value")
+		got := tr.getConfig(ctx, "github.token", "GITHUB_TOKEN")
+		if got != "env-token-value" {
+			t.Errorf("getConfig(github.token) = %q, want %q", got, "env-token-value")
+		}
+	})
+
+	t.Run("returns empty when no value is set", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "")
+		got := tr.getConfig(ctx, "github.token", "GITHUB_TOKEN")
+		if got != "" {
+			t.Errorf("getConfig(github.token) = %q, want empty", got)
+		}
+	})
 }
 
 func TestValidate(t *testing.T) {
