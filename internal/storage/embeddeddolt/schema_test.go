@@ -59,6 +59,7 @@ func TestSchemaAfterInit(t *testing.T) {
 		"wisp_dependencies",
 		"wisp_events",
 		"wisp_comments",
+		"wisp_child_counters",
 		"schema_migrations",
 	}
 
