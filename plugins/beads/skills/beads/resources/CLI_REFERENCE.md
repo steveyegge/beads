@@ -1,7 +1,7 @@
 # CLI Command Reference
 
 **For:** AI agents and developers using bd command-line interface
-**Version:** 0.60.0+
+**Version:** 1.0.4+
 
 ## Quick Navigation
 
@@ -228,6 +228,9 @@ bd edit <id> --acceptance       # Edit acceptance criteria
 # Complete work (supports multiple IDs)
 bd close <id> [<id>...] --reason "Done" --json
 
+# Close with reason from file (v1.0.4+)
+bd close <id> --reason-file evidence.md --json
+
 # Reopen closed issues (supports multiple IDs)
 bd reopen <id> [<id>...] --reason "Reopening" --json
 ```
@@ -443,6 +446,9 @@ bd --db /path/to/.beads/beads.db <command>
 
 # Custom actor for audit trail
 bd --actor alice <command>
+
+# Run against a different working directory (v1.0.4+)
+bd -C /path/to/other/project <command>
 ```
 
 **See also:**
@@ -545,6 +551,47 @@ bd dolt show                   # Check connection status
 ```
 
 > **Note:** `bd sync` is deprecated (now a no-op). Use the Dolt commands above instead.
+
+### Re-initialize Local Database (v1.0.4+)
+
+```bash
+# Re-initialize .beads/ over existing local data (does NOT touch remote)
+bd init --reinit-local
+
+# Also discard remote history (requires --destroy-token in non-interactive mode)
+bd init --reinit-local --discard-remote
+
+# Note: --force is a deprecated alias for --reinit-local; bypasses only the
+# local data-safety guard and does NOT authorize remote divergence.
+```
+
+### Configuration (v1.0.4+)
+
+```bash
+# Show all effective configuration with provenance
+bd config show
+
+# Detect drift between configured state and actual repo state
+bd config drift
+
+# Reconcile state to match configuration
+bd config apply
+
+# Get / set individual values
+bd config get <key>
+bd config set <key> <value>
+bd config list
+```
+
+### Batch Operations (v1.0.1+)
+
+```bash
+# Run many write operations in a single Dolt transaction (avoids write amplification)
+bd batch -f operations.json
+cat operations.json | bd batch
+```
+
+Commands are read from stdin or file. The whole batch is rolled back on any error.
 
 ## Issue Types
 

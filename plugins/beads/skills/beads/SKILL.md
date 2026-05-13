@@ -7,10 +7,10 @@ description: >
   ready", "track this work", "resume after compaction". Make sure to use this skill
   whenever managing multi-session work, tracking dependencies, or recovering context.
 allowed-tools: "Read,Bash(bd:*)"
-version: "0.60.0"
+version: "1.0.4"
 author: "Steve Yegge <steve.yegge@gmail.com>"
 license: "MIT"
-compatible-with: [claude-code, codex]
+compatible-with: [claude-code, codex, gemini]
 tags: [issue-tracking, task-management, multi-session, dependencies]
 ---
 
@@ -32,19 +32,23 @@ See [BOUNDARIES.md](resources/BOUNDARIES.md) for detailed comparison.
 ## Prerequisites
 
 ```bash
-bd --version  # Requires v0.60.0+
+bd --version  # Requires v1.0.0+; v1.0.4+ recommended
 ```
 
 - **bd CLI** installed and in PATH
 - **Git repository** (optional — use `BEADS_DIR` + `--stealth` for git-free operation)
 - **Initialization**: `bd init` run once (humans do this, not agents)
 
+## Hooks
+
+When installed as a plugin, `bd prime` runs at SessionStart (load context) and PreCompact (re-inject memories). Hookless setups call `bd prime` manually, or `bd prime --memories-only` for a lower-token refresh. Wire hooks with `bd setup claude`, `bd setup codex`, or `bd setup gemini`.
+
 ## CLI Reference
 
 **Run `bd prime`** for AI-optimized workflow context (auto-loaded by hooks).
 **Run `bd <command> --help`** for specific command usage.
 
-Essential commands: `bd ready`, `bd create`, `bd show`, `bd update`, `bd close`, `bd dolt push`
+Essential commands: `bd ready`, `bd create`, `bd show`, `bd update`, `bd close`, `bd dolt push`. See [CLI_REFERENCE.md](resources/CLI_REFERENCE.md) for v1.0.4 additions (`bd batch`, `bd -C`, `bd config drift`, `bd init --reinit-local`, `bd close --reason-file`).
 
 ## Session Protocol
 
@@ -67,6 +71,7 @@ Append `--json` to any command for structured output. Use `bd show <id> --long` 
 | `not in a git repository` | `git init` first |
 | `disk I/O error (522)` | Move `.beads/` off cloud-synced filesystem |
 | Status updates lag | Use server mode: `bd dolt start` |
+| `--force is deprecated` (v1.0.4+) | Use `bd init --reinit-local --discard-remote` instead |
 
 See [TROUBLESHOOTING.md](resources/TROUBLESHOOTING.md) for full details.
 
@@ -107,4 +112,4 @@ bd close <id> --reason "Implemented with refresh tokens" --json
 
 ## Validation
 
-If `bd --version` reports newer than `0.60.0`, this skill may be stale. Run `bd prime` for current CLI guidance — it auto-updates with each bd release and is the canonical source of truth ([ADR-0001](adr/0001-bd-prime-as-source-of-truth.md)).
+If `bd --version` reports a minor or major version newer than `1.0.x`, this skill may be stale. Run `bd prime` for current CLI guidance — it auto-updates with each bd release and is the canonical source of truth ([ADR-0001](adr/0001-bd-prime-as-source-of-truth.md)).
