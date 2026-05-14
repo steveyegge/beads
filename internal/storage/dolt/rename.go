@@ -14,9 +14,3 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 		return issueops.UpdateIssueIDInTx(ctx, regularTx, ignoredTx, oldID, newID, issue, actor)
 	})
 }
-
-// RenameCounterPrefix is a no-op with hash-based IDs
-func (s *DoltStore) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	// Hash-based IDs don't use counters
-	return nil
-}

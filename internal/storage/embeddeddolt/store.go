@@ -602,10 +602,6 @@ func (s *EmbeddedDoltStore) PromoteFromEphemeral(ctx context.Context, id string,
 
 // GetNextChildID is implemented in child_id.go.
 
-func (s *EmbeddedDoltStore) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	return nil // Hash-based IDs don't use counters.
-}
-
 // ---------------------------------------------------------------------------
 // storage.DependencyQueryStore
 // ---------------------------------------------------------------------------
