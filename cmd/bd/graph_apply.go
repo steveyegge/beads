@@ -50,6 +50,13 @@ type GraphApplyResult struct {
 	IDs map[string]string `json:"ids"`
 }
 
+// GraphApplyOptions carries CLI-level storage options that apply to every node
+// in the graph.
+type GraphApplyOptions struct {
+	Ephemeral bool
+	NoHistory bool
+}
+
 // GraphApplyDryRun describes the actions that would be taken by a graph plan,
 // without performing any writes. Emitted by `bd create --graph --dry-run`.
 type GraphApplyDryRun struct {
@@ -426,6 +433,58 @@ func validateGraphApplyPlan(plan *GraphApplyPlan) error {
 		}
 	}
 
+	if err := validateGraphApplyLocalCycles(plan, seenKeys); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateGraphApplyLocalCycles(plan *GraphApplyPlan, knownKeys map[string]bool) error {
+	adj := make(map[string][]string)
+	for _, edge := range plan.Edges {
+		if edge.FromKey == "" || edge.ToKey == "" {
+			continue
+		}
+		if !knownKeys[edge.FromKey] || !knownKeys[edge.ToKey] {
+			continue
+		}
+		depType := types.DependencyType(edge.Type)
+		if depType == "" {
+			depType = types.DepBlocks
+		}
+		if depType != types.DepBlocks && depType != types.DepConditionalBlocks {
+			continue
+		}
+		adj[edge.FromKey] = append(adj[edge.FromKey], edge.ToKey)
+	}
+
+	visiting := make(map[string]bool, len(knownKeys))
+	visited := make(map[string]bool, len(knownKeys))
+	var visit func(string) bool
+	visit = func(key string) bool {
+		if visiting[key] {
+			return true
+		}
+		if visited[key] {
+			return false
+		}
+		visiting[key] = true
+		for _, next := range adj[key] {
+			if visit(next) {
+				return true
+			}
+		}
+		visiting[key] = false
+		visited[key] = true
+		return false
+	}
+
+	for key := range knownKeys {
+		if visit(key) {
+			return fmt.Errorf("graph contains a blocking dependency cycle involving node %q", key)
+		}
+	}
 	return nil
 }
 
@@ -532,10 +591,15 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 			}
 		}
 
+		parentDepPairs := graphApplyParentDepPairs(plan.Nodes, keyToID)
+
 		// Add dependencies from edges.
 		for _, edge := range plan.Edges {
 			fromID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
 			toID := resolveEdgeRef(edge.ToKey, edge.ToID, keyToID)
+			if parentDepPairs[graphApplyDepPairKey(fromID, toID)] {
+				continue
+			}
 			depType := types.DependencyType(edge.Type)
 			if depType == "" {
 				depType = types.DepBlocks
@@ -545,7 +609,11 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 				DependsOnID: toID,
 				Type:        depType,
 			}
-			if err := tx.AddDependency(ctx, dep, actor); err != nil {
+			addOpts := storage.DependencyAddOptions{}
+			if graphApplyEdgeCanSkipSQLCycleCheck(edge, depType) {
+				addOpts.SkipCycleCheck = true
+			}
+			if err := tx.AddDependencyWithOptions(ctx, dep, actor, addOpts); err != nil {
 				return fmt.Errorf("adding edge %s->%s: %w", fromID, toID, err)
 			}
 		}
@@ -584,6 +652,35 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 	}
 
 	return &GraphApplyResult{IDs: keyToID}, nil
+}
+
+func graphApplyEdgeCanSkipSQLCycleCheck(edge GraphApplyEdge, depType types.DependencyType) bool {
+	if edge.FromKey == "" || edge.ToKey == "" || edge.FromID != "" || edge.ToID != "" {
+		return false
+	}
+	if depType == "" {
+		depType = types.DepBlocks
+	}
+	return depType == types.DepBlocks || depType == types.DepConditionalBlocks
+}
+
+func graphApplyParentDepPairs(nodes []GraphApplyNode, keyToID map[string]string) map[string]bool {
+	pairs := make(map[string]bool)
+	for _, node := range nodes {
+		parentID := node.ParentID
+		if node.ParentKey != "" {
+			parentID = keyToID[node.ParentKey]
+		}
+		childID := keyToID[node.Key]
+		if childID != "" && parentID != "" {
+			pairs[graphApplyDepPairKey(childID, parentID)] = true
+		}
+	}
+	return pairs
+}
+
+func graphApplyDepPairKey(issueID, dependsOnID string) string {
+	return issueID + "\x00" + dependsOnID
 }
 
 func resolveEdgeRef(key, id string, keyToID map[string]string) string {

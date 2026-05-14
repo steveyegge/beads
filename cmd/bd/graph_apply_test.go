@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestValidateGraphApplyPlanAcceptsCustomTypes(t *testing.T) {
@@ -253,5 +255,98 @@ func TestEmitGraphApplyDryRun_Counts(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run missing %q in output:\n%s", want, out)
 		}
+	}
+}
+
+func TestValidateGraphApplyPlanRejectsLocalBlockingCycle(t *testing.T) {
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "a", Title: "A", Type: "task"},
+			{Key: "b", Title: "B", Type: "task"},
+			{Key: "c", Title: "C", Type: "task"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromKey: "a", ToKey: "b", Type: "blocks"},
+			{FromKey: "b", ToKey: "c", Type: "conditional-blocks"},
+			{FromKey: "c", ToKey: "a", Type: "blocks"},
+		},
+	}
+
+	err := validateGraphApplyPlan(plan)
+	if err == nil {
+		t.Fatal("expected local graph cycle to be rejected")
+	}
+	if got, want := err.Error(), "graph contains a blocking dependency cycle"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want to contain %q", got, want)
+	}
+}
+
+func TestValidateGraphApplyPlanAllowsNonBlockingLocalCycle(t *testing.T) {
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "a", Title: "A", Type: "task"},
+			{Key: "b", Title: "B", Type: "task"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromKey: "a", ToKey: "b", Type: "related"},
+			{FromKey: "b", ToKey: "a", Type: "related"},
+		},
+	}
+
+	if err := validateGraphApplyPlan(plan); err != nil {
+		t.Fatalf("non-blocking cycle rejected: %v", err)
+	}
+}
+
+func TestGraphApplyEdgeCanSkipSQLCycleCheckOnlyForLocalBlockingEdges(t *testing.T) {
+	tests := []struct {
+		name string
+		edge GraphApplyEdge
+		typ  string
+		want bool
+	}{
+		{name: "local default blocks", edge: GraphApplyEdge{FromKey: "a", ToKey: "b"}, want: true},
+		{name: "local conditional blocks", edge: GraphApplyEdge{FromKey: "a", ToKey: "b"}, typ: "conditional-blocks", want: true},
+		{name: "local nonblocking", edge: GraphApplyEdge{FromKey: "a", ToKey: "b"}, typ: "related"},
+		{name: "existing id target", edge: GraphApplyEdge{FromKey: "a", ToID: "bd-123"}, want: false},
+		{name: "explicit id overrides key", edge: GraphApplyEdge{FromKey: "a", FromID: "bd-1", ToKey: "b"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := graphApplyEdgeCanSkipSQLCycleCheck(tt.edge, types.DependencyType(tt.typ))
+			if got != tt.want {
+				t.Fatalf("skip = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGraphApplyParentDepPairs(t *testing.T) {
+	nodes := []GraphApplyNode{
+		{Key: "root", Title: "Root"},
+		{Key: "child", Title: "Child", ParentKey: "root"},
+		{Key: "external-child", Title: "External child", ParentID: "bd-parent"},
+	}
+	keyToID := map[string]string{
+		"root":           "bd-root",
+		"child":          "bd-child",
+		"external-child": "bd-external-child",
+	}
+
+	pairs := graphApplyParentDepPairs(nodes, keyToID)
+	for _, pair := range []struct {
+		child  string
+		parent string
+	}{
+		{"bd-child", "bd-root"},
+		{"bd-external-child", "bd-parent"},
+	} {
+		if !pairs[graphApplyDepPairKey(pair.child, pair.parent)] {
+			t.Fatalf("missing parent dep pair %s -> %s", pair.child, pair.parent)
+		}
+	}
+	if pairs[graphApplyDepPairKey("bd-root", "bd-child")] {
+		t.Fatal("unexpected reverse parent dep pair")
 	}
 }
