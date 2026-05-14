@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	beadsplugin "github.com/steveyegge/beads/plugins/beads"
 )
 
 // RecipeType indicates how the recipe is installed.
@@ -89,7 +90,7 @@ var BuiltinRecipes = map[string]Recipe{
 			".github/copilot-instructions.md",
 		},
 		Contents: map[string]string{
-			".copilot-plugin/plugin.json":     CopilotPluginManifestTemplate,
+			".copilot-plugin/plugin.json":     beadsplugin.CopilotPluginManifest(),
 			".github/copilot-instructions.md": CopilotInstructionsTemplate,
 		},
 	},

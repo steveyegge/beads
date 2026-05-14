@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	beadsplugin "github.com/steveyegge/beads/plugins/beads"
 )
 
 func TestBuiltinRecipes(t *testing.T) {
@@ -178,8 +180,8 @@ func TestContentForPathCopilot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContentForPath(plugin.json): %v", err)
 	}
-	if !containsAll(manifest, `"name": "beads"`, `"SessionStart"`, `"PreCompact"`) {
-		t.Fatalf("unexpected Copilot plugin manifest:\n%s", manifest)
+	if manifest != beadsplugin.CopilotPluginManifest() {
+		t.Fatalf("copilot manifest does not match embedded shared plugin manifest")
 	}
 
 	instructions, err := ContentForPath(recipe, ".github/copilot-instructions.md")

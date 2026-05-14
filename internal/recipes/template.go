@@ -83,52 +83,6 @@ If the Beads Copilot plugin is installed, Copilot CLI will automatically run
 ` + "`bd prime`" + ` on session start and before compaction.
 `
 
-// CopilotPluginManifestTemplate is the native Copilot CLI plugin manifest for
-// Beads. It lets Copilot register bd prime hooks without bespoke setup logic.
-const CopilotPluginManifestTemplate = `{
-  "name": "beads",
-  "description": "AI-supervised issue tracker for coding workflows. Manage tasks, discover work, and maintain context with simple CLI commands.",
-  "version": "1.0.4",
-  "author": {
-    "name": "Steve Yegge",
-    "url": "https://github.com/steveyegge"
-  },
-  "repository": "https://github.com/gastownhall/beads",
-  "license": "MIT",
-  "homepage": "https://github.com/gastownhall/beads",
-  "keywords": [
-    "issue-tracker",
-    "task-management",
-    "ai-workflow",
-    "agent-memory"
-  ],
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bd prime"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bd prime"
-          }
-        ]
-      }
-    ]
-  }
-}
-`
-
 // ContentForPath returns the file content that should be written for a recipe path.
 func ContentForPath(recipe Recipe, path string) (string, error) {
 	switch recipe.Type {
