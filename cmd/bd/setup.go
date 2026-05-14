@@ -282,6 +282,8 @@ func runRecipe(name string) {
 				FatalError("%v", err)
 			}
 			removed = true
+			// Best-effort cleanup for recipe-created parent directories. This only
+			// succeeds when the directory became empty after removing this file.
 			_ = os.Remove(filepath.Dir(path))
 		}
 		if !removed {
