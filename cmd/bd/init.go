@@ -1995,8 +1995,7 @@ func printInitNoDoltRemoteWarning() {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "  To enable durable sync, add a git origin and then run:")
-	fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt remote add origin <git-remote-url>"))
-	fmt.Fprintf(os.Stderr, "    %s\n\n", ui.RenderAccent("bd dolt push"))
+	fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt push"))
 }
 
 type initSyncRemoteSource int

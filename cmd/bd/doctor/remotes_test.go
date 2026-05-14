@@ -2,7 +2,9 @@ package doctor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
@@ -29,5 +31,36 @@ func TestCheckRemoteConsistency_WorktreeFallbackUsesSharedConfig(t *testing.T) {
 	}
 	if check.Message == "N/A (not using Dolt backend)" {
 		t.Fatalf("expected shared worktree config to be used, got %q", check.Message)
+	}
+}
+
+func TestRemoteAdoptionDetailUsesGitOrigin(t *testing.T) {
+	repoDir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"remote", "add", "origin", "git@github.com:org/repo.git"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v\n%s", args[0], err, out)
+		}
+	}
+
+	detail := remoteAdoptionDetail(repoDir)
+	for _, want := range []string{
+		"git origin is configured",
+		"bd dolt remote add origin git+ssh://git@github.com/org/repo.git",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("remote adoption detail missing %q:\n%s", want, detail)
+		}
+	}
+}
+
+func TestRemoteAdoptionDetailWithoutGitOrigin(t *testing.T) {
+	detail := remoteAdoptionDetail(t.TempDir())
+	if !strings.Contains(detail, "bd dolt remote add origin <url>") {
+		t.Fatalf("remote adoption detail without git origin should keep generic command, got:\n%s", detail)
 	}
 }

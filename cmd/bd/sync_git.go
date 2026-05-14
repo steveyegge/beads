@@ -79,6 +79,19 @@ func gitOriginGetURL() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+func gitOriginGetURLForActiveRepo(ctx context.Context) (string, error) {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return "", err
+	}
+	cmd := rc.GitCmd(ctx, "remote", "get-url", "origin")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // gitOriginHasDoltDataRef checks if origin has refs/dolt/data.
 // Returns false on any error (network, no remote, timeout, etc).
 // Uses a 10s timeout since this is a network call used for auto-detection,

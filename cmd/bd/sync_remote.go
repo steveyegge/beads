@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 )
 
@@ -43,6 +45,23 @@ func commitBeadsConfig(msg string) {
 	commitCmd := exec.Command("git", "commit", "-m", msg) //nolint:gosec // G702: msg is from internal callers only, not user input
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		// "nothing to commit" is normal if the file was already staged
+		if !strings.Contains(string(out), "nothing to commit") {
+			fmt.Fprintf(os.Stderr, "Warning: failed to commit config change: %v\n", err)
+		}
+	}
+}
+
+func commitBeadsConfigForActiveRepo(ctx context.Context, msg string) {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return
+	}
+	addCmd := rc.GitCmd(ctx, "add", ".beads/config.yaml")
+	if err := addCmd.Run(); err != nil {
+		return
+	}
+	commitCmd := rc.GitCmd(ctx, "commit", "-m", msg)
+	if out, err := commitCmd.CombinedOutput(); err != nil {
 		if !strings.Contains(string(out), "nothing to commit") {
 			fmt.Fprintf(os.Stderr, "Warning: failed to commit config change: %v\n", err)
 		}

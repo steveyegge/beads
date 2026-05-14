@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -58,7 +59,7 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 			Name:     "Remote Consistency",
 			Status:   StatusWarning,
 			Message:  "No remotes configured",
-			Detail:   "Add a remote with: bd dolt remote add origin <url>",
+			Detail:   remoteAdoptionDetail(repoPath),
 			Category: CategoryData,
 		}
 	}
@@ -118,6 +119,36 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 		Fix:      fix,
 		Category: CategoryData,
 	}
+}
+
+func remoteAdoptionDetail(repoPath string) string {
+	if originURL := gitOriginRemoteURL(repoPath); originURL != "" {
+		remoteURL := normalizeGitOriginForDolt(originURL)
+		return fmt.Sprintf("git origin is configured. Adopt it with: bd dolt remote add origin %s", remoteURL)
+	}
+	return "Add a remote with: bd dolt remote add origin <url>"
+}
+
+func gitOriginRemoteURL(repoPath string) string {
+	cmd := exec.Command("git", "-C", repoPath, "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func normalizeGitOriginForDolt(url string) string {
+	if strings.HasPrefix(url, "git+") || strings.HasPrefix(url, "file://") || strings.HasPrefix(url, "aws://") || strings.HasPrefix(url, "gs://") || strings.HasPrefix(url, "dolthub://") {
+		return url
+	}
+	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "ssh://") {
+		return "git+" + url
+	}
+	if idx := strings.Index(url, ":"); idx > 0 && !strings.Contains(url[:idx], "/") && strings.Contains(url, "@") {
+		return "git+ssh://" + url[:idx] + "/" + url[idx+1:]
+	}
+	return url
 }
 
 // querySQLRemotes gets remotes from the SQL server.
