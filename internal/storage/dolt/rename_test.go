@@ -47,7 +47,7 @@ func TestUpdateIssueIDUpdatesWispTables(t *testing.T) {
 		DependsOnID: "test-old1",
 		Type:        types.DepBlocks,
 	}
-	if err := store.addWispDependency(ctx, dep, "test"); err != nil {
+	if err := store.addWispDependency(ctx, dep, "test", false); err != nil {
 		t.Fatalf("failed to add wisp dependency: %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestUpdateIssueIDUpdatesWispTables(t *testing.T) {
 		DependsOnID: wisp2.ID,
 		Type:        types.DepBlocks,
 	}
-	if err := store.addWispDependency(ctx, dep2, "test"); err != nil {
+	if err := store.addWispDependency(ctx, dep2, "test", false); err != nil {
 		t.Fatalf("failed to add wisp dependency 2: %v", err)
 	}
 

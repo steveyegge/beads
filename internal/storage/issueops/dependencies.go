@@ -10,6 +10,41 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// DepTargetKind identifies which typed target column on the dependencies /
+// wisp_dependencies tables a dependency edge populates.
+type DepTargetKind int
+
+const (
+	DepTargetIssue DepTargetKind = iota
+	DepTargetWisp
+	DepTargetExternal
+)
+
+// Column returns the typed target column name for this kind.
+func (k DepTargetKind) Column() string {
+	switch k {
+	case DepTargetWisp:
+		return "depends_on_wisp_id"
+	case DepTargetExternal:
+		return "depends_on_external"
+	default:
+		return "depends_on_issue_id"
+	}
+}
+
+// ClassifyDepTarget classifies a dependency's target. external: prefixes and
+// cross-prefix refs land in DepTargetExternal (they don't resolve in this DB);
+// otherwise an in-tx wisps lookup distinguishes wisp from regular-issue targets.
+func ClassifyDepTarget(ctx context.Context, tx *sql.Tx, dep *types.Dependency, isCrossPrefix bool) DepTargetKind {
+	if isCrossPrefix || strings.HasPrefix(dep.DependsOnID, "external:") {
+		return DepTargetExternal
+	}
+	if IsActiveWispInTx(ctx, tx, dep.DependsOnID) {
+		return DepTargetWisp
+	}
+	return DepTargetIssue
+}
+
 // AddDependencyOpts configures AddDependencyInTx behavior.
 // When fields are left empty, AddDependencyInTx performs wisp routing
 // automatically via IsActiveWispInTx. Callers that have already determined
@@ -34,6 +69,10 @@ type AddDependencyOpts struct {
 	// SkipCycleCheck skips the recursive pre-insert cycle check for callers
 	// that intentionally trade validation cost for bulk graph wiring speed.
 	SkipCycleCheck bool
+	// TargetKind, when non-nil, skips in-tx target classification. Used by
+	// callers that pre-computed kind to avoid a connection-pool round-trip
+	// inside the tx.
+	TargetKind *DepTargetKind
 }
 
 // AddDependencyInTx validates and inserts a dependency within an existing
@@ -173,11 +212,18 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		return fmt.Errorf("failed to check existing dependency: %w", err)
 	}
 
-	//nolint:gosec // G201: writeTable is from WispTableRouting
+	var kind DepTargetKind
+	if opts.TargetKind != nil {
+		kind = *opts.TargetKind
+	} else {
+		kind = ClassifyDepTarget(ctx, tx, dep, opts.IsCrossPrefix)
+	}
+
+	//nolint:gosec // G201: writeTable from WispTableRouting; target column from DepTargetKind.Column()
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+		INSERT INTO %s (issue_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?, ?)
-	`, writeTable), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+	`, writeTable, kind.Column()), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
 	}
 	return nil

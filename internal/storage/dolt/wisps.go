@@ -224,22 +224,6 @@ func (s *DoltStore) deleteWisp(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Delete from auxiliary tables
-	for _, table := range []string{"wisp_dependencies", "wisp_events", "wisp_comments", "wisp_labels"} {
-		if table == "wisp_dependencies" {
-			_, err = tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ? OR depends_on_id = ?", table), id, id) //nolint:gosec // G201: table is hardcoded
-		} else {
-			_, err = tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ?", table), id) //nolint:gosec // G201: table is hardcoded
-		}
-		if err != nil {
-			return fmt.Errorf("failed to delete from %s: %w", table, err)
-		}
-	}
-
-	if _, err = tx.ExecContext(ctx, "DELETE FROM wisp_child_counters WHERE parent_id = ?", id); err != nil {
-		return fmt.Errorf("failed to delete from wisp_child_counters: %w", err)
-	}
-
 	result, err := tx.ExecContext(ctx, "DELETE FROM wisps WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete wisp: %w", err)
@@ -302,42 +286,6 @@ func (s *DoltStore) deleteWispBatchTx(ctx context.Context, ids []string) (int, e
 
 	inClause, args := doltBuildSQLInClause(ids)
 
-	// Delete from wisp_dependencies using two separate queries rather than a
-	// single OR condition. An OR across issue_id and depends_on_id forces Dolt
-	// to union two index scans in one statement, which is slow enough to trigger
-	// the driver's write timeout on large batches (ff-tqm). Two targeted queries
-	// each use their own index: PRIMARY KEY for issue_id and
-	// idx_wisp_dep_depends for depends_on_id.
-	//nolint:gosec // G201: inClause contains only ? markers
-	if _, err := tx.ExecContext(ctx,
-		fmt.Sprintf("DELETE FROM wisp_dependencies WHERE issue_id IN (%s)", inClause),
-		args...); err != nil {
-		return 0, fmt.Errorf("failed to batch delete from wisp_dependencies (issue_id): %w", err)
-	}
-	//nolint:gosec // G201: inClause contains only ? markers
-	if _, err := tx.ExecContext(ctx,
-		fmt.Sprintf("DELETE FROM wisp_dependencies WHERE depends_on_id IN (%s)", inClause),
-		args...); err != nil {
-		return 0, fmt.Errorf("failed to batch delete from wisp_dependencies (depends_on_id): %w", err)
-	}
-
-	for _, table := range []string{"wisp_events", "wisp_comments", "wisp_labels"} {
-		//nolint:gosec // G201: table is a hardcoded constant, inClause contains only ? markers
-		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf("DELETE FROM %s WHERE issue_id IN (%s)", table, inClause),
-			args...); err != nil {
-			return 0, fmt.Errorf("failed to batch delete from %s: %w", table, err)
-		}
-	}
-
-	//nolint:gosec // G201: inClause contains only ? markers
-	if _, err := tx.ExecContext(ctx,
-		fmt.Sprintf("DELETE FROM wisp_child_counters WHERE parent_id IN (%s)", inClause),
-		args...); err != nil {
-		return 0, fmt.Errorf("failed to batch delete from wisp_child_counters: %w", err)
-	}
-
-	// Delete the wisps themselves
 	//nolint:gosec // G201: inClause contains only ? markers
 	result, err := tx.ExecContext(ctx,
 		fmt.Sprintf("DELETE FROM wisps WHERE id IN (%s)", inClause),
@@ -533,7 +481,7 @@ func (s *DoltStore) getWispsByIDs(ctx context.Context, ids []string) ([]*types.I
 }
 
 // addWispDependency adds a dependency to the wisp_dependencies table.
-func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency, actor string, isCrossPrefix bool) error {
 	metadata := dep.Metadata
 	if metadata == "" {
 		metadata = "{}"
@@ -593,10 +541,12 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("failed to check existing wisp dependency: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO wisp_dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+	kind := issueops.ClassifyDepTarget(ctx, tx, dep, isCrossPrefix)
+	//nolint:gosec // G201: typed column name from DepTargetKind.Column()
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO wisp_dependencies (issue_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?, ?)
-	`, dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+	`, kind.Column()), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return fmt.Errorf("failed to add wisp dependency: %w", err)
 	}
 

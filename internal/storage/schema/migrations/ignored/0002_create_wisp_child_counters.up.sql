@@ -34,7 +34,7 @@ SET @needs_add = (
       AND CONSTRAINT_NAME = 'fk_counter_parent'
 );
 SET @sql = IF(@needs_add = 1,
-    'ALTER TABLE child_counters ADD CONSTRAINT fk_counter_parent FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE',
+    'ALTER TABLE child_counters ADD CONSTRAINT fk_counter_parent FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE ON UPDATE CASCADE',
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

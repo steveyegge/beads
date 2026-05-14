@@ -43,8 +43,8 @@ func PromoteFromEphemeralInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx,
 	}
 
 	if _, err := regularTx.ExecContext(ctx, `
-		INSERT IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
-		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+		INSERT IGNORE INTO dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
+		SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
 		FROM wisp_dependencies WHERE issue_id = ?
 	`, id); err != nil {
 		log.Printf("promote %s: failed to copy dependencies: %v", id, err)

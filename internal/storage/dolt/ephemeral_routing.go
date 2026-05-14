@@ -215,26 +215,15 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 		}
 	}
 
-	// Copy dependencies directly to permanent dependencies table
-	deps, err := s.getWispDependencyRecords(ctx, id)
-	if err != nil {
-		return wrapQueryError("get wisp dependencies for promote", err)
-	}
-	for _, dep := range deps {
-		metadata := dep.Metadata
-		if metadata == "" {
-			metadata = "{}"
-		}
-		if _, err := s.execContext(ctx, `
-			INSERT IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy, metadata, dep.ThreadID); err != nil {
-			// Skip if target doesn't exist (external ref to other wisp)
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "foreign key") {
-				continue
-			}
-			return fmt.Errorf("failed to copy dependency: %w", err)
-		}
+	// Copy dependencies directly to permanent dependencies table. Typed-column
+	// shape is identical across both tables, so SELECT/INSERT preserves which
+	// target column was populated (issue/wisp/external) per row.
+	if _, err := s.execContext(ctx, `
+		INSERT IGNORE INTO dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
+		SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
+		FROM wisp_dependencies WHERE issue_id = ?
+	`, id); err != nil {
+		log.Printf("promote %s: failed to copy dependencies: %v", id, err)
 	}
 
 	// Copy events via INSERT...SELECT (best-effort: log but don't fail promotion)
@@ -288,8 +277,8 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 		}
 
 		if _, err := ignoredTx.ExecContext(ctx, `
-			INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
-			SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+			INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
+			SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
 			FROM dependencies WHERE issue_id = ?
 		`, id); err != nil {
 			log.Printf("demote %s: failed to copy dependencies (data may be lost): %v", id, err)
@@ -316,13 +305,6 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			VALUES (?, ?, ?, ?, ?)
 		`, id, types.EventUpdated, actor, "", "demoted to wisp"); err != nil {
 			log.Printf("demote %s: failed to record demotion event: %v", id, err)
-		}
-
-		for _, table := range []string{"dependencies", "events", "comments", "labels"} {
-			if _, err := regularTx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE issue_id = ?", table), id); //nolint:gosec // G201: table is hardcoded
-			err != nil {
-				return fmt.Errorf("failed to delete from %s: %w", table, err)
-			}
 		}
 
 		if _, err := regularTx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id); err != nil {
