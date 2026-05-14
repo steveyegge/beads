@@ -140,6 +140,30 @@ func (te *testEnv) assertChildCounter(t *testing.T, ctx context.Context, parentI
 	}
 }
 
+// assertWispChildCounter verifies the last_child value in wisp_child_counters.
+func (te *testEnv) assertWispChildCounter(t *testing.T, ctx context.Context, parentID string, wantLastChild int) {
+	t.Helper()
+	var lastChild int
+	te.queryScalar(t, ctx,
+		"SELECT last_child FROM wisp_child_counters WHERE parent_id = ?",
+		[]any{parentID}, &lastChild)
+	if lastChild != wantLastChild {
+		t.Errorf("wisp last_child for %s: got %d, want %d", parentID, lastChild, wantLastChild)
+	}
+}
+
+// assertNoChildCounterRow verifies the row is absent from the given counter table.
+func (te *testEnv) assertNoChildCounterRow(t *testing.T, ctx context.Context, table, parentID string) {
+	t.Helper()
+	var count int
+	te.queryScalar(t, ctx,
+		fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE parent_id = ?", table),
+		[]any{parentID}, &count)
+	if count != 0 {
+		t.Errorf("expected no row in %s for parent %s, found %d", table, parentID, count)
+	}
+}
+
 func skipUnlessEmbeddedDolt(t *testing.T) {
 	t.Helper()
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
@@ -903,6 +927,51 @@ func TestCreateIssues(t *testing.T) {
 			te.assertRowExists(t, ctx, "issues", iss.ID)
 		}
 		te.assertChildCounter(t, ctx, "hc-parent", 5)
+	})
+
+	t.Run("hierarchical_child_counters_mixed_wisp_and_issue", func(t *testing.T) {
+		te := newTestEnv(t, "mh")
+		ctx := t.Context()
+
+		issues := []*types.Issue{
+			{ID: "mh-issue-parent", Title: "Issue parent", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+			{ID: "mh-issue-parent.1", Title: "Issue child 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+			{ID: "mh-issue-parent.4", Title: "Issue child 4", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+			{ID: "mh-wisp-parent", Title: "Wisp parent", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Ephemeral: true},
+			{ID: "mh-wisp-parent.2", Title: "Wisp child 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Ephemeral: true},
+			{ID: "mh-wisp-parent.7", Title: "Wisp child 7", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Ephemeral: true},
+		}
+
+		if err := te.store.CreateIssues(ctx, issues, "tester"); err != nil {
+			t.Fatalf("CreateIssues: %v", err)
+		}
+
+		te.assertChildCounter(t, ctx, "mh-issue-parent", 4)
+		te.assertWispChildCounter(t, ctx, "mh-wisp-parent", 7)
+		te.assertNoChildCounterRow(t, ctx, "wisp_child_counters", "mh-issue-parent")
+		te.assertNoChildCounterRow(t, ctx, "child_counters", "mh-wisp-parent")
+	})
+
+	t.Run("wisp_delete_clears_child_counter", func(t *testing.T) {
+		te := newTestEnv(t, "wd")
+		ctx := t.Context()
+
+		parent := &types.Issue{
+			ID: "wd-wisp-parent", Title: "Wisp parent", Status: types.StatusOpen,
+			Priority: 2, IssueType: types.TypeTask, Ephemeral: true,
+		}
+		if err := te.store.CreateIssue(ctx, parent, "tester"); err != nil {
+			t.Fatalf("CreateIssue: %v", err)
+		}
+		if _, err := te.store.GetNextChildID(ctx, "wd-wisp-parent"); err != nil {
+			t.Fatalf("GetNextChildID: %v", err)
+		}
+		te.assertWispChildCounter(t, ctx, "wd-wisp-parent", 1)
+
+		if err := te.store.DeleteIssue(ctx, "wd-wisp-parent"); err != nil {
+			t.Fatalf("DeleteIssue: %v", err)
+		}
+		te.assertNoChildCounterRow(t, ctx, "wisp_child_counters", "wd-wisp-parent")
 	})
 
 	t.Run("prefix_validation_rejects_mismatch", func(t *testing.T) {

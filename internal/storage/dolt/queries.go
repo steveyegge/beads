@@ -584,7 +584,7 @@ func (s *DoltStore) GetNextChildID(ctx context.Context, parentID string) (string
 	var childID string
 	err := s.withRetryTxs(ctx, func(regularTx, ignoredTx *sql.Tx) error {
 		var err error
-		childID, err = issueops.GetNextChildIDTx(ctx, regularTx, parentID)
+		childID, err = issueops.GetNextChildIDTx(ctx, regularTx, ignoredTx, parentID)
 		return err
 	})
 	return childID, err

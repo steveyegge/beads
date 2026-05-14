@@ -312,6 +312,7 @@ func updateWispIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issu
 		{"wisp_events", "issue_id"},
 		{"wisp_labels", "issue_id"},
 		{"wisp_comments", "issue_id"},
+		{"wisp_child_counters", "parent_id"},
 	}
 	for _, r := range refs {
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s = ? WHERE %s = ?", r.table, r.col, r.col), newID, oldID); err != nil {

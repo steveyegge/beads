@@ -47,6 +47,14 @@ func DeleteIssueInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, id strin
 		}
 	}
 
+	counterTable := "child_counters"
+	if isWisp {
+		counterTable = "wisp_child_counters"
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE parent_id = ?", counterTable), id); err != nil {
+		return fmt.Errorf("delete from %s: %w", counterTable, err)
+	}
+
 	result, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ?", issueTable), id)
 	if err != nil {
 		return fmt.Errorf("delete issue from %s: %w", issueTable, err)

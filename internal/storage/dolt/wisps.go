@@ -236,6 +236,10 @@ func (s *DoltStore) deleteWisp(ctx context.Context, id string) error {
 		}
 	}
 
+	if _, err = tx.ExecContext(ctx, "DELETE FROM wisp_child_counters WHERE parent_id = ?", id); err != nil {
+		return fmt.Errorf("failed to delete from wisp_child_counters: %w", err)
+	}
+
 	result, err := tx.ExecContext(ctx, "DELETE FROM wisps WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete wisp: %w", err)
@@ -324,6 +328,13 @@ func (s *DoltStore) deleteWispBatchTx(ctx context.Context, ids []string) (int, e
 			args...); err != nil {
 			return 0, fmt.Errorf("failed to batch delete from %s: %w", table, err)
 		}
+	}
+
+	//nolint:gosec // G201: inClause contains only ? markers
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf("DELETE FROM wisp_child_counters WHERE parent_id IN (%s)", inClause),
+		args...); err != nil {
+		return 0, fmt.Errorf("failed to batch delete from wisp_child_counters: %w", err)
 	}
 
 	// Delete the wisps themselves

@@ -13,7 +13,7 @@ func (s *EmbeddedDoltStore) GetNextChildID(ctx context.Context, parentID string)
 	var childID string
 	err := s.withConn(ctx, true, func(regularTx, ignoredTx *sql.Tx) error {
 		var err error
-		childID, err = issueops.GetNextChildIDTx(ctx, regularTx, parentID)
+		childID, err = issueops.GetNextChildIDTx(ctx, regularTx, ignoredTx, parentID)
 		return err
 	})
 	return childID, err

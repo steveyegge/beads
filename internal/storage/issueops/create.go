@@ -357,25 +357,55 @@ func PersistDependencies(ctx context.Context, regularTx, ignoredTx *sql.Tx, issu
 }
 
 func ReconcileChildCounters(ctx context.Context, regularTx, ignoredTx *sql.Tx, issues []*types.Issue) error {
-	_ = ignoredTx // unused: child_counters is regular-only
-	childMaxMap := make(map[string]int)
+	type bucket struct {
+		maxChild int
+		isWisp   bool
+		known    bool // true if isWisp was set from an in-batch issue rather than probed
+	}
+	parents := make(map[string]*bucket)
+
+	// Promote known-wisp parents from in-batch issues to avoid an extra probe.
 	for _, issue := range issues {
-		if parentID, childNum, ok := ParseHierarchicalID(issue.ID); ok {
-			if childNum > childMaxMap[parentID] {
-				childMaxMap[parentID] = childNum
+		if IsWisp(issue) {
+			if b, ok := parents[issue.ID]; ok {
+				b.isWisp, b.known = true, true
+			} else {
+				parents[issue.ID] = &bucket{isWisp: true, known: true}
 			}
 		}
 	}
-	for parentID, maxChild := range childMaxMap {
-		var parentExists int
-		if err := regularTx.QueryRowContext(ctx, "SELECT 1 FROM issues WHERE id = ?", parentID).Scan(&parentExists); err != nil {
-			continue // parent not in issues table — skip counter
+
+	for _, issue := range issues {
+		parentID, childNum, ok := ParseHierarchicalID(issue.ID)
+		if !ok {
+			continue
 		}
-		_, err := regularTx.ExecContext(ctx, `
-			INSERT INTO child_counters (parent_id, last_child) VALUES (?, ?)
+		b, exists := parents[parentID]
+		if !exists {
+			b = &bucket{}
+			parents[parentID] = b
+		}
+		if childNum > b.maxChild {
+			b.maxChild = childNum
+		}
+	}
+
+	for parentID, b := range parents {
+		if b.maxChild == 0 {
+			continue // parent appeared in batch but has no hierarchical children to record
+		}
+		if !b.known {
+			b.isWisp = IsActiveWispInTx(ctx, ignoredTx, parentID)
+		}
+		tx, table := regularTx, "child_counters"
+		if b.isWisp {
+			tx, table = ignoredTx, "wisp_child_counters"
+		}
+		//nolint:gosec // G201: table is one of two hardcoded constants.
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s (parent_id, last_child) VALUES (?, ?)
 			ON DUPLICATE KEY UPDATE last_child = GREATEST(last_child, ?)
-		`, parentID, maxChild, maxChild)
-		if err != nil {
+		`, table), parentID, b.maxChild, b.maxChild); err != nil {
 			return fmt.Errorf("failed to reconcile child counter for %s: %w", parentID, err)
 		}
 	}
