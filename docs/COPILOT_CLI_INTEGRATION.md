@@ -72,8 +72,9 @@ bd setup copilot --remove
 ## Related Files
 
 - `plugins/beads/.copilot-plugin/plugin.json` - Source plugin manifest for the shared plugin package
+- `plugins/beads/copilot_manifest.go` - Embedded manifest source used by `bd setup copilot`
 - `internal/recipes/recipes.go` - Lightweight `copilot` recipe definition
-- `internal/recipes/template.go` - Static Copilot manifest/instructions templates used by `bd setup`
+- `internal/recipes/template.go` - Static Copilot instructions template used by `bd setup`
 - `docs/COPILOT_INTEGRATION.md` - VS Code MCP integration
 
 ## References
