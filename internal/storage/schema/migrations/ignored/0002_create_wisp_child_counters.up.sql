@@ -23,3 +23,19 @@ SET @sql = IF(@both_exist = 1,
     'DELETE FROM child_counters WHERE parent_id IN (SELECT id FROM wisps)',
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+SET @needs_add = (
+    SELECT IF(COUNT(*) = 0, 1, 0)
+    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'child_counters'
+      AND CONSTRAINT_NAME = 'fk_counter_parent'
+);
+SET @sql = IF(@needs_add = 1,
+    'ALTER TABLE child_counters ADD CONSTRAINT fk_counter_parent FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE',
+    'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET FOREIGN_KEY_CHECKS = 1;
