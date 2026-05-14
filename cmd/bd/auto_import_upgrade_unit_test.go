@@ -90,7 +90,7 @@ func TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenNonEmpty(t *testing.T) {
 	count := swapFallbackImporter(t, errors.New("test importer should not run"))
 
 	store := &fakeFallbackStore{statsTotalIssues: 5}
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 
 	if got := count.Load(); got != 0 {
 		t.Fatalf("regression: fallback importer was invoked %d time(s) on a non-empty store; expected 0 (top-level emptiness guard missing or broken)", got)
@@ -138,7 +138,7 @@ func TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenStatisticsReportNonEmpty
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		maybeAutoImportJSONL(ctx, store, dir)
+		maybeAutoImportJSONL(ctx, store, dir, false)
 	}()
 
 	select {
@@ -202,7 +202,7 @@ func TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenStatisticsNil(t *testing
 	count := swapFallbackImporter(t, errors.New("test importer should not run"))
 
 	store := &fakeFallbackStore{statsNil: true}
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 
 	if got := count.Load(); got != 0 {
 		t.Fatalf("fallback importer was invoked %d time(s) when statistics were nil; expected 0", got)
@@ -222,7 +222,7 @@ func TestMaybeAutoImportJSONL_FallbackImporter_RunsWhenEmpty(t *testing.T) {
 	count := swapFallbackImporter(t, errors.New("test importer: short-circuit before s.Commit"))
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 
 	if got := count.Load(); got != 1 {
 		t.Fatalf("fallback importer invoked %d time(s) on empty store; expected exactly 1", got)
@@ -245,7 +245,7 @@ func TestMaybeAutoImportJSONL_UsesConfiguredImportPath(t *testing.T) {
 	t.Cleanup(func() { fallbackImporter = orig })
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 
 	wantPath := filepath.Join(dir, "beads.jsonl")
 	if gotPath != wantPath {
@@ -259,8 +259,8 @@ func TestMaybeAutoImportJSONL_FailedImportStampPreventsRepeatedImport(t *testing
 	count := swapFallbackImporter(t, errors.New("test importer failed"))
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir)
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 
 	if got := count.Load(); got != 1 {
 		t.Fatalf("fallback importer invoked %d time(s), want 1 for unchanged JSONL after failed attempt stamp", got)
@@ -279,8 +279,8 @@ func TestMaybeAutoImportJSONL_SuccessStampPreventsRepeatedImport(t *testing.T) {
 	t.Cleanup(func() { fallbackImporter = orig })
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir)
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 
 	if got := count.Load(); got != 1 {
 		t.Fatalf("fallback importer invoked %d time(s), want 1 for unchanged JSONL after success stamp", got)
@@ -299,11 +299,11 @@ func TestMaybeAutoImportJSONL_ChangedJSONLBypassesSuccessStamp(t *testing.T) {
 	t.Cleanup(func() { fallbackImporter = orig })
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 	if err := os.WriteFile(filepath.Join(dir, "issues.jsonl"), []byte(`{"_type":"issue","id":"unit-2","title":"changed","status":"open","priority":2,"issue_type":"task"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
 
 	if got := count.Load(); got != 2 {
 		t.Fatalf("fallback importer invoked %d time(s), want 2 after JSONL changed", got)
@@ -400,4 +400,22 @@ func TestAutoImportFallbackSeamUsesConflictSkip(t *testing.T) {
 			t.Fatalf("bd bootstrap / init --from-jsonl must keep UPSERT (ConflictSkip=false); got true")
 		}
 	})
+}
+
+// TestMaybeAutoImportJSONL_SkipsEntirelyInServerMode verifies the early return
+// added in the serverMode guard. In server mode the database is persistent and
+// shared; the JSONL recovery path is irrelevant and would trigger a
+// serialization conflict (Error 1213) with initSchema's open transaction.
+// Passing nil as the store is safe because the early return fires before any
+// store method is called.
+func TestMaybeAutoImportJSONL_SkipsEntirelyInServerMode(t *testing.T) {
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONL(t, dir)
+	count := swapFallbackImporter(t, nil)
+
+	maybeAutoImportJSONL(context.Background(), nil, dir, true)
+
+	if got := count.Load(); got != 0 {
+		t.Fatalf("fallbackImporter invoked %d time(s) with serverMode=true; expected 0", got)
+	}
 }

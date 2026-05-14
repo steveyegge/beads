@@ -68,6 +68,11 @@ func writeAutoImportStamp(beadsDir string, info os.FileInfo) {
 // .beads/dolt/) to 1.0+ (which uses .beads/embeddeddolt/) don't appear to
 // lose their issues.  See GH#2994.
 //
+// serverMode must be true when the store is connected to an external
+// dolt sql-server. In server mode the database is persistent and shared;
+// the JSONL recovery path is irrelevant and attempting it causes a
+// serialization conflict with initSchema's open transaction (Error 1213).
+//
 // The top-level emptiness guard (GetStatistics) is the primary
 // protection for BOTH the embedded fast-path and the server-mode
 // fallback. Defense in depth backs each path up: the embedded
@@ -81,7 +86,10 @@ func writeAutoImportStamp(beadsDir string, info os.FileInfo) {
 //
 // The function is best-effort: failures are logged as warnings but do not
 // prevent the store from being used.
-func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string) {
+func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string, serverMode bool) {
+	if serverMode {
+		return
+	}
 	// Quick check: does the JSONL file exist and have content?
 	jsonlPath := configuredImportJSONLPath(beadsDir)
 	info, err := os.Stat(jsonlPath)
