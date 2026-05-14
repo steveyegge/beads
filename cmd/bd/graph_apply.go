@@ -231,12 +231,19 @@ func warnUnknownGraphFields(w io.Writer, unknown map[string][]string) []string {
 	return hintFields
 }
 
+// GraphApplyOptions carries CLI-level options that apply to the graph.
+type GraphApplyOptions struct {
+	DryRun    bool
+	Ephemeral bool
+	NoHistory bool
+}
+
 // createIssuesFromGraph handles `bd create --graph <plan-file>`.
-// When dryRun is true, the plan is parsed and validated but no writes occur;
+// When DryRun is true, the plan is parsed and validated but no writes occur;
 // a preview is emitted to stdout (JSON when jsonOutput is set, otherwise
 // human-readable). Unknown plan/node/edge fields are reported to stderr in
 // both modes so schema gaps are visible before any writes happen. (GH#3367)
-func createIssuesFromGraph(planFile string, dryRun bool) {
+func createIssuesFromGraph(planFile string, opts GraphApplyOptions) {
 	data, err := os.ReadFile(planFile) // #nosec G304 -- user-provided path is intentional
 	if err != nil {
 		FatalError("reading graph plan: %v", err)
@@ -255,12 +262,12 @@ func createIssuesFromGraph(planFile string, dryRun bool) {
 		FatalError("invalid graph plan: %v", err)
 	}
 
-	if dryRun {
+	if opts.DryRun {
 		emitGraphApplyDryRun(&plan)
 		return
 	}
 
-	result, err := executeGraphApply(rootCtx, &plan)
+	result, err := executeGraphApply(rootCtx, &plan, opts)
 	if err != nil {
 		FatalError("graph create: %v", err)
 	}
@@ -422,7 +429,11 @@ func validateGraphApplyPlan(plan *GraphApplyPlan) error {
 	return nil
 }
 
-func executeGraphApply(ctx context.Context, plan *GraphApplyPlan) (*GraphApplyResult, error) {
+func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphApplyOptions) (*GraphApplyResult, error) {
+	if opts.Ephemeral && opts.NoHistory {
+		return nil, fmt.Errorf("ephemeral and no_history are mutually exclusive")
+	}
+
 	keyToID := make(map[string]string, len(plan.Nodes))
 
 	commitMsg := plan.CommitMessage
@@ -461,6 +472,8 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan) (*GraphApplyRe
 				Priority:  priority,
 				Labels:    node.Labels,
 				Metadata:  metadataJSON,
+				Ephemeral: opts.Ephemeral,
+				NoHistory: opts.NoHistory,
 			}
 			if node.Description != "" {
 				issue.Description = node.Description
