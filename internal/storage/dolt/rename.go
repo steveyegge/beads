@@ -15,13 +15,6 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 	})
 }
 
-// RenameDependencyPrefix updates the prefix in all dependency records
-func (s *DoltStore) RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	return s.withRetryTxs(ctx, func(regularTx, ignoredTx *sql.Tx) error {
-		return issueops.RenameDependencyPrefixInTx(ctx, regularTx, oldPrefix, newPrefix)
-	})
-}
-
 // RenameCounterPrefix is a no-op with hash-based IDs
 func (s *DoltStore) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
 	// Hash-based IDs don't use counters

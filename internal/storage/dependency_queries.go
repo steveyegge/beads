@@ -17,5 +17,4 @@ type DependencyQueryStore interface {
 	GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error)
 	DetectCycles(ctx context.Context) ([][]*types.Issue, error)
 	FindWispDependentsRecursive(ctx context.Context, ids []string) (map[string]bool, error)
-	RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error
 }

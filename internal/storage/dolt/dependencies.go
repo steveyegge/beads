@@ -27,8 +27,6 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		return s.addWispDependency(ctx, dep, actor, isCrossPrefix)
 	}
 
-	// Pre-transaction: classify target so we can populate the right typed
-	// column inside the tx without re-probing (avoids pool deadlock — bd-w2w).
 	targetTable := "issues"
 	kind := issueops.DepTargetIssue
 	switch {

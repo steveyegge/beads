@@ -215,9 +215,6 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 		}
 	}
 
-	// Copy dependencies directly to permanent dependencies table. Typed-column
-	// shape is identical across both tables, so SELECT/INSERT preserves which
-	// target column was populated (issue/wisp/external) per row.
 	if _, err := s.execContext(ctx, `
 		INSERT IGNORE INTO dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
 		SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id

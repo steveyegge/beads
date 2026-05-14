@@ -323,15 +323,6 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 		fmt.Printf("  Renamed %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
 	}
 
-	// Update all dependencies to use new prefix
-	for oldPrefix := range prefixes {
-		if oldPrefix != targetPrefix {
-			if err := st.RenameDependencyPrefix(ctx, oldPrefix, targetPrefix); err != nil {
-				return fmt.Errorf("failed to update dependencies for prefix %s: %w", oldPrefix, err)
-			}
-		}
-	}
-
 	// Update counters for all old prefixes
 	for oldPrefix := range prefixes {
 		if oldPrefix != targetPrefix {
@@ -399,10 +390,6 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 		if err := store.UpdateIssueID(ctx, oldID, newID, issue, actor); err != nil {
 			return fmt.Errorf("failed to update issue %s: %w", oldID, err)
 		}
-	}
-
-	if err := store.RenameDependencyPrefix(ctx, oldPrefix, newPrefix); err != nil {
-		return fmt.Errorf("failed to update dependencies: %w", err)
 	}
 
 	if err := store.RenameCounterPrefix(ctx, oldPrefix, newPrefix); err != nil {

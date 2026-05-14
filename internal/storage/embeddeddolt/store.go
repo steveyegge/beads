@@ -639,12 +639,6 @@ func (s *EmbeddedDoltStore) FindWispDependentsRecursive(ctx context.Context, ids
 	return result, err
 }
 
-func (s *EmbeddedDoltStore) RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	return s.withConn(ctx, true, func(regularTx, ignoredTx *sql.Tx) error {
-		return issueops.RenameDependencyPrefixInTx(ctx, regularTx, oldPrefix, newPrefix)
-	})
-}
-
 // ---------------------------------------------------------------------------
 // storage.AnnotationQueryStore
 // ---------------------------------------------------------------------------

@@ -212,7 +212,7 @@ func UpdateIssueIDInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, oldID,
 	return updateIssueIDInTx(ctx, regularTx, ignoredTx, oldID, newID, issue, actor)
 }
 
-func updateIssueIDInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+func updateIssueIDInTx(ctx context.Context, regularTx, _ *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
 	now := time.Now().UTC()
 	result, err := regularTx.ExecContext(ctx, `
 		UPDATE issues
@@ -226,7 +226,6 @@ func updateIssueIDInTx(ctx context.Context, regularTx, ignoredTx *sql.Tx, oldID,
 		return fmt.Errorf("issue not found: %s", oldID)
 	}
 
-	_ = ignoredTx
 	_, err = regularTx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, 'renamed', ?, ?, ?)
@@ -253,16 +252,6 @@ func updateWispIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issu
 		VALUES (?, 'renamed', ?, ?, ?)
 	`, newID, actor, oldID, newID)
 	return err
-}
-
-// RenameDependencyPrefixInTx is a no-op. Prefix renames now propagate through
-// the FKs declared on dependencies (fk_dep_issue, fk_dep_issue_target,
-// fk_dep_wisp_target) when their parent issues/wisps are renamed via
-// UpdateIssueIDInTx. Kept on the interface for API stability.
-func RenameDependencyPrefixInTx(ctx context.Context, tx *sql.Tx, oldPrefix, newPrefix string) error {
-	_, _, _ = ctx, tx, oldPrefix
-	_ = newPrefix
-	return nil
 }
 
 // FindWispDependentsRecursiveInTx walks wisp_dependencies to find all transitive
