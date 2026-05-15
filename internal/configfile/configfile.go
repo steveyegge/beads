@@ -56,6 +56,13 @@ type Config struct {
 	DaemonIdleSeconds        int    `json:"daemon_idle_seconds,omitempty"`
 	DaemonMaxLifetimeSeconds int    `json:"daemon_max_lifetime_seconds,omitempty"`
 
+	// RPC iterator transport settings.
+	// DaemonIterIdleSeconds governs per-session idle reap, independent of
+	// DaemonIdleSeconds which controls the daemon process exit on overall idle.
+	DaemonIterBatch       int `json:"daemon_iter_batch,omitempty"`
+	DaemonIterMax         int `json:"daemon_iter_max,omitempty"`
+	DaemonIterIdleSeconds int `json:"daemon_iter_idle_seconds,omitempty"`
+
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
 	// upgrade notifications firing after git operations reset metadata.json.
@@ -470,6 +477,30 @@ func (c *Config) GetDaemonMaxLifetimeSeconds() int {
 		return c.DaemonMaxLifetimeSeconds
 	}
 	return 3600
+}
+
+// GetDaemonIterBatch returns the RPC iterator fetch batch size. Defaults to 100.
+func (c *Config) GetDaemonIterBatch() int {
+	if c != nil && c.DaemonIterBatch > 0 {
+		return c.DaemonIterBatch
+	}
+	return 100
+}
+
+// GetDaemonIterMax returns the max concurrent iterator sessions. Defaults to 64.
+func (c *Config) GetDaemonIterMax() int {
+	if c != nil && c.DaemonIterMax > 0 {
+		return c.DaemonIterMax
+	}
+	return 64
+}
+
+// GetDaemonIterIdleSeconds returns the iterator session idle reap timeout in seconds. Defaults to 30.
+func (c *Config) GetDaemonIterIdleSeconds() int {
+	if c != nil && c.DaemonIterIdleSeconds > 0 {
+		return c.DaemonIterIdleSeconds
+	}
+	return 30
 }
 
 // GenerateProjectID creates a UUID v4 for project identity verification (GH#2372).
