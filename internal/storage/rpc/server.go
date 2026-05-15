@@ -13,8 +13,9 @@ import (
 
 // daemonServer wraps a storage.Storage for net/rpc dispatch.
 type daemonServer struct {
-	store storage.Storage
-	root  context.Context
+	store   storage.Storage
+	root    context.Context
+	iterMgr *iterSessionManager
 }
 
 func daemonCallContext(root context.Context) (context.Context, context.CancelFunc) {
@@ -42,6 +43,10 @@ func encodeRPCError(err error) *RPCError {
 		return &RPCError{Kind: "ErrNotInitialized", Msg: err.Error()}
 	case errors.Is(err, storage.ErrPrefixMismatch):
 		return &RPCError{Kind: "ErrPrefixMismatch", Msg: err.Error()}
+	case errors.Is(err, storage.ErrTooManyIterators):
+		return &RPCError{Kind: "ErrTooManyIterators", Msg: err.Error()}
+	case errors.Is(err, storage.ErrIterSessionNotFound):
+		return &RPCError{Kind: "ErrIterSessionNotFound", Msg: err.Error()}
 	default:
 		return &RPCError{Kind: "", Msg: err.Error()}
 	}
