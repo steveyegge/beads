@@ -188,12 +188,13 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	// blocking deps exist, and skipping 16K+ wisps avoids query timeouts.
 	blockedIDs, err := s.computeBlockedIDs(ctx, filter.IncludeEphemeral)
 	if err == nil && len(blockedIDs) > 0 {
-		// Also exclude children of blocked parents (GH#1495):
-		// If a parent/epic is blocked, its children should not appear as ready work.
-		childrenOfBlocked, childErr := s.getChildrenOfIssues(ctx, blockedIDs)
-		if childErr == nil {
-			for _, childID := range childrenOfBlocked {
-				blockedIDs = append(blockedIDs, childID)
+		// Also exclude ALL transitive descendants of blocked parents (GH#1495):
+		// If a parent/epic is blocked, grandchildren and deeper must also be
+		// excluded — not just direct children.
+		descendantsOfBlocked, descErr := s.getTransitiveDescendantsOfIssues(ctx, blockedIDs, filter.IncludeEphemeral)
+		if descErr == nil {
+			for descendantID := range descendantsOfBlocked {
+				blockedIDs = append(blockedIDs, descendantID)
 			}
 		}
 
@@ -448,14 +449,15 @@ func (s *DoltStore) getChildrenOfIssues(ctx context.Context, parentIDs []string)
 	return result, err
 }
 
-// getChildrenWithParents returns a map of childID -> parentID for direct children
-// (parent-child deps) of the given parent IDs.
-func (s *DoltStore) getChildrenWithParents(ctx context.Context, parentIDs []string) (map[string]string, error) {
-	var result map[string]string
+// getTransitiveDescendantsOfIssues returns all transitive parent-child descendants
+// (grandchildren, great-grandchildren, etc.) of the given issue IDs, with cycle detection.
+// Pass includeWisps=true only when ephemeral issues are in scope.
+func (s *DoltStore) getTransitiveDescendantsOfIssues(ctx context.Context, parentIDs []string, includeWisps bool) (map[string]string, error) {
+	result := make(map[string]string)
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		result, err = issueops.GetChildrenWithParentsInTx(ctx, tx, parentIDs)
-		return err
+		var txErr error
+		result, txErr = issueops.GetTransitiveDescendantsWithParentsInTx(ctx, tx, parentIDs, includeWisps)
+		return txErr
 	})
 	return result, err
 }

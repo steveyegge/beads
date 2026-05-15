@@ -243,16 +243,28 @@ func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) (
 	return result, activeIDs, nil
 }
 
-// GetChildrenWithParentsInTx returns a map of childID -> parentID for direct children
-// (parent-child deps) of the given parent IDs.
+// GetTransitiveDescendantsWithParentsInTx returns a map of descendantID → immediateParentID
+// for ALL transitive parent-child descendants of the given issue IDs. Cycle detection via
+// path tracking prevents infinite traversal. When a descendant is reachable via multiple
+// paths, an arbitrary immediate parent is recorded (the CTE has no ORDER BY, so which
+// parent is chosen is non-deterministic). Seeds are batched to stay under SQL
+// parameter limits; each batch's CTE recurses fully, so no descendants are missed.
+// Pass includeWisps=true only when ephemeral issues are in scope; false skips the
+// wisp_dependencies table scan (which can be large) to avoid query timeouts.
 //
-//nolint:gosec // G201: tables are hardcoded
-func GetChildrenWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []string) (map[string]string, error) {
+//nolint:gosec // G201: edgeSQL built from hardcoded table names; placeholders use ? params
+func GetTransitiveDescendantsWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []string, includeWisps bool) (map[string]string, error) {
 	if len(parentIDs) == 0 {
 		return nil, nil
 	}
-	result := make(map[string]string)
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+
+	doQuery := func(withWisps bool) (map[string]string, error) {
+		edgeSQL := `SELECT issue_id, depends_on_id FROM dependencies WHERE type = 'parent-child'`
+		if withWisps {
+			edgeSQL += ` UNION ALL SELECT issue_id, depends_on_id FROM wisp_dependencies WHERE type = 'parent-child'`
+		}
+
+		result := make(map[string]string)
 		for start := 0; start < len(parentIDs); start += queryBatchSize {
 			end := start + queryBatchSize
 			if end > len(parentIDs) {
@@ -261,29 +273,51 @@ func GetChildrenWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []str
 			placeholders, args := buildSQLInClause(parentIDs[start:end])
 
 			query := fmt.Sprintf(`
-				SELECT issue_id, depends_on_id FROM %s
-				WHERE type = 'parent-child' AND depends_on_id IN (%s)
-			`, depTable, placeholders)
+				WITH RECURSIVE
+				edges(issue_id, depends_on_id) AS (%s),
+				desc_tree(id, immediate_parent, path) AS (
+					SELECT issue_id, depends_on_id, CONCAT(',', depends_on_id, ',', issue_id, ',')
+					FROM edges WHERE depends_on_id IN (%s)
+					UNION ALL
+					SELECT e.issue_id, d.id, CONCAT(d.path, e.issue_id, ',')
+					FROM edges e
+					JOIN desc_tree d ON e.depends_on_id = d.id
+					WHERE LOCATE(CONCAT(',', e.issue_id, ','), d.path) = 0
+				)
+				SELECT id, immediate_parent FROM desc_tree
+			`, edgeSQL, placeholders)
+
 			rows, err := tx.QueryContext(ctx, query, args...)
 			if err != nil {
-				if isTableNotExistError(err) {
-					break
-				}
-				return nil, fmt.Errorf("get children with parents from %s: %w", depTable, err)
+				return nil, err
 			}
 			for rows.Next() {
-				var childID, parentID string
-				if err := rows.Scan(&childID, &parentID); err != nil {
+				var descendantID, parentID string
+				if err := rows.Scan(&descendantID, &parentID); err != nil {
 					_ = rows.Close()
-					return nil, fmt.Errorf("scan children with parents: %w", err)
+					return nil, fmt.Errorf("transitive descendants: scan: %w", err)
 				}
-				result[childID] = parentID
+				if _, exists := result[descendantID]; !exists {
+					result[descendantID] = parentID
+				}
 			}
 			_ = rows.Close()
 			if err := rows.Err(); err != nil {
-				return nil, fmt.Errorf("children with parents rows from %s: %w", depTable, err)
+				return nil, fmt.Errorf("transitive descendants: rows: %w", err)
 			}
 		}
+		return result, nil
+	}
+
+	if !includeWisps {
+		return doQuery(false)
+	}
+	result, err := doQuery(true)
+	if err != nil {
+		if isTableNotExistError(err) {
+			return doQuery(false)
+		}
+		return nil, fmt.Errorf("transitive descendants: %w", err)
 	}
 	return result, nil
 }
@@ -429,13 +463,13 @@ func GetBlockedIssuesInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 		blockedSet[id] = true
 	}
 
-	// Step 2: Include children of blocked parents (GH#1495).
-	childToParent, childErr := GetChildrenWithParentsInTx(ctx, tx, blockedIDList)
+	// Step 2: Include ALL transitive descendants of blocked parents (GH#1495 + recursive extension).
+	childToParent, childErr := GetTransitiveDescendantsWithParentsInTx(ctx, tx, blockedIDList, filter.IncludeEphemeral)
 	if childErr == nil {
-		for childID := range childToParent {
-			if activeIDs[childID] && !blockedSet[childID] {
-				blockedSet[childID] = true
-				blockedIDList = append(blockedIDList, childID)
+		for descendantID := range childToParent {
+			if activeIDs[descendantID] && !blockedSet[descendantID] {
+				blockedSet[descendantID] = true
+				blockedIDList = append(blockedIDList, descendantID)
 			}
 		}
 	}

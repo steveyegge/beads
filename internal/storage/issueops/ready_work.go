@@ -168,10 +168,12 @@ func GetReadyWorkInTx(
 	// Exclude blocked issues.
 	blockedIDs, err := computeBlockedFn(ctx, tx, filter.IncludeEphemeral)
 	if err == nil && len(blockedIDs) > 0 {
-		// Also exclude children of blocked parents.
-		childrenOfBlocked, childErr := getChildrenOfIssuesInTx(ctx, tx, blockedIDs)
+		// Also exclude ALL transitive descendants of blocked parents.
+		descendants, childErr := GetTransitiveDescendantsWithParentsInTx(ctx, tx, blockedIDs, filter.IncludeEphemeral)
 		if childErr == nil {
-			blockedIDs = append(blockedIDs, childrenOfBlocked...)
+			for descendantID := range descendants {
+				blockedIDs = append(blockedIDs, descendantID)
+			}
 		}
 
 		for start := 0; start < len(blockedIDs); start += queryBatchSize {
