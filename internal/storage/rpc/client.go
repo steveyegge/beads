@@ -42,6 +42,10 @@ func decodeRPCError(r *RPCError) error {
 		return fmt.Errorf("%s: %w", r.Msg, storage.ErrNotInitialized)
 	case "ErrPrefixMismatch":
 		return fmt.Errorf("%s: %w", r.Msg, storage.ErrPrefixMismatch)
+	case "ErrTooManyIterators":
+		return fmt.Errorf("%s: %w", r.Msg, storage.ErrTooManyIterators)
+	case "ErrIterSessionNotFound":
+		return fmt.Errorf("%s: %w", r.Msg, storage.ErrIterSessionNotFound)
 	default:
 		return errors.New(r.Msg)
 	}
