@@ -367,10 +367,28 @@ var (
 // when filter.Ephemeral is nil (default) or false, also against the wisps
 // table — merging results so NoHistory beads (stored in wisps with
 // ephemeral=0 per GH#3649 / GH#3659) survive the non-ephemeral guard.
-// Mirrors Dolt's SearchIssuesInTx at internal/storage/issueops/search.go:40-56
-// (be-2clc). The clause builder lives in searchTable; this wrapper handles
-// table routing and merge-by-ID.
+// When filter.Ephemeral is true, queries the wisps table directly so
+// callers searching for ephemeral rows actually hit the table where they
+// live (be-e62iag).
+// Mirrors Dolt's SearchIssuesInTx at internal/storage/issueops/search.go:17-56
+// (be-2clc + be-e62iag). The clause builder lives in searchTable; this
+// wrapper handles table routing and merge-by-ID.
 func (s *PostgresStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	// Route ephemeral-only queries to the wisps table. Mirrors Dolt's
+	// SearchIssuesInTx at internal/storage/issueops/search.go:17-26.
+	// Falls through to the issues path when wisps return nothing so
+	// callers don't lose the issues-table fallback Dolt provides for
+	// instances where the wisps table is missing.
+	if filter.Ephemeral != nil && *filter.Ephemeral {
+		wispResults, err := s.searchTable(ctx, query, filter, wispsSearchTables)
+		if err != nil {
+			return nil, err
+		}
+		if len(wispResults) > 0 {
+			return wispResults, nil
+		}
+	}
+
 	results, err := s.searchTable(ctx, query, filter, issuesSearchTables)
 	if err != nil {
 		return nil, err
@@ -418,7 +436,15 @@ func (s *PostgresStore) searchTable(ctx context.Context, query string, filter ty
 	}
 
 	if query != "" {
-		add(fmt.Sprintf("(title ILIKE $%d OR description ILIKE $%d)", next, next), "%"+query+"%")
+		// be-e62iag: also match against id so substring lookups
+		// (e.g. ResolvePartialID's wisp fallback at
+		// internal/utils/id_parser.go:167-196 calling SearchIssues
+		// with hashPart) reach rows whose hash matches but whose
+		// title/description don't. Mirrors Dolt's
+		// BuildIssueFilterClauses at internal/storage/issueops/
+		// filters.go:56-65, which always includes id LIKE in the
+		// query clause.
+		add(fmt.Sprintf("(title ILIKE $%d OR description ILIKE $%d OR id ILIKE $%d)", next, next, next), "%"+query+"%")
 	}
 	if filter.Status != nil {
 		add(fmt.Sprintf("status = $%d", next), string(*filter.Status))
