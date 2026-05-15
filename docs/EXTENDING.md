@@ -26,6 +26,12 @@ defaults.
 | `global_dolt_database` | string | `""` | Global database name in shared-server mode |
 | `deletions_retention_days` | int | `3` | How long deletion records are kept |
 | `stale_closed_issues_days` | int | `0` | Stale-check threshold for closed issues; `0` disables |
-| `daemon_mode` | string | `"off"` | `"off"` / `"auto"` / `"always"` — bdd daemon dispatch mode (be-oyer9z) |
+| `daemon_mode` | string | `"off"` | `"off"` / `"auto"` / `"always"` — bdd daemon dispatch mode |
 | `daemon_idle_seconds` | int | `300` | Daemon idle timeout before self-exit |
 | `daemon_max_lifetime_seconds` | int | `3600` | Hard ceiling on daemon lifetime (1 h) |
+| `daemon_iter_batch` | int | `100` | RPC iterator fetch batch size |
+| `daemon_iter_max` | int | `64` | Max concurrent iterator sessions |
+| `daemon_iter_idle_seconds` | int | `30` | Iterator session idle reap timeout (s) |
+
+> **Note:** `daemon_iter_idle_seconds` controls per-session idle reap and is independent of
+> `daemon_idle_seconds` which controls the daemon process exit on overall idle.
