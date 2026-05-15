@@ -54,8 +54,8 @@ type AddDependencyOpts struct {
 	// WriteTable is the dependency table to insert/update/check existing deps in.
 	// Auto-detected from source wisp routing if empty.
 	WriteTable string
-	// DepTables are the tables to scan for cycle detection. The recursive CTE
-	// UNIONs all of them. Defaults to ["dependencies", "wisp_dependencies"] if empty.
+	// DepTables are the tables to scan for cycle detection. When empty, same-table
+	// edges scan only WriteTable; mixed source/target storage scans both tables.
 	DepTables []string
 	// IsCrossPrefix is true when source and target have different prefixes,
 	// meaning the target lives in another rig's database.
@@ -104,7 +104,7 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 
 	depTables := opts.DepTables
 	if len(depTables) == 0 {
-		depTables = cycleDetectionTables()
+		depTables = cycleDetectionTables(sourceTable, targetTable, writeTable)
 	}
 
 	metadata := dep.Metadata
@@ -202,8 +202,6 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	return nil
 }
 
-// cycleReachabilityQuery uses UNION distinct recursion so cyclic and diamond
-// graphs terminate by unique reachable node instead of enumerating paths.
 func cycleReachabilityQuery(depTables []string) string {
 	if len(depTables) == 1 {
 		return fmt.Sprintf(`
@@ -235,8 +233,14 @@ func cycleReachabilityQuery(depTables []string) string {
 	`, unionQuery)
 }
 
-func cycleDetectionTables() []string {
-	return []string{"dependencies", "wisp_dependencies"}
+func cycleDetectionTables(sourceTable, targetTable, writeTable string) []string {
+	if sourceTable != "" && targetTable != "" && sourceTable != targetTable {
+		return []string{"dependencies", "wisp_dependencies"}
+	}
+	if writeTable != "" {
+		return []string{writeTable}
+	}
+	return []string{"dependencies"}
 }
 
 func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {
