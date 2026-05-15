@@ -6,13 +6,17 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/steveyegge/beads/internal/atomicfile"
 )
 
 type PidFile struct {
-	Pid  int `json:"pid"`
-	Port int `json:"port"`
+	Pid        int       `json:"pid"`
+	Port       int       `json:"port"`
+	SocketPath string    `json:"socket,omitempty"`
+	Version    string    `json:"version,omitempty"`
+	StartedAt  time.Time `json:"started_at,omitempty"`
 }
 
 func Path(rootDir, name string) string {

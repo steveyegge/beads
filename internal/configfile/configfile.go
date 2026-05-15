@@ -51,6 +51,14 @@ type Config struct {
 	// 0 = disabled (default), positive = threshold in days
 	StaleClosedIssuesDays int `json:"stale_closed_issues_days,omitempty"`
 
+	// Daemon mode configuration (be-fqjs3v / be-oyer9z).
+	// Controls whether the bdd daemon is used for CLI-to-storage dispatch.
+	// "off" (default): in-process only. "auto": use daemon if reachable, else in-process.
+	// "always": require daemon; fail if unreachable.
+	DaemonMode               string `json:"daemon_mode,omitempty"`
+	DaemonIdleSeconds        int    `json:"daemon_idle_seconds,omitempty"`
+	DaemonMaxLifetimeSeconds int    `json:"daemon_max_lifetime_seconds,omitempty"`
+
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
 	// upgrade notifications firing after git operations reset metadata.json.
@@ -469,6 +477,41 @@ func (c *Config) GetDoltRemotesAPIPort() int {
 		return c.DoltRemotesAPIPort
 	}
 	return DefaultDoltRemotesAPIPort
+}
+
+// DaemonMode controls whether the bdd daemon is used for CLI-to-storage dispatch.
+type DaemonMode string
+
+const (
+	DaemonModeOff    DaemonMode = "off"
+	DaemonModeAuto   DaemonMode = "auto"
+	DaemonModeAlways DaemonMode = "always"
+)
+
+// GetDaemonMode returns the configured daemon mode. Defaults to DaemonModeOff.
+func (c *Config) GetDaemonMode() DaemonMode {
+	switch DaemonMode(c.DaemonMode) {
+	case DaemonModeAuto, DaemonModeAlways:
+		return DaemonMode(c.DaemonMode)
+	default:
+		return DaemonModeOff
+	}
+}
+
+// GetDaemonIdleSeconds returns the daemon idle timeout in seconds. Defaults to 300.
+func (c *Config) GetDaemonIdleSeconds() int {
+	if c != nil && c.DaemonIdleSeconds > 0 {
+		return c.DaemonIdleSeconds
+	}
+	return 300
+}
+
+// GetDaemonMaxLifetimeSeconds returns the daemon hard lifetime ceiling in seconds. Defaults to 3600.
+func (c *Config) GetDaemonMaxLifetimeSeconds() int {
+	if c != nil && c.DaemonMaxLifetimeSeconds > 0 {
+		return c.DaemonMaxLifetimeSeconds
+	}
+	return 3600
 }
 
 // GenerateProjectID creates a UUID v4 for project identity verification (GH#2372).
