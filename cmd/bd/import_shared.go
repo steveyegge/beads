@@ -25,6 +25,11 @@ type ImportOptions struct {
 	DeletionIDs                []string
 	SkipPrefixValidation       bool
 	ProtectLocalExportIDs      map[string]time.Time
+	// ConflictSkip makes the import insert-if-new instead of UPSERT: an
+	// issue whose ID already exists is left untouched. Set only by the
+	// auto-import upgrade-recovery fallback (GH#3955); explicit `bd import`
+	// leaves this false and keeps UPSERT semantics.
+	ConflictSkip bool
 }
 
 // ImportResult describes what an import operation did.
@@ -53,6 +58,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	err := store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
 		OrphanHandling:       storage.OrphanAllow,
 		SkipPrefixValidation: opts.SkipPrefixValidation,
+		ConflictSkip:         opts.ConflictSkip,
 	})
 	if err != nil {
 		return nil, err
@@ -158,10 +164,28 @@ func parseJSONLFile(path string) ([]*types.Issue, map[string]string, error) {
 	return issues, configEntries, nil
 }
 
-// importFromLocalJSONLFull imports issues and memories from a local JSONL file.
-// It detects memory records (lines with "_type":"memory") and imports them
-// via SetConfig, while routing regular issue records through the normal path.
+// importFromLocalJSONLFull imports issues and memories from a local JSONL file
+// using UPSERT semantics (an existing issue row is overwritten). Used by the
+// explicit recovery paths: `bd bootstrap` and `bd init --from-jsonl`.
 func importFromLocalJSONLFull(ctx context.Context, store storage.DoltStorage, localPath string) (*importLocalResult, error) {
+	return importFromLocalJSONLWithOpts(ctx, store, localPath, false)
+}
+
+// importFromLocalJSONLConflictSkip is the auto-import upgrade-recovery
+// fallback (GH#3955; the fallbackImporter seam in auto_import_upgrade.go).
+// It is identical to importFromLocalJSONLFull except that an issue whose ID
+// already exists is left untouched instead of being overwritten, so a
+// regressed emptiness guard can never clobber live rows — worst case is a
+// no-op.
+func importFromLocalJSONLConflictSkip(ctx context.Context, store storage.DoltStorage, localPath string) (*importLocalResult, error) {
+	return importFromLocalJSONLWithOpts(ctx, store, localPath, true)
+}
+
+// importFromLocalJSONLWithOpts is the shared implementation. It detects
+// memory records (lines with "_type":"memory") and imports them via
+// SetConfig, while routing regular issue records through the normal path.
+// conflictSkip selects insert-if-new (true) vs UPSERT (false) for issue rows.
+func importFromLocalJSONLWithOpts(ctx context.Context, store storage.DoltStorage, localPath string, conflictSkip bool) (*importLocalResult, error) {
 	issues, configEntries, err := parseJSONLFile(localPath)
 	if err != nil {
 		return nil, err
@@ -192,6 +216,7 @@ func importFromLocalJSONLFull(ctx context.Context, store storage.DoltStorage, lo
 
 		opts := ImportOptions{
 			SkipPrefixValidation: true,
+			ConflictSkip:         conflictSkip,
 		}
 		_, err = importIssuesCore(ctx, "", store, issues, opts)
 		if err != nil {
