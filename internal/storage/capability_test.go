@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -45,10 +46,10 @@ func TestCapabilitySet_Require_ErrorContainsNames(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	msg := err.Error()
-	if !contains(msg, "push") {
+	if !strings.Contains(msg, "push") {
 		t.Errorf("error message %q does not contain capability name", msg)
 	}
-	if !contains(msg, "mydriver") {
+	if !strings.Contains(msg, "mydriver") {
 		t.Errorf("error message %q does not contain driver name", msg)
 	}
 }
@@ -105,16 +106,4 @@ func TestPostgresCapabilities(t *testing.T) {
 			t.Errorf("PostgresCapabilities should not have %q", cap)
 		}
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
-		func() bool {
-			for i := range s {
-				if i+len(sub) <= len(s) && s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-			return false
-		}())
 }

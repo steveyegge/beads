@@ -56,8 +56,9 @@ type DriverConfig struct {
 }
 
 // DriverOpener is the constructor function registered per backend.
-// It must return a fully constructed Driver that is ready to Open.
-type DriverOpener func(ctx context.Context, cfg DriverConfig) (Driver, error)
+// It must return a newly constructed Driver in a zero/default state.
+// Open has NOT been called; OpenDriver calls it after construction.
+type DriverOpener func() (Driver, error)
 
 var (
 	driverMu       sync.RWMutex
@@ -75,9 +76,8 @@ func RegisterDriver(name string, opener DriverOpener) {
 	driverRegistry[name] = opener
 }
 
-// OpenDriver looks up the registered opener for name and calls it.
-// The opener is responsible for constructing and opening the driver.
-// The returned Driver is ready to use.
+// OpenDriver looks up the registered opener for name, constructs the driver,
+// and calls Open(ctx, cfg) on it. The returned Driver is ready to use.
 func OpenDriver(ctx context.Context, name string, cfg DriverConfig) (Driver, error) {
 	driverMu.RLock()
 	opener, ok := driverRegistry[name]
@@ -85,8 +85,11 @@ func OpenDriver(ctx context.Context, name string, cfg DriverConfig) (Driver, err
 	if !ok {
 		return nil, fmt.Errorf("storage: no driver registered for %q", name)
 	}
-	d, err := opener(ctx, cfg)
+	d, err := opener()
 	if err != nil {
+		return nil, fmt.Errorf("storage: construct driver %q: %w", name, err)
+	}
+	if err := d.Open(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("storage: open driver %q: %w", name, err)
 	}
 	return d, nil
