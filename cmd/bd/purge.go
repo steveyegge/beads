@@ -87,6 +87,7 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	olderThan, _ := cmd.Flags().GetString("older-than")
 	pattern, _ := cmd.Flags().GetString("pattern")
+	ignoreReferences, _ := cmd.Flags().GetBool("ignore-references")
 
 	// Safety gate: prune refuses to run without scope narrowing so a typo
 	// or muscle-memory `--force` can't wipe every closed bead in the repo.
@@ -153,13 +154,48 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 	}
 	closedIssues = filtered
 
+	// Filter out beads referenced by open beads (prune only; purge skips this).
+	var referencedCount int
+	var referencedSample []string
+	if scope.cmdName == "prune" && !ignoreReferences && len(closedIssues) > 0 {
+		candidateIDs := make(map[string]bool, len(closedIssues))
+		for _, iss := range closedIssues {
+			candidateIDs[iss.ID] = true
+		}
+		refSet, samples, err := buildReferencedSet(ctx, store, candidateIDs)
+		if err != nil {
+			FatalError("scanning open beads for references: %v", err)
+		}
+		if len(refSet) > 0 {
+			refs := make([]*types.Issue, 0, len(closedIssues)-len(refSet))
+			for _, iss := range closedIssues {
+				if refSet[iss.ID] {
+					referencedCount++
+					continue
+				}
+				refs = append(refs, iss)
+			}
+			closedIssues = refs
+			referencedSample = samples
+		}
+	}
+
 	// Report nothing-to-do
 	if len(closedIssues) == 0 {
 		if jsonOutput {
-			outputJSON(map[string]interface{}{
+			stats := map[string]interface{}{
 				scope.countKey: 0,
 				"message":      fmt.Sprintf("No %ss to %s", scope.subjectNoun, scope.cmdName),
-			})
+			}
+			if pinnedCount > 0 {
+				stats["pinned_skipped"] = pinnedCount
+			}
+			if referencedCount > 0 {
+				stats["referenced_skipped"] = referencedCount
+				stats["referenced_count"] = referencedCount
+				stats["referenced_ids_sample"] = referencedSample
+			}
+			outputJSON(stats)
 		} else {
 			msg := fmt.Sprintf("No %ss to %s", scope.subjectNoun, scope.cmdName)
 			if olderThan != "" {
@@ -169,6 +205,12 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 				msg += fmt.Sprintf(" (matching %q)", pattern)
 			}
 			fmt.Println(msg)
+			if pinnedCount > 0 {
+				fmt.Printf("  Pinned (skipped):     %d\n", pinnedCount)
+			}
+			if referencedCount > 0 {
+				fmt.Printf("  Referenced (skipped): %d\n", referencedCount)
+			}
 		}
 		return
 	}
@@ -198,6 +240,11 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 			if pinnedCount > 0 {
 				stats["pinned_skipped"] = pinnedCount
 			}
+			if referencedCount > 0 {
+				stats["referenced_skipped"] = referencedCount
+				stats["referenced_count"] = referencedCount
+				stats["referenced_ids_sample"] = referencedSample
+			}
 			outputJSON(stats)
 		} else {
 			fmt.Printf("Would %s %d %s(s)\n", scope.cmdName, len(issueIDs), scope.subjectNoun)
@@ -209,6 +256,16 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 			if pinnedCount > 0 {
 				fmt.Printf("  Pinned (skipped): %d\n", pinnedCount)
 			}
+			if referencedCount > 0 {
+				sampleDisplay := referencedSample
+				suffix := ""
+				if len(sampleDisplay) > 5 {
+					sampleDisplay = sampleDisplay[:5]
+					suffix = fmt.Sprintf(" (+%d more)", referencedCount-5)
+				}
+				fmt.Printf("  Referenced (skipped):    %d\n", referencedCount)
+				fmt.Printf("  Referenced IDs (sample): %s%s\n", strings.Join(sampleDisplay, ", "), suffix)
+			}
 			fmt.Printf("\n(Dry-run mode — no changes made)\n")
 		}
 		return
@@ -219,6 +276,11 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 		fmt.Printf("Found %d %s(s) to %s\n", len(issueIDs), scope.subjectNoun, scope.cmdName)
 		if pinnedCount > 0 {
 			fmt.Printf("Skipping %d pinned bead(s)\n", pinnedCount)
+		}
+		if referencedCount > 0 {
+			fmt.Printf("Skipping %d referenced bead(s)\n", referencedCount)
+			fmt.Printf("Hint: %d of those are cited by open beads.\n", referencedCount)
+			fmt.Printf("Use --dry-run to see which IDs.\n")
 		}
 		hint := fmt.Sprintf("bd %s --force", scope.cmdName)
 		if olderThan != "" {
@@ -249,6 +311,11 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 		}
 		if pinnedCount > 0 {
 			stats["pinned_skipped"] = pinnedCount
+		}
+		if referencedCount > 0 {
+			stats["referenced_skipped"] = referencedCount
+			stats["referenced_count"] = referencedCount
+			stats["referenced_ids_sample"] = referencedSample
 		}
 		outputJSON(stats)
 	} else {
