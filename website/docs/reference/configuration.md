@@ -123,9 +123,11 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `sync.require_confirmation_on_mass_delete` | — | — | `false` | Prompt before pushing >50% issue deletions |
 | `directory.labels` | — | — | `{}` | Map directory patterns → labels for monorepos |
 | `external_projects` | — | — | `{}` | Map project names → paths for cross-project deps |
-| `output.title-length` | — | — | `255` | Title display in feedback (`0` hides) |
+| `output.title-length` | — | — | `255` | Title display in feedback (`0` hides); see routing note below |
 | `ai.model` | — | `BD_AI_MODEL` | `claude-haiku-4-5-20251001` | Default AI model |
-| `agents.file` | — | — | `AGENTS.md` | Agents instruction filename |
+| `agents.file` | — | — | `AGENTS.md` | Agents instruction filename; see routing note below |
+
+Routing note: `output.title-length` and `agents.file` are functionally tool-level settings, but `bd config set` writes them to the Dolt database. They are typically read from `config.yaml` when set there directly.
 
 `bd config show` is the source of truth for what's currently effective on your machine, including provenance.
 
