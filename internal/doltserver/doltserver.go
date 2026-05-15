@@ -391,8 +391,8 @@ func writePortFile(beadsDir string, port int) error {
 }
 
 // EnsurePortFile makes the repo-local port file match the connected server port.
-// This is a best-effort repair path for upgraded repos that are missing
-// .beads/dolt-server.port even though commands can still connect.
+// Deprecated: read paths must not call this. Use WriteResolvedPort with an
+// explicit lifecycle/config/doctor reason at the actual mutation site.
 func EnsurePortFile(beadsDir string, port int) error {
 	if beadsDir == "" || port <= 0 {
 		return nil
@@ -404,7 +404,7 @@ func EnsurePortFile(beadsDir string, port int) error {
 	if existing > 0 {
 		fmt.Fprintf(os.Stderr, "Info: updating port file %d → %d in %s\n", existing, port, beadsDir)
 	}
-	return writePortFile(beadsDir, port)
+	return WriteResolvedPort(beadsDir, port, PortWriteReasonDoctorHandoff)
 }
 
 // ReadPortFile returns the port from the project's dolt-server.port file,
@@ -423,69 +423,19 @@ func ReadPortFile(beadsDir string) int {
 // the server is listening on. Consulting it here ensures that commands
 // connecting to an already-running server use the correct port.
 func DefaultConfig(beadsDir string) *Config {
-	// In shared mode, use the shared server directory for port resolution
+	endpoint, _, _ := ResolveEndpoint(beadsDir, ResolveOptions{Purpose: EndpointPurposeRead})
+	cfgBeadsDir := beadsDir
 	if IsSharedServerMode() {
 		if sharedDir, err := SharedServerDir(); err == nil {
-			beadsDir = sharedDir
+			cfgBeadsDir = sharedDir
 		}
 	}
-
 	cfg := &Config{
-		BeadsDir: beadsDir,
-		Host:     "127.0.0.1",
+		BeadsDir: cfgBeadsDir,
+		Host:     endpoint.Host,
+		Port:     endpoint.Port,
 		Mode:     ResolveServerMode(beadsDir),
 	}
-
-	// Check env var override first (used by tests and manual overrides)
-	if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
-		if port, err := strconv.Atoi(p); err == nil {
-			cfg.Port = port
-			return cfg
-		}
-	}
-
-	// Check the port file (gitignored, local-only) — this is the primary
-	// persistent source. Start() writes the actual listening port here.
-	// Elevated to top priority (after env var) to prevent git-tracked values
-	// from causing cross-project data leakage (GH#2372).
-	if p := readPortFile(beadsDir); 0 < p {
-		cfg.Port = p
-		return cfg
-	}
-
-	// Check config.yaml / global config (~/.config/bd/config.yaml) (GH#2073)
-	// Note: project-level config.yaml dolt.port is git-tracked and could
-	// propagate to collaborators. Prefer the gitignored port file above.
-	if cfg.Port == 0 {
-		if p := config.GetYamlConfig("dolt.port"); p != "" {
-			if port, err := strconv.Atoi(p); err == nil && port > 0 {
-				cfg.Port = port
-			}
-		}
-	}
-
-	// Deprecated: metadata.json DoltServerPort is git-tracked and propagates
-	// to all contributors, causing cross-project data leakage (GH#2372).
-	// Emit a one-time warning but still use the value as a fallback so
-	// existing setups don't break silently.
-	if cfg.Port == 0 {
-		if metaCfg, err := configfile.Load(beadsDir); err == nil && metaCfg != nil {
-			if metaCfg.DoltServerPort > 0 {
-				fmt.Fprintf(os.Stderr, "Warning: dolt_server_port in metadata.json is deprecated (can cause cross-project data leakage).\n")
-				fmt.Fprintf(os.Stderr, "  The port file (.beads/dolt-server.port) is now the primary source.\n")
-				fmt.Fprintf(os.Stderr, "  Remove dolt_server_port from .beads/metadata.json to silence this warning.\n")
-				cfg.Port = metaCfg.DoltServerPort
-			}
-		}
-	}
-
-	// Port 0 means "no configured port". In shared mode, use the fixed
-	// shared server port. In per-project mode, Start() will allocate an
-	// ephemeral port from the OS (GH#2098, GH#2372).
-	if cfg.Port == 0 && IsSharedServerMode() {
-		cfg.Port = DefaultSharedServerPort // 3308 - avoids orchestrator conflict on 3307
-	}
-
 	return cfg
 }
 
@@ -583,7 +533,6 @@ func EnsureRunningDetailed(beadsDir string) (port int, startedByUs bool, err err
 		return 0, false, err
 	}
 	if state.Running {
-		_ = EnsurePortFile(serverDir, state.Port)
 		return state.Port, false, nil
 	}
 
@@ -754,7 +703,7 @@ startupLoop:
 			if adoptPID > 0 {
 				_ = logFile.Close()
 				_ = os.WriteFile(pidPath(beadsDir), []byte(strconv.Itoa(adoptPID)), 0600)
-				_ = writePortFile(beadsDir, actualPort)
+				_ = WriteResolvedPort(beadsDir, actualPort, PortWriteReasonStartedServer)
 				return &State{Running: true, PID: adoptPID, Port: actualPort, DataDir: doltDir}, nil
 			}
 		}
@@ -842,7 +791,7 @@ startupLoop:
 		}
 		return nil, fmt.Errorf("writing PID file: %w", err)
 	}
-	if err := writePortFile(beadsDir, actualPort); err != nil {
+	if err := WriteResolvedPort(beadsDir, actualPort, PortWriteReasonStartedServer); err != nil {
 		if proc, findErr := os.FindProcess(pid); findErr == nil {
 			_ = proc.Kill()
 		}

@@ -990,6 +990,9 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	if cfg.ServerSocket != "" {
 		addr = cfg.ServerSocket
 		conn, dialErr = net.DialTimeout("unix", cfg.ServerSocket, 500*time.Millisecond)
+	} else if cfg.ServerPort <= 0 {
+		addr = "unresolved Dolt endpoint"
+		dialErr = fmt.Errorf("no Dolt server port resolved")
 	} else {
 		addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
 		conn, dialErr = net.DialTimeout("tcp", addr, 500*time.Millisecond)
@@ -1143,14 +1146,6 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			_ = db.Close()
 			return nil, verifyErr
 		}
-	}
-
-	if isLocalHost(cfg.ServerHost) {
-		beadsDir := cfg.BeadsDir
-		if beadsDir == "" && cfg.Path != "" {
-			beadsDir = filepath.Dir(cfg.Path)
-		}
-		_ = doltserver.EnsurePortFile(beadsDir, cfg.ServerPort)
 	}
 
 	// All writers operate on main — transaction isolation via RunInTransaction

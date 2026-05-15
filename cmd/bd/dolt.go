@@ -411,6 +411,16 @@ on the next bd command unless auto-start is disabled.`,
 		if beadsDir == "" {
 			FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
 		}
+		endpoint, _, err := doltserver.ResolveEndpoint(beadsDir, doltserver.ResolveOptions{Purpose: doltserver.EndpointPurposeLifecycle})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if endpoint.Owner == doltserver.EndpointOwnerExternal || endpoint.Owner == doltserver.EndpointOwnerGC {
+			fmt.Fprintf(os.Stderr, "Dolt server is %s-managed; bd will not stop it from this workspace.\n", endpoint.Owner)
+			fmt.Fprintf(os.Stderr, "Endpoint: %s:%d database %s\n", endpoint.Host, endpoint.Port, endpoint.Database)
+			os.Exit(1)
+		}
 		serverDir := doltserver.ResolveServerDir(beadsDir)
 		force, _ := cmd.Flags().GetBool("force")
 
@@ -444,29 +454,16 @@ reachability, server version, and database.`,
 			return
 		}
 
-		// For externally-managed Dolt servers, the local PID file is
-		// meaningless or absent — ping the configured endpoint via SQL
-		// instead. Two flavors qualify:
-		//   - non-local host (Hosted Dolt, remote shared sql-server, bd-q35w)
-		//   - local host with auto-start disabled (an orchestrator or
-		//     systemd manages the server lifecycle, be-0eyj)
-		//
-		// IsAutoStartDisabled reads the active (globally-bound) config and
-		// BEADS_DOLT_AUTO_START env, not the per-beadsDir cfg loaded just
-		// below. That coupling is intentional and consistent with every
-		// other call site of IsAutoStartDisabled in this package — both
-		// resolve against the same active workspace at command time.
-		cfg, cfgErr := configfile.Load(beadsDir)
-		if cfgErr != nil {
-			// Don't silently swallow. A corrupted or missing metadata.json
-			// would otherwise mask the externally-managed routing for both
-			// the remote-host and auto-start-disabled-local cases, falling
-			// through to the PID-file path with a misleading "not running"
-			// — which is the exact failure mode this PR addresses.
-			fmt.Fprintf(os.Stderr, "Warning: cannot load .beads config (%v); falling back to PID-file status path\n", cfgErr)
+		endpoint, _, err := doltserver.ResolveEndpoint(beadsDir, doltserver.ResolveOptions{Purpose: doltserver.EndpointPurposeRead})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-		if cfg != nil && shouldUseExternalDoltStatus(cfg, doltserver.IsAutoStartDisabled()) {
-			runExternalDoltStatus(beadsDir, cfg)
+		if endpoint.Owner == doltserver.EndpointOwnerExternal ||
+			endpoint.Owner == doltserver.EndpointOwnerGC ||
+			endpoint.Owner == doltserver.EndpointOwnerShared ||
+			!isLocalHost(endpoint.Host) {
+			runEndpointDoltStatus(beadsDir, endpoint)
 			return
 		}
 
@@ -494,7 +491,11 @@ func renderLocalDoltStatus(state *doltserver.State, serverDir string) {
 	if state == nil || !state.Running {
 		cfg := doltserver.DefaultConfig(serverDir)
 		fmt.Println("Dolt server: not running")
-		fmt.Printf("  Expected port: %d\n", cfg.Port)
+		if cfg.Port > 0 {
+			fmt.Printf("  Expected port: %d\n", cfg.Port)
+		} else {
+			fmt.Println("  Expected port: unresolved")
+		}
 		return
 	}
 	fmt.Println("Dolt server: running")
@@ -552,11 +553,33 @@ func isLocalHost(host string) bool {
 // log file — reachability, version, host/port/database, and TLS mode are the
 // user-relevant signals.
 func runExternalDoltStatus(beadsDir string, cfg *configfile.Config) {
-	host := cfg.GetDoltServerHost()
-	port := doltserver.DefaultConfig(beadsDir).Port
-	user := cfg.GetDoltServerUser()
-	database := cfg.GetDoltDatabase()
-	tls := cfg.GetDoltServerTLS()
+	if cfg == nil {
+		cfg = configfile.DefaultConfig()
+	}
+	endpoint := doltserver.Endpoint{
+		Host:     cfg.GetDoltServerHost(),
+		Port:     doltserver.DefaultConfig(beadsDir).Port,
+		User:     cfg.GetDoltServerUser(),
+		Database: cfg.GetDoltDatabase(),
+		TLS:      cfg.GetDoltServerTLS(),
+		Owner:    doltserver.EndpointOwnerExternal,
+		Source:   doltserver.EndpointSourceMetadata,
+		Resolved: doltserver.DefaultConfig(beadsDir).Port > 0,
+		Dialable: doltserver.DefaultConfig(beadsDir).Port > 0,
+	}
+	runEndpointDoltStatus(beadsDir, endpoint)
+}
+
+func runEndpointDoltStatus(beadsDir string, endpoint doltserver.Endpoint) {
+	host := endpoint.Host
+	port := endpoint.Port
+	user := endpoint.User
+	database := endpoint.Database
+	tls := endpoint.TLS
+	cfg, _ := configfile.Load(beadsDir)
+	if cfg == nil {
+		cfg = configfile.DefaultConfig()
+	}
 	password := cfg.GetDoltServerPasswordForPort(port)
 
 	dsn := doltutil.ServerDSN{
@@ -569,12 +592,23 @@ func runExternalDoltStatus(beadsDir string, cfg *configfile.Config) {
 	}.String()
 
 	result := map[string]interface{}{
-		"mode":     "external",
+		"mode":     string(endpoint.Owner),
 		"host":     host,
 		"port":     port,
 		"user":     user,
 		"database": database,
 		"tls":      tls,
+	}
+	if !endpoint.Resolved || !endpoint.Dialable {
+		result["running"] = false
+		result["error"] = "Dolt server endpoint is unresolved"
+		if jsonOutput {
+			outputJSON(result)
+			return
+		}
+		fmt.Printf("Dolt server: unresolved (%s)\n", endpoint.Owner)
+		fmt.Println("  Error:    no resolved Dolt server port")
+		return
 	}
 
 	db, openErr := sql.Open("mysql", dsn)
@@ -611,9 +645,9 @@ func runExternalDoltStatus(beadsDir string, cfg *configfile.Config) {
 	}
 
 	if running {
-		fmt.Println("Dolt server: running (external)")
+		fmt.Printf("Dolt server: running (%s)\n", endpoint.Owner)
 	} else {
-		fmt.Println("Dolt server: not reachable (external)")
+		fmt.Printf("Dolt server: not reachable (%s)\n", endpoint.Owner)
 	}
 	fmt.Printf("  Host:     %s\n", host)
 	fmt.Printf("  Port:     %d\n", port)
@@ -1272,10 +1306,13 @@ func showDoltConfig(testConnection bool) {
 	backend := cfg.GetBackend()
 	embedded := !usesSQLServer()
 
-	// Resolve actual server port for connection testing
-	showHost := cfg.GetDoltServerHost()
-	dsCfg := doltserver.DefaultConfig(beadsDir)
-	showPort := dsCfg.Port
+	endpoint, diagnostics, err := doltserver.ResolveEndpoint(beadsDir, doltserver.ResolveOptions{Purpose: doltserver.EndpointPurposeRead})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving Dolt endpoint: %v\n", err)
+		os.Exit(1)
+	}
+	showHost := endpoint.Host
+	showPort := endpoint.Port
 	embeddedDataDir := filepath.Join(beadsDir, "embeddeddolt")
 
 	if jsonOutput {
@@ -1291,9 +1328,12 @@ func showDoltConfig(testConnection bool) {
 				result["host"] = showHost
 				result["port"] = showPort
 				result["user"] = cfg.GetDoltServerUser()
+				result["endpoint_owner"] = string(endpoint.Owner)
+				result["endpoint_source"] = string(endpoint.Source)
+				result["endpoint_resolved"] = endpoint.Resolved
 				result["shared_server"] = doltserver.IsSharedServerMode()
 				if testConnection {
-					result["connection_ok"] = testServerConnection(showHost, showPort)
+					result["connection_ok"] = endpoint.Dialable && testServerConnection(showHost, showPort)
 				}
 			}
 		}
@@ -1314,7 +1354,11 @@ func showDoltConfig(testConnection bool) {
 		fmt.Printf("  Data:     %s\n", embeddedDataDir)
 	} else {
 		fmt.Printf("  Host:     %s\n", showHost)
-		fmt.Printf("  Port:     %d\n", showPort)
+		if endpoint.Resolved {
+			fmt.Printf("  Port:     %d\n", showPort)
+		} else {
+			fmt.Println("  Port:     unresolved")
+		}
 		fmt.Printf("  User:     %s\n", cfg.GetDoltServerUser())
 		if doltserver.IsSharedServerMode() {
 			fmt.Println("  Mode:     shared server")
@@ -1327,11 +1371,14 @@ func showDoltConfig(testConnection bool) {
 
 		if testConnection {
 			fmt.Println()
-			if testServerConnection(showHost, showPort) {
+			if endpoint.Dialable && testServerConnection(showHost, showPort) {
 				fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
 			} else {
 				fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
 			}
+		}
+		for _, diagnostic := range diagnostics {
+			fmt.Printf("  %s\n", ui.RenderWarn(diagnostic.Message))
 		}
 	}
 
@@ -1530,6 +1577,13 @@ func setDoltConfig(key, value string, updateConfig bool) {
 		fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 		os.Exit(1)
 	}
+	if key == "port" {
+		port, _ := strconv.Atoi(value)
+		if err := doltserver.WriteResolvedPort(beadsDir, port, doltserver.PortWriteReasonSetPort); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving port file: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	if jsonOutput {
 		result := map[string]interface{}{
@@ -1576,16 +1630,27 @@ func testDoltConnection() {
 		os.Exit(1)
 	}
 
-	host := cfg.GetDoltServerHost()
-	port := doltserver.DefaultConfig(beadsDir).Port
-	addr := fmt.Sprintf("%s:%d", host, port)
+	endpoint, _, err := doltserver.ResolveEndpoint(beadsDir, doltserver.ResolveOptions{Purpose: doltserver.EndpointPurposeRead})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving Dolt endpoint: %v\n", err)
+		os.Exit(1)
+	}
+	host := endpoint.Host
+	port := endpoint.Port
+	addr := "unresolved Dolt endpoint"
+	if endpoint.Resolved {
+		addr = fmt.Sprintf("%s:%d", host, port)
+	}
 
 	if jsonOutput {
-		ok := testServerConnection(host, port)
+		ok := endpoint.Dialable && testServerConnection(host, port)
 		outputJSON(map[string]interface{}{
-			"host":          host,
-			"port":          port,
-			"connection_ok": ok,
+			"host":              host,
+			"port":              port,
+			"endpoint_owner":    string(endpoint.Owner),
+			"endpoint_source":   string(endpoint.Source),
+			"endpoint_resolved": endpoint.Resolved,
+			"connection_ok":     ok,
 		})
 		if !ok {
 			os.Exit(1)
@@ -1595,11 +1660,15 @@ func testDoltConnection() {
 
 	fmt.Printf("Testing connection to %s...\n", addr)
 
-	if testServerConnection(host, port) {
+	if endpoint.Dialable && testServerConnection(host, port) {
 		fmt.Printf("%s\n", ui.RenderPass("✓ Connection successful"))
 	} else {
 		fmt.Printf("%s\n", ui.RenderWarn("✗ Connection failed"))
-		fmt.Println("\nStart the server with: bd dolt start")
+		if endpoint.Owner == doltserver.EndpointOwnerBeads {
+			fmt.Println("\nStart the server with: bd dolt start")
+		} else {
+			fmt.Printf("\nEndpoint is %s-managed; start or repair that owner instead of starting a competing per-project server.\n", endpoint.Owner)
+		}
 		os.Exit(1)
 	}
 
