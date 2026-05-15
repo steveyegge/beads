@@ -494,6 +494,7 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	if metadata == "" {
 		metadata = "{}"
 	}
+	targetIsWisp := s.isActiveWisp(ctx, dep.DependsOnID)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -502,25 +503,13 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	defer func() { _ = tx.Rollback() }()
 
 	// Cycle detection for blocking dependency types: check if adding this edge
-	// would create a cycle. UNIONs both tables to detect cross-table cycles
-	// (e.g., wisp A -> permanent B -> wisp A). (bd-xe27)
+	// would create a cycle. Same-storage-class edges stay on wisp_dependencies;
+	// mixed wisp/permanent edges scan both tables to preserve cross-table safety.
 	if dep.Type == types.DepBlocks {
+		depTables := wispCycleDetectionTables(targetIsWisp)
 		var reachable int
-		if err := tx.QueryRowContext(ctx, `
-			WITH RECURSIVE reachable AS (
-				SELECT ? AS node, 0 AS depth
-				UNION ALL
-				SELECT d.depends_on_id, r.depth + 1
-				FROM reachable r
-				JOIN (
-					SELECT issue_id, depends_on_id FROM dependencies WHERE type = 'blocks'
-					UNION ALL
-					SELECT issue_id, depends_on_id FROM wisp_dependencies WHERE type = 'blocks'
-				) d ON d.issue_id = r.node
-				WHERE r.depth < 100
-			)
-			SELECT COUNT(*) FROM reachable WHERE node = ?
-		`, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
+		query := wispCycleReachabilityQuery(depTables)
+		if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
 			return fmt.Errorf("failed to check for dependency cycle: %w", err)
 		}
 		if reachable > 0 {
@@ -559,6 +548,44 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	}
 
 	return wrapTransactionError("commit add wisp dependency", tx.Commit())
+}
+
+func wispCycleReachabilityQuery(depTables []string) string {
+	if len(depTables) == 1 {
+		return fmt.Sprintf(`
+			WITH RECURSIVE reachable(node) AS (
+				SELECT ?
+				UNION
+				SELECT d.depends_on_id
+				FROM reachable r
+				JOIN %s d ON d.issue_id = r.node AND d.type = 'blocks'
+			)
+			SELECT COUNT(*) FROM reachable WHERE node = ?
+		`, depTables[0])
+	}
+
+	var unions []string
+	for _, t := range depTables {
+		unions = append(unions, fmt.Sprintf("SELECT issue_id, depends_on_id FROM %s WHERE type = 'blocks'", t))
+	}
+	unionQuery := strings.Join(unions, " UNION ")
+	return fmt.Sprintf(`
+		WITH RECURSIVE reachable(node) AS (
+			SELECT ?
+			UNION
+			SELECT d.depends_on_id
+			FROM reachable r
+			JOIN (%s) d ON d.issue_id = r.node
+		)
+		SELECT COUNT(*) FROM reachable WHERE node = ?
+	`, unionQuery)
+}
+
+func wispCycleDetectionTables(targetIsWisp bool) []string {
+	if targetIsWisp {
+		return []string{"wisp_dependencies"}
+	}
+	return []string{"dependencies", "wisp_dependencies"}
 }
 
 // getWispDependencies retrieves issues that a wisp depends on.
