@@ -184,6 +184,10 @@ func adoptGitOriginRemoteForPush(ctx context.Context, st storage.DoltStorage) (b
 	if len(remotes) > 0 {
 		return false, nil
 	}
+	beadsDir := selectedDoltBeadsDir()
+	if beadsDir == "" {
+		return false, fmt.Errorf("no active beads workspace")
+	}
 	originURL, err := gitOriginGetURLForActiveRepo(ctx)
 	if err != nil || originURL == "" {
 		return false, nil
@@ -203,10 +207,6 @@ func adoptGitOriginRemoteForPush(ctx context.Context, st storage.DoltStorage) (b
 		}
 	}
 
-	beadsDir := selectedDoltBeadsDir()
-	if beadsDir == "" {
-		return false, fmt.Errorf("no active beads workspace")
-	}
 	if err := config.SetYamlConfigInDir(beadsDir, "sync.remote", remoteURL); err != nil {
 		return false, fmt.Errorf("failed to persist sync.remote to config.yaml: %w", err)
 	}

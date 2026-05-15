@@ -1,15 +1,23 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/doltremote"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+)
+
+var (
+	querySQLRemotesForDoctor = querySQLRemotes
+	listCLIRemotesForDoctor  = doltutil.ListCLIRemotes
 )
 
 // CheckRemoteConsistency compares remotes registered in the SQL server
@@ -29,7 +37,7 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 	}
 
 	// Get SQL remotes via direct connection
-	sqlRemotes, sqlErr := querySQLRemotes(beadsDir)
+	sqlRemotes, sqlErr := querySQLRemotesForDoctor(beadsDir)
 	if sqlErr != nil {
 		return DoctorCheck{
 			Name:     "Remote Consistency",
@@ -43,7 +51,7 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 	doltDir := doltserver.ResolveDoltDir(beadsDir)
 	dbName := cfg.GetDoltDatabase()
 	dbDir := filepath.Join(doltDir, dbName)
-	cliRemotes, cliErr := doltutil.ListCLIRemotes(dbDir)
+	cliRemotes, cliErr := listCLIRemotesForDoctor(dbDir)
 	if cliErr != nil {
 		return DoctorCheck{
 			Name:     "Remote Consistency",
@@ -123,32 +131,21 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 
 func remoteAdoptionDetail(repoPath string) string {
 	if originURL := gitOriginRemoteURL(repoPath); originURL != "" {
-		remoteURL := normalizeGitOriginForDolt(originURL)
+		remoteURL := doltremote.Normalize(originURL)
 		return fmt.Sprintf("git origin is configured. Adopt it with: bd dolt remote add origin %s", remoteURL)
 	}
 	return "Add a remote with: bd dolt remote add origin <url>"
 }
 
 func gitOriginRemoteURL(repoPath string) string {
-	cmd := exec.Command("git", "-C", repoPath, "remote", "get-url", "origin")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "remote", "get-url", "origin")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func normalizeGitOriginForDolt(url string) string {
-	if strings.HasPrefix(url, "git+") || strings.HasPrefix(url, "file://") || strings.HasPrefix(url, "aws://") || strings.HasPrefix(url, "gs://") || strings.HasPrefix(url, "dolthub://") {
-		return url
-	}
-	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "ssh://") {
-		return "git+" + url
-	}
-	if idx := strings.Index(url, ":"); idx > 0 && !strings.Contains(url[:idx], "/") && strings.Contains(url, "@") {
-		return "git+ssh://" + url[:idx] + "/" + url[idx+1:]
-	}
-	return url
 }
 
 // querySQLRemotes gets remotes from the SQL server.

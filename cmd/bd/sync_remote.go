@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/doltremote"
 )
 
 // resolveSyncRemote returns the effective sync remote URL.
@@ -68,38 +69,11 @@ func commitBeadsConfigForActiveRepo(ctx context.Context, msg string) {
 	}
 }
 
-// doltNativeSchemes are URL schemes that Dolt understands natively
-// and should not be converted through gitURLToDoltRemote.
-var doltNativeSchemes = []string{
-	"dolthub://",
-	"file://",
-	"aws://",
-	"gs://",
-	"git+https://",
-	"git+ssh://",
-	"git+http://",
-}
-
 // normalizeRemoteURL converts a remote URL to a Dolt-compatible format.
 // Dolt-native URLs (dolthub://, file://, aws://, gs://, git+...) are
 // returned as-is. Git URLs (https://, ssh://, git@...) are converted
 // via gitURLToDoltRemote. Unknown schemes are returned as-is and let
 // dolt clone decide.
 func normalizeRemoteURL(url string) string {
-	for _, scheme := range doltNativeSchemes {
-		if strings.HasPrefix(url, scheme) {
-			return url
-		}
-	}
-	// Git-style URLs need conversion to dolt remote format
-	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") ||
-		strings.HasPrefix(url, "ssh://") {
-		return gitURLToDoltRemote(url)
-	}
-	// SCP-style git@host:path
-	if idx := strings.Index(url, ":"); idx > 0 && !strings.Contains(url[:idx], "/") && strings.Contains(url, "@") {
-		return gitURLToDoltRemote(url)
-	}
-	// Unknown scheme — return as-is, let dolt handle it
-	return url
+	return doltremote.Normalize(url)
 }

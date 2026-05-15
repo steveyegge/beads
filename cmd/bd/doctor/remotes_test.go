@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage"
 )
 
 func TestCheckRemoteConsistency_WorktreeFallbackUsesSharedConfig(t *testing.T) {
@@ -55,6 +56,52 @@ func TestRemoteAdoptionDetailUsesGitOrigin(t *testing.T) {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("remote adoption detail missing %q:\n%s", want, detail)
 		}
+	}
+}
+
+func TestCheckRemoteConsistencyNoRemotesIncludesGitOriginAdoptionDetail(t *testing.T) {
+	clearResolveBeadsDirCache()
+	t.Cleanup(clearResolveBeadsDirCache)
+
+	repoDir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"remote", "add", "origin", "git@github.com:org/repo.git"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v\n%s", args[0], err, out)
+		}
+	}
+
+	beadsDir := filepath.Join(repoDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads: %v", err)
+	}
+	if err := (&configfile.Config{}).Save(beadsDir); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	oldQuerySQLRemotes := querySQLRemotesForDoctor
+	oldListCLIRemotes := listCLIRemotesForDoctor
+	t.Cleanup(func() {
+		querySQLRemotesForDoctor = oldQuerySQLRemotes
+		listCLIRemotesForDoctor = oldListCLIRemotes
+	})
+	querySQLRemotesForDoctor = func(string) ([]storage.RemoteInfo, error) {
+		return nil, nil
+	}
+	listCLIRemotesForDoctor = func(string) ([]storage.RemoteInfo, error) {
+		return nil, nil
+	}
+
+	check := CheckRemoteConsistency(repoDir)
+	if check.Status != StatusWarning {
+		t.Fatalf("expected warning when no remotes are configured, got %q: %s", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Detail, "bd dolt remote add origin git+ssh://git@github.com/org/repo.git") {
+		t.Fatalf("remote consistency detail missing git origin adoption command:\n%s", check.Detail)
 	}
 }
 
