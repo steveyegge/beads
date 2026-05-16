@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,11 +24,13 @@ func bdImport(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd import %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd import %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // writeJSONLFile writes issues as JSONL to the given path.
@@ -174,12 +177,14 @@ func TestEmbeddedImport(t *testing.T) {
 		showCmd := exec.Command(bd, "show", id, "--json")
 		showCmd.Dir = dir
 		showCmd.Env = bdEnv(dir)
-		showOut, err := showCmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd show %s failed: %v\n%s", id, err, showOut)
+		var stdout, stderr bytes.Buffer
+		showCmd.Stdout = &stdout
+		showCmd.Stderr = &stderr
+		if err := showCmd.Run(); err != nil {
+			t.Fatalf("bd show %s failed: %v\nstdout:\n%s\nstderr:\n%s", id, err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(showOut), "Updated Title") {
-			t.Errorf("expected 'Updated Title' after upsert, got: %s", showOut)
+		if !strings.Contains(stdout.String(), "Updated Title") {
+			t.Errorf("expected 'Updated Title' after upsert, got: %s", stdout.String())
 		}
 	})
 }

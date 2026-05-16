@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -307,12 +308,14 @@ func TestEmbeddedShow(t *testing.T) {
 		cmd := exec.Command(bd, "view", issue.ID, "--short")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd view failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd view failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), issue.ID) {
-			t.Errorf("expected ID in view alias output: %s", out)
+		if !strings.Contains(stdout.String(), issue.ID) {
+			t.Errorf("expected ID in view alias output: %s", stdout.String())
 		}
 	})
 

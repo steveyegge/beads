@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,11 +19,13 @@ func bdRenamePrefix(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd rename-prefix %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd rename-prefix %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdRenamePrefixFail runs "bd rename-prefix" expecting failure.
@@ -63,15 +66,17 @@ func TestEmbeddedRenamePrefix(t *testing.T) {
 		cmd := exec.Command(bd, "list")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		listOut, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd list after rename failed: %v\n%s", err, listOut)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd list after rename failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(listOut), "new-") {
-			t.Errorf("expected 'new-' prefix in list output: %s", listOut)
+		if !strings.Contains(stdout.String(), "new-") {
+			t.Errorf("expected 'new-' prefix in list output: %s", stdout.String())
 		}
-		if strings.Contains(string(listOut), "old-") {
-			t.Errorf("unexpected 'old-' prefix still in list output: %s", listOut)
+		if strings.Contains(stdout.String(), "old-") {
+			t.Errorf("unexpected 'old-' prefix still in list output: %s", stdout.String())
 		}
 	})
 
@@ -90,12 +95,14 @@ func TestEmbeddedRenamePrefix(t *testing.T) {
 		cmd := exec.Command(bd, "list")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		listOut, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd list after dry-run rename failed: %v\n%s", err, listOut)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd list after dry-run rename failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if strings.Contains(string(listOut), "xx-") {
-			t.Errorf("dry-run should not have changed prefix: %s", listOut)
+		if strings.Contains(stdout.String(), "xx-") {
+			t.Errorf("dry-run should not have changed prefix: %s", stdout.String())
 		}
 	})
 

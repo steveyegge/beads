@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,11 +21,13 @@ func bdBootstrap(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd bootstrap %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd bootstrap %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 func bdBootstrapAllowError(t *testing.T, bd, dir string, args ...string) (string, error) {
@@ -57,20 +60,26 @@ func TestBootstrapNoWorkspace(t *testing.T) {
 	})
 
 	t.Run("json_output", func(t *testing.T) {
-		out, err := bdBootstrapAllowError(t, bd, dir, "--json")
+		cmd := exec.Command(bd, "bootstrap", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err := cmd.Run()
 		if err == nil {
 			t.Fatal("expected bd bootstrap --json to exit non-zero without a workspace")
 		}
 
-		s := strings.TrimSpace(out)
+		s := strings.TrimSpace(stdout.String())
 		start := strings.Index(s, "{")
 		if start < 0 {
-			t.Fatalf("expected JSON object in output, got: %s", out)
+			t.Fatalf("expected JSON object in output:\nstdout: %s\nstderr: %s", s, stderr.String())
 		}
 
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(s[start:]), &payload); err != nil {
-			t.Fatalf("parse bootstrap JSON: %v\n%s", err, s)
+			t.Fatalf("parse bootstrap JSON: %v\nstdout: %s", err, s)
 		}
 		if action, _ := payload["action"].(string); action != "none" {
 			t.Fatalf("action = %q, want %q", action, "none")
@@ -147,12 +156,14 @@ func TestEmbeddedBootstrap(t *testing.T) {
 		bcmd.Dir = dir
 		bcmd.Env = bdEnv(dir)
 		bcmd.Stdin = strings.NewReader("y\n")
-		out, err := bcmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bootstrap init failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		bcmd.Stdout = &stdout
+		bcmd.Stderr = &stderr
+		if err := bcmd.Run(); err != nil {
+			t.Fatalf("bootstrap init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), "Created fresh database") {
-			t.Errorf("expected 'Created fresh database': %s", out)
+		if !strings.Contains(stdout.String(), "Created fresh database") {
+			t.Errorf("expected 'Created fresh database': %s", stdout.String())
 		}
 	})
 
@@ -193,12 +204,14 @@ func TestEmbeddedBootstrap(t *testing.T) {
 		bcmd.Dir = dir
 		bcmd.Env = bdEnv(dir)
 		bcmd.Stdin = strings.NewReader("y\n")
-		out, err := bcmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bootstrap jsonl-import failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		bcmd.Stdout = &stdout
+		bcmd.Stderr = &stderr
+		if err := bcmd.Run(); err != nil {
+			t.Fatalf("bootstrap jsonl-import failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), "Imported") {
-			t.Errorf("expected 'Imported' in output: %s", out)
+		if !strings.Contains(stdout.String(), "Imported") {
+			t.Errorf("expected 'Imported' in output: %s", stdout.String())
 		}
 	})
 

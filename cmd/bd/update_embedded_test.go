@@ -52,11 +52,13 @@ func bdShowJSON(t *testing.T, bd, dir, id string) string {
 	cmd := exec.Command(bd, "show", id, "--json")
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd show %s --json failed: %v\n%s", id, err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd show %s --json failed: %v\nstdout:\n%s\nstderr:\n%s", id, err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // hasLabel checks if a label is present in the issue's labels.
@@ -746,8 +748,7 @@ func TestEmbeddedUpdate(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		err := cmd.Run()
-		if err != nil {
+		if err := cmd.Run(); err != nil {
 			t.Fatalf("bd update --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := stdout.String()

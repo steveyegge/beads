@@ -144,11 +144,13 @@ func runBDInit(t *testing.T, bd, dir string, extraArgs ...string) string {
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd init %s failed: %v\n%s", strings.Join(extraArgs, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd init %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(extraArgs, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdInitFail runs bd init --quiet expecting failure. Returns combined output.
@@ -325,12 +327,14 @@ func TestEmbeddedInit(t *testing.T) {
 		cmd := exec.Command(bd, "init", "--prefix", "nq")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd init failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), "bd initialized successfully") {
-			t.Errorf("expected success message, got: %s", out)
+		if !strings.Contains(stdout.String(), "bd initialized successfully") {
+			t.Errorf("expected success message, got: %s", stdout.String())
 		}
 	})
 
@@ -472,12 +476,14 @@ func TestEmbeddedInit(t *testing.T) {
 		cmd = exec.Command(bd, "list")
 		cmd.Dir = cloneDir
 		cmd.Env = bdEnv(cloneDir)
-		listOut, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd list failed: %v\n%s", err, listOut)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd list failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(listOut), "Remote issue") {
-			t.Fatalf("cloned database missing remote issue:\n%s", listOut)
+		if !strings.Contains(stdout.String(), "Remote issue") {
+			t.Fatalf("cloned database missing remote issue:\n%s", stdout.String())
 		}
 
 		cloneBeadsDir := filepath.Join(cloneDir, ".beads")
@@ -708,12 +714,14 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 		logCmd := exec.Command("git", "log", "--oneline", "-n", "1")
 		logCmd.Dir = dir
-		logOut, err := logCmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git log failed: %v\n%s", err, logOut)
+		var stdout, stderr bytes.Buffer
+		logCmd.Stdout = &stdout
+		logCmd.Stderr = &stderr
+		if err := logCmd.Run(); err != nil {
+			t.Fatalf("git log failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(logOut), "bd init: initialize beads issue tracking") {
-			t.Fatalf("expected init commit to succeed, got log: %s", logOut)
+		if !strings.Contains(stdout.String(), "bd init: initialize beads issue tracking") {
+			t.Fatalf("expected init commit to succeed, got log: %s", stdout.String())
 		}
 	})
 
@@ -750,21 +758,26 @@ func TestEmbeddedInit(t *testing.T) {
 		cmd := exec.Command(bd, "init", "--prefix", "jl", "--from-jsonl", "--quiet")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("--from-jsonl should succeed now that CreateIssuesWithFullOptions is implemented: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("--from-jsonl should succeed now that CreateIssuesWithFullOptions is implemented: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".hook-ran")); err == nil {
 			t.Fatal("expected --from-jsonl auto-commit to bypass git hooks")
 		}
 		logCmd := exec.Command("git", "log", "--oneline", "-n", "1")
 		logCmd.Dir = dir
-		logOut, err := logCmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git log failed: %v\n%s", err, logOut)
+		stdout.Reset()
+		stderr.Reset()
+		logCmd.Stdout = &stdout
+		logCmd.Stderr = &stderr
+		if err := logCmd.Run(); err != nil {
+			t.Fatalf("git log failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(logOut), "bd init: initialize beads issue tracking") {
-			t.Fatalf("expected init commit to succeed, got log: %s", logOut)
+		if !strings.Contains(stdout.String(), "bd init: initialize beads issue tracking") {
+			t.Fatalf("expected init commit to succeed, got log: %s", stdout.String())
 		}
 	})
 

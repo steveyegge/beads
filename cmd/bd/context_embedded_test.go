@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,12 +25,14 @@ func TestEmbeddedContext(t *testing.T) {
 		cmd := exec.Command(bd, "context")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd context failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd context failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), "embedded") && !strings.Contains(string(out), ".beads") {
-			t.Errorf("expected embedded mode or .beads in context output: %s", out)
+		if !strings.Contains(stdout.String(), "embedded") && !strings.Contains(stdout.String(), ".beads") {
+			t.Errorf("expected embedded mode or .beads in context output: %s", stdout.String())
 		}
 	})
 
@@ -37,11 +40,13 @@ func TestEmbeddedContext(t *testing.T) {
 		cmd := exec.Command(bd, "context", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd context --json failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd context --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if len(strings.TrimSpace(string(out))) == 0 {
+		if len(strings.TrimSpace(stdout.String())) == 0 {
 			t.Error("expected non-empty context --json output")
 		}
 	})

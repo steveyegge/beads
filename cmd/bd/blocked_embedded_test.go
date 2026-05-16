@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,12 +28,14 @@ func TestEmbeddedBlocked(t *testing.T) {
 		cmd := exec.Command(bd, "blocked")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd blocked failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd blocked failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		// No blocked issues on fresh db
-		_ = out
+		_ = stdout.String()
 	})
 
 	// ===== With Blocked Issue =====
@@ -52,12 +55,14 @@ func TestEmbeddedBlocked(t *testing.T) {
 		cmd = exec.Command(bd, "blocked")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd blocked failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd blocked failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), blocked.ID) {
-			t.Errorf("expected %s in blocked output: %s", blocked.ID, out)
+		if !strings.Contains(stdout.String(), blocked.ID) {
+			t.Errorf("expected %s in blocked output: %s", blocked.ID, stdout.String())
 		}
 	})
 
@@ -67,11 +72,13 @@ func TestEmbeddedBlocked(t *testing.T) {
 		cmd := exec.Command(bd, "blocked", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd blocked --json failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd blocked --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		s := strings.TrimSpace(string(out))
+		s := strings.TrimSpace(stdout.String())
 		start := strings.IndexAny(s, "[{")
 		if start < 0 {
 			t.Fatalf("no JSON in blocked --json output: %s", s)

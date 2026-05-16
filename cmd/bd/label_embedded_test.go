@@ -20,11 +20,13 @@ func bdLabel(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd label %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd label %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 func bdLabelJSONOutput(t *testing.T, bd, dir string, args ...string) string {
@@ -67,7 +69,7 @@ func bdLabelListJSON(t *testing.T, bd, dir, issueID string) []string {
 	}
 	var labels []string
 	if err := json.Unmarshal([]byte(s[start:]), &labels); err != nil {
-		t.Fatalf("parse label list JSON: %v\n%s", err, s)
+		t.Fatalf("parse label list JSON: %v\nstdout: %s", err, s)
 	}
 	return labels
 }
@@ -82,7 +84,7 @@ func bdLabelListAllJSON(t *testing.T, bd, dir string) []map[string]interface{} {
 	}
 	var results []map[string]interface{}
 	if err := json.Unmarshal([]byte(s[start:]), &results); err != nil {
-		t.Fatalf("parse label list-all JSON: %v\n%s", err, s)
+		t.Fatalf("parse label list-all JSON: %v\nstdout: %s", err, s)
 	}
 	return results
 }
@@ -192,10 +194,19 @@ func TestEmbeddedLabel(t *testing.T) {
 
 	t.Run("label_remove_json", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "JSON rm label", "--type", "task", "--label", "jsonrm")
-		s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "remove", issue.ID, "jsonrm", "--json"))
+		cmd := exec.Command(bd, "label", "remove", issue.ID, "jsonrm", "--json")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd label remove --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		s := strings.TrimSpace(stdout.String())
 		start := strings.Index(s, "[")
 		if start < 0 {
-			t.Fatalf("no JSON array in output: %s", s)
+			t.Fatalf("no JSON array in output:\nstdout: %s\nstderr: %s", s, stderr.String())
 		}
 		if !json.Valid([]byte(s[start:])) {
 			t.Errorf("expected valid JSON: %s", s)

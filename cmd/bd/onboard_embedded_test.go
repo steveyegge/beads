@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,15 +25,17 @@ func TestEmbeddedOnboard(t *testing.T) {
 		cmd := exec.Command(bd, "onboard")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd onboard failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd onboard failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if len(strings.TrimSpace(string(out))) == 0 {
+		if len(strings.TrimSpace(stdout.String())) == 0 {
 			t.Error("expected non-empty onboard output")
 		}
-		if !strings.Contains(string(out), "prime") && !strings.Contains(string(out), "bd") {
-			t.Errorf("expected 'prime' or 'bd' in onboard output: %s", out)
+		if !strings.Contains(stdout.String(), "prime") && !strings.Contains(stdout.String(), "bd") {
+			t.Errorf("expected 'prime' or 'bd' in onboard output: %s", stdout.String())
 		}
 	})
 }

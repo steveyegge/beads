@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,11 +22,13 @@ func TestEmbeddedVersion(t *testing.T) {
 
 	t.Run("version_output", func(t *testing.T) {
 		cmd := exec.Command(bd, "version")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd version failed: %v\n%s", err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd version failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		s := string(out)
+		s := stdout.String()
 		if len(strings.TrimSpace(s)) == 0 {
 			t.Error("expected non-empty version output")
 		}
