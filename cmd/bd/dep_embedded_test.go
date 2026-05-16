@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -49,11 +50,13 @@ func bdDepJSON(t *testing.T, bd, dir string, args ...string) map[string]interfac
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd dep --json %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd dep --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	s := strings.TrimSpace(string(out))
+	s := strings.TrimSpace(stdout.String())
 	start := strings.IndexAny(s, "{[")
 	if start < 0 {
 		t.Fatalf("no JSON in dep output: %s", s)
