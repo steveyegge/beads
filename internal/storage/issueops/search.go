@@ -80,11 +80,11 @@ func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
-	//nolint:gosec // G201: whereSQL contains column comparisons with ?, limitSQL is a safe integer
 	selectSQL := "SELECT "
 	if labelDriven {
 		selectSQL = "SELECT DISTINCT "
 	}
+	//nolint:gosec // G201: SQL fragments are built from fixed table/column names and parameterized filters.
 	querySQL := fmt.Sprintf(`%s%s FROM %s %s ORDER BY priority ASC, created_at DESC, id ASC %s`,
 		selectSQL, IssueSelectColumns, fromSQL, whereSQL, limitSQL)
 

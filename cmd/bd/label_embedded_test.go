@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,6 +27,22 @@ func bdLabel(t *testing.T, bd, dir string, args ...string) string {
 	return string(out)
 }
 
+func bdLabelJSONOutput(t *testing.T, bd, dir string, args ...string) string {
+	t.Helper()
+	fullArgs := append([]string{"label"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("bd label %s failed: %v\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	return stdout.String()
+}
+
 // bdLabelFail runs "bd label" expecting failure.
 func bdLabelFail(t *testing.T, bd, dir string, args ...string) string {
 	t.Helper()
@@ -43,14 +60,7 @@ func bdLabelFail(t *testing.T, bd, dir string, args ...string) string {
 // bdLabelListJSON runs "bd label list --json" and returns parsed labels.
 func bdLabelListJSON(t *testing.T, bd, dir, issueID string) []string {
 	t.Helper()
-	cmd := exec.Command(bd, "label", "list", issueID, "--json")
-	cmd.Dir = dir
-	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd label list %s --json failed: %v\n%s", issueID, err, out)
-	}
-	s := strings.TrimSpace(string(out))
+	s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "list", issueID, "--json"))
 	start := strings.Index(s, "[")
 	if start < 0 {
 		return nil
@@ -65,14 +75,7 @@ func bdLabelListJSON(t *testing.T, bd, dir, issueID string) []string {
 // bdLabelListAllJSON runs "bd label list-all --json" and returns parsed results.
 func bdLabelListAllJSON(t *testing.T, bd, dir string) []map[string]interface{} {
 	t.Helper()
-	cmd := exec.Command(bd, "label", "list-all", "--json")
-	cmd.Dir = dir
-	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bd label list-all --json failed: %v\n%s", err, out)
-	}
-	s := strings.TrimSpace(string(out))
+	s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "list-all", "--json"))
 	start := strings.Index(s, "[")
 	if start < 0 {
 		return nil
@@ -134,15 +137,13 @@ func TestEmbeddedLabel(t *testing.T) {
 
 	t.Run("label_add_json", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "Label JSON add", "--type", "task")
-		cmd := exec.Command(bd, "label", "add", issue.ID, "json-label", "--json")
-		cmd.Dir = dir
-		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd label add --json failed: %v\n%s", err, out)
+		s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "add", issue.ID, "json-label", "--json"))
+		start := strings.Index(s, "[")
+		if start < 0 {
+			t.Fatalf("no JSON array in output: %s", s)
 		}
-		if !json.Valid([]byte(strings.TrimSpace(string(out))[strings.Index(strings.TrimSpace(string(out)), "["):])) {
-			t.Errorf("expected valid JSON: %s", out)
+		if !json.Valid([]byte(s[start:])) {
+			t.Errorf("expected valid JSON: %s", s)
 		}
 	})
 
@@ -191,14 +192,7 @@ func TestEmbeddedLabel(t *testing.T) {
 
 	t.Run("label_remove_json", func(t *testing.T) {
 		issue := bdCreate(t, bd, dir, "JSON rm label", "--type", "task", "--label", "jsonrm")
-		cmd := exec.Command(bd, "label", "remove", issue.ID, "jsonrm", "--json")
-		cmd.Dir = dir
-		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd label remove --json failed: %v\n%s", err, out)
-		}
-		s := strings.TrimSpace(string(out))
+		s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "remove", issue.ID, "jsonrm", "--json"))
 		start := strings.Index(s, "[")
 		if start < 0 {
 			t.Fatalf("no JSON array in output: %s", s)
@@ -298,14 +292,7 @@ func TestEmbeddedLabel(t *testing.T) {
 		child := bdCreate(t, bd, dir, "JSON prop child", "--type", "task")
 		bdDepAdd(t, bd, dir, child.ID, parent.ID, "--type", "parent-child")
 
-		cmd := exec.Command(bd, "label", "propagate", parent.ID, "prop-json", "--json")
-		cmd.Dir = dir
-		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("bd label propagate --json failed: %v\n%s", err, out)
-		}
-		s := strings.TrimSpace(string(out))
+		s := strings.TrimSpace(bdLabelJSONOutput(t, bd, dir, "propagate", parent.ID, "prop-json", "--json"))
 		start := strings.Index(s, "[")
 		if start >= 0 && !json.Valid([]byte(s[start:])) {
 			t.Errorf("expected valid JSON: %s", s)
