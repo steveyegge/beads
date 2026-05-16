@@ -164,9 +164,13 @@ func searchSummaryTableInTx(ctx context.Context, tx *sql.Tx, query string, filte
 		for i, s := range summaries {
 			ids[i] = s.ID
 		}
-		wispSet, wispErr := WispIDSetInTx(ctx, tx, ids)
-		if wispErr != nil {
-			return nil, fmt.Errorf("build wisp set: %w", wispErr)
+		// Since we queried a single table, all results share the same wisp
+		// status — construct the set directly without an extra DB round-trip.
+		wispSet := make(map[string]struct{})
+		if tables.Main == "wisps" {
+			for _, id := range ids {
+				wispSet[id] = struct{}{}
+			}
 		}
 		labelMap, labelErr := GetLabelsForIssuesInTx(ctx, tx, ids, wispSet)
 		if labelErr != nil {
