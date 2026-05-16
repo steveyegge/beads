@@ -1077,6 +1077,21 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				}
 			}
 
+			// Write archive.* config keys so the format is explicit at init time.
+			if err := config.SetYamlConfigInDir(beadsDir, "archive.format", "jsonl"); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write archive.format: %v\n", err)
+			} else {
+				if err := config.SetYamlConfigInDir(beadsDir, "archive.path", ".beads/issues.jsonl"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to write archive.path: %v\n", err)
+				}
+				if err := config.SetYamlConfigInDir(beadsDir, "archive.throttle_seconds", "60"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to write archive.throttle_seconds: %v\n", err)
+				}
+				if !quiet {
+					fmt.Printf("  %s Archive enabled (.beads/issues.jsonl — git-tracked, 60s throttle)\n", ui.RenderPass("✓"))
+				}
+			}
+
 			// In stealth mode, persist no-git-ops: true so bd prime
 			// automatically uses stealth session-close protocol (GH#2159)
 			if stealth {

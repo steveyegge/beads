@@ -245,6 +245,13 @@ func Initialize() error {
 	v.SetDefault("export.path", "issues.jsonl") // relative to .beads/; canonical name
 	v.SetDefault("export.git-add", true)
 
+	// Archive: periodic JSONL snapshot written after mutations for viewers and
+	// backup. Format and path are set at bd init time based on the backend.
+	// Default is "none" until explicitly configured.
+	v.SetDefault("archive.format", "none")
+	v.SetDefault("archive.path", "")
+	v.SetDefault("archive.throttle_seconds", 60)
+
 	// Auto-import: legacy compatibility fallback for projects that have not
 	// configured a Dolt remote yet. Hook code skips this path when sync.remote
 	// is configured because JSONL import is upsert-only, not reconciliation.
@@ -980,6 +987,29 @@ func ValidateAgentsFile(filename string) error {
 		return fmt.Errorf("agents file must have .md extension, got %q", ext)
 	}
 	return nil
+}
+
+// ArchiveFormat returns the configured archive format ("jsonl" or "none").
+func ArchiveFormat() string { return GetString("archive.format") }
+
+// ArchivePath returns the configured archive file path (relative to .beads/).
+func ArchivePath() string { return GetString("archive.path") }
+
+// ArchiveThrottleSeconds returns the archive write throttle in seconds.
+func ArchiveThrottleSeconds() int {
+	if v == nil {
+		return 60
+	}
+	return v.GetInt("archive.throttle_seconds")
+}
+
+// archiveDefaultForBackend returns the default archive format for the given
+// driver name: "jsonl" for dolt (git-tracked JSONL export), "none" for all others.
+func ArchiveDefaultForBackend(driverName string) string {
+	if driverName == "dolt" {
+		return "jsonl"
+	}
+	return "none"
 }
 
 // getConfigList is a helper that retrieves a comma-separated list from config.yaml.

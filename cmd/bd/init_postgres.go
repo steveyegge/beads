@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	pgstore "github.com/steveyegge/beads/internal/storage/postgres"
 	pgdsn "github.com/steveyegge/beads/internal/storage/postgres/dsn"
@@ -83,8 +84,21 @@ func runPostgresInit(ctx context.Context, beadsDir, prefix string, p pgInitParam
 	pgWriteDiscoveryLog(beadsDir, decision, strippedDSN)
 	pgEnsureGitignored(beadsDir, ".discovery_log")
 
+	// Create config.yaml (idempotent) then write archive.* defaults for PG.
+	if err := createConfigYaml(beadsDir, false, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
+	} else {
+		if err := config.SetYamlConfigInDir(beadsDir, "archive.format", "none"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write archive.format: %v\n", err)
+		}
+		if err := config.SetYamlConfigInDir(beadsDir, "archive.throttle_seconds", "60"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write archive.throttle_seconds: %v\n", err)
+		}
+	}
+
 	target := pgdsn.RenderRedacted(strippedDSN)
 	fmt.Printf("  %s bd initialized; backend: postgres; target: %s\n", ui.RenderPass("✓"), target)
+	fmt.Printf("  %s Archive disabled — enable: bd config set archive.format jsonl\n", ui.RenderPass("✓"))
 }
 
 // resolvePostgresDSN implements the priority chain: --dsn → --pg-* flags → discovery.
