@@ -89,6 +89,21 @@ type Storage interface {
 	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
 	GetAllEventsSince(ctx context.Context, since time.Time) ([]*types.Event, error)
 
+	// Aggregate counts — cheaper than materializing rows when only cardinality is needed.
+	// Filter.Limit and Filter.Offset are ignored by CountIssues; all others apply.
+
+	// CountIssues returns the number of issues matching query and filter.
+	CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error)
+	// CountDependents returns the number of issues that depend on issueID.
+	CountDependents(ctx context.Context, issueID string) (int64, error)
+	// CountDependencies returns the number of issues that issueID depends on.
+	CountDependencies(ctx context.Context, issueID string) (int64, error)
+	// CountIssueComments returns the number of comments on an issue.
+	CountIssueComments(ctx context.Context, issueID string) (int64, error)
+	// CountEvents returns the number of audit events for an issue, capped at limit
+	// (or unbounded if limit == 0).
+	CountEvents(ctx context.Context, issueID string, limit int) (int64, error)
+
 	// Streaming iterators (be-jaavsb / be-yinl4d).
 	//
 	// IterIssues streams issues matching the filter. Use this in place of

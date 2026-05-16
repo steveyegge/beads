@@ -225,6 +225,22 @@ func (s *Store) SlotGet(_ context.Context, _, _ string) (string, error) {
 }
 func (s *Store) SlotClear(_ context.Context, _, _, _ string) error { return errNotImplemented }
 
+func (s *Store) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
+	return 0, errNotImplemented
+}
+func (s *Store) CountDependents(_ context.Context, _ string) (int64, error) {
+	return 0, errNotImplemented
+}
+func (s *Store) CountDependencies(_ context.Context, _ string) (int64, error) {
+	return 0, errNotImplemented
+}
+func (s *Store) CountIssueComments(_ context.Context, _ string) (int64, error) {
+	return 0, errNotImplemented
+}
+func (s *Store) CountEvents(_ context.Context, _ string, _ int) (int64, error) {
+	return 0, errNotImplemented
+}
+
 func (s *Store) Close() error { return nil }
 
 // compile-time check that Store implements storage.Storage

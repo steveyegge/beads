@@ -24,4 +24,9 @@ type DependencyQueryStore interface {
 	// GetAllDependencyRecords (which returns map[string][]*types.Dependency)
 	// can rebuild that map by streaming and grouping on Dependency.IssueID.
 	IterAllDependencyRecords(ctx context.Context) (Iter[types.Dependency], error)
+
+	// CountDependentsByStatus returns the number of issues that depend on issueID
+	// and are in the given status. Preferred over CountDependents + per-row filtering
+	// for the bd close epic-closure check.
+	CountDependentsByStatus(ctx context.Context, issueID string, status types.Status) (int64, error)
 }

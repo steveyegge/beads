@@ -574,6 +574,47 @@ func (s *InstrumentedStorage) SlotClear(ctx context.Context, issueID, key, actor
 	return err
 }
 
+// ── Aggregate counts ─────────────────────────────────────────────────────────
+
+func (s *InstrumentedStorage) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
+	ctx, span, t := s.op(ctx, "CountIssues")
+	v, err := s.inner.CountIssues(ctx, query, filter)
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountDependents(ctx context.Context, issueID string) (int64, error) {
+	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
+	ctx, span, t := s.op(ctx, "CountDependents", attrs...)
+	v, err := s.inner.CountDependents(ctx, issueID)
+	s.done(ctx, span, t, err, attrs...)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountDependencies(ctx context.Context, issueID string) (int64, error) {
+	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
+	ctx, span, t := s.op(ctx, "CountDependencies", attrs...)
+	v, err := s.inner.CountDependencies(ctx, issueID)
+	s.done(ctx, span, t, err, attrs...)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountIssueComments(ctx context.Context, issueID string) (int64, error) {
+	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
+	ctx, span, t := s.op(ctx, "CountIssueComments", attrs...)
+	v, err := s.inner.CountIssueComments(ctx, issueID)
+	s.done(ctx, span, t, err, attrs...)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountEvents(ctx context.Context, issueID string, limit int) (int64, error) {
+	attrs := []attribute.KeyValue{attribute.String("bd.issue.id", issueID)}
+	ctx, span, t := s.op(ctx, "CountEvents", attrs...)
+	v, err := s.inner.CountEvents(ctx, issueID, limit)
+	s.done(ctx, span, t, err, attrs...)
+	return v, err
+}
+
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 func (s *InstrumentedStorage) Close() error {

@@ -438,4 +438,20 @@ func (c *daemonClient) SlotClear(ctx context.Context, issueID string, key string
 	return decodeRPCError(reply.RPCError)
 }
 
+func (c *daemonClient) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
+	return 0, errors.New("daemon: CountIssues not yet implemented")
+}
+func (c *daemonClient) CountDependents(_ context.Context, _ string) (int64, error) {
+	return 0, errors.New("daemon: CountDependents not yet implemented")
+}
+func (c *daemonClient) CountDependencies(_ context.Context, _ string) (int64, error) {
+	return 0, errors.New("daemon: CountDependencies not yet implemented")
+}
+func (c *daemonClient) CountIssueComments(_ context.Context, _ string) (int64, error) {
+	return 0, errors.New("daemon: CountIssueComments not yet implemented")
+}
+func (c *daemonClient) CountEvents(_ context.Context, _ string, _ int) (int64, error) {
+	return 0, errors.New("daemon: CountEvents not yet implemented")
+}
+
 var _ storage.Storage = (*daemonClient)(nil)
