@@ -341,34 +341,52 @@ func queryReadyIssueIDPage(ctx context.Context, tx *sql.Tx, query string, args [
 
 // getChildrenOfDeferredParentsInTx returns IDs of issues whose parent has a
 // future defer_until. Works within an existing transaction.
+//
+//nolint:gosec // G201: depTable is selected from a hardcoded list below.
 func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	// Step 1: Get IDs of issues with future defer_until.
-	deferredRows, err := tx.QueryContext(ctx, `
-		SELECT id FROM issues
-		WHERE defer_until IS NOT NULL AND defer_until > UTC_TIMESTAMP()
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("deferred parents: get deferred issues: %w", err)
-	}
-	var deferredIDs []string
-	for deferredRows.Next() {
-		var id string
-		if err := deferredRows.Scan(&id); err != nil {
-			_ = deferredRows.Close()
-			return nil, fmt.Errorf("deferred parents: scan deferred issue: %w", err)
+	var hasDeferredParent int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM issues
+		WHERE defer_until IS NOT NULL
+		  AND defer_until > UTC_TIMESTAMP()
+		LIMIT 1
+	`).Scan(&hasDeferredParent); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
 		}
-		deferredIDs = append(deferredIDs, id)
-	}
-	_ = deferredRows.Close()
-	if err := deferredRows.Err(); err != nil {
-		return nil, fmt.Errorf("deferred parents: deferred rows: %w", err)
-	}
-	if len(deferredIDs) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("deferred parents: check future-deferred parents: %w", err)
 	}
 
-	// Step 2: Get children of those deferred parents.
-	return getChildrenOfIssuesInTx(ctx, tx, deferredIDs)
+	var childIDs []string
+	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+			SELECT dep.issue_id
+			FROM %s dep
+			JOIN issues parent ON parent.id = dep.depends_on_id
+			WHERE dep.type = 'parent-child'
+			  AND parent.defer_until IS NOT NULL
+			  AND parent.defer_until > UTC_TIMESTAMP()
+		`, depTable))
+		if err != nil {
+			if depTable == "wisp_dependencies" && isTableNotExistError(err) {
+				continue
+			}
+			return nil, fmt.Errorf("deferred parents: get deferred children from %s: %w", depTable, err)
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("deferred parents: scan deferred child from %s: %w", depTable, err)
+			}
+			childIDs = append(childIDs, id)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("deferred parents: child rows from %s: %w", depTable, err)
+		}
+	}
+	return childIDs, nil
 }
 
 // getChildrenOfIssuesInTx returns IDs of direct children (parent-child deps)
