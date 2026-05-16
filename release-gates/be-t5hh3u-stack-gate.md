@@ -1,9 +1,9 @@
 # Release Gate: be-t5hh3u daemon+postgres stack
 
 **Branch:** `feat/be-t5hh3u-daemon-child-endpoint`  
-**Branch tip:** `7cd0d45ed`  
+**Branch tip:** `3a59ad0f4`  
 **Gate date:** 2026-05-16  
-**Verdict: FAIL (criterion 3)**
+**Verdict: FAIL (criterion 3) → FIXED by be-vk7ovi (3a59ad0f4) — re-gate pending**
 
 ## Build beads (reviewed)
 
