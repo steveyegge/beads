@@ -64,6 +64,10 @@ func (s *daemonServer) IterIssuesNext(args *IterNextArgs, reply *IterIssuesNextR
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
 	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
+	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
 		if !sess.iter.Next(ctx) {
@@ -132,6 +136,10 @@ func (s *daemonServer) IterDependentsWithMetadataNext(args *IterNextArgs, reply 
 	batchSize := args.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
+	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
 	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
@@ -206,6 +214,10 @@ func (s *daemonServer) IterDependenciesWithMetadataNext(args *IterNextArgs, repl
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
 	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
+	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
 		if !sess.iter.Next(ctx) {
@@ -279,6 +291,10 @@ func (s *daemonServer) IterIssueCommentsNext(args *IterNextArgs, reply *IterIssu
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
 	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
+	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
 		if !sess.iter.Next(ctx) {
@@ -347,6 +363,10 @@ func (s *daemonServer) IterEventsNext(args *IterNextArgs, reply *IterEventsNextR
 	batchSize := args.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
+	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
 	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
@@ -417,6 +437,10 @@ func (s *daemonServer) IterAllEventsSinceNext(args *IterNextArgs, reply *IterAll
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
 	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
+	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
 		if !sess.iter.Next(ctx) {
@@ -485,6 +509,10 @@ func (s *daemonServer) IterReadyWorkNext(args *IterNextArgs, reply *IterReadyWor
 	batchSize := args.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
+	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
 	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
@@ -555,6 +583,10 @@ func (s *daemonServer) IterBlockedIssuesNext(args *IterNextArgs, reply *IterBloc
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
 	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
+	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
 		if !sess.iter.Next(ctx) {
@@ -623,6 +655,10 @@ func (s *daemonServer) IterWispsNext(args *IterNextArgs, reply *IterWispsNextRep
 	batchSize := args.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
+	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
 	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
@@ -697,6 +733,10 @@ func (s *daemonServer) IterAllDependencyRecordsNext(args *IterNextArgs, reply *I
 	batchSize := args.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultIterBatchSize
+	}
+	const maxIterBatchSize = 10000
+	if batchSize > maxIterBatchSize {
+		batchSize = maxIterBatchSize
 	}
 	ctx := context.Background()
 	for len(reply.Items) < batchSize {
