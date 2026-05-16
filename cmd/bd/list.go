@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -888,6 +889,13 @@ var listCmd = &cobra.Command{
 			activeStore = routedStore
 		}
 
+		// Streaming path: --json --limit 0 uses IterIssues to avoid materializing the full
+		// issue slice in memory (be-303d0l). Limit > 0 keeps the slice path below.
+		if jsonOutput && effectiveLimit == 0 && !readyFlag && !watchMode {
+			streamListJSON(ctx, activeStore, filter)
+			return
+		}
+
 		// Direct mode
 		var issues []*types.Issue
 		if readyFlag {
@@ -1164,4 +1172,71 @@ func init() {
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
+}
+
+// streamListJSON streams bd list --json output using IterIssues when effectiveLimit == 0.
+// This avoids materializing the full issue slice, bounding RSS to O(1) per issue.
+// Per-issue enrichment uses N+1 queries (acceptable for the unlimited-scan path).
+func streamListJSON(ctx context.Context, store storage.DoltStorage, filter types.IssueFilter) {
+	it, err := store.IterIssues(ctx, "", filter)
+	if err != nil {
+		FatalError("%v", err)
+	}
+
+	w := os.Stdout
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+
+	if jsonEnvelopeEnabled() {
+		fmt.Fprintf(w, `{"schema_version":%d,"data":[`, JSONSchemaVersion)
+	} else {
+		_, _ = fmt.Fprint(w, "[")
+	}
+
+	first := true
+	for it.Next(ctx) {
+		issue := it.Value()
+
+		labels, _ := store.GetLabels(ctx, issue.ID)
+		issue.Labels = labels
+		depCount, _ := store.CountDependencies(ctx, issue.ID)
+		dependentCount, _ := store.CountDependents(ctx, issue.ID)
+		commentCount, _ := store.CountIssueComments(ctx, issue.ID)
+
+		var parent *string
+		if deps, depErr := store.GetDependencyRecords(ctx, issue.ID); depErr == nil {
+			for _, dep := range deps {
+				if dep.Type == types.DepParentChild {
+					id := dep.DependsOnID
+					parent = &id
+					break
+				}
+			}
+		}
+
+		iwc := &types.IssueWithCounts{
+			Issue:           issue,
+			DependencyCount: int(depCount),
+			DependentCount:  int(dependentCount),
+			CommentCount:    int(commentCount),
+			Parent:          parent,
+		}
+
+		if !first {
+			_, _ = fmt.Fprint(w, ",")
+		}
+		first = false
+		_ = enc.Encode(iwc)
+	}
+
+	if err := it.Err(); err != nil {
+		FatalError("%v", err)
+	}
+
+	if jsonEnvelopeEnabled() {
+		fmt.Fprintln(w, "]}")
+	} else {
+		fmt.Fprintln(w, "]")
+		emitEnvelopeDeprecation()
+	}
 }
