@@ -86,6 +86,18 @@ var configSetCmd = &cobra.Command{
 		key := args[0]
 		value := args[1]
 
+		// export.auto is a deprecated alias for archive.format: translate and warn.
+		if key == "export.auto" {
+			if err := config.SetArchiveFormat(key, value); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			if !jsonOutput {
+				fmt.Printf("Set archive.format = %s (in config.yaml) — export.auto is deprecated\n", map[string]string{"true": "jsonl", "1": "jsonl", "yes": "jsonl"}[strings.ToLower(value)])
+			}
+			return
+		}
+
 		// Reject keys that look like init-only state so the user does not
 		// silently land a write in a store that 'bd create' never reads.
 		// 'bd config set issue-prefix' used to write DB key "issue-prefix"
@@ -206,6 +218,26 @@ var configGetCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
+
+		// export.auto is a deprecated alias for archive.format.
+		if key == "export.auto" {
+			value := config.ResolveArchiveFormat()
+			translated := map[string]string{"jsonl": "true", "none": "false"}[value]
+			if translated == "" {
+				translated = value
+			}
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"key":        "archive.format",
+					"value":      value,
+					"deprecated": "export.auto is deprecated; use archive.format",
+					"location":   "config.yaml",
+				})
+			} else {
+				fmt.Printf("%s\n", translated)
+			}
+			return
+		}
 
 		// Check if this is a yaml-only key (startup settings)
 		// These are read from config.yaml via viper, not SQLite. (GH#536)

@@ -39,7 +39,7 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	if !config.GetBool("export.auto") {
+	if config.ResolveArchiveFormat() != "jsonl" {
 		return
 	}
 	if store == nil {
