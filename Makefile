@@ -9,7 +9,7 @@ SHELL := $(subst cmd,bin,$(subst git.exe,bash.exe,$(GIT_BASH)))
 endif
 endif
 
-.PHONY: all build test test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick bench-postgres clean install install-force help check-up-to-date fmt fmt-check
+.PHONY: all build test test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean install install-force help check-up-to-date fmt fmt-check
 
 # Default target
 all: build
@@ -126,27 +126,6 @@ bench-quick:
 	@echo "Running quick performance benchmarks..."
 	go test -tags "$(BUILD_TAGS)" -bench=. -benchtime=100ms -benchmem -run=^$$ ./internal/storage/dolt/ -timeout=15m
 
-# Run performance benchmarks against the PostgreSQL storage backend.
-# Requires either:
-#   - DOCKER_HOST + a running podman/docker socket (testcontainers spins
-#     postgres:14-alpine on demand), OR
-#   - BEADS_TEST_POSTGRES_DSN pointing at an existing PG14+ admin DSN.
-# Output: bench/postgres-<sha>.txt (benchstat-compatible).
-# benchstat is invoked on the latest two artifacts via
-# scripts/benchstat-postgres.sh (informational; never gates).
-.PHONY: bench-postgres
-bench-postgres:
-	@echo "Running PG benchmarks (Bd{Ready,List,Create})..."
-	@mkdir -p bench
-	@SHA=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
-	OUT=bench/postgres-$$SHA.txt; \
-	go test -tags "$(BUILD_TAGS) integration_pg" \
-		-bench='^BenchmarkBd(Ready|List|Create)$$' \
-		-benchmem -benchtime=1s -count=6 -run=^$$ \
-		./internal/storage/postgres/ \
-		-timeout=30m | tee $$OUT
-	@./scripts/benchstat-postgres.sh
-
 # Check that local branch is up to date with origin/main
 check-up-to-date:
 ifndef SKIP_UPDATE_CHECK
@@ -231,7 +210,6 @@ help:
 	@echo "  make test-migration - Run migration test harness (fidelity checks, recipes)"
 	@echo "  make bench        - Run performance benchmarks (generates CPU profiles)"
 	@echo "  make bench-quick  - Run quick benchmarks (shorter benchtime)"
-	@echo "  make bench-postgres - Run PG benchmarks; writes bench/postgres-<sha>.txt + benchstat delta"
 	@echo "  make install      - Install bd to ~/.local/bin (with codesign on macOS, includes 'beads' alias)"
 	@echo "  make install-force - Install bd, skipping the origin/main update check"
 	@echo "  make fmt          - Format all Go files with gofmt"
