@@ -559,19 +559,12 @@ func resolveCloseTargets(ctx context.Context, localStore storage.DoltStorage, id
 }
 
 // countEpicOpenChildren returns the number of open (non-closed) children for an epic.
-// Uses GetDependentsWithMetadata to find parent-child relationships.
 // Takes an explicit store so callers can route to the store actually holding the epic
 // (relevant for contributor auto-routing where the epic lives in the planning repo).
 func countEpicOpenChildren(ctx context.Context, s storage.DoltStorage, epicID string) int {
-	dependents, err := s.GetDependentsWithMetadata(ctx, epicID)
+	n, err := s.CountDependentsByStatus(ctx, epicID, types.StatusOpen)
 	if err != nil {
 		return 0
 	}
-	count := 0
-	for _, dep := range dependents {
-		if dep.DependencyType == types.DepParentChild && dep.Issue.Status != types.StatusClosed {
-			count++
-		}
-	}
-	return count
+	return int(n)
 }

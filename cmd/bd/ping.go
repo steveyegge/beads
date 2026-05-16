@@ -50,8 +50,7 @@ Examples:
 		}
 		storeMs := time.Since(start).Milliseconds()
 
-		filter := types.IssueFilter{Limit: 1}
-		_, err := st.SearchIssues(rootCtx, "", filter)
+		_, err := st.CountIssues(rootCtx, "", types.IssueFilter{})
 		if err != nil {
 			pingFail(start, fmt.Sprintf("query failed: %v", err))
 			return

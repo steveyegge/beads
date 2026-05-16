@@ -78,10 +78,9 @@ Examples:
 		if store != nil {
 			ctx := rootCtx
 
-			filter := types.IssueFilter{}
-			issues, err := store.SearchIssues(ctx, "", filter)
+			n, err := store.CountIssues(ctx, "", types.IssueFilter{})
 			if err == nil {
-				info["issue_count"] = len(issues)
+				info["issue_count"] = n
 			}
 		}
 
