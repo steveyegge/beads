@@ -612,6 +612,11 @@ func runDiagnostics(path string) doctorResult {
 		result.Backend.Healthy = true
 	}
 
+	// Archive status (INFO — all backends, all formats).
+	archiveCheck := convertDoctorCheck(doctor.CheckArchiveStatus(path))
+	result.Checks = append(result.Checks, archiveCheck)
+	// Never fails overall check — disabled is a valid config.
+
 	// Always: legacy Dolt artifacts check (INFO severity, never affects exit code).
 	legacyDoltCheck := convertWithCategory(doctor.CheckLegacyDoltArtifacts(beadsDir), doctor.CategoryData)
 	result.Checks = append(result.Checks, legacyDoltCheck)
