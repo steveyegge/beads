@@ -405,33 +405,44 @@ func appendReadyIssueIDs(
 // getChildrenOfDeferredParentsInTx returns IDs of issues whose parent has a
 // future defer_until. Works within an existing transaction.
 func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx, issueTable string, dependencyTable string) ([]string, error) {
-	// Step 1: Get IDs of issues with future defer_until.
-	deferredRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id FROM %s
-		WHERE defer_until IS NOT NULL AND defer_until > UTC_TIMESTAMP()
-	`, issueTable))
-	if err != nil {
-		return nil, fmt.Errorf("deferred parents: get deferred issues: %w", err)
-	}
-	var deferredIDs []string
-	for deferredRows.Next() {
-		var id string
-		if err := deferredRows.Scan(&id); err != nil {
-			_ = deferredRows.Close()
-			return nil, fmt.Errorf("deferred parents: scan deferred issue: %w", err)
+	var hasDeferredParent int
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT 1 FROM %s
+		WHERE defer_until IS NOT NULL
+		  AND defer_until > UTC_TIMESTAMP()
+		LIMIT 1
+	`, issueTable)).Scan(&hasDeferredParent); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
 		}
-		deferredIDs = append(deferredIDs, id)
-	}
-	_ = deferredRows.Close()
-	if err := deferredRows.Err(); err != nil {
-		return nil, fmt.Errorf("deferred parents: deferred rows: %w", err)
-	}
-	if len(deferredIDs) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("deferred parents: check future-deferred parents: %w", err)
 	}
 
-	// Step 2: Get children of those deferred parents.
-	return getChildrenOfIssuesFromDependencyTableInTx(ctx, tx, dependencyTable, deferredIDs)
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+		SELECT dep.issue_id
+		FROM %s dep
+		JOIN %s parent ON parent.id = dep.depends_on_id
+		WHERE dep.type = 'parent-child'
+		  AND parent.defer_until IS NOT NULL
+		  AND parent.defer_until > UTC_TIMESTAMP()
+	`, dependencyTable, issueTable))
+	if err != nil {
+		return nil, fmt.Errorf("deferred parents: get deferred children: %w", err)
+	}
+	var childIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("deferred parents: scan deferred child: %w", err)
+		}
+		childIDs = append(childIDs, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("deferred parents: child rows: %w", err)
+	}
+	return childIDs, nil
 }
 
 // getChildrenOfIssuesInTx returns IDs of direct children (parent-child deps)
