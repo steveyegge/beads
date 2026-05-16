@@ -59,7 +59,15 @@ var createCmd = &cobra.Command{
 				FatalError("cannot specify both title and --graph flag")
 			}
 			graphDryRun, _ := cmd.Flags().GetBool("dry-run")
-			createIssuesFromGraph(graphFile, graphDryRun)
+			wisp, _ := cmd.Flags().GetBool("ephemeral")
+			noHistory, _ := cmd.Flags().GetBool("no-history")
+			if wisp && noHistory {
+				FatalError("--ephemeral and --no-history are mutually exclusive")
+			}
+			createIssuesFromGraph(graphFile, graphDryRun, GraphApplyOptions{
+				Ephemeral: wisp,
+				NoHistory: noHistory,
+			})
 			return
 		}
 
