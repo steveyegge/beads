@@ -64,6 +64,7 @@ bd list [flags]
       --priority-min string          Filter by minimum priority (inclusive, 0-4 or P0-P4)
       --ready                        Show only ready issues (no active blockers, same semantics as bd ready)
   -r, --reverse                      Reverse sort order
+      --skip-labels                  Skip label hydration. The labels field in output will be empty regardless of actual labels. Use only when the caller does not depend on label data. Cannot combine with --label, --label-any, --label-pattern, --label-regex, --exclude-label, or --no-labels.
       --sort string                  Sort by field: priority, created, updated, closed, status, id, title, type, assignee
       --spec string                  Filter by spec_id prefix
   -s, --status string                Filter by stored status (open, in_progress, blocked, deferred, closed). Comma-separated for multiple: --status open,in_progress
