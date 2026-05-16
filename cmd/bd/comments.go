@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/uimd"
 )
 
 var commentsCmd = &cobra.Command{
@@ -82,7 +82,7 @@ Examples:
 				ts = ts.Local()
 			}
 			fmt.Printf("[%s] at %s\n", comment.Author, ts.Format("2006-01-02 15:04"))
-			rendered := ui.RenderMarkdown(comment.Text)
+			rendered := uimd.RenderMarkdown(comment.Text)
 			// TrimRight removes trailing newlines that Glamour adds, preventing extra blank lines
 			for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
 				fmt.Printf("  %s\n", line)
