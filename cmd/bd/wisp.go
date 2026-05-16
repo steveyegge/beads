@@ -365,6 +365,7 @@ func runWispList(cmd *cobra.Command, args []string) {
 
 	showAll, _ := cmd.Flags().GetBool("all")
 	typeFilter, _ := cmd.Flags().GetString("type")
+	limit, _ := cmd.Flags().GetInt("limit")
 
 	// Check for database connection
 	if store == nil {
@@ -379,11 +380,57 @@ func runWispList(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Query wisps from main database using Ephemeral filter
+	// Streaming path for --json --limit 0 (be-ritg7o): use IterWisps.
+	// Only applies when !showAll because WispFilter.Status=nil = non-closed only.
+	if jsonOutput && limit == 0 && !showAll {
+		wf := types.WispFilter{}
+		if typeFilter != "" {
+			it := types.IssueType(typeFilter)
+			wf.Type = &it
+		}
+		it, err := store.IterWisps(ctx, wf)
+		if err != nil {
+			FatalError("listing wisps: %v", err)
+		}
+		now := time.Now()
+		var items []WispListItem
+		oldCount := 0
+		for it.Next(ctx) {
+			issue := it.Value()
+			item := WispListItem{
+				ID:        issue.ID,
+				Title:     issue.Title,
+				Status:    string(issue.Status),
+				Priority:  issue.Priority,
+				Type:      string(issue.IssueType),
+				Labels:    issue.Labels,
+				CreatedAt: issue.CreatedAt,
+				UpdatedAt: issue.UpdatedAt,
+			}
+			if now.Sub(issue.UpdatedAt) > OldThreshold {
+				item.Old = true
+				oldCount++
+			}
+			items = append(items, item)
+		}
+		if err := it.Err(); err != nil {
+			FatalError("%v", err)
+		}
+		slices.SortFunc(items, func(a, b WispListItem) int {
+			return b.UpdatedAt.Compare(a.UpdatedAt)
+		})
+		outputJSON(WispListResult{Wisps: items, Count: len(items), OldCount: oldCount})
+		return
+	}
+
+	// Slice path: bounded or --all
 	ephemeralFlag := true
 	filter := types.IssueFilter{
 		Ephemeral: &ephemeralFlag,
-		Limit:     5000,
+		Limit:     limit,
+	}
+	if limit == 0 {
+		filter.Limit = 5000 // fallback cap for non-streaming paths
 	}
 	if typeFilter != "" {
 		it := types.IssueType(typeFilter)
@@ -814,6 +861,7 @@ func init() {
 
 	wispListCmd.Flags().Bool("all", false, "Include closed wisps")
 	wispListCmd.Flags().String("type", "", "Filter by issue type (e.g., agent, task, patrol)")
+	wispListCmd.Flags().Int("limit", 5000, "Limit results (0 = unlimited)")
 
 	wispGCCmd.Flags().Bool("dry-run", false, "Preview what would be cleaned")
 	wispGCCmd.Flags().String("age", "1h", "Age threshold for abandoned wisp detection")
