@@ -18,7 +18,9 @@ type WhereResult struct {
 	Path           string `json:"path"`                      // Active .beads directory path
 	RedirectedFrom string `json:"redirected_from,omitempty"` // Original path if redirected
 	Prefix         string `json:"prefix,omitempty"`          // Issue prefix (if detectable)
-	DatabasePath   string `json:"database_path,omitempty"`   // Full path to database file
+	DatabasePath   string `json:"database_path,omitempty"`   // Full path to database file (Dolt)
+	BackendType    string `json:"backend_type,omitempty"`    // "dolt" | "postgres"
+	DataLivesIn    string `json:"data_lives_in,omitempty"`   // Human-readable data location
 }
 
 var whereCmd = &cobra.Command{
@@ -65,7 +67,27 @@ Examples:
 			result.RedirectedFrom = originalBeadsDir
 		}
 
-		// Find the database path
+		// Resolve backend identity and data location.
+		bi := configfile.ResolveBackendInfo(beadsDir)
+		result.BackendType = bi.Backend
+		switch bi.Backend {
+		case configfile.BackendPostgres:
+			if bi.Host != "" && bi.Port != 0 {
+				userPart := ""
+				if bi.User != "" {
+					userPart = bi.User + "@"
+				}
+				result.DataLivesIn = fmt.Sprintf("postgres://%s%s:%d/%s", userPart, bi.Host, bi.Port, bi.Database)
+			}
+		default:
+			if bi.Mode == "server" && bi.Host != "" {
+				result.DataLivesIn = fmt.Sprintf("dolt://%s:%d/%s", bi.Host, bi.Port, bi.Database)
+			} else if bi.DataDir != "" {
+				result.DataLivesIn = bi.DataDir
+			}
+		}
+
+		// Find the database path (Dolt only)
 		dbPath := resolveWhereDatabasePath()
 		if dbPath != "" {
 			result.DatabasePath = dbPath
@@ -99,6 +121,9 @@ Examples:
 			}
 			if result.DatabasePath != "" {
 				fmt.Printf("  database: %s\n", result.DatabasePath)
+			}
+			if result.DataLivesIn != "" {
+				fmt.Printf("  Data lives in: %s  (%s)\n", result.DataLivesIn, result.BackendType)
 			}
 		}
 	},

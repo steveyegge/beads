@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -51,10 +53,25 @@ Examples:
 			absDBPath = dbPath
 		}
 
+		// Resolve backend identity.
+		resolvedMode := "direct"
+		var connectionTarget string
+		if beadsDir := beads.FindBeadsDir(); beadsDir != "" {
+			bi := configfile.ResolveBackendInfo(beadsDir)
+			resolvedMode = bi.Mode
+			if bi.Backend == configfile.BackendPostgres && bi.Host != "" && bi.Port != 0 {
+				connectionTarget = fmt.Sprintf("%s:%d/%s", bi.Host, bi.Port, bi.Database)
+			}
+		}
+
 		// Build info structure
 		info := map[string]interface{}{
 			"database_path": absDBPath,
-			"mode":          "direct",
+			"mode":          resolvedMode,
+		}
+		if connectionTarget != "" {
+			info["connection_target"] = connectionTarget
+			delete(info, "database_path")
 		}
 
 		// Get issue count from direct store
@@ -135,8 +152,12 @@ Examples:
 		// Human-readable output
 		fmt.Println("\nBeads Database Information")
 		fmt.Println("===========================")
-		fmt.Printf("Database: %s\n", absDBPath)
-		fmt.Printf("Mode: direct\n")
+		if connectionTarget != "" {
+			fmt.Printf("Connection: %s\n", connectionTarget)
+		} else {
+			fmt.Printf("Database: %s\n", absDBPath)
+		}
+		fmt.Printf("Mode: %s\n", resolvedMode)
 
 		// Show issue count
 		if count, ok := info["issue_count"].(int); ok {

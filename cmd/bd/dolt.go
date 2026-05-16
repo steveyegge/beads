@@ -75,6 +75,9 @@ var doltShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current Dolt configuration with connection status",
 	Run: func(cmd *cobra.Command, args []string) {
+		if redirectedForPostgres("bd dolt show") {
+			return
+		}
 		showDoltConfig(true)
 	},
 }
@@ -435,6 +438,9 @@ managed outside bd (dolt.auto-start: false, e.g. an orchestrator-shared
 sql-server) — pings the configured endpoint via SQL and reports
 reachability, server version, and database.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if redirectedForPostgres("bd dolt status") {
+			return
+		}
 		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
 			FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
@@ -1252,6 +1258,33 @@ func selectedDoltBeadsDir() string {
 	}
 	prepareSelectedNoDBContext(beadsDir)
 	return beadsDir
+}
+
+// redirectedForPostgres checks whether the current workspace uses the Postgres backend.
+// When true it prints a redirect message (text or JSON) and returns true; the caller
+// should return immediately. Exit code is 0 — this is a redirect, not an error.
+func redirectedForPostgres(commandName string) bool {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return false
+	}
+	bi := configfile.ResolveBackendInfo(beadsDir)
+	if bi.Backend != configfile.BackendPostgres {
+		return false
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"redirected":   true,
+			"reason":       "backend is postgres",
+			"alternatives": []string{"bd backend status", "bd context"},
+		})
+	} else {
+		fmt.Printf("backend is postgres — %s is not applicable.\n", commandName)
+		fmt.Printf("  Try: bd backend status    (generic backend health)\n")
+		fmt.Printf("       bd context           (connection details)\n")
+	}
+	return true
 }
 
 func showDoltConfig(testConnection bool) {

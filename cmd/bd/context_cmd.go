@@ -12,23 +12,25 @@ import (
 
 // ContextInfo contains the effective backend identity and repository context.
 type ContextInfo struct {
-	BeadsDir      string `json:"beads_dir"`
-	RepoRoot      string `json:"repo_root"`
-	CWDRepoRoot   string `json:"cwd_repo_root,omitempty"`
-	IsRedirected  bool   `json:"is_redirected"`
-	IsWorktree    bool   `json:"is_worktree"`
-	Backend       string `json:"backend"`
-	DoltMode      string `json:"dolt_mode"`
-	ServerHost    string `json:"server_host,omitempty"`
-	ServerPort    int    `json:"server_port,omitempty"`
-	ProxiedDir    string `json:"proxied_dir,omitempty"`
-	Database      string `json:"database"`
-	DataDir       string `json:"data_dir,omitempty"`
-	ProjectID     string `json:"project_id,omitempty"`
-	SyncRemote    string `json:"sync_remote,omitempty"`
-	SyncGitRemote string `json:"sync_git_remote,omitempty"` // Deprecated: use sync_remote
-	Role          string `json:"role,omitempty"`
-	BdVersion     string `json:"bd_version"`
+	BeadsDir         string                  `json:"beads_dir"`
+	RepoRoot         string                  `json:"repo_root"`
+	CWDRepoRoot      string                  `json:"cwd_repo_root,omitempty"`
+	IsRedirected     bool                    `json:"is_redirected"`
+	IsWorktree       bool                    `json:"is_worktree"`
+	Backend          string                  `json:"backend"`
+	DoltMode         string                  `json:"dolt_mode"`
+	ServerHost       string                  `json:"server_host,omitempty"`
+	ServerPort       int                     `json:"server_port,omitempty"`
+	ProxiedDir       string                  `json:"proxied_dir,omitempty"`
+	Database         string                  `json:"database"`
+	DataDir          string                  `json:"data_dir,omitempty"`
+	ProjectID        string                  `json:"project_id,omitempty"`
+	SyncRemote       string                  `json:"sync_remote,omitempty"`
+	SyncGitRemote    string                  `json:"sync_git_remote,omitempty"` // Deprecated: use sync_remote
+	Role             string                  `json:"role,omitempty"`
+	BdVersion        string                  `json:"bd_version"`
+	BackendInfo      *configfile.BackendInfo `json:"backend_info,omitempty"`      // resolved backend identity
+	ConnectionTarget string                  `json:"connection_target,omitempty"` // Postgres: host:port/db
 }
 
 var contextCmd = &cobra.Command{
@@ -47,7 +49,7 @@ Examples:
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		info := ContextInfo{
-			Backend:   configfile.BackendDolt,
+			Backend:   configfile.BackendDolt, // overridden below by ResolveBackendInfo
 			BdVersion: Version,
 		}
 
@@ -86,24 +88,37 @@ Examples:
 			cfg = configfile.DefaultConfig()
 		}
 
-		info.DoltMode = cfg.GetDoltMode()
-		info.Database = cfg.GetDoltDatabase()
-		info.ProjectID = cfg.ProjectID
+		// Resolve backend identity via single source of truth.
+		bi := configfile.ResolveBackendInfo(rc.BeadsDir)
+		info.Backend = bi.Backend
+		info.BackendInfo = &bi
 
-		if cfg.IsDoltServerMode() {
-			info.ServerHost = cfg.GetDoltServerHost()
-			// Use doltserver.DefaultConfig to resolve the actual runtime port
-			// (from port file, env var, etc.) instead of the static config default.
-			// This matches what "bd dolt show" does (GH#2555).
-			dsCfg := doltserver.DefaultConfig(rc.BeadsDir)
-			info.ServerPort = dsCfg.Port
-		}
-		if cfg.IsDoltProxiedServerMode() {
-			info.ProxiedDir = resolveProxiedServerRootPath(rc.BeadsDir, cfg)
-		}
+		if bi.Backend == configfile.BackendPostgres {
+			info.Database = bi.Database
+			info.ProjectID = bi.ProjectID
+			if bi.Host != "" && bi.Port != 0 && bi.Database != "" {
+				info.ConnectionTarget = fmt.Sprintf("%s:%d/%s", bi.Host, bi.Port, bi.Database)
+			}
+		} else {
+			info.DoltMode = cfg.GetDoltMode()
+			info.Database = cfg.GetDoltDatabase()
+			info.ProjectID = cfg.ProjectID
 
-		if dataDir := cfg.GetDoltDataDir(); dataDir != "" {
-			info.DataDir = dataDir
+			if cfg.IsDoltServerMode() {
+				info.ServerHost = cfg.GetDoltServerHost()
+				// Use doltserver.DefaultConfig to resolve the actual runtime port
+				// (from port file, env var, etc.) instead of the static config default.
+				// This matches what "bd dolt show" does (GH#2555).
+				dsCfg := doltserver.DefaultConfig(rc.BeadsDir)
+				info.ServerPort = dsCfg.Port
+			}
+			if cfg.IsDoltProxiedServerMode() {
+				info.ProxiedDir = resolveProxiedServerRootPath(rc.BeadsDir, cfg)
+			}
+
+			if dataDir := cfg.GetDoltDataDir(); dataDir != "" {
+				info.DataDir = dataDir
+			}
 		}
 
 		// Read sync remote from the selected repo's config.yaml.
@@ -145,19 +160,36 @@ func printContextText(info ContextInfo) {
 	// Backend
 	fmt.Println("Backend:")
 	fmt.Printf("  type:         %s\n", info.Backend)
-	fmt.Printf("  mode:         %s\n", info.DoltMode)
-	fmt.Printf("  database:     %s\n", info.Database)
-	if info.ServerHost != "" {
-		fmt.Printf("  server:       %s:%d\n", info.ServerHost, info.ServerPort)
-	}
-	if info.ProxiedDir != "" {
-		fmt.Printf("  proxied dir:  %s\n", info.ProxiedDir)
-	}
-	if info.DataDir != "" {
-		fmt.Printf("  data dir:     %s\n", info.DataDir)
-	}
-	if info.ProjectID != "" {
-		fmt.Printf("  project id:   %s\n", info.ProjectID)
+	if info.Backend == configfile.BackendPostgres {
+		if info.ConnectionTarget != "" {
+			bi := info.BackendInfo
+			extra := ""
+			if bi != nil && bi.User != "" {
+				extra += fmt.Sprintf("  user=%s", bi.User)
+			}
+			if bi != nil && bi.SSLMode != "" {
+				extra += fmt.Sprintf("  sslmode=%s", bi.SSLMode)
+			}
+			fmt.Printf("  target:       %s%s\n", info.ConnectionTarget, extra)
+		}
+		if info.ProjectID != "" {
+			fmt.Printf("  project id:   %s\n", info.ProjectID)
+		}
+	} else {
+		fmt.Printf("  mode:         %s\n", info.DoltMode)
+		fmt.Printf("  database:     %s\n", info.Database)
+		if info.ServerHost != "" {
+			fmt.Printf("  server:       %s:%d\n", info.ServerHost, info.ServerPort)
+		}
+		if info.ProxiedDir != "" {
+			fmt.Printf("  proxied dir:  %s\n", info.ProxiedDir)
+		}
+		if info.DataDir != "" {
+			fmt.Printf("  data dir:     %s\n", info.DataDir)
+		}
+		if info.ProjectID != "" {
+			fmt.Printf("  project id:   %s\n", info.ProjectID)
+		}
 	}
 
 	// Sync
