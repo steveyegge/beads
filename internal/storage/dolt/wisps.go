@@ -494,7 +494,6 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	if metadata == "" {
 		metadata = "{}"
 	}
-	targetIsWisp := s.isActiveWisp(ctx, dep.DependsOnID)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -503,10 +502,10 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	defer func() { _ = tx.Rollback() }()
 
 	// Cycle detection for blocking dependency types: check if adding this edge
-	// would create a cycle. Same-storage-class edges stay on wisp_dependencies;
-	// mixed wisp/permanent edges scan both tables to preserve cross-table safety.
+	// would create a cycle. Edge storage is source-routed, so same-class
+	// endpoints can still have mixed-table interior paths.
 	if dep.Type == types.DepBlocks {
-		depTables := wispCycleDetectionTables(targetIsWisp)
+		depTables := wispCycleDetectionTables()
 		var reachable int
 		query := wispCycleReachabilityQuery(depTables)
 		if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
@@ -550,6 +549,8 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	return wrapTransactionError("commit add wisp dependency", tx.Commit())
 }
 
+// wispCycleReachabilityQuery uses UNION distinct recursion so cyclic and
+// diamond graphs terminate by unique reachable node instead of enumerating paths.
 func wispCycleReachabilityQuery(depTables []string) string {
 	if len(depTables) == 1 {
 		return fmt.Sprintf(`
@@ -581,10 +582,7 @@ func wispCycleReachabilityQuery(depTables []string) string {
 	`, unionQuery)
 }
 
-func wispCycleDetectionTables(targetIsWisp bool) []string {
-	if targetIsWisp {
-		return []string{"wisp_dependencies"}
-	}
+func wispCycleDetectionTables() []string {
 	return []string{"dependencies", "wisp_dependencies"}
 }
 

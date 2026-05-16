@@ -6,22 +6,8 @@ import (
 	"testing"
 )
 
-func TestCycleDetectionTablesUseWriteTableForSameStorageClass(t *testing.T) {
-	got := cycleDetectionTables("issues", "issues", "dependencies")
-	want := []string{"dependencies"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-
-	got = cycleDetectionTables("wisps", "wisps", "wisp_dependencies")
-	want = []string{"wisp_dependencies"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-}
-
-func TestCycleDetectionTablesUseBothTablesForMixedStorageClass(t *testing.T) {
-	got := cycleDetectionTables("issues", "wisps", "dependencies")
+func TestCycleDetectionTablesUseBothTablesByDefault(t *testing.T) {
+	got := cycleDetectionTables()
 	want := []string{"dependencies", "wisp_dependencies"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
