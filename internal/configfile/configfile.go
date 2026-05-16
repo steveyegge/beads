@@ -66,6 +66,13 @@ type Config struct {
 	DaemonIterMax         int `json:"daemon_iter_max,omitempty"`
 	DaemonIterIdleSeconds int `json:"daemon_iter_idle_seconds,omitempty"`
 
+	// Postgres backend configuration (be-zdhe4l).
+	// PostgresDSN holds a stripped (password-free) DSN produced by bd init.
+	// The password is supplied at runtime via BEADS_POSTGRES_PASSWORD.
+	// BEADS_POSTGRES_{HOST,PORT,USER,DATABASE,SSLMODE} env vars override
+	// individual fields on every invocation (dsn.ApplyEnvOverrides).
+	PostgresDSN string `json:"postgres_dsn,omitempty"`
+
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
 	// upgrade notifications firing after git operations reset metadata.json.
@@ -196,7 +203,8 @@ func (c *Config) GetStaleClosedIssuesDays() int {
 
 // Backend constants
 const (
-	BackendDolt = "dolt"
+	BackendDolt     = "dolt"
+	BackendPostgres = "postgres"
 )
 
 // BackendCapabilities describes behavioral constraints for a storage backend.
@@ -231,9 +239,19 @@ func (c *Config) GetCapabilities() BackendCapabilities {
 	return CapabilitiesForBackend(backend)
 }
 
-// GetBackend returns the backend type. Always returns "dolt".
+// GetBackend returns the backend type. Returns "postgres" when the config was
+// initialized with a postgres backend (backend field in metadata.json), or
+// "dolt" for all other configs including legacy ones.
 func (c *Config) GetBackend() string {
+	if c != nil && c.Backend == BackendPostgres {
+		return BackendPostgres
+	}
 	return BackendDolt
+}
+
+// IsPostgresBackend reports whether this config targets a Postgres backend.
+func (c *Config) IsPostgresBackend() bool {
+	return c.GetBackend() == BackendPostgres
 }
 
 // Dolt mode constants

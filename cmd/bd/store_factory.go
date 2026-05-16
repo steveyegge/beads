@@ -15,6 +15,8 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
+	pgstore "github.com/steveyegge/beads/internal/storage/postgres"
+	pgdsn "github.com/steveyegge/beads/internal/storage/postgres/dsn"
 )
 
 func usesSQLServer() bool {
@@ -84,7 +86,31 @@ func openConfiguredStore(ctx context.Context, beadsDir string, _ bool) (storage.
 	if daemonStore, err := tryDaemonClient(beadsDir, cfg); daemonStore != nil || err != nil {
 		return daemonStore, err
 	}
+	if cfg != nil && cfg.IsPostgresBackend() {
+		return newPostgresStore(ctx, cfg)
+	}
 	return newDoltStoreFromConfig(ctx, beadsDir)
+}
+
+// newPostgresStore applies BEADS_POSTGRES_* env overrides to the stored
+// stripped DSN, composes the full connection string (adding password last),
+// and opens a Postgres store. The override field list is forwarded to the
+// Store so that downstream surfaces (bd context, bd backend status) can
+// report which fields were overridden.
+//
+// On connection failure the error includes the redacted target address and
+// the list of applied overrides (NFR-4):
+//
+//	postgres unreachable: staging.db:5433/mybd (overrides applied: host) — err=...
+//
+// NOTE: be-0w5z7u (BackendInfo resolver) should also call
+// dsn.ApplyEnvOverrides so that `bd context` / `bd backend status` reflect
+// the runtime target rather than the persisted DSN.
+func newPostgresStore(ctx context.Context, cfg *configfile.Config) (*pgstore.Store, error) {
+	overriddenDSN, overrideFields := pgdsn.ApplyEnvOverrides(cfg.PostgresDSN)
+	password := os.Getenv("BEADS_POSTGRES_PASSWORD")
+	fullDSN := pgdsn.Compose(overriddenDSN, password)
+	return pgstore.Open(ctx, fullDSN, overriddenDSN, overrideFields)
 }
 
 // newDoltStoreFromConfig creates a storage backend from the beads directory's
