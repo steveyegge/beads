@@ -759,6 +759,12 @@ type IssueDetails struct {
 	Comments     []*Comment                     `json:"comments,omitempty"`
 	Parent       *string                        `json:"parent,omitempty"`
 
+	// Aggregate counts. Populated when the corresponding slice is omitted
+	// (i.e., when --include-dependents / --include-comments is not set).
+	DependentCount  int64 `json:"dependent_count,omitempty"`
+	DependencyCount int64 `json:"dependency_count,omitempty"`
+	CommentCount    int64 `json:"comment_count,omitempty"`
+
 	// Epic progress fields (populated only for issue_type=epic with children)
 	EpicTotalChildren  *int  `json:"epic_total_children,omitempty"`
 	EpicClosedChildren *int  `json:"epic_closed_children,omitempty"`

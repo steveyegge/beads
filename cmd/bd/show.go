@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -29,6 +30,8 @@ var showCmd = &cobra.Command{
 		localTime, _ := cmd.Flags().GetBool("local-time")
 		watchMode, _ := cmd.Flags().GetBool("watch")
 		currentMode, _ := cmd.Flags().GetBool("current")
+		includeDependents, _ := cmd.Flags().GetBool("include-dependents")
+		includeComments, _ := cmd.Flags().GetBool("include-comments")
 		ctx := rootCtx
 
 		// Helper to format timestamp based on --local-time flag
@@ -146,26 +149,55 @@ var showCmd = &cobra.Command{
 
 				// Get dependencies with metadata (dependency_type field)
 				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID) // Best effort: show issue even if deps unavailable
-				details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)     // Best effort: show issue even if dependents unavailable
+				details.DependencyCount, _ = issueStore.CountDependencies(ctx, issue.ID)
 
-				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID) // Best effort: show issue even if comments unavailable
+				if includeDependents {
+					// Stream full dependents via iterator; collect into slice for JSON output.
+					it, err := issueStore.IterDependentsWithMetadata(ctx, issue.ID)
+					if err == nil {
+						details.Dependents, _ = storage.Collect(ctx, it)
+					}
+				} else {
+					// Count-only path: cheaper for hub beads with many dependents.
+					details.DependentCount, _ = issueStore.CountDependents(ctx, issue.ID)
+				}
+
+				if includeComments {
+					// Stream full comments via iterator; collect into slice for JSON output.
+					it, err := issueStore.IterIssueComments(ctx, issue.ID)
+					if err == nil {
+						details.Comments, _ = storage.Collect(ctx, it)
+					}
+				} else {
+					// Count-only path.
+					details.CommentCount, _ = issueStore.CountIssueComments(ctx, issue.ID)
+				}
 
 				// Epic progress: count children status for epic issues
-				if issue.IssueType == types.TypeEpic && details.Dependents != nil {
-					total, closed := 0, 0
-					for _, dep := range details.Dependents {
-						if dep.DependencyType == types.DepParentChild {
-							total++
-							if dep.Issue.Status == types.StatusClosed {
-								closed++
+				if issue.IssueType == types.TypeEpic {
+					var epicDeps []*types.IssueWithDependencyMetadata
+					if includeDependents {
+						epicDeps = details.Dependents
+					} else {
+						// Fetch dependents for epic progress calculation only when not already fetched.
+						epicDeps, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
+					}
+					if epicDeps != nil {
+						total, closed := 0, 0
+						for _, dep := range epicDeps {
+							if dep.DependencyType == types.DepParentChild {
+								total++
+								if dep.Issue.Status == types.StatusClosed {
+									closed++
+								}
 							}
 						}
-					}
-					if total > 0 {
-						details.EpicTotalChildren = &total
-						details.EpicClosedChildren = &closed
-						closeable := total == closed
-						details.EpicCloseable = &closeable
+						if total > 0 {
+							details.EpicTotalChildren = &total
+							details.EpicClosedChildren = &closed
+							closeable := total == closed
+							details.EpicCloseable = &closeable
+						}
 					}
 				}
 
@@ -400,6 +432,8 @@ func init() {
 	showCmd.Flags().Bool("local-time", false, "Show timestamps in local time instead of UTC")
 	showCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-refresh display")
 	showCmd.Flags().Bool("current", false, "Show the currently active issue (in-progress, hooked, or last touched)")
+	showCmd.Flags().Bool("include-dependents", false, "Include full dependent issues in --json output. Default: emit dependent_count only. Warning: may be slow on beads with many dependents.")
+	showCmd.Flags().Bool("include-comments", false, "Include full comment bodies in --json output. Default: emit comment_count only.")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }

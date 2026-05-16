@@ -23,16 +23,16 @@ func TestValidateIssueUpdatable(t *testing.T) {
 }
 
 func TestValidateIssueClosable(t *testing.T) {
-	if err := validateIssueClosable("x", nil, false); err != nil {
+	if err := validateIssueClosable("x", nil, "", false); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if err := validateIssueClosable("bd-1", &types.Issue{IsTemplate: true}, false); err == nil {
+	if err := validateIssueClosable("bd-1", &types.Issue{IsTemplate: true}, "", false); err == nil {
 		t.Fatalf("expected template close error")
 	}
-	if err := validateIssueClosable("bd-2", &types.Issue{Status: types.StatusPinned}, false); err == nil {
+	if err := validateIssueClosable("bd-2", &types.Issue{Status: types.StatusPinned}, "", false); err == nil {
 		t.Fatalf("expected pinned close error")
 	}
-	if err := validateIssueClosable("bd-2", &types.Issue{Status: types.StatusPinned}, true); err != nil {
+	if err := validateIssueClosable("bd-2", &types.Issue{Status: types.StatusPinned}, "", true); err != nil {
 		t.Fatalf("expected pinned close to succeed with force, got %v", err)
 	}
 }

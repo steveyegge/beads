@@ -650,6 +650,13 @@ func (s *configStore) IterBlockedIssues(_ context.Context, _ types.WorkFilter) (
 func (s *configStore) IterWisps(_ context.Context, _ types.WispFilter) (storage.Iter[types.Issue], error) {
 	return storage.NewSliceIter[types.Issue](nil), nil
 }
+func (s *configStore) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
+	return 0, nil
+}
+func (s *configStore) CountDependents(_ context.Context, _ string) (int64, error)    { return 0, nil }
+func (s *configStore) CountDependencies(_ context.Context, _ string) (int64, error)  { return 0, nil }
+func (s *configStore) CountIssueComments(_ context.Context, _ string) (int64, error) { return 0, nil }
+func (s *configStore) CountEvents(_ context.Context, _ string, _ int) (int64, error) { return 0, nil }
 
 func TestFetchIssuesIncludesPullJQLInQuery(t *testing.T) {
 	var capturedJQL string
