@@ -237,7 +237,7 @@ func (c *daemonClient) GetLabels(ctx context.Context, issueID string) ([]string,
 	if err := c.client.Call("daemonServer.GetLabels", args, &reply); err != nil {
 		return nil, err
 	}
-	return reply.strings, decodeRPCError(reply.RPCError)
+	return reply.Strings, decodeRPCError(reply.RPCError)
 }
 
 func (c *daemonClient) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {

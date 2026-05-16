@@ -210,7 +210,7 @@ type GetLabelsArgs struct {
 }
 
 type GetLabelsReply struct {
-	strings  []string
+	Strings  []string
 	RPCError *RPCError
 }
 

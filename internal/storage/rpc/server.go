@@ -225,7 +225,7 @@ func (s *daemonServer) GetLabels(args *GetLabelsArgs, reply *GetLabelsReply) err
 	ctx, cancel := daemonCallContext(s.root)
 	defer cancel()
 	r0, err := s.store.GetLabels(ctx, args.IssueID)
-	reply.strings = r0
+	reply.Strings = r0
 	reply.RPCError = encodeRPCError(err)
 	return nil
 }

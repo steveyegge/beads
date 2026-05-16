@@ -450,6 +450,8 @@ func resultFieldName(typeStr string) string {
 	if idx := strings.LastIndex(base, "."); idx >= 0 {
 		base = base[idx+1:]
 	}
+	// Ensure the field name is exported (built-in types like "string" are lowercase).
+	base = exportedName(base)
 	if isSlice {
 		return base + "s"
 	}
