@@ -585,17 +585,21 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 		}
 
 		parentDepPairs := graphApplyParentDepPairs(plan.Nodes, keyToID)
+		canSkipLocalCycleChecks := graphApplyPlanCanSkipSQLCycleChecks(plan)
 
 		// Add dependencies from edges.
-		for _, edge := range plan.Edges {
+		for i, edge := range plan.Edges {
 			fromID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
 			toID := resolveEdgeRef(edge.ToKey, edge.ToID, keyToID)
-			if parentDepPairs[graphApplyDepPairKey(fromID, toID)] {
-				continue
-			}
 			depType := types.DependencyType(edge.Type)
 			if depType == "" {
 				depType = types.DepBlocks
+			}
+			if parentDepPairs[graphApplyDepPairKey(fromID, toID)] {
+				if depType == types.DepParentChild {
+					continue
+				}
+				return fmt.Errorf("edge %d %s->%s duplicates a parent-child relationship with dependency type %q", i, fromID, toID, depType)
 			}
 			dep := &types.Dependency{
 				IssueID:     fromID,
@@ -603,7 +607,7 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 				Type:        depType,
 			}
 			addOpts := storage.DependencyAddOptions{}
-			if graphApplyEdgeCanSkipSQLCycleCheck(edge, depType) {
+			if canSkipLocalCycleChecks && graphApplyEdgeCanSkipSQLCycleCheck(edge, depType) {
 				addOpts.SkipCycleCheck = true
 			}
 			if err := tx.AddDependencyWithOptions(ctx, dep, actor, addOpts); err != nil {
@@ -645,6 +649,22 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 	}
 
 	return &GraphApplyResult{IDs: keyToID}, nil
+}
+
+func graphApplyPlanCanSkipSQLCycleChecks(plan *GraphApplyPlan) bool {
+	for _, edge := range plan.Edges {
+		depType := types.DependencyType(edge.Type)
+		if depType == "" {
+			depType = types.DepBlocks
+		}
+		if depType != types.DepBlocks && depType != types.DepConditionalBlocks {
+			continue
+		}
+		if !graphApplyEdgeCanSkipSQLCycleCheck(edge, depType) {
+			return false
+		}
+	}
+	return true
 }
 
 func graphApplyEdgeCanSkipSQLCycleCheck(edge GraphApplyEdge, depType types.DependencyType) bool {
