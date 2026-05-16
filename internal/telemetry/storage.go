@@ -579,6 +579,7 @@ func (s *InstrumentedStorage) CountEvents(ctx context.Context, issueID string, l
 	return v, err
 }
 
+
 // ── MergeSlot ────────────────────────────────────────────────────────────────
 
 func (s *InstrumentedStorage) MergeSlotCreate(ctx context.Context, actor string) (*types.Issue, error) {
