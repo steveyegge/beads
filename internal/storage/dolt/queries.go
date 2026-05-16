@@ -28,15 +28,10 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	var result []*types.Issue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		result, err = issueops.GetReadyWorkInTx(ctx, tx, filter, computeBlockedIDsForReadyWork)
+		result, err = issueops.GetReadyWorkInTx(ctx, tx, filter, s.computeBlockedIDsForReadyWork)
 		return err
 	})
 	return result, err
-}
-
-func computeBlockedIDsForReadyWork(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error) {
-	ids, _, err := issueops.ComputeBlockedIDsInTx(ctx, tx, includeWisps)
-	return ids, err
 }
 
 // GetBlockedIssues returns issues that are blocked by other issues.
@@ -120,9 +115,21 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 //
 // Caller must hold s.mu (at least RLock).
 func (s *DoltStore) computeBlockedIDs(ctx context.Context, includeWisps bool) ([]string, error) {
+	var result []string
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = s.computeBlockedIDsForReadyWork(ctx, tx, includeWisps)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *DoltStore) computeBlockedIDsForReadyWork(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error) {
 	s.cacheMu.Lock()
-	// Cache hit: return if cached result covers the requested scope.
-	// A full (wisps-included) cache satisfies both modes.
 	if s.blockedIDsCached && (s.blockedIDsCacheIncludesWisps || !includeWisps) {
 		result := s.blockedIDsCache
 		s.cacheMu.Unlock()
@@ -130,33 +137,24 @@ func (s *DoltStore) computeBlockedIDs(ctx context.Context, includeWisps bool) ([
 	}
 	s.cacheMu.Unlock()
 
-	var result []string
-	var blockedSet map[string]bool
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var activeIDs map[string]bool
-		var err error
-		result, activeIDs, err = issueops.ComputeBlockedIDsInTx(ctx, tx, includeWisps)
-		if err != nil {
-			return err
-		}
-		blockedSet = make(map[string]bool, len(result))
-		for _, id := range result {
-			blockedSet[id] = true
-		}
-		_ = activeIDs // activeIDs not needed for cache
-		return nil
-	})
+	result, _, err := issueops.ComputeBlockedIDsInTx(ctx, tx, includeWisps)
 	if err != nil {
 		return nil, err
 	}
+	blockedSet := make(map[string]bool, len(result))
+	for _, id := range result {
+		blockedSet[id] = true
+	}
 
 	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.blockedIDsCached && (s.blockedIDsCacheIncludesWisps || !includeWisps) {
+		return s.blockedIDsCache, nil
+	}
 	s.blockedIDsCache = result
 	s.blockedIDsCacheMap = blockedSet
 	s.blockedIDsCached = true
 	s.blockedIDsCacheIncludesWisps = includeWisps
-	s.cacheMu.Unlock()
-
 	return result, nil
 }
 

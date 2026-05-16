@@ -15,6 +15,10 @@ type blockingDepRecord struct {
 	metadata                      sql.NullString
 }
 
+func optionalBlockedTable(table string) bool {
+	return table == "wisps" || table == "wisp_dependencies"
+}
+
 // ComputeBlockedIDsInTx returns the set of issue IDs that are blocked by active issues.
 // This is the core computation without caching — callers manage their own cache.
 //
@@ -35,7 +39,7 @@ func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) (
 			WHERE status NOT IN ('closed', 'pinned')
 		`, table))
 		if err != nil {
-			if isTableNotExistError(err) {
+			if optionalBlockedTable(table) && isTableNotExistError(err) {
 				continue
 			}
 			return nil, nil, fmt.Errorf("compute blocked IDs: active issues from %s: %w", table, err)
@@ -66,7 +70,7 @@ func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) (
 			WHERE type IN ('blocks', 'waits-for', 'conditional-blocks')
 		`, depTable))
 		if err != nil {
-			if isTableNotExistError(err) {
+			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 				continue
 			}
 			return nil, nil, fmt.Errorf("compute blocked IDs: deps from %s: %w", depTable, err)
@@ -144,7 +148,7 @@ func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) (
 					WHERE type = 'parent-child' AND depends_on_id IN (%s)
 				`, depTbl, placeholders), args...)
 				if err != nil {
-					if isTableNotExistError(err) {
+					if optionalBlockedTable(depTbl) && isTableNotExistError(err) {
 						continue
 					}
 					return nil, nil, fmt.Errorf("compute blocked IDs: children from %s: %w", depTbl, err)
@@ -186,7 +190,7 @@ func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) (
 						WHERE status = 'closed' AND id IN (%s)
 					`, issueTbl, placeholders), args...)
 					if err != nil {
-						if isTableNotExistError(err) {
+						if optionalBlockedTable(issueTbl) && isTableNotExistError(err) {
 							continue
 						}
 						return nil, nil, fmt.Errorf("compute blocked IDs: closed children from %s: %w", issueTbl, err)
@@ -306,7 +310,18 @@ func ComputeBlockedCandidateIDsInTx(ctx context.Context, tx *sql.Tx, candidateID
 		for _, parentID := range childParents {
 			parentIDs = append(parentIDs, parentID)
 		}
-		parentDeps, err := loadBlockingDepsForIssueIDsInTx(ctx, tx, depTables, parentIDs)
+		parentSet, err := loadActiveIDSetInTx(ctx, tx, issueTables, parentIDs)
+		if err != nil {
+			return nil, fmt.Errorf("compute blocked candidates: active parents: %w", err)
+		}
+		if len(parentSet) == 0 {
+			return resultFromBlockedSet(blockedSet), nil
+		}
+		activeParentIDs := make([]string, 0, len(parentSet))
+		for parentID := range parentSet {
+			activeParentIDs = append(activeParentIDs, parentID)
+		}
+		parentDeps, err := loadBlockingDepsForIssueIDsInTx(ctx, tx, depTables, activeParentIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -318,9 +333,7 @@ func ComputeBlockedCandidateIDsInTx(ctx context.Context, tx *sql.Tx, candidateID
 		if err != nil {
 			return nil, fmt.Errorf("compute blocked candidates: active parent blockers: %w", err)
 		}
-		parentSet := make(map[string]bool, len(childParents))
-		for _, parentID := range childParents {
-			parentSet[parentID] = true
+		for parentID := range parentSet {
 			activeParentBlockers[parentID] = true
 		}
 		parentBlockedSet := make(map[string]bool)
@@ -334,11 +347,15 @@ func ComputeBlockedCandidateIDsInTx(ctx context.Context, tx *sql.Tx, candidateID
 		}
 	}
 
+	return resultFromBlockedSet(blockedSet), nil
+}
+
+func resultFromBlockedSet(blockedSet map[string]bool) []string {
 	result := make([]string, 0, len(blockedSet))
 	for id := range blockedSet {
 		result = append(result, id)
 	}
-	return result, nil
+	return result
 }
 
 type candidateWaitsForDep struct {
@@ -410,7 +427,7 @@ func markBlockedFromDepsInTx(
 				WHERE type = 'parent-child' AND depends_on_id IN (%s)
 			`, depTbl, placeholders), args...)
 			if err != nil {
-				if isTableNotExistError(err) {
+				if optionalBlockedTable(depTbl) && isTableNotExistError(err) {
 					continue
 				}
 				return fmt.Errorf("compute blocked IDs: children from %s: %w", depTbl, err)
@@ -461,7 +478,7 @@ func markBlockedFromDepsInTx(
 						WHERE status = 'closed' AND id IN (%s)
 					`, issueTbl, placeholders), args...)
 					if err != nil {
-						if isTableNotExistError(err) {
+						if optionalBlockedTable(issueTbl) && isTableNotExistError(err) {
 							continue
 						}
 						return fmt.Errorf("compute blocked IDs: closed children from %s: %w", issueTbl, err)
@@ -532,7 +549,7 @@ func loadBlockingDepsForIssueIDsInTx(ctx context.Context, tx *sql.Tx, depTables 
 				  AND type IN ('blocks', 'waits-for', 'conditional-blocks')
 			`, depTable, placeholders), args...)
 			if err != nil {
-				if isTableNotExistError(err) {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 					break
 				}
 				return nil, fmt.Errorf("compute blocked IDs: deps from %s: %w", depTable, err)
@@ -572,7 +589,7 @@ func loadActiveIDSetInTx(ctx context.Context, tx *sql.Tx, issueTables []string, 
 				  AND status NOT IN ('closed', 'pinned')
 			`, issueTable, placeholders), args...)
 			if err != nil {
-				if isTableNotExistError(err) {
+				if optionalBlockedTable(issueTable) && isTableNotExistError(err) {
 					break
 				}
 				return nil, fmt.Errorf("active IDs from %s: %w", issueTable, err)
@@ -609,7 +626,7 @@ func loadParentIDsForChildrenInTx(ctx context.Context, tx *sql.Tx, depTables []s
 				  AND type = 'parent-child'
 			`, depTable, placeholders), args...)
 			if err != nil {
-				if isTableNotExistError(err) {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 					break
 				}
 				return nil, fmt.Errorf("candidate parents from %s: %w", depTable, err)
@@ -654,7 +671,7 @@ func GetChildrenWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []str
 			`, depTable, placeholders)
 			rows, err := tx.QueryContext(ctx, query, args...)
 			if err != nil {
-				if isTableNotExistError(err) {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 					break
 				}
 				return nil, fmt.Errorf("get children with parents from %s: %w", depTable, err)
@@ -698,7 +715,7 @@ func GetChildrenOfIssuesInTx(ctx context.Context, tx *sql.Tx, parentIDs []string
 			`, depTable, placeholders)
 			rows, err := tx.QueryContext(ctx, query, args...)
 			if err != nil {
-				if isTableNotExistError(err) {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 					break
 				}
 				return nil, fmt.Errorf("get children of issues from %s: %w", depTable, err)

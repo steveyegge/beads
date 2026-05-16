@@ -237,10 +237,7 @@ func (s *DoltStore) ClaimReadyIssue(ctx context.Context, filter types.WorkFilter
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	claimed, err := issueops.ClaimReadyIssueInTx(ctx, tx, filter, actor, func(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error) {
-		ids, _, err := issueops.ComputeBlockedIDsInTx(ctx, tx, includeWisps)
-		return ids, err
-	})
+	claimed, err := issueops.ClaimReadyIssueInTx(ctx, tx, filter, actor, s.computeBlockedIDsForReadyWork)
 	if err != nil {
 		return nil, err
 	}

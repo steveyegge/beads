@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -46,7 +47,9 @@ func GetReadyWorkInTx(
 		args = append(args, *filter.Priority)
 	}
 	if filter.Type != "" {
-		whereClauses = append(whereClauses, "issue_type = ?")
+		// Keep the type predicate isolated from other indexed predicates to
+		// avoid Dolt's mergeJoinIter panic on type+status+priority queries.
+		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
 		args = append(args, filter.Type)
 	} else {
 		excludeTypes := []string{"merge-request", "gate", "molecule", "message", "agent", "role", "rig"}
@@ -67,7 +70,7 @@ func GetReadyWorkInTx(
 			placeholders[i] = "?"
 			args = append(args, t)
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", strings.Join(placeholders, ",")))
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM issues WHERE issue_type NOT IN (%s))", strings.Join(placeholders, ",")))
 	}
 	// Unassigned takes precedence over Assignee filter.
 	if filter.Unassigned {
@@ -145,7 +148,7 @@ func GetReadyWorkInTx(
 			return nil, err
 		}
 		whereClauses = append(whereClauses, "JSON_EXTRACT(metadata, ?) IS NOT NULL")
-		args = append(args, "$."+filter.HasMetadataKey)
+		args = append(args, storage.JSONMetadataPath(filter.HasMetadataKey))
 	}
 
 	// Metadata field equality filters.
@@ -169,12 +172,16 @@ func GetReadyWorkInTx(
 	// dependency graph scan when the caller only needs a small ready set.
 	if filter.Limit == 0 {
 		blockedIDs, err := computeBlockedFn(ctx, tx, filter.IncludeEphemeral)
-		if err == nil && len(blockedIDs) > 0 {
+		if err != nil {
+			return nil, fmt.Errorf("compute blocked IDs: %w", err)
+		}
+		if len(blockedIDs) > 0 {
 			// Also exclude children of blocked parents.
 			childrenOfBlocked, childErr := getChildrenOfIssuesInTx(ctx, tx, blockedIDs)
-			if childErr == nil {
-				blockedIDs = append(blockedIDs, childrenOfBlocked...)
+			if childErr != nil {
+				return nil, fmt.Errorf("compute blocked children: %w", childErr)
 			}
+			blockedIDs = append(blockedIDs, childrenOfBlocked...)
 
 			for start := 0; start < len(blockedIDs); start += queryBatchSize {
 				end := start + queryBatchSize
@@ -198,10 +205,12 @@ func GetReadyWorkInTx(
 	case types.SortPolicyPriority:
 		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
 	case types.SortPolicyHybrid, "":
+		recentCutoff := time.Now().UTC().Add(-48 * time.Hour)
 		orderBySQL = `ORDER BY
-			CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR) THEN 0 ELSE 1 END ASC,
-			CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR) THEN priority ELSE 999 END ASC,
+			CASE WHEN created_at >= ? THEN 0 ELSE 1 END ASC,
+			CASE WHEN created_at >= ? THEN priority ELSE 999 END ASC,
 			created_at ASC, id ASC`
+		args = append(args, recentCutoff, recentCutoff)
 	default:
 		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
 	}
@@ -288,9 +297,10 @@ func GetReadyWorkInTx(
 			wispFilter.Status = &s
 		}
 		wisps, wErr := SearchIssuesInTx(ctx, tx, "", wispFilter)
-		if wErr == nil {
-			ordered = append(ordered, wisps...)
+		if wErr != nil {
+			return nil, fmt.Errorf("search wisps (ready work): %w", wErr)
 		}
+		ordered = append(ordered, wisps...)
 	}
 
 	return ordered, nil
