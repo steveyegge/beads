@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/steveyegge/beads/internal/storage"
+	pgdsn "github.com/steveyegge/beads/internal/storage/postgres/dsn"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -53,7 +54,7 @@ func Open(ctx context.Context, fullDSN, strippedDSN string, overrideFields []str
 	// Quick TCP probe — cheaper than a full pgx connection for the error path.
 	conn, err := pgconn.ConnectConfig(ctx, cfg)
 	if err != nil {
-		target := renderRedacted(strippedDSN)
+		target := pgdsn.RenderRedacted(strippedDSN)
 		msg := fmt.Sprintf("postgres unreachable: %s", target)
 		if len(overrideFields) > 0 {
 			msg += fmt.Sprintf(" (overrides applied: %s)", strings.Join(overrideFields, ", "))
@@ -63,20 +64,6 @@ func Open(ctx context.Context, fullDSN, strippedDSN string, overrideFields []str
 	_ = conn.Close(ctx)
 
 	return &Store{dsn: fullDSN, overrideFields: overrideFields}, nil
-}
-
-// renderRedacted returns "host:port/db" from a stripped DSN, omitting
-// credentials. Used in error messages (NFR-4).
-func renderRedacted(strippedDSN string) string {
-	cfg, err := pgconn.ParseConfig(strippedDSN)
-	if err != nil {
-		return "(unparseable)"
-	}
-	host := cfg.Host
-	if cfg.Port != 0 {
-		host = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	}
-	return fmt.Sprintf("%s/%s", host, cfg.Database)
 }
 
 // --- storage.Storage stubs (all return errNotImplemented) ---
