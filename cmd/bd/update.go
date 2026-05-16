@@ -283,6 +283,7 @@ create, update, show, or close operation).`,
 
 		// Get claim flag
 		claimFlag, _ := cmd.Flags().GetBool("claim")
+		forceFlag, _ := cmd.Flags().GetBool("force")
 
 		if len(updates) == 0 && !claimFlag {
 			fmt.Println("No updates specified")
@@ -368,6 +369,14 @@ create, update, show, or close operation).`,
 				}
 				combined += appendNotes
 				regularUpdates["notes"] = combined
+			}
+			// Authority guard: --status=closed must satisfy the same chain as bd close.
+			if s, ok := regularUpdates["status"].(string); ok && s == "closed" {
+				if err := validateIssueClosable(id, issue, actor, forceFlag); err != nil {
+					fmt.Fprintf(os.Stderr, "%s\n", err)
+					result.Close()
+					continue
+				}
 			}
 			if len(regularUpdates) > 0 {
 				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
@@ -607,6 +616,7 @@ func init() {
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; idempotent if already claimed by you)")
+	updateCmd.Flags().Bool("force", false, "Override assignee authority guard when setting --status=closed")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")
 	// Time-based scheduling flags (GH#820)
 	// Examples:

@@ -16,14 +16,15 @@ func validateIssueUpdatable(id string, issue *types.Issue) error {
 	return validation.NotTemplate()(id, issue)
 }
 
-// validateIssueClosable checks if an issue can be closed.
+// validateIssueClosable checks if an issue can be closed by actor.
 // Uses the centralized validation package for consistency.
-func validateIssueClosable(id string, issue *types.Issue, force bool) error {
+func validateIssueClosable(id string, issue *types.Issue, actor string, force bool) error {
 	// Note: We use individual validators instead of ForClose() to maintain
 	// backward compatibility - the original didn't check for nil issues.
 	return validation.Chain(
 		validation.NotTemplate(),
 		validation.NotPinned(force),
+		validation.AssigneeMatches(actor, force),
 	)(id, issue)
 }
 
