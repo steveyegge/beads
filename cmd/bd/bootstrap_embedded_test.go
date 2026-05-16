@@ -162,8 +162,9 @@ func TestEmbeddedBootstrap(t *testing.T) {
 		if err := bcmd.Run(); err != nil {
 			t.Fatalf("bootstrap init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "Created fresh database") {
-			t.Errorf("expected 'Created fresh database': %s", stdout.String())
+		combined := stdout.String() + stderr.String()
+		if !strings.Contains(combined, "Created fresh database") {
+			t.Errorf("expected 'Created fresh database':\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 		}
 	})
 
@@ -210,8 +211,9 @@ func TestEmbeddedBootstrap(t *testing.T) {
 		if err := bcmd.Run(); err != nil {
 			t.Fatalf("bootstrap jsonl-import failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "Imported") {
-			t.Errorf("expected 'Imported' in output: %s", stdout.String())
+		combined := stdout.String() + stderr.String()
+		if !strings.Contains(combined, "Imported") {
+			t.Errorf("expected 'Imported' in output:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 		}
 	})
 

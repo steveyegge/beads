@@ -18,6 +18,8 @@ import (
 )
 
 // bdImport runs "bd import" with extra args. Returns combined output.
+// bd import writes status lines like "Imported N issues" to stderr
+// (see cmd/bd/import.go), so callers grepping for those need both streams.
 func bdImport(t *testing.T, bd, dir string, args ...string) string {
 	t.Helper()
 	fullArgs := append([]string{"import"}, args...)
@@ -30,7 +32,7 @@ func bdImport(t *testing.T, bd, dir string, args ...string) string {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("bd import %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return stdout.String()
+	return stdout.String() + stderr.String()
 }
 
 // writeJSONLFile writes issues as JSONL to the given path.
