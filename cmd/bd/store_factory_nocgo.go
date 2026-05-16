@@ -5,14 +5,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 	"github.com/steveyegge/beads/internal/storage/dolt"
-	pgstore "github.com/steveyegge/beads/internal/storage/postgres"
-	pgdsn "github.com/steveyegge/beads/internal/storage/postgres/dsn"
 )
 
 func usesSQLServer() bool {
@@ -51,24 +48,7 @@ func openConfiguredStore(ctx context.Context, beadsDir string, _ bool) (storage.
 	if daemonStore, err := tryDaemonClient(beadsDir, cfg); daemonStore != nil || err != nil {
 		return daemonStore, err
 	}
-	if cfg != nil && cfg.IsPostgresBackend() {
-		return newPostgresStore(ctx, cfg)
-	}
 	return newDoltStoreFromConfig(ctx, beadsDir)
-}
-
-// newPostgresStore applies BEADS_POSTGRES_* env overrides to the stored
-// stripped DSN, composes the full connection string (adding password last),
-// and opens a Postgres store.
-//
-// NOTE: be-0w5z7u (BackendInfo resolver) should also call
-// dsn.ApplyEnvOverrides so that `bd context` / `bd backend status` reflect
-// the runtime target rather than the persisted DSN.
-func newPostgresStore(ctx context.Context, cfg *configfile.Config) (*pgstore.Store, error) {
-	overriddenDSN, overrideFields := pgdsn.ApplyEnvOverrides(cfg.PostgresDSN)
-	password := os.Getenv("BEADS_POSTGRES_PASSWORD")
-	fullDSN := pgdsn.Compose(overriddenDSN, password)
-	return pgstore.Open(ctx, fullDSN, overriddenDSN, overrideFields)
 }
 
 // newDoltStoreFromConfig creates a SQL-server-backed storage backend from config.

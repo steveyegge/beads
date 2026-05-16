@@ -8,29 +8,24 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
-	pgdsn "github.com/steveyegge/beads/internal/storage/postgres/dsn"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
 // BackendStatusResult is the stable JSON shape for bd backend status.
 // All fields are always present; empty string / false / [] are used when not applicable.
 type BackendStatusResult struct {
-	Backend          string   `json:"backend"`
-	Mode             string   `json:"mode"`
-	Target           string   `json:"target"`
-	User             string   `json:"user,omitempty"`
-	SSLMode          string   `json:"sslmode,omitempty"`
-	Healthy          bool     `json:"healthy"`
-	Version          string   `json:"version"`
-	Error            string   `json:"error"`
-	LegacyDoltDir    string   `json:"legacy_dolt_dir"`
-	LegacyDoltFields []string `json:"legacy_dolt_fields"`
+	Backend string `json:"backend"`
+	Mode    string `json:"mode"`
+	Target  string `json:"target"`
+	User    string `json:"user,omitempty"`
+	Healthy bool   `json:"healthy"`
+	Version string `json:"version"`
+	Error   string `json:"error"`
 }
 
 var backendCmd = &cobra.Command{
@@ -84,13 +79,8 @@ Exit codes:
 // probeBackend performs the health probe for the given backend and returns the status result.
 func probeBackend(bi configfile.BackendInfo, beadsDir string) BackendStatusResult {
 	res := BackendStatusResult{
-		Backend:          bi.Backend,
-		Mode:             bi.Mode,
-		LegacyDoltDir:    bi.LegacyDoltDir,
-		LegacyDoltFields: bi.LegacyDoltFields,
-	}
-	if res.LegacyDoltFields == nil {
-		res.LegacyDoltFields = []string{}
+		Backend: bi.Backend,
+		Mode:    bi.Mode,
 	}
 
 	switch bi.Backend {
@@ -106,47 +96,9 @@ func probeBackend(bi configfile.BackendInfo, beadsDir string) BackendStatusResul
 		res.Error = "no backend configured — run 'bd init' to initialize"
 		return res
 
-	case configfile.BackendPostgres:
-		return probePostgres(res, bi)
-
 	default: // dolt
 		return probeDolt(res, bi, beadsDir)
 	}
-}
-
-func probePostgres(res BackendStatusResult, bi configfile.BackendInfo) BackendStatusResult {
-	if bi.Host == "" {
-		res.Error = "postgres backend configured but no host found in metadata.json"
-		return res
-	}
-
-	target := fmt.Sprintf("%s:%d/%s", bi.Host, bi.Port, bi.Database)
-	res.Target = target
-	res.User = bi.User
-	res.SSLMode = bi.SSLMode
-
-	strippedDSN := pgdsn.BuildFromFields(bi.Host, bi.Port, bi.User, bi.Database, bi.SSLMode)
-	password := os.Getenv("BEADS_POSTGRES_PASSWORD")
-	fullDSN := pgdsn.Compose(strippedDSN, password)
-
-	cfg, parseErr := pgconn.ParseConfig(fullDSN)
-	if parseErr != nil {
-		res.Error = fmt.Sprintf("invalid DSN: %v", parseErr)
-		return res
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, connErr := pgconn.ConnectConfig(ctx, cfg)
-	if connErr != nil {
-		res.Error = fmt.Sprintf("connect: %v", connErr)
-		return res
-	}
-	res.Healthy = true
-	res.Version = conn.ParameterStatus("server_version")
-	_ = conn.Close(ctx)
-	return res
 }
 
 func probeDolt(res BackendStatusResult, bi configfile.BackendInfo, beadsDir string) BackendStatusResult {
@@ -246,19 +198,6 @@ func printBackendStatusText(res BackendStatusResult) {
 		fmt.Printf("backend  %s  unconfigured  (%s)\n", ui.FailStyle.Render("●"), res.Error)
 		return
 
-	case configfile.BackendPostgres:
-		fmt.Printf("backend  %s\n", ui.AccentStyle.Render("postgres"))
-		fmt.Printf("  mode     %s\n", res.Mode)
-		if res.Target != "" {
-			fmt.Printf("  target   %s\n", res.Target)
-		}
-		if res.User != "" {
-			fmt.Printf("  user     %s\n", res.User)
-		}
-		if res.SSLMode != "" {
-			fmt.Printf("  sslmode  %s\n", res.SSLMode)
-		}
-
 	default: // dolt
 		modeLabel := res.Mode
 		if modeLabel == "" {
@@ -282,11 +221,6 @@ func printBackendStatusText(res BackendStatusResult) {
 		fmt.Printf("  version  %s\n", res.Version)
 	}
 
-	// Legacy Dolt dir warning (postgres backend only, informational)
-	if res.LegacyDoltDir != "" {
-		fmt.Printf("  %s  legacy  %s (inactive — backend is postgres)\n",
-			ui.RenderWarn("⚠"), res.LegacyDoltDir)
-	}
 }
 
 func init() {

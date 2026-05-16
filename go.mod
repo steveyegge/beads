@@ -12,14 +12,12 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/dolthub/driver v1.88.1
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/jackc/pgx/v5 v5.9.2
 	github.com/olebedev/when v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/dolt v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.43.0
 	go.opentelemetry.io/otel/exporters/stdout/stdoutmetric v1.43.0
@@ -39,9 +37,6 @@ require (
 	github.com/JohannesKaufmann/dom v0.2.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/jackc/pgpassfile v1.0.0 // indirect
-	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/moby/moby/api v1.54.1 // indirect
 	github.com/moby/moby/client v0.4.0 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect

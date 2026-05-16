@@ -34,19 +34,15 @@ type doctorCheck struct {
 // BackendBlock is the stable JSON shape for the top-level "backend" key in
 // bd doctor --json output. Always present regardless of backend type (§5 design).
 type BackendBlock struct {
-	Type             string   `json:"type"`
-	Mode             string   `json:"mode"`
-	Host             string   `json:"host"`
-	Port             int      `json:"port"`
-	Database         string   `json:"database"`
-	User             string   `json:"user,omitempty"`
-	SSLMode          string   `json:"sslmode,omitempty"`
-	Version          string   `json:"version"`
-	Healthy          bool     `json:"healthy"`
-	ProjectIDMatch   bool     `json:"project_id_match"`
-	Error            string   `json:"error"`
-	LegacyDoltDir    string   `json:"legacy_dolt_dir"`
-	LegacyDoltFields []string `json:"legacy_dolt_fields"`
+	Type     string `json:"type"`
+	Mode     string `json:"mode"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Database string `json:"database"`
+	User     string `json:"user,omitempty"`
+	Version  string `json:"version"`
+	Healthy  bool   `json:"healthy"`
+	Error    string `json:"error"`
 }
 
 type doctorResult struct {
@@ -579,38 +575,19 @@ func runDiagnostics(path string) doctorResult {
 	// Dolt: run RunDoltHealthChecks as before.
 	bi := configfile.ResolveBackendInfo(beadsDir)
 	result.Backend = BackendBlock{
-		Type:             bi.Backend,
-		Mode:             bi.Mode,
-		Host:             bi.Host,
-		Port:             bi.Port,
-		Database:         bi.Database,
-		User:             bi.User,
-		SSLMode:          bi.SSLMode,
-		LegacyDoltDir:    bi.LegacyDoltDir,
-		LegacyDoltFields: bi.LegacyDoltFields,
-	}
-	if result.Backend.LegacyDoltFields == nil {
-		result.Backend.LegacyDoltFields = []string{}
+		Type:     bi.Backend,
+		Mode:     bi.Mode,
+		Host:     bi.Host,
+		Port:     bi.Port,
+		Database: bi.Database,
+		User:     bi.User,
 	}
 
-	if bi.Backend == configfile.BackendPostgres {
-		probe := doctor.ProbePostgresHealth(beadsDir)
-		result.Checks = append(result.Checks, convertDoctorCheck(probe.Check))
-		result.Backend.Healthy = probe.Healthy
-		result.Backend.Version = probe.Version
-		result.Backend.ProjectIDMatch = probe.ProjectIDMatch
-		if probe.Check.Status != statusOK {
-			result.Backend.Error = probe.Check.Message
-			result.OverallOK = false
-		}
-	} else {
-		// Dolt health checks (connection, schema, issue count, status).
-		for _, dc := range doctor.RunDoltHealthChecks(path) {
-			result.Checks = append(result.Checks, convertDoctorCheck(dc))
-		}
-		// Dolt backend is healthy when we can run checks.
-		result.Backend.Healthy = true
+	// Dolt health checks (connection, schema, issue count, status).
+	for _, dc := range doctor.RunDoltHealthChecks(path) {
+		result.Checks = append(result.Checks, convertDoctorCheck(dc))
 	}
+	result.Backend.Healthy = true
 
 	// Archive status (INFO — all backends, all formats).
 	archiveCheck := convertDoctorCheck(doctor.CheckArchiveStatus(path))
