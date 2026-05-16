@@ -87,8 +87,7 @@ func TestSearchIssues_Lite_BlankHeavyFields(t *testing.T) {
 }
 
 // assertLiteRow / assertFullRow / helpers mirror the per-backend pattern in
-// internal/storage/dolt/lite_search_test.go and
-// internal/storage/postgres/lite_search_test.go. Each backend's test owns its
+// internal/storage/dolt/lite_search_test.go. Each backend's test owns its
 // own copy because they share no test helpers across packages — _test.go
 // helpers do not export across package boundaries.
 
