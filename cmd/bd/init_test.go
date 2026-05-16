@@ -2038,12 +2038,12 @@ func TestInitBackendFlag(t *testing.T) {
 	t.Run("unknown_backend_errors", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		cmd := exec.Command(bd, "init", "--backend", "postgres", "--quiet")
+		cmd := exec.Command(bd, "init", "--backend", "notavalidbackend", "--quiet")
 		cmd.Dir = tmpDir
 		cmd.Env = os.Environ()
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			t.Fatal("Expected non-zero exit for --backend=postgres, but command succeeded")
+			t.Fatal("Expected non-zero exit for --backend=notavalidbackend, but command succeeded")
 		}
 
 		outStr := string(out)
