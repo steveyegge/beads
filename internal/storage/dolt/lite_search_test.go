@@ -1,5 +1,3 @@
-//go:build !no_dolt && dolt_only
-
 package dolt
 
 import (

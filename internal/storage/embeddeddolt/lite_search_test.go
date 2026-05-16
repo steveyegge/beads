@@ -1,4 +1,4 @@
-//go:build !no_dolt && cgo && dolt_only
+//go:build cgo
 
 package embeddeddolt_test
 
