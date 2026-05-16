@@ -1034,7 +1034,17 @@ var rootCmd = &cobra.Command{
 		// Skip auto-import when the user is explicitly running "bd import" —
 		// the import command handles JSONL files itself and auto-importing
 		// first would interfere (double-import / upsert confusion).
-		if store != nil && !useReadOnly && !globalFlag && cmd.Name() != "import" {
+		//
+		// Gate to ServerModeEmbedded only. In Owned/External (shared)
+		// server mode there is no per-clone embedded DB to recover into:
+		// the empty-DB probe runs before the session selects the
+		// configured database, always reports "empty", and fires a
+		// spurious auto-import against the wrong/empty view on every
+		// command. The data is safe on the shared server; the import
+		// just fails noisily. Auto-import is only meaningful for the
+		// legacy in-process embedded path it was written for.
+		if store != nil && !useReadOnly && !globalFlag && cmd.Name() != "import" &&
+			doltserver.ResolveServerMode(beadsDir) == doltserver.ServerModeEmbedded {
 			maybeAutoImportJSONL(rootCtx, store, beadsDir)
 		}
 
