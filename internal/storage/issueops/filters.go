@@ -85,7 +85,7 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 	}
 
 	if filter.IssueType != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM %s WHERE issue_type = ?)", tables.Main))
+		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, *filter.IssueType)
 	}
 	if len(filter.ExcludeTypes) > 0 {
