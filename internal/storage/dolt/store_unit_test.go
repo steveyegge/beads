@@ -262,6 +262,7 @@ func TestApplyConfigDefaults_TestModeWithPort(t *testing.T) {
 func TestApplyConfigDefaults_TestModeBlocksProdPort(t *testing.T) {
 	origTestMode := os.Getenv("BEADS_TEST_MODE")
 	origPort := os.Getenv("BEADS_DOLT_PORT")
+	origServerPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
 	defer func() {
 		if origTestMode == "" {
 			os.Unsetenv("BEADS_TEST_MODE")
@@ -273,10 +274,16 @@ func TestApplyConfigDefaults_TestModeBlocksProdPort(t *testing.T) {
 		} else {
 			os.Setenv("BEADS_DOLT_PORT", origPort)
 		}
+		if origServerPort == "" {
+			os.Unsetenv("BEADS_DOLT_SERVER_PORT")
+		} else {
+			os.Setenv("BEADS_DOLT_SERVER_PORT", origServerPort)
+		}
 	}()
 
 	os.Setenv("BEADS_TEST_MODE", "1")
-	os.Setenv("BEADS_DOLT_PORT", "3307") // Production port
+	os.Setenv("BEADS_DOLT_PORT", "3307")  // Production port
+	os.Unsetenv("BEADS_DOLT_SERVER_PORT") // Must not shadow BEADS_DOLT_PORT (gc-rig env leak)
 
 	cfg := &Config{}
 	applyConfigDefaults(cfg)
