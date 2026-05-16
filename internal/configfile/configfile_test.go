@@ -755,6 +755,7 @@ func TestGetDoltProxiedServerRootPath_ResolutionChain(t *testing.T) {
 		}
 	})
 }
+
 // TestGetBackend tests that GetBackend returns the configured backend name,
 // defaulting to BackendDolt when unset.
 func TestGetBackend(t *testing.T) {
