@@ -755,24 +755,25 @@ func TestGetDoltProxiedServerRootPath_ResolutionChain(t *testing.T) {
 		}
 	})
 }
-
-// TestGetBackendAlwaysDolt tests that GetBackend always returns "dolt".
-func TestGetBackendAlwaysDolt(t *testing.T) {
+// TestGetBackend tests that GetBackend returns the configured backend name,
+// defaulting to BackendDolt when unset.
+func TestGetBackend(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  *Config
+		want string
 	}{
-		{name: "explicit dolt", cfg: &Config{Backend: BackendDolt}},
-		{name: "empty backend", cfg: &Config{Backend: ""}},
-		{name: "legacy config", cfg: &Config{}},
-		{name: "stale sqlite value", cfg: &Config{Backend: "sqlite"}},
-		{name: "unknown backend", cfg: &Config{Backend: "postgres"}},
+		{name: "explicit dolt", cfg: &Config{Backend: BackendDolt}, want: BackendDolt},
+		{name: "empty backend", cfg: &Config{Backend: ""}, want: BackendDolt},
+		{name: "legacy config", cfg: &Config{}, want: BackendDolt},
+		{name: "postgres backend", cfg: &Config{Backend: "postgres"}, want: BackendPostgres},
+		{name: "uppercase normalised", cfg: &Config{Backend: "POSTGRES"}, want: BackendPostgres},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.cfg.GetBackend(); got != BackendDolt {
-				t.Errorf("GetBackend() = %q, want %q", got, BackendDolt)
+			if got := tt.cfg.GetBackend(); got != tt.want {
+				t.Errorf("GetBackend() = %q, want %q", got, tt.want)
 			}
 		})
 	}

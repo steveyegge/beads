@@ -217,6 +217,8 @@ Use --remote to push to a specific named remote instead of the default.
 The remote must already exist (see 'bd dolt remote add').`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
+		beadsDir := selectedDoltBeadsDir()
+		requireDoltCap(beadsDir, storage.CapPush)
 		st := getStore()
 		if st == nil {
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
@@ -280,6 +282,8 @@ Use --remote to pull from a specific named remote instead of the default.
 The remote must already exist (see 'bd dolt remote add').`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
+		beadsDir := selectedDoltBeadsDir()
+		requireDoltCap(beadsDir, storage.CapPull)
 		st := getStore()
 		if st == nil {
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
@@ -333,6 +337,8 @@ auto-commit was off or changes were made externally.
 For more options (--stdin, custom messages), see: bd vc commit`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
+		beadsDir := selectedDoltBeadsDir()
+		requireDoltCap(beadsDir, storage.CapVersionControl)
 		st := getStore()
 		if st == nil {
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
@@ -891,6 +897,8 @@ var doltRemoteAddCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
+		beadsDir := selectedDoltBeadsDir()
+		requireDoltCap(beadsDir, storage.CapVersionControl)
 		st := getStore()
 		if st == nil {
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
@@ -994,6 +1002,8 @@ var doltRemoteListCmd = &cobra.Command{
 	Short: "List configured Dolt remotes (SQL server + CLI)",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
+		beadsDir := selectedDoltBeadsDir()
+		requireDoltCap(beadsDir, storage.CapVersionControl)
 		st := getStore()
 		if st == nil {
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
@@ -1112,6 +1122,8 @@ var doltRemoteRemoveCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
+		beadsDir := selectedDoltBeadsDir()
+		requireDoltCap(beadsDir, storage.CapVersionControl)
 		st := getStore()
 		if st == nil {
 			fmt.Fprintf(os.Stderr, "Error: no store available\n")
