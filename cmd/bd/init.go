@@ -35,10 +35,16 @@ var initCmd = &cobra.Command{
 	GroupID: "setup",
 	Short:   "Initialize bd in the current directory",
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
-and Dolt database. Optionally specify a custom issue prefix.
+and storage backend. Optionally specify a custom issue prefix.
 
-Dolt is the default (and only supported) storage backend. The legacy SQLite
-backend has been removed. Use --backend=sqlite to see migration instructions.
+Backends:
+  --backend=dolt      (default) Embedded or server-mode Dolt database.
+  --backend=postgres  PostgreSQL. Pass --dsn, or --pg-host/--pg-port, or
+                      let bd auto-discover a local cluster.
+                      Set password via BEADS_POSTGRES_PASSWORD env var.
+
+The legacy SQLite backend has been removed.
+Use --backend=sqlite to see migration instructions.
 
 Use --database to specify an existing server database name, overriding the
 default prefix-based naming. This is useful when an external tool (e.g. an orchestrator)
@@ -54,11 +60,13 @@ Pass --server to use an external dolt sql-server instead. In server mode,
 set connection details with --server-host, --server-port, and --server-user.
 Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
-Auto-export is enabled by default. After every write command, bd exports
-issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv), interchange, and backups up to date without extra steps.
-Cross-machine sync uses Dolt remotes, not JSONL import/export.
-To disable: bd config set export.auto false
+Archive (JSONL export):
+  Enabled by default for Dolt; disabled for Postgres. After every write command,
+  bd exports issues to .beads/issues.jsonl (throttled, 60s default). This keeps
+  viewers (bv), interchange, and backups up to date without extra steps.
+  Cross-machine sync uses backend remotes, not JSONL import/export.
+  Enable:  bd config set archive.format jsonl
+  Disable: bd config set archive.format none
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
   Skips all interactive prompts, using sensible defaults:
@@ -156,9 +164,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Handle --backend flag: "dolt" is the only supported backend.
-		// "sqlite" is accepted for backward compatibility but prints a
-		// deprecation notice and exits with an error.
+		// Handle --backend flag. "sqlite" is accepted for backward compatibility
+		// but prints a deprecation notice and exits with an error.
 		if backendFlag == "sqlite" {
 			fmt.Fprintf(os.Stderr, "%s The SQLite backend has been removed.\n\n", ui.RenderWarn("⚠ DEPRECATED:"))
 			fmt.Fprintf(os.Stderr, "Dolt is now the default (and only) storage backend for beads.\n")
