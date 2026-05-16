@@ -43,7 +43,7 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 
 	// Dolt versioning — wisps and no-history issues skip DOLT_COMMIT.
 	if !issue.Ephemeral && !issue.NoHistory {
-		if err := s.doltAddAndCommit(ctx, []string{"issues", "events"},
+		if err := s.doltAddAndCommit(ctx, []string{"issues", "events", "labels", "comments"},
 			fmt.Sprintf("bd: create %s", issue.ID)); err != nil {
 			return err
 		}

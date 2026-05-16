@@ -91,7 +91,7 @@ func CreateIssueInTx(ctx context.Context, tx *sql.Tx, bc *BatchContext, issue *t
 		}
 	}
 
-	if err := PersistLabels(ctx, tx, issue); err != nil {
+	if err := PersistLabels(ctx, tx, issue, actor, eventTable, isNew); err != nil {
 		return err
 	}
 	return PersistComments(ctx, tx, issue)
@@ -283,7 +283,7 @@ func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue 
 	return existingCount == 0, nil
 }
 
-func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
+func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue, actor, eventTable string, recordEvents bool) error {
 	if len(issue.Labels) == 0 {
 		return nil
 	}
@@ -291,7 +291,18 @@ func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 	if IsWisp(issue) {
 		labelTable = "wisp_labels"
 	}
+	seen := make(map[string]struct{}, len(issue.Labels))
 	for _, label := range issue.Labels {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		if recordEvents {
+			if err := AddLabelInTx(ctx, tx, labelTable, eventTable, issue.ID, label, actor); err != nil {
+				return fmt.Errorf("failed to insert label %q for %s: %w", label, issue.ID, err)
+			}
+			continue
+		}
 		//nolint:gosec // G201: table is determined by ephemeral flag
 		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO %s (issue_id, label)
