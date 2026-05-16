@@ -108,6 +108,14 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		serverConfigPath, _ := cmd.Flags().GetString("proxied-server-config")
 		serverLogPath, _ := cmd.Flags().GetString("proxied-server-log-path")
 		serverRootPath, _ := cmd.Flags().GetString("proxied-server-root-path")
+		// Postgres backend flags (read unconditionally; validated at use site).
+		pgDSN, _ := cmd.Flags().GetString("dsn")
+		pgHost, _ := cmd.Flags().GetString("pg-host")
+		pgPort, _ := cmd.Flags().GetInt("pg-port")
+		pgUser, _ := cmd.Flags().GetString("pg-user")
+		pgDatabase, _ := cmd.Flags().GetString("pg-database")
+		pgSSLMode, _ := cmd.Flags().GetString("pg-sslmode")
+		pgClusterDir, _ := cmd.Flags().GetString("pg-cluster-dir")
 		if os.Getenv("BEADS_DOLT_PROXIED_SERVER") == "1" {
 			initProxiedServer = true
 		}
@@ -160,8 +168,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			fmt.Fprintf(os.Stderr, "  bd init --from-jsonl\n\n")
 			fmt.Fprintf(os.Stderr, "See: https://github.com/steveyegge/beads/blob/main/docs/DOLT-BACKEND.md\n")
 			os.Exit(1)
-		} else if backendFlag != "" && backendFlag != "dolt" {
-			FatalError("unknown backend %q: only \"dolt\" is supported", backendFlag)
+		} else if backendFlag != "" && backendFlag != "dolt" && backendFlag != "postgres" {
+			FatalError("unknown backend %q: must be \"dolt\" or \"postgres\"", backendFlag)
 		}
 
 		// Validate --database format early, before any side effects.
@@ -193,8 +201,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			FatalError("--team requires interactive prompts and cannot be used with --non-interactive")
 		}
 
-		// Dolt is the only supported backend
 		backend := configfile.BackendDolt
+		if backendFlag == "postgres" {
+			backend = configfile.BackendPostgres
+		}
 
 		// Also treat BEADS_DOLT_SERVER_MODE=1 env var as --server.
 		if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
@@ -569,6 +579,26 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 
 		ctx := rootCtx
+
+		// Postgres backend: branch off before any Dolt-specific setup.
+		if backend == configfile.BackendPostgres {
+			hasPgFlags := cmd.Flags().Changed("pg-host") || cmd.Flags().Changed("pg-port") ||
+				cmd.Flags().Changed("pg-user") || cmd.Flags().Changed("pg-database") ||
+				cmd.Flags().Changed("pg-sslmode")
+			if pgDSN != "" && hasPgFlags {
+				FatalError("--dsn and --pg-* flags are mutually exclusive")
+			}
+			runPostgresInit(ctx, beadsDir, prefix, pgInitParams{
+				rawDSN:     pgDSN,
+				host:       pgHost,
+				port:       pgPort,
+				user:       pgUser,
+				database:   pgDatabase,
+				sslmode:    pgSSLMode,
+				clusterDir: pgResolveClusterDir(pgClusterDir),
+			})
+			return
+		}
 
 		// Create Dolt storage backend
 		storagePath := doltserver.ResolveDoltDir(beadsDir)
@@ -1505,8 +1535,17 @@ func init() {
 	initCmd.Flags().Bool("non-interactive", false, "Skip all interactive prompts (auto-detected in CI or non-TTY environments)")
 	initCmd.Flags().String("role", "", "Set beads role without prompting: \"maintainer\" or \"contributor\"")
 
-	// Backend selection (dolt is the only supported backend; sqlite accepted for deprecation notice)
-	initCmd.Flags().String("backend", "", "Storage backend (default: dolt). --backend=sqlite prints deprecation notice.")
+	// Backend selection
+	initCmd.Flags().String("backend", "", "Storage backend: \"dolt\" (default) or \"postgres\". --backend=sqlite prints deprecation notice.")
+
+	// Postgres backend flags (only consulted when --backend=postgres)
+	initCmd.Flags().String("dsn", "", "Full Postgres connection DSN (mutually exclusive with --pg-* flags)")
+	initCmd.Flags().String("pg-host", "", "Postgres host")
+	initCmd.Flags().Int("pg-port", 0, "Postgres port")
+	initCmd.Flags().String("pg-user", "", "Postgres user (default: beads)")
+	initCmd.Flags().String("pg-database", "", "Postgres database name (default: sanitized prefix)")
+	initCmd.Flags().String("pg-sslmode", "", "Postgres SSL mode: disable (loopback default) or require (non-loopback default)")
+	initCmd.Flags().String("pg-cluster-dir", "", "Postgres cluster directory for host/port discovery (default: $XDG_DATA_HOME/beads/postgres/data)")
 
 	// Dolt server connection flags
 	initCmd.Flags().Bool("server", false, "Use external dolt sql-server instead of embedded engine")
