@@ -290,13 +290,13 @@ func selectedNoDBBeadsDir(cmd *cobra.Command) string {
 			return selectedBeadsDir
 		}
 	}
-	if dbPath != "" {
-		if selectedBeadsDir := resolveCommandBeadsDir(dbPath); selectedBeadsDir != "" {
+	if os.Getenv("BEADS_DIR") != "" {
+		if selectedBeadsDir := beads.FindBeadsDir(); selectedBeadsDir != "" {
 			return selectedBeadsDir
 		}
 	}
-	if os.Getenv("BEADS_DIR") != "" {
-		if selectedBeadsDir := beads.FindBeadsDir(); selectedBeadsDir != "" {
+	if dbPath != "" {
+		if selectedBeadsDir := resolveCommandBeadsDir(dbPath); selectedBeadsDir != "" {
 			return selectedBeadsDir
 		}
 	}
@@ -706,6 +706,19 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		selectedNoDBCommand := isSelectedNoDBCommand(cmd)
+
+		// Commands that skip store initialization still need their config/env
+		// rebound to the selected workspace before they inspect server mode or
+		// other startup settings.
+		if selectedNoDBCommand {
+			prepareSelectedNoDBContext(selectedNoDBBeadsDir(cmd))
+			refreshBoundCommandConfig(cmd)
+			if _, err := getDoltAutoCommitMode(); err != nil {
+				FatalError("%v", err)
+			}
+		}
+
 		// GH#1093: Check noDbCommands BEFORE expensive operations
 		// to avoid spawning git subprocesses for simple commands
 		// like "bd version" that don't need database access.
@@ -779,15 +792,18 @@ var rootCmd = &cobra.Command{
 
 		// Commands that skip store initialization still need early config/env
 		// setup before they inspect server mode or per-project Dolt settings.
-		// Rebind them to the selected workspace so explicit --db / BEADS_DB
-		// targets behave consistently across doctor/bootstrap/context/dolt.
-		if skipsStoreInit {
+		// Explicit-target no-DB commands must bind to the selected workspace,
+		// while all other no-store commands preserve the historical ambient
+		// load-from-current-workspace behavior.
+		if selectedNoDBCommand {
 			prepareSelectedNoDBContext(selectedNoDBBeadsDir(cmd))
 			refreshBoundCommandConfig(cmd)
-			if beadsDir := os.Getenv("BEADS_DIR"); beadsDir == "" {
-				loadEnvironment()
-				loadServerModeFromConfig()
+			if _, err := getDoltAutoCommitMode(); err != nil {
+				FatalError("%v", err)
 			}
+		} else if skipsStoreInit {
+			loadEnvironment()
+			loadServerModeFromConfig()
 			if _, err := getDoltAutoCommitMode(); err != nil {
 				FatalError("%v", err)
 			}

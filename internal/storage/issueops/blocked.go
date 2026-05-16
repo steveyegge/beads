@@ -853,6 +853,9 @@ func GetBlockedIssuesInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 			WHERE type IN ('blocks', 'waits-for', 'conditional-blocks')
 		`, depTable))
 		if err != nil {
+			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+				continue
+			}
 			return nil, fmt.Errorf("get blocking deps from %s: %w", depTable, err)
 		}
 

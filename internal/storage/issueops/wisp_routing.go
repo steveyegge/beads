@@ -52,6 +52,9 @@ func WispIDSetInTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]st
 		q := fmt.Sprintf("SELECT id FROM wisps WHERE id IN (%s)", strings.Join(placeholders, ","))
 		rows, err := tx.QueryContext(ctx, q, args...)
 		if err != nil {
+			if isTableNotExistError(err) {
+				return set, nil
+			}
 			return nil, fmt.Errorf("wisp id set: %w", err)
 		}
 		for rows.Next() {
