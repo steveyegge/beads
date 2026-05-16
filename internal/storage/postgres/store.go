@@ -38,10 +38,10 @@ func (s *Store) OverrideFields() []string {
 	return s.overrideFields
 }
 
-// Open attempts a TCP probe against the Postgres server at the address
-// encoded in fullDSN. On success it returns a Store ready for use. On
-// failure it wraps the connection error with a redacted target string and
-// the overrideFields list (NFR-4).
+// Open connects to the Postgres server at the address encoded in fullDSN
+// using pgconn (full authentication handshake). On success it returns a
+// Store ready for use. On failure it wraps the connection error with a
+// redacted target string and the overrideFields list (NFR-4).
 //
 // fullDSN must include the password; strippedDSN (no password) is used
 // only for the redacted error message.
@@ -51,7 +51,6 @@ func Open(ctx context.Context, fullDSN, strippedDSN string, overrideFields []str
 		return nil, fmt.Errorf("postgres: invalid DSN: %w", err)
 	}
 
-	// Quick TCP probe — cheaper than a full pgx connection for the error path.
 	conn, err := pgconn.ConnectConfig(ctx, cfg)
 	if err != nil {
 		target := pgdsn.RenderRedacted(strippedDSN)
