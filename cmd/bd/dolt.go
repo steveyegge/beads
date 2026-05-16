@@ -68,7 +68,9 @@ Examples:
   bd dolt set database myproject
   bd dolt set host 192.168.1.100 --update-config
   bd dolt set data-dir /home/user/.beads-dolt/myproject
-  bd dolt test`,
+  bd dolt test
+
+For backend-agnostic health reporting, see 'bd backend status'.`,
 }
 
 var doltShowCmd = &cobra.Command{

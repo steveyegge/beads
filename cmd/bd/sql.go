@@ -50,7 +50,7 @@ WARNING: Direct database access bypasses the storage layer. Use with caution.`,
 				fmt.Fprintln(os.Stderr, "note: this command requires direct storage access and cannot run via the bdd daemon.")
 				fmt.Fprintln(os.Stderr, `  Bypass daemon for this call: BEADS_DAEMON_MODE=off bd sql "..."`)
 				fmt.Fprintln(os.Stderr, "  Or disable daemon mode: bd config set daemon_mode off")
-				os.Exit(0)
+				os.Exit(1)
 			}
 			FatalErrorRespectJSON("storage backend does not support raw DB access")
 		}
