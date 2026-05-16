@@ -45,9 +45,8 @@ func GetReadyWorkInTx(
 		whereClauses = append(whereClauses, "priority = ?")
 		args = append(args, *filter.Priority)
 	}
-	// Use subquery for type filter to prevent join issues.
 	if filter.Type != "" {
-		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
+		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, filter.Type)
 	} else {
 		excludeTypes := []string{"merge-request", "gate", "molecule", "message", "agent", "role", "rig"}
@@ -68,7 +67,7 @@ func GetReadyWorkInTx(
 			placeholders[i] = "?"
 			args = append(args, t)
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM issues WHERE issue_type NOT IN (%s))", strings.Join(placeholders, ",")))
+		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 	// Unassigned takes precedence over Assignee filter.
 	if filter.Unassigned {
@@ -165,32 +164,31 @@ func GetReadyWorkInTx(
 		}
 	}
 
-	// Exclude blocked issues.
-	blockedIDs, err := computeBlockedFn(ctx, tx, filter.IncludeEphemeral)
-	if err == nil && len(blockedIDs) > 0 {
-		// Also exclude children of blocked parents.
-		childrenOfBlocked, childErr := getChildrenOfIssuesInTx(ctx, tx, blockedIDs)
-		if childErr == nil {
-			blockedIDs = append(blockedIDs, childrenOfBlocked...)
-		}
-
-		for start := 0; start < len(blockedIDs); start += queryBatchSize {
-			end := start + queryBatchSize
-			if end > len(blockedIDs) {
-				end = len(blockedIDs)
+	// Exclude blocked issues eagerly for unbounded queries. Limited queries page
+	// candidate IDs first and filter blockers per page below, avoiding a full
+	// dependency graph scan when the caller only needs a small ready set.
+	if filter.Limit == 0 {
+		blockedIDs, err := computeBlockedFn(ctx, tx, filter.IncludeEphemeral)
+		if err == nil && len(blockedIDs) > 0 {
+			// Also exclude children of blocked parents.
+			childrenOfBlocked, childErr := getChildrenOfIssuesInTx(ctx, tx, blockedIDs)
+			if childErr == nil {
+				blockedIDs = append(blockedIDs, childrenOfBlocked...)
 			}
-			placeholders, batchArgs := buildSQLInClause(blockedIDs[start:end])
-			args = append(args, batchArgs...)
-			whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (%s)", placeholders))
+
+			for start := 0; start < len(blockedIDs); start += queryBatchSize {
+				end := start + queryBatchSize
+				if end > len(blockedIDs) {
+					end = len(blockedIDs)
+				}
+				placeholders, batchArgs := buildSQLInClause(blockedIDs[start:end])
+				args = append(args, batchArgs...)
+				whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (%s)", placeholders))
+			}
 		}
 	}
 
 	whereSQL := "WHERE " + strings.Join(whereClauses, " AND ")
-
-	limitSQL := ""
-	if filter.Limit > 0 {
-		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
-	}
 
 	// Build ORDER BY clause based on SortPolicy.
 	var orderBySQL string
@@ -208,32 +206,61 @@ func GetReadyWorkInTx(
 		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
 	}
 
-	//nolint:gosec // G201: whereSQL contains column comparisons with ?, limitSQL is a safe integer
-	query := fmt.Sprintf(`
-		SELECT id FROM issues
-		%s
-		%s
-		%s
-	`, whereSQL, orderBySQL, limitSQL)
-
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ready work: %w", err)
-	}
-
-	// Collect IDs in order.
 	var issueIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("get ready work: scan id: %w", err)
+	if filter.Limit > 0 {
+		pageSize := readyWorkPageSize(filter.Limit)
+		for offset := 0; len(issueIDs) < filter.Limit; offset += pageSize {
+			//nolint:gosec // G201: whereSQL/orderBySQL are hardcoded, pageSize/offset are integers
+			query := fmt.Sprintf(`
+				SELECT id FROM issues
+				%s
+				%s
+				LIMIT %d OFFSET %d
+			`, whereSQL, orderBySQL, pageSize, offset)
+
+			pageIDs, err := queryReadyIssueIDPage(ctx, tx, query, args)
+			if err != nil {
+				return nil, err
+			}
+			if len(pageIDs) == 0 {
+				break
+			}
+
+			blockedPageIDs, err := ComputeBlockedCandidateIDsInTx(ctx, tx, pageIDs, filter.IncludeEphemeral)
+			if err != nil {
+				return nil, fmt.Errorf("get ready work: filter blocked candidates: %w", err)
+			}
+			blockedPageSet := make(map[string]struct{}, len(blockedPageIDs))
+			for _, id := range blockedPageIDs {
+				blockedPageSet[id] = struct{}{}
+			}
+
+			for _, id := range pageIDs {
+				if _, blocked := blockedPageSet[id]; blocked {
+					continue
+				}
+				issueIDs = append(issueIDs, id)
+				if len(issueIDs) >= filter.Limit {
+					break
+				}
+			}
+			if len(pageIDs) < pageSize {
+				break
+			}
 		}
-		issueIDs = append(issueIDs, id)
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("get ready work: rows: %w", err)
+	} else {
+		//nolint:gosec // G201: whereSQL/orderBySQL are hardcoded strings and ? placeholders
+		query := fmt.Sprintf(`
+			SELECT id FROM issues
+			%s
+			%s
+		`, whereSQL, orderBySQL)
+
+		var err error
+		issueIDs, err = queryReadyIssueIDPage(ctx, tx, query, args)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Batch-fetch full issues preserving order.
@@ -267,6 +294,39 @@ func GetReadyWorkInTx(
 	}
 
 	return ordered, nil
+}
+
+func readyWorkPageSize(limit int) int {
+	pageSize := limit * 4
+	if pageSize < 100 {
+		return 100
+	}
+	if pageSize > 1000 {
+		return 1000
+	}
+	return pageSize
+}
+
+func queryReadyIssueIDPage(ctx context.Context, tx *sql.Tx, query string, args []interface{}) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ready work: %w", err)
+	}
+
+	var issueIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("get ready work: scan id: %w", err)
+		}
+		issueIDs = append(issueIDs, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get ready work: rows: %w", err)
+	}
+	return issueIDs, nil
 }
 
 // getChildrenOfDeferredParentsInTx returns IDs of issues whose parent has a

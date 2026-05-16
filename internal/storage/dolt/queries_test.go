@@ -303,6 +303,86 @@ func TestGetReadyWork_LimitFilter(t *testing.T) {
 	}
 }
 
+func TestGetReadyWork_LimitSkipsBlockedCandidates(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	blocker := &types.Issue{
+		ID:        "rw-page-blocker",
+		Title:     "Blocking Gate",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeGate,
+	}
+	issues := []*types.Issue{
+		blocker,
+		{
+			ID:        "rw-page-blocked-1",
+			Title:     "Blocked 1",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		},
+		{
+			ID:        "rw-page-blocked-2",
+			Title:     "Blocked 2",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		},
+		{
+			ID:        "rw-page-ready-1",
+			Title:     "Ready 1",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		},
+		{
+			ID:        "rw-page-ready-2",
+			Title:     "Ready 2",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		},
+	}
+	for _, iss := range issues {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", iss.ID, err)
+		}
+	}
+	for _, blockedID := range []string{"rw-page-blocked-1", "rw-page-blocked-2"} {
+		dep := &types.Dependency{
+			IssueID:     blockedID,
+			DependsOnID: blocker.ID,
+			Type:        types.DepBlocks,
+		}
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("failed to add dependency for %s: %v", blockedID, err)
+		}
+	}
+
+	work, err := store.GetReadyWork(ctx, types.WorkFilter{Limit: 2, SortPolicy: types.SortPolicyOldest})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	ids := issueIDs(work)
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 ready items after skipping blocked candidates, got %d: %v", len(ids), ids)
+	}
+	idSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		idSet[id] = struct{}{}
+	}
+	for _, blockedID := range []string{"rw-page-blocked-1", "rw-page-blocked-2"} {
+		if _, ok := idSet[blockedID]; ok {
+			t.Fatalf("blocked issue %s appeared in limited ready work: %v", blockedID, ids)
+		}
+	}
+}
+
 func TestGetReadyWork_TypeFilter(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
