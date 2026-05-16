@@ -113,6 +113,20 @@ func importFromLocalJSONLFull(ctx context.Context, store storage.DoltStorage, lo
 			return nil, fmt.Errorf("failed to parse JSONL line: %w", err)
 		}
 
+		// Skip the optional beads-jsonl metadata/header record.
+		// Canonical exports produced by the stable-ordering /
+		// git-merge convention prepend a schema+provenance line, e.g.
+		// {"_schema":"beads-jsonl/1","_dolt_branch":"main",
+		// "_dolt_commit":"...","_sort":"stable-v1"}. It carries no
+		// _type and no issue fields; without this guard it falls
+		// through to the issue path, unmarshals into an empty Issue,
+		// and aborts the whole import with "validation failed for
+		// issue : title is required". Identified by the _schema
+		// sentinel, which real issue/memory records never carry.
+		if _, isHeader := peek["_schema"]; isHeader {
+			continue
+		}
+
 		// Check if this is a memory record
 		if rawType, ok := peek["_type"]; ok {
 			var typeStr string
