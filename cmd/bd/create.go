@@ -290,6 +290,7 @@ var createCmd = &cobra.Command{
 				NoHistory:          noHistory,
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
+				Labels:             labels,
 				MolType:            molType,
 				WispType:           wispType,
 				DueAt:              dueAt,
@@ -473,6 +474,8 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		labels = mergeCreateLabels(labels, inheritedLabels)
+
 		issue := buildCreateIssue(createIssueParams{
 			ID:                 explicitID,
 			Title:              title,
@@ -490,6 +493,7 @@ var createCmd = &cobra.Command{
 			NoHistory:          noHistory,
 			CreatedBy:          getActorWithGit(),
 			Owner:              getOwner(),
+			Labels:             labels,
 			MolType:            molType,
 			WispType:           wispType,
 			EventKind:          eventCategory,
@@ -543,9 +547,9 @@ var createCmd = &cobra.Command{
 		}
 
 		// Track whether any post-create writes occurred. CreateIssue commits
-		// the issue to Dolt internally, but subsequent AddDependency/AddLabel
-		// calls only write to the working set. A follow-up Dolt commit is
-		// needed to persist them (GH#2009).
+		// the issue and its initial labels to Dolt internally, but subsequent
+		// AddDependency calls only write to the working set. A follow-up Dolt
+		// commit is needed to persist them (GH#2009).
 		postCreateWrites := false
 
 		// If parent was specified, add parent-child dependency
@@ -557,28 +561,6 @@ var createCmd = &cobra.Command{
 			}
 			if err := store.AddDependency(ctx, dep, actor); err != nil {
 				WarnError("failed to add parent-child dependency %s -> %s: %v", issue.ID, parentID, err)
-			} else {
-				postCreateWrites = true
-			}
-		}
-
-		// Merge inherited parent labels with user-specified labels (GH#2100)
-		if len(inheritedLabels) > 0 {
-			seen := make(map[string]bool)
-			for _, l := range labels {
-				seen[l] = true
-			}
-			for _, l := range inheritedLabels {
-				if !seen[l] {
-					labels = append(labels, l)
-				}
-			}
-		}
-
-		// Add labels if specified
-		for _, label := range labels {
-			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
-				WarnError("failed to add label %s: %v", label, err)
 			} else {
 				postCreateWrites = true
 			}
@@ -677,8 +659,8 @@ var createCmd = &cobra.Command{
 		}
 
 		// Commit to Dolt. In DoltStore mode, CreateIssue commits the issue
-		// row internally, so only post-create metadata (deps, labels) needs
-		// a separate commit. In EmbeddedDoltStore mode, CreateIssue writes
+		// row internally, so only post-create metadata (deps) needs a separate
+		// commit. In EmbeddedDoltStore mode, CreateIssue writes
 		// to the working set without a Dolt commit, so we always commit
 		// everything together at the end.
 		if !usesSQLServer() || postCreateWrites {
@@ -742,6 +724,7 @@ type createIssueParams struct {
 	NoHistory          bool
 	CreatedBy          string
 	Owner              string
+	Labels             []string
 	MolType            types.MolType
 	WispType           types.WispType
 	EventKind          string
@@ -777,6 +760,7 @@ func buildCreateIssue(params createIssueParams) *types.Issue {
 		NoHistory:          params.NoHistory,
 		CreatedBy:          params.CreatedBy,
 		Owner:              params.Owner,
+		Labels:             append([]string(nil), params.Labels...),
 		MolType:            params.MolType,
 		WispType:           params.WispType,
 		EventKind:          params.EventKind,
@@ -787,6 +771,25 @@ func buildCreateIssue(params createIssueParams) *types.Issue {
 		DeferUntil:         params.DeferUntil,
 		Metadata:           params.Metadata,
 	}
+}
+
+func mergeCreateLabels(labels, inheritedLabels []string) []string {
+	merged := append([]string(nil), labels...)
+	if len(inheritedLabels) == 0 {
+		return merged
+	}
+	seen := make(map[string]struct{}, len(merged)+len(inheritedLabels))
+	for _, label := range merged {
+		seen[label] = struct{}{}
+	}
+	for _, label := range inheritedLabels {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		merged = append(merged, label)
+	}
+	return merged
 }
 
 func renderCreateDryRunPreview(issue *types.Issue, labels, deps []string) {
