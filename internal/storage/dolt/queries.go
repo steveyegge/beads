@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
-	"strings"
 
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -26,249 +23,20 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 
 // GetReadyWork returns issues that are ready to work on (not blocked).
 //
-// Blocking semantics are unified through computeBlockedIDs, which is the
-// canonical source of truth for both GetReadyWork and GetBlockedIssues.
-// The molecule subgraph analysis (analyzeMoleculeParallel) uses equivalent
-// logic scoped to an in-memory subgraph rather than the full database.
+// Blocking semantics are unified through issueops.GetReadyWorkInTx.
 func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	var result []*types.Issue
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetReadyWorkInTx(ctx, tx, filter, computeBlockedIDsForReadyWork)
+		return err
+	})
+	return result, err
+}
 
-	// Status filtering: default to open OR in_progress (matches memory storage)
-	var statusClause string
-	if filter.Status != "" {
-		statusClause = "status = ?"
-	} else {
-		statusClause = "status IN ('open', 'in_progress')"
-	}
-	whereClauses := []string{
-		statusClause,
-		"(pinned = 0 OR pinned IS NULL)", // Exclude pinned issues (context markers, not work)
-	}
-	if !filter.IncludeEphemeral {
-		whereClauses = append(whereClauses, "(ephemeral = 0 OR ephemeral IS NULL)")
-	}
-	args := []interface{}{}
-	if filter.Status != "" {
-		args = append(args, string(filter.Status))
-	}
-
-	if filter.Priority != nil {
-		whereClauses = append(whereClauses, "priority = ?")
-		args = append(args, *filter.Priority)
-	}
-	// Use subquery for type filter to prevent Dolt mergeJoinIter panic (see SearchIssues).
-	if filter.Type != "" {
-		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
-		args = append(args, filter.Type)
-	} else {
-		// Exclude workflow/identity types from ready work by default.
-		// These are internal items, not actionable work for agents to claim:
-		// - merge-request: processed by automation
-		// - gate: async wait conditions
-		// - molecule: workflow containers
-		// - message: mail/communication items
-		// - agent: identity/state tracking beads
-		// - role: agent role definitions (reference metadata)
-		// - rig: rig identity beads (reference metadata)
-		excludeTypes := []string{"merge-request", "gate", "molecule", "message", "agent", "role", "rig"}
-		// Append caller-supplied exclusions (e.g., from --exclude-type flag).
-		for _, t := range filter.ExcludeTypes {
-			excludeTypes = append(excludeTypes, string(t))
-		}
-		placeholders := make([]string, len(excludeTypes))
-		for i, t := range excludeTypes {
-			placeholders[i] = "?"
-			args = append(args, t)
-		}
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM issues WHERE issue_type NOT IN (%s))", strings.Join(placeholders, ",")))
-	}
-	// Unassigned takes precedence over Assignee filter (matches memory storage)
-	if filter.Unassigned {
-		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
-	} else if filter.Assignee != nil {
-		whereClauses = append(whereClauses, "assignee = ?")
-		args = append(args, *filter.Assignee)
-	}
-	// Exclude future-deferred issues unless IncludeDeferred is set
-	if !filter.IncludeDeferred {
-		whereClauses = append(whereClauses, "(defer_until IS NULL OR defer_until <= UTC_TIMESTAMP())")
-	}
-	// Exclude children of future-deferred parents (GH#1190)
-	// Pre-compute excluded IDs using separate single-table queries to avoid
-	// correlated cross-table JOIN subquery that triggers Dolt joinIter hangs.
-	if !filter.IncludeDeferred {
-		deferredChildIDs, dcErr := s.getChildrenOfDeferredParents(ctx)
-		if dcErr == nil && len(deferredChildIDs) > 0 {
-			// Batch the NOT IN clause to avoid oversized queries (GH#2179).
-			for start := 0; start < len(deferredChildIDs); start += queryBatchSize {
-				end := start + queryBatchSize
-				if end > len(deferredChildIDs) {
-					end = len(deferredChildIDs)
-				}
-				placeholders, batchArgs := doltBuildSQLInClause(deferredChildIDs[start:end])
-				args = append(args, batchArgs...)
-				whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (%s)", placeholders))
-			}
-		}
-	}
-	if len(filter.Labels) > 0 {
-		for _, label := range filter.Labels {
-			whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label = ?)")
-			args = append(args, label)
-		}
-	}
-	if len(filter.ExcludeLabels) > 0 {
-		placeholders := make([]string, len(filter.ExcludeLabels))
-		for i, label := range filter.ExcludeLabels {
-			placeholders[i] = "?"
-			args = append(args, label)
-		}
-		whereClauses = append(whereClauses, fmt.Sprintf(
-			"id NOT IN (SELECT issue_id FROM labels WHERE label IN (%s))",
-			strings.Join(placeholders, ", ")))
-	}
-	// Parent filtering: filter to children of specified parent (GH#2009)
-	// Explicit parent-child dependency takes precedence over dotted-ID prefix.
-	if filter.ParentID != nil {
-		parentID := *filter.ParentID
-		descendantIDs, descErr := s.getDescendantIDs(ctx, parentID)
-		if descErr != nil {
-			return nil, fmt.Errorf("get parent descendants: %w", descErr)
-		}
-		parentClauses := []string{"(id LIKE CONCAT(?, '.%') AND id NOT IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child'))"}
-		args = append(args, parentID)
-		for start := 0; start < len(descendantIDs); start += queryBatchSize {
-			end := start + queryBatchSize
-			if end > len(descendantIDs) {
-				end = len(descendantIDs)
-			}
-			placeholders, batchArgs := doltBuildSQLInClause(descendantIDs[start:end])
-			parentClauses = append(parentClauses, fmt.Sprintf("id IN (%s)", placeholders))
-			args = append(args, batchArgs...)
-		}
-		whereClauses = append(whereClauses, "("+strings.Join(parentClauses, " OR ")+")")
-	}
-
-	// Molecule filtering: filter to direct children of the specified molecule.
-	if filter.MoleculeID != "" {
-		whereClauses = append(whereClauses, "(id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?) OR (id LIKE CONCAT(?, '.%') AND id NOT IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child')))")
-		args = append(args, filter.MoleculeID, filter.MoleculeID)
-	}
-
-	// Metadata existence check (GH#1406)
-	if filter.HasMetadataKey != "" {
-		if err := storage.ValidateMetadataKey(filter.HasMetadataKey); err != nil {
-			return nil, err
-		}
-		whereClauses = append(whereClauses, "JSON_EXTRACT(metadata, ?) IS NOT NULL")
-		args = append(args, storage.JSONMetadataPath(filter.HasMetadataKey))
-	}
-
-	// Metadata field equality filters (GH#1406)
-	if len(filter.MetadataFields) > 0 {
-		metaKeys := make([]string, 0, len(filter.MetadataFields))
-		for k := range filter.MetadataFields {
-			metaKeys = append(metaKeys, k)
-		}
-		sort.Strings(metaKeys)
-		for _, k := range metaKeys {
-			if err := storage.ValidateMetadataKey(k); err != nil {
-				return nil, err
-			}
-			whereClauses = append(whereClauses, "JSON_UNQUOTE(JSON_EXTRACT(metadata, ?)) = ?")
-			args = append(args, storage.JSONMetadataPath(k), filter.MetadataFields[k])
-		}
-	}
-
-	// Exclude blocked issues: pre-compute blocked set using separate single-table
-	// queries to avoid Dolt's joinIter panic (join_iters.go:192).
-	// Correlated EXISTS/NOT EXISTS subqueries across tables trigger the same panic.
-	// Skip wisp table scanning when ephemeral items aren't requested — no cross-table
-	// blocking deps exist, and skipping 16K+ wisps avoids query timeouts.
-	blockedIDs, err := s.computeBlockedIDs(ctx, filter.IncludeEphemeral)
-	if err == nil && len(blockedIDs) > 0 {
-		// Also exclude children of blocked parents (GH#1495):
-		// If a parent/epic is blocked, its children should not appear as ready work.
-		childrenOfBlocked, childErr := s.getChildrenOfIssues(ctx, blockedIDs)
-		if childErr == nil {
-			for _, childID := range childrenOfBlocked {
-				blockedIDs = append(blockedIDs, childID)
-			}
-		}
-
-		// Batch the NOT IN clause to avoid oversized queries (GH#2179).
-		for start := 0; start < len(blockedIDs); start += queryBatchSize {
-			end := start + queryBatchSize
-			if end > len(blockedIDs) {
-				end = len(blockedIDs)
-			}
-			batch := blockedIDs[start:end]
-			placeholders, batchArgs := doltBuildSQLInClause(batch)
-			args = append(args, batchArgs...)
-			whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (%s)", placeholders))
-		}
-	}
-
-	whereSQL := "WHERE " + strings.Join(whereClauses, " AND ")
-
-	limitSQL := ""
-	if filter.Limit > 0 {
-		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
-	}
-
-	// Build ORDER BY clause based on SortPolicy
-	var orderBySQL string
-	switch filter.SortPolicy {
-	case types.SortPolicyOldest:
-		orderBySQL = "ORDER BY created_at ASC, id ASC"
-	case types.SortPolicyPriority:
-		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
-	case types.SortPolicyHybrid, "": // hybrid is the default
-		// Recent issues (created within 48 hours) are sorted by priority;
-		// older issues are sorted by age (oldest first) to prevent starvation.
-		orderBySQL = `ORDER BY
-			CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR) THEN 0 ELSE 1 END ASC,
-			CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR) THEN priority ELSE 999 END ASC,
-			created_at ASC, id ASC`
-	default:
-		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
-	}
-
-	// nolint:gosec // G201: whereSQL contains column comparisons with ?, limitSQL is a safe integer
-	query := fmt.Sprintf(`
-		SELECT id FROM issues
-		%s
-		%s
-		%s
-	`, whereSQL, orderBySQL, limitSQL)
-
-	rows, err := s.queryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ready work: %w", err)
-	}
-	defer rows.Close()
-
-	issues, err := s.scanIssueIDs(ctx, rows)
-	if err != nil {
-		return nil, err
-	}
-
-	// When IncludeEphemeral is set, also query the wisps table for ready work.
-	if filter.IncludeEphemeral {
-		wispFilter := types.IssueFilter{Limit: filter.Limit}
-		if filter.Status != "" {
-			s := filter.Status
-			wispFilter.Status = &s
-		}
-		wisps, wErr := s.searchWisps(ctx, "", wispFilter)
-		if wErr != nil && !isTableNotExistError(wErr) {
-			return nil, fmt.Errorf("search wisps (ready work): %w", wErr)
-		}
-		issues = append(issues, wisps...)
-	}
-
-	return issues, nil
+func computeBlockedIDsForReadyWork(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error) {
+	ids, _, err := issueops.ComputeBlockedIDsInTx(ctx, tx, includeWisps)
+	return ids, err
 }
 
 // GetBlockedIssues returns issues that are blocked by other issues.

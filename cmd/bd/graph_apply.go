@@ -50,13 +50,6 @@ type GraphApplyResult struct {
 	IDs map[string]string `json:"ids"`
 }
 
-// GraphApplyOptions carries CLI-level storage options that apply to every node
-// in the graph.
-type GraphApplyOptions struct {
-	Ephemeral bool
-	NoHistory bool
-}
-
 // GraphApplyDryRun describes the actions that would be taken by a graph plan,
 // without performing any writes. Emitted by `bd create --graph --dry-run`.
 type GraphApplyDryRun struct {
