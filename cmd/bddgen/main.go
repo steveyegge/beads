@@ -2,6 +2,8 @@
 //
 // Invoke via go generate from internal/storage/rpc/.
 // Writes types.go, server.go, and client.go to the output directory.
+// Also writes iter_types.go, iter_server.go, and iter_client.go for Iter*
+// methods detected in the Storage and DependencyQueryStore interfaces.
 package main
 
 import (
@@ -23,17 +25,28 @@ import (
 func main() {
 	log.SetFlags(0)
 	storagePath := flag.String("storage", "", "path to storage.go (default: ../storage.go)")
+	depsPath := flag.String("deps", "", "path to dependency_queries.go (default: ../dependency_queries.go)")
 	outDir := flag.String("out", ".", "output directory")
 	flag.Parse()
 
 	if *storagePath == "" {
 		*storagePath = filepath.Join("..", "storage.go")
 	}
+	if *depsPath == "" {
+		*depsPath = filepath.Join("..", "dependency_queries.go")
+	}
 
-	methods, err := parseStorage(*storagePath)
+	methods, iterMethods, err := parseStorage(*storagePath)
 	if err != nil {
 		log.Fatalf("bddgen: %v", err)
 	}
+
+	// Collect Iter* methods from DependencyQueryStore as well.
+	depIterMethods, err := parseIterInterface(*depsPath, "DependencyQueryStore")
+	if err != nil {
+		log.Fatalf("bddgen: deps: %v", err)
+	}
+	iterMethods = append(iterMethods, depIterMethods...)
 
 	for _, gen := range []struct {
 		name string
@@ -51,7 +64,26 @@ func main() {
 			log.Fatalf("bddgen: write %s: %v", gen.name, err)
 		}
 	}
+
+	for _, gen := range []struct {
+		name string
+		fn   func([]iterMethodInfo) ([]byte, error)
+	}{
+		{"iter_types.go", genIterTypes},
+		{"iter_server.go", genIterServer},
+		{"iter_client.go", genIterClient},
+	} {
+		src, err := gen.fn(iterMethods)
+		if err != nil {
+			log.Fatalf("bddgen: %s: %v", gen.name, err)
+		}
+		if err := os.WriteFile(filepath.Join(*outDir, gen.name), src, 0o644); err != nil { // #nosec G306
+			log.Fatalf("bddgen: write %s: %v", gen.name, err)
+		}
+	}
 }
+
+// ── methodInfo for regular (non-Iter) methods ────────────────────────────────
 
 // methodInfo describes one method on storage.Storage.
 type methodInfo struct {
@@ -71,16 +103,80 @@ type resultInfo struct {
 	TypeStr   string // qualified type string (e.g. "*types.Issue")
 }
 
-// parseStorage reads the Storage interface from storagePath and returns
-// methodInfos for all methods that can be proxied over net/rpc.
-func parseStorage(path string) ([]methodInfo, error) {
+// ── iterMethodInfo for Iter* methods ─────────────────────────────────────────
+
+// iterMethodInfo describes one Iter* method on storage.Storage or
+// DependencyQueryStore.
+type iterMethodInfo struct {
+	Name           string      // e.g. "IterIssues"
+	ShortName      string      // Name without "Iter" prefix, e.g. "Issues"
+	SessionType    string      // e.g. "issueIterSession"
+	ClientType     string      // e.g. "rpcIssueIter"
+	Params         []paramInfo // non-ctx params (excludes BatchSize)
+	ElemType       string      // e.g. "types.Issue"
+	FallbackMethod string      // slice-path method for ErrTooManyIterators, or ""
+	// StoreIface is the qualified Go type for the interface that declares this
+	// method ("storage.Storage" or "storage.DependencyQueryStore"). The server
+	// uses this to type-assert s.store when the method is not on Storage.
+	StoreIface string
+}
+
+// iterSliceFallback maps Iter* method names to their slice-path equivalents.
+// Empty string means no direct slice fallback exists.
+var iterSliceFallback = map[string]string{
+	"IterIssues":                   "SearchIssues",
+	"IterDependentsWithMetadata":   "GetDependentsWithMetadata",
+	"IterDependenciesWithMetadata": "GetDependenciesWithMetadata",
+	"IterIssueComments":            "GetIssueComments",
+	"IterEvents":                   "GetEvents",
+	"IterAllEventsSince":           "GetAllEventsSince",
+	"IterReadyWork":                "GetReadyWork",
+	"IterBlockedIssues":            "GetBlockedIssues",
+	"IterWisps":                    "ListWisps",
+	// IterAllDependencyRecords: no direct 1:1 slice fallback (GetAllDependencyRecords
+	// returns map[string][]*types.Dependency, not a flat slice).
+}
+
+// parseStorage reads the Storage interface from storagePath and returns:
+//   - methods: regular (non-Iter) methodInfos for the slice-RPC path
+//   - iterMethods: Iter* methodInfos for the streaming path
+func parseStorage(path string) (methods []methodInfo, iterMethods []iterMethodInfo, err error) {
+	fset := token.NewFileSet()
+	f, errP := parser.ParseFile(fset, path, nil, 0)
+	if errP != nil {
+		return nil, nil, fmt.Errorf("parse %s: %w", path, errP)
+	}
+
+	iface := findInterface(f, "Storage")
+	if iface == nil {
+		return nil, nil, fmt.Errorf("Storage interface not found in %s", path)
+	}
+
+	methods, iterMethods = extractMethods(fset, iface)
+	return methods, iterMethods, nil
+}
+
+// parseIterInterface reads a named interface from path and returns only its
+// Iter* methods as iterMethodInfos.
+func parseIterInterface(path, ifaceName string) ([]iterMethodInfo, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
-	var iface *ast.InterfaceType
+	iface := findInterface(f, ifaceName)
+	if iface == nil {
+		// File may not have this interface (e.g. a future rename). Non-fatal.
+		return nil, nil
+	}
+
+	_, iterMethods := extractMethodsWithIface(fset, iface, "storage."+ifaceName)
+	return iterMethods, nil
+}
+
+// findInterface scans the top-level declarations of f for an interface named name.
+func findInterface(f *ast.File, name string) *ast.InterfaceType {
 	for _, decl := range f.Decls {
 		gd, ok := decl.(*ast.GenDecl)
 		if !ok {
@@ -88,22 +184,30 @@ func parseStorage(path string) ([]methodInfo, error) {
 		}
 		for _, spec := range gd.Specs {
 			ts, ok := spec.(*ast.TypeSpec)
-			if !ok || ts.Name.Name != "Storage" {
+			if !ok || ts.Name.Name != name {
 				continue
 			}
 			if it, ok := ts.Type.(*ast.InterfaceType); ok {
-				iface = it
+				return it
 			}
 		}
 	}
-	if iface == nil {
-		return nil, fmt.Errorf("Storage interface not found in %s", path)
-	}
+	return nil
+}
 
+// extractMethods splits interface methods into regular and Iter* groups.
+// ifaceName is used to populate iterMethodInfo.StoreIface.
+func extractMethods(fset *token.FileSet, iface *ast.InterfaceType) ([]methodInfo, []iterMethodInfo) {
+	return extractMethodsWithIface(fset, iface, "storage.Storage")
+}
+
+func extractMethodsWithIface(fset *token.FileSet, iface *ast.InterfaceType, ifaceName string) ([]methodInfo, []iterMethodInfo) {
 	var methods []methodInfo
+	var iterMethods []iterMethodInfo
+
 	for _, m := range iface.Methods.List {
 		if len(m.Names) == 0 {
-			continue // embedded interface — skip
+			continue // embedded interface
 		}
 		name := m.Names[0].Name
 		ft, ok := m.Type.(*ast.FuncType)
@@ -111,12 +215,26 @@ func parseStorage(path string) ([]methodInfo, error) {
 			continue
 		}
 
-		// Skip methods that can't cross the RPC boundary.
-		if name == "Close" || name == "RunInTransaction" {
+		// Collect result type strings to detect Iter[T] returns.
+		var resultTypes []string
+		if ft.Results != nil {
+			for _, field := range ft.Results.List {
+				resultTypes = append(resultTypes, nodeStr(fset, field.Type))
+			}
+		}
+
+		if isIterMethod(resultTypes) {
+			if im, ok := buildIterMethod(fset, name, ft, resultTypes); ok {
+				im.StoreIface = ifaceName
+				iterMethods = append(iterMethods, im)
+			}
 			continue
 		}
 
-		// Skip methods with func-typed parameters.
+		// Skip methods that can't cross the regular RPC boundary.
+		if name == "Close" || name == "RunInTransaction" {
+			continue
+		}
 		if hasFuncParam(ft) {
 			continue
 		}
@@ -132,7 +250,6 @@ func parseStorage(path string) ([]methodInfo, error) {
 			typeStr = qualifyStorageType(typeStr)
 			names := field.Names
 			if len(names) == 0 {
-				// Unnamed param — generate a placeholder.
 				names = []*ast.Ident{{Name: fmt.Sprintf("arg%d", len(mi.Params))}}
 			}
 			for _, n := range names {
@@ -161,7 +278,86 @@ func parseStorage(path string) ([]methodInfo, error) {
 
 		methods = append(methods, mi)
 	}
-	return methods, nil
+
+	return methods, iterMethods
+}
+
+// isIterMethod returns true when at least one result type is an Iter[T].
+func isIterMethod(resultTypes []string) bool {
+	for _, t := range resultTypes {
+		if strings.HasPrefix(t, "Iter[") && strings.HasSuffix(t, "]") {
+			return true
+		}
+	}
+	return false
+}
+
+// buildIterMethod constructs an iterMethodInfo from a parsed Iter* method.
+func buildIterMethod(fset *token.FileSet, name string, ft *ast.FuncType, resultTypes []string) (iterMethodInfo, bool) {
+	if !strings.HasPrefix(name, "Iter") {
+		return iterMethodInfo{}, false
+	}
+	shortName := name[4:] // strip "Iter"
+
+	// Extract element type from the first Iter[T] result.
+	var elemType string
+	for _, rt := range resultTypes {
+		if strings.HasPrefix(rt, "Iter[") && strings.HasSuffix(rt, "]") {
+			inner := rt[5 : len(rt)-1]
+			elemType = qualifyStorageType(inner)
+			break
+		}
+	}
+	if elemType == "" {
+		return iterMethodInfo{}, false
+	}
+
+	// Collect non-ctx params.
+	var params []paramInfo
+	for _, field := range ft.Params.List {
+		typeStr := nodeStr(fset, field.Type)
+		if typeStr == "context.Context" {
+			continue
+		}
+		typeStr = qualifyStorageType(typeStr)
+		fieldNames := field.Names
+		if len(fieldNames) == 0 {
+			fieldNames = []*ast.Ident{{Name: fmt.Sprintf("arg%d", len(params))}}
+		}
+		for _, n := range fieldNames {
+			params = append(params, paramInfo{
+				Name:      n.Name,
+				FieldName: exportedName(n.Name),
+				TypeStr:   typeStr,
+			})
+		}
+	}
+
+	// Derive session and client type names.
+	//   "Issues" → "issueIterSession", "rpcIssueIter"
+	//   "DependentsWithMetadata" → "dependentsWithMetadataIterSession", "rpcDependentsWithMetadataIter"
+	sessionType := lowerFirst(shortName) + "IterSession"
+	clientType := "rpc" + shortName + "Iter"
+
+	return iterMethodInfo{
+		Name:           name,
+		ShortName:      shortName,
+		SessionType:    sessionType,
+		ClientType:     clientType,
+		Params:         params,
+		ElemType:       elemType,
+		FallbackMethod: iterSliceFallback[name],
+	}, true
+}
+
+// lowerFirst lowercases the first rune of s.
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToLower(r[0])
+	return string(r)
 }
 
 // hasFuncParam returns true if any parameter has a func type.
@@ -301,6 +497,17 @@ func allTypeStrs(methods []methodInfo) []string {
 	return out
 }
 
+func allIterTypeStrs(methods []iterMethodInfo) []string {
+	var out []string
+	for _, m := range methods {
+		out = append(out, m.ElemType)
+		for _, p := range m.Params {
+			out = append(out, p.TypeStr)
+		}
+	}
+	return out
+}
+
 // fmtSource runs gofmt on src and returns the formatted bytes.
 func fmtSource(src []byte) ([]byte, error) {
 	return format.Source(src)
@@ -377,6 +584,7 @@ func genServer(methods []methodInfo) ([]byte, error) {
 type daemonServer struct {
 	store storage.Storage
 	root  context.Context
+	iterMgr *iterSessionManager
 }
 
 func daemonCallContext(root context.Context) (context.Context, context.CancelFunc) {
@@ -404,6 +612,10 @@ func encodeRPCError(err error) *RPCError {
 		return &RPCError{Kind: "ErrNotInitialized", Msg: err.Error()}
 	case errors.Is(err, storage.ErrPrefixMismatch):
 		return &RPCError{Kind: "ErrPrefixMismatch", Msg: err.Error()}
+	case errors.Is(err, storage.ErrTooManyIterators):
+		return &RPCError{Kind: "ErrTooManyIterators", Msg: err.Error()}
+	case errors.Is(err, storage.ErrIterSessionNotFound):
+		return &RPCError{Kind: "ErrIterSessionNotFound", Msg: err.Error()}
 	default:
 		return &RPCError{Kind: "", Msg: err.Error()}
 	}
@@ -492,6 +704,10 @@ func decodeRPCError(r *RPCError) error {
 		return fmt.Errorf("%s: %w", r.Msg, storage.ErrNotInitialized)
 	case "ErrPrefixMismatch":
 		return fmt.Errorf("%s: %w", r.Msg, storage.ErrPrefixMismatch)
+	case "ErrTooManyIterators":
+		return fmt.Errorf("%s: %w", r.Msg, storage.ErrTooManyIterators)
+	case "ErrIterSessionNotFound":
+		return fmt.Errorf("%s: %w", r.Msg, storage.ErrIterSessionNotFound)
 	default:
 		return errors.New(r.Msg)
 	}
@@ -583,4 +799,320 @@ func zeroValue(typeStr string) string {
 		return "nil"
 	}
 	return "nil"
+}
+
+// ── iter_types.go ────────────────────────────────────────────────────────────
+
+func genIterTypes(methods []iterMethodInfo) ([]byte, error) {
+	typeStrs := allIterTypeStrs(methods)
+	imports := usedImports(typeStrs)
+
+	var b strings.Builder
+	b.WriteString("// Code generated by bddgen. DO NOT EDIT.\n\npackage rpc\n\n")
+	b.WriteString(importBlock(imports))
+	b.WriteString("\n")
+
+	for _, m := range methods {
+		// IterXxxStartArgs — method params + BatchSize.
+		fmt.Fprintf(&b, "// %sStartArgs is the argument struct for %sStart.\n", m.Name, m.Name)
+		fmt.Fprintf(&b, "type %sStartArgs struct {\n", m.Name)
+		for _, p := range m.Params {
+			fmt.Fprintf(&b, "\t%s %s\n", p.FieldName, p.TypeStr)
+		}
+		b.WriteString("\t// BatchSize controls rows per IterXxxNext RPC. 0 uses the daemon default.\n")
+		b.WriteString("\tBatchSize int\n")
+		b.WriteString("}\n\n")
+
+		// IterXxxNextReply — batch of items + Done + RPCError.
+		fmt.Fprintf(&b, "// %sNextReply is the reply struct for %sNext.\n", m.Name, m.Name)
+		fmt.Fprintf(&b, "type %sNextReply struct {\n", m.Name)
+		fmt.Fprintf(&b, "\tItems    []*%s\n", m.ElemType)
+		b.WriteString("\tDone     bool\n")
+		b.WriteString("\tRPCError *RPCError\n")
+		b.WriteString("}\n\n")
+	}
+
+	return fmtSource([]byte(b.String()))
+}
+
+// ── iter_server.go ───────────────────────────────────────────────────────────
+
+func genIterServer(methods []iterMethodInfo) ([]byte, error) {
+	typeStrs := allIterTypeStrs(methods)
+	imports := usedImports(typeStrs,
+		"context",
+		"crypto/rand",
+		"encoding/hex",
+		"sync",
+		"sync/atomic",
+		"time",
+		"github.com/steveyegge/beads/internal/storage",
+	)
+
+	var b strings.Builder
+	b.WriteString("// Code generated by bddgen. DO NOT EDIT.\n\npackage rpc\n\n")
+	b.WriteString(importBlock(imports))
+	b.WriteString(`
+const defaultIterBatchSize = 100
+
+// newSessionID returns a random 16-byte hex string for iterator session IDs.
+func newSessionID() string {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		panic("bddgen: newSessionID: " + err.Error())
+	}
+	return hex.EncodeToString(buf[:])
+}
+
+`)
+
+	for _, m := range methods {
+		// Build the store call argument list.
+		var storeArgExprs []string
+		storeArgExprs = append(storeArgExprs, "ctx")
+		for _, p := range m.Params {
+			storeArgExprs = append(storeArgExprs, "args."+p.FieldName)
+		}
+		storeCall := fmt.Sprintf("s.store.%s(%s)", m.Name, strings.Join(storeArgExprs, ", "))
+
+		// IterXxxStart
+		fmt.Fprintf(&b, "// %sStart opens a new iterator session for %s.\n", m.Name, m.Name)
+		fmt.Fprintf(&b, "func (s *daemonServer) %sStart(args *%sStartArgs, reply *IterStartReply) error {\n", m.Name, m.Name)
+		b.WriteString("\tctx, cancel := daemonCallContext(s.root)\n")
+		b.WriteString("\tdefer cancel()\n")
+
+		// For methods on interfaces other than storage.Storage, type-assert the store.
+		storeExpr := "s.store"
+		if m.StoreIface != "" && m.StoreIface != "storage.Storage" {
+			storeVar := "store_" + m.Name
+			fmt.Fprintf(&b, "\t%s, ok := s.store.(%s)\n", storeVar, m.StoreIface)
+			b.WriteString("\tif !ok {\n")
+			fmt.Fprintf(&b, "\t\treply.RPCError = &RPCError{Kind: \"\", Msg: \"store does not implement %s\"}\n", m.StoreIface)
+			b.WriteString("\t\treturn nil\n")
+			b.WriteString("\t}\n")
+			storeExpr = storeVar
+			// Rebuild storeCall with the narrowed var.
+			var narrowArgExprs []string
+			narrowArgExprs = append(narrowArgExprs, "ctx")
+			for _, p := range m.Params {
+				narrowArgExprs = append(narrowArgExprs, "args."+p.FieldName)
+			}
+			storeCall = fmt.Sprintf("%s.%s(%s)", storeExpr, m.Name, strings.Join(narrowArgExprs, ", "))
+		}
+
+		fmt.Fprintf(&b, "\tit, err := %s\n", storeCall)
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\treply.RPCError = encodeRPCError(err)\n")
+		b.WriteString("\t\treturn nil\n")
+		b.WriteString("\t}\n")
+		_ = storeExpr // used above
+		fmt.Fprintf(&b, "\tsess := &%s{iter: it}\n", m.SessionType)
+		b.WriteString("\tsess.Touch()\n")
+		b.WriteString("\tsessionID := newSessionID()\n")
+		b.WriteString("\tif err := s.iterMgr.openSession(sessionID, sess); err != nil {\n")
+		b.WriteString("\t\t_ = it.Close()\n")
+		b.WriteString("\t\treply.RPCError = encodeRPCError(err)\n")
+		b.WriteString("\t\treturn nil\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treply.SessionID = sessionID\n")
+		b.WriteString("\treturn nil\n")
+		b.WriteString("}\n\n")
+
+		// IterXxxNext
+		fmt.Fprintf(&b, "// %sNext fetches the next batch from a %s session.\n", m.Name, m.Name)
+		fmt.Fprintf(&b, "func (s *daemonServer) %sNext(args *IterNextArgs, reply *%sNextReply) error {\n", m.Name, m.Name)
+		b.WriteString("\traw := s.iterMgr.getSession(args.SessionID)\n")
+		b.WriteString("\tif raw == nil {\n")
+		b.WriteString("\t\treply.RPCError = encodeRPCError(storage.ErrIterSessionNotFound)\n")
+		b.WriteString("\t\treturn nil\n")
+		b.WriteString("\t}\n")
+		fmt.Fprintf(&b, "\tsess, ok := raw.(*%s)\n", m.SessionType)
+		b.WriteString("\tif !ok {\n")
+		b.WriteString("\t\treply.RPCError = encodeRPCError(storage.ErrIterSessionNotFound)\n")
+		b.WriteString("\t\treturn nil\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tsess.mu.Lock()\n")
+		b.WriteString("\tdefer sess.mu.Unlock()\n")
+		b.WriteString("\tsess.Touch()\n")
+		b.WriteString("\tbatchSize := args.BatchSize\n")
+		b.WriteString("\tif batchSize <= 0 {\n")
+		b.WriteString("\t\tbatchSize = defaultIterBatchSize\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tctx := context.Background()\n")
+		b.WriteString("\tfor len(reply.Items) < batchSize {\n")
+		b.WriteString("\t\tif !sess.iter.Next(ctx) {\n")
+		b.WriteString("\t\t\treply.Done = true\n")
+		b.WriteString("\t\t\tif iterErr := sess.iter.Err(); iterErr != nil {\n")
+		b.WriteString("\t\t\t\treply.RPCError = encodeRPCError(iterErr)\n")
+		b.WriteString("\t\t\t}\n")
+		b.WriteString("\t\t\ts.iterMgr.closeSession(args.SessionID)\n")
+		b.WriteString("\t\t\tbreak\n")
+		b.WriteString("\t\t}\n")
+		fmt.Fprintf(&b, "\t\tv := *sess.iter.Value()\n")
+		fmt.Fprintf(&b, "\t\treply.Items = append(reply.Items, &v)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\ts.iterMgr.rowsStreamedTotal.Add(int64(len(reply.Items)))\n")
+		b.WriteString("\treturn nil\n")
+		b.WriteString("}\n\n")
+
+		// xxxIterSession struct
+		fmt.Fprintf(&b, "// %s is the server-side session for %s.\n", m.SessionType, m.Name)
+		fmt.Fprintf(&b, "type %s struct {\n", m.SessionType)
+		b.WriteString("\tmu       sync.Mutex\n")
+		fmt.Fprintf(&b, "\titer     storage.Iter[%s]\n", m.ElemType)
+		b.WriteString("\tlastUsed atomic.Int64\n")
+		b.WriteString("}\n\n")
+		fmt.Fprintf(&b, "func (s *%s) TypeName() string      { return %q }\n", m.SessionType, m.SessionType)
+		fmt.Fprintf(&b, "func (s *%s) Touch()                { s.lastUsed.Store(time.Now().UnixNano()) }\n", m.SessionType)
+		fmt.Fprintf(&b, "func (s *%s) LastUsedAt() time.Time { return time.Unix(0, s.lastUsed.Load()) }\n", m.SessionType)
+		fmt.Fprintf(&b, "func (s *%s) Close() error          { return s.iter.Close() }\n\n", m.SessionType)
+	}
+
+	return fmtSource([]byte(b.String()))
+}
+
+// ── iter_client.go ───────────────────────────────────────────────────────────
+
+func genIterClient(methods []iterMethodInfo) ([]byte, error) {
+	typeStrs := allIterTypeStrs(methods)
+	imports := usedImports(typeStrs,
+		"context",
+		"errors",
+		"net/rpc",
+		"github.com/steveyegge/beads/internal/storage",
+	)
+
+	var b strings.Builder
+	b.WriteString("// Code generated by bddgen. DO NOT EDIT.\n\npackage rpc\n\n")
+	b.WriteString(importBlock(imports))
+	b.WriteString(`
+// rpcIterClose sends an IterClose RPC to the daemon, releasing the server-side
+// iterator session. Errors are ignored — the server's idle reaper will clean up
+// any session that leaks due to a failed close.
+func rpcIterClose(client *rpc.Client, sessionID string) error {
+	args := &IterCloseArgs{SessionID: sessionID}
+	var reply IterCloseReply
+	return client.Call("daemonServer.IterClose", args, &reply)
+}
+
+`)
+
+	for _, m := range methods {
+		// rpcXxxIter struct
+		fmt.Fprintf(&b, "// %s implements storage.Iter[%s] over net/rpc.\n", m.ClientType, m.ElemType)
+		fmt.Fprintf(&b, "type %s struct {\n", m.ClientType)
+		b.WriteString("\tclient    *rpc.Client\n")
+		b.WriteString("\tsessionID string\n")
+		fmt.Fprintf(&b, "\tbuf       []*%s\n", m.ElemType)
+		b.WriteString("\tpos       int\n")
+		b.WriteString("\texhausted bool\n")
+		b.WriteString("\terr       error\n")
+		b.WriteString("}\n\n")
+
+		// Next method with context cancellation via rpc.Client.Go
+		fmt.Fprintf(&b, "func (it *%s) Next(ctx context.Context) bool {\n", m.ClientType)
+		b.WriteString("\tif it.exhausted {\n\t\treturn false\n\t}\n")
+		b.WriteString("\t// Serve from buffer if available.\n")
+		b.WriteString("\tif it.pos+1 < len(it.buf) {\n")
+		b.WriteString("\t\tit.pos++\n")
+		b.WriteString("\t\treturn true\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\t// Fetch next batch from server.\n")
+		b.WriteString("\targs := &IterNextArgs{SessionID: it.sessionID}\n")
+		fmt.Fprintf(&b, "\tvar reply %sNextReply\n", m.Name)
+		fmt.Fprintf(&b, "\tcall := it.client.Go(\"daemonServer.%sNext\", args, &reply, nil)\n", m.Name)
+		b.WriteString("\tselect {\n")
+		b.WriteString("\tcase <-ctx.Done():\n")
+		b.WriteString("\t\tit.err = ctx.Err()\n")
+		b.WriteString("\t\tit.exhausted = true\n")
+		b.WriteString("\t\tgo rpcIterClose(it.client, it.sessionID) //nolint:errcheck\n")
+		b.WriteString("\t\treturn false\n")
+		b.WriteString("\tcase <-call.Done:\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif call.Error != nil {\n")
+		b.WriteString("\t\tit.err = call.Error\n")
+		b.WriteString("\t\tit.exhausted = true\n")
+		b.WriteString("\t\treturn false\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif reply.RPCError != nil {\n")
+		b.WriteString("\t\tit.err = decodeRPCError(reply.RPCError)\n")
+		b.WriteString("\t\tit.exhausted = true\n")
+		b.WriteString("\t\treturn false\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tit.buf = reply.Items\n")
+		b.WriteString("\tit.pos = 0\n")
+		b.WriteString("\tif reply.Done {\n")
+		b.WriteString("\t\tit.exhausted = true\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn len(it.buf) > 0\n")
+		b.WriteString("}\n\n")
+
+		fmt.Fprintf(&b, "func (it *%s) Value() *%s {\n", m.ClientType, m.ElemType)
+		b.WriteString("\tif it.pos < 0 || it.pos >= len(it.buf) {\n\t\treturn nil\n\t}\n")
+		b.WriteString("\treturn it.buf[it.pos]\n")
+		b.WriteString("}\n\n")
+
+		fmt.Fprintf(&b, "func (it *%s) Err() error { return it.err }\n\n", m.ClientType)
+
+		fmt.Fprintf(&b, "func (it *%s) Close() error {\n", m.ClientType)
+		b.WriteString("\tif !it.exhausted {\n")
+		b.WriteString("\t\tit.exhausted = true\n")
+		b.WriteString("\t\treturn rpcIterClose(it.client, it.sessionID)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn nil\n")
+		b.WriteString("}\n\n")
+
+		// Compile-time interface check
+		fmt.Fprintf(&b, "var _ storage.Iter[%s] = (*%s)(nil)\n\n", m.ElemType, m.ClientType)
+
+		// daemonClient.IterXxx method
+		var sigParams []string
+		sigParams = append(sigParams, "ctx context.Context")
+		for _, p := range m.Params {
+			sigParams = append(sigParams, p.Name+" "+p.TypeStr)
+		}
+		fmt.Fprintf(&b, "func (c *daemonClient) %s(%s) (storage.Iter[%s], error) {\n",
+			m.Name, strings.Join(sigParams, ", "), m.ElemType)
+
+		// Build start args.
+		var fieldInits []string
+		for _, p := range m.Params {
+			fieldInits = append(fieldInits, p.FieldName+": "+p.Name)
+		}
+		if len(fieldInits) > 0 {
+			fmt.Fprintf(&b, "\tstartArgs := &%sStartArgs{%s}\n", m.Name, strings.Join(fieldInits, ", "))
+		} else {
+			fmt.Fprintf(&b, "\tstartArgs := &%sStartArgs{}\n", m.Name)
+		}
+		b.WriteString("\tvar startReply IterStartReply\n")
+		fmt.Fprintf(&b, "\tif err := c.client.Call(\"daemonServer.%sStart\", startArgs, &startReply); err != nil {\n", m.Name)
+		b.WriteString("\t\treturn nil, err\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif startReply.RPCError != nil {\n")
+		b.WriteString("\t\trpcErr := decodeRPCError(startReply.RPCError)\n")
+
+		if m.FallbackMethod != "" {
+			// Generate slice-path fallback.
+			b.WriteString("\t\tif errors.Is(rpcErr, storage.ErrTooManyIterators) {\n")
+			var fallbackArgs []string
+			fallbackArgs = append(fallbackArgs, "ctx")
+			for _, p := range m.Params {
+				fallbackArgs = append(fallbackArgs, p.Name)
+			}
+			fmt.Fprintf(&b, "\t\t\titems, err := c.%s(%s)\n", m.FallbackMethod, strings.Join(fallbackArgs, ", "))
+			b.WriteString("\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n")
+			fmt.Fprintf(&b, "\t\t\treturn storage.NewSliceIter(items), nil\n")
+			b.WriteString("\t\t}\n")
+		} else {
+			// No direct slice fallback; propagate the error.
+			b.WriteString("\t\t// No direct slice fallback for this method.\n")
+		}
+
+		b.WriteString("\t\treturn nil, rpcErr\n")
+		b.WriteString("\t}\n")
+		fmt.Fprintf(&b, "\treturn &%s{client: c.client, sessionID: startReply.SessionID, pos: -1}, nil\n", m.ClientType)
+		b.WriteString("}\n\n")
+	}
+
+	return fmtSource([]byte(b.String()))
 }
