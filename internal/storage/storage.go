@@ -34,11 +34,11 @@ var ErrNotInitialized = errors.New("database not initialized")
 var ErrPrefixMismatch = errors.New("prefix mismatch")
 
 // ErrTooManyIterators is returned when the daemon has reached its maximum concurrent
-// iterator session limit (daemon_iter_max).
+// iterator session limit (daemon_iter_max in configfile).
 var ErrTooManyIterators = errors.New("too many iterators")
 
 // ErrIterSessionNotFound is returned when an iterator session ID does not exist
-// or has already been closed/expired.
+// in the session manager (session may have been reaped due to idle timeout).
 var ErrIterSessionNotFound = errors.New("iterator session not found")
 
 // Storage is the interface satisfied by *dolt.DoltStore.

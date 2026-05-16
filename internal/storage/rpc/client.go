@@ -438,4 +438,36 @@ func (c *daemonClient) SlotClear(ctx context.Context, issueID string, key string
 	return decodeRPCError(reply.RPCError)
 }
 
+func (c *daemonClient) SearchIssuesWithCounts(_ context.Context, _ string, _ types.IssueFilter) ([]*types.IssueWithCounts, error) {
+	return nil, fmt.Errorf("SearchIssuesWithCounts: not supported over daemon RPC")
+}
+
+func (c *daemonClient) GetReadyWorkWithCounts(_ context.Context, _ types.WorkFilter) ([]*types.IssueWithCounts, error) {
+	return nil, fmt.Errorf("GetReadyWorkWithCounts: not supported over daemon RPC")
+}
+
+func (c *daemonClient) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
+	return 0, fmt.Errorf("CountIssues: not supported over daemon RPC")
+}
+
+func (c *daemonClient) CountDependents(_ context.Context, _ string) (int64, error) {
+	return 0, fmt.Errorf("CountDependents: not supported over daemon RPC")
+}
+
+func (c *daemonClient) CountDependencies(_ context.Context, _ string) (int64, error) {
+	return 0, fmt.Errorf("CountDependencies: not supported over daemon RPC")
+}
+
+func (c *daemonClient) CountIssueComments(_ context.Context, _ string) (int64, error) {
+	return 0, fmt.Errorf("CountIssueComments: not supported over daemon RPC")
+}
+
+func (c *daemonClient) CountEvents(_ context.Context, _ string, _ int) (int64, error) {
+	return 0, fmt.Errorf("CountEvents: not supported over daemon RPC")
+}
+
+func (c *daemonClient) CountDependentsByStatus(_ context.Context, _ string, _ types.Status) (int64, error) {
+	return 0, fmt.Errorf("CountDependentsByStatus: not supported over daemon RPC")
+}
+
 var _ storage.Storage = (*daemonClient)(nil)
