@@ -2,8 +2,6 @@ package doctor
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,11 +14,8 @@ import (
 func CheckLegacyDoltArtifacts(beadsDir string) DoctorCheck {
 	bi := configfile.ResolveBackendInfo(beadsDir)
 
-	doltDir := filepath.Join(beadsDir, "dolt")
-	doltExists := false
-	if info, err := os.Stat(doltDir); err == nil && info.IsDir() {
-		doltExists = true
-	}
+	doltDir := bi.LegacyDoltDir // already backend-gated; empty on Dolt workspaces
+	doltExists := doltDir != ""
 
 	hasLegacyFields := len(bi.LegacyDoltFields) > 0
 
@@ -48,7 +43,7 @@ func CheckLegacyDoltArtifacts(beadsDir string) DoctorCheck {
 			strings.Join(bi.LegacyDoltFields, ", ")))
 	}
 
-	msg := ".beads/dolt present (inactive — backend is postgres)"
+	msg := fmt.Sprintf(".beads/dolt present (inactive — backend is %s)", bi.Backend)
 	if !doltExists && hasLegacyFields {
 		msg = fmt.Sprintf("metadata.json has Dolt fields while backend is postgres: %s",
 			strings.Join(bi.LegacyDoltFields, ", "))
