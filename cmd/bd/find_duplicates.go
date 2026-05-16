@@ -16,6 +16,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/telemetry"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -106,9 +107,13 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) {
 	}
 
 	var issues []*types.Issue
-	var err error
 
-	issues, err = store.SearchIssues(ctx, "", filter)
+	dupIt, itErr := store.IterIssues(ctx, "", filter)
+	if itErr != nil {
+		FatalError("fetching issues: %v", itErr)
+	}
+	var err error
+	issues, err = storage.Collect[types.Issue](ctx, dupIt)
 	if err != nil {
 		FatalError("fetching issues: %v", err)
 	}

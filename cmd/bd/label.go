@@ -182,17 +182,16 @@ var labelListAllCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
 		ctx := rootCtx
-		var issues []*types.Issue
-		var err error
 		// Direct mode
-		issues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
+		it, err := store.IterIssues(ctx, "", types.IssueFilter{})
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
+		defer func() { _ = it.Close() }()
 		// Collect unique labels with counts
 		labelCounts := make(map[string]int)
-		for _, issue := range issues {
-			// Direct mode - need to fetch labels
+		for it.Next(ctx) {
+			issue := it.Value()
 			labels, err := store.GetLabels(ctx, issue.ID)
 			if err != nil {
 				FatalErrorRespectJSON("getting labels for %s: %v", issue.ID, err)
@@ -200,6 +199,9 @@ var labelListAllCmd = &cobra.Command{
 			for _, label := range labels {
 				labelCounts[label]++
 			}
+		}
+		if err := it.Err(); err != nil {
+			FatalErrorRespectJSON("%v", err)
 		}
 		type labelInfo struct {
 			Label string `json:"label"`

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -22,7 +23,11 @@ func runPollutionCheck(_ string, clean bool, yes bool) {
 	ctx := rootCtx
 
 	// Get all issues
-	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	bsIt, err := store.IterIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		FatalError("fetching issues: %v", err)
+	}
+	allIssues, err := storage.Collect[types.Issue](ctx, bsIt)
 	if err != nil {
 		FatalError("fetching issues: %v", err)
 	}

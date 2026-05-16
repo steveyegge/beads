@@ -714,13 +714,15 @@ func runADOSync(cmd *cobra.Command, _ []string) error {
 // collectADOWorkItemMap gathers ADO work item IDs from local issues that
 // have ADO external refs, returning a map of ADO numeric ID → local issue ID.
 func collectADOWorkItemMap(ctx context.Context, at *ado.Tracker) map[int]string {
-	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	it, err := store.IterIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return nil
 	}
+	defer func() { _ = it.Close() }()
 
 	m := make(map[int]string)
-	for _, issue := range allIssues {
+	for it.Next(ctx) {
+		issue := it.Value()
 		if issue.ExternalRef == nil {
 			continue
 		}
@@ -733,6 +735,9 @@ func collectADOWorkItemMap(ctx context.Context, at *ado.Tracker) map[int]string 
 			m[id] = issue.ID
 		}
 	}
+	if it.Err() != nil {
+		return nil
+	}
 	return m
 }
 
@@ -740,15 +745,17 @@ func collectADOWorkItemMap(ctx context.Context, at *ado.Tracker) map[int]string 
 // local issues with ADO external refs. Returns the number of links synced
 // and any warnings.
 func pushADOLinks(ctx context.Context, resolver *ado.LinkResolver, at *ado.Tracker, st storage.Storage, warn func(string)) (int, []string) {
-	allIssues, err := st.SearchIssues(ctx, "", types.IssueFilter{})
+	it, err := st.IterIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return 0, []string{fmt.Sprintf("Link sync skipped: %v", err)}
 	}
+	defer func() { _ = it.Close() }()
 
 	var warnings []string
 	linkCount := 0
 
-	for _, issue := range allIssues {
+	for it.Next(ctx) {
+		issue := it.Value()
 		if issue.ExternalRef == nil {
 			continue
 		}
@@ -813,6 +820,9 @@ func pushADOLinks(ctx context.Context, resolver *ado.LinkResolver, at *ado.Track
 		}
 		linkCount += len(desired) - len(errs)
 	}
+	if err := it.Err(); err != nil {
+		warnings = append(warnings, fmt.Sprintf("iterator error: %v", err))
+	}
 
 	return linkCount, warnings
 }
@@ -847,7 +857,8 @@ func buildADOPullHooks(ctx context.Context, at *ado.Tracker, bootstrapMatch, noC
 		var idx *ado.BootstrapIndex
 		var bm *ado.BootstrapMatcher
 		if bootstrapMatch {
-			localIssues, _ := store.SearchIssues(ctx, "", types.IssueFilter{})
+			bsIt, _ := store.IterIssues(ctx, "", types.IssueFilter{})
+			localIssues, _ := storage.Collect[types.Issue](ctx, bsIt)
 			idx = ado.BuildBootstrapIndex(localIssues)
 			bm = ado.NewBootstrapMatcher(at.FieldMapper(), true)
 		}

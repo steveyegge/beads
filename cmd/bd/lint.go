@@ -47,13 +47,39 @@ Examples:
 		typeFilter, _ := cmd.Flags().GetString("type")
 		statusFilter, _ := cmd.Flags().GetString("status")
 
-		var issues []*types.Issue
-
 		// Direct mode
 
 		if store == nil {
 			FatalErrorWithHint("database not initialized",
 				diagHint())
+		}
+
+		var results []LintResult
+		totalWarnings := 0
+		issuesChecked := 0
+
+		lintOne := func(issue *types.Issue) {
+			issuesChecked++
+			err := validation.LintIssue(issue)
+			if err == nil {
+				return
+			}
+			templateErr, ok := err.(*validation.TemplateError)
+			if !ok {
+				return
+			}
+			missing := make([]string, len(templateErr.Missing))
+			for i, m := range templateErr.Missing {
+				missing[i] = m.Heading
+			}
+			results = append(results, LintResult{
+				ID:       issue.ID,
+				Title:    issue.Title,
+				Type:     string(issue.IssueType),
+				Missing:  missing,
+				Warnings: len(missing),
+			})
+			totalWarnings += len(missing)
 		}
 
 		if len(args) > 0 {
@@ -68,7 +94,7 @@ Examples:
 					fmt.Fprintf(os.Stderr, "Issue not found: %s\n", id)
 					continue
 				}
-				issues = append(issues, issue)
+				lintOne(issue)
 			}
 		} else {
 			// Lint all matching issues
@@ -88,41 +114,17 @@ Examples:
 				filter.IssueType = &t
 			}
 
-			var err error
-			issues, err = store.SearchIssues(ctx, "", filter)
+			it, err := store.IterIssues(ctx, "", filter)
 			if err != nil {
 				FatalError("%v", err)
 			}
-		}
-
-		var results []LintResult
-		totalWarnings := 0
-
-		for _, issue := range issues {
-			err := validation.LintIssue(issue)
-			if err == nil {
-				continue // No warnings for this issue
+			defer func() { _ = it.Close() }()
+			for it.Next(ctx) {
+				lintOne(it.Value())
 			}
-
-			templateErr, ok := err.(*validation.TemplateError)
-			if !ok {
-				continue
+			if err := it.Err(); err != nil {
+				FatalError("%v", err)
 			}
-
-			missing := make([]string, len(templateErr.Missing))
-			for i, m := range templateErr.Missing {
-				missing[i] = m.Heading
-			}
-
-			result := LintResult{
-				ID:       issue.ID,
-				Title:    issue.Title,
-				Type:     string(issue.IssueType),
-				Missing:  missing,
-				Warnings: len(missing),
-			}
-			results = append(results, result)
-			totalWarnings += len(missing)
 		}
 
 		if jsonOutput {
@@ -142,7 +144,7 @@ Examples:
 
 		// Human-readable output
 		if len(results) == 0 {
-			fmt.Printf("✓ No template warnings found (%d issues checked)\n", len(issues))
+			fmt.Printf("✓ No template warnings found (%d issues checked)\n", issuesChecked)
 			return
 		}
 
