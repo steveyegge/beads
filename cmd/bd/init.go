@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
@@ -812,6 +813,15 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				// Non-fatal — project init should succeed even if global DB creation fails
 			} else if !quiet {
 				fmt.Printf("  %s Global database %s available\n", ui.RenderPass("✓"), doltserver.GlobalDatabaseName)
+			}
+		}
+
+		// bd init --reinit-local destroys and recreates the local database.
+		// Kill any running bdd daemon so it releases the embedded store lock
+		// before we mutate the data directory.
+		if reinitLocal {
+			if err := daemon.Kill(beadsDir); err != nil && !quiet {
+				fmt.Fprintf(os.Stderr, "Warning: could not stop bdd daemon before reinit: %v\n", err)
 			}
 		}
 

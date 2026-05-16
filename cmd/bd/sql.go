@@ -44,6 +44,14 @@ WARNING: Direct database access bypasses the storage layer. Use with caution.`,
 
 		accessor, ok := storage.UnwrapStore(store).(storage.RawDBAccessor)
 		if !ok {
+			// In daemon mode, the store is a remote client and does not expose
+			// direct DB access. Redirect the user to bypass the daemon.
+			if !noDaemon {
+				fmt.Fprintln(os.Stderr, "note: this command requires direct storage access and cannot run via the bdd daemon.")
+				fmt.Fprintln(os.Stderr, `  Bypass daemon for this call: BEADS_DAEMON_MODE=off bd sql "..."`)
+				fmt.Fprintln(os.Stderr, "  Or disable daemon mode: bd config set daemon_mode off")
+				os.Exit(0)
+			}
 			FatalErrorRespectJSON("storage backend does not support raw DB access")
 		}
 		db := accessor.UnderlyingDB()

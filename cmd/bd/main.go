@@ -719,6 +719,7 @@ var rootCmd = &cobra.Command{
 			"completion",
 			"context", // reads config files directly, does not need DB open
 			"codex-hook",
+			"daemon", // reads pidfile / signals; does not need DB open
 			"doctor",
 			"dolt", // bare "bd dolt" shows help only; subcommands handled below
 			"fish",

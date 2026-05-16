@@ -78,7 +78,7 @@ func acquireEmbeddedLock(beadsDir string, serverMode bool) (util.Unlocker, error
 // be a daemon client (satisfies Storage + StoreLocator only) or a local
 // DoltStorage (satisfies all Storage + DoltStorage sub-interfaces). Callers
 // that need DoltStorage capabilities should type-assert; the assertion fails
-// in daemon mode, signalling that --no-daemon or direct-mode is required.
+// in daemon mode, signaling that --no-daemon or direct-mode is required.
 func openConfiguredStore(ctx context.Context, beadsDir string, _ bool) (storage.Storage, error) {
 	cfg, _ := configfile.Load(beadsDir)
 	if daemonStore, err := tryDaemonClient(beadsDir, cfg); daemonStore != nil || err != nil {
