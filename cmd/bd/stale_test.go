@@ -254,7 +254,6 @@ func TestStaleSuite(t *testing.T) {
 }
 
 func TestStaleCommandInit(t *testing.T) {
-	t.Parallel()
 	if staleCmd == nil {
 		t.Fatal("staleCmd should be initialized")
 	}
