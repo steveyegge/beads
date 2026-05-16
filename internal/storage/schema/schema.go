@@ -88,6 +88,11 @@ func parseVersion(name string) (int, error) {
 }
 
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
+	dirtyBefore, err := committableDirtyTables(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration status: %w", err)
+	}
+
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
 		return applied, err
@@ -111,8 +116,12 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, nil
 	}
 
-	if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
+	staged, err := stageNewDirtyTables(ctx, db, dirtyBefore)
+	if err != nil {
 		return applied, fmt.Errorf("staging migrations: %w", err)
+	}
+	if !staged {
+		return applied, nil
 	}
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
@@ -121,6 +130,58 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	}
 
 	return applied, nil
+}
+
+func committableDirtyTables(ctx context.Context, db DBConn) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.table_name
+		FROM dolt_status s
+		WHERE NOT EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			AND s.table_name LIKE di.pattern
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]struct{})
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, err
+		}
+		tables[table] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
+func stageNewDirtyTables(ctx context.Context, db DBConn, dirtyBefore map[string]struct{}) (bool, error) {
+	dirtyAfter, err := committableDirtyTables(ctx, db)
+	if err != nil {
+		return false, err
+	}
+
+	var tables []string
+	for table := range dirtyAfter {
+		if _, wasDirty := dirtyBefore[table]; wasDirty {
+			continue
+		}
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+
+	for _, table := range tables {
+		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD(?)", table); err != nil {
+			return false, fmt.Errorf("dolt add %s: %w", table, err)
+		}
+	}
+	return len(tables) > 0, nil
 }
 
 type migrationFile struct {
