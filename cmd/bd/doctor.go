@@ -31,8 +31,27 @@ type doctorCheck struct {
 	Category string `json:"category,omitempty"` // category for grouping in output
 }
 
+// BackendBlock is the stable JSON shape for the top-level "backend" key in
+// bd doctor --json output. Always present regardless of backend type (§5 design).
+type BackendBlock struct {
+	Type             string   `json:"type"`
+	Mode             string   `json:"mode"`
+	Host             string   `json:"host"`
+	Port             int      `json:"port"`
+	Database         string   `json:"database"`
+	User             string   `json:"user,omitempty"`
+	SSLMode          string   `json:"sslmode,omitempty"`
+	Version          string   `json:"version"`
+	Healthy          bool     `json:"healthy"`
+	ProjectIDMatch   bool     `json:"project_id_match"`
+	Error            string   `json:"error"`
+	LegacyDoltDir    string   `json:"legacy_dolt_dir"`
+	LegacyDoltFields []string `json:"legacy_dolt_fields"`
+}
+
 type doctorResult struct {
 	Path            string            `json:"path"`
+	Backend         BackendBlock      `json:"backend"`
 	Checks          []doctorCheck     `json:"checks"`
 	OverallOK       bool              `json:"overall_ok"`
 	CLIVersion      string            `json:"cli_version"`
@@ -555,10 +574,47 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, remoteCheck)
 	// Don't fail overall for remote discrepancies, just warn
 
-	// Dolt health checks (connection, schema, issue count, status).
-	for _, dc := range doctor.RunDoltHealthChecks(path) {
-		result.Checks = append(result.Checks, convertDoctorCheck(dc))
+	// Backend-specific health checks.
+	// Postgres: run CheckPostgresHealth and populate result.Backend.
+	// Dolt: run RunDoltHealthChecks as before.
+	bi := configfile.ResolveBackendInfo(beadsDir)
+	result.Backend = BackendBlock{
+		Type:             bi.Backend,
+		Mode:             bi.Mode,
+		Host:             bi.Host,
+		Port:             bi.Port,
+		Database:         bi.Database,
+		User:             bi.User,
+		SSLMode:          bi.SSLMode,
+		LegacyDoltDir:    bi.LegacyDoltDir,
+		LegacyDoltFields: bi.LegacyDoltFields,
 	}
+	if result.Backend.LegacyDoltFields == nil {
+		result.Backend.LegacyDoltFields = []string{}
+	}
+
+	if bi.Backend == configfile.BackendPostgres {
+		probe := doctor.ProbePostgresHealth(beadsDir)
+		result.Checks = append(result.Checks, convertDoctorCheck(probe.Check))
+		result.Backend.Healthy = probe.Healthy
+		result.Backend.Version = probe.Version
+		result.Backend.ProjectIDMatch = probe.ProjectIDMatch
+		if probe.Check.Status != statusOK {
+			result.Backend.Error = probe.Check.Message
+			result.OverallOK = false
+		}
+	} else {
+		// Dolt health checks (connection, schema, issue count, status).
+		for _, dc := range doctor.RunDoltHealthChecks(path) {
+			result.Checks = append(result.Checks, convertDoctorCheck(dc))
+		}
+		// Dolt backend is healthy when we can run checks.
+		result.Backend.Healthy = true
+	}
+
+	// Always: legacy Dolt artifacts check (INFO severity, never affects exit code).
+	legacyDoltCheck := convertWithCategory(doctor.CheckLegacyDoltArtifacts(beadsDir), doctor.CategoryData)
+	result.Checks = append(result.Checks, legacyDoltCheck)
 
 	// Federation health checks (bd-wkumz.6)
 	// Check 8d: Federation remotesapi port accessibility
@@ -961,7 +1017,7 @@ func printDiagnostics(result doctorResult) {
 		switch check.Status {
 		case statusOK:
 			passCount++
-		case statusWarning:
+		case statusWarning, doctor.StatusInfo:
 			warnCount++
 			issuesByCategory[cat] = append(issuesByCategory[cat], check)
 			hasIssues = true
@@ -1022,9 +1078,12 @@ func printDiagnostics(result doctorResult) {
 
 			for _, check := range issues {
 				line := fmt.Sprintf("%s: %s", check.Name, check.Message)
-				if check.Status == statusError {
+				switch check.Status {
+				case statusError:
 					fmt.Printf("  %s  %s\n", ui.RenderFailIcon(), ui.RenderFail(line))
-				} else {
+				case doctor.StatusInfo:
+					fmt.Printf("  %s  %s\n", ui.WarnStyle.Render(ui.IconInfo), line)
+				default:
 					fmt.Printf("  %s  %s\n", ui.RenderWarnIcon(), line)
 				}
 				if check.Detail != "" {
@@ -1049,9 +1108,12 @@ func printDiagnostics(result doctorResult) {
 			fmt.Printf("%s\n", ui.RenderCategory("Other"))
 			for _, check := range otherIssues {
 				line := fmt.Sprintf("%s: %s", check.Name, check.Message)
-				if check.Status == statusError {
+				switch check.Status {
+				case statusError:
 					fmt.Printf("  %s  %s\n", ui.RenderFailIcon(), ui.RenderFail(line))
-				} else {
+				case doctor.StatusInfo:
+					fmt.Printf("  %s  %s\n", ui.WarnStyle.Render(ui.IconInfo), line)
+				default:
 					fmt.Printf("  %s  %s\n", ui.RenderWarnIcon(), line)
 				}
 				if check.Detail != "" {

@@ -5,6 +5,8 @@ const (
 	StatusOK      = "ok"
 	StatusWarning = "warning"
 	StatusError   = "error"
+	// StatusInfo is advisory-only — renders ℹ icon, never affects exit code.
+	StatusInfo = "info"
 )
 
 // Category constants for grouping doctor checks
