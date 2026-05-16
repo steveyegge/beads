@@ -78,6 +78,7 @@ var (
 	traceFile         *os.File
 	verboseFlag       bool // Enable verbose/debug output
 	quietFlag         bool // Suppress non-essential output
+	noDaemon          bool // Skip bdd daemon probe (overrides daemon_mode setting)
 
 	// Dolt auto-commit policy (flag/config). Values: off | on
 	doltAutoCommit string
@@ -508,6 +509,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
+	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "bypass bdd daemon; use in-process storage (overrides daemon_mode setting)")
 
 	// Add --version flag to root command (same behavior as version subcommand)
 	rootCmd.Flags().BoolP("version", "V", false, "Print version information")

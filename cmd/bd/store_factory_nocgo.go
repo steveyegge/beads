@@ -40,6 +40,17 @@ func acquireEmbeddedLock(_ string, _ bool) (util.Unlocker, error) {
 	return util.NoopLock{}, nil
 }
 
+// openConfiguredStore opens storage for beadsDir, probing the bdd daemon first
+// when daemon_mode is auto or always. In the nocgo build, embedded Dolt is not
+// available; daemon mode is the only no-sql-server path.
+func openConfiguredStore(ctx context.Context, beadsDir string, _ bool) (storage.Storage, error) {
+	cfg, _ := configfile.Load(beadsDir)
+	if daemonStore, err := tryDaemonClient(beadsDir, cfg); daemonStore != nil || err != nil {
+		return daemonStore, err
+	}
+	return newDoltStoreFromConfig(ctx, beadsDir)
+}
+
 // newDoltStoreFromConfig creates a SQL-server-backed storage backend from config.
 func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
 	cfg, err := configfile.Load(beadsDir)

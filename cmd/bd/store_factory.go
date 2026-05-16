@@ -73,6 +73,20 @@ func acquireEmbeddedLock(beadsDir string, serverMode bool) (util.Unlocker, error
 	return lock, nil
 }
 
+// openConfiguredStore opens storage for beadsDir, probing the bdd daemon
+// first when daemon_mode is auto or always. Returns a storage.Storage that may
+// be a daemon client (satisfies Storage + StoreLocator only) or a local
+// DoltStorage (satisfies all Storage + DoltStorage sub-interfaces). Callers
+// that need DoltStorage capabilities should type-assert; the assertion fails
+// in daemon mode, signalling that --no-daemon or direct-mode is required.
+func openConfiguredStore(ctx context.Context, beadsDir string, _ bool) (storage.Storage, error) {
+	cfg, _ := configfile.Load(beadsDir)
+	if daemonStore, err := tryDaemonClient(beadsDir, cfg); daemonStore != nil || err != nil {
+		return daemonStore, err
+	}
+	return newDoltStoreFromConfig(ctx, beadsDir)
+}
+
 // newDoltStoreFromConfig creates a storage backend from the beads directory's
 // persisted metadata.json configuration. Uses embedded Dolt by default;
 // connects to dolt sql-server when dolt_mode is "server".
