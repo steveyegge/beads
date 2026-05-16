@@ -32,8 +32,19 @@ func capabilitySetForBackend(beadsDir string) (storage.CapabilitySet, string) {
 		beadsDir = selectedDoltBeadsDir()
 	}
 	cfg, _ := configfile.Load(beadsDir)
-	if cfg != nil && cfg.GetBackend() == configfile.BackendPostgres {
-		return storage.PostgresCapabilities, "postgres"
+	var backend string
+	if cfg != nil {
+		backend = cfg.GetBackend()
+	}
+	backendCaps := map[string]struct {
+		caps storage.CapabilitySet
+		name string
+	}{
+		configfile.BackendDolt:     {storage.DoltCapabilities, "dolt"},
+		configfile.BackendPostgres: {storage.PostgresCapabilities, "postgres"},
+	}
+	if entry, ok := backendCaps[backend]; ok {
+		return entry.caps, entry.name
 	}
 	return storage.DoltCapabilities, "dolt"
 }
