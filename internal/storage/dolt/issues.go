@@ -50,6 +50,9 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 			fmt.Sprintf("bd: create %s", issue.ID)); err != nil {
 			return err
 		}
+	} else if useWispsTable {
+		// Q5: new wisp row means the table is no longer empty; drop the cache.
+		s.invalidateWispCountCache()
 	}
 	return nil
 }
@@ -97,10 +100,15 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 				issue.Ephemeral = true
 			}
 		}
-		return s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
 			_, err := issueops.CreateIssuesInTxWithResult(ctx, tx, issues, actor, opts)
 			return err
-		})
+		}); err != nil {
+			return err
+		}
+		// Q5: wisps were inserted; table may no longer be empty.
+		s.invalidateWispCountCache()
+		return nil
 	}
 
 	var result issueops.CreateIssuesResult
@@ -337,7 +345,12 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 	// Route ephemeral IDs to wisps table (falls through for promoted wisps)
 	if s.isActiveWisp(ctx, id) {
-		return s.deleteWisp(ctx, id)
+		err := s.deleteWisp(ctx, id)
+		if err == nil {
+			// Q5: wisp was removed; table may now be empty.
+			s.invalidateWispCountCache()
+		}
+		return err
 	}
 
 	if err := s.withWriteTx(ctx, func(tx *sql.Tx) error {
@@ -403,6 +416,8 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 				return nil, fmt.Errorf("failed to batch delete wisps: %w", err)
 			}
 			wispDeleteCount = deleted
+			// Q5: wisps were removed; table may now be empty.
+			s.invalidateWispCountCache()
 		}
 	}
 	ids = regularIDs

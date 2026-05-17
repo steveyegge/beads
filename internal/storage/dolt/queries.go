@@ -11,7 +11,15 @@ import (
 
 // SearchIssues finds issues matching query and filters.
 // Delegates to issueops.SearchIssuesInTx for shared query logic.
+//
+// Q5: When the wisps table is known empty (cached), SkipWisps is set on the
+// filter automatically, avoiding the full-table scan regardless of caller intent.
 func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	// Q5: short-circuit wisps merge if the table is known empty.
+	if !filter.SkipWisps {
+		filter.SkipWisps = s.isWispTableEmpty(ctx)
+	}
+
 	var result []*types.Issue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -29,6 +37,35 @@ func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, fi
 		return err
 	})
 	return result, err
+}
+
+// isWispTableEmpty returns true when the wisps table is known to have zero rows
+// (Q5 per-process cache). A false return does NOT mean wisps are non-empty; it
+// means the count hasn't been fetched yet or the cache was invalidated.
+func (s *DoltStore) isWispTableEmpty(ctx context.Context) bool {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.wispCountCached {
+		return s.wispCountZero
+	}
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wisps`).Scan(&count)
+	if err != nil {
+		// Table may not exist or query failed; don't cache, don't skip.
+		return false
+	}
+	s.wispCountCached = true
+	s.wispCountZero = count == 0
+	return s.wispCountZero
+}
+
+// invalidateWispCountCache clears the Q5 wisp row-count cache.
+// Must be called after any write that creates or deletes wisps.
+func (s *DoltStore) invalidateWispCountCache() {
+	s.cacheMu.Lock()
+	s.wispCountCached = false
+	s.wispCountZero = false
+	s.cacheMu.Unlock()
 }
 
 func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
@@ -111,6 +148,39 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 	}
 
 	return stats, nil
+}
+
+// invalidateBlockedIDsCache clears the blocked IDs cache.
+// Called after writes that may change blocking status.
+func (s *DoltStore) invalidateBlockedIDsCache() {
+	s.cacheMu.Lock()
+	s.blockedIDsCached = false
+	s.blockedIDsCache = nil
+	s.blockedIDsCacheMap = nil
+	s.blockedIDsCacheIncludesWisps = false
+	s.cacheMu.Unlock()
+}
+
+// getChildrenWithParents returns a map of childID -> parentID for direct children
+// (parent-child deps) of the given parent IDs.
+func (s *DoltStore) getChildrenWithParents(ctx context.Context, parentIDs []string) (map[string]string, error) {
+	var result map[string]string
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetChildrenWithParentsInTx(ctx, tx, parentIDs)
+		return err
+	})
+	return result, err
+}
+
+func (s *DoltStore) getDescendantIDs(ctx context.Context, rootID string) ([]string, error) {
+	var result []string
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetDescendantIDsInTx(ctx, tx, rootID, 0)
+		return err
+	})
+	return result, err
 }
 
 // GetMoleculeProgress returns progress stats for a molecule

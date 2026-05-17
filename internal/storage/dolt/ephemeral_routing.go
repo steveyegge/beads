@@ -286,6 +286,8 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 	}); err != nil {
 		return err
 	}
+	s.invalidateWispCountCache()
+	s.invalidateBlockedIDsCache()
 	return nil
 }
 

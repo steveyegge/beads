@@ -137,6 +137,8 @@ Examples:
 			}
 		}
 
+		searchFilter.SkipWisps = true // bd query never needs ephemeral wisp results
+
 		if jsonOutput {
 			iwc, err := store.SearchIssuesWithCounts(ctx, "", searchFilter)
 			if err != nil {
@@ -164,7 +166,6 @@ Examples:
 			outputJSON(iwc)
 			return
 		}
-
 		issues, err := store.SearchIssues(ctx, "", searchFilter)
 		if err != nil {
 			FatalError("%v", err)

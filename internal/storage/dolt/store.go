@@ -163,14 +163,21 @@ type DoltStore struct {
 	readOnly      bool         // True if opened in read-only mode
 	credentialKey []byte       // Random encryption key for federation credentials
 
-	customStatusDetailedCache []types.CustomStatus
-	customStatusCache         []string
-	customStatusCached        bool
-	customTypeCache           []string
-	customTypeCached          bool
-	infraTypeCache            map[string]bool
-	infraTypeCached           bool
-	cacheMu                   sync.Mutex
+	// Per-invocation caches (lifetime = DoltStore lifetime)
+	customStatusDetailedCache    []types.CustomStatus // cached result of GetCustomStatusesDetailed
+	customStatusCache            []string             // cached name-only result (derived from detailed)
+	customStatusCached           bool                 // true once cache has been populated
+	customTypeCache              []string             // cached result of GetCustomTypes
+	customTypeCached             bool                 // true once customTypeCache has been populated
+	infraTypeCache               map[string]bool      // cached result of GetInfraTypes
+	infraTypeCached              bool                 // true once infraTypeCache has been populated
+	blockedIDsCache              []string             // cached result of computeBlockedIDs
+	blockedIDsCacheMap           map[string]bool
+	blockedIDsCached             bool // true once blockedIDsCache has been populated
+	blockedIDsCacheIncludesWisps bool // true if cache was computed with wisps
+	wispCountCached              bool // Q5: true once wisp row count has been fetched
+	wispCountZero                bool // Q5: true if wisps table is known empty (skip merge)
+	cacheMu                      sync.Mutex
 
 	// OTel span attribute cache (avoids per-call allocation)
 	spanAttrsOnce  sync.Once
