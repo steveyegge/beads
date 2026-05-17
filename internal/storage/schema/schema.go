@@ -82,18 +82,27 @@ func AllMigrationsSQL() string {
 func acquireMigrateLock(ctx context.Context, db DBConn) error {
 	var locked sql.NullInt64
 	if err := db.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", migrateLockName, migrateLockTimeoutSec).Scan(&locked); err != nil {
-		return fmt.Errorf("acquiring schema migration lock %q: %w", migrateLockName, err)
+		return fmt.Errorf("failed to acquire schema advisory lock: %w", err)
 	}
-	if !locked.Valid || locked.Int64 != 1 {
-		return fmt.Errorf("acquiring schema migration lock %q: timed out after %ds (another connection holds it)", migrateLockName, migrateLockTimeoutSec)
+	if !locked.Valid {
+		return fmt.Errorf("failed to acquire schema advisory lock")
+	}
+	if locked.Int64 != 1 {
+		return fmt.Errorf("schema advisory lock timeout")
 	}
 	return nil
 }
 
 func releaseMigrateLock(ctx context.Context, db DBConn) {
-	_, err := db.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", migrateLockName)
-	if err != nil {
-		panic(fmt.Errorf("failed to release sql advisory lock: %w", err))
+	var released sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", migrateLockName).Scan(&released); err != nil {
+		panic(fmt.Sprintf("failed to release schema advisory lock: %v", err))
+	}
+	if !released.Valid {
+		panic("failed to release schema advisory lock")
+	}
+	if released.Int64 != 1 {
+		panic("failed to release schema advisory lock: lock not held")
 	}
 }
 
