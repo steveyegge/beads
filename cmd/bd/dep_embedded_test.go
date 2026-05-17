@@ -380,8 +380,8 @@ func TestEmbeddedDep(t *testing.T) {
 		b := bdCreate(t, bd, dir2, "No cycle B", "--type", "task")
 		bdDep(t, bd, dir2, "add", a.ID, b.ID)
 		out := bdDep(t, bd, dir2, "cycles")
-		if !strings.Contains(out, "No cycles") && !strings.Contains(out, "no cycles") {
-			t.Logf("expected 'No cycles' message: %s", out)
+		if !strings.Contains(out, "No dependency cycles detected") {
+			t.Logf("expected no-cycle message: %s", out)
 		}
 	})
 }

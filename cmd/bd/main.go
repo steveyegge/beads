@@ -1125,8 +1125,12 @@ var rootCmd = &cobra.Command{
 		// Auto-backup: export JSONL to .beads/backup/ if enabled and due
 		maybeAutoBackup(rootCtx)
 
-		// Auto-export: write git-tracked JSONL for portability if enabled and due
-		maybeAutoExport(rootCtx)
+		// Auto-export: write git-tracked JSONL for portability if enabled and due.
+		// Read-only commands must not perform post-run maintenance writes or emit
+		// sync guidance after machine-readable output.
+		if shouldRunPostCommandAutoExport(cmd) {
+			maybeAutoExport(rootCtx)
+		}
 
 		// Auto-push: push to Dolt remote if enabled and due.
 		// Skip for read-only commands to avoid unnecessary network operations
@@ -1167,6 +1171,13 @@ var rootCmd = &cobra.Command{
 			rootCancel()
 		}
 	},
+}
+
+func shouldRunPostCommandAutoExport(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return true
+	}
+	return !isReadOnlyCommand(cmd.Name())
 }
 
 // blockedEnvVars lists environment variables that must not be set because they
