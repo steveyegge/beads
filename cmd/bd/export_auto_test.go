@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // TestGitAddFile_InWorktreeHook_StagesCorrectPath is a regression test for
@@ -173,6 +175,15 @@ func TestScrubGitHookEnv(t *testing.T) {
 		if !strings.Contains(joined, k) {
 			t.Errorf("scrubGitHookEnv dropped %s\nresult:\n%s", k, joined)
 		}
+	}
+}
+
+func TestShouldRunPostCommandAutoExportSkipsReadOnlyCommands(t *testing.T) {
+	if shouldRunPostCommandAutoExport(&cobra.Command{Use: "search"}) {
+		t.Fatal("search is read-only and must not trigger post-command auto-export")
+	}
+	if !shouldRunPostCommandAutoExport(&cobra.Command{Use: "create"}) {
+		t.Fatal("write commands should still trigger post-command auto-export")
 	}
 }
 
