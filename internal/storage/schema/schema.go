@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type DBConn interface {
@@ -94,12 +95,15 @@ func acquireMigrateLock(ctx context.Context, db DBConn) error {
 }
 
 func releaseMigrateLock(ctx context.Context, db DBConn) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
 	var released sql.NullInt64
-	if err := db.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", migrateLockName).Scan(&released); err != nil {
-		panic(fmt.Sprintf("failed to release schema advisory lock: %v", err))
+	if err := db.QueryRowContext(releaseCtx, "SELECT RELEASE_LOCK(?)", migrateLockName).Scan(&released); err != nil {
+		return
 	}
 	if !released.Valid {
-		panic("failed to release schema advisory lock")
+		return
 	}
 	if released.Int64 != 1 {
 		panic("failed to release schema advisory lock: lock not held")
