@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +41,9 @@ type purgeScope struct {
 	// Without this gate, `bd prune --force` would silently delete every
 	// closed non-ephemeral bead in the repo.
 	requireFilter bool
+	// ignoreReferences bypasses the reference-aware skip in prune mode.
+	// Has no effect for purge (ephemeral beads; references to them are transient).
+	ignoreReferences bool
 }
 
 var purgeCmd = &cobra.Command{
@@ -153,13 +159,48 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 	}
 	closedIssues = filtered
 
+	// Reference-aware skip: for prune, skip beads still cited by open beads.
+	isPrune := scope.cmdName == "prune"
+	var referencedCount int
+	var referencedSample []string // up to 100 IDs for JSON; up to 5 for human output
+	if isPrune && !scope.ignoreReferences && len(closedIssues) > 0 {
+		candidateIDs := make(map[string]bool, len(closedIssues))
+		for _, iss := range closedIssues {
+			candidateIDs[iss.ID] = true
+		}
+		referenced, err := buildReferencedSet(ctx, candidateIDs)
+		if err != nil {
+			FatalError("scanning open beads for references: %v", err)
+		}
+		kept := make([]*types.Issue, 0, len(closedIssues))
+		for _, iss := range closedIssues {
+			if referenced[iss.ID] {
+				referencedCount++
+				if len(referencedSample) < 100 {
+					referencedSample = append(referencedSample, iss.ID)
+				}
+				continue
+			}
+			kept = append(kept, iss)
+		}
+		closedIssues = kept
+	}
+
 	// Report nothing-to-do
 	if len(closedIssues) == 0 {
 		if jsonOutput {
-			outputJSON(map[string]interface{}{
+			m := map[string]interface{}{
 				scope.countKey: 0,
 				"message":      fmt.Sprintf("No %ss to %s", scope.subjectNoun, scope.cmdName),
-			})
+			}
+			if isPrune {
+				m["referenced_skipped"] = referencedCount
+				m["referenced_count"] = referencedCount
+				if len(referencedSample) > 0 {
+					m["referenced_ids_sample"] = referencedSample
+				}
+			}
+			outputJSON(m)
 		} else {
 			msg := fmt.Sprintf("No %ss to %s", scope.subjectNoun, scope.cmdName)
 			if olderThan != "" {
@@ -167,6 +208,11 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 			}
 			if pattern != "" {
 				msg += fmt.Sprintf(" (matching %q)", pattern)
+			}
+			if referencedCount > 0 {
+				msg += fmt.Sprintf(" (%s referenced; use %s to override)",
+					ui.MutedStyle.Render(strconv.Itoa(referencedCount)),
+					ui.CommandStyle.Render("--ignore-references"))
 			}
 			fmt.Println(msg)
 		}
@@ -198,6 +244,13 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 			if pinnedCount > 0 {
 				stats["pinned_skipped"] = pinnedCount
 			}
+			if isPrune {
+				stats["referenced_skipped"] = referencedCount
+				stats["referenced_count"] = referencedCount
+				if len(referencedSample) > 0 {
+					stats["referenced_ids_sample"] = referencedSample
+				}
+			}
 			outputJSON(stats)
 		} else {
 			fmt.Printf("Would %s %d %s(s)\n", scope.cmdName, len(issueIDs), scope.subjectNoun)
@@ -209,6 +262,22 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 			if pinnedCount > 0 {
 				fmt.Printf("  Pinned (skipped): %d\n", pinnedCount)
 			}
+			if referencedCount > 0 {
+				fmt.Printf("  %s\n", ui.MutedStyle.Render(fmt.Sprintf("Referenced (skipped): %d", referencedCount)))
+				sample := referencedSample
+				if len(sample) > 5 {
+					sample = sample[:5]
+				}
+				ids := make([]string, len(sample))
+				for i, id := range sample {
+					ids[i] = ui.IDStyle.Render(id)
+				}
+				suffix := ""
+				if referencedCount > 5 {
+					suffix = ui.MutedStyle.Render(", ...")
+				}
+				fmt.Printf("  %s\n", ui.MutedStyle.Render("Referenced IDs (sample): ")+strings.Join(ids, ui.MutedStyle.Render(", "))+suffix)
+			}
 			fmt.Printf("\n(Dry-run mode — no changes made)\n")
 		}
 		return
@@ -219,6 +288,9 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 		fmt.Printf("Found %d %s(s) to %s\n", len(issueIDs), scope.subjectNoun, scope.cmdName)
 		if pinnedCount > 0 {
 			fmt.Printf("Skipping %d pinned bead(s)\n", pinnedCount)
+		}
+		if referencedCount > 0 {
+			fmt.Printf("%s\n", ui.MutedStyle.Render(fmt.Sprintf("Skipping %d referenced bead(s)", referencedCount)))
 		}
 		hint := fmt.Sprintf("bd %s --force", scope.cmdName)
 		if olderThan != "" {
@@ -250,6 +322,13 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 		if pinnedCount > 0 {
 			stats["pinned_skipped"] = pinnedCount
 		}
+		if isPrune {
+			stats["referenced_skipped"] = referencedCount
+			stats["referenced_count"] = referencedCount
+			if len(referencedSample) > 0 {
+				stats["referenced_ids_sample"] = referencedSample
+			}
+		}
 		outputJSON(stats)
 	} else {
 		fmt.Printf("%s %s %d %s(s)\n", ui.RenderPass("✓"), capitalize(scope.pastTense), result.DeletedCount, scope.subjectNoun)
@@ -258,6 +337,9 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 		fmt.Printf("  Events removed:       %d\n", result.EventsCount)
 		if pinnedCount > 0 {
 			fmt.Printf("  Pinned (skipped):     %d\n", pinnedCount)
+		}
+		if referencedCount > 0 {
+			fmt.Printf("  %s\n", ui.MutedStyle.Render(fmt.Sprintf("Referenced (skipped): %d", referencedCount)))
 		}
 	}
 
@@ -271,6 +353,54 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// buildReferencedSet returns the subset of candidateIDs that appear (by word
+// boundary match) in the description, notes, or comments of any non-closed bead.
+// Callers use this to protect ADR / decision trails still cited by open work.
+func buildReferencedSet(ctx context.Context, candidateIDs map[string]bool) (map[string]bool, error) {
+	if len(candidateIDs) == 0 {
+		return nil, nil
+	}
+	quoted := make([]string, 0, len(candidateIDs))
+	for id := range candidateIDs {
+		quoted = append(quoted, regexp.QuoteMeta(id))
+	}
+	sort.Strings(quoted) // stable pattern for testability
+	pat := regexp.MustCompile(`\b(` + strings.Join(quoted, "|") + `)\b`)
+
+	refSet := make(map[string]bool)
+
+	openStatuses := []types.Status{
+		types.StatusOpen,
+		types.StatusInProgress,
+		types.StatusBlocked,
+		types.StatusDeferred,
+		types.StatusPinned,
+		types.StatusHooked,
+	}
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{Statuses: openStatuses})
+	if err != nil {
+		return nil, err
+	}
+	for _, iss := range issues {
+		scanText(iss.Description, pat, refSet)
+		scanText(iss.Notes, pat, refSet)
+		comments, err := store.GetIssueComments(ctx, iss.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range comments {
+			scanText(c.Text, pat, refSet)
+		}
+	}
+	return refSet, nil
+}
+
+func scanText(text string, pat *regexp.Regexp, out map[string]bool) {
+	for _, m := range pat.FindAllString(text, -1) {
+		out[m] = true
+	}
 }
 
 // parseHumanDuration parses a human-friendly duration string into days.

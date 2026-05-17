@@ -166,6 +166,21 @@ bd backup restore --force /path/to/backup
 See [docs/DOLT.md](docs/DOLT.md#migrating-between-backends) for full
 migration instructions.
 
+## 🗑 Storage Maintenance
+
+Use `bd prune` to delete old closed beads and reclaim space, and `bd purge` to remove closed ephemeral beads (wisps).
+
+```bash
+bd prune --older-than 30d              # Preview closed beads older than 30 days
+bd prune --older-than 30d --force      # Delete them
+bd prune --older-than 90d --dry-run    # Detailed preview with stats
+bd purge --force                       # Delete all closed ephemeral beads
+```
+
+**Reference protection:** `bd prune` automatically skips closed beads whose ID appears in the description, notes, or comments of any open or in-progress bead. This prevents accidental deletion of ADR records, decision trails, and verification history that downstream beads still reference.
+
+Use `--ignore-references` to override this protection when you intentionally want to clean up beads that are only cited in stale contexts (for example, bulk-decommissioning a retired label across the rig). `bd purge` is unaffected by this flag.
+
 ## 🌐 Community Tools
 
 See [docs/COMMUNITY_TOOLS.md](docs/COMMUNITY_TOOLS.md) for a curated list of community-built UIs, extensions, and integrations—including terminal interfaces, web UIs, editor extensions, and native apps.
