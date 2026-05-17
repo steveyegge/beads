@@ -30,6 +30,16 @@ func (s *EmbeddedDoltStore) SearchIssuesWithCounts(ctx context.Context, query st
 	return result, err
 }
 
+func (s *EmbeddedDoltStore) CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error) {
+	var result map[string]int
+	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.CountIssuesByGroupInTx(ctx, tx, filter, groupBy)
+		return err
+	})
+	return result, err
+}
+
 func (s *EmbeddedDoltStore) ListWisps(ctx context.Context, filter types.WispFilter) ([]*types.Issue, error) {
 	issueFilter := issueops.WispFilterToIssueFilter(filter)
 	var result []*types.Issue

@@ -68,6 +68,24 @@ func (s *DoltStore) invalidateWispCountCache() {
 	s.cacheMu.Unlock()
 }
 
+// CountIssuesByGroup returns per-group issue counts. groupBy is one of:
+// status, priority, type, assignee, label.
+func (s *DoltStore) CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error) {
+	if !filter.SkipWisps {
+		filter.SkipWisps = s.isWispTableEmpty(ctx)
+	}
+	var result map[string]int
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.CountIssuesByGroupInTx(ctx, tx, filter, groupBy)
+		return err
+	})
+	return result, err
+}
+
+// GetReadyWork returns issues that are ready to work on (not blocked).
+//
+// Blocking semantics are unified through issueops.GetReadyWorkInTx.
 func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
 	var result []*types.Issue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {

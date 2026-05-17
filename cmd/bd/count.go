@@ -227,8 +227,10 @@ Examples:
 		}
 
 		groups := make([]GroupCount, 0, len(counts))
+		total := 0
 		for group, count := range counts {
 			groups = append(groups, GroupCount{Group: group, Count: count})
+			total += count
 		}
 
 		// Use CountIssues for the total so multi-label issues aren't double-counted

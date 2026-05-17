@@ -204,6 +204,14 @@ func (s *InstrumentedStorage) SearchIssuesWithCounts(ctx context.Context, query 
 	return v, err
 }
 
+func (s *InstrumentedStorage) CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error) {
+	attrs := []attribute.KeyValue{attribute.String("bd.group_by", groupBy)}
+	ctx, span, t := s.op(ctx, "CountIssuesByGroup", attrs...)
+	result, err := s.inner.CountIssuesByGroup(ctx, filter, groupBy)
+	s.done(ctx, span, t, err, attrs...)
+	return result, err
+}
+
 // ── Dependencies ────────────────────────────────────────────────────────────
 
 func (s *InstrumentedStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
