@@ -1,32 +1,32 @@
-// Package ui provides terminal styling for beads CLI output.
-package ui
+// Package uimd provides markdown rendering for beads CLI output.
+// Keep this separate from internal/ui so non-markdown ui consumers do not
+// inherit the glamour/chroma dependency graph.
+// This package may depend on internal/ui for terminal policy checks, but
+// internal/ui must not import internal/uimd.
+package uimd
 
 import (
 	"os"
 
 	"charm.land/glamour/v2"
+	"github.com/steveyegge/beads/internal/ui"
 	"golang.org/x/term"
 )
 
-// RenderMarkdown renders markdown text using glamour with beads theme colors.
+// RenderMarkdown renders markdown text using glamour's auto-detected terminal style.
 // Returns the rendered markdown or the original text if rendering fails.
 // Word wraps at terminal width (or 80 columns if width can't be detected).
 func RenderMarkdown(markdown string) string {
-	// Skip glamour in agent mode to keep output clean for parsing
-	if IsAgentMode() {
+	if ui.IsAgentMode() {
+		return markdown
+	}
+	if !ui.ShouldUseColor() {
 		return markdown
 	}
 
-	// Skip glamour if colors are disabled
-	if !ShouldUseColor() {
-		return markdown
-	}
-
-	// Detect terminal width for word wrap
-	// Cap at 100 chars for readability - wider lines cause eye-tracking fatigue
-	// Typography research suggests 50-75 chars optimal, 80-100 comfortable max
+	// Cap at 100 chars for readability; wider lines are harder to scan.
 	const maxReadableWidth = 100
-	wrapWidth := 80 // default if terminal size unavailable
+	wrapWidth := 80
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		wrapWidth = w
 	}
@@ -34,18 +34,16 @@ func RenderMarkdown(markdown string) string {
 		wrapWidth = maxReadableWidth
 	}
 
-	// Create renderer with auto-detected style (respects terminal light/dark mode)
 	renderer, err := glamour.NewTermRenderer(
+		// No style is specified so glamour can auto-detect light/dark terminals.
 		glamour.WithWordWrap(wrapWidth),
 	)
 	if err != nil {
-		// fallback to raw markdown on error
 		return markdown
 	}
 
 	rendered, err := renderer.Render(markdown)
 	if err != nil {
-		// fallback to raw markdown on error
 		return markdown
 	}
 
