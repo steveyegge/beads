@@ -17,17 +17,19 @@ import (
 )
 
 // bdImport runs "bd import" with extra args. Returns combined output.
+// bd import writes status lines like "Imported N issues" to stderr
+// (see cmd/bd/import.go), so callers grepping for those need both streams.
 func bdImport(t *testing.T, bd, dir string, args ...string) string {
 	t.Helper()
 	fullArgs := append([]string{"import"}, args...)
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd import %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd import %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String() + stderr.String()
 }
 
 // writeJSONLFile writes issues as JSONL to the given path.
@@ -174,12 +176,12 @@ func TestEmbeddedImport(t *testing.T) {
 		showCmd := exec.Command(bd, "show", id, "--json")
 		showCmd.Dir = dir
 		showCmd.Env = bdEnv(dir)
-		showOut, err := showCmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, showCmd)
 		if err != nil {
-			t.Fatalf("bd show %s failed: %v\n%s", id, err, showOut)
+			t.Fatalf("bd show %s failed: %v\nstdout:\n%s\nstderr:\n%s", id, err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(showOut), "Updated Title") {
-			t.Errorf("expected 'Updated Title' after upsert, got: %s", showOut)
+		if !strings.Contains(stdout.String(), "Updated Title") {
+			t.Errorf("expected 'Updated Title' after upsert, got: %s", stdout.String())
 		}
 	})
 }

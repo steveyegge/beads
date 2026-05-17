@@ -86,11 +86,11 @@ func bdShow(t *testing.T, bd, dir, id string) *types.Issue {
 	cmd := exec.Command(bd, "show", id, "--json")
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd show %s --json failed: %v\n%s", id, err, out)
+		t.Fatalf("bd show %s --json failed: %v\nstdout:\n%s\nstderr:\n%s", id, err, stdout.String(), stderr.String())
 	}
-	return parseIssueJSON(t, out)
+	return parseIssueJSON(t, stdout.Bytes())
 }
 
 // openStore opens an EmbeddedDoltStore for direct verification queries.
@@ -503,15 +503,15 @@ func TestEmbeddedCreate(t *testing.T) {
 		cmd := exec.Command(bd, "create", "--dry-run", "Dry run issue", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err != nil {
-			t.Fatalf("bd create --dry-run failed: %v\n%s", err, out)
+			t.Fatalf("bd create --dry-run failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 
 		// Dry run should not persist anything. Create a real issue and verify
 		// the dry-run issue doesn't exist.
-		if strings.Contains(string(out), "error") {
-			t.Errorf("dry-run produced error output: %s", out)
+		if strings.Contains(stdout.String(), "error") {
+			t.Errorf("dry-run produced error output: %s", stdout.String())
 		}
 	})
 
@@ -578,9 +578,9 @@ A new feature
 		cmd := exec.Command(bd, "create", "-f", mdFile, "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err != nil {
-			t.Fatalf("bd create -f failed: %v\n%s", err, out)
+			t.Fatalf("bd create -f failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 
 		// Verify both issues were created
