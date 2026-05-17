@@ -1206,7 +1206,7 @@ func checkMetadataBackendError(cfg *configfile.Config, beadsDir string) error {
 			"  binary:  %s\n"+
 			"  version: %s\n\n"+
 			"Upgrade bd to a version that supports %q:\n"+
-			"  curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash\n"+
+			"  curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash\n"+
 			"  brew upgrade beads\n\n"+
 			"To confirm which binary is running: bd --version\n"+
 			"To inspect PATH for stale binaries: which bd",
