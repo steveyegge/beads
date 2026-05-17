@@ -527,7 +527,7 @@ func executeInitAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.
 		CreateIfMissing: true,
 		AutoStart:       true,
 		BeadsDir:        plan.BeadsDir,
-	}, true)
+	}, true, false)
 	if err != nil {
 		return fmt.Errorf("create database: %w", err)
 	}
@@ -554,7 +554,7 @@ func executeRestoreAction(ctx context.Context, plan BootstrapPlan, cfg *configfi
 		CreateIfMissing: true,
 		AutoStart:       true,
 		BeadsDir:        plan.BeadsDir,
-	}, true)
+	}, true, false)
 	if err != nil {
 		return fmt.Errorf("create database: %w", err)
 	}
@@ -585,7 +585,7 @@ func executeJSONLImportAction(ctx context.Context, plan BootstrapPlan, cfg *conf
 		CreateIfMissing: true,
 		AutoStart:       true,
 		BeadsDir:        plan.BeadsDir,
-	}, true)
+	}, true, false)
 	if err != nil {
 		return fmt.Errorf("create database: %w", err)
 	}

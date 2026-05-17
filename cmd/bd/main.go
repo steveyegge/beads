@@ -1009,10 +1009,10 @@ var rootCmd = &cobra.Command{
 		// Removing them WILL cause unrecoverable data corruption and data loss.
 		// Dolt manages these files itself; external interference is never safe.
 
-		// bd migrate schema must open with autoMigrate=true — the schema guard
-		// would otherwise block it before it can run, creating a circular failure.
-		autoMigrateForCmd := cmd.Name() == "schema" && cmd.Parent() != nil && cmd.Parent().Name() == "migrate"
-		store, err = newDoltStore(rootCtx, doltCfg, autoMigrateForCmd)
+		// 'bd migrate schema' skips schema init entirely so MigrateSchemaUp can
+		// apply pending migrations and report the correct count. Pointer comparison
+		// (cmd == migrateSchemaCmd) is immune to renames unlike string comparison.
+		store, err = newDoltStore(rootCtx, doltCfg, false, cmd == migrateSchemaCmd)
 
 		// Track final read-only state for staleness checks (GH#1089)
 		storeIsReadOnly = doltCfg.ReadOnly

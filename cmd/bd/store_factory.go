@@ -40,7 +40,10 @@ func usesProxiedServer() bool {
 
 // newDoltStore creates a storage backend from an explicit config.
 // Used by bd init and PersistentPreRun.
-func newDoltStore(ctx context.Context, cfg *dolt.Config, autoMigrate bool) (storage.DoltStorage, error) {
+// When skipSchemaInit is true (used by 'bd migrate schema'), schema
+// initialization is bypassed entirely — no auto-migration and no staleness
+// check — so MigrateSchemaUp can apply and count pending migrations.
+func newDoltStore(ctx context.Context, cfg *dolt.Config, autoMigrate bool, skipSchemaInit bool) (storage.DoltStorage, error) {
 	if cfg.ProxiedServer {
 		// TODO: this should not be a store
 		// it should be a uow provider
@@ -48,7 +51,11 @@ func newDoltStore(ctx context.Context, cfg *dolt.Config, autoMigrate bool) (stor
 	}
 	if cfg.ServerMode {
 		cfg.AutoMigrate = autoMigrate
+		cfg.SkipSchemaInit = skipSchemaInit
 		return dolt.New(ctx, cfg)
+	}
+	if skipSchemaInit {
+		return embeddeddolt.OpenForMigration(ctx, cfg.BeadsDir, cfg.Database, "main")
 	}
 	return embeddeddolt.Open(ctx, cfg.BeadsDir, cfg.Database, "main", autoMigrate)
 }

@@ -34,6 +34,17 @@ type cacheEntry struct {
 // Open returns an error if the schema is behind the binary's expected version,
 // directing the user to run "bd migrate schema".
 func Open(ctx context.Context, beadsDir, database, branch string, autoMigrate bool) (*EmbeddedDoltStore, error) {
+	return openCached(ctx, beadsDir, database, branch, autoMigrate, false)
+}
+
+// OpenForMigration opens the store without running schema initialization —
+// neither auto-migration nor the staleness check. Used by 'bd migrate schema'
+// so MigrateSchemaUp applies pending migrations and returns the correct count.
+func OpenForMigration(ctx context.Context, beadsDir, database, branch string) (*EmbeddedDoltStore, error) {
+	return openCached(ctx, beadsDir, database, branch, false, true)
+}
+
+func openCached(ctx context.Context, beadsDir, database, branch string, autoMigrate bool, skipSchemaInit bool) (*EmbeddedDoltStore, error) {
 	key, err := cacheKey(beadsDir)
 	if err != nil {
 		return nil, err
@@ -48,7 +59,7 @@ func Open(ctx context.Context, beadsDir, database, branch string, autoMigrate bo
 	cacheMu.Unlock()
 
 	// Slow path: create a new store outside the lock.
-	s, err := newStore(ctx, beadsDir, database, branch, autoMigrate)
+	s, err := newStore(ctx, beadsDir, database, branch, autoMigrate, skipSchemaInit)
 	if err != nil {
 		return nil, err
 	}

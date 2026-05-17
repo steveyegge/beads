@@ -908,7 +908,7 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 				BeadsDir:        beadsDir,
 				Database:        dbName,
 				CreateIfMissing: true,
-			}, true)
+			}, true, false)
 			if err != nil {
 				return fmt.Errorf("failed to initialize target database: %w", err)
 			}

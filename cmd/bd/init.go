@@ -815,7 +815,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		store, err := newDoltStore(ctx, doltCfg, true)
+		store, err := newDoltStore(ctx, doltCfg, true, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt store: %v\n", err)
 			os.Exit(1)
@@ -2114,7 +2114,7 @@ func initGlobalDatabaseConfig(ctx context.Context, projectCfg *dolt.Config, quie
 		AutoStart:       false, // server is already running
 	}
 
-	globalStore, err := newDoltStore(ctx, globalCfg, true)
+	globalStore, err := newDoltStore(ctx, globalCfg, true, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to open global database: %v\n", err)
 		return

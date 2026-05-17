@@ -63,7 +63,7 @@ func (s *EmbeddedDoltStore) IsClosed() bool {
 // The dolthub/driver handles its own concurrency internally. File-level locking
 // is only used during bd init (via util.TryLock in the init command) to protect
 // one-time initialization steps — the store itself does not hold any lock.
-func newStore(ctx context.Context, beadsDir, database, branch string, autoMigrate bool) (*EmbeddedDoltStore, error) {
+func newStore(ctx context.Context, beadsDir, database, branch string, autoMigrate bool, skipSchemaInit bool) (*EmbeddedDoltStore, error) {
 	if database == "" {
 		return nil, fmt.Errorf("embeddeddolt: database name must not be empty (caller should default to %q)", "beads")
 	}
@@ -87,8 +87,10 @@ func newStore(ctx context.Context, beadsDir, database, branch string, autoMigrat
 		branch:   branch,
 	}
 
-	if err := s.initSchema(ctx, autoMigrate); err != nil {
-		return nil, fmt.Errorf("embeddeddolt: init schema: %w", err)
+	if !skipSchemaInit {
+		if err := s.initSchema(ctx, autoMigrate); err != nil {
+			return nil, fmt.Errorf("embeddeddolt: init schema: %w", err)
+		}
 	}
 
 	return s, nil
@@ -181,17 +183,12 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context, autoMigrate bool) er
 			return fmt.Errorf("embeddeddolt: migrate: %w", err)
 		}
 	} else {
-		pending, err := schema.PendingMigrationCount(ctx, conn)
+		pending, current, err := schema.PendingCountAndCurrentVersion(ctx, conn)
 		if err != nil {
 			return fmt.Errorf("embeddeddolt: checking schema version: %w", err)
 		}
 		if pending > 0 {
-			latestVersion := schema.LatestVersion()
-			currentVersion, err := schema.CurrentVersion(ctx, conn)
-			if err != nil {
-				return fmt.Errorf("embeddeddolt: reading current version: %w", err)
-			}
-			return fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", currentVersion, latestVersion)
+			return fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", current, schema.LatestVersion())
 		}
 	}
 

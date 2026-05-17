@@ -93,6 +93,24 @@ func PendingMigrationCount(ctx context.Context, db DBConn) (int, error) {
 	return mainSource.pendingCount(ctx, db)
 }
 
+// PendingCountAndCurrentVersion returns both the pending migration count and
+// the current applied version in a single DB roundtrip. Use this instead of
+// calling PendingMigrationCount + CurrentVersion in sequence.
+func PendingCountAndCurrentVersion(ctx context.Context, db DBConn) (pending int, current int, err error) {
+	if _, err = db.ExecContext(ctx, mainSource.bootstrapSQL()); err != nil {
+		return 0, 0, fmt.Errorf("creating %s: %w", mainSource.cursorTable, err)
+	}
+	if scanErr := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+mainSource.cursorTable).Scan(&current); scanErr != nil && scanErr != sql.ErrNoRows {
+		return 0, 0, fmt.Errorf("reading %s version: %w", mainSource.cursorTable, scanErr)
+	}
+	for _, mf := range mainSource.list() {
+		if mf.version > current {
+			pending++
+		}
+	}
+	return pending, current, nil
+}
+
 // CurrentVersion returns the highest schema migration version that has been
 // applied to db, or 0 if no migrations have been applied. Prefer this over
 // computing latestVersion - pending, which breaks when migration numbers have gaps.

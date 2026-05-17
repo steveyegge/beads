@@ -23,7 +23,7 @@ func usesProxiedServer() bool {
 	return cmdCtx != nil && cmdCtx.ProxiedServerMode
 }
 
-func newDoltStore(ctx context.Context, cfg *dolt.Config, autoMigrate bool) (storage.DoltStorage, error) {
+func newDoltStore(ctx context.Context, cfg *dolt.Config, autoMigrate bool, skipSchemaInit bool) (storage.DoltStorage, error) {
 	if cfg.ProxiedServer {
 		// TODO: this should not be a store
 		// it should be a uow provider
@@ -33,6 +33,7 @@ func newDoltStore(ctx context.Context, cfg *dolt.Config, autoMigrate bool) (stor
 		return nil, fmt.Errorf("%s", nocgoEmbeddedErrMsg)
 	}
 	cfg.AutoMigrate = autoMigrate
+	cfg.SkipSchemaInit = skipSchemaInit
 	return dolt.New(ctx, cfg)
 }
 

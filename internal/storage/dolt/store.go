@@ -187,6 +187,11 @@ type DoltStore struct {
 	// pending migrations automatically; when false, error if schema is stale.
 	autoMigrate bool
 
+	// skipSchemaInit bypasses both auto-migration and the staleness check on
+	// Open. Used by 'bd migrate schema' so MigrateSchemaUp reports the correct
+	// applied count rather than 0 (pre-migrated during open).
+	skipSchemaInit bool
+
 	// Version control config
 	committerName  string
 	committerEmail string
@@ -259,6 +264,11 @@ type Config struct {
 	// When false, Open returns an error if the schema is behind the binary's
 	// expected version, directing the user to run "bd migrate schema".
 	AutoMigrate bool
+
+	// SkipSchemaInit bypasses both auto-migration and the staleness check.
+	// Set by 'bd migrate schema' so MigrateSchemaUp handles the migration and
+	// reports the correct applied count instead of always seeing 0.
+	SkipSchemaInit bool
 
 	// MaxOpenConns overrides the connection pool size (0 = default 10).
 	// Set to 1 for branch isolation in tests (DOLT_CHECKOUT is session-level).
@@ -1105,6 +1115,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		serverMode:           true,
 		readOnly:             cfg.ReadOnly,
 		autoMigrate:          cfg.AutoMigrate,
+		skipSchemaInit:       cfg.SkipSchemaInit,
 		autoStartedServerDir: autoStartedDir,
 	}
 
@@ -1499,17 +1510,12 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB, autoMigrate bool) error {
 			return fmt.Errorf("schema migration: %w", err)
 		}
 	} else {
-		pending, err := schema.PendingMigrationCount(ctx, conn)
+		pending, current, err := schema.PendingCountAndCurrentVersion(ctx, conn)
 		if err != nil {
 			return fmt.Errorf("schema: checking version: %w", err)
 		}
 		if pending > 0 {
-			latestVersion := schema.LatestVersion()
-			currentVersion, err := schema.CurrentVersion(ctx, conn)
-			if err != nil {
-				return fmt.Errorf("schema: reading current version: %w", err)
-			}
-			return fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", currentVersion, latestVersion)
+			return fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", current, schema.LatestVersion())
 		}
 	}
 
@@ -1517,6 +1523,9 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB, autoMigrate bool) error {
 }
 
 func (s *DoltStore) initSchema(ctx context.Context) error {
+	if s.skipSchemaInit {
+		return nil
+	}
 	return initSchemaOnDB(ctx, s.db, s.autoMigrate)
 }
 
