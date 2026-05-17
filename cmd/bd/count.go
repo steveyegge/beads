@@ -197,6 +197,7 @@ Examples:
 			filter.PriorityMax = &priorityMax
 		}
 
+		filter.SkipWisps = true // bd count never needs ephemeral wisp results
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
 			FatalError("%v", err)

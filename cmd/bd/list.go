@@ -1092,6 +1092,11 @@ var listCmd = &cobra.Command{
 				FatalError("%v", err)
 			}
 		} else {
+			// Skip wisps merge when the caller doesn't need ephemeral results
+			// (no --include-infra, not an infra type request). Q2 perf opt.
+			if !includeInfra && (issueType == "" || !isInfra(issueType)) {
+				filter.SkipWisps = true
+			}
 			var err error
 			issues, err = activeStore.SearchIssues(ctx, "", filter)
 			if err != nil {
