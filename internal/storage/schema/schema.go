@@ -91,7 +91,10 @@ func acquireMigrateLock(ctx context.Context, db DBConn) error {
 }
 
 func releaseMigrateLock(ctx context.Context, db DBConn) {
-	_, _ = db.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", migrateLockName)
+	_, err := db.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", migrateLockName)
+	if err != nil {
+		panic(fmt.Errorf("failed to release sql advisory lock: %w", err))
+	}
 }
 
 func parseVersion(name string) (int, error) {
