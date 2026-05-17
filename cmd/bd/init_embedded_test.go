@@ -777,15 +777,21 @@ func TestEmbeddedInit(t *testing.T) {
 
 	t.Run("rejected_backends", func(t *testing.T) {
 		for _, tc := range []struct {
-			backend, wantErr string
+			name    string
+			args    []string
+			wantErr string
 		}{
-			{"sqlite", "DEPRECATED"},
-			{"postgres", "unknown backend"},
+			{"sqlite", []string{"--backend", "sqlite"}, "DEPRECATED"},
+			{"unknown", []string{"--backend", "badbackend"}, "unknown backend"},
+			{"postgres_no_experimental", []string{"--backend", "postgres"}, "requires --experimental flag"},
+			{"postgres_experimental", []string{"--backend", "postgres", "--experimental"}, "not yet implemented"},
 		} {
-			out := bdInitFail(t, bd, "--backend", tc.backend)
-			if !strings.Contains(out, tc.wantErr) {
-				t.Errorf("--backend %s: expected %q, got: %s", tc.backend, tc.wantErr, out)
-			}
+			t.Run(tc.name, func(t *testing.T) {
+				out := bdInitFail(t, bd, tc.args...)
+				if !strings.Contains(out, tc.wantErr) {
+					t.Errorf("%s: expected %q, got: %s", tc.name, tc.wantErr, out)
+				}
+			})
 		}
 	})
 
