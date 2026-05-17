@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -22,6 +23,7 @@ var migrateCmd = &cobra.Command{
 Without subcommand, checks and updates database metadata to current version.
 
 Subcommands:
+  schema      Apply pending SQL schema migrations explicitly
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
   sync        Set up sync.branch workflow for multi-clone setups
@@ -637,6 +639,72 @@ func listMigrations() []string {
 // configures the separate-branch workflow for multi-clone setups.
 // Previously this was documented but never wired as an actual subcommand,
 // so bd doctor's recommendation to run "bd migrate sync beads-sync" would fail.
+// migrateSchemaCmd is the "bd migrate schema" subcommand. It applies any
+// pending SQL schema migrations explicitly, replacing the previous behavior of
+// silently migrating on every Store Open (be-3z3fmi).
+var migrateSchemaCmd = &cobra.Command{
+	Use:   "schema",
+	Short: "Apply pending schema migrations explicitly",
+	Long: `Apply any pending SQL schema migrations to the beads database.
+
+After upgrading bd, run this once to bring the database schema up to date.
+Store Open commands will refuse to operate on a stale schema once the guard
+is active (see be-o7fh35); this command is the explicit migration path.
+
+Examples:
+  bd migrate schema           # apply pending migrations, show count
+  bd migrate schema --json    # machine-readable output`,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		ctx := rootCtx
+
+		s := getStore()
+		if s == nil {
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"error":   "no_store",
+					"message": activeWorkspaceNotFoundMessage() + " " + diagHint() + ".",
+				})
+				os.Exit(1)
+			}
+			return fmt.Errorf("no beads database found: %s", diagHint())
+		}
+
+		sm, ok := s.(storage.SchemaMigrator)
+		if !ok {
+			// Postgres and other non-Dolt backends handle schema differently.
+			fmt.Fprintln(os.Stderr, "bd migrate schema: current backend does not support explicit schema migration")
+			os.Exit(1)
+		}
+
+		applied, currentVersion, err := sm.MigrateSchemaUp(ctx)
+		if err != nil {
+			return fmt.Errorf("applying schema migrations: %w", err)
+		}
+
+		if applied == 0 {
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"applied":         0,
+					"current_version": currentVersion,
+				})
+			} else {
+				fmt.Println("already up to date")
+			}
+			return nil
+		}
+
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"applied":         applied,
+				"current_version": currentVersion,
+			})
+		} else {
+			fmt.Printf("%d migration(s) applied, schema now at version %d\n", applied, currentVersion)
+		}
+		return nil
+	},
+}
+
 var migrateSyncCmd = &cobra.Command{
 	Use:   "sync <branch>",
 	Short: "Set up sync.branch workflow for multi-clone setups",
@@ -663,6 +731,9 @@ func init() {
 	migrateCmd.Flags().Bool("update-repo-id", false, "Update repository ID (use after changing git remote)")
 	migrateCmd.Flags().Bool("inspect", false, "Show migration plan and database state for AI agent analysis")
 	migrateCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output migration statistics in JSON format")
+
+	migrateSchemaCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	migrateCmd.AddCommand(migrateSchemaCmd)
 
 	migrateSyncCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
 	migrateSyncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")

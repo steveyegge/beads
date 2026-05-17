@@ -461,6 +461,39 @@ func (s *EmbeddedDoltStore) CLIDir() string {
 }
 
 // ---------------------------------------------------------------------------
+// storage.SchemaMigrator
+// ---------------------------------------------------------------------------
+
+// MigrateSchemaUp applies any pending schema migrations. It opens a fresh
+// SQL connection (bypassing the auto-migration guard added in be-o7fh35) so
+// that "bd migrate schema" works even when the schema is stale.
+func (s *EmbeddedDoltStore) MigrateSchemaUp(ctx context.Context) (applied int, currentVersion int, err error) {
+	db, cleanup, err := OpenSQL(ctx, s.dataDir, "", "")
+	if err != nil {
+		return 0, 0, fmt.Errorf("embeddeddolt: open db for schema migration: %w", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("embeddeddolt: pin connection for schema migration: %w", err)
+	}
+	defer conn.Close()
+
+	if s.database != "" {
+		if _, err := conn.ExecContext(ctx, "USE `"+s.database+"`"); err != nil {
+			return 0, 0, fmt.Errorf("embeddeddolt: switch to database: %w", err)
+		}
+	}
+
+	applied, err = schema.MigrateUp(ctx, conn)
+	if err != nil {
+		return 0, 0, fmt.Errorf("embeddeddolt: schema migration: %w", err)
+	}
+	return applied, schema.LatestVersion(), nil
+}
+
+// ---------------------------------------------------------------------------
 // storage.VersionControl
 // ---------------------------------------------------------------------------
 

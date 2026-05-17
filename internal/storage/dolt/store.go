@@ -1492,6 +1492,22 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 	return initSchemaOnDB(ctx, s.db)
 }
 
+// MigrateSchemaUp applies any pending schema migrations and returns the count
+// applied and the resulting current schema version.
+func (s *DoltStore) MigrateSchemaUp(ctx context.Context) (applied int, currentVersion int, err error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("schema: pin connection: %w", err)
+	}
+	defer conn.Close()
+
+	applied, err = schema.MigrateUp(ctx, conn)
+	if err != nil {
+		return 0, 0, err
+	}
+	return applied, schema.LatestVersion(), nil
+}
+
 // IsClosed returns true if the store has been closed.
 func (s *DoltStore) IsClosed() bool {
 	return s.closed.Load()

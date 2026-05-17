@@ -166,6 +166,16 @@ type RawDBAccessor interface {
 	UnderlyingDB() *sql.DB
 }
 
+// SchemaMigrator provides explicit schema migration control.
+// Commands that must apply pending migrations (e.g. "bd migrate schema") type-assert
+// to this interface instead of relying on auto-migration during Store Open.
+type SchemaMigrator interface {
+	// MigrateSchemaUp applies any pending schema migrations. Returns the count applied
+	// and the resulting current version. Returns (0, currentVersion, nil) if already
+	// up to date.
+	MigrateSchemaUp(ctx context.Context) (applied int, currentVersion int, err error)
+}
+
 // StoreLocator provides filesystem path information for the store.
 // Callers that need the store's on-disk location should type-assert to this interface.
 type StoreLocator interface {
