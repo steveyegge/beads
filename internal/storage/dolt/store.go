@@ -302,6 +302,9 @@ func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if schema.IsMigrationLockError(err) {
+		return true
+	}
 	errStr := strings.ToLower(err.Error())
 	// MySQL driver transient errors
 	if strings.Contains(errStr, "driver: bad connection") {
@@ -1104,7 +1107,9 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	if !cfg.ReadOnly {
 		schemaBO := backoff.NewExponentialBackOff()
 		schemaBO.InitialInterval = 100 * time.Millisecond
-		schemaBO.MaxElapsedTime = 5 * time.Second
+		// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a
+		// contended schema migration can time out once and still retry.
+		schemaBO.MaxElapsedTime = 15 * time.Second
 		if err := backoff.Retry(func() error {
 			schemaErr := store.initSchema(ctx)
 			if schemaErr != nil && isRetryableError(schemaErr) {
@@ -1486,21 +1491,7 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("schema: read database name: %w", err)
 	}
 
-	// Serialize schema migrations per database; migration scripts are not safe
-	// to execute concurrently against the same fresh database.
-	lockName := "bd_schema_init:" + dbName
-	var locked int
-	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 30)", lockName).Scan(&locked); err != nil {
-		return fmt.Errorf("schema: acquire migration lock: %w", err)
-	}
-	if locked != 1 {
-		return fmt.Errorf("schema: acquire migration lock: timeout")
-	}
-	defer func() {
-		_, _ = conn.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", lockName)
-	}()
-
-	if _, err := schema.MigrateUp(ctx, conn); err != nil {
+	if _, err := schema.MigrateUpWithLock(ctx, conn, dbName); err != nil {
 		return fmt.Errorf("schema migration: %w", err)
 	}
 

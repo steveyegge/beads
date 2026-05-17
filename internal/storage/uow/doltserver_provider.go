@@ -153,7 +153,9 @@ func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 func (p *doltServerProvider) initSchema(ctx context.Context, database string) error {
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = 25 * time.Millisecond
-	bo.MaxElapsedTime = 5 * time.Second
+	// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a
+	// contended schema migration can time out once and still retry.
+	bo.MaxElapsedTime = 15 * time.Second
 	return backoff.Retry(func() error {
 		conn, err := p.db.Conn(ctx)
 		if err != nil {
@@ -172,8 +174,8 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 			return backoff.Permanent(fmt.Errorf("uow: switching to database: %w", err))
 		}
 
-		if _, err := schema.MigrateUp(ctx, conn); err != nil {
-			if isSerializationError(err) {
+		if _, err := schema.MigrateUpWithLock(ctx, conn, database); err != nil {
+			if isSerializationError(err) || schema.IsMigrationLockError(err) {
 				return fmt.Errorf("uow: migrate: %w", err)
 			}
 			return backoff.Permanent(fmt.Errorf("uow: migrate: %w", err))
