@@ -11,10 +11,14 @@ Generated from `bd help --doc init`
 ## bd init
 
 Initialize bd in the current directory by creating a .beads/ directory
-and Dolt database. Optionally specify a custom issue prefix.
+and database. Optionally specify a custom issue prefix.
 
-Dolt is the default (and only supported) storage backend. The legacy SQLite
-backend has been removed. Use --backend=sqlite to see migration instructions.
+Storage backends:
+  dolt (default)  — embedded Dolt engine, git-compatible, no external server.
+  postgres        — experimental; use --backend=postgres --experimental to enable.
+
+The legacy SQLite backend has been removed.
+Use --backend=sqlite to see migration instructions.
 
 Use --database to specify an existing server database name, overriding the
 default prefix-based naming. This is useful when an external tool (e.g. an orchestrator)
@@ -54,11 +58,12 @@ bd init [flags]
       --agents-file string                Custom filename for agent instructions (default: AGENTS.md)
       --agents-profile string             AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
       --agents-template string            Path to custom AGENTS.md template (overrides embedded default)
-      --backend string                    Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
+      --backend string                    Storage backend: "dolt" (default) or "postgres" (requires --experimental)
       --contributor                       Run OSS contributor setup wizard
       --database string                   Use existing server database name (overrides prefix-based naming)
       --destroy-token string              Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
       --discard-remote                    Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
+      --experimental                      Enable experimental features (required for --backend=postgres)
       --external                          Server is externally managed (skip server startup); use with --shared-server or --server
       --force                             Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
       --from-jsonl                        Import issues from .beads/issues.jsonl instead of git history
