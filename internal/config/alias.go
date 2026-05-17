@@ -6,31 +6,31 @@ import (
 	"strings"
 )
 
-// ResolveArchiveFormat returns the effective archive format for the current workspace.
+// ResolveArchiveFormat returns the effective archive format for the current
+// workspace, and a non-empty warningMsg when the value was resolved via the
+// deprecated export.auto alias.
 //
 // Resolution order:
 //  1. archive.format in config.yaml — the canonical key.
-//  2. export.auto in config.yaml — the deprecated alias. When found, a
-//     deprecation notice is printed to stderr and the translated value is
-//     returned without mutating config on disk (read-only resolution).
+//  2. export.auto in config.yaml — the deprecated alias. When found,
+//     warningMsg is set; the caller decides whether and where to print it.
 //
 // Returns ArchiveFormatNone when neither key is set.
-func ResolveArchiveFormat() string {
-	if format, err := GetArchiveFormat(); err == nil && format != "" {
-		return format
+func ResolveArchiveFormat() (format string, warningMsg string) {
+	if f, err := GetArchiveFormat(); err == nil && f != "" {
+		return f, ""
 	}
 	// Fall back to export.auto alias.
 	raw := GetYamlConfig("export.auto")
 	if raw == "" {
-		return ArchiveFormatNone
+		return ArchiveFormatNone, ""
 	}
-	fmt.Fprintf(os.Stderr,
-		"⚠ Deprecated config key 'export.auto' — migrate: bd config set archive.format jsonl\n")
+	msg := "⚠ Deprecated config key 'export.auto' — migrate: bd config set archive.format jsonl\n"
 	switch strings.ToLower(raw) {
 	case "true", "1", "yes":
-		return ArchiveFormatJSONL
+		return ArchiveFormatJSONL, msg
 	default:
-		return ArchiveFormatNone
+		return ArchiveFormatNone, msg
 	}
 }
 

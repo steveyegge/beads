@@ -251,8 +251,12 @@ var configGetCmd = &cobra.Command{
 			var value string
 			if key == "export.auto" {
 				// Resolve via the archive alias layer so callers see the
-				// canonical value and receive the deprecation notice on stderr.
-				resolved := config.ResolveArchiveFormat()
+				// canonical value; print the deprecation notice here at the
+				// call site where user-visible output is expected.
+				resolved, warn := config.ResolveArchiveFormat()
+				if warn != "" {
+					fmt.Fprint(os.Stderr, warn)
+				}
 				switch resolved {
 				case config.ArchiveFormatJSONL:
 					value = "true"
