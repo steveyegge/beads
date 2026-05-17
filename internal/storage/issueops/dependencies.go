@@ -157,7 +157,14 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		var reachable int
 		query := cycleReachabilityQuery(depTables)
 		if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
-			return fmt.Errorf("failed to check for dependency cycle: %w", err)
+			if isTableNotExistError(err) && len(depTables) > 1 && writeTable != "" {
+				fallbackQuery := cycleReachabilityQuery([]string{writeTable})
+				if fallbackErr := tx.QueryRowContext(ctx, fallbackQuery, dep.DependsOnID, dep.IssueID).Scan(&reachable); fallbackErr != nil {
+					return fmt.Errorf("failed to check for dependency cycle: %w", fallbackErr)
+				}
+			} else {
+				return fmt.Errorf("failed to check for dependency cycle: %w", err)
+			}
 		}
 		if reachable > 0 {
 			return fmt.Errorf("adding dependency would create a cycle")
@@ -234,13 +241,7 @@ func cycleReachabilityQuery(depTables []string) string {
 }
 
 func cycleDetectionTables(sourceTable, targetTable, writeTable string) []string {
-	if sourceTable != "" && targetTable != "" && sourceTable != targetTable {
-		return []string{"dependencies", "wisp_dependencies"}
-	}
-	if writeTable != "" {
-		return []string{writeTable}
-	}
-	return []string{"dependencies"}
+	return []string{"dependencies", "wisp_dependencies"}
 }
 
 func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {
@@ -270,6 +271,41 @@ func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newI
 		"UPDATE dependencies SET depends_on_wisp_id = ? WHERE depends_on_wisp_id = ?",
 		newID, oldID); err != nil {
 		return fmt.Errorf("update wisp %s -> %s in dependencies: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+// UpdateIssueIDInDependencyTargetsInTx rewrites dependency target columns that
+// point at a renamed persistent issue.
+func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+	if err := moveIssueDependencyTargets(ctx, tx, "dependencies", oldID, newID); err != nil {
+		return fmt.Errorf("update issue %s -> %s in dependencies: %w", oldID, newID, err)
+	}
+	if err := moveIssueDependencyTargets(ctx, tx, "wisp_dependencies", oldID, newID); err != nil {
+		if !isTableNotExistError(err) {
+			return fmt.Errorf("update issue %s -> %s in wisp_dependencies: %w", oldID, newID, err)
+		}
+	}
+	return nil
+}
+
+//nolint:gosec // G201: table is one of the hardcoded dependency table names.
+func moveIssueDependencyTargets(ctx context.Context, tx *sql.Tx, table string, oldID, newID string) error {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT IGNORE INTO %s (
+			issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		)
+		SELECT issue_id, ?, depends_on_wisp_id, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		FROM %s
+		WHERE depends_on_issue_id = ? OR depends_on_id = ?
+	`, table, table), newID, oldID, oldID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+		"DELETE FROM %s WHERE depends_on_issue_id = ? OR depends_on_id = ?", table), oldID, oldID); err != nil {
+		return err
 	}
 	return nil
 }

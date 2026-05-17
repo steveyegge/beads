@@ -582,9 +582,6 @@ func wispCycleReachabilityQuery(depTables []string) string {
 }
 
 func wispCycleDetectionTables(targetIsWisp bool) []string {
-	if targetIsWisp {
-		return []string{"wisp_dependencies"}
-	}
 	return []string{"dependencies", "wisp_dependencies"}
 }
 

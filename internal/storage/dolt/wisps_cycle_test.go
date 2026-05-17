@@ -9,9 +9,9 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-func TestWispCycleDetectionTablesUseWispOnlyForWispTarget(t *testing.T) {
+func TestWispCycleDetectionTablesScanBothTablesForWispTarget(t *testing.T) {
 	got := wispCycleDetectionTables(true)
-	want := []string{"wisp_dependencies"}
+	want := []string{"dependencies", "wisp_dependencies"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

@@ -282,10 +282,10 @@ func TestGetCommentsForIssues_MixedWispAndPermanent(t *testing.T) {
 	createPerm(t, ctx, store, "mix-cmt-perm")
 	createWisp(t, ctx, store, "mix-cmt-wisp")
 
-	if err := store.AddComment(ctx, "mix-cmt-perm", "alice", "on perm"); err != nil {
+	if _, err := store.AddIssueComment(ctx, "mix-cmt-perm", "alice", "on perm"); err != nil {
 		t.Fatalf("add comment on perm: %v", err)
 	}
-	if err := store.AddComment(ctx, "mix-cmt-wisp", "bob", "on wisp"); err != nil {
+	if _, err := store.AddIssueComment(ctx, "mix-cmt-wisp", "bob", "on wisp"); err != nil {
 		t.Fatalf("add comment on wisp: %v", err)
 	}
 

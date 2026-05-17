@@ -98,13 +98,9 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, fmt.Errorf("backfill custom tables: %w", err)
 	}
 
-	if _, err := db.ExecContext(ctx, "REPLACE INTO dolt_ignore VALUES ('ignored_schema_migrations', true)"); err != nil {
-		return applied, fmt.Errorf("registering ignored_schema_migrations in dolt_ignore: %w", err)
-	}
-
-	appliedIgnored, err := ignoredSource.migrate(ctx, db)
+	appliedIgnored, err := MigrateIgnoredUp(ctx, db)
 	if err != nil {
-		return applied, fmt.Errorf("ignored migrations: %w", err)
+		return applied, err
 	}
 
 	if applied == 0 && !backfilled && appliedIgnored == 0 {
@@ -120,6 +116,19 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		}
 	}
 
+	return applied, nil
+}
+
+// MigrateIgnoredUp applies migrations for Dolt-ignored local tables such as
+// wisps, wisp auxiliary tables, local metadata, and repo mtimes.
+func MigrateIgnoredUp(ctx context.Context, db DBConn) (int, error) {
+	if _, err := db.ExecContext(ctx, "REPLACE INTO dolt_ignore VALUES ('ignored_schema_migrations', true)"); err != nil {
+		return 0, fmt.Errorf("registering ignored_schema_migrations in dolt_ignore: %w", err)
+	}
+	applied, err := ignoredSource.migrate(ctx, db)
+	if err != nil {
+		return applied, fmt.Errorf("ignored migrations: %w", err)
+	}
 	return applied, nil
 }
 

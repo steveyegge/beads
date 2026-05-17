@@ -305,6 +305,24 @@ func selectedNoDBBeadsDir(cmd *cobra.Command) string {
 	return beads.FindBeadsDir()
 }
 
+func isSelectedNoDBCommand(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if cmd.Name() == "context" || cmd.Name() == "where" {
+		return true
+	}
+	if cmd.Parent() == nil || cmd.Parent().Name() != "dolt" {
+		return false
+	}
+	switch cmd.Name() {
+	case "push", "pull", "commit":
+		return false
+	default:
+		return true
+	}
+}
+
 // configCommandCanRunWithoutStore returns true for config subcommands whose Run
 // path can execute without an opened Dolt store. This lets no-workspace calls
 // fail or degrade in the command itself instead of tripping low-level DB init.
