@@ -198,69 +198,27 @@ Examples:
 		}
 
 		filter.SkipWisps = true // bd count never needs ephemeral wisp results
-		issues, err := store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			FatalError("%v", err)
-		}
 
-		// If no grouping, just print count
+		// Q1: SQL COUNT(*) aggregate — avoids materializing all rows.
 		if groupBy == "" {
+			count, err := store.CountIssues(ctx, "", filter)
+			if err != nil {
+				FatalError("%v", err)
+			}
 			if jsonOutput {
 				result := struct {
-					Count int `json:"count"`
-				}{Count: len(issues)}
+					Count int64 `json:"count"`
+				}{Count: count}
 				outputJSON(result)
 			} else {
-				fmt.Println(len(issues))
+				fmt.Println(count)
 			}
 			return
 		}
 
-		// Group by the specified field
-		counts := make(map[string]int)
-
-		// For label grouping, fetch all labels in one query to avoid N+1
-		var labelsMap map[string][]string
-		if groupBy == "label" {
-			issueIDs := make([]string, len(issues))
-			for i, issue := range issues {
-				issueIDs[i] = issue.ID
-			}
-			var err error
-			labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
-			if err != nil {
-				FatalError("getting labels: %v", err)
-			}
-		}
-
-		for _, issue := range issues {
-			var groupKey string
-			switch groupBy {
-			case "status":
-				groupKey = string(issue.Status)
-			case "priority":
-				groupKey = fmt.Sprintf("P%d", issue.Priority)
-			case "type":
-				groupKey = string(issue.IssueType)
-			case "assignee":
-				if issue.Assignee == "" {
-					groupKey = "(unassigned)"
-				} else {
-					groupKey = issue.Assignee
-				}
-			case "label":
-				// For labels, count each label separately
-				labels := labelsMap[issue.ID]
-				if len(labels) > 0 {
-					for _, label := range labels {
-						counts[label]++
-					}
-					continue
-				} else {
-					groupKey = "(no labels)"
-				}
-			}
-			counts[groupKey]++
+		counts, err := store.CountIssuesByGroup(ctx, filter, groupBy)
+		if err != nil {
+			FatalError("%v", err)
 		}
 
 		type GroupCount struct {
@@ -273,6 +231,13 @@ Examples:
 			groups = append(groups, GroupCount{Group: group, Count: count})
 		}
 
+		// Use CountIssues for the total so multi-label issues aren't double-counted
+		// (--by-label buckets are not mutually exclusive, unlike status/priority/type).
+		total, err := store.CountIssues(ctx, "", filter)
+		if err != nil {
+			FatalError("%v", err)
+		}
+
 		// Sort for consistent output
 		slices.SortFunc(groups, func(a, b GroupCount) int {
 			return cmp.Compare(a.Group, b.Group)
@@ -280,15 +245,15 @@ Examples:
 
 		if jsonOutput {
 			result := struct {
-				Total  int          `json:"total"`
+				Total  int64        `json:"total"`
 				Groups []GroupCount `json:"groups"`
 			}{
-				Total:  len(issues),
+				Total:  total,
 				Groups: groups,
 			}
 			outputJSON(result)
 		} else {
-			fmt.Printf("Total: %d\n\n", len(issues))
+			fmt.Printf("Total: %d\n\n", total)
 			for _, g := range groups {
 				fmt.Printf("%s: %d\n", g.Group, g.Count)
 			}

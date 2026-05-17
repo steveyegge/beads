@@ -631,6 +631,9 @@ func (s *configStore) SlotClear(_ context.Context, _, _, _ string) error { retur
 func (s *configStore) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
 	return 0, nil
 }
+func (s *configStore) CountIssuesByGroup(_ context.Context, _ types.IssueFilter, _ string) (map[string]int, error) {
+	return nil, nil
+}
 func (s *configStore) CountDependents(_ context.Context, _ string) (int64, error)   { return 0, nil }
 func (s *configStore) CountDependencies(_ context.Context, _ string) (int64, error) { return 0, nil }
 func (s *configStore) CountIssueComments(_ context.Context, _ string) (int64, error) {
