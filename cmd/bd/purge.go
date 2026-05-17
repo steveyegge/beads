@@ -193,7 +193,7 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 				scope.countKey: 0,
 				"message":      fmt.Sprintf("No %ss to %s", scope.subjectNoun, scope.cmdName),
 			}
-			if isPrune {
+			if isPrune && !scope.ignoreReferences {
 				m["referenced_skipped"] = referencedCount
 				m["referenced_count"] = referencedCount
 				if len(referencedSample) > 0 {
@@ -209,12 +209,13 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 			if pattern != "" {
 				msg += fmt.Sprintf(" (matching %q)", pattern)
 			}
-			if referencedCount > 0 {
-				msg += fmt.Sprintf(" (%s referenced; use %s to override)",
-					ui.MutedStyle.Render(strconv.Itoa(referencedCount)),
-					ui.CommandStyle.Render("--ignore-references"))
-			}
 			fmt.Println(msg)
+			if referencedCount > 0 {
+				fmt.Printf("  %s\n", ui.MutedStyle.Render(fmt.Sprintf(
+					"(%d closed beads protected by open-bead references — use %s to override)",
+					referencedCount,
+					ui.CommandStyle.Render("--ignore-references"))))
+			}
 		}
 		return
 	}
@@ -244,7 +245,7 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 			if pinnedCount > 0 {
 				stats["pinned_skipped"] = pinnedCount
 			}
-			if isPrune {
+			if isPrune && !scope.ignoreReferences {
 				stats["referenced_skipped"] = referencedCount
 				stats["referenced_count"] = referencedCount
 				if len(referencedSample) > 0 {
@@ -322,7 +323,7 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 		if pinnedCount > 0 {
 			stats["pinned_skipped"] = pinnedCount
 		}
-		if isPrune {
+		if isPrune && !scope.ignoreReferences {
 			stats["referenced_skipped"] = referencedCount
 			stats["referenced_count"] = referencedCount
 			if len(referencedSample) > 0 {
