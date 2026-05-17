@@ -226,6 +226,10 @@ func updateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, iss
 		return fmt.Errorf("issue not found: %s", oldID)
 	}
 
+	if err := UpdateIssueIDInDependencyTargetsInTx(ctx, tx, oldID, newID); err != nil {
+		return err
+	}
+
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
 		VALUES (?, 'renamed', ?, ?, ?)

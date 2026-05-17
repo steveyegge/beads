@@ -271,6 +271,39 @@ func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newI
 	return nil
 }
 
+// UpdateIssueIDInDependencyTargetsInTx rewrites dependency target columns that
+// point at a renamed persistent issue.
+func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+	if err := moveIssueDependencyTargets(ctx, tx, "dependencies", oldID, newID); err != nil {
+		return fmt.Errorf("update issue %s -> %s in dependencies: %w", oldID, newID, err)
+	}
+	if err := moveIssueDependencyTargets(ctx, tx, "wisp_dependencies", oldID, newID); err != nil {
+		return fmt.Errorf("update issue %s -> %s in wisp_dependencies: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+//nolint:gosec // G201: table is one of the hardcoded dependency table names.
+func moveIssueDependencyTargets(ctx context.Context, tx *sql.Tx, table string, oldID, newID string) error {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT IGNORE INTO %s (
+			issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		)
+		SELECT issue_id, ?, depends_on_wisp_id, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		FROM %s
+		WHERE depends_on_issue_id = ? OR depends_on_id = ?
+	`, table, table), newID, oldID, oldID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+		"DELETE FROM %s WHERE depends_on_issue_id = ? OR depends_on_id = ?", table), oldID, oldID); err != nil {
+		return err
+	}
+	return nil
+}
+
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
 // source issue is an active wisp.
