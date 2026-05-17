@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -74,7 +75,10 @@ func GetReadyWorkInTx(
 	// Exclude children of future-deferred parents.
 	if !filter.IncludeDeferred {
 		deferredChildIDs, dcErr := getChildrenOfDeferredParentsInTx(ctx, tx)
-		if dcErr == nil && len(deferredChildIDs) > 0 {
+		if dcErr != nil {
+			return nil, fmt.Errorf("get ready work: compute deferred parent children: %w", dcErr)
+		}
+		if len(deferredChildIDs) > 0 {
 			for start := 0; start < len(deferredChildIDs); start += queryBatchSize {
 				end := start + queryBatchSize
 				if end > len(deferredChildIDs) {
@@ -490,7 +494,7 @@ func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string
 			hasDeferredParent = true
 			break
 		}
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if issueTable == "wisps" && isTableNotExistError(err) {
