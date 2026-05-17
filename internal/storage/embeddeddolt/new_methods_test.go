@@ -271,3 +271,70 @@ func TestGetReadyWorkMoleculeFilter(t *testing.T) {
 		}
 	})
 }
+
+func TestGetReadyWorkIncludeEphemeralAppliesWispFilters(t *testing.T) {
+	skipUnlessEmbeddedDolt(t)
+
+	te := newTestEnv(t, "rwf")
+	ctx := t.Context()
+
+	matching := &types.Issue{
+		ID:        "rwf-wisp-filter-match",
+		Title:     "Matching routed wisp",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+		Metadata:  []byte(`{"gc.routed_to":"beads/workflows.kimi"}`),
+	}
+	assigned := &types.Issue{
+		ID:        "rwf-wisp-filter-assigned",
+		Title:     "Assigned routed wisp",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		Assignee:  "beads--control-dispatcher",
+		Ephemeral: true,
+		Metadata:  []byte(`{"gc.routed_to":"beads/workflows.kimi"}`),
+	}
+	wrongRoute := &types.Issue{
+		ID:        "rwf-wisp-filter-wrong-route",
+		Title:     "Wrong routed wisp",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+		Metadata:  []byte(`{"gc.routed_to":"beads/workflows.codex-max"}`),
+	}
+	for _, issue := range []*types.Issue{matching, assigned, wrongRoute} {
+		if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", issue.ID, err)
+		}
+	}
+
+	ready, err := te.store.GetReadyWork(ctx, types.WorkFilter{
+		Status:           types.StatusOpen,
+		Unassigned:       true,
+		IncludeEphemeral: true,
+		MetadataFields: map[string]string{
+			"gc.routed_to": "beads/workflows.kimi",
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork: %v", err)
+	}
+
+	ids := make(map[string]bool, len(ready))
+	for _, issue := range ready {
+		ids[issue.ID] = true
+	}
+	if !ids[matching.ID] {
+		t.Fatalf("matching wisp missing from ready work: %v", ids)
+	}
+	if ids[assigned.ID] {
+		t.Fatalf("assigned wisp leaked through unassigned ready filter: %v", ids)
+	}
+	if ids[wrongRoute.ID] {
+		t.Fatalf("wrong-route wisp leaked through metadata ready filter: %v", ids)
+	}
+}
