@@ -62,7 +62,7 @@ func simulateCompaction(t *testing.T, bd, dir, beadsDir, database string) string
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for i := 0; i < 5; i++ {
-		store, err = embeddeddolt.Open(ctx, beadsDir, database, "main")
+		store, err = embeddeddolt.Open(ctx, beadsDir, database, "main", true)
 		if err == nil {
 			break
 		}
@@ -181,7 +181,7 @@ func TestEmbeddedRestoreConcurrent(t *testing.T) {
 	var store *embeddeddolt.EmbeddedDoltStore
 	var err error
 	for i := 0; i < 5; i++ {
-		store, err = embeddeddolt.Open(ctx, beadsDir, "rstcon", "main")
+		store, err = embeddeddolt.Open(ctx, beadsDir, "rstcon", "main", true)
 		if err == nil {
 			break
 		}

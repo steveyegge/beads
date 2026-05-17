@@ -19,7 +19,7 @@ func TestSchemaAfterInit(t *testing.T) {
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 	dataDir := filepath.Join(beadsDir, "embeddeddolt")
 
-	store, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main")
+	store, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

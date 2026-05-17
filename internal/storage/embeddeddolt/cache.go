@@ -28,7 +28,12 @@ type cacheEntry struct {
 //
 // This prevents redundant engine initializations when multiple code paths open
 // connectors against the same data directory in the same process.
-func Open(ctx context.Context, beadsDir, database, branch string) (*EmbeddedDoltStore, error) {
+//
+// When autoMigrate is true, any pending schema migrations are applied
+// automatically (used by init and bootstrap paths). When autoMigrate is false,
+// Open returns an error if the schema is behind the binary's expected version,
+// directing the user to run "bd migrate schema".
+func Open(ctx context.Context, beadsDir, database, branch string, autoMigrate bool) (*EmbeddedDoltStore, error) {
 	key, err := cacheKey(beadsDir)
 	if err != nil {
 		return nil, err
@@ -43,7 +48,7 @@ func Open(ctx context.Context, beadsDir, database, branch string) (*EmbeddedDolt
 	cacheMu.Unlock()
 
 	// Slow path: create a new store outside the lock.
-	s, err := newStore(ctx, beadsDir, database, branch)
+	s, err := newStore(ctx, beadsDir, database, branch, autoMigrate)
 	if err != nil {
 		return nil, err
 	}

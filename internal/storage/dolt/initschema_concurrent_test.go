@@ -74,7 +74,7 @@ func TestConcurrentInitSchema(t *testing.T) {
 
 			<-ready // wait for all goroutines to be ready
 
-			if err := initSchemaOnDB(ctx, db); err != nil {
+			if err := initSchemaOnDB(ctx, db, true); err != nil {
 				errs <- fmt.Errorf("goroutine %d: initSchemaOnDB: %w", n, err)
 			}
 		}(i)

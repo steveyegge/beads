@@ -23,7 +23,7 @@ func TestEmbeddedSquashWispMoleculeClearsRootEphemeral(t *testing.T) {
 	ctx := context.Background()
 	beadsDir := t.TempDir()
 
-	s, err := embeddeddolt.Open(ctx, beadsDir, "moltest", "main")
+	s, err := embeddeddolt.Open(ctx, beadsDir, "moltest", "main", true)
 	if err != nil {
 		t.Fatalf("embeddeddolt.Open: %v", err)
 	}

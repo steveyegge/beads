@@ -46,7 +46,7 @@ func TestNewDoltStoreFromConfig_NoMetadata(t *testing.T) {
 // deferring to a confusing "no database selected" SQL error.
 // Belt-and-suspenders defense for be-sy8 / GH#2988.
 func TestEmbeddedOpen_EmptyDatabaseRejected(t *testing.T) {
-	_, err := embeddeddolt.Open(t.Context(), t.TempDir(), "", "main")
+	_, err := embeddeddolt.Open(t.Context(), t.TempDir(), "", "main", true)
 	if err == nil {
 		t.Fatal("expected error for empty database name")
 	}

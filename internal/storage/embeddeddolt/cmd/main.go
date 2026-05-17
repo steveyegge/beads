@@ -31,7 +31,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	store, err := embeddeddolt.Open(ctx, absDir, *database, *branch)
+	store, err := embeddeddolt.Open(ctx, absDir, *database, *branch, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

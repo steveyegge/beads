@@ -65,6 +65,7 @@ func TestNewDoltServerUOWProvider_ValidationErrors(t *testing.T) {
 				tc.database,
 				"", "", tc.backend,
 				tc.rootUser, "", tc.doltBin,
+				true,
 			)
 			assert.Nil(t, p)
 			require.Error(t, err)
@@ -107,6 +108,7 @@ func TestNewDoltServerUOWProvider_HappyPath(t *testing.T) {
 		"root",
 		"",
 		bin,
+		true,
 	)
 
 	require.NoError(t, err)

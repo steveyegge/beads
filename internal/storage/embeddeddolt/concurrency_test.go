@@ -226,13 +226,13 @@ func TestConcurrentOpenReturnsCached(t *testing.T) {
 	ctx := t.Context()
 	beadsDir := t.TempDir()
 
-	store1, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main")
+	store1, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
 
 	// Second Open should return immediately with the same cached store.
-	store2, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main")
+	store2, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}

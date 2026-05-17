@@ -21,7 +21,7 @@ func TestSpawnMolecule_PreservesStepLabels(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	s, err := embeddeddolt.Open(ctx, t.TempDir(), "beads", "main")
+	s, err := embeddeddolt.Open(ctx, t.TempDir(), "beads", "main", true)
 	if err != nil {
 		t.Fatalf("embeddeddolt.Open failed: %v", err)
 	}

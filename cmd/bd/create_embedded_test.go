@@ -96,7 +96,7 @@ func bdShow(t *testing.T, bd, dir, id string) *types.Issue {
 // openStore opens an EmbeddedDoltStore for direct verification queries.
 func openStore(t *testing.T, beadsDir, database string) *embeddeddolt.EmbeddedDoltStore {
 	t.Helper()
-	store, err := embeddeddolt.Open(t.Context(), beadsDir, database, "main")
+	store, err := embeddeddolt.Open(t.Context(), beadsDir, database, "main", true)
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}

@@ -18,13 +18,13 @@ func TestOpenReturnsCachedStore(t *testing.T) {
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 
 	// First Open creates a new store.
-	store1, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main")
+	store1, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
 
 	// Second Open with same beadsDir returns the same pointer.
-	store2, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main")
+	store2, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}
@@ -58,13 +58,13 @@ func TestOpenDifferentDirsReturnsDifferentStores(t *testing.T) {
 	beadsDir1 := filepath.Join(t.TempDir(), ".beads")
 	beadsDir2 := filepath.Join(t.TempDir(), ".beads")
 
-	store1, err := embeddeddolt.Open(ctx, beadsDir1, "testdb", "main")
+	store1, err := embeddeddolt.Open(ctx, beadsDir1, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("Open dir1: %v", err)
 	}
 	defer store1.Close()
 
-	store2, err := embeddeddolt.Open(ctx, beadsDir2, "testdb", "main")
+	store2, err := embeddeddolt.Open(ctx, beadsDir2, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("Open dir2: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestOpenAfterCloseCreatesNewStore(t *testing.T) {
 	ctx := t.Context()
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 
-	store1, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main")
+	store1, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestOpenAfterCloseCreatesNewStore(t *testing.T) {
 	store1.Close()
 
 	// Re-opening should create a fresh store, not return the closed one.
-	store2, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main")
+	store2, err := embeddeddolt.Open(ctx, beadsDir, "testdb", "main", true)
 	if err != nil {
 		t.Fatalf("Open after Close: %v", err)
 	}

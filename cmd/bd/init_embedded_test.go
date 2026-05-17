@@ -205,7 +205,7 @@ func readBackOnce(t *testing.T, beadsDir, database, key string, metadata bool) (
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	store, err := embeddeddolt.Open(ctx, beadsDir, database, "main")
+	store, err := embeddeddolt.Open(ctx, beadsDir, database, "main", true)
 	if err != nil {
 		return "", fmt.Errorf("New failed: %w", err)
 	}
@@ -824,7 +824,7 @@ func TestEmbeddedInit(t *testing.T) {
 		func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			store, err := embeddeddolt.Open(ctx, beadsDir, "meta", "main")
+			store, err := embeddeddolt.Open(ctx, beadsDir, "meta", "main", true)
 			if err != nil {
 				t.Fatalf("failed to open store for bd_version check: %v", err)
 			}

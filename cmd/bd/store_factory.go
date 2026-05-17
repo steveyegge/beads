@@ -40,16 +40,17 @@ func usesProxiedServer() bool {
 
 // newDoltStore creates a storage backend from an explicit config.
 // Used by bd init and PersistentPreRun.
-func newDoltStore(ctx context.Context, cfg *dolt.Config) (storage.DoltStorage, error) {
+func newDoltStore(ctx context.Context, cfg *dolt.Config, autoMigrate bool) (storage.DoltStorage, error) {
 	if cfg.ProxiedServer {
 		// TODO: this should not be a store
 		// it should be a uow provider
 		return nil, fmt.Errorf("proxy server store should be uow provider")
 	}
 	if cfg.ServerMode {
+		cfg.AutoMigrate = autoMigrate
 		return dolt.New(ctx, cfg)
 	}
-	return embeddeddolt.Open(ctx, cfg.BeadsDir, cfg.Database, "main")
+	return embeddeddolt.Open(ctx, cfg.BeadsDir, cfg.Database, "main", autoMigrate)
 }
 
 // acquireEmbeddedLock acquires an exclusive flock on the embeddeddolt data
@@ -103,7 +104,7 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltS
 		}
 		database = sanitized
 	}
-	return embeddeddolt.Open(ctx, beadsDir, database, "main")
+	return embeddeddolt.Open(ctx, beadsDir, database, "main", false)
 }
 
 // migrateHyphenatedDB renames a legacy hyphenated database directory and
@@ -174,5 +175,5 @@ func newReadOnlyStoreFromConfig(ctx context.Context, beadsDir string) (storage.D
 	if sanitized := sanitizeDBName(database); sanitized != database {
 		database = sanitized
 	}
-	return embeddeddolt.Open(ctx, beadsDir, database, "main")
+	return embeddeddolt.Open(ctx, beadsDir, database, "main", false)
 }

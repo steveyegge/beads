@@ -183,6 +183,10 @@ type DoltStore struct {
 	// Circuit breaker for Dolt server connections
 	breaker *circuitBreaker
 
+	// autoMigrate controls schema migration behavior: when true, apply
+	// pending migrations automatically; when false, error if schema is stale.
+	autoMigrate bool
+
 	// Version control config
 	committerName  string
 	committerEmail string
@@ -249,6 +253,12 @@ type Config struct {
 	// When true and the host is localhost, bd will start a dolt sql-server
 	// automatically if one isn't running. Disabled under orchestrator (GT_ROOT set).
 	AutoStart bool
+
+	// AutoMigrate controls schema migration behavior on Open. When true,
+	// pending migrations are applied automatically (init and bootstrap paths).
+	// When false, Open returns an error if the schema is behind the binary's
+	// expected version, directing the user to run "bd migrate schema".
+	AutoMigrate bool
 
 	// MaxOpenConns overrides the connection pool size (0 = default 10).
 	// Set to 1 for branch isolation in tests (DOLT_CHECKOUT is session-level).
@@ -1094,6 +1104,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remotePassword:       cfg.RemotePassword,
 		serverMode:           true,
 		readOnly:             cfg.ReadOnly,
+		autoMigrate:          cfg.AutoMigrate,
 		autoStartedServerDir: autoStartedDir,
 	}
 
@@ -1471,25 +1482,39 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 	return false, rows.Err()
 }
 
-// initSchemaOnDB applies pending schema migrations. schema.MigrateUp tracks
-// applied versions in schema_migrations and backfills legacy config-driven
-// tables.
-func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
+// initSchemaOnDB applies pending schema migrations or checks for staleness.
+// When autoMigrate is true, schema.MigrateUp is called to apply any pending
+// migrations. When autoMigrate is false, the function checks for pending
+// migrations and returns an error if any are found, directing the user to run
+// "bd migrate schema".
+func initSchemaOnDB(ctx context.Context, db *sql.DB, autoMigrate bool) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("schema: pin connection: %w", err)
 	}
 	defer conn.Close()
 
-	if _, err := schema.MigrateUp(ctx, conn); err != nil {
-		return fmt.Errorf("schema migration: %w", err)
+	if autoMigrate {
+		if _, err := schema.MigrateUp(ctx, conn); err != nil {
+			return fmt.Errorf("schema migration: %w", err)
+		}
+	} else {
+		pending, err := schema.PendingMigrationCount(ctx, conn)
+		if err != nil {
+			return fmt.Errorf("schema: checking version: %w", err)
+		}
+		if pending > 0 {
+			latestVersion := schema.LatestVersion()
+			currentVersion := latestVersion - pending
+			return fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", currentVersion, latestVersion)
+		}
 	}
 
 	return nil
 }
 
 func (s *DoltStore) initSchema(ctx context.Context) error {
-	return initSchemaOnDB(ctx, s.db)
+	return initSchemaOnDB(ctx, s.db, s.autoMigrate)
 }
 
 // MigrateSchemaUp applies any pending schema migrations and returns the count

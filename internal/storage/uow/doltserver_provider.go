@@ -24,6 +24,7 @@ const defaultBranch = "main"
 type doltServerProvider struct {
 	defaultBranch string
 	db            *sql.DB
+	autoMigrate   bool
 }
 
 var (
@@ -41,6 +42,7 @@ func NewDoltServerUOWProvider(
 	rootUser string,
 	rootPassword string,
 	doltBinExec string,
+	autoMigrate bool,
 ) (UnitOfWorkProvider, error) {
 	if database == "" {
 		return nil, fmt.Errorf("uow: database name must not be empty (caller should default to %q)", "beads")
@@ -81,6 +83,7 @@ func NewDoltServerUOWProvider(
 	initProvider := &doltServerProvider{
 		defaultBranch: defaultBranch,
 		db:            initDB,
+		autoMigrate:   autoMigrate,
 	}
 
 	if err := initProvider.initSchema(ctx, database); err != nil {
@@ -172,11 +175,26 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 			return backoff.Permanent(fmt.Errorf("uow: switching to database: %w", err))
 		}
 
-		if _, err := schema.MigrateUp(ctx, conn); err != nil {
-			if isSerializationError(err) {
-				return fmt.Errorf("uow: migrate: %w", err)
+		if p.autoMigrate {
+			if _, err := schema.MigrateUp(ctx, conn); err != nil {
+				if isSerializationError(err) {
+					return fmt.Errorf("uow: migrate: %w", err)
+				}
+				return backoff.Permanent(fmt.Errorf("uow: migrate: %w", err))
 			}
-			return backoff.Permanent(fmt.Errorf("uow: migrate: %w", err))
+		} else {
+			pending, err := schema.PendingMigrationCount(ctx, conn)
+			if err != nil {
+				if isSerializationError(err) {
+					return fmt.Errorf("uow: schema version check: %w", err)
+				}
+				return backoff.Permanent(fmt.Errorf("uow: schema version check: %w", err))
+			}
+			if pending > 0 {
+				latestVersion := schema.LatestVersion()
+				currentVersion := latestVersion - pending
+				return backoff.Permanent(fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", currentVersion, latestVersion))
+			}
 		}
 		return nil
 	}, backoff.WithContext(bo, ctx))
