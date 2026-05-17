@@ -15,6 +15,7 @@ Database migration and data transformation commands.
 Without subcommand, checks and updates database metadata to current version.
 
 Subcommands:
+  schema      Apply pending SQL schema migrations explicitly
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
   sync        Set up sync.branch workflow for multi-clone setups
@@ -103,6 +104,28 @@ bd migrate issues [flags]
       --type string        Filter by issue type (bug/feature/task/epic/chore/decision)
       --within-from-only   Only include dependencies from source repo (default true)
       --yes                Skip confirmation prompt
+```
+
+### bd migrate schema
+
+Apply any pending SQL schema migrations to the beads database.
+
+After upgrading bd, run this once to bring the database schema up to date.
+Store Open commands will refuse to operate on a stale schema once the guard
+is active (see be-o7fh35); this command is the explicit migration path.
+
+Examples:
+  bd migrate schema           # apply pending migrations, show count
+  bd migrate schema --json    # machine-readable output
+
+```
+bd migrate schema [flags]
+```
+
+**Flags:**
+
+```
+      --json   Output in JSON format
 ```
 
 ### bd migrate sync
