@@ -1505,7 +1505,10 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB, autoMigrate bool) error {
 		}
 		if pending > 0 {
 			latestVersion := schema.LatestVersion()
-			currentVersion := latestVersion - pending
+			currentVersion, err := schema.CurrentVersion(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("schema: reading current version: %w", err)
+			}
 			return fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", currentVersion, latestVersion)
 		}
 	}

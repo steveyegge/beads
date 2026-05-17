@@ -93,6 +93,21 @@ func PendingMigrationCount(ctx context.Context, db DBConn) (int, error) {
 	return mainSource.pendingCount(ctx, db)
 }
 
+// CurrentVersion returns the highest schema migration version that has been
+// applied to db, or 0 if no migrations have been applied. Prefer this over
+// computing latestVersion - pending, which breaks when migration numbers have gaps.
+func CurrentVersion(ctx context.Context, db DBConn) (int, error) {
+	if _, err := db.ExecContext(ctx, mainSource.bootstrapSQL()); err != nil {
+		return 0, fmt.Errorf("creating %s: %w", mainSource.cursorTable, err)
+	}
+	var current int
+	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+mainSource.cursorTable).Scan(&current)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("reading %s version: %w", mainSource.cursorTable, err)
+	}
+	return current, nil
+}
+
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
