@@ -1,6 +1,8 @@
 // Package uimd provides markdown rendering for beads CLI output.
-// Kept separate from internal/ui so callers that don't need markdown
-// don't pull in the chroma/glamour startup cost (~4.6 MB init).
+// Keep this separate from internal/ui so non-markdown ui consumers do not
+// inherit the glamour/chroma dependency graph.
+// This package may depend on internal/ui for terminal policy checks, but
+// internal/ui must not import internal/uimd.
 package uimd
 
 import (
@@ -11,7 +13,7 @@ import (
 	"golang.org/x/term"
 )
 
-// RenderMarkdown renders markdown text using glamour with beads theme colors.
+// RenderMarkdown renders markdown text using glamour's auto-detected terminal style.
 // Returns the rendered markdown or the original text if rendering fails.
 // Word wraps at terminal width (or 80 columns if width can't be detected).
 func RenderMarkdown(markdown string) string {
@@ -22,6 +24,7 @@ func RenderMarkdown(markdown string) string {
 		return markdown
 	}
 
+	// Cap at 100 chars for readability; wider lines are harder to scan.
 	const maxReadableWidth = 100
 	wrapWidth := 80
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
@@ -32,6 +35,7 @@ func RenderMarkdown(markdown string) string {
 	}
 
 	renderer, err := glamour.NewTermRenderer(
+		// No style is specified so glamour can auto-detect light/dark terminals.
 		glamour.WithWordWrap(wrapWidth),
 	)
 	if err != nil {
