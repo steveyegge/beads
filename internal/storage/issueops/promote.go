@@ -66,5 +66,9 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor 
 		log.Printf("promote %s: failed to copy comments: %v", id, err)
 	}
 
+	if err := RetargetInboundDependenciesToIssueInTx(ctx, tx, id); err != nil {
+		return err
+	}
+
 	return DeleteIssueInTx(ctx, tx, id)
 }

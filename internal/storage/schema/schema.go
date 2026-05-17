@@ -109,6 +109,10 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration dirty table diffs: %w", err)
 	}
+	tablesBefore, err := existingTables(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration tables: %w", err)
+	}
 
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
@@ -140,7 +144,7 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, fmt.Errorf("pre-existing dirty tables changed during schema migration: %s", strings.Join(changedDirtyTables, ", "))
 	}
 
-	staged, err := stageNewDirtyTables(ctx, db, dirtyBefore)
+	staged, err := stageNewSchemaTables(ctx, db, dirtyBefore, tablesBefore)
 	if err != nil {
 		return applied, fmt.Errorf("staging migrations: %w", err)
 	}
@@ -157,34 +161,12 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 }
 
 func committableDirtyTables(ctx context.Context, db DBConn) (map[string]dirtyTableState, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT s.table_name, s.staged
-		FROM dolt_status s
-		WHERE NOT EXISTS (
-			SELECT 1 FROM dolt_ignore di
-			WHERE di.ignored = 1
-			AND s.table_name LIKE di.pattern
-		)
-	`)
+	tables, err := dirtyTables(ctx, db, true)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	tables := make(map[string]dirtyTableState)
-	for rows.Next() {
-		var table string
-		var staged bool
-		if err := rows.Scan(&table, &staged); err != nil {
-			return nil, err
-		}
-		state := tables[table]
-		state.staged = state.staged || staged
-		tables[table] = state
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
+	delete(tables, mainSource.cursorTable)
+	delete(tables, ignoredSource.cursorTable)
 	return tables, nil
 }
 
@@ -320,27 +302,104 @@ func writeSignatureValue(b *strings.Builder, v any) {
 	}
 }
 
-func stageNewDirtyTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) (bool, error) {
-	dirtyAfter, err := committableDirtyTables(ctx, db)
+func stageNewSchemaTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState, tablesBefore map[string]struct{}) (bool, error) {
+	dirtyAfter, err := dirtyTables(ctx, db, false)
 	if err != nil {
 		return false, err
 	}
 
-	var tables []string
+	tableSet := make(map[string]struct{})
 	for table := range dirtyAfter {
 		if _, wasDirty := dirtyBefore[table]; wasDirty {
 			continue
 		}
+		tableSet[table] = struct{}{}
+	}
+	tablesAfter, err := existingTables(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	for table := range tablesAfter {
+		if _, existed := tablesBefore[table]; !existed {
+			tableSet[table] = struct{}{}
+		}
+	}
+
+	tables := make([]string, 0, len(tableSet))
+	for table := range tableSet {
 		tables = append(tables, table)
 	}
 	sort.Strings(tables)
 
 	for _, table := range tables {
-		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD(?)", table); err != nil {
+		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('-f', ?)", table); err != nil {
 			return false, fmt.Errorf("dolt add %s: %w", table, err)
 		}
 	}
 	return len(tables) > 0, nil
+}
+
+func existingTables(ctx context.Context, db DBConn) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT TABLE_NAME
+		FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_TYPE = 'BASE TABLE'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]struct{})
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, err
+		}
+		tables[table] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
+func dirtyTables(ctx context.Context, db DBConn, excludeIgnored bool) (map[string]dirtyTableState, error) {
+	query := `
+		SELECT s.table_name, s.staged
+		FROM dolt_status s
+	`
+	if excludeIgnored {
+		query += `
+		WHERE NOT EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			AND s.table_name LIKE di.pattern
+		)
+		`
+	}
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]dirtyTableState)
+	for rows.Next() {
+		var table string
+		var staged bool
+		if err := rows.Scan(&table, &staged); err != nil {
+			return nil, err
+		}
+		state := tables[table]
+		state.staged = state.staged || staged
+		tables[table] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
 }
 
 type migrationFile struct {

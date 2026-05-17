@@ -280,27 +280,43 @@ func GetReadyWorkInTx(
 		}
 	}
 
-	// When IncludeEphemeral is set, also query the wisps table.
-	if filter.IncludeEphemeral {
-		wispFilter := readyWorkWispIssueFilter(filter)
-		// Ready-only wisp predicates are applied after search, so avoid limiting
-		// before that filtering can drop non-ready candidates.
-		wispFilter.Limit = 0
-		wisps, wErr := SearchIssuesInTx(ctx, tx, "", wispFilter)
-		if wErr != nil {
-			return nil, fmt.Errorf("search wisps (ready work): %w", wErr)
+	wisps, wErr := getReadyWispsInTx(ctx, tx, filter)
+	if wErr != nil {
+		return nil, wErr
+	}
+	if len(wisps) > 0 {
+		seen := make(map[string]struct{}, len(ordered))
+		for _, issue := range ordered {
+			seen[issue.ID] = struct{}{}
 		}
-		wisps, wErr = filterReadyWispsInTx(ctx, tx, filter, wisps)
-		if wErr != nil {
-			return nil, wErr
+		for _, wisp := range wisps {
+			if _, exists := seen[wisp.ID]; exists {
+				continue
+			}
+			ordered = append(ordered, wisp)
 		}
-		ordered = append(ordered, wisps...)
+		sortReadyIssues(ordered, filter.SortPolicy)
 		if filter.Limit > 0 && len(ordered) > filter.Limit {
 			ordered = ordered[:filter.Limit]
 		}
 	}
 
 	return ordered, nil
+}
+
+func getReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilter) ([]*types.Issue, error) {
+	wispFilter := readyWorkWispIssueFilter(filter)
+	// Ready-only wisp predicates are applied after search, so avoid limiting
+	// before that filtering can drop non-ready candidates.
+	wispFilter.Limit = 0
+	wisps, err := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables)
+	if err != nil {
+		if isTableNotExistError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("search wisps (ready work): %w", err)
+	}
+	return filterReadyWispsInTx(ctx, tx, filter, wisps)
 }
 
 func readyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {
@@ -328,7 +344,6 @@ func readyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {
 }
 
 func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
-	ephTrue := true
 	pinnedFalse := false
 	wispFilter := types.IssueFilter{
 		Priority:       filter.Priority,
@@ -338,7 +353,6 @@ func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
 		Limit:          filter.Limit,
 		MolType:        filter.MolType,
 		WispType:       filter.WispType,
-		Ephemeral:      &ephTrue,
 		Pinned:         &pinnedFalse,
 		MetadataFields: filter.MetadataFields,
 		HasMetadataKey: filter.HasMetadataKey,
@@ -363,6 +377,10 @@ func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
 	if filter.MoleculeID != "" {
 		moleculeID := filter.MoleculeID
 		wispFilter.ParentID = &moleculeID
+	}
+	if !filter.IncludeEphemeral {
+		ephFalse := false
+		wispFilter.Ephemeral = &ephFalse
 	}
 	return wispFilter
 }
@@ -440,6 +458,48 @@ func filterReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 		ready = append(ready, wisp)
 	}
 	return ready, nil
+}
+
+func sortReadyIssues(issues []*types.Issue, policy types.SortPolicy) {
+	recentCutoff := time.Now().UTC().Add(-48 * time.Hour)
+	sort.SliceStable(issues, func(i, j int) bool {
+		a, b := issues[i], issues[j]
+		switch policy {
+		case types.SortPolicyOldest:
+			return issueCreatedBefore(a, b)
+		case types.SortPolicyPriority:
+			return issuePriorityBefore(a, b)
+		case types.SortPolicyHybrid, "":
+			aRecent := !a.CreatedAt.Before(recentCutoff)
+			bRecent := !b.CreatedAt.Before(recentCutoff)
+			if aRecent != bRecent {
+				return aRecent
+			}
+			if aRecent && a.Priority != b.Priority {
+				return a.Priority < b.Priority
+			}
+			return issueCreatedBefore(a, b)
+		default:
+			return issuePriorityBefore(a, b)
+		}
+	})
+}
+
+func issuePriorityBefore(a, b *types.Issue) bool {
+	if a.Priority != b.Priority {
+		return a.Priority < b.Priority
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
+	}
+	return a.ID < b.ID
+}
+
+func issueCreatedBefore(a, b *types.Issue) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.ID < b.ID
 }
 
 func readyWorkPageSize(limit int) int {

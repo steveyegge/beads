@@ -3,7 +3,6 @@ package dolt
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -184,66 +183,15 @@ func (s *DoltStore) batchWispExists(ctx context.Context, ids []string) map[strin
 // Uses direct SQL inserts to bypass IsEphemeralID routing, which would otherwise
 // redirect label/dependency/event writes back to wisp tables.
 func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor string) error {
-	issue, err := s.getWisp(ctx, id)
-	if errors.Is(err, storage.ErrNotFound) {
-		return fmt.Errorf("wisp %s not found", id)
-	}
-	if err != nil {
-		return wrapDBError("get wisp for promote", err)
-	}
-	if issue == nil {
-		return fmt.Errorf("wisp %s not found", id)
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		return issueops.PromoteFromEphemeralInTx(ctx, tx, id, actor)
+	}); err != nil {
+		return err
 	}
 
-	// Clear ephemeral flag for persistent storage
-	issue.Ephemeral = false
-
-	// Create in issues table (bypasses ephemeral routing since Ephemeral=false)
-	if err := s.CreateIssue(ctx, issue, actor); err != nil {
-		return fmt.Errorf("failed to promote wisp to issues: %w", err)
-	}
-
-	// Copy labels directly to permanent labels table (bypass IsEphemeralID routing)
-	labels, err := s.getWispLabels(ctx, id)
-	if err != nil {
-		return wrapQueryError("get wisp labels for promote", err)
-	}
-	for _, label := range labels {
-		if _, err := s.execContext(ctx,
-			`INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)`,
-			id, label); err != nil {
-			return fmt.Errorf("failed to copy label %q: %w", label, err)
-		}
-	}
-
-	if _, err := s.execContext(ctx, `
-		INSERT IGNORE INTO dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
-		SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
-		FROM wisp_dependencies WHERE issue_id = ?
-	`, id); err != nil {
-		log.Printf("promote %s: failed to copy dependencies: %v", id, err)
-	}
-
-	// Copy events via INSERT...SELECT (best-effort: log but don't fail promotion)
-	if _, err := s.execContext(ctx, `
-		INSERT IGNORE INTO events (issue_id, event_type, actor, old_value, new_value, comment, created_at)
-		SELECT issue_id, event_type, actor, old_value, new_value, comment, created_at
-		FROM wisp_events WHERE issue_id = ?
-	`, id); err != nil {
-		log.Printf("promote %s: failed to copy events (data may be lost): %v", id, err)
-	}
-
-	// Copy comments via INSERT...SELECT (best-effort: log but don't fail promotion)
-	if _, err := s.execContext(ctx, `
-		INSERT IGNORE INTO comments (issue_id, author, text, created_at)
-		SELECT issue_id, author, text, created_at
-		FROM wisp_comments WHERE issue_id = ?
-	`, id); err != nil {
-		log.Printf("promote %s: failed to copy comments (data may be lost): %v", id, err)
-	}
-
-	// Delete from wisps table (and all wisp_* auxiliary tables)
-	return s.deleteWisp(ctx, id)
+	return s.doltAddAndCommit(ctx,
+		[]string{"issues", "labels", "dependencies", "events", "comments"},
+		fmt.Sprintf("bd: promote %s", id))
 }
 
 // DemoteToWisp moves an issue from the issues table to the wisps table.
@@ -303,6 +251,10 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			VALUES (?, ?, ?, ?, ?)
 		`, id, types.EventUpdated, actor, "", "demoted to wisp"); err != nil {
 			log.Printf("demote %s: failed to record demotion event: %v", id, err)
+		}
+
+		if err := issueops.RetargetInboundDependenciesToWispInTx(ctx, tx, id); err != nil {
+			return err
 		}
 
 		if _, err := tx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id); err != nil {
