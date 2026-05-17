@@ -98,7 +98,7 @@ Examples:
 
 		output := &StatusOutput{
 			Summary:             stats,
-			BlockedCountSkipped: noBlocked,
+			BlockedCountSkipped: stats.BlockedIssues == nil,
 			RecentActivity:      recentActivity,
 		}
 
@@ -126,7 +126,11 @@ Examples:
 			fmt.Printf("  Blocked:                %d\n", blocked)
 		}
 		fmt.Printf("  Closed:                 %d\n", stats.ClosedIssues)
-		fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
+		if noBlocked {
+			fmt.Printf("  Ready to Work:          %s\n", ui.MutedStyle.Render("(skipped)"))
+		} else {
+			fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
+		}
 
 		// Extended statistics (only show if non-zero)
 		hasExtended := stats.PinnedIssues > 0 ||
