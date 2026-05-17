@@ -79,6 +79,21 @@ func AllMigrationsSQL() string {
 	return b.String()
 }
 
+func acquireMigrateLock(ctx context.Context, db DBConn) error {
+	var locked sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", migrateLockName, migrateLockTimeoutSec).Scan(&locked); err != nil {
+		return fmt.Errorf("acquiring schema migration lock %q: %w", migrateLockName, err)
+	}
+	if !locked.Valid || locked.Int64 != 1 {
+		return fmt.Errorf("acquiring schema migration lock %q: timed out after %ds (another connection holds it)", migrateLockName, migrateLockTimeoutSec)
+	}
+	return nil
+}
+
+func releaseMigrateLock(ctx context.Context, db DBConn) {
+	_, _ = db.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", migrateLockName)
+}
+
 func parseVersion(name string) (int, error) {
 	parts := strings.SplitN(name, "_", 2)
 	if len(parts) == 0 {
@@ -87,7 +102,21 @@ func parseVersion(name string) (int, error) {
 	return strconv.Atoi(parts[0])
 }
 
+const (
+	migrateLockName       = "bd_schema_migrate"
+	migrateLockTimeoutSec = 30
+)
+
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
+	if mainSource.atLatest(ctx, db) && ignoredSource.atLatest(ctx, db) {
+		return 0, nil
+	}
+
+	if err := acquireMigrateLock(ctx, db); err != nil {
+		return 0, err
+	}
+	defer releaseMigrateLock(ctx, db)
+
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
 		return applied, err
@@ -161,6 +190,14 @@ func (m migrationSource) latest() int {
 		return 0
 	}
 	return files[len(files)-1].version
+}
+
+func (m migrationSource) atLatest(ctx context.Context, db DBConn) bool {
+	var current int
+	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current); err != nil {
+		return false
+	}
+	return current >= m.latest()
 }
 
 func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
