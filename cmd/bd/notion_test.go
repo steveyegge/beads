@@ -20,8 +20,6 @@ import (
 )
 
 func TestNotionCommandsRegistered(t *testing.T) {
-	t.Parallel()
-
 	for _, name := range []string{"init", "connect", "status", "sync"} {
 		if _, _, err := notionCmd.Find([]string{name}); err != nil {
 			t.Fatalf("missing subcommand %q: %v", name, err)
