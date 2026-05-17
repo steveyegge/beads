@@ -176,6 +176,8 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 		}
 	}
 
+	// Embedded mode relies on the dolthub/driver's local file/concurrency
+	// controls; schema.MigrateUpWithLock requires a sql-server session lock.
 	if _, err := schema.MigrateUp(ctx, conn); err != nil {
 		return fmt.Errorf("embeddeddolt: migrate: %w", err)
 	}

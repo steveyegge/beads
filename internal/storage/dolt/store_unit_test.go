@@ -10,6 +10,7 @@ import (
 
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/schema"
 )
 
 // newTestDoltDB creates a temporary database on the test Dolt server.
@@ -46,6 +47,13 @@ func newTestDoltDB(t *testing.T) (*sql.DB, func()) {
 		db.Close()
 		// Skip DROP DATABASE — rapid CREATE/DROP cycles crash the Dolt container.
 		// Orphan databases are cleaned up when the container terminates.
+	}
+}
+
+func TestIsRetryableErrorSchemaMigrationLock(t *testing.T) {
+	err := fmt.Errorf("schema migration: %w", schema.ErrMigrationLockUnavailable)
+	if !isRetryableError(err) {
+		t.Fatal("schema migration lock errors should be retryable")
 	}
 }
 

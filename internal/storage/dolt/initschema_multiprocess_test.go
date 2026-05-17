@@ -69,10 +69,8 @@ func TestHelperSchemaInit(t *testing.T) {
 		os.Exit(1)
 	}
 
-	// Report which path was taken. The parent test asserts exactly 1 slow path.
-	// We detect the path by checking if schema_version existed before our init.
-	// Since initSchemaOnDB is idempotent, we can't truly distinguish from here,
-	// but the important thing is all subprocesses succeed without corruption.
+	// initSchemaOnDB is idempotent, so the parent test only needs to know that
+	// every subprocess reached a clean schema without corruption.
 	fmt.Fprintf(os.Stdout, "OK proc=%s\n", procID)
 }
 
@@ -172,19 +170,19 @@ func TestMultiProcessSchemaInit(t *testing.T) {
 	verifyCtx, verifyCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer verifyCancel()
 
-	// Check schema_version exists and is current.
+	// Check schema_migrations exists and is current.
 	var version int
-	err = verifyDB.QueryRowContext(verifyCtx, "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1").Scan(&version)
+	err = verifyDB.QueryRowContext(verifyCtx, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version)
 	if err != nil {
-		t.Fatalf("schema_version query failed: %v", err)
+		t.Fatalf("schema_migrations query failed: %v", err)
 	}
 	if version == 0 {
-		t.Error("schema_version is 0 after concurrent init")
+		t.Error("schema_migrations max version is 0 after concurrent init")
 	}
-	t.Logf("schema_version: %d", version)
+	t.Logf("schema_migrations max version: %d", version)
 
 	// Verify core tables exist.
-	requiredTables := []string{"issues", "dependencies", "comments", "schema_version"}
+	requiredTables := []string{"issues", "dependencies", "comments", "schema_migrations"}
 	for _, table := range requiredTables {
 		var count int
 		err := verifyDB.QueryRowContext(verifyCtx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", dbName, table).Scan(&count)
