@@ -87,6 +87,12 @@ func parseVersion(name string) (int, error) {
 	return strconv.Atoi(parts[0])
 }
 
+// PendingMigrationCount returns the number of main-track migrations that have
+// not yet been applied to db. Returns 0 if the schema is current.
+func PendingMigrationCount(ctx context.Context, db DBConn) (int, error) {
+	return mainSource.pendingCount(ctx, db)
+}
+
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
@@ -161,6 +167,26 @@ func (m migrationSource) latest() int {
 		return 0
 	}
 	return files[len(files)-1].version
+}
+
+func (m migrationSource) pendingCount(ctx context.Context, db DBConn) (int, error) {
+	if _, err := db.ExecContext(ctx, m.bootstrapSQL()); err != nil {
+		return 0, fmt.Errorf("creating %s: %w", m.cursorTable, err)
+	}
+
+	var current int
+	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
+	}
+
+	count := 0
+	for _, mf := range m.list() {
+		if mf.version > current {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
