@@ -1,6 +1,7 @@
 package dolt
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -90,5 +91,108 @@ func TestSchemaMigrationDoesNotCommitPreExistingDirtyData(t *testing.T) {
 	}
 	if committedCustomStatuses != 1 {
 		t.Fatalf("committed custom status count = %d, want 1", committedCustomStatuses)
+	}
+}
+
+func TestSchemaMigrationRejectsPreExistingStagedData(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issue := &types.Issue{
+		ID:        "schema-staged-label",
+		Title:     "schema migration staged label",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+
+	if err := store.SetConfig(ctx, "status.custom", "review:wip"); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if err := store.CommitWithConfig(ctx, "test: configure custom status"); err != nil {
+		t.Fatalf("CommitWithConfig: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, "DELETE FROM custom_statuses"); err != nil {
+		t.Fatalf("clear custom_statuses: %v", err)
+	}
+	if err := store.doltAddAndCommit(ctx, []string{"custom_statuses"}, "test: simulate missing custom status backfill"); err != nil {
+		t.Fatalf("commit cleared custom_statuses: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx,
+		"INSERT INTO labels (issue_id, label) VALUES (?, ?)",
+		issue.ID, "staged-before-schema",
+	); err != nil {
+		t.Fatalf("insert staged label: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "CALL DOLT_ADD(?)", "labels"); err != nil {
+		t.Fatalf("stage label: %v", err)
+	}
+
+	err := initSchemaOnDB(ctx, store.db)
+	if err == nil || !strings.Contains(err.Error(), "pre-existing staged tables") {
+		t.Fatalf("initSchemaOnDB error = %v, want pre-existing staged tables error", err)
+	}
+
+	var committedLabelCount int
+	if err := store.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM labels AS OF 'HEAD' WHERE issue_id = ? AND label = ?",
+		issue.ID, "staged-before-schema",
+	).Scan(&committedLabelCount); err != nil {
+		t.Fatalf("count committed staged label: %v", err)
+	}
+	if committedLabelCount != 0 {
+		t.Fatalf("staged label was committed by schema migration, count = %d", committedLabelCount)
+	}
+}
+
+func TestSchemaMigrationRejectsChangedPreExistingDirtyTable(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	if err := store.SetConfig(ctx, "status.custom", "review:wip"); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if err := store.CommitWithConfig(ctx, "test: configure custom status"); err != nil {
+		t.Fatalf("CommitWithConfig: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, "DELETE FROM custom_statuses"); err != nil {
+		t.Fatalf("clear custom_statuses: %v", err)
+	}
+	if err := store.doltAddAndCommit(ctx, []string{"custom_statuses"}, "test: simulate missing custom status backfill"); err != nil {
+		t.Fatalf("commit cleared custom_statuses: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx,
+		"REPLACE INTO dolt_ignore VALUES ('ignored_schema_migrations', false)",
+	); err != nil {
+		t.Fatalf("dirty dolt_ignore: %v", err)
+	}
+
+	err := initSchemaOnDB(ctx, store.db)
+	if err == nil || !strings.Contains(err.Error(), "pre-existing dirty tables changed") {
+		t.Fatalf("initSchemaOnDB error = %v, want changed dirty table error", err)
+	}
+
+	var committedCustomStatuses int
+	if err := store.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM custom_statuses AS OF 'HEAD' WHERE name = ?",
+		"review",
+	).Scan(&committedCustomStatuses); err != nil {
+		t.Fatalf("count committed custom statuses: %v", err)
+	}
+	if committedCustomStatuses != 0 {
+		t.Fatalf("custom status was committed after dirty-table drift, count = %d", committedCustomStatuses)
 	}
 }
