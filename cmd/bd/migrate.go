@@ -657,7 +657,7 @@ Examples:
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx := rootCtx
 
-		s := getStore()
+		s := storage.UnwrapStore(getStore())
 		if s == nil {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
