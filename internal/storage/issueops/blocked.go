@@ -21,6 +21,8 @@ func optionalBlockedTable(table string) bool {
 
 // ComputeBlockedIDsInTx returns the set of issue IDs that are blocked by active issues.
 // This is the core computation without caching — callers manage their own cache.
+// The returned active ID set is owned by the caller, but waits-for evaluation
+// may expand it with active children discovered while resolving spawner deps.
 //
 //nolint:gosec // G201: tables are hardcoded
 func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, map[string]bool, error) {
@@ -63,38 +65,12 @@ func ComputeBlockedIDsInTx(ctx context.Context, tx *sql.Tx, includeWisps bool) (
 		activeIDList = append(activeIDList, id)
 	}
 
-	var allDeps []blockingDepRecord
-	for _, depTable := range depTables {
-		for start := 0; start < len(activeIDList); start += queryBatchSize {
-			end := start + queryBatchSize
-			if end > len(activeIDList) {
-				end = len(activeIDList)
-			}
-			placeholders, args := buildSQLInClause(activeIDList[start:end])
-			depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-				SELECT issue_id, depends_on_id, type, metadata FROM %s
-				WHERE issue_id IN (%s)
-				  AND type IN ('blocks', 'waits-for', 'conditional-blocks')
-			`, depTable, placeholders), args...)
-			if err != nil {
-				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
-					break
-				}
-				return nil, nil, fmt.Errorf("compute blocked IDs: deps from %s: %w", depTable, err)
-			}
-			for depRows.Next() {
-				var rec blockingDepRecord
-				if err := depRows.Scan(&rec.issueID, &rec.dependsOnID, &rec.depType, &rec.metadata); err != nil {
-					_ = depRows.Close()
-					return nil, nil, fmt.Errorf("compute blocked IDs: scan dep: %w", err)
-				}
-				allDeps = append(allDeps, rec)
-			}
-			_ = depRows.Close()
-			if err := depRows.Err(); err != nil {
-				return nil, nil, fmt.Errorf("compute blocked IDs: dep rows from %s: %w", depTable, err)
-			}
-		}
+	// This only narrows the expensive scan when inactive or closed rows dominate.
+	// Active-heavy repositories still pay one indexed lookup per queryBatchSize
+	// active IDs, so callers should not treat this as a universal speedup.
+	allDeps, err := loadBlockingDepsForIssueIDsInTx(ctx, tx, depTables, activeIDList)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	blockedSet := make(map[string]bool)
@@ -222,6 +198,10 @@ type candidateWaitsForDep struct {
 	gate      string
 }
 
+// markBlockedFromDepsInTx evaluates preloaded blocking dependency rows.
+// activeIDs must be caller-owned: waits-for handling expands it with active
+// children discovered from spawner dependencies so downstream callers can reuse
+// the same active lookup for transitively blocked children.
 func markBlockedFromDepsInTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -705,28 +685,13 @@ func GetBlockedIssuesInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 
 	// Step 3: Get blocking deps to build BlockedBy lists
 	blockerMap := make(map[string][]string)
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
-		depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT issue_id, depends_on_id FROM %s
-			WHERE type IN ('blocks', 'waits-for', 'conditional-blocks')
-		`, depTable))
-		if err != nil {
-			return nil, fmt.Errorf("get blocking deps from %s: %w", depTable, err)
-		}
-
-		for depRows.Next() {
-			var issueID, blockerID string
-			if err := depRows.Scan(&issueID, &blockerID); err != nil {
-				_ = depRows.Close()
-				return nil, fmt.Errorf("scan dependency: %w", err)
-			}
-			if blockedSet[issueID] && activeIDs[blockerID] {
-				blockerMap[issueID] = append(blockerMap[issueID], blockerID)
-			}
-		}
-		_ = depRows.Close()
-		if err := depRows.Err(); err != nil {
-			return nil, fmt.Errorf("dependency rows from %s: %w", depTable, err)
+	blockingDeps, err := loadBlockingDepsForIssueIDsInTx(ctx, tx, []string{"dependencies", "wisp_dependencies"}, blockedIDList)
+	if err != nil {
+		return nil, fmt.Errorf("get blocking deps: %w", err)
+	}
+	for _, rec := range blockingDeps {
+		if blockedSet[rec.issueID] && activeIDs[rec.dependsOnID] {
+			blockerMap[rec.issueID] = append(blockerMap[rec.issueID], rec.dependsOnID)
 		}
 	}
 
