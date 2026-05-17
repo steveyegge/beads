@@ -192,7 +192,10 @@ func (p *doltServerProvider) initSchema(ctx context.Context, database string) er
 			}
 			if pending > 0 {
 				latestVersion := schema.LatestVersion()
-				currentVersion := latestVersion - pending
+				currentVersion, err := schema.CurrentVersion(ctx, conn)
+				if err != nil {
+					return backoff.Permanent(fmt.Errorf("uow: reading current version: %w", err))
+				}
 				return backoff.Permanent(fmt.Errorf("beads schema is at version %d, binary requires %d — run: bd migrate schema", currentVersion, latestVersion))
 			}
 		}
