@@ -519,6 +519,14 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, configValuesCheck)
 	// Don't fail overall check for config value warnings, just warn
 
+	// Check 7a2: Archive configuration status (be-tsjke3)
+	archiveCheck := convertWithCategory(doctor.CheckArchiveConfig(path), doctor.CategoryData)
+	result.Checks = append(result.Checks, archiveCheck)
+	if archiveCheck.Status == statusWarning {
+		result.OverallOK = false
+	}
+	// StatusOK and disabled archive are informational — no overall failure
+
 	// Check 7a1: Project identity (GH#2372 backfill)
 	projectIDCheck := convertWithCategory(doctor.CheckProjectIdentityWithStore(sharedStore, path), doctor.CategoryData)
 	result.Checks = append(result.Checks, projectIDCheck)

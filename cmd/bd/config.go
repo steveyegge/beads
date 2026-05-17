@@ -143,8 +143,26 @@ var configSetCmd = &cobra.Command{
 		// These must be written to config.yaml, not SQLite, because they're read
 		// before the database is opened. (GH#536)
 		if config.IsYamlOnlyKey(key) {
-			if err := config.SetYamlConfig(key, value); err != nil {
-				fmt.Fprintf(os.Stderr, "Error setting config: %v\n", err)
+			// export.auto and archive.format go through the alias layer so
+			// they stay in sync and the deprecation warning is surfaced.
+			var setErr error
+			if key == "export.auto" || key == "archive.format" {
+				setErr = config.SetArchiveFormat(key, value)
+				// Normalise reported key/value to the canonical form.
+				if key == "export.auto" {
+					key = "archive.format"
+					switch value {
+					case "true", "1", "yes":
+						value = config.ArchiveFormatJSONL
+					default:
+						value = config.ArchiveFormatNone
+					}
+				}
+			} else {
+				setErr = config.SetYamlConfig(key, value)
+			}
+			if setErr != nil {
+				fmt.Fprintf(os.Stderr, "Error setting config: %v\n", setErr)
 				os.Exit(1)
 			}
 
@@ -230,7 +248,20 @@ var configGetCmd = &cobra.Command{
 		// Check if this is a yaml-only key (startup settings)
 		// These are read from config.yaml via viper, not SQLite. (GH#536)
 		if config.IsYamlOnlyKey(key) {
-			value := config.GetYamlConfig(key)
+			var value string
+			if key == "export.auto" {
+				// Resolve via the archive alias layer so callers see the
+				// canonical value and receive the deprecation notice on stderr.
+				resolved := config.ResolveArchiveFormat()
+				switch resolved {
+				case config.ArchiveFormatJSONL:
+					value = "true"
+				default:
+					value = "false"
+				}
+			} else {
+				value = config.GetYamlConfig(key)
+			}
 
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
