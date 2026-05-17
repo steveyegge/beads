@@ -983,6 +983,46 @@ func ValidateAgentsFile(filename string) error {
 	return nil
 }
 
+// Archive format constants for the archive.format config key.
+const (
+	ArchiveFormatJSONL = "jsonl"
+	ArchiveFormatNone  = "none"
+)
+
+// ArchiveDefaultForBackend returns the appropriate archive.format default for the
+// named storage backend: "jsonl" for "dolt" (archive is git-tracked alongside the
+// repo), "none" for all other backends.
+func ArchiveDefaultForBackend(driverName string) string {
+	if driverName == "dolt" {
+		return ArchiveFormatJSONL
+	}
+	return ArchiveFormatNone
+}
+
+// ValidateArchiveFormat returns an error when format is not "jsonl" or "none".
+func ValidateArchiveFormat(format string) error {
+	switch format {
+	case ArchiveFormatJSONL, ArchiveFormatNone:
+		return nil
+	default:
+		return fmt.Errorf("archive.format must be %q or %q, got %q", ArchiveFormatJSONL, ArchiveFormatNone, format)
+	}
+}
+
+// GetArchiveFormat reads archive.format from config and validates it.
+// Returns ("", nil) when the key is unset; the caller should call
+// ArchiveDefaultForBackend to determine the effective value.
+func GetArchiveFormat() (string, error) {
+	format := GetString("archive.format")
+	if format == "" {
+		return "", nil
+	}
+	if err := ValidateArchiveFormat(format); err != nil {
+		return "", err
+	}
+	return format, nil
+}
+
 // getConfigList retrieves a list-typed configuration value from config.yaml,
 // accepting either the YAML list form (e.g. `types: { custom: [step, wisp] }`)
 // or the legacy comma-separated string form (e.g.

@@ -1307,6 +1307,34 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
+		// Write archive.* config keys for the active backend so the archive
+		// subsystem knows its format, path, and throttle from the very first run.
+		// Dolt: jsonl at .beads/issues.jsonl, 60s throttle.
+		// Other backends: disabled (format=none).
+		archiveFmt := config.ArchiveDefaultForBackend(backend)
+		archiveWriteErrs := false
+		if err := config.SetYamlConfig("archive.format", archiveFmt); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write archive.format: %v\n", err)
+			archiveWriteErrs = true
+		}
+		if archiveFmt == config.ArchiveFormatJSONL {
+			if err := config.SetYamlConfig("archive.path", ".beads/issues.jsonl"); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write archive.path: %v\n", err)
+				archiveWriteErrs = true
+			}
+		}
+		if err := config.SetYamlConfig("archive.throttle_seconds", "60"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write archive.throttle_seconds: %v\n", err)
+			archiveWriteErrs = true
+		}
+		if !quiet && !archiveWriteErrs {
+			if archiveFmt == config.ArchiveFormatJSONL {
+				fmt.Printf("  %s Archive enabled (.beads/issues.jsonl — git-tracked, 60s throttle)\n", ui.RenderPass("✓"))
+			} else {
+				fmt.Printf("  %s Archive disabled — enable: bd config set archive.format jsonl\n", ui.RenderPass("✓"))
+			}
+		}
+
 		// Check if we're in a git repo and hooks aren't installed
 		// Install by default unless --skip-hooks is passed
 		// Hooks are installed to .beads/hooks/ (uses git config core.hooksPath)
