@@ -54,8 +54,9 @@ type AddDependencyOpts struct {
 	// WriteTable is the dependency table to insert/update/check existing deps in.
 	// Auto-detected from source wisp routing if empty.
 	WriteTable string
-	// DepTables are the tables to scan for cycle detection. When empty, same-table
-	// edges scan only WriteTable; mixed source/target storage scans both tables.
+	// DepTables are the tables to scan for cycle detection. Defaults to both
+	// dependency tables so same-storage endpoints still catch cycles whose
+	// interior path crosses the issue/wisp boundary.
 	DepTables []string
 	// IsCrossPrefix is true when source and target have different prefixes,
 	// meaning the target lives in another rig's database.
@@ -234,13 +235,7 @@ func cycleReachabilityQuery(depTables []string) string {
 }
 
 func cycleDetectionTables(sourceTable, targetTable, writeTable string) []string {
-	if sourceTable != "" && targetTable != "" && sourceTable != targetTable {
-		return []string{"dependencies", "wisp_dependencies"}
-	}
-	if writeTable != "" {
-		return []string{writeTable}
-	}
-	return []string{"dependencies"}
+	return []string{"dependencies", "wisp_dependencies"}
 }
 
 func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {
