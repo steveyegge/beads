@@ -743,9 +743,11 @@ func TestEmbeddedUpdate(t *testing.T) {
 		cmd := exec.Command(bd, "update", issue.ID, "--status", "in_progress", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
 		if err != nil {
-			t.Fatalf("bd update --json failed: %v\n%s", err, out)
+			t.Fatalf("bd update --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, stderr.String())
 		}
 		s := string(out)
 		start := strings.Index(s, "[")
