@@ -2038,17 +2038,51 @@ func TestInitBackendFlag(t *testing.T) {
 	t.Run("unknown_backend_errors", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		cmd := exec.Command(bd, "init", "--backend", "postgres", "--quiet")
+		cmd := exec.Command(bd, "init", "--backend", "badbackend", "--quiet")
 		cmd.Dir = tmpDir
 		cmd.Env = os.Environ()
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			t.Fatal("Expected non-zero exit for --backend=postgres, but command succeeded")
+			t.Fatal("Expected non-zero exit for --backend=badbackend, but command succeeded")
 		}
 
 		outStr := string(out)
 		if !strings.Contains(outStr, "unknown backend") {
 			t.Errorf("Expected 'unknown backend' error, got: %s", outStr)
+		}
+	})
+
+	t.Run("postgres_requires_experimental", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "postgres", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatal("Expected non-zero exit for --backend=postgres without --experimental, but command succeeded")
+		}
+
+		outStr := string(out)
+		if !strings.Contains(outStr, "requires --experimental flag") {
+			t.Errorf("Expected 'requires --experimental flag' error, got: %s", outStr)
+		}
+	})
+
+	t.Run("postgres_experimental_not_implemented", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cmd := exec.Command(bd, "init", "--backend", "postgres", "--experimental", "--quiet")
+		cmd.Dir = tmpDir
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatal("Expected non-zero exit for --backend=postgres --experimental, but command succeeded")
+		}
+
+		outStr := string(out)
+		if !strings.Contains(outStr, "not yet implemented") {
+			t.Errorf("Expected 'not yet implemented' error, got: %s", outStr)
 		}
 	})
 
