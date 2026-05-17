@@ -27,17 +27,17 @@ func GetIssueInTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, err
 	if err == nil {
 		return issue, nil
 	}
-	if errors.Is(err, storage.ErrNotFound) || isTableNotExistError(err) {
+	if errors.Is(err, storage.ErrNotFound) {
 		return nil, fmt.Errorf("%w: issue %s", storage.ErrNotFound, id)
 	}
 	return nil, err
 }
 
 func getIssueFromTableInTx(ctx context.Context, tx *sql.Tx, issueTable, labelTable, id string) (*types.Issue, error) {
-	//nolint:gosec // G201: issueTable is from WispTableRouting ("issues" or "wisps")
+	//nolint:gosec // G201: issueTable is a hardcoded literal supplied by GetIssueInTx ("issues" or "wisps")
 	row := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE id = ?`, IssueSelectColumns, issueTable), id)
 	issue, err := ScanIssueFrom(row)
-	if err == sql.ErrNoRows {
+	if err == sql.ErrNoRows || isTableNotExistError(err) {
 		return nil, storage.ErrNotFound
 	}
 	if err != nil {
