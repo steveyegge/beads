@@ -54,8 +54,9 @@ type AddDependencyOpts struct {
 	// WriteTable is the dependency table to insert/update/check existing deps in.
 	// Auto-detected from source wisp routing if empty.
 	WriteTable string
-	// DepTables are the tables to scan for cycle detection. The recursive CTE
-	// UNIONs all of them. Defaults to ["dependencies", "wisp_dependencies"] if empty.
+	// DepTables are the tables to scan for cycle detection. Defaults to both
+	// dependency tables; edge storage is source-routed, so same-class endpoints
+	// can still have mixed-table interior paths.
 	DepTables []string
 	// IsCrossPrefix is true when source and target have different prefixes,
 	// meaning the target lives in another rig's database.
