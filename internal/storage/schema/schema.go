@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type DBConn interface {
@@ -79,6 +80,36 @@ func AllMigrationsSQL() string {
 	return b.String()
 }
 
+func acquireMigrateLock(ctx context.Context, db DBConn) error {
+	var locked sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", migrateLockName, migrateLockTimeoutSec).Scan(&locked); err != nil {
+		return fmt.Errorf("failed to acquire schema advisory lock: %w", err)
+	}
+	if !locked.Valid {
+		return fmt.Errorf("failed to acquire schema advisory lock")
+	}
+	if locked.Int64 != 1 {
+		return fmt.Errorf("schema advisory lock timeout")
+	}
+	return nil
+}
+
+func releaseMigrateLock(ctx context.Context, db DBConn) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	var released sql.NullInt64
+	if err := db.QueryRowContext(releaseCtx, "SELECT RELEASE_LOCK(?)", migrateLockName).Scan(&released); err != nil {
+		return
+	}
+	if !released.Valid {
+		return
+	}
+	if released.Int64 != 1 {
+		panic("failed to release schema advisory lock: lock not held")
+	}
+}
+
 func parseVersion(name string) (int, error) {
 	parts := strings.SplitN(name, "_", 2)
 	if len(parts) == 0 {
@@ -87,7 +118,21 @@ func parseVersion(name string) (int, error) {
 	return strconv.Atoi(parts[0])
 }
 
+const (
+	migrateLockName       = "bd_schema_migrate"
+	migrateLockTimeoutSec = 30
+)
+
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
+	if mainSource.atLatest(ctx, db) && ignoredSource.atLatest(ctx, db) {
+		return 0, nil
+	}
+
+	if err := acquireMigrateLock(ctx, db); err != nil {
+		return 0, err
+	}
+	defer releaseMigrateLock(ctx, db)
+
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
 		return applied, err
@@ -161,6 +206,14 @@ func (m migrationSource) latest() int {
 		return 0
 	}
 	return files[len(files)-1].version
+}
+
+func (m migrationSource) atLatest(ctx context.Context, db DBConn) bool {
+	var current int
+	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current); err != nil {
+		return false
+	}
+	return current >= m.latest()
 }
 
 func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
