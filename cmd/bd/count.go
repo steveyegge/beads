@@ -227,10 +227,15 @@ Examples:
 		}
 
 		groups := make([]GroupCount, 0, len(counts))
-		total := 0
 		for group, count := range counts {
 			groups = append(groups, GroupCount{Group: group, Count: count})
-			total += count
+		}
+
+		// Use CountIssues for the total so multi-label issues aren't double-counted
+		// (--by-label buckets are not mutually exclusive, unlike status/priority/type).
+		total, err := store.CountIssues(ctx, filter)
+		if err != nil {
+			FatalError("%v", err)
 		}
 
 		// Use CountIssues for the total so multi-label issues aren't double-counted
