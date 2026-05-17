@@ -168,6 +168,8 @@ Reference for bd Latest. Generated from `bd help --all`.
 
 - [bd batch](#bd-batch) — Run multiple write operations in a single database transaction
 - [bd compact](#bd-compact) — Squash old Dolt commits to reduce history size
+- [bd daemon](#bd-daemon) — Daemon management commands
+  - [bd daemon stats](#bd-daemon-stats) — Show bdd daemon runtime statistics
 - [bd doctor](#bd-doctor) — Check and fix beads installation health (start here)
 - [bd flatten](#bd-flatten) — Squash all Dolt history into a single commit
 - [bd gc](#bd-gc) — Garbage collect: decay old issues, compact Dolt commits, run Dolt GC
@@ -3745,6 +3747,30 @@ bd compact [flags]
       --days int   Keep commits newer than N days (default 30)
       --dry-run    Preview without making changes
   -f, --force      Confirm commit squash
+```
+
+### bd daemon
+
+Inspect and manage the bdd background daemon (bd daemon stats).
+
+```
+bd daemon
+```
+
+#### bd daemon stats
+
+Show runtime statistics for the bdd background daemon.
+
+When the daemon is not running, the command exits with a non-zero status
+and a diagnostic message.
+
+Examples:
+  bd daemon stats          # Human-readable output
+  bd daemon stats --json   # JSON output for scripting
+
+
+```
+bd daemon stats
 ```
 
 ### bd doctor
