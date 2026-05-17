@@ -34,10 +34,14 @@ var initCmd = &cobra.Command{
 	GroupID: "setup",
 	Short:   "Initialize bd in the current directory",
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
-and Dolt database. Optionally specify a custom issue prefix.
+and database. Optionally specify a custom issue prefix.
 
-Dolt is the default (and only supported) storage backend. The legacy SQLite
-backend has been removed. Use --backend=sqlite to see migration instructions.
+Storage backends:
+  dolt (default)  — embedded Dolt engine, git-compatible, no external server.
+  postgres        — experimental; use --backend=postgres --experimental to enable.
+
+The legacy SQLite backend has been removed.
+Use --backend=sqlite to see migration instructions.
 
 Use --database to specify an existing server database name, overriding the
 default prefix-based naming. This is useful when an external tool (e.g. an orchestrator)
@@ -147,20 +151,26 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Handle --backend flag: "dolt" is the only supported backend.
+		// Handle --backend flag.
 		// "sqlite" is accepted for backward compatibility but prints a
 		// deprecation notice and exits with an error.
+		// "postgres" is a placeholder — requires --experimental until Phase 1 ships.
+		experimental, _ := cmd.Flags().GetBool("experimental")
 		if backendFlag == "sqlite" {
 			fmt.Fprintf(os.Stderr, "%s The SQLite backend has been removed.\n\n", ui.RenderWarn("⚠ DEPRECATED:"))
-			fmt.Fprintf(os.Stderr, "Dolt is now the default (and only) storage backend for beads.\n")
+			fmt.Fprintf(os.Stderr, "Dolt is now the default storage backend for beads.\n")
 			fmt.Fprintf(os.Stderr, "To initialize with Dolt:\n")
 			fmt.Fprintf(os.Stderr, "  bd init\n\n")
 			fmt.Fprintf(os.Stderr, "To import issues from an existing JSONL export:\n")
 			fmt.Fprintf(os.Stderr, "  bd init --from-jsonl\n\n")
 			fmt.Fprintf(os.Stderr, "See: https://github.com/steveyegge/beads/blob/main/docs/DOLT-BACKEND.md\n")
 			os.Exit(1)
-		} else if backendFlag != "" && backendFlag != "dolt" {
-			FatalError("unknown backend %q: only \"dolt\" is supported", backendFlag)
+		} else if backendFlag == "postgres" && !experimental {
+			FatalError("--backend=postgres requires --experimental flag (PostgreSQL backend is not yet production-ready)")
+		} else if backendFlag == "postgres" && experimental {
+			FatalError("--backend=postgres is not yet implemented; check back after the Phase 1 driver release")
+		} else if backendFlag != "" && backendFlag != "dolt" && backendFlag != "postgres" {
+			FatalError("unknown backend %q: supported values are \"dolt\" and \"postgres\" (experimental)", backendFlag)
 		}
 
 		// Validate --database format early, before any side effects.
@@ -1495,8 +1505,9 @@ func init() {
 	initCmd.Flags().Bool("non-interactive", false, "Skip all interactive prompts (auto-detected in CI or non-TTY environments)")
 	initCmd.Flags().String("role", "", "Set beads role without prompting: \"maintainer\" or \"contributor\"")
 
-	// Backend selection (dolt is the only supported backend; sqlite accepted for deprecation notice)
-	initCmd.Flags().String("backend", "", "Storage backend (default: dolt). --backend=sqlite prints deprecation notice.")
+	// Backend selection. Dolt is the default; postgres is experimental.
+	initCmd.Flags().String("backend", "", "Storage backend: \"dolt\" (default) or \"postgres\" (requires --experimental)")
+	initCmd.Flags().Bool("experimental", false, "Enable experimental features (required for --backend=postgres)")
 
 	// Dolt server connection flags
 	initCmd.Flags().Bool("server", false, "Use external dolt sql-server instead of embedded engine")
