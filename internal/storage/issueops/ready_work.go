@@ -52,23 +52,11 @@ func GetReadyWorkInTx(
 		whereClauses = append(whereClauses, "id IN (SELECT id FROM issues WHERE issue_type = ?)")
 		args = append(args, filter.Type)
 	} else {
-		excludeTypes := []string{"merge-request", "gate", "molecule", "message", "agent", "role", "rig"}
-		seen := make(map[string]bool, len(excludeTypes)+len(filter.ExcludeTypes))
-		for _, t := range excludeTypes {
-			seen[t] = true
-		}
-		for _, t := range filter.ExcludeTypes {
-			s := string(t)
-			if s == "" || seen[s] {
-				continue
-			}
-			seen[s] = true
-			excludeTypes = append(excludeTypes, s)
-		}
+		excludeTypes := readyWorkExcludeTypes(filter.ExcludeTypes)
 		placeholders := make([]string, len(excludeTypes))
 		for i, t := range excludeTypes {
 			placeholders[i] = "?"
-			args = append(args, t)
+			args = append(args, string(t))
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM issues WHERE issue_type NOT IN (%s))", strings.Join(placeholders, ",")))
 	}
@@ -290,12 +278,7 @@ func GetReadyWorkInTx(
 
 	// When IncludeEphemeral is set, also query the wisps table.
 	if filter.IncludeEphemeral {
-		ephTrue := true
-		wispFilter := types.IssueFilter{Limit: filter.Limit, Ephemeral: &ephTrue}
-		if filter.Status != "" {
-			s := filter.Status
-			wispFilter.Status = &s
-		}
+		wispFilter := readyWorkWispIssueFilter(filter)
 		wisps, wErr := SearchIssuesInTx(ctx, tx, "", wispFilter)
 		if wErr != nil {
 			return nil, fmt.Errorf("search wisps (ready work): %w", wErr)
@@ -304,6 +287,70 @@ func GetReadyWorkInTx(
 	}
 
 	return ordered, nil
+}
+
+func readyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {
+	excludeTypes := []types.IssueType{
+		types.IssueType("merge-request"),
+		types.TypeGate,
+		types.TypeMolecule,
+		types.TypeMessage,
+		types.IssueType("agent"),
+		types.IssueType("role"),
+		types.IssueType("rig"),
+	}
+	seen := make(map[types.IssueType]bool, len(excludeTypes)+len(extra))
+	for _, t := range excludeTypes {
+		seen[t] = true
+	}
+	for _, t := range extra {
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		excludeTypes = append(excludeTypes, t)
+	}
+	return excludeTypes
+}
+
+func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
+	ephTrue := true
+	wispFilter := types.IssueFilter{
+		Priority:       filter.Priority,
+		Labels:         filter.Labels,
+		LabelsAny:      filter.LabelsAny,
+		ExcludeLabels:  filter.ExcludeLabels,
+		Limit:          filter.Limit,
+		MolType:        filter.MolType,
+		WispType:       filter.WispType,
+		Ephemeral:      &ephTrue,
+		MetadataFields: filter.MetadataFields,
+		HasMetadataKey: filter.HasMetadataKey,
+	}
+	if filter.Status != "" {
+		s := filter.Status
+		wispFilter.Status = &s
+	} else {
+		wispFilter.Statuses = []types.Status{types.StatusOpen, types.StatusInProgress}
+	}
+	if filter.Type != "" {
+		t := types.IssueType(filter.Type)
+		wispFilter.IssueType = &t
+	} else {
+		wispFilter.ExcludeTypes = readyWorkExcludeTypes(filter.ExcludeTypes)
+	}
+	if filter.Unassigned {
+		wispFilter.NoAssignee = true
+	} else if filter.Assignee != nil {
+		wispFilter.Assignee = filter.Assignee
+	}
+	if filter.MoleculeID != "" {
+		moleculeID := filter.MoleculeID
+		wispFilter.ParentID = &moleculeID
+	} else if filter.ParentID != nil {
+		wispFilter.ParentID = filter.ParentID
+	}
+	return wispFilter
 }
 
 func readyWorkPageSize(limit int) int {
