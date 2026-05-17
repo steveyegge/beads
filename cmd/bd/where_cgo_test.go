@@ -16,6 +16,15 @@ import (
 )
 
 func TestWhereCommand_ReadsPrefixFromEmbeddedStore(t *testing.T) {
+	// Repo dogfoods bd; opt out of its .beads/config.yaml so issue-prefix isn't masked here.
+	t.Setenv("BEADS_TEST_IGNORE_REPO_CONFIG", "1")
+	// BEADS_TEST_IGNORE_REPO_CONFIG only suppresses the cwd-walk's hit on the
+	// module-root .beads/config.yaml. In git-worktree checkouts, the
+	// worktreeFallbackConfigPath probe in config.Initialize still loads the
+	// upstream repo's .beads/config.yaml via the git common-dir, which
+	// reintroduces issue-prefix. Chdir to a non-git tempdir so neither probe
+	// finds anything and the store-fallback in where.go can be exercised.
+	t.Chdir(t.TempDir())
 	saveAndRestoreGlobals(t)
 	ensureCleanGlobalState(t)
 	initConfigForTest(t)
