@@ -1481,6 +1481,23 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 	}
 	defer conn.Close()
 
+	var dbName string
+	if err := conn.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&dbName); err != nil {
+		return fmt.Errorf("schema: read database name: %w", err)
+	}
+
+	lockName := "bd_schema_init:" + dbName
+	var locked int
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 30)", lockName).Scan(&locked); err != nil {
+		return fmt.Errorf("schema: acquire migration lock: %w", err)
+	}
+	if locked != 1 {
+		return fmt.Errorf("schema: acquire migration lock: timeout")
+	}
+	defer func() {
+		_, _ = conn.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", lockName)
+	}()
+
 	if _, err := schema.MigrateUp(ctx, conn); err != nil {
 		return fmt.Errorf("schema migration: %w", err)
 	}
