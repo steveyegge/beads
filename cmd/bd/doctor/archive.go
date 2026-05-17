@@ -75,7 +75,7 @@ func CheckArchiveConfig(repoPath string) DoctorCheck {
 	}
 
 	// Probe the archive file for its size.
-	fullPath := filepath.Join(beadsDir, archivePath)
+	fullPath := filepath.Join(repoPath, archivePath)
 	var sizeStr string
 	if fi, err := os.Stat(fullPath); err == nil {
 		sizeStr = humanBytes(fi.Size())
