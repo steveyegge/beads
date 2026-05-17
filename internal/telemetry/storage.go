@@ -521,6 +521,43 @@ func (s *InstrumentedStorage) IterWisps(ctx context.Context, filter types.WispFi
 	return it, err
 }
 
+// ── Count* aggregates ─────────────────────────────────────────────────────────
+
+func (s *InstrumentedStorage) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
+	ctx, span, t := s.op(ctx, "CountIssues")
+	v, err := s.inner.CountIssues(ctx, query, filter)
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountDependents(ctx context.Context, issueID string) (int64, error) {
+	ctx, span, t := s.op(ctx, "CountDependents", attribute.String("issue.id", issueID))
+	v, err := s.inner.CountDependents(ctx, issueID)
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountDependencies(ctx context.Context, issueID string) (int64, error) {
+	ctx, span, t := s.op(ctx, "CountDependencies", attribute.String("issue.id", issueID))
+	v, err := s.inner.CountDependencies(ctx, issueID)
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountIssueComments(ctx context.Context, issueID string) (int64, error) {
+	ctx, span, t := s.op(ctx, "CountIssueComments", attribute.String("issue.id", issueID))
+	v, err := s.inner.CountIssueComments(ctx, issueID)
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
+func (s *InstrumentedStorage) CountEvents(ctx context.Context, issueID string, limit int) (int64, error) {
+	ctx, span, t := s.op(ctx, "CountEvents", attribute.String("issue.id", issueID))
+	v, err := s.inner.CountEvents(ctx, issueID, limit)
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
 // ── MergeSlot ────────────────────────────────────────────────────────────────
 
 func (s *InstrumentedStorage) MergeSlotCreate(ctx context.Context, actor string) (*types.Issue, error) {

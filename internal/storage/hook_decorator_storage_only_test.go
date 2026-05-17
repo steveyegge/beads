@@ -172,6 +172,18 @@ func (s *storageOnlyStub) IterWisps(context.Context, types.WispFilter) (storage.
 	return storage.NewSliceIter[types.Issue](nil), nil
 }
 
+// — Count* stubs (be-fv0xme) —
+
+func (s *storageOnlyStub) CountIssues(context.Context, string, types.IssueFilter) (int64, error) {
+	return 0, nil
+}
+func (s *storageOnlyStub) CountDependents(context.Context, string) (int64, error)   { return 0, nil }
+func (s *storageOnlyStub) CountDependencies(context.Context, string) (int64, error) { return 0, nil }
+func (s *storageOnlyStub) CountIssueComments(context.Context, string) (int64, error) {
+	return 0, nil
+}
+func (s *storageOnlyStub) CountEvents(context.Context, string, int) (int64, error) { return 0, nil }
+
 func (s *storageOnlyStub) GetStatistics(context.Context) (*types.Statistics, error) { return nil, nil }
 func (s *storageOnlyStub) SetConfig(context.Context, string, string) error          { return nil }
 func (s *storageOnlyStub) GetConfig(context.Context, string) (string, error)        { return "", nil }
