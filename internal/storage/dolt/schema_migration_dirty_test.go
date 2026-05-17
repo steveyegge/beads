@@ -94,7 +94,7 @@ func TestSchemaMigrationDoesNotCommitPreExistingDirtyData(t *testing.T) {
 	}
 }
 
-func TestSchemaMigrationRejectsPreExistingStagedData(t *testing.T) {
+func TestSchemaMigrationDoesNotCommitPreExistingStagedData(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
@@ -136,9 +136,8 @@ func TestSchemaMigrationRejectsPreExistingStagedData(t *testing.T) {
 		t.Fatalf("stage label: %v", err)
 	}
 
-	err := initSchemaOnDB(ctx, store.db)
-	if err == nil || !strings.Contains(err.Error(), "pre-existing staged tables") {
-		t.Fatalf("initSchemaOnDB error = %v, want pre-existing staged tables error", err)
+	if err := initSchemaOnDB(ctx, store.db); err != nil {
+		t.Fatalf("initSchemaOnDB: %v", err)
 	}
 
 	var committedLabelCount int
@@ -150,6 +149,27 @@ func TestSchemaMigrationRejectsPreExistingStagedData(t *testing.T) {
 	}
 	if committedLabelCount != 0 {
 		t.Fatalf("staged label was committed by schema migration, count = %d", committedLabelCount)
+	}
+
+	var workingLabelCount int
+	if err := store.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM labels WHERE issue_id = ? AND label = ?",
+		issue.ID, "staged-before-schema",
+	).Scan(&workingLabelCount); err != nil {
+		t.Fatalf("count working staged label: %v", err)
+	}
+	if workingLabelCount != 1 {
+		t.Fatalf("working staged label count = %d, want 1", workingLabelCount)
+	}
+
+	var stagedLabelTables int
+	if err := store.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM dolt_status WHERE table_name = 'labels' AND staged = true",
+	).Scan(&stagedLabelTables); err != nil {
+		t.Fatalf("count staged label tables: %v", err)
+	}
+	if stagedLabelTables != 0 {
+		t.Fatalf("labels remained staged after schema migration, count = %d", stagedLabelTables)
 	}
 }
 

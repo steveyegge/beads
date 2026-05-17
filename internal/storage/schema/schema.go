@@ -98,22 +98,22 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return 0, nil
 	}
 
-	dirtyBefore, err := committableDirtyTables(ctx, db)
+	dirtyBeforeAll, err := dirtyTables(ctx, db, false)
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration status: %w", err)
 	}
-	if staged := stagedDirtyTables(dirtyBefore); len(staged) > 0 {
-		return 0, fmt.Errorf("refusing to apply migrations with pre-existing staged tables: %s", strings.Join(staged, ", "))
+	if err := unstagePreExistingTables(ctx, db, dirtyBeforeAll); err != nil {
+		return 0, fmt.Errorf("unstaging pre-migration tables: %w", err)
+	}
+
+	dirtyBefore, err := committableDirtyTables(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration status: %w", err)
 	}
 	dirtyBeforeSignatures, err := dirtyTableSignatures(ctx, db, dirtyBefore)
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration dirty table diffs: %w", err)
 	}
-	tablesBefore, err := existingTables(ctx, db)
-	if err != nil {
-		return 0, fmt.Errorf("reading pre-migration tables: %w", err)
-	}
-
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
 		return applied, err
@@ -144,7 +144,7 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, fmt.Errorf("pre-existing dirty tables changed during schema migration: %s", strings.Join(changedDirtyTables, ", "))
 	}
 
-	staged, err := stageNewSchemaTables(ctx, db, dirtyBefore, tablesBefore)
+	staged, err := stageSchemaTables(ctx, db, dirtyBefore)
 	if err != nil {
 		return applied, fmt.Errorf("staging migrations: %w", err)
 	}
@@ -179,6 +179,15 @@ func stagedDirtyTables(tables map[string]dirtyTableState) []string {
 	}
 	sort.Strings(staged)
 	return staged
+}
+
+func unstagePreExistingTables(ctx context.Context, db DBConn, tables map[string]dirtyTableState) error {
+	for _, table := range stagedDirtyTables(tables) {
+		if _, err := db.ExecContext(ctx, "CALL DOLT_RESET(?)", table); err != nil {
+			return fmt.Errorf("dolt reset %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 func dirtyTableSignatures(ctx context.Context, db DBConn, tables map[string]dirtyTableState) (map[string]string, error) {
@@ -302,7 +311,7 @@ func writeSignatureValue(b *strings.Builder, v any) {
 	}
 }
 
-func stageNewSchemaTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState, tablesBefore map[string]struct{}) (bool, error) {
+func stageSchemaTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) (bool, error) {
 	dirtyAfter, err := dirtyTables(ctx, db, false)
 	if err != nil {
 		return false, err
@@ -320,9 +329,10 @@ func stageNewSchemaTables(ctx context.Context, db DBConn, dirtyBefore map[string
 		return false, err
 	}
 	for table := range tablesAfter {
-		if _, existed := tablesBefore[table]; !existed {
-			tableSet[table] = struct{}{}
+		if _, wasDirty := dirtyBefore[table]; wasDirty {
+			continue
 		}
+		tableSet[table] = struct{}{}
 	}
 
 	tables := make([]string, 0, len(tableSet))
