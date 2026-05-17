@@ -792,12 +792,13 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
 		return 0, nil
 	}
 
-	return runMigrations(ctx, db, current)
+	return runMigrations(ctx, db, m, current)
 }
 
-// runMigrations applies all migration files with version > minVersion. It is
-// package-private so tests can call it directly without needing a live cursor table.
-func runMigrations(ctx context.Context, db DBConn, minVersion int) (int, error) {
+// runMigrations applies all migration files from src with version > minVersion.
+// It is package-private so tests can call it directly without needing a live
+// cursor table.
+func runMigrations(ctx context.Context, db DBConn, src migrationSource, minVersion int) (int, error) {
 	// One-shot large-rig notice. Treats a missing issues table as "fresh
 	// install" and emits nothing — on a first-ever run there is no rig to
 	// warn about, and the COUNT(*) query would error on the missing table.
@@ -805,11 +806,11 @@ func runMigrations(ctx context.Context, db DBConn, minVersion int) (int, error) 
 	emitLargeRigNotice(progressOut, rowCount, rowCountErr)
 
 	count := 0
-	for _, mf := range mainSource.list() {
+	for _, mf := range src.list() {
 		if mf.version <= minVersion {
 			continue
 		}
-		data, err := mainSource.files.ReadFile(mainSource.dir + "/" + mf.name)
+		data, err := src.files.ReadFile(src.dir + "/" + mf.name)
 		if err != nil {
 			return count, fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
@@ -820,8 +821,8 @@ func runMigrations(ctx context.Context, db DBConn, minVersion int) (int, error) 
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
 			return count, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
-		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+mainSource.cursorTable+" (version) VALUES (?)", mf.version); err != nil {
-			return count, fmt.Errorf("recording %s in %s: %w", mf.name, mainSource.cursorTable, err)
+		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+src.cursorTable+" (version) VALUES (?)", mf.version); err != nil {
+			return count, fmt.Errorf("recording %s in %s: %w", mf.name, src.cursorTable, err)
 		}
 		fmt.Fprintf(progressOut, "  done (%.1fs)\n", time.Since(start).Seconds())
 		count++

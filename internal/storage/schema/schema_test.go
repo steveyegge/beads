@@ -532,7 +532,7 @@ func TestRunMigrationsProgressOutput(t *testing.T) {
 	issueRowCounter = func(_ context.Context, _ DBConn) (int64, error) { return 0, nil }
 	defer func() { issueRowCounter = origCounter }()
 
-	n, err := runMigrations(context.Background(), &mockDB{}, 0)
+	n, err := runMigrations(context.Background(), &mockDB{}, mainSource, 0)
 	if err != nil {
 		t.Fatalf("runMigrations: %v", err)
 	}
