@@ -1,10 +1,13 @@
-// Package ui provides terminal styling for beads CLI output.
-package ui
+// Package uimd provides markdown rendering for beads CLI output.
+// Kept separate from internal/ui so callers that don't need markdown
+// don't pull in the chroma/glamour startup cost (~4.6 MB init).
+package uimd
 
 import (
 	"os"
 
 	"charm.land/glamour/v2"
+	"github.com/steveyegge/beads/internal/ui"
 	"golang.org/x/term"
 )
 
@@ -12,21 +15,15 @@ import (
 // Returns the rendered markdown or the original text if rendering fails.
 // Word wraps at terminal width (or 80 columns if width can't be detected).
 func RenderMarkdown(markdown string) string {
-	// Skip glamour in agent mode to keep output clean for parsing
-	if IsAgentMode() {
+	if ui.IsAgentMode() {
+		return markdown
+	}
+	if !ui.ShouldUseColor() {
 		return markdown
 	}
 
-	// Skip glamour if colors are disabled
-	if !ShouldUseColor() {
-		return markdown
-	}
-
-	// Detect terminal width for word wrap
-	// Cap at 100 chars for readability - wider lines cause eye-tracking fatigue
-	// Typography research suggests 50-75 chars optimal, 80-100 comfortable max
 	const maxReadableWidth = 100
-	wrapWidth := 80 // default if terminal size unavailable
+	wrapWidth := 80
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		wrapWidth = w
 	}
@@ -34,18 +31,15 @@ func RenderMarkdown(markdown string) string {
 		wrapWidth = maxReadableWidth
 	}
 
-	// Create renderer with auto-detected style (respects terminal light/dark mode)
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithWordWrap(wrapWidth),
 	)
 	if err != nil {
-		// fallback to raw markdown on error
 		return markdown
 	}
 
 	rendered, err := renderer.Render(markdown)
 	if err != nil {
-		// fallback to raw markdown on error
 		return markdown
 	}
 
