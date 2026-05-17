@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,10 +20,8 @@ func bdDep(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd dep %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -52,10 +49,8 @@ func bdDepJSON(t *testing.T, bd, dir string, args ...string) map[string]interfac
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd dep --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	s := strings.TrimSpace(stdout.String())
@@ -77,10 +72,8 @@ func bdDepWithInput(t *testing.T, bd, dir, input string, args ...string) string 
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
 	cmd.Stdin = strings.NewReader(input)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd dep %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -302,10 +295,8 @@ func TestEmbeddedDep(t *testing.T) {
 		cmd := exec.Command(bd, fullArgs...)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("dep list --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), issueD.ID) {
@@ -362,10 +353,8 @@ func TestEmbeddedDep(t *testing.T) {
 		cmd := exec.Command(bd, fullArgs...)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("dep tree --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), epic.ID) {

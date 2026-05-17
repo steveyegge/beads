@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,10 +36,7 @@ func bdLintJSON(t *testing.T, bd, dir string, args ...string) map[string]interfa
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	// lint exits 1 on warnings even with --json, so ignore exit error
 	if err != nil {
 		if _, ok := err.(*exec.ExitError); !ok {

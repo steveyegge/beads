@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,10 +27,8 @@ func TestEmbeddedBlocked(t *testing.T) {
 		cmd := exec.Command(bd, "blocked")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd blocked failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		// No blocked issues on fresh db
@@ -55,10 +52,8 @@ func TestEmbeddedBlocked(t *testing.T) {
 		cmd = exec.Command(bd, "blocked")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd blocked failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), blocked.ID) {
@@ -72,10 +67,8 @@ func TestEmbeddedBlocked(t *testing.T) {
 		cmd := exec.Command(bd, "blocked", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd blocked --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())

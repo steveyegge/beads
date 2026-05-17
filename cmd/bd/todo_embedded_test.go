@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,10 +19,8 @@ func bdTodo(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd todo %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -54,10 +51,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd := exec.Command(bd, "todo", "add", "JSON todo", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd todo add --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())
@@ -105,10 +100,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd := exec.Command(bd, "todo", "list", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd todo list --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())
@@ -132,10 +125,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd := exec.Command(bd, "todo", "add", "Done test", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd todo add failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())
@@ -155,10 +146,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd1 := exec.Command(bd, "todo", "add", "Multi done 1", "--json")
 		cmd1.Dir = dir
 		cmd1.Env = bdEnv(dir)
-		var stdout1, stderr1 bytes.Buffer
-		cmd1.Stdout = &stdout1
-		cmd1.Stderr = &stderr1
-		if err := cmd1.Run(); err != nil {
+		stdout1, stderr1, err := runCommandBuffers(t, cmd1)
+		if err != nil {
 			t.Fatalf("bd todo add Multi done 1 --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout1.String(), stderr1.String())
 		}
 		s1 := strings.TrimSpace(stdout1.String())
@@ -175,10 +164,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd2 := exec.Command(bd, "todo", "add", "Multi done 2", "--json")
 		cmd2.Dir = dir
 		cmd2.Env = bdEnv(dir)
-		var stdout2, stderr2 bytes.Buffer
-		cmd2.Stdout = &stdout2
-		cmd2.Stderr = &stderr2
-		if err := cmd2.Run(); err != nil {
+		stdout2, stderr2, err := runCommandBuffers(t, cmd2)
+		if err != nil {
 			t.Fatalf("bd todo add Multi done 2 --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout2.String(), stderr2.String())
 		}
 		s2 := strings.TrimSpace(stdout2.String())
@@ -207,10 +194,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd := exec.Command(bd, "todo", "add", "Reason done", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd todo add Reason done --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())
@@ -235,10 +220,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd := exec.Command(bd, "todo", "add", "JSON done", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var addStdout, addStderr bytes.Buffer
-		cmd.Stdout = &addStdout
-		cmd.Stderr = &addStderr
-		if err := cmd.Run(); err != nil {
+		addStdout, addStderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd todo add JSON done --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, addStdout.String(), addStderr.String())
 		}
 		s := strings.TrimSpace(addStdout.String())
@@ -255,10 +238,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		doneCmd := exec.Command(bd, "todo", "done", id, "--json")
 		doneCmd.Dir = dir
 		doneCmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		doneCmd.Stdout = &stdout
-		doneCmd.Stderr = &stderr
-		if err := doneCmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, doneCmd)
+		if err != nil {
 			t.Fatalf("bd todo done --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 	})
@@ -269,10 +250,8 @@ func TestEmbeddedTodo(t *testing.T) {
 		cmd := exec.Command(bd, "todo", "list", "--all", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd todo list --all --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())

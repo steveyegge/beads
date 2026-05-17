@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,10 +19,8 @@ func bdState(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd state %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -36,10 +33,8 @@ func bdSetState(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd set-state %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -69,10 +64,8 @@ func TestEmbeddedState(t *testing.T) {
 		cmd := exec.Command(bd, "set-state", issue.ID, "env=staging", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd set-state --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())
@@ -113,10 +106,8 @@ func TestEmbeddedState(t *testing.T) {
 		cmd := exec.Command(bd, "state", issue.ID, "phase", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd state --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		_ = stdout.String()
@@ -142,10 +133,8 @@ func TestEmbeddedState(t *testing.T) {
 		cmd := exec.Command(bd, "state", "list", issue.ID, "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd state list --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		_ = stdout.String()

@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,10 +99,8 @@ func initContributor(t *testing.T, bd, prefix string) (projectDir, planningDir s
 	cmd.Dir = projectDir
 	cmd.Env = append(bdEnv(projectDir), "BD_NON_INTERACTIVE=0")
 	cmd.Stdin = strings.NewReader("y\n" + planningDir + "\n")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd init --contributor failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 	}
 

@@ -32,10 +32,8 @@ func TestEmbeddedReady(t *testing.T) {
 		cmd := exec.Command(bd, "ready")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd ready failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "Ready test issue") {
@@ -49,10 +47,8 @@ func TestEmbeddedReady(t *testing.T) {
 		cmd := exec.Command(bd, "ready", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd ready --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := strings.TrimSpace(stdout.String())
@@ -93,10 +89,8 @@ func TestEmbeddedReady(t *testing.T) {
 		cmd := exec.Command(bd, "ready", "--claim", "--json", "--label", "missing-label")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd ready --claim --json with no matches failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		var empty []types.IssueWithCounts
@@ -152,10 +146,8 @@ func TestEmbeddedReady(t *testing.T) {
 		cmd = exec.Command(bd, "ready")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd ready failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		// The blocked issue should not appear in ready output
@@ -173,10 +165,8 @@ func TestEmbeddedReady(t *testing.T) {
 		cmd := exec.Command(bd, "ready", "--exclude-label", "triage:pending")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd ready --exclude-label failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if strings.Contains(stdout.String(), "Triage pending item") {
@@ -195,10 +185,8 @@ func TestEmbeddedReady(t *testing.T) {
 		cmd := exec.Command(bd, "-C", dir, "ready")
 		cmd.Dir = tmpDir // Run from a directory with no .beads/
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd -C %s ready failed: %v\nstdout:\n%s\nstderr:\n%s", dir, err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "Ready test issue") {

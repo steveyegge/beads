@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -315,10 +314,8 @@ func TestEmbeddedClose(t *testing.T) {
 		cmd := exec.Command(bd, "close", blocker.ID, "--suggest-next", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd close --suggest-next --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := stdout.String()
@@ -357,10 +354,8 @@ func TestEmbeddedClose(t *testing.T) {
 		cmd := exec.Command(bd, "close", toClose.ID, "--claim-next", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd close --claim-next --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := stdout.String()
@@ -391,10 +386,8 @@ func TestEmbeddedClose(t *testing.T) {
 		env := bdEnv(dir)
 		env = append(env, "CLAUDE_SESSION_ID=env-sess")
 		cmd.Env = env
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd close with env session failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		session := querySessionSQL(t, beadsDir, issue.ID)
@@ -410,10 +403,8 @@ func TestEmbeddedClose(t *testing.T) {
 		cmd := exec.Command(bd, "close", issue.ID, "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd close --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		s := stdout.String()
@@ -434,10 +425,8 @@ func TestEmbeddedClose(t *testing.T) {
 		cmd := exec.Command(bd, "done", issue.ID)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd done failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		got := bdShow(t, bd, dir, issue.ID)
@@ -451,10 +440,8 @@ func TestEmbeddedClose(t *testing.T) {
 		cmd := exec.Command(bd, "done", issue.ID, "the reason")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd done with reason failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		got := bdShow(t, bd, dir, issue.ID)
@@ -577,10 +564,8 @@ func TestEmbeddedCloseConcurrent(t *testing.T) {
 				listCmd := exec.Command(bd, "list", "--json", "--limit", "0", "--all")
 				listCmd.Dir = dir
 				listCmd.Env = bdEnv(dir)
-				var listStdout, listStderr bytes.Buffer
-				listCmd.Stdout = &listStdout
-				listCmd.Stderr = &listStderr
-				if err := listCmd.Run(); err != nil {
+				listStdout, listStderr, err := runCommandBuffers(t, listCmd)
+				if err != nil {
 					r.err = fmt.Errorf("list after close %d: %v\nstdout:\n%s\nstderr:\n%s", i, err, listStdout.String(), listStderr.String())
 					results[worker] = r
 					return

@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,10 +25,8 @@ func bdImport(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd import %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String() + stderr.String()
@@ -179,10 +176,8 @@ func TestEmbeddedImport(t *testing.T) {
 		showCmd := exec.Command(bd, "show", id, "--json")
 		showCmd.Dir = dir
 		showCmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		showCmd.Stdout = &stdout
-		showCmd.Stderr = &stderr
-		if err := showCmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, showCmd)
+		if err != nil {
 			t.Fatalf("bd show %s failed: %v\nstdout:\n%s\nstderr:\n%s", id, err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "Updated Title") {

@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,10 +19,8 @@ func bdStatus(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd status %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -36,10 +33,8 @@ func bdStatusJSON(t *testing.T, bd, dir string, args ...string) map[string]inter
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd status --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	s := strings.TrimSpace(stdout.String())
@@ -134,10 +129,8 @@ func TestEmbeddedStatus(t *testing.T) {
 		cmd := exec.Command(bd, args...)
 		cmd.Dir = dir
 		cmd.Env = env
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd status --assigned --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 
@@ -190,10 +183,8 @@ func TestEmbeddedStatus(t *testing.T) {
 		cmd := exec.Command(bd, "stats", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd stats alias failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "summary") {
@@ -263,10 +254,8 @@ func TestEmbeddedStatusConcurrent(t *testing.T) {
 			cmd := exec.Command(bd, args...)
 			cmd.Dir = dir
 			cmd.Env = bdEnv(dir)
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
+			stdout, stderr, err := runCommandBuffers(t, cmd)
+			if err != nil {
 				r.err = fmt.Errorf("worker %d status: %v\nstdout:\n%s\nstderr:\n%s", worker, err, stdout.String(), stderr.String())
 				results[worker] = r
 				return

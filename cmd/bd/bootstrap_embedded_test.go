@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,10 +20,8 @@ func bdBootstrap(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd bootstrap %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -63,10 +60,7 @@ func TestBootstrapNoWorkspace(t *testing.T) {
 		cmd := exec.Command(bd, "bootstrap", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		err := cmd.Run()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err == nil {
 			t.Fatal("expected bd bootstrap --json to exit non-zero without a workspace")
 		}
@@ -156,10 +150,8 @@ func TestEmbeddedBootstrap(t *testing.T) {
 		bcmd.Dir = dir
 		bcmd.Env = bdEnv(dir)
 		bcmd.Stdin = strings.NewReader("y\n")
-		var stdout, stderr bytes.Buffer
-		bcmd.Stdout = &stdout
-		bcmd.Stderr = &stderr
-		if err := bcmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, bcmd)
+		if err != nil {
 			t.Fatalf("bootstrap init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		combined := stdout.String() + stderr.String()
@@ -205,10 +197,8 @@ func TestEmbeddedBootstrap(t *testing.T) {
 		bcmd.Dir = dir
 		bcmd.Env = bdEnv(dir)
 		bcmd.Stdin = strings.NewReader("y\n")
-		var stdout, stderr bytes.Buffer
-		bcmd.Stdout = &stdout
-		bcmd.Stderr = &stderr
-		if err := bcmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, bcmd)
+		if err != nil {
 			t.Fatalf("bootstrap jsonl-import failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		combined := stdout.String() + stderr.String()

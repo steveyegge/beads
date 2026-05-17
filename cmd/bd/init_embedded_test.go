@@ -97,6 +97,14 @@ func isEmbeddedLockOutput(out string) bool {
 		strings.Contains(out, "locked by another dolt process")
 }
 
+func runCommandBuffers(t *testing.T, cmd *exec.Cmd) (stdout, stderr bytes.Buffer, err error) {
+	t.Helper()
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	return stdout, stderr, err
+}
+
 // bdRunWithFlockRetry runs a bd command with retry on flock contention.
 // Returns stdout and nil on success, or combined stdout/stderr and the last
 // error after retries are exhausted or a non-flock error occurs.
@@ -144,10 +152,8 @@ func runBDInit(t *testing.T, bd, dir string, extraArgs ...string) string {
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd init %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(extraArgs, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
@@ -327,10 +333,8 @@ func TestEmbeddedInit(t *testing.T) {
 		cmd := exec.Command(bd, "init", "--prefix", "nq")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "bd initialized successfully") {
@@ -476,10 +480,8 @@ func TestEmbeddedInit(t *testing.T) {
 		cmd = exec.Command(bd, "list")
 		cmd.Dir = cloneDir
 		cmd.Env = bdEnv(cloneDir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("bd list failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "Remote issue") {
@@ -714,10 +716,8 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 		logCmd := exec.Command("git", "log", "--oneline", "-n", "1")
 		logCmd.Dir = dir
-		var stdout, stderr bytes.Buffer
-		logCmd.Stdout = &stdout
-		logCmd.Stderr = &stderr
-		if err := logCmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, logCmd)
+		if err != nil {
 			t.Fatalf("git log failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "bd init: initialize beads issue tracking") {
@@ -758,10 +758,8 @@ func TestEmbeddedInit(t *testing.T) {
 		cmd := exec.Command(bd, "init", "--prefix", "jl", "--from-jsonl", "--quiet")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
 			t.Fatalf("--from-jsonl should succeed now that CreateIssuesWithFullOptions is implemented: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".hook-ran")); err == nil {
