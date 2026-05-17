@@ -14,7 +14,7 @@ import (
 // is false.
 func TestNocgoNewDoltStore_ErrorSuggestsCorrectFlag(t *testing.T) {
 	cfg := &dolt.Config{ServerMode: false}
-	_, err := newDoltStore(t.Context(), cfg)
+	_, err := newDoltStore(t.Context(), cfg, false, false)
 	if err == nil {
 		t.Fatal("expected error when ServerMode is false")
 	}

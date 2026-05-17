@@ -252,6 +252,12 @@ prev_create --title "Another issue" --type bug || true
 # Upgrade: run candidate init (simulates upgrade)
 cand_init 2>/dev/null || true
 
+# PR #4015 (be-o7fh35): schema-stale guard refuses to open stale schemas;
+# explicit migration is now required after a binary upgrade. Tolerate
+# failure on candidates that don't yet have "bd migrate schema" — this
+# script is bidirectional across versions.
+cand migrate schema >/dev/null 2>&1 || true
+
 # Verify
 ROLE=$(git -C "$WS" config --get beads.role 2>/dev/null || echo "MISSING")
 if [ "$ROLE" = "maintainer" ]; then
@@ -402,6 +408,9 @@ else
 
     # Upgrade: run candidate init
     cand_init 2>/dev/null || true
+
+    # PR #4015 (be-o7fh35): schema-stale guard requires explicit migration.
+    cand migrate schema >/dev/null 2>&1 || true
 
     # Mutate using the candidate binary
     cand update "$MUT_ID" --notes "smoke test mutation" 2>/dev/null || true
