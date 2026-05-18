@@ -286,8 +286,11 @@ func GetReadyWorkInTx(
 		// Ready-only wisp predicates are applied after search, so avoid limiting
 		// before that filtering can drop non-ready candidates.
 		wispFilter.Limit = 0
-		wisps, wErr := SearchIssuesInTx(ctx, tx, "", wispFilter)
+		wisps, wErr := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables)
 		if wErr != nil {
+			if isTableNotExistError(wErr) {
+				return ordered, nil
+			}
 			return nil, fmt.Errorf("search wisps (ready work): %w", wErr)
 		}
 		wisps, wErr = filterReadyWispsInTx(ctx, tx, filter, wisps)
@@ -328,7 +331,6 @@ func readyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {
 }
 
 func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
-	ephTrue := true
 	pinnedFalse := false
 	wispFilter := types.IssueFilter{
 		Priority:       filter.Priority,
@@ -338,7 +340,6 @@ func readyWorkWispIssueFilter(filter types.WorkFilter) types.IssueFilter {
 		Limit:          filter.Limit,
 		MolType:        filter.MolType,
 		WispType:       filter.WispType,
-		Ephemeral:      &ephTrue,
 		Pinned:         &pinnedFalse,
 		MetadataFields: filter.MetadataFields,
 		HasMetadataKey: filter.HasMetadataKey,
