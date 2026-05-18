@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -74,7 +75,10 @@ func GetReadyWorkInTx(
 	// Exclude children of future-deferred parents.
 	if !filter.IncludeDeferred {
 		deferredChildIDs, dcErr := getChildrenOfDeferredParentsInTx(ctx, tx)
-		if dcErr == nil && len(deferredChildIDs) > 0 {
+		if dcErr != nil {
+			return nil, fmt.Errorf("get ready work: compute deferred parent children: %w", dcErr)
+		}
+		if len(deferredChildIDs) > 0 {
 			for start := 0; start < len(deferredChildIDs); start += queryBatchSize {
 				end := start + queryBatchSize
 				if end > len(deferredChildIDs) {
@@ -473,40 +477,70 @@ func queryReadyIssueIDPage(ctx context.Context, tx *sql.Tx, query string, args [
 
 // getChildrenOfDeferredParentsInTx returns IDs of issues whose parent has a
 // future defer_until. Works within an existing transaction.
+//
+//nolint:gosec // G201: depTable is selected from a hardcoded list below.
 func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	// Step 1: Get IDs of issues with future defer_until.
-	var deferredIDs []string
+	hasDeferredParent := false
 	for _, issueTable := range []string{"issues", "wisps"} {
 		//nolint:gosec // G201: issueTable is hardcoded to "issues" or "wisps"
-		deferredRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT id FROM %s
-			WHERE defer_until IS NOT NULL AND defer_until > UTC_TIMESTAMP()
-		`, issueTable))
-		if err != nil {
-			if issueTable == "wisps" && isTableNotExistError(err) {
-				break
-			}
-			return nil, fmt.Errorf("deferred parents: get deferred issues from %s: %w", issueTable, err)
+		var exists int
+		err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+			SELECT 1 FROM %s
+			WHERE defer_until IS NOT NULL
+			  AND defer_until > UTC_TIMESTAMP()
+			LIMIT 1
+		`, issueTable)).Scan(&exists)
+		if err == nil {
+			hasDeferredParent = true
+			break
 		}
-		for deferredRows.Next() {
-			var id string
-			if err := deferredRows.Scan(&id); err != nil {
-				_ = deferredRows.Close()
-				return nil, fmt.Errorf("deferred parents: scan deferred issue from %s: %w", issueTable, err)
-			}
-			deferredIDs = append(deferredIDs, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
 		}
-		_ = deferredRows.Close()
-		if err := deferredRows.Err(); err != nil {
-			return nil, fmt.Errorf("deferred parents: deferred rows from %s: %w", issueTable, err)
+		if issueTable == "wisps" && isTableNotExistError(err) {
+			continue
 		}
+		return nil, fmt.Errorf("deferred parents: check future-deferred parents from %s: %w", issueTable, err)
 	}
-	if len(deferredIDs) == 0 {
+	if !hasDeferredParent {
 		return nil, nil
 	}
 
-	// Step 2: Get children of those deferred parents.
-	return getChildrenOfIssuesInTx(ctx, tx, deferredIDs)
+	var childIDs []string
+	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+		for _, issueTable := range []string{"issues", "wisps"} {
+			rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+				SELECT dep.issue_id
+				FROM %s dep
+				JOIN %s parent ON parent.id = dep.depends_on_id
+				WHERE dep.type = 'parent-child'
+				  AND parent.defer_until IS NOT NULL
+				  AND parent.defer_until > UTC_TIMESTAMP()
+			`, depTable, issueTable))
+			if err != nil {
+				if depTable == "wisp_dependencies" && isTableNotExistError(err) {
+					break
+				}
+				if issueTable == "wisps" && isTableNotExistError(err) {
+					continue
+				}
+				return nil, fmt.Errorf("deferred parents: get deferred children from %s/%s: %w", depTable, issueTable, err)
+			}
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("deferred parents: scan deferred child from %s/%s: %w", depTable, issueTable, err)
+				}
+				childIDs = append(childIDs, id)
+			}
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("deferred parents: child rows from %s/%s: %w", depTable, issueTable, err)
+			}
+		}
+	}
+	return childIDs, nil
 }
 
 //nolint:gosec // G201: depTable is hardcoded to "dependencies" or "wisp_dependencies"

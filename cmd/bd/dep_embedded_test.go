@@ -381,7 +381,7 @@ func TestEmbeddedDep(t *testing.T) {
 		bdDep(t, bd, dir2, "add", a.ID, b.ID)
 		out := bdDep(t, bd, dir2, "cycles")
 		if !strings.Contains(out, "No dependency cycles detected") {
-			t.Logf("expected no-cycle message: %s", out)
+			t.Errorf("expected no-cycle message: %s", out)
 		}
 	})
 }
