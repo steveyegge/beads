@@ -1223,6 +1223,15 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
+		// Auto-configure contributor routing for fork repos (bd-umbf Child 1).
+		// Non-interactive, idempotent; only fires when upstream remote detected
+		// and routing.contributor is not already set.
+		if !contributor && isGitRepo() {
+			if err := autoConfigureForkContributor(ctx, store, quiet, roleFlag); err != nil && !quiet {
+				fmt.Fprintf(os.Stderr, "Warning: failed to auto-configure fork contributor routing: %v\n", err)
+			}
+		}
+
 		// Auto-export prompt: enabled by default, let user opt out interactively (GH#2973).
 		// In non-interactive mode the default (enabled) is kept.
 		if !nonInteractive && !quiet {
