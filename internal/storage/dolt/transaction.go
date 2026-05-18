@@ -139,6 +139,11 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 }
 
 func (s *DoltStore) beginIgnoredTxOnBranch(ctx context.Context, branch string) (*sql.DB, *sql.Conn, *sql.Tx, error) {
+	// Use an independent single-connection pool for ignored tables. Reusing the
+	// main pool can deadlock when MaxOpenConns=1, and each Dolt SQL session has
+	// its own active branch. This intentionally pays one extra connection setup
+	// for mixed regular/ignored writes so the ignored transaction can be checked
+	// out to the regular transaction's branch before writes.
 	db, err := sql.Open("mysql", s.connStr)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to open ignored tx connection: %w", err)

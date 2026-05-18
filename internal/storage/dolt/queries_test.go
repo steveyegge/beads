@@ -477,6 +477,9 @@ func TestGetReadyWork_LimitCandidateGraphSemantics(t *testing.T) {
 	defer cancel()
 
 	issues := []*types.Issue{
+		// This blocker is intentionally a blocked epic instead of the older open
+		// gate fixture: current dependency validation rejects gate->epic block
+		// edges, and the test only needs a non-ready blocker for the parent chain.
 		{ID: "rw-graph-parent-blocker", Title: "Parent blocker", Status: types.StatusBlocked, Priority: 1, IssueType: types.TypeEpic},
 		{ID: "rw-graph-parent", Title: "Blocked parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic},
 		{ID: "rw-graph-parent-child", Title: "Child of blocked parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},

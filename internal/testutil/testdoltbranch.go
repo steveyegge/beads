@@ -177,57 +177,70 @@ type doltIgnoreRow struct {
 	ignored bool
 }
 
+type doltBranchSQL interface {
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
+}
+
 // MaterializeLocalTableSchemasForBranchTests makes the shared test database
 // branchable without running local-table DDL on every test branch. Production
 // opens always have these tables available after migration; branch-per-test
-// isolation needs the same invariant in main before individual tests fork.
+// isolation needs the same invariant in main before individual tests fork. The
+// sequence is pinned to one Dolt SQL session because checkout, staging, commit,
+// and dolt_ignore state are session-scoped.
 func MaterializeLocalTableSchemasForBranchTests(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT('main')"); err != nil {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire materialization connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_CHECKOUT('main')"); err != nil {
 		return fmt.Errorf("checkout main: %w", err)
 	}
 
-	ignoreRows, err := doltIgnoreRows(ctx, db)
+	ignoreRows, err := doltIgnoreRows(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("read dolt_ignore rows: %w", err)
 	}
-	tableNames, err := ignoredTableNames(ctx, db)
+	tableNames, err := ignoredTableNames(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("read ignored table names: %w", err)
 	}
 
-	if err := removeDoltIgnoreRows(ctx, db, ignoreRows); err != nil {
+	if err := removeDoltIgnoreRows(ctx, conn, ignoreRows); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('dolt_ignore')"); err != nil {
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_ADD('dolt_ignore')"); err != nil {
 		return fmt.Errorf("stage unignored local table patterns: %w", err)
 	}
-	if err := commitAllowEmpty(ctx, db, "test: unignore local table schemas"); err != nil {
+	if err := commitAllowEmpty(ctx, conn, "test: unignore local table schemas"); err != nil {
 		return err
 	}
 
 	for _, table := range tableNames {
-		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD(?)", table); err != nil {
+		if _, err := conn.ExecContext(ctx, "CALL DOLT_ADD(?)", table); err != nil {
 			return fmt.Errorf("stage local table %s: %w", table, err)
 		}
 	}
-	if err := commitAllowEmpty(ctx, db, "test: materialize local table schemas"); err != nil {
+	if err := commitAllowEmpty(ctx, conn, "test: materialize local table schemas"); err != nil {
 		return err
 	}
 
-	if err := restoreDoltIgnoreRows(ctx, db, ignoreRows); err != nil {
+	if err := restoreDoltIgnoreRows(ctx, conn, ignoreRows); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('dolt_ignore')"); err != nil {
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_ADD('dolt_ignore')"); err != nil {
 		return fmt.Errorf("stage restored local table patterns: %w", err)
 	}
-	if err := commitAllowEmpty(ctx, db, "test: restore local table ignores"); err != nil {
+	if err := commitAllowEmpty(ctx, conn, "test: restore local table ignores"); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func doltIgnoreRows(ctx context.Context, db *sql.DB) ([]doltIgnoreRow, error) {
+func doltIgnoreRows(ctx context.Context, db doltBranchSQL) ([]doltIgnoreRow, error) {
 	rows, err := db.QueryContext(ctx, "SELECT pattern, ignored FROM dolt_ignore ORDER BY pattern")
 	if err != nil {
 		return nil, err
@@ -245,7 +258,7 @@ func doltIgnoreRows(ctx context.Context, db *sql.DB) ([]doltIgnoreRow, error) {
 	return result, rows.Err()
 }
 
-func ignoredTableNames(ctx context.Context, db *sql.DB) ([]string, error) {
+func ignoredTableNames(ctx context.Context, db doltBranchSQL) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT DISTINCT t.table_name
 		FROM information_schema.tables t
@@ -270,7 +283,7 @@ func ignoredTableNames(ctx context.Context, db *sql.DB) ([]string, error) {
 	return result, rows.Err()
 }
 
-func removeDoltIgnoreRows(ctx context.Context, db *sql.DB, rows []doltIgnoreRow) error {
+func removeDoltIgnoreRows(ctx context.Context, db doltBranchSQL, rows []doltIgnoreRow) error {
 	for _, row := range rows {
 		if _, err := db.ExecContext(ctx, "DELETE FROM dolt_ignore WHERE pattern = ?", row.pattern); err != nil {
 			return fmt.Errorf("remove dolt_ignore pattern %s: %w", row.pattern, err)
@@ -279,16 +292,16 @@ func removeDoltIgnoreRows(ctx context.Context, db *sql.DB, rows []doltIgnoreRow)
 	return nil
 }
 
-func restoreDoltIgnoreRows(ctx context.Context, db *sql.DB, rows []doltIgnoreRow) error {
+func restoreDoltIgnoreRows(ctx context.Context, db doltBranchSQL, rows []doltIgnoreRow) error {
 	for _, row := range rows {
-		if _, err := db.ExecContext(ctx, "REPLACE INTO dolt_ignore VALUES (?, ?)", row.pattern, row.ignored); err != nil {
+		if _, err := db.ExecContext(ctx, "REPLACE INTO dolt_ignore (pattern, ignored) VALUES (?, ?)", row.pattern, row.ignored); err != nil {
 			return fmt.Errorf("restore dolt_ignore pattern %s: %w", row.pattern, err)
 		}
 	}
 	return nil
 }
 
-func commitAllowEmpty(ctx context.Context, db *sql.DB, message string) error {
+func commitAllowEmpty(ctx context.Context, db doltBranchSQL, message string) error {
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('--allow-empty', '-m', ?)", message); err != nil {
 		return fmt.Errorf("commit %q: %w", message, err)
 	}
