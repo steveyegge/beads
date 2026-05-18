@@ -287,7 +287,7 @@ bd setup mux      # Mux - creates/updates AGENTS.md
 ```
 
 **How it works:**
-- `bd init` creates or updates `AGENTS.md` by default unless you use `--skip-agents` or `--stealth`
+- `bd init` creates or updates `AGENTS.md` and installs project Claude/Codex integrations by default unless you use `--skip-agents` or `--stealth`
 - Editor hooks/rules inject `bd prime` automatically on session start
 - Codex 0.129.0+ uses native `/hooks`: SessionStart injects `bd prime`, compact hooks mark context stale, and the next prompt after compaction refreshes Beads context once
 - `bd prime` provides ~1-2k tokens of workflow context
@@ -517,7 +517,7 @@ See the "Claude Code Plugin" section above for alternative installation methods 
 After installation:
 
 1. **Initialize a project**: `cd your-project && bd init`
-2. **Configure your agent**: `bd init` creates/updates `AGENTS.md` by default; run `bd setup --list` for richer integrations or `bd onboard` for a manual fallback snippet
+2. **Configure your agent**: `bd init` creates/updates `AGENTS.md` and installs project Claude/Codex integrations by default; run `bd setup --list` for richer integrations or `bd onboard` for a manual fallback snippet
 3. **Learn the basics**: See [QUICKSTART.md](QUICKSTART.md) for a tutorial
 4. **Explore examples**: Check out the [examples/](../examples/) directory
 
