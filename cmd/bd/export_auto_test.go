@@ -1032,3 +1032,20 @@ func autoExportDataLossTestEnv(home string) []string {
 	}
 	return append(env, "HOME="+home, "BEADS_DOLT_AUTO_START=0", "BEADS_NO_DAEMON=1")
 }
+
+// TestMaybeAutoExportJSONL_SkipsEntirelyInServerMode verifies that
+// maybeAutoExport returns immediately when serverMode is true, making
+// no store access and causing no side effects. Mirrors the guard in
+// maybeAutoImportJSONL (GH#3944).
+func TestMaybeAutoExportJSONL_SkipsEntirelyInServerMode(t *testing.T) {
+	// Leave the global store nil — any access would panic, so a clean return
+	// without panic is proof the serverMode guard fires before any store call.
+	orig := store
+	store = nil
+	t.Cleanup(func() { store = orig })
+
+	// Must not panic.
+	if err := maybeAutoExport(context.Background(), true, false); err != nil {
+		t.Fatalf("maybeAutoExport(serverMode=true): %v", err)
+	}
+}
