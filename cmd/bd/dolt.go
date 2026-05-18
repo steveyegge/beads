@@ -176,6 +176,44 @@ func printNoRemoteGuidance() {
 	fmt.Println("  • Azure Blob Storage: az://account.blob.core.windows.net/container/path")
 }
 
+func adoptGitOriginRemoteForPush(ctx context.Context, st storage.DoltStorage) (bool, error) {
+	remotes, err := st.ListRemotes(ctx)
+	if err != nil {
+		return false, err
+	}
+	if len(remotes) > 0 {
+		return false, nil
+	}
+	beadsDir := selectedDoltBeadsDir()
+	if beadsDir == "" {
+		return false, fmt.Errorf("no active beads workspace")
+	}
+	originURL, err := gitOriginGetURLForActiveRepo(ctx)
+	if err != nil || originURL == "" {
+		return false, nil
+	}
+	remoteURL := normalizeRemoteURL(originURL)
+	if err := st.AddRemote(ctx, "origin", remoteURL); err != nil {
+		return false, err
+	}
+
+	if usesSQLServer() {
+		if locator, ok := storage.UnwrapStore(st).(storage.StoreLocator); ok {
+			if dbPath := locator.CLIDir(); dbPath != "" && doltutil.FindCLIRemote(dbPath, "origin") == "" {
+				if err := doltutil.AddCLIRemote(dbPath, "origin", remoteURL); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: SQL remote added but CLI remote failed: %v\n", err)
+				}
+			}
+		}
+	}
+
+	if err := config.SetYamlConfigInDir(beadsDir, "sync.remote", remoteURL); err != nil {
+		return false, fmt.Errorf("failed to persist sync.remote to config.yaml: %w", err)
+	}
+	commitBeadsConfigForActiveRepo(ctx, "bd: update sync.remote")
+	return true, nil
+}
+
 // printDivergedHistoryGuidance prints recovery guidance when push/pull fails
 // due to diverged local and remote histories.
 func printDivergedHistoryGuidance(operation string) {
@@ -239,6 +277,12 @@ The remote must already exist (see 'bd dolt remote add').`,
 			}
 			fmt.Println("Push complete.")
 			return
+		}
+		if adopted, err := adoptGitOriginRemoteForPush(ctx, st); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to adopt git origin as Dolt remote: %v\n", err)
+			os.Exit(1)
+		} else if adopted {
+			fmt.Println("Configured Dolt remote origin from git origin.")
 		}
 		fmt.Println("Pushing to Dolt remote...")
 
