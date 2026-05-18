@@ -177,3 +177,65 @@ func TestMergeWithYAMLCustomTypes_NilGetter(t *testing.T) {
 		t.Fatalf("got %v, want [convoy]", got)
 	}
 }
+
+// TestCustomTypesYAMLFallback pins the YAML-fallback decision in
+// ResolveCustomTypesInTx. When the in-tx config-string read errors, we mirror
+// ResolveCustomStatusesDetailedInTx: degraded DB + populated YAML must return
+// the YAML overlay with a nil error so callers (NewBatchContext,
+// UpdateIssueInTx) don't treat the YAML-fallback path as a fatal validation
+// failure. When YAML supplies nothing, the original error propagates.
+func TestCustomTypesYAMLFallback(t *testing.T) {
+	sentinelErr := errSentinel("boom")
+
+	tests := []struct {
+		name      string
+		yamlTypes []string
+		wantTypes []string
+		wantErr   bool
+	}{
+		{
+			name:      "yaml supplies types -> return yaml with nil error",
+			yamlTypes: []string{"step", "wisp"},
+			wantTypes: []string{"step", "wisp"},
+			wantErr:   false,
+		},
+		{
+			name:      "yaml empty -> propagate db error",
+			yamlTypes: nil,
+			wantTypes: nil,
+			wantErr:   true,
+		},
+		{
+			name:      "yaml all-whitespace -> propagate db error",
+			yamlTypes: []string{"  ", ""},
+			wantTypes: nil,
+			wantErr:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := customTypesYAMLFallback(func() []string { return tt.yamlTypes }, sentinelErr)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("got nil error, want %v", sentinelErr)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("got error %v, want nil", err)
+				}
+			}
+			if len(got) != len(tt.wantTypes) {
+				t.Fatalf("got %v, want %v", got, tt.wantTypes)
+			}
+			for i := range got {
+				if got[i] != tt.wantTypes[i] {
+					t.Errorf("index %d: got %q, want %q", i, got[i], tt.wantTypes[i])
+				}
+			}
+		})
+	}
+}
+
+type errSentinel string
+
+func (e errSentinel) Error() string { return string(e) }

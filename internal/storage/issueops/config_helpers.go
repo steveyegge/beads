@@ -142,10 +142,7 @@ func ResolveCustomTypesInTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	if len(fromDB) == 0 {
 		value, err := GetConfigInTx(ctx, tx, "types.custom")
 		if err != nil {
-			// Don't fail closed: still overlay YAML if available so a stable-bd
-			// project running pre-#3691 doesn't lose its types.custom validation
-			// just because the config-string read errored.
-			return mergeWithYAMLCustomTypes(nil, config.GetCustomTypesFromYAML), err
+			return customTypesYAMLFallback(config.GetCustomTypesFromYAML, err)
 		}
 		if value != "" {
 			// Try JSON array first (e.g. '["gate","convoy"]'), fall back to comma-separated.
@@ -209,6 +206,23 @@ func mergeWithYAMLCustomTypes(dbTypes []string, yamlGetter func() []string) []st
 		out = append(out, t)
 	}
 	return out
+}
+
+// customTypesYAMLFallback decides what to return from ResolveCustomTypesInTx
+// when the in-tx config-string read errors. If YAML types.custom supplies any
+// types, return them with a nil error so in-tx callers (NewBatchContext,
+// UpdateIssueInTx) treat this as the YAML-fallback case rather than a fatal
+// validation failure. If YAML has nothing, propagate the original error.
+// Mirrors the YAML-fallback shape used by ResolveCustomStatusesDetailedInTx,
+// and preserves the gastownhall/beads#4024 overlay goal under degraded /
+// pre-migration DB conditions. Extracted as a pure function so the fallback
+// decision is testable without sql.Tx mocking.
+func customTypesYAMLFallback(yamlGetter func() []string, dbErr error) ([]string, error) {
+	merged := mergeWithYAMLCustomTypes(nil, yamlGetter)
+	if len(merged) > 0 {
+		return merged, nil
+	}
+	return nil, dbErr
 }
 
 func dedupePreservingOrder(in []string) []string {
