@@ -1194,6 +1194,98 @@ func TestAddDependency_Blocks_DeepCrossTypeChain(t *testing.T) {
 	}
 }
 
+func TestAddDependency_CombinedGraphCycle_BlocksClosesLoop(t *testing.T) {
+	// Cycle detection now walks both blocks and parent-child edges so a
+	// closing blocks edge that completes a combined-graph loop is rejected.
+	// The loop: E1 -[blocks]-> T1 -[child-of]-> E2 -[blocks]-> T0 -[child-of]-> E1.
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issues := []*types.Issue{
+		{ID: "cgc-e1", Title: "Epic 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic},
+		{ID: "cgc-e2", Title: "Epic 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic},
+		{ID: "cgc-t0", Title: "Task 0", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
+		{ID: "cgc-t1", Title: "Task 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
+	}
+	for _, iss := range issues {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create %s: %v", iss.ID, err)
+		}
+	}
+
+	setup := []*types.Dependency{
+		{IssueID: "cgc-t0", DependsOnID: "cgc-e1", Type: types.DepParentChild},
+		{IssueID: "cgc-t1", DependsOnID: "cgc-e2", Type: types.DepParentChild},
+		{IssueID: "cgc-e2", DependsOnID: "cgc-t0", Type: types.DepBlocks},
+	}
+	for _, dep := range setup {
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("setup dep %+v: %v", dep, err)
+		}
+	}
+
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     "cgc-e1",
+		DependsOnID: "cgc-t1",
+		Type:        types.DepBlocks,
+	}, "tester")
+	if err == nil {
+		t.Fatal("expected cycle rejection for combined-graph loop")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("expected cycle error, got: %v", err)
+	}
+}
+
+func TestAddDependency_CombinedGraphCycle_ParentChildClosesLoop(t *testing.T) {
+	// Same livelock as above, but inserted in an order where the closing
+	// edge is the parent-child link. Cycle detection runs on parent-child
+	// inserts too.
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issues := []*types.Issue{
+		{ID: "cgp-e1", Title: "Epic 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic},
+		{ID: "cgp-e2", Title: "Epic 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic},
+		{ID: "cgp-t0", Title: "Task 0", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
+		{ID: "cgp-t1", Title: "Task 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
+	}
+	for _, iss := range issues {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create %s: %v", iss.ID, err)
+		}
+	}
+
+	setup := []*types.Dependency{
+		{IssueID: "cgp-t0", DependsOnID: "cgp-e1", Type: types.DepParentChild},
+		{IssueID: "cgp-e2", DependsOnID: "cgp-t0", Type: types.DepBlocks},
+		{IssueID: "cgp-e1", DependsOnID: "cgp-t1", Type: types.DepBlocks},
+	}
+	for _, dep := range setup {
+		if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("setup dep %+v: %v", dep, err)
+		}
+	}
+
+	err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     "cgp-t1",
+		DependsOnID: "cgp-e2",
+		Type:        types.DepParentChild,
+	}, "tester")
+	if err == nil {
+		t.Fatal("expected cycle rejection for combined-graph loop via parent-child closing edge")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("expected cycle error, got: %v", err)
+	}
+}
+
 func TestAddDependency_BlocksSameType_TaskBlocksTask(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

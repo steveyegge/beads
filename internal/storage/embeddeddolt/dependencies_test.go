@@ -368,4 +368,136 @@ func TestAddDependency(t *testing.T) {
 			t.Fatalf("epic blocking unrelated task should succeed: %v", err)
 		}
 	})
+
+	t.Run("combined_graph_cycle_blocks_closes_loop", func(t *testing.T) {
+		// Construct the livelock scenario that PR1's relaxed cross-type rule
+		// could otherwise admit:
+		//   T0 blocks E2, T0 is a child of E1, T1 is a child of E2,
+		//   then adding T1 blocks E1 closes a cycle in the combined
+		//   blocks + parent-child graph and must be rejected.
+		te := newTestEnv(t, "cc")
+		ctx := t.Context()
+
+		issues := []*types.Issue{
+			{ID: "cc-e1", Title: "Epic 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+			{ID: "cc-e2", Title: "Epic 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+			{ID: "cc-t0", Title: "Task 0", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+			{ID: "cc-t1", Title: "Task 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		}
+		for _, iss := range issues {
+			if err := te.store.CreateIssue(ctx, iss, "tester"); err != nil {
+				t.Fatalf("CreateIssue %s: %v", iss.ID, err)
+			}
+		}
+
+		setup := []*types.Dependency{
+			{IssueID: "cc-t0", DependsOnID: "cc-e1", Type: types.DepParentChild},
+			{IssueID: "cc-t1", DependsOnID: "cc-e2", Type: types.DepParentChild},
+			{IssueID: "cc-e2", DependsOnID: "cc-t0", Type: types.DepBlocks},
+		}
+		for _, dep := range setup {
+			if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+				t.Fatalf("setup dep %+v: %v", dep, err)
+			}
+		}
+
+		// Closing edge: T1 blocks E1 -> would form a cycle via
+		// E1 -[blocks]-> T1 -[child-of]-> E2 -[blocks]-> T0 -[child-of]-> E1.
+		err := te.store.AddDependency(ctx, &types.Dependency{
+			IssueID:     "cc-e1",
+			DependsOnID: "cc-t1",
+			Type:        types.DepBlocks,
+		}, "tester")
+		if err == nil {
+			t.Fatal("expected cycle rejection for combined-graph loop")
+		}
+		if !strings.Contains(err.Error(), "cycle") {
+			t.Errorf("expected cycle error, got: %v", err)
+		}
+	})
+
+	t.Run("combined_graph_cycle_parent_child_closes_loop", func(t *testing.T) {
+		// Same livelock, but inserted in an order where the closing edge is
+		// the parent-child link rather than the blocks link.
+		te := newTestEnv(t, "cp")
+		ctx := t.Context()
+
+		issues := []*types.Issue{
+			{ID: "cp-e1", Title: "Epic 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+			{ID: "cp-e2", Title: "Epic 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+			{ID: "cp-t0", Title: "Task 0", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+			{ID: "cp-t1", Title: "Task 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		}
+		for _, iss := range issues {
+			if err := te.store.CreateIssue(ctx, iss, "tester"); err != nil {
+				t.Fatalf("CreateIssue %s: %v", iss.ID, err)
+			}
+		}
+
+		setup := []*types.Dependency{
+			{IssueID: "cp-t0", DependsOnID: "cp-e1", Type: types.DepParentChild},
+			{IssueID: "cp-e2", DependsOnID: "cp-t0", Type: types.DepBlocks},
+			{IssueID: "cp-e1", DependsOnID: "cp-t1", Type: types.DepBlocks},
+		}
+		for _, dep := range setup {
+			if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+				t.Fatalf("setup dep %+v: %v", dep, err)
+			}
+		}
+
+		// Closing edge: T1 is a child of E2 -> would form the same combined
+		// cycle. The cycle detector now also runs on parent-child inserts.
+		err := te.store.AddDependency(ctx, &types.Dependency{
+			IssueID:     "cp-t1",
+			DependsOnID: "cp-e2",
+			Type:        types.DepParentChild,
+		}, "tester")
+		if err == nil {
+			t.Fatal("expected cycle rejection for combined-graph loop via parent-child closing edge")
+		}
+		if !strings.Contains(err.Error(), "cycle") {
+			t.Errorf("expected cycle error, got: %v", err)
+		}
+	})
+
+	t.Run("deep_linear_chain_allowed", func(t *testing.T) {
+		// Linear chain: T_i blocks E_i and T_i is a child of E_{i+1}.
+		// Each blocks edge and each parent-child edge introduces an unrelated
+		// pair; the combined graph stays acyclic so every insert succeeds.
+		te := newTestEnv(t, "dl")
+		ctx := t.Context()
+
+		const levels = 5
+		for i := 1; i <= levels; i++ {
+			epic := &types.Issue{
+				ID: "dl-e" + string(rune('0'+i)), Title: "E", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic,
+			}
+			task := &types.Issue{
+				ID: "dl-t" + string(rune('0'+i)), Title: "T", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask,
+			}
+			if err := te.store.CreateIssue(ctx, epic, "tester"); err != nil {
+				t.Fatalf("CreateIssue %s: %v", epic.ID, err)
+			}
+			if err := te.store.CreateIssue(ctx, task, "tester"); err != nil {
+				t.Fatalf("CreateIssue %s: %v", task.ID, err)
+			}
+		}
+		for i := 1; i <= levels; i++ {
+			ei := "dl-e" + string(rune('0'+i))
+			ti := "dl-t" + string(rune('0'+i))
+			if err := te.store.AddDependency(ctx, &types.Dependency{
+				IssueID: ei, DependsOnID: ti, Type: types.DepBlocks,
+			}, "tester"); err != nil {
+				t.Fatalf("blocks %s<-%s: %v", ei, ti, err)
+			}
+			if i+1 <= levels {
+				parent := "dl-e" + string(rune('0'+i+1))
+				if err := te.store.AddDependency(ctx, &types.Dependency{
+					IssueID: ti, DependsOnID: parent, Type: types.DepParentChild,
+				}, "tester"); err != nil {
+					t.Fatalf("parent-child %s->%s: %v", ti, parent, err)
+				}
+			}
+		}
+	})
 }
