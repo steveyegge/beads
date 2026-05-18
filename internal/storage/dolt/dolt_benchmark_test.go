@@ -11,12 +11,17 @@ package dolt
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // setupBenchStore creates a store for benchmarks
@@ -905,6 +910,318 @@ func BenchmarkGetReadyWork(b *testing.B) {
 		_, err := store.GetReadyWork(ctx, types.WorkFilter{})
 		if err != nil {
 			b.Fatalf("failed to get ready work: %v", err)
+		}
+	}
+}
+
+// =============================================================================
+// Recent production hot-path regression benchmarks (May 2026 perf stack)
+// =============================================================================
+
+func createBenchIssueBatch(b *testing.B, store *DoltStore, issues []*types.Issue) {
+	b.Helper()
+	ctx := context.Background()
+	err := store.withRetryTx(ctx, func(tx *sql.Tx) error {
+		return issueops.CreateIssuesInTx(ctx, tx, issues, "bench", storage.BatchCreateOptions{
+			OrphanHandling:       storage.OrphanAllow,
+			SkipPrefixValidation: true,
+		})
+	})
+	if err != nil {
+		b.Fatalf("failed to create %d benchmark issues: %v", len(issues), err)
+	}
+}
+
+func BenchmarkPerfSearchLabelFilter_1K(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	const total = 1000
+	issues := make([]*types.Issue, 0, total)
+	for i := 0; i < total; i++ {
+		labels := []string{fmt.Sprintf("bucket-%02d", i%100)}
+		if i%20 == 0 {
+			labels = append(labels, "perf-hot")
+		}
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-search-%05d", i),
+			Title:     fmt.Sprintf("Search label benchmark issue %05d", i),
+			Status:    types.StatusOpen,
+			Priority:  (i % 4) + 1,
+			IssueType: types.TypeTask,
+			Labels:    labels,
+		})
+	}
+	createBenchIssueBatch(b, store, issues)
+
+	ctx := context.Background()
+	filter := types.IssueFilter{Labels: []string{"perf-hot"}, Limit: 100}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := store.SearchIssues(ctx, "", filter); err != nil {
+			b.Fatalf("SearchIssues label filter: %v", err)
+		}
+	}
+}
+
+func BenchmarkPerfResolvePartialID_1K(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	const total = 1000
+	issues := make([]*types.Issue, 0, total)
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("bench-perf-partial-%05d", i)
+		if i == total-1 {
+			id = "bench-zz999999"
+		}
+		issues = append(issues, &types.Issue{
+			ID:        id,
+			Title:     fmt.Sprintf("Partial ID benchmark issue %05d", i),
+			Status:    types.StatusOpen,
+			Priority:  (i % 4) + 1,
+			IssueType: types.TypeTask,
+		})
+	}
+	createBenchIssueBatch(b, store, issues)
+
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := utils.ResolvePartialID(ctx, store, "zz999"); err != nil {
+			b.Fatalf("ResolvePartialID: %v", err)
+		}
+	}
+}
+
+func BenchmarkPerfAddDependencyCycleCheck_DiamondDAG(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	const layers = 10
+	issues := make([]*types.Issue, 0, 2*layers+1)
+	issues = append(issues, &types.Issue{
+		ID:        "bench-perf-cycle-source",
+		Title:     "Cycle source",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	})
+	for layer := 0; layer < layers; layer++ {
+		for _, suffix := range []string{"a", "b"} {
+			issue := &types.Issue{
+				ID:        fmt.Sprintf("bench-perf-cycle-l%02d-%s", layer, suffix),
+				Title:     fmt.Sprintf("Cycle diamond layer %02d %s", layer, suffix),
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			}
+			if layer < layers-1 {
+				issue.Dependencies = []*types.Dependency{
+					{DependsOnID: fmt.Sprintf("bench-perf-cycle-l%02d-a", layer+1), Type: types.DepBlocks},
+					{DependsOnID: fmt.Sprintf("bench-perf-cycle-l%02d-b", layer+1), Type: types.DepBlocks},
+				}
+			}
+			issues = append(issues, issue)
+		}
+	}
+	createBenchIssueBatch(b, store, issues)
+
+	ctx := context.Background()
+	dep := &types.Dependency{
+		IssueID:     "bench-perf-cycle-source",
+		DependsOnID: "bench-perf-cycle-l00-a",
+		Type:        types.DepBlocks,
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := store.AddDependency(ctx, dep, "bench"); err != nil {
+			b.Fatalf("AddDependency cycle check: %v", err)
+		}
+	}
+}
+
+func BenchmarkPerfReadyWorkLimited_LargeBlockedGraph(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	issues := make([]*types.Issue, 0, 1100)
+	for i := 0; i < 100; i++ {
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-ready-clear-%04d", i),
+			Title:     fmt.Sprintf("Ready issue %04d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		})
+	}
+	for i := 0; i < 500; i++ {
+		blockerID := fmt.Sprintf("bench-perf-ready-blocker-%04d", i)
+		issues = append(issues, &types.Issue{
+			ID:        blockerID,
+			Title:     fmt.Sprintf("Ready blocker %04d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		})
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-ready-blocked-%04d", i),
+			Title:     fmt.Sprintf("Blocked ready issue %04d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Dependencies: []*types.Dependency{
+				{DependsOnID: blockerID, Type: types.DepBlocks},
+			},
+		})
+	}
+	createBenchIssueBatch(b, store, issues)
+
+	ctx := context.Background()
+	filter := types.WorkFilter{Limit: 50, SortPolicy: types.SortPolicyPriority}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := store.GetReadyWork(ctx, filter); err != nil {
+			b.Fatalf("GetReadyWork limited blocked graph: %v", err)
+		}
+	}
+}
+
+func BenchmarkPerfBlockedIssues_ClosedDependencySkew(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	issues := make([]*types.Issue, 0, 1020)
+	for i := 0; i < 500; i++ {
+		blockerID := fmt.Sprintf("bench-perf-closed-blocker-%04d", i)
+		issues = append(issues, &types.Issue{
+			ID:        blockerID,
+			Title:     fmt.Sprintf("Closed blocker %04d", i),
+			Status:    types.StatusClosed,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		})
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-closed-blocked-%04d", i),
+			Title:     fmt.Sprintf("Closed blocked issue %04d", i),
+			Status:    types.StatusClosed,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Dependencies: []*types.Dependency{
+				{DependsOnID: blockerID, Type: types.DepBlocks},
+			},
+		})
+	}
+	for i := 0; i < 10; i++ {
+		blockerID := fmt.Sprintf("bench-perf-active-blocker-%02d", i)
+		issues = append(issues, &types.Issue{
+			ID:        blockerID,
+			Title:     fmt.Sprintf("Active blocker %02d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		})
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-active-blocked-%02d", i),
+			Title:     fmt.Sprintf("Active blocked issue %02d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Dependencies: []*types.Dependency{
+				{DependsOnID: blockerID, Type: types.DepBlocks},
+			},
+		})
+	}
+	createBenchIssueBatch(b, store, issues)
+
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := store.GetBlockedIssues(ctx, types.WorkFilter{}); err != nil {
+			b.Fatalf("GetBlockedIssues closed skew: %v", err)
+		}
+	}
+}
+
+func BenchmarkPerfReadyWorkDeferredParentExclusion_1K(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	future := time.Now().UTC().Add(24 * time.Hour)
+	issues := make([]*types.Issue, 0, 1150)
+	for i := 0; i < 100; i++ {
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-deferred-ready-%03d", i),
+			Title:     fmt.Sprintf("Ready non-deferred issue %03d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		})
+	}
+	for i := 0; i < 1000; i++ {
+		issues = append(issues, &types.Issue{
+			ID:         fmt.Sprintf("bench-perf-deferred-parent-%04d", i),
+			Title:      fmt.Sprintf("Future deferred parent %04d", i),
+			Status:     types.StatusOpen,
+			Priority:   2,
+			IssueType:  types.TypeTask,
+			DeferUntil: &future,
+		})
+	}
+	for i := 0; i < 50; i++ {
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-deferred-child-%03d", i),
+			Title:     fmt.Sprintf("Child of deferred parent %03d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Dependencies: []*types.Dependency{
+				{DependsOnID: fmt.Sprintf("bench-perf-deferred-parent-%04d", i), Type: types.DepParentChild},
+			},
+		})
+	}
+	createBenchIssueBatch(b, store, issues)
+
+	ctx := context.Background()
+	filter := types.WorkFilter{Limit: 50, SortPolicy: types.SortPolicyPriority}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := store.GetReadyWork(ctx, filter); err != nil {
+			b.Fatalf("GetReadyWork deferred parent exclusion: %v", err)
+		}
+	}
+}
+
+func BenchmarkPerfGetIssuePrimaryFirst_PermanentWithWisps(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	const wispCount = 1000
+	issues := make([]*types.Issue, 0, wispCount+1)
+	issues = append(issues, &types.Issue{
+		ID:        "bench-perf-get-primary",
+		Title:     "Permanent issue fetched from primary table",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	})
+	for i := 0; i < wispCount; i++ {
+		issues = append(issues, &types.Issue{
+			ID:        fmt.Sprintf("bench-perf-get-wisp-%04d", i),
+			Title:     fmt.Sprintf("Wisp noise issue %04d", i),
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Ephemeral: true,
+		})
+	}
+	createBenchIssueBatch(b, store, issues)
+
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := store.GetIssue(ctx, "bench-perf-get-primary"); err != nil {
+			b.Fatalf("GetIssue permanent with wisps: %v", err)
 		}
 	}
 }

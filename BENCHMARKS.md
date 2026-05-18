@@ -41,6 +41,8 @@ Tests on graphs with different topologies (linear chains, trees, dense graphs):
 ### Search Operations
 - **BenchmarkSearchIssues_Large_NoFilter** - Search all open issues (10K dataset)
 - **BenchmarkSearchIssues_Large_ComplexFilter** - Search with priority/status filters (10K dataset)
+- **BenchmarkPerfSearchLabelFilter_1K** - Label-driven search over a 1K issue/label catalog
+- **BenchmarkPerfResolvePartialID_1K** - Partial ID resolution without loading the whole issue catalog
 
 ### CRUD Operations
 - **BenchmarkCreateIssue_Large** - Create new issue in 10K database
@@ -50,6 +52,33 @@ Tests on graphs with different topologies (linear chains, trees, dense graphs):
 ### Specialized Operations
 - **BenchmarkLargeDescription** - Handling 100KB+ issue descriptions (NEW)
 - **BenchmarkSyncMerge** - Simulate sync cycle with create/update operations (NEW)
+
+### Recent Perf Regression References
+
+These benchmarks cover the May 2026 Dolt hot-path changes so future perf PRs can run before/after checks against the same fixture shapes:
+
+| PR / change | Benchmark |
+|-------------|-----------|
+| #3966 `perf(deps): narrow recursive cycle checks` | `BenchmarkPerfAddDependencyCycleCheck_DiamondDAG` |
+| #3967 `perf(search): tighten label and partial-id queries` | `BenchmarkPerfSearchLabelFilter_1K`, `BenchmarkPerfResolvePartialID_1K` |
+| #3968 `perf(ready): page blocked checks for limited ready work` | `BenchmarkPerfReadyWorkLimited_LargeBlockedGraph` |
+| #4001 `perf(ready): narrow deferred-parent child filtering` | `BenchmarkPerfReadyWorkDeferredParentExclusion_1K` |
+| #4002 `perf(ready): restrict blocked dependency scans to active IDs` | `BenchmarkPerfBlockedIssues_ClosedDependencySkew` |
+| #4003 `perf(get): query primary issues before wisp fallback` | `BenchmarkPerfGetIssuePrimaryFirst_PermanentWithWisps` |
+| #4004 `perf(deps): scan one cycle table for same-storage edges` | `BenchmarkPerfAddDependencyCycleCheck_DiamondDAG` |
+
+Run the recent perf reference set with:
+
+```bash
+go test -run=^$ -bench='BenchmarkPerf(SearchLabelFilter|ResolvePartialID|AddDependencyCycleCheck|ReadyWorkLimited|BlockedIssues|ReadyWorkDeferredParentExclusion|GetIssuePrimaryFirst)' -benchtime=1x -benchmem ./internal/storage/dolt
+```
+
+For production-shaped CLI timeout and index experiments, use:
+
+```bash
+go run ./scripts/repro-dolt-prod-timeouts --bd ./bd --scenario all
+go run ./scripts/bench-ready-indexes --dsn 'root@tcp(127.0.0.1:33307)/mc?timeout=30s&readTimeout=30s&writeTimeout=30s'
+```
 
 ## Performance Targets
 
