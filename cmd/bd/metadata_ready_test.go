@@ -13,7 +13,7 @@ import (
 func TestGetReadyWork_MetadataSuite(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
-	store := newTestStore(t, tmpDir)
+	store := newTestStoreIsolatedDB(t, tmpDir, "test")
 	ctx := context.Background()
 
 	// Create all test data up front with unique metadata keys per subtest.
@@ -91,4 +91,103 @@ func TestGetReadyWork_MetadataSuite(t *testing.T) {
 			t.Fatal("expected error for invalid metadata key, got nil")
 		}
 	})
+}
+
+func TestGetReadyWork_IncludeEphemeralAssigneeIsSuperset(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := newTestStoreIsolatedDB(t, tmpDir, "test")
+	ctx := context.Background()
+	worker := "control-dispatcher"
+
+	issues := []*types.Issue{
+		{
+			ID:        "mr-assignee-persistent",
+			Title:     "Persistent assigned task",
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Status:    types.StatusOpen,
+			Assignee:  worker,
+		},
+		{
+			ID:        "mr-assignee-no-history",
+			Title:     "No-history assigned task",
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Status:    types.StatusOpen,
+			Assignee:  worker,
+			NoHistory: true,
+		},
+		{
+			ID:        "mr-assignee-ephemeral",
+			Title:     "Ephemeral assigned task",
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Status:    types.StatusOpen,
+			Assignee:  worker,
+			Ephemeral: true,
+		},
+		{
+			ID:        "mr-assignee-other",
+			Title:     "Other assigned task",
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Status:    types.StatusOpen,
+			Assignee:  "someone-else",
+			Ephemeral: true,
+		},
+	}
+	for _, issue := range issues {
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", issue.ID, err)
+		}
+	}
+
+	defaultResults, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Status:   types.StatusOpen,
+		Assignee: &worker,
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork default: %v", err)
+	}
+	if got := readyIssueIDs(defaultResults); !sameStringSet(got, []string{"mr-assignee-persistent", "mr-assignee-no-history"}) {
+		t.Fatalf("default ready IDs = %v, want persistent and no-history only", got)
+	}
+
+	allResults, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Status:           types.StatusOpen,
+		Assignee:         &worker,
+		IncludeEphemeral: true,
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork include ephemeral: %v", err)
+	}
+	if got := readyIssueIDs(allResults); !sameStringSet(got, []string{"mr-assignee-persistent", "mr-assignee-no-history", "mr-assignee-ephemeral"}) {
+		t.Fatalf("include-ephemeral ready IDs = %v, want persistent, no-history, and ephemeral for assignee", got)
+	}
+}
+
+func readyIssueIDs(issues []*types.Issue) []string {
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		ids = append(ids, issue.ID)
+	}
+	return ids
+}
+
+func sameStringSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	counts := make(map[string]int, len(want))
+	for _, v := range want {
+		counts[v]++
+	}
+	for _, v := range got {
+		counts[v]--
+		if counts[v] < 0 {
+			return false
+		}
+	}
+	return true
 }
