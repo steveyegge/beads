@@ -70,8 +70,12 @@ SET @sql = IF(@needs_drop = 1,
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- UUID PK (not AUTO_INCREMENT) for parity with `dependencies` and to match
+-- migration 0037's federation-safe rationale. wisp_dependencies is local-only
+-- (dolt_ignored), but keeping the PK shape identical avoids surprises during
+-- promote/demote, which INSERT…SELECT between the two tables.
 SET @sql = IF(@needs_drop = 1,
-    'ALTER TABLE wisp_dependencies ADD COLUMN id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST',
+    'ALTER TABLE wisp_dependencies ADD COLUMN id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY FIRST',
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
