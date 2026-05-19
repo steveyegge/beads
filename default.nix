@@ -19,7 +19,7 @@ buildGoModule {
   # proxyVendor avoids vendor/modules.txt consistency checks when the vendored
   # tree lags go.mod/go.sum.
   proxyVendor = true;
-  vendorHash = "sha256-W7gsJYxNJTLcf32pgZhLWiAiuSAYMXysJNqIaOR53A4=";
+  vendorHash = "sha256-B7uO9FxPZ8QFyr+2IlAelUcLZ9/u1Pgn1EFGFjTKsAc=";
 
   # Match go.mod to the selected Nix Go toolchain. buildGoModule also builds
   # vendored dependencies in the Nix sandbox, where toolchain downloads are not
