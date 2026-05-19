@@ -360,6 +360,7 @@ func moveWispDependencyTargets(ctx context.Context, tx *sql.Tx, table string, ol
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
 // source issue is an active wisp.
+//
 //nolint:gosec // G201: depTable from WispTableRouting (hardcoded constants)
 func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID string) error {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
