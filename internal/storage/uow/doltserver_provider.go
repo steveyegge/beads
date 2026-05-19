@@ -107,15 +107,28 @@ func (p *doltServerProvider) NewUOW(ctx context.Context) (UnitOfWork, error) {
 	return NewUOW(ctx, p)
 }
 
-func (p *doltServerProvider) NewTx(ctx context.Context) (Tx, error) {
+func (p *doltServerProvider) Close(ctx context.Context) error {
+	if p.db == nil {
+		return nil
+	}
+	db := p.db
+	p.db = nil
+	return db.Close()
+}
+
+func (p *doltServerProvider) BeginTx(ctx context.Context) (Tx, error) {
 	conn, err := p.db.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("uow: pin connection: %w", err)
 	}
+
+	_, err = conn.ExecContext(ctx, "START TRANSACTION;")
+	if err != nil {
+		return nil, fmt.Errorf("uow: failed to start transaction: %w", err)
+	}
+
 	return &doltServerTx{
-		conn:         conn,
-		vc:           db.NewDoltVersionControlSQLRepository(conn),
-		targetBranch: p.defaultBranch,
+		conn: conn,
 	}, nil
 }
 

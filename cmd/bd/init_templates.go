@@ -16,18 +16,29 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 		return nil
 	}
 
+	body := renderInitConfigYAML(prefix, noDbMode)
+	if err := os.WriteFile(configYamlPath, body, 0600); err != nil {
+		return fmt.Errorf("failed to write config.yaml: %w", err)
+	}
+
+	return nil
+}
+
+// renderInitConfigYAML returns the canonical config.yaml body produced by
+// bd init. When noDbMode is true, the prefix is baked into the file (since
+// there's no database to store it).
+func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 	noDbLine := "# no-db: false"
 	if noDbMode {
 		noDbLine = "no-db: true  # JSONL-only mode, no database"
 	}
 
-	// In no-db mode, we need to persist the prefix in config.yaml
 	prefixLine := "# issue-prefix: \"\""
 	if noDbMode && prefix != "" {
 		prefixLine = fmt.Sprintf("issue-prefix: %q", prefix)
 	}
 
-	configYamlTemplate := fmt.Sprintf(`# Beads Configuration File
+	body := fmt.Sprintf(`# Beads Configuration File
 # This file configures default behavior for all bd commands in this repository
 # All settings can also be set via environment variables (BD_* prefix)
 # or overridden with command-line flags
@@ -83,12 +94,7 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 # - linear.api_key  → use LINEAR_API_KEY env var instead
 # - github.token    → use GITHUB_TOKEN env var instead
 `, prefixLine, noDbLine)
-
-	if err := os.WriteFile(configYamlPath, []byte(configYamlTemplate), 0600); err != nil {
-		return fmt.Errorf("failed to write config.yaml: %w", err)
-	}
-
-	return nil
+	return []byte(body)
 }
 
 // createReadme creates the README.md file in the .beads directory
