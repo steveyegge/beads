@@ -2609,6 +2609,7 @@ Examples:
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
+  bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
   bd config get export.auto
   bd config list
   bd config unset jira.url
@@ -3359,6 +3360,7 @@ bd init [flags]
       --backend string                    Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
       --contributor                       Run OSS contributor setup wizard
       --database string                   Use existing server database name (overrides prefix-based naming)
+      --debug                             Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
       --destroy-token string              Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
       --discard-remote                    Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
       --external                          Server is externally managed (skip server startup); use with --shared-server or --server
