@@ -58,11 +58,11 @@ func checkOrphanedDependenciesDB(db *sql.DB) DoctorCheck {
 	// injected by the JSONL exporter and intentionally reference issues not
 	// present in the local database (#1593).
 	query := `
-		SELECT d.issue_id, d.depends_on_id, d.type
+		SELECT d.issue_id, COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id, d.type
 		FROM dependencies d
-		LEFT JOIN issues i ON d.depends_on_id = i.id
+		LEFT JOIN issues i ON i.id = COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external)
 		WHERE i.id IS NULL
-		  AND d.depends_on_id NOT LIKE 'external:%'
+		  AND d.depends_on_external IS NULL
 	`
 	rows, err := db.Query(query)
 	if err != nil {
@@ -416,13 +416,13 @@ func checkDoltConflicts(beadsDir string) DoctorCheck {
 
 // checkChildParentDependenciesDB is the core logic for CheckChildParentDependencies.
 func checkChildParentDependenciesDB(db *sql.DB) DoctorCheck {
-	// Query for child→parent BLOCKING dependencies where issue_id starts with depends_on_id + "."
+	// Query for child→parent BLOCKING dependencies where issue_id starts with target id + "."
 	// Only matches blocking types (blocks, conditional-blocks, waits-for) that cause deadlock.
 	// Excludes 'parent-child' type which is a legitimate structural hierarchy relationship.
 	query := `
-		SELECT d.issue_id, d.depends_on_id
+		SELECT d.issue_id, COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id
 		FROM dependencies d
-		WHERE d.issue_id LIKE CONCAT(d.depends_on_id, '.%')
+		WHERE d.issue_id LIKE CONCAT(COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external), '.%')
 		  AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
 	`
 	rows, err := db.Query(query)

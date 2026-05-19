@@ -519,7 +519,7 @@ func bondMolMol(ctx context.Context, s storage.DoltStorage, molA, molB *types.Is
 		// Sequential: use blocks (B runs after A completes)
 		// Conditional: use conditional-blocks (B runs only if A fails)
 		// Parallel: use parent-child (organizational, no blocking)
-		// Note: Schema only allows one dependency per (issue_id, depends_on_id) pair
+		// Note: Schema only allows one dependency per (issue_id, target) pair (target = typed column)
 		var depType types.DependencyType
 		switch bondType {
 		case types.BondTypeSequential:

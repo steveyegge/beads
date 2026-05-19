@@ -125,11 +125,11 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 		return s.getWispDependenciesWithMetadata(ctx, issueID)
 	}
 
-	rows, err := s.queryContext(ctx, `
-		SELECT d.depends_on_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id
+	rows, err := s.queryContext(ctx, fmt.Sprintf(`
+		SELECT %s AS depends_on_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id
 		FROM dependencies d
 		WHERE d.issue_id = ?
-	`, issueID)
+	`, issueops.DepTargetExpr), issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies with metadata: %w", err)
 	}
@@ -207,11 +207,11 @@ func (s *DoltStore) GetDependencyRecords(ctx context.Context, issueID string) ([
 		return s.getWispDependencyRecords(ctx, issueID)
 	}
 
-	rows, err := s.queryContext(ctx, `
-		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+	rows, err := s.queryContext(ctx, fmt.Sprintf(`
+		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM dependencies
 		WHERE issue_id = ?
-	`, issueID)
+	`, issueops.DepTargetExpr), issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependency records: %w", err)
 	}
@@ -321,9 +321,9 @@ func (s *DoltStore) IsBlocked(ctx context.Context, issueID string) (bool, []stri
 	// computeBlockedIDs which considers blocks, waits-for, and
 	// conditional-blocks (GH-1524).
 	rows, err := s.queryContext(ctx, `
-		SELECT d.depends_on_id, d.type
+		SELECT d.depends_on_issue_id, d.type
 		FROM dependencies d
-		JOIN issues i ON d.depends_on_id = i.id
+		JOIN issues i ON d.depends_on_issue_id = i.id
 		WHERE d.issue_id = ?
 		  AND d.type IN ('blocks', 'waits-for', 'conditional-blocks')
 		  AND i.status NOT IN ('closed', 'pinned')
@@ -364,7 +364,7 @@ func (s *DoltStore) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID 
 		SELECT d.issue_id
 		FROM dependencies d
 		JOIN issues i ON d.issue_id = i.id
-		WHERE d.depends_on_id = ?
+		WHERE d.depends_on_issue_id = ?
 		  AND d.type = 'blocks'
 		  AND i.status NOT IN ('closed', 'pinned')
 	`, closedIssueID)
@@ -407,10 +407,10 @@ func (s *DoltStore) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID 
 		stillBlockedQuery := fmt.Sprintf(`
 			SELECT DISTINCT d2.issue_id
 			FROM dependencies d2
-			JOIN issues blocker ON d2.depends_on_id = blocker.id
+			JOIN issues blocker ON d2.depends_on_issue_id = blocker.id
 			WHERE d2.issue_id IN (%s)
 			  AND d2.type = 'blocks'
-			  AND d2.depends_on_id != ?
+			  AND d2.depends_on_issue_id != ?
 			  AND blocker.status NOT IN ('closed', 'pinned')
 		`, placeholders)
 

@@ -11,11 +11,11 @@ import (
 
 // GetAllDependencyRecordsInTx returns all dependency records from the dependencies table.
 func GetAllDependencyRecordsInTx(ctx context.Context, tx *sql.Tx) (map[string][]*types.Dependency, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM dependencies
 		ORDER BY issue_id
-	`)
+	`, DepTargetExpr))
 	if err != nil {
 		return nil, fmt.Errorf("get all dependency records: %w", err)
 	}
@@ -90,9 +90,9 @@ func getDependencyRecordsIntoFromTable(ctx context.Context, tx *sql.Tx, depTable
 			args[i] = id
 		}
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+			`SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
 			 FROM %s WHERE issue_id IN (%s) ORDER BY issue_id`,
-			depTable, strings.Join(placeholders, ",")), args...)
+			DepTargetExpr, depTable, strings.Join(placeholders, ",")), args...)
 		if err != nil {
 			return fmt.Errorf("get dependency records from %s: %w", depTable, err)
 		}
@@ -166,14 +166,16 @@ func GetDependencyCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string)
 			return nil, fmt.Errorf("get dependency counts: blocker rows: %w", err)
 		}
 
-		// Dependents: issues blocked by the given IDs
+		// Dependents: issues blocked by the given IDs.
+		// IDs can be of any target kind (perm/wisp/external), so resolve via
+		// COALESCE; the table is `dependencies` only, matching prior behavior.
 		//nolint:gosec // G201: inClause contains only ? placeholders
 		blockingRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT depends_on_id, COUNT(*) as cnt
+			SELECT %s AS depends_on_id, COUNT(*) as cnt
 			FROM dependencies
-			WHERE depends_on_id IN (%s) AND type = 'blocks'
-			GROUP BY depends_on_id
-		`, inClause), args...)
+			WHERE %s IN (%s) AND type = 'blocks'
+			GROUP BY %s
+		`, DepTargetExpr, DepTargetExpr, inClause, DepTargetExpr), args...)
 		if err != nil {
 			return nil, fmt.Errorf("get dependency counts (dependents): %w", err)
 		}
@@ -226,14 +228,14 @@ func GetBlockingInfoForIssuesInTx(ctx context.Context, tx *sql.Tx, issueIDs []st
 
 	// Process wisp IDs against wisp_dependencies.
 	if len(wispIDs) > 0 {
-		if err := queryBlockingInfo(ctx, tx, wispIDs, "wisp_dependencies", "wisps", blockedByMap, blocksMap, parentMap); err != nil {
+		if err := queryBlockingInfo(ctx, tx, wispIDs, "wisp_dependencies", "wisps", "depends_on_wisp_id", blockedByMap, blocksMap, parentMap); err != nil {
 			return nil, nil, nil, err
 		}
 	}
 
 	// Process perm IDs against dependencies.
 	if len(permIDs) > 0 {
-		if err := queryBlockingInfo(ctx, tx, permIDs, "dependencies", "issues", blockedByMap, blocksMap, parentMap); err != nil {
+		if err := queryBlockingInfo(ctx, tx, permIDs, "dependencies", "issues", "depends_on_issue_id", blockedByMap, blocksMap, parentMap); err != nil {
 			return nil, nil, nil, err
 		}
 	}
@@ -243,10 +245,15 @@ func GetBlockingInfoForIssuesInTx(ctx context.Context, tx *sql.Tx, issueIDs []st
 
 // queryBlockingInfo queries blocking info from a specific dep table + issue table pair.
 // Uses batched IN clauses (queryBatchSize) to avoid query-planner spikes.
+//
+// targetCol names the typed column that resolves a row's target id for the
+// given issueTable (depends_on_issue_id for issues, depends_on_wisp_id for
+// wisps). External rows can't be blockers (no row in any local table) so they
+// are skipped by joining only on the typed column.
 func queryBlockingInfo(
 	ctx context.Context, tx *sql.Tx,
 	issueIDs []string,
-	depTable, issueTable string,
+	depTable, issueTable, targetCol string,
 	blockedByMap map[string][]string,
 	blocksMap map[string][]string,
 	parentMap map[string]string,
@@ -266,14 +273,18 @@ func queryBlockingInfo(
 		}
 		inClause := strings.Join(placeholders, ",")
 
-		// Query 1: "blocked by" — deps where issue_id is in our set
-		//nolint:gosec // G201: depTable and issueTable are caller-controlled constants
+		// Query 1: "blocked by" — deps where issue_id is in our set.
+		// Project COALESCE so cross-table targets (wisp/external blockers in a
+		// perm row, etc.) still return their id; status JOIN narrows to the
+		// typed column for index use, but rows that don't join still surface
+		// with the blocker id and an empty status, preserving prior semantics.
+		//nolint:gosec // G201: depTable, issueTable, targetCol are caller-controlled constants
 		blockedByQuery := fmt.Sprintf(`
-			SELECT d.issue_id, d.depends_on_id, d.type, COALESCE(i.status, '') AS blocker_status
+			SELECT d.issue_id, %s AS depends_on_id, d.type, COALESCE(i.status, '') AS blocker_status
 			FROM %s d
-			LEFT JOIN %s i ON i.id = d.depends_on_id
+			LEFT JOIN %s i ON i.id = d.%s
 			WHERE d.issue_id IN (%s) AND d.type IN ('blocks', 'parent-child')
-		`, depTable, issueTable, inClause)
+		`, DepTargetExpr, depTable, issueTable, targetCol, inClause)
 
 		rows, err := tx.QueryContext(ctx, blockedByQuery, args...)
 		if err != nil {
@@ -299,14 +310,14 @@ func queryBlockingInfo(
 			return fmt.Errorf("get blocking info: blocked-by rows: %w", err)
 		}
 
-		// Query 2: "blocks" — deps where depends_on_id is in our set
-		//nolint:gosec // G201: depTable and issueTable are caller-controlled constants
+		// Query 2: "blocks" — deps where the typed target is in our set
+		//nolint:gosec // G201: depTable, issueTable, targetCol are caller-controlled constants
 		blocksQuery := fmt.Sprintf(`
-			SELECT d.depends_on_id, d.issue_id, d.type, COALESCE(i.status, '') AS blocker_status
+			SELECT d.%s, d.issue_id, d.type, COALESCE(i.status, '') AS blocker_status
 			FROM %s d
-			LEFT JOIN %s i ON i.id = d.depends_on_id
-			WHERE d.depends_on_id IN (%s) AND d.type IN ('blocks', 'parent-child')
-		`, depTable, issueTable, inClause)
+			LEFT JOIN %s i ON i.id = d.%s
+			WHERE d.%s IN (%s) AND d.type IN ('blocks', 'parent-child')
+		`, targetCol, depTable, issueTable, targetCol, targetCol, inClause)
 
 		rows2, err := tx.QueryContext(ctx, blocksQuery, args...)
 		if err != nil {
@@ -349,8 +360,8 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx *sql.Tx, closedIssueID
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 			SELECT issue_id FROM %s
-			WHERE depends_on_id = ? AND type = 'blocks'
-		`, depTable), closedIssueID)
+			WHERE %s = ? AND type = 'blocks'
+		`, depTable, DepTargetExpr), closedIssueID)
 		if err != nil {
 			return nil, fmt.Errorf("find blocked candidates from %s: %w", depTable, err)
 		}
@@ -406,9 +417,9 @@ func GetNewlyUnblockedByCloseInTx(ctx context.Context, tx *sql.Tx, closedIssueID
 
 		//nolint:gosec // G201: depTable from WispTableRouting (hardcoded)
 		depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT depends_on_id FROM %s
-			WHERE issue_id = ? AND type = 'blocks' AND depends_on_id != ?
-		`, depTable), candidateID, closedIssueID)
+			SELECT %s AS depends_on_id FROM %s
+			WHERE issue_id = ? AND type = 'blocks' AND %s != ?
+		`, DepTargetExpr, depTable, DepTargetExpr), candidateID, closedIssueID)
 		if err != nil {
 			return nil, fmt.Errorf("check remaining blockers for %s: %w", candidateID, err)
 		}
@@ -467,9 +478,9 @@ func IsBlockedInTx(ctx context.Context, tx *sql.Tx, issueID string) (bool, []str
 		dependsOnID, depType string
 	}
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT depends_on_id, type FROM %s
+		SELECT %s AS depends_on_id, type FROM %s
 		WHERE issue_id = ? AND type IN ('blocks', 'waits-for', 'conditional-blocks')
-	`, depTable), issueID)
+	`, DepTargetExpr, depTable), issueID)
 	if err != nil {
 		return false, nil, fmt.Errorf("check blockers: %w", err)
 	}

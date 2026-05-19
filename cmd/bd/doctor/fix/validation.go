@@ -37,11 +37,11 @@ func OrphanedDependencies(path string, verbose bool) error {
 
 	// Find orphaned dependencies (exclude external: cross-rig tracking refs, #1593)
 	query := `
-		SELECT d.issue_id, d.depends_on_id
+		SELECT d.issue_id, COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id
 		FROM dependencies d
-		LEFT JOIN issues i ON d.depends_on_id = i.id
+		LEFT JOIN issues i ON i.id = COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external)
 		WHERE i.id IS NULL
-		  AND d.depends_on_id NOT LIKE 'external:%'
+		  AND d.depends_on_external IS NULL
 	`
 	rows, err := db.Query(query)
 	if err != nil {
@@ -80,7 +80,7 @@ func OrphanedDependencies(path string, verbose bool) error {
 	}
 	var removed int
 	for _, o := range orphans {
-		_, err := tx.Exec("DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?",
+		_, err := tx.Exec("DELETE FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?",
 			o.issueID, o.dependsOnID)
 		if err != nil {
 			fmt.Printf("  Warning: failed to remove %s→%s: %v\n", o.issueID, o.dependsOnID, err)
@@ -119,13 +119,13 @@ func ChildParentDependencies(path string, verbose bool) error {
 	}
 	defer db.Close()
 
-	// Find child→parent BLOCKING dependencies where issue_id starts with depends_on_id + "."
+	// Find child→parent BLOCKING dependencies where issue_id starts with target id + "."
 	// Only matches blocking types (blocks, conditional-blocks, waits-for) that cause deadlock.
 	// Excludes 'parent-child' type which is a legitimate structural hierarchy relationship.
 	query := `
-		SELECT d.issue_id, d.depends_on_id, d.type
+		SELECT d.issue_id, COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id, d.type
 		FROM dependencies d
-		WHERE d.issue_id LIKE CONCAT(d.depends_on_id, '.%')
+		WHERE d.issue_id LIKE CONCAT(COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external), '.%')
 		  AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
 	`
 	rows, err := db.Query(query)
@@ -166,7 +166,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 	}
 	var removed int
 	for _, d := range badDeps {
-		_, err := tx.Exec("DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ? AND type = ?",
+		_, err := tx.Exec("DELETE FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ? AND type = ?",
 			d.issueID, d.dependsOnID, d.depType)
 		if err != nil {
 			fmt.Printf("  Warning: failed to remove %s→%s: %v\n", d.issueID, d.dependsOnID, err)

@@ -60,15 +60,15 @@ func TestUpdateIssueIDUpdatesWispDependencyTargets(t *testing.T) {
 		t.Fatalf("UpdateIssueID failed: %v", err)
 	}
 
-	// Verify wisp_dependencies.depends_on_id was updated
+	// Verify wisp_dependencies typed target columns were updated
 	var depCount int
-	err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM wisp_dependencies WHERE depends_on_id = ?`, newID).Scan(&depCount)
+	err = store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM wisp_dependencies WHERE COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?`, newID).Scan(&depCount)
 	if err != nil {
-		t.Fatalf("failed to query wisp_dependencies depends_on_id: %v", err)
+		t.Fatalf("failed to query wisp_dependencies target: %v", err)
 	}
 	if depCount != 1 {
-		t.Errorf("expected 1 wisp_dependencies row with depends_on_id=%q, got %d", newID, depCount)
+		t.Errorf("expected 1 wisp_dependencies row targeting %q, got %d", newID, depCount)
 	}
 
 	// Verify wisp_dependencies.issue_id still points at the source wisp.
@@ -84,7 +84,8 @@ func TestUpdateIssueIDUpdatesWispDependencyTargets(t *testing.T) {
 	// Verify old ID is gone from wisp_dependencies
 	var oldCount int
 	err = store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM wisp_dependencies WHERE depends_on_id = ?`, "test-old1").Scan(&oldCount)
+		`SELECT COUNT(*) FROM wisp_dependencies WHERE issue_id = ? OR COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?`,
+		"test-old1", "test-old1").Scan(&oldCount)
 	if err != nil {
 		t.Fatalf("failed to query old wisp_dependencies: %v", err)
 	}
