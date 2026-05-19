@@ -226,10 +226,6 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			_ = os.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
 		}
 
-		// Propagate --debug to env so IsDebugMode() returns true for the
-		// server start that happens later in this same init invocation
-		// (before config.yaml is written). Same one-shot rationale as
-		// the shared-server propagation above.
 		if debugMode {
 			_ = os.Setenv("BEADS_DOLT_DEBUG", "1")
 		}
@@ -801,10 +797,6 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 						fmt.Printf("  %s Shared Dolt server started\n", ui.RenderPass("✓"))
 					}
 				} else if debugMode {
-					// Shared server is already up — it was started without
-					// the debug-mode argv we just configured. Persisting
-					// dolt.debug will take effect on the next restart, but
-					// the currently-running server keeps its existing flags.
 					fmt.Fprintf(os.Stderr, "Warning: shared Dolt server (PID %d, port %d) is already running without debug flags.\n", state.PID, state.Port)
 					fmt.Fprintf(os.Stderr, "  Restart to pick up debug mode:\n")
 					fmt.Fprintf(os.Stderr, "    bd dolt stop && bd dolt start\n")
@@ -1055,9 +1047,6 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				}
 			}
 
-			// Persist --debug intent to config.yaml so subsequent bd commands
-			// that auto-start the dolt sql-server pick up the debug flags
-			// without requiring BEADS_DOLT_DEBUG in every shell.
 			if debugMode {
 				if err := config.SetYamlConfig("dolt.debug", "true"); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to persist dolt.debug: %v\n", err)

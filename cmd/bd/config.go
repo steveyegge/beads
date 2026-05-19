@@ -98,10 +98,6 @@ var configSetCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// dolt.debug only affects the managed sql-server's argv. In embedded
-		// mode there is no managed server, so the write would be a no-op
-		// (and worse, would still appear in `bd config list`). Reject
-		// explicitly so the user doesn't store dead config.
 		if key == "dolt.debug" && !usesSQLServer() {
 			fmt.Fprintln(os.Stderr, "Error: dolt.debug requires a sql-server-backed project (embedded mode has no managed server).")
 			fmt.Fprintln(os.Stderr, "  To migrate: re-init with 'bd init --server' or 'bd init --shared-server'.")

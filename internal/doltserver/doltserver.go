@@ -115,15 +115,6 @@ func IsSharedServerMode() bool {
 	return config.GetBool("dolt.shared-server")
 }
 
-// IsDebugMode returns true if the dolt sql-server should be launched in
-// debug mode (--loglevel=debug plus CPU profiling via --prof cpu).
-// Sources (priority order):
-//  1. BEADS_DOLT_DEBUG env var ("1" or "true")
-//  2. dolt.debug in config.yaml
-//
-// Debug mode only affects servers beads spawns. External / hosted /
-// auto-start-disabled servers are unaffected — operators manage those
-// argv themselves.
 func IsDebugMode() bool {
 	if v := os.Getenv("BEADS_DOLT_DEBUG"); v == "1" || strings.EqualFold(v, "true") {
 		return true
@@ -131,27 +122,6 @@ func IsDebugMode() bool {
 	return config.GetBool("dolt.debug")
 }
 
-// DebugProfileDir returns the directory dolt sql-server writes pprof
-// artifacts into when debug mode is enabled. The path is the canonical
-// location surfaced by bd init / bd dolt start / bd dolt status so users
-// know where to find cpu.pprof.
-//
-// Layout:
-//   - per-project:   <beadsDir>/dolt-pprof/
-//   - shared server: ~/.beads/shared-server/dolt-pprof/
-//
-// The returned path is absolute. Dolt sql-server is launched with
-// cmd.Dir = <doltDataDir>, and dolt's --prof-path is resolved relative
-// to that cwd via os.Stat — passing a relative path like
-// ".beads/dolt-pprof" would be looked up as ".beads/dolt/.beads/dolt-pprof"
-// and dolt would panic with "profile path does not exist". Absolute paths
-// are immune to that cwd shift. If filepath.Abs fails for some reason,
-// fall back to the joined path (best-effort; the panic case will surface
-// loudly at server start).
-//
-// The caller is responsible for creating the directory (Start does this
-// before exec because dolt --prof-path panics on a missing path even
-// with an absolute argument).
 func DebugProfileDir(beadsDir string) string {
 	p := filepath.Join(resolveServerDir(beadsDir), "dolt-pprof")
 	if abs, err := filepath.Abs(p); err == nil {
@@ -160,19 +130,8 @@ func DebugProfileDir(beadsDir string) string {
 	return p
 }
 
-// debugProfileFilename is the fixed filename pkg/profile writes for
-// each profile mode. We currently only use cpu profiling; if that
-// changes, extend this map.
 const debugProfileFilename = "cpu.pprof"
 
-// rotateDebugProfile renames cpu.pprof → cpu-<RFC3339>.pprof if it
-// exists, so successive server runs do not overwrite each other's
-// profiles. Called from Stop after the server has exited (when
-// pkg/profile's deferred .Stop() has flushed the file to disk).
-//
-// Best-effort: failures are logged but do not block stop, since the
-// rotation is a convenience and a missing file is the common case
-// (server crashed under SIGKILL before flush).
 func rotateDebugProfile(beadsDir string) {
 	profDir := DebugProfileDir(beadsDir)
 	src := filepath.Join(profDir, debugProfileFilename)
