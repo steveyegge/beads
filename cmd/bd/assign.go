@@ -55,7 +55,9 @@ Examples:
 			FatalErrorRespectJSON("updating %s: %v", id, err)
 		}
 
-		commandDidWrite.Store(true)
+		if err := commitPendingIfEmbedded(ctx, issueStore, actor); err != nil {
+			FatalErrorRespectJSON("failed to commit: %v", err)
+		}
 
 		SetLastTouchedID(result.ResolvedID)
 

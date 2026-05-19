@@ -43,6 +43,14 @@ func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) error {
 	return maybeAutoCommitStore(ctx, getStore(), p)
 }
 
+func commitPendingIfEmbedded(ctx context.Context, st storage.DoltStorage, actor string) error {
+	if !isEmbeddedMode() || st == nil {
+		return nil
+	}
+	_, err := st.CommitPending(ctx, actor)
+	return err
+}
+
 func maybeAutoCommitStore(ctx context.Context, st storage.DoltStorage, p doltAutoCommitParams) error {
 	mode, err := getDoltAutoCommitMode()
 	if err != nil {
