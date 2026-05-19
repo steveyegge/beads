@@ -66,6 +66,7 @@ var YamlOnlyKeys = map[string]bool{
 	// Dolt server settings
 	"dolt.shared-server": true, // Shared Dolt server at ~/.beads/shared-server/ (GH#2377)
 	"dolt.max-conns":     true, // Connection pool size override (default 10, GH#3140)
+	"dolt.debug":         true, // Debug-mode dolt sql-server: --loglevel=debug + --prof cpu
 
 	// Secrets: tokens and API keys must NOT be stored in the Dolt database
 	// because that data is pushed to remotes, triggering secret-scanning
@@ -520,6 +521,11 @@ func validateYamlConfigValue(key, value string) error {
 		lower := strings.ToLower(value)
 		if lower != "true" && lower != "false" {
 			return fmt.Errorf("dolt.shared-server must be \"true\" or \"false\", got %q", value)
+		}
+	case "dolt.debug":
+		lower := strings.ToLower(value)
+		if lower != "true" && lower != "false" {
+			return fmt.Errorf("dolt.debug must be \"true\" or \"false\", got %q", value)
 		}
 	}
 	return nil

@@ -59,6 +59,7 @@ Examples:
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
+  bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
   bd config get export.auto
   bd config list
   bd config unset jira.url
