@@ -88,6 +88,8 @@ func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 #   path: issues.jsonl
 #   interval: 60s
 #   git-add: false
+# import:
+#   path: issues.jsonl
 
 # Integration settings (access with 'bd config get/set')
 # Non-secret keys (stored in the database):

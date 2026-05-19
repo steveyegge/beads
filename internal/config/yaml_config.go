@@ -63,6 +63,9 @@ var YamlOnlyKeys = map[string]bool{
 	"backup.git-push": true,
 	"backup.git-repo": true,
 
+	// Import settings
+	"import.path": true,
+
 	// Dolt server settings
 	"dolt.shared-server": true, // Shared Dolt server at ~/.beads/shared-server/ (GH#2377)
 	"dolt.max-conns":     true, // Connection pool size override (default 10, GH#3140)
