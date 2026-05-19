@@ -681,7 +681,7 @@ var createCmd = &cobra.Command{
 		// a separate commit. In EmbeddedDoltStore mode, CreateIssue writes
 		// to the working set without a Dolt commit, so we always commit
 		// everything together at the end.
-		if !usesSQLServer() || postCreateWrites {
+		if shouldCommitCreatePostWrites(issue, postCreateWrites) {
 			commitMsg := fmt.Sprintf("bd: create %s", issue.ID)
 			if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 				WarnError("failed to commit: %v", err)
@@ -815,6 +815,19 @@ func renderCreateDryRunPreview(issue *types.Issue, labels, deps []string) {
 	if issue.EventKind != "" {
 		fmt.Printf("  Event category: %s\n", issue.EventKind)
 	}
+}
+
+func shouldCommitCreatePostWrites(issue *types.Issue, postCreateWrites bool) bool {
+	if isEmbeddedMode() {
+		return true
+	}
+	if !postCreateWrites {
+		return false
+	}
+	if issue != nil && (issue.Ephemeral || issue.NoHistory) {
+		return false
+	}
+	return true
 }
 
 func createDepsAcceptedTypeList() string {
