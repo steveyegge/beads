@@ -166,8 +166,6 @@ func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 func (p *doltServerProvider) initSchema(ctx context.Context, database string) error {
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = 25 * time.Millisecond
-	// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a
-	// contended schema migration can time out once and still retry.
 	bo.MaxElapsedTime = 15 * time.Second
 	return backoff.Retry(func() error {
 		conn, err := p.db.Conn(ctx)

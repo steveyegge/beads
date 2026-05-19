@@ -54,6 +54,7 @@ type ResolveProxiedInitParams struct {
 type ResolveProxiedInitResult struct {
 	BeadsDir    string
 	HasExplicit bool
+	IsLocal     bool
 	DBName      string
 	ProjectID   string
 }
@@ -143,6 +144,7 @@ func (u *beadsDirFSUseCaseImpl) ResolveProxiedInit(ctx context.Context, params R
 	result := ResolveProxiedInitResult{
 		BeadsDir:    resolution.BeadsDir,
 		HasExplicit: resolution.HasExplicit,
+		IsLocal:     u.fsRepo.BeadsDirIsLocal(ctx),
 	}
 
 	cfg, err := u.fsRepo.ReadBeadsConfig(ctx)

@@ -87,6 +87,8 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 	}
 	beadsDir, hasExplicitBeadsDir := proxiedInit.BeadsDir, proxiedInit.HasExplicit
 	dbName, projectID := proxiedInit.DBName, proxiedInit.ProjectID
+	beadsDirIsLocal := proxiedInit.IsLocal
+	useLocalBeads := !hasExplicitBeadsDir || beadsDirIsLocal
 
 	if strings.Contains(filepath.Clean(cwd), string(filepath.Separator)+".beads"+string(filepath.Separator)) ||
 		strings.HasSuffix(filepath.Clean(cwd), string(filepath.Separator)+".beads") {
@@ -94,16 +96,6 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 		fmt.Fprintf(os.Stderr, "Current directory: %s\n", cwd)
 		os.Exit(1)
 	}
-
-	beadsDirAbs, err := filepath.Abs(beadsDir)
-	if err != nil {
-		beadsDirAbs = filepath.Clean(beadsDir)
-	}
-
-	cwdAbs, _ := filepath.Abs(cwd)
-	beadsDirIsLocal := strings.HasPrefix(beadsDirAbs, filepath.Clean(cwdAbs)+string(filepath.Separator)) ||
-		filepath.Clean(beadsDirAbs) == filepath.Clean(cwdAbs)
-	useLocalBeads := !hasExplicitBeadsDir || beadsDirIsLocal
 
 	if !hasExplicitBeadsDir {
 		res, err := gitUC.EnsureGitRepo(ctx)
@@ -284,7 +276,9 @@ type runInitTailContext struct {
 }
 
 func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initProxiedServerInput, t runInitTailContext) {
-	if t.gitUC.IsGitRepo(ctx) {
+	isRepo := t.gitUC.IsGitRepo(ctx)
+
+	if isRepo {
 		role := in.roleFlag
 		if role == "" {
 			role = "maintainer"
@@ -302,7 +296,7 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		if err := t.fsUseCase.SetupForkExclude(ctx, !in.quiet); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 		}
-	} else if !in.stealth && t.gitUC.IsGitRepo(ctx) {
+	} else if !in.stealth && isRepo {
 		if isFork, upstreamURL, _ := t.gitUC.DetectFork(ctx); isFork {
 			if in.nonInteractive {
 				if err := t.fsUseCase.SetupForkExclude(ctx, !in.quiet); err != nil {
@@ -341,7 +335,7 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 				fmt.Printf("  Hooks installed (jujutsu mode - no staging)\n")
 			}
 		default:
-			if t.gitUC.IsGitRepo(ctx) {
+			if isRepo {
 				hooksParams := domain.HooksInstallParams{
 					HookNames:  managedHookNames,
 					BeadsHooks: true,
@@ -372,7 +366,8 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		if resolvedAgentsFile == "" {
 			resolvedAgentsFile = config.SafeAgentsFile()
 		}
-		if t.gitUC.IsBareGitRepo(ctx) {
+		isBare := t.gitUC.IsBareGitRepo(ctx)
+		if isBare {
 			if !in.quiet {
 				fmt.Printf("  Skipping %s generation in bare repository\n", resolvedAgentsFile)
 			}
@@ -384,16 +379,13 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 				Profile:      agentsProfileStr,
 				HasRemote:    t.remoteURL != "",
 			})
+			if err := t.fsUseCase.InstallClaudeProject(ctx, in.stealth); err != nil && !in.quiet {
+				fmt.Fprintf(os.Stderr, "Warning: failed to setup Claude hooks: %v\n", err)
+			}
 		}
 	}
 
-	if !in.stealth && !in.skipAgents && !t.gitUC.IsBareGitRepo(ctx) {
-		if err := t.fsUseCase.InstallClaudeProject(ctx, in.stealth); err != nil && !in.quiet {
-			fmt.Fprintf(os.Stderr, "Warning: failed to setup Claude hooks: %v\n", err)
-		}
-	}
-
-	if !in.stealth && t.gitUC.IsGitRepo(ctx) && t.useLocalBeads {
+	if !in.stealth && isRepo && t.useLocalBeads {
 		commitResult, err := t.gitUC.CommitInitArtifacts(ctx, domain.CommitInitArtifactsParams{
 			BeadsDir: ".beads/",
 			OptionalPaths: []string{
@@ -413,7 +405,7 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		}
 	}
 
-	if t.gitUC.IsGitRepo(ctx) && !in.quiet {
+	if isRepo && !in.quiet {
 		if t.gitUC.HasAnyRemotes(ctx) && !t.gitUC.HasUpstream(ctx) {
 			fmt.Fprintf(os.Stderr, "\n%s Git upstream not configured\n", ui.RenderWarn("⚠"))
 			fmt.Fprintf(os.Stderr, "  For sync workflows, set your upstream with:\n")
