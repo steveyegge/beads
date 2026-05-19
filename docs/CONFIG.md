@@ -92,6 +92,10 @@ dolt:
 
 Periodic Dolt-native backup to `.beads/backup/` provides an off-machine recovery path. Local Dolt snapshots (via `dolt.auto-commit`) remain the primary safety net; backup is a secondary layer.
 
+This is a full database backup, unlike `bd export` or `.beads/issues.jsonl`.
+It preserves Dolt state such as tables, branches, commit history, and
+working-set data.
+
 ```yaml
 backup:
   enabled: true    # Enable auto-backup after write commands
@@ -101,7 +105,7 @@ backup:
 **How it works:**
 - After each write command (in PersistentPostRun), `bd` checks the Dolt HEAD commit hash against the last backup state
 - If data changed and the throttle interval has passed, a Dolt-native backup is synced to `.beads/backup/`
-- Full commit history is preserved in the backup
+- Full database state and commit history are preserved in the backup
 - State is tracked in `.beads/backup/backup_state.json`
 
 **Manual commands:**
@@ -342,7 +346,7 @@ Configuration keys use dot-notation namespaces to organize settings:
 - `min_hash_length` - Minimum hash ID length (default: 4)
 - `max_hash_length` - Maximum hash ID length (default: 8)
 - `import.orphan_handling` - How to handle hierarchical issues with missing parents during import (default: `allow`)
-- `export.auto` - Refresh the JSONL export after every write command (default: `true`). This is for viewers, interchange, and backup, not cross-machine sync.
+- `export.auto` - Refresh the JSONL export after every write command (default: `true`). This is for viewers, interchange, and issue-level migration; it is not cross-machine sync and not a full database backup.
 - `export.path` - Output filename relative to `.beads/` (default: `issues.jsonl`)
 - `export.interval` - Minimum time between auto-exports (default: `60s`)
 - `export.git-add` - Run `git add` on the export file after writing (default: `true`)

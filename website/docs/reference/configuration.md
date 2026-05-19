@@ -212,7 +212,7 @@ backup:
   enabled: true
   interval: 15m
 
-# Auto-export issues.jsonl after writes for viewers/interchange/backup
+# Auto-export issues.jsonl after writes for viewers/interchange
 export:
   auto: true
   path: issues.jsonl

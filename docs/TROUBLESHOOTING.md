@@ -523,7 +523,7 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
 
 2. **If you have accidental duplicates** (unintentional):
    - Decide which database to keep
-   - Export issues from the unwanted database: `cd <unwanted-dir> && bd export -o backup.jsonl`
+   - Export issues from the unwanted database: `cd <unwanted-dir> && bd export -o issue-export.jsonl`
    - Remove the unwanted `.beads` directory: `rm -rf <unwanted-dir>/.beads`
    - Optionally import issues into the main database if needed
 

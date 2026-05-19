@@ -139,11 +139,13 @@ permanently destroy them.
 ### 1. Export first, then proceed
 
 ```
-bd export > backup.jsonl
+bd export > issue-export.jsonl
 bd init --reinit-local
 ```
 
-`backup.jsonl` lets you re-import individual issues if needed.
+`issue-export.jsonl` lets you re-import individual issues if needed. It is not
+a full database backup; use `bd backup` when the Dolt database is healthy
+enough to create a restorable backup before reinitializing.
 
 ### 2. Investigate why you hit this
 
