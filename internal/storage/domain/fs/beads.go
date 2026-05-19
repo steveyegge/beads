@@ -17,10 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
-// NewBeadsDirFSRepository binds the repository to a project working directory
-// and the canonical templates the caller wants written into .beads/. Paths are
-// derived from workDir at construction time; the BEADS_DIR env variable, if set,
-// still overrides the .beads location (HasExplicit will be true in that case).
 func NewBeadsDirFSRepository(workDir string, templates domain.BeadsDirTemplates) domain.BeadsDirFSRepository {
 	beadsDir, hasExplicit := resolveBeadsDir(workDir)
 	return &beadsDirFSRepositoryImpl{
@@ -44,8 +40,6 @@ func resolveBeadsDir(workDir string) (string, bool) {
 	if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
 		return utils.CanonicalizePath(envBeadsDir), true
 	}
-	// GetWorktreeFallbackBeadsDir still uses cwd-derived git context; in
-	// practice init runs with workDir == cwd, so this is consistent.
 	if dir := beads.GetWorktreeFallbackBeadsDir(); dir != "" {
 		return dir, false
 	}

@@ -24,9 +24,6 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 	return nil
 }
 
-// renderInitConfigYAML returns the canonical config.yaml body produced by
-// bd init. When noDbMode is true, the prefix is baked into the file (since
-// there's no database to store it).
 func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 	noDbLine := "# no-db: false"
 	if noDbMode {
@@ -97,7 +94,6 @@ func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 	return []byte(body)
 }
 
-// BeadsReadmeTemplate is the canonical .beads/README.md content written during init.
 const BeadsReadmeTemplate = `# Beads - AI-Native Issue Tracking
 
 Welcome to Beads! This repository uses **Beads** for issue tracking - a modern, AI-native tool designed to live directly in your codebase alongside your code.
@@ -181,7 +177,6 @@ bd create "Try out Beads"
 *Beads: Issue tracking that moves at the speed of thought* ⚡
 `
 
-// createReadme creates the README.md file in the .beads directory.
 func createReadme(beadsDir string) error {
 	readmePath := filepath.Join(beadsDir, "README.md")
 

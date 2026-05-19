@@ -59,9 +59,6 @@ type ResolveProxiedInitResult struct {
 	ProjectID   string
 }
 
-// BeadsDirTemplates carries the text bodies the repository writes during init.
-// Passing them in lets the CLI keep canonical copies (e.g. doctor.GitignoreTemplate)
-// rather than maintaining duplicates inside the storage layer.
 type BeadsDirTemplates struct {
 	BeadsGitignore           string
 	ProjectGitignoreHeader   string
@@ -70,22 +67,11 @@ type BeadsDirTemplates struct {
 }
 
 type InitializeBeadsDirParams struct {
-	MetadataJSONBody []byte
-	ConfigYAMLBody   []byte
-
-	// WriteProjectGitignore, when true, appends Dolt/beads patterns to the
-	// project-root .gitignore (workDir/.gitignore).
+	MetadataJSONBody      []byte
+	ConfigYAMLBody        []byte
 	WriteProjectGitignore bool
-
-	// SetNoCOW, when true, applies FS_NOCOW_FL to BeadsDir after creation.
-	// Best-effort: failures surface in InitializeBeadsDirResult.NoCOWErr,
-	// not the returned error.
-	SetNoCOW bool
-
-	// LocalVersion, when non-empty, writes BeadsDir/.local_version with
-	// the given value. Best-effort: failures surface in
-	// InitializeBeadsDirResult.LocalVersionErr, not the returned error.
-	LocalVersion string
+	SetNoCOW              bool
+	LocalVersion          string
 }
 
 type InitializeBeadsDirResult struct {
@@ -109,9 +95,6 @@ type AgentsFileParams struct {
 	HasRemote    bool
 }
 
-// BeadsDirFSAdapters wires the use case's non-trivial side effects to the
-// CLI-side helper implementations. Each adapter is optional at the type
-// level; methods that depend on a nil adapter return a configuration error.
 type BeadsDirFSAdapters struct {
 	ApplyNoCOW            func(path string) error
 	WriteLocalVersion     func(path, version string) error

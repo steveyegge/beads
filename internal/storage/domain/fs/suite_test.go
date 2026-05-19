@@ -18,8 +18,6 @@ func (s *testSuite) Ctx() context.Context {
 	return context.Background()
 }
 
-// newRepo returns a fresh (workDir, beadsDir, repo) for an isolated subtest.
-// The repo is bound to workDir; beadsDir is workDir/.beads.
 func (s *testSuite) newRepo() (workDir, beadsDir string, repo domain.BeadsDirFSRepository) {
 	s.T().Helper()
 	s.T().Setenv("BEADS_DIR", "")

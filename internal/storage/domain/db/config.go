@@ -67,7 +67,3 @@ func (r *configSQLRepositoryImpl) SetConfig(ctx context.Context, key, value stri
 	}
 	return nil
 }
-
-func (r *configSQLRepositoryImpl) GetStatistics(ctx context.Context) (domain.Statistics, error) {
-	return domain.Statistics{}, nil
-}

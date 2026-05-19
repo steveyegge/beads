@@ -69,8 +69,8 @@ var changeDirEnvSnapshot map[string]envSnapshotValue
 
 var (
 	sandboxMode       bool
-	globalFlag        bool // Use the global shared-server database (beads_global)
-	serverMode        bool // True when using external dolt sql-server (dolt_mode=server)
+	globalFlag        bool
+	serverMode        bool
 	proxiedServerMode bool
 	readonlyMode      bool               // Read-only mode: block write operations (for worker sandboxes)
 	storeIsReadOnly   bool               // Track if store was opened read-only (for staleness checks)

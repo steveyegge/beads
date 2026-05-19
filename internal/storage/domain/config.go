@@ -11,7 +11,6 @@ type ConfigSQLRepository interface {
 	SetLocalMetadata(ctx context.Context, key, value string) error
 	GetConfig(ctx context.Context, key string) (string, error)
 	SetConfig(ctx context.Context, key, value string) error
-	GetStatistics(ctx context.Context) (Statistics, error)
 }
 
 type ConfigUseCase interface {
@@ -21,8 +20,6 @@ type ConfigUseCase interface {
 type Issue struct{}
 
 type BatchCreateOptions struct{}
-
-type Statistics struct{}
 
 type GlobalDatabaseParams struct{}
 
