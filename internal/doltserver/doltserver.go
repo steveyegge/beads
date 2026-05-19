@@ -115,6 +115,81 @@ func IsSharedServerMode() bool {
 	return config.GetBool("dolt.shared-server")
 }
 
+// IsDebugMode returns true if the dolt sql-server should be launched in
+// debug mode (--loglevel=debug plus CPU profiling via --prof cpu).
+// Sources (priority order):
+//  1. BEADS_DOLT_DEBUG env var ("1" or "true")
+//  2. dolt.debug in config.yaml
+//
+// Debug mode only affects servers beads spawns. External / hosted /
+// auto-start-disabled servers are unaffected — operators manage those
+// argv themselves.
+func IsDebugMode() bool {
+	if v := os.Getenv("BEADS_DOLT_DEBUG"); v == "1" || strings.EqualFold(v, "true") {
+		return true
+	}
+	return config.GetBool("dolt.debug")
+}
+
+// DebugProfileDir returns the directory dolt sql-server writes pprof
+// artifacts into when debug mode is enabled. The path is the canonical
+// location surfaced by bd init / bd dolt start / bd dolt status so users
+// know where to find cpu.pprof.
+//
+// Layout:
+//   - per-project:   <beadsDir>/dolt-pprof/
+//   - shared server: ~/.beads/shared-server/dolt-pprof/
+//
+// The returned path is absolute. Dolt sql-server is launched with
+// cmd.Dir = <doltDataDir>, and dolt's --prof-path is resolved relative
+// to that cwd via os.Stat — passing a relative path like
+// ".beads/dolt-pprof" would be looked up as ".beads/dolt/.beads/dolt-pprof"
+// and dolt would panic with "profile path does not exist". Absolute paths
+// are immune to that cwd shift. If filepath.Abs fails for some reason,
+// fall back to the joined path (best-effort; the panic case will surface
+// loudly at server start).
+//
+// The caller is responsible for creating the directory (Start does this
+// before exec because dolt --prof-path panics on a missing path even
+// with an absolute argument).
+func DebugProfileDir(beadsDir string) string {
+	p := filepath.Join(resolveServerDir(beadsDir), "dolt-pprof")
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
+// debugProfileFilename is the fixed filename pkg/profile writes for
+// each profile mode. We currently only use cpu profiling; if that
+// changes, extend this map.
+const debugProfileFilename = "cpu.pprof"
+
+// rotateDebugProfile renames cpu.pprof → cpu-<RFC3339>.pprof if it
+// exists, so successive server runs do not overwrite each other's
+// profiles. Called from Stop after the server has exited (when
+// pkg/profile's deferred .Stop() has flushed the file to disk).
+//
+// Best-effort: failures are logged but do not block stop, since the
+// rotation is a convenience and a missing file is the common case
+// (server crashed under SIGKILL before flush).
+func rotateDebugProfile(beadsDir string) {
+	profDir := DebugProfileDir(beadsDir)
+	src := filepath.Join(profDir, debugProfileFilename)
+	info, err := os.Stat(src)
+	if err != nil || info.Size() == 0 {
+		// No profile to rotate (server killed before flush, or never started in debug).
+		return
+	}
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	dst := filepath.Join(profDir, fmt.Sprintf("cpu-%s.pprof", ts))
+	if err := os.Rename(src, dst); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not rotate %s → %s: %v\n", src, dst, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Debug: cpu profile rotated to %s\n", dst)
+}
+
 // IsAutoStartDisabled returns true if the dolt server should NOT be
 // auto-started or managed by bd. When true, KillStaleServers and
 // auto-start are suppressed — the server is externally managed (e.g.,
@@ -633,20 +708,39 @@ func EnsureRunningDetailed(beadsDir string) (port int, startedByUs bool, err err
 // trace, debug, info, warning, error, fatal.
 const doltServerLogLevel = "warning"
 
-// buildDoltServerArgs returns the argv passed to `dolt sql-server`
-// (excluding argv[0]/the binary itself). It is factored out of Start so it
-// can be asserted on in unit tests without spawning a real server.
+// buildDoltServerArgs returns the argv passed to `dolt` (excluding argv[0]/
+// the binary itself). It is factored out of Start so it can be asserted on
+// in unit tests without spawning a real server.
 //
 // The `--loglevel` flag MUST be included here — see doltServerLogLevel for
 // the rationale. If you remove or reorder these args, update the tests in
 // doltserver_test.go accordingly.
-func buildDoltServerArgs(host string, port int) []string {
-	return []string{
+//
+// When debug is true, the argv begins with `--prof cpu --prof-path <profDir>`.
+// These top-level dolt flags MUST appear before the `sql-server` subcommand:
+// dolt's argv loop stops scanning debug flags on the first unknown token
+// (see ~/cursor_src/dolt/go/cmd/dolt/dolt.go runMain). The caller must
+// ensure profDir already exists — dolt panics if it does not.
+//
+// Debug mode also raises --loglevel from the default warning to debug;
+// the connection-log spam concern that motivated the warning floor is
+// the price of opting into debug.
+func buildDoltServerArgs(host string, port int, debug bool, profDir string) []string {
+	var args []string
+	if debug {
+		args = append(args, "--prof", "cpu", "--prof-path", profDir)
+	}
+	args = append(args,
 		"sql-server",
 		"-H", host,
 		"-P", strconv.Itoa(port),
-		"--loglevel=" + doltServerLogLevel,
+	)
+	if debug {
+		args = append(args, "--loglevel=debug")
+	} else {
+		args = append(args, "--loglevel="+doltServerLogLevel)
 	}
+	return args
 }
 
 // Start explicitly starts a dolt sql-server for the project.
@@ -709,6 +803,17 @@ func Start(beadsDir string) (*State, error) {
 	// Ensure dolt identity is configured
 	if err := ensureDoltIdentity(); err != nil {
 		return nil, fmt.Errorf("configuring dolt identity: %w", err)
+	}
+
+	// Debug mode: create the pprof output dir before exec, since dolt's
+	// --prof-path panics on a missing directory (see dolt/dolt.go runMain).
+	debug := IsDebugMode()
+	var profDir string
+	if debug {
+		profDir = DebugProfileDir(beadsDir)
+		if err := os.MkdirAll(profDir, config.BeadsDirPerm); err != nil {
+			return nil, fmt.Errorf("creating pprof directory %s: %w", profDir, err)
+		}
 	}
 
 	// Launch dolt sql-server, retrying once after an automatic corrupt-
@@ -777,7 +882,7 @@ startupLoop:
 				actualPort = p
 			}
 
-			cmd := exec.Command(doltBin, buildDoltServerArgs(cfg.Host, actualPort)...) //nolint:gosec // doltBin is resolved from PATH, not user input
+			cmd := exec.Command(doltBin, buildDoltServerArgs(cfg.Host, actualPort, debug, profDir)...) //nolint:gosec // doltBin is resolved from PATH, not user input
 			cmd.Dir = doltDir
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
@@ -1033,6 +1138,15 @@ func StopWithForce(beadsDir string, force bool) error {
 	if err := gracefulStop(state.PID, 5*time.Second); err != nil {
 		return errors.Join(err, cleanupStateFiles(beadsDir))
 	}
+
+	// In debug mode, rotate cpu.pprof → cpu-<timestamp>.pprof so the next
+	// server start does not overwrite this run's profile. Only meaningful
+	// after a graceful (SIGTERM) exit — SIGKILL skips pkg/profile's
+	// deferred flush, leaving nothing to rotate. Best-effort.
+	if IsDebugMode() {
+		rotateDebugProfile(beadsDir)
+	}
+
 	return cleanupStateFiles(beadsDir)
 }
 

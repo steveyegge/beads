@@ -59,6 +59,9 @@ dolt-server.lock
 dolt-server.port
 dolt-server.activity
 
+# Debug-mode pprof artifacts (written when dolt.debug: true in config.yaml)
+dolt-pprof/
+
 # Corrupt backup directories (created by bd doctor --fix recovery)
 *.corrupt.backup/
 

@@ -544,6 +544,24 @@ func TestValidateYamlConfigValue_SharedServer(t *testing.T) {
 	}
 }
 
+func TestValidateYamlConfigValue_DoltDebug(t *testing.T) {
+	if err := validateYamlConfigValue("dolt.debug", "true"); err != nil {
+		t.Errorf("expected 'true' to be valid: %v", err)
+	}
+	if err := validateYamlConfigValue("dolt.debug", "false"); err != nil {
+		t.Errorf("expected 'false' to be valid: %v", err)
+	}
+	if err := validateYamlConfigValue("dolt.debug", "TRUE"); err != nil {
+		t.Errorf("expected 'TRUE' to be valid (case-insensitive): %v", err)
+	}
+	if err := validateYamlConfigValue("dolt.debug", "maybe"); err == nil {
+		t.Error("expected 'maybe' to be invalid")
+	}
+	if err := validateYamlConfigValue("dolt.debug", "1"); err == nil {
+		t.Error("expected '1' to be invalid (not a boolean string)")
+	}
+}
+
 func TestIsSecretKey(t *testing.T) {
 	tests := []struct {
 		key      string

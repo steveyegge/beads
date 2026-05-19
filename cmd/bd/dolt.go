@@ -436,6 +436,11 @@ required. Use this command for explicit control or diagnostics.`,
 		if doltserver.IsSharedServerMode() {
 			fmt.Println("  Mode: shared server")
 		}
+		if doltserver.IsDebugMode() {
+			fmt.Println("  Debug: on (loglevel=debug, --prof cpu)")
+			fmt.Printf("  Profile dir: %s\n", doltserver.DebugProfileDir(beadsDir))
+			fmt.Println("  Note: cpu.pprof is written when the server exits cleanly (bd dolt stop).")
+		}
 	},
 }
 
@@ -548,6 +553,10 @@ func renderLocalDoltStatus(state *doltserver.State, serverDir string) {
 	fmt.Printf("  Logs: %s\n", doltserver.LogPath(serverDir))
 	if doltserver.IsSharedServerMode() {
 		fmt.Println("  Mode: shared server")
+	}
+	if doltserver.IsDebugMode() {
+		fmt.Println("  Debug: on (loglevel=debug, --prof cpu)")
+		fmt.Printf("  Profile dir: %s\n", doltserver.DebugProfileDir(serverDir))
 	}
 }
 
