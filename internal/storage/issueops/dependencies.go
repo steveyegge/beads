@@ -270,91 +270,85 @@ func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []
 }
 
 // Dependency target rewrite contract:
-//   - Persistent issue target renames rewrite both dependency source tables
-//     (`dependencies` and `wisp_dependencies`) with insert/delete. Dolt can
-//     cascade the underlying target FK column without refreshing the stored
-//     generated `depends_on_id` primary-key value, so the replacement row must
-//     be reinserted to derive the new key and duplicate-key collisions must
-//     roll back the caller's rename transaction.
-//   - Wisp target renames use the same insert/delete repair on both dependency
-//     source tables because depends_on_wisp_id participates in the same stored
-//     generated depends_on_id primary-key value.
+//   - Persistent issue renames are covered by FK ON UPDATE CASCADE
+//     (fk_dep_issue / fk_dep_issue_target / fk_wisp_dep_issue_target). The
+//     surrogate `id` PK on dependencies/wisp_dependencies is independent of any
+//     target column, so cascade is sufficient and UK collisions (uk_dep_*_target)
+//     naturally fail the caller's transaction.
+//   - Wisp renames cascade automatically on wisp_dependencies (fk_wisp_dep_issue
+//     / fk_wisp_dep_wisp_target). The `dependencies` table has no FK to wisps
+//     (wisps are dolt_ignored), so depends_on_wisp_id there needs an explicit
+//     UPDATE.
 func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
-	if err := moveWispDependencyTargets(ctx, tx, "dependencies", oldID, newID); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE dependencies SET depends_on_wisp_id = ? WHERE depends_on_wisp_id = ?",
+		newID, oldID); err != nil {
 		return fmt.Errorf("update wisp %s -> %s in dependencies: %w", oldID, newID, err)
 	}
-	if err := moveWispDependencyTargets(ctx, tx, "wisp_dependencies", oldID, newID); err != nil {
-		return fmt.Errorf("update wisp %s -> %s in wisp_dependencies: %w", oldID, newID, err)
+	// wisp_dependencies.depends_on_wisp_id cascades via fk_wisp_dep_wisp_target.
+	// Reject cross-typed-column target collisions (same source already has the
+	// new ID in depends_on_issue_id / depends_on_external) that the per-column
+	// UK constraints don't catch.
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_wisp_id", newID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// UpdateIssueIDInDependencyTargetsInTx rewrites dependency target columns that
-// point at a renamed persistent issue.
-func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
-	if err := moveIssueDependencyTargets(ctx, tx, "dependencies", oldID, newID); err != nil {
-		return fmt.Errorf("update issue %s -> %s in dependencies: %w", oldID, newID, err)
-	}
-	if err := moveIssueDependencyTargets(ctx, tx, "wisp_dependencies", oldID, newID); err != nil {
-		return fmt.Errorf("update issue %s -> %s in wisp_dependencies: %w", oldID, newID, err)
-	}
-	return nil
-}
-
-//nolint:gosec // G201: table is one of the hardcoded dependency table names.
-func moveIssueDependencyTargets(ctx context.Context, tx *sql.Tx, table string, oldID, newID string) error {
-	// Only real persistent-issue targets are rewritten. Wisp and external targets
-	// may have the same computed depends_on_id string, but they are not issue
-	// rename targets. Dolt cascades depends_on_issue_id but can leave the stored
-	// generated depends_on_id primary-key value on the old ID, so insert/delete is
-	// intentional; INSERT without IGNORE lets duplicate-key collisions fail and
-	// roll back.
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (
-			issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external,
-			type, created_at, created_by, metadata, thread_id
-		)
-		SELECT issue_id, ?, depends_on_wisp_id, depends_on_external,
-			type, created_at, created_by, metadata, thread_id
-		FROM %s
-		WHERE depends_on_issue_id = ?
-			OR (depends_on_issue_id = ? AND depends_on_id = ?)
-	`, table, table), newID, oldID, newID, oldID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-		"DELETE FROM %s WHERE depends_on_issue_id = ? OR (depends_on_issue_id = ? AND depends_on_id = ?)",
-		table), oldID, newID, oldID); err != nil {
-		return err
+// UpdateIssueIDInDependencyTargetsInTx is called after the issues PK is updated
+// from oldID to newID. FK ON UPDATE CASCADE has already propagated
+// depends_on_issue_id from oldID to newID across dependencies and
+// wisp_dependencies, so no rewrite is needed.
+//
+// The remaining job is to reject cross-typed-column target collisions that the
+// per-column UK constraints don't catch on their own: e.g. a source already had
+// a row with depends_on_external = newID and now also has depends_on_issue_id
+// = newID after the cascade. The old polymorphic depends_on_id PK detected this
+// as a duplicate key; with the column gone we re-detect via an explicit query
+// so callers can abort the transaction.
+func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, _, newID string) error {
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_issue_id", newID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-//nolint:gosec // G201: table is one of the hardcoded dependency table names.
-func moveWispDependencyTargets(ctx context.Context, tx *sql.Tx, table string, oldID, newID string) error {
-	// Dolt cascades depends_on_wisp_id but can leave the stored generated
-	// depends_on_id primary-key value on the old ID, so insert/delete is
-	// intentional; INSERT without IGNORE lets duplicate-key collisions fail and
-	// roll back.
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (
-			issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external,
-			type, created_at, created_by, metadata, thread_id
-		)
-		SELECT issue_id, depends_on_issue_id, ?, depends_on_external,
-			type, created_at, created_by, metadata, thread_id
-		FROM %s
-		WHERE depends_on_wisp_id = ?
-			OR (depends_on_wisp_id = ? AND depends_on_id = ?)
-	`, table, table), newID, oldID, newID, oldID); err != nil {
-		return err
+//nolint:gosec // G201: table and typedCol are hardcoded constants.
+func checkRenameTargetCollision(ctx context.Context, tx *sql.Tx, table, typedCol, newID string) error {
+	var otherCols []string
+	switch typedCol {
+	case "depends_on_issue_id":
+		otherCols = []string{"depends_on_wisp_id", "depends_on_external"}
+	case "depends_on_wisp_id":
+		otherCols = []string{"depends_on_issue_id", "depends_on_external"}
+	default:
+		return fmt.Errorf("checkRenameTargetCollision: unsupported typed column %q", typedCol)
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-		"DELETE FROM %s WHERE depends_on_wisp_id = ? OR (depends_on_wisp_id = ? AND depends_on_id = ?)",
-		table), oldID, newID, oldID); err != nil {
-		return err
+
+	query := fmt.Sprintf(`
+		SELECT 1 FROM %s a
+		JOIN %s b ON a.issue_id = b.issue_id
+		WHERE a.%s = ?
+		  AND (b.%s = ? OR b.%s = ?)
+		LIMIT 1
+	`, table, table, typedCol, otherCols[0], otherCols[1])
+
+	var found int
+	err := tx.QueryRowContext(ctx, query, newID, newID, newID).Scan(&found)
+	if err == sql.ErrNoRows {
+		return nil
 	}
-	return nil
+	if err != nil {
+		if isTableNotExistError(err) {
+			return nil
+		}
+		return fmt.Errorf("check rename collision in %s: %w", table, err)
+	}
+	return fmt.Errorf("rename to %s collides with existing dependency target in %s", newID, table)
 }
 
 // RemoveDependencyInTx removes a dependency between two issues within an
