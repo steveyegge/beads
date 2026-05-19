@@ -685,6 +685,57 @@ func TestGetReadyWork_LimitIncludeEphemeralWispBlocker(t *testing.T) {
 	}
 }
 
+func TestGetReadyWork_LimitIncludeEphemeralHonorsOldestSortAcrossWispPages(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	now := time.Now().UTC()
+	lowPriorityOld := &types.Issue{
+		ID:        "rw-eph-oldest-low-priority",
+		Title:     "Oldest low priority wisp",
+		Status:    types.StatusOpen,
+		Priority:  4,
+		IssueType: types.TypeTask,
+		CreatedAt: now.Add(-72 * time.Hour),
+		Ephemeral: true,
+	}
+	if err := store.CreateIssue(ctx, lowPriorityOld, "tester"); err != nil {
+		t.Fatalf("create old wisp: %v", err)
+	}
+
+	for i := 0; i < 101; i++ {
+		iss := &types.Issue{
+			ID:        fmt.Sprintf("rw-eph-priority-noise-%03d", i),
+			Title:     fmt.Sprintf("Priority noise %03d", i),
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			CreatedAt: now.Add(time.Duration(i) * time.Minute),
+			Ephemeral: true,
+		}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create priority noise %03d: %v", i, err)
+		}
+	}
+
+	work, err := store.GetReadyWork(ctx, types.WorkFilter{
+		Limit:            1,
+		IncludeEphemeral: true,
+		SortPolicy:       types.SortPolicyOldest,
+	})
+	if err != nil {
+		t.Fatalf("limited oldest ready work with wisps: %v", err)
+	}
+	ids := issueIDs(work)
+	want := []string{lowPriorityOld.ID}
+	if fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Fatalf("limited oldest ready work = %v, want %v", ids, want)
+	}
+}
+
 func TestGetReadyWork_IncludeEphemeralPropagatesWispSearchError(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
