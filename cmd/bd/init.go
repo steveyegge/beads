@@ -219,6 +219,30 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			cmdCtx.ProxiedServerMode = initProxiedServer
 		}
 
+		if initProxiedServer {
+			runInitProxiedServer(cmd, rootCtx, initProxiedServerInput{
+				prefix:            prefix,
+				database:          database,
+				roleFlag:          roleFlag,
+				initRemote:        initRemote,
+				initRemoteChanged: initRemoteChanged,
+				destroyToken:      destroyToken,
+				serverConfigPath:  serverConfigPath,
+				serverLogPath:     serverLogPath,
+				serverRootPath:    serverRootPath,
+				quiet:             quiet,
+				stealth:           stealth,
+				skipHooks:         skipHooks,
+				skipAgents:        skipAgents,
+				reinitLocal:       reinitLocal,
+				contributor:       contributor,
+				team:              team,
+				fromJSONL:         fromJSONL,
+				nonInteractive:    nonInteractive,
+			})
+			return
+		}
+
 		// Propagate --shared-server flag to env so that IsSharedServerMode(),
 		// ResolveDoltDir(), and DefaultConfig() all see shared mode immediately
 		// (before config.yaml exists). Safe: init runs once and exits.
