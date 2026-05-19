@@ -477,7 +477,10 @@ func TestGetReadyWork_LimitCandidateGraphSemantics(t *testing.T) {
 	defer cancel()
 
 	issues := []*types.Issue{
-		{ID: "rw-graph-parent-blocker", Title: "Parent blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeGate},
+		// This blocker is intentionally a blocked epic instead of the older open
+		// gate fixture: current dependency validation rejects gate->epic block
+		// edges, and the test only needs a non-ready blocker for the parent chain.
+		{ID: "rw-graph-parent-blocker", Title: "Parent blocker", Status: types.StatusBlocked, Priority: 1, IssueType: types.TypeEpic},
 		{ID: "rw-graph-parent", Title: "Blocked parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic},
 		{ID: "rw-graph-parent-child", Title: "Child of blocked parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
 		{ID: "rw-graph-all-waiter", Title: "All waiter", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
@@ -719,7 +722,7 @@ func TestGetReadyWork_DottedHasMetadataKey(t *testing.T) {
 	defer cancel()
 
 	matching := &types.Issue{
-		ID:        "rw-meta-dotted",
+		ID:        "test-rw-meta-dotted",
 		Title:     "Dotted metadata",
 		Status:    types.StatusOpen,
 		Priority:  1,
@@ -727,7 +730,7 @@ func TestGetReadyWork_DottedHasMetadataKey(t *testing.T) {
 		Metadata:  []byte(`{"gc.routed_to":"beads/workflows.codex-max"}`),
 	}
 	nonMatching := &types.Issue{
-		ID:        "rw-meta-nested",
+		ID:        "test-rw-meta-nested",
 		Title:     "Nested metadata",
 		Status:    types.StatusOpen,
 		Priority:  1,
@@ -760,9 +763,9 @@ func TestGetReadyWork_TypePriorityLimitUsesDoltSafeTypePredicate(t *testing.T) {
 
 	priority := 1
 	issues := []*types.Issue{
-		{ID: "rw-type-task", Title: "Task", Status: types.StatusOpen, Priority: priority, IssueType: types.TypeTask},
-		{ID: "rw-type-bug-1", Title: "Bug 1", Status: types.StatusOpen, Priority: priority, IssueType: types.TypeBug},
-		{ID: "rw-type-bug-2", Title: "Bug 2", Status: types.StatusOpen, Priority: priority, IssueType: types.TypeBug},
+		{ID: "test-rw-type-task", Title: "Task", Status: types.StatusOpen, Priority: priority, IssueType: types.TypeTask},
+		{ID: "test-rw-type-bug-1", Title: "Bug 1", Status: types.StatusOpen, Priority: priority, IssueType: types.TypeBug},
+		{ID: "test-rw-type-bug-2", Title: "Bug 2", Status: types.StatusOpen, Priority: priority, IssueType: types.TypeBug},
 	}
 	if err := store.CreateIssues(ctx, issues, "tester"); err != nil {
 		t.Fatalf("create typed issues: %v", err)
@@ -779,7 +782,7 @@ func TestGetReadyWork_TypePriorityLimitUsesDoltSafeTypePredicate(t *testing.T) {
 		t.Fatalf("ready work with type+status+priority+limit: %v", err)
 	}
 	ids := issueIDs(work)
-	want := []string{"rw-type-bug-1", "rw-type-bug-2"}
+	want := []string{"test-rw-type-bug-1", "test-rw-type-bug-2"}
 	if fmt.Sprint(ids) != fmt.Sprint(want) {
 		t.Fatalf("typed ready work = %v, want %v", ids, want)
 	}
@@ -792,8 +795,8 @@ func TestGetReadyWork_UnboundedPopulatesBlockedIDsCache(t *testing.T) {
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	blocker := &types.Issue{ID: "rw-cache-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	blocked := &types.Issue{ID: "rw-cache-blocked", Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocker := &types.Issue{ID: "test-rw-cache-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked := &types.Issue{ID: "test-rw-cache-blocked", Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
 	if err := store.CreateIssues(ctx, []*types.Issue{blocker, blocked}, "tester"); err != nil {
 		t.Fatalf("create cache issues: %v", err)
 	}
@@ -830,8 +833,8 @@ func TestClaimReadyIssue_UnboundedPopulatesAndReusesBlockedIDsCache(t *testing.T
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	blocker := &types.Issue{ID: "claim-cache-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	blocked := &types.Issue{ID: "claim-cache-blocked", Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug}
+	blocker := &types.Issue{ID: "test-claim-cache-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked := &types.Issue{ID: "test-claim-cache-blocked", Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug}
 	if err := store.CreateIssues(ctx, []*types.Issue{blocker, blocked}, "tester"); err != nil {
 		t.Fatalf("create claim cache issues: %v", err)
 	}

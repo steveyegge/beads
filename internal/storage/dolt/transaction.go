@@ -88,16 +88,23 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 	}
 	defer conn.Close()
 
+	var currentBranch string
+	if err := conn.QueryRowContext(ctx, "SELECT active_branch()").Scan(&currentBranch); err != nil {
+		return fmt.Errorf("failed to read active branch: %w", err)
+	}
+
 	regularTx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin regular tx: %w", err)
 	}
 
-	ignoredTx, err := s.db.BeginTx(ctx, nil)
+	ignoredDB, ignoredConn, ignoredTx, err := s.beginIgnoredTxOnBranch(ctx, currentBranch)
 	if err != nil {
 		_ = regularTx.Rollback()
-		return fmt.Errorf("failed to begin ignored tx: %w", err)
+		return err
 	}
+	defer ignoredDB.Close()
+	defer ignoredConn.Close()
 
 	tx := &doltTransaction{regularTx: regularTx, ignoredTx: ignoredTx, store: s}
 
@@ -129,6 +136,40 @@ func (s *DoltStore) runDoltTransaction(ctx context.Context, commitMsg string, fn
 		return fmt.Errorf("sql commit (ignored, regular already committed): %w", err)
 	}
 	return nil
+}
+
+func (s *DoltStore) beginIgnoredTxOnBranch(ctx context.Context, branch string) (*sql.DB, *sql.Conn, *sql.Tx, error) {
+	// Use an independent single-connection pool for ignored tables. Reusing the
+	// main pool can deadlock when MaxOpenConns=1, and each Dolt SQL session has
+	// its own active branch. This intentionally pays one extra connection setup
+	// for mixed regular/ignored writes so the ignored transaction can be checked
+	// out to the regular transaction's branch before writes.
+	db, err := sql.Open("mysql", s.connStr)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to open ignored tx connection: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, nil, fmt.Errorf("failed to acquire ignored tx connection: %w", err)
+	}
+
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", branch); err != nil {
+		_ = conn.Close()
+		_ = db.Close()
+		return nil, nil, nil, fmt.Errorf("failed to checkout ignored tx branch %s: %w", branch, err)
+	}
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		_ = conn.Close()
+		_ = db.Close()
+		return nil, nil, nil, fmt.Errorf("failed to begin ignored tx: %w", err)
+	}
+
+	return db, conn, tx, nil
 }
 
 // isDoltNothingToCommit returns true if the error indicates there were no

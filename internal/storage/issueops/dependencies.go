@@ -262,11 +262,90 @@ func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []
 	return nil
 }
 
+// Dependency target rewrite contract:
+//   - Persistent issue target renames rewrite both dependency source tables
+//     (`dependencies` and `wisp_dependencies`) with insert/delete. Dolt can
+//     cascade the underlying target FK column without refreshing the stored
+//     generated `depends_on_id` primary-key value, so the replacement row must
+//     be reinserted to derive the new key and duplicate-key collisions must
+//     roll back the caller's rename transaction.
+//   - Wisp target renames use the same insert/delete repair on both dependency
+//     source tables because depends_on_wisp_id participates in the same stored
+//     generated depends_on_id primary-key value.
 func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE dependencies SET depends_on_wisp_id = ? WHERE depends_on_wisp_id = ?",
-		newID, oldID); err != nil {
+	if err := moveWispDependencyTargets(ctx, tx, "dependencies", oldID, newID); err != nil {
 		return fmt.Errorf("update wisp %s -> %s in dependencies: %w", oldID, newID, err)
+	}
+	if err := moveWispDependencyTargets(ctx, tx, "wisp_dependencies", oldID, newID); err != nil {
+		return fmt.Errorf("update wisp %s -> %s in wisp_dependencies: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+// UpdateIssueIDInDependencyTargetsInTx rewrites dependency target columns that
+// point at a renamed persistent issue.
+func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+	if err := moveIssueDependencyTargets(ctx, tx, "dependencies", oldID, newID); err != nil {
+		return fmt.Errorf("update issue %s -> %s in dependencies: %w", oldID, newID, err)
+	}
+	if err := moveIssueDependencyTargets(ctx, tx, "wisp_dependencies", oldID, newID); err != nil {
+		return fmt.Errorf("update issue %s -> %s in wisp_dependencies: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+//nolint:gosec // G201: table is one of the hardcoded dependency table names.
+func moveIssueDependencyTargets(ctx context.Context, tx *sql.Tx, table string, oldID, newID string) error {
+	// Only real persistent-issue targets are rewritten. Wisp and external targets
+	// may have the same computed depends_on_id string, but they are not issue
+	// rename targets. Dolt cascades depends_on_issue_id but can leave the stored
+	// generated depends_on_id primary-key value on the old ID, so insert/delete is
+	// intentional; INSERT without IGNORE lets duplicate-key collisions fail and
+	// roll back.
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (
+			issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		)
+		SELECT issue_id, ?, depends_on_wisp_id, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		FROM %s
+		WHERE depends_on_issue_id = ?
+			OR (depends_on_issue_id = ? AND depends_on_id = ?)
+	`, table, table), newID, oldID, newID, oldID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+		"DELETE FROM %s WHERE depends_on_issue_id = ? OR (depends_on_issue_id = ? AND depends_on_id = ?)",
+		table), oldID, newID, oldID); err != nil {
+		return err
+	}
+	return nil
+}
+
+//nolint:gosec // G201: table is one of the hardcoded dependency table names.
+func moveWispDependencyTargets(ctx context.Context, tx *sql.Tx, table string, oldID, newID string) error {
+	// Dolt cascades depends_on_wisp_id but can leave the stored generated
+	// depends_on_id primary-key value on the old ID, so insert/delete is
+	// intentional; INSERT without IGNORE lets duplicate-key collisions fail and
+	// roll back.
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (
+			issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		)
+		SELECT issue_id, depends_on_issue_id, ?, depends_on_external,
+			type, created_at, created_by, metadata, thread_id
+		FROM %s
+		WHERE depends_on_wisp_id = ?
+			OR (depends_on_wisp_id = ? AND depends_on_id = ?)
+	`, table, table), newID, oldID, newID, oldID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+		"DELETE FROM %s WHERE depends_on_wisp_id = ? OR (depends_on_wisp_id = ? AND depends_on_id = ?)",
+		table), oldID, newID, oldID); err != nil {
+		return err
 	}
 	return nil
 }
