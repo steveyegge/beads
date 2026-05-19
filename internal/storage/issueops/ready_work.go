@@ -509,14 +509,18 @@ func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string
 	var childIDs []string
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		for _, issueTable := range []string{"issues", "wisps"} {
+			targetCol := "depends_on_issue_id"
+			if issueTable == "wisps" {
+				targetCol = "depends_on_wisp_id"
+			}
 			rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 				SELECT dep.issue_id
 				FROM %s dep
-				JOIN %s parent ON parent.id = dep.depends_on_id
+				JOIN %s parent ON parent.id = dep.%s
 				WHERE dep.type = 'parent-child'
 				  AND parent.defer_until IS NOT NULL
 				  AND parent.defer_until > UTC_TIMESTAMP()
-			`, depTable, issueTable))
+			`, depTable, issueTable, targetCol))
 			if err != nil {
 				if depTable == "wisp_dependencies" && isTableNotExistError(err) {
 					break
