@@ -1388,7 +1388,7 @@ func exportSubprocessDir(beadsDir string) string {
 	return filepath.Dir(beadsDir)
 }
 
-// importJSONLForSync imports .beads/issues.jsonl into Dolt after a git
+// importJSONLForSync imports the configured import.path JSONL into Dolt after a git
 // pull/merge/branch-checkout only for legacy projects with no Dolt remote.
 // When sync.remote is configured, Dolt remains the source of truth and JSONL
 // import is skipped because upsert-only import cannot reconcile stale exports.
@@ -1412,11 +1412,7 @@ func importJSONLForSync(reason string) {
 		return
 	}
 
-	exportPath := config.GetString("export.path")
-	if exportPath == "" {
-		exportPath = "issues.jsonl"
-	}
-	fullPath := filepath.Join(beadsDir, exportPath)
+	fullPath := configuredImportJSONLPath(beadsDir)
 
 	if info, err := os.Stat(fullPath); err != nil || info.Size() == 0 {
 		return

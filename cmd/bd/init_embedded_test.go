@@ -876,6 +876,46 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
+	t.Run("from_jsonl_uses_import_path", func(t *testing.T) {
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+		beadsDir := filepath.Join(dir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("import:\n  path: beads.jsonl\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		issue := types.Issue{
+			ID:        "jlcfg-abc123",
+			Title:     "Configured JSONL",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		line, _ := json.Marshal(issue)
+		if err := os.WriteFile(filepath.Join(beadsDir, "beads.jsonl"), append(line, '\n'), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "jlcfg", "--from-jsonl", "--quiet")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("--from-jsonl with import.path failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+
+		showCmd := exec.Command(bd, "show", "jlcfg-abc123", "--json")
+		showCmd.Dir = dir
+		showCmd.Env = bdEnv(dir)
+		if out, err := showCmd.CombinedOutput(); err != nil {
+			t.Fatalf("imported issue not found: %v\n%s", err, out)
+		}
+	})
+
 	t.Run("backend_dolt", func(t *testing.T) {
 		_, beadsDir, _ := bdInit(t, bd, "--prefix", "bdolt", "--backend", "dolt")
 		embeddedDir := filepath.Join(beadsDir, "embeddeddolt")

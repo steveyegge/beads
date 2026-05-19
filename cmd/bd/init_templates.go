@@ -73,6 +73,12 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 #   git-push: false    # Disable git push (export locally only)
 #   git-repo: ""       # Separate git repo for backups (default: project repo)
 
+# JSONL import/export filenames (relative to .beads/)
+# export:
+#   path: issues.jsonl
+# import:
+#   path: issues.jsonl
+
 # Integration settings (access with 'bd config get/set')
 # Non-secret keys (stored in the database):
 # - jira.url, jira.project
