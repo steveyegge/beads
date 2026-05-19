@@ -37,6 +37,8 @@ Auto-Export (config.yaml):
 
 Auto-Import (config.yaml):
   Reads .beads/issues.jsonl by default when a JSONL import path is implied.
+  Use a relative filename/path so the import stays within the project .beads/
+  directory and remains portable across machines.
 
   Keys:
     import.path       Input filename relative to .beads/ (default: issues.jsonl)
