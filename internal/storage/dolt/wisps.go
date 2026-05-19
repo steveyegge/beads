@@ -516,8 +516,6 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 		}
 	}
 
-	// Classify the target so the pair lookup and INSERT both hit the same
-	// typed column.
 	kind := issueops.ClassifyDepTarget(ctx, tx, dep, isCrossPrefix)
 	targetCol := kind.Column()
 

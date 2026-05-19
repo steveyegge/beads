@@ -166,9 +166,6 @@ func GetDependencyCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string)
 			return nil, fmt.Errorf("get dependency counts: blocker rows: %w", err)
 		}
 
-		// Dependents: issues blocked by the given IDs.
-		// IDs can be of any target kind (perm/wisp/external), so resolve via
-		// COALESCE; the table is `dependencies` only, matching prior behavior.
 		//nolint:gosec // G201: inClause contains only ? placeholders
 		blockingRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 			SELECT %s AS depends_on_id, COUNT(*) as cnt
@@ -245,11 +242,6 @@ func GetBlockingInfoForIssuesInTx(ctx context.Context, tx *sql.Tx, issueIDs []st
 
 // queryBlockingInfo queries blocking info from a specific dep table + issue table pair.
 // Uses batched IN clauses (queryBatchSize) to avoid query-planner spikes.
-//
-// targetCol names the typed column that resolves a row's target id for the
-// given issueTable (depends_on_issue_id for issues, depends_on_wisp_id for
-// wisps). External rows can't be blockers (no row in any local table) so they
-// are skipped by joining only on the typed column.
 func queryBlockingInfo(
 	ctx context.Context, tx *sql.Tx,
 	issueIDs []string,
@@ -274,10 +266,6 @@ func queryBlockingInfo(
 		inClause := strings.Join(placeholders, ",")
 
 		// Query 1: "blocked by" — deps where issue_id is in our set.
-		// Project COALESCE so cross-table targets (wisp/external blockers in a
-		// perm row, etc.) still return their id; status JOIN narrows to the
-		// typed column for index use, but rows that don't join still surface
-		// with the blocker id and an empty status, preserving prior semantics.
 		//nolint:gosec // G201: depTable, issueTable, targetCol are caller-controlled constants
 		blockedByQuery := fmt.Sprintf(`
 			SELECT d.issue_id, %s AS depends_on_id, d.type, COALESCE(i.status, '') AS blocker_status

@@ -171,8 +171,6 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		}
 	}
 
-	// Classify the target so the pair lookup and INSERT both hit the same
-	// typed column.
 	var kind DepTargetKind
 	if opts.TargetKind != nil {
 		kind = *opts.TargetKind
@@ -362,12 +360,6 @@ func moveWispDependencyTargets(ctx context.Context, tx *sql.Tx, table string, ol
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
 // source issue is an active wisp.
-//
-// The target is matched via DepTargetExpr rather than a typed column: we
-// can't reliably classify the target at remove time (it may have been
-// promoted/deleted since the row was written), and CHECK guarantees the row
-// has exactly one typed column set so COALESCE matches unambiguously.
-//
 //nolint:gosec // G201: depTable from WispTableRouting (hardcoded constants)
 func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID string) error {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)

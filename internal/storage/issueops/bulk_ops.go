@@ -293,8 +293,6 @@ func FindWispDependentsRecursiveInTx(ctx context.Context, tx *sql.Tx, ids []stri
 		toProcess = toProcess[end:]
 
 		placeholders, args := buildSQLInClause(batch)
-		// IDs from recursive traversal may target any kind (issue/wisp/external),
-		// so resolve via DepTargetExpr rather than a typed column.
 		rows, err := tx.QueryContext(ctx,
 			fmt.Sprintf(`SELECT issue_id FROM wisp_dependencies WHERE %s IN (%s)`, DepTargetExpr, placeholders),
 			args...)
