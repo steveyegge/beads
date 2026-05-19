@@ -379,9 +379,6 @@ Before migrating, take a safety export of your current data:
 bd export -o pre-migrate.jsonl
 ```
 
-The `--to=postgres` path is implemented in `handleCrossBackendMigrate`
-(`cmd/bd/migrate.go:287`).
-
 **What carries to Postgres:**
 
 - Issues and wisps
