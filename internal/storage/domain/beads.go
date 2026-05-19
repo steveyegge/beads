@@ -4,25 +4,33 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 type BeadsDirFSRepository interface {
-	CreateBeadsDir(ctx context.Context, beadsDir string) error
-	BeadsDirExists(ctx context.Context, beadsDir string) (bool, error)
-	WriteBeadsGitignore(ctx context.Context, beadsDir string) error
-	BeadsGitignoreExists(ctx context.Context, beadsDir string) (bool, error)
-	WriteProjectGitignore(ctx context.Context, repoRoot string) error
-	ProjectGitignoreExists(ctx context.Context, repoRoot string) (bool, error)
-	WriteInteractionsLog(ctx context.Context, beadsDir string) error
-	WriteReadme(ctx context.Context, beadsDir string) error
-	WriteMetadataJSON(ctx context.Context, beadsDir string, content []byte) error
-	ReadMetadataJSON(ctx context.Context, beadsDir string) ([]byte, error)
-	WriteConfigYAML(ctx context.Context, beadsDir string, content []byte) error
-	ReadConfigYAML(ctx context.Context, beadsDir string) ([]byte, error)
+	ResolveBeadsDirPath(ctx context.Context) BeadsDirResolution
+	BeadsDirIsLocal(ctx context.Context) bool
+
+	CreateBeadsDir(ctx context.Context) error
+	BeadsDirExists(ctx context.Context) (bool, error)
+	WriteBeadsGitignore(ctx context.Context) error
+	BeadsGitignoreExists(ctx context.Context) (bool, error)
+	WriteProjectGitignore(ctx context.Context) error
+	ProjectGitignoreExists(ctx context.Context) (bool, error)
+	WriteInteractionsLog(ctx context.Context) error
+	WriteReadme(ctx context.Context) error
+	WriteMetadataJSON(ctx context.Context, content []byte) error
+	ReadMetadataJSON(ctx context.Context) ([]byte, error)
+	WriteConfigYAML(ctx context.Context, content []byte) error
+	ReadConfigYAML(ctx context.Context) ([]byte, error)
+	ReadBeadsConfig(ctx context.Context) (*configfile.Config, error)
 }
 
 type BeadsDirFSUseCase interface {
 	ResolveBeadsDir(ctx context.Context) BeadsDirResolution
+	ResolveProxiedInit(ctx context.Context, params ResolveProxiedInitParams) (ResolveProxiedInitResult, error)
 	InitializeBeadsDir(ctx context.Context, params InitializeBeadsDirParams) (InitializeBeadsDirResult, error)
 	SetupForkExclude(ctx context.Context, verbose bool) error
 	SetupStealthMode(ctx context.Context, verbose bool) error
@@ -38,11 +46,35 @@ type BeadsDirResolution struct {
 	HasExplicit bool
 }
 
+type ResolveProxiedInitParams struct {
+	Prefix string
+	DBFlag string
+}
+
+type ResolveProxiedInitResult struct {
+	BeadsDir    string
+	HasExplicit bool
+	DBName      string
+	ProjectID   string
+}
+
+// BeadsDirTemplates carries the text bodies the repository writes during init.
+// Passing them in lets the CLI keep canonical copies (e.g. doctor.GitignoreTemplate)
+// rather than maintaining duplicates inside the storage layer.
+type BeadsDirTemplates struct {
+	BeadsGitignore           string
+	ProjectGitignoreHeader   string
+	ProjectGitignorePatterns []string
+	Readme                   string
+}
+
 type InitializeBeadsDirParams struct {
-	BeadsDir         string
-	RepoRoot         string
 	MetadataJSONBody []byte
 	ConfigYAMLBody   []byte
+
+	// WriteProjectGitignore, when true, appends Dolt/beads patterns to the
+	// project-root .gitignore (workDir/.gitignore).
+	WriteProjectGitignore bool
 
 	// SetNoCOW, when true, applies FS_NOCOW_FL to BeadsDir after creation.
 	// Best-effort: failures surface in InitializeBeadsDirResult.NoCOWErr,
@@ -80,7 +112,6 @@ type AgentsFileParams struct {
 // CLI-side helper implementations. Each adapter is optional at the type
 // level; methods that depend on a nil adapter return a configuration error.
 type BeadsDirFSAdapters struct {
-	ResolveBeadsDir       func() BeadsDirResolution
 	ApplyNoCOW            func(path string) error
 	WriteLocalVersion     func(path, version string) error
 	SetupForkExclude      func(verbose bool) error
@@ -104,52 +135,83 @@ type beadsDirFSUseCaseImpl struct {
 var _ BeadsDirFSUseCase = (*beadsDirFSUseCaseImpl)(nil)
 
 func (u *beadsDirFSUseCaseImpl) ResolveBeadsDir(ctx context.Context) BeadsDirResolution {
-	if u.adapters.ResolveBeadsDir == nil {
-		return BeadsDirResolution{}
+	return u.fsRepo.ResolveBeadsDirPath(ctx)
+}
+
+func (u *beadsDirFSUseCaseImpl) ResolveProxiedInit(ctx context.Context, params ResolveProxiedInitParams) (ResolveProxiedInitResult, error) {
+	resolution := u.fsRepo.ResolveBeadsDirPath(ctx)
+	result := ResolveProxiedInitResult{
+		BeadsDir:    resolution.BeadsDir,
+		HasExplicit: resolution.HasExplicit,
 	}
-	return u.adapters.ResolveBeadsDir()
+
+	cfg, err := u.fsRepo.ReadBeadsConfig(ctx)
+	if err != nil {
+		return ResolveProxiedInitResult{}, fmt.Errorf("ResolveProxiedInit: read config: %w", err)
+	}
+
+	result.DBName = resolveDoltDatabaseName(cfg, params.Prefix, params.DBFlag)
+	result.ProjectID = resolveProjectID(cfg)
+	return result, nil
+}
+
+func resolveDoltDatabaseName(cfg *configfile.Config, prefix, dbFlag string) string {
+	if dbFlag != "" {
+		return dbFlag
+	}
+	if cfg != nil && cfg.DoltDatabase != "" {
+		return cfg.DoltDatabase
+	}
+	if prefix != "" {
+		return strings.ReplaceAll(prefix, "-", "_")
+	}
+	return configfile.DefaultDoltDatabase
+}
+
+func resolveProjectID(cfg *configfile.Config) string {
+	if cfg != nil && cfg.ProjectID != "" {
+		return cfg.ProjectID
+	}
+	return configfile.GenerateProjectID()
 }
 
 func (u *beadsDirFSUseCaseImpl) InitializeBeadsDir(ctx context.Context, params InitializeBeadsDirParams) (InitializeBeadsDirResult, error) {
-	if params.BeadsDir == "" {
-		return InitializeBeadsDirResult{}, fmt.Errorf("InitializeBeadsDir: BeadsDir must not be empty")
-	}
-
-	if err := u.fsRepo.CreateBeadsDir(ctx, params.BeadsDir); err != nil {
+	if err := u.fsRepo.CreateBeadsDir(ctx); err != nil {
 		return InitializeBeadsDirResult{}, err
 	}
-	if err := u.fsRepo.WriteBeadsGitignore(ctx, params.BeadsDir); err != nil {
+	if err := u.fsRepo.WriteBeadsGitignore(ctx); err != nil {
 		return InitializeBeadsDirResult{}, err
 	}
 	if len(params.MetadataJSONBody) > 0 {
-		if err := u.fsRepo.WriteMetadataJSON(ctx, params.BeadsDir, params.MetadataJSONBody); err != nil {
+		if err := u.fsRepo.WriteMetadataJSON(ctx, params.MetadataJSONBody); err != nil {
 			return InitializeBeadsDirResult{}, err
 		}
 	}
 	if len(params.ConfigYAMLBody) > 0 {
-		if err := u.fsRepo.WriteConfigYAML(ctx, params.BeadsDir, params.ConfigYAMLBody); err != nil {
+		if err := u.fsRepo.WriteConfigYAML(ctx, params.ConfigYAMLBody); err != nil {
 			return InitializeBeadsDirResult{}, err
 		}
 	}
-	if err := u.fsRepo.WriteInteractionsLog(ctx, params.BeadsDir); err != nil {
+	if err := u.fsRepo.WriteInteractionsLog(ctx); err != nil {
 		return InitializeBeadsDirResult{}, err
 	}
-	if err := u.fsRepo.WriteReadme(ctx, params.BeadsDir); err != nil {
+	if err := u.fsRepo.WriteReadme(ctx); err != nil {
 		return InitializeBeadsDirResult{}, err
 	}
-	if params.RepoRoot != "" {
-		if err := u.fsRepo.WriteProjectGitignore(ctx, params.RepoRoot); err != nil {
+	if params.WriteProjectGitignore {
+		if err := u.fsRepo.WriteProjectGitignore(ctx); err != nil {
 			return InitializeBeadsDirResult{}, err
 		}
 	}
 
 	var result InitializeBeadsDirResult
 	if params.SetNoCOW && u.adapters.ApplyNoCOW != nil {
-		result.NoCOWErr = u.adapters.ApplyNoCOW(params.BeadsDir)
+		result.NoCOWErr = u.adapters.ApplyNoCOW(u.fsRepo.ResolveBeadsDirPath(ctx).BeadsDir)
 	}
 	if params.LocalVersion != "" && u.adapters.WriteLocalVersion != nil {
+		beadsDir := u.fsRepo.ResolveBeadsDirPath(ctx).BeadsDir
 		result.LocalVersionErr = u.adapters.WriteLocalVersion(
-			filepath.Join(params.BeadsDir, ".local_version"),
+			filepath.Join(beadsDir, ".local_version"),
 			params.LocalVersion,
 		)
 	}

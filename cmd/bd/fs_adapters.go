@@ -1,18 +1,24 @@
 package main
 
 import (
+	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/cmd/bd/setup"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/templates/agents"
 )
 
+func newBeadsDirTemplates() domain.BeadsDirTemplates {
+	return domain.BeadsDirTemplates{
+		BeadsGitignore:           doctor.GitignoreTemplate,
+		ProjectGitignoreHeader:   doctor.ProjectGitignoreHeader,
+		ProjectGitignorePatterns: doctor.ProjectGitignorePatterns,
+		Readme:                   BeadsReadmeTemplate,
+	}
+}
+
 func newFileSystemAdapters() domain.BeadsDirFSAdapters {
 	return domain.BeadsDirFSAdapters{
-		ResolveBeadsDir: func() domain.BeadsDirResolution {
-			beadsDir, hasExplicit := resolveBeadsDirForInit()
-			return domain.BeadsDirResolution{BeadsDir: beadsDir, HasExplicit: hasExplicit}
-		},
 		ApplyNoCOW:        applyNoCOW,
 		WriteLocalVersion: writeLocalVersion,
 		SetupForkExclude:  setupForkExclude,

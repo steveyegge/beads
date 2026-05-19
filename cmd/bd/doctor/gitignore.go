@@ -94,8 +94,8 @@ var ProjectGitignorePatterns = []string{
 	".beads/proxieddb/",
 }
 
-// projectGitignoreComment is the section header added to the project .gitignore
-const projectGitignoreComment = "# Beads / Dolt files (added by bd init)"
+// ProjectGitignoreHeader is the section header added to the project .gitignore
+const ProjectGitignoreHeader = "# Beads / Dolt files (added by bd init)"
 
 // requiredPatterns are patterns that MUST be in .beads/.gitignore
 var requiredPatterns = []string{
@@ -712,7 +712,7 @@ func EnsureProjectGitignore(repoPath string) error {
 		newContent += "\n"
 	}
 
-	newContent += "\n" + projectGitignoreComment + "\n"
+	newContent += "\n" + ProjectGitignoreHeader + "\n"
 	for _, pattern := range toAdd {
 		newContent += pattern + "\n"
 	}

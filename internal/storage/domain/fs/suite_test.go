@@ -12,24 +12,30 @@ import (
 
 type testSuite struct {
 	suite.Suite
-	repo domain.BeadsDirFSRepository
-}
-
-func (s *testSuite) SetupTest() {
-	s.repo = NewBeadsDirFSRepository()
 }
 
 func (s *testSuite) Ctx() context.Context {
 	return context.Background()
 }
 
-func (s *testSuite) tmpRoot() string {
-	return s.T().TempDir()
+// newRepo returns a fresh (workDir, beadsDir, repo) for an isolated subtest.
+// The repo is bound to workDir; beadsDir is workDir/.beads.
+func (s *testSuite) newRepo() (workDir, beadsDir string, repo domain.BeadsDirFSRepository) {
+	s.T().Helper()
+	s.T().Setenv("BEADS_DIR", "")
+	workDir = s.T().TempDir()
+	beadsDir = filepath.Join(workDir, ".beads")
+	repo = NewBeadsDirFSRepository(workDir, testTemplates())
+	return
 }
 
-func (s *testSuite) beadsDir() (string, string) {
-	root := s.tmpRoot()
-	return root, filepath.Join(root, ".beads")
+func testTemplates() domain.BeadsDirTemplates {
+	return domain.BeadsDirTemplates{
+		BeadsGitignore:           "# test beads gitignore\ndolt/\n",
+		ProjectGitignoreHeader:   "# Beads test header",
+		ProjectGitignorePatterns: []string{".dolt/", "*.db"},
+		Readme:                   "# test readme\n",
+	}
 }
 
 func TestDomainFS(t *testing.T) {

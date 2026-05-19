@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage/domain"
 )
 
 func (s *testSuite) TestBeadsDirFSRepository() {
 	s.Run("CreateBeadsDir", func() {
-		s.Run("EmptyPathErrors", s.createBeadsDirEmptyPath)
 		s.Run("CreatesDirectoryWithPerms", s.createBeadsDirCreates)
 		s.Run("IdempotentOnExisting", s.createBeadsDirIdempotent)
 	})
@@ -31,7 +31,6 @@ func (s *testSuite) TestBeadsDirFSRepository() {
 		s.Run("PresentReturnsTrue", s.beadsGitignoreExistsPresent)
 	})
 	s.Run("WriteProjectGitignore", func() {
-		s.Run("EmptyRepoRootErrors", s.writeProjectGitignoreEmptyRoot)
 		s.Run("CreatesWithHeaderAndPatterns", s.writeProjectGitignoreCreates)
 		s.Run("AppendsToExisting", s.writeProjectGitignoreAppends)
 		s.Run("SkipsAlreadyPresentPatterns", s.writeProjectGitignoreNoDuplicates)
@@ -60,18 +59,25 @@ func (s *testSuite) TestBeadsDirFSRepository() {
 		s.Run("WriteThenReadRoundTrip", s.configYAMLRoundTrip)
 		s.Run("WriteOverwrites", s.configYAMLOverwrite)
 	})
-}
-
-func (s *testSuite) createBeadsDirEmptyPath() {
-	err := s.repo.CreateBeadsDir(s.Ctx(), "")
-	s.Require().Error(err)
+	s.Run("ReadBeadsConfig", func() {
+		s.Run("MissingFileReturnsNil", s.readBeadsConfigMissing)
+		s.Run("ParsesMetadataJSON", s.readBeadsConfigParses)
+	})
+	s.Run("ResolveBeadsDirPath", func() {
+		s.Run("HonorsBeadsDirEnv", s.resolveBeadsDirPathHonorsEnv)
+		s.Run("FallsBackToLocalDotBeads", s.resolveBeadsDirPathLocalFallback)
+	})
+	s.Run("BeadsDirIsLocal", func() {
+		s.Run("TrueForWorkDirChild", s.beadsDirIsLocalTrue)
+		s.Run("FalseForExplicitEnv", s.beadsDirIsLocalFalseEnv)
+	})
 }
 
 func (s *testSuite) createBeadsDirCreates() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(s.repo.CreateBeadsDir(s.Ctx(), dir))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(repo.CreateBeadsDir(s.Ctx()))
 
-	info, err := os.Stat(dir)
+	info, err := os.Stat(beadsDir)
 	s.Require().NoError(err)
 	s.True(info.IsDir())
 
@@ -81,54 +87,54 @@ func (s *testSuite) createBeadsDirCreates() {
 }
 
 func (s *testSuite) createBeadsDirIdempotent() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(s.repo.CreateBeadsDir(s.Ctx(), dir))
-	s.Require().NoError(s.repo.CreateBeadsDir(s.Ctx(), dir))
+	_, _, repo := s.newRepo()
+	s.Require().NoError(repo.CreateBeadsDir(s.Ctx()))
+	s.Require().NoError(repo.CreateBeadsDir(s.Ctx()))
 }
 
 func (s *testSuite) beadsDirExistsMissing() {
-	_, dir := s.beadsDir()
-	exists, err := s.repo.BeadsDirExists(s.Ctx(), dir)
+	_, _, repo := s.newRepo()
+	exists, err := repo.BeadsDirExists(s.Ctx())
 	s.Require().NoError(err)
 	s.False(exists)
 }
 
 func (s *testSuite) beadsDirExistsPresent() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	exists, err := s.repo.BeadsDirExists(s.Ctx(), dir)
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	exists, err := repo.BeadsDirExists(s.Ctx())
 	s.Require().NoError(err)
 	s.True(exists)
 }
 
 func (s *testSuite) beadsDirExistsIsFile() {
-	_, path := s.beadsDir()
-	s.Require().NoError(os.WriteFile(path, []byte("not a dir"), 0600))
-	exists, err := s.repo.BeadsDirExists(s.Ctx(), path)
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.WriteFile(beadsDir, []byte("not a dir"), 0600))
+	exists, err := repo.BeadsDirExists(s.Ctx())
 	s.Require().NoError(err)
 	s.False(exists)
 }
 
 func (s *testSuite) writeBeadsGitignoreWrites() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	s.Require().NoError(s.repo.WriteBeadsGitignore(s.Ctx(), dir))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	s.Require().NoError(repo.WriteBeadsGitignore(s.Ctx()))
 
-	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	data, err := os.ReadFile(filepath.Join(beadsDir, ".gitignore"))
 	s.Require().NoError(err)
-	s.Equal(beadsGitignoreTemplate, string(data))
+	s.Equal(testTemplates().BeadsGitignore, string(data))
 }
 
 func (s *testSuite) writeBeadsGitignoreIdempotent() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	path := filepath.Join(dir, ".gitignore")
-	s.Require().NoError(os.WriteFile(path, []byte(beadsGitignoreTemplate), 0600))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	path := filepath.Join(beadsDir, ".gitignore")
+	s.Require().NoError(os.WriteFile(path, []byte(testTemplates().BeadsGitignore), 0600))
 
 	before, err := os.Stat(path)
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.repo.WriteBeadsGitignore(s.Ctx(), dir))
+	s.Require().NoError(repo.WriteBeadsGitignore(s.Ctx()))
 
 	after, err := os.Stat(path)
 	s.Require().NoError(err)
@@ -136,80 +142,77 @@ func (s *testSuite) writeBeadsGitignoreIdempotent() {
 }
 
 func (s *testSuite) writeBeadsGitignoreOverwrites() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	path := filepath.Join(dir, ".gitignore")
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	path := filepath.Join(beadsDir, ".gitignore")
 	s.Require().NoError(os.WriteFile(path, []byte("stale\n"), 0600))
 
-	s.Require().NoError(s.repo.WriteBeadsGitignore(s.Ctx(), dir))
+	s.Require().NoError(repo.WriteBeadsGitignore(s.Ctx()))
 
 	data, err := os.ReadFile(path)
 	s.Require().NoError(err)
-	s.Equal(beadsGitignoreTemplate, string(data))
+	s.Equal(testTemplates().BeadsGitignore, string(data))
 }
 
 func (s *testSuite) beadsGitignoreExistsMissing() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	exists, err := s.repo.BeadsGitignoreExists(s.Ctx(), dir)
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	exists, err := repo.BeadsGitignoreExists(s.Ctx())
 	s.Require().NoError(err)
 	s.False(exists)
 }
 
 func (s *testSuite) beadsGitignoreExistsPresent() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	s.Require().NoError(os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("x"), 0600))
-	exists, err := s.repo.BeadsGitignoreExists(s.Ctx(), dir)
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	s.Require().NoError(os.WriteFile(filepath.Join(beadsDir, ".gitignore"), []byte("x"), 0600))
+	exists, err := repo.BeadsGitignoreExists(s.Ctx())
 	s.Require().NoError(err)
 	s.True(exists)
 }
 
-func (s *testSuite) writeProjectGitignoreEmptyRoot() {
-	err := s.repo.WriteProjectGitignore(s.Ctx(), "")
-	s.Require().Error(err)
-}
-
 func (s *testSuite) writeProjectGitignoreCreates() {
-	root := s.tmpRoot()
-	s.Require().NoError(s.repo.WriteProjectGitignore(s.Ctx(), root))
+	workDir, _, repo := s.newRepo()
+	s.Require().NoError(repo.WriteProjectGitignore(s.Ctx()))
 
-	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	data, err := os.ReadFile(filepath.Join(workDir, ".gitignore"))
 	s.Require().NoError(err)
 	body := string(data)
 
-	s.Contains(body, projectGitignoreHeader)
-	for _, pattern := range projectGitignorePatterns {
+	tpl := testTemplates()
+	s.Contains(body, tpl.ProjectGitignoreHeader)
+	for _, pattern := range tpl.ProjectGitignorePatterns {
 		s.Contains(body, pattern)
 	}
 }
 
 func (s *testSuite) writeProjectGitignoreAppends() {
-	root := s.tmpRoot()
-	path := filepath.Join(root, ".gitignore")
+	workDir, _, repo := s.newRepo()
+	path := filepath.Join(workDir, ".gitignore")
 	preexisting := "node_modules/\n*.log\n"
 	s.Require().NoError(os.WriteFile(path, []byte(preexisting), 0644))
 
-	s.Require().NoError(s.repo.WriteProjectGitignore(s.Ctx(), root))
+	s.Require().NoError(repo.WriteProjectGitignore(s.Ctx()))
 
 	data, err := os.ReadFile(path)
 	s.Require().NoError(err)
 	body := string(data)
 
+	tpl := testTemplates()
 	s.True(strings.HasPrefix(body, preexisting), "preexisting content must be preserved at the top")
-	s.Contains(body, projectGitignoreHeader)
-	for _, pattern := range projectGitignorePatterns {
+	s.Contains(body, tpl.ProjectGitignoreHeader)
+	for _, pattern := range tpl.ProjectGitignorePatterns {
 		s.Contains(body, pattern)
 	}
 }
 
 func (s *testSuite) writeProjectGitignoreNoDuplicates() {
-	root := s.tmpRoot()
-	path := filepath.Join(root, ".gitignore")
+	workDir, _, repo := s.newRepo()
+	path := filepath.Join(workDir, ".gitignore")
 	preexisting := ".dolt/\nnode_modules/\n"
 	s.Require().NoError(os.WriteFile(path, []byte(preexisting), 0644))
 
-	s.Require().NoError(s.repo.WriteProjectGitignore(s.Ctx(), root))
+	s.Require().NoError(repo.WriteProjectGitignore(s.Ctx()))
 
 	data, err := os.ReadFile(path)
 	s.Require().NoError(err)
@@ -218,12 +221,13 @@ func (s *testSuite) writeProjectGitignoreNoDuplicates() {
 }
 
 func (s *testSuite) writeProjectGitignoreNoOpWhenComplete() {
-	root := s.tmpRoot()
-	path := filepath.Join(root, ".gitignore")
+	workDir, _, repo := s.newRepo()
+	path := filepath.Join(workDir, ".gitignore")
+	tpl := testTemplates()
 	var buf bytes.Buffer
 	buf.WriteString("existing\n")
-	buf.WriteString(projectGitignoreHeader + "\n")
-	for _, pattern := range projectGitignorePatterns {
+	buf.WriteString(tpl.ProjectGitignoreHeader + "\n")
+	for _, pattern := range tpl.ProjectGitignorePatterns {
 		buf.WriteString(pattern + "\n")
 	}
 	s.Require().NoError(os.WriteFile(path, buf.Bytes(), 0644))
@@ -231,7 +235,7 @@ func (s *testSuite) writeProjectGitignoreNoOpWhenComplete() {
 	before, err := os.Stat(path)
 	s.Require().NoError(err)
 
-	s.Require().NoError(s.repo.WriteProjectGitignore(s.Ctx(), root))
+	s.Require().NoError(repo.WriteProjectGitignore(s.Ctx()))
 
 	after, err := os.Stat(path)
 	s.Require().NoError(err)
@@ -239,53 +243,53 @@ func (s *testSuite) writeProjectGitignoreNoOpWhenComplete() {
 }
 
 func (s *testSuite) writeProjectGitignoreFixesTrailingNewline() {
-	root := s.tmpRoot()
-	path := filepath.Join(root, ".gitignore")
+	workDir, _, repo := s.newRepo()
+	path := filepath.Join(workDir, ".gitignore")
 	s.Require().NoError(os.WriteFile(path, []byte("no-trailing-newline"), 0644))
 
-	s.Require().NoError(s.repo.WriteProjectGitignore(s.Ctx(), root))
+	s.Require().NoError(repo.WriteProjectGitignore(s.Ctx()))
 
 	data, err := os.ReadFile(path)
 	s.Require().NoError(err)
 	body := string(data)
 
 	s.True(strings.HasPrefix(body, "no-trailing-newline\n"), "trailing newline must be inserted before appended content")
-	s.Contains(body, projectGitignoreHeader)
+	s.Contains(body, testTemplates().ProjectGitignoreHeader)
 }
 
 func (s *testSuite) projectGitignoreExistsMissing() {
-	root := s.tmpRoot()
-	exists, err := s.repo.ProjectGitignoreExists(s.Ctx(), root)
+	_, _, repo := s.newRepo()
+	exists, err := repo.ProjectGitignoreExists(s.Ctx())
 	s.Require().NoError(err)
 	s.False(exists)
 }
 
 func (s *testSuite) projectGitignoreExistsPresent() {
-	root := s.tmpRoot()
-	s.Require().NoError(os.WriteFile(filepath.Join(root, ".gitignore"), []byte("x"), 0644))
-	exists, err := s.repo.ProjectGitignoreExists(s.Ctx(), root)
+	workDir, _, repo := s.newRepo()
+	s.Require().NoError(os.WriteFile(filepath.Join(workDir, ".gitignore"), []byte("x"), 0644))
+	exists, err := repo.ProjectGitignoreExists(s.Ctx())
 	s.Require().NoError(err)
 	s.True(exists)
 }
 
 func (s *testSuite) writeInteractionsLogCreates() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	s.Require().NoError(s.repo.WriteInteractionsLog(s.Ctx(), dir))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	s.Require().NoError(repo.WriteInteractionsLog(s.Ctx()))
 
-	data, err := os.ReadFile(filepath.Join(dir, "interactions.jsonl"))
+	data, err := os.ReadFile(filepath.Join(beadsDir, "interactions.jsonl"))
 	s.Require().NoError(err)
 	s.Empty(data)
 }
 
 func (s *testSuite) writeInteractionsLogPreserves() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	path := filepath.Join(dir, "interactions.jsonl")
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	path := filepath.Join(beadsDir, "interactions.jsonl")
 	existing := []byte(`{"event":"x"}` + "\n")
 	s.Require().NoError(os.WriteFile(path, existing, 0644))
 
-	s.Require().NoError(s.repo.WriteInteractionsLog(s.Ctx(), dir))
+	s.Require().NoError(repo.WriteInteractionsLog(s.Ctx()))
 
 	data, err := os.ReadFile(path)
 	s.Require().NoError(err)
@@ -293,23 +297,23 @@ func (s *testSuite) writeInteractionsLogPreserves() {
 }
 
 func (s *testSuite) writeReadmeCreates() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	s.Require().NoError(s.repo.WriteReadme(s.Ctx(), dir))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	s.Require().NoError(repo.WriteReadme(s.Ctx()))
 
-	data, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	data, err := os.ReadFile(filepath.Join(beadsDir, "README.md"))
 	s.Require().NoError(err)
-	s.Equal(beadsReadmeTemplate, string(data))
+	s.Equal(testTemplates().Readme, string(data))
 }
 
 func (s *testSuite) writeReadmePreserves() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	path := filepath.Join(dir, "README.md")
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	path := filepath.Join(beadsDir, "README.md")
 	custom := []byte("# My custom readme\n")
 	s.Require().NoError(os.WriteFile(path, custom, 0644))
 
-	s.Require().NoError(s.repo.WriteReadme(s.Ctx(), dir))
+	s.Require().NoError(repo.WriteReadme(s.Ctx()))
 
 	data, err := os.ReadFile(path)
 	s.Require().NoError(err)
@@ -317,63 +321,125 @@ func (s *testSuite) writeReadmePreserves() {
 }
 
 func (s *testSuite) readMetadataJSONMissing() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	data, err := s.repo.ReadMetadataJSON(s.Ctx(), dir)
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	data, err := repo.ReadMetadataJSON(s.Ctx())
 	s.Require().NoError(err)
 	s.Nil(data)
 }
 
 func (s *testSuite) metadataJSONRoundTrip() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
 	body := []byte(`{"_project_id":"abc-123"}`)
 
-	s.Require().NoError(s.repo.WriteMetadataJSON(s.Ctx(), dir, body))
+	s.Require().NoError(repo.WriteMetadataJSON(s.Ctx(), body))
 
-	got, err := s.repo.ReadMetadataJSON(s.Ctx(), dir)
+	got, err := repo.ReadMetadataJSON(s.Ctx())
 	s.Require().NoError(err)
 	s.Equal(body, got)
 }
 
 func (s *testSuite) metadataJSONOverwrite() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	s.Require().NoError(s.repo.WriteMetadataJSON(s.Ctx(), dir, []byte(`{"v":1}`)))
-	s.Require().NoError(s.repo.WriteMetadataJSON(s.Ctx(), dir, []byte(`{"v":2}`)))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	s.Require().NoError(repo.WriteMetadataJSON(s.Ctx(), []byte(`{"v":1}`)))
+	s.Require().NoError(repo.WriteMetadataJSON(s.Ctx(), []byte(`{"v":2}`)))
 
-	got, err := s.repo.ReadMetadataJSON(s.Ctx(), dir)
+	got, err := repo.ReadMetadataJSON(s.Ctx())
 	s.Require().NoError(err)
 	s.Equal([]byte(`{"v":2}`), got)
 }
 
 func (s *testSuite) readConfigYAMLMissing() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	data, err := s.repo.ReadConfigYAML(s.Ctx(), dir)
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	data, err := repo.ReadConfigYAML(s.Ctx())
 	s.Require().NoError(err)
 	s.Nil(data)
 }
 
 func (s *testSuite) configYAMLRoundTrip() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
 	body := []byte("issue_prefix: bd\n")
 
-	s.Require().NoError(s.repo.WriteConfigYAML(s.Ctx(), dir, body))
+	s.Require().NoError(repo.WriteConfigYAML(s.Ctx(), body))
 
-	got, err := s.repo.ReadConfigYAML(s.Ctx(), dir)
+	got, err := repo.ReadConfigYAML(s.Ctx())
 	s.Require().NoError(err)
 	s.Equal(body, got)
 }
 
 func (s *testSuite) configYAMLOverwrite() {
-	_, dir := s.beadsDir()
-	s.Require().NoError(os.MkdirAll(dir, 0700))
-	s.Require().NoError(s.repo.WriteConfigYAML(s.Ctx(), dir, []byte("v: 1\n")))
-	s.Require().NoError(s.repo.WriteConfigYAML(s.Ctx(), dir, []byte("v: 2\n")))
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	s.Require().NoError(repo.WriteConfigYAML(s.Ctx(), []byte("v: 1\n")))
+	s.Require().NoError(repo.WriteConfigYAML(s.Ctx(), []byte("v: 2\n")))
 
-	got, err := s.repo.ReadConfigYAML(s.Ctx(), dir)
+	got, err := repo.ReadConfigYAML(s.Ctx())
 	s.Require().NoError(err)
 	s.Equal([]byte("v: 2\n"), got)
 }
+
+func (s *testSuite) readBeadsConfigMissing() {
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	cfg, err := repo.ReadBeadsConfig(s.Ctx())
+	s.Require().NoError(err)
+	s.Nil(cfg)
+}
+
+func (s *testSuite) readBeadsConfigParses() {
+	_, beadsDir, repo := s.newRepo()
+	s.Require().NoError(os.MkdirAll(beadsDir, 0700))
+	body := []byte(`{"dolt_database":"my_db","project_id":"pid-123"}`)
+	s.Require().NoError(repo.WriteMetadataJSON(s.Ctx(), body))
+
+	cfg, err := repo.ReadBeadsConfig(s.Ctx())
+	s.Require().NoError(err)
+	s.Require().NotNil(cfg)
+	s.Equal("my_db", cfg.DoltDatabase)
+	s.Equal("pid-123", cfg.ProjectID)
+}
+
+func (s *testSuite) resolveBeadsDirPathHonorsEnv() {
+	envDir := s.T().TempDir()
+	s.T().Setenv("BEADS_DIR", envDir)
+
+	workDir := s.T().TempDir()
+	repo := NewBeadsDirFSRepository(workDir, testTemplates())
+
+	res := repo.ResolveBeadsDirPath(s.Ctx())
+	s.True(res.HasExplicit)
+	s.NotEmpty(res.BeadsDir)
+}
+
+func (s *testSuite) resolveBeadsDirPathLocalFallback() {
+	workDir, beadsDir, repo := s.newRepo()
+
+	res := repo.ResolveBeadsDirPath(s.Ctx())
+	s.False(res.HasExplicit)
+	// When BEADS_DIR is unset and we're outside a git worktree, the fallback is
+	// workDir/.beads (FollowRedirect leaves the path unchanged when no redirect).
+	s.Equal(beadsDir, res.BeadsDir)
+	_ = workDir
+}
+
+func (s *testSuite) beadsDirIsLocalTrue() {
+	_, _, repo := s.newRepo()
+	s.True(repo.BeadsDirIsLocal(s.Ctx()))
+}
+
+func (s *testSuite) beadsDirIsLocalFalseEnv() {
+	envDir := s.T().TempDir()
+	s.T().Setenv("BEADS_DIR", envDir)
+
+	workDir := s.T().TempDir()
+	repo := NewBeadsDirFSRepository(workDir, testTemplates())
+
+	s.False(repo.BeadsDirIsLocal(s.Ctx()), "explicit BEADS_DIR outside workDir is not local")
+}
+
+// statically assert the BeadsDirTemplates type is reachable for downstream callers.
+var _ = domain.BeadsDirTemplates{}

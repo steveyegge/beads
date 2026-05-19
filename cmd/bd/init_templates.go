@@ -97,16 +97,8 @@ func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 	return []byte(body)
 }
 
-// createReadme creates the README.md file in the .beads directory
-func createReadme(beadsDir string) error {
-	readmePath := filepath.Join(beadsDir, "README.md")
-
-	// Skip if already exists
-	if _, err := os.Stat(readmePath); err == nil {
-		return nil
-	}
-
-	readmeTemplate := `# Beads - AI-Native Issue Tracking
+// BeadsReadmeTemplate is the canonical .beads/README.md content written during init.
+const BeadsReadmeTemplate = `# Beads - AI-Native Issue Tracking
 
 Welcome to Beads! This repository uses **Beads** for issue tracking - a modern, AI-native tool designed to live directly in your codebase alongside your code.
 
@@ -189,9 +181,18 @@ bd create "Try out Beads"
 *Beads: Issue tracking that moves at the speed of thought* ⚡
 `
 
+// createReadme creates the README.md file in the .beads directory.
+func createReadme(beadsDir string) error {
+	readmePath := filepath.Join(beadsDir, "README.md")
+
+	// Skip if already exists
+	if _, err := os.Stat(readmePath); err == nil {
+		return nil
+	}
+
 	// Write README.md (0644 is standard for markdown files)
 	// #nosec G306 - README needs to be readable
-	if err := os.WriteFile(readmePath, []byte(readmeTemplate), 0644); err != nil {
+	if err := os.WriteFile(readmePath, []byte(BeadsReadmeTemplate), 0644); err != nil {
 		return fmt.Errorf("failed to write README.md: %w", err)
 	}
 
