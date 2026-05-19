@@ -83,6 +83,7 @@ func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 
 # Optional JSONL auto-export for viewers, interchange, and issue-level migration.
 # Disabled by default; enable only when an integration needs fresh .beads/issues.jsonl.
+# Use relative paths under .beads/ so configs remain portable across machines.
 # export:
 #   auto: false
 #   path: issues.jsonl
