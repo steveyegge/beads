@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -399,11 +400,11 @@ func applyUpdatesToIssueStruct(issue *types.Issue, updates map[string]interface{
 // getAllWispDependencyRecords returns all wisp dependency records, keyed by issue_id.
 // Used by DetectCycles to include wisp dependencies in cross-table cycle detection. (bd-xe27)
 func (s *DoltStore) getAllWispDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
-	rows, err := s.queryContext(ctx, `
-		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+	rows, err := s.queryContext(ctx, fmt.Sprintf(`
+		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM wisp_dependencies
 		ORDER BY issue_id
-	`)
+	`, issueops.DepTargetExpr))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all wisp dependency records: %w", err)
 	}
@@ -422,11 +423,11 @@ func (s *DoltStore) getAllWispDependencyRecords(ctx context.Context) (map[string
 
 // getWispDependencyRecords returns raw dependency records for a wisp from wisp_dependencies.
 func (s *DoltStore) getWispDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
-	rows, err := s.queryContext(ctx, `
-		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+	rows, err := s.queryContext(ctx, fmt.Sprintf(`
+		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM wisp_dependencies
 		WHERE issue_id = ?
-	`, issueID)
+	`, issueops.DepTargetExpr), issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wisp dependency records: %w", err)
 	}

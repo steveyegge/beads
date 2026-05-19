@@ -261,9 +261,9 @@ func markBlockedFromDepsInTx(
 			placeholders, args := buildSQLInClause(allSpawnerIDs[start:end])
 
 			childRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-				SELECT issue_id, depends_on_id FROM %s
-				WHERE type = 'parent-child' AND depends_on_id IN (%s)
-			`, depTbl, placeholders), args...)
+				SELECT issue_id, %s AS depends_on_id FROM %s
+				WHERE type = 'parent-child' AND %s IN (%s)
+			`, DepTargetExpr, depTbl, DepTargetExpr, placeholders), args...)
 			if err != nil {
 				if optionalBlockedTable(depTbl) && isTableNotExistError(err) {
 					continue
@@ -382,10 +382,10 @@ func loadBlockingDepsForIssueIDsInTx(ctx context.Context, tx *sql.Tx, depTables 
 			}
 			placeholders, args := buildSQLInClause(issueIDs[start:end])
 			rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-				SELECT issue_id, depends_on_id, type, metadata FROM %s
+				SELECT issue_id, %s AS depends_on_id, type, metadata FROM %s
 				WHERE issue_id IN (%s)
 				  AND type IN ('blocks', 'waits-for', 'conditional-blocks')
-			`, depTable, placeholders), args...)
+			`, DepTargetExpr, depTable, placeholders), args...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 					break
@@ -459,10 +459,10 @@ func loadParentIDsForChildrenInTx(ctx context.Context, tx *sql.Tx, depTables []s
 			}
 			placeholders, args := buildSQLInClause(childIDs[start:end])
 			rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-				SELECT issue_id, depends_on_id FROM %s
+				SELECT issue_id, %s AS depends_on_id FROM %s
 				WHERE issue_id IN (%s)
 				  AND type = 'parent-child'
-			`, depTable, placeholders), args...)
+			`, DepTargetExpr, depTable, placeholders), args...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 					break
@@ -504,9 +504,9 @@ func GetChildrenWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []str
 			placeholders, args := buildSQLInClause(parentIDs[start:end])
 
 			query := fmt.Sprintf(`
-				SELECT issue_id, depends_on_id FROM %s
-				WHERE type = 'parent-child' AND depends_on_id IN (%s)
-			`, depTable, placeholders)
+				SELECT issue_id, %s AS depends_on_id FROM %s
+				WHERE type = 'parent-child' AND %s IN (%s)
+			`, DepTargetExpr, depTable, DepTargetExpr, placeholders)
 			rows, err := tx.QueryContext(ctx, query, args...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -549,8 +549,8 @@ func GetChildrenOfIssuesInTx(ctx context.Context, tx *sql.Tx, parentIDs []string
 
 			query := fmt.Sprintf(`
 				SELECT issue_id FROM %s
-				WHERE type = 'parent-child' AND depends_on_id IN (%s)
-			`, depTable, placeholders)
+				WHERE type = 'parent-child' AND %s IN (%s)
+			`, depTable, DepTargetExpr, placeholders)
 			rows, err := tx.QueryContext(ctx, query, args...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -586,16 +586,17 @@ func GetDescendantIDsInTx(ctx context.Context, tx *sql.Tx, rootID string, maxDep
 	}
 
 	queryDescendants := func(includeWisps bool) ([]string, bool, error) {
-		edgeQuery := `
-			SELECT issue_id, depends_on_id FROM dependencies WHERE type = 'parent-child'
-		`
+		edgeQuery := fmt.Sprintf(`
+			SELECT issue_id, %s FROM dependencies WHERE type = 'parent-child'
+		`, DepTargetExpr)
 		if includeWisps {
-			edgeQuery += `
+			edgeQuery += fmt.Sprintf(`
 			UNION ALL
-			SELECT issue_id, depends_on_id FROM wisp_dependencies WHERE type = 'parent-child'
-		`
+			SELECT issue_id, %s FROM wisp_dependencies WHERE type = 'parent-child'
+		`, DepTargetExpr)
 		}
 
+		//nolint:gosec // G201: edgeQuery is built from hardcoded SQL plus DepTargetExpr (no user input)
 		query := fmt.Sprintf(`
 			WITH RECURSIVE
 			parent_edges(issue_id, depends_on_id) AS (

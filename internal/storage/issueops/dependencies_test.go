@@ -35,10 +35,13 @@ func TestCycleReachabilityQueryMultipleTablesTraversesUniqueNodes(t *testing.T) 
 	if strings.Contains(query, "UNION ALL") || strings.Contains(query, "depth") {
 		t.Fatalf("multi-table cycle query should traverse unique nodes, not enumerate paths:\n%s", query)
 	}
-	if !strings.Contains(query, "SELECT issue_id, depends_on_id FROM dependencies") {
+	if !strings.Contains(query, "FROM dependencies") {
 		t.Fatalf("query does not include dependencies table:\n%s", query)
 	}
-	if !strings.Contains(query, "SELECT issue_id, depends_on_id FROM wisp_dependencies") {
+	if !strings.Contains(query, "FROM wisp_dependencies") {
 		t.Fatalf("query does not include wisp_dependencies table:\n%s", query)
+	}
+	if !strings.Contains(query, DepTargetExpr) {
+		t.Fatalf("query does not resolve depends_on_id via DepTargetExpr:\n%s", query)
 	}
 }

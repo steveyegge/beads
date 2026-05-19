@@ -98,7 +98,7 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 			inClause, args := buildSQLInClause(batch)
 
 			rows, err := tx.QueryContext(ctx,
-				fmt.Sprintf(`SELECT depends_on_id, issue_id FROM dependencies WHERE depends_on_id IN (%s)`, inClause),
+				fmt.Sprintf(`SELECT depends_on_issue_id, issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, inClause),
 				args...)
 			if err != nil {
 				return nil, fmt.Errorf("check dependents: %w", err)
@@ -184,7 +184,7 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 		batchInClause, batchArgs := buildSQLInClause(batch)
 
 		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_id IN (%s)`, batchInClause),
+			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, batchInClause),
 			batchArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("count inbound dependencies: %w", err)
@@ -264,7 +264,7 @@ func findAllDependentsRecursiveInTx(ctx context.Context, tx *sql.Tx, ids []strin
 
 		inClause, args := buildSQLInClause(batch)
 		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_id IN (%s)`, inClause),
+			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, inClause),
 			args...)
 		if err != nil {
 			return nil, fmt.Errorf("query dependents for batch: %w", err)
@@ -305,7 +305,7 @@ func findExternalDependentsBatchedInTx(ctx context.Context, tx *sql.Tx, ids []st
 		inClause, args := buildSQLInClause(batch)
 
 		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_id IN (%s)`, inClause),
+			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, inClause),
 			args...)
 		if err != nil {
 			return nil, fmt.Errorf("query dependents: %w", err)

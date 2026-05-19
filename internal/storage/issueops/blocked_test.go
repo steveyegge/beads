@@ -12,8 +12,8 @@ import (
 
 const (
 	activeIssuesQuery = `(?s)SELECT id FROM issues\s+WHERE status NOT IN \('closed', 'pinned'\)`
-	blockingDepsQuery = `(?s)SELECT issue_id, depends_on_id, type, metadata FROM dependencies\s+WHERE issue_id IN \(.+\)\s+AND type IN \('blocks', 'waits-for', 'conditional-blocks'\)`
-	childrenQuery     = `(?s)SELECT issue_id, depends_on_id FROM dependencies\s+WHERE type = 'parent-child' AND depends_on_id IN \(.+\)`
+	blockingDepsQuery = `(?s)SELECT issue_id, COALESCE\(depends_on_issue_id, depends_on_wisp_id, depends_on_external\) AS depends_on_id, type, metadata FROM dependencies\s+WHERE issue_id IN \(.+\)\s+AND type IN \('blocks', 'waits-for', 'conditional-blocks'\)`
+	childrenQuery     = `(?s)SELECT issue_id, COALESCE\(depends_on_issue_id, depends_on_wisp_id, depends_on_external\) AS depends_on_id FROM dependencies\s+WHERE type = 'parent-child' AND COALESCE\(depends_on_issue_id, depends_on_wisp_id, depends_on_external\) IN \(.+\)`
 	activeChildQuery  = `(?s)SELECT id FROM issues\s+WHERE id IN \(.+\)\s+AND status NOT IN \('closed', 'pinned'\)`
 	closedChildQuery  = `(?s)SELECT id FROM issues\s+WHERE status = 'closed' AND id IN \(.+\)`
 )

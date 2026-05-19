@@ -200,9 +200,11 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 	// Route to correct table based on whether molecule is a wisp (bd-w2w)
 	issueTable := "issues"
 	depTable := "dependencies"
+	parentCol := "depends_on_issue_id"
 	if s.isActiveWisp(ctx, moleculeID) {
 		issueTable = "wisps"
 		depTable = "wisp_dependencies"
+		parentCol = "depends_on_wisp_id"
 	}
 
 	// Get molecule title
@@ -217,11 +219,11 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 	// (join_iters.go:192) which triggers on JOIN between issues and dependencies.
 
 	// Step 1: Get child issue IDs from dependencies table (single-table scan)
-	//nolint:gosec // G201: depTable is hardcoded to "dependencies" or "wisp_dependencies"
+	//nolint:gosec // G201: depTable and parentCol are hardcoded
 	depRows, err := s.queryContext(ctx, fmt.Sprintf(`
 		SELECT issue_id FROM %s
-		WHERE depends_on_id = ? AND type = 'parent-child'
-	`, depTable), moleculeID)
+		WHERE %s = ? AND type = 'parent-child'
+	`, depTable, parentCol), moleculeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get molecule children: %w", err)
 	}

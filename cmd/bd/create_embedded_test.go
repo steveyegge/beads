@@ -115,7 +115,7 @@ func assertDepExists(t *testing.T, beadsDir, database, issueID, dependsOnID stri
 	defer cleanup()
 	var count int
 	err = db.QueryRowContext(t.Context(),
-		"SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND depends_on_id = ?",
+		"SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?",
 		issueID, dependsOnID).Scan(&count)
 	if err != nil {
 		t.Fatalf("query dependencies: %v", err)
@@ -136,7 +136,7 @@ func assertDepExistsWithType(t *testing.T, beadsDir, database, issueID, dependsO
 
 	var depType string
 	err = db.QueryRowContext(t.Context(),
-		"SELECT type FROM dependencies WHERE issue_id = ? AND depends_on_id = ?",
+		"SELECT type FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?",
 		issueID, dependsOnID).Scan(&depType)
 	if err != nil {
 		t.Fatalf("query dependencies for %s -> %s: %v", issueID, dependsOnID, err)

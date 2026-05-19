@@ -497,7 +497,7 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	if filter.ParentID != nil {
 		parentID := *filter.ParentID
 		//nolint:gosec // G201: depTable is hardcoded to "dependencies" or "wisp_dependencies"
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND depends_on_id = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", depTable, depTable))
+		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND %s = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", depTable, issueops.DepTargetExpr, depTable))
 		args = append(args, parentID, parentID)
 	}
 
@@ -736,10 +736,10 @@ func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID stri
 
 	//nolint:gosec // G201: table is hardcoded
 	rows, err := t.txFor(table).QueryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM %s
 		WHERE issue_id = ?
-	`, table), issueID)
+	`, issueops.DepTargetExpr, table), issueID)
 	if err != nil {
 		return nil, wrapQueryError("get dependency records in tx", err)
 	}
@@ -773,8 +773,8 @@ func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, depends
 
 	//nolint:gosec // G201: table is hardcoded
 	_, err := t.txFor(table).ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s WHERE issue_id = ? AND depends_on_id = ?
-	`, table), issueID, dependsOnID)
+		DELETE FROM %s WHERE issue_id = ? AND %s = ?
+	`, table, issueops.DepTargetExpr), issueID, dependsOnID)
 	if err == nil {
 		t.dirty.MarkDirty(table)
 	}
