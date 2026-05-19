@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -109,5 +110,25 @@ func TestShouldCommitCreatePostWritesPreservesEmbeddedFlush(t *testing.T) {
 	}
 	if !shouldCommitCreatePostWrites(&types.Issue{}, false) {
 		t.Fatal("embedded create should keep the existing commit behavior")
+	}
+}
+
+func TestAttachLabelsInCreateUsesInitialTransactionForWisps(t *testing.T) {
+	labels := []string{"gc:session", "agent:worker"}
+
+	noHistory := &types.Issue{NoHistory: true}
+	if !attachLabelsInCreate(noHistory, labels) {
+		t.Fatal("no-history create labels should be attached before CreateIssue")
+	}
+	if got := strings.Join(noHistory.Labels, ","); got != "gc:session,agent:worker" {
+		t.Fatalf("no-history labels = %q, want labels attached to issue", got)
+	}
+
+	persistent := &types.Issue{}
+	if attachLabelsInCreate(persistent, labels) {
+		t.Fatal("persistent create should keep post-create AddLabel behavior")
+	}
+	if len(persistent.Labels) != 0 {
+		t.Fatalf("persistent labels = %v, want no pre-attachment", persistent.Labels)
 	}
 }

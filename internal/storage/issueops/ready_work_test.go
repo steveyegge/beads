@@ -96,6 +96,24 @@ func TestBuildSQLInClause(t *testing.T) {
 	}
 }
 
+func TestSearchIssuesWispTierOnlyDoesNotQueryIssuesTable(t *testing.T) {
+	_, mock, tx := beginMockTx(t)
+
+	mock.ExpectQuery(`FROM wisps\b`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	got, err := SearchIssuesInTx(context.Background(), tx, "", types.IssueFilter{WispTierOnly: true})
+	if err != nil {
+		t.Fatalf("SearchIssuesInTx(wisp tier): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("SearchIssuesInTx(wisp tier) returned %d rows, want 0", len(got))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
 func TestGetReadyWorkInTx_PropagatesDeferredParentChildError(t *testing.T) {
 	t.Parallel()
 

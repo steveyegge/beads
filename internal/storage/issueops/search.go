@@ -13,6 +13,14 @@ import (
 // It queries the issues table, optionally merges wisps, and returns hydrated issues
 // with labels populated.
 func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	if filter.WispTierOnly {
+		results, err := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		if err != nil {
+			return nil, fmt.Errorf("search wisps (tier-only): %w", err)
+		}
+		return results, nil
+	}
+
 	// Route ephemeral-only queries to wisps table.
 	if filter.Ephemeral != nil && *filter.Ephemeral {
 		results, err := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)

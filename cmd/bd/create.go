@@ -538,6 +538,7 @@ var createCmd = &cobra.Command{
 			// If error getting parent or parent has no source_repo, continue with default
 		}
 
+		labelsAttachedInCreate := attachLabelsInCreate(issue, labels)
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			FatalError("%v", err)
 		}
@@ -576,11 +577,13 @@ var createCmd = &cobra.Command{
 		}
 
 		// Add labels if specified
-		for _, label := range labels {
-			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
-				WarnError("failed to add label %s: %v", label, err)
-			} else {
-				postCreateWrites = true
+		if !labelsAttachedInCreate {
+			for _, label := range labels {
+				if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
+					WarnError("failed to add label %s: %v", label, err)
+				} else {
+					postCreateWrites = true
+				}
 			}
 		}
 
@@ -827,6 +830,14 @@ func shouldCommitCreatePostWrites(issue *types.Issue, postCreateWrites bool) boo
 	if issue != nil && (issue.Ephemeral || issue.NoHistory) {
 		return false
 	}
+	return true
+}
+
+func attachLabelsInCreate(issue *types.Issue, labels []string) bool {
+	if issue == nil || len(labels) == 0 || (!issue.Ephemeral && !issue.NoHistory) {
+		return false
+	}
+	issue.Labels = append(issue.Labels[:0], labels...)
 	return true
 }
 

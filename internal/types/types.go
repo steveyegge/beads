@@ -1238,7 +1238,8 @@ type IssueFilter struct {
 	SourceRepo *string // Filter by source_repo field (nil = any)
 
 	// Ephemeral filtering
-	Ephemeral *bool // Filter by ephemeral flag (nil = any, true = only ephemeral, false = only persistent)
+	Ephemeral    *bool // Filter by ephemeral flag (nil = any, true = only ephemeral, false = only persistent)
+	WispTierOnly bool  // Query only the wisp/no-history storage tier without merging persistent issues
 
 	// Pinned filtering
 	Pinned *bool // Filter by pinned flag (nil = any, true = only pinned, false = only non-pinned)
