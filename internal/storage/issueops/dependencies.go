@@ -301,13 +301,6 @@ func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newI
 // from oldID to newID. FK ON UPDATE CASCADE has already propagated
 // depends_on_issue_id from oldID to newID across dependencies and
 // wisp_dependencies, so no rewrite is needed.
-//
-// The remaining job is to reject cross-typed-column target collisions that the
-// per-column UK constraints don't catch on their own: e.g. a source already had
-// a row with depends_on_external = newID and now also has depends_on_issue_id
-// = newID after the cascade. The old polymorphic depends_on_id PK detected this
-// as a duplicate key; with the column gone we re-detect via an explicit query
-// so callers can abort the transaction.
 func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, _, newID string) error {
 	for _, table := range []string{"dependencies", "wisp_dependencies"} {
 		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_issue_id", newID); err != nil {
