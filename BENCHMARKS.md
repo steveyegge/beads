@@ -92,6 +92,15 @@ go run ./scripts/repro-dolt-prod-timeouts --bd ./bd --scenario all
 go run ./scripts/bench-ready-indexes --dsn 'root@tcp(127.0.0.1:33307)/mc?timeout=30s&readTimeout=30s&writeTimeout=30s'
 ```
 
+When `repro-dolt-prod-timeouts` targets an existing workspace with
+`--workspace`, fixture seeding defaults to `--seed-mode=none`; pass
+`--seed-mode=full` or `--seed-mode=dep-only` only when intentionally writing
+and committing synthetic fixture rows into that workspace.
+
+`bench-ready-indexes` drops its candidate indexes again before exit by default;
+pass `--keep-indexes` only when intentionally leaving the final index set
+installed.
+
 ## Performance Targets
 
 ### Typical Results (M2 Pro)

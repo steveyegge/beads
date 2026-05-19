@@ -1058,11 +1058,15 @@ func insertBenchLabels(ctx context.Context, tx *sql.Tx, issueTable string, issue
 }
 
 func insertBenchDependencies(ctx context.Context, tx *sql.Tx, depTable string, issues []*types.Issue, now time.Time) error {
+	type benchDependencyRow struct {
+		issueID     string
+		dependsOnID string
+		depType     types.DependencyType
+		createdAt   time.Time
+	}
+
 	const batchSize = 500
-	var issueIDs []string
-	var dependsOnIDs []string
-	var depTypes []types.DependencyType
-	var createdAts []time.Time
+	rowsByColumn := map[string][]benchDependencyRow{}
 	for _, issue := range issues {
 		for _, dep := range issue.Dependencies {
 			if dep.IssueID == "" {
@@ -1072,31 +1076,36 @@ func insertBenchDependencies(ctx context.Context, tx *sql.Tx, depTable string, i
 			if createdAt.IsZero() {
 				createdAt = now
 			}
-			issueIDs = append(issueIDs, dep.IssueID)
-			dependsOnIDs = append(dependsOnIDs, dep.DependsOnID)
-			depTypes = append(depTypes, dep.Type)
-			createdAts = append(createdAts, createdAt)
+			column := issueops.ClassifyDepTarget(ctx, tx, dep, false).Column()
+			rowsByColumn[column] = append(rowsByColumn[column], benchDependencyRow{
+				issueID:     dep.IssueID,
+				dependsOnID: dep.DependsOnID,
+				depType:     dep.Type,
+				createdAt:   createdAt,
+			})
 		}
 	}
-	for start := 0; start < len(issueIDs); start += batchSize {
-		end := start + batchSize
-		if end > len(issueIDs) {
-			end = len(issueIDs)
-		}
-		var placeholders []string
-		var args []interface{}
-		for i := start; i < end; i++ {
-			placeholders = append(placeholders, "(?, ?, ?, 'bench', ?, '{}')")
-			args = append(args, issueIDs[i], dependsOnIDs[i], depTypes[i], createdAts[i])
-		}
-		//nolint:gosec // G201: depTable is selected from fixed dependency table names.
-		query := fmt.Sprintf(`
-			INSERT INTO %s (issue_id, depends_on_issue_id, type, created_by, created_at, metadata)
-			VALUES %s
-			ON DUPLICATE KEY UPDATE type = type
-		`, depTable, strings.Join(placeholders, ","))
-		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-			return fmt.Errorf("insert benchmark dependencies into %s: %w", depTable, err)
+	for column, rows := range rowsByColumn {
+		for start := 0; start < len(rows); start += batchSize {
+			end := start + batchSize
+			if end > len(rows) {
+				end = len(rows)
+			}
+			var placeholders []string
+			var args []interface{}
+			for _, row := range rows[start:end] {
+				placeholders = append(placeholders, "(?, ?, ?, 'bench', ?, '{}')")
+				args = append(args, row.issueID, row.dependsOnID, row.depType, row.createdAt)
+			}
+			//nolint:gosec // G201: depTable is fixed and column comes from issueops.DepTargetKind.Column.
+			query := fmt.Sprintf(`
+				INSERT INTO %s (issue_id, %s, type, created_by, created_at, metadata)
+				VALUES %s
+				ON DUPLICATE KEY UPDATE type = type
+			`, depTable, column, strings.Join(placeholders, ","))
+			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+				return fmt.Errorf("insert benchmark dependencies into %s: %w", depTable, err)
+			}
 		}
 	}
 	return nil
@@ -1213,6 +1222,13 @@ func BenchmarkPerfAddDependencyCycleCheck_DiamondDAG(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if err := store.AddDependency(ctx, dep, "bench"); err != nil {
 			b.Fatalf("AddDependency cycle check: %v", err)
+		}
+		b.StopTimer()
+		if err := store.RemoveDependency(ctx, dep.IssueID, dep.DependsOnID, "bench"); err != nil {
+			b.Fatalf("RemoveDependency cycle check fixture reset: %v", err)
+		}
+		if i < b.N-1 {
+			b.StartTimer()
 		}
 	}
 }

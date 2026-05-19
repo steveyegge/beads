@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -40,10 +41,10 @@ type result struct {
 
 var indexes = []candidateIndex{
 	{
-		Name:  "idx_dependencies_type_issue_depends",
+		Name:  "idx_dependencies_type_issue_target",
 		Table: "dependencies",
-		SQL:   "CREATE INDEX idx_dependencies_type_issue_depends ON dependencies (type, issue_id, depends_on_id)",
-		Drop:  "DROP INDEX idx_dependencies_type_issue_depends ON dependencies",
+		SQL:   "CREATE INDEX idx_dependencies_type_issue_target ON dependencies (type, issue_id, depends_on_issue_id)",
+		Drop:  "DROP INDEX idx_dependencies_type_issue_target ON dependencies",
 	},
 	{
 		Name:  "idx_issues_ready_assignee",
@@ -65,30 +66,54 @@ var indexes = []candidateIndex{
 	},
 }
 
+var sqlOpen = sql.Open
+
+const dependencyTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
+
 func main() {
+	if err := run(context.Background()); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
+	return runWithArgs(ctx, os.Args[1:])
+}
+
+func runWithArgs(ctx context.Context, args []string) error {
 	var dsn string
 	var concurrency int
 	var iterations int
-	flag.StringVar(&dsn, "dsn", "root@tcp(127.0.0.1:33307)/mc?timeout=30s&readTimeout=30s&writeTimeout=30s", "MySQL DSN")
-	flag.IntVar(&concurrency, "concurrency", 64, "concurrent query workers")
-	flag.IntVar(&iterations, "iterations", 2, "query executions per worker per case")
-	flag.Parse()
+	var keepIndexes bool
+	fs := flag.NewFlagSet("bench-ready-indexes", flag.ContinueOnError)
+	fs.StringVar(&dsn, "dsn", "root@tcp(127.0.0.1:33307)/mc?timeout=30s&readTimeout=30s&writeTimeout=30s", "MySQL DSN")
+	fs.IntVar(&concurrency, "concurrency", 64, "concurrent query workers")
+	fs.IntVar(&iterations, "iterations", 2, "query executions per worker per case")
+	fs.BoolVar(&keepIndexes, "keep-indexes", false, "leave candidate indexes installed after the final benchmark state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
-	ctx := context.Background()
-	db, err := sql.Open("mysql", dsn)
+	db, err := sqlOpen("mysql", dsn)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(concurrency + 8)
 	db.SetMaxIdleConns(concurrency + 8)
 	if err := db.PingContext(ctx); err != nil {
-		log.Fatal(err)
+		return err
 	}
+	defer func() {
+		if err := cleanupCandidateIndexes(context.Background(), db, keepIndexes); err != nil {
+			log.Printf("cleanup candidate indexes: %v", err)
+		}
+	}()
 
 	queries, err := buildQueries(ctx, db)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	states := [][]candidateIndex{nil}
@@ -99,7 +124,7 @@ func main() {
 
 	for _, state := range states {
 		if err := dropAll(ctx, db); err != nil {
-			log.Fatal(err)
+			return err
 		}
 		stateName := "baseline"
 		if len(state) > 0 {
@@ -107,7 +132,7 @@ func main() {
 			for _, idx := range state {
 				start := time.Now()
 				if _, err := db.ExecContext(ctx, idx.SQL); err != nil {
-					log.Fatalf("create %s: %v", idx.Name, err)
+					return fmt.Errorf("create %s: %w", idx.Name, err)
 				}
 				fmt.Printf("created %s in %s\n", idx.Name, time.Since(start).Round(time.Millisecond))
 				names = append(names, idx.Name)
@@ -123,6 +148,14 @@ func main() {
 				r.P95.Round(time.Millisecond), r.Max.Round(time.Millisecond), r.Elapsed.Round(time.Millisecond))
 		}
 	}
+	return nil
+}
+
+func cleanupCandidateIndexes(ctx context.Context, db *sql.DB, keepIndexes bool) error {
+	if keepIndexes {
+		return nil
+	}
+	return dropAll(ctx, db)
 }
 
 func dropAll(ctx context.Context, db *sql.DB) error {
@@ -177,7 +210,7 @@ WHERE defer_until IS NOT NULL AND defer_until > UTC_TIMESTAMP()`,
 		},
 		{
 			Name:  "candidate_blocking_deps",
-			Query: fmt.Sprintf(`SELECT issue_id, depends_on_id, type, metadata FROM dependencies WHERE issue_id IN (%s) AND type IN ('blocks','waits-for','conditional-blocks')`, placeholders),
+			Query: fmt.Sprintf(`SELECT issue_id, %s AS target_id, type, metadata FROM dependencies WHERE issue_id IN (%s) AND type IN ('blocks','waits-for','conditional-blocks')`, dependencyTargetExpr, placeholders),
 			Args:  args,
 		},
 	}, nil

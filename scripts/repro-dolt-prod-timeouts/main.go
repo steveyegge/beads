@@ -69,13 +69,41 @@ type job struct {
 	Sh   string
 }
 
+var subprocessEnvDenylist = []string{
+	"BEADS_DIR",
+	"BEADS_DOLT_SERVER_PORT",
+	"BEADS_DOLT_PORT",
+	"BEADS_DOLT_SERVER_HOST",
+	"BEADS_DOLT_SERVER_SOCKET",
+}
+
+const dependencyTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
+
 func main() {
-	cfg := parseFlags()
-	ctx := context.Background()
+	if err := run(context.Background()); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
+	return runWithArgs(ctx, os.Args[1:])
+}
+
+func runWithArgs(ctx context.Context, args []string) error {
+	cfg, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
+	bdPath, err := resolveExecutablePath(cfg.BDPath)
+	if err != nil {
+		return err
+	}
+	cfg.BDPath = bdPath
 
 	ws, err := openOrCreateWorkspace(ctx, cfg)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer func() {
 		if cfg.Workspace == "" {
@@ -92,51 +120,111 @@ func main() {
 
 	fmt.Printf("workspace=%s port=%d database=%s\n", ws.Dir, ws.Port, ws.Database)
 	if err := loadProductionShape(ctx, ws, cfg); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	switch cfg.Scenario {
-	case "ready":
-		report("ready", runReadyScenario(ctx, cfg, ws))
-	case "dep":
-		report("dep", runDepScenario(ctx, cfg, ws))
-	case "control":
-		report("control", runControlQueryScenario(ctx, cfg, ws))
-	case "mixed":
-		report("mixed", runMixedCityLoadScenario(ctx, cfg, ws))
-	case "outage":
-		report("outage", runOutageScenario(ctx, cfg, ws))
-	case "cycle-current":
-		report("cycle-current", runCycleCheckScenario(ctx, cfg, ws, cycleCheckCurrentSQL))
-	case "cycle-deps-only":
-		report("cycle-deps-only", runCycleCheckScenario(ctx, cfg, ws, cycleCheckDependenciesOnlySQL))
-	case "cycle-wisps-only":
-		report("cycle-wisps-only", runCycleCheckScenario(ctx, cfg, ws, cycleCheckWispsOnlySQL))
-	case "cycle-bfs":
-		report("cycle-bfs", runCycleCheckScenario(ctx, cfg, ws, cycleCheckBatchedBFS))
-	case "all":
-		report("ready", runReadyScenario(ctx, cfg, ws))
-		report("dep", runDepScenario(ctx, cfg, ws))
-	default:
-		log.Fatalf("unknown scenario %q", cfg.Scenario)
+	scenarios, err := scenarioNames(cfg.Scenario)
+	if err != nil {
+		return err
 	}
+	for _, scenario := range scenarios {
+		report(scenario, runScenario(ctx, cfg, ws, scenario))
+	}
+	return nil
 }
 
-func parseFlags() config {
+func parseFlags(args []string) (config, error) {
 	var cfg config
-	flag.StringVar(&cfg.BDPath, "bd", "bd", "bd binary to execute")
-	flag.StringVar(&cfg.Workspace, "workspace", "", "existing workspace to test instead of creating a synthetic one")
-	flag.StringVar(&cfg.SeedMode, "seed-mode", "full", "fixture seed mode: full, dep-only, none")
-	flag.StringVar(&cfg.Scenario, "scenario", "all", "scenario: ready, dep, control, mixed, outage, cycle-current, cycle-deps-only, cycle-wisps-only, cycle-bfs, all")
-	flag.IntVar(&cfg.IssueCount, "issues", 100000, "issue rows to seed")
-	flag.IntVar(&cfg.DepCount, "deps", 85000, "dependency rows to seed")
-	flag.IntVar(&cfg.Concurrency, "concurrency", 20, "concurrent bd processes")
-	flag.IntVar(&cfg.Ops, "ops", 80, "total operations per scenario")
-	flag.DurationVar(&cfg.Timeout, "timeout", 30*time.Second, "per-command timeout")
-	flag.IntVar(&cfg.ChainDepth, "chain-depth", 0, "existing blocking chain depth behind each dep-add target")
-	flag.BoolVar(&cfg.KeepWorkdir, "keep-workdir", false, "keep temp workspace")
-	flag.Parse()
-	return cfg
+	fs := flag.NewFlagSet("repro-dolt-prod-timeouts", flag.ContinueOnError)
+	fs.StringVar(&cfg.BDPath, "bd", "bd", "bd binary to execute")
+	fs.StringVar(&cfg.Workspace, "workspace", "", "existing workspace to test instead of creating a synthetic one")
+	fs.StringVar(&cfg.SeedMode, "seed-mode", "full", "fixture seed mode: full, dep-only, none")
+	fs.StringVar(&cfg.Scenario, "scenario", "all", "scenario: ready, dep, control, mixed, outage, cycle-current, cycle-deps-only, cycle-wisps-only, cycle-bfs, all")
+	fs.IntVar(&cfg.IssueCount, "issues", 100000, "issue rows to seed")
+	fs.IntVar(&cfg.DepCount, "deps", 85000, "dependency rows to seed")
+	fs.IntVar(&cfg.Concurrency, "concurrency", 20, "concurrent bd processes")
+	fs.IntVar(&cfg.Ops, "ops", 80, "total operations per scenario")
+	fs.DurationVar(&cfg.Timeout, "timeout", 30*time.Second, "per-command timeout")
+	fs.IntVar(&cfg.ChainDepth, "chain-depth", 0, "existing blocking chain depth behind each dep-add target")
+	fs.BoolVar(&cfg.KeepWorkdir, "keep-workdir", false, "keep temp workspace")
+	if err := fs.Parse(args); err != nil {
+		return config{}, err
+	}
+	if cfg.Workspace != "" && !flagPassed(fs, "seed-mode") {
+		cfg.SeedMode = "none"
+	}
+	return cfg, nil
+}
+
+func flagPassed(fs *flag.FlagSet, name string) bool {
+	passed := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			passed = true
+		}
+	})
+	return passed
+}
+
+func resolveExecutablePath(path string) (string, error) {
+	bdPath, err := exec.LookPath(path)
+	if err != nil {
+		return "", fmt.Errorf("find bd binary %q: %w", path, err)
+	}
+	absPath, err := filepath.Abs(bdPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve bd binary %q: %w", bdPath, err)
+	}
+	return absPath, nil
+}
+
+var allScenarioNames = []string{
+	"ready",
+	"dep",
+	"control",
+	"mixed",
+	"outage",
+	"cycle-current",
+	"cycle-deps-only",
+	"cycle-wisps-only",
+	"cycle-bfs",
+}
+
+func scenarioNames(scenario string) ([]string, error) {
+	if scenario == "all" {
+		return append([]string(nil), allScenarioNames...), nil
+	}
+	for _, name := range allScenarioNames {
+		if scenario == name {
+			return []string{scenario}, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown scenario %q", scenario)
+}
+
+func runScenario(ctx context.Context, cfg config, ws *workspace, scenario string) []opResult {
+	switch scenario {
+	case "ready":
+		return runReadyScenario(ctx, cfg, ws)
+	case "dep":
+		return runDepScenario(ctx, cfg, ws)
+	case "control":
+		return runControlQueryScenario(ctx, cfg, ws)
+	case "mixed":
+		return runMixedCityLoadScenario(ctx, cfg, ws)
+	case "outage":
+		return runOutageScenario(ctx, cfg, ws)
+	case "cycle-current":
+		return runCycleCheckScenario(ctx, cfg, ws, cycleCheckCurrentSQL)
+	case "cycle-deps-only":
+		return runCycleCheckScenario(ctx, cfg, ws, cycleCheckDependenciesOnlySQL)
+	case "cycle-wisps-only":
+		return runCycleCheckScenario(ctx, cfg, ws, cycleCheckWispsOnlySQL)
+	case "cycle-bfs":
+		return runCycleCheckScenario(ctx, cfg, ws, cycleCheckBatchedBFS)
+	default:
+		return []opResult{{Kind: scenario, Err: fmt.Sprintf("unknown scenario %q", scenario)}}
+	}
 }
 
 func openOrCreateWorkspace(ctx context.Context, cfg config) (*workspace, error) {
@@ -147,12 +235,6 @@ func openOrCreateWorkspace(ctx context.Context, cfg config) (*workspace, error) 
 }
 
 func openWorkspace(ctx context.Context, cfg config, dir string) (*workspace, error) {
-	bdPath, err := exec.LookPath(cfg.BDPath)
-	if err != nil {
-		return nil, fmt.Errorf("find bd binary %q: %w", cfg.BDPath, err)
-	}
-	cfg.BDPath = bdPath
-
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -191,12 +273,6 @@ func isPortOpen(port int) bool {
 }
 
 func createWorkspace(ctx context.Context, cfg config) (*workspace, error) {
-	bdPath, err := exec.LookPath(cfg.BDPath)
-	if err != nil {
-		return nil, fmt.Errorf("find bd binary %q: %w", cfg.BDPath, err)
-	}
-	cfg.BDPath = bdPath
-
 	dir, err := os.MkdirTemp("", "bd-prod-timeout-*")
 	if err != nil {
 		return nil, err
@@ -220,8 +296,7 @@ func createWorkspace(ctx context.Context, cfg config) (*workspace, error) {
 		"--skip-agents",
 	)
 	cmd.Dir = dir
-	cmd.Env = cleanEnv(os.Environ(), "BEADS_DIR", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT")
-	cmd.Env = append(cmd.Env, "BD_NON_INTERACTIVE=1")
+	cmd.Env = subprocessEnv("BD_NON_INTERACTIVE=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("bd init after %s: %w\n%s", initTimeout, err, string(out))
@@ -251,8 +326,7 @@ func startWorkspaceDolt(ctx context.Context, cfg config, dir string) error {
 
 	cmd := exec.CommandContext(startCtx, cfg.BDPath, "dolt", "start")
 	cmd.Dir = dir
-	cmd.Env = cleanEnv(os.Environ(), "BEADS_DIR", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT")
-	cmd.Env = append(cmd.Env, "BD_NON_INTERACTIVE=1")
+	cmd.Env = subprocessEnv("BD_NON_INTERACTIVE=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("bd dolt start after %s: %w\n%s", startTimeout, err, string(out))
 	}
@@ -280,7 +354,7 @@ func readDoltDatabase(path string) (string, error) {
 func stopWorkspace(ctx context.Context, cfg config, ws *workspace) {
 	cmd := exec.CommandContext(ctx, cfg.BDPath, "dolt", "stop")
 	cmd.Dir = ws.Dir
-	cmd.Env = append(cleanEnv(os.Environ(), "BEADS_DIR"), "BD_NON_INTERACTIVE=1")
+	cmd.Env = subprocessEnv("BD_NON_INTERACTIVE=1")
 	_ = cmd.Run()
 }
 
@@ -305,12 +379,20 @@ func loadProductionShape(ctx context.Context, ws *workspace, cfg config) error {
 	db.SetMaxOpenConns(1)
 
 	start := time.Now()
+	if err := seedProductionShape(ctx, db, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("seeded mode=%s issues=%d deps=%d in %s\n", cfg.SeedMode, cfg.IssueCount, cfg.DepCount, time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+func seedProductionShape(ctx context.Context, db *sql.DB, cfg config) error {
 	switch cfg.SeedMode {
 	case "full":
 		if err := insertIssues(ctx, db, cfg.IssueCount, cfg.Ops, cfg.ChainDepth); err != nil {
 			return err
 		}
-		if err := insertDependencies(ctx, db, cfg.DepCount); err != nil {
+		if err := insertDependencies(ctx, db, cfg.DepCount, cfg.IssueCount); err != nil {
 			return err
 		}
 	case "dep-only":
@@ -331,7 +413,6 @@ func loadProductionShape(ctx context.Context, ws *workspace, cfg config) error {
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'seed production timeout fixture')"); err != nil {
 		return fmt.Errorf("DOLT_COMMIT fixture: %w", err)
 	}
-	fmt.Printf("seeded mode=%s issues=%d deps=%d in %s\n", cfg.SeedMode, cfg.IssueCount, cfg.DepCount, time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
@@ -419,8 +500,18 @@ func depFixtureIssueCount(depOps, chainDepth int) int {
 	return depOps * 2
 }
 
-func insertDependencies(ctx context.Context, db *sql.DB, count int) error {
+func insertDependencies(ctx context.Context, db *sql.DB, count, issueCount int) error {
 	const batchSize = 500
+	if count <= 0 {
+		return nil
+	}
+	maxPairs, err := maxDependencyPairs(issueCount)
+	if err != nil {
+		return err
+	}
+	if count > maxPairs {
+		return fmt.Errorf("dependency count %d exceeds unique dependency pairs for %d issues", count, issueCount)
+	}
 	for start := 0; start < count; start += batchSize {
 		end := start + batchSize
 		if end > count {
@@ -428,7 +519,7 @@ func insertDependencies(ctx context.Context, db *sql.DB, count int) error {
 		}
 		var q strings.Builder
 		q.WriteString(`INSERT INTO dependencies
-			(issue_id, depends_on_id, type, created_by, metadata)
+			(issue_id, depends_on_issue_id, type, created_by, metadata)
 			VALUES `)
 		args := make([]any, 0, (end-start)*5)
 		for i := start; i < end; i++ {
@@ -436,13 +527,10 @@ func insertDependencies(ctx context.Context, db *sql.DB, count int) error {
 				q.WriteByte(',')
 			}
 			q.WriteString("(?,?,?,?,?)")
-			bulkIssueIndex := (i + 1000) % 100000
-			issueID := fmt.Sprintf("perf-%06d", bulkIssueIndex)
-			dependsOnID := fmt.Sprintf("perf-%06d", (bulkIssueIndex+300)%100000)
+			issueID, dependsOnID := dependencyEndpoints(i, issueCount, 1000, 300)
 			depType := "parent-child"
 			if i < 20 || (i >= 40 && i < 60) {
-				issueID = fmt.Sprintf("perf-%06d", i)
-				dependsOnID = fmt.Sprintf("perf-%06d", 200+(i%80))
+				issueID, dependsOnID = dependencyEndpoints(i, issueCount, 0, 200)
 				depType = "blocks"
 			} else if i < 5000 {
 				depType = "blocks"
@@ -454,6 +542,31 @@ func insertDependencies(ctx context.Context, db *sql.DB, count int) error {
 		}
 	}
 	return nil
+}
+
+func maxDependencyPairs(issueCount int) (int, error) {
+	if issueCount <= 0 {
+		return 0, fmt.Errorf("issue count must be positive, got %d", issueCount)
+	}
+	if issueCount == 1 {
+		return 1, nil
+	}
+	return issueCount * (issueCount - 1), nil
+}
+
+func dependencyEndpoints(i, issueCount, sourceOffset, targetOffset int) (string, string) {
+	if issueCount == 1 {
+		return perfIssueID(0), perfIssueID(0)
+	}
+	source := (i + sourceOffset) % issueCount
+	round := i / issueCount
+	offset := 1 + ((targetOffset - 1 + round) % (issueCount - 1))
+	target := (source + offset) % issueCount
+	return perfIssueID(source), perfIssueID(target)
+}
+
+func perfIssueID(i int) string {
+	return fmt.Sprintf("perf-%06d", i)
 }
 
 func insertDepAddChains(ctx context.Context, db *sql.DB, ops, depth int) error {
@@ -470,7 +583,7 @@ func insertDepAddChains(ctx context.Context, db *sql.DB, ops, depth int) error {
 		}
 		var q strings.Builder
 		q.WriteString(`INSERT INTO dependencies
-			(issue_id, depends_on_id, type, created_by, metadata)
+			(issue_id, depends_on_issue_id, type, created_by, metadata)
 			VALUES `)
 		args := make([]any, 0, (end-start)*5)
 		for i := start; i < end; i++ {
@@ -589,21 +702,22 @@ func runCycleCheckScenario(ctx context.Context, cfg config, ws *workspace, check
 
 func cycleCheckCurrentSQL(ctx context.Context, db *sql.DB, issueID, dependsOnID string, _ int) error {
 	var reachable int
-	err := db.QueryRowContext(ctx, `
+	query := fmt.Sprintf(`
 		WITH RECURSIVE reachable AS (
 			SELECT ? AS node, 0 AS depth
 			UNION ALL
-			SELECT d.depends_on_id, r.depth + 1
+			SELECT d.target_id, r.depth + 1
 			FROM reachable r
 			JOIN (
-				SELECT issue_id, depends_on_id FROM dependencies WHERE type IN ('blocks', 'conditional-blocks')
+				SELECT issue_id, %s AS target_id FROM dependencies WHERE type IN ('blocks', 'conditional-blocks')
 				UNION ALL
-				SELECT issue_id, depends_on_id FROM wisp_dependencies WHERE type IN ('blocks', 'conditional-blocks')
+				SELECT issue_id, %s AS target_id FROM wisp_dependencies WHERE type IN ('blocks', 'conditional-blocks')
 			) d ON d.issue_id = r.node
 			WHERE r.depth < 100
 		)
 		SELECT COUNT(*) FROM reachable WHERE node = ?
-	`, dependsOnID, issueID).Scan(&reachable)
+	`, dependencyTargetExpr, dependencyTargetExpr)
+	err := db.QueryRowContext(ctx, query, dependsOnID, issueID).Scan(&reachable)
 	if err != nil {
 		return err
 	}
@@ -628,13 +742,13 @@ func cycleCheckOneTableSQL(ctx context.Context, db *sql.DB, table, issueID, depe
 		WITH RECURSIVE reachable AS (
 			SELECT ? AS node, 0 AS depth
 			UNION ALL
-			SELECT d.depends_on_id, r.depth + 1
+			SELECT %s, r.depth + 1
 			FROM reachable r
 			JOIN %s d ON d.issue_id = r.node
 			WHERE d.type IN ('blocks', 'conditional-blocks') AND r.depth < 100
 		)
 		SELECT COUNT(*) FROM reachable WHERE node = ?
-	`, table)
+	`, dependencyTargetExpr, table)
 	if err := db.QueryRowContext(ctx, query, dependsOnID, issueID).Scan(&reachable); err != nil {
 		return err
 	}
@@ -678,12 +792,12 @@ func fetchBlockingTargets(ctx context.Context, db *sql.DB, issueIDs []string) ([
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(issueIDs)), ",")
 	//nolint:gosec // G201: placeholders are generated from ? markers only.
 	query := fmt.Sprintf(`
-		SELECT depends_on_id FROM dependencies
+		SELECT %s FROM dependencies
 		WHERE issue_id IN (%s) AND type IN ('blocks', 'conditional-blocks')
 		UNION ALL
-		SELECT depends_on_id FROM wisp_dependencies
+		SELECT %s FROM wisp_dependencies
 		WHERE issue_id IN (%s) AND type IN ('blocks', 'conditional-blocks')
-	`, placeholders, placeholders)
+	`, dependencyTargetExpr, placeholders, dependencyTargetExpr, placeholders)
 	for _, id := range issueIDs {
 		args = append(args, id)
 	}
@@ -829,9 +943,16 @@ func controlQueryJobs(count int) []job {
 func controlQueryScript() string {
 	return `BD_EXPORT_AUTO=false
 tmp=$(mktemp)
-trap "rm -f \"$tmp\"" EXIT
+err=$(mktemp)
+trap "rm -f \"$tmp\" \"$err\"" EXIT
 emit_ready() {
-  r=$("$@" 2>/dev/null || true)
+  r=$("$@" 2>"$err")
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf "ready probe failed (%s):\n" "$*" >&2
+    cat "$err" >&2
+    return "$status"
+  fi
   [ -n "$r" ] && [ "$r" != "[]" ] && printf "%s\n" "$r" >> "$tmp"
 }
 for id in "$GC_CONTROL_SESSION_NAME" "$GC_SESSION_NAME" "$GC_ALIAS" "$GC_CONTROL_TARGET" "$GC_SESSION_ID"; do
@@ -840,11 +961,11 @@ for id in "$GC_CONTROL_SESSION_NAME" "$GC_SESSION_NAME" "$GC_ALIAS" "$GC_CONTROL
   case "$id" in *control-dispatcher) legacy="${id%control-dispatcher}workflow-control";; esac
   for cand in "$id" "$legacy"; do
     [ -z "$cand" ] && continue
-    emit_ready "$BD_BIN" --readonly --sandbox ready --assignee="$cand" --json --limit=20
+    emit_ready "$BD_BIN" --readonly --sandbox ready --assignee="$cand" --json --limit=20 || exit $?
   done
 done
-emit_ready "$BD_BIN" --readonly --sandbox ready --metadata-field "gc.routed_to=$GC_CONTROL_TARGET" --unassigned --json --limit=20
-emit_ready "$BD_BIN" --readonly --sandbox ready --metadata-field "gc.routed_to=$GC_CONTROL_LEGACY_TARGET" --unassigned --json --limit=20
+emit_ready "$BD_BIN" --readonly --sandbox ready --metadata-field "gc.routed_to=$GC_CONTROL_TARGET" --unassigned --json --limit=20 || exit $?
+emit_ready "$BD_BIN" --readonly --sandbox ready --metadata-field "gc.routed_to=$GC_CONTROL_LEGACY_TARGET" --unassigned --json --limit=20 || exit $?
 [ -s "$tmp" ] && jq -s 'reduce add[] as $item ([]; if any(.[]; .id == $item.id) then . else . + [$item] end)' "$tmp" || printf "[]"
 `
 }
@@ -894,8 +1015,7 @@ func runBD(ctx context.Context, cfg config, ws *workspace, j job) opResult {
 	defer cancel()
 	cmd := exec.CommandContext(opCtx, cfg.BDPath, j.Argv...)
 	cmd.Dir = ws.Dir
-	cmd.Env = append(cleanEnv(os.Environ(), "BEADS_DIR"), "BD_NON_INTERACTIVE=1")
-	cmd.Env = append(cmd.Env, j.Env...)
+	cmd.Env = subprocessEnv(append([]string{"BD_NON_INTERACTIVE=1"}, j.Env...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	start := time.Now()
@@ -920,8 +1040,7 @@ func runShell(ctx context.Context, cfg config, ws *workspace, j job) opResult {
 	defer cancel()
 	cmd := exec.CommandContext(opCtx, "sh", "-c", j.Sh)
 	cmd.Dir = ws.Dir
-	cmd.Env = append(cleanEnv(os.Environ(), "BEADS_DIR"), "BD_NON_INTERACTIVE=1", "BD_BIN="+cfg.BDPath)
-	cmd.Env = append(cmd.Env, j.Env...)
+	cmd.Env = subprocessEnv(append([]string{"BD_NON_INTERACTIVE=1", "BD_BIN=" + cfg.BDPath}, j.Env...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	start := time.Now()
@@ -996,6 +1115,11 @@ func readInt(path string) (int, error) {
 		return 0, err
 	}
 	return strconv.Atoi(strings.TrimSpace(string(data)))
+}
+
+func subprocessEnv(extra ...string) []string {
+	env := cleanEnv(os.Environ(), subprocessEnvDenylist...)
+	return append(env, extra...)
 }
 
 func cleanEnv(env []string, keys ...string) []string {
