@@ -71,7 +71,7 @@ type AddDependencyOpts struct {
 // transaction. It handles:
 //   - Wisp routing (auto-detected or caller-provided)
 //   - Source/target existence validation
-//   - Cross-type blocking validation (GH#1495)
+//   - Parent-child shadow rejection for blocks edges (GH#1495)
 //   - Cycle detection via recursive CTE across both dependency tables
 //   - Idempotent same-type updates (metadata only)
 //   - Type conflict detection
@@ -135,26 +135,34 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		}
 	}
 
-	// Cross-type blocking validation (GH#1495): tasks can only block tasks,
-	// epics can only block epics.
-	if dep.Type == types.DepBlocks && targetType != "" {
-		sourceIsEpic := sourceType == string(types.TypeEpic)
-		targetIsEpic := targetType == string(types.TypeEpic)
-		if sourceIsEpic != targetIsEpic {
-			if sourceIsEpic {
-				return fmt.Errorf("epics can only block other epics, not tasks")
-			}
-			return fmt.Errorf("tasks can only block other tasks, not epics")
-		}
-	}
-
-	// Self-dependency check
+	// Self-dependency check (must run before graph queries that would
+	// otherwise treat source == target as a trivial match).
 	if dep.IssueID == dep.DependsOnID {
 		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
 	}
 
-	// Cycle detection for blocking deps via recursive CTE.
-	if !opts.SkipCycleCheck && (dep.Type == types.DepBlocks || dep.Type == types.DepConditionalBlocks) {
+	// Parent-child shadow rejection (GH#1495): a blocks edge between an
+	// issue and one of its parent-child ancestors or descendants creates a
+	// livelock in ready-work computation, because the blocked parent
+	// propagates its blocked state back down to the blocking child, which
+	// the child can never escape. The parent-child hierarchy already
+	// encodes scheduling for these pairs, so the blocks edge is also
+	// redundant. Cross-type blocks edges between unrelated issues are fine.
+	if dep.Type == types.DepBlocks && targetType != "" {
+		var linked int
+		query := parentChildLinkedQuery(depTables)
+		if err := tx.QueryRowContext(ctx, query, dep.IssueID, dep.DependsOnID).Scan(&linked); err != nil {
+			return fmt.Errorf("failed to check parent-child relationship: %w", err)
+		}
+		if linked > 0 {
+			return fmt.Errorf("cannot add blocks dependency: %s and %s already share a parent-child relationship; the existing hierarchy encodes their scheduling", dep.IssueID, dep.DependsOnID)
+		}
+	}
+
+	// Cycle detection across the combined blocks + parent-child graph.
+	// Runs for every scheduling-relevant edge type so a cycle is caught no
+	// matter which edge type closes the loop.
+	if !opts.SkipCycleCheck && isSchedulingEdge(dep.Type) {
 		var reachable int
 		query := cycleReachabilityQuery(depTables)
 		if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
@@ -205,6 +213,12 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 
 // cycleReachabilityQuery uses UNION distinct recursion so cyclic and diamond
 // graphs terminate by unique reachable node instead of enumerating paths.
+//
+// The walked edge set is the union of scheduling-relevant edges: blocks,
+// conditional-blocks, and parent-child. Parent-child is included because a
+// blocked parent propagates its blocked state to its children in the
+// ready-work computation, so a chain mixing blocks and parent-child edges
+// can form a logical livelock that prevents anything from being ready.
 func cycleReachabilityQuery(depTables []string) string {
 	if len(depTables) == 1 {
 		return fmt.Sprintf(`
@@ -213,7 +227,7 @@ func cycleReachabilityQuery(depTables []string) string {
 				UNION
 				SELECT d.depends_on_id
 				FROM reachable r
-				JOIN %s d ON d.issue_id = r.node AND d.type IN ('blocks', 'conditional-blocks')
+				JOIN %s d ON d.issue_id = r.node AND d.type IN ('blocks', 'conditional-blocks', 'parent-child')
 			)
 			SELECT COUNT(*) FROM reachable WHERE node = ?
 		`, depTables[0])
@@ -221,7 +235,7 @@ func cycleReachabilityQuery(depTables []string) string {
 
 	var unions []string
 	for _, t := range depTables {
-		unions = append(unions, fmt.Sprintf("SELECT issue_id, depends_on_id FROM %s WHERE type IN ('blocks', 'conditional-blocks')", t))
+		unions = append(unions, fmt.Sprintf("SELECT issue_id, depends_on_id FROM %s WHERE type IN ('blocks', 'conditional-blocks', 'parent-child')", t))
 	}
 	unionQuery := strings.Join(unions, " UNION ")
 	return fmt.Sprintf(`
@@ -238,6 +252,45 @@ func cycleReachabilityQuery(depTables []string) string {
 
 func cycleDetectionTables() []string {
 	return []string{"dependencies", "wisp_dependencies"}
+}
+
+// isSchedulingEdge reports whether a dependency type participates in
+// ready-work computation, and therefore in cycle detection across the
+// combined dependency graph.
+func isSchedulingEdge(t types.DependencyType) bool {
+	switch t {
+	case types.DepBlocks, types.DepConditionalBlocks, types.DepParentChild:
+		return true
+	default:
+		return false
+	}
+}
+
+// parentChildLinkedQuery returns >0 if the two endpoints share a parent-child
+// connected component (i.e., one is an ancestor of the other via parent-child
+// edges). Parent-child rows are directed (issue_id = child, depends_on_id =
+// parent); we emit both directions into a derived edge relation so the
+// recursive CTE has a single recursive term, which MySQL/Dolt require.
+// Parameters: seed ID, target ID.
+func parentChildLinkedQuery(depTables []string) string {
+	var unions []string
+	for _, t := range depTables {
+		unions = append(unions,
+			fmt.Sprintf("SELECT issue_id AS src, depends_on_id AS dst FROM %s WHERE type = 'parent-child'", t),
+			fmt.Sprintf("SELECT depends_on_id AS src, issue_id AS dst FROM %s WHERE type = 'parent-child'", t),
+		)
+	}
+	edges := strings.Join(unions, " UNION ")
+	return fmt.Sprintf(`
+		WITH RECURSIVE related(node) AS (
+			SELECT ?
+			UNION
+			SELECT e.dst
+			FROM related r
+			JOIN (%s) e ON e.src = r.node
+		)
+		SELECT COUNT(*) FROM related WHERE node = ?
+	`, edges)
 }
 
 func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {
