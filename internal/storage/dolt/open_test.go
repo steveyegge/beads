@@ -106,6 +106,59 @@ func TestResolveAutoStart(t *testing.T) {
 	}
 }
 
+func TestResolveCLIRemoteSync(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "unset defaults enabled", want: true},
+		{name: "true enables", raw: "true", want: true},
+		{name: "false disables", raw: "false", want: false},
+		{name: "zero disables", raw: "0", want: false},
+		{name: "off disables", raw: "off", want: false},
+		{name: "case-insensitive false disables", raw: "FALSE", want: false},
+		{name: "unknown preserves compatibility", raw: "unexpected", want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveCLIRemoteSync(tc.raw); got != tc.want {
+				t.Fatalf("resolveCLIRemoteSync(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyResolvedConfigDisablesCLIRemoteSyncFromYaml(t *testing.T) {
+	beadsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt:\n  sync-cli-remotes: false\n"), 0600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	fileCfg := configfile.DefaultConfig()
+	cfg := &Config{}
+	applyResolvedConfig(beadsDir, fileCfg, cfg)
+
+	if !cfg.DisableCLIRemoteSync {
+		t.Fatal("DisableCLIRemoteSync = false, want true when dolt.sync-cli-remotes=false")
+	}
+}
+
+func TestApplyCLIRemoteSyncDisablesFromFlatYaml(t *testing.T) {
+	beadsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt.sync-cli-remotes: false\n"), 0600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	cfg := &Config{}
+	ApplyCLIRemoteSync(beadsDir, cfg)
+
+	if !cfg.DisableCLIRemoteSync {
+		t.Fatal("DisableCLIRemoteSync = false, want true when flat dolt.sync-cli-remotes=false")
+	}
+}
+
 // TestApplyCLIAutoStart_RespectsExternalMode verifies that an external-mode
 // repo (metadata.json with explicit dolt_server_port) suppresses the CLI
 // auto-start path, preventing the shadow-database fallback when the

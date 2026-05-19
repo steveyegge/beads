@@ -44,6 +44,19 @@ func ApplyCLIAutoStart(beadsDir string, cfg *Config) {
 	cfg.AutoStart = resolveAutoStart(true, autoStartCfg, mode)
 }
 
+// ApplyCLIRemoteSync applies the CLI startup setting that controls whether
+// server-mode store open imports CLI remotes into SQL-visible dolt_remotes.
+func ApplyCLIRemoteSync(beadsDir string, cfg *Config) {
+	if cfg.DisableCLIRemoteSync {
+		return
+	}
+	remoteSyncCfg := config.GetString("dolt.sync-cli-remotes")
+	if remoteSyncCfg == "" {
+		remoteSyncCfg = config.GetStringFromDir(beadsDir, "dolt.sync-cli-remotes")
+	}
+	cfg.DisableCLIRemoteSync = !resolveCLIRemoteSync(remoteSyncCfg)
+}
+
 // NewFromConfig creates a DoltStore based on the metadata.json configuration.
 // beadsDir is the path to the .beads directory.
 func NewFromConfig(ctx context.Context, beadsDir string) (*DoltStore, error) {
@@ -173,6 +186,13 @@ func resolveAutoStart(current bool, doltAutoStartCfg string, mode ServerMode) bo
 	return true
 }
 
+func resolveCLIRemoteSync(raw string) bool {
+	if strings.EqualFold(raw, "false") || raw == "0" || strings.EqualFold(raw, "off") {
+		return false
+	}
+	return true
+}
+
 // GetBackendFromConfig returns the backend type from metadata.json.
 // Returns "dolt" if no config exists or backend is not specified.
 func GetBackendFromConfig(beadsDir string) string {
@@ -230,6 +250,8 @@ func applyResolvedConfig(beadsDir string, fileCfg *configfile.Config, cfg *Confi
 	if !cfg.ServerTLS {
 		cfg.ServerTLS = fileCfg.GetDoltServerTLS()
 	}
+
+	ApplyCLIRemoteSync(beadsDir, cfg)
 
 	// Pool size: env var > config.yaml > caller override > default (10).
 	// Useful for shared-server setups with many worktrees (GH#3140).

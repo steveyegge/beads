@@ -1483,6 +1483,14 @@ func TestGetStringFromDir(t *testing.T) {
 		}
 	})
 
+	t.Run("flat dotted key", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfig(t, dir, "dolt.sync-cli-remotes: false\n")
+		if got := GetStringFromDir(dir, "dolt.sync-cli-remotes"); got != "false" {
+			t.Errorf("got %q, want %q", got, "false")
+		}
+	})
+
 	t.Run("non-existent file returns empty string", func(t *testing.T) {
 		dir := t.TempDir()
 		if got := GetStringFromDir(dir, "dolt.auto-start"); got != "" {

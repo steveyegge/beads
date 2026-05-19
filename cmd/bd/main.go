@@ -995,6 +995,7 @@ var rootCmd = &cobra.Command{
 		// Keep standalone CLI auto-start behavior centralized so doctor and
 		// other helper paths stay in lockstep with the main command path.
 		dolt.ApplyCLIAutoStart(beadsDir, doltCfg)
+		dolt.ApplyCLIRemoteSync(beadsDir, doltCfg)
 
 		if proxiedServerMode {
 			p, err := newProxiedServerUOWProvider(rootCtx, beadsDir)

@@ -220,6 +220,12 @@ type Config struct {
 	// or deprecated sync.git-remote). Used for context-aware error hints.
 	SyncRemote string
 
+	// DisableCLIRemoteSync skips the server-mode startup repair that imports
+	// CLI remotes into SQL-visible dolt_remotes. It is enabled by
+	// dolt.sync-cli-remotes=false for local-only hot paths that do not use
+	// Dolt remote sync.
+	DisableCLIRemoteSync bool
+
 	// CreateIfMissing allows CREATE DATABASE when the target database does not
 	// exist on the server. Only explicit initialization, migration, or new-board
 	// creation paths should set this to true. Normal open paths leave it false,
@@ -1129,7 +1135,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// GH#2315: Sync CLI remotes into SQL server on store open.
 	// After a server restart, dolt_remotes is empty (not persisted across sessions).
 	// CLI remotes survive in .dolt/config. Re-register them so DOLT_PUSH/DOLT_PULL work.
-	if !cfg.ReadOnly {
+	if !cfg.ReadOnly && !cfg.DisableCLIRemoteSync {
 		store.syncCLIRemotesToSQL(ctx)
 	}
 
