@@ -18,11 +18,8 @@ type UnitOfWork interface {
 	IssueUseCase() domain.IssueUseCase
 	DependencyUseCase() domain.DependencyUseCase
 	LabelUseCase() domain.LabelUseCase
+	CommentUseCase() domain.CommentUseCase
 	CustomTypesUseCase() domain.CustomTypesUseCase
-
-	DependencyQueryUseCase() domain.DependencyQueryUseCase
-	LabelQueryUseCase() domain.LabelQueryUseCase
-	CommentQueryUseCase() domain.CommentQueryUseCase
 }
 
 type UnitOfWorkProvider interface {
@@ -48,11 +45,8 @@ type baseUOW struct {
 	issueUseCase       domain.IssueUseCase
 	dependencyUseCase  domain.DependencyUseCase
 	labelUseCase       domain.LabelUseCase
+	commentUseCase     domain.CommentUseCase
 	customTypesUseCase domain.CustomTypesUseCase
-
-	dependencyQueryUseCase domain.DependencyQueryUseCase
-	labelQueryUseCase      domain.LabelQueryUseCase
-	commentQueryUseCase    domain.CommentQueryUseCase
 }
 
 func (u *baseUOW) Commit(ctx context.Context, message string) error {
@@ -104,11 +98,7 @@ func (u *baseUOW) IssueUseCase() domain.IssueUseCase {
 
 func (u *baseUOW) DependencyUseCase() domain.DependencyUseCase {
 	if u.dependencyUseCase == nil {
-		runner := u.tx.Runner()
-		u.dependencyUseCase = domain.NewDependencyUseCase(
-			db.NewDependencySQLRepository(runner),
-			db.NewIssueSQLRepository(runner),
-		)
+		u.dependencyUseCase = domain.NewDependencyUseCase(db.NewDependencySQLRepository(u.tx.Runner()))
 	}
 	return u.dependencyUseCase
 }
@@ -127,23 +117,9 @@ func (u *baseUOW) CustomTypesUseCase() domain.CustomTypesUseCase {
 	return u.customTypesUseCase
 }
 
-func (u *baseUOW) DependencyQueryUseCase() domain.DependencyQueryUseCase {
-	if u.dependencyQueryUseCase == nil {
-		u.dependencyQueryUseCase = domain.NewDependencyQueryUseCase(db.NewDependencySQLRepository(u.tx.Runner()))
+func (u *baseUOW) CommentUseCase() domain.CommentUseCase {
+	if u.commentUseCase == nil {
+		u.commentUseCase = domain.NewCommentUseCase(db.NewCommentSQLRepository(u.tx.Runner()))
 	}
-	return u.dependencyQueryUseCase
-}
-
-func (u *baseUOW) LabelQueryUseCase() domain.LabelQueryUseCase {
-	if u.labelQueryUseCase == nil {
-		u.labelQueryUseCase = domain.NewLabelQueryUseCase(db.NewLabelSQLRepository(u.tx.Runner()))
-	}
-	return u.labelQueryUseCase
-}
-
-func (u *baseUOW) CommentQueryUseCase() domain.CommentQueryUseCase {
-	if u.commentQueryUseCase == nil {
-		u.commentQueryUseCase = domain.NewCommentQueryUseCase(db.NewCommentSQLRepository(u.tx.Runner()))
-	}
-	return u.commentQueryUseCase
+	return u.commentUseCase
 }
