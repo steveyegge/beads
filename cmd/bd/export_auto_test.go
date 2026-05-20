@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -546,4 +548,358 @@ func TestGitAddFile_RedirectCase_DoesNotStageInMainRepo(t *testing.T) {
 	}
 	checkNoStage("worktree", worktree)
 	checkNoStage("main", mainRepo)
+}
+
+// TestIsExportPathGitignored exercises the gitignore probe used by the
+// auto-export throttle bypass for GH#3848. Pure helper test — no Dolt
+// store, no CGO needed; the maybeAutoExport integration coverage lives
+// in export_auto_embedded_test.go.
+//
+// Each sub-case runs `git init` + filesystem I/O in `t.TempDir()`; the
+// whole table completes in ~120ms total so it stays in the default-run
+// lane (no `if testing.Short()` skip) so coverage is attributable. The
+// heavy embedded-Dolt counterpart lives in export_auto_embedded_test.go.
+func TestIsExportPathGitignored(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	type scenario struct {
+		name       string
+		setup      func(t *testing.T, repo string)
+		initGit    bool   // run `git init` in repo
+		beadsRel   string // relative path under repo for .beads/, default ".beads"
+		exportName string // filename to probe inside .beads/, default "issues.jsonl"
+		want       bool
+	}
+
+	cases := []scenario{
+		{
+			name:    "gitignored beads dir via dir pattern returns true",
+			initGit: true,
+			setup: func(t *testing.T, repo string) {
+				writeTestFile(t, filepath.Join(repo, ".gitignore"), []byte(".beads/\n"))
+			},
+			want: true,
+		},
+		{
+			name:    "tracked beads dir (no .gitignore) returns false",
+			initGit: true,
+			setup:   func(t *testing.T, repo string) {},
+			want:    false,
+		},
+		{
+			name:    "not in a git repo returns false (no .git/ parent)",
+			initGit: false,
+			setup:   func(t *testing.T, repo string) {},
+			want:    false,
+		},
+		{
+			name:    "parent .gitignore (umbrella workspace) matches nested .beads/",
+			initGit: true,
+			setup: func(t *testing.T, repo string) {
+				writeTestFile(t, filepath.Join(repo, ".gitignore"), []byte(".beads/\n"))
+			},
+			beadsRel: "project-a/.beads",
+			want:     true,
+		},
+		{
+			name:    "file-level wildcard *.jsonl matches even when dir is tracked",
+			initGit: true,
+			setup: func(t *testing.T, repo string) {
+				writeTestFile(t, filepath.Join(repo, ".gitignore"), []byte("*.jsonl\n"))
+			},
+			want: true,
+		},
+		{
+			name:    ".git/info/exclude (per-clone) treated same as .gitignore",
+			initGit: true,
+			setup: func(t *testing.T, repo string) {
+				writeTestFile(t, filepath.Join(repo, ".git", "info", "exclude"), []byte(".beads/\n"))
+			},
+			want: true,
+		},
+		{
+			name:    "issues.jsonl absent on disk still returns correct ignore status",
+			initGit: true,
+			setup: func(t *testing.T, repo string) {
+				writeTestFile(t, filepath.Join(repo, ".gitignore"), []byte(".beads/\n"))
+				// Note: we deliberately do NOT create issues.jsonl inside
+				// beadsDir — git check-ignore must answer based on the
+				// rule alone, regardless of whether the path exists yet.
+			},
+			exportName: "issues.jsonl",
+			want:       true,
+		},
+		{
+			name:    "non-default export path honors the actual path",
+			initGit: true,
+			setup: func(t *testing.T, repo string) {
+				// Only "global-issues.jsonl" is gitignored; the default
+				// "issues.jsonl" is not.
+				writeTestFile(t, filepath.Join(repo, ".gitignore"), []byte("global-issues.jsonl\n"))
+			},
+			exportName: "global-issues.jsonl",
+			want:       true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			repo, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.initGit {
+				runGit(t, repo, "init", "-q")
+			}
+			tc.setup(t, repo)
+
+			beadsRel := tc.beadsRel
+			if beadsRel == "" {
+				beadsRel = ".beads"
+			}
+			exportName := tc.exportName
+			if exportName == "" {
+				exportName = "issues.jsonl"
+			}
+
+			beadsDir := filepath.Join(repo, beadsRel)
+			if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			fullPath := filepath.Join(beadsDir, exportName)
+
+			// Each sub-test gets its own context so the probe's
+			// internal timeout is honored independently.
+			got := runGitignoreProbe(context.Background(), beadsDir, fullPath)
+			if got != tc.want {
+				t.Errorf("runGitignoreProbe(%q, %q) = %v, want %v", beadsDir, fullPath, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunGitignoreProbe_Timeout asserts the probe honors its 2s deadline
+// when the git subprocess hangs (slow filesystem, hostile wrapper). We
+// can't easily simulate a hanging git binary in CI, so we exercise the
+// context-cancellation path by passing a context that is already cancelled.
+func TestRunGitignoreProbe_Timeout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := t.TempDir()
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "init", "-q")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before invoking
+
+	beadsDir := filepath.Join(repo, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := runGitignoreProbe(ctx, beadsDir, filepath.Join(beadsDir, "issues.jsonl"))
+	if got != false {
+		t.Errorf("expected runGitignoreProbe to return false when ctx is cancelled; got true")
+	}
+}
+
+// TestIsExportPathGitignored_Cache verifies the per-process cache: a
+// second call with the same key does not re-invoke the subprocess. We
+// exercise this by checking the cached value sticks even when the
+// underlying .gitignore changes mid-process.
+func TestIsExportPathGitignored_Cache(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Reset cache so the test is hermetic relative to other tests that
+	// may have populated it.
+	gitignoreProbeCacheMu.Lock()
+	gitignoreProbeCache = map[string]bool{}
+	gitignoreProbeCacheMu.Unlock()
+
+	repo := t.TempDir()
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "init", "-q")
+	writeTestFile(t, filepath.Join(repo, ".gitignore"), []byte(".beads/\n"))
+	beadsDir := filepath.Join(repo, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fullPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	first := isExportPathGitignored(context.Background(), beadsDir, fullPath)
+	if !first {
+		t.Fatalf("setup error: expected first probe = true (gitignored), got false")
+	}
+
+	// Mutate .gitignore — without cache, the next call would return false.
+	if err := os.Remove(filepath.Join(repo, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+
+	second := isExportPathGitignored(context.Background(), beadsDir, fullPath)
+	if second != first {
+		t.Errorf("expected cached value to persist; got %v, want %v", second, first)
+	}
+}
+
+// runGit is a tiny test helper used by the gitignore-probe tests. Lifted
+// to package scope so multiple tests can share it (TestIsExportPath* +
+// TestRunGitignoreProbe_*). Mirrors the pattern of the closures inside
+// the GitAddFile tests above.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s failed: %v\n%s", args, dir, err, out)
+	}
+}
+
+// writeTestFile writes content to path, creating parent dirs as needed.
+// Lives in this (non-tagged) test file so it is available under both
+// CGO and pure-Go builds. The `writeFile` helper in explicit_db_nodb_test.go
+// is `//go:build cgo`, so its symbol is unreachable from the pure-Go test
+// compile — using a distinct name here avoids both the collision and the
+// missing-symbol error in `cmd/bd pure-Go tests compile (CGO_ENABLED=0)`.
+func writeTestFile(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir parent for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// TestShouldExport covers the pure throttle-window decision used by
+// maybeAutoExport. It's a no-I/O table-driven test specifically so the
+// coverage tool (which runs the fast / pure-Go lane) can attribute
+// lines to the new logic in export_auto.go. The integration variants
+// that wire shouldExport through maybeAutoExport live in
+// export_auto_embedded_test.go and are CGO-only.
+func TestShouldExport(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name     string
+		state    *exportAutoState
+		interval time.Duration
+		want     bool
+	}{
+		{
+			name:     "first run (zero timestamp) always exports",
+			state:    &exportAutoState{},
+			interval: time.Minute,
+			want:     true,
+		},
+		{
+			name:     "throttle window active — block",
+			state:    &exportAutoState{Timestamp: now.Add(-10 * time.Second)},
+			interval: time.Minute,
+			want:     false,
+		},
+		{
+			name:     "throttle window just elapsed — allow",
+			state:    &exportAutoState{Timestamp: now.Add(-2 * time.Minute)},
+			interval: time.Minute,
+			want:     true,
+		},
+		{
+			name:     "exactly at interval boundary — allow (>=)",
+			state:    &exportAutoState{Timestamp: now.Add(-time.Minute)},
+			interval: time.Minute,
+			want:     true,
+		},
+		{
+			name:     "zero interval (effectively disabled) always exports",
+			state:    &exportAutoState{Timestamp: now.Add(-time.Microsecond)},
+			interval: 0,
+			want:     true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldExport(tc.state, tc.interval)
+			if got != tc.want {
+				t.Errorf("shouldExport(%+v, %s) = %v, want %v",
+					tc.state, tc.interval, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestShouldBypassThrottle covers the GH#3848 bypass policy: when the
+// JSONL path is git-ignored, the throttle is overridden because the
+// JSONL is the only cross-machine sync substrate. Pure function —
+// coverage-tool-visible.
+func TestShouldBypassThrottle(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name       string
+		state      *exportAutoState
+		interval   time.Duration
+		gitignored bool
+		want       bool
+	}{
+		{
+			name:       "first run never bypasses (shouldExport handles it)",
+			state:      &exportAutoState{},
+			interval:   time.Minute,
+			gitignored: true,
+			want:       false,
+		},
+		{
+			name:       "window elapsed — no bypass needed",
+			state:      &exportAutoState{Timestamp: now.Add(-2 * time.Minute)},
+			interval:   time.Minute,
+			gitignored: true,
+			want:       false,
+		},
+		{
+			name:       "window active + gitignored — bypass (the bug fix)",
+			state:      &exportAutoState{Timestamp: now.Add(-10 * time.Second)},
+			interval:   time.Minute,
+			gitignored: true,
+			want:       true,
+		},
+		{
+			name:       "window active + tracked — DO NOT bypass (regression guard)",
+			state:      &exportAutoState{Timestamp: now.Add(-10 * time.Second)},
+			interval:   time.Minute,
+			gitignored: false,
+			want:       false,
+		},
+		{
+			name:       "exactly at interval boundary — no bypass (window has elapsed)",
+			state:      &exportAutoState{Timestamp: now.Add(-time.Minute)},
+			interval:   time.Minute,
+			gitignored: true,
+			want:       false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldBypassThrottle(tc.state, tc.interval, tc.gitignored)
+			if got != tc.want {
+				t.Errorf("shouldBypassThrottle(%+v, %s, gitignored=%v) = %v, want %v",
+					tc.state, tc.interval, tc.gitignored, got, tc.want)
+			}
+		})
+	}
 }

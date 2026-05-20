@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/atomicfile"
@@ -54,19 +56,30 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	// Load state and check throttle
+	// Resolve the export path early — the throttle decision below consults
+	// it (GH#3848: when the path is git-ignored we bypass throttle to keep
+	// the JSONL in sync with Dolt).
+	exportPath := config.GetString("export.path")
+	if exportPath == "" {
+		if globalFlag {
+			exportPath = "global-issues.jsonl"
+		} else {
+			exportPath = "issues.jsonl"
+		}
+	}
+	fullPath := filepath.Join(beadsDir, exportPath)
+
+	// Load state + interval.
 	state := loadExportAutoState(beadsDir)
 	interval := config.GetDuration("export.interval")
 	if interval == 0 {
 		interval = 60 * time.Second
 	}
-	if !state.Timestamp.IsZero() && time.Since(state.Timestamp) < interval {
-		debug.Logf("auto-export: throttled (last export %s ago, interval %s)\n",
-			time.Since(state.Timestamp).Round(time.Second), interval)
-		return
-	}
 
-	// Change detection via Dolt commit hash
+	// Change detection via Dolt commit hash. Cheap (single hash compare
+	// against stored state), so do it before the throttle — when there's no
+	// change, there's nothing to throttle. This also lets the throttle-bypass
+	// below act only when there's an actual pending write.
 	currentCommit, err := store.GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to get current commit: %v\n", err)
@@ -77,16 +90,18 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	// Determine output path
-	exportPath := config.GetString("export.path")
-	if exportPath == "" {
-		if globalFlag {
-			exportPath = "global-issues.jsonl"
+	// Throttle decision is factored into a pure function so the branching
+	// logic is unit-testable without a store or filesystem. See
+	// shouldBypassThrottle for the policy.
+	if !shouldExport(state, interval) {
+		if shouldBypassThrottle(state, interval, isExportPathGitignored(ctx, beadsDir, fullPath)) {
+			debug.Logf("auto-export: bypassing throttle — export path is gitignored (GH#3848)\n")
 		} else {
-			exportPath = "issues.jsonl"
+			debug.Logf("auto-export: throttled (last export %s ago, interval %s)\n",
+				time.Since(state.Timestamp).Round(time.Second), interval)
+			return
 		}
 	}
-	fullPath := filepath.Join(beadsDir, exportPath)
 
 	// Run the export — memories are excluded from auto-export because they
 	// contain private agent context that must not reach git history (GH#3650).
@@ -309,6 +324,144 @@ func gitAddFile(path string) error {
 	}
 	return nil
 }
+
+// shouldExport reports whether the throttle window has elapsed (or never
+// existed). Returns true on the first export (no recorded timestamp) and
+// any subsequent export after the configured interval. Returns false only
+// when a recent export exists AND the interval has not yet elapsed.
+//
+// Pure function — no I/O, no clock, no globals. The only inputs are the
+// recorded state and the configured interval. Caller passes in
+// time.Now() implicitly via time.Since.
+func shouldExport(state *exportAutoState, interval time.Duration) bool {
+	if state.Timestamp.IsZero() {
+		return true // first run — never throttle the initial export
+	}
+	return time.Since(state.Timestamp) >= interval
+}
+
+// shouldBypassThrottle reports whether the auto-export should fire even
+// though shouldExport said the throttle window is still active.
+//
+// Bypass policy: when the export path is git-ignored, the JSONL on disk
+// is the only cross-machine sync substrate (no git push will carry it,
+// no pre-commit hook will refresh it). Throttling a pending Dolt write
+// in that case means the write is silently lost when the embedded Dolt
+// state is rebuilt (fresh clone, container restart, host migration).
+// Bypass the throttle to keep the JSONL in sync with Dolt. See GH#3848.
+//
+// Pure function — pulled out so the branching logic is unit-testable
+// without a store, subprocess, or filesystem. Codecov needs at least
+// one non-CGO, non-`-short` test to attribute coverage; this gives it
+// one.
+//
+// Caller is responsible for the timing check (shouldExport returns false)
+// before consulting this. We don't re-check here so the policy is
+// expressible as a single boolean.
+func shouldBypassThrottle(state *exportAutoState, interval time.Duration, gitignored bool) bool {
+	if state.Timestamp.IsZero() {
+		return false // first run — nothing to bypass
+	}
+	if time.Since(state.Timestamp) >= interval {
+		return false // throttle already elapsed; normal path handles it
+	}
+	return gitignored
+}
+
+// isExportPathGitignored reports whether the resolved auto-export path
+// (typically `.beads/issues.jsonl`) is excluded by a gitignore rule in the
+// enclosing repo.
+//
+// Used by the auto-export throttle bypass (GH#3848): when the JSONL path
+// is git-ignored, the on-disk JSONL is the sole cross-machine sync
+// substrate (there is no other catch-up path — no git push will carry it,
+// no pre-commit hook will refresh it). A pending Dolt write must therefore
+// land on disk on the current invocation; throttling it would lose data
+// when the embedded Dolt state is rebuilt.
+//
+// Probe semantics:
+//   - `git check-ignore -q -- <path>`: exit 0 = ignored, exit 1 = not
+//     ignored, exit 128 = not in a git repo or other startup error, any
+//     other exit / error = transient or unknown.
+//   - True is returned only on exit 0 (definitely ignored). Exits 1 and
+//     128 return false (definitely-not-ignored / not-a-git-repo, both
+//     fall back to the regular throttle).
+//   - **Other failure modes (timeout, missing git binary, transient
+//     ExitError with code != 0, 1, 128) are logged via debug.Logf and
+//     return false.** This is "fail closed for bypass" — when in doubt,
+//     throttle as before, preserving pre-fix behavior rather than newly
+//     amplifying writes.
+//   - GIT_* env vars are scrubbed (same pattern as gitAddFile) so stray
+//     GIT_DIR / GIT_WORK_TREE values cannot redirect the probe at an
+//     unrelated repo.
+//   - Capped at 2 seconds via ctx WithTimeout — the probe runs on the
+//     main goroutine via PersistentPostRun, so a hung subprocess on a
+//     slow filesystem would block every bd command. 2 s is generous for
+//     a single git plumbing call.
+//   - Cached per-process via sync.Once keyed on path. The .gitignore /
+//     check-ignore answer is stable for a process lifetime in practice;
+//     if it changes mid-process (rare: user edits .gitignore while a bd
+//     subprocess is running), the next bd invocation re-probes.
+func isExportPathGitignored(ctx context.Context, beadsDir, path string) bool {
+	key := beadsDir + "\x00" + path
+	gitignoreProbeCacheMu.Lock()
+	if v, ok := gitignoreProbeCache[key]; ok {
+		gitignoreProbeCacheMu.Unlock()
+		return v
+	}
+	gitignoreProbeCacheMu.Unlock()
+
+	result := runGitignoreProbe(ctx, beadsDir, path)
+
+	gitignoreProbeCacheMu.Lock()
+	gitignoreProbeCache[key] = result
+	gitignoreProbeCacheMu.Unlock()
+	return result
+}
+
+// runGitignoreProbe is the uncached subprocess invocation. Kept separate
+// so tests can exercise the network of exit-code mappings without going
+// through the cache.
+func runGitignoreProbe(ctx context.Context, beadsDir, path string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	// `--` separator is defense-in-depth: it guarantees the path is
+	// interpreted as a path even if a future caller passes something that
+	// starts with `-`.
+	cmd := exec.CommandContext(probeCtx, "git", "check-ignore", "-q", "--", path)
+	cmd.Dir = filepath.Dir(beadsDir)
+	cmd.Env = scrubGitHookEnv(os.Environ())
+
+	err := cmd.Run()
+	if err == nil {
+		return true // exit 0 = ignored
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		switch exitErr.ExitCode() {
+		case 1:
+			return false // exit 1 = definitely not ignored
+		case 128:
+			return false // exit 128 = not in a git repo / no upstream
+		default:
+			debug.Logf("auto-export: check-ignore unexpected exit %d for %s (treating as not ignored)\n",
+				exitErr.ExitCode(), path)
+			return false
+		}
+	}
+	// Context deadline, missing git binary, fork/exec failure, etc.
+	debug.Logf("auto-export: check-ignore probe failed for %s: %v (treating as not ignored)\n", path, err)
+	return false
+}
+
+// gitignoreProbeCache memoizes isExportPathGitignored results per-process.
+// The cache is unbounded but the key space is bounded by the number of
+// distinct (beadsDir, exportPath) pairs the process touches — typically 1.
+var (
+	gitignoreProbeCache   = map[string]bool{}
+	gitignoreProbeCacheMu sync.Mutex
+)
 
 // scrubGitHookEnv returns env with the GIT_* variables that can poison
 // git's repo/worktree auto-discovery or object-store resolution removed,
