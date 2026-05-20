@@ -11,10 +11,21 @@ type ConfigSQLRepository interface {
 	SetLocalMetadata(ctx context.Context, key, value string) error
 	GetConfig(ctx context.Context, key string) (string, error)
 	SetConfig(ctx context.Context, key, value string) error
+
+	GetCustomTypes(ctx context.Context) ([]string, error)
+	GetAllowedPrefixes(ctx context.Context) (string, error)
 }
 
 type ConfigUseCase interface {
 	VerifyInit(ctx context.Context) (VerifyResult, error)
+}
+
+type CustomTypesUseCase interface {
+	GetCustomTypes(ctx context.Context) ([]string, error)
+}
+
+func NewCustomTypesUseCase(cfgRepo ConfigSQLRepository) CustomTypesUseCase {
+	return nil
 }
 
 type Issue struct{}
