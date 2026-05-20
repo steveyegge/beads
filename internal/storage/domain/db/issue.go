@@ -14,11 +14,15 @@ import (
 )
 
 func NewIssueSQLRepository(runner Runner) domain.IssueSQLRepository {
-	return &issueSQLRepositoryImpl{runner: runner}
+	return &issueSQLRepositoryImpl{
+		runner: runner,
+		events: NewEventsSQLRepository(runner),
+	}
 }
 
 type issueSQLRepositoryImpl struct {
 	runner Runner
+	events domain.EventsSQLRepository
 }
 
 var _ domain.IssueSQLRepository = (*issueSQLRepositoryImpl)(nil)
@@ -55,20 +59,19 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
-	table := pickIssueTable(opts.UseWispsTable)
-	eventTable := pickEventTable(opts.UseWispsTable)
-
 	if issue.ID == "" {
 		return errors.New("db: Insert: explicit ID required (ID generation belongs to CreateIssueUseCase)")
 	}
 
+	table := pickIssueTable(opts.UseWispsTable)
 	if err := insertIssueRow(ctx, r.runner, table, issue); err != nil {
 		return err
 	}
-	if err := recordEvent(ctx, r.runner, eventTable, issue.ID, string(types.EventCreated), actor, ""); err != nil {
-		return err
-	}
-	return nil
+	return r.events.Record(ctx, domain.Event{
+		IssueID: issue.ID,
+		Type:    types.EventCreated,
+		Actor:   actor,
+	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable})
 }
 
 func (r *issueSQLRepositoryImpl) InsertBatch(ctx context.Context, issues []*types.Issue, actor string, opts domain.InsertIssueOpts) error {
@@ -114,10 +117,11 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		return fmt.Errorf("db: Update %s: %w", id, sql.ErrNoRows)
 	}
 
-	if err := recordEvent(ctx, r.runner, "events", id, string(types.EventUpdated), actor, ""); err != nil {
-		return err
-	}
-	return nil
+	return r.events.Record(ctx, domain.Event{
+		IssueID: id,
+		Type:    types.EventUpdated,
+		Actor:   actor,
+	}, domain.RecordEventOpts{})
 }
 
 func (r *issueSQLRepositoryImpl) Get(ctx context.Context, id string) (*types.Issue, error) {
@@ -269,13 +273,6 @@ func pickIssueTable(useWisps bool) string {
 	return "issues"
 }
 
-func pickEventTable(useWisps bool) string {
-	if useWisps {
-		return "wisp_events"
-	}
-	return "events"
-}
-
 //nolint:gosec // G201: table is a hardcoded constant ("issues" or "wisps")
 func insertIssueRow(ctx context.Context, runner Runner, table string, issue *types.Issue) error {
 	_, err := runner.ExecContext(ctx, fmt.Sprintf(`
@@ -332,18 +329,6 @@ func insertIssueRow(ctx context.Context, runner Runner, table string, issue *typ
 	)
 	if err != nil {
 		return fmt.Errorf("db: insert into %s: %w", table, err)
-	}
-	return nil
-}
-
-//nolint:gosec // G201: table is a hardcoded constant
-func recordEvent(ctx context.Context, runner Runner, table, issueID, eventType, actor, newValue string) error {
-	_, err := runner.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (issue_id, event_type, actor, old_value, new_value)
-		VALUES (?, ?, ?, ?, ?)
-	`, table), issueID, eventType, actor, "", newValue)
-	if err != nil {
-		return fmt.Errorf("db: record event in %s: %w", table, err)
 	}
 	return nil
 }
