@@ -18,6 +18,7 @@ type DeepValidationResult struct {
 	EpicCompleteness    DoctorCheck   `json:"epic_completeness"`
 	MailThreadIntegrity DoctorCheck   `json:"mail_thread_integrity"`
 	MoleculeIntegrity   DoctorCheck   `json:"molecule_integrity"`
+	OrphanedChildren    DoctorCheck   `json:"orphaned_children"`
 	AllChecks           []DoctorCheck `json:"all_checks"`
 	TotalIssues         int           `json:"total_issues"`
 	TotalDependencies   int           `json:"total_dependencies"`
@@ -115,6 +116,9 @@ func RunDeepValidation(path string) DeepValidationResult {
 	if result.MoleculeIntegrity.Status == StatusError {
 		result.OverallOK = false
 	}
+
+	result.OrphanedChildren = checkOrphanedChildren(db)
+	result.AllChecks = append(result.AllChecks, result.OrphanedChildren)
 
 	return result
 }
@@ -455,6 +459,57 @@ func checkMoleculeIntegrity(db *sql.DB) DoctorCheck {
 
 	check.Status = StatusOK
 	check.Message = fmt.Sprintf("%d molecules validated", len(molecules))
+	return check
+}
+
+// checkOrphanedChildren finds issues whose ID contains a '.' but whose parent
+// prefix does not exist in the issues table (e.g. "parent.1" where "parent" is gone).
+func checkOrphanedChildren(db *sql.DB) DoctorCheck {
+	check := DoctorCheck{
+		Name:     "Orphaned Children",
+		Category: CategoryMetadata,
+	}
+
+	query := `
+		SELECT id
+		FROM issues
+		WHERE id LIKE '%.%'
+		  AND SUBSTRING_INDEX(id, '.', 1) NOT IN (SELECT id FROM issues)
+		LIMIT 10`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		check.Status = StatusWarning
+		check.Message = "Unable to check for orphaned children"
+		check.Detail = err.Error()
+		return check
+	}
+	defer rows.Close()
+
+	var orphans []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			orphans = append(orphans, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		check.Status = StatusWarning
+		check.Message = "Row iteration error checking orphaned children"
+		check.Detail = err.Error()
+		return check
+	}
+
+	if len(orphans) == 0 {
+		check.Status = StatusOK
+		check.Message = "No orphaned child issues found"
+		return check
+	}
+
+	check.Status = StatusWarning
+	check.Message = fmt.Sprintf("Found %d+ child issues whose parent no longer exists", len(orphans))
+	check.Detail = fmt.Sprintf("Examples: %s", strings.Join(orphans[:min(3, len(orphans))], ", "))
+	check.Fix = "Delete orphaned issues with 'bd admin delete <id>' or re-create the parent"
 	return check
 }
 
