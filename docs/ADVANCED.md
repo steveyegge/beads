@@ -5,6 +5,7 @@ This guide covers advanced features for power users and specific use cases.
 ## Table of Contents
 
 - [Renaming Prefix](#renaming-prefix)
+- [Detecting Test Pollution](#detecting-test-pollution)
 - [Merging Duplicate Issues](#merging-duplicate-issues)
 - [Git Worktrees](#git-worktrees)
 - [Database Redirects](#database-redirects)
@@ -55,6 +56,31 @@ bd rename-prefix kw-
 # Now you have kw-1, kw-2, etc.
 bd list  # Shows kw-* issues
 ```
+
+## Detecting Test Pollution
+
+Test pollution occurs when test or scratch issues accumulate in a production database. Use `bd doctor --check=pollution` to detect and optionally remove them:
+
+```bash
+# Scan for test issues (dry-run)
+bd doctor --check=pollution
+
+# Remove detected test issues
+bd doctor --check=pollution --fix
+
+# JSON output for scripting
+bd doctor --check=pollution --json
+```
+
+Test issues are identified by title patterns (`test-`, `benchmark-`, `tmp-`, `debug-`, etc.) and signals like rapid creation bursts or sequential IDs in a non-sequential database.
+
+**Repair with `--fix`:**
+- Closes detected test issues with reason `Removed: test pollution`
+- Preserves open non-test issues and all closed issues
+- Prints a summary of what was removed
+
+> **Legacy note:** An older `bd detect-pollution` command existed in early versions.
+> It was removed and its functionality merged into `bd doctor --check=pollution`.
 
 ## Duplicate Detection
 
