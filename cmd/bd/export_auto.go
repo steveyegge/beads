@@ -54,19 +54,27 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	// Load state and check throttle
+	// Resolve the export path before throttle/check detection so all decisions
+	// refer to the path that would actually be written.
+	exportPath := config.GetString("export.path")
+	if exportPath == "" {
+		if globalFlag {
+			exportPath = "global-issues.jsonl"
+		} else {
+			exportPath = "issues.jsonl"
+		}
+	}
+	fullPath := filepath.Join(beadsDir, exportPath)
+
+	// Load state + interval.
 	state := loadExportAutoState(beadsDir)
 	interval := config.GetDuration("export.interval")
 	if interval == 0 {
 		interval = 60 * time.Second
 	}
-	if !state.Timestamp.IsZero() && time.Since(state.Timestamp) < interval {
-		debug.Logf("auto-export: throttled (last export %s ago, interval %s)\n",
-			time.Since(state.Timestamp).Round(time.Second), interval)
-		return
-	}
 
-	// Change detection via Dolt commit hash
+	// Change detection via Dolt commit hash. This is cheap, so do it before
+	// throttle: when there are no changes, there is nothing to throttle.
 	currentCommit, err := store.GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to get current commit: %v\n", err)
@@ -77,16 +85,11 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	// Determine output path
-	exportPath := config.GetString("export.path")
-	if exportPath == "" {
-		if globalFlag {
-			exportPath = "global-issues.jsonl"
-		} else {
-			exportPath = "issues.jsonl"
-		}
+	if !shouldExport(state, interval) {
+		debug.Logf("auto-export: throttled (last export %s ago, interval %s)\n",
+			time.Since(state.Timestamp).Round(time.Second), interval)
+		return
 	}
-	fullPath := filepath.Join(beadsDir, exportPath)
 
 	// Run the export — memories are excluded from auto-export because they
 	// contain private agent context that must not reach git history (GH#3650).
@@ -126,6 +129,18 @@ func maybeAutoExport(ctx context.Context) {
 		Memories:       memoryCount,
 	}
 	saveExportAutoState(beadsDir, &newState)
+}
+
+// shouldExport reports whether the throttle window has elapsed, or whether
+// this is the first auto-export attempt. It returns false only when a recent
+// export exists and the configured interval has not elapsed.
+//
+// Extracted from Jeremy Longshore's GH#4061 throttle-decision refactor.
+func shouldExport(state *exportAutoState, interval time.Duration) bool {
+	if state.Timestamp.IsZero() {
+		return true
+	}
+	return time.Since(state.Timestamp) >= interval
 }
 
 // exportToFile atomically exports issues + memories to the given file path.

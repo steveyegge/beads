@@ -104,7 +104,7 @@ func TestPromptAutoExportDefaultsOff(t *testing.T) {
 	if !strings.Contains(output, "optional JSONL export") {
 		t.Fatalf("prompt should describe JSONL as optional export:\n%s", output)
 	}
-	if !strings.Contains(output, "Dolt remotes handle cross-machine sync") {
+	if !strings.Contains(output, "Dolt remotes/backups handle cross-machine sync and backup") {
 		t.Fatalf("prompt should direct sync to Dolt remotes:\n%s", output)
 	}
 }
