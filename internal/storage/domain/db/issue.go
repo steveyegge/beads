@@ -83,7 +83,7 @@ func (r *issueSQLRepositoryImpl) InsertBatch(ctx context.Context, issues []*type
 	return nil
 }
 
-func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates map[string]any, actor string) error {
+func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates map[string]any, actor string, opts domain.IssueTableOpts) error {
 	if id == "" {
 		return errors.New("db: Update: id must not be empty")
 	}
@@ -104,7 +104,9 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 	args = append(args, time.Now().UTC())
 	args = append(args, id)
 
-	q := fmt.Sprintf("UPDATE issues SET %s WHERE id = ?", strings.Join(setClauses, ", "))
+	table := pickIssueTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", table, strings.Join(setClauses, ", "))
 	res, err := r.runner.ExecContext(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("db: Update %s: %w", id, err)
@@ -121,14 +123,16 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 		IssueID: id,
 		Type:    types.EventUpdated,
 		Actor:   actor,
-	}, domain.RecordEventOpts{})
+	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable})
 }
 
-func (r *issueSQLRepositoryImpl) Get(ctx context.Context, id string) (*types.Issue, error) {
+func (r *issueSQLRepositoryImpl) Get(ctx context.Context, id string, opts domain.IssueTableOpts) (*types.Issue, error) {
 	if id == "" {
 		return nil, errors.New("db: Get: id must not be empty")
 	}
-	row := r.runner.QueryRowContext(ctx, fmt.Sprintf("SELECT %s FROM issues WHERE id = ?", issueSelectColumns), id)
+	table := pickIssueTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	row := r.runner.QueryRowContext(ctx, fmt.Sprintf("SELECT %s FROM %s WHERE id = ?", issueSelectColumns, table), id)
 	issue, err := scanIssue(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, sql.ErrNoRows
@@ -139,7 +143,7 @@ func (r *issueSQLRepositoryImpl) Get(ctx context.Context, id string) (*types.Iss
 	return issue, nil
 }
 
-func (r *issueSQLRepositoryImpl) GetByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
+func (r *issueSQLRepositoryImpl) GetByIDs(ctx context.Context, ids []string, opts domain.IssueTableOpts) ([]*types.Issue, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -149,7 +153,9 @@ func (r *issueSQLRepositoryImpl) GetByIDs(ctx context.Context, ids []string) ([]
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	q := fmt.Sprintf("SELECT %s FROM issues WHERE id IN (%s)", issueSelectColumns, strings.Join(placeholders, ","))
+	table := pickIssueTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	q := fmt.Sprintf("SELECT %s FROM %s WHERE id IN (%s)", issueSelectColumns, table, strings.Join(placeholders, ","))
 	rows, err := r.runner.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db: GetByIDs: %w", err)
@@ -170,8 +176,8 @@ func (r *issueSQLRepositoryImpl) GetByIDs(ctx context.Context, ids []string) ([]
 	return out, nil
 }
 
-func (r *issueSQLRepositoryImpl) Search(ctx context.Context, filter types.IssueFilter) ([]*types.Issue, error) {
-	q, args := buildSearchQuery(filter)
+func (r *issueSQLRepositoryImpl) Search(ctx context.Context, filter types.IssueFilter, opts domain.IssueTableOpts) ([]*types.Issue, error) {
+	q, args := buildSearchQuery(filter, pickIssueTable(opts.UseWispsTable))
 	rows, err := r.runner.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db: Search: %w", err)
@@ -192,7 +198,7 @@ func (r *issueSQLRepositoryImpl) Search(ctx context.Context, filter types.IssueF
 	return out, nil
 }
 
-func buildSearchQuery(filter types.IssueFilter) (string, []any) {
+func buildSearchQuery(filter types.IssueFilter, table string) (string, []any) {
 	var where []string
 	var args []any
 
@@ -241,7 +247,8 @@ func buildSearchQuery(filter types.IssueFilter) (string, []any) {
 		args = append(args, filter.SpecIDPrefix+"%")
 	}
 
-	q := fmt.Sprintf("SELECT %s FROM issues", issueSelectColumns)
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	q := fmt.Sprintf("SELECT %s FROM %s", issueSelectColumns, table)
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}

@@ -19,7 +19,14 @@ type commentSQLRepositoryImpl struct {
 
 var _ domain.CommentSQLRepository = (*commentSQLRepositoryImpl)(nil)
 
-func (r *commentSQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issueIDs []string) (map[string]int, error) {
+func pickCommentTable(useWisps bool) string {
+	if useWisps {
+		return "wisp_comments"
+	}
+	return "comments"
+}
+
+func (r *commentSQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issueIDs []string, opts domain.CommentOpts) (map[string]int, error) {
 	result := make(map[string]int)
 	if len(issueIDs) == 0 {
 		return result, nil
@@ -30,9 +37,11 @@ func (r *commentSQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issueID
 		placeholders[i] = "?"
 		args[i] = id
 	}
+	table := pickCommentTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
 	q := fmt.Sprintf(
-		"SELECT issue_id, COUNT(*) FROM comments WHERE issue_id IN (%s) GROUP BY issue_id",
-		strings.Join(placeholders, ","),
+		"SELECT issue_id, COUNT(*) FROM %s WHERE issue_id IN (%s) GROUP BY issue_id",
+		table, strings.Join(placeholders, ","),
 	)
 	rows, err := r.runner.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -54,7 +63,7 @@ func (r *commentSQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issueID
 	return result, nil
 }
 
-func (r *commentSQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error) {
+func (r *commentSQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueIDs []string, opts domain.CommentOpts) (map[string][]*types.Comment, error) {
 	result := make(map[string][]*types.Comment)
 	if len(issueIDs) == 0 {
 		return result, nil
@@ -65,12 +74,14 @@ func (r *commentSQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueIDs 
 		placeholders[i] = "?"
 		args[i] = id
 	}
+	table := pickCommentTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
 	q := fmt.Sprintf(`
 		SELECT id, issue_id, author, text, created_at
-		FROM comments
+		FROM %s
 		WHERE issue_id IN (%s)
 		ORDER BY issue_id, created_at ASC, id ASC
-	`, strings.Join(placeholders, ","))
+	`, table, strings.Join(placeholders, ","))
 	rows, err := r.runner.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db: CommentSQLRepository.ListByIssueIDs: %w", err)

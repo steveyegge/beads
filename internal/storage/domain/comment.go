@@ -6,9 +6,13 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+type CommentOpts struct {
+	UseWispsTable bool
+}
+
 type CommentSQLRepository interface {
-	CountsByIssueIDs(ctx context.Context, issueIDs []string) (map[string]int, error)
-	ListByIssueIDs(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
+	CountsByIssueIDs(ctx context.Context, issueIDs []string, opts CommentOpts) (map[string]int, error)
+	ListByIssueIDs(ctx context.Context, issueIDs []string, opts CommentOpts) (map[string][]*types.Comment, error)
 }
 
 type CommentQueryUseCase interface {

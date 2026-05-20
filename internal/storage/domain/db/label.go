@@ -23,15 +23,24 @@ type labelSQLRepositoryImpl struct {
 
 var _ domain.LabelSQLRepository = (*labelSQLRepositoryImpl)(nil)
 
-func (r *labelSQLRepositoryImpl) Insert(ctx context.Context, issueID, label, actor string) error {
+func pickLabelTable(useWisps bool) string {
+	if useWisps {
+		return "wisp_labels"
+	}
+	return "labels"
+}
+
+func (r *labelSQLRepositoryImpl) Insert(ctx context.Context, issueID, label, actor string, opts domain.LabelOpts) error {
 	if issueID == "" {
 		return fmt.Errorf("db: LabelSQLRepository.Insert: issueID must not be empty")
 	}
 	if label == "" {
 		return fmt.Errorf("db: LabelSQLRepository.Insert: label must not be empty")
 	}
+	table := pickLabelTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
 	if _, err := r.runner.ExecContext(ctx,
-		"INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)",
+		fmt.Sprintf("INSERT IGNORE INTO %s (issue_id, label) VALUES (?, ?)", table),
 		issueID, label,
 	); err != nil {
 		return fmt.Errorf("db: LabelSQLRepository.Insert %s/%s: %w", issueID, label, err)
@@ -41,15 +50,17 @@ func (r *labelSQLRepositoryImpl) Insert(ctx context.Context, issueID, label, act
 		Type:     types.EventLabelAdded,
 		Actor:    actor,
 		NewValue: label,
-	}, domain.RecordEventOpts{})
+	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable})
 }
 
-func (r *labelSQLRepositoryImpl) List(ctx context.Context, issueID string) ([]string, error) {
+func (r *labelSQLRepositoryImpl) List(ctx context.Context, issueID string, opts domain.LabelOpts) ([]string, error) {
 	if issueID == "" {
 		return nil, fmt.Errorf("db: LabelSQLRepository.List: issueID must not be empty")
 	}
+	table := pickLabelTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
 	rows, err := r.runner.QueryContext(ctx,
-		"SELECT label FROM labels WHERE issue_id = ? ORDER BY label",
+		fmt.Sprintf("SELECT label FROM %s WHERE issue_id = ? ORDER BY label", table),
 		issueID,
 	)
 	if err != nil {
@@ -71,7 +82,7 @@ func (r *labelSQLRepositoryImpl) List(ctx context.Context, issueID string) ([]st
 	return out, nil
 }
 
-func (r *labelSQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueIDs []string) (map[string][]string, error) {
+func (r *labelSQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueIDs []string, opts domain.LabelOpts) (map[string][]string, error) {
 	result := make(map[string][]string)
 	if len(issueIDs) == 0 {
 		return result, nil
@@ -82,9 +93,11 @@ func (r *labelSQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueIDs []
 		placeholders[i] = "?"
 		args[i] = id
 	}
+	table := pickLabelTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
 	q := fmt.Sprintf(
-		"SELECT issue_id, label FROM labels WHERE issue_id IN (%s) ORDER BY issue_id, label",
-		strings.Join(placeholders, ","),
+		"SELECT issue_id, label FROM %s WHERE issue_id IN (%s) ORDER BY issue_id, label",
+		table, strings.Join(placeholders, ","),
 	)
 	rows, err := r.runner.QueryContext(ctx, q, args...)
 	if err != nil {

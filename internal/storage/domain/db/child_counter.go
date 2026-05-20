@@ -2,7 +2,11 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 )
@@ -17,6 +21,80 @@ type childCounterSQLRepositoryImpl struct {
 
 var _ domain.ChildCounterSQLRepository = (*childCounterSQLRepositoryImpl)(nil)
 
-func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentID string) (string, error) {
-	return "", errors.New("db: ChildCounterSQLRepository.NextChildID: not implemented")
+// NextChildID allocates the next hierarchical child suffix for parentID and
+// returns "parentID.N". The stored counter is authoritative; the issue table
+// is also scanned for direct children so a pre-existing row inserted without
+// bumping the counter doesn't collide. Grandchildren (parent.1.7) are excluded
+// so they don't influence the parent's own counter.
+//
+// Routes to child_counters / issues by default; opts.UseWispsTable pivots to
+// wisp_child_counters / wisps for wisp parents.
+func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentID string, opts domain.ChildCounterOpts) (string, error) {
+	if parentID == "" {
+		return "", errors.New("db: ChildCounterSQLRepository.NextChildID: parentID must not be empty")
+	}
+
+	counterTable, issueTable := "child_counters", "issues"
+	if opts.UseWispsTable {
+		counterTable, issueTable = "wisp_child_counters", "wisps"
+	}
+
+	var lastChild int
+	err := r.runner.QueryRowContext(ctx,
+		//nolint:gosec // G201: counterTable is one of two hardcoded constants
+		fmt.Sprintf("SELECT last_child FROM %s WHERE parent_id = ?", counterTable),
+		parentID,
+	).Scan(&lastChild)
+	switch {
+	case err == nil:
+	case errors.Is(err, sql.ErrNoRows):
+		lastChild = 0
+	default:
+		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: read counter for %s: %w", parentID, err)
+	}
+
+	rows, err := r.runner.QueryContext(ctx, fmt.Sprintf(`
+		SELECT id FROM %s
+		WHERE id LIKE CONCAT(?, '.%%')
+		  AND id NOT LIKE CONCAT(?, '.%%.%%')
+	`, issueTable), parentID, parentID) //nolint:gosec // G201: issueTable is one of two hardcoded constants
+	if err != nil {
+		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: scan existing children of %s: %w", parentID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: scan: %w", err)
+		}
+		if n, ok := parseChildSuffix(id); ok && n > lastChild {
+			lastChild = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: rows: %w", err)
+	}
+
+	next := lastChild + 1
+	//nolint:gosec // G201: counterTable is one of two hardcoded constants
+	if _, err := r.runner.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (parent_id, last_child) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE last_child = ?
+	`, counterTable), parentID, next, next); err != nil {
+		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: upsert counter for %s: %w", parentID, err)
+	}
+
+	return fmt.Sprintf("%s.%d", parentID, next), nil
+}
+
+func parseChildSuffix(id string) (int, bool) {
+	dot := strings.LastIndex(id, ".")
+	if dot < 0 || dot == len(id)-1 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(id[dot+1:])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }

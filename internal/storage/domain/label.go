@@ -2,10 +2,14 @@ package domain
 
 import "context"
 
+type LabelOpts struct {
+	UseWispsTable bool
+}
+
 type LabelSQLRepository interface {
-	Insert(ctx context.Context, issueID, label, actor string) error
-	List(ctx context.Context, issueID string) ([]string, error)
-	ListByIssueIDs(ctx context.Context, issueIDs []string) (map[string][]string, error)
+	Insert(ctx context.Context, issueID, label, actor string, opts LabelOpts) error
+	List(ctx context.Context, issueID string, opts LabelOpts) ([]string, error)
+	ListByIssueIDs(ctx context.Context, issueIDs []string, opts LabelOpts) (map[string][]string, error)
 }
 
 type LabelUseCase interface {

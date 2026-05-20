@@ -23,6 +23,12 @@ func (s *testSuite) TestLabelSQLRepository() {
 		s.Run("MultipleIssuesGroupedByID", s.labelBulkGrouped)
 		s.Run("MissingIDsAreAbsent", s.labelBulkMissingAbsent)
 	})
+	s.Run("Wisp", func() {
+		s.Run("InsertRoutesToWispLabels", s.labelWispInsertRouting)
+		s.Run("InsertRecordsEventInWispEvents", s.labelWispInsertEvent)
+		s.Run("ListReadsFromWispLabels", s.labelWispListIsolated)
+		s.Run("ListByIssueIDsReadsFromWispLabels", s.labelWispBulkIsolated)
+	})
 }
 
 func (s *testSuite) labelRepo() domain.LabelSQLRepository {
@@ -32,9 +38,9 @@ func (s *testSuite) labelRepo() domain.LabelSQLRepository {
 func (s *testSuite) labelInsertRoundTrip() {
 	s.seedIssueRow("bd-lbl-1")
 	r := s.labelRepo()
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-1", "tech-debt", "tester"))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-1", "tech-debt", "tester", domain.LabelOpts{}))
 
-	out, err := r.List(s.Ctx(), "bd-lbl-1")
+	out, err := r.List(s.Ctx(), "bd-lbl-1", domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.Equal([]string{"tech-debt"}, out)
 }
@@ -42,10 +48,10 @@ func (s *testSuite) labelInsertRoundTrip() {
 func (s *testSuite) labelInsertIdempotent() {
 	s.seedIssueRow("bd-lbl-dup")
 	r := s.labelRepo()
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-dup", "needs-review", "tester"))
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-dup", "needs-review", "tester"))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-dup", "needs-review", "tester", domain.LabelOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-dup", "needs-review", "tester", domain.LabelOpts{}))
 
-	out, err := r.List(s.Ctx(), "bd-lbl-dup")
+	out, err := r.List(s.Ctx(), "bd-lbl-dup", domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.Equal([]string{"needs-review"}, out, "duplicate label add should be a no-op on the labels table")
 
@@ -60,7 +66,7 @@ func (s *testSuite) labelInsertIdempotent() {
 func (s *testSuite) labelInsertRecordsEvent() {
 	s.seedIssueRow("bd-lbl-evt")
 	r := s.labelRepo()
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-evt", "perf", "alice"))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-evt", "perf", "alice", domain.LabelOpts{}))
 
 	var actor, newValue string
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
@@ -72,40 +78,40 @@ func (s *testSuite) labelInsertRecordsEvent() {
 }
 
 func (s *testSuite) labelInsertEmptyIssueID() {
-	err := s.labelRepo().Insert(s.Ctx(), "", "x", "tester")
+	err := s.labelRepo().Insert(s.Ctx(), "", "x", "tester", domain.LabelOpts{})
 	s.Require().Error(err)
 }
 
 func (s *testSuite) labelInsertEmptyLabel() {
-	err := s.labelRepo().Insert(s.Ctx(), "bd-lbl-x", "", "tester")
+	err := s.labelRepo().Insert(s.Ctx(), "bd-lbl-x", "", "tester", domain.LabelOpts{})
 	s.Require().Error(err)
 }
 
 func (s *testSuite) labelInsertFKViolation() {
-	err := s.labelRepo().Insert(s.Ctx(), "bd-no-such-issue", "x", "tester")
+	err := s.labelRepo().Insert(s.Ctx(), "bd-no-such-issue", "x", "tester", domain.LabelOpts{})
 	s.Require().Error(err, "expected FK violation when issue_id does not exist")
 }
 
 func (s *testSuite) labelListAlphaOrder() {
 	s.seedIssueRow("bd-lbl-ord")
 	r := s.labelRepo()
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-ord", "zeta", "tester"))
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-ord", "alpha", "tester"))
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-ord", "mu", "tester"))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-ord", "zeta", "tester", domain.LabelOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-ord", "alpha", "tester", domain.LabelOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-ord", "mu", "tester", domain.LabelOpts{}))
 
-	out, err := r.List(s.Ctx(), "bd-lbl-ord")
+	out, err := r.List(s.Ctx(), "bd-lbl-ord", domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.Equal([]string{"alpha", "mu", "zeta"}, out)
 }
 
 func (s *testSuite) labelListUnknown() {
-	out, err := s.labelRepo().List(s.Ctx(), "bd-no-labels-here")
+	out, err := s.labelRepo().List(s.Ctx(), "bd-no-labels-here", domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.Empty(out)
 }
 
 func (s *testSuite) labelBulkEmpty() {
-	out, err := s.labelRepo().ListByIssueIDs(s.Ctx(), nil)
+	out, err := s.labelRepo().ListByIssueIDs(s.Ctx(), nil, domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.NotNil(out, "ListByIssueIDs should return a non-nil empty map")
 	s.Empty(out)
@@ -115,11 +121,11 @@ func (s *testSuite) labelBulkGrouped() {
 	s.seedIssueRow("bd-lbl-bulk-1")
 	s.seedIssueRow("bd-lbl-bulk-2")
 	r := s.labelRepo()
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-bulk-1", "a", "tester"))
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-bulk-1", "b", "tester"))
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-bulk-2", "c", "tester"))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-bulk-1", "a", "tester", domain.LabelOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-bulk-1", "b", "tester", domain.LabelOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-bulk-2", "c", "tester", domain.LabelOpts{}))
 
-	out, err := r.ListByIssueIDs(s.Ctx(), []string{"bd-lbl-bulk-1", "bd-lbl-bulk-2"})
+	out, err := r.ListByIssueIDs(s.Ctx(), []string{"bd-lbl-bulk-1", "bd-lbl-bulk-2"}, domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.Equal([]string{"a", "b"}, out["bd-lbl-bulk-1"])
 	s.Equal([]string{"c"}, out["bd-lbl-bulk-2"])
@@ -128,11 +134,83 @@ func (s *testSuite) labelBulkGrouped() {
 func (s *testSuite) labelBulkMissingAbsent() {
 	s.seedIssueRow("bd-lbl-present")
 	r := s.labelRepo()
-	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-present", "x", "tester"))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-present", "x", "tester", domain.LabelOpts{}))
 
-	out, err := r.ListByIssueIDs(s.Ctx(), []string{"bd-lbl-present", "bd-lbl-missing"})
+	out, err := r.ListByIssueIDs(s.Ctx(), []string{"bd-lbl-present", "bd-lbl-missing"}, domain.LabelOpts{})
 	s.Require().NoError(err)
 	s.Equal([]string{"x"}, out["bd-lbl-present"])
 	_, present := out["bd-lbl-missing"]
 	s.False(present, "missing issue IDs should not appear in the result map")
+}
+
+func (s *testSuite) labelWispInsertRouting() {
+	s.seedWispRow("bd-lbl-wisp-1")
+	r := s.labelRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-wisp-1", "wisp-only", "tester", domain.LabelOpts{UseWispsTable: true}))
+
+	var wispCount, permCount int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM wisp_labels WHERE issue_id = ?", "bd-lbl-wisp-1").Scan(&wispCount))
+	s.Equal(1, wispCount)
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM labels WHERE issue_id = ?", "bd-lbl-wisp-1").Scan(&permCount))
+	s.Equal(0, permCount, "wisp-routed insert must not write to labels")
+}
+
+func (s *testSuite) labelWispInsertEvent() {
+	s.seedWispRow("bd-lbl-wisp-evt")
+	r := s.labelRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-wisp-evt", "audit", "alice", domain.LabelOpts{UseWispsTable: true}))
+
+	var wispEvtCount, permEvtCount int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM wisp_events WHERE issue_id = ? AND event_type = ?",
+		"bd-lbl-wisp-evt", string(types.EventLabelAdded),
+	).Scan(&wispEvtCount))
+	s.Equal(1, wispEvtCount)
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = ?",
+		"bd-lbl-wisp-evt", string(types.EventLabelAdded),
+	).Scan(&permEvtCount))
+	s.Equal(0, permEvtCount, "wisp-routed label event must not write to events")
+}
+
+func (s *testSuite) labelWispListIsolated() {
+	// Same issue ID in both tables (won't happen in practice, but proves the routing
+	// is strict — List with UseWispsTable=true sees only wisp_labels rows).
+	s.seedIssueRow("bd-lbl-iso-perm")
+	s.seedWispRow("bd-lbl-iso-wisp")
+	r := s.labelRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-iso-perm", "perm", "tester", domain.LabelOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-iso-wisp", "wisp", "tester", domain.LabelOpts{UseWispsTable: true}))
+
+	permLabels, err := r.List(s.Ctx(), "bd-lbl-iso-perm", domain.LabelOpts{})
+	s.Require().NoError(err)
+	s.Equal([]string{"perm"}, permLabels)
+
+	wispLabels, err := r.List(s.Ctx(), "bd-lbl-iso-wisp", domain.LabelOpts{UseWispsTable: true})
+	s.Require().NoError(err)
+	s.Equal([]string{"wisp"}, wispLabels)
+
+	// Cross-routed lookups should be empty.
+	empty, err := r.List(s.Ctx(), "bd-lbl-iso-wisp", domain.LabelOpts{})
+	s.Require().NoError(err)
+	s.Empty(empty)
+	empty, err = r.List(s.Ctx(), "bd-lbl-iso-perm", domain.LabelOpts{UseWispsTable: true})
+	s.Require().NoError(err)
+	s.Empty(empty)
+}
+
+func (s *testSuite) labelWispBulkIsolated() {
+	s.seedWispRow("bd-lbl-wbulk-1")
+	s.seedWispRow("bd-lbl-wbulk-2")
+	r := s.labelRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-wbulk-1", "a", "tester", domain.LabelOpts{UseWispsTable: true}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-wbulk-1", "b", "tester", domain.LabelOpts{UseWispsTable: true}))
+	s.Require().NoError(r.Insert(s.Ctx(), "bd-lbl-wbulk-2", "c", "tester", domain.LabelOpts{UseWispsTable: true}))
+
+	out, err := r.ListByIssueIDs(s.Ctx(), []string{"bd-lbl-wbulk-1", "bd-lbl-wbulk-2"}, domain.LabelOpts{UseWispsTable: true})
+	s.Require().NoError(err)
+	s.Equal([]string{"a", "b"}, out["bd-lbl-wbulk-1"])
+	s.Equal([]string{"c"}, out["bd-lbl-wbulk-2"])
 }

@@ -22,10 +22,25 @@ type dependencySQLRepositoryImpl struct {
 
 var _ domain.DependencySQLRepository = (*dependencySQLRepositoryImpl)(nil)
 
+// depTargetExpr resolves a row's target ID from the three typed target
+// columns. After the ignored migrations (0003, 0005), both dependencies and
+// wisp_dependencies have the same column shape — three nullable target
+// columns plus a CHECK that exactly one is set. dependencies also has a
+// STORED generated depends_on_id, but Dolt doesn't reliably allow that in
+// WHERE/GROUP BY; wisp_dependencies has no such column at all. The expression
+// works uniformly across both.
 const depTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
+
 const depSelectColumns = "issue_id, " + depTargetExpr + " AS depends_on_id, type, created_at, created_by, metadata, thread_id"
 
-func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dependency, actor string) error {
+func pickDepTable(useWisps bool) string {
+	if useWisps {
+		return "wisp_dependencies"
+	}
+	return "dependencies"
+}
+
+func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dependency, actor string, opts domain.DepInsertOpts) error {
 	if dep == nil {
 		return errors.New("db: DependencySQLRepository.Insert: dep must not be nil")
 	}
@@ -44,16 +59,20 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		metadata = "{}"
 	}
 
+	table := pickDepTable(opts.UseWispsTable)
+
 	var existingType string
 	err := r.runner.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT type FROM dependencies WHERE issue_id = ? AND %s = ?", depTargetExpr),
+		//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
+		fmt.Sprintf("SELECT type FROM %s WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
 		dep.IssueID, dep.DependsOnID,
 	).Scan(&existingType)
 	switch {
 	case err == nil:
 		if existingType == string(dep.Type) {
+			//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
 			if _, err := r.runner.ExecContext(ctx,
-				fmt.Sprintf("UPDATE dependencies SET metadata = ? WHERE issue_id = ? AND %s = ?", depTargetExpr),
+				fmt.Sprintf("UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
 				metadata, dep.IssueID, dep.DependsOnID,
 			); err != nil {
 				return fmt.Errorf("db: DependencySQLRepository.Insert: refresh metadata: %w", err)
@@ -67,10 +86,11 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		return fmt.Errorf("db: DependencySQLRepository.Insert: check existing: %w", err)
 	}
 
-	if _, err := r.runner.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_issue_id, type, created_at, created_by, metadata, thread_id)
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	if _, err := r.runner.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (issue_id, depends_on_issue_id, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`,
+	`, table),
 		dep.IssueID, dep.DependsOnID, string(dep.Type),
 		time.Now().UTC(), actor, metadata, dep.ThreadID,
 	); err != nil {
@@ -83,6 +103,8 @@ func (r *dependencySQLRepositoryImpl) HasCycle(ctx context.Context, issueID, dep
 	if issueID == "" || dependsOnID == "" {
 		return false, errors.New("db: DependencySQLRepository.HasCycle: issueID and dependsOnID must not be empty")
 	}
+
+	// Fast path: a direct (one-hop) back-edge in either table closes a 2-cycle.
 	var one int
 	err := r.runner.QueryRowContext(ctx, `
 		SELECT 1 FROM dependencies
@@ -90,19 +112,41 @@ func (r *dependencySQLRepositoryImpl) HasCycle(ctx context.Context, issueID, dep
 		  AND type IN ('blocks', 'conditional-blocks')
 		LIMIT 1
 	`, dependsOnID, issueID).Scan(&one)
-	if err == nil {
+	switch {
+	case err == nil:
 		return true, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: direct probe (dependencies): %w", err)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: direct probe: %w", err)
+	err = r.runner.QueryRowContext(ctx, `
+		SELECT 1 FROM wisp_dependencies
+		WHERE issue_id = ? AND depends_on_issue_id = ?
+		  AND type IN ('blocks', 'conditional-blocks')
+		LIMIT 1
+	`, dependsOnID, issueID).Scan(&one)
+	switch {
+	case err == nil:
+		return true, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: direct probe (wisp_dependencies): %w", err)
 	}
+
+	// Slow path: recursive CTE over UNION of both dependency tables. Each
+	// branch only emits rows whose depends_on_issue_id is set, so we follow
+	// only issue-to-issue closure edges — wisp and external targets terminate
+	// the path. This catches issue -> wisp -> issue paths only when the wisp
+	// edges themselves point back at issues, which is the practical cycle
+	// shape; revisit if wisp-targeted closure becomes a need.
 	var count int
 	err = r.runner.QueryRowContext(ctx, `
 		WITH RECURSIVE reachable(node) AS (
 			SELECT ?
 			UNION
-			SELECT d.depends_on_issue_id
-			FROM dependencies d
+			SELECT d.depends_on_issue_id FROM (
+				SELECT issue_id, depends_on_issue_id, type FROM dependencies
+				UNION ALL
+				SELECT issue_id, depends_on_issue_id, type FROM wisp_dependencies
+			) d
 			JOIN reachable r ON d.issue_id = r.node
 			WHERE d.type IN ('blocks', 'conditional-blocks')
 			  AND d.depends_on_issue_id IS NOT NULL
@@ -126,11 +170,13 @@ func (r *dependencySQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueI
 
 	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
 	typeWhere, typeArgs := buildTypeFilter(opts.Types)
+	table := pickDepTable(opts.UseWispsTable)
 
 	if opts.Direction == domain.DepDirectionBoth || opts.Direction == domain.DepDirectionOut {
+		//nolint:gosec // G201: table and depSelectColumns are hardcoded
 		q := fmt.Sprintf(
-			`SELECT %s FROM dependencies WHERE issue_id IN (%s)%s ORDER BY issue_id`,
-			depSelectColumns, idPlaceholders, typeWhere,
+			`SELECT %s FROM %s WHERE issue_id IN (%s)%s ORDER BY issue_id`,
+			depSelectColumns, table, idPlaceholders, typeWhere,
 		)
 		args := combineArgs(idArgs, typeArgs)
 		if err := r.queryDeps(ctx, q, args, result.Outgoing, true); err != nil {
@@ -139,9 +185,10 @@ func (r *dependencySQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueI
 	}
 
 	if opts.Direction == domain.DepDirectionBoth || opts.Direction == domain.DepDirectionIn {
+		//nolint:gosec // G201: table, depSelectColumns, depTargetExpr are hardcoded
 		q := fmt.Sprintf(
-			`SELECT %s FROM dependencies WHERE %s IN (%s)%s ORDER BY issue_id`,
-			depSelectColumns, depTargetExpr, idPlaceholders, typeWhere,
+			`SELECT %s FROM %s WHERE %s IN (%s)%s ORDER BY issue_id`,
+			depSelectColumns, table, depTargetExpr, idPlaceholders, typeWhere,
 		)
 		args := combineArgs(idArgs, typeArgs)
 		if err := r.queryDeps(ctx, q, args, result.Incoming, false); err != nil {
@@ -152,7 +199,7 @@ func (r *dependencySQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueI
 	return result, nil
 }
 
-func (r *dependencySQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error) {
+func (r *dependencySQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issueIDs []string, opts domain.DepCountsOpts) (map[string]*types.DependencyCounts, error) {
 	result := make(map[string]*types.DependencyCounts)
 	if len(issueIDs) == 0 {
 		return result, nil
@@ -162,18 +209,21 @@ func (r *dependencySQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issu
 	}
 
 	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
+	table := pickDepTable(opts.UseWispsTable)
 
+	//nolint:gosec // G201: table is one of two hardcoded constants
 	outQ := fmt.Sprintf(
-		`SELECT issue_id, COUNT(*) FROM dependencies WHERE issue_id IN (%s) AND type = 'blocks' GROUP BY issue_id`,
-		idPlaceholders,
+		`SELECT issue_id, COUNT(*) FROM %s WHERE issue_id IN (%s) AND type = 'blocks' GROUP BY issue_id`,
+		table, idPlaceholders,
 	)
 	if err := scanCounts(ctx, r.runner, outQ, idArgs, result, func(c *types.DependencyCounts, n int) { c.DependencyCount = n }); err != nil {
 		return nil, fmt.Errorf("db: DependencySQLRepository.CountsByIssueIDs (out): %w", err)
 	}
 
+	//nolint:gosec // G201: table and depTargetExpr are hardcoded
 	inQ := fmt.Sprintf(
-		`SELECT %s AS depends_on_id, COUNT(*) FROM dependencies WHERE %s IN (%s) AND type = 'blocks' GROUP BY %s`,
-		depTargetExpr, depTargetExpr, idPlaceholders, depTargetExpr,
+		`SELECT %s AS depends_on_id, COUNT(*) FROM %s WHERE %s IN (%s) AND type = 'blocks' GROUP BY %s`,
+		depTargetExpr, table, depTargetExpr, idPlaceholders, depTargetExpr,
 	)
 	if err := scanCounts(ctx, r.runner, inQ, idArgs, result, func(c *types.DependencyCounts, n int) { c.DependentCount = n }); err != nil {
 		return nil, fmt.Errorf("db: DependencySQLRepository.CountsByIssueIDs (in): %w", err)

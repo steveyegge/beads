@@ -26,6 +26,15 @@ func (s *testSuite) seedIssueRow(id string) {
 	s.Require().NoError(err)
 }
 
+// seedWispRow inserts a minimal row into the wisps table. The wisps schema
+// has defaults for the TEXT columns (unlike issues), so id + title is enough.
+func (s *testSuite) seedWispRow(id string) {
+	_, err := s.Runner().ExecContext(s.Ctx(),
+		"INSERT INTO wisps (id, title) VALUES (?, ?)",
+		id, "seed-wisp")
+	s.Require().NoError(err)
+}
+
 func (s *testSuite) eventsRecordEvents() {
 	s.seedIssueRow("bd-evt-1")
 

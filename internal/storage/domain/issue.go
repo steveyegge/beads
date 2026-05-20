@@ -19,15 +19,22 @@ type InsertIssueOpts struct {
 	UseWispsTable        bool
 }
 
+// IssueTableOpts pivots Update/Get/GetByIDs/Search to the wisps partition.
+// Issue and wisp rows live in independent tables with the same column shape,
+// so the same SQL works against either — only the table name changes.
+type IssueTableOpts struct {
+	UseWispsTable bool
+}
+
 type IssueSQLRepository interface {
 	Insert(ctx context.Context, issue *types.Issue, actor string, opts InsertIssueOpts) error
 	InsertBatch(ctx context.Context, issues []*types.Issue, actor string, opts InsertIssueOpts) error
-	Update(ctx context.Context, id string, updates map[string]any, actor string) error
+	Update(ctx context.Context, id string, updates map[string]any, actor string, opts IssueTableOpts) error
 
-	Get(ctx context.Context, id string) (*types.Issue, error)
-	GetByIDs(ctx context.Context, ids []string) ([]*types.Issue, error)
+	Get(ctx context.Context, id string, opts IssueTableOpts) (*types.Issue, error)
+	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
 
-	Search(ctx context.Context, filter types.IssueFilter) ([]*types.Issue, error)
+	Search(ctx context.Context, filter types.IssueFilter, opts IssueTableOpts) ([]*types.Issue, error)
 }
 
 type IssueUseCase interface {
