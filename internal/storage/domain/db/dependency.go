@@ -22,13 +22,6 @@ type dependencySQLRepositoryImpl struct {
 
 var _ domain.DependencySQLRepository = (*dependencySQLRepositoryImpl)(nil)
 
-// depTargetExpr resolves a row's target ID from the three typed target
-// columns. After the ignored migrations (0003, 0005), both dependencies and
-// wisp_dependencies have the same column shape — three nullable target
-// columns plus a CHECK that exactly one is set. dependencies also has a
-// STORED generated depends_on_id, but Dolt doesn't reliably allow that in
-// WHERE/GROUP BY; wisp_dependencies has no such column at all. The expression
-// works uniformly across both.
 const depTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
 
 const depSelectColumns = "issue_id, " + depTargetExpr + " AS depends_on_id, type, created_at, created_by, metadata, thread_id"
@@ -104,7 +97,6 @@ func (r *dependencySQLRepositoryImpl) HasCycle(ctx context.Context, issueID, dep
 		return false, errors.New("db: DependencySQLRepository.HasCycle: issueID and dependsOnID must not be empty")
 	}
 
-	// Fast path: a direct (one-hop) back-edge in either table closes a 2-cycle.
 	var one int
 	err := r.runner.QueryRowContext(ctx, `
 		SELECT 1 FROM dependencies
@@ -131,12 +123,6 @@ func (r *dependencySQLRepositoryImpl) HasCycle(ctx context.Context, issueID, dep
 		return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: direct probe (wisp_dependencies): %w", err)
 	}
 
-	// Slow path: recursive CTE over UNION of both dependency tables. Each
-	// branch only emits rows whose depends_on_issue_id is set, so we follow
-	// only issue-to-issue closure edges — wisp and external targets terminate
-	// the path. This catches issue -> wisp -> issue paths only when the wisp
-	// edges themselves point back at issues, which is the practical cycle
-	// shape; revisit if wisp-targeted closure becomes a need.
 	var count int
 	err = r.runner.QueryRowContext(ctx, `
 		WITH RECURSIVE reachable(node) AS (

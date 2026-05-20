@@ -19,7 +19,6 @@ type UnitOfWork interface {
 	DependencyUseCase() domain.DependencyUseCase
 	LabelUseCase() domain.LabelUseCase
 	CommentUseCase() domain.CommentUseCase
-	CustomTypesUseCase() domain.CustomTypesUseCase
 }
 
 type UnitOfWorkProvider interface {
@@ -42,11 +41,10 @@ type baseUOW struct {
 	remoteUseCase    domain.DoltRemoteUseCase
 	bootstrapUseCase domain.BootstrapUseCase
 
-	issueUseCase       domain.IssueUseCase
-	dependencyUseCase  domain.DependencyUseCase
-	labelUseCase       domain.LabelUseCase
-	commentUseCase     domain.CommentUseCase
-	customTypesUseCase domain.CustomTypesUseCase
+	issueUseCase      domain.IssueUseCase
+	dependencyUseCase domain.DependencyUseCase
+	labelUseCase      domain.LabelUseCase
+	commentUseCase    domain.CommentUseCase
 }
 
 func (u *baseUOW) Commit(ctx context.Context, message string) error {
@@ -108,13 +106,6 @@ func (u *baseUOW) LabelUseCase() domain.LabelUseCase {
 		u.labelUseCase = domain.NewLabelUseCase(db.NewLabelSQLRepository(u.tx.Runner()))
 	}
 	return u.labelUseCase
-}
-
-func (u *baseUOW) CustomTypesUseCase() domain.CustomTypesUseCase {
-	if u.customTypesUseCase == nil {
-		u.customTypesUseCase = domain.NewCustomTypesUseCase(db.NewConfigSQLRepository(u.tx.Runner()))
-	}
-	return u.customTypesUseCase
 }
 
 func (u *baseUOW) CommentUseCase() domain.CommentUseCase {

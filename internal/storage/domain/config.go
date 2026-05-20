@@ -18,14 +18,7 @@ type ConfigSQLRepository interface {
 
 type ConfigUseCase interface {
 	VerifyInit(ctx context.Context) (VerifyResult, error)
-}
-
-type CustomTypesUseCase interface {
 	GetCustomTypes(ctx context.Context) ([]string, error)
-}
-
-func NewCustomTypesUseCase(cfgRepo ConfigSQLRepository) CustomTypesUseCase {
-	return nil
 }
 
 type Issue struct{}
@@ -75,4 +68,12 @@ func (u *configUseCaseImpl) VerifyInit(ctx context.Context) (VerifyResult, error
 		IssuePrefix: issuePrefix,
 		Missing:     missing,
 	}, nil
+}
+
+func (u *configUseCaseImpl) GetCustomTypes(ctx context.Context) ([]string, error) {
+	out, err := u.cfgRepo.GetCustomTypes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetCustomTypes: %w", err)
+	}
+	return out, nil
 }

@@ -21,14 +21,6 @@ type childCounterSQLRepositoryImpl struct {
 
 var _ domain.ChildCounterSQLRepository = (*childCounterSQLRepositoryImpl)(nil)
 
-// NextChildID allocates the next hierarchical child suffix for parentID and
-// returns "parentID.N". The stored counter is authoritative; the issue table
-// is also scanned for direct children so a pre-existing row inserted without
-// bumping the counter doesn't collide. Grandchildren (parent.1.7) are excluded
-// so they don't influence the parent's own counter.
-//
-// Routes to child_counters / issues by default; opts.UseWispsTable pivots to
-// wisp_child_counters / wisps for wisp parents.
 func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentID string, opts domain.ChildCounterOpts) (string, error) {
 	if parentID == "" {
 		return "", errors.New("db: ChildCounterSQLRepository.NextChildID: parentID must not be empty")
