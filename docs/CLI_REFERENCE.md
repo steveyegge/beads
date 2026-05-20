@@ -2200,6 +2200,11 @@ bd swarm validate [epic-id] [flags]
 
 Back up your beads database for off-machine recovery.
 
+This is a Dolt-native database backup. It preserves the database state,
+including tables, branches, commit history, and working-set data. This is
+different from 'bd export', which writes issue records to JSONL for migration
+and interoperability.
+
 Commands:
   bd backup init &lt;path&gt;    Set up a backup destination (filesystem or DoltHub)
   bd backup sync           Push to configured backup destination
@@ -2257,6 +2262,10 @@ Restore the beads database from a Dolt-native backup.
 
 By default, reads from .beads/backup/ (or the configured backup directory).
 Optionally specify a path to a directory containing a Dolt backup.
+
+This restores a full database backup created by 'bd backup sync' or an
+equivalent Dolt backup. JSONL files produced by 'bd export' are issue exports,
+not restore targets for this command.
 
 Use --force to overwrite an existing database with the backup contents.
 
@@ -2318,9 +2327,10 @@ Export all issues to JSONL (newline-delimited JSON) format.
 Each line is a complete JSON object representing one issue, including its
 labels, dependencies, and comments.
 
-This command is for issue export, migration, and interoperability. It does
-not produce the JSONL backup snapshot used by 'bd backup restore'. For
-supported backup/restore flows, use 'bd backup', 'bd backup export-git',
+This command is for issue export, migration, and interoperability. It exports
+records from the issues table; it is not a full database backup and does not
+capture Dolt branches, commit history, working-set state, or non-issue tables.
+For supported full backup/restore flows, use 'bd backup init', 'bd backup sync',
 and 'bd backup restore'.
 
 By default, exports only regular issues (excluding infrastructure beads
@@ -2332,7 +2342,7 @@ include them.
 
 EXAMPLES:
   bd export                              # Export issues to stdout
-  bd export -o backup.jsonl              # Export to file
+  bd export -o issues.jsonl              # Export issues to file
   bd export --include-memories           # Export issues + memories
   bd export --all -o full.jsonl          # Include infra + templates + gates + memories
   bd export --scrub -o clean.jsonl       # Exclude test/pollution records
@@ -2575,7 +2585,7 @@ Common namespaces:
 
 Auto-Export (config.yaml):
   Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv), interchange, and backup.
+  Enabled by default. Useful for viewers (bv) and interchange; not a backup.
   It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
 
   Keys:
@@ -3335,8 +3345,8 @@ Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv), interchange, and backups up to date without extra steps.
-Cross-machine sync uses Dolt remotes, not JSONL import/export.
+viewers (bv) and interchange up to date without extra steps.
+Cross-machine sync and backups use Dolt remotes/backups, not JSONL import/export.
 To disable: bd config set export.auto false
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):

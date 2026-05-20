@@ -89,6 +89,12 @@ Switch to server mode when you need:
 You can migrate data between embedded mode and server mode using `bd backup`.
 Both directions preserve full Dolt commit history.
 
+`bd export` is not a substitute for this flow. JSONL exports contain issue
+records from the issues table for migration and interoperability; they do not
+capture Dolt branches, full commit history, working-set state, or non-issue
+tables. Use `bd backup` or a manual Dolt backup when you need a restorable
+database backup.
+
 ### Server → Embedded
 
 1. **Create a backup from the server-mode project:**
@@ -158,7 +164,7 @@ Both directions preserve full Dolt commit history.
 ### Notes
 
 - Data locations differ between modes: `.beads/embeddeddolt/` (embedded) vs `.beads/dolt/` (server)
-- The backup directory is a full Dolt backup — it can be on a local drive, NAS, or DoltHub
+- The backup directory is a full Dolt backup, not an `issues.jsonl` export — it can be on a local drive, NAS, or DoltHub
 - You can also migrate via Dolt remotes (`bd dolt push` / `bd dolt pull`) if both projects share a remote
 
 The sections below are the canonical backend migration reference.

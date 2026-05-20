@@ -139,7 +139,7 @@ When the list is empty, fix it on the machine whose local database is
 authoritative:
 
 ```bash
-bd export -o .beads/issues.pre-remote.jsonl   # optional audit backup
+bd export -o .beads/issues.pre-remote.jsonl   # optional issue audit export
 bd dolt remote add origin git+ssh://git@github.com/org/repo.git
 bd dolt push
 ```
