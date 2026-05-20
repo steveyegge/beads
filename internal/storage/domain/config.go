@@ -11,10 +11,14 @@ type ConfigSQLRepository interface {
 	SetLocalMetadata(ctx context.Context, key, value string) error
 	GetConfig(ctx context.Context, key string) (string, error)
 	SetConfig(ctx context.Context, key, value string) error
+
+	GetCustomTypes(ctx context.Context) ([]string, error)
+	GetAllowedPrefixes(ctx context.Context) (string, error)
 }
 
 type ConfigUseCase interface {
 	VerifyInit(ctx context.Context) (VerifyResult, error)
+	GetCustomTypes(ctx context.Context) ([]string, error)
 }
 
 type Issue struct{}
@@ -64,4 +68,12 @@ func (u *configUseCaseImpl) VerifyInit(ctx context.Context) (VerifyResult, error
 		IssuePrefix: issuePrefix,
 		Missing:     missing,
 	}, nil
+}
+
+func (u *configUseCaseImpl) GetCustomTypes(ctx context.Context) ([]string, error) {
+	out, err := u.cfgRepo.GetCustomTypes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetCustomTypes: %w", err)
+	}
+	return out, nil
 }

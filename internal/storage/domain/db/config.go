@@ -67,3 +67,11 @@ func (r *configSQLRepositoryImpl) SetConfig(ctx context.Context, key, value stri
 	}
 	return nil
 }
+
+func (r *configSQLRepositoryImpl) GetCustomTypes(ctx context.Context) ([]string, error) {
+	return nil, errors.New("db: GetCustomTypes: not implemented")
+}
+
+func (r *configSQLRepositoryImpl) GetAllowedPrefixes(ctx context.Context) (string, error) {
+	return "", errors.New("db: GetAllowedPrefixes: not implemented")
+}
