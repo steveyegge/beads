@@ -43,7 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Init refusal messages follow What/Why/Next structure** — runtime error text no longer echoes copy-pasteable destructive invocations. Token values and exact override commands live in `bd help init-safety` and `docs/RECOVERY.md` only. Closes the failure class where an AI agent destroyed 247 issues by pattern-matching on the tool's own error output (`58f5989bf`).
 - **`beads.OpenBestAvailable` signature changed (breaking)** — returns `(Storage, error)` instead of `(Storage, Unlocker, error)`. The per-open flock and `Unlocker` return value were removed; the embedded Dolt engine handles its own concurrency internally. External SDK consumers that call `OpenBestAvailable` must drop the second return value. ([PR #3614](https://github.com/gastownhall/beads/pull/3614))
 - **Embedded-mode flock removed** — the process-lifetime exclusive flock on `.beads/embeddeddolt/` has been removed. Concurrent `bd` processes now open the embedded engine independently. If the GH#2571 nil-deref stack (`NewConnector` → `DoltDB.SetCrashOnFatalError` → `CollectDBs`) resurfaces under concurrent access, it should be filed and fixed in `dolthub/driver`, not reintroduced as a beads-side flock. ([PR #3614](https://github.com/gastownhall/beads/pull/3614))
-- **Auto-export is now on by default** — pending Dolt changes are committed automatically and exported to JSONL when configured, reducing manual sync drift in coordinated repos.
+- **Auto-export is now opt-in by default** — new repositories leave `export.auto`
+  and `export.git-add` disabled unless a viewer or JSONL integration explicitly
+  enables them. This keeps `.beads/issues.jsonl` as an optional export surface,
+  not the default mutation path. ([GH#4062](https://github.com/gastownhall/beads/issues/4062))
+
 - **Release workflow uses the checked-in beads-release formula** — the old release shell path now delegates to the formula-backed release workflow with CI gates.
 
 ### Deprecated
