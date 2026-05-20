@@ -16,14 +16,10 @@ type UnitOfWork interface {
 	BootstrapUseCase() domain.BootstrapUseCase
 
 	IssueUseCase() domain.IssueUseCase
-	CreateIssueUseCase() domain.CreateIssueUseCase
 	DependencyUseCase() domain.DependencyUseCase
 	LabelUseCase() domain.LabelUseCase
 	CustomTypesUseCase() domain.CustomTypesUseCase
-	GraphApplyUseCase() domain.GraphApplyUseCase
 
-	IssueQueryUseCase() domain.IssueQueryUseCase
-	ListIssuesUseCase() domain.ListIssuesUseCase
 	DependencyQueryUseCase() domain.DependencyQueryUseCase
 	LabelQueryUseCase() domain.LabelQueryUseCase
 	CommentQueryUseCase() domain.CommentQueryUseCase
@@ -50,14 +46,10 @@ type baseUOW struct {
 	bootstrapUseCase domain.BootstrapUseCase
 
 	issueUseCase       domain.IssueUseCase
-	createIssueUseCase domain.CreateIssueUseCase
 	dependencyUseCase  domain.DependencyUseCase
 	labelUseCase       domain.LabelUseCase
 	customTypesUseCase domain.CustomTypesUseCase
-	graphApplyUseCase  domain.GraphApplyUseCase
 
-	issueQueryUseCase      domain.IssueQueryUseCase
-	listIssuesUseCase      domain.ListIssuesUseCase
 	dependencyQueryUseCase domain.DependencyQueryUseCase
 	labelQueryUseCase      domain.LabelQueryUseCase
 	commentQueryUseCase    domain.CommentQueryUseCase
@@ -97,23 +89,17 @@ func (u *baseUOW) BootstrapUseCase() domain.BootstrapUseCase {
 
 func (u *baseUOW) IssueUseCase() domain.IssueUseCase {
 	if u.issueUseCase == nil {
-		u.issueUseCase = domain.NewIssueUseCase(db.NewIssueSQLRepository(u.tx.Runner()))
-	}
-	return u.issueUseCase
-}
-
-func (u *baseUOW) CreateIssueUseCase() domain.CreateIssueUseCase {
-	if u.createIssueUseCase == nil {
 		runner := u.tx.Runner()
-		u.createIssueUseCase = domain.NewCreateIssueUseCase(
+		u.issueUseCase = domain.NewIssueUseCase(
 			db.NewIssueSQLRepository(runner),
 			db.NewDependencySQLRepository(runner),
 			db.NewLabelSQLRepository(runner),
 			db.NewChildCounterSQLRepository(runner),
+			db.NewCommentSQLRepository(runner),
 			db.NewConfigSQLRepository(runner),
 		)
 	}
-	return u.createIssueUseCase
+	return u.issueUseCase
 }
 
 func (u *baseUOW) DependencyUseCase() domain.DependencyUseCase {
@@ -139,39 +125,6 @@ func (u *baseUOW) CustomTypesUseCase() domain.CustomTypesUseCase {
 		u.customTypesUseCase = domain.NewCustomTypesUseCase(db.NewConfigSQLRepository(u.tx.Runner()))
 	}
 	return u.customTypesUseCase
-}
-
-func (u *baseUOW) GraphApplyUseCase() domain.GraphApplyUseCase {
-	if u.graphApplyUseCase == nil {
-		runner := u.tx.Runner()
-		u.graphApplyUseCase = domain.NewGraphApplyUseCase(
-			u.CreateIssueUseCase(),
-			db.NewIssueSQLRepository(runner),
-			db.NewDependencySQLRepository(runner),
-			db.NewLabelSQLRepository(runner),
-		)
-	}
-	return u.graphApplyUseCase
-}
-
-func (u *baseUOW) IssueQueryUseCase() domain.IssueQueryUseCase {
-	if u.issueQueryUseCase == nil {
-		u.issueQueryUseCase = domain.NewIssueQueryUseCase(db.NewIssueSQLRepository(u.tx.Runner()))
-	}
-	return u.issueQueryUseCase
-}
-
-func (u *baseUOW) ListIssuesUseCase() domain.ListIssuesUseCase {
-	if u.listIssuesUseCase == nil {
-		runner := u.tx.Runner()
-		u.listIssuesUseCase = domain.NewListIssuesUseCase(
-			db.NewIssueSQLRepository(runner),
-			db.NewDependencySQLRepository(runner),
-			db.NewLabelSQLRepository(runner),
-			db.NewCommentSQLRepository(runner),
-		)
-	}
-	return u.listIssuesUseCase
 }
 
 func (u *baseUOW) DependencyQueryUseCase() domain.DependencyQueryUseCase {
