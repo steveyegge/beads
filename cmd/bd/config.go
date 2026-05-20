@@ -37,7 +37,7 @@ Common namespaces:
 
 Auto-Export (config.yaml):
   Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv), interchange, and backup.
+  Enabled by default. Useful for viewers (bv) and interchange; not a backup.
   It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
 
   Keys:

@@ -43,7 +43,7 @@ bd backup sync                            # Push a Dolt-native backup
 - **Formulas**: Declarative workflow templates (TOML/JSON)
 - **Molecules**: Work graphs from formulas
 - **Gates**: Async coordination (human/timer/github)
-- **Wisps**: Ephemeral workflows (excluded from JSONL backups)
+- **Wisps**: Ephemeral workflows (excluded from issue JSONL exports)
 
 ## Recovery
 

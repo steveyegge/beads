@@ -1141,7 +1141,7 @@ var rootCmd = &cobra.Command{
 				}
 			}
 
-			// Auto-backup: export JSONL to .beads/backup/ if enabled and due
+			// Auto-backup: sync a Dolt-native backup if enabled and due
 			maybeAutoBackup(rootCtx)
 
 			// Auto-export: write git-tracked JSONL for portability if enabled and due.

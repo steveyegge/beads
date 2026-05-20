@@ -55,8 +55,8 @@ Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv), interchange, and backups up to date without extra steps.
-Cross-machine sync uses Dolt remotes, not JSONL import/export.
+viewers (bv) and interchange up to date without extra steps.
+Cross-machine sync and backups use Dolt remotes/backups, not JSONL import/export.
 To disable: bd config set export.auto false
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
@@ -1976,7 +1976,7 @@ func promptContributorMode() (isContributor bool, err error) {
 // Returns true to keep it enabled, false to disable.
 func promptAutoExport() (bool, error) {
 	fmt.Printf("\n%s Auto-export keeps .beads/issues.jsonl up to date after every write command.\n", ui.RenderAccent("▶"))
-	fmt.Println("  This is useful for viewers (bv), interchange, and backups. Dolt remotes handle sync.")
+	fmt.Println("  This is useful for viewers (bv) and interchange. Dolt remotes/backups handle sync and backup.")
 	fmt.Print("\nEnable auto-export? [Y/n]: ")
 
 	reader := bufio.NewReader(os.Stdin)
