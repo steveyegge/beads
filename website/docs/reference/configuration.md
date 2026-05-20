@@ -108,10 +108,10 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `backup.interval` | — | `BD_BACKUP_INTERVAL` | `15m` | Minimum time between auto-backups |
 | `backup.git-push` | — | — | `false` | Auto-push backup repo |
 | `backup.git-repo` | — | `BD_BACKUP_GIT_REPO` | (none) | Backup git repo URL |
-| `export.auto` | — | — | `true` | Refresh `.beads/issues.jsonl` export after every write; not cross-machine sync |
+| `export.auto` | — | — | `false` | Refresh `.beads/issues.jsonl` export after every write; not cross-machine sync |
 | `export.path` | — | — | `issues.jsonl` | Output filename relative to `.beads/` |
 | `export.interval` | — | — | `60s` | Minimum time between auto-exports |
-| `export.git-add` | — | — | `true` | Run `git add` on the export file |
+| `export.git-add` | — | — | `false` | Run `git add` on the export file |
 | `routing.mode` | — | — | (none) | Multi-repo routing: `auto`, `maintainer`, `contributor`, `explicit` |
 | `routing.default` | — | — | `.` | Default routing target |
 | `routing.maintainer` | — | — | `.` | Maintainer-routed path |
@@ -212,12 +212,12 @@ backup:
   enabled: true
   interval: 15m
 
-# Auto-export issues.jsonl after writes for viewers/interchange
+# Optional auto-export of issues.jsonl after writes for viewers/interchange
 export:
-  auto: true
+  auto: false
   path: issues.jsonl
   interval: 60s
-  git-add: true
+  git-add: false
 
 # Optional Dolt federation
 federation:

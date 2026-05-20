@@ -237,13 +237,13 @@ func Initialize() error {
 	v.SetDefault("backup.git-push", false)
 	v.SetDefault("backup.git-repo", "")
 
-	// Auto-export: write JSONL after mutations for viewers, interchange, and
-	// backup. It is not cross-machine sync; Dolt remotes are the source of
-	// truth for sync. Enabled by default so tools like bv see fresh data.
-	v.SetDefault("export.auto", true)
+	// Auto-export: optional JSONL export after mutations for viewers,
+	// interchange, and backup. It is not cross-machine sync; Dolt remotes are
+	// the source of truth for sync. Viewer integrations can opt in explicitly.
+	v.SetDefault("export.auto", false)
 	v.SetDefault("export.interval", "60s")
 	v.SetDefault("export.path", "issues.jsonl") // relative to .beads/; canonical name
-	v.SetDefault("export.git-add", true)
+	v.SetDefault("export.git-add", false)
 
 	// Auto-import: legacy compatibility fallback for projects that have not
 	// configured a Dolt remote yet. Hook code skips this path when sync.remote
