@@ -1393,6 +1393,10 @@ func exportSubprocessDir(beadsDir string) string {
 // When sync.remote is configured, Dolt remains the source of truth and JSONL
 // import is skipped because upsert-only import cannot reconcile stale exports.
 //
+// Unlike the other implied-import callsites, this hook falls back to export.path
+// when import.path is unset/default so legacy projects that customized only
+// export.path continue to sync the file git just updated.
+//
 // Errors are logged as warnings but never block the merge/checkout. The
 // import is upsert; running it on an unchanged JSONL is a no-op (bd
 // import returns "Error 1105: nothing to commit", which we tolerate).
@@ -1412,7 +1416,21 @@ func importJSONLForSync(reason string) {
 		return
 	}
 
-	fullPath := configuredImportJSONLPath(beadsDir)
+	// Prefer import.path; fall back to export.path for legacy projects that
+	// customized only export.path and haven't set import.path yet.
+	// Only fall back if export.path differs from the shared default ("issues.jsonl")
+	// so that uncustomised setups still read "issues.jsonl" as before.
+	const defaultJSONLName = "issues.jsonl"
+	importPath := config.GetString("import.path")
+	if importPath == "" || importPath == defaultJSONLName {
+		if exportPath := config.GetString("export.path"); exportPath != "" && exportPath != defaultJSONLName {
+			importPath = exportPath
+		}
+	}
+	if importPath == "" {
+		importPath = defaultJSONLName
+	}
+	fullPath := filepath.Join(beadsDir, importPath)
 
 	if info, err := os.Stat(fullPath); err != nil || info.Size() == 0 {
 		return

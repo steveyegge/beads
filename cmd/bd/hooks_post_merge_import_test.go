@@ -105,6 +105,52 @@ func captureHookStderr(t *testing.T, fn func()) string {
 	return string(out)
 }
 
+// TestImportJSONLForSync_FallsBackToExportPath verifies that when a project has
+// customised export.path but not import.path, the git-hook sync still finds the
+// right file. Without the fallback, importJSONLForSync would stat the default
+// "issues.jsonl" (which does not exist here), get ENOENT, and return silently.
+func TestImportJSONLForSync_FallsBackToExportPath(t *testing.T) {
+	tmp := t.TempDir()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+
+	initConfigForTest(t) // initialise viper from tmp (no real config files here)
+
+	beadsDir := filepath.Join(tmp, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// metadata.json makes FindBeadsDir() recognise this as a beads project dir.
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"backend":"dolt"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Write only the export-path file, not the default "issues.jsonl".
+	if err := os.WriteFile(filepath.Join(beadsDir, "beads.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	config.Set("import.auto", true)
+	config.Set("export.path", "beads.jsonl")
+	config.Set("no-git-ops", true) // suppress warnJSONLWithoutDoltRemote chatter
+
+	stderr := captureHookStderr(t, func() {
+		importJSONLForSync("test")
+	})
+	// The subprocess ("bd import ...") will fail since there is no working
+	// beads store here. The failure is surfaced as "import warning" on stderr —
+	// that line is only reached after os.Stat succeeds, so seeing it proves
+	// the fallback resolved to "beads.jsonl" instead of the missing "issues.jsonl".
+	if !strings.Contains(stderr, "import warning") {
+		t.Fatalf("expected 'import warning' on stderr (proving fallback to export.path worked), got:\n%s", stderr)
+	}
+}
+
 // TestRunPostCheckoutHook_FileModeSkipsImport asserts that file-mode
 // checkouts (flag=0, e.g. `git checkout -- <file>`) do NOT trigger the
 // import path — only branch-mode checkouts (flag=1) do. Without this
