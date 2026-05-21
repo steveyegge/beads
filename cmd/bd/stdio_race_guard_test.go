@@ -37,11 +37,13 @@ var cobraParallelUnsafeMethods = []string{
 // redirecting them, and races where Find()/InheritedFlags() lazily merge
 // persistent parent flags on shared global command objects.
 //
-// The rule: if a test function contains t.Parallel() (in code, not
-// comments), it must NOT call any Cobra method in
-// cobraParallelUnsafeMethods. Setting cmd.SetOut()/SetErr() does NOT prevent
-// output races because cobra eagerly evaluates os.Stdout as the default
-// argument before checking outWriter.
+// The rule: if a top-level test function or test method contains t.Parallel()
+// (in code, not comments), it must NOT call any method name in
+// cobraParallelUnsafeMethods. The matcher is intentionally receiver-agnostic;
+// it favors a clear false positive over missing a shared Cobra command-state
+// race. Setting cmd.SetOut()/SetErr() does NOT prevent output races because
+// cobra eagerly evaluates os.Stdout as the default argument before checking
+// outWriter.
 //
 // Fix options for flagged tests:
 //  1. Remove t.Parallel() (preferred for fast tests)
@@ -56,7 +58,7 @@ func TestCobraParallelPolicyGuard(t *testing.T) {
 		t.Fatalf("glob: %v", err)
 	}
 
-	funcPattern := regexp.MustCompile(`(?m)^func (Test\w+)\(`)
+	funcPattern := regexp.MustCompile(`(?m)^func\s+(?:\([^)]*\)\s+)?(Test\w+)\(`)
 
 	for _, file := range testFiles {
 		data, err := os.ReadFile(file)
@@ -91,10 +93,10 @@ func TestCobraParallelPolicyGuard(t *testing.T) {
 
 			for _, method := range cobraParallelUnsafeMethods {
 				if strings.Contains(strippedStrings, method) {
-					t.Errorf("%s:%s is t.Parallel() and calls cobra %s — "+
+					t.Errorf("%s:%s is t.Parallel() and calls method name %s — "+
 						"this can race with stdio capture or shared command flag caches. "+
 						"Remove t.Parallel() or serialize under stdioMutex. "+
-						"See stdioMutex in test_helpers_test.go.",
+						"See stdioMutex in test_helpers_pure_test.go.",
 						file, funcName, method)
 					break // one error per function is enough
 				}
@@ -121,22 +123,28 @@ func stripLineComments(s string) string {
 func stripStringLiterals(s string) string {
 	var b strings.Builder
 	inString := false
+	inRawString := false
 	escaped := false
 	for _, ch := range s {
 		if escaped {
 			escaped = false
 			continue
 		}
-		if ch == '\\' && inString {
+		if ch == '\\' && inString && !inRawString {
 			escaped = true
 			continue
 		}
-		if ch == '"' {
+		if ch == '"' && !inRawString {
 			inString = !inString
 			b.WriteRune(ch)
 			continue
 		}
-		if !inString {
+		if ch == '`' && !inString {
+			inRawString = !inRawString
+			b.WriteRune(ch)
+			continue
+		}
+		if !inString && !inRawString {
 			b.WriteRune(ch)
 		}
 	}

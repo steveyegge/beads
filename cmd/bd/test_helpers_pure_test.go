@@ -57,7 +57,9 @@ var doltNewMutex sync.Mutex
 // because cobra's OutOrStdout() eagerly evaluates os.Stdout as the default
 // argument even when outWriter is set — the Go race detector catches this read.
 //
-// TestCobraParallelPolicyGuard in stdio_race_guard_test.go enforces this.
+// The name is historical; this mutex also serializes Cobra command-tree lazy
+// mutations on shared commands. TestCobraParallelPolicyGuard in
+// stdio_race_guard_test.go enforces this.
 var stdioMutex sync.Mutex
 
 // uniqueTestDBName generates a unique database name for test isolation.
