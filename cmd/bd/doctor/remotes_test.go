@@ -105,6 +105,84 @@ func TestCheckRemoteConsistencyNoRemotesIncludesGitOriginAdoptionDetail(t *testi
 	}
 }
 
+func TestCheckRemoteConsistency_ServerModeSkipsCLIComparison(t *testing.T) {
+	clearResolveBeadsDirCache()
+	t.Cleanup(clearResolveBeadsDirCache)
+
+	repoDir := t.TempDir()
+	beadsDir := filepath.Join(repoDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads: %v", err)
+	}
+	cfg := &configfile.Config{DoltMode: configfile.DoltModeServer}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	oldQuerySQLRemotes := querySQLRemotesForDoctor
+	oldListCLIRemotes := listCLIRemotesForDoctor
+	t.Cleanup(func() {
+		querySQLRemotesForDoctor = oldQuerySQLRemotes
+		listCLIRemotesForDoctor = oldListCLIRemotes
+	})
+	querySQLRemotesForDoctor = func(string) ([]storage.RemoteInfo, error) {
+		return []storage.RemoteInfo{{Name: "origin", URL: "git+ssh://git@github.com/org/repo.git"}}, nil
+	}
+	// CLI listing should NOT be called in server mode; fail loudly if it is.
+	listCLIRemotesForDoctor = func(string) ([]storage.RemoteInfo, error) {
+		t.Fatalf("listCLIRemotes should not be called in server mode")
+		return nil, nil
+	}
+
+	check := CheckRemoteConsistency(repoDir)
+	if check.Status != StatusOK {
+		t.Fatalf("expected OK in server mode with one SQL remote, got %q: %s", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "server mode") {
+		t.Fatalf("expected server-mode note in message, got: %s", check.Message)
+	}
+	if !strings.Contains(check.Message, "1 remote") {
+		t.Fatalf("expected remote count in message, got: %s", check.Message)
+	}
+}
+
+func TestCheckRemoteConsistency_ServerModeNoRemotesStillWarns(t *testing.T) {
+	clearResolveBeadsDirCache()
+	t.Cleanup(clearResolveBeadsDirCache)
+
+	repoDir := t.TempDir()
+	beadsDir := filepath.Join(repoDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads: %v", err)
+	}
+	cfg := &configfile.Config{DoltMode: configfile.DoltModeServer}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	oldQuerySQLRemotes := querySQLRemotesForDoctor
+	oldListCLIRemotes := listCLIRemotesForDoctor
+	t.Cleanup(func() {
+		querySQLRemotesForDoctor = oldQuerySQLRemotes
+		listCLIRemotesForDoctor = oldListCLIRemotes
+	})
+	querySQLRemotesForDoctor = func(string) ([]storage.RemoteInfo, error) {
+		return nil, nil
+	}
+	listCLIRemotesForDoctor = func(string) ([]storage.RemoteInfo, error) {
+		t.Fatalf("listCLIRemotes should not be called in server mode")
+		return nil, nil
+	}
+
+	check := CheckRemoteConsistency(repoDir)
+	if check.Status != StatusWarning {
+		t.Fatalf("expected warning when no remotes in server mode, got %q: %s", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "No remotes configured") {
+		t.Fatalf("expected 'No remotes configured' message, got: %s", check.Message)
+	}
+}
+
 func TestRemoteAdoptionDetailWithoutGitOrigin(t *testing.T) {
 	detail := remoteAdoptionDetail(t.TempDir())
 	if !strings.Contains(detail, "bd dolt remote add origin <url>") {

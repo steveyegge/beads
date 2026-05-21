@@ -47,6 +47,15 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 		}
 	}
 
+	// In server mode the per-repo CLI dolt dir doesn't exist by design — Dolt
+	// manages data via the server, not under .beads/dolt/<db>/. Skip the CLI
+	// comparison and report SQL-only. This covers all server flavors: in-process
+	// server start, beads-managed shared server, and externally-managed servers
+	// (BEADS_DOLT_SERVER_MODE / BEADS_DOLT_SHARED_SERVER / dolt_mode=server).
+	if cfg.IsDoltServerMode() {
+		return serverModeRemoteConsistencyCheck(sqlRemotes, repoPath)
+	}
+
 	// Get CLI remotes
 	doltDir := doltserver.ResolveDoltDir(beadsDir)
 	dbName := cfg.GetDoltDatabase()
@@ -125,6 +134,34 @@ func CheckRemoteConsistency(repoPath string) DoctorCheck {
 		Message:  fmt.Sprintf("%d discrepancies found", len(issues)),
 		Detail:   strings.Join(issues, "\n"),
 		Fix:      fix,
+		Category: CategoryData,
+	}
+}
+
+// serverModeRemoteConsistencyCheck reports SQL remotes only, since CLI remotes
+// are an embedded-mode concept (per-repo .beads/dolt/<db>/ on disk).
+func serverModeRemoteConsistencyCheck(sqlRemotes []storage.RemoteInfo, repoPath string) DoctorCheck {
+	if len(sqlRemotes) == 0 {
+		return DoctorCheck{
+			Name:     "Remote Consistency",
+			Status:   StatusWarning,
+			Message:  "No remotes configured",
+			Detail:   remoteAdoptionDetail(repoPath),
+			Category: CategoryData,
+		}
+	}
+
+	msg := fmt.Sprintf("%d remote(s) configured (server mode — CLI N/A)", len(sqlRemotes))
+	for _, r := range sqlRemotes {
+		if doltutil.IsSSHURL(r.URL) {
+			msg += " — git+ssh remotes also support refs/dolt/data (see https://docs.dolthub.com/concepts/dolt/git/remotes)"
+			break
+		}
+	}
+	return DoctorCheck{
+		Name:     "Remote Consistency",
+		Status:   StatusOK,
+		Message:  msg,
 		Category: CategoryData,
 	}
 }
