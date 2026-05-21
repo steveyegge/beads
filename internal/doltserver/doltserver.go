@@ -1274,6 +1274,34 @@ func ensureDoltIdentity() error {
 // Those databases are incompatible with the current server-only architecture.
 const bdDoltMarker = ".bd-dolt-ok"
 
+// MarkDoltDirCompatible writes the bd compatibility marker when doltDir contains
+// a local Dolt repository.
+func MarkDoltDirCompatible(doltDir string) error {
+	if doltDir == "" {
+		return errors.New("dolt directory is required")
+	}
+	dotDolt := filepath.Join(doltDir, ".dolt")
+	if info, err := os.Stat(dotDolt); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("checking dolt metadata directory %s: %w", dotDolt, err)
+	} else if !info.IsDir() {
+		return fmt.Errorf("dolt metadata path %s is not a directory", dotDolt)
+	}
+	markerPath := filepath.Join(doltDir, bdDoltMarker)
+	if info, err := os.Stat(markerPath); err == nil {
+		_ = info
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking dolt compatibility marker %s: %w", markerPath, err)
+	}
+	if err := os.WriteFile(markerPath, []byte("ok\n"), 0600); err != nil {
+		return fmt.Errorf("writing dolt compatibility marker %s: %w", markerPath, err)
+	}
+	return nil
+}
+
 // ensureDoltInit initializes a dolt database directory if .dolt/ doesn't exist.
 // If .dolt/ exists, seeds the .bd-dolt-ok marker for existing working databases.
 // See GH#2137 for background on pre-0.56 database compatibility.

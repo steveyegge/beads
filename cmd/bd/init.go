@@ -1232,6 +1232,12 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
 		}
 
+		if initServerMode {
+			if err := doltserver.MarkDoltDirCompatible(storagePath); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write Dolt compatibility marker: %v\n", err)
+			}
+		}
+
 		// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
 		// directory — including noms/LOCK files. These are Dolt-internal files.
 		// Removing them WILL cause unrecoverable data corruption and data loss.
