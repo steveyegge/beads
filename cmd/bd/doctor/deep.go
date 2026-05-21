@@ -470,6 +470,7 @@ func checkOrphanedChildren(db *sql.DB) DoctorCheck {
 		Category: CategoryMetadata,
 	}
 
+	const orphanLimit = 10
 	query := `
 		SELECT id
 		FROM issues
@@ -507,7 +508,11 @@ func checkOrphanedChildren(db *sql.DB) DoctorCheck {
 	}
 
 	check.Status = StatusWarning
-	check.Message = fmt.Sprintf("Found %d+ child issues whose parent no longer exists", len(orphans))
+	if len(orphans) >= orphanLimit {
+		check.Message = fmt.Sprintf("Found %d+ child issues whose parent no longer exists", len(orphans))
+	} else {
+		check.Message = fmt.Sprintf("Found %d orphaned child issues whose parent no longer exists", len(orphans))
+	}
 	check.Detail = fmt.Sprintf("Examples: %s", strings.Join(orphans[:min(3, len(orphans))], ", "))
 	check.Fix = "Delete orphaned issues with 'bd admin delete <id>' or re-create the parent"
 	return check
