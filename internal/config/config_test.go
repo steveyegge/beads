@@ -66,6 +66,8 @@ func TestDefaults(t *testing.T) {
 		{"json", false, func(k string) interface{} { return GetBool(k) }},
 		{"db", "", func(k string) interface{} { return GetString(k) }},
 		{"actor", "", func(k string) interface{} { return GetString(k) }},
+		{"export.auto", false, func(k string) interface{} { return GetBool(k) }},
+		{"export.git-add", false, func(k string) interface{} { return GetBool(k) }},
 	}
 
 	for _, tt := range tests {

@@ -346,10 +346,10 @@ Configuration keys use dot-notation namespaces to organize settings:
 - `min_hash_length` - Minimum hash ID length (default: 4)
 - `max_hash_length` - Maximum hash ID length (default: 8)
 - `import.orphan_handling` - How to handle hierarchical issues with missing parents during import (default: `allow`)
-- `export.auto` - Refresh the JSONL export after every write command (default: `true`). This is for viewers, interchange, and issue-level migration; it is not cross-machine sync and not a full database backup.
+- `export.auto` - Refresh the JSONL export after every write command (default: `false`). This is for viewers, interchange, and issue-level migration; it is not cross-machine sync and not a full database backup.
 - `export.path` - Output filename relative to `.beads/` (default: `issues.jsonl`)
 - `export.interval` - Minimum time between auto-exports (default: `60s`)
-- `export.git-add` - Run `git add` on the export file after writing (default: `true`)
+- `export.git-add` - Run `git add` on the export file after writing (default: `false`)
 - `export.error_policy` - Error handling strategy for exports (default: `strict`)
 - `export.retry_attempts` - Number of retry attempts for transient errors (default: 3)
 - `export.retry_backoff_ms` - Initial backoff in milliseconds for retries (default: 100)
@@ -359,6 +359,20 @@ Configuration keys use dot-notation namespaces to organize settings:
 - `import.auto` - Legacy hook fallback that imports JSONL after git merge/checkout only when no Dolt remote is configured (default: `true`)
 - `sync.branch` - Name of the dedicated sync branch for beads data (see docs/PROTECTED_BRANCHES.md)
 - `sync.require_confirmation_on_mass_delete` - Require interactive confirmation before pushing when >50% of issues vanish during a merge AND more than 5 issues existed before (default: `false`)
+
+**Upgrade note:** `export.auto` and `export.git-add` are opt-in. Older releases
+briefly made `.beads/issues.jsonl` look like the default git-tracked source of
+truth; current releases treat it as an optional export for viewers,
+interchange, and issue-level migration. If your workflow depends on fresh JSONL
+or on the pre-commit hook staging that file, set both values explicitly:
+
+```bash
+bd config set export.auto true
+bd config set export.git-add true
+```
+
+Use `bd dolt push` / `bd dolt pull` for cross-machine sync and `bd backup` for
+restorable database backups.
 
 ### Integration Namespaces
 
