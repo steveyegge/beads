@@ -163,7 +163,7 @@ func GetReadyWorkInTx(
 	// candidate IDs first and filter blockers per page below, avoiding a full
 	// dependency graph scan when the caller only needs a small ready set.
 	if filter.Limit == 0 {
-		blockedIDs, err := computeBlockedFn(ctx, tx, filter.IncludeEphemeral)
+		blockedIDs, err := computeBlockedFn(ctx, tx, true)
 		if err != nil {
 			return nil, fmt.Errorf("compute blocked IDs: %w", err)
 		}
@@ -227,7 +227,7 @@ func GetReadyWorkInTx(
 				break
 			}
 
-			blockedPageIDs, err := ComputeBlockedCandidateIDsInTx(ctx, tx, pageIDs, filter.IncludeEphemeral)
+			blockedPageIDs, err := ComputeBlockedCandidateIDsInTx(ctx, tx, pageIDs, true)
 			if err != nil {
 				return nil, fmt.Errorf("get ready work: filter blocked candidates: %w", err)
 			}
@@ -285,22 +285,30 @@ func GetReadyWorkInTx(
 		return nil, wErr
 	}
 	if len(wisps) > 0 {
-		seen := make(map[string]struct{}, len(ordered))
-		for _, issue := range ordered {
-			seen[issue.ID] = struct{}{}
-		}
-		for _, wisp := range wisps {
-			if _, exists := seen[wisp.ID]; exists {
-				continue
-			}
-			ordered = append(ordered, wisp)
-		}
-		sortReadyIssues(ordered, filter.SortPolicy)
-		if filter.Limit > 0 && len(ordered) > filter.Limit {
-			ordered = ordered[:filter.Limit]
+		ordered, err = mergeReadyWisps(ordered, wisps, filter)
+		if err != nil {
+			return nil, err
 		}
 	}
 
+	return ordered, nil
+}
+
+func mergeReadyWisps(ordered []*types.Issue, wisps []*types.Issue, filter types.WorkFilter) ([]*types.Issue, error) {
+	seen := make(map[string]struct{}, len(ordered))
+	for _, issue := range ordered {
+		seen[issue.ID] = struct{}{}
+	}
+	for _, wisp := range wisps {
+		if _, exists := seen[wisp.ID]; exists {
+			return nil, fmt.Errorf("ready work id %q exists in both issues and wisps", wisp.ID)
+		}
+		ordered = append(ordered, wisp)
+	}
+	sortReadyIssues(ordered, filter.SortPolicy)
+	if filter.Limit > 0 && len(ordered) > filter.Limit {
+		ordered = ordered[:filter.Limit]
+	}
 	return ordered, nil
 }
 
@@ -672,7 +680,7 @@ func getChildrenOfIssuesInTx(ctx context.Context, tx *sql.Tx, parentIDs []string
 			rows, err := tx.QueryContext(ctx, query, args...)
 			if err != nil {
 				// wisp_dependencies table may not exist on pre-migration databases.
-				if depTable == "wisp_dependencies" {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 					break
 				}
 				return nil, fmt.Errorf("get children of issues from %s: %w", depTable, err)

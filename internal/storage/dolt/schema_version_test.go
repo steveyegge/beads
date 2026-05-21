@@ -128,6 +128,32 @@ func TestSchemaRunsInitWhenMissing(t *testing.T) {
 		t.Errorf("max migration version = %d, want %d", maxVersion, schema.LatestVersion())
 	}
 
+	var legacyTargetColumns int
+	err = store.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = DATABASE()
+		  AND table_name = 'wisp_dependencies'
+		  AND column_name = 'depends_on_id'`).Scan(&legacyTargetColumns)
+	if err != nil {
+		t.Fatalf("query wisp_dependencies legacy target column: %v", err)
+	}
+	if legacyTargetColumns != 0 {
+		t.Fatalf("wisp_dependencies.depends_on_id exists after fresh migration")
+	}
+
+	var splitTargetColumns int
+	err = store.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = DATABASE()
+		  AND table_name = 'wisp_dependencies'
+		  AND column_name IN ('depends_on_issue_id', 'depends_on_wisp_id', 'depends_on_external')`).Scan(&splitTargetColumns)
+	if err != nil {
+		t.Fatalf("query wisp_dependencies split target columns: %v", err)
+	}
+	if splitTargetColumns != 3 {
+		t.Fatalf("wisp_dependencies split target column count = %d, want 3", splitTargetColumns)
+	}
+
 	dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*testTimeout)
 	defer dropCancel()
 	_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))

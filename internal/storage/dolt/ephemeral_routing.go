@@ -4,14 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
-	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+var permanentIssueAuxTables = []string{"issues", "labels", "dependencies", "events", "comments"}
 
 // IsEphemeralID returns true if the ID belongs to an ephemeral issue.
 func IsEphemeralID(id string) bool {
@@ -184,73 +184,87 @@ func (s *DoltStore) batchWispExists(ctx context.Context, ids []string) map[strin
 // redirect label/dependency/event writes back to wisp tables.
 func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor string) error {
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
-		return issueops.PromoteFromEphemeralInTx(ctx, tx, id, actor)
+		if err := issueops.PromoteFromEphemeralInTx(ctx, tx, id, actor); err != nil {
+			return err
+		}
+		return s.doltAddAndCommitInTx(ctx, tx, permanentIssueAuxTables, fmt.Sprintf("bd: promote %s", id))
 	}); err != nil {
 		return err
 	}
-
-	return s.doltAddAndCommit(ctx,
-		[]string{"issues", "labels", "dependencies", "events", "comments"},
-		fmt.Sprintf("bd: promote %s", id))
+	s.invalidateBlockedIDsCache()
+	return nil
 }
 
 // DemoteToWisp moves an issue from the issues table to the wisps table.
 // This is the inverse of PromoteFromEphemeral. It applies any provided updates
-// (e.g., setting no_history or ephemeral) to the issue in-memory, then migrates
-// it atomically: insert into wisps, copy auxiliary data, delete from issues.
+// (e.g., setting no_history or ephemeral) without recording an intermediate
+// update event, then migrates it atomically: insert into wisps, copy auxiliary
+// data, delete from issues.
 //
 // Called by UpdateIssue when no_history=true or wisp=true is set on a regular issue.
 func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
-	// Read the current issue from the issues table.
-	issue, err := scanIssueFromTable(ctx, s.db, "issues", id)
-	if err != nil {
-		return fmt.Errorf("failed to get issue for demotion: %w", err)
-	}
+	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
+		if _, err := issueops.UpdateIssueWithoutEventInTx(ctx, tx, id, updates, actor); err != nil {
+			return fmt.Errorf("update issue before demotion: %w", err)
+		}
 
-	// Apply in-memory updates so the wisps row reflects all requested changes.
-	applyUpdatesToIssueStruct(issue, updates)
+		issue, err := scanIssueTxFromTable(ctx, tx, "issues", id)
+		if err != nil {
+			return fmt.Errorf("failed to get updated issue for demotion: %w", err)
+		}
 
-	return s.withWriteTx(ctx, func(tx *sql.Tx) error {
 		if err := insertIssueTxIntoTable(ctx, tx, "wisps", issue); err != nil {
 			return fmt.Errorf("failed to insert issue into wisps: %w", err)
 		}
 
 		if _, err := tx.ExecContext(ctx, `
-			INSERT IGNORE INTO wisp_labels (issue_id, label)
-			SELECT issue_id, label FROM labels WHERE issue_id = ?
-		`, id); err != nil {
-			log.Printf("demote %s: failed to copy labels (data may be lost): %v", id, err)
+		INSERT IGNORE INTO wisp_labels (issue_id, label)
+		SELECT issue_id, label FROM labels WHERE issue_id = ?
+	`, id); err != nil {
+			return fmt.Errorf("copy labels for demoted issue %s: %w", id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM labels WHERE issue_id = ?`, id); err != nil {
+			return fmt.Errorf("delete copied labels for demoted issue %s: %w", id, err)
 		}
 
 		if _, err := tx.ExecContext(ctx, `
-			INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
-			SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
-			FROM dependencies WHERE issue_id = ?
-		`, id); err != nil {
-			log.Printf("demote %s: failed to copy dependencies (data may be lost): %v", id, err)
+		INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
+		SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
+		FROM dependencies WHERE issue_id = ?
+	`, id); err != nil {
+			return fmt.Errorf("copy dependencies for demoted issue %s: %w", id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dependencies WHERE issue_id = ?`, id); err != nil {
+			return fmt.Errorf("delete copied dependencies for demoted issue %s: %w", id, err)
 		}
 
 		if _, err := tx.ExecContext(ctx, `
-			INSERT IGNORE INTO wisp_events (issue_id, event_type, actor, old_value, new_value, comment, created_at)
-			SELECT issue_id, event_type, actor, old_value, new_value, comment, created_at
-			FROM events WHERE issue_id = ?
-		`, id); err != nil {
-			log.Printf("demote %s: failed to copy events (data may be lost): %v", id, err)
+		INSERT IGNORE INTO wisp_events (issue_id, event_type, actor, old_value, new_value, comment, created_at)
+		SELECT issue_id, event_type, actor, old_value, new_value, comment, created_at
+		FROM events WHERE issue_id = ?
+	`, id); err != nil {
+			return fmt.Errorf("copy events for demoted issue %s: %w", id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE issue_id = ?`, id); err != nil {
+			return fmt.Errorf("delete copied events for demoted issue %s: %w", id, err)
 		}
 
 		if _, err := tx.ExecContext(ctx, `
-			INSERT IGNORE INTO wisp_comments (issue_id, author, text, created_at)
-			SELECT issue_id, author, text, created_at
-			FROM comments WHERE issue_id = ?
-		`, id); err != nil {
-			log.Printf("demote %s: failed to copy comments (data may be lost): %v", id, err)
+		INSERT IGNORE INTO wisp_comments (issue_id, author, text, created_at)
+		SELECT issue_id, author, text, created_at
+		FROM comments WHERE issue_id = ?
+	`, id); err != nil {
+			return fmt.Errorf("copy comments for demoted issue %s: %w", id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM comments WHERE issue_id = ?`, id); err != nil {
+			return fmt.Errorf("delete copied comments for demoted issue %s: %w", id, err)
 		}
 
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO wisp_events (issue_id, event_type, actor, old_value, new_value)
-			VALUES (?, ?, ?, ?, ?)
-		`, id, types.EventUpdated, actor, "", "demoted to wisp"); err != nil {
-			log.Printf("demote %s: failed to record demotion event: %v", id, err)
+		INSERT INTO wisp_events (issue_id, event_type, actor, old_value, new_value)
+		VALUES (?, ?, ?, ?, ?)
+	`, id, types.EventUpdated, actor, "", "demoted to wisp"); err != nil {
+			return fmt.Errorf("record demotion event for demoted issue %s: %w", id, err)
 		}
 
 		if err := issueops.RetargetInboundDependenciesToWispInTx(ctx, tx, id); err != nil {
@@ -261,92 +275,25 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			return fmt.Errorf("failed to delete issue from issues: %w", err)
 		}
 
-		for _, table := range []string{"issues", "labels", "dependencies", "events", "comments"} {
-			_, _ = tx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
-		}
-		commitMsg := fmt.Sprintf("bd: demote %s to wisp", id)
-		if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
-			commitMsg, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
-			return fmt.Errorf("dolt commit after demotion: %w", err)
-		}
-
-		return nil
-	})
+		return s.doltAddAndCommitInTx(ctx, tx, permanentIssueAuxTables, fmt.Sprintf("bd: demote %s to wisp", id))
+	}); err != nil {
+		return err
+	}
+	s.invalidateBlockedIDsCache()
+	return nil
 }
 
-// applyUpdatesToIssueStruct applies an updates map (as used by UpdateIssue) to
-// an Issue struct in memory. Used by DemoteToWisp so the wisps row reflects all
-// requested field changes alongside the routing-flag change.
-func applyUpdatesToIssueStruct(issue *types.Issue, updates map[string]interface{}) {
-	now := time.Now().UTC()
-	issue.UpdatedAt = now
-
-	for key, value := range updates {
-		switch key {
-		case "status":
-			if v, ok := value.(string); ok {
-				issue.Status = types.Status(v)
-			}
-		case "title":
-			if v, ok := value.(string); ok {
-				issue.Title = v
-			}
-		case "description":
-			if v, ok := value.(string); ok {
-				issue.Description = v
-			}
-		case "design":
-			if v, ok := value.(string); ok {
-				issue.Design = v
-			}
-		case "notes":
-			if v, ok := value.(string); ok {
-				issue.Notes = v
-			}
-		case "assignee":
-			if v, ok := value.(string); ok {
-				issue.Assignee = v
-			}
-		case "priority":
-			if v, ok := value.(int); ok {
-				issue.Priority = v
-			}
-		case "issue_type":
-			if v, ok := value.(string); ok {
-				issue.IssueType = types.IssueType(v)
-			}
-		case "wisp":
-			if v, ok := value.(bool); ok {
-				issue.Ephemeral = v
-			}
-		case "no_history":
-			if v, ok := value.(bool); ok {
-				issue.NoHistory = v
-			}
-		case "acceptance_criteria":
-			if v, ok := value.(string); ok {
-				issue.AcceptanceCriteria = v
-			}
-		case "external_ref":
-			// nil clears the ref (CLI passes nil for --external-ref ""); non-nil
-			// string sets it. GH#3902.
-			if value == nil {
-				issue.ExternalRef = nil
-			} else if v, ok := value.(string); ok {
-				issue.ExternalRef = &v
-			}
-		case "spec_id":
-			if v, ok := value.(string); ok {
-				issue.SpecID = v
-			}
-		case "estimated_minutes":
-			if v, ok := value.(int); ok {
-				issue.EstimatedMinutes = &v
-			}
+func (s *DoltStore) doltAddAndCommitInTx(ctx context.Context, tx *sql.Tx, tables []string, commitMsg string) error {
+	for _, table := range tables {
+		if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD(?)", table); err != nil {
+			return fmt.Errorf("dolt add %s: %w", table, err)
 		}
-		// closed_at is managed by manageClosedAt; skip here.
-		// Labels, metadata, and other complex fields are handled outside this path.
 	}
+	if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
+		commitMsg, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
+		return fmt.Errorf("dolt commit: %w", err)
+	}
+	return nil
 }
 
 // getAllWispDependencyRecords returns all wisp dependency records, keyed by issue_id.

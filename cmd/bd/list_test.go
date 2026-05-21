@@ -680,6 +680,56 @@ func TestStableTreeOrdering(t *testing.T) {
 	})
 }
 
+func TestTreeViewUsesWispDependencyRecords(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
+
+	parent := &types.Issue{
+		ID:        "tree-wisp-parent",
+		Title:     "Parent epic",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	child := &types.Issue{
+		ID:        "tree-wisp-child",
+		Title:     "Wisp child",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	for _, issue := range []*types.Issue{parent, child} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", issue.ID, err)
+		}
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     child.ID,
+		DependsOnID: parent.ID,
+		Type:        types.DepParentChild,
+	}, "tester"); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	allDeps, err := store.GetAllDependencyRecords(ctx)
+	if err != nil {
+		t.Fatalf("GetAllDependencyRecords: %v", err)
+	}
+	if ds := allDeps[child.ID]; len(ds) != 1 || ds[0].DependsOnID != parent.ID {
+		t.Fatalf("wisp dependency records = %+v, want child -> parent", ds)
+	}
+
+	roots, childrenMap := buildIssueTreeWithDeps([]*types.Issue{parent, child}, allDeps)
+	if len(roots) != 1 || roots[0].ID != parent.ID {
+		t.Fatalf("roots = %+v, want only parent root", roots)
+	}
+	children := childrenMap[parent.ID]
+	if len(children) != 1 || children[0].ID != child.ID {
+		t.Fatalf("children[%s] = %+v, want wisp child", parent.ID, children)
+	}
+}
+
 // Helper function to compare string slices for equality
 func slicesEqual(a, b []string) bool {
 	if len(a) != len(b) {

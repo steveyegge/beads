@@ -71,8 +71,11 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 		return &types.DeleteIssuesResult{DeletedCount: wispDeleteCount}, nil
 	}
 
-	idSet := make(map[string]bool, len(ids))
+	idSet := make(map[string]bool, len(ids)+len(wispIDs))
 	for _, id := range ids {
+		idSet[id] = true
+	}
+	for _, id := range wispIDs {
 		idSet[id] = true
 	}
 
@@ -97,27 +100,32 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 			batch := ids[i:end]
 			inClause, args := buildSQLInClause(batch)
 
-			rows, err := tx.QueryContext(ctx,
-				fmt.Sprintf(`SELECT depends_on_issue_id, issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, inClause),
-				args...)
-			if err != nil {
-				return nil, fmt.Errorf("check dependents: %w", err)
-			}
-
 			externalBySource := make(map[string][]string)
-			for rows.Next() {
-				var depOnID, issueID string
-				if err := rows.Scan(&depOnID, &issueID); err != nil {
-					_ = rows.Close()
-					return nil, fmt.Errorf("scan dependent: %w", err)
+			for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+				rows, err := tx.QueryContext(ctx,
+					fmt.Sprintf(`SELECT %s AS depends_on_id, issue_id FROM %s WHERE %s`, DepTargetExpr, depTable, depTargetIn("", inClause)),
+					args...)
+				if err != nil {
+					if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+						continue
+					}
+					return nil, fmt.Errorf("check dependents from %s: %w", depTable, err)
 				}
-				if !idSet[issueID] {
-					externalBySource[depOnID] = append(externalBySource[depOnID], issueID)
+
+				for rows.Next() {
+					var depOnID, issueID string
+					if err := rows.Scan(&depOnID, &issueID); err != nil {
+						_ = rows.Close()
+						return nil, fmt.Errorf("scan dependent: %w", err)
+					}
+					if !idSet[issueID] {
+						externalBySource[depOnID] = append(externalBySource[depOnID], issueID)
+					}
 				}
-			}
-			_ = rows.Close()
-			if err := rows.Err(); err != nil {
-				return nil, fmt.Errorf("iterate dependents: %w", err)
+				_ = rows.Close()
+				if err := rows.Err(); err != nil {
+					return nil, fmt.Errorf("iterate dependents from %s: %w", depTable, err)
+				}
 			}
 
 			for _, id := range batch {
@@ -135,83 +143,94 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 		result.OrphanedIssues = orphans
 	}
 
-	expandedIDSet := make(map[string]bool, len(expandedIDs))
-	for _, id := range expandedIDs {
+	allExpandedIDs := expandedIDs
+	expandedWispIDs, expandedRegularIDs, err := PartitionWispIDsInTx(ctx, tx, allExpandedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("partition expanded delete IDs: %w", err)
+	}
+	expandedIDSet := make(map[string]bool, len(allExpandedIDs))
+	for _, id := range allExpandedIDs {
 		expandedIDSet[id] = true
 	}
+	expandedIDs = expandedRegularIDs
 
 	var depsCount, labelsCount, eventsCount int
-	for i := 0; i < len(expandedIDs); i += deleteBatchSize {
-		end := i + deleteBatchSize
-		if end > len(expandedIDs) {
-			end = len(expandedIDs)
-		}
-		batch := expandedIDs[i:end]
-		batchInClause, batchArgs := buildSQLInClause(batch)
-
-		var batchDeps int
-		if err := tx.QueryRowContext(ctx,
-			fmt.Sprintf(`SELECT COUNT(*) FROM dependencies WHERE issue_id IN (%s)`, batchInClause),
-			batchArgs...).Scan(&batchDeps); err != nil {
-			return nil, fmt.Errorf("count dependencies: %w", err)
-		}
-		depsCount += batchDeps
-
-		var batchLabels int
-		if err := tx.QueryRowContext(ctx,
-			fmt.Sprintf(`SELECT COUNT(*) FROM labels WHERE issue_id IN (%s)`, batchInClause),
-			batchArgs...).Scan(&batchLabels); err != nil {
-			return nil, fmt.Errorf("count labels: %w", err)
-		}
-		labelsCount += batchLabels
-
-		var batchEvents int
-		if err := tx.QueryRowContext(ctx,
-			fmt.Sprintf(`SELECT COUNT(*) FROM events WHERE issue_id IN (%s)`, batchInClause),
-			batchArgs...).Scan(&batchEvents); err != nil {
-			return nil, fmt.Errorf("count events: %w", err)
-		}
-		eventsCount += batchEvents
+	if depsCount, err = countRowsForIssueIDsInTx(ctx, tx, "dependencies", expandedIDs); err != nil {
+		return nil, fmt.Errorf("count dependencies: %w", err)
 	}
+	wispDepsCount, err := countRowsForIssueIDsInTx(ctx, tx, "wisp_dependencies", expandedWispIDs)
+	if err != nil {
+		return nil, fmt.Errorf("count wisp dependencies: %w", err)
+	}
+	depsCount += wispDepsCount
+
+	if labelsCount, err = countRowsForIssueIDsInTx(ctx, tx, "labels", expandedIDs); err != nil {
+		return nil, fmt.Errorf("count labels: %w", err)
+	}
+	wispLabelsCount, err := countRowsForIssueIDsInTx(ctx, tx, "wisp_labels", expandedWispIDs)
+	if err != nil {
+		return nil, fmt.Errorf("count wisp labels: %w", err)
+	}
+	labelsCount += wispLabelsCount
+
+	if eventsCount, err = countRowsForIssueIDsInTx(ctx, tx, "events", expandedIDs); err != nil {
+		return nil, fmt.Errorf("count events: %w", err)
+	}
+	wispEventsCount, err := countRowsForIssueIDsInTx(ctx, tx, "wisp_events", expandedWispIDs)
+	if err != nil {
+		return nil, fmt.Errorf("count wisp events: %w", err)
+	}
+	eventsCount += wispEventsCount
 
 	// Pass 2: inbound deps from outside the deletion set.
-	for i := 0; i < len(expandedIDs); i += deleteBatchSize {
+	for i := 0; i < len(allExpandedIDs); i += deleteBatchSize {
 		end := i + deleteBatchSize
-		if end > len(expandedIDs) {
-			end = len(expandedIDs)
+		if end > len(allExpandedIDs) {
+			end = len(allExpandedIDs)
 		}
-		batch := expandedIDs[i:end]
+		batch := allExpandedIDs[i:end]
 		batchInClause, batchArgs := buildSQLInClause(batch)
 
-		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, batchInClause),
-			batchArgs...)
-		if err != nil {
-			return nil, fmt.Errorf("count inbound dependencies: %w", err)
-		}
-		for rows.Next() {
-			var issID string
-			if err := rows.Scan(&issID); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan inbound dependency: %w", err)
+		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+			rows, err := tx.QueryContext(ctx,
+				fmt.Sprintf(`SELECT issue_id FROM %s WHERE %s`, depTable, depTargetIn("", batchInClause)),
+				batchArgs...)
+			if err != nil {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+					continue
+				}
+				return nil, fmt.Errorf("count inbound dependencies from %s: %w", depTable, err)
 			}
-			if !expandedIDSet[issID] {
-				depsCount++
+			for rows.Next() {
+				var issID string
+				if err := rows.Scan(&issID); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("scan inbound dependency: %w", err)
+				}
+				if !expandedIDSet[issID] {
+					depsCount++
+				}
 			}
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate inbound dependencies: %w", err)
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("iterate inbound dependencies from %s: %w", depTable, err)
+			}
 		}
 	}
 
 	result.DependenciesCount = depsCount
 	result.LabelsCount = labelsCount
 	result.EventsCount = eventsCount
-	result.DeletedCount = len(expandedIDs) + wispDeleteCount
+	result.DeletedCount = len(expandedIDs) + len(expandedWispIDs) + wispDeleteCount
 
 	if dryRun {
 		return result, nil
+	}
+
+	for _, id := range expandedWispIDs {
+		if err := DeleteIssueInTx(ctx, tx, id); err != nil {
+			return nil, fmt.Errorf("delete cascaded wisp %s: %w", id, err)
+		}
 	}
 
 	totalDeleted := 0
@@ -232,7 +251,7 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 		rowsAffected, _ := deleteResult.RowsAffected()
 		totalDeleted += int(rowsAffected)
 	}
-	result.DeletedCount = totalDeleted + wispDeleteCount
+	result.DeletedCount = totalDeleted + len(expandedWispIDs) + wispDeleteCount
 
 	return result, nil
 }
@@ -263,27 +282,32 @@ func findAllDependentsRecursiveInTx(ctx context.Context, tx *sql.Tx, ids []strin
 		toProcess = toProcess[batchEnd:]
 
 		inClause, args := buildSQLInClause(batch)
-		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, inClause),
-			args...)
-		if err != nil {
-			return nil, fmt.Errorf("query dependents for batch: %w", err)
-		}
+		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+			rows, err := tx.QueryContext(ctx,
+				fmt.Sprintf(`SELECT issue_id FROM %s WHERE %s`, depTable, depTargetIn("", inClause)),
+				args...)
+			if err != nil {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+					continue
+				}
+				return nil, fmt.Errorf("query dependents for batch from %s: %w", depTable, err)
+			}
 
-		for rows.Next() {
-			var depID string
-			if err := rows.Scan(&depID); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan dependent: %w", err)
+			for rows.Next() {
+				var depID string
+				if err := rows.Scan(&depID); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("scan dependent: %w", err)
+				}
+				if !result[depID] {
+					result[depID] = true
+					toProcess = append(toProcess, depID)
+				}
 			}
-			if !result[depID] {
-				result[depID] = true
-				toProcess = append(toProcess, depID)
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("iterate dependents for batch from %s: %w", depTable, err)
 			}
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate dependents for batch: %w", err)
 		}
 	}
 
@@ -304,25 +328,30 @@ func findExternalDependentsBatchedInTx(ctx context.Context, tx *sql.Tx, ids []st
 		batch := ids[i:end]
 		inClause, args := buildSQLInClause(batch)
 
-		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM dependencies WHERE depends_on_issue_id IN (%s)`, inClause),
-			args...)
-		if err != nil {
-			return nil, fmt.Errorf("query dependents: %w", err)
-		}
-		for rows.Next() {
-			var depID string
-			if err := rows.Scan(&depID); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan dependent: %w", err)
+		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+			rows, err := tx.QueryContext(ctx,
+				fmt.Sprintf(`SELECT issue_id FROM %s WHERE %s`, depTable, depTargetIn("", inClause)),
+				args...)
+			if err != nil {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+					continue
+				}
+				return nil, fmt.Errorf("query dependents from %s: %w", depTable, err)
 			}
-			if !idSet[depID] {
-				orphanSet[depID] = true
+			for rows.Next() {
+				var depID string
+				if err := rows.Scan(&depID); err != nil {
+					_ = rows.Close()
+					return nil, fmt.Errorf("scan dependent: %w", err)
+				}
+				if !idSet[depID] {
+					orphanSet[depID] = true
+				}
 			}
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate dependents: %w", err)
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("iterate dependents from %s: %w", depTable, err)
+			}
 		}
 	}
 
@@ -331,4 +360,27 @@ func findExternalDependentsBatchedInTx(ctx context.Context, tx *sql.Tx, ids []st
 		result = append(result, id)
 	}
 	return result, nil
+}
+
+//nolint:gosec // G201: table is selected by callers from fixed issue/wisp auxiliary tables.
+func countRowsForIssueIDsInTx(ctx context.Context, tx *sql.Tx, table string, ids []string) (int, error) {
+	total := 0
+	for i := 0; i < len(ids); i += deleteBatchSize {
+		end := i + deleteBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		inClause, args := buildSQLInClause(ids[i:end])
+		var count int
+		if err := tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE issue_id IN (%s)`, table, inClause),
+			args...).Scan(&count); err != nil {
+			if optionalBlockedTable(table) && isTableNotExistError(err) {
+				continue
+			}
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
 }

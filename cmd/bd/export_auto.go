@@ -379,7 +379,8 @@ func hookWorkTreeRoot() string {
 		return ""
 	}
 	var root string
-	if data, err := os.ReadFile(filepath.Join(gitDir, "gitdir")); err == nil { // #nosec G304 -- path is GIT_DIR/gitdir, a well-known git internal file
+	//nolint:gosec // G304: path is GIT_DIR/gitdir, a well-known git internal file.
+	if data, err := os.ReadFile(filepath.Join(gitDir, "gitdir")); err == nil {
 		if dotGit := strings.TrimSpace(string(data)); dotGit != "" {
 			root = filepath.Dir(dotGit)
 		}
