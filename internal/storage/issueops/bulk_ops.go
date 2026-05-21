@@ -226,7 +226,7 @@ func updateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, iss
 		return fmt.Errorf("issue not found: %s", oldID)
 	}
 
-	if err := UpdateIssueIDInDependencyTargetsInTx(ctx, tx, oldID, newID); err != nil {
+	if err := UpdateIssueIDInDependenciesInTx(ctx, tx, oldID, newID); err != nil {
 		return err
 	}
 

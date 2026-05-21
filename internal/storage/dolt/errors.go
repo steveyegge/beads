@@ -11,6 +11,7 @@ import (
 	mysql "github.com/go-sql-driver/mysql"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 )
 
 // Sentinel errors for the dolt storage layer.
@@ -41,8 +42,7 @@ var (
 // fallthrough (pre-migration databases without wisps table) from real errors
 // (timeouts, connection failures, corrupt data).
 func isTableNotExistError(err error) bool {
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1146
+	return dberrors.IsTableNotExist(err)
 }
 
 // isBranchTrackingError returns true if the error indicates that DOLT_PULL

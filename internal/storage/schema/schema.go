@@ -2,14 +2,20 @@ package schema
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"log"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 )
 
 type DBConn interface {
@@ -17,6 +23,12 @@ type DBConn interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
+
+type dirtyTableState struct {
+	staged bool
+}
+
+var doltStatusTableNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 //go:embed migrations/*.up.sql
 var upMigrations embed.FS
@@ -88,10 +100,41 @@ func parseVersion(name string) (int, error) {
 }
 
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
-	if mainSource.atLatest(ctx, db) && ignoredSource.atLatest(ctx, db) {
+	needed, err := migrationWorkNeeded(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("checking schema migration work: %w", err)
+	}
+	if !needed {
 		return 0, nil
 	}
 
+	dirtyBeforeAll, err := dirtyTables(ctx, db, false)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration status: %w", err)
+	}
+	// Schema migration needs a clean staged set so the migration commit
+	// contains only schema-owned tables. Pre-existing staged tables are reset
+	// here and left dirty but unstaged; dirtyTableSignatures below preserves
+	// their data state and rejects unexpected content changes.
+	if err := unstagePreExistingTables(ctx, db, dirtyBeforeAll); err != nil {
+		return 0, fmt.Errorf("unstaging pre-migration tables: %w", err)
+	}
+
+	dirtyBefore, err := committableDirtyTables(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration status: %w", err)
+	}
+	touchedDirtyTables, err := mainSource.pendingMigrationDirtyTables(ctx, db, dirtyBefore)
+	if err != nil {
+		return 0, fmt.Errorf("checking dirty tables against pending migrations: %w", err)
+	}
+	if len(touchedDirtyTables) > 0 {
+		return 0, fmt.Errorf("pending schema migrations alter pre-existing dirty tables: %s", strings.Join(touchedDirtyTables, ", "))
+	}
+	dirtyBeforeSignatures, err := dirtyTableSignatures(ctx, db, dirtyBefore)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration dirty table diffs: %w", err)
+	}
 	applied, err := mainSource.migrate(ctx, db)
 	if err != nil {
 		return applied, err
@@ -106,17 +149,39 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, fmt.Errorf("registering ignored_schema_migrations in dolt_ignore: %w", err)
 	}
 
+	touchedIgnoredDirtyTables, err := ignoredSource.pendingMigrationDirtyTables(ctx, db, dirtyBeforeAll)
+	if err != nil {
+		return applied, fmt.Errorf("checking dirty tables against pending ignored migrations: %w", err)
+	}
+	if len(touchedIgnoredDirtyTables) > 0 {
+		return applied, fmt.Errorf("pending ignored schema migrations alter pre-existing dirty tables: %s", strings.Join(touchedIgnoredDirtyTables, ", "))
+	}
+
 	appliedIgnored, err := ignoredSource.migrate(ctx, db)
 	if err != nil {
 		return applied, fmt.Errorf("ignored migrations: %w", err)
+	}
+	if err := unstageIgnoredTables(ctx, db); err != nil {
+		return applied, fmt.Errorf("unstaging ignored migration tables: %w", err)
 	}
 
 	if applied == 0 && !backfilled && appliedIgnored == 0 {
 		return applied, nil
 	}
+	changedDirtyTables, err := changedDirtyTableSignatures(ctx, db, dirtyBeforeSignatures)
+	if err != nil {
+		return applied, fmt.Errorf("checking pre-existing dirty table diffs: %w", err)
+	}
+	if len(changedDirtyTables) > 0 {
+		return applied, fmt.Errorf("pre-existing dirty tables changed during schema migration: %s", strings.Join(changedDirtyTables, ", "))
+	}
 
-	if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('-A')"); err != nil {
+	staged, err := stageSchemaTables(ctx, db, dirtyBefore)
+	if err != nil {
 		return applied, fmt.Errorf("staging migrations: %w", err)
+	}
+	if !staged {
+		return applied, nil
 	}
 	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
@@ -125,6 +190,315 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	}
 
 	return applied, nil
+}
+
+func migrationWorkNeeded(ctx context.Context, db DBConn) (bool, error) {
+	if !mainSource.atLatest(ctx, db) || !ignoredSource.atLatest(ctx, db) {
+		return true, nil
+	}
+	return needsBackfilledCustomStatusesCustomTypes(ctx, db)
+}
+
+func committableDirtyTables(ctx context.Context, db DBConn) (map[string]dirtyTableState, error) {
+	tables, err := dirtyTables(ctx, db, true)
+	if err != nil {
+		return nil, err
+	}
+	delete(tables, mainSource.cursorTable)
+	delete(tables, ignoredSource.cursorTable)
+	return tables, nil
+}
+
+func stagedDirtyTables(tables map[string]dirtyTableState) []string {
+	var staged []string
+	for table, state := range tables {
+		if state.staged {
+			staged = append(staged, table)
+		}
+	}
+	sort.Strings(staged)
+	return staged
+}
+
+func unstagePreExistingTables(ctx context.Context, db DBConn, tables map[string]dirtyTableState) error {
+	staged := stagedDirtyTables(tables)
+	if len(staged) > 0 {
+		log.Printf("schema migration unstaging pre-existing staged tables: %s", strings.Join(staged, ", "))
+	}
+	for _, table := range staged {
+		if _, err := db.ExecContext(ctx, "CALL DOLT_RESET(?)", table); err != nil {
+			return fmt.Errorf("dolt reset %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+func unstageIgnoredTables(ctx context.Context, db DBConn) error {
+	tables, err := existingIgnoredTables(ctx, db)
+	if err != nil {
+		return err
+	}
+	return unstagePreExistingTables(ctx, db, tables)
+}
+
+func dirtyTableSignatures(ctx context.Context, db DBConn, tables map[string]dirtyTableState) (map[string]string, error) {
+	signatures := make(map[string]string, len(tables))
+	names := sortedDirtyTableNames(tables)
+	for _, table := range names {
+		signature, err := dirtyTableSignature(ctx, db, table)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", table, err)
+		}
+		signatures[table] = signature
+	}
+	return signatures, nil
+}
+
+func changedDirtyTableSignatures(ctx context.Context, db DBConn, before map[string]string) ([]string, error) {
+	var changed []string
+	names := sortedSignatureTableNames(before)
+	for _, table := range names {
+		signature, err := dirtyTableSignature(ctx, db, table)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", table, err)
+		}
+		if signature != before[table] {
+			changed = append(changed, table)
+		}
+	}
+	return changed, nil
+}
+
+func sortedDirtyTableNames(tables map[string]dirtyTableState) []string {
+	names := make([]string, 0, len(tables))
+	for table := range tables {
+		names = append(names, table)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedSignatureTableNames(signatures map[string]string) []string {
+	names := make([]string, 0, len(signatures))
+	for table := range signatures {
+		names = append(names, table)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func dirtyTableSignature(ctx context.Context, db DBConn, table string) (string, error) {
+	if !doltStatusTableNameRE.MatchString(table) {
+		return "", fmt.Errorf("unsafe dolt status table name %q", table)
+	}
+	//nolint:gosec // table comes from dolt_status; dolt_diff requires a literal table argument.
+	rows, err := db.QueryContext(ctx, "SELECT * FROM dolt_diff('HEAD', 'WORKING', "+sqlStringLiteral(table)+")")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", err
+	}
+
+	var rowSignatures []string
+	for rows.Next() {
+		values := make([]any, len(columns))
+		dest := make([]any, len(columns))
+		for i := range values {
+			dest[i] = &values[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return "", err
+		}
+
+		var b strings.Builder
+		for i, column := range columns {
+			if isDiffMetadataColumn(column) {
+				continue
+			}
+			b.WriteString(column)
+			b.WriteByte('=')
+			writeSignatureValue(&b, values[i])
+			b.WriteByte(0)
+		}
+		rowSignatures = append(rowSignatures, b.String())
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	sort.Strings(rowSignatures)
+
+	h := sha256.New()
+	for _, row := range rowSignatures {
+		_, _ = h.Write([]byte(row))
+		_, _ = h.Write([]byte{0xff})
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func isDiffMetadataColumn(column string) bool {
+	switch strings.ToLower(column) {
+	case "from_commit", "to_commit", "from_commit_date", "to_commit_date":
+		return true
+	default:
+		return false
+	}
+}
+
+func sqlStringLiteral(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `''`)
+	return "'" + s + "'"
+}
+
+func writeSignatureValue(b *strings.Builder, v any) {
+	switch typed := v.(type) {
+	case nil:
+		b.WriteString("<nil>")
+	case []byte:
+		b.Write(typed)
+	default:
+		b.WriteString(fmt.Sprintf("%v", typed))
+	}
+}
+
+func stageSchemaTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) (bool, error) {
+	dirtyAfter, err := dirtyTables(ctx, db, true)
+	if err != nil {
+		return false, err
+	}
+
+	tableSet := make(map[string]struct{})
+	for table := range dirtyAfter {
+		if _, wasDirty := dirtyBefore[table]; wasDirty {
+			continue
+		}
+		tableSet[table] = struct{}{}
+	}
+	tablesAfter, err := existingCommittableTables(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	for table := range tablesAfter {
+		if _, wasDirty := dirtyBefore[table]; wasDirty {
+			continue
+		}
+		tableSet[table] = struct{}{}
+	}
+
+	tables := make([]string, 0, len(tableSet))
+	for table := range tableSet {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+
+	for _, table := range tables {
+		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('-f', ?)", table); err != nil {
+			return false, fmt.Errorf("dolt add %s: %w", table, err)
+		}
+	}
+	return len(tables) > 0, nil
+}
+
+func existingCommittableTables(ctx context.Context, db DBConn) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT t.TABLE_NAME
+		FROM INFORMATION_SCHEMA.TABLES t
+		WHERE t.TABLE_SCHEMA = DATABASE()
+		  AND t.TABLE_TYPE = 'BASE TABLE'
+		  AND NOT EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			  AND t.TABLE_NAME LIKE di.pattern
+		  )
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]struct{})
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, err
+		}
+		tables[table] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
+func existingIgnoredTables(ctx context.Context, db DBConn) (map[string]dirtyTableState, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.table_name, s.staged
+		FROM dolt_status s
+		WHERE EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			  AND s.table_name LIKE di.pattern
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]dirtyTableState)
+	for rows.Next() {
+		var table string
+		var staged bool
+		if err := rows.Scan(&table, &staged); err != nil {
+			return nil, err
+		}
+		tables[table] = dirtyTableState{staged: staged}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
+func dirtyTables(ctx context.Context, db DBConn, excludeIgnored bool) (map[string]dirtyTableState, error) {
+	query := `
+		SELECT s.table_name, s.staged
+		FROM dolt_status s
+	`
+	if excludeIgnored {
+		query += `
+		WHERE NOT EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			AND s.table_name LIKE di.pattern
+		)
+		`
+	}
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]dirtyTableState)
+	for rows.Next() {
+		var table string
+		var staged bool
+		if err := rows.Scan(&table, &staged); err != nil {
+			return nil, err
+		}
+		state := tables[table]
+		state.staged = state.staged || staged
+		tables[table] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
 }
 
 type migrationFile struct {
@@ -168,11 +542,76 @@ func (m migrationSource) latest() int {
 }
 
 func (m migrationSource) atLatest(ctx context.Context, db DBConn) bool {
-	var current int
-	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current); err != nil {
+	current, err := m.currentVersion(ctx, db)
+	if err != nil {
 		return false
 	}
 	return current >= m.latest()
+}
+
+func (m migrationSource) currentVersion(ctx context.Context, db DBConn) (int, error) {
+	var current int
+	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
+	if err == nil || err == sql.ErrNoRows {
+		return current, nil
+	}
+	if dberrors.IsTableNotExist(err) {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
+}
+
+func (m migrationSource) pendingMigrationDirtyTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) ([]string, error) {
+	if len(dirtyBefore) == 0 {
+		return nil, nil
+	}
+	current, err := m.currentVersion(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+
+	dirtyNames := sortedDirtyTableNames(dirtyBefore)
+	touched := make(map[string]struct{})
+	for _, mf := range m.list() {
+		if mf.version <= current {
+			continue
+		}
+		data, err := m.files.ReadFile(m.dir + "/" + mf.name)
+		if err != nil {
+			return nil, fmt.Errorf("reading migration %s: %w", mf.name, err)
+		}
+		sqlText := string(data)
+		for _, table := range dirtyNames {
+			if migrationSQLTouchesTable(sqlText, table) {
+				touched[table] = struct{}{}
+			}
+		}
+	}
+
+	names := make([]string, 0, len(touched))
+	for table := range touched {
+		names = append(names, table)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func migrationSQLTouchesTable(sqlText, table string) bool {
+	tableRef := "`?" + regexp.QuoteMeta(table) + "`?"
+	// This intentionally scans raw migration text so PREPARE strings that run
+	// DDL/DML are treated as real table touches.
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:alter\s+table|update|delete\s+from|insert(?:\s+ignore)?\s+into|replace\s+into|truncate\s+table|drop\s+table|create\s+table(?:\s+if\s+not\s+exists)?|rename\s+table)\s+` + tableRef + `\b`),
+		regexp.MustCompile(`(?i)\brename\s+table\b[^;]*\bto\s+` + tableRef + `\b`),
+		regexp.MustCompile(`(?i)\bcreate\s+(?:unique\s+)?index\b[^;]*\bon\s+` + tableRef + `\b`),
+		regexp.MustCompile(`(?i)\b(?:create\s+(?:or\s+replace\s+)?view|alter\s+view)\s+` + tableRef + `\b`),
+	}
+	for _, pattern := range patterns {
+		if pattern.MatchString(sqlText) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {

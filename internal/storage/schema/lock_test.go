@@ -102,6 +102,8 @@ func expectOnePendingMigration(t *testing.T, mock sqlmock.Sqlmock) {
 	latestIgnored := LatestIgnoredVersion()
 
 	expectScalar(mock, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations", "version", latest-1)
+	expectDoltStatusRows(mock)
+	expectDoltStatusRows(mock)
 	mock.ExpectExec("(?s)^CREATE TABLE IF NOT EXISTS schema_migrations").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	expectScalar(mock, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations", "version", latest-1)
@@ -117,7 +119,12 @@ func expectOnePendingMigration(t *testing.T, mock sqlmock.Sqlmock) {
 	mock.ExpectExec("(?s)^CREATE TABLE IF NOT EXISTS ignored_schema_migrations").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	expectScalar(mock, "SELECT COALESCE(MAX(version), 0) FROM ignored_schema_migrations", "version", latestIgnored)
-	mock.ExpectExec(regexp.QuoteMeta("CALL DOLT_ADD('-A')")).
+	expectDoltStatusRows(mock)
+	expectDoltStatusRows(mock)
+	mock.ExpectQuery("(?s)SELECT t\\.TABLE_NAME\\s+FROM INFORMATION_SCHEMA\\.TABLES t").
+		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("schema_migrations"))
+	mock.ExpectExec(regexp.QuoteMeta("CALL DOLT_ADD('-f', ?)")).
+		WithArgs("schema_migrations").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta("CALL DOLT_COMMIT('-m', 'schema: apply migrations')")).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -126,4 +133,9 @@ func expectOnePendingMigration(t *testing.T, mock sqlmock.Sqlmock) {
 func expectScalar(mock sqlmock.Sqlmock, query, column string, value any) {
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WillReturnRows(sqlmock.NewRows([]string{column}).AddRow(value))
+}
+
+func expectDoltStatusRows(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery("(?s)SELECT s\\.table_name, s\\.staged\\s+FROM dolt_status s").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "staged"}))
 }
