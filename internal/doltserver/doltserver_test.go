@@ -1181,16 +1181,22 @@ func TestMarkDoltDirCompatible(t *testing.T) {
 		}
 	})
 
-	t.Run("marker directory errors", func(t *testing.T) {
+	t.Run("marker directory is preserved", func(t *testing.T) {
 		doltDir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(doltDir, ".dolt"), 0750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(doltDir, bdDoltMarker), 0750); err != nil {
+		markerPath := filepath.Join(doltDir, bdDoltMarker)
+		if err := os.MkdirAll(markerPath, 0750); err != nil {
 			t.Fatal(err)
 		}
-		if err := MarkDoltDirCompatible(doltDir); err == nil {
-			t.Fatal("expected marker directory to error")
+		if err := MarkDoltDirCompatible(doltDir); err != nil {
+			t.Fatalf("MarkDoltDirCompatible: %v", err)
+		}
+		if info, err := os.Stat(markerPath); err != nil {
+			t.Fatalf("stat marker path: %v", err)
+		} else if !info.IsDir() {
+			t.Fatal("existing marker path should be preserved as-is")
 		}
 	})
 }

@@ -1291,9 +1291,7 @@ func MarkDoltDirCompatible(doltDir string) error {
 	}
 	markerPath := filepath.Join(doltDir, bdDoltMarker)
 	if info, err := os.Stat(markerPath); err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("dolt compatibility marker %s is a directory", markerPath)
-		}
+		_ = info
 		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking dolt compatibility marker %s: %w", markerPath, err)

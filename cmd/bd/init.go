@@ -1233,7 +1233,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 
 		if initServerMode {
-			if err := doltserver.MarkDoltDirCompatible(storagePath); err != nil && !quiet {
+			if err := doltserver.MarkDoltDirCompatible(storagePath); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to write Dolt compatibility marker: %v\n", err)
 			}
 		}

@@ -1690,6 +1690,71 @@ func TestInitServerModeWritesDoltCompatibilityMarker(t *testing.T) {
 	}
 }
 
+func TestInitServerModeWarnsOnMarkerFailureInQuietMode(t *testing.T) {
+	skipIfNoDolt(t)
+	saveAndRestoreGlobals(t)
+	ensureCleanGlobalState(t)
+	dbPath = ""
+	store = nil
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(doltDir, 0o700); err != nil {
+		t.Fatalf("creating dolt dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(doltDir, ".dolt"), []byte("not a dir"), 0o600); err != nil {
+		t.Fatalf("creating invalid dot-dolt marker: %v", err)
+	}
+
+	database := uniqueTestDBName(t)
+	t.Cleanup(func() {
+		dropTestDatabase(database, testDoltServerPort)
+	})
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stderr: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		os.Stderr = oldStderr
+	}()
+
+	rootCmd.SetArgs([]string{
+		"init",
+		"--server",
+		"--external",
+		"--server-host", "127.0.0.1",
+		"--server-port", fmt.Sprintf("%d", testDoltServerPort),
+		"--database", database,
+		"--prefix", "marker",
+		"--quiet",
+		"--skip-hooks",
+		"--skip-agents",
+	})
+
+	if err := rootCmd.Execute(); err != nil {
+		w.Close()
+		t.Fatalf("server init failed: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
+	var stderr bytes.Buffer
+	if _, err := stderr.ReadFrom(r); err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), "Warning: failed to write Dolt compatibility marker") {
+		t.Fatalf("expected marker warning in stderr, got:\n%s", stderr.String())
+	}
+}
+
 func setupBareParentInitWorktree(t *testing.T) (string, string) {
 	t.Helper()
 
