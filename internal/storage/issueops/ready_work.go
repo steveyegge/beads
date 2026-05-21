@@ -195,7 +195,7 @@ func GetReadyWorkInTx(
 	case types.SortPolicyOldest:
 		orderBySQL = "ORDER BY created_at ASC, id ASC"
 	case types.SortPolicyPriority:
-		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
+		orderBySQL = "ORDER BY priority ASC, created_at ASC, id ASC"
 	case types.SortPolicyHybrid, "":
 		recentCutoff := time.Now().UTC().Add(-48 * time.Hour)
 		orderBySQL = `ORDER BY
@@ -204,7 +204,7 @@ func GetReadyWorkInTx(
 			created_at ASC, id ASC`
 		args = append(args, recentCutoff, recentCutoff)
 	default:
-		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
+		orderBySQL = "ORDER BY priority ASC, created_at ASC, id ASC"
 	}
 
 	var issueIDs []string

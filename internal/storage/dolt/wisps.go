@@ -358,7 +358,7 @@ func (s *DoltStore) searchWisps(ctx context.Context, query string, filter types.
 	querySQL := fmt.Sprintf(`
 		SELECT id FROM wisps
 		%s
-		ORDER BY priority ASC, created_at DESC
+		ORDER BY priority ASC, created_at ASC
 		%s
 	`, whereSQL, limitSQL)
 
