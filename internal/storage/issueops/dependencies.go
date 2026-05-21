@@ -171,8 +171,9 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	// redundant. Cross-type blocks edges between unrelated issues are fine.
 	if dep.Type == types.DepBlocks && targetType != "" {
 		var linked int
-		query := parentChildLinkedQuery(depTables)
-		if err := tx.QueryRowContext(ctx, query, dep.IssueID, dep.DependsOnID).Scan(&linked); err != nil {
+		// Four params: seed-src, seed-tgt, target-in-src-tree, source-in-tgt-tree.
+		query := parentChildAncestorQuery(depTables)
+		if err := tx.QueryRowContext(ctx, query, dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID).Scan(&linked); err != nil {
 			return fmt.Errorf("failed to check parent-child relationship: %w", err)
 		}
 		if linked > 0 {
@@ -373,30 +374,37 @@ func cycleDetectionTables() []string {
 	return []string{"dependencies", "wisp_dependencies"}
 }
 
-// parentChildLinkedQuery returns >0 if the two endpoints share a parent-child
-// connected component (i.e., one is an ancestor of the other via parent-child
-// edges). Parent-child rows are directed (issue_id = child, depends_on_id =
-// parent); we emit both directions into a derived edge relation so the
-// recursive CTE has a single recursive term, which MySQL/Dolt require.
-// Parameters: seed ID, target ID.
-func parentChildLinkedQuery(depTables []string) string {
+// parentChildAncestorQuery returns >0 if one endpoint is a directed
+// parent-child ancestor of the other. Parent-child rows are directed
+// (issue_id = child, parent via DepTargetExpr); we walk edges only in the
+// child→parent direction from each seed. Siblings/cousins that share a
+// common parent but are not ancestors of each other return 0 and are allowed
+// to form blocks edges. Two CTEs (one seeded from source, one from target)
+// share the same edge relation via %[1]s.
+// Parameters: source, target, target, source.
+func parentChildAncestorQuery(depTables []string) string {
 	var unions []string
 	for _, t := range depTables {
 		unions = append(unions,
-			fmt.Sprintf("SELECT issue_id AS src, depends_on_id AS dst FROM %s WHERE type = 'parent-child'", t),
-			fmt.Sprintf("SELECT depends_on_id AS src, issue_id AS dst FROM %s WHERE type = 'parent-child'", t),
+			fmt.Sprintf("SELECT issue_id AS child, %s AS parent FROM %s WHERE type = 'parent-child'", DepTargetExpr, t),
 		)
 	}
 	edges := strings.Join(unions, " UNION ")
 	return fmt.Sprintf(`
-		WITH RECURSIVE related(node) AS (
+		WITH RECURSIVE
+		anc_src(node) AS (
 			SELECT ?
 			UNION
-			SELECT e.dst
-			FROM related r
-			JOIN (%s) e ON e.src = r.node
+			SELECT e.parent FROM anc_src r JOIN (%[1]s) e ON e.child = r.node
+		),
+		anc_tgt(node) AS (
+			SELECT ?
+			UNION
+			SELECT e.parent FROM anc_tgt r JOIN (%[1]s) e ON e.child = r.node
 		)
-		SELECT COUNT(*) FROM related WHERE node = ?
+		SELECT
+			(SELECT COUNT(*) FROM anc_src WHERE node = ?)
+			+ (SELECT COUNT(*) FROM anc_tgt WHERE node = ?)
 	`, edges)
 }
 

@@ -368,4 +368,35 @@ func TestAddDependency(t *testing.T) {
 			t.Fatalf("epic blocking unrelated task should succeed: %v", err)
 		}
 	})
+
+	// Regression for parentChildLinkedQuery: siblings (two tasks under the same
+	// epic) were incorrectly rejected because the undirected walk saw them as
+	// "connected". The new directed ancestor query allows sibling blocks edges.
+	t.Run("siblings_allowed", func(t *testing.T) {
+		te := newTestEnv(t, "si")
+		ctx := t.Context()
+
+		epic := &types.Issue{ID: "si-epic", Title: "Epic", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+		t1 := &types.Issue{ID: "si-t1", Title: "Task 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		t2 := &types.Issue{ID: "si-t2", Title: "Task 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		for _, issue := range []*types.Issue{epic, t1, t2} {
+			if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+				t.Fatalf("CreateIssue %s: %v", issue.ID, err)
+			}
+		}
+
+		pc1 := &types.Dependency{IssueID: "si-t1", DependsOnID: "si-epic", Type: types.DepParentChild}
+		pc2 := &types.Dependency{IssueID: "si-t2", DependsOnID: "si-epic", Type: types.DepParentChild}
+		if err := te.store.AddDependency(ctx, pc1, "tester"); err != nil {
+			t.Fatalf("AddDependency pc1: %v", err)
+		}
+		if err := te.store.AddDependency(ctx, pc2, "tester"); err != nil {
+			t.Fatalf("AddDependency pc2: %v", err)
+		}
+
+		dep := &types.Dependency{IssueID: "si-t1", DependsOnID: "si-t2", Type: types.DepBlocks}
+		if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("sibling blocks edge should be allowed: %v", err)
+		}
+	})
 }

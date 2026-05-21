@@ -1643,4 +1643,80 @@ func TestGetBlockedIssues_WithBlockerDetails(t *testing.T) {
 	}
 }
 
+// TestAddDependency_Blocks_SiblingsAllowed is a regression test for the
+// parentChildLinkedQuery bug: the old undirected connected-component walk
+// treated siblings (two children of the same parent) as "connected", so a
+// blocks edge between them was rejected. The new directed ancestor query
+// (parentChildAncestorQuery) allows it.
+func TestAddDependency_Blocks_SiblingsAllowed(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	epic := &types.Issue{ID: "sb-epic", Title: "Epic", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+	t1 := &types.Issue{ID: "sb-task1", Title: "Task 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	t2 := &types.Issue{ID: "sb-task2", Title: "Task 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	for _, issue := range []*types.Issue{epic, t1, t2} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("CreateIssue %s: %v", issue.ID, err)
+		}
+	}
+
+	pc1 := &types.Dependency{IssueID: "sb-task1", DependsOnID: "sb-epic", Type: types.DepParentChild}
+	pc2 := &types.Dependency{IssueID: "sb-task2", DependsOnID: "sb-epic", Type: types.DepParentChild}
+	if err := store.AddDependency(ctx, pc1, "tester"); err != nil {
+		t.Fatalf("AddDependency pc1: %v", err)
+	}
+	if err := store.AddDependency(ctx, pc2, "tester"); err != nil {
+		t.Fatalf("AddDependency pc2: %v", err)
+	}
+
+	dep := &types.Dependency{IssueID: "sb-task1", DependsOnID: "sb-task2", Type: types.DepBlocks}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("sibling blocks edge should be allowed: %v", err)
+	}
+}
+
+// TestAddDependency_Blocks_CousinsAllowed is a regression test for the same
+// parentChildLinkedQuery bug: tasks under different child epics of the same
+// grandparent (cousins) are not ancestors of each other and must be allowed
+// to form blocks edges.
+func TestAddDependency_Blocks_CousinsAllowed(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	gp := &types.Issue{ID: "co-gp", Title: "Grandparent", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+	ce1 := &types.Issue{ID: "co-ce1", Title: "Child Epic 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+	ce2 := &types.Issue{ID: "co-ce2", Title: "Child Epic 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+	ct1 := &types.Issue{ID: "co-ct1", Title: "Cousin Task 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	ct2 := &types.Issue{ID: "co-ct2", Title: "Cousin Task 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	for _, issue := range []*types.Issue{gp, ce1, ce2, ct1, ct2} {
+		if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("CreateIssue %s: %v", issue.ID, err)
+		}
+	}
+
+	for _, pc := range []struct{ child, parent string }{
+		{"co-ce1", "co-gp"},
+		{"co-ce2", "co-gp"},
+		{"co-ct1", "co-ce1"},
+		{"co-ct2", "co-ce2"},
+	} {
+		d := &types.Dependency{IssueID: pc.child, DependsOnID: pc.parent, Type: types.DepParentChild}
+		if err := store.AddDependency(ctx, d, "tester"); err != nil {
+			t.Fatalf("AddDependency parent-child %s->%s: %v", pc.child, pc.parent, err)
+		}
+	}
+
+	dep := &types.Dependency{IssueID: "co-ct1", DependsOnID: "co-ct2", Type: types.DepBlocks}
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("cousin blocks edge should be allowed: %v", err)
+	}
+}
+
 // Note: testContext is already defined in dolt_test.go for this package
