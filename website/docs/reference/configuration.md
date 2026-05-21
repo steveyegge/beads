@@ -127,6 +127,25 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `ai.model` | — | `BD_AI_MODEL` | `claude-haiku-4-5-20251001` | Default AI model |
 | `agents.file` | — | — | `AGENTS.md` | Agents instruction filename; see routing note below |
 
+:::important JSONL export is opt-in
+
+`export.auto` and `export.git-add` are disabled unless configured explicitly.
+`.beads/issues.jsonl` is an optional export for viewers, interchange, and
+issue-level migration. It is not the canonical source of truth, not
+cross-machine sync, and not a full database backup.
+
+Workflows that depend on a fresh, git-staged JSONL file should opt in:
+
+```bash
+bd config set export.auto true
+bd config set export.git-add true
+```
+
+Use `bd dolt push` / `bd dolt pull` for sync and `bd backup` for restorable
+database backups.
+
+:::
+
 Routing note: `output.title-length` and `agents.file` are functionally tool-level settings, but `bd config set` writes them to the Dolt database. They are typically read from `config.yaml` when set there directly.
 
 `bd config show` is the source of truth for what's currently effective on your machine, including provenance.
