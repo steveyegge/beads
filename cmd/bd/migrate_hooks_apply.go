@@ -320,6 +320,10 @@ func renderMigratedHookContent(op hookMigrationWriteOp) ([]byte, error) {
 	baseContent = strings.ReplaceAll(baseContent, "\r\n", "\n")
 	baseContent = ensureHookShebang(baseContent)
 
+	if !isShellShebang(baseContent) {
+		return nil, fmt.Errorf("skipping hook migration for %s: non-shell interpreter detected (GH#4000)", op.HookName)
+	}
+
 	content := injectHookSection(baseContent, generateHookSection(op.HookName))
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	if !strings.HasSuffix(content, "\n") {

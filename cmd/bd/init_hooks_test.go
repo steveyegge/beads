@@ -1085,6 +1085,120 @@ func TestHooksNeedUpdate(t *testing.T) {
 	}
 }
 
+// TestIsShellShebang verifies the shebang detection used to guard against
+// injecting bash syntax into non-shell hook scripts (GH#4000).
+func TestIsShellShebang(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"no shebang", "echo hello", true},
+		{"bash", "#!/bin/bash\necho hi", true},
+		{"env bash", "#!/usr/bin/env bash\necho hi", true},
+		{"sh", "#!/bin/sh\necho hi", true},
+		{"env sh", "#!/usr/bin/env sh\necho hi", true},
+		{"zsh", "#!/usr/bin/env zsh\necho hi", true},
+		{"dash", "#!/usr/bin/dash\necho hi", true},
+		{"ksh", "#!/usr/bin/env ksh\necho hi", true},
+		{"ash", "#!/bin/ash\necho hi", true},
+		{"python", "#!/usr/bin/env python3\nimport sys", false},
+		{"ruby", "#!/usr/bin/ruby\nputs 'hi'", false},
+		{"node", "#!/usr/bin/env node\nconsole.log('hi')", false},
+		{"perl", "#!/usr/bin/perl\nprint 'hi'", false},
+		{"empty content", "", true},
+		{"bare shebang", "#!\n", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isShellShebang(tt.content); got != tt.want {
+				t.Errorf("isShellShebang() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestInstallHooksWithOptions_SkipsNonShellHook verifies that installHooksWithOptions
+// does NOT inject bash into a hook with a non-shell shebang (GH#4000).
+func TestInstallHooksWithOptions_SkipsNonShellHook(t *testing.T) {
+	tmpDir := newGitRepo(t)
+	runInDir(t, tmpDir, func() {
+		gitDirPath, err := git.GetGitDir()
+		if err != nil {
+			t.Fatalf("git.GetGitDir() failed: %v", err)
+		}
+		hooksDir := filepath.Join(gitDirPath, "hooks")
+		if err := os.MkdirAll(hooksDir, 0750); err != nil {
+			t.Fatalf("Failed to create hooks directory: %v", err)
+		}
+
+		pythonHook := "#!/usr/bin/env python3\nimport sys\nprint('lint passed')\n"
+		preCommitPath := filepath.Join(hooksDir, "pre-commit")
+		if err := os.WriteFile(preCommitPath, []byte(pythonHook), 0700); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := installHooksWithOptions([]string{"pre-commit"}, false, false, false, false); err != nil {
+			t.Fatalf("installHooksWithOptions() failed: %v", err)
+		}
+
+		content, err := os.ReadFile(preCommitPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contentStr := string(content)
+
+		if contentStr != pythonHook {
+			t.Errorf("Python hook should not be modified.\nExpected:\n%s\nGot:\n%s", pythonHook, contentStr)
+		}
+		if strings.Contains(contentStr, hookSectionBeginPrefix) {
+			t.Error("bash section markers should not be injected into a Python hook")
+		}
+	})
+}
+
+// TestInstallHooksWithOptions_InjectsShellHook verifies that shell hooks
+// still get the section injected after the shebang guard (GH#4000).
+func TestInstallHooksWithOptions_InjectsShellHook(t *testing.T) {
+	tmpDir := newGitRepo(t)
+	runInDir(t, tmpDir, func() {
+		gitDirPath, err := git.GetGitDir()
+		if err != nil {
+			t.Fatalf("git.GetGitDir() failed: %v", err)
+		}
+		hooksDir := filepath.Join(gitDirPath, "hooks")
+		if err := os.MkdirAll(hooksDir, 0750); err != nil {
+			t.Fatalf("Failed to create hooks directory: %v", err)
+		}
+
+		bashHook := "#!/usr/bin/env bash\necho 'lint passed'\n"
+		preCommitPath := filepath.Join(hooksDir, "pre-commit")
+		if err := os.WriteFile(preCommitPath, []byte(bashHook), 0700); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := installHooksWithOptions([]string{"pre-commit"}, false, false, false, false); err != nil {
+			t.Fatalf("installHooksWithOptions() failed: %v", err)
+		}
+
+		content, err := os.ReadFile(preCommitPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contentStr := string(content)
+
+		if !strings.Contains(contentStr, "echo 'lint passed'") {
+			t.Error("existing bash hook content should be preserved")
+		}
+		if !strings.Contains(contentStr, hookSectionBeginPrefix) {
+			t.Error("section markers should be injected into a bash hook")
+		}
+		if !strings.Contains(contentStr, "bd hooks run pre-commit") {
+			t.Error("hook invocation should be present in bash hook")
+		}
+	})
+}
+
 // TestInstallHooksBeads_HuskyV8Helper verifies that the husky v8 _/ helper
 // directory is symlinked when hooks are preserved from a husky-managed directory.
 // GH#3132 Bug 1: without this, hooks that source $(dirname "$0")/_/husky.sh fail.

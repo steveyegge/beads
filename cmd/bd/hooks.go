@@ -805,6 +805,10 @@ func installHooksWithOptions(hookNames []string, force bool, shared bool, chain 
 					newContent = "#!/usr/bin/env sh\n" + section
 				} else {
 					// Non-bd hook — inject section (preserving existing content)
+					if !isShellShebang(existingStr) {
+						fmt.Fprintf(os.Stderr, "warning: skipping hook injection for %q: non-shell interpreter detected; run 'bd hooks run %s' from a wrapper\n", hookName, hookName)
+						continue
+					}
 					newContent = injectHookSection(existingStr, section)
 				}
 			}
@@ -1579,6 +1583,31 @@ func runPrepareCommitMsgHook(args []string) int {
 // =============================================================================
 // Hook Helper Functions
 // =============================================================================
+
+// isShellShebang returns true if the content has no shebang (assumed shell)
+// or has a shebang pointing to a shell interpreter (sh, bash, zsh, dash, ksh, ash).
+// Used to guard against injecting bash syntax into non-shell hook scripts
+// (Python, Ruby, Node, Perl, etc.) which would cause SyntaxError. (GH#4000)
+func isShellShebang(content string) bool {
+	firstLine, _, _ := strings.Cut(content, "\n")
+	firstLine = strings.TrimSpace(firstLine)
+	if !strings.HasPrefix(firstLine, "#!") {
+		return true // no shebang = assume shell
+	}
+	shebang := strings.TrimPrefix(firstLine, "#!")
+	shebang = strings.TrimSpace(shebang)
+	parts := strings.Fields(shebang)
+	if len(parts) == 0 {
+		return true // bare #! with no interpreter = assume shell
+	}
+	// Handle "env" wrapper: #!/usr/bin/env bash → last token is interpreter
+	interpreter := filepath.Base(parts[len(parts)-1])
+	switch interpreter {
+	case "sh", "bash", "zsh", "dash", "ksh", "ash":
+		return true
+	}
+	return false
+}
 
 // isRebaseInProgress checks if a rebase is in progress.
 func isRebaseInProgress() bool {
