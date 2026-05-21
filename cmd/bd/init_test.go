@@ -1643,6 +1643,53 @@ func TestInitDoltMetadataNoGit(t *testing.T) {
 	}
 }
 
+func TestInitServerModeWritesDoltCompatibilityMarker(t *testing.T) {
+	skipIfNoDolt(t)
+	saveAndRestoreGlobals(t)
+	ensureCleanGlobalState(t)
+	dbPath = ""
+	store = nil
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+		t.Fatalf("creating beads dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(doltDir, ".dolt"), 0o750); err != nil {
+		t.Fatalf("creating simulated server data dir: %v", err)
+	}
+
+	database := uniqueTestDBName(t)
+	t.Cleanup(func() {
+		dropTestDatabase(database, testDoltServerPort)
+	})
+
+	rootCmd.SetArgs([]string{
+		"init",
+		"--server",
+		"--external",
+		"--server-host", "127.0.0.1",
+		"--server-port", fmt.Sprintf("%d", testDoltServerPort),
+		"--database", database,
+		"--prefix", "marker",
+		"--quiet",
+		"--skip-hooks",
+		"--skip-agents",
+	})
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("server init failed: %v", err)
+	}
+
+	markerPath := filepath.Join(doltDir, ".bd-dolt-ok")
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("expected server init to write %s: %v", markerPath, err)
+	}
+}
+
 func setupBareParentInitWorktree(t *testing.T) (string, string) {
 	t.Helper()
 
