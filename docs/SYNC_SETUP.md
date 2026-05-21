@@ -84,7 +84,7 @@ that from the machine whose local database is authoritative:
 
 ```bash
 bd dolt remote list
-bd export -o .beads/issues.pre-remote.jsonl   # optional audit backup
+bd export -o .beads/issues.pre-remote.jsonl   # optional issue audit export
 bd dolt remote add origin git+ssh://git@github.com/org/repo.git
 bd dolt push
 ```
@@ -220,7 +220,7 @@ bd list                            # sees the closed task
 - **Always use `bd dolt ...` commands** — never run raw `dolt` CLI commands while the Dolt server is running. It causes journal corruption.
 - **Commit before pulling** — if you have uncommitted working set changes, `bd dolt pull` will fail with "cannot merge with uncommitted changes". Run `bd dolt commit` first.
 - **Push before switching machines** — unpushed changes only exist locally.
-- **Do not use JSONL as sync** — `.beads/issues.jsonl` is an export for viewers, interchange, and backup. It is not the source of truth and cannot safely reconcile deletes or pruning.
+- **Do not use JSONL as sync** — `.beads/issues.jsonl` is an export for viewers and interchange. It is not the source of truth, not a full database backup, and cannot safely reconcile deletes or pruning.
 
 ## Troubleshooting
 

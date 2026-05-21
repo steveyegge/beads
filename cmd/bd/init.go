@@ -55,8 +55,8 @@ Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv), interchange, and backups up to date without extra steps.
-Cross-machine sync uses Dolt remotes, not JSONL import/export.
+viewers (bv) and interchange up to date without extra steps.
+Cross-machine sync and backups use Dolt remotes/backups, not JSONL import/export.
 To disable: bd config set export.auto false
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
@@ -103,6 +103,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 		sharedServer, _ := cmd.Flags().GetBool("shared-server")
 		externalServer, _ := cmd.Flags().GetBool("external")
+		debugMode, _ := cmd.Flags().GetBool("debug")
 		initProxiedServer, _ := cmd.Flags().GetBool("proxied-server")
 		serverConfigPath, _ := cmd.Flags().GetString("proxied-server-config")
 		serverLogPath, _ := cmd.Flags().GetString("proxied-server-log-path")
@@ -218,11 +219,39 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			cmdCtx.ProxiedServerMode = initProxiedServer
 		}
 
+		if initProxiedServer {
+			runInitProxiedServer(cmd, rootCtx, initProxiedServerInput{
+				prefix:            prefix,
+				database:          database,
+				roleFlag:          roleFlag,
+				initRemote:        initRemote,
+				initRemoteChanged: initRemoteChanged,
+				destroyToken:      destroyToken,
+				serverConfigPath:  serverConfigPath,
+				serverLogPath:     serverLogPath,
+				serverRootPath:    serverRootPath,
+				quiet:             quiet,
+				stealth:           stealth,
+				skipHooks:         skipHooks,
+				skipAgents:        skipAgents,
+				reinitLocal:       reinitLocal,
+				contributor:       contributor,
+				team:              team,
+				fromJSONL:         fromJSONL,
+				nonInteractive:    nonInteractive,
+			})
+			return
+		}
+
 		// Propagate --shared-server flag to env so that IsSharedServerMode(),
 		// ResolveDoltDir(), and DefaultConfig() all see shared mode immediately
 		// (before config.yaml exists). Safe: init runs once and exits.
 		if sharedServer {
 			_ = os.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+		}
+
+		if debugMode {
+			_ = os.Setenv("BEADS_DOLT_DEBUG", "1")
 		}
 
 		// Reject hyphens in --database for embedded mode. Must run AFTER
@@ -261,7 +290,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				fmt.Fprintf(os.Stderr, "  This action CANNOT be undone. All issues, dependencies, and\n")
 				fmt.Fprintf(os.Stderr, "  Dolt commit history will be permanently lost.\n\n")
 				fmt.Fprintf(os.Stderr, "  Before proceeding, consider:\n")
-				fmt.Fprintf(os.Stderr, "    bd export > backup.jsonl    # Export issues to JSONL\n")
+				fmt.Fprintf(os.Stderr, "    bd export > issue-export.jsonl    # Export issue records, not full DB state\n")
 				fmt.Fprintf(os.Stderr, "    bd dolt status              # Check if this is a server config issue\n\n")
 				if term.IsTerminal(int(os.Stdin.Fd())) {
 					fmt.Fprintf(os.Stderr, "Type 'destroy %d issues' to confirm: ", count)
@@ -286,7 +315,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					} else {
 						fmt.Fprintf(os.Stderr, "Refusing to destroy %d issues in non-interactive mode.\n", count)
 						fmt.Fprintf(os.Stderr, "  See 'bd help init-safety' for the required --destroy-token format.\n")
-						fmt.Fprintf(os.Stderr, "  Or export first: bd export > backup.jsonl\n")
+						fmt.Fprintf(os.Stderr, "  Or export issue records first: bd export > issue-export.jsonl\n")
 						os.Exit(ExitDestroyTokenMissing)
 					}
 				}
@@ -782,7 +811,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// ensuring the server is reachable and the port file exists.
 		if !externalServer && (sharedServer || doltserver.IsSharedServerMode()) {
 			if sharedDir, err := doltserver.SharedServerDir(); err == nil {
-				if state, _ := doltserver.IsRunning(sharedDir); state == nil || !state.Running {
+				state, _ := doltserver.IsRunning(sharedDir)
+				if state == nil || !state.Running {
 					if _, startErr := doltserver.Start(sharedDir); startErr != nil {
 						fmt.Fprintf(os.Stderr, "Error: failed to start shared Dolt server: %v\n", startErr)
 						os.Exit(1)
@@ -790,6 +820,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					if !quiet {
 						fmt.Printf("  %s Shared Dolt server started\n", ui.RenderPass("✓"))
 					}
+				} else if debugMode {
+					fmt.Fprintf(os.Stderr, "Warning: shared Dolt server (PID %d, port %d) is already running without debug flags.\n", state.PID, state.Port)
+					fmt.Fprintf(os.Stderr, "  Restart to pick up debug mode:\n")
+					fmt.Fprintf(os.Stderr, "    bd dolt stop && bd dolt start\n")
 				}
 			}
 
@@ -1034,6 +1068,18 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					fmt.Fprintf(os.Stderr, "Warning: failed to enable shared server mode: %v\n", err)
 				} else if !quiet {
 					fmt.Printf("  %s Shared server mode enabled\n", ui.RenderPass("✓"))
+				}
+			}
+
+			if debugMode {
+				if err := config.SetYamlConfig("dolt.debug", "true"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to persist dolt.debug: %v\n", err)
+				} else if !quiet {
+					serverDir := doltserver.ResolveServerDir(beadsDir)
+					fmt.Printf("  %s Debug mode enabled\n", ui.RenderPass("✓"))
+					fmt.Printf("      Server log:  %s\n", doltserver.LogPath(serverDir))
+					fmt.Printf("      Profile dir: %s\n", doltserver.DebugProfileDir(beadsDir))
+					fmt.Printf("      Note: cpu.pprof is written when the server exits cleanly (bd dolt stop).\n")
 				}
 			}
 
@@ -1507,6 +1553,7 @@ func init() {
 	initCmd.Flags().String("database", "", "Use existing server database name (overrides prefix-based naming)")
 	initCmd.Flags().Bool("shared-server", false, "Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)")
 	initCmd.Flags().Bool("external", false, "Server is externally managed (skip server startup); use with --shared-server or --server")
+	initCmd.Flags().Bool("debug", false, "Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.")
 	initCmd.Flags().Bool("proxied-server", false, "[EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb")
 	initCmd.Flags().String("proxied-server-config", "", "[EXPERIMENTAL] Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.")
 	initCmd.Flags().String("proxied-server-log-path", "", "[EXPERIMENTAL] Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.")
@@ -1628,7 +1675,7 @@ To use the existing database:
   Just run bd commands normally (e.g., %s)
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), prefix)
@@ -1689,7 +1736,7 @@ To use the existing database:
   Just run bd commands normally (e.g., %s)
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), prefix)
@@ -1718,7 +1765,7 @@ To use the existing database:
   The redirect will route to the canonical database.
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), prefix)
@@ -1738,7 +1785,7 @@ To use the existing database:
   Just run bd commands normally (e.g., %s)
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), prefix)
@@ -1929,7 +1976,7 @@ func promptContributorMode() (isContributor bool, err error) {
 // Returns true to keep it enabled, false to disable.
 func promptAutoExport() (bool, error) {
 	fmt.Printf("\n%s Auto-export keeps .beads/issues.jsonl up to date after every write command.\n", ui.RenderAccent("▶"))
-	fmt.Println("  This is useful for viewers (bv), interchange, and backups. Dolt remotes handle sync.")
+	fmt.Println("  This is useful for viewers (bv) and interchange. Dolt remotes/backups handle sync and backup.")
 	fmt.Print("\nEnable auto-export? [Y/n]: ")
 
 	reader := bufio.NewReader(os.Stdin)

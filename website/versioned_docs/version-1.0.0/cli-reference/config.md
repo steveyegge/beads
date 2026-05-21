@@ -26,7 +26,7 @@ Common namespaces:
 
 Auto-Export (config.yaml):
   Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv), interchange, and backup.
+  Enabled by default. Useful for viewers (bv) and interchange; not a backup.
   It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
 
   Keys:
@@ -69,6 +69,7 @@ Examples:
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
+  bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
   bd config get export.auto
   bd config list
   bd config unset jira.url

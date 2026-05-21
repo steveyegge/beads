@@ -294,7 +294,7 @@ func FindWispDependentsRecursiveInTx(ctx context.Context, tx *sql.Tx, ids []stri
 
 		placeholders, args := buildSQLInClause(batch)
 		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM wisp_dependencies WHERE depends_on_id IN (%s)`, placeholders),
+			fmt.Sprintf(`SELECT issue_id FROM wisp_dependencies WHERE %s IN (%s)`, DepTargetExpr, placeholders),
 			args...)
 		if err != nil {
 			return discovered, fmt.Errorf("query wisp dependents: %w", err)

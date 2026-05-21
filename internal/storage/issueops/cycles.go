@@ -19,9 +19,9 @@ func DetectCyclesInTx(ctx context.Context, tx *sql.Tx) ([][]*types.Issue, error)
 
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT issue_id, depends_on_id, type
+			SELECT issue_id, %s AS depends_on_id, type
 			FROM %s
-		`, depTable))
+		`, DepTargetExpr, depTable))
 		if err != nil {
 			return nil, fmt.Errorf("detect cycles: query %s: %w", depTable, err)
 		}

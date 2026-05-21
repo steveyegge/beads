@@ -20,7 +20,7 @@ import (
 // These wrap Dolt's built-in backup feature (CALL DOLT_BACKUP(...)) for standalone
 // users who want their beads database backed up to a filesystem path, NAS, or DoltHub.
 //
-// Unlike the JSONL backup (bd backup), Dolt backups preserve full commit history
+// Unlike issue JSONL exports, Dolt-native backups preserve full commit history
 // and are faster for large databases.
 
 const defaultDoltBackupName = "default"

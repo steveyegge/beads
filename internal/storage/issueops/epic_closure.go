@@ -48,8 +48,8 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx *sql.Tx) ([]*types.E
 	}
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT depends_on_id, issue_id FROM %s
-			WHERE type = 'parent-child'
+			SELECT depends_on_issue_id, issue_id FROM %s
+			WHERE type = 'parent-child' AND depends_on_issue_id IS NOT NULL
 		`, depTable))
 		if err != nil {
 			if isTableNotExistError(err) {

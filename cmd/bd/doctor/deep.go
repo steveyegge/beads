@@ -128,12 +128,12 @@ func checkParentConsistency(db *sql.DB) DoctorCheck {
 
 	// Find parent-child deps where either side doesn't exist
 	query := `
-		SELECT d.issue_id, d.depends_on_id
+		SELECT d.issue_id, COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id
 		FROM dependencies d
 		WHERE d.type = 'parent-child'
 		  AND (
 		    NOT EXISTS (SELECT 1 FROM issues WHERE id = d.issue_id)
-		    OR NOT EXISTS (SELECT 1 FROM issues WHERE id = d.depends_on_id)
+		    OR NOT EXISTS (SELECT 1 FROM issues WHERE id = COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external))
 		  )
 		LIMIT 10`
 
@@ -182,11 +182,11 @@ func checkDependencyIntegrity(db *sql.DB) DoctorCheck {
 
 	// Find any deps where either side is missing
 	query := `
-		SELECT d.issue_id, d.depends_on_id, d.type
+		SELECT d.issue_id, COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id, d.type
 		FROM dependencies d
 		WHERE (
 		    NOT EXISTS (SELECT 1 FROM issues WHERE id = d.issue_id)
-		    OR NOT EXISTS (SELECT 1 FROM issues WHERE id = d.depends_on_id)
+		    OR NOT EXISTS (SELECT 1 FROM issues WHERE id = COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external))
 		  )
 		LIMIT 10`
 
@@ -239,7 +239,7 @@ func checkEpicCompleteness(db *sql.DB) DoctorCheck {
 		       COUNT(c.id) as total_children,
 		       SUM(CASE WHEN c.status = 'closed' THEN 1 ELSE 0 END) as closed_children
 		FROM issues e
-		JOIN dependencies d ON d.depends_on_id = e.id AND d.type = 'parent-child'
+		JOIN dependencies d ON d.depends_on_issue_id = e.id AND d.type = 'parent-child'
 		JOIN issues c ON c.id = d.issue_id
 		WHERE e.issue_type = 'epic'
 		  AND e.status != 'closed'
@@ -425,12 +425,12 @@ func checkMoleculeIntegrity(db *sql.DB) DoctorCheck {
 
 		// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
 		brokenQuery := fmt.Sprintf(`
-			SELECT d.depends_on_id, COUNT(*) AS orphan_count
+			SELECT d.depends_on_issue_id, COUNT(*) AS orphan_count
 			FROM dependencies d
-			WHERE d.depends_on_id IN (%s)
+			WHERE d.depends_on_issue_id IN (%s)
 			  AND d.type = 'parent-child'
 			  AND NOT EXISTS (SELECT 1 FROM issues WHERE id = d.issue_id)
-			GROUP BY d.depends_on_id`, strings.Join(placeholders, ","))
+			GROUP BY d.depends_on_issue_id`, strings.Join(placeholders, ","))
 
 		brokenRows, err := db.Query(brokenQuery, molIDs...)
 		if err == nil {

@@ -38,7 +38,7 @@ Common namespaces:
 
 Auto-Export (config.yaml):
   Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv), interchange, and backup.
+  Enabled by default. Useful for viewers (bv) and interchange; not a backup.
   It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
 
   Keys:
@@ -81,6 +81,7 @@ Examples:
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
+  bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
   bd config get export.auto
   bd config list
   bd config unset jira.url`,
@@ -104,6 +105,12 @@ var configSetCmd = &cobra.Command{
 		// visible.
 		if msg, rejected := rejectProtectedConfigKey(key); rejected {
 			fmt.Fprintln(os.Stderr, msg)
+			os.Exit(1)
+		}
+
+		if key == "dolt.debug" && !usesSQLServer() {
+			fmt.Fprintln(os.Stderr, "Error: dolt.debug requires a sql-server-backed project (embedded mode has no managed server).")
+			fmt.Fprintln(os.Stderr, "  To migrate: re-init with 'bd init --server' or 'bd init --shared-server'.")
 			os.Exit(1)
 		}
 

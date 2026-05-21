@@ -2266,6 +2266,11 @@ Generated from `bd help --doc backup`
 
 Back up your beads database for off-machine recovery.
 
+This is a Dolt-native database backup. It preserves the database state,
+including tables, branches, commit history, and working-set data. This is
+different from 'bd export', which writes issue records to JSONL for migration
+and interoperability.
+
 Commands:
   bd backup init &lt;path&gt;    Set up a backup destination (filesystem or DoltHub)
   bd backup sync           Push to configured backup destination
@@ -2323,6 +2328,10 @@ Restore the beads database from a Dolt-native backup.
 
 By default, reads from .beads/backup/ (or the configured backup directory).
 Optionally specify a path to a directory containing a Dolt backup.
+
+This restores a full database backup created by 'bd backup sync' or an
+equivalent Dolt backup. JSONL files produced by 'bd export' are issue exports,
+not restore targets for this command.
 
 Use --force to overwrite an existing database with the backup contents.
 
@@ -2463,7 +2472,7 @@ Unlike 'bd init --force', bootstrap will never delete existing issues.
 
 Bootstrap auto-detects the right action:
   • If sync.remote is configured: clones from the remote
-  • If git origin has Dolt data (refs/dolt/data): clones from git
+  • If git origin has Dolt data (refs/dolt/data): clones from git and wires origin for future push/pull
   • If .beads/backup/*.jsonl exists: restores from backup
   • If .beads/issues.jsonl exists: imports from git-tracked JSONL
   • If no database exists: creates a fresh one
@@ -2879,7 +2888,8 @@ Common namespaces:
 
 Auto-Export (config.yaml):
   Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv) and git-based sync.
+  Enabled by default. Useful for viewers (bv) and interchange; not a backup.
+  It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
 
   Keys:
     export.auto       Enable/disable auto-export (default: true)
@@ -2912,6 +2922,7 @@ Examples:
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
+  bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
   bd config get export.auto
   bd config list
   bd config unset jira.url
@@ -3745,7 +3756,7 @@ Examples:
   bd doctor --fix -i     # Confirm each fix individually
   bd doctor --fix --fix-child-parent  # Also fix child→parent deps (opt-in)
   bd doctor --fix --force # Force repair even when database can't be opened
-  bd doctor --fix --source=jsonl # Rebuild database from JSONL (source of truth)
+  bd doctor --fix --source=jsonl # Rebuild database from a JSONL export
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file
@@ -4245,9 +4256,10 @@ Export all issues to JSONL (newline-delimited JSON) format.
 Each line is a complete JSON object representing one issue, including its
 labels, dependencies, and comments.
 
-This command is for issue export, migration, and interoperability. It does
-not produce the JSONL backup snapshot used by 'bd backup restore'. For
-supported backup/restore flows, use 'bd backup', 'bd backup export-git',
+This command is for issue export, migration, and interoperability. It exports
+records from the issues table; it is not a full database backup and does not
+capture Dolt branches, commit history, working-set state, or non-issue tables.
+For supported full backup/restore flows, use 'bd backup init', 'bd backup sync',
 and 'bd backup restore'.
 
 By default, exports only regular issues (excluding infrastructure beads
@@ -4259,7 +4271,7 @@ include them.
 
 EXAMPLES:
   bd export                              # Export issues to stdout
-  bd export -o backup.jsonl              # Export to file
+  bd export -o issues.jsonl              # Export issues to file
   bd export --include-memories           # Export issues + memories
   bd export --all -o full.jsonl          # Include infra + templates + gates + memories
   bd export --scrub -o clean.jsonl       # Exclude test/pollution records
@@ -4430,19 +4442,14 @@ Generated from `bd help --doc formula`
 
 Manage workflow formulas - the source layer for molecule templates.
 
-Formulas are YAML/JSON files that define workflows with composition rules.
-They are "cooked" into proto beads which can then be poured or wisped.
-
-The Rig → Cook → Run lifecycle:
-  - Rig: Compose formulas (extends, compose)
-  - Cook: Transform to proto (bd cook expands macros, applies aspects)
-  - Run: Agents execute poured mols or wisps
+Formulas are TOML/JSON files that define workflows with composition rules.
+Define formulas, cook them into protos, then pour or wisp them into work.
 
 Search paths (in order):
   1. &lt;resolved-beads-dir&gt;/formulas/ (active project)
   2. &lt;checkout-root&gt;/.beads/formulas/ (repo-local formulas)
   3. ~/.beads/formulas/ (user)
-  4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
+  4. $GT_ROOT/.beads/formulas/ (shared workspace root, if GT_ROOT set)
 
 Commands:
   list   List available formulas from all search paths
@@ -4491,7 +4498,7 @@ Search paths (in order of priority):
   1. &lt;resolved-beads-dir&gt;/formulas/ (active project - highest priority)
   2. &lt;checkout-root&gt;/.beads/formulas/ (repo-local formulas)
   3. ~/.beads/formulas/ (user)
-  4. $GT_ROOT/.beads/formulas/ (orchestrator, if GT_ROOT set)
+  4. $GT_ROOT/.beads/formulas/ (shared workspace root, if GT_ROOT set)
 
 Formulas in earlier paths shadow those with the same name in later paths.
 
@@ -5486,7 +5493,8 @@ Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
 Auto-export is enabled by default. After every write command, bd exports
 issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv) and git-based workflows up to date without extra steps.
+viewers (bv) and interchange up to date without extra steps.
+Cross-machine sync and backups use Dolt remotes/backups, not JSONL import/export.
 To disable: bd config set export.auto false
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
@@ -5504,34 +5512,39 @@ bd init [flags]
 **Flags:**
 
 ```
-      --agents-file string       Custom filename for agent instructions (default: AGENTS.md)
-      --agents-profile string    AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
-      --agents-template string   Path to custom AGENTS.md template (overrides embedded default)
-      --backend string           Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
-      --contributor              Run OSS contributor setup wizard
-      --database string          Use existing server database name (overrides prefix-based naming)
-      --destroy-token string     Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
-      --discard-remote           Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
-      --external                 Server is externally managed (skip server startup); use with --shared-server or --server
-      --force                    Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
-      --from-jsonl               Import issues from .beads/issues.jsonl instead of git history
-      --non-interactive          Skip all interactive prompts (auto-detected in CI or non-TTY environments)
-  -p, --prefix string            Issue prefix (default: current directory name)
-  -q, --quiet                    Suppress output (quiet mode)
-      --reinit-local             Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
-      --remote string            Dolt remote URL to clone from and persist as sync.remote
-      --role string              Set beads role without prompting: "maintainer" or "contributor"
-      --server                   Use external dolt sql-server instead of embedded engine
-      --server-host string       Dolt server host (default: 127.0.0.1)
-      --server-port int          Dolt server port (default: 3307)
-      --server-socket string     Unix domain socket path (overrides host/port)
-      --server-user string       Dolt server MySQL user (default: root)
-      --setup-exclude            Configure .git/info/exclude to keep beads files local (for forks)
-      --shared-server            Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
-      --skip-agents              Skip AGENTS.md and Claude settings generation
-      --skip-hooks               Skip git hooks installation
-      --stealth                  Enable stealth mode: global gitattributes and gitignore, no local repo tracking
-      --team                     Run team workflow setup wizard
+      --agents-file string                Custom filename for agent instructions (default: AGENTS.md)
+      --agents-profile string             AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
+      --agents-template string            Path to custom AGENTS.md template (overrides embedded default)
+      --backend string                    Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
+      --contributor                       Run OSS contributor setup wizard
+      --database string                   Use existing server database name (overrides prefix-based naming)
+      --debug                             Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
+      --destroy-token string              Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
+      --discard-remote                    Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
+      --external                          Server is externally managed (skip server startup); use with --shared-server or --server
+      --force                             Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
+      --from-jsonl                        Import issues from .beads/issues.jsonl instead of git history
+      --non-interactive                   Skip all interactive prompts (auto-detected in CI or non-TTY environments)
+  -p, --prefix string                     Issue prefix (default: current directory name)
+      --proxied-server                    [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
+      --proxied-server-config string      [EXPERIMENTAL] Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.
+      --proxied-server-log-path string    [EXPERIMENTAL] Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.
+      --proxied-server-root-path string   [EXPERIMENTAL] Directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it.
+  -q, --quiet                             Suppress output (quiet mode)
+      --reinit-local                      Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
+      --remote string                     Dolt remote URL to clone from and persist as sync.remote
+      --role string                       Set beads role without prompting: "maintainer" or "contributor"
+      --server                            Use external dolt sql-server instead of embedded engine
+      --server-host string                Dolt server host (default: 127.0.0.1)
+      --server-port int                   Dolt server port (default: 3307)
+      --server-socket string              Unix domain socket path (overrides host/port)
+      --server-user string                Dolt server MySQL user (default: root)
+      --setup-exclude                     Configure .git/info/exclude to keep beads files local (for forks)
+      --shared-server                     Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
+      --skip-agents                       Skip AGENTS.md and Claude settings generation
+      --skip-hooks                        Skip git hooks installation
+      --stealth                           Enable stealth mode: global gitattributes and gitignore, no local repo tracking
+      --team                              Run team workflow setup wizard
 ```
 
 </document>
@@ -6762,7 +6775,7 @@ Formula search paths (checked in order):
   1. &lt;resolved-beads-dir&gt;/formulas/ (active project)
   2. &lt;checkout-root&gt;/.beads/formulas/ (repo-local formulas)
   3. ~/.beads/formulas/ (user level)
-  4. $GT_ROOT/.beads/formulas/ (orchestrator level, if GT_ROOT set)
+  4. $GT_ROOT/.beads/formulas/ (shared workspace root, if GT_ROOT set)
 
 Examples:
   bd mol seed mol-feature                 # Verify specific formula
@@ -8157,12 +8170,13 @@ Generated from `bd help --doc setup`
 Setup integration files for AI editors and coding assistants.
 
 Recipes define where beads workflow instructions are written. Built-in recipes
-include cursor, claude, gemini, aider, factory, codex, mux, opencode, junie, windsurf, cody, and kilocode.
+include cursor, claude, copilot, gemini, aider, factory, codex, mux, opencode, junie, windsurf, cody, and kilocode.
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
   bd setup codex           # Install Codex skill + AGENTS.md guidance
   bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
+  bd setup copilot         # Install Copilot CLI plugin + repository instructions
   bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
   bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
   bd setup mux --project --global  # Install both Mux layers
@@ -10307,6 +10321,48 @@ bd hydrate --from backend-repo
 
 </document>
 
+<document path="docs/integrations/index.md">
+
+
+# Integrations
+
+Beads integration pages are based on two sources of support in the repository:
+
+- Built-in `bd setup` recipes from `internal/recipes/recipes.go`
+- First-party MCP integrations and editor guides already shipped in the repo
+
+Run this command to see the built-in setup recipes supported by your installed `bd` binary:
+
+```bash
+bd setup --list
+```
+
+## Built-in Setup Recipes
+
+| Recipe | Integration | Primary setup surface |
+|--------|-------------|-----------------------|
+| `aider` | [Aider](/integrations/aider) | `.aider.conf.yml` and `.aider/` instructions |
+| `claude` | [Claude Code](/integrations/claude-code) | Claude hooks and `CLAUDE.md` |
+| `codex` | [Codex](/integrations/codex) | Beads skill, `AGENTS.md`, and Codex hooks |
+| `cody` | [Sourcegraph Cody](/integrations/cody) | `.cody/rules/beads.md` |
+| `cursor` | [Cursor](/integrations/cursor) | `.cursor/rules/beads.mdc` |
+| `factory` | [Factory.ai Droid](/integrations/factory) | `AGENTS.md` |
+| `gemini` | [Gemini CLI](/integrations/gemini) | Gemini hooks and `GEMINI.md` |
+| `junie` | [Junie](/integrations/junie) | `.junie/guidelines.md` and MCP config |
+| `kilocode` | [Kilo Code](/integrations/kilocode) | `.kilocode/rules/beads.md` |
+| `mux` | [Mux](/integrations/mux) | `AGENTS.md`, optional `.mux/AGENTS.md`, and Mux hooks |
+| `opencode` | [OpenCode](/integrations/opencode) | `AGENTS.md` |
+| `windsurf` | [Windsurf](/integrations/windsurf) | `.windsurf/rules/beads.md` |
+
+## MCP-Based Integrations
+
+These integrations use the Beads MCP server rather than a dedicated `bd setup` recipe:
+
+- [MCP Server](/integrations/mcp-server)
+- [GitHub Copilot](/integrations/github-copilot)
+
+</document>
+
 <document path="docs/integrations/aider.md">
 
 
@@ -10632,6 +10688,110 @@ Codex 0.129.0+ supports `/hooks`, compact lifecycle hooks, and hook-provided dev
 `PreCompact` alone does not inject context because Codex ignores plain stdout from compact hooks. The post-compact marker plus first-prompt refresh is the reliable recovery path.
 
 The Beads Codex plugin declares `"hooks": "./hooks/hooks.json"`. Without the plugin, `bd setup codex` installs the same hook config in `.codex/hooks.json` and enables `[features].hooks = true`.
+
+</document>
+
+<document path="docs/integrations/cody.md">
+
+
+# Sourcegraph Cody Integration
+
+Use Beads with Sourcegraph Cody through a project rules file.
+
+```bash
+bd setup cody
+bd setup cody --check
+```
+
+The setup command creates `.cody/rules/beads.md` with Beads workflow guidance.
+
+## Remove
+
+```bash
+bd setup cody --remove
+```
+
+</document>
+
+<document path="docs/integrations/cursor.md">
+
+
+# Cursor Integration
+
+Use Beads with Cursor through a project rules file.
+
+```bash
+bd setup cursor
+bd setup cursor --check
+```
+
+The setup command creates `.cursor/rules/beads.mdc` with Beads workflow guidance and quick `bd` command references. Restart Cursor after setup so the rules file is loaded into new agent sessions.
+
+## Remove
+
+```bash
+bd setup cursor --remove
+```
+
+</document>
+
+<document path="docs/integrations/factory.md">
+
+
+# Factory.ai Droid Integration
+
+Use Beads with Factory.ai Droid through managed `AGENTS.md` guidance.
+
+```bash
+bd setup factory
+bd setup factory --check
+```
+
+The setup command creates or updates `AGENTS.md` with a managed Beads section. Factory Droid reads `AGENTS.md` automatically when it starts a session.
+
+## Remove
+
+```bash
+bd setup factory --remove
+```
+
+</document>
+
+<document path="docs/integrations/gemini.md">
+
+
+# Gemini CLI Integration
+
+Use Beads with Gemini CLI through SessionStart hooks and `GEMINI.md` guidance.
+
+```bash
+bd setup gemini
+bd setup gemini --check
+```
+
+By default, setup installs global hooks in `~/.gemini/settings.json`. For project-local hooks, use:
+
+```bash
+bd setup gemini --project
+```
+
+The hook runs `bd prime --hook-json` so Gemini receives compact Beads workflow context at session start. The setup also writes Beads guidance to `GEMINI.md`.
+
+## Stealth Mode
+
+For CI or other environments where setup should avoid git operations:
+
+```bash
+bd setup gemini --stealth
+bd setup gemini --project --stealth
+```
+
+## Remove
+
+```bash
+bd setup gemini --remove
+bd setup gemini --project --remove
+```
 
 </document>
 
@@ -10999,6 +11159,28 @@ This removes:
 
 </document>
 
+<document path="docs/integrations/kilocode.md">
+
+
+# Kilo Code Integration
+
+Use Beads with Kilo Code through a project rules file.
+
+```bash
+bd setup kilocode
+bd setup kilocode --check
+```
+
+The setup command creates `.kilocode/rules/beads.md` with Beads workflow guidance.
+
+## Remove
+
+```bash
+bd setup kilocode --remove
+```
+
+</document>
+
 <document path="docs/integrations/mcp-server.md">
 
 
@@ -11182,6 +11364,92 @@ bd init --quiet
 
 - [Claude Code](/integrations/claude-code) - CLI integration
 - [Installation](/getting-started/installation) - Full install guide
+
+</document>
+
+<document path="docs/integrations/mux.md">
+
+
+# Mux Integration
+
+Use Beads with Mux through `AGENTS.md`, optional layered Mux instruction files, and Mux hooks.
+
+```bash
+bd setup mux
+bd setup mux --check
+```
+
+The default setup writes a managed Beads section to root `AGENTS.md`.
+
+## Workspace and Global Layers
+
+Mux also supports workspace and global instruction layers:
+
+```bash
+bd setup mux --project
+bd setup mux --global
+bd setup mux --project --global
+```
+
+Project setup writes `.mux/AGENTS.md` and installs Mux hook files under `.mux/`:
+
+- `.mux/init`
+- `.mux/tool_post`
+- `.mux/tool_env`
+
+Global setup writes `~/.mux/AGENTS.md`.
+
+## Remove
+
+```bash
+bd setup mux --remove
+bd setup mux --project --remove
+bd setup mux --global --remove
+```
+
+</document>
+
+<document path="docs/integrations/opencode.md">
+
+
+# OpenCode Integration
+
+Use Beads with OpenCode through managed `AGENTS.md` guidance.
+
+```bash
+bd setup opencode
+bd setup opencode --check
+```
+
+The setup command creates or updates `AGENTS.md` with a managed Beads section. Restart OpenCode after setup if it is already running.
+
+## Remove
+
+```bash
+bd setup opencode --remove
+```
+
+</document>
+
+<document path="docs/integrations/windsurf.md">
+
+
+# Windsurf Integration
+
+Use Beads with Windsurf through a project rules file.
+
+```bash
+bd setup windsurf
+bd setup windsurf --check
+```
+
+The setup command creates `.windsurf/rules/beads.md` with Beads workflow guidance.
+
+## Remove
+
+```bash
+bd setup windsurf --remove
+```
 
 </document>
 
