@@ -535,8 +535,9 @@ var listCmd = &cobra.Command{
 		// Resolve effective limit. Priority order:
 		// 1. Explicit --limit always wins (user intent is clear)
 		// 2. --all implies unlimited when --limit is not set (GH#1840)
-		// 3. Agent mode uses a lower default for context efficiency
-		// 4. Default limit (50) otherwise
+		// 3. Non-interactive (piped) stdout disables truncation (GH#4094)
+		// 4. Agent mode uses a lower default for context efficiency
+		// 5. Default limit (50) otherwise
 		limitChanged := cmd.Flags().Changed("limit")
 		effectiveLimit := limit
 		switch {
@@ -544,6 +545,8 @@ var listCmd = &cobra.Command{
 			effectiveLimit = limit // Explicit value (including --limit 0 for unlimited)
 		case allFlag:
 			effectiveLimit = 0 // --all implies unlimited regardless of other flags
+		case !ui.IsTerminal():
+			effectiveLimit = 0 // Piped stdout should not truncate (GH#4094)
 		case ui.IsAgentMode():
 			effectiveLimit = 20 // Agent mode default
 		}
