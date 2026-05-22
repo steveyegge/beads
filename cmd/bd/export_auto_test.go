@@ -503,6 +503,14 @@ func TestGitAddFile_SkipsWhenIndexLocked(t *testing.T) {
 	}
 }
 
+// TestAutoExportGitAddFailureExitsNonZero verifies that a *genuine* auto-export
+// staging failure is fatal and surfaces to the caller as a non-zero exit. The
+// trigger is a held git index lock — the real GH#3970 repro of a tracked .beads
+// whose index is contended — NOT a gitignored .beads. A gitignored .beads/ is a
+// supported workflow (the JSONL is intentionally untracked) and must remain
+// non-fatal; that contract is regressed separately by
+// TestEmbeddedPrune/prune_last_issue_removes_gitignored_auto_export. See be-1wzr
+// / PR #4098 for the contract decision.
 func TestAutoExportGitAddFailureExitsNonZero(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -535,13 +543,19 @@ func TestAutoExportGitAddFailureExitsNonZero(t *testing.T) {
 	}
 
 	run("init", "--prefix", "agf", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents")
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".beads/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	run("config", "set", "export.interval", "1ms")
 	run("config", "set", "export.auto", "true")
 	run("config", "set", "export.git-add", "true")
 	time.Sleep(10 * time.Millisecond)
+
+	// Hold the git index lock so the auto-export `git add` cannot proceed. The
+	// preflight in gitAddFile detects this and returns a non-nil error, which
+	// maybeAutoExport must escalate to a fatal, caller-visible error. .beads is
+	// NOT gitignored here, so the only reason staging fails is the lock.
+	lockPath := filepath.Join(dir, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, []byte("held by another git process"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := exec.Command(bd, "create", "caller visible git add failure", "-p", "2")
 	cmd.Dir = dir
@@ -554,8 +568,8 @@ func TestAutoExportGitAddFailureExitsNonZero(t *testing.T) {
 	if !strings.Contains(output, "Error: auto-export: git add failed") {
 		t.Fatalf("expected caller-visible auto-export git add error, got:\n%s", output)
 	}
-	if !strings.Contains(strings.ToLower(output), "ignored") {
-		t.Fatalf("expected git add stderr to explain ignored path, got:\n%s", output)
+	if !strings.Contains(strings.ToLower(output), "index is locked") {
+		t.Fatalf("expected git add stderr to explain locked index, got:\n%s", output)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".beads", exportAutoStateFile)); !os.IsNotExist(err) {
 		t.Fatalf("git-add failure should not save export state, stat err=%v", err)

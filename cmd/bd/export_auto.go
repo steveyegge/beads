@@ -142,7 +142,18 @@ func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) 
 	// git repo (standalone BEADS_DIR flow), or when export.git-add is false.
 	if config.GetBool("export.git-add") && !config.GetBool("no-git-ops") && isGitRepo() {
 		if err := gitAddFile(fullPath); err != nil {
-			return fmt.Errorf("auto-export: git add failed: %w", err)
+			// A gitignored .beads/ is a supported workflow: the JSONL export is
+			// written for local use / Dolt sync but intentionally left untracked,
+			// so `git add` can never stage it. That is not a failure and must not
+			// abort the command. Only genuine staging failures — e.g. a locked
+			// index, the real GH#3970 repro — are fatal. See be-1wzr / PR #4098
+			// for the contract decision; the gitignored-success path is regressed
+			// by TestEmbeddedPrune/prune_last_issue_removes_gitignored_auto_export.
+			if pathIsGitIgnored(fullPath) {
+				debug.Logf("auto-export: %s is gitignored; skipping git add\n", fullPath)
+			} else {
+				return fmt.Errorf("auto-export: git add failed: %w", err)
+			}
 		}
 	}
 
@@ -493,6 +504,26 @@ func gitAddFile(path string) error {
 		return err
 	}
 	return nil
+}
+
+// pathIsGitIgnored reports whether path is excluded by a .gitignore rule in
+// the enclosing repo. It is used by auto-export to classify a gitAddFile
+// failure: a gitignored .beads/ is a supported workflow (the JSONL export is
+// intentionally untracked), so failing to stage it must be benign, whereas a
+// real staging failure such as a locked index stays fatal (be-1wzr / PR #4098).
+//
+// `git check-ignore -q` exits 0 when the path is ignored, 1 when it is not,
+// and 128 on error. Anything other than a clean exit 0 is treated as "not
+// ignored" so genuine failures are never masked. The git-hook env is scrubbed
+// and the command runs from the file's directory, mirroring gitAddFile so the
+// ignore decision matches the repo `git add` actually consulted.
+func pathIsGitIgnored(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), gitAddTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "check-ignore", "-q", "--", path)
+	cmd.Dir = filepath.Dir(path)
+	cmd.Env = scrubGitHookEnv(os.Environ())
+	return cmd.Run() == nil
 }
 
 func gitIndexLockPath(path string, env []string) (string, error) {
