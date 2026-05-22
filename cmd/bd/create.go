@@ -59,7 +59,16 @@ var createCmd = &cobra.Command{
 				FatalError("cannot specify both title and --graph flag")
 			}
 			graphDryRun, _ := cmd.Flags().GetBool("dry-run")
-			createIssuesFromGraph(graphFile, graphDryRun)
+			wisp, _ := cmd.Flags().GetBool("ephemeral")
+			noHistory, _ := cmd.Flags().GetBool("no-history")
+			graphOpts := GraphApplyOptions{
+				Ephemeral: wisp,
+				NoHistory: noHistory,
+			}
+			if err := graphOpts.Validate(); err != nil {
+				FatalError("invalid graph options: %v", err)
+			}
+			createIssuesFromGraph(graphFile, graphDryRun, graphOpts)
 			return
 		}
 
