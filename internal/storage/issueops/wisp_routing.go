@@ -22,10 +22,6 @@ func IsActiveWispInTx(ctx context.Context, tx *sql.Tx, id string) bool {
 	return err == nil
 }
 
-// wispsTableEmptyOrMissingInTx returns true when the wisps table either does
-// not exist or contains zero rows. Used by the wisp-partition helpers below
-// to short-circuit the per-batch IN-list probes on projects that never use
-// wisps — one row probe replaces N batched lookups.
 func wispsTableEmptyOrMissingInTx(ctx context.Context, tx *sql.Tx) (bool, error) {
 	var probe int
 	err := tx.QueryRowContext(ctx, "SELECT 1 FROM wisps LIMIT 1").Scan(&probe)

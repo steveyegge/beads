@@ -12,8 +12,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
-// routingConfigKeys lists every config key consulted by routing resolution.
-// Used to batch-load DB values in one query (GH read-path optimization).
 var routingConfigKeys = []string{
 	"routing.mode",
 	"routing.contributor",
@@ -23,11 +21,7 @@ var routingConfigKeys = []string{
 	"contributor.planning_repo",
 }
 
-// resolveRoutingConfigValue applies the standard YAML/env-first, then-DB
-// precedence using a preloaded DB-config map. dbValues may be nil (treated as
-// empty) when the store lookup failed; resolution still works from YAML/env.
 func resolveRoutingConfigValue(key string, dbValues map[string]string) string {
-	// Only trust YAML/env values that were explicitly set, not Viper defaults.
 	if src := config.GetValueSource(key); src != config.SourceDefault {
 		if value := strings.TrimSpace(config.GetString(key)); value != "" {
 			return value
@@ -36,9 +30,6 @@ func resolveRoutingConfigValue(key string, dbValues map[string]string) string {
 	return strings.TrimSpace(dbValues[key])
 }
 
-// getRoutingConfigValue is the single-key compatibility shim retained for
-// callers (e.g. write paths in bd create) that do not yet batch their reads.
-// New code should prefer resolveRoutingConfigValue with a preloaded map.
 func getRoutingConfigValue(ctx context.Context, store storage.DoltStorage, key string) string {
 	if src := config.GetValueSource(key); src != config.SourceDefault {
 		if value := strings.TrimSpace(config.GetString(key)); value != "" {
@@ -56,17 +47,12 @@ func getRoutingConfigValue(ctx context.Context, store storage.DoltStorage, key s
 	return strings.TrimSpace(dbValue)
 }
 
-// determineAutoRoutedRepoPath returns the repository path that should be used for
-// issue reads when contributor auto-routing is enabled.
 func determineAutoRoutedRepoPath(ctx context.Context, store storage.DoltStorage) string {
 	userRole, err := routing.DetectUserRole(".")
 	if err != nil {
 		debug.Logf("Warning: failed to detect user role: %v\n", err)
 	}
 
-	// Load all routing-related config keys in a single DB transaction rather
-	// than issuing one tx per key. The full config table is small in
-	// practice (well under a thousand rows on real projects).
 	var dbValues map[string]string
 	if store != nil {
 		all, allErr := store.GetAllConfig(ctx)
@@ -82,11 +68,9 @@ func determineAutoRoutedRepoPath(ctx context.Context, store storage.DoltStorage)
 		}
 	}
 
-	// Build routing config with backward compatibility for legacy contributor.* keys.
 	routingMode := resolveRoutingConfigValue("routing.mode", dbValues)
 	contributorRepo := resolveRoutingConfigValue("routing.contributor", dbValues)
 
-	// Backward compatibility - fall back to legacy contributor.* keys
 	if routingMode == "" {
 		if resolveRoutingConfigValue("contributor.auto_route", dbValues) == "true" {
 			routingMode = "auto"

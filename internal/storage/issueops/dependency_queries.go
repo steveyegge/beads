@@ -131,8 +131,6 @@ func getDependencyRecordsIntoFromTable(ctx context.Context, tx *sql.Tx, depTable
 	return nil
 }
 
-// GetDependencyCountsInTx returns dependency counts for multiple issues within a transaction.
-// Uses batched IN clauses (queryBatchSize) to avoid query-planner spikes.
 func GetDependencyCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string) (map[string]*types.DependencyCounts, error) {
 	if len(issueIDs) == 0 {
 		return make(map[string]*types.DependencyCounts), nil
@@ -143,10 +141,6 @@ func GetDependencyCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string)
 		result[id] = &types.DependencyCounts{}
 	}
 
-	// Skip the wisp_dependencies pair on projects without wisps. wisp_dependencies
-	// requires at least one wisp on either side, so an empty wisps table implies
-	// an empty wisp_dependencies table. One cheap probe replaces two queries per
-	// batch (blockers + dependents).
 	depTables := []string{"dependencies", "wisp_dependencies"}
 	if empty, probeErr := wispsTableEmptyOrMissingInTx(ctx, tx); probeErr != nil {
 		return nil, fmt.Errorf("get dependency counts: probe: %w", probeErr)
@@ -170,7 +164,6 @@ func GetDependencyCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string)
 		inClause := strings.Join(placeholders, ",")
 
 		for _, depTable := range depTables {
-			// Blockers: issues that block the given IDs.
 			//nolint:gosec // G201: depTable is hardcoded and inClause contains only ? placeholders.
 			depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 				SELECT issue_id, COUNT(*) as cnt

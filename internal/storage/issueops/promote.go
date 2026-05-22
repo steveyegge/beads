@@ -93,9 +93,6 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor 
 		return fmt.Errorf("wisp %s not found", id)
 	}
 
-	// id now lives in `issues` and any inbound refs have been retargeted to
-	// depends_on_issue_id. Refresh is_blocked for id plus its dependers and
-	// parent-child descendants.
 	affectedIssues, affectedWisps, aerr := AffectedByStatusChangeInTx(ctx, tx, id)
 	if aerr != nil {
 		return fmt.Errorf("affected by promote for %s: %w", id, aerr)

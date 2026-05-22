@@ -13,9 +13,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// readyWorkPredicates holds the SQL fragments derived from a WorkFilter that
-// are shared between the legacy id-only GetReadyWorkInTx path and the
-// single-statement GetReadyWorkWithCountsInTx path.
 type readyWorkPredicates struct {
 	whereSQL         string
 	orderBySQL       string
@@ -24,11 +21,6 @@ type readyWorkPredicates struct {
 	deferredChildIDs []string
 }
 
-// buildReadyWorkPredicates assembles the WHERE/ORDER BY/LIMIT fragments and
-// the deferred-parent-children list once so both ready-work entry points stay
-// in sync. The tables parameter controls which dep/label table names are
-// substituted into the subquery clauses so the same builder produces a WHERE
-// suitable for either issues or wisps.
 func buildReadyWorkPredicates(ctx context.Context, tx *sql.Tx, filter types.WorkFilter, tables FilterTables) (*readyWorkPredicates, error) {
 	var statusClause string
 	if filter.Status != "" {
@@ -193,8 +185,6 @@ func buildReadyWorkPredicates(ctx context.Context, tx *sql.Tx, filter types.Work
 	}, nil
 }
 
-// GetReadyWorkInTx returns issues that are ready to work on (not blocked).
-//
 //nolint:gosec // G201: whereSQL/orderBySQL built from hardcoded strings and ? placeholders
 func GetReadyWorkInTx(
 	ctx context.Context,
@@ -219,7 +209,6 @@ func GetReadyWorkInTx(
 		return nil, err
 	}
 
-	// Batch-fetch full issues preserving order.
 	issues, err := GetIssuesByIDsInTx(ctx, tx, issueIDs, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get ready work: fetch issues: %w", err)
@@ -267,13 +256,7 @@ func mergeReadyWisps(ordered []*types.Issue, wisps []*types.Issue, filter types.
 	return ordered, nil
 }
 
-// deferredChildIDs is precomputed by GetReadyWorkInTx so this helper does not
-// re-issue the deferred-parent probes that the issues path already ran.
-// Pass nil when filter.IncludeDeferred is true.
 func getReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilter, deferredChildIDs []string) ([]*types.Issue, error) {
-	// Skip the wisp candidate scan entirely when the wisps table is missing
-	// or empty — projects that never use wisps would otherwise pay one full
-	// SELECT against wisps per bd ready invocation.
 	empty, err := wispsTableEmptyOrMissingInTx(ctx, tx)
 	if err != nil {
 		return nil, fmt.Errorf("search wisps (ready work): probe: %w", err)
@@ -283,8 +266,6 @@ func getReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilter,
 	}
 
 	wispFilter := readyWorkWispIssueFilter(filter)
-	// Ready-only wisp predicates are applied after search, so avoid limiting
-	// before that filtering can drop non-ready candidates.
 	wispFilter.Limit = 0
 	wisps, err := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables)
 	if err != nil {
@@ -407,14 +388,11 @@ func filterReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 				excluded[wisp.ID] = struct{}{}
 			}
 		}
-		// deferredChildIDs is precomputed by GetReadyWorkInTx; do not re-probe.
 		for _, id := range deferredChildIDs {
 			excluded[id] = struct{}{}
 		}
 	}
 
-	// Filter wisps that are currently is_blocked = 1 (maintained by write-side
-	// instrumentation).
 	for start := 0; start < len(wispIDs); start += queryBatchSize {
 		end := start + queryBatchSize
 		if end > len(wispIDs) {

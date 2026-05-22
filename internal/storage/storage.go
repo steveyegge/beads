@@ -49,10 +49,6 @@ type Storage interface {
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	DeleteIssue(ctx context.Context, id string) error
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
-	// SearchIssuesWithCounts returns matching issues hydrated with labels,
-	// dependency records, dep/dependent/comment counts and parent ID in one
-	// SQL statement. JSON-path callers (bd list --json) should use this in
-	// place of SearchIssues + 3 follow-up hydration calls.
 	SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error)
 
 	// Dependencies
@@ -72,10 +68,6 @@ type Storage interface {
 
 	// Work queries
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
-	// GetReadyWorkWithCounts returns ready issues with labels, dependency
-	// records, dep/dependent/comment counts and parent ID hydrated in a
-	// single SQL statement. Use for bd ready --json. Wisps (if any) are
-	// merged in via the slower per-call hydration path.
 	GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error)
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)

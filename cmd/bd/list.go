@@ -308,8 +308,6 @@ func sortIssues(issues []*types.Issue, sortBy string, reverse bool) {
 	})
 }
 
-// sortIssuesWithCounts sorts an IssueWithCounts slice by the same field set
-// as sortIssues. Mirrors that function exactly for the embedded *Issue.
 func sortIssuesWithCounts(items []*types.IssueWithCounts, sortBy string, reverse bool) {
 	if sortBy == "" {
 		return
@@ -942,19 +940,11 @@ var listCmd = &cobra.Command{
 			activeStore = routedStore
 		}
 
-		// Direct mode
-
-		// Watch mode is handled entirely by watchIssues which manages its
-		// own fetch loop; skip the up-front SearchIssues to avoid a wasted
-		// call. Stays the highest-precedence path (GH#654).
 		if watchMode {
 			watchIssues(ctx, activeStore, filter, readyFlag, parentID, sortBy, reverse, effectiveLimit)
 			return
 		}
 
-		// JSON branch: single mega-query path. Bypasses the legacy
-		// SearchIssues + per-call hydration and returns IssueWithCounts
-		// directly.
 		if jsonOutput {
 			var iwc []*types.IssueWithCounts
 			var err error
@@ -1051,9 +1041,6 @@ var listCmd = &cobra.Command{
 		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
 
-		// Labels were already hydrated by SearchIssues / GetReadyWork; reuse
-		// them via a map keyed by ID so the existing format helpers do not
-		// need to change shape.
 		issueIDs := make([]string, len(issues))
 		labelsMap := make(map[string][]string, len(issues))
 		for i, issue := range issues {

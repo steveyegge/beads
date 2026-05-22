@@ -120,11 +120,6 @@ func (s *DoltStore) GetLocalMetadata(ctx context.Context, key string) (string, e
 	return value, err
 }
 
-// loadCustomConfigCache lazily populates the customStatus* and customType*
-// caches together via a single tx. The combined resolver issues at most one
-// batched config-table read (for both status.custom and types.custom) when
-// either normalized table is empty, replacing what used to be two separate
-// single-key SELECTs across two separate transactions.
 func (s *DoltStore) loadCustomConfigCache(ctx context.Context) {
 	s.cacheMu.Lock()
 	if s.customStatusCached && s.customTypeCached {
@@ -141,9 +136,6 @@ func (s *DoltStore) loadCustomConfigCache(ctx context.Context) {
 		return resolveErr
 	})
 	if err != nil {
-		// DB unavailable — fall back to config.yaml for both sides before
-		// giving up. We still mark the caches populated so a transient
-		// failure doesn't cause a re-probe on every call.
 		log.Printf("warning: failed to resolve custom config: %v", err)
 		if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
 			statuses = issueops.ParseStatusFallback(yamlStatuses)
@@ -166,8 +158,6 @@ func (s *DoltStore) loadCustomConfigCache(ctx context.Context) {
 	s.cacheMu.Unlock()
 }
 
-// GetCustomStatuses returns custom status name strings from config (backward-compatible API).
-// Callers that need category information should use GetCustomStatusesDetailed instead.
 func (s *DoltStore) GetCustomStatuses(ctx context.Context) ([]string, error) {
 	s.loadCustomConfigCache(ctx)
 	s.cacheMu.Lock()
@@ -175,10 +165,6 @@ func (s *DoltStore) GetCustomStatuses(ctx context.Context) ([]string, error) {
 	return s.customStatusCache, nil
 }
 
-// GetCustomStatusesDetailed returns typed custom statuses with category information.
-// Falls back to config.yaml if DB config is unavailable.
-// Results are cached per DoltStore lifetime and invalidated when SetConfig
-// updates the "status.custom" key.
 func (s *DoltStore) GetCustomStatusesDetailed(ctx context.Context) ([]types.CustomStatus, error) {
 	s.loadCustomConfigCache(ctx)
 	s.cacheMu.Lock()

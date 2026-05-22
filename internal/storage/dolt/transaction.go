@@ -596,16 +596,12 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	return issues, nil
 }
 
-// UpdateIssue updates an issue within the transaction. Delegates to the
-// issueops layer so is_blocked is maintained transactionally.
 func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	table := "issues"
 	if t.isActiveWisp(ctx, id) {
 		table = "wisps"
 	}
 
-	// Validate metadata up front (kept inline since callers expect this
-	// pre-validation error path before any UPDATE runs).
 	if rawMeta, ok := updates["metadata"]; ok {
 		metadataStr, err := storage.NormalizeMetadataValue(rawMeta)
 		if err != nil {
@@ -623,8 +619,6 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 	return nil
 }
 
-// CloseIssue closes an issue within the transaction. Delegates to the
-// issueops layer (event-free variant) so is_blocked is maintained.
 func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	table := "issues"
 	if t.isActiveWisp(ctx, id) {
@@ -638,8 +632,6 @@ func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason stri
 	return nil
 }
 
-// DeleteIssue deletes an issue within the transaction. Delegates to the
-// issueops layer so is_blocked is maintained for survivors of the cascade.
 func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
 	table := "issues"
 	if t.isActiveWisp(ctx, id) {
@@ -730,8 +722,6 @@ func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID stri
 	return deps, rows.Err()
 }
 
-// RemoveDependency removes a dependency within the transaction. Delegates
-// to the issueops layer so is_blocked is maintained.
 func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	table := "dependencies"
 	if t.isActiveWisp(ctx, issueID) {

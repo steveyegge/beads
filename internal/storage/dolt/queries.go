@@ -21,10 +21,6 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	return result, err
 }
 
-// SearchIssuesWithCounts returns matching issues hydrated with labels,
-// dependency records, dep/dependent/comment counts and parent ID in one
-// SQL statement (plus a wisp-empty probe). Used by bd list --json to
-// avoid the SearchIssues + 3-call hydration sequence.
 func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
 	var result []*types.IssueWithCounts
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -35,11 +31,6 @@ func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, fi
 	return result, err
 }
 
-// GetReadyWork returns issues that are ready to work on (not blocked).
-//
-// Blocking semantics are unified through issueops.GetReadyWorkInTx, which
-// consults the stored is_blocked column maintained by write-side
-// instrumentation.
 func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
 	var result []*types.Issue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -50,10 +41,6 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	return result, err
 }
 
-// GetReadyWorkWithCounts returns ready issues with labels, dependency records,
-// dep/dependent/comment counts and parent ID hydrated in one SQL statement
-// (plus the wisp-empty probe). Used by bd ready --json to avoid the 5-call
-// per-issue hydration the legacy path would otherwise issue.
 func (s *DoltStore) GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error) {
 	var result []*types.IssueWithCounts
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -64,7 +51,6 @@ func (s *DoltStore) GetReadyWorkWithCounts(ctx context.Context, filter types.Wor
 	return result, err
 }
 
-// GetBlockedIssues returns issues that are blocked by other issues.
 func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
 	var result []*types.BlockedIssue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -108,7 +94,6 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
 	}
 
-	// Blocked count: read directly from the stored is_blocked column.
 	var blockedCount int
 	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -120,7 +105,6 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 	}
 	stats.BlockedIssues = blockedCount
 
-	// Ready count: derive from open count minus blocked count.
 	stats.ReadyIssues = stats.OpenIssues - blockedCount
 	if stats.ReadyIssues < 0 {
 		stats.ReadyIssues = 0

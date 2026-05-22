@@ -20,9 +20,6 @@ func (s *EmbeddedDoltStore) SearchIssues(ctx context.Context, query string, filt
 	return result, err
 }
 
-// SearchIssuesWithCounts returns matching issues hydrated with labels,
-// dependency records, dep/dependent/comment counts and parent ID in one SQL
-// statement. See DoltStore.SearchIssuesWithCounts for details.
 func (s *EmbeddedDoltStore) SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
 	var result []*types.IssueWithCounts
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {

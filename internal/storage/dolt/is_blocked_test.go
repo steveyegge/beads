@@ -8,8 +8,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// getIsBlocked reads the stored is_blocked column for the given id in the
-// given table ("issues" or "wisps"). Returns false if the row is missing.
 func getIsBlocked(t *testing.T, ctx context.Context, store *DoltStore, table, id string) bool {
 	t.Helper()
 	var b int
@@ -21,8 +19,6 @@ func getIsBlocked(t *testing.T, ctx context.Context, store *DoltStore, table, id
 	return b != 0
 }
 
-// TestIsBlocked_FreshIssueIsNotBlocked covers spec case (1): a newly created
-// issue with no dependencies should have is_blocked = 0.
 func TestIsBlocked_FreshIssueIsNotBlocked(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -36,7 +32,6 @@ func TestIsBlocked_FreshIssueIsNotBlocked(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_AddRemoveBlocksDepFlips covers spec case (2).
 func TestIsBlocked_AddRemoveBlocksDepFlips(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -66,7 +61,6 @@ func TestIsBlocked_AddRemoveBlocksDepFlips(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_CloseReopenBlockerFlipsDepender covers spec case (3).
 func TestIsBlocked_CloseReopenBlockerFlipsDepender(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -99,9 +93,6 @@ func TestIsBlocked_CloseReopenBlockerFlipsDepender(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_PinStatusBehavesLikeClose covers spec case (4): setting status
-// to 'pinned' on the blocker makes it inactive for blocking purposes, just
-// like 'closed'.
 func TestIsBlocked_PinStatusBehavesLikeClose(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -138,8 +129,6 @@ func TestIsBlocked_PinStatusBehavesLikeClose(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_ParentChildTransitivePropagation covers spec case (5):
-// an active grandchild of a blocked grandparent is also is_blocked = 1.
 func TestIsBlocked_ParentChildTransitivePropagation(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -183,8 +172,6 @@ func TestIsBlocked_ParentChildTransitivePropagation(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_CascadeDeleteClearsDepender covers spec case (6): deleting the
-// blocker (which cascades the dep row) leaves the former depender unblocked.
 func TestIsBlocked_CascadeDeleteClearsDepender(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -210,16 +197,12 @@ func TestIsBlocked_CascadeDeleteClearsDepender(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_BatchedCreateWithDepsInOneTxn covers spec case (7): when
-// CreateIssues batches both issues and a parent-child dep between them,
-// is_blocked propagates correctly within the single transaction.
 func TestIsBlocked_BatchedCreateWithDepsInOneTxn(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	// Seed a pre-existing blocker so the new parent will become blocked.
 	createPerm(t, ctx, store, "isb-batch-blocker")
 
 	parent := &types.Issue{
@@ -252,10 +235,6 @@ func TestIsBlocked_BatchedCreateWithDepsInOneTxn(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_ConditionalBlocksAndWaitsFor verifies that the non-'blocks'
-// blocking-type deps (conditional-blocks, waits-for) also flip is_blocked
-// correctly. waits-for with default gate semantics is blocked while the
-// spawner is active.
 func TestIsBlocked_ConditionalBlocksAndWaitsFor(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -274,8 +253,6 @@ func TestIsBlocked_ConditionalBlocksAndWaitsFor(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_WaitsForDefaultGate verifies the default ("all-children")
-// gate: waiter is blocked iff at least one child of the spawner is active.
 func TestIsBlocked_WaitsForDefaultGate(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -286,7 +263,6 @@ func TestIsBlocked_WaitsForDefaultGate(t *testing.T) {
 	createPerm(t, ctx, store, "isb-wf-default-spawner")
 	createPerm(t, ctx, store, "isb-wf-default-child")
 
-	// child <- spawner (parent-child), then waiter --waits-for--> spawner.
 	if err := store.AddDependency(ctx, &types.Dependency{
 		IssueID: "isb-wf-default-child", DependsOnID: "isb-wf-default-spawner", Type: types.DepParentChild,
 	}, "tester"); err != nil {
@@ -309,8 +285,6 @@ func TestIsBlocked_WaitsForDefaultGate(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_WaitsForAnyChildrenGate verifies the "any-children" gate:
-// waiter is unblocked once ANY child closes, even if others are still active.
 func TestIsBlocked_WaitsForAnyChildrenGate(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -339,7 +313,6 @@ func TestIsBlocked_WaitsForAnyChildrenGate(t *testing.T) {
 		t.Fatal("expected waiter blocked: no children closed yet under any-children gate")
 	}
 
-	// Close just one child — should unblock the waiter.
 	if err := store.CloseIssue(ctx, "isb-wf-any-child-1", "done", "tester", ""); err != nil {
 		t.Fatalf("CloseIssue first child: %v", err)
 	}
@@ -347,7 +320,6 @@ func TestIsBlocked_WaitsForAnyChildrenGate(t *testing.T) {
 		t.Fatal("expected waiter unblocked: any-children gate satisfied by one closed child")
 	}
 
-	// Reopen the closed child — waiter should be blocked again.
 	if err := store.ReopenIssue(ctx, "isb-wf-any-child-1", "", "tester"); err != nil {
 		t.Fatalf("ReopenIssue child: %v", err)
 	}
@@ -356,8 +328,6 @@ func TestIsBlocked_WaitsForAnyChildrenGate(t *testing.T) {
 	}
 }
 
-// TestIsBlocked_ClosedDependerNotRemarkedActive verifies that an issue whose
-// status is closed stays is_blocked = 0 even if its blocker is active.
 func TestIsBlocked_ClosedDependerNotRemarkedActive(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

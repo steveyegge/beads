@@ -436,9 +436,6 @@ func buildReadyIssueOutput(ctx context.Context, s storage.DoltStorage, issues []
 		issueIDs[i] = issue.ID
 	}
 
-	// Best effort: display gracefully degrades with empty data.
-	// Labels were already hydrated by GetReadyWork / ClaimReadyIssue
-	// (issueops.GetIssuesByIDsInTx) so we do not re-fetch them here.
 	depCounts, _ := s.GetDependencyCounts(ctx, issueIDs)
 	allDeps, _ := s.GetDependencyRecordsForIssues(ctx, issueIDs)
 	commentCounts, _ := s.GetCommentCounts(ctx, issueIDs)

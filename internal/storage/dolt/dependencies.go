@@ -290,9 +290,6 @@ func (s *DoltStore) DetectCycles(ctx context.Context) ([][]*types.Issue, error) 
 	return result, err
 }
 
-// IsBlocked checks if an issue has open blockers, reading the authoritative
-// stored is_blocked column on issues/wisps and (when true) collecting the
-// active blocker list for display.
 func (s *DoltStore) IsBlocked(ctx context.Context, issueID string) (bool, []string, error) {
 	var blocked bool
 	var blockers []string

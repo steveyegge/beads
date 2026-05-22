@@ -47,18 +47,6 @@ func ParseCommaSeparatedList(value string) []string {
 	return result
 }
 
-// ResolveCustomConfigInTx reads custom statuses and custom types from their
-// normalized tables in a single transaction, falling back to a single
-// batched config-table read when either table is empty or missing.
-// Replaces two separate Resolve*-style call sequences (each of which would
-// issue its own per-key SELECT value FROM config WHERE key=? fallback) with
-// at most 3 queries: two table scans plus one batched config lookup keyed
-// on ('status.custom', 'types.custom').
-//
-// Read-path callers (DoltStore / EmbeddedDoltStore cache loaders) should
-// route through this helper so the two caches are populated by one tx.
-// Write-path callers (create/update) keep using the per-key resolvers when
-// they only need one side.
 func ResolveCustomConfigInTx(ctx context.Context, tx *sql.Tx) (statuses []types.CustomStatus, customTypes []string, err error) {
 	statuses, statusesFromTable, err := resolveCustomStatusesFromTableInTx(ctx, tx)
 	if err != nil {
@@ -72,11 +60,8 @@ func ResolveCustomConfigInTx(ctx context.Context, tx *sql.Tx) (statuses []types.
 		return statuses, customTypes, nil
 	}
 
-	// One batched config read covers both fallback keys.
 	cfg, err := getConfigKeysInTx(ctx, tx, "status.custom", "types.custom")
 	if err != nil {
-		// On config-table failure, give each side a chance to fall back to
-		// YAML before giving up entirely.
 		if !statusesFromTable {
 			if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
 				statuses = ParseStatusFallback(yamlStatuses)
@@ -95,8 +80,6 @@ func ResolveCustomConfigInTx(ctx context.Context, tx *sql.Tx) (statuses []types.
 			if parsed, parseErr := types.ParseCustomStatusConfig(v); parseErr == nil {
 				statuses = parsed
 			}
-			// parse error: leave statuses nil (degraded mode, same as
-			// ResolveCustomStatusesDetailedInTx behavior).
 		} else if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
 			statuses = ParseStatusFallback(yamlStatuses)
 		}
@@ -116,13 +99,9 @@ func ResolveCustomConfigInTx(ctx context.Context, tx *sql.Tx) (statuses []types.
 	return statuses, customTypes, nil
 }
 
-// resolveCustomStatusesFromTableInTx reads the normalized custom_statuses
-// table. The second return value reports whether the table yielded rows
-// (true = trust this result, false = caller must apply fallbacks).
 func resolveCustomStatusesFromTableInTx(ctx context.Context, tx *sql.Tx) ([]types.CustomStatus, bool, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT name, category FROM custom_statuses ORDER BY name")
 	if err != nil {
-		// Table missing on pre-migration schemas: caller falls back.
 		return nil, false, nil
 	}
 	defer rows.Close()
@@ -143,8 +122,6 @@ func resolveCustomStatusesFromTableInTx(ctx context.Context, tx *sql.Tx) ([]type
 	return result, len(result) > 0, nil
 }
 
-// resolveCustomTypesFromTableInTx reads the normalized custom_types table.
-// Same shape as resolveCustomStatusesFromTableInTx.
 func resolveCustomTypesFromTableInTx(ctx context.Context, tx *sql.Tx) ([]string, bool, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT name FROM custom_types ORDER BY name")
 	if err != nil {
@@ -165,8 +142,6 @@ func resolveCustomTypesFromTableInTx(ctx context.Context, tx *sql.Tx) ([]string,
 	return result, len(result) > 0, nil
 }
 
-// getConfigKeysInTx fetches multiple config keys in one SELECT … WHERE key IN
-// (…) statement. Missing keys are omitted from the result map.
 func getConfigKeysInTx(ctx context.Context, tx *sql.Tx, keys ...string) (map[string]string, error) {
 	if len(keys) == 0 {
 		return map[string]string{}, nil

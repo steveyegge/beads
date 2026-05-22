@@ -234,11 +234,6 @@ func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[str
 		}
 	}
 
-	// Refresh is_blocked if status flipped between active and inactive.
-	// "Active" for blocking purposes is status NOT IN ('closed','pinned');
-	// other status transitions (e.g., open -> in_progress) do not change
-	// blocker activity, and pure pinned-flag flips don't either, so we only
-	// fan out work on the active/inactive boundary.
 	if rawStatus, hasStatus := updates["status"]; hasStatus {
 		var newStatus string
 		switch v := rawStatus.(type) {

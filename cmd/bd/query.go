@@ -129,9 +129,6 @@ Examples:
 			FatalError("no storage available")
 		}
 
-		// If predicate filtering is needed (OR queries that can't be
-		// expressed in pure SQL), over-fetch so we still have enough rows
-		// after the Go-side predicate culls non-matches.
 		searchFilter := result.Filter
 		if result.RequiresPredicate && limit > 0 {
 			searchFilter.Limit = limit * 3
@@ -140,9 +137,6 @@ Examples:
 			}
 		}
 
-		// JSON branch: single mega-query returns IssueWithCounts directly,
-		// bypassing the legacy SearchIssues + GetDependencyCounts +
-		// GetCommentCounts sequence (Stage 2).
 		if jsonOutput {
 			iwc, err := store.SearchIssuesWithCounts(ctx, "", searchFilter)
 			if err != nil {
@@ -171,9 +165,6 @@ Examples:
 			return
 		}
 
-		// Non-JSON path: legacy SearchIssues + Go-side sort + display.
-		// Labels are hydrated on each *types.Issue by SearchIssues, so
-		// outputQueryResults can read issue.Labels directly.
 		issues, err := store.SearchIssues(ctx, "", searchFilter)
 		if err != nil {
 			FatalError("%v", err)
