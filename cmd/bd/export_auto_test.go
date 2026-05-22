@@ -504,7 +504,9 @@ func TestGitAddFile_CapturesStderrOnFailure(t *testing.T) {
 	}
 }
 
-func TestGitAddFile_SkipsWhenIndexLocked(t *testing.T) {
+// TestGitAddFile_CapturesLockedIndexFailure verifies that a locked git index
+// is surfaced as a rich, caller-visible error rather than a bare exit status.
+func TestGitAddFile_CapturesLockedIndexFailure(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -569,6 +571,68 @@ func TestGitAddFile_SkipsWhenIndexLocked(t *testing.T) {
 	}
 	if strings.Contains(string(data), ".beads/issues.jsonl") {
 		t.Fatalf("gitAddFile staged target despite index.lock:\n%s", data)
+	}
+}
+
+func TestAutoExportGitAddFailureExitsNonZero(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	bd := buildBDForInitTests(t)
+	dir := t.TempDir()
+	env := append(autoExportDataLossTestEnv(dir), "BD_NON_INTERACTIVE=1")
+
+	runGit := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init", "-q")
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	run("init", "--prefix", "agf", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".beads/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("config", "set", "export.interval", "1ms")
+	run("config", "set", "export.auto", "true")
+	run("config", "set", "export.git-add", "true")
+	if err := os.Remove(filepath.Join(dir, ".beads", exportAutoStateFile)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	cmd := exec.Command(bd, "create", "caller visible git add failure", "-p", "2")
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("bd create succeeded despite auto-export git add failure:\n%s", out)
+	}
+	output := string(out)
+	if !strings.Contains(output, "Error: auto-export: git add failed") {
+		t.Fatalf("expected caller-visible auto-export git add error, got:\n%s", output)
+	}
+	if !strings.Contains(strings.ToLower(output), "ignored") {
+		t.Fatalf("expected git add stderr to explain ignored path, got:\n%s", output)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".beads", exportAutoStateFile)); !os.IsNotExist(err) {
+		t.Fatalf("git-add failure should not save export state, stat err=%v", err)
 	}
 }
 
