@@ -112,6 +112,9 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			initProxiedServer = true
 		}
 		if initProxiedServer {
+			// Proxied-server mode has no local Dolt init lifecycle yet. When it
+			// is implemented, that path must mark any local .dolt/ it creates or
+			// acknowledges with doltserver.MarkDoltDirCompatible.
 			FatalError("--proxied-server is not yet implemented")
 		}
 		if initProxiedServer && initServerMode {
@@ -1234,7 +1237,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 
 		if initServerMode {
 			if err := doltserver.MarkDoltDirCompatible(storagePath); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to write Dolt compatibility marker: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Warning: failed to write Dolt compatibility marker at %s: %v\n", storagePath, err)
 			}
 		}
 
