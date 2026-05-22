@@ -115,18 +115,36 @@ step = "design"
 position = "before"
 ```
 
-### Hooks
+### Runtime fanout via `on_complete`
 
-Execute actions on step completion:
+A step can declare a fanout that fires when the step closes, spawning one
+molecule per element of a runtime-discovered list:
 
 ```toml
 [[steps]]
-id = "build"
-title = "Build project"
+id = "survey-workers"
+title = "Survey workers"
 
 [steps.on_complete]
-run = "make build"
+for_each = "output.workers"
+bond = "worker-arm"
+parallel = true
+
+[steps.on_complete.vars]
+worker_name = "{item.name}"
 ```
+
+The agent populates the step's `metadata.output.workers` (e.g. via
+`bd update <id> --metadata '{"output":{"workers":[...]}}'`) before closing
+it. On close, the runtime iterates the list and bonds the named formula
+once per item, substituting `{item}`, `{item.field}`, and `{index}` into
+spec vars. Use `sequential = true` to chain the spawned molecules; the
+default (`parallel`) attaches them as independent siblings.
+
+If the step closes without populating the `for_each` path, the runtime
+emits a hard error and surfaces it on stderr (the close itself has
+already succeeded). Per-item bond failures are accumulated and recorded
+into the parent's `metadata.on_complete_failures`.
 
 ### Pinning Work
 

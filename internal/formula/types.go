@@ -323,19 +323,32 @@ type LoopSpec struct {
 	Body []*Step `json:"body"`
 }
 
-// OnCompleteSpec defines actions triggered when a step completes.
-// Used for runtime expansion over step output (the for-each construct).
+// OnCompleteSpec declares a runtime fanout that fires when the owning step
+// closes. The spec is persisted onto the step's issue at pour time under
+// metadata.on_complete; at close time the runtime reads the spec, resolves
+// ForEach against the issue's own metadata (the step itself populates
+// metadata.output.<path> before closing), and bonds the named child
+// formula once per element with placeholder-substituted vars.
 //
-// Example YAML:
+// Hard errors: closing a step whose for_each path is missing from
+// metadata, or resolves to a non-array, surfaces a stderr error after the
+// close. Per-item bond failures don't abort the fanout — they accumulate
+// into the parent's metadata.on_complete_failures so partial state stays
+// inspectable.
 //
-//	step: survey-workers
-//	on_complete:
-//	  for_each: output.workers
-//	  bond: mol-worker-arm
-//	  vars:
-//	    worker_name: "{item.name}"
-//	    rig: "{item.rig}"
-//	  parallel: true
+// Example:
+//
+//	[[steps]]
+//	id = "survey-workers"
+//	title = "Survey workers"
+//
+//	[steps.on_complete]
+//	for_each = "output.workers"
+//	bond = "worker-arm"
+//	parallel = true
+//
+//	[steps.on_complete.vars]
+//	worker_name = "{item.name}"
 type OnCompleteSpec struct {
 	// ForEach is the path to the iterable collection in step output.
 	// Format: "output.<field>" or "output.<field>.<nested>"

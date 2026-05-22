@@ -378,6 +378,14 @@ create, update, show, or close operation).`,
 				// Audit log key field changes (survives Dolt GC flatten)
 				if s, ok := regularUpdates["status"].(string); ok {
 					audit.LogFieldChange(result.ResolvedID, "status", string(issue.Status), s, actor, "")
+					// Fire on_complete fanout when status transitions to closed
+					// via bd update (GH#3782). Mirrors cmd/bd/close.go so the
+					// trigger is universal across close paths.
+					if s == "closed" && string(issue.Status) != "closed" {
+						if err := executeOnCompleteFanout(ctx, issueStore, result.ResolvedID, actor); err != nil {
+							fmt.Fprintf(os.Stderr, "%s\n", err)
+						}
+					}
 				}
 				if a, ok := regularUpdates["assignee"].(string); ok {
 					audit.LogFieldChange(result.ResolvedID, "assignee", issue.Assignee, a, actor, "")
