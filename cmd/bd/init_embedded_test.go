@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/types"
@@ -829,8 +830,22 @@ func TestEmbeddedInit(t *testing.T) {
 		if err := os.MkdirAll(beadsDir, 0750); err != nil {
 			t.Fatal(err)
 		}
+		commentTime := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+		preservedCommentID := "018f13f1-1111-7111-8111-111111111111"
 		issues := []types.Issue{
-			{ID: "jl-abc123", Title: "One", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+			{
+				ID:        "jl-abc123",
+				Title:     "One",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+				Comments: []*types.Comment{
+					{ID: preservedCommentID, IssueID: "jl-abc123", Author: "alice", Text: "preserve this id", CreatedAt: commentTime},
+					{IssueID: "jl-abc123", Author: "bob", Text: "generate an id", CreatedAt: commentTime.Add(time.Minute)},
+				},
+			},
 			{ID: "jl-def456", Title: "Two", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug, CreatedAt: time.Now(), UpdatedAt: time.Now()},
 		}
 		var lines []string
@@ -873,6 +888,71 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 		if !strings.Contains(stdout.String(), "bd init: initialize beads issue tracking") {
 			t.Fatalf("expected init commit to succeed, got log: %s", stdout.String())
+		}
+
+		exportCommentIDs := func(t *testing.T, repoDir, outFile string) []string {
+			t.Helper()
+			exportCmd := exec.Command(bd, "export", "-o", outFile)
+			exportCmd.Dir = repoDir
+			exportCmd.Env = bdEnv(repoDir)
+			if out, err := exportCmd.CombinedOutput(); err != nil {
+				t.Fatalf("bd export failed: %v\n%s", err, out)
+			}
+			data, err := os.ReadFile(outFile)
+			if err != nil {
+				t.Fatalf("read export: %v", err)
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				var issue types.Issue
+				if err := json.Unmarshal([]byte(line), &issue); err != nil {
+					t.Fatalf("parse exported issue: %v\n%s", err, line)
+				}
+				if issue.ID != "jl-abc123" {
+					continue
+				}
+				if len(issue.Comments) != 2 {
+					t.Fatalf("exported comments = %d, want 2", len(issue.Comments))
+				}
+				return []string{issue.Comments[0].ID, issue.Comments[1].ID}
+			}
+			t.Fatal("jl-abc123 missing from export")
+			return nil
+		}
+
+		firstExport := filepath.Join(dir, "first.jsonl")
+		firstIDs := exportCommentIDs(t, dir, firstExport)
+		if firstIDs[0] != preservedCommentID {
+			t.Fatalf("preserved comment ID = %q, want %q", firstIDs[0], preservedCommentID)
+		}
+		if firstIDs[1] == "" {
+			t.Fatal("missing-ID comment was exported without generated ID")
+		}
+		if _, err := uuid.Parse(firstIDs[1]); err != nil {
+			t.Fatalf("generated comment ID %q is not a valid UUID: %v", firstIDs[1], err)
+		}
+
+		reimportDir := t.TempDir()
+		initGitRepoAt(t, reimportDir)
+		reimportBeadsDir := filepath.Join(reimportDir, ".beads")
+		if err := os.MkdirAll(reimportBeadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		exportedJSONL, err := os.ReadFile(firstExport)
+		if err != nil {
+			t.Fatalf("read first export: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(reimportBeadsDir, "issues.jsonl"), exportedJSONL, 0644); err != nil {
+			t.Fatal(err)
+		}
+		reimportCmd := exec.Command(bd, "init", "--prefix", "jl", "--from-jsonl", "--quiet")
+		reimportCmd.Dir = reimportDir
+		reimportCmd.Env = bdEnv(reimportDir)
+		if stdout, stderr, err := runCommandBuffers(t, reimportCmd); err != nil {
+			t.Fatalf("reimport exported JSONL failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		secondIDs := exportCommentIDs(t, reimportDir, filepath.Join(reimportDir, "second.jsonl"))
+		if firstIDs[0] != secondIDs[0] || firstIDs[1] != secondIDs[1] {
+			t.Fatalf("comment IDs changed after reimport: first=%v second=%v", firstIDs, secondIDs)
 		}
 	})
 
