@@ -61,6 +61,18 @@ func (s *graphApplyFakeStore) GetDependenciesWithMetadata(_ context.Context, iss
 	return out, nil
 }
 
+func (s *graphApplyFakeStore) GetDependencyRecords(_ context.Context, issueID string) ([]*types.Dependency, error) {
+	var out []*types.Dependency
+	for _, dep := range s.deps {
+		if dep.IssueID != issueID {
+			continue
+		}
+		cp := *dep
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
 func (s *graphApplyFakeStore) RunInTransaction(ctx context.Context, _ string, fn func(storage.Transaction) error) error {
 	txStore := s.clone()
 	tx := &graphApplyFakeTx{store: txStore}
@@ -120,6 +132,9 @@ func (tx *graphApplyFakeTx) AddDependencyWithOptions(_ context.Context, dep *typ
 	for _, existing := range tx.store.deps {
 		if existing.IssueID == dep.IssueID && existing.DependsOnID == dep.DependsOnID {
 			if existing.Type == dep.Type {
+				// Real storage accepts this duplicate and updates metadata; graph
+				// apply never sets dependency metadata, so the fake treats it as
+				// idempotent for duplicate-suppression tests.
 				return nil
 			}
 			return fmt.Errorf("dependency already exists with type %s", existing.Type)
@@ -131,6 +146,10 @@ func (tx *graphApplyFakeTx) AddDependencyWithOptions(_ context.Context, dep *typ
 	depCopy := *dep
 	tx.store.deps = append(tx.store.deps, &depCopy)
 	return nil
+}
+
+func (tx *graphApplyFakeTx) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
+	return tx.store.GetDependencyRecords(ctx, issueID)
 }
 
 func (tx *graphApplyFakeTx) AddLabel(context.Context, string, string, string) error {
@@ -173,7 +192,7 @@ func (tx *graphApplyFakeTx) hasBlockingPath(fromID, toID string) bool {
 }
 
 func isGraphApplyFakeBlocking(depType types.DependencyType) bool {
-	return depType == types.DepBlocks || depType == types.DepConditionalBlocks
+	return graphApplyCycleRelevantDependencyType(depType)
 }
 
 func withGraphApplyFakeStore(t *testing.T) (context.Context, *graphApplyFakeStore) {
@@ -240,6 +259,201 @@ func TestExecuteGraphApplyUnitRejectsBlockingChildToParentDuplicate(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "parent-child") {
 		t.Fatalf("error = %q, want parent-child duplicate rejection", err.Error())
+	}
+}
+
+func TestExecuteGraphApplyUnitRejectsReverseParentToChildBlockingEdge(t *testing.T) {
+	tests := []struct {
+		name       string
+		depType    string
+		externalID bool
+	}{
+		{name: "local blocks", depType: "blocks"},
+		{name: "local conditional blocks", depType: "conditional-blocks"},
+		{name: "external blocks", depType: "blocks", externalID: true},
+		{name: "external conditional blocks", depType: "conditional-blocks", externalID: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, fakeStore := withGraphApplyFakeStore(t)
+			nodes := []GraphApplyNode{
+				{Key: "root", Title: "Root", Type: "epic"},
+				{Key: "child", Title: "Child", Type: "task", ParentKey: "root"},
+			}
+			edge := GraphApplyEdge{FromKey: "root", ToKey: "child", Type: tt.depType}
+			if tt.externalID {
+				if err := fakeStore.CreateIssue(ctx, &types.Issue{
+					ID:        "ga-parent",
+					Title:     "Existing Parent",
+					Status:    types.StatusOpen,
+					Priority:  2,
+					IssueType: types.TypeEpic,
+				}, actor); err != nil {
+					t.Fatalf("CreateIssue(existing parent): %v", err)
+				}
+				nodes = []GraphApplyNode{
+					{Key: "child", Title: "Child", Type: "task", ParentID: "ga-parent"},
+				}
+				edge = GraphApplyEdge{FromID: "ga-parent", ToKey: "child", Type: tt.depType}
+			}
+
+			plan := &GraphApplyPlan{
+				Nodes: nodes,
+				Edges: []GraphApplyEdge{edge},
+			}
+
+			_, err := executeGraphApply(ctx, plan, GraphApplyOptions{})
+			if err == nil {
+				t.Fatal("expected reverse parent-to-child blocking edge to be rejected")
+			}
+			if !strings.Contains(err.Error(), "parent-child") {
+				t.Fatalf("error = %q, want parent-child reverse rejection", err.Error())
+			}
+		})
+	}
+}
+
+func TestExecuteGraphApplyUnitRejectsExternalParentTransitiveBlockingPath(t *testing.T) {
+	ctx, fakeStore := withGraphApplyFakeStore(t)
+	if err := fakeStore.CreateIssue(ctx, &types.Issue{
+		ID:        "ga-parent",
+		Title:     "Existing Parent",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeEpic,
+	}, actor); err != nil {
+		t.Fatalf("CreateIssue(existing parent): %v", err)
+	}
+
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "mid", Title: "Middle", Type: "task"},
+			{Key: "child", Title: "Child", Type: "task", ParentID: "ga-parent"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromID: "ga-parent", ToKey: "mid", Type: "blocks"},
+			{FromKey: "mid", ToKey: "child", Type: "blocks"},
+		},
+	}
+
+	_, err := executeGraphApply(ctx, plan, GraphApplyOptions{})
+	if err == nil {
+		t.Fatal("expected external parent transitive blocking path to be rejected")
+	}
+	if got, want := err.Error(), "planned blocking dependencies create a path from parent"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want to contain %q", got, want)
+	}
+	if _, ok := fakeStore.issues["ga-1"]; ok {
+		t.Fatal("transaction committed graph issues after validation failure")
+	}
+}
+
+func TestExecuteGraphApplyUnitRejectsStoredPrefixParentBlockingPath(t *testing.T) {
+	ctx, fakeStore := withGraphApplyFakeStore(t)
+	for _, issue := range []*types.Issue{
+		{
+			ID:        "ga-parent",
+			Title:     "Existing Parent",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+		{
+			ID:        "ga-existing-mid",
+			Title:     "Existing Middle",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+	} {
+		if err := fakeStore.CreateIssue(ctx, issue, actor); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", issue.ID, err)
+		}
+	}
+	fakeStore.deps = append(fakeStore.deps, &types.Dependency{
+		IssueID:     "ga-parent",
+		DependsOnID: "ga-existing-mid",
+		Type:        types.DepBlocks,
+	})
+
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "child", Title: "Child", Type: "task", ParentID: "ga-parent"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromID: "ga-existing-mid", ToKey: "child", Type: "blocks"},
+		},
+	}
+
+	_, err := executeGraphApply(ctx, plan, GraphApplyOptions{})
+	if err == nil {
+		t.Fatal("expected stored-prefix parent blocking path to be rejected")
+	}
+	if got, want := err.Error(), "planned blocking dependencies create a path from parent"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want to contain %q", got, want)
+	}
+	if _, ok := fakeStore.issues["ga-1"]; ok {
+		t.Fatal("transaction committed graph issues after validation failure")
+	}
+}
+
+func TestExecuteGraphApplyUnitRejectsTransitiveParentChainBlockingCycle(t *testing.T) {
+	ctx, fakeStore := withGraphApplyFakeStore(t)
+	if err := fakeStore.CreateIssue(ctx, &types.Issue{
+		ID:        "ga-existing-parent",
+		Title:     "Existing Parent",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeEpic,
+	}, actor); err != nil {
+		t.Fatalf("CreateIssue(existing parent): %v", err)
+	}
+
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "a", Title: "A", Type: "task", ParentKey: "b"},
+			{Key: "b", Title: "B", Type: "task", ParentID: "ga-existing-parent"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromID: "ga-existing-parent", ToKey: "a", Type: "blocks"},
+		},
+	}
+
+	_, err := executeGraphApply(ctx, plan, GraphApplyOptions{})
+	if err == nil {
+		t.Fatal("expected transitive parent-chain blocking cycle to be rejected")
+	}
+	if got, want := err.Error(), "planned blocking dependencies create a path from parent"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want to contain %q", got, want)
+	}
+	if _, ok := fakeStore.issues["ga-1"]; ok {
+		t.Fatal("transaction committed graph issues after validation failure")
+	}
+}
+
+func TestExecuteGraphApplyUnitRejectsReverseParentChildEdgeCycle(t *testing.T) {
+	ctx, fakeStore := withGraphApplyFakeStore(t)
+
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "root", Title: "Root", Type: "epic"},
+			{Key: "child", Title: "Child", Type: "task", ParentKey: "root"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromKey: "root", ToKey: "child", Type: string(types.DepParentChild)},
+		},
+	}
+
+	_, err := executeGraphApply(ctx, plan, GraphApplyOptions{})
+	if err == nil {
+		t.Fatal("expected reverse parent-child edge to be rejected")
+	}
+	if got, want := err.Error(), "planned blocking dependencies create a path from parent"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want to contain %q", got, want)
+	}
+	if _, ok := fakeStore.issues["ga-1"]; ok {
+		t.Fatal("transaction committed graph issues after validation failure")
 	}
 }
 

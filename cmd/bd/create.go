@@ -61,13 +61,14 @@ var createCmd = &cobra.Command{
 			graphDryRun, _ := cmd.Flags().GetBool("dry-run")
 			wisp, _ := cmd.Flags().GetBool("ephemeral")
 			noHistory, _ := cmd.Flags().GetBool("no-history")
-			if wisp && noHistory {
-				FatalError("--ephemeral and --no-history are mutually exclusive")
-			}
-			createIssuesFromGraph(graphFile, graphDryRun, GraphApplyOptions{
+			graphOpts := GraphApplyOptions{
 				Ephemeral: wisp,
 				NoHistory: noHistory,
-			})
+			}
+			if err := graphOpts.Validate(); err != nil {
+				FatalError("invalid graph options: %v", err)
+			}
+			createIssuesFromGraph(graphFile, graphDryRun, graphOpts)
 			return
 		}
 

@@ -115,6 +115,62 @@ func TestExecuteGraphApplyRejectsMixedLocalExternalBlockingCycle(t *testing.T) {
 	}
 }
 
+func TestExecuteGraphApplyRejectsStoredPrefixParentBlockingPath(t *testing.T) {
+	ctx, db := withGraphApplyTestStore(t)
+
+	parent := &types.Issue{
+		ID:        "ga-parent",
+		Title:     "Existing Parent",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	mid := &types.Issue{
+		ID:        "ga-existing-mid",
+		Title:     "Existing Middle",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	for _, issue := range []*types.Issue{parent, mid} {
+		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", issue.ID, err)
+		}
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     parent.ID,
+		DependsOnID: mid.ID,
+		Type:        types.DepBlocks,
+	}, actor); err != nil {
+		t.Fatalf("AddDependency(parent -> mid): %v", err)
+	}
+
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "child", Title: "Child", Type: "task", ParentID: parent.ID},
+		},
+		Edges: []GraphApplyEdge{
+			{FromID: mid.ID, ToKey: "child", Type: "blocks"},
+		},
+	}
+
+	_, err := executeGraphApply(ctx, plan, GraphApplyOptions{})
+	if err == nil {
+		t.Fatal("expected stored-prefix parent blocking path to be rejected")
+	}
+	if got, want := err.Error(), "planned blocking dependencies create a path from parent"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want to contain %q", got, want)
+	}
+
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues WHERE title = 'Child'").Scan(&count); err != nil {
+		t.Fatalf("query child rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("child issue rows after failed transaction = %d, want 0", count)
+	}
+}
+
 func TestExecuteGraphApplyAllowsExplicitParentChildDuplicate(t *testing.T) {
 	ctx, _ := withGraphApplyTestStore(t)
 
