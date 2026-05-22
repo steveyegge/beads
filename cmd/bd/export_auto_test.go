@@ -504,6 +504,74 @@ func TestGitAddFile_CapturesStderrOnFailure(t *testing.T) {
 	}
 }
 
+func TestGitAddFile_SkipsWhenIndexLocked(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "bd-index-lock-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir, err = filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "t@t")
+	runGit("config", "user.name", "t")
+
+	target := filepath.Join(repo, ".beads", "issues.jsonl")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(`{"id":"x"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lockPath := filepath.Join(repo, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, []byte("held by another git process"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Unsetenv("GIT_DIR"); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	err = gitAddFile(target)
+	if err == nil {
+		t.Fatal("expected gitAddFile to fail while index.lock exists, got nil")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "index is locked") || !strings.Contains(msg, "index.lock") {
+		t.Fatalf("expected index.lock error, got: %q", msg)
+	}
+
+	c := exec.Command("git", "ls-files", "--stage")
+	c.Dir = repo
+	data, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ls-files: %v\n%s", err, data)
+	}
+	if strings.Contains(string(data), ".beads/issues.jsonl") {
+		t.Fatalf("gitAddFile staged target despite index.lock:\n%s", data)
+	}
+}
+
 // TestGitAddFile_RedirectCase_DoesNotStageInMainRepo regresses the
 // silent-stage-in-main follow-up from the GH#3311 review: when a worktree
 // has .beads/redirect -> main/.beads, the worktree's pre-commit hook must
@@ -618,6 +686,76 @@ func TestGitAddFile_RedirectCase_DoesNotStageInMainRepo(t *testing.T) {
 	checkNoStage("main", mainRepo)
 }
 
+func TestPreCommitHasStagedBeadsFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "bd-staged-beads-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir, err = filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "t@t")
+	runGit("config", "user.name", "t")
+
+	readme := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readme, []byte("code\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	if preCommitHasStagedBeadsFiles(filepath.Join(repo, ".beads")) {
+		t.Fatal("staged non-.beads file should not trigger pre-commit JSONL export")
+	}
+
+	configPath := filepath.Join(repo, ".beads", "config.yaml")
+	if err := os.WriteFile(configPath, []byte("export:\n  auto: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".beads/config.yaml")
+	if !preCommitHasStagedBeadsFiles(filepath.Join(repo, ".beads")) {
+		t.Fatal("staged .beads file should trigger pre-commit JSONL export")
+	}
+}
+
+func TestCommandAllowsEmptyAutoExport(t *testing.T) {
+	commandMayEmptyJSONLExport.Store(false)
+	t.Cleanup(func() { commandMayEmptyJSONLExport.Store(false) })
+
+	if commandAllowsEmptyAutoExport(&cobra.Command{Use: "prune"}) {
+		t.Fatal("prune should not allow an empty auto-export before deleting rows")
+	}
+
+	commandMayEmptyJSONLExport.Store(true)
+	if !commandAllowsEmptyAutoExport(&cobra.Command{Use: "prune"}) {
+		t.Fatal("prune should allow an intentional empty auto-export")
+	}
+	if !commandAllowsEmptyAutoExport(&cobra.Command{Use: "purge"}) {
+		t.Fatal("purge should allow an intentional empty auto-export")
+	}
+	if commandAllowsEmptyAutoExport(&cobra.Command{Use: "create"}) {
+		t.Fatal("create should not bypass empty auto-export protection")
+	}
+}
+
 // TestShouldExport covers the pure throttle-window decision used by
 // maybeAutoExport. Adapted from Jeremy Longshore's GH#4061 refactor.
 func TestShouldExport(t *testing.T) {
@@ -667,4 +805,142 @@ func TestShouldExport(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCountIssueRecordsInJSONL(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "issues.jsonl")
+	data := strings.Join([]string{
+		`{"_type":"issue","id":"bd-1","status":"open"}`,
+		`{"id":"bd-2","status":"closed"}`,
+		`{"_type":"issue","id":"bd-2","status":"closed"}`,
+		`{"_type":"memory","key":"note","value":"private"}`,
+		`{"_type":"issue","id":"bd-3","status":"tombstone"}`,
+		`{"_type":"issue","title":"missing id"}`,
+		``,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := countIssueRecordsInJSONL(path)
+	if err != nil {
+		t.Fatalf("countIssueRecordsInJSONL: %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("countIssueRecordsInJSONL = %d, want 2", got)
+	}
+
+	ids, err := issueIDsInJSONL(path)
+	if err != nil {
+		t.Fatalf("issueIDsInJSONL: %v", err)
+	}
+	if got := strings.Join(ids, ","); got != "bd-1,bd-2" {
+		t.Fatalf("issueIDsInJSONL = %q, want bd-1,bd-2", got)
+	}
+}
+
+func TestAutoExportSkipsEmptyExportOverPopulatedJSONL(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	dir := t.TempDir()
+	env := autoExportDataLossTestEnv(dir)
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	run("init", "--prefix", "dl", "--non-interactive")
+	run("config", "set", "export.path", "custom.jsonl")
+
+	jsonlPath := filepath.Join(dir, ".beads", "custom.jsonl")
+	original := []byte(`{"_type":"issue","id":"dl-1","title":"Recovered issue","priority":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}` + "\n")
+	if err := os.WriteFile(jsonlPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run("config", "set", "export.auto", "true")
+	out := run("remember", "private context that should not be auto-exported")
+	if !strings.Contains(out, "refusing to overwrite") {
+		t.Fatalf("expected auto-export refusal warning, got:\n%s", out)
+	}
+
+	got, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("expected populated JSONL to remain: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("populated JSONL was modified:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".beads", exportAutoStateFile)); !os.IsNotExist(err) {
+		t.Fatalf("empty skipped auto-export should not save export state, stat err=%v", err)
+	}
+}
+
+func TestAutoExportSkipsWhenExistingJSONLHasIDsMissingFromStore(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	dir := t.TempDir()
+	env := autoExportDataLossTestEnv(dir)
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	run("init", "--prefix", "dl", "--non-interactive")
+	run("config", "set", "export.path", "custom.jsonl")
+	run("create", "local issue", "-p", "2")
+
+	jsonlPath := filepath.Join(dir, ".beads", "custom.jsonl")
+	original := []byte(strings.Join([]string{
+		`{"_type":"issue","id":"dl-1","title":"Local issue","priority":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`,
+		`{"_type":"issue","id":"dl-jsonl-only","title":"Only in JSONL","priority":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`,
+		``,
+	}, "\n"))
+	if err := os.WriteFile(jsonlPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run("config", "set", "export.interval", "1ms")
+	run("config", "set", "export.auto", "true")
+	out := run("create", "another local issue", "-p", "2")
+	if !strings.Contains(out, "JSONL-only issue record") || !strings.Contains(out, "dl-jsonl-only") {
+		t.Fatalf("expected JSONL-only refusal warning, got:\n%s", out)
+	}
+
+	got, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("expected JSONL to remain: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("JSONL-only records were overwritten:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".beads", exportAutoStateFile)); !os.IsNotExist(err) {
+		t.Fatalf("skipped auto-export should not save export state, stat err=%v", err)
+	}
+}
+
+func autoExportDataLossTestEnv(home string) []string {
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "BEADS_") {
+			continue
+		}
+		env = append(env, e)
+	}
+	return append(env, "HOME="+home, "BEADS_DOLT_AUTO_START=0", "BEADS_NO_DAEMON=1")
 }

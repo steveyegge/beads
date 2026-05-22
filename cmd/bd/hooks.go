@@ -1347,6 +1347,10 @@ func exportJSONLForCommit() {
 		exportPath = "issues.jsonl"
 	}
 	fullPath := filepath.Join(beadsDir, exportPath)
+	if !preCommitHasStagedBeadsFiles(beadsDir) {
+		debug.Logf("pre-commit: skipping JSONL export — no staged .beads paths\n")
+		return
+	}
 
 	debug.Logf("pre-commit: exporting JSONL to %s\n", fullPath)
 	warnJSONLWithoutDoltRemote("pre-commit auto-export")
@@ -1382,6 +1386,22 @@ func exportJSONLForCommit() {
 			debug.Logf("pre-commit: git add failed: %v\n", err)
 		}
 	}
+}
+
+func preCommitHasStagedBeadsFiles(beadsDir string) bool {
+	cmdDir := exportSubprocessDir(beadsDir)
+	if hookRoot := hookWorkTreeRoot(); hookRoot != "" {
+		cmdDir = hookRoot
+	}
+	cmd := exec.Command("git", "diff", "--cached", "--name-only", "--", ".beads")
+	cmd.Dir = cmdDir
+	cmd.Env = scrubGitHookEnv(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		debug.Logf("pre-commit: failed to inspect staged .beads paths: %v\n", err)
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }
 
 func exportSubprocessDir(beadsDir string) string {
