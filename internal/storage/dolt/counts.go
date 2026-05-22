@@ -10,6 +10,15 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// depTargetExpr resolves a `dependencies` row's target id from the split
+// physical columns instead of the STORED generated `depends_on_id` column.
+// Count queries (which project no real columns) must use this: referencing the
+// generated column in a count(*) WHERE clause can trip a "column depends_on_id
+// could not be found in any table in scope" analyzer error in the pure-Go GMS
+// engine. Only the `dependencies` table is split; `wisp_dependencies` keeps a
+// physical `depends_on_id`.
+const depTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
+
 // CountIssues returns the number of issues matching query and filter.
 // Filter.Limit and Filter.Offset are ignored; all other fields apply.
 func (s *DoltStore) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
@@ -34,15 +43,19 @@ func (s *DoltStore) CountIssues(ctx context.Context, query string, filter types.
 // Counts both dependency tables so the total matches GetDependentsWithMetadata:
 // a dependent may be a permanent issue (edge in `dependencies`) or a wisp
 // (edge in `wisp_dependencies`, routed there by WispTableRouting on the source).
-// The two tables are counted in separate top-level queries and summed in Go:
-// folding them into a single `SELECT (subq)+(subq)` trips a "column could not
-// be found in any table in scope" analyzer error in the pure-Go GMS engine.
+//
+// The `dependencies` target is resolved via the split physical columns
+// (depTargetExpr) rather than the STORED generated `depends_on_id`: inside a
+// count(*) (no real columns projected) the pure-Go GMS analyzer can prune the
+// base columns the generated column depends on and fail with "column
+// depends_on_id could not be found in any table in scope". wisp_dependencies
+// keeps a physical depends_on_id, so it is queried directly.
 func (s *DoltStore) CountDependents(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var perm, wisp int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM dependencies WHERE depends_on_id = ?`, issueID).Scan(&perm); err != nil {
+			`SELECT count(*) FROM dependencies WHERE `+depTargetExpr+` = ?`, issueID).Scan(&perm); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx,
@@ -118,7 +131,7 @@ func (s *DoltStore) CountDependentsByStatus(ctx context.Context, issueID string,
 		if err := tx.QueryRowContext(ctx,
 			`SELECT count(*) FROM dependencies d
 			 JOIN issues i ON i.id = d.issue_id
-			 WHERE d.depends_on_id = ? AND i.status = ?`,
+			 WHERE COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) = ? AND i.status = ?`,
 			issueID, string(status)).Scan(&perm); err != nil {
 			return err
 		}
