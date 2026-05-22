@@ -1268,14 +1268,15 @@ func ensureDoltIdentity() error {
 	return nil
 }
 
-// bdDoltMarker is a file written after ensureDoltInit successfully creates a
-// dolt database. Its absence in an existing .dolt/ directory indicates the
-// database was created by a pre-0.56 bd version (which used embedded mode).
+// bdDoltMarker is written after a current bd process creates or acknowledges a
+// local Dolt repository. Its absence in an existing .dolt/ directory indicates
+// the database was created by a pre-0.56 bd version (which used embedded mode).
 // Those databases are incompatible with the current server-only architecture.
 const bdDoltMarker = ".bd-dolt-ok"
 
-// MarkDoltDirCompatible writes the bd compatibility marker when doltDir contains
-// a local Dolt repository.
+// MarkDoltDirCompatible writes the canonical bd compatibility marker when
+// doltDir contains a local Dolt repository. It no-ops when there is no .dolt/
+// directory, which lets server and repair paths call it defensively.
 func MarkDoltDirCompatible(doltDir string) error {
 	if doltDir == "" {
 		return errors.New("dolt directory is required")
@@ -1290,8 +1291,7 @@ func MarkDoltDirCompatible(doltDir string) error {
 		return fmt.Errorf("dolt metadata path %s is not a directory", dotDolt)
 	}
 	markerPath := filepath.Join(doltDir, bdDoltMarker)
-	if info, err := os.Stat(markerPath); err == nil {
-		_ = info
+	if _, err := os.Stat(markerPath); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking dolt compatibility marker %s: %w", markerPath, err)
@@ -1311,16 +1311,13 @@ func ensureDoltInit(doltDir string) error {
 	}
 
 	dotDolt := filepath.Join(doltDir, ".dolt")
-	markerPath := filepath.Join(doltDir, bdDoltMarker)
 
 	if _, err := os.Stat(dotDolt); err == nil {
 		// .dolt/ exists — seed the marker if missing.
 		// This is the non-destructive path: we just mark existing databases
 		// as known. The destructive recovery path (RecoverPreV56DoltDir) is
 		// triggered separately during version upgrades.
-		if _, markerErr := os.Stat(markerPath); os.IsNotExist(markerErr) {
-			_ = os.WriteFile(markerPath, []byte("ok\n"), 0600) // Seed marker
-		}
+		_ = MarkDoltDirCompatible(doltDir)
 		return nil // Already initialized
 	}
 
@@ -1330,8 +1327,8 @@ func ensureDoltInit(doltDir string) error {
 		return fmt.Errorf("dolt init: %w\n%s", err, out)
 	}
 
-	// Write version marker so future runs know this database is compatible
-	_ = os.WriteFile(markerPath, []byte("ok\n"), 0600)
+	// Write version marker so future runs know this database is compatible.
+	_ = MarkDoltDirCompatible(doltDir)
 
 	return nil
 }

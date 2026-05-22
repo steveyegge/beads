@@ -1753,6 +1753,9 @@ func TestInitServerModeWarnsOnMarkerFailureInQuietMode(t *testing.T) {
 	if !strings.Contains(stderr.String(), "Warning: failed to write Dolt compatibility marker") {
 		t.Fatalf("expected marker warning in stderr, got:\n%s", stderr.String())
 	}
+	if !strings.Contains(stderr.String(), doltDir) {
+		t.Fatalf("expected marker warning to include dolt dir %s, got:\n%s", doltDir, stderr.String())
+	}
 }
 
 func setupBareParentInitWorktree(t *testing.T) (string, string) {
