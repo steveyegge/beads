@@ -181,67 +181,73 @@ func isDoltNothingToCommit(err error) bool {
 // CreateIssue creates an issue within the transaction.
 // Routes ephemeral issues to the wisps table.
 func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	now := time.Now().UTC()
-	if issue.CreatedAt.IsZero() {
-		issue.CreatedAt = now
-	}
-	if issue.UpdatedAt.IsZero() {
-		issue.UpdatedAt = now
-	}
-	if issue.ContentHash == "" {
-		issue.ContentHash = issue.ComputeContentHash()
+	if issue == nil {
+		return fmt.Errorf("issue must not be nil")
 	}
 
-	table := "issues"
-	if issue.Ephemeral || issue.NoHistory {
-		table = "wisps"
-	}
-
-	// Generate ID if not provided
-	if issue.ID == "" {
-		var configPrefix string
-		err := t.regularTx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
-		if err == sql.ErrNoRows || configPrefix == "" {
-			return fmt.Errorf("%w: issue_prefix config is missing", storage.ErrNotInitialized)
-		} else if err != nil {
-			return fmt.Errorf("failed to get config: %w", err)
-		}
-
-		// Normalize prefix: strip trailing hyphen to prevent double-hyphen IDs (bd-6uly)
-		configPrefix = strings.TrimSuffix(configPrefix, "-")
-
-		var prefix string
-		if issue.Ephemeral {
-			prefix = wispPrefix(configPrefix, issue)
-		} else {
-			prefix = configPrefix
-			if issue.PrefixOverride != "" {
-				prefix = issue.PrefixOverride
-			} else if issue.IDPrefix != "" {
-				prefix = configPrefix + "-" + issue.IDPrefix
-			}
-		}
-
-		generatedID, err := generateIssueIDInTable(ctx, t.txFor(table), table, prefix, issue, actor)
+	if issueops.IsWisp(issue) {
+		bc, err := issueops.NewBatchContext(ctx, t.ignoredTx, storage.BatchCreateOptions{SkipPrefixValidation: true})
 		if err != nil {
-			return fmt.Errorf("failed to generate issue ID: %w", err)
+			return err
 		}
-		issue.ID = generatedID
-	}
-
-	// Validate metadata against schema if configured (GH#1416 Phase 2)
-	if err := validateMetadataIfConfigured(issue.Metadata); err != nil {
+		_, err = issueops.CreateIssueInTxWithResult(ctx, t.ignoredTx, bc, issue, actor)
 		return err
 	}
 
-	t.dirty.MarkDirty(table)
-	return insertIssueTxIntoTable(ctx, t.txFor(table), table, issue)
+	bc, err := issueops.NewBatchContext(ctx, t.regularTx, storage.BatchCreateOptions{SkipPrefixValidation: true})
+	if err != nil {
+		return err
+	}
+	result, err := issueops.CreateIssueInTxWithResult(ctx, t.regularTx, bc, issue, actor)
+	if err != nil {
+		return err
+	}
+	for table := range issueops.CreateIssueDirtyTables(ctx, issue, result) {
+		t.dirty.MarkDirty(table)
+	}
+	return nil
 }
 
 // CreateIssues creates multiple issues within the transaction
 func (t *doltTransaction) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	if len(issues) == 0 {
+		return nil
+	}
+
+	// This must run before splitting regular issues from wisps: the shared
+	// create helper below only sees the regular subset.
+	if err := issueops.ValidateCreateIssuesMixedBucketDependencies(issues); err != nil {
+		return err
+	}
+
+	var regularIssues []*types.Issue
+	var wispIssues []*types.Issue
 	for _, issue := range issues {
-		if err := t.CreateIssue(ctx, issue, actor); err != nil {
+		if issueops.IsWisp(issue) {
+			wispIssues = append(wispIssues, issue)
+		} else {
+			regularIssues = append(regularIssues, issue)
+		}
+	}
+
+	if len(regularIssues) > 0 {
+		result, err := issueops.CreateIssuesInTxWithResult(ctx, t.regularTx, regularIssues, actor, storage.BatchCreateOptions{
+			OrphanHandling:       storage.OrphanAllow,
+			SkipPrefixValidation: true,
+		})
+		if err != nil {
+			return err
+		}
+		for table := range issueops.CreateIssuesDirtyTables(ctx, regularIssues, result) {
+			t.dirty.MarkDirty(table)
+		}
+	}
+
+	if len(wispIssues) > 0 {
+		if _, err := issueops.CreateIssuesInTxWithResult(ctx, t.ignoredTx, wispIssues, actor, storage.BatchCreateOptions{
+			OrphanHandling:       storage.OrphanAllow,
+			SkipPrefixValidation: true,
+		}); err != nil {
 			return err
 		}
 	}

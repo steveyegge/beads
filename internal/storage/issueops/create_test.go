@@ -1,0 +1,144 @@
+package issueops
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
+)
+
+func TestValidateCreateIssuesMixedBucketDependenciesRejectsCrossBucketEdges(t *testing.T) {
+	regularA := &types.Issue{ID: "test-regular-a", IssueType: types.TypeTask}
+	regularB := &types.Issue{ID: "test-regular-b", IssueType: types.TypeTask}
+	wispA := &types.Issue{ID: "test-wisp-a", IssueType: types.TypeTask, Ephemeral: true}
+	wispB := &types.Issue{ID: "test-wisp-b", IssueType: types.TypeTask, Ephemeral: true}
+
+	tests := []struct {
+		name      string
+		issues    []*types.Issue
+		wantError bool
+	}{
+		{
+			name: "regular to wisp",
+			issues: []*types.Issue{
+				{
+					ID:        regularA.ID,
+					IssueType: types.TypeTask,
+					Dependencies: []*types.Dependency{{
+						DependsOnID: wispA.ID,
+						Type:        types.DepBlocks,
+					}},
+				},
+				wispA,
+			},
+			wantError: true,
+		},
+		{
+			name: "wisp to regular",
+			issues: []*types.Issue{
+				regularA,
+				{
+					ID:        wispA.ID,
+					IssueType: types.TypeTask,
+					Ephemeral: true,
+					Dependencies: []*types.Dependency{{
+						DependsOnID: regularA.ID,
+						Type:        types.DepBlocks,
+					}},
+				},
+			},
+			wantError: true,
+		},
+		{
+			name: "same bucket dependencies",
+			issues: []*types.Issue{
+				regularB,
+				{
+					ID:        regularA.ID,
+					IssueType: types.TypeTask,
+					Dependencies: []*types.Dependency{{
+						DependsOnID: regularB.ID,
+						Type:        types.DepBlocks,
+					}},
+				},
+				wispB,
+				{
+					ID:        wispA.ID,
+					IssueType: types.TypeTask,
+					Ephemeral: true,
+					Dependencies: []*types.Dependency{{
+						DependsOnID: wispB.ID,
+						Type:        types.DepBlocks,
+					}},
+				},
+			},
+		},
+		{
+			name: "out of batch target",
+			issues: []*types.Issue{
+				{
+					ID:        regularA.ID,
+					IssueType: types.TypeTask,
+					Dependencies: []*types.Dependency{{
+						DependsOnID: "test-external-wisp",
+						Type:        types.DepBlocks,
+					}},
+				},
+				wispA,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCreateIssuesMixedBucketDependencies(tt.issues)
+			if tt.wantError {
+				if err == nil || !strings.Contains(err.Error(), "cross-bucket dependency") {
+					t.Fatalf("error = %v, want cross-bucket dependency", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestPersistDependenciesReturnsTargetLookupErrors(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	targetErr := errors.New("target lookup failed")
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "target",
+			Type:        types.DepBlocks,
+		}},
+	}
+
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("target").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("target").
+		WillReturnError(targetErr)
+
+	err := PersistDependencies(ctx, tx, []*types.Issue{issue}, "tester")
+	if err == nil || !strings.Contains(err.Error(), "failed to check dependency target target for source") {
+		t.Fatalf("error = %v, want dependency target lookup error", err)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}

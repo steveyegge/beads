@@ -28,7 +28,7 @@ func TestBuildCreateIssuePreservesLabels(t *testing.T) {
 
 func TestMergeCreateLabelsKeepsUserOrderAndDedupesInherited(t *testing.T) {
 	got := mergeCreateLabels(
-		[]string{"gc:wisp", "status:pending"},
+		[]string{"gc:wisp", "status:pending", "gc:wisp"},
 		[]string{"status:pending", "owner:agent"},
 	)
 	want := []string{"gc:wisp", "status:pending", "owner:agent"}

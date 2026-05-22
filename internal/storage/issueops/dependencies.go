@@ -169,20 +169,9 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		}
 	}
 
-	// Self-dependency check
-	if dep.IssueID == dep.DependsOnID {
-		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
-	}
-
-	// Cycle detection for blocking deps via recursive CTE.
-	if !opts.SkipCycleCheck && (dep.Type == types.DepBlocks || dep.Type == types.DepConditionalBlocks) {
-		var reachable int
-		query := cycleReachabilityQuery(depTables)
-		if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
-			return fmt.Errorf("failed to check for dependency cycle: %w", err)
-		}
-		if reachable > 0 {
-			return fmt.Errorf("adding dependency would create a cycle")
+	if !opts.SkipCycleCheck {
+		if err := CheckDependencyCycleInTx(ctx, tx, dep, depTables); err != nil {
+			return err
 		}
 	}
 
@@ -223,6 +212,30 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		VALUES (?, ?, ?, NOW(), ?, ?, ?)
 	`, writeTable, targetCol), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
+	}
+	return nil
+}
+
+// CheckDependencyCycleInTx rejects self-dependencies and blocking dependency
+// cycles before a dependency insert. The caller may pass a restricted depTables
+// list for a known storage bucket; nil uses all dependency tables.
+func CheckDependencyCycleInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, depTables []string) error {
+	if dep.IssueID == dep.DependsOnID {
+		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
+	}
+	if dep.Type != types.DepBlocks && dep.Type != types.DepConditionalBlocks {
+		return nil
+	}
+	if len(depTables) == 0 {
+		depTables = cycleDetectionTables()
+	}
+	var reachable int
+	query := cycleReachabilityQuery(depTables)
+	if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
+		return fmt.Errorf("failed to check for dependency cycle: %w", err)
+	}
+	if reachable > 0 {
+		return fmt.Errorf("adding dependency would create a cycle")
 	}
 	return nil
 }
