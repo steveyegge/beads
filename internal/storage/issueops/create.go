@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -293,11 +294,16 @@ func PersistComments(ctx context.Context, tx *sql.Tx, issue *types.Issue) error 
 		if exists > 0 {
 			continue
 		}
+		commentID := comment.ID
+		if commentID == "" {
+			commentID = uuid.Must(uuid.NewV7()).String()
+			comment.ID = commentID
+		}
 		//nolint:gosec // G201: table is determined by ephemeral flag
 		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO %s (issue_id, author, text, created_at)
-			VALUES (?, ?, ?, ?)
-		`, commentTable), issue.ID, comment.Author, comment.Text, createdAt)
+			INSERT INTO %s (id, issue_id, author, text, created_at)
+			VALUES (?, ?, ?, ?, ?)
+		`, commentTable), commentID, issue.ID, comment.Author, comment.Text, createdAt)
 		if err != nil {
 			return fmt.Errorf("failed to insert comment for %s: %w", issue.ID, err)
 		}
