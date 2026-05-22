@@ -81,8 +81,19 @@ type ParentLink struct {
 // ParentReconcileStats summarizes a ReconcileParents run.
 type ParentReconcileStats struct {
 	// Updated is the count of Linear issues whose parent field was changed
-	// (set, cleared, or rewired) by this pass.
+	// (set, cleared, or rewired) by this pass. Zero in dry-run mode — see
+	// WouldUpdate for the dry-run counterpart.
 	Updated int
+	// WouldUpdate is the count of mutations the pass WOULD have issued
+	// in wet-run. Populated only in dry-run mode; zero in wet-run.
+	WouldUpdate int
+	// Mutations is the (child, parent) link list that was applied (wet-run)
+	// or would have been applied (dry-run). In wet-run, an entry is appended
+	// only after the IssueUpdate API call succeeds — so this list reflects
+	// state actually propagated to Linear, not attempted. In dry-run, all
+	// candidates that pass the idempotency check appear. Lets callers print
+	// per-link detail without having to re-derive it.
+	Mutations []ParentLink
 	// Skipped is the count of links where Linear's parent already matched
 	// the desired value — no API mutation was issued.
 	Skipped int
@@ -113,10 +124,16 @@ type ParentReconcileStats struct {
 // (IssueUpdateInput.parentId requires the internal UUID, not the
 // human-readable identifier).
 //
+// When dryRun is true, the read-only fetches still run (so the caller
+// gets accurate Skipped / NotFound counts and a populated Mutations
+// list for preview output) but the IssueUpdate mutation is skipped.
+// Mutations that would have fired increment stats.WouldUpdate instead
+// of stats.Updated.
+//
 // Returns nil error when the pass completed (even if per-link errors
 // were collected in Stats.Errors). A non-nil error indicates a setup-level
 // failure that prevented any work from running.
-func (t *Tracker) ReconcileParents(ctx context.Context, links []ParentLink) (*ParentReconcileStats, error) {
+func (t *Tracker) ReconcileParents(ctx context.Context, links []ParentLink, dryRun bool) (*ParentReconcileStats, error) {
 	stats := &ParentReconcileStats{}
 	if len(links) == 0 {
 		return stats, nil
@@ -191,6 +208,15 @@ func (t *Tracker) ReconcileParents(ctx context.Context, links []ParentLink) (*Pa
 			continue
 		}
 
+		if dryRun {
+			// Dry-run: record the intended mutation but skip the API call.
+			// All read-only state (fetch results, idempotency check above)
+			// matched wet-run, so the preview is trustworthy.
+			stats.Mutations = append(stats.Mutations, link)
+			stats.WouldUpdate++
+			continue
+		}
+
 		// Use the child's host client (resolved during fetch) so the
 		// update goes to the correct team in multi-team setups.
 		updated, err := childE.client.UpdateIssue(ctx, childE.issue.ID, map[string]interface{}{
@@ -212,6 +238,10 @@ func (t *Tracker) ReconcileParents(ctx context.Context, links []ParentLink) (*Pa
 		if updated != nil {
 			fetched[link.ChildIdentifier] = entry{issue: updated, client: childE.client}
 		}
+		// Record the mutation only AFTER the API call succeeds, so
+		// Mutations reflects actual state propagated to Linear (callers
+		// can trust the list for accurate post-sync reporting).
+		stats.Mutations = append(stats.Mutations, link)
 		stats.Updated++
 	}
 

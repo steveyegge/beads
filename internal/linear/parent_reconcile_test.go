@@ -174,7 +174,7 @@ func TestReconcileParents_HappyPath(t *testing.T) {
 	tr := newTestLinearTracker(t, server.URL)
 	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
 		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-2"},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestReconcileParents_IdempotentSkip(t *testing.T) {
 	tr := newTestLinearTracker(t, server.URL)
 	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
 		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-2"},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestReconcileParents_RewiresWrongParent(t *testing.T) {
 	tr := newTestLinearTracker(t, server.URL)
 	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
 		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-2"},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestReconcileParents_FetchCaching(t *testing.T) {
 		{ChildIdentifier: "TEAM-11", ParentIdentifier: "TEAM-99"},
 		{ChildIdentifier: "TEAM-12", ParentIdentifier: "TEAM-99"},
 	}
-	stats, err := tr.ReconcileParents(context.Background(), links)
+	stats, err := tr.ReconcileParents(context.Background(), links, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestReconcileParents_MissingChildOrParent(t *testing.T) {
 	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
 		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-99"}, // parent missing
 		{ChildIdentifier: "TEAM-2", ParentIdentifier: "TEAM-1"},  // child missing
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestReconcileParents_MissingChildOrParent(t *testing.T) {
 // TestReconcileParents_EmptyLinks short-circuits cleanly.
 func TestReconcileParents_EmptyLinks(t *testing.T) {
 	tr := &Tracker{} // no client needed
-	stats, err := tr.ReconcileParents(context.Background(), nil)
+	stats, err := tr.ReconcileParents(context.Background(), nil, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestReconcileParents_MultiTeam(t *testing.T) {
 	tr, _ := newTestMultiTeamTracker(t, []string{srvA.URL, srvB.URL})
 	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
 		{ChildIdentifier: "TEAM-2", ParentIdentifier: "TEAM-1"},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestReconcileParents_AbortsOnRateLimit(t *testing.T) {
 	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
 		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-99"},
 		{ChildIdentifier: "TEAM-2", ParentIdentifier: "TEAM-99"},
-	})
+	}, false)
 	if err == nil {
 		t.Fatal("expected error from rate-limit abort, got nil")
 	}
@@ -401,7 +401,7 @@ func TestReconcileParents_BlankIdentifiersSkipped(t *testing.T) {
 	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
 		{ChildIdentifier: "", ParentIdentifier: "TEAM-2"},
 		{ChildIdentifier: "TEAM-1", ParentIdentifier: ""},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("ReconcileParents err: %v", err)
 	}
@@ -411,5 +411,234 @@ func TestReconcileParents_BlankIdentifiersSkipped(t *testing.T) {
 	if len(mock.updates) != 0 || len(mock.fetches) != 0 {
 		t.Errorf("expected no API calls for blank links, fetches=%v updates=%v",
 			mock.fetches, mock.updates)
+	}
+}
+
+// TestReconcileParents_DryRunNoMutations is the bd-5zh acceptance: when
+// dryRun=true, the read-only fetches still run (Skipped, NotFound, and
+// Mutations populate correctly) but ZERO IssueUpdate calls fire. WouldUpdate
+// counts the mutations that would have been issued; Updated stays 0.
+func TestReconcileParents_DryRunNoMutations(t *testing.T) {
+	mock := newLinearMock(t)
+	mock.issues["TEAM-1"] = &Issue{ID: "uuid-c1", Identifier: "TEAM-1"} // needs parent
+	mock.issues["TEAM-2"] = &Issue{ID: "uuid-c2", Identifier: "TEAM-2", //
+		Parent: &Parent{ID: "uuid-p", Identifier: "TEAM-99"}} // already correct
+	mock.issues["TEAM-3"] = &Issue{ID: "uuid-c3", Identifier: "TEAM-3"} // needs parent
+	mock.issues["TEAM-99"] = &Issue{ID: "uuid-p", Identifier: "TEAM-99"}
+	server := httptest.NewServer(mock)
+	defer server.Close()
+
+	tr := newTestLinearTracker(t, server.URL)
+	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
+		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-99"},
+		{ChildIdentifier: "TEAM-2", ParentIdentifier: "TEAM-99"},
+		{ChildIdentifier: "TEAM-3", ParentIdentifier: "TEAM-99"},
+	}, true)
+	if err != nil {
+		t.Fatalf("ReconcileParents err: %v", err)
+	}
+	if stats.Updated != 0 {
+		t.Errorf("Updated = %d, want 0 in dry-run", stats.Updated)
+	}
+	if stats.WouldUpdate != 2 {
+		t.Errorf("WouldUpdate = %d, want 2 (TEAM-1 + TEAM-3 need parent set)", stats.WouldUpdate)
+	}
+	if stats.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1 (TEAM-2 already correct)", stats.Skipped)
+	}
+	if len(mock.updates) != 0 {
+		t.Errorf("dry-run must not issue IssueUpdate; got %d updates: %v", len(mock.updates), mock.updates)
+	}
+	if len(stats.Mutations) != 2 {
+		t.Fatalf("Mutations = %v, want 2 entries", stats.Mutations)
+	}
+	// Mutations should carry the original identifiers in order of input.
+	if stats.Mutations[0].ChildIdentifier != "TEAM-1" || stats.Mutations[0].ParentIdentifier != "TEAM-99" {
+		t.Errorf("Mutations[0] = %+v, want TEAM-1 → TEAM-99", stats.Mutations[0])
+	}
+	if stats.Mutations[1].ChildIdentifier != "TEAM-3" || stats.Mutations[1].ParentIdentifier != "TEAM-99" {
+		t.Errorf("Mutations[1] = %+v, want TEAM-3 → TEAM-99", stats.Mutations[1])
+	}
+}
+
+// TestReconcileParents_DryRunIdempotentSkipUnchanged verifies that when
+// every link is already correct, dry-run produces zero WouldUpdate and
+// matches wet-run's Skipped count.
+func TestReconcileParents_DryRunIdempotentSkipUnchanged(t *testing.T) {
+	mock := newLinearMock(t)
+	mock.issues["TEAM-1"] = &Issue{ID: "uuid-c", Identifier: "TEAM-1",
+		Parent: &Parent{ID: "uuid-p", Identifier: "TEAM-2"}}
+	mock.issues["TEAM-2"] = &Issue{ID: "uuid-p", Identifier: "TEAM-2"}
+	server := httptest.NewServer(mock)
+	defer server.Close()
+
+	tr := newTestLinearTracker(t, server.URL)
+	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
+		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-2"},
+	}, true)
+	if err != nil {
+		t.Fatalf("ReconcileParents err: %v", err)
+	}
+	if stats.WouldUpdate != 0 {
+		t.Errorf("WouldUpdate = %d, want 0 (already correct)", stats.WouldUpdate)
+	}
+	if stats.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", stats.Skipped)
+	}
+	if len(stats.Mutations) != 0 {
+		t.Errorf("Mutations = %v, want empty (no changes needed)", stats.Mutations)
+	}
+}
+
+// TestReconcileParents_DryRunMissingTargetsNotFound verifies that dry-run
+// still surfaces NotFound entries for unresolvable identifiers, so the user
+// gets the same visibility into orphan targets as wet-run.
+func TestReconcileParents_DryRunMissingTargetsNotFound(t *testing.T) {
+	mock := newLinearMock(t)
+	mock.issues["TEAM-1"] = &Issue{ID: "uuid-c", Identifier: "TEAM-1"}
+	// TEAM-99 (parent) intentionally absent.
+	server := httptest.NewServer(mock)
+	defer server.Close()
+
+	tr := newTestLinearTracker(t, server.URL)
+	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
+		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-99"},
+	}, true)
+	if err != nil {
+		t.Fatalf("ReconcileParents err: %v", err)
+	}
+	if stats.WouldUpdate != 0 || stats.Updated != 0 {
+		t.Errorf("Would/Updated = %d/%d, want 0/0", stats.WouldUpdate, stats.Updated)
+	}
+	if len(stats.NotFound) != 1 || stats.NotFound[0] != "TEAM-99" {
+		t.Errorf("NotFound = %v, want [TEAM-99]", stats.NotFound)
+	}
+}
+
+// TestReconcileParents_DryRunMatchesWetRunMutationSet verifies that the
+// Mutations list is identical between dry-run and wet-run for the same
+// input. This is the property that makes dry-run a trustworthy pre-flight:
+// what you see is what you'll get.
+func TestReconcileParents_DryRunMatchesWetRunMutationSet(t *testing.T) {
+	makeMock := func() *linearMockHandler {
+		m := newLinearMock(t)
+		m.issues["TEAM-1"] = &Issue{ID: "uuid-c1", Identifier: "TEAM-1"}
+		m.issues["TEAM-2"] = &Issue{ID: "uuid-c2", Identifier: "TEAM-2"}
+		m.issues["TEAM-99"] = &Issue{ID: "uuid-p", Identifier: "TEAM-99"}
+		return m
+	}
+	links := []ParentLink{
+		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-99"},
+		{ChildIdentifier: "TEAM-2", ParentIdentifier: "TEAM-99"},
+	}
+
+	// Dry-run
+	dryMock := makeMock()
+	drySrv := httptest.NewServer(dryMock)
+	defer drySrv.Close()
+	dryTr := newTestLinearTracker(t, drySrv.URL)
+	dryStats, err := dryTr.ReconcileParents(context.Background(), links, true)
+	if err != nil {
+		t.Fatalf("dry: %v", err)
+	}
+
+	// Wet-run
+	wetMock := makeMock()
+	wetSrv := httptest.NewServer(wetMock)
+	defer wetSrv.Close()
+	wetTr := newTestLinearTracker(t, wetSrv.URL)
+	wetStats, err := wetTr.ReconcileParents(context.Background(), links, false)
+	if err != nil {
+		t.Fatalf("wet: %v", err)
+	}
+
+	if dryStats.WouldUpdate != wetStats.Updated {
+		t.Errorf("dry WouldUpdate=%d vs wet Updated=%d (must match)",
+			dryStats.WouldUpdate, wetStats.Updated)
+	}
+	if len(dryStats.Mutations) != len(wetStats.Mutations) {
+		t.Fatalf("Mutations length differs: dry=%d wet=%d",
+			len(dryStats.Mutations), len(wetStats.Mutations))
+	}
+	for i := range dryStats.Mutations {
+		if dryStats.Mutations[i] != wetStats.Mutations[i] {
+			t.Errorf("Mutations[%d] differ: dry=%+v wet=%+v",
+				i, dryStats.Mutations[i], wetStats.Mutations[i])
+		}
+	}
+	// Sanity: wet-run actually issued updates, dry-run did not.
+	if len(dryMock.updates) != 0 {
+		t.Errorf("dry mock saw %d updates; expected 0", len(dryMock.updates))
+	}
+	if len(wetMock.updates) != 2 {
+		t.Errorf("wet mock saw %d updates; expected 2", len(wetMock.updates))
+	}
+}
+
+// TestReconcileParents_WetRunFailureDoesNotRecordMutation verifies that
+// when a wet-run UpdateIssue call fails (e.g. transient API error), the
+// failed mutation is NOT appended to stats.Mutations. The contract is
+// that Mutations reflects state actually propagated to Linear in wet-run,
+// so callers can trust it for post-sync reporting.
+func TestReconcileParents_WetRunFailureDoesNotRecordMutation(t *testing.T) {
+	// Custom handler: succeeds on fetch, returns success=false on update.
+	updateAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req GraphQLRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("bad request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case strings.Contains(req.Query, "IssueByIdentifier"):
+			filter, _ := req.Variables["filter"].(map[string]interface{})
+			number, _ := filter["number"].(map[string]interface{})
+			eq, _ := number["eq"].(float64)
+			id := "uuid-" + itoa(int(eq))
+			ident := "TEAM-" + itoa(int(eq))
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{
+					"issues": map[string]interface{}{
+						"nodes": []interface{}{
+							map[string]interface{}{"id": id, "identifier": ident,
+								"createdAt": "2026-05-22T00:00:00Z", "updatedAt": "2026-05-22T00:00:00Z"},
+						},
+					},
+				},
+			})
+		case strings.Contains(req.Query, "issueUpdate"):
+			updateAttempts++
+			// Return success=false to surface as an error to the client.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{
+					"issueUpdate": map[string]interface{}{"success": false, "issue": nil},
+				},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
+		}
+	}))
+	defer server.Close()
+
+	tr := newTestLinearTracker(t, server.URL)
+	stats, err := tr.ReconcileParents(context.Background(), []ParentLink{
+		{ChildIdentifier: "TEAM-1", ParentIdentifier: "TEAM-2"},
+	}, false)
+	if err != nil {
+		t.Fatalf("ReconcileParents: %v", err)
+	}
+	if updateAttempts != 1 {
+		t.Errorf("expected 1 update attempt, got %d", updateAttempts)
+	}
+	if stats.Updated != 0 {
+		t.Errorf("Updated = %d, want 0 (API call failed)", stats.Updated)
+	}
+	if len(stats.Mutations) != 0 {
+		t.Errorf("Mutations = %v, want empty (no successful mutation)", stats.Mutations)
+	}
+	if len(stats.Errors) != 1 {
+		t.Errorf("Errors = %v, want 1 entry", stats.Errors)
 	}
 }

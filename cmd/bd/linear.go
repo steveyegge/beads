@@ -385,13 +385,25 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 	// and previously-pushed orphan trees need a backfill. This pass is
 	// idempotent — no API mutation when remote parent already matches.
 	//
+	// In dry-run mode the pass still runs (read-only fetches) so the user
+	// gets a preview of which parents would be set; the IssueUpdate
+	// mutation is skipped per-link.
+	//
 	// Skipped on scoped syncs (--parent / --type / --exclude-type / --since
 	// / --issue-id) because the reconciler walks ALL local beads with
 	// external_refs, not just the in-scope ones — a scoped sync that
 	// silently mutated other parts of the tree would surprise the user.
 	// A full sync still picks up the repair on the next run.
-	if push && !dryRun && result.Success && !syncIsScoped(&opts) {
-		reconcileLinearParents(ctx, lt, &result.Warnings)
+	//
+	// `effectivePush` mirrors engine.Sync's bidirectional default: when
+	// neither --pull nor --push is passed, the engine internally runs both
+	// directions, so the reconcile pass must also fire (otherwise
+	// `bd linear sync --dry-run` with no direction flag silently skips the
+	// preview). We can't read opts.Push after engine.Sync because Sync
+	// receives opts by value.
+	effectivePush := push || (!push && !pull)
+	if effectivePush && result.Success && !syncIsScoped(&opts) {
+		reconcileLinearParents(ctx, lt, dryRun, jsonOutput, &result.Warnings)
 	}
 
 	// Record successful pull timestamp
@@ -1210,9 +1222,19 @@ func syncIsScoped(opts *tracker.SyncOptions) bool {
 //  2. Orphan repair: existing Linear issues created in earlier bd versions
 //     (or by interrupted syncs) without a parent get wired up retroactively.
 //
+// In dry-run mode the read-only fetches still run and the per-link mutation
+// plan is printed as [dry-run] lines, but no IssueUpdate is issued. Lets
+// users preview the orphan-repair scope before committing to a wet sync.
+//
+// Human-readable output is suppressed when jsonOutput is true so the
+// caller's JSON serialization (in runLinearSync's output section) isn't
+// polluted with stray fmt.Printf lines. Warnings and errors still go
+// through the warnings slice, which IS surfaced in JSON output via
+// SyncResult.Warnings.
+//
 // Warnings (per-link failures, missing refs) are appended to the engine's
 // warning slice so the user sees them in the standard sync output.
-func reconcileLinearParents(ctx context.Context, lt *linear.Tracker, warnings *[]string) {
+func reconcileLinearParents(ctx context.Context, lt *linear.Tracker, dryRun, jsonOutput bool, warnings *[]string) {
 	if lt == nil || store == nil {
 		return
 	}
@@ -1224,13 +1246,25 @@ func reconcileLinearParents(ctx context.Context, lt *linear.Tracker, warnings *[
 	if len(links) == 0 {
 		return
 	}
-	stats, err := lt.ReconcileParents(ctx, links)
-	// Print the partial success count first; an abort (e.g. rate-limit
-	// circuit breaker) may have completed some updates before bailing,
-	// and the user should see that work wasn't lost.
-	if stats != nil && stats.Updated > 0 {
-		fmt.Printf("✓ Reconciled %d Linear parent link%s\n",
-			stats.Updated, plural(stats.Updated))
+	stats, err := lt.ReconcileParents(ctx, links, dryRun)
+	// Print mutation summary first; an abort (e.g. rate-limit circuit
+	// breaker) may have completed some updates before bailing, and the
+	// user should see that work wasn't lost. Suppress when --json is
+	// requested so the JSON envelope stays clean.
+	if stats != nil && !jsonOutput {
+		if dryRun {
+			if stats.WouldUpdate > 0 {
+				fmt.Printf("[dry-run] Would reconcile %d Linear parent link%s\n",
+					stats.WouldUpdate, plural(stats.WouldUpdate))
+				for _, link := range stats.Mutations {
+					fmt.Printf("[dry-run] Would set parent of %s → %s\n",
+						link.ChildIdentifier, link.ParentIdentifier)
+				}
+			}
+		} else if stats.Updated > 0 {
+			fmt.Printf("✓ Reconciled %d Linear parent link%s\n",
+				stats.Updated, plural(stats.Updated))
+		}
 	}
 	if err != nil {
 		*warnings = append(*warnings, fmt.Sprintf("parent reconcile: %v", err))
