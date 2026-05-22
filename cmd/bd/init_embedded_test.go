@@ -42,7 +42,7 @@ func buildEmbeddedBD(t *testing.T) string {
 			embeddedBD = prebuilt
 			return
 		}
-		tmpDir, err := os.MkdirTemp("", "bd-embedded-init-test-*")
+		tmpDir, err := testTempDir("bd-embedded-init-test-*")
 		if err != nil {
 			embeddedBDErr = fmt.Errorf("failed to create temp dir: %w", err)
 			return

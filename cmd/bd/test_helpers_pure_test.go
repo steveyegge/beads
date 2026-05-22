@@ -279,7 +279,7 @@ func buildBDForInitTests(t *testing.T) string {
 			return
 		}
 		// Fall back to building
-		tmpDir, err := os.MkdirTemp("", "bd-init-test-*")
+		tmpDir, err := testTempDir("bd-init-test-*")
 		if err != nil {
 			initTestBDErr = fmt.Errorf("failed to create temp dir: %w", err)
 			return
