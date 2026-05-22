@@ -30,6 +30,7 @@ type exportAutoState struct {
 }
 
 const exportAutoStateFile = "export-state.json"
+const gitAddTimeout = 5 * time.Second
 
 // maybeAutoExport writes a git-tracked JSONL file if enabled and due.
 // Called from PersistentPostRun after auto-backup.
@@ -452,13 +453,30 @@ func gitAddFile(path string) error {
 		// Staging here would pollute a different repo's index; skip.
 		return nil
 	}
-	cmd := exec.Command("git", "add", path)
+
+	env := scrubGitHookEnv(os.Environ())
+	if lockPath, err := gitIndexLockPath(path, env); err == nil && lockPath != "" {
+		if _, statErr := os.Stat(lockPath); statErr == nil {
+			return fmt.Errorf("git index is locked at %s; skipping auto-stage", lockPath)
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("failed to check git index lock %s: %w", lockPath, statErr)
+		}
+	} else if err != nil {
+		debug.Logf("auto-export: git add lock preflight skipped: %v\n", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), gitAddTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "add", path)
 	cmd.Dir = filepath.Dir(path)
-	cmd.Env = scrubGitHookEnv(os.Environ())
+	cmd.Env = env
 	// Capture combined output so the caller's warning surfaces git's stderr
 	// (e.g. "paths are ignored", "Unable to create index.lock") instead of
 	// just the exit-status text.
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("git add timed out after %s", gitAddTimeout)
+	}
 	if err != nil {
 		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
 			return fmt.Errorf("%w: %s", err, trimmed)
@@ -466,6 +484,32 @@ func gitAddFile(path string) error {
 		return err
 	}
 	return nil
+}
+
+func gitIndexLockPath(path string, env []string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitAddTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
+	cmd.Dir = filepath.Dir(path)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("git rev-parse timed out after %s", gitAddTimeout)
+	}
+	if err != nil {
+		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
+			return "", fmt.Errorf("%w: %s", err, trimmed)
+		}
+		return "", err
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if gitDir == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(filepath.Dir(path), gitDir)
+	}
+	return filepath.Join(gitDir, "index.lock"), nil
 }
 
 // scrubGitHookEnv returns env with the GIT_* variables that can poison
