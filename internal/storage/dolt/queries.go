@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -75,20 +77,33 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	stats := &types.Statistics{}
 
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		return issueops.ScanIssueCountsInTx(ctx, tx, stats)
+	// Run issue counts and blocked-ID computation in parallel: both are
+	// read-only and independent, and each requires a separate DB roundtrip.
+	// withReadTx acquires s.mu.RLock so concurrent calls are safe.
+	var blockedIDs []string
+	g, gctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return s.withReadTx(gctx, func(tx *sql.Tx) error {
+			return issueops.ScanIssueCountsInTx(gctx, tx, stats)
+		})
 	})
-	if err != nil {
+
+	g.Go(func() error {
+		// computeBlockedIDs caches results across GetReadyWork and
+		// GetStatistics calls within the same CLI invocation.
+		ids, err := s.computeBlockedIDs(gctx, true)
+		if err == nil {
+			blockedIDs = ids
+		}
+		return nil // blocked count is best-effort; don't fail stats on error
+	})
+
+	if err := g.Wait(); err != nil {
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
 	}
 
-	// Blocked count: reuse computeBlockedIDs which caches the result across
-	// GetReadyWork and GetStatistics calls within the same CLI invocation.
-	var blockedCount int
-	blockedIDs, err := s.computeBlockedIDs(ctx, true)
-	if err == nil {
-		blockedCount = len(blockedIDs)
-	}
+	blockedCount := len(blockedIDs)
 	stats.BlockedIssues = blockedCount
 
 	// Ready count: compute without using the ready_issues view to avoid
