@@ -32,30 +32,47 @@ func (s *EmbeddedDoltStore) CountIssues(ctx context.Context, query string, filte
 
 // CountDependents counts both dependency tables so the total matches
 // GetDependentsWithMetadata: a dependent may be a permanent issue (edge in
-// `dependencies`) or a wisp (edge in `wisp_dependencies`).
+// `dependencies`) or a wisp (edge in `wisp_dependencies`). The two tables are
+// counted in separate top-level queries and summed in Go: folding them into a
+// single `SELECT (subq)+(subq)` trips a "column could not be found in any
+// table in scope" analyzer error in the pure-Go GMS engine.
 func (s *EmbeddedDoltStore) CountDependents(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx,
-			`SELECT
-				(SELECT count(*) FROM dependencies WHERE depends_on_id = ?) +
-				(SELECT count(*) FROM wisp_dependencies WHERE depends_on_id = ?)`,
-			issueID, issueID).Scan(&n)
+		var perm, wisp int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM dependencies WHERE depends_on_id = ?`, issueID).Scan(&perm); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM wisp_dependencies WHERE depends_on_id = ?`, issueID).Scan(&wisp); err != nil {
+			return err
+		}
+		n = perm + wisp
+		return nil
 	})
 	return n, err
 }
 
 // CountDependencies counts both dependency tables so the total matches
 // GetDependenciesWithMetadata: a wisp's outgoing edges live in
-// `wisp_dependencies`, a permanent issue's in `dependencies`.
+// `wisp_dependencies`, a permanent issue's in `dependencies`. Counted as two
+// separate queries summed in Go (see CountDependents for why a single combined
+// query is avoided).
 func (s *EmbeddedDoltStore) CountDependencies(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx,
-			`SELECT
-				(SELECT count(*) FROM dependencies WHERE issue_id = ?) +
-				(SELECT count(*) FROM wisp_dependencies WHERE issue_id = ?)`,
-			issueID, issueID).Scan(&n)
+		var perm, wisp int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM dependencies WHERE issue_id = ?`, issueID).Scan(&perm); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM wisp_dependencies WHERE issue_id = ?`, issueID).Scan(&wisp); err != nil {
+			return err
+		}
+		n = perm + wisp
+		return nil
 	})
 	return n, err
 }
@@ -87,18 +104,28 @@ func (s *EmbeddedDoltStore) CountEvents(ctx context.Context, issueID string, lim
 // CountDependentsByStatus counts both dependency tables, joining each to its
 // home issue table (dependencies→issues, wisp_dependencies→wisps), so wisp
 // dependents are included the same way GetDependentsWithMetadata includes them.
+// Counted as two separate queries summed in Go (see CountDependents for why a
+// single combined query is avoided).
 func (s *EmbeddedDoltStore) CountDependentsByStatus(ctx context.Context, issueID string, status types.Status) (int64, error) {
 	var n int64
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx,
-			`SELECT
-				(SELECT count(*) FROM dependencies d
-				   JOIN issues i ON i.id = d.issue_id
-				   WHERE d.depends_on_id = ? AND i.status = ?) +
-				(SELECT count(*) FROM wisp_dependencies d
-				   JOIN wisps w ON w.id = d.issue_id
-				   WHERE d.depends_on_id = ? AND w.status = ?)`,
-			issueID, string(status), issueID, string(status)).Scan(&n)
+		var perm, wisp int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM dependencies d
+			 JOIN issues i ON i.id = d.issue_id
+			 WHERE d.depends_on_id = ? AND i.status = ?`,
+			issueID, string(status)).Scan(&perm); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM wisp_dependencies d
+			 JOIN wisps w ON w.id = d.issue_id
+			 WHERE d.depends_on_id = ? AND w.status = ?`,
+			issueID, string(status)).Scan(&wisp); err != nil {
+			return err
+		}
+		n = perm + wisp
+		return nil
 	})
 	return n, err
 }
