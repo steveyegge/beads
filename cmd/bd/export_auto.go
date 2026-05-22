@@ -300,6 +300,11 @@ func sampleStrings(values []string, limit int) []string {
 }
 
 func autoExportFilter(ctx context.Context) types.IssueFilter {
+	filter, _ := buildAutoExportFilter(ctx)
+	return filter
+}
+
+func buildAutoExportFilter(ctx context.Context) (types.IssueFilter, map[string]bool) {
 	filter := types.IssueFilter{Limit: 0}
 	var infraTypes []string
 	if store != nil {
@@ -313,6 +318,11 @@ func autoExportFilter(ctx context.Context) types.IssueFilter {
 	if len(infraTypes) == 0 {
 		infraTypes = dolt.DefaultInfraTypes()
 	}
+	infraTypeSet := make(map[string]bool, len(infraTypes))
+	for _, t := range infraTypes {
+		infraTypeSet[t] = true
+	}
+	sort.Strings(infraTypes)
 	for _, t := range infraTypes {
 		filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))
 	}
@@ -324,7 +334,7 @@ func autoExportFilter(ctx context.Context) types.IssueFilter {
 	persistentOnly := false
 	filter.Ephemeral = &persistentOnly
 
-	return filter
+	return filter, infraTypeSet
 }
 
 // exportToFile atomically exports issues + memories to the given file path.
@@ -341,9 +351,14 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 		}
 	}()
 
-	issues, err := store.SearchIssues(ctx, "", autoExportFilter(ctx))
+	filter, infraTypeSet := buildAutoExportFilter(ctx)
+	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to search issues: %w", err)
+	}
+
+	if err := guardAutoExportOverwrite(path, infraTypeSet, includeMemories); err != nil {
+		return 0, 0, err
 	}
 
 	// Bulk-load relational data
@@ -429,6 +444,84 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 	}
 
 	return issueCount, memoryCount, nil
+}
+
+func guardAutoExportOverwrite(path string, infraTypes map[string]bool, includeMemories bool) error {
+	f, err := os.Open(path) //nolint:gosec
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("auto-export shrink guard: inspect existing JSONL: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var stats autoExportOverwriteStats
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if err := classifyExistingAutoExportRecord([]byte(line), infraTypes, includeMemories, &stats); err != nil {
+			return fmt.Errorf("auto-export shrink guard: inspect existing JSONL line %d: %w", lineNo, err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("auto-export shrink guard: inspect existing JSONL: %w", err)
+	}
+
+	if stats.FilteredRecords == 0 {
+		return nil
+	}
+	return fmt.Errorf("auto-export shrink guard: refusing to overwrite %s because it contains %d record(s) outside auto-export scope (%d memories, %d infra/template/ephemeral issues, %d unknown); run an explicit export if you want to replace it", path, stats.FilteredRecords, stats.Memories, stats.FilteredIssues, stats.UnknownRecords)
+}
+
+type autoExportOverwriteStats struct {
+	FilteredRecords int
+	Memories        int
+	FilteredIssues  int
+	UnknownRecords  int
+}
+
+func classifyExistingAutoExportRecord(line []byte, infraTypes map[string]bool, includeMemories bool, stats *autoExportOverwriteStats) error {
+	var record struct {
+		Type       string          `json:"_type"`
+		IssueType  types.IssueType `json:"issue_type"`
+		IsTemplate bool            `json:"is_template"`
+		Ephemeral  bool            `json:"ephemeral"`
+		ID         string          `json:"id"`
+	}
+	if err := json.Unmarshal(line, &record); err != nil {
+		return err
+	}
+
+	switch record.Type {
+	case "memory":
+		if !includeMemories {
+			stats.FilteredRecords++
+			stats.Memories++
+		}
+		return nil
+	case "", "issue":
+		if record.ID == "" {
+			stats.FilteredRecords++
+			stats.UnknownRecords++
+			return nil
+		}
+		if infraTypes[string(record.IssueType)] || record.IsTemplate || record.Ephemeral {
+			stats.FilteredRecords++
+			stats.FilteredIssues++
+		}
+		return nil
+	default:
+		stats.FilteredRecords++
+		stats.UnknownRecords++
+		return nil
+	}
 }
 
 func loadExportAutoState(beadsDir string) *exportAutoState {
