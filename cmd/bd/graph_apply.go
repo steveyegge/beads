@@ -22,21 +22,21 @@ type GraphApplyPlan struct {
 
 // GraphApplyNode describes a single bead to create.
 type GraphApplyNode struct {
-	Key               string            `json:"key"`
-	Title             string            `json:"title"`
-	Type              string            `json:"type,omitempty"`
-	Description       string            `json:"description,omitempty"`
-	Assignee          string            `json:"assignee,omitempty"`
-	AssignAfterCreate bool              `json:"assign_after_create,omitempty"`
-	Priority          *int              `json:"priority,omitempty"` // nil defaults to P2
-	Estimate          *int              `json:"estimate,omitempty"` // minutes
-	Labels            []string          `json:"labels,omitempty"`
-	Metadata          map[string]string `json:"metadata,omitempty"`
-	MetadataRefs      map[string]string `json:"metadata_refs,omitempty"`
-	ExternalRef       string            `json:"external_ref,omitempty"`
-	Parent            string            `json:"parent,omitempty"`     // alias for parent_key
-	ParentKey         string            `json:"parent_key,omitempty"`
-	ParentID          string            `json:"parent_id,omitempty"`
+	Key               string              `json:"key"`
+	Title             string              `json:"title"`
+	Type              string              `json:"type,omitempty"`
+	Description       string              `json:"description,omitempty"`
+	Assignee          string              `json:"assignee,omitempty"`
+	AssignAfterCreate bool                `json:"assign_after_create,omitempty"`
+	Priority          *int                `json:"priority,omitempty"` // nil defaults to P2
+	Estimate          *int                `json:"estimate,omitempty"` // minutes
+	Labels            []string            `json:"labels,omitempty"`
+	Metadata          map[string]string   `json:"metadata,omitempty"`
+	MetadataRefs      map[string]string   `json:"metadata_refs,omitempty"`
+	ExternalRef       string              `json:"external_ref,omitempty"`
+	Parent            string              `json:"parent,omitempty"` // alias for parent_key
+	ParentKey         string              `json:"parent_key,omitempty"`
+	ParentID          string              `json:"parent_id,omitempty"`
 	Deps              []GraphApplyNodeDep `json:"deps,omitempty"`
 }
 
