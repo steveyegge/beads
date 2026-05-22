@@ -249,6 +249,7 @@ func Initialize() error {
 	// configured a Dolt remote yet. Hook code skips this path when sync.remote
 	// is configured because JSONL import is upsert-only, not reconciliation.
 	v.SetDefault("import.auto", true)
+	v.SetDefault("import.path", "issues.jsonl") // relative to .beads/; canonical import name
 
 	// AI configuration defaults
 	v.SetDefault("ai.model", "claude-haiku-4-5-20251001")

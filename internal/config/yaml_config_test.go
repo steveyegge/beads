@@ -40,6 +40,10 @@ func TestIsYamlOnlyKey(t *testing.T) {
 		{"backup.git-repo", true},
 		{"backup.future-key", true}, // prefix match
 
+		// Import settings
+		{"import.path", true},
+		{"import.orphan_handling", false},
+
 		// Secret keys (stored in yaml to avoid leaking via Dolt push)
 		{"github.token", true},
 		{"linear.api_key", true},

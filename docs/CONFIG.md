@@ -346,6 +346,7 @@ Configuration keys use dot-notation namespaces to organize settings:
 - `min_hash_length` - Minimum hash ID length (default: 4)
 - `max_hash_length` - Maximum hash ID length (default: 8)
 - `import.orphan_handling` - How to handle hierarchical issues with missing parents during import (default: `allow`)
+- `import.path` - Input filename relative to `.beads/` for implied JSONL imports, including `bd init --from-jsonl` and empty-DB auto-import (default: `issues.jsonl`). Use a relative filename/path such as `beads.jsonl` so the import remains project-local and portable across machines.
 - `export.auto` - Refresh the JSONL export after every write command (default: `false`). This is for viewers, interchange, and issue-level migration; it is not cross-machine sync and not a full database backup.
 - `export.path` - Output filename relative to `.beads/` (default: `issues.jsonl`)
 - `export.interval` - Minimum time between auto-exports (default: `60s`)

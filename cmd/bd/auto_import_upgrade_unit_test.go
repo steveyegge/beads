@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -32,11 +33,16 @@ func (f *fakeFallbackStore) GetStatistics(_ context.Context) (*types.Statistics,
 
 func writeAutoImportFixtureJSONL(t *testing.T, dir string) {
 	t.Helper()
+	writeAutoImportFixtureJSONLNamed(t, dir, "issues.jsonl")
+}
+
+func writeAutoImportFixtureJSONLNamed(t *testing.T, dir, name string) {
+	t.Helper()
 	// Minimal valid issue line. Contents are irrelevant for the
 	// skip-when-non-empty test (returns before parseJSONLFile) and are
 	// only required to be parseable for the negative-control test.
 	line := `{"_type":"issue","id":"unit-1","title":"unit-test-fixture","status":"open","priority":2,"issue_type":"task"}`
-	if err := os.WriteFile(filepath.Join(dir, "issues.jsonl"), []byte(line+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(line+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -115,5 +121,29 @@ func TestMaybeAutoImportJSONL_ServerModeFallback_RunsWhenEmpty(t *testing.T) {
 
 	if got := count.Load(); got != 1 {
 		t.Fatalf("server-mode fallback importer invoked %d time(s) on empty store; expected exactly 1", got)
+	}
+}
+
+func TestMaybeAutoImportJSONL_UsesConfiguredImportPath(t *testing.T) {
+	initConfigForTest(t)
+	config.Set("import.path", "beads.jsonl")
+
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONLNamed(t, dir, "beads.jsonl")
+
+	orig := fallbackImporter
+	var gotPath string
+	fallbackImporter = func(_ context.Context, _ storage.DoltStorage, path string) (*importLocalResult, error) {
+		gotPath = path
+		return nil, errors.New("test importer: short-circuit before s.Commit")
+	}
+	t.Cleanup(func() { fallbackImporter = orig })
+
+	store := &fakeFallbackStore{statsTotalIssues: 0}
+	maybeAutoImportJSONL(context.Background(), store, dir)
+
+	wantPath := filepath.Join(dir, "beads.jsonl")
+	if gotPath != wantPath {
+		t.Fatalf("auto-import path = %q, want %q", gotPath, wantPath)
 	}
 }

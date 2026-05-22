@@ -83,11 +83,14 @@ func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 
 # Optional JSONL auto-export for viewers, interchange, and issue-level migration.
 # Disabled by default; enable only when an integration needs fresh .beads/issues.jsonl.
+# Use relative paths under .beads/ for JSONL import/export filenames.
 # export:
 #   auto: false
 #   path: issues.jsonl
 #   interval: 60s
 #   git-add: false
+# import:
+#   path: issues.jsonl
 
 # Integration settings (access with 'bd config get/set')
 # Non-secret keys (stored in the database):

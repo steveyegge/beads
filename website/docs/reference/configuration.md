@@ -110,6 +110,7 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `backup.git-repo` | — | `BD_BACKUP_GIT_REPO` | (none) | Backup git repo URL |
 | `export.auto` | — | — | `false` | Refresh `.beads/issues.jsonl` export after every write; not cross-machine sync |
 | `export.path` | — | — | `issues.jsonl` | Output filename relative to `.beads/` |
+| `import.path` | — | — | `issues.jsonl` | Input filename relative to `.beads/` for implied JSONL imports; use relative paths for portability |
 | `export.interval` | — | — | `60s` | Minimum time between auto-exports |
 | `export.git-add` | — | — | `false` | Run `git add` on the export file |
 | `routing.mode` | — | — | (none) | Multi-repo routing: `auto`, `maintainer`, `contributor`, `explicit` |
