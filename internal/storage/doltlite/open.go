@@ -65,6 +65,9 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 
 	if branch = strings.TrimSpace(branch); branch != "" {
 		if _, err := db.ExecContext(ctx, "SELECT dolt_checkout(?)", branch); err != nil {
+			if branch == "main" && isMissingDoltFunction(err) {
+				return db, cleanup, nil
+			}
 			closeErr := cleanup()
 			if closeErr != nil {
 				return nil, nil, fmt.Errorf("%w; close: %v", err, closeErr)
@@ -74,6 +77,10 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 	}
 
 	return db, cleanup, nil
+}
+
+func isMissingDoltFunction(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such function:")
 }
 
 func newUUID() (string, error) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -20,6 +21,38 @@ func (s *DoltliteStore) ClaimIssue(ctx context.Context, id string, actor string)
 		_, err := issueops.ClaimIssueInTxWithDialect(ctx, tx, id, actor, issueops.SQLDialectSQLite)
 		return err
 	})
+}
+
+// ClaimReadyIssue atomically claims the first ready issue matching filter.
+func (s *DoltliteStore) ClaimReadyIssue(ctx context.Context, filter types.WorkFilter, actor string) (*types.Issue, error) {
+	var claimed *types.Issue
+	err := s.withConn(ctx, true, func(tx *sql.Tx) error {
+		claimFilter := filter
+		claimFilter.Status = types.StatusOpen
+		claimFilter.Unassigned = true
+		claimFilter.Assignee = nil
+		claimFilter.Limit = 0
+
+		readyIssues, err := issueops.GetReadyWorkInTxWithDialect(ctx, tx, claimFilter, computeBlockedIDsWrapper, issueops.SQLDialectSQLite)
+		if err != nil {
+			return err
+		}
+		for _, issue := range readyIssues {
+			if _, err := issueops.ClaimIssueInTxWithDialect(ctx, tx, issue.ID, actor, issueops.SQLDialectSQLite); err != nil {
+				if errors.Is(err, storage.ErrAlreadyClaimed) || errors.Is(err, storage.ErrNotClaimable) {
+					continue
+				}
+				return err
+			}
+			claimed, err = issueops.GetIssueInTx(ctx, tx, issue.ID)
+			if err != nil {
+				return fmt.Errorf("get claimed issue: %w", err)
+			}
+			return nil
+		}
+		return nil
+	})
+	return claimed, err
 }
 
 // UpdateIssue updates fields on an issue.

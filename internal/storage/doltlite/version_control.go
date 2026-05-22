@@ -52,6 +52,9 @@ func commitAllNative(ctx context.Context, db versioncontrolops.DBConn, message s
 		message = "doltlite: snapshot"
 	}
 	_, err := db.ExecContext(ctx, "SELECT dolt_commit('-A', '-m', ?, '--author', ?)", message, commitAuthor)
+	if isMissingDoltFunction(err) {
+		return nil
+	}
 	if err != nil && !issueops.IsNothingToCommitError(err) {
 		return fmt.Errorf("doltlite commit: %w", err)
 	}

@@ -835,12 +835,6 @@ func (s *DoltliteStore) FindWispDependentsRecursive(ctx context.Context, ids []s
 	return result, err
 }
 
-func (s *DoltliteStore) RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	return s.withConn(ctx, true, func(tx *sql.Tx) error {
-		return issueops.RenameDependencyPrefixInTx(ctx, tx, oldPrefix, newPrefix)
-	})
-}
-
 // ---------------------------------------------------------------------------
 // storage.AnnotationQueryStore
 // ---------------------------------------------------------------------------
