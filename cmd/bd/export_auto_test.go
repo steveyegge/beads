@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,6 +186,74 @@ func TestShouldRunPostCommandAutoExportSkipsReadOnlyCommands(t *testing.T) {
 	}
 	if !shouldRunPostCommandAutoExport(&cobra.Command{Use: "create"}) {
 		t.Fatal("write commands should still trigger post-command auto-export")
+	}
+}
+
+func TestGuardAutoExportOverwriteAllowsViewerScopedJSONL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "issues.jsonl")
+	writeJSONLLines(t, path,
+		map[string]any{"_type": "issue", "id": "bd-1", "issue_type": "task", "title": "kept"},
+		map[string]any{"id": "bd-legacy", "issue_type": "bug", "title": "legacy issue record"},
+	)
+
+	if err := guardAutoExportOverwrite(path, map[string]bool{"agent": true}, false); err != nil {
+		t.Fatalf("guardAutoExportOverwrite: %v", err)
+	}
+}
+
+func TestGuardAutoExportOverwriteBlocksRicherJSONL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "issues.jsonl")
+	writeJSONLLines(t, path,
+		map[string]any{"_type": "issue", "id": "bd-1", "issue_type": "task", "title": "kept"},
+		map[string]any{"_type": "memory", "key": "keep-me", "value": "private context"},
+		map[string]any{"_type": "issue", "id": "bd-agent", "issue_type": "agent", "title": "infra"},
+		map[string]any{"_type": "issue", "id": "bd-template", "issue_type": "task", "is_template": true},
+		map[string]any{"_type": "issue", "id": "bd-wisp", "issue_type": "task", "ephemeral": true},
+		map[string]any{"_type": "event", "id": "bd-event"},
+	)
+
+	err := guardAutoExportOverwrite(path, map[string]bool{"agent": true}, false)
+	if err == nil {
+		t.Fatal("expected guardAutoExportOverwrite to reject richer JSONL, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"refusing to overwrite",
+		"5 record(s) outside auto-export scope",
+		"1 memories",
+		"3 infra/template/ephemeral issues",
+		"1 unknown",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("guard error %q does not contain %q", msg, want)
+		}
+	}
+}
+
+func TestGuardAutoExportOverwriteAllowsMemoriesWhenIncluded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "issues.jsonl")
+	writeJSONLLines(t, path,
+		map[string]any{"_type": "memory", "key": "keep-me", "value": "private context"},
+	)
+
+	if err := guardAutoExportOverwrite(path, nil, true); err != nil {
+		t.Fatalf("guardAutoExportOverwrite with memories included: %v", err)
+	}
+}
+
+func writeJSONLLines(t *testing.T, path string, records ...map[string]any) {
+	t.Helper()
+	var b strings.Builder
+	for _, rec := range records {
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
