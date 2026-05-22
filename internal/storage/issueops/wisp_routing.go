@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -21,6 +22,25 @@ func IsActiveWispInTx(ctx context.Context, tx *sql.Tx, id string) bool {
 	return err == nil
 }
 
+// wispsTableEmptyOrMissingInTx returns true when the wisps table either does
+// not exist or contains zero rows. Used by the wisp-partition helpers below
+// to short-circuit the per-batch IN-list probes on projects that never use
+// wisps — one row probe replaces N batched lookups.
+func wispsTableEmptyOrMissingInTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var probe int
+	err := tx.QueryRowContext(ctx, "SELECT 1 FROM wisps LIMIT 1").Scan(&probe)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return true, nil
+	case isTableNotExistError(err):
+		return true, nil
+	default:
+		return false, err
+	}
+}
+
 // WispIDSetInTx returns the subset of ids that are currently-active wisps
 // within the tx. The set is consistent for the tx's lifetime (Dolt MVCC).
 // Intended for hot-path partitioning where a batch of IDs must be split
@@ -35,6 +55,11 @@ func IsActiveWispInTx(ctx context.Context, tx *sql.Tx, id string) bool {
 func WispIDSetInTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]struct{}, error) {
 	set := make(map[string]struct{})
 	if len(ids) == 0 {
+		return set, nil
+	}
+	if empty, err := wispsTableEmptyOrMissingInTx(ctx, tx); err != nil {
+		return nil, fmt.Errorf("wisp id set: probe: %w", err)
+	} else if empty {
 		return set, nil
 	}
 	for start := 0; start < len(ids); start += queryBatchSize {
@@ -94,6 +119,12 @@ func partitionByWispSet(ids []string, wispSet map[string]struct{}) (wispIDs, per
 func PartitionWispIDsInTx(ctx context.Context, tx *sql.Tx, ids []string) (wispIDs, permIDs []string, err error) {
 	if len(ids) == 0 {
 		return nil, nil, nil
+	}
+
+	if empty, probeErr := wispsTableEmptyOrMissingInTx(ctx, tx); probeErr != nil {
+		return nil, nil, fmt.Errorf("partition wisp ids: probe: %w", probeErr)
+	} else if empty {
+		return nil, append([]string(nil), ids...), nil
 	}
 
 	wispSet := make(map[string]struct{}, len(ids))

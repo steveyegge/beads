@@ -16,11 +16,12 @@ type FilterTables struct {
 	Main         string // "issues" or "wisps"
 	Labels       string // "labels" or "wisp_labels"
 	Dependencies string // "dependencies" or "wisp_dependencies"
+	Comments     string // "comments" or "wisp_comments"
 }
 
 var (
-	IssuesFilterTables = FilterTables{Main: "issues", Labels: "labels", Dependencies: "dependencies"}
-	WispsFilterTables  = FilterTables{Main: "wisps", Labels: "wisp_labels", Dependencies: "wisp_dependencies"}
+	IssuesFilterTables = FilterTables{Main: "issues", Labels: "labels", Dependencies: "dependencies", Comments: "comments"}
+	WispsFilterTables  = FilterTables{Main: "wisps", Labels: "wisp_labels", Dependencies: "wisp_dependencies", Comments: "wisp_comments"}
 )
 
 // BuildIssueFilterClauses builds WHERE clause fragments and args from a query

@@ -548,6 +548,9 @@ func (s *configStore) ReopenIssue(_ context.Context, _, _, _ string) error     {
 func (s *configStore) UpdateIssueType(_ context.Context, _, _, _ string) error { return nil }
 func (s *configStore) CloseIssue(_ context.Context, _, _, _, _ string) error   { return nil }
 func (s *configStore) DeleteIssue(_ context.Context, _ string) error           { return nil }
+func (s *configStore) SearchIssuesWithCounts(_ context.Context, _ string, _ types.IssueFilter) ([]*types.IssueWithCounts, error) {
+	return nil, nil
+}
 func (s *configStore) SearchIssues(_ context.Context, _ string, _ types.IssueFilter) ([]*types.Issue, error) {
 	return nil, nil
 }
@@ -579,6 +582,9 @@ func (s *configStore) GetIssuesByLabel(_ context.Context, _ string) ([]*types.Is
 	return nil, nil
 }
 func (s *configStore) GetReadyWork(_ context.Context, _ types.WorkFilter) ([]*types.Issue, error) {
+	return nil, nil
+}
+func (s *configStore) GetReadyWorkWithCounts(_ context.Context, _ types.WorkFilter) ([]*types.IssueWithCounts, error) {
 	return nil, nil
 }
 func (s *configStore) GetBlockedIssues(_ context.Context, _ types.WorkFilter) ([]*types.BlockedIssue, error) {

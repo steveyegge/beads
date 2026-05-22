@@ -191,7 +191,6 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 	}); err != nil {
 		return err
 	}
-	s.invalidateBlockedIDsCache()
 	return nil
 }
 
@@ -275,11 +274,21 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			return fmt.Errorf("failed to delete issue from issues: %w", err)
 		}
 
+		// id now lives in `wisps` and any inbound refs have been retargeted
+		// to depends_on_wisp_id. Refresh is_blocked for id plus its
+		// dependers and parent-child descendants.
+		affectedIssues, affectedWisps, aerr := issueops.AffectedByStatusChangeForWispInTx(ctx, tx, id)
+		if aerr != nil {
+			return fmt.Errorf("affected by demote for %s: %w", id, aerr)
+		}
+		if err := issueops.RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+			return fmt.Errorf("recompute is_blocked after demote for %s: %w", id, err)
+		}
+
 		return s.doltAddAndCommitInTx(ctx, tx, permanentIssueAuxTables, fmt.Sprintf("bd: demote %s to wisp", id))
 	}); err != nil {
 		return err
 	}
-	s.invalidateBlockedIDsCache()
 	return nil
 }
 

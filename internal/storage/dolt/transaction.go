@@ -329,7 +329,6 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
-	// Type filtering — use subquery to prevent Dolt mergeJoinIter panic
 	if len(filter.ExcludeTypes) > 0 {
 		placeholders := make([]string, len(filter.ExcludeTypes))
 		for i, tp := range filter.ExcludeTypes {
@@ -354,7 +353,6 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 		args = append(args, *filter.PriorityMax)
 	}
 
-	// Issue type — use subquery to prevent Dolt mergeJoinIter panic
 	if filter.IssueType != nil {
 		//nolint:gosec // G201: table is hardcoded to "issues" or "wisps"
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT id FROM %s WHERE issue_type = ?)", table))
@@ -598,91 +596,60 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	return issues, nil
 }
 
-// UpdateIssue updates an issue within the transaction
+// UpdateIssue updates an issue within the transaction. Delegates to the
+// issueops layer so is_blocked is maintained transactionally.
 func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	table := "issues"
 	if t.isActiveWisp(ctx, id) {
 		table = "wisps"
 	}
 
-	setClauses := []string{"updated_at = ?"}
-	args := []interface{}{time.Now().UTC()}
-
-	for key, value := range updates {
-		if !isAllowedUpdateField(key) {
-			return fmt.Errorf("invalid field for update: %s", key)
+	// Validate metadata up front (kept inline since callers expect this
+	// pre-validation error path before any UPDATE runs).
+	if rawMeta, ok := updates["metadata"]; ok {
+		metadataStr, err := storage.NormalizeMetadataValue(rawMeta)
+		if err != nil {
+			return fmt.Errorf("invalid metadata: %w", err)
 		}
-		columnName := key
-		if key == "wisp" {
-			columnName = "ephemeral"
-		}
-		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
-
-		// Handle JSON serialization for array fields stored as TEXT
-		if key == "waiters" {
-			waitersJSON, err := json.Marshal(value)
-			if err != nil {
-				return fmt.Errorf("invalid waiters: %w", err)
-			}
-			args = append(args, string(waitersJSON))
-		} else if key == "metadata" {
-			// GH#1417: Normalize metadata to string, accepting string/[]byte/json.RawMessage
-			metadataStr, err := storage.NormalizeMetadataValue(value)
-			if err != nil {
-				return fmt.Errorf("invalid metadata: %w", err)
-			}
-			// Validate against schema if configured (GH#1416 Phase 2)
-			if err := validateMetadataIfConfigured(json.RawMessage(metadataStr)); err != nil {
-				return err
-			}
-			args = append(args, metadataStr)
-		} else {
-			args = append(args, value)
+		if err := validateMetadataIfConfigured(json.RawMessage(metadataStr)); err != nil {
+			return err
 		}
 	}
 
-	args = append(args, id)
-	//nolint:gosec // G201: table is hardcoded, setClauses contains only column names
-	querySQL := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", table, strings.Join(setClauses, ", "))
-	_, err := t.txFor(table).ExecContext(ctx, querySQL, args...)
-	if err == nil {
-		t.dirty.MarkDirty(table)
+	if _, err := issueops.UpdateIssueWithoutEventInTx(ctx, t.txFor(table), id, updates, actor); err != nil {
+		return wrapExecError("update issue in tx", err)
 	}
-	return wrapExecError("update issue in tx", err)
+	t.dirty.MarkDirty(table)
+	return nil
 }
 
-// CloseIssue closes an issue within the transaction
+// CloseIssue closes an issue within the transaction. Delegates to the
+// issueops layer (event-free variant) so is_blocked is maintained.
 func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	table := "issues"
 	if t.isActiveWisp(ctx, id) {
 		table = "wisps"
 	}
 
-	now := time.Now().UTC()
-	//nolint:gosec // G201: table is hardcoded
-	_, err := t.txFor(table).ExecContext(ctx, fmt.Sprintf(`
-		UPDATE %s SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
-		WHERE id = ?
-	`, table), types.StatusClosed, now, now, reason, session, id)
-	if err == nil {
-		t.dirty.MarkDirty(table)
+	if _, err := issueops.CloseIssueWithoutEventInTx(ctx, t.txFor(table), id, reason, actor, session); err != nil {
+		return wrapExecError("close issue in tx", err)
 	}
-	return wrapExecError("close issue in tx", err)
+	t.dirty.MarkDirty(table)
+	return nil
 }
 
-// DeleteIssue deletes an issue within the transaction
+// DeleteIssue deletes an issue within the transaction. Delegates to the
+// issueops layer so is_blocked is maintained for survivors of the cascade.
 func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
 	table := "issues"
 	if t.isActiveWisp(ctx, id) {
 		table = "wisps"
 	}
-
-	//nolint:gosec // G201: table is hardcoded
-	_, err := t.txFor(table).ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ?", table), id)
-	if err == nil {
-		t.dirty.MarkDirty(table)
+	if err := issueops.DeleteIssueInTx(ctx, t.txFor(table), id); err != nil {
+		return wrapExecError("delete issue in tx", err)
 	}
-	return wrapExecError("delete issue in tx", err)
+	t.dirty.MarkDirty(table)
+	return nil
 }
 
 // AddDependency adds a dependency within the transaction.
@@ -724,7 +691,6 @@ func (t *doltTransaction) AddDependencyWithOptions(ctx context.Context, dep *typ
 		return err
 	}
 	t.dirty.MarkDirty(table)
-	t.store.invalidateBlockedIDsCache()
 	return nil
 }
 
@@ -764,21 +730,18 @@ func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID stri
 	return deps, rows.Err()
 }
 
-// RemoveDependency removes a dependency within the transaction
+// RemoveDependency removes a dependency within the transaction. Delegates
+// to the issueops layer so is_blocked is maintained.
 func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	table := "dependencies"
 	if t.isActiveWisp(ctx, issueID) {
 		table = "wisp_dependencies"
 	}
-
-	//nolint:gosec // G201: table is hardcoded
-	_, err := t.txFor(table).ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s WHERE issue_id = ? AND %s = ?
-	`, table, issueops.DepTargetExpr), issueID, dependsOnID)
-	if err == nil {
-		t.dirty.MarkDirty(table)
+	if err := issueops.RemoveDependencyInTx(ctx, t.txFor(table), issueID, dependsOnID); err != nil {
+		return wrapExecError("remove dependency in tx", err)
 	}
-	return wrapExecError("remove dependency in tx", err)
+	t.dirty.MarkDirty(table)
+	return nil
 }
 
 // AddLabel adds a label within the transaction

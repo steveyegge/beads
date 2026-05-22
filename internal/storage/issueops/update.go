@@ -234,6 +234,38 @@ func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[str
 		}
 	}
 
+	// Refresh is_blocked if status flipped between active and inactive.
+	// "Active" for blocking purposes is status NOT IN ('closed','pinned');
+	// other status transitions (e.g., open -> in_progress) do not change
+	// blocker activity, and pure pinned-flag flips don't either, so we only
+	// fan out work on the active/inactive boundary.
+	if rawStatus, hasStatus := updates["status"]; hasStatus {
+		var newStatus string
+		switch v := rawStatus.(type) {
+		case string:
+			newStatus = v
+		case types.Status:
+			newStatus = string(v)
+		}
+		oldActive := oldIssue.Status != types.StatusClosed && oldIssue.Status != types.StatusPinned
+		newActive := newStatus != string(types.StatusClosed) && newStatus != string(types.StatusPinned)
+		if oldActive != newActive {
+			var affectedIssues, affectedWisps []string
+			var aerr error
+			if isWisp {
+				affectedIssues, affectedWisps, aerr = AffectedByStatusChangeForWispInTx(ctx, tx, id)
+			} else {
+				affectedIssues, affectedWisps, aerr = AffectedByStatusChangeInTx(ctx, tx, id)
+			}
+			if aerr != nil {
+				return nil, fmt.Errorf("affected by status change for %s: %w", id, aerr)
+			}
+			if err := RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+				return nil, fmt.Errorf("recompute is_blocked after status change for %s: %w", id, err)
+			}
+		}
+	}
+
 	return &UpdateResult{OldIssue: oldIssue, IsWisp: isWisp}, nil
 }
 

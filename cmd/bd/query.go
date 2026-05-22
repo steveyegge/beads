@@ -129,36 +129,57 @@ Examples:
 			FatalError("no storage available")
 		}
 
-		// If we need predicate filtering, we may need to fetch more results
-		// to ensure we get enough after filtering
+		// If predicate filtering is needed (OR queries that can't be
+		// expressed in pure SQL), over-fetch so we still have enough rows
+		// after the Go-side predicate culls non-matches.
 		searchFilter := result.Filter
 		if result.RequiresPredicate && limit > 0 {
-			// Fetch more to account for predicate filtering
 			searchFilter.Limit = limit * 3
 			if searchFilter.Limit < 100 {
 				searchFilter.Limit = 100
 			}
 		}
 
+		// JSON branch: single mega-query returns IssueWithCounts directly,
+		// bypassing the legacy SearchIssues + GetDependencyCounts +
+		// GetCommentCounts sequence (Stage 2).
+		if jsonOutput {
+			iwc, err := store.SearchIssuesWithCounts(ctx, "", searchFilter)
+			if err != nil {
+				FatalError("%v", err)
+			}
+			if result.RequiresPredicate && result.Predicate != nil {
+				filtered := make([]*types.IssueWithCounts, 0, len(iwc))
+				for _, item := range iwc {
+					if item == nil || item.Issue == nil {
+						continue
+					}
+					if result.Predicate(item.Issue) {
+						filtered = append(filtered, item)
+					}
+				}
+				iwc = filtered
+				if limit > 0 && len(iwc) > limit {
+					iwc = iwc[:limit]
+				}
+			}
+			sortIssuesWithCounts(iwc, sortBy, reverse)
+			if iwc == nil {
+				iwc = []*types.IssueWithCounts{}
+			}
+			outputJSON(iwc)
+			return
+		}
+
+		// Non-JSON path: legacy SearchIssues + Go-side sort + display.
+		// Labels are hydrated on each *types.Issue by SearchIssues, so
+		// outputQueryResults can read issue.Labels directly.
 		issues, err := store.SearchIssues(ctx, "", searchFilter)
 		if err != nil {
 			FatalError("%v", err)
 		}
 
-		// Apply predicate filter if needed (for OR queries)
 		if result.RequiresPredicate && result.Predicate != nil {
-			// For predicate filtering, we need labels populated on issues
-			if store != nil {
-				issueIDs := make([]string, len(issues))
-				for i, issue := range issues {
-					issueIDs[i] = issue.ID
-				}
-				labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
-				for _, issue := range issues {
-					issue.Labels = labelsMap[issue.ID]
-				}
-			}
-
 			filtered := make([]*types.Issue, 0, len(issues))
 			for _, issue := range issues {
 				if result.Predicate(issue) {
@@ -166,63 +187,12 @@ Examples:
 				}
 			}
 			issues = filtered
-
-			// Apply limit after predicate filtering
 			if limit > 0 && len(issues) > limit {
 				issues = issues[:limit]
 			}
 		}
 
-		// Apply sorting
 		sortIssues(issues, sortBy, reverse)
-
-		// Output results
-		if jsonOutput {
-			// Get labels and dependency counts
-			if store != nil {
-				issueIDs := make([]string, len(issues))
-				for i, issue := range issues {
-					issueIDs[i] = issue.ID
-				}
-				labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)   // Best effort: display gracefully degrades with empty data
-				depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)  // Best effort: display gracefully degrades with empty data
-				commentCounts, _ := store.GetCommentCounts(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
-
-				for _, issue := range issues {
-					issue.Labels = labelsMap[issue.ID]
-				}
-
-				issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
-				for i, issue := range issues {
-					counts := depCounts[issue.ID]
-					if counts == nil {
-						counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
-					}
-					issuesWithCounts[i] = &types.IssueWithCounts{
-						Issue:           issue,
-						DependencyCount: counts.DependencyCount,
-						DependentCount:  counts.DependentCount,
-						CommentCount:    commentCounts[issue.ID],
-					}
-				}
-				outputJSON(issuesWithCounts)
-			} else {
-				outputJSON(issues)
-			}
-			return
-		}
-
-		// Load labels for display
-		if store != nil && !result.RequiresPredicate {
-			issueIDs := make([]string, len(issues))
-			for i, issue := range issues {
-				issueIDs[i] = issue.ID
-			}
-			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs) // Best effort: display gracefully degrades with empty data
-			for _, issue := range issues {
-				issue.Labels = labelsMap[issue.ID]
-			}
-		}
 
 		outputQueryResults(issues, queryStr, longFormat)
 	},

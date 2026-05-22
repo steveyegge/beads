@@ -193,6 +193,17 @@ func (s *InstrumentedStorage) SearchIssues(ctx context.Context, query string, fi
 	return issues, err
 }
 
+func (s *InstrumentedStorage) SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
+	attrs := []attribute.KeyValue{attribute.String("bd.query", query)}
+	ctx, span, t := s.op(ctx, "SearchIssuesWithCounts", attrs...)
+	v, err := s.inner.SearchIssuesWithCounts(ctx, query, filter)
+	if err == nil {
+		span.SetAttributes(attribute.Int("bd.result.count", len(v)))
+	}
+	s.done(ctx, span, t, err, attrs...)
+	return v, err
+}
+
 // ── Dependencies ────────────────────────────────────────────────────────────
 
 func (s *InstrumentedStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
@@ -306,6 +317,16 @@ func (s *InstrumentedStorage) GetIssuesByLabel(ctx context.Context, label string
 func (s *InstrumentedStorage) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
 	ctx, span, t := s.op(ctx, "GetReadyWork")
 	v, err := s.inner.GetReadyWork(ctx, filter)
+	if err == nil {
+		span.SetAttributes(attribute.Int("bd.result.count", len(v)))
+	}
+	s.done(ctx, span, t, err)
+	return v, err
+}
+
+func (s *InstrumentedStorage) GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error) {
+	ctx, span, t := s.op(ctx, "GetReadyWorkWithCounts")
+	v, err := s.inner.GetReadyWorkWithCounts(ctx, filter)
 	if err == nil {
 		span.SetAttributes(attribute.Int("bd.result.count", len(v)))
 	}

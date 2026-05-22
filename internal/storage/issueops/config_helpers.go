@@ -47,6 +47,154 @@ func ParseCommaSeparatedList(value string) []string {
 	return result
 }
 
+// ResolveCustomConfigInTx reads custom statuses and custom types from their
+// normalized tables in a single transaction, falling back to a single
+// batched config-table read when either table is empty or missing.
+// Replaces two separate Resolve*-style call sequences (each of which would
+// issue its own per-key SELECT value FROM config WHERE key=? fallback) with
+// at most 3 queries: two table scans plus one batched config lookup keyed
+// on ('status.custom', 'types.custom').
+//
+// Read-path callers (DoltStore / EmbeddedDoltStore cache loaders) should
+// route through this helper so the two caches are populated by one tx.
+// Write-path callers (create/update) keep using the per-key resolvers when
+// they only need one side.
+func ResolveCustomConfigInTx(ctx context.Context, tx *sql.Tx) (statuses []types.CustomStatus, customTypes []string, err error) {
+	statuses, statusesFromTable, err := resolveCustomStatusesFromTableInTx(ctx, tx)
+	if err != nil {
+		return nil, nil, err
+	}
+	customTypes, typesFromTable, err := resolveCustomTypesFromTableInTx(ctx, tx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if statusesFromTable && typesFromTable {
+		return statuses, customTypes, nil
+	}
+
+	// One batched config read covers both fallback keys.
+	cfg, err := getConfigKeysInTx(ctx, tx, "status.custom", "types.custom")
+	if err != nil {
+		// On config-table failure, give each side a chance to fall back to
+		// YAML before giving up entirely.
+		if !statusesFromTable {
+			if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
+				statuses = ParseStatusFallback(yamlStatuses)
+			}
+		}
+		if !typesFromTable {
+			if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
+				customTypes = yamlTypes
+			}
+		}
+		return statuses, customTypes, nil
+	}
+
+	if !statusesFromTable {
+		if v := cfg["status.custom"]; v != "" {
+			if parsed, parseErr := types.ParseCustomStatusConfig(v); parseErr == nil {
+				statuses = parsed
+			}
+			// parse error: leave statuses nil (degraded mode, same as
+			// ResolveCustomStatusesDetailedInTx behavior).
+		} else if yamlStatuses := config.GetCustomStatusesFromYAML(); len(yamlStatuses) > 0 {
+			statuses = ParseStatusFallback(yamlStatuses)
+		}
+	}
+	if !typesFromTable {
+		if v := cfg["types.custom"]; v != "" {
+			var jsonTypes []string
+			if jsonErr := json.Unmarshal([]byte(v), &jsonTypes); jsonErr == nil {
+				customTypes = jsonTypes
+			} else {
+				customTypes = ParseCommaSeparatedList(v)
+			}
+		} else if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
+			customTypes = yamlTypes
+		}
+	}
+	return statuses, customTypes, nil
+}
+
+// resolveCustomStatusesFromTableInTx reads the normalized custom_statuses
+// table. The second return value reports whether the table yielded rows
+// (true = trust this result, false = caller must apply fallbacks).
+func resolveCustomStatusesFromTableInTx(ctx context.Context, tx *sql.Tx) ([]types.CustomStatus, bool, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT name, category FROM custom_statuses ORDER BY name")
+	if err != nil {
+		// Table missing on pre-migration schemas: caller falls back.
+		return nil, false, nil
+	}
+	defer rows.Close()
+	var result []types.CustomStatus
+	for rows.Next() {
+		var name, category string
+		if err := rows.Scan(&name, &category); err != nil {
+			continue
+		}
+		result = append(result, types.CustomStatus{
+			Name:     name,
+			Category: types.StatusCategory(category),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("reading custom_statuses: %w", err)
+	}
+	return result, len(result) > 0, nil
+}
+
+// resolveCustomTypesFromTableInTx reads the normalized custom_types table.
+// Same shape as resolveCustomStatusesFromTableInTx.
+func resolveCustomTypesFromTableInTx(ctx context.Context, tx *sql.Tx) ([]string, bool, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT name FROM custom_types ORDER BY name")
+	if err != nil {
+		return nil, false, nil
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		result = append(result, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("reading custom_types: %w", err)
+	}
+	return result, len(result) > 0, nil
+}
+
+// getConfigKeysInTx fetches multiple config keys in one SELECT … WHERE key IN
+// (…) statement. Missing keys are omitted from the result map.
+func getConfigKeysInTx(ctx context.Context, tx *sql.Tx, keys ...string) (map[string]string, error) {
+	if len(keys) == 0 {
+		return map[string]string{}, nil
+	}
+	placeholders := make([]string, len(keys))
+	args := make([]interface{}, len(keys))
+	for i, k := range keys {
+		placeholders[i] = "?"
+		args[i] = k
+	}
+	//nolint:gosec // G201: only ? placeholders are formatted in.
+	q := fmt.Sprintf("SELECT `key`, value FROM config WHERE `key` IN (%s)", strings.Join(placeholders, ","))
+	rows, err := tx.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get config keys: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]string, len(keys))
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, fmt.Errorf("get config keys: scan: %w", err)
+		}
+		result[k] = v
+	}
+	return result, rows.Err()
+}
+
 // ResolveCustomStatusesDetailedInTx reads custom statuses from the custom_statuses
 // table, falling back to the config string and then config.yaml if the table
 // doesn't exist (pre-migration databases).

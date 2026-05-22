@@ -192,6 +192,11 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 		return 0, nil
 	}
 
+	affectedIssues, affectedWisps, aerr := AffectedByDeletionInTx(ctx, tx, issueIDs, nil)
+	if aerr != nil {
+		return 0, fmt.Errorf("affected by source-repo delete: %w", aerr)
+	}
+
 	result, err := tx.ExecContext(ctx, `DELETE FROM issues WHERE source_repo = ?`, sourceRepo)
 	if err != nil {
 		return 0, fmt.Errorf("delete issues: %w", err)
@@ -201,6 +206,11 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 	if err != nil {
 		return 0, fmt.Errorf("rows affected: %w", err)
 	}
+
+	if err := RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+		return int(rowsAffected), fmt.Errorf("recompute is_blocked after source-repo delete: %w", err)
+	}
+
 	return int(rowsAffected), nil
 }
 

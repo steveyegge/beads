@@ -308,6 +308,60 @@ func sortIssues(issues []*types.Issue, sortBy string, reverse bool) {
 	})
 }
 
+// sortIssuesWithCounts sorts an IssueWithCounts slice by the same field set
+// as sortIssues. Mirrors that function exactly for the embedded *Issue.
+func sortIssuesWithCounts(items []*types.IssueWithCounts, sortBy string, reverse bool) {
+	if sortBy == "" {
+		return
+	}
+	slices.SortFunc(items, func(a, b *types.IssueWithCounts) int {
+		if a == nil || a.Issue == nil {
+			if b == nil || b.Issue == nil {
+				return 0
+			}
+			return 1
+		}
+		if b == nil || b.Issue == nil {
+			return -1
+		}
+		var result int
+		switch sortBy {
+		case "priority":
+			result = cmp.Compare(a.Priority, b.Priority)
+		case "created":
+			result = b.CreatedAt.Compare(a.CreatedAt)
+		case "updated":
+			result = b.UpdatedAt.Compare(a.UpdatedAt)
+		case "closed":
+			if a.ClosedAt == nil && b.ClosedAt == nil {
+				result = 0
+			} else if a.ClosedAt == nil {
+				result = 1
+			} else if b.ClosedAt == nil {
+				result = -1
+			} else {
+				result = b.ClosedAt.Compare(*a.ClosedAt)
+			}
+		case "status":
+			result = cmp.Compare(a.Status, b.Status)
+		case "id":
+			result = utils.NaturalCompareIDs(a.ID, b.ID)
+		case "title":
+			result = cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title))
+		case "type":
+			result = cmp.Compare(a.IssueType, b.IssueType)
+		case "assignee":
+			result = cmp.Compare(a.Assignee, b.Assignee)
+		default:
+			result = 0
+		}
+		if reverse {
+			return -result
+		}
+		return result
+	})
+}
+
 // knownListFlags maps bare words that users might pass as positional args
 // but are actually flag names. Each maps to a hint for the error message.
 var knownListFlags = map[string]string{
@@ -889,6 +943,42 @@ var listCmd = &cobra.Command{
 		}
 
 		// Direct mode
+
+		// Watch mode is handled entirely by watchIssues which manages its
+		// own fetch loop; skip the up-front SearchIssues to avoid a wasted
+		// call. Stays the highest-precedence path (GH#654).
+		if watchMode {
+			watchIssues(ctx, activeStore, filter, readyFlag, parentID, sortBy, reverse, effectiveLimit)
+			return
+		}
+
+		// JSON branch: single mega-query path. Bypasses the legacy
+		// SearchIssues + per-call hydration and returns IssueWithCounts
+		// directly.
+		if jsonOutput {
+			var iwc []*types.IssueWithCounts
+			var err error
+			if readyFlag {
+				iwc, err = activeStore.GetReadyWorkWithCounts(ctx, readyWorkFilterFromIssueFilter(filter))
+			} else {
+				iwc, err = activeStore.SearchIssuesWithCounts(ctx, "", filter)
+			}
+			if err != nil {
+				FatalError("%v", err)
+			}
+			sortIssuesWithCounts(iwc, sortBy, reverse)
+			truncated := effectiveLimit > 0 && len(iwc) > effectiveLimit
+			if truncated {
+				iwc = iwc[:effectiveLimit]
+			}
+			if iwc == nil {
+				iwc = []*types.IssueWithCounts{}
+			}
+			outputJSON(iwc)
+			printTruncationHint(truncated, effectiveLimit)
+			return
+		}
+
 		var issues []*types.Issue
 		if readyFlag {
 			// Use blocker-aware GetReadyWork semantics (GH#3478).
@@ -916,12 +1006,6 @@ var listCmd = &cobra.Command{
 		truncated := effectiveLimit > 0 && len(issues) > effectiveLimit
 		if truncated {
 			issues = issues[:effectiveLimit]
-		}
-
-		// Handle watch mode (GH#654) - must be before other output modes
-		if watchMode {
-			watchIssues(ctx, activeStore, filter, readyFlag, parentID, sortBy, reverse, effectiveLimit)
-			return
 		}
 
 		// Handle pretty format (GH#654)
@@ -964,62 +1048,20 @@ var listCmd = &cobra.Command{
 			return
 		}
 
-		if jsonOutput {
-			// Get labels and dependency counts in bulk (single query instead of N queries)
-			issueIDs := make([]string, len(issues))
-			for i, issue := range issues {
-				issueIDs[i] = issue.ID
-			}
-			// Best effort: display gracefully degrades with empty data
-			labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
-			depCounts, _ := activeStore.GetDependencyCounts(ctx, issueIDs)
-			allDeps, _ := activeStore.GetDependencyRecordsForIssues(ctx, issueIDs)
-			commentCounts, _ := activeStore.GetCommentCounts(ctx, issueIDs)
-
-			// Populate labels and dependencies for JSON output
-			for _, issue := range issues {
-				issue.Labels = labelsMap[issue.ID]
-				issue.Dependencies = allDeps[issue.ID]
-			}
-
-			// Build response with counts + computed parent (bd-ym8c)
-			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
-			for i, issue := range issues {
-				counts := depCounts[issue.ID]
-				if counts == nil {
-					counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
-				}
-				// Compute parent from dependency records
-				var parent *string
-				for _, dep := range allDeps[issue.ID] {
-					if dep.Type == types.DepParentChild {
-						parent = &dep.DependsOnID
-						break
-					}
-				}
-				issuesWithCounts[i] = &types.IssueWithCounts{
-					Issue:           issue,
-					DependencyCount: counts.DependencyCount,
-					DependentCount:  counts.DependentCount,
-					CommentCount:    commentCounts[issue.ID],
-					Parent:          parent,
-				}
-			}
-			outputJSON(issuesWithCounts)
-			printTruncationHint(truncated, effectiveLimit)
-			return
-		}
-
 		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
 
-		// Load labels in bulk for display
+		// Labels were already hydrated by SearchIssues / GetReadyWork; reuse
+		// them via a map keyed by ID so the existing format helpers do not
+		// need to change shape.
 		issueIDs := make([]string, len(issues))
+		labelsMap := make(map[string][]string, len(issues))
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
+			if len(issue.Labels) > 0 {
+				labelsMap[issue.ID] = issue.Labels
+			}
 		}
-		// Best effort: display gracefully degrades with empty data
-		labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
 
 		// Load blocking info for displayed issues only (bd-7di).
 		// Previously loaded ALL dependency records which was O(total_issues) and took 2-4s.

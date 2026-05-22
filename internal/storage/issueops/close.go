@@ -17,11 +17,29 @@ type CloseResult struct {
 // CloseIssueInTx closes an issue within a transaction, setting status to closed
 // and recording the close event. Routes to the correct table (issues/wisps)
 // automatically. The caller is responsible for Dolt versioning if needed.
-//
-//nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func CloseIssueInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, session string) (*CloseResult, error) {
+	return closeIssueInTx(ctx, tx, id, reason, actor, session, true)
+}
+
+func CloseIssueWithoutEventInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, session string) (*CloseResult, error) {
+	return closeIssueInTx(ctx, tx, id, reason, actor, session, false)
+}
+
+//nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
+func closeIssueInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, session string, recordEvent bool) (*CloseResult, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, id)
 	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
+
+	var affectedIssues, affectedWisps []string
+	var aerr error
+	if isWisp {
+		affectedIssues, affectedWisps, aerr = AffectedByStatusChangeForWispInTx(ctx, tx, id)
+	} else {
+		affectedIssues, affectedWisps, aerr = AffectedByStatusChangeInTx(ctx, tx, id)
+	}
+	if aerr != nil {
+		return nil, fmt.Errorf("affected by close for %s: %w", id, aerr)
+	}
 
 	now := time.Now().UTC()
 
@@ -41,8 +59,14 @@ func CloseIssueInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, s
 		return nil, fmt.Errorf("issue not found: %s", id)
 	}
 
-	if err := RecordEventInTable(ctx, tx, eventTable, id, types.EventClosed, actor, reason); err != nil {
-		return nil, fmt.Errorf("failed to record event: %w", err)
+	if recordEvent {
+		if err := RecordEventInTable(ctx, tx, eventTable, id, types.EventClosed, actor, reason); err != nil {
+			return nil, fmt.Errorf("failed to record event: %w", err)
+		}
+	}
+
+	if err := RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+		return nil, fmt.Errorf("recompute is_blocked after close for %s: %w", id, err)
 	}
 
 	return &CloseResult{IsWisp: isWisp}, nil

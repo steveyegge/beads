@@ -126,49 +126,6 @@ func TestDemoteToWispRollsBackWhenAuxiliaryCopyFails(t *testing.T) {
 	}
 }
 
-func TestDemoteToWispInvalidatesBlockedCache(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx, cancel := testContext(t)
-	defer cancel()
-
-	createPerm(t, ctx, store, "mixed-demote-cache-blocker")
-	createPerm(t, ctx, store, "mixed-demote-cache-blocked")
-	if err := store.AddDependency(ctx, &types.Dependency{
-		IssueID:     "mixed-demote-cache-blocked",
-		DependsOnID: "mixed-demote-cache-blocker",
-		Type:        types.DepBlocks,
-	}, "tester"); err != nil {
-		t.Fatalf("AddDependency before demote: %v", err)
-	}
-
-	if _, err := store.computeBlockedIDs(ctx, true); err != nil {
-		t.Fatalf("computeBlockedIDs: %v", err)
-	}
-	if !store.blockedIDsCached {
-		t.Fatal("expected blocked-ID cache to be populated before demotion")
-	}
-
-	if err := store.UpdateIssue(ctx, "mixed-demote-cache-blocker", map[string]interface{}{
-		"no_history": true,
-		"status":     string(types.StatusClosed),
-	}, "tester"); err != nil {
-		t.Fatalf("demote closed blocker: %v", err)
-	}
-	if store.blockedIDsCached {
-		t.Fatal("expected demotion to invalidate blocked-ID cache")
-	}
-
-	blocked, _, err := store.IsBlocked(ctx, "mixed-demote-cache-blocked")
-	if err != nil {
-		t.Fatalf("IsBlocked after demotion: %v", err)
-	}
-	if blocked {
-		t.Fatal("issue remained blocked after its demoted blocker was closed")
-	}
-}
-
 func TestDemoteToWispLeavesIgnoredWispTablesUnstaged(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

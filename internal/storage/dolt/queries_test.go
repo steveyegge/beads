@@ -701,6 +701,19 @@ func TestGetReadyWork_IncludeEphemeralPropagatesWispSearchError(t *testing.T) {
 	}, "tester"); err != nil {
 		t.Fatalf("create ready issue: %v", err)
 	}
+	// Insert a wisp first so the wisp-empty short-circuit in
+	// getReadyWispsInTx does not skip the search. We damage the table
+	// after the row exists so the probe still finds it.
+	if err := store.CreateIssue(ctx, &types.Issue{
+		ID:        "rw-wisp-error-wisp",
+		Title:     "Wisp control",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}, "tester"); err != nil {
+		t.Fatalf("create wisp: %v", err)
+	}
 	if _, err := store.db.ExecContext(ctx, "ALTER TABLE wisps DROP COLUMN title"); err != nil {
 		t.Fatalf("damage wisps table for regression test: %v", err)
 	}
@@ -785,92 +798,6 @@ func TestGetReadyWork_TypePriorityLimitUsesDoltSafeTypePredicate(t *testing.T) {
 	want := []string{"test-rw-type-bug-1", "test-rw-type-bug-2"}
 	if fmt.Sprint(ids) != fmt.Sprint(want) {
 		t.Fatalf("typed ready work = %v, want %v", ids, want)
-	}
-}
-
-func TestGetReadyWork_UnboundedPopulatesBlockedIDsCache(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx, cancel := testContext(t)
-	defer cancel()
-
-	blocker := &types.Issue{ID: "test-rw-cache-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	blocked := &types.Issue{ID: "test-rw-cache-blocked", Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	if err := store.CreateIssues(ctx, []*types.Issue{blocker, blocked}, "tester"); err != nil {
-		t.Fatalf("create cache issues: %v", err)
-	}
-	if err := store.AddDependency(ctx, &types.Dependency{IssueID: blocked.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "tester"); err != nil {
-		t.Fatalf("add cache dependency: %v", err)
-	}
-
-	if _, err := store.GetReadyWork(ctx, types.WorkFilter{}); err != nil {
-		t.Fatalf("first ready work: %v", err)
-	}
-	if !store.blockedIDsCached {
-		t.Fatal("expected unbounded ready work to populate blocked IDs cache")
-	}
-	firstCache := store.blockedIDsCache
-	if len(firstCache) == 0 {
-		t.Fatal("expected blocked IDs cache to contain blocked issue")
-	}
-	firstCacheEntry := &firstCache[0]
-	if _, err := store.GetReadyWork(ctx, types.WorkFilter{}); err != nil {
-		t.Fatalf("second ready work: %v", err)
-	}
-	if !store.blockedIDsCached || len(store.blockedIDsCache) == 0 {
-		t.Fatal("expected blocked IDs cache to remain populated")
-	}
-	if &store.blockedIDsCache[0] != firstCacheEntry {
-		t.Fatal("expected consecutive unbounded ready-work calls to reuse the blocked IDs cache")
-	}
-}
-
-func TestClaimReadyIssue_UnboundedPopulatesAndReusesBlockedIDsCache(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx, cancel := testContext(t)
-	defer cancel()
-
-	blocker := &types.Issue{ID: "test-claim-cache-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	blocked := &types.Issue{ID: "test-claim-cache-blocked", Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug}
-	if err := store.CreateIssues(ctx, []*types.Issue{blocker, blocked}, "tester"); err != nil {
-		t.Fatalf("create claim cache issues: %v", err)
-	}
-	if err := store.AddDependency(ctx, &types.Dependency{IssueID: blocked.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "tester"); err != nil {
-		t.Fatalf("add claim cache dependency: %v", err)
-	}
-
-	filter := types.WorkFilter{Type: string(types.TypeBug)}
-	claimed, err := store.ClaimReadyIssue(ctx, filter, "tester")
-	if err != nil {
-		t.Fatalf("first claim ready issue: %v", err)
-	}
-	if claimed != nil {
-		t.Fatalf("first claim = %s, want nil because bug is blocked", claimed.ID)
-	}
-	if !store.blockedIDsCached {
-		t.Fatal("expected claim path to populate blocked IDs cache")
-	}
-	firstCache := store.blockedIDsCache
-	if len(firstCache) == 0 {
-		t.Fatal("expected blocked IDs cache to contain blocked issue")
-	}
-	firstCacheEntry := &firstCache[0]
-
-	claimed, err = store.ClaimReadyIssue(ctx, filter, "tester")
-	if err != nil {
-		t.Fatalf("second claim ready issue: %v", err)
-	}
-	if claimed != nil {
-		t.Fatalf("second claim = %s, want nil because bug is blocked", claimed.ID)
-	}
-	if !store.blockedIDsCached || len(store.blockedIDsCache) == 0 {
-		t.Fatal("expected blocked IDs cache to remain populated")
-	}
-	if &store.blockedIDsCache[0] != firstCacheEntry {
-		t.Fatal("expected consecutive claim attempts to reuse the blocked IDs cache")
 	}
 }
 
