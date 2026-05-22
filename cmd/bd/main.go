@@ -89,6 +89,11 @@ var (
 	// Thread-safe via atomic.Bool to avoid data races in concurrent flush operations.
 	commandDidWrite atomic.Bool
 
+	// commandMayEmptyJSONLExport is set by destructive maintenance commands
+	// after they actually delete rows, allowing post-run auto-export to record
+	// an intentional empty JSONL artifact instead of treating it as ambiguous.
+	commandMayEmptyJSONLExport atomic.Bool
+
 	// commandDidExplicitDoltCommit is set when a command already created a Dolt commit
 	// explicitly (e.g., bd sync in dolt-native mode, hook flows, bd vc commit).
 	// This prevents a redundant auto-commit attempt in PersistentPostRun.
@@ -602,6 +607,7 @@ var rootCmd = &cobra.Command{
 
 		// Reset per-command write tracking (used by Dolt auto-commit).
 		commandDidWrite.Store(false)
+		commandMayEmptyJSONLExport.Store(false)
 		commandDidExplicitDoltCommit = false
 		commandDidWriteTipMetadata = false
 		commandTipIDsShown = make(map[string]struct{})
@@ -1048,7 +1054,7 @@ var rootCmd = &cobra.Command{
 		// the import command handles JSONL files itself and auto-importing
 		// first would interfere (double-import / upsert confusion).
 		if store != nil && !useReadOnly && !globalFlag && cmd.Name() != "import" {
-			maybeAutoImportJSONL(rootCtx, store, beadsDir)
+			maybeAutoImportJSONL(rootCtx, store, beadsDir, doltCfg.ServerMode)
 		}
 
 		// Validate workspace identity for write commands (GH#2438, GH#2372)
@@ -1148,7 +1154,7 @@ var rootCmd = &cobra.Command{
 			// Read-only commands must not perform post-run maintenance writes or emit
 			// sync guidance after machine-readable output.
 			if shouldRunPostCommandAutoExport(cmd) {
-				maybeAutoExport(rootCtx)
+				maybeAutoExport(rootCtx, serverMode, commandAllowsEmptyAutoExport(cmd))
 			}
 
 			// Auto-push: push to Dolt remote if enabled and due.
@@ -1198,6 +1204,18 @@ func shouldRunPostCommandAutoExport(cmd *cobra.Command) bool {
 		return true
 	}
 	return !isReadOnlyCommand(cmd.Name())
+}
+
+func commandAllowsEmptyAutoExport(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	switch cmd.Name() {
+	case "prune", "purge":
+		return commandMayEmptyJSONLExport.Load()
+	default:
+		return false
+	}
 }
 
 // blockedEnvVars lists environment variables that must not be set because they

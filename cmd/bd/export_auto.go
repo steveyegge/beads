@@ -34,7 +34,12 @@ const gitAddTimeout = 5 * time.Second
 
 // maybeAutoExport writes a git-tracked JSONL file if enabled and due.
 // Called from PersistentPostRun after auto-backup.
-func maybeAutoExport(ctx context.Context) {
+func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) {
+	if serverMode {
+		debug.Logf("auto-export: skipping — server mode\n")
+		return
+	}
+
 	// Skip when running as a git hook to avoid re-export during pre-commit.
 	if os.Getenv("BD_GIT_HOOK") == "1" {
 		debug.Logf("auto-export: skipping — running as git hook\n")
@@ -93,19 +98,23 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
-	if skip, existingCount, err := shouldSkipEmptyAutoExport(ctx, fullPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to check existing JSONL: %v\n", err)
-		return
-	} else if skip {
-		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: current database would export 0 issues, but %s already contains %d issue(s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, existingCount)
-		return
+	if !allowEmptyOverwrite {
+		if skip, existingCount, err := shouldSkipEmptyAutoExport(ctx, fullPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to check existing JSONL: %v\n", err)
+			return
+		} else if skip {
+			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: current database would export 0 issues, but %s already contains %d issue(s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, existingCount)
+			return
+		}
 	}
-	if missingIDs, err := missingJSONLIssueIDsInStore(ctx, fullPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to compare existing JSONL against local store: %v\n", err)
-		return
-	} else if len(missingIDs) > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: %s contains %d JSONL-only issue record(s) absent from the local Dolt store (%s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, len(missingIDs), strings.Join(sampleStrings(missingIDs, 5), ", "))
-		return
+	if !allowEmptyOverwrite {
+		if missingIDs, err := missingJSONLIssueIDsInStore(ctx, fullPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to compare existing JSONL against local store: %v\n", err)
+			return
+		} else if len(missingIDs) > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: %s contains %d JSONL-only issue record(s) absent from the local Dolt store (%s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, len(missingIDs), strings.Join(sampleStrings(missingIDs, 5), ", "))
+			return
+		}
 	}
 
 	// Run the export — memories are excluded from auto-export because they
@@ -126,6 +135,12 @@ func maybeAutoExport(ctx context.Context) {
 	// issues.jsonl before any issues exist.
 	if issueCount == 0 && memoryCount == 0 {
 		_ = os.Remove(fullPath)
+		saveExportAutoState(beadsDir, &exportAutoState{
+			LastDoltCommit: currentCommit,
+			Timestamp:      time.Now(),
+			Issues:         0,
+			Memories:       0,
+		})
 		return
 	}
 	warnJSONLWithoutDoltRemote("auto-export")
