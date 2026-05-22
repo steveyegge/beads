@@ -99,6 +99,13 @@ func maybeAutoExport(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: current database would export 0 issues, but %s already contains %d issue(s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, existingCount)
 		return
 	}
+	if missingIDs, err := missingJSONLIssueIDsInStore(ctx, fullPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to compare existing JSONL against local store: %v\n", err)
+		return
+	} else if len(missingIDs) > 0 {
+		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: %s contains %d JSONL-only issue record(s) absent from the local Dolt store (%s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, len(missingIDs), strings.Join(sampleStrings(missingIDs, 5), ", "))
+		return
+	}
 
 	// Run the export — memories are excluded from auto-export because they
 	// contain private agent context that must not reach git history (GH#3650).
@@ -170,19 +177,55 @@ func shouldSkipEmptyAutoExport(ctx context.Context, path string) (bool, int, err
 }
 
 func countIssueRecordsInJSONL(path string) (int, error) {
+	ids, err := issueIDsInJSONL(path)
+	if err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+func missingJSONLIssueIDsInStore(ctx context.Context, path string) ([]string, error) {
+	existingIDs, err := issueIDsInJSONL(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(existingIDs) == 0 {
+		return nil, nil
+	}
+
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{Limit: 0})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search issues: %w", err)
+	}
+	localIDs := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		localIDs[issue.ID] = struct{}{}
+	}
+
+	missing := make([]string, 0)
+	for _, id := range existingIDs {
+		if _, ok := localIDs[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing, nil
+}
+
+func issueIDsInJSONL(path string) ([]string, error) {
 	f, err := os.Open(path) //nolint:gosec
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return nil, nil
 		}
-		return 0, err
+		return nil, err
 	}
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
 
-	count := 0
+	seen := make(map[string]struct{})
+	var ids []string
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -191,7 +234,7 @@ func countIssueRecordsInJSONL(path string) (int, error) {
 
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
-			return 0, err
+			return nil, err
 		}
 
 		if rawType, ok := raw["_type"]; ok {
@@ -217,13 +260,27 @@ func countIssueRecordsInJSONL(path string) (int, error) {
 			continue
 		}
 
-		count++
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
 	}
 	if err := scanner.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	return count, nil
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func sampleStrings(values []string, limit int) []string {
+	if len(values) <= limit {
+		return values
+	}
+	out := append([]string{}, values[:limit]...)
+	out = append(out, "...")
+	return out
 }
 
 func autoExportFilter(ctx context.Context) types.IssueFilter {

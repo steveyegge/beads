@@ -606,6 +606,7 @@ func TestCountIssueRecordsInJSONL(t *testing.T) {
 	data := strings.Join([]string{
 		`{"_type":"issue","id":"bd-1","status":"open"}`,
 		`{"id":"bd-2","status":"closed"}`,
+		`{"_type":"issue","id":"bd-2","status":"closed"}`,
 		`{"_type":"memory","key":"note","value":"private"}`,
 		`{"_type":"issue","id":"bd-3","status":"tombstone"}`,
 		`{"_type":"issue","title":"missing id"}`,
@@ -621,6 +622,14 @@ func TestCountIssueRecordsInJSONL(t *testing.T) {
 	}
 	if got != 2 {
 		t.Fatalf("countIssueRecordsInJSONL = %d, want 2", got)
+	}
+
+	ids, err := issueIDsInJSONL(path)
+	if err != nil {
+		t.Fatalf("issueIDsInJSONL: %v", err)
+	}
+	if got := strings.Join(ids, ","); got != "bd-1,bd-2" {
+		t.Fatalf("issueIDsInJSONL = %q, want bd-1,bd-2", got)
 	}
 }
 
@@ -665,6 +674,56 @@ func TestAutoExportSkipsEmptyExportOverPopulatedJSONL(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".beads", exportAutoStateFile)); !os.IsNotExist(err) {
 		t.Fatalf("empty skipped auto-export should not save export state, stat err=%v", err)
+	}
+}
+
+func TestAutoExportSkipsWhenExistingJSONLHasIDsMissingFromStore(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	dir := t.TempDir()
+	env := autoExportDataLossTestEnv(dir)
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	run("init", "--prefix", "dl", "--non-interactive")
+	run("config", "set", "export.path", "custom.jsonl")
+	run("create", "local issue", "-p", "2")
+
+	jsonlPath := filepath.Join(dir, ".beads", "custom.jsonl")
+	original := []byte(strings.Join([]string{
+		`{"_type":"issue","id":"dl-1","title":"Local issue","priority":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`,
+		`{"_type":"issue","id":"dl-jsonl-only","title":"Only in JSONL","priority":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`,
+		``,
+	}, "\n"))
+	if err := os.WriteFile(jsonlPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run("config", "set", "export.interval", "1ms")
+	run("config", "set", "export.auto", "true")
+	out := run("create", "another local issue", "-p", "2")
+	if !strings.Contains(out, "JSONL-only issue record") || !strings.Contains(out, "dl-jsonl-only") {
+		t.Fatalf("expected JSONL-only refusal warning, got:\n%s", out)
+	}
+
+	got, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("expected JSONL to remain: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("JSONL-only records were overwritten:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".beads", exportAutoStateFile)); !os.IsNotExist(err) {
+		t.Fatalf("skipped auto-export should not save export state, stat err=%v", err)
 	}
 }
 
