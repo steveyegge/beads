@@ -92,5 +92,13 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor 
 	if rows == 0 {
 		return fmt.Errorf("wisp %s not found", id)
 	}
+
+	affectedIssues, affectedWisps, aerr := AffectedByStatusChangeInTx(ctx, tx, id)
+	if aerr != nil {
+		return fmt.Errorf("affected by promote for %s: %w", id, aerr)
+	}
+	if err := RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+		return fmt.Errorf("recompute is_blocked after promote for %s: %w", id, err)
+	}
 	return nil
 }

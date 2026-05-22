@@ -27,7 +27,7 @@ func (s *EmbeddedDoltStore) ClaimReadyIssue(ctx context.Context, filter types.Wo
 	var claimed *types.Issue
 	err := s.withConn(ctx, true, func(tx *sql.Tx) error {
 		var err error
-		claimed, err = issueops.ClaimReadyIssueInTx(ctx, tx, filter, actor, computeBlockedIDsWrapper)
+		claimed, err = issueops.ClaimReadyIssueInTx(ctx, tx, filter, actor)
 		return err
 	})
 	return claimed, err

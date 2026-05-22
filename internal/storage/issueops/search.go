@@ -38,6 +38,13 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 	// querying wisps here with Ephemeral=&false returns only NoHistory beads
 	// while correctly excluding true ephemeral wisps. (GH#3659)
 	if filter.Ephemeral == nil || !*filter.Ephemeral {
+		empty, probeErr := wispsTableEmptyOrMissingInTx(ctx, tx)
+		if probeErr != nil {
+			return nil, fmt.Errorf("search wisps (merge): probe: %w", probeErr)
+		}
+		if empty {
+			return results, nil
+		}
 		wispResults, wispErr := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
 		if wispErr != nil && !isTableNotExistError(wispErr) {
 			return nil, fmt.Errorf("search wisps (merge): %w", wispErr)

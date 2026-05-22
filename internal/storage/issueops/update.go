@@ -234,6 +234,33 @@ func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[str
 		}
 	}
 
+	if rawStatus, hasStatus := updates["status"]; hasStatus {
+		var newStatus string
+		switch v := rawStatus.(type) {
+		case string:
+			newStatus = v
+		case types.Status:
+			newStatus = string(v)
+		}
+		oldActive := oldIssue.Status != types.StatusClosed && oldIssue.Status != types.StatusPinned
+		newActive := newStatus != string(types.StatusClosed) && newStatus != string(types.StatusPinned)
+		if oldActive != newActive {
+			var affectedIssues, affectedWisps []string
+			var aerr error
+			if isWisp {
+				affectedIssues, affectedWisps, aerr = AffectedByStatusChangeForWispInTx(ctx, tx, id)
+			} else {
+				affectedIssues, affectedWisps, aerr = AffectedByStatusChangeInTx(ctx, tx, id)
+			}
+			if aerr != nil {
+				return nil, fmt.Errorf("affected by status change for %s: %w", id, aerr)
+			}
+			if err := RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+				return nil, fmt.Errorf("recompute is_blocked after status change for %s: %w", id, err)
+			}
+		}
+	}
+
 	return &UpdateResult{OldIssue: oldIssue, IsWisp: isWisp}, nil
 }
 

@@ -218,6 +218,32 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			return
 		}
 
+		if jsonOutput {
+			results, err := activeStore.GetReadyWorkWithCounts(ctx, filter)
+			if err != nil {
+				FatalError("%v", err)
+			}
+			totalReady := len(results)
+			truncated := false
+			if filter.Limit > 0 && len(results) == filter.Limit {
+				countFilter := filter
+				countFilter.Limit = 0
+				all, countErr := activeStore.GetReadyWorkWithCounts(ctx, countFilter)
+				if countErr == nil && len(all) > len(results) {
+					totalReady = len(all)
+					truncated = true
+				}
+			}
+			if results == nil {
+				results = []*types.IssueWithCounts{}
+			}
+			outputJSON(results)
+			if truncated {
+				fmt.Fprintf(os.Stderr, "Showing %d of %d ready issues. Use --limit 0 for all, or --limit N to raise the cap.\n", len(results), totalReady)
+			}
+			return
+		}
+
 		issues, err := activeStore.GetReadyWork(ctx, filter)
 		if err != nil {
 			FatalError("%v", err)
@@ -233,14 +259,6 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				totalReady = len(allIssues)
 				truncated = true
 			}
-		}
-
-		if jsonOutput {
-			outputJSON(buildReadyIssueOutput(ctx, activeStore, issues))
-			if truncated {
-				fmt.Fprintf(os.Stderr, "Showing %d of %d ready issues. Use --limit 0 for all, or --limit N to raise the cap.\n", len(issues), totalReady)
-			}
-			return
 		}
 		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
@@ -418,14 +436,11 @@ func buildReadyIssueOutput(ctx context.Context, s storage.DoltStorage, issues []
 		issueIDs[i] = issue.ID
 	}
 
-	// Best effort: display gracefully degrades with empty data.
-	labelsMap, _ := s.GetLabelsForIssues(ctx, issueIDs)
 	depCounts, _ := s.GetDependencyCounts(ctx, issueIDs)
 	allDeps, _ := s.GetDependencyRecordsForIssues(ctx, issueIDs)
 	commentCounts, _ := s.GetCommentCounts(ctx, issueIDs)
 
 	for _, issue := range issues {
-		issue.Labels = labelsMap[issue.ID]
 		issue.Dependencies = allDeps[issue.ID]
 	}
 
