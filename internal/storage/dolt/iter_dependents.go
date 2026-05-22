@@ -4,11 +4,16 @@
 // conn pattern as iter_issues.go — labels (when needed) hydrate on a
 // second pool connection so the cursor never deadlocks.
 //
-// Mirrors the PG impl: queries the `dependencies` table only. The slice
-// path GetDependentsWithMetadata also queries `wisp_dependencies`; the
-// streaming path does not, matching PG semantics. Callers that need
-// wisp-edge dependents stream IterWisps separately (or iterate
-// dependencies via IterAllDependencyRecords and filter).
+// Both dependency tables are included so results match the slice path
+// GetDependentsWithMetadata, which the human-readable `bd show` uses.
+// IterDependentsWithMetadata UNION ALLs `dependencies` (permanent-source
+// edges, joined to `issues`) with `wisp_dependencies` (wisp-source edges,
+// joined to `wisps`). WispTableRouting routes every edge to exactly one table
+// by its source's wisp status, so each edge table joins cleanly to its source
+// and no row is double-counted. IterDependenciesWithMetadata delegates to the
+// slice path: a dependency's *target* may be permanent or wisp independent of
+// which table holds the edge, which a single streaming join cannot resolve,
+// and the method has no streaming caller today.
 package dolt
 
 import (
@@ -35,29 +40,38 @@ type doltDependentsIter struct {
 }
 
 // IterDependentsWithMetadata streams dependents (issues that depend on
-// issueID) with the relationship type attached.
+// issueID) with the relationship type attached. Includes both permanent
+// (`dependencies`) and wisp (`wisp_dependencies`) dependents so the stream
+// matches GetDependentsWithMetadata. See the package doc for why the join
+// target per edge table is unambiguous.
 func (s *DoltStore) IterDependentsWithMetadata(ctx context.Context, issueID string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
 	q := fmt.Sprintf(`
 		SELECT %s, d.type
 		FROM issues i
 		JOIN dependencies d ON d.issue_id = i.id
 		WHERE d.depends_on_id = ?
-		ORDER BY i.created_at ASC
-	`, prefixedIssueColumns("i"))
-	return s.iterIssuesWithDepType(ctx, q, issueID)
+		UNION ALL
+		SELECT %s, d.type
+		FROM wisps w
+		JOIN wisp_dependencies d ON d.issue_id = w.id
+		WHERE d.depends_on_id = ?
+		ORDER BY created_at ASC
+	`, prefixedIssueColumns("i"), prefixedIssueColumns("w"))
+	return s.iterIssuesWithDepType(ctx, q, issueID, issueID)
 }
 
-// IterDependenciesWithMetadata streams dependencies (issues issueID
-// depends on) with the relationship type attached.
+// IterDependenciesWithMetadata streams dependencies (issues issueID depends
+// on) with the relationship type attached. It delegates to the slice path
+// GetDependenciesWithMetadata (which resolves targets across both `issues`
+// and `wisps`) rather than a streaming join, because a dependency's target
+// table cannot be determined from the edge table alone. There is no streaming
+// caller for this direction today; revisit if one appears.
 func (s *DoltStore) IterDependenciesWithMetadata(ctx context.Context, issueID string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
-	q := fmt.Sprintf(`
-		SELECT %s, d.type
-		FROM issues i
-		JOIN dependencies d ON d.depends_on_id = i.id
-		WHERE d.issue_id = ?
-		ORDER BY i.created_at ASC
-	`, prefixedIssueColumns("i"))
-	return s.iterIssuesWithDepType(ctx, q, issueID)
+	deps, err := s.GetDependenciesWithMetadata(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	return storage.NewSliceIter(deps), nil
 }
 
 func (s *DoltStore) iterIssuesWithDepType(ctx context.Context, q string, args ...any) (storage.Iter[types.IssueWithDependencyMetadata], error) {
