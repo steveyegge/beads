@@ -104,55 +104,142 @@ func ResolveCustomStatusesDetailedInTx(ctx context.Context, tx *sql.Tx) ([]types
 }
 
 // ResolveCustomTypesInTx reads custom issue types from the custom_types table,
-// falling back to config string and then config.yaml if the table doesn't exist
-// (pre-migration databases).
+// falling back to config string when the table is empty or pre-migration,
+// and always overlay-unions project-extension types from .beads/config.yaml on
+// top of the database-side result (gastownhall/beads#4024).
+//
+// The overlay shape: built-in types are the enforced floor (handled by
+// IsValidWithCustom), database-side custom_types are the next layer (operator-
+// /agent-installed project types), and .beads/config.yaml's types.custom is
+// the topmost union-add (project-extension types declared in version-controlled
+// config). A bead whose type is in any of those three layers validates; a bead
+// whose type is in none still fails cleanly.
+//
 // Does not cache — callers layer caching on top.
 func ResolveCustomTypesInTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	// Try the normalized table first
+	var fromDB []string
+
+	// Try the normalized table first.
 	rows, err := tx.QueryContext(ctx, "SELECT name FROM custom_types ORDER BY name")
 	if err == nil {
 		defer rows.Close()
-		var result []string
 		for rows.Next() {
 			var name string
 			if err := rows.Scan(&name); err != nil {
 				continue
 			}
-			result = append(result, name)
+			fromDB = append(fromDB, name)
 		}
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("reading custom_types: %w", err)
 		}
-		if len(result) > 0 {
-			return result, nil
-		}
-		// Table exists but is empty — fall through to config string.
-		// This handles the case where schema migration created the table
-		// but didn't populate it from the existing types.custom config.
 	}
 
-	// Fallback: table doesn't exist (pre-migration) — read from config string
-	value, err := GetConfigInTx(ctx, tx, "types.custom")
-	if err != nil {
-		if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
-			return yamlTypes, nil
+	// If the table didn't yield any rows, fall through to the legacy config-string
+	// fallback. The table-empty case is intentional: schema migration creates the
+	// table but may not have populated it from the existing types.custom config
+	// string yet.
+	if len(fromDB) == 0 {
+		value, err := GetConfigInTx(ctx, tx, "types.custom")
+		if err != nil {
+			return customTypesYAMLFallback(config.GetCustomTypesFromYAML, err)
 		}
-		return nil, err
+		if value != "" {
+			// Try JSON array first (e.g. '["gate","convoy"]'), fall back to comma-separated.
+			var jsonTypes []string
+			if err := json.Unmarshal([]byte(value), &jsonTypes); err == nil {
+				fromDB = jsonTypes
+			} else {
+				fromDB = ParseCommaSeparatedList(value)
+			}
+		}
 	}
 
-	if value != "" {
-		// Try JSON array first (e.g. '["gate","convoy"]'), fall back to comma-separated
-		var jsonTypes []string
-		if err := json.Unmarshal([]byte(value), &jsonTypes); err == nil {
-			return jsonTypes, nil
-		}
-		return ParseCommaSeparatedList(value), nil
-	}
+	// Overlay-union with YAML types.custom regardless of the DB-side result.
+	// gastownhall/beads#4024: project-extension types declared in .beads/config.yaml
+	// must validate server-side even when the database side hasn't been migrated
+	// or populated with those types.
+	return mergeWithYAMLCustomTypes(fromDB, config.GetCustomTypesFromYAML), nil
+}
 
-	if yamlTypes := config.GetCustomTypesFromYAML(); len(yamlTypes) > 0 {
-		return yamlTypes, nil
+// mergeWithYAMLCustomTypes returns the union of dbTypes and the YAML-declared
+// types.custom set (in that order), with duplicates removed. dbTypes preserve
+// their order; YAML-only types are appended in their declared order. nil
+// inputs are tolerated. The function is the union-add step that implements
+// gastownhall/beads#4024's overlay semantics; keeping it isolated lets the
+// merge logic be unit-tested without sql.Tx mocking.
+func mergeWithYAMLCustomTypes(dbTypes []string, yamlGetter func() []string) []string {
+	if yamlGetter == nil {
+		return dbTypes
 	}
-	return nil, nil
+	yamlTypes := yamlGetter()
+	if len(yamlTypes) == 0 {
+		return dbTypes
+	}
+	if len(dbTypes) == 0 {
+		// Dedup YAML alone too, in case the YAML file itself listed the same
+		// type twice (a configuration smell but not worth failing on).
+		return dedupePreservingOrder(yamlTypes)
+	}
+	seen := make(map[string]struct{}, len(dbTypes)+len(yamlTypes))
+	out := make([]string, 0, len(dbTypes)+len(yamlTypes))
+	for _, t := range dbTypes {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	for _, t := range yamlTypes {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+// customTypesYAMLFallback decides what to return from ResolveCustomTypesInTx
+// when the in-tx config-string read errors. If YAML types.custom supplies any
+// types, return them with a nil error so in-tx callers (NewBatchContext,
+// UpdateIssueInTx) treat this as the YAML-fallback case rather than a fatal
+// validation failure. If YAML has nothing, propagate the original error.
+// Mirrors the YAML-fallback shape used by ResolveCustomStatusesDetailedInTx,
+// and preserves the gastownhall/beads#4024 overlay goal under degraded /
+// pre-migration DB conditions. Extracted as a pure function so the fallback
+// decision is testable without sql.Tx mocking.
+func customTypesYAMLFallback(yamlGetter func() []string, dbErr error) ([]string, error) {
+	merged := mergeWithYAMLCustomTypes(nil, yamlGetter)
+	if len(merged) > 0 {
+		return merged, nil
+	}
+	return nil, dbErr
+}
+
+func dedupePreservingOrder(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, t := range in {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 // SyncCustomStatusesTable replaces all rows in custom_statuses with parsed config value.

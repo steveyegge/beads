@@ -137,6 +137,95 @@ func TestCheckEpicCompleteness_CompletedEpic(t *testing.T) {
 	}
 }
 
+func TestCheckEpicCompleteness_CountsWispChildren(t *testing.T) {
+	store := newTestDoltStore(t, "epic")
+	ctx := context.Background()
+
+	epic := &types.Issue{
+		ID:        "epic-wisp",
+		Title:     "Epic",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeEpic,
+		CreatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, epic, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	child := &types.Issue{
+		ID:        "epic-wisp.1",
+		Title:     "Wisp child",
+		Status:    types.StatusClosed,
+		IssueType: types.TypeTask,
+		ClosedAt:  ptrTime(time.Now()),
+		NoHistory: true,
+		CreatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, child, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	dep := &types.Dependency{
+		IssueID:     child.ID,
+		DependsOnID: epic.ID,
+		Type:        types.DepParentChild,
+		CreatedAt:   time.Now(),
+		CreatedBy:   "test",
+	}
+	if err := store.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	check := checkEpicCompleteness(store.UnderlyingDB())
+	if check.Status != StatusWarning {
+		t.Errorf("Status = %q, want %q", check.Status, StatusWarning)
+	}
+}
+
+func TestCheckEpicCompleteness_OpenWispChildPreventsCompletedEpic(t *testing.T) {
+	store := newTestDoltStore(t, "epic")
+	ctx := context.Background()
+
+	epic := &types.Issue{
+		ID:        "epic-open-wisp",
+		Title:     "Epic",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeEpic,
+		CreatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, epic, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	child := &types.Issue{
+		ID:        "epic-open-wisp.1",
+		Title:     "Open wisp child",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+		NoHistory: true,
+		CreatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, child, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	dep := &types.Dependency{
+		IssueID:     child.ID,
+		DependsOnID: epic.ID,
+		Type:        types.DepParentChild,
+		CreatedAt:   time.Now(),
+		CreatedBy:   "test",
+	}
+	if err := store.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	check := checkEpicCompleteness(store.UnderlyingDB())
+	if check.Status != StatusOK {
+		t.Errorf("Status = %q, want %q; detail=%s", check.Status, StatusOK, check.Detail)
+	}
+}
+
 // TestCheckMailThreadIntegrity_ValidThreads verifies valid thread references pass
 func TestCheckMailThreadIntegrity_ValidThreads(t *testing.T) {
 	store := newTestDoltStore(t, "thread")

@@ -48,9 +48,10 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 				seen[issue.ID] = true
 			}
 			for _, issue := range wispResults {
-				if !seen[issue.ID] {
-					results = append(results, issue)
+				if seen[issue.ID] {
+					return nil, fmt.Errorf("id %q exists in both issues and wisps", issue.ID)
 				}
+				results = append(results, issue)
 			}
 		}
 	}

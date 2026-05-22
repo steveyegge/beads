@@ -237,13 +237,13 @@ func Initialize() error {
 	v.SetDefault("backup.git-push", false)
 	v.SetDefault("backup.git-repo", "")
 
-	// Auto-export: write JSONL after mutations for viewers, interchange, and
-	// backup. It is not cross-machine sync; Dolt remotes are the source of
-	// truth for sync. Enabled by default so tools like bv see fresh data.
-	v.SetDefault("export.auto", true)
+	// Auto-export: optional JSONL export after mutations for viewers,
+	// interchange, and backup. It is not cross-machine sync; Dolt remotes are
+	// the source of truth for sync. Viewer integrations can opt in explicitly.
+	v.SetDefault("export.auto", false)
 	v.SetDefault("export.interval", "60s")
 	v.SetDefault("export.path", "issues.jsonl") // relative to .beads/; canonical name
-	v.SetDefault("export.git-add", true)
+	v.SetDefault("export.git-add", false)
 
 	// Auto-import: legacy compatibility fallback for projects that have not
 	// configured a Dolt remote yet. Hook code skips this path when sync.remote
@@ -983,13 +983,41 @@ func ValidateAgentsFile(filename string) error {
 	return nil
 }
 
-// getConfigList is a helper that retrieves a comma-separated list from config.yaml.
+// getConfigList retrieves a list-typed configuration value from config.yaml,
+// accepting either the YAML list form (e.g. `types: { custom: [step, wisp] }`)
+// or the legacy comma-separated string form (e.g.
+// `types.custom = "step,wisp"`). Entries are trimmed; empty entries are
+// dropped. The dual-form support is required for project-extension
+// types/statuses declared in .beads/config.yaml — see gastownhall/beads#4024.
 func getConfigList(key string) []string {
 	if v == nil {
 		debug.Logf("config: viper not initialized, returning nil for key %q", key)
 		return nil
 	}
 
+	// Try the YAML-list form first. Viper's GetStringSlice returns:
+	//   * []string for a YAML sequence value,
+	//   * []string{value} when the underlying value is a single string,
+	//   * nil/empty when the key is unset.
+	// Re-splitting each entry on comma covers the case where the entry is
+	// itself a comma-separated string (legacy form bound via GetStringSlice).
+	if slice := v.GetStringSlice(key); len(slice) > 0 {
+		result := make([]string, 0, len(slice))
+		for _, entry := range slice {
+			for _, p := range strings.Split(entry, ",") {
+				if trimmed := strings.TrimSpace(p); trimmed != "" {
+					result = append(result, trimmed)
+				}
+			}
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+
+	// Fallback to direct string retrieval for the comma-separated form when
+	// GetStringSlice didn't surface a value (e.g. some viper builds short-
+	// circuit GetStringSlice for pure-string values).
 	value := v.GetString(key)
 	if value == "" {
 		return nil

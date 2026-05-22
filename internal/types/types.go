@@ -1331,8 +1331,9 @@ type WorkFilter struct {
 	IncludeDeferred bool // If true, include issues with future defer_until timestamps
 
 	// Ephemeral issue filtering
-	// By default, GetReadyWork excludes ephemeral issues (wisps).
-	// Set to true to include them (e.g., for merge-request processing).
+	// By default, GetReadyWork excludes ephemeral wisps but includes
+	// no-history wisps because they are durable work items without Dolt history.
+	// Set to true to include ephemeral wisps too (e.g., for merge-request processing).
 	IncludeEphemeral bool
 
 	// Type exclusion: exclude issues with these types from results.

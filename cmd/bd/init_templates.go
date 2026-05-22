@@ -81,9 +81,14 @@ func renderInitConfigYAML(prefix string, noDbMode bool) []byte {
 #   git-push: false    # Disable git push (backup locally only)
 #   git-repo: ""       # Separate git repo for backups (default: project repo)
 
-# JSONL import/export filenames (use relative paths under .beads/)
+# Optional JSONL auto-export for viewers, interchange, and issue-level migration.
+# Disabled by default; enable only when an integration needs fresh .beads/issues.jsonl.
+# Use relative paths under .beads/ for JSONL import/export filenames.
 # export:
+#   auto: false
 #   path: issues.jsonl
+#   interval: 60s
+#   git-add: false
 # import:
 #   path: issues.jsonl
 

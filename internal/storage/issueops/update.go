@@ -126,6 +126,17 @@ type UpdateResult struct {
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func UpdateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string) (*UpdateResult, error) {
+	return updateIssueInTx(ctx, tx, id, updates, actor, true)
+}
+
+// UpdateIssueWithoutEventInTx applies normal update semantics without recording
+// an intermediate event. Demotion uses this to preserve the historical event
+// stream: create/update history is copied, then a single demotion event is added.
+func UpdateIssueWithoutEventInTx(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string) (*UpdateResult, error) {
+	return updateIssueInTx(ctx, tx, id, updates, actor, false)
+}
+
+func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string, recordEvent bool) (*UpdateResult, error) {
 	// Route to correct table.
 	isWisp := IsActiveWispInTx(ctx, tx, id)
 	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
@@ -213,13 +224,14 @@ func UpdateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[str
 		return nil, fmt.Errorf("failed to update issue: %w", err)
 	}
 
-	// Record event.
-	oldData, _ := json.Marshal(oldIssue)
-	newData, _ := json.Marshal(updates)
-	eventType := DetermineEventType(oldIssue, updates)
+	if recordEvent {
+		oldData, _ := json.Marshal(oldIssue)
+		newData, _ := json.Marshal(updates)
+		eventType := DetermineEventType(oldIssue, updates)
 
-	if err := RecordFullEventInTable(ctx, tx, eventTable, id, eventType, actor, string(oldData), string(newData)); err != nil {
-		return nil, fmt.Errorf("failed to record event: %w", err)
+		if err := RecordFullEventInTable(ctx, tx, eventTable, id, eventType, actor, string(oldData), string(newData)); err != nil {
+			return nil, fmt.Errorf("failed to record event: %w", err)
+		}
 	}
 
 	return &UpdateResult{OldIssue: oldIssue, IsWisp: isWisp}, nil
