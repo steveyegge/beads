@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -69,9 +70,39 @@ func (r *configSQLRepositoryImpl) SetConfig(ctx context.Context, key, value stri
 }
 
 func (r *configSQLRepositoryImpl) GetCustomTypes(ctx context.Context) ([]string, error) {
-	return nil, errors.New("db: GetCustomTypes: not implemented")
+	value, err := r.GetConfig(ctx, "types.custom")
+	if err != nil {
+		return nil, fmt.Errorf("db: GetCustomTypes: %w", err)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	var jsonTypes []string
+	if err := json.Unmarshal([]byte(value), &jsonTypes); err == nil {
+		return parseCustomTypesList(jsonTypes), nil
+	}
+	return parseCustomTypesList(strings.Split(value, ",")), nil
+}
+
+func parseCustomTypesList(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, t := range in {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (r *configSQLRepositoryImpl) GetAllowedPrefixes(ctx context.Context) (string, error) {
-	return "", errors.New("db: GetAllowedPrefixes: not implemented")
+	value, err := r.GetConfig(ctx, "allowed_prefixes")
+	if err != nil {
+		return "", fmt.Errorf("db: GetAllowedPrefixes: %w", err)
+	}
+	return value, nil
 }

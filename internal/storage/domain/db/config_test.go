@@ -24,6 +24,17 @@ func (s *testSuite) TestConfigSQLRepository() {
 		s.Run("IssuePrefixTrimsTrailingHyphen", s.configSetConfigIssuePrefixTrim)
 		s.Run("IssuePrefixWithoutHyphenUnchanged", s.configSetConfigIssuePrefixUnchanged)
 	})
+	s.Run("GetCustomTypes", func() {
+		s.Run("MissingKeyReturnsNil", s.configGetCustomTypesMissing)
+		s.Run("EmptyValueReturnsNil", s.configGetCustomTypesEmpty)
+		s.Run("CommaSeparated", s.configGetCustomTypesCommaSeparated)
+		s.Run("JSONArray", s.configGetCustomTypesJSONArray)
+		s.Run("TrimsWhitespaceAndSkipsEmpty", s.configGetCustomTypesTrimsAndSkipsEmpty)
+	})
+	s.Run("GetAllowedPrefixes", func() {
+		s.Run("MissingKeyReturnsEmpty", s.configGetAllowedPrefixesMissing)
+		s.Run("ReturnsRawValue", s.configGetAllowedPrefixesRawValue)
+	})
 }
 
 func (s *testSuite) configRepo() domain.ConfigSQLRepository {
@@ -102,4 +113,56 @@ func (s *testSuite) configSetConfigIssuePrefixUnchanged() {
 	v, err := r.GetConfig(s.Ctx(), "issue_prefix")
 	s.Require().NoError(err)
 	s.Equal("bd", v)
+}
+
+func (s *testSuite) configGetCustomTypesMissing() {
+	got, err := s.configRepo().GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Nil(got)
+}
+
+func (s *testSuite) configGetCustomTypesEmpty() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", ""))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Nil(got)
+}
+
+func (s *testSuite) configGetCustomTypesCommaSeparated() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", "molecule,gate,convoy"))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal([]string{"molecule", "gate", "convoy"}, got)
+}
+
+func (s *testSuite) configGetCustomTypesJSONArray() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", `["gate","convoy"]`))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal([]string{"gate", "convoy"}, got)
+}
+
+func (s *testSuite) configGetCustomTypesTrimsAndSkipsEmpty() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", "  alpha , , beta  ,"))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal([]string{"alpha", "beta"}, got)
+}
+
+func (s *testSuite) configGetAllowedPrefixesMissing() {
+	got, err := s.configRepo().GetAllowedPrefixes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal("", got)
+}
+
+func (s *testSuite) configGetAllowedPrefixesRawValue() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "allowed_prefixes", "hacker-news, me-py-toolkit, hq-cv"))
+	got, err := r.GetAllowedPrefixes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal("hacker-news, me-py-toolkit, hq-cv", got)
 }
