@@ -432,10 +432,6 @@ func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 		if cfg.IsDoltServerMode() {
 			return cfg.DatabasePath(beadsDir)
 		}
-		doltlitePath := filepath.Join(beadsDir, "doltlite")
-		if info, err := os.Stat(doltlitePath); err == nil && info.IsDir() {
-			return doltlitePath
-		}
 		// For embedded Dolt, the engine stores data under .beads/embeddeddolt/,
 		// not .beads/dolt/. Check the actual embedded data directory first.
 		embeddedPath := filepath.Join(beadsDir, "embeddeddolt")
@@ -450,11 +446,7 @@ func findDatabaseInBeadsDir(beadsDir string, _ bool) string {
 		}
 	}
 
-	// Fall back: check if doltlite, embeddeddolt, or dolt directory exists without metadata.json
-	doltlitePath := filepath.Join(beadsDir, "doltlite")
-	if info, err := os.Stat(doltlitePath); err == nil && info.IsDir() {
-		return doltlitePath
-	}
+	// Fall back: check if embeddeddolt or dolt directory exists without metadata.json
 	embeddedPath := filepath.Join(beadsDir, "embeddeddolt")
 	if info, err := os.Stat(embeddedPath); err == nil && info.IsDir() {
 		return embeddedPath
@@ -499,14 +491,6 @@ func FindDatabasePath() string {
 
 		// BEADS_DIR is set but no database found - this is OK for --no-db mode
 		// Return empty string and let the caller handle it
-	}
-
-	// 1a. Gas City sessions can advertise the authoritative repo root via
-	// GC_BEADS_SCOPE_ROOT even when cwd is a polecat worktree scaffold.
-	if beadsDir := getGCScopeRootBeadsDir(); beadsDir != "" {
-		if dbPath := findDatabaseInBeadsDir(beadsDir, false); dbPath != "" {
-			return dbPath
-		}
 	}
 
 	// 2. Check BEADS_DB environment variable (deprecated but still supported)
@@ -610,11 +594,8 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 		return true
 	}
 
-	// Check for storage directories (server mode uses dolt/, embedded uses doltlite/ or embeddeddolt/)
+	// Check for Dolt database directory (server mode uses dolt/, embedded uses embeddeddolt/)
 	if info, err := os.Stat(filepath.Join(beadsDir, "dolt")); err == nil && info.IsDir() {
-		return true
-	}
-	if info, err := os.Stat(filepath.Join(beadsDir, "doltlite")); err == nil && info.IsDir() {
 		return true
 	}
 	if info, err := os.Stat(filepath.Join(beadsDir, "embeddeddolt")); err == nil && info.IsDir() {
@@ -648,9 +629,6 @@ func hasBeadsDatabase(beadsDir string) bool {
 	if info, err := os.Stat(filepath.Join(beadsDir, "dolt")); err == nil && info.IsDir() {
 		return true
 	}
-	if info, err := os.Stat(filepath.Join(beadsDir, "doltlite")); err == nil && info.IsDir() {
-		return true
-	}
 	if info, err := os.Stat(filepath.Join(beadsDir, "embeddeddolt")); err == nil && info.IsDir() {
 		return true
 	}
@@ -662,24 +640,6 @@ func hasBeadsDatabase(beadsDir string) bool {
 		}
 	}
 	return false
-}
-
-// getGCScopeRootBeadsDir resolves the rig-local .beads directory advertised by
-// Gas City sessions. GC_BEADS_SCOPE_ROOT points at the authoritative repo root
-// for beads commands even when the process cwd is inside a polecat worktree
-// that only contains scaffolding artifacts.
-func getGCScopeRootBeadsDir() string {
-	scopeRoot := strings.TrimSpace(os.Getenv("GC_BEADS_SCOPE_ROOT"))
-	if scopeRoot == "" {
-		return ""
-	}
-
-	beadsDir := canonicalizeBeadsDirPath(filepath.Join(scopeRoot, ".beads"))
-	if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-		return FollowRedirect(beadsDir)
-	}
-
-	return ""
 }
 
 // FindBeadsDir finds the .beads/ directory in the current directory tree.
@@ -712,14 +672,6 @@ func FindBeadsDir() string {
 			if hasBeadsProjectFiles(absBeadsDir) {
 				return absBeadsDir
 			}
-		}
-	}
-
-	// 1a. Gas City sessions can advertise the authoritative repo root via
-	// GC_BEADS_SCOPE_ROOT even when cwd is a polecat worktree scaffold.
-	if beadsDir := getGCScopeRootBeadsDir(); beadsDir != "" {
-		if hasBeadsProjectFiles(beadsDir) {
-			return beadsDir
 		}
 	}
 

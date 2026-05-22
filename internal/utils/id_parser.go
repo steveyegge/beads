@@ -41,11 +41,13 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		return "", fmt.Errorf("cannot resolve issue ID %q: storage is nil", input)
 	}
 
-	// Fast path: exact ID lookup should be an indexed primary-key read. This
-	// keeps exact probes such as "bd show abc-123" from paying the broader
-	// partial-ID search path when the issue is absent.
-	if issue, err := store.GetIssue(ctx, input); err == nil && issue != nil {
-		return issue.ID, nil
+	// Fast path: Use SearchIssues with exact ID filter (GH#942).
+	// This uses the same query path as "bd list --id", ensuring consistency.
+	// Previously we used GetIssue which could fail in cases where SearchIssues
+	// with filter.IDs succeeded, likely due to subtle query differences.
+	exactFilter := types.IssueFilter{IDs: []string{input}}
+	if issues, err := store.SearchIssues(ctx, "", exactFilter); err == nil && len(issues) > 0 {
+		return issues[0].ID, nil
 	}
 
 	// Get the configured prefix
@@ -97,11 +99,10 @@ func ResolvePartialID(ctx context.Context, store storage.Storage, input string) 
 		normalizedID = prefixWithHyphen + input
 	}
 
-	// Try exact match on normalized ID before falling back to substring search.
-	if normalizedID != input {
-		if issue, err := store.GetIssue(ctx, normalizedID); err == nil && issue != nil {
-			return issue.ID, nil
-		}
+	// Try exact match on normalized ID using SearchIssues (GH#942)
+	normalizedFilter := types.IssueFilter{IDs: []string{normalizedID}}
+	if issues, err := store.SearchIssues(ctx, "", normalizedFilter); err == nil && len(issues) > 0 {
+		return issues[0].ID, nil
 	}
 
 	// If exact match failed, try substring search.
