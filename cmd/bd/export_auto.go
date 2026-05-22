@@ -34,31 +34,31 @@ const gitAddTimeout = 5 * time.Second
 
 // maybeAutoExport writes a git-tracked JSONL file if enabled and due.
 // Called from PersistentPostRun after auto-backup.
-func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) {
+func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) error {
 	if serverMode {
 		debug.Logf("auto-export: skipping — server mode\n")
-		return
+		return nil
 	}
 
 	// Skip when running as a git hook to avoid re-export during pre-commit.
 	if os.Getenv("BD_GIT_HOOK") == "1" {
 		debug.Logf("auto-export: skipping — running as git hook\n")
-		return
+		return nil
 	}
 
 	if !config.GetBool("export.auto") {
-		return
+		return nil
 	}
 	if store == nil {
-		return
+		return nil
 	}
 	if lm, ok := storage.UnwrapStore(store).(storage.LifecycleManager); ok && lm.IsClosed() {
-		return
+		return nil
 	}
 
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
-		return
+		return nil
 	}
 
 	// Resolve the export path before throttle/check detection so all decisions
@@ -85,35 +85,35 @@ func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) 
 	currentCommit, err := store.GetCurrentCommit(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to get current commit: %v\n", err)
-		return
+		return nil
 	}
 	if currentCommit == state.LastDoltCommit && state.LastDoltCommit != "" {
 		debug.Logf("auto-export: no changes since last export\n")
-		return
+		return nil
 	}
 
 	if !shouldExport(state, interval) {
 		debug.Logf("auto-export: throttled (last export %s ago, interval %s)\n",
 			time.Since(state.Timestamp).Round(time.Second), interval)
-		return
+		return nil
 	}
 
 	if !allowEmptyOverwrite {
 		if skip, existingCount, err := shouldSkipEmptyAutoExport(ctx, fullPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to check existing JSONL: %v\n", err)
-			return
+			return nil
 		} else if skip {
 			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: current database would export 0 issues, but %s already contains %d issue(s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, existingCount)
-			return
+			return nil
 		}
 	}
 	if !allowEmptyOverwrite {
 		if missingIDs, err := missingJSONLIssueIDsInStore(ctx, fullPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to compare existing JSONL against local store: %v\n", err)
-			return
+			return nil
 		} else if len(missingIDs) > 0 {
 			fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: %s contains %d JSONL-only issue record(s) absent from the local Dolt store (%s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, len(missingIDs), strings.Join(sampleStrings(missingIDs, 5), ", "))
-			return
+			return nil
 		}
 	}
 
@@ -122,7 +122,7 @@ func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) 
 	issueCount, memoryCount, err := exportToFile(ctx, fullPath, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: auto-export failed: %v\n", err)
-		return
+		return nil
 	}
 
 	debug.Logf("auto-export: wrote %d issues and %d memories to %s\n",
@@ -141,7 +141,7 @@ func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) 
 			Issues:         0,
 			Memories:       0,
 		})
-		return
+		return nil
 	}
 	warnJSONLWithoutDoltRemote("auto-export")
 
@@ -149,7 +149,7 @@ func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) 
 	// git repo (standalone BEADS_DIR flow), or when export.git-add is false.
 	if config.GetBool("export.git-add") && !config.GetBool("no-git-ops") && isGitRepo() {
 		if err := gitAddFile(fullPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: auto-export: git add failed: %v\n", err)
+			return fmt.Errorf("auto-export: git add failed: %w", err)
 		}
 	}
 
@@ -161,6 +161,7 @@ func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) 
 		Memories:       memoryCount,
 	}
 	saveExportAutoState(beadsDir, &newState)
+	return nil
 }
 
 // shouldExport reports whether the throttle window has elapsed, or whether

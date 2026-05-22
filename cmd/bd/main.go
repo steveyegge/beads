@@ -1154,7 +1154,9 @@ var rootCmd = &cobra.Command{
 			// Read-only commands must not perform post-run maintenance writes or emit
 			// sync guidance after machine-readable output.
 			if shouldRunPostCommandAutoExport(cmd) {
-				maybeAutoExport(rootCtx, serverMode, commandAllowsEmptyAutoExport(cmd))
+				if err := maybeAutoExport(rootCtx, serverMode, commandAllowsEmptyAutoExport(cmd)); err != nil {
+					FatalError("%v", err)
+				}
 			}
 
 			// Auto-push: push to Dolt remote if enabled and due.
