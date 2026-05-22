@@ -2420,6 +2420,71 @@ func TestGetStatistics_ReadyIssuesExcludesBlocked(t *testing.T) {
 	}
 }
 
+func TestGetStatistics_ConcurrentCallsReturnConsistentResults(t *testing.T) {
+	// Regression test for the parallel GetStatistics implementation:
+	// two concurrent calls must return the same counts and not race.
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	issues := []*types.Issue{
+		{ID: "par-open-1", Title: "Open 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
+		{ID: "par-open-2", Title: "Open 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "par-blocker", Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
+		{ID: "par-blocked", Title: "Blocked", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+	}
+	for _, iss := range issues {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
+		}
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     "par-blocked",
+		DependsOnID: "par-blocker",
+		Type:        types.DepBlocks,
+	}, "tester"); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	// Call GetStatistics twice concurrently; both must agree.
+	type result struct {
+		stats *types.Statistics
+		err   error
+	}
+	ch := make(chan result, 2)
+	for range 2 {
+		go func() {
+			s, err := store.GetStatistics(ctx)
+			ch <- result{s, err}
+		}()
+	}
+	var results [2]result
+	for i := range results {
+		results[i] = <-ch
+	}
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, r.err)
+		}
+	}
+	a, b := results[0].stats, results[1].stats
+	if a.TotalIssues != b.TotalIssues {
+		t.Errorf("TotalIssues mismatch: %d vs %d", a.TotalIssues, b.TotalIssues)
+	}
+	if a.BlockedIssues != b.BlockedIssues {
+		t.Errorf("BlockedIssues mismatch: %d vs %d", a.BlockedIssues, b.BlockedIssues)
+	}
+	if a.ReadyIssues != b.ReadyIssues {
+		t.Errorf("ReadyIssues mismatch: %d vs %d", a.ReadyIssues, b.ReadyIssues)
+	}
+	// 4 open, 1 blocked => ready = 3
+	if a.ReadyIssues != 3 {
+		t.Errorf("expected 3 ready issues, got %d", a.ReadyIssues)
+	}
+}
+
 // =============================================================================
 // GetStaleIssues tests
 // =============================================================================
