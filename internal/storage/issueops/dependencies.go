@@ -224,9 +224,9 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	if dialect == SQLDialectSQLite {
 		//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column()
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO %s (id, issue_id, %s, type, created_at, created_by, metadata, thread_id)
-			VALUES (?, ?, ?, ?, %s, ?, ?, ?)
-		`, writeTable, targetCol, dialect.CurrentTimestamp()), uuid.Must(uuid.NewV7()).String(), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+			INSERT INTO %s (id, issue_id, depends_on_id, %s, type, created_at, created_by, metadata, thread_id)
+			VALUES (?, ?, ?, ?, ?, %s, ?, ?, ?)
+		`, writeTable, targetCol, dialect.CurrentTimestamp()), uuid.Must(uuid.NewV7()).String(), dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 			return fmt.Errorf("failed to add dependency: %w", err)
 		}
 		return nil
