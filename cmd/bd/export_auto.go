@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -91,6 +92,14 @@ func maybeAutoExport(ctx context.Context) {
 		return
 	}
 
+	if skip, existingCount, err := shouldSkipEmptyAutoExport(ctx, fullPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: failed to check existing JSONL: %v\n", err)
+		return
+	} else if skip {
+		fmt.Fprintf(os.Stderr, "Warning: auto-export skipped: current database would export 0 issues, but %s already contains %d issue(s); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.\n", fullPath, existingCount)
+		return
+	}
+
 	// Run the export — memories are excluded from auto-export because they
 	// contain private agent context that must not reach git history (GH#3650).
 	issueCount, memoryCount, err := exportToFile(ctx, fullPath, false)
@@ -143,21 +152,81 @@ func shouldExport(state *exportAutoState, interval time.Duration) bool {
 	return time.Since(state.Timestamp) >= interval
 }
 
-// exportToFile atomically exports issues + memories to the given file path.
-// Writes to a temp file first, then renames into place so readers never see
-// a partial or truncated export. Used by both `bd export -o` and auto-export.
-func exportToFile(ctx context.Context, path string, includeMemories bool) (issueCount, memoryCount int, err error) {
-	w, err := atomicfile.Create(path, 0o644)
+func shouldSkipEmptyAutoExport(ctx context.Context, path string) (bool, int, error) {
+	existingCount, err := countIssueRecordsInJSONL(path)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to create export file: %w", err)
+		return false, 0, err
 	}
-	defer func() {
-		if err != nil {
-			_ = w.Abort()
-		}
-	}()
+	if existingCount == 0 {
+		return false, 0, nil
+	}
 
-	// Build filter: exclude infra types and templates
+	issues, err := store.SearchIssues(ctx, "", autoExportFilter(ctx))
+	if err != nil {
+		return false, 0, fmt.Errorf("failed to search issues: %w", err)
+	}
+
+	return len(issues) == 0, existingCount, nil
+}
+
+func countIssueRecordsInJSONL(path string) (int, error) {
+	f, err := os.Open(path) //nolint:gosec
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
+
+	count := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			return 0, err
+		}
+
+		if rawType, ok := raw["_type"]; ok {
+			var recordType string
+			if err := json.Unmarshal(rawType, &recordType); err == nil && recordType != "" && recordType != "issue" {
+				continue
+			}
+		}
+
+		var id string
+		if rawID, ok := raw["id"]; ok {
+			_ = json.Unmarshal(rawID, &id)
+		}
+		if id == "" {
+			continue
+		}
+
+		var status string
+		if rawStatus, ok := raw["status"]; ok {
+			_ = json.Unmarshal(rawStatus, &status)
+		}
+		if status == "tombstone" {
+			continue
+		}
+
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
+func autoExportFilter(ctx context.Context) types.IssueFilter {
 	filter := types.IssueFilter{Limit: 0}
 	var infraTypes []string
 	if store != nil {
@@ -182,7 +251,24 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 	persistentOnly := false
 	filter.Ephemeral = &persistentOnly
 
-	issues, err := store.SearchIssues(ctx, "", filter)
+	return filter
+}
+
+// exportToFile atomically exports issues + memories to the given file path.
+// Writes to a temp file first, then renames into place so readers never see
+// a partial or truncated export. Used by both `bd export -o` and auto-export.
+func exportToFile(ctx context.Context, path string, includeMemories bool) (issueCount, memoryCount int, err error) {
+	w, err := atomicfile.Create(path, 0o644)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to create export file: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = w.Abort()
+		}
+	}()
+
+	issues, err := store.SearchIssues(ctx, "", autoExportFilter(ctx))
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to search issues: %w", err)
 	}

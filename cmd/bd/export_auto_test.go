@@ -599,3 +599,82 @@ func TestShouldExport(t *testing.T) {
 		})
 	}
 }
+
+func TestCountIssueRecordsInJSONL(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "issues.jsonl")
+	data := strings.Join([]string{
+		`{"_type":"issue","id":"bd-1","status":"open"}`,
+		`{"id":"bd-2","status":"closed"}`,
+		`{"_type":"memory","key":"note","value":"private"}`,
+		`{"_type":"issue","id":"bd-3","status":"tombstone"}`,
+		`{"_type":"issue","title":"missing id"}`,
+		``,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := countIssueRecordsInJSONL(path)
+	if err != nil {
+		t.Fatalf("countIssueRecordsInJSONL: %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("countIssueRecordsInJSONL = %d, want 2", got)
+	}
+}
+
+func TestAutoExportSkipsEmptyExportOverPopulatedJSONL(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	dir := t.TempDir()
+	env := autoExportDataLossTestEnv(dir)
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bd, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	run("init", "--prefix", "dl", "--non-interactive")
+	run("config", "set", "export.path", "custom.jsonl")
+
+	jsonlPath := filepath.Join(dir, ".beads", "custom.jsonl")
+	original := []byte(`{"_type":"issue","id":"dl-1","title":"Recovered issue","priority":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}` + "\n")
+	if err := os.WriteFile(jsonlPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run("config", "set", "export.auto", "true")
+	out := run("remember", "private context that should not be auto-exported")
+	if !strings.Contains(out, "refusing to overwrite") {
+		t.Fatalf("expected auto-export refusal warning, got:\n%s", out)
+	}
+
+	got, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("expected populated JSONL to remain: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("populated JSONL was modified:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".beads", exportAutoStateFile)); !os.IsNotExist(err) {
+		t.Fatalf("empty skipped auto-export should not save export state, stat err=%v", err)
+	}
+}
+
+func autoExportDataLossTestEnv(home string) []string {
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "BEADS_") {
+			continue
+		}
+		env = append(env, e)
+	}
+	return append(env, "HOME="+home, "BEADS_DOLT_AUTO_START=0", "BEADS_NO_DAEMON=1")
+}
