@@ -65,6 +65,11 @@ func NotPinned(force bool) IssueValidator {
 // Authority means the issue is unassigned or the actor matches the current
 // assignee. Returns an error on mismatch unless force is true.
 //
+// Authority is identity-by-string: actor is compared verbatim to assignee, so
+// two principals sharing one actor name both pass. bd has no identity layer,
+// so this matches the existing semantics of the actor field — the guard
+// removes silent cross-actor closes without adding new identity guarantees.
+//
 // This guards against the silent-success bug where actor A closes a bead that
 // was concurrently re-claimed by actor B: storage accepts the close (id-only
 // WHERE clause), so without this check bd reports "✓ Closed" even though A had
