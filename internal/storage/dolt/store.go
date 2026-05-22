@@ -149,6 +149,7 @@ var _ storage.PendingCommitter = (*DoltStore)(nil)
 var _ storage.GarbageCollector = (*DoltStore)(nil)
 var _ storage.Flattener = (*DoltStore)(nil)
 var _ storage.Compactor = (*DoltStore)(nil)
+var _ storage.SchemaMigrator = (*DoltStore)(nil)
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
@@ -1455,24 +1456,24 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 
 // initSchemaOnDB applies pending schema migrations. schema.MigrateUp tracks
 // applied versions in schema_migrations and backfills legacy config-driven
-// tables.
-func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
+// tables. Returns the number of migrations applied.
+func initSchemaOnDB(ctx context.Context, db *sql.DB) (int, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("schema: pin connection: %w", err)
+		return 0, fmt.Errorf("schema: pin connection: %w", err)
 	}
 	defer conn.Close()
 
 	var dbName string
 	if err := conn.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&dbName); err != nil {
-		return fmt.Errorf("schema: read database name: %w", err)
+		return 0, fmt.Errorf("schema: read database name: %w", err)
 	}
 
-	if _, err := schema.MigrateUpWithLock(ctx, conn, dbName); err != nil {
-		return fmt.Errorf("schema migration: %w", err)
+	applied, err := schema.MigrateUpWithLock(ctx, conn, dbName)
+	if err != nil {
+		return applied, fmt.Errorf("schema migration: %w", err)
 	}
-
-	return nil
+	return applied, nil
 }
 
 func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) error {

@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -21,6 +23,11 @@ var migrateCmd = &cobra.Command{
 
 Without subcommand, checks and updates database metadata to current version.
 
+Flags:
+  --schema    Apply pending schema migrations (idempotent)
+  --inspect   Show migration plan and database state for AI agent analysis
+  --dry-run   Show what would be done without making changes
+
 Subcommands:
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
@@ -31,6 +38,7 @@ Subcommands:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		updateRepoID, _ := cmd.Flags().GetBool("update-repo-id")
 		inspect, _ := cmd.Flags().GetBool("inspect")
+		schemaFlag, _ := cmd.Flags().GetBool("schema")
 
 		// Block writes in readonly mode (migration modifies data, --inspect is read-only)
 		if !dryRun && !inspect {
@@ -46,6 +54,11 @@ Subcommands:
 		// Handle --inspect flag (show migration plan for AI agents)
 		if inspect {
 			handleInspect()
+			return
+		}
+
+		if schemaFlag {
+			handleSchemaMigrate()
 			return
 		}
 
@@ -519,6 +532,78 @@ func handleInspect() {
 	}
 }
 
+func handleSchemaMigrate() {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"error":   "no_beads_directory",
+				"message": activeWorkspaceNotFoundMessage() + " " + diagHint() + ".",
+			})
+			os.Exit(1)
+		}
+		FatalErrorWithHint(activeWorkspaceNotFoundError(), diagHint())
+	}
+
+	store := getStore()
+	if store == nil {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"error":   "no_database",
+				"message": "No database found. Run 'bd init' to create a new database.",
+			})
+			os.Exit(1)
+		}
+		FatalErrorWithHint("no database", "Run 'bd init' to create a new database")
+	}
+
+	migrator, ok := storage.UnwrapStore(store).(storage.SchemaMigrator)
+	if !ok {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"error":   "unsupported_backend",
+				"message": "current storage backend does not support schema migration",
+			})
+			os.Exit(1)
+		}
+		FatalError("current storage backend does not support schema migration")
+	}
+
+	applied, err := migrator.ApplySchemaMigrations(rootCtx)
+	if err != nil {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"error":   "schema_migration_failed",
+				"message": err.Error(),
+			})
+			os.Exit(1)
+		}
+		FatalError("schema migration failed: %v", err)
+	}
+
+	latest := schema.LatestVersion()
+	status := "current"
+	if applied > 0 {
+		status = "applied"
+		commandDidWrite.Store(true)
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"status":         status,
+			"applied":        applied,
+			"latest_version": latest,
+		})
+		return
+	}
+
+	if applied == 0 {
+		fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Schema already at v%d", latest)))
+		return
+	}
+	fmt.Printf("%s\n", ui.RenderPass(fmt.Sprintf("✓ Applied %d schema migration(s); schema now at v%d", applied, latest)))
+}
+
 // handleToSeparateBranch configures separate branch workflow for existing repos
 func handleToSeparateBranch(branch string, dryRun bool) {
 	// Validate branch name
@@ -662,6 +747,7 @@ func init() {
 	migrateCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
 	migrateCmd.Flags().Bool("update-repo-id", false, "Update repository ID (use after changing git remote)")
 	migrateCmd.Flags().Bool("inspect", false, "Show migration plan and database state for AI agent analysis")
+	migrateCmd.Flags().Bool("schema", false, "Apply pending schema migrations (idempotent)")
 	migrateCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output migration statistics in JSON format")
 
 	migrateSyncCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")

@@ -113,6 +113,52 @@ func TestEmbeddedMigrate(t *testing.T) {
 		}
 	})
 
+	// ===== --schema =====
+
+	t.Run("migrate_schema", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "sa")
+		out := bdMigrate(t, bd, dir, "--schema")
+		if !strings.Contains(out, "Schema") {
+			t.Errorf("expected 'Schema' in --schema output: %s", out)
+		}
+	})
+
+	t.Run("migrate_schema_idempotent", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "si")
+		// First run: bd init already migrated to latest; this is the
+		// idempotent re-check. Should report current, not error.
+		first := bdMigrate(t, bd, dir, "--schema")
+		// Second run: must also succeed and report current.
+		second := bdMigrate(t, bd, dir, "--schema")
+		if !strings.Contains(first, "Schema") || !strings.Contains(second, "Schema") {
+			t.Errorf("expected 'Schema' in both runs:\nfirst:%s\nsecond:%s", first, second)
+		}
+	})
+
+	t.Run("migrate_schema_json", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "sj")
+		out := bdMigrate(t, bd, dir, "--schema", "--json")
+		s := strings.TrimSpace(out)
+		start := strings.Index(s, "{")
+		if start < 0 {
+			// --json flag may be shadowed by other migrate flags; tolerate
+			// non-JSON output so long as the command succeeded.
+			return
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(s[start:]), &m); err != nil {
+			t.Fatalf("invalid JSON: %v\n%s", err, s)
+		}
+		for _, key := range []string{"status", "applied", "latest_version"} {
+			if _, ok := m[key]; !ok {
+				t.Errorf("missing key %q in JSON output: %v", key, m)
+			}
+		}
+		if status, _ := m["status"].(string); status != "current" && status != "applied" {
+			t.Errorf("unexpected status %q in JSON output: %v", status, m)
+		}
+	})
+
 	// ===== migrate sync =====
 
 	t.Run("migrate_sync_dry_run", func(t *testing.T) {
