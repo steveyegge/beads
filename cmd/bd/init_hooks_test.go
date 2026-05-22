@@ -1108,6 +1108,11 @@ func TestIsShellShebang(t *testing.T) {
 		{"perl", "#!/usr/bin/perl\nprint 'hi'", false},
 		{"empty content", "", true},
 		{"bare shebang", "#!\n", true},
+		{"bash with flag", "#!/bin/bash -e\nset -x", true},
+		{"env -S bash", "#!/usr/bin/env -S bash\necho hi", true},
+		{"env python with flag", "#!/usr/bin/env -S python3 -u\nimport sys", false},
+		{"bare env", "#!/usr/bin/env\n", true},
+		{"env with only flags", "#!/usr/bin/env -i -S\n", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1600,8 +1600,20 @@ func isShellShebang(content string) bool {
 	if len(parts) == 0 {
 		return true // bare #! with no interpreter = assume shell
 	}
-	// Handle "env" wrapper: #!/usr/bin/env bash → last token is interpreter
-	interpreter := filepath.Base(parts[len(parts)-1])
+	interpreter := filepath.Base(parts[0])
+	if interpreter == "env" {
+		interpreter = ""
+		for _, tok := range parts[1:] {
+			if strings.HasPrefix(tok, "-") {
+				continue // skip env options like -S, -i
+			}
+			interpreter = filepath.Base(tok)
+			break
+		}
+		if interpreter == "" {
+			return true // bare "#!/usr/bin/env" = assume shell
+		}
+	}
 	switch interpreter {
 	case "sh", "bash", "zsh", "dash", "ksh", "ash":
 		return true
