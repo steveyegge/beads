@@ -263,6 +263,7 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 
 	if result.DeletedCount > 0 {
 		commandDidWrite.Store(true)
+		commandMayEmptyJSONLExport.Store(true)
 	}
 }
 

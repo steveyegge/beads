@@ -41,7 +41,11 @@ var fallbackImporter = importFromLocalJSONLFull
 //
 // The function is best-effort: failures are logged as warnings but do not
 // prevent the store from being used.
-func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string) {
+func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string, serverMode bool) {
+	if serverMode {
+		return
+	}
+
 	// Quick check: does the JSONL file exist and have content?
 	jsonlPath := configuredImportJSONLPath(beadsDir)
 	info, err := os.Stat(jsonlPath)

@@ -617,6 +617,76 @@ func TestGitAddFile_RedirectCase_DoesNotStageInMainRepo(t *testing.T) {
 	checkNoStage("main", mainRepo)
 }
 
+func TestPreCommitHasStagedBeadsFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "bd-staged-beads-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir, err = filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "t@t")
+	runGit("config", "user.name", "t")
+
+	readme := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readme, []byte("code\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	if preCommitHasStagedBeadsFiles(filepath.Join(repo, ".beads")) {
+		t.Fatal("staged non-.beads file should not trigger pre-commit JSONL export")
+	}
+
+	configPath := filepath.Join(repo, ".beads", "config.yaml")
+	if err := os.WriteFile(configPath, []byte("export:\n  auto: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".beads/config.yaml")
+	if !preCommitHasStagedBeadsFiles(filepath.Join(repo, ".beads")) {
+		t.Fatal("staged .beads file should trigger pre-commit JSONL export")
+	}
+}
+
+func TestCommandAllowsEmptyAutoExport(t *testing.T) {
+	commandMayEmptyJSONLExport.Store(false)
+	t.Cleanup(func() { commandMayEmptyJSONLExport.Store(false) })
+
+	if commandAllowsEmptyAutoExport(&cobra.Command{Use: "prune"}) {
+		t.Fatal("prune should not allow an empty auto-export before deleting rows")
+	}
+
+	commandMayEmptyJSONLExport.Store(true)
+	if !commandAllowsEmptyAutoExport(&cobra.Command{Use: "prune"}) {
+		t.Fatal("prune should allow an intentional empty auto-export")
+	}
+	if !commandAllowsEmptyAutoExport(&cobra.Command{Use: "purge"}) {
+		t.Fatal("purge should allow an intentional empty auto-export")
+	}
+	if commandAllowsEmptyAutoExport(&cobra.Command{Use: "create"}) {
+		t.Fatal("create should not bypass empty auto-export protection")
+	}
+}
+
 // TestShouldExport covers the pure throttle-window decision used by
 // maybeAutoExport. Adapted from Jeremy Longshore's GH#4061 refactor.
 func TestShouldExport(t *testing.T) {
