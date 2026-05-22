@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 		issue.Ephemeral = true // infra types get marked ephemeral (legacy behavior)
 	}
 
+	var result issueops.CreateIssueResult
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
 		// SkipPrefixValidation matches legacy behavior: single-issue path does
 		// not validate prefixes for explicit IDs.
@@ -36,19 +38,40 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 		if err != nil {
 			return err
 		}
-		return issueops.CreateIssueInTx(ctx, tx, bc, issue, actor)
+		result, err = issueops.CreateIssueInTxWithResult(ctx, tx, bc, issue, actor)
+		return err
 	}); err != nil {
 		return err
 	}
 
 	// Dolt versioning — wisps and no-history issues skip DOLT_COMMIT.
 	if !issue.Ephemeral && !issue.NoHistory {
-		if err := s.doltAddAndCommit(ctx, []string{"issues", "events", "labels", "comments"},
+		if err := s.doltAddAndCommit(ctx, createIssueCommitTables(ctx, issue, result),
 			fmt.Sprintf("bd: create %s", issue.ID)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func createIssueCommitTables(ctx context.Context, issue *types.Issue, result issueops.CreateIssueResult) []string {
+	return sortedDirtyTables(issueops.CreateIssueDirtyTables(ctx, issue, result))
+}
+
+func createIssuesCommitTables(ctx context.Context, issues []*types.Issue, result issueops.CreateIssuesResult) []string {
+	return sortedDirtyTables(issueops.CreateIssuesDirtyTables(ctx, issues, result))
+}
+
+func sortedDirtyTables(dirty map[string]bool) []string {
+	if len(dirty) == 0 {
+		return nil
+	}
+	tables := make([]string, 0, len(dirty))
+	for table := range dirty {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+	return tables
 }
 
 // CreateIssues creates multiple issues in a single transaction
@@ -66,35 +89,32 @@ func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*t
 		return nil
 	}
 
-	// All-wisps fast path: individual transactions, no Dolt versioning.
+	// All-wisps fast path: one SQL transaction, no Dolt versioning.
 	// Covers both ephemeral issues and no-history issues (both skip DOLT_COMMIT).
 	if issueops.AllWisps(issues) {
 		for _, issue := range issues {
 			if !issue.NoHistory {
 				issue.Ephemeral = true
 			}
-			if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
-				bc, err := issueops.NewBatchContext(ctx, tx, opts)
-				if err != nil {
-					return err
-				}
-				return issueops.CreateIssueInTx(ctx, tx, bc, issue, actor)
-			}); err != nil {
-				return err
-			}
 		}
-		return nil
+		return s.withRetryTx(ctx, func(tx *sql.Tx) error {
+			_, err := issueops.CreateIssuesInTxWithResult(ctx, tx, issues, actor, opts)
+			return err
+		})
 	}
 
+	var result issueops.CreateIssuesResult
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
-		return issueops.CreateIssuesInTx(ctx, tx, issues, actor, opts)
+		var err error
+		result, err = issueops.CreateIssuesInTxWithResult(ctx, tx, issues, actor, opts)
+		return err
 	}); err != nil {
 		return err
 	}
 
 	// GH#2455: Stage only the tables we modified, then commit without -A.
 	return s.doltAddAndCommit(ctx,
-		[]string{"issues", "events", "labels", "comments", "dependencies", "child_counters"},
+		createIssuesCommitTables(ctx, issues, result),
 		fmt.Sprintf("bd: create %d issue(s)", len(issues)))
 }
 

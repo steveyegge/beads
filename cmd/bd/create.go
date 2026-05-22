@@ -271,44 +271,7 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		// Handle --dry-run flag (before --rig to ensure it works with cross-rig creation)
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		if dryRun {
-			previewIssue := buildCreateIssue(createIssueParams{
-				ID:                 explicitID,
-				Title:              title,
-				Description:        description,
-				Design:             design,
-				AcceptanceCriteria: acceptance,
-				Notes:              notes,
-				SpecID:             specID,
-				Priority:           priority,
-				IssueType:          types.IssueType(issueType).Normalize(),
-				Assignee:           assignee,
-				ExternalRef:        externalRef,
-				Ephemeral:          wisp,
-				NoHistory:          noHistory,
-				CreatedBy:          getActorWithGit(),
-				Owner:              getOwner(),
-				Labels:             labels,
-				MolType:            molType,
-				WispType:           wispType,
-				DueAt:              dueAt,
-				DeferUntil:         deferUntil,
-				Metadata:           metadata,
-				EventKind:          eventCategory,
-				Actor:              eventActor,
-				Target:             eventTarget,
-				Payload:            eventPayload,
-			})
-
-			if jsonOutput {
-				outputJSON(previewIssue)
-			} else {
-				renderCreateDryRunPreview(previewIssue, labels, deps)
-			}
-			return
-		}
 
 		// Get estimate if provided
 		var estimatedMinutes *int
@@ -360,11 +323,53 @@ var createCmd = &cobra.Command{
 			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
 		}
 
+		renderDryRun := func() {
+			previewIssue := buildCreateIssue(createIssueParams{
+				ID:                 explicitID,
+				Title:              title,
+				Description:        description,
+				Design:             design,
+				AcceptanceCriteria: acceptance,
+				Notes:              notes,
+				SpecID:             specID,
+				Priority:           priority,
+				IssueType:          types.IssueType(issueType).Normalize(),
+				Assignee:           assignee,
+				ExternalRef:        externalRef,
+				EstimatedMinutes:   estimatedMinutes,
+				Ephemeral:          wisp,
+				NoHistory:          noHistory,
+				CreatedBy:          getActorWithGit(),
+				Owner:              getOwner(),
+				Labels:             labels,
+				MolType:            molType,
+				WispType:           wispType,
+				DueAt:              dueAt,
+				DeferUntil:         deferUntil,
+				Metadata:           metadata,
+				EventKind:          eventCategory,
+				Actor:              eventActor,
+				Target:             eventTarget,
+				Payload:            eventPayload,
+			})
+
+			if jsonOutput {
+				outputJSON(previewIssue)
+			} else {
+				renderCreateDryRunPreview(previewIssue, labels, deps)
+			}
+		}
+
+		if dryRun && parentID == "" {
+			renderDryRun()
+			return
+		}
+
 		// Switch to target repo for multi-repo support (bd-6x6g)
 		// When routing to a different repo, we use direct storage access
 		var targetStore storage.DoltStorage
 		var remoteCache *remotecache.Cache // non-nil when routing to a remote URL
-		if repoPath != "." {
+		if !dryRun && repoPath != "." {
 			if remotecache.IsRemoteURL(repoPath) {
 				// Remote URL: pull into cache, open store, push explicitly after create
 				var err error
@@ -417,29 +422,52 @@ var createCmd = &cobra.Command{
 			FatalError("cannot specify both --id and --parent flags")
 		}
 
-		// If parent is specified, generate child ID and optionally inherit labels
+		parentLookupStore := store
+		if dryRun && repoPath != "." {
+			var err error
+			parentLookupStore, err = openDryRunTargetStore(rootCtx, repoPath)
+			if err != nil {
+				FatalError("%v", err)
+			}
+			defer func() { _ = parentLookupStore.Close() }()
+		}
+
+		// If parent is specified, validate it and optionally inherit labels.
+		// Child ID allocation is delayed until after the dry-run gate so
+		// previews do not consume the next child counter.
 		var inheritedLabels []string
 		if parentID != "" {
 			ctx := rootCtx
-			// Validate parent exists before generating child ID
-			_, err := store.GetIssue(ctx, parentID)
+			_, err := parentLookupStore.GetIssue(ctx, parentID)
 			if err != nil {
 				if errors.Is(err, storage.ErrNotFound) {
 					FatalError("parent issue %s not found", parentID)
 				}
 				FatalError("failed to check parent issue: %v", err)
 			}
-			childID, err := store.GetNextChildID(ctx, parentID)
-			if err != nil {
-				FatalError("%v", err)
-			}
-			explicitID = childID // Set as explicit ID for the rest of the flow
 
 			// Inherit parent labels unless --no-inherit-labels is set (GH#2100)
 			noInheritLabels, _ := cmd.Flags().GetBool("no-inherit-labels")
 			if !noInheritLabels {
-				inheritedLabels, _ = store.GetLabels(ctx, parentID)
+				inheritedLabels, _ = parentLookupStore.GetLabels(ctx, parentID)
 			}
+		}
+
+		labels = mergeCreateLabels(labels, inheritedLabels)
+
+		if dryRun {
+			renderDryRun()
+			return
+		}
+
+		createCtx := rootCtx
+		if parentID != "" {
+			childID, err := store.GetNextChildID(rootCtx, parentID)
+			if err != nil {
+				FatalError("%v", err)
+			}
+			explicitID = childID // Set as explicit ID for the rest of the flow.
+			createCtx = storage.WithReservedChildCounter(createCtx, parentID, childID)
 		}
 
 		// Validate explicit ID format if provided
@@ -453,7 +481,7 @@ var createCmd = &cobra.Command{
 			}
 
 			// Validate prefix matches database prefix
-			ctx := rootCtx
+			ctx := createCtx
 
 			// Get database prefix and allowed prefixes from config.
 			// YAML config takes precedence over DB — in shared-server mode the DB
@@ -473,8 +501,6 @@ var createCmd = &cobra.Command{
 				FatalError("%v", err)
 			}
 		}
-
-		labels = mergeCreateLabels(labels, inheritedLabels)
 
 		issue := buildCreateIssue(createIssueParams{
 			ID:                 explicitID,
@@ -505,7 +531,7 @@ var createCmd = &cobra.Command{
 			Metadata:           metadata,
 		})
 
-		ctx := rootCtx
+		ctx := createCtx
 
 		// Check if any dependencies are discovered-from type
 		// If so, inherit source_repo from the parent issue
@@ -774,13 +800,14 @@ func buildCreateIssue(params createIssueParams) *types.Issue {
 }
 
 func mergeCreateLabels(labels, inheritedLabels []string) []string {
-	merged := append([]string(nil), labels...)
-	if len(inheritedLabels) == 0 {
-		return merged
-	}
-	seen := make(map[string]struct{}, len(merged)+len(inheritedLabels))
-	for _, label := range merged {
+	merged := make([]string, 0, len(labels)+len(inheritedLabels))
+	seen := make(map[string]struct{}, len(labels)+len(inheritedLabels))
+	for _, label := range labels {
+		if _, ok := seen[label]; ok {
+			continue
+		}
 		seen[label] = struct{}{}
+		merged = append(merged, label)
 	}
 	for _, label := range inheritedLabels {
 		if _, ok := seen[label]; ok {
@@ -788,6 +815,9 @@ func mergeCreateLabels(labels, inheritedLabels []string) []string {
 		}
 		seen[label] = struct{}{}
 		merged = append(merged, label)
+	}
+	if len(merged) == 0 {
+		return nil
 	}
 	return merged
 }
@@ -885,6 +915,38 @@ func formatTimeForRPC(t *time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339)
+}
+
+func openDryRunTargetStore(ctx context.Context, repoPath string) (storage.DoltStorage, error) {
+	if remotecache.IsRemoteURL(repoPath) {
+		cache, err := remotecache.DefaultCache()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize remote cache: %w", err)
+		}
+		// The dry-run parent lookup only reads from this cached remote store.
+		// Do not add writes here; dry-runs must not mutate cached remotes.
+		store, err := cache.OpenStore(ctx, repoPath, newDoltStoreFromConfig)
+		if err != nil {
+			return nil, fmt.Errorf("dry-run parent lookup requires an existing cached remote store for %s: %w", repoPath, err)
+		}
+		return store, nil
+	}
+
+	targetPath := routing.ExpandPath(repoPath)
+	beadsDir := filepath.Join(targetPath, ".beads")
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if _, err := os.Stat(metadataPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("target repo %s is not initialized; refusing to initialize it during dry-run", targetPath)
+		}
+		return nil, fmt.Errorf("failed to inspect target repo %s: %w", targetPath, err)
+	}
+
+	store, err := newDoltStoreFromConfig(ctx, beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open target store for dry-run: %w", err)
+	}
+	return store, nil
 }
 
 // ensureBeadsDirForPath ensures a beads directory exists at the target path.
