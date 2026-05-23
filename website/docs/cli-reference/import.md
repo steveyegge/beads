@@ -12,8 +12,8 @@ Generated from `bd help --doc import`
 
 Import issues from a JSONL file (newline-delimited JSON) into the database.
 
-If no file is specified, imports from .beads/issues.jsonl (the git-tracked
-export). Use "-" to read from stdin. This is the incremental counterpart to
+If no file is specified, imports from the configured import.path under .beads/
+(default: issues.jsonl). Use "-" to read from stdin. This is the incremental counterpart to
 'bd export': new issues are created and existing issues are updated (upsert
 semantics).
 
@@ -49,7 +49,7 @@ when present in the JSONL and otherwise filled in by the importer. The
 legacy "wisp" boolean is accepted as an alias for "ephemeral".
 
 EXAMPLES:
-  bd import                        # Import from .beads/issues.jsonl
+  bd import                        # Import from configured import.path
   bd import backup.jsonl           # Import from a specific file
   bd import -i backup.jsonl        # Legacy alias for a specific file
   bd import -                      # Read JSONL from stdin

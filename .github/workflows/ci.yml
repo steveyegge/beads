@@ -209,6 +209,51 @@ jobs:
           report_type: test_results
           fail_ci_if_error: false
 
+  # Focused job for the hexagonal storage layer (internal/storage/domain/* and
+  # internal/storage/uow). These packages back the proxied-server init path and
+  # also live behind the existing ./... matrix, but TestDomainDB requires the
+  # Dolt sql-server image cached locally (testcontainers checks `docker image
+  # inspect` and skips otherwise). Pulling the image up front guarantees the
+  # suite actually runs and surfaces failures here with a clear job name.
+  test-domain-uow:
+    name: Test (storage domain + uow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt CLI
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Verify dolt on PATH
+        run: dolt version
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Pull Dolt sql-server image
+        # Keep tag in sync with internal/testutil/testdoltcommon.go:DoltDockerImage.
+        # Without this, RequireDoltContainer reports doltNoImage and TestDomainDB skips.
+        run: docker pull dolthub/dolt-sql-server:1.88.1
+
+      - name: Pre-build bd binary for uow concurrent test
+        # internal/storage/uow tests spin up the proxy which re-execs `bd`. The
+        # BEADS_TEST_BD_BINARY env var lets the test skip the per-process build.
+        run: go build -tags gms_pure_go -o /tmp/bd-uow-test ./cmd/bd
+
+      - name: Test domain + uow
+        env:
+          BEADS_TEST_BD_BINARY: /tmp/bd-uow-test
+        run: go test -tags gms_pure_go -race -count=1 -v ./internal/storage/domain/... ./internal/storage/uow/...
+
   # Embedded Dolt tests - test the in-process Dolt engine (no server required)
   #
   # Split into: build → storage tests + parallel cmd test shards.

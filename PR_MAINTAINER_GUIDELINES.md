@@ -60,6 +60,7 @@ Other outcomes are possible, including rerouting a PR to the right project or ba
 - Preserve contributor attribution when absorbing, fixing, cherry-picking, splitting, or reimplementing PR value.
 - Be explicit when closing a PR: thank the contributor, state the outcome, and explain what was accepted, rejected, superseded, or implemented differently.
 - Treat request-changes as exceptional because it can strand contributor work.
+- Consider the entire PR thread. Valuable clarifying info are often in the comments.
 - File follow-up work as beads issues instead of hidden notes.
 - When code changes result from PR maintenance, follow repo quality gates and session completion rules in `AGENTS.md`.
 - Post multi-line PR comments from a real Markdown body file or a shell heredoc, not from strings with escaped `\n` sequences. After posting or editing, verify the rendered body with `gh pr view --comments --json comments --jq ...` before moving on.

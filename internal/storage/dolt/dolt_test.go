@@ -2136,6 +2136,40 @@ func TestEphemeralExplicitID_GetIssue(t *testing.T) {
 	}
 }
 
+func TestGetIssue_WispLabelTableErrorPropagates(t *testing.T) {
+	store, cleanup := setupConcurrentTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	wisp := &types.Issue{
+		ID:        "test-wisp-label-error",
+		Title:     "Wisp with missing labels table",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.CreateIssue(ctx, wisp, "tester"); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "DROP TABLE wisp_labels"); err != nil {
+		t.Fatalf("drop wisp_labels: %v", err)
+	}
+
+	_, err := store.GetIssue(ctx, wisp.ID)
+	if err == nil {
+		t.Fatal("expected error for missing wisp_labels table")
+	}
+	if errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected table error, got ErrNotFound: %v", err)
+	}
+	if !strings.Contains(err.Error(), "wisp_labels") {
+		t.Fatalf("expected error to mention wisp_labels, got: %v", err)
+	}
+}
+
 // TestEphemeralExplicitID_UpdateIssue verifies that UpdateIssue works on
 // ephemeral beads created with explicit IDs. Regression test for GH#2053.
 func TestEphemeralExplicitID_UpdateIssue(t *testing.T) {

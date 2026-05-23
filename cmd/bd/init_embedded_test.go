@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/types"
@@ -41,7 +42,7 @@ func buildEmbeddedBD(t *testing.T) string {
 			embeddedBD = prebuilt
 			return
 		}
-		tmpDir, err := os.MkdirTemp("", "bd-embedded-init-test-*")
+		tmpDir, err := testTempDir("bd-embedded-init-test-*")
 		if err != nil {
 			embeddedBDErr = fmt.Errorf("failed to create temp dir: %w", err)
 			return
@@ -381,6 +382,103 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 		if !strings.Contains(string(lsOut), "refs/dolt/data") {
 			t.Fatalf("bd dolt push did not publish refs/dolt/data:\n%s", lsOut)
+		}
+	})
+
+	t.Run("no_git_origin_stays_local", func(t *testing.T) {
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		runBDInit(t, bd, dir, "--prefix", "local", "--skip-hooks", "--skip-agents")
+
+		out := bdDolt(t, bd, dir, "remote", "list")
+		if strings.Contains(out, "origin") {
+			t.Fatalf("init without git origin should not configure a Dolt remote; remote list:\n%s", out)
+		}
+
+		configYAML, err := os.ReadFile(filepath.Join(dir, ".beads", "config.yaml"))
+		if err != nil {
+			t.Fatalf("read config.yaml: %v", err)
+		}
+		if strings.Contains(string(configYAML), "sync.remote:") || strings.Contains(string(configYAML), "sync-remote:") {
+			t.Fatalf("init without git origin should not persist sync.remote; config.yaml:\n%s", configYAML)
+		}
+	})
+
+	t.Run("dolt_push_lazily_adopts_later_git_origin", func(t *testing.T) {
+		bareDir := filepath.Join(t.TempDir(), "later-origin.git")
+		runGitForBootstrapTest(t, "", "init", "--bare", "-b", "main", bareDir)
+		remoteURL := "file://" + bareDir
+
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+		runGitForBootstrapTest(t, dir, "branch", "-M", "main")
+		runGitForBootstrapTest(t, dir, "commit", "--allow-empty", "-m", "init")
+		runBDInit(t, bd, dir, "--prefix", "late", "--skip-hooks", "--skip-agents")
+		bdCreate(t, bd, dir, "Lazy remote adoption", "--type", "task")
+
+		runGitForBootstrapTest(t, dir, "remote", "add", "origin", remoteURL)
+		runGitForBootstrapTest(t, dir, "push", "-u", "origin", "main")
+
+		bdDolt(t, bd, dir, "push")
+
+		out := bdDolt(t, bd, dir, "remote", "list")
+		if !strings.Contains(out, "origin") || !strings.Contains(out, remoteURL) {
+			t.Fatalf("bd dolt push should adopt later git origin %q; remote list:\n%s", remoteURL, out)
+		}
+
+		configYAML, err := os.ReadFile(filepath.Join(dir, ".beads", "config.yaml"))
+		if err != nil {
+			t.Fatalf("read config.yaml: %v", err)
+		}
+		if !strings.Contains(string(configYAML), remoteURL) {
+			t.Fatalf("bd dolt push should persist sync.remote; config.yaml:\n%s", configYAML)
+		}
+
+		ls := exec.Command("git", "ls-remote", remoteURL, "refs/dolt/data")
+		lsOut, err := ls.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git ls-remote refs/dolt/data failed: %v\n%s", err, lsOut)
+		}
+		if !strings.Contains(string(lsOut), "refs/dolt/data") {
+			t.Fatalf("bd dolt push did not publish refs/dolt/data:\n%s", lsOut)
+		}
+	})
+
+	t.Run("dolt_push_adopts_target_origin_with_dash_c", func(t *testing.T) {
+		targetBare := filepath.Join(t.TempDir(), "target-origin.git")
+		ambientBare := filepath.Join(t.TempDir(), "ambient-origin.git")
+		runGitForBootstrapTest(t, "", "init", "--bare", "-b", "main", targetBare)
+		runGitForBootstrapTest(t, "", "init", "--bare", "-b", "main", ambientBare)
+		targetURL := "file://" + targetBare
+		ambientURL := "file://" + ambientBare
+
+		targetDir := t.TempDir()
+		initGitRepoAt(t, targetDir)
+		runGitForBootstrapTest(t, targetDir, "branch", "-M", "main")
+		runGitForBootstrapTest(t, targetDir, "commit", "--allow-empty", "-m", "init")
+		runBDInit(t, bd, targetDir, "--prefix", "dc", "--skip-hooks", "--skip-agents")
+		bdCreate(t, bd, targetDir, "Dash C remote adoption", "--type", "task")
+		runGitForBootstrapTest(t, targetDir, "remote", "add", "origin", targetURL)
+		runGitForBootstrapTest(t, targetDir, "push", "-u", "origin", "main")
+
+		ambientDir := t.TempDir()
+		initGitRepoAt(t, ambientDir)
+		runGitForBootstrapTest(t, ambientDir, "remote", "add", "origin", ambientURL)
+
+		cmd := exec.Command(bd, "-C", targetDir, "dolt", "push")
+		cmd.Dir = ambientDir
+		cmd.Env = bdEnv(ambientDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bd -C target dolt push failed: %v\n%s", err, out)
+		}
+
+		out := bdDolt(t, bd, targetDir, "remote", "list")
+		if !strings.Contains(out, "origin") || !strings.Contains(out, targetURL) {
+			t.Fatalf("bd -C target dolt push should adopt target origin %q; remote list:\n%s", targetURL, out)
+		}
+		if strings.Contains(out, ambientURL) {
+			t.Fatalf("bd -C target dolt push adopted ambient origin %q; remote list:\n%s", ambientURL, out)
 		}
 	})
 
@@ -732,8 +830,22 @@ func TestEmbeddedInit(t *testing.T) {
 		if err := os.MkdirAll(beadsDir, 0750); err != nil {
 			t.Fatal(err)
 		}
+		commentTime := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+		preservedCommentID := "018f13f1-1111-7111-8111-111111111111"
 		issues := []types.Issue{
-			{ID: "jl-abc123", Title: "One", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+			{
+				ID:        "jl-abc123",
+				Title:     "One",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+				Comments: []*types.Comment{
+					{ID: preservedCommentID, IssueID: "jl-abc123", Author: "alice", Text: "preserve this id", CreatedAt: commentTime},
+					{IssueID: "jl-abc123", Author: "bob", Text: "generate an id", CreatedAt: commentTime.Add(time.Minute)},
+				},
+			},
 			{ID: "jl-def456", Title: "Two", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug, CreatedAt: time.Now(), UpdatedAt: time.Now()},
 		}
 		var lines []string
@@ -776,6 +888,111 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 		if !strings.Contains(stdout.String(), "bd init: initialize beads issue tracking") {
 			t.Fatalf("expected init commit to succeed, got log: %s", stdout.String())
+		}
+
+		exportCommentIDs := func(t *testing.T, repoDir, outFile string) []string {
+			t.Helper()
+			exportCmd := exec.Command(bd, "export", "-o", outFile)
+			exportCmd.Dir = repoDir
+			exportCmd.Env = bdEnv(repoDir)
+			if out, err := exportCmd.CombinedOutput(); err != nil {
+				t.Fatalf("bd export failed: %v\n%s", err, out)
+			}
+			data, err := os.ReadFile(outFile)
+			if err != nil {
+				t.Fatalf("read export: %v", err)
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				var issue types.Issue
+				if err := json.Unmarshal([]byte(line), &issue); err != nil {
+					t.Fatalf("parse exported issue: %v\n%s", err, line)
+				}
+				if issue.ID != "jl-abc123" {
+					continue
+				}
+				if len(issue.Comments) != 2 {
+					t.Fatalf("exported comments = %d, want 2", len(issue.Comments))
+				}
+				return []string{issue.Comments[0].ID, issue.Comments[1].ID}
+			}
+			t.Fatal("jl-abc123 missing from export")
+			return nil
+		}
+
+		firstExport := filepath.Join(dir, "first.jsonl")
+		firstIDs := exportCommentIDs(t, dir, firstExport)
+		if firstIDs[0] != preservedCommentID {
+			t.Fatalf("preserved comment ID = %q, want %q", firstIDs[0], preservedCommentID)
+		}
+		if firstIDs[1] == "" {
+			t.Fatal("missing-ID comment was exported without generated ID")
+		}
+		if _, err := uuid.Parse(firstIDs[1]); err != nil {
+			t.Fatalf("generated comment ID %q is not a valid UUID: %v", firstIDs[1], err)
+		}
+
+		reimportDir := t.TempDir()
+		initGitRepoAt(t, reimportDir)
+		reimportBeadsDir := filepath.Join(reimportDir, ".beads")
+		if err := os.MkdirAll(reimportBeadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		exportedJSONL, err := os.ReadFile(firstExport)
+		if err != nil {
+			t.Fatalf("read first export: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(reimportBeadsDir, "issues.jsonl"), exportedJSONL, 0644); err != nil {
+			t.Fatal(err)
+		}
+		reimportCmd := exec.Command(bd, "init", "--prefix", "jl", "--from-jsonl", "--quiet")
+		reimportCmd.Dir = reimportDir
+		reimportCmd.Env = bdEnv(reimportDir)
+		if stdout, stderr, err := runCommandBuffers(t, reimportCmd); err != nil {
+			t.Fatalf("reimport exported JSONL failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		secondIDs := exportCommentIDs(t, reimportDir, filepath.Join(reimportDir, "second.jsonl"))
+		if firstIDs[0] != secondIDs[0] || firstIDs[1] != secondIDs[1] {
+			t.Fatalf("comment IDs changed after reimport: first=%v second=%v", firstIDs, secondIDs)
+		}
+	})
+
+	t.Run("from_jsonl_uses_import_path", func(t *testing.T) {
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+		beadsDir := filepath.Join(dir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("import:\n  path: beads.jsonl\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		issue := types.Issue{
+			ID:        "jlcfg-abc123",
+			Title:     "Configured JSONL",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		line, _ := json.Marshal(issue)
+		if err := os.WriteFile(filepath.Join(beadsDir, "beads.jsonl"), append(line, '\n'), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "jlcfg", "--from-jsonl", "--quiet")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("--from-jsonl with import.path failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+
+		showCmd := exec.Command(bd, "show", "jlcfg-abc123", "--json")
+		showCmd.Dir = dir
+		showCmd.Env = bdEnv(dir)
+		if out, err := showCmd.CombinedOutput(); err != nil {
+			t.Fatalf("imported issue not found: %v\n%s", err, out)
 		}
 	})
 

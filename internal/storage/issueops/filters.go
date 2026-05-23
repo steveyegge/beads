@@ -16,11 +16,12 @@ type FilterTables struct {
 	Main         string // "issues" or "wisps"
 	Labels       string // "labels" or "wisp_labels"
 	Dependencies string // "dependencies" or "wisp_dependencies"
+	Comments     string // "comments" or "wisp_comments"
 }
 
 var (
-	IssuesFilterTables = FilterTables{Main: "issues", Labels: "labels", Dependencies: "dependencies"}
-	WispsFilterTables  = FilterTables{Main: "wisps", Labels: "wisp_labels", Dependencies: "wisp_dependencies"}
+	IssuesFilterTables = FilterTables{Main: "issues", Labels: "labels", Dependencies: "dependencies", Comments: "comments"}
+	WispsFilterTables  = FilterTables{Main: "wisps", Labels: "wisp_labels", Dependencies: "wisp_dependencies", Comments: "wisp_comments"}
 )
 
 // BuildIssueFilterClauses builds WHERE clause fragments and args from a query
@@ -134,7 +135,7 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 
 	if filter.ParentID != nil {
 		parentID := *filter.ParentID
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND depends_on_id = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", tables.Dependencies, tables.Dependencies))
+		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND %s = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", tables.Dependencies, DepTargetExpr, tables.Dependencies))
 		args = append(args, parentID, parentID)
 	}
 	if filter.NoParent {

@@ -29,6 +29,27 @@ func (k DepTargetKind) Column() string {
 	}
 }
 
+// DepTargetExpr is the SQL expression that resolves a dependency row's target
+// id from its three typed columns. Use this in SELECT projections (aliased as
+// depends_on_id) and in WHERE clauses when the caller doesn't know the target
+// kind ahead of time.
+const DepTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
+
+func depTargetExpr(alias string) string {
+	if alias == "" {
+		return DepTargetExpr
+	}
+	return fmt.Sprintf("COALESCE(%s.depends_on_issue_id, %s.depends_on_wisp_id, %s.depends_on_external)", alias, alias, alias)
+}
+
+func depTargetEquals(alias string) string {
+	return depTargetExpr(alias) + " = ?"
+}
+
+func depTargetIn(alias, placeholders string) string {
+	return depTargetExpr(alias) + " IN (" + placeholders + ")"
+}
+
 func ClassifyDepTarget(ctx context.Context, tx *sql.Tx, dep *types.Dependency, isCrossPrefix bool) DepTargetKind {
 	if isCrossPrefix || strings.HasPrefix(dep.DependsOnID, "external:") {
 		return DepTargetExternal
@@ -165,16 +186,26 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		}
 	}
 
-	// Check for existing dependency between the same pair.
+	var kind DepTargetKind
+	if opts.TargetKind != nil {
+		kind = *opts.TargetKind
+	} else {
+		kind = ClassifyDepTarget(ctx, tx, dep, opts.IsCrossPrefix)
+	}
+	targetCol := kind.Column()
+
+	// Check for existing dependency between the same pair. Use the resolved
+	// target expression defensively so stale/reclassified rows in another typed
+	// target column cannot bypass the idempotency/conflict check.
 	var existingType string
-	//nolint:gosec // G201: writeTable is from WispTableRouting ("dependencies" or "wisp_dependencies")
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT type FROM %s WHERE issue_id = ? AND depends_on_id = ?`, writeTable),
+	//nolint:gosec // G201: writeTable from WispTableRouting; depTargetEquals has no user input.
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT type FROM %s WHERE issue_id = ? AND %s`, writeTable, depTargetEquals("")),
 		dep.IssueID, dep.DependsOnID).Scan(&existingType)
 	if err == nil {
 		if existingType == string(dep.Type) {
 			// Same type — idempotent; update metadata.
-			//nolint:gosec // G201: writeTable is from WispTableRouting
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET metadata = ? WHERE issue_id = ? AND depends_on_id = ?`, writeTable),
+			//nolint:gosec // G201: writeTable from WispTableRouting; depTargetEquals has no user input.
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s`, writeTable, depTargetEquals("")),
 				metadata, dep.IssueID, dep.DependsOnID); err != nil {
 				return fmt.Errorf("failed to update dependency metadata: %w", err)
 			}
@@ -186,19 +217,27 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		return fmt.Errorf("failed to check existing dependency: %w", err)
 	}
 
-	var kind DepTargetKind
-	if opts.TargetKind != nil {
-		kind = *opts.TargetKind
-	} else {
-		kind = ClassifyDepTarget(ctx, tx, dep, opts.IsCrossPrefix)
-	}
-
-	//nolint:gosec // G201: writeTable from WispTableRouting; target column from DepTargetKind.Column()
+	//nolint:gosec // G201: writeTable from WispTableRouting; targetCol from DepTargetKind.Column()
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (issue_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?, ?)
-	`, writeTable, kind.Column()), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+	`, writeTable, targetCol), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
+	}
+
+	srcIsWisp := writeTable == "wisp_dependencies"
+	var affectedIssues, affectedWisps []string
+	var aerr error
+	if srcIsWisp {
+		affectedIssues, affectedWisps, aerr = AffectedByDepChangeForWispInTx(ctx, tx, dep.IssueID, dep.DependsOnID, dep.Type)
+	} else {
+		affectedIssues, affectedWisps, aerr = AffectedByDepChangeInTx(ctx, tx, dep.IssueID, dep.DependsOnID, dep.Type)
+	}
+	if aerr != nil {
+		return fmt.Errorf("affected by add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, aerr)
+	}
+	if err := RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+		return fmt.Errorf("recompute is_blocked after add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 	}
 	return nil
 }
@@ -211,17 +250,17 @@ func cycleReachabilityQuery(depTables []string) string {
 			WITH RECURSIVE reachable(node) AS (
 				SELECT ?
 				UNION
-				SELECT d.depends_on_id
+				SELECT %s
 				FROM reachable r
 				JOIN %s d ON d.issue_id = r.node AND d.type IN ('blocks', 'conditional-blocks')
 			)
 			SELECT COUNT(*) FROM reachable WHERE node = ?
-		`, depTables[0])
+		`, DepTargetExpr, depTables[0])
 	}
 
 	var unions []string
 	for _, t := range depTables {
-		unions = append(unions, fmt.Sprintf("SELECT issue_id, depends_on_id FROM %s WHERE type IN ('blocks', 'conditional-blocks')", t))
+		unions = append(unions, fmt.Sprintf("SELECT issue_id, %s AS depends_on_id FROM %s WHERE type IN ('blocks', 'conditional-blocks')", DepTargetExpr, t))
 	}
 	unionQuery := strings.Join(unions, " UNION ")
 	return fmt.Sprintf(`
@@ -262,28 +301,237 @@ func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []
 	return nil
 }
 
+// Dependency target rewrites reinsert matching rows because Dolt can leave the
+// stored generated depends_on_id column stale after a split target column is
+// updated by FK cascade.
 func UpdateWispIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE dependencies SET depends_on_wisp_id = ? WHERE depends_on_wisp_id = ?",
-		newID, oldID); err != nil {
-		return fmt.Errorf("update wisp %s -> %s in dependencies: %w", oldID, newID, err)
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := replaceDependencyTargetInTx(ctx, tx, table, "depends_on_wisp_id", oldID, newID); err != nil {
+			return fmt.Errorf("update wisp %s -> %s in %s: %w", oldID, newID, table, err)
+		}
 	}
 	return nil
+}
+
+func UpdateIssueIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := replaceDependencyTargetInTx(ctx, tx, table, "depends_on_issue_id", oldID, newID); err != nil {
+			return fmt.Errorf("update issue target %s -> %s in %s: %w", oldID, newID, table, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE dependencies SET issue_id = ? WHERE issue_id = ?",
+		newID, oldID); err != nil {
+		return fmt.Errorf("update issue source %s -> %s in dependencies: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+func replaceDependencyTargetInTx(ctx context.Context, tx *sql.Tx, table, column, oldID, newID string) error {
+	// Dolt does not reliably recompute the stored generated depends_on_id when
+	// only the split target column changes. Reinsert rows so the generated key
+	// is calculated from the new target value.
+	if err := checkRenameTargetCollision(ctx, tx, table, column, newID); err != nil {
+		return err
+	}
+
+	type depRow struct {
+		issueID     string
+		issueTarget sql.NullString
+		wispTarget  sql.NullString
+		external    sql.NullString
+		depType     string
+		createdAt   sql.NullTime
+		createdBy   sql.NullString
+		metadata    sql.NullString
+		threadID    sql.NullString
+	}
+
+	rows := make([]depRow, 0)
+	//nolint:gosec // table and column are hardcoded by callers.
+	queryRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+		SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
+		FROM %s
+		WHERE %s = ? OR (%s = ? AND depends_on_external IS NULL)
+	`, table, column, DepTargetExpr), oldID, oldID)
+	if err != nil {
+		return fmt.Errorf("query dependency targets: %w", err)
+	}
+	for queryRows.Next() {
+		var row depRow
+		if err := queryRows.Scan(&row.issueID, &row.issueTarget, &row.wispTarget, &row.external, &row.depType, &row.createdAt, &row.createdBy, &row.metadata, &row.threadID); err != nil {
+			_ = queryRows.Close()
+			return fmt.Errorf("scan dependency target: %w", err)
+		}
+		switch column {
+		case "depends_on_issue_id":
+			row.issueTarget = sql.NullString{String: newID, Valid: true}
+			row.wispTarget = sql.NullString{}
+			row.external = sql.NullString{}
+		case "depends_on_wisp_id":
+			row.issueTarget = sql.NullString{}
+			row.wispTarget = sql.NullString{String: newID, Valid: true}
+			row.external = sql.NullString{}
+		default:
+			_ = queryRows.Close()
+			return fmt.Errorf("replace dependency target: unsupported typed column %q", column)
+		}
+		rows = append(rows, row)
+	}
+	_ = queryRows.Close()
+	if err := queryRows.Err(); err != nil {
+		return fmt.Errorf("iterate dependency targets: %w", err)
+	}
+
+	//nolint:gosec // table and column are hardcoded by callers.
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE %s = ? OR (%s = ? AND depends_on_external IS NULL)`, table, column, DepTargetExpr), oldID, oldID); err != nil {
+		return fmt.Errorf("delete old dependency target: %w", err)
+	}
+	for _, row := range rows {
+		//nolint:gosec // table is hardcoded by callers.
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, table), row.issueID, nullStringValue(row.issueTarget), nullStringValue(row.wispTarget), nullStringValue(row.external), row.depType, nullTimeValue(row.createdAt), nullStringValue(row.createdBy), nullStringValue(row.metadata), nullStringValue(row.threadID)); err != nil {
+			return fmt.Errorf("insert replacement dependency target: %w", err)
+		}
+	}
+	return nil
+}
+
+func nullStringValue(value sql.NullString) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
+}
+
+func nullTimeValue(value sql.NullTime) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.Time
+}
+
+func RetargetInboundDependenciesToWispInTx(ctx context.Context, tx *sql.Tx, id string) error {
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_wisp_id", id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE %s
+			SET depends_on_wisp_id = ?, depends_on_issue_id = NULL
+			WHERE depends_on_issue_id = ?
+		`, table), id, id); err != nil {
+			return fmt.Errorf("retarget inbound dependencies to wisp in %s for %s: %w", table, id, err)
+		}
+	}
+	return nil
+}
+
+func RetargetInboundDependenciesToIssueInTx(ctx context.Context, tx *sql.Tx, id string) error {
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_issue_id", id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE %s
+			SET depends_on_issue_id = ?, depends_on_wisp_id = NULL
+			WHERE depends_on_wisp_id = ?
+		`, table), id, id); err != nil {
+			return fmt.Errorf("retarget inbound dependencies to issue in %s for %s: %w", table, id, err)
+		}
+	}
+	return nil
+}
+
+// UpdateIssueIDInDependencyTargetsInTx is called after the issues PK is updated
+// from oldID to newID. FK ON UPDATE CASCADE has already propagated
+// depends_on_issue_id from oldID to newID across dependencies and
+// wisp_dependencies, so no rewrite is needed.
+func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, _, newID string) error {
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_issue_id", newID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+//nolint:gosec // G201: table and typedCol are hardcoded constants.
+func checkRenameTargetCollision(ctx context.Context, tx *sql.Tx, table, typedCol, newID string) error {
+	var otherCols []string
+	switch typedCol {
+	case "depends_on_issue_id":
+		otherCols = []string{"depends_on_wisp_id", "depends_on_external"}
+	case "depends_on_wisp_id":
+		otherCols = []string{"depends_on_issue_id", "depends_on_external"}
+	default:
+		return fmt.Errorf("checkRenameTargetCollision: unsupported typed column %q", typedCol)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 1 FROM %s a
+		JOIN %s b ON a.issue_id = b.issue_id
+		WHERE a.%s = ?
+		  AND (b.%s = ? OR b.%s = ?)
+		LIMIT 1
+	`, table, table, typedCol, otherCols[0], otherCols[1])
+
+	var found int
+	err := tx.QueryRowContext(ctx, query, newID, newID, newID).Scan(&found)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		if isTableNotExistError(err) {
+			return nil
+		}
+		return fmt.Errorf("check rename collision in %s: %w", table, err)
+	}
+	return fmt.Errorf("rename to %s collides with existing dependency target in %s", newID, table)
 }
 
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
 // source issue is an active wisp.
 //
-//nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
+//nolint:gosec // G201: depTable from WispTableRouting (hardcoded constants)
 func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID string) error {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
 	_, _, _, depTable := WispTableRouting(isWisp)
 
+	// Capture the row's type before deleting so we can dispatch the right
+	// affected-set helper. If no row matches, treat as a no-op.
+	var depType string
+	row := tx.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT type FROM %s WHERE issue_id = ? AND %s = ?`, depTable, DepTargetExpr),
+		issueID, dependsOnID)
+	if err := row.Scan(&depType); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("lookup dependency type for %s -> %s: %w", issueID, dependsOnID, err)
+	}
+
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-		`DELETE FROM %s WHERE issue_id = ? AND depends_on_id = ?`, depTable),
+		`DELETE FROM %s WHERE issue_id = ? AND %s = ?`, depTable, DepTargetExpr),
 		issueID, dependsOnID); err != nil {
 		return fmt.Errorf("remove dependency: %w", err)
+	}
+
+	var affectedIssues, affectedWisps []string
+	var aerr error
+	if isWisp {
+		affectedIssues, affectedWisps, aerr = AffectedByDepChangeForWispInTx(ctx, tx, issueID, dependsOnID, types.DependencyType(depType))
+	} else {
+		affectedIssues, affectedWisps, aerr = AffectedByDepChangeInTx(ctx, tx, issueID, dependsOnID, types.DependencyType(depType))
+	}
+	if aerr != nil {
+		return fmt.Errorf("affected by remove dependency %s -> %s: %w", issueID, dependsOnID, aerr)
+	}
+	if err := RecomputeIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
+		return fmt.Errorf("recompute is_blocked after remove dependency %s -> %s: %w", issueID, dependsOnID, err)
 	}
 	return nil
 }
@@ -406,7 +654,7 @@ func GetDependenciesWithMetadataInTx(ctx context.Context, tx *sql.Tx, issueID st
 	var deps []depMeta
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT depends_on_id, type FROM %s WHERE issue_id = ?`, depTable), issueID)
+			`SELECT %s AS depends_on_id, type FROM %s WHERE issue_id = ?`, DepTargetExpr, depTable), issueID)
 		if err != nil {
 			return nil, fmt.Errorf("get dependencies from %s: %w", depTable, err)
 		}
@@ -469,7 +717,7 @@ func GetDependentsWithMetadataInTx(ctx context.Context, tx *sql.Tx, issueID stri
 	var deps []depMeta
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT issue_id, type FROM %s WHERE depends_on_id = ?`, depTable), issueID)
+			`SELECT issue_id, type FROM %s WHERE %s = ?`, depTable, DepTargetExpr), issueID)
 		if err != nil {
 			return nil, fmt.Errorf("get dependents from %s: %w", depTable, err)
 		}
@@ -527,7 +775,7 @@ func GetDependenciesInTx(ctx context.Context, tx *sql.Tx, issueID string) ([]*ty
 	var ids []string
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT depends_on_id FROM %s WHERE issue_id = ?`, depTable), issueID)
+			`SELECT %s AS depends_on_id FROM %s WHERE issue_id = ?`, DepTargetExpr, depTable), issueID)
 		if err != nil {
 			return nil, fmt.Errorf("get dependencies from %s: %w", depTable, err)
 		}
@@ -560,7 +808,7 @@ func GetDependentsInTx(ctx context.Context, tx *sql.Tx, issueID string) ([]*type
 	var ids []string
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT issue_id FROM %s WHERE depends_on_id = ?`, depTable), issueID)
+			`SELECT issue_id FROM %s WHERE %s = ?`, depTable, DepTargetExpr), issueID)
 		if err != nil {
 			return nil, fmt.Errorf("get dependents from %s: %w", depTable, err)
 		}

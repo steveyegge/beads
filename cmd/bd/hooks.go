@@ -1347,6 +1347,10 @@ func exportJSONLForCommit() {
 		exportPath = "issues.jsonl"
 	}
 	fullPath := filepath.Join(beadsDir, exportPath)
+	if !preCommitHasStagedBeadsFiles(beadsDir) {
+		debug.Logf("pre-commit: skipping JSONL export — no staged .beads paths\n")
+		return
+	}
 
 	debug.Logf("pre-commit: exporting JSONL to %s\n", fullPath)
 	warnJSONLWithoutDoltRemote("pre-commit auto-export")
@@ -1384,11 +1388,41 @@ func exportJSONLForCommit() {
 	}
 }
 
+func preCommitHasStagedBeadsFiles(beadsDir string) bool {
+	cmdDir := exportSubprocessDir(beadsDir)
+	if hookRoot := hookWorkTreeRoot(); hookRoot != "" {
+		cmdDir = hookRoot
+	}
+	cmd := exec.Command("git", "diff", "--cached", "--name-only", "--", ".beads")
+	cmd.Dir = cmdDir
+	cmd.Env = scrubGitHookEnv(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		debug.Logf("pre-commit: failed to inspect staged .beads paths: %v\n", err)
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
 func exportSubprocessDir(beadsDir string) string {
 	return filepath.Dir(beadsDir)
 }
 
-// importJSONLForSync imports .beads/issues.jsonl into Dolt after a git
+// syncImportJSONLPath returns the JSONL path used by the legacy git-hook sync
+// import path. Existing projects may have customized export.path before
+// import.path existed, so keep importing from export.path unless import.path is
+// explicitly configured.
+func syncImportJSONLPath(beadsDir string) string {
+	if config.GetValueSource("import.path") == config.SourceDefault {
+		exportPath := config.GetString("export.path")
+		if exportPath != "" {
+			return filepath.Join(beadsDir, exportPath)
+		}
+	}
+	return configuredImportJSONLPath(beadsDir)
+}
+
+// importJSONLForSync imports JSONL into Dolt after a git
 // pull/merge/branch-checkout only for legacy projects with no Dolt remote.
 // When sync.remote is configured, Dolt remains the source of truth and JSONL
 // import is skipped because upsert-only import cannot reconcile stale exports.
@@ -1412,11 +1446,7 @@ func importJSONLForSync(reason string) {
 		return
 	}
 
-	exportPath := config.GetString("export.path")
-	if exportPath == "" {
-		exportPath = "issues.jsonl"
-	}
-	fullPath := filepath.Join(beadsDir, exportPath)
+	fullPath := syncImportJSONLPath(beadsDir)
 
 	if info, err := os.Stat(fullPath); err != nil || info.Size() == 0 {
 		return

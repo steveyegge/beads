@@ -49,6 +49,7 @@ type Storage interface {
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	DeleteIssue(ctx context.Context, id string) error
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
+	SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error)
 
 	// Dependencies
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
@@ -67,6 +68,7 @@ type Storage interface {
 
 	// Work queries
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
+	GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error)
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 
@@ -80,6 +82,54 @@ type Storage interface {
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 	GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error)
 	GetAllEventsSince(ctx context.Context, since time.Time) ([]*types.Event, error)
+
+	// Aggregate counts — cheaper than materializing rows when only cardinality is needed.
+	// Filter.Limit and Filter.Offset are ignored by CountIssues; all others apply.
+
+	// CountIssues returns the number of issues matching query and filter.
+	CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error)
+	// CountDependents returns the number of issues that depend on issueID.
+	CountDependents(ctx context.Context, issueID string) (int64, error)
+	// CountDependencies returns the number of issues that issueID depends on.
+	CountDependencies(ctx context.Context, issueID string) (int64, error)
+	// CountIssueComments returns the number of comments on an issue.
+	CountIssueComments(ctx context.Context, issueID string) (int64, error)
+	// CountEvents returns the number of audit events for an issue, capped at limit
+	// (or unbounded if limit == 0).
+	CountEvents(ctx context.Context, issueID string, limit int) (int64, error)
+
+	// Streaming iterators (be-jaavsb / be-yinl4d).
+	//
+	// IterIssues streams issues matching the filter. Use this in place of
+	// SearchIssues when the result set is potentially unbounded
+	// (filter.Limit == 0 or absent). For bounded queries SearchIssues
+	// remains the right call.
+	IterIssues(ctx context.Context, query string, filter types.IssueFilter) (Iter[types.Issue], error)
+	// IterDependentsWithMetadata streams dependents (issues that depend on
+	// issueID) with the relationship metadata attached. Replaces the slice
+	// path for bd show --json --include-dependents on hub beads.
+	IterDependentsWithMetadata(ctx context.Context, issueID string) (Iter[types.IssueWithDependencyMetadata], error)
+	// IterDependenciesWithMetadata is the inverse direction — issues that
+	// issueID depends on, with metadata.
+	IterDependenciesWithMetadata(ctx context.Context, issueID string) (Iter[types.IssueWithDependencyMetadata], error)
+	// IterIssueComments streams comments on an issue, ordered by created_at.
+	IterIssueComments(ctx context.Context, issueID string) (Iter[types.Comment], error)
+	// IterEvents streams the audit-trail events for an issue, ordered by
+	// created_at descending. limit==0 means unbounded.
+	IterEvents(ctx context.Context, issueID string, limit int) (Iter[types.Event], error)
+	// IterAllEventsSince streams every audit-trail event in the rig newer
+	// than `since`. There is no bounded variant — full-rig event scans are
+	// inherently unbounded.
+	IterAllEventsSince(ctx context.Context, since time.Time) (Iter[types.Event], error)
+	// IterReadyWork streams issues that are ready for work (no open
+	// blockers), matching the filter.
+	IterReadyWork(ctx context.Context, filter types.WorkFilter) (Iter[types.Issue], error)
+	// IterBlockedIssues streams blocked issues (with the blockers surfaced
+	// in BlockedIssue), matching the filter.
+	IterBlockedIssues(ctx context.Context, filter types.WorkFilter) (Iter[types.BlockedIssue], error)
+	// IterWisps streams ephemeral issues matching the filter. Always
+	// restricts to Ephemeral=true; callers do not need to set that flag.
+	IterWisps(ctx context.Context, filter types.WispFilter) (Iter[types.Issue], error)
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)

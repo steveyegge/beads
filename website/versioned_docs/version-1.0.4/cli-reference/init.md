@@ -30,17 +30,17 @@ Pass --server to use an external dolt sql-server instead. In server mode,
 set connection details with --server-host, --server-port, and --server-user.
 Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
-Auto-export is enabled by default. After every write command, bd exports
-issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv), interchange, and backups up to date without extra steps.
-Cross-machine sync uses Dolt remotes, not JSONL import/export.
-To disable: bd config set export.auto false
+Auto-export is optional. When enabled, bd exports issues to
+.beads/issues.jsonl after write commands (throttled to once per 60s). This is
+for viewers (bv), interchange, and issue-level migration; not backup.
+Cross-machine sync and backups use Dolt remotes/backups, not JSONL import/export.
+To enable: bd config set export.auto true
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
   Skips all interactive prompts, using sensible defaults:
   • Role defaults to "maintainer" (override with --role)
   • Fork exclude auto-configured when fork detected
-  • Auto-export left at default (enabled)
+  • Auto-export left at default (disabled)
   • --contributor and --team flags are rejected (wizards require interaction)
   Also auto-detected when stdin is not a terminal or CI=true is set.
 
@@ -57,11 +57,12 @@ bd init [flags]
       --backend string                    Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
       --contributor                       Run OSS contributor setup wizard
       --database string                   Use existing server database name (overrides prefix-based naming)
+      --debug                             Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
       --destroy-token string              Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
       --discard-remote                    Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
       --external                          Server is externally managed (skip server startup); use with --shared-server or --server
       --force                             Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
-      --from-jsonl                        Import issues from .beads/issues.jsonl instead of git history
+      --from-jsonl                        Import issues from configured import.path instead of git history
       --non-interactive                   Skip all interactive prompts (auto-detected in CI or non-TTY environments)
   -p, --prefix string                     Issue prefix (default: current directory name)
       --proxied-server                    [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb

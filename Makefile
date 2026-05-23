@@ -9,7 +9,7 @@ SHELL := $(subst cmd,bin,$(subst git.exe,bash.exe,$(GIT_BASH)))
 endif
 endif
 
-.PHONY: all build test test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean install install-force help check-up-to-date fmt fmt-check
+.PHONY: all build test test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check
 
 # Default target
 all: build
@@ -197,6 +197,13 @@ clean:
 	rm -f internal/storage/dolt/bench-cpu-*.prof
 	rm -f beads-perf-*.prof
 
+# Sweep orphaned cmd/bd test temp dirs (e.g. when a test run was SIGKILLed
+# before its TestMain cleanup ran). Safe to run between test runs; will
+# skip dirs in use by a live test process. See bd-3q2u.
+clean-test-tmp:
+	@echo "Sweeping orphaned cmd/bd test temp dirs from $${TMPDIR:-/tmp}..."
+	@./scripts/clean-test-tmp.sh
+
 # Show help
 help:
 	@echo "Beads Makefile targets:"
@@ -216,4 +223,5 @@ help:
 	@echo "  make fmt-check    - Check Go formatting (for CI)"
 	@echo "  make check-docs   - Validate docs against CLI flags"
 	@echo "  make clean        - Remove build artifacts and profile files"
+	@echo "  make clean-test-tmp - Sweep orphaned cmd/bd test temp dirs from \$$TMPDIR"
 	@echo "  make help         - Show this help message"

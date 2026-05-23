@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -112,7 +113,45 @@ func CreateIssuesInTx(ctx context.Context, tx *sql.Tx, issues []*types.Issue, ac
 		return err
 	}
 
-	return ReconcileChildCounters(ctx, tx, issues)
+	if err := ReconcileChildCounters(ctx, tx, issues); err != nil {
+		return err
+	}
+
+	issueSeen := make(map[string]bool, len(issues))
+	wispSeen := make(map[string]bool, len(issues))
+	issueIDs := make([]string, 0, len(issues))
+	wispIDs := make([]string, 0, len(issues))
+	add := func(id string, isWisp bool) {
+		if id == "" {
+			return
+		}
+		if isWisp {
+			if !wispSeen[id] {
+				wispSeen[id] = true
+				wispIDs = append(wispIDs, id)
+			}
+			return
+		}
+		if !issueSeen[id] {
+			issueSeen[id] = true
+			issueIDs = append(issueIDs, id)
+		}
+	}
+	for _, issue := range issues {
+		if issue == nil {
+			continue
+		}
+		isWisp := IsWisp(issue)
+		add(issue.ID, isWisp)
+		for _, dep := range issue.Dependencies {
+			src := dep.IssueID
+			if src == "" {
+				src = issue.ID
+			}
+			add(src, isWisp)
+		}
+	}
+	return RecomputeIsBlockedInTx(ctx, tx, issueIDs, wispIDs)
 }
 
 // PrepareIssueForInsert normalizes timestamps, validates, and computes the content hash.
@@ -293,11 +332,16 @@ func PersistComments(ctx context.Context, tx *sql.Tx, issue *types.Issue) error 
 		if exists > 0 {
 			continue
 		}
+		commentID := comment.ID
+		if commentID == "" {
+			commentID = uuid.Must(uuid.NewV7()).String()
+			comment.ID = commentID
+		}
 		//nolint:gosec // G201: table is determined by ephemeral flag
 		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO %s (issue_id, author, text, created_at)
-			VALUES (?, ?, ?, ?)
-		`, commentTable), issue.ID, comment.Author, comment.Text, createdAt)
+			INSERT INTO %s (id, issue_id, author, text, created_at)
+			VALUES (?, ?, ?, ?, ?)
+		`, commentTable), commentID, issue.ID, comment.Author, comment.Text, createdAt)
 		if err != nil {
 			return fmt.Errorf("failed to insert comment for %s: %w", issue.ID, err)
 		}

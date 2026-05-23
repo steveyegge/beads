@@ -24,8 +24,8 @@ type jsonlImporter interface {
 // non-empty database. Production builds always use importFromLocalJSONLFull.
 var fallbackImporter = importFromLocalJSONLFull
 
-// maybeAutoImportJSONL checks whether the database is empty and a
-// issues.jsonl file exists in beadsDir. When both conditions are true it
+// maybeAutoImportJSONL checks whether the database is empty and the configured
+// import.path JSONL file exists in beadsDir. When both conditions are true it
 // auto-imports the JSONL data so users upgrading from pre-0.56 (which used
 // .beads/dolt/) to 1.0+ (which uses .beads/embeddeddolt/) don't appear to
 // lose their issues.  See GH#2994.
@@ -41,9 +41,13 @@ var fallbackImporter = importFromLocalJSONLFull
 //
 // The function is best-effort: failures are logged as warnings but do not
 // prevent the store from being used.
-func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string) {
+func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string, serverMode bool) {
+	if serverMode {
+		return
+	}
+
 	// Quick check: does the JSONL file exist and have content?
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	jsonlPath := configuredImportJSONLPath(beadsDir)
 	info, err := os.Stat(jsonlPath)
 	if err != nil || info.Size() == 0 {
 		return // no JSONL file or empty — nothing to import

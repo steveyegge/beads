@@ -28,6 +28,7 @@ import (
 	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/telemetry"
 	"github.com/steveyegge/beads/internal/utils"
 	"go.opentelemetry.io/otel/attribute"
@@ -35,11 +36,12 @@ import (
 )
 
 var (
-	changeDir  string
-	dbPath     string
-	actor      string
-	store      storage.DoltStorage
-	jsonOutput bool
+	changeDir   string
+	dbPath      string
+	actor       string
+	store       storage.DoltStorage
+	uowProvider uow.UnitOfWorkProvider
+	jsonOutput  bool
 
 	// Signal-aware context for graceful cancellation
 	rootCtx    context.Context
@@ -67,9 +69,9 @@ var changeDirEnvSnapshot map[string]envSnapshotValue
 
 var (
 	sandboxMode       bool
-	globalFlag        bool               // Use the global shared-server database (beads_global)
-	serverMode        bool               // True when using external dolt sql-server (dolt_mode=server)
-	proxiedServerMode bool               // True when using per-workspace proxied dolt sql-server (dolt_mode=proxied-server)
+	globalFlag        bool
+	serverMode        bool
+	proxiedServerMode bool
 	readonlyMode      bool               // Read-only mode: block write operations (for worker sandboxes)
 	storeIsReadOnly   bool               // Track if store was opened read-only (for staleness checks)
 	lockTimeout       = 30 * time.Second // Dolt open timeout (fixed default)
@@ -86,6 +88,11 @@ var (
 	// auto-flush. Used to decide whether to auto-commit Dolt after the command completes.
 	// Thread-safe via atomic.Bool to avoid data races in concurrent flush operations.
 	commandDidWrite atomic.Bool
+
+	// commandMayEmptyJSONLExport is set by destructive maintenance commands
+	// after they actually delete rows, allowing post-run auto-export to record
+	// an intentional empty JSONL artifact instead of treating it as ambiguous.
+	commandMayEmptyJSONLExport atomic.Bool
 
 	// commandDidExplicitDoltCommit is set when a command already created a Dolt commit
 	// explicitly (e.g., bd sync in dolt-native mode, hook flows, bd vc commit).
@@ -600,6 +607,7 @@ var rootCmd = &cobra.Command{
 
 		// Reset per-command write tracking (used by Dolt auto-commit).
 		commandDidWrite.Store(false)
+		commandMayEmptyJSONLExport.Store(false)
 		commandDidExplicitDoltCommit = false
 		commandDidWriteTipMetadata = false
 		commandTipIDsShown = make(map[string]struct{})
@@ -988,6 +996,17 @@ var rootCmd = &cobra.Command{
 		// other helper paths stay in lockstep with the main command path.
 		dolt.ApplyCLIAutoStart(beadsDir, doltCfg)
 
+		if proxiedServerMode {
+			p, err := newProxiedServerUOWProvider(rootCtx, beadsDir)
+			if err != nil {
+				FatalError("failed to open uow provider: %v", err)
+			}
+			uowProvider = p
+
+			syncCommandContext()
+			return
+		}
+
 		// Default auto-commit based on mode when the user hasn't set a value:
 		// - Server mode: OFF — the server handles commits via its own transaction
 		//   lifecycle; firing DOLT_COMMIT after every write under concurrent load
@@ -1035,7 +1054,7 @@ var rootCmd = &cobra.Command{
 		// the import command handles JSONL files itself and auto-importing
 		// first would interfere (double-import / upsert confusion).
 		if store != nil && !useReadOnly && !globalFlag && cmd.Name() != "import" {
-			maybeAutoImportJSONL(rootCtx, store, beadsDir)
+			maybeAutoImportJSONL(rootCtx, store, beadsDir, doltCfg.ServerMode)
 		}
 
 		// Validate workspace identity for write commands (GH#2438, GH#2372)
@@ -1087,65 +1106,74 @@ var rootCmd = &cobra.Command{
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		defer restoreChangeDirSelection()
 
-		// Dolt auto-commit: after a successful write command (and after final flush),
-		// create a Dolt commit so changes don't remain only in the working set.
-		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
-			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
-				FatalError("dolt auto-commit failed: %v", err)
+		if proxiedServerMode {
+			if uowProvider != nil {
+				_ = uowProvider.Close(rootCtx)
+				uowProvider = nil
 			}
-		}
+		} else {
+			// Dolt auto-commit: after a successful write command (and after final flush),
+			// create a Dolt commit so changes don't remain only in the working set.
+			if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
+				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
+					FatalError("dolt auto-commit failed: %v", err)
+				}
+			}
 
-		// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
-		// tip_*_last_shown metadata updates. This may happen even for otherwise read-only commands.
-		if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
-			// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
-			if mode, err := getDoltAutoCommitMode(); err != nil {
-				FatalError("dolt tip auto-commit failed: %v", err)
-			} else if mode == doltAutoCommitOn {
-				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
-				for tipID := range commandTipIDsShown {
-					key := fmt.Sprintf("tip_%s_last_shown", tipID)
-					value := time.Now().Format(time.RFC3339)
-					if err := store.SetLocalMetadata(rootCtx, key, value); err != nil {
+			// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
+			// tip_*_last_shown metadata updates. This may happen even for otherwise read-only commands.
+			if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
+				// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
+				if mode, err := getDoltAutoCommitMode(); err != nil {
+					FatalError("dolt tip auto-commit failed: %v", err)
+				} else if mode == doltAutoCommitOn {
+					// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
+					for tipID := range commandTipIDsShown {
+						key := fmt.Sprintf("tip_%s_last_shown", tipID)
+						value := time.Now().Format(time.RFC3339)
+						if err := store.SetLocalMetadata(rootCtx, key, value); err != nil {
+							FatalError("dolt tip auto-commit failed: %v", err)
+						}
+					}
+
+					ids := make([]string, 0, len(commandTipIDsShown))
+					for tipID := range commandTipIDsShown {
+						ids = append(ids, tipID)
+					}
+					msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
+					if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
 						FatalError("dolt tip auto-commit failed: %v", err)
 					}
 				}
+			}
 
-				ids := make([]string, 0, len(commandTipIDsShown))
-				for tipID := range commandTipIDsShown {
-					ids = append(ids, tipID)
-				}
-				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
-				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
-					FatalError("dolt tip auto-commit failed: %v", err)
+			// Auto-backup: sync a Dolt-native backup if enabled and due
+			maybeAutoBackup(rootCtx)
+
+			// Auto-export: write git-tracked JSONL for portability if enabled and due.
+			// Read-only commands must not perform post-run maintenance writes or emit
+			// sync guidance after machine-readable output.
+			if shouldRunPostCommandAutoExport(cmd) {
+				if err := maybeAutoExport(rootCtx, serverMode, commandAllowsEmptyAutoExport(cmd)); err != nil {
+					FatalError("%v", err)
 				}
 			}
-		}
 
-		// Auto-backup: export JSONL to .beads/backup/ if enabled and due
-		maybeAutoBackup(rootCtx)
+			// Auto-push: push to Dolt remote if enabled and due.
+			// Skip for read-only commands to avoid unnecessary network operations
+			// and metadata writes on commands like bd list/show/ready (GH#2191).
+			if !isReadOnlyCommand(cmd.Name()) {
+				maybeAutoPush(rootCtx)
+			}
 
-		// Auto-export: write git-tracked JSONL for portability if enabled and due.
-		// Read-only commands must not perform post-run maintenance writes or emit
-		// sync guidance after machine-readable output.
-		if shouldRunPostCommandAutoExport(cmd) {
-			maybeAutoExport(rootCtx)
-		}
+			// Signal that store is closing (prevents background flush from accessing closed store)
+			storeMutex.Lock()
+			storeActive = false
+			storeMutex.Unlock()
 
-		// Auto-push: push to Dolt remote if enabled and due.
-		// Skip for read-only commands to avoid unnecessary network operations
-		// and metadata writes on commands like bd list/show/ready (GH#2191).
-		if !isReadOnlyCommand(cmd.Name()) {
-			maybeAutoPush(rootCtx)
-		}
-
-		// Signal that store is closing (prevents background flush from accessing closed store)
-		storeMutex.Lock()
-		storeActive = false
-		storeMutex.Unlock()
-
-		if store != nil {
-			_ = store.Close() // Best effort cleanup
+			if store != nil {
+				_ = store.Close() // Best effort cleanup
+			}
 		}
 
 		// End the command span and flush OTel data before process exit.
@@ -1178,6 +1206,18 @@ func shouldRunPostCommandAutoExport(cmd *cobra.Command) bool {
 		return true
 	}
 	return !isReadOnlyCommand(cmd.Name())
+}
+
+func commandAllowsEmptyAutoExport(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	switch cmd.Name() {
+	case "prune", "purge":
+		return commandMayEmptyJSONLExport.Load()
+	default:
+		return false
+	}
 }
 
 // blockedEnvVars lists environment variables that must not be set because they

@@ -161,13 +161,11 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	result, err := issueops.UpdateIssueInTx(ctx, tx, id, updates, actor)
+	_, err = issueops.UpdateIssueInTx(ctx, tx, id, updates, actor)
 	if err != nil {
 		return err
 	}
 
-	// Dolt versioning for permanent issues.
-	// GH#2455: Stage only the tables we modified, then commit without -A.
 	for _, table := range []string{"issues", "events"} {
 		_, _ = tx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
 	}
@@ -180,11 +178,6 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 	if err := tx.Commit(); err != nil {
 		return wrapTransactionError("commit update issue", err)
 	}
-	// Status changes affect the active set used by blocked ID computation
-	if _, hasStatus := updates["status"]; hasStatus {
-		s.invalidateBlockedIDsCache()
-	}
-	_ = result // OldIssue available if needed for future cache invalidation
 	return nil
 }
 
@@ -224,8 +217,6 @@ func (s *DoltStore) ClaimIssue(ctx context.Context, id string, actor string) err
 	if err := tx.Commit(); err != nil {
 		return wrapTransactionError("commit claim issue", err)
 	}
-	// Claiming changes status to in_progress, affecting blocked ID computation
-	s.invalidateBlockedIDsCache()
 	return nil
 }
 
@@ -237,7 +228,7 @@ func (s *DoltStore) ClaimReadyIssue(ctx context.Context, filter types.WorkFilter
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	claimed, err := issueops.ClaimReadyIssueInTx(ctx, tx, filter, actor, s.computeBlockedIDsForReadyWork)
+	claimed, err := issueops.ClaimReadyIssueInTx(ctx, tx, filter, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +248,6 @@ func (s *DoltStore) ClaimReadyIssue(ctx context.Context, filter types.WorkFilter
 	if err := tx.Commit(); err != nil {
 		return nil, wrapTransactionError("commit claim ready issue", err)
 	}
-	s.invalidateBlockedIDsCache()
 	return claimed, nil
 }
 
@@ -320,8 +310,6 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 	if err := tx.Commit(); err != nil {
 		return wrapTransactionError("commit close issue", err)
 	}
-	// Closing changes the active set, which affects blocked ID computation (GH#1495)
-	s.invalidateBlockedIDsCache()
 	return nil
 }
 
@@ -349,7 +337,6 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 	}); err != nil {
 		return err
 	}
-	s.invalidateBlockedIDsCache()
 	return nil
 }
 
@@ -433,11 +420,6 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 	}
 	result.DeletedCount += wispDeleteCount
 
-	if dryRun {
-		return result, nil
-	}
-
-	s.invalidateBlockedIDsCache()
 	return result, nil
 }
 
@@ -629,9 +611,6 @@ func (s *DoltStore) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo str
 		count, err = issueops.DeleteIssuesBySourceRepoInTx(ctx, tx, sourceRepo)
 		return err
 	})
-	if err == nil {
-		s.invalidateBlockedIDsCache()
-	}
 	return count, err
 }
 

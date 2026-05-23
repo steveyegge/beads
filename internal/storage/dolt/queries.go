@@ -21,24 +21,36 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	return result, err
 }
 
-// GetReadyWork returns issues that are ready to work on (not blocked).
-//
-// Blocking semantics are unified through issueops.GetReadyWorkInTx.
-func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
-	var result []*types.Issue
+func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
+	var result []*types.IssueWithCounts
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		result, err = issueops.GetReadyWorkInTx(ctx, tx, filter, s.computeBlockedIDsForReadyWork)
+		result, err = issueops.SearchIssuesWithCountsInTx(ctx, tx, query, filter)
 		return err
 	})
 	return result, err
 }
 
-// GetBlockedIssues returns issues that are blocked by other issues.
-// Uses separate single-table queries with Go-level filtering to avoid
-// correlated EXISTS subqueries that trigger Dolt's joinIter panic
-// (slice bounds out of range at join_iters.go:192).
-// Same fix pattern as GetStatistics blocked count (fc16065c, a4a21958).
+func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
+	var result []*types.Issue
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetReadyWorkInTx(ctx, tx, filter)
+		return err
+	})
+	return result, err
+}
+
+func (s *DoltStore) GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error) {
+	var result []*types.IssueWithCounts
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.GetReadyWorkWithCountsInTx(ctx, tx, filter)
+		return err
+	})
+	return result, err
+}
+
 func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
 	var result []*types.BlockedIssue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -82,158 +94,23 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 		return nil, fmt.Errorf("failed to get statistics: %w", err)
 	}
 
-	// Blocked count: reuse computeBlockedIDs which caches the result across
-	// GetReadyWork and GetStatistics calls within the same CLI invocation.
 	var blockedCount int
-	blockedIDs, err := s.computeBlockedIDs(ctx, true)
-	if err == nil {
-		blockedCount = len(blockedIDs)
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM issues
+			WHERE is_blocked = 1 AND status <> 'closed' AND status <> 'pinned'
+		`).Scan(&blockedCount)
+	}); err != nil {
+		return nil, fmt.Errorf("failed to count blocked issues: %w", err)
 	}
 	stats.BlockedIssues = blockedCount
 
-	// Ready count: compute without using the ready_issues view to avoid
-	// recursive CTE join that triggers the same Dolt panic.
-	// Ready = open, non-ephemeral, not blocked (directly or transitively).
 	stats.ReadyIssues = stats.OpenIssues - blockedCount
 	if stats.ReadyIssues < 0 {
 		stats.ReadyIssues = 0
 	}
 
 	return stats, nil
-}
-
-// computeBlockedIDs returns the set of issue IDs that are blocked by active issues.
-// Uses separate single-table queries with Go-level filtering to avoid Dolt's
-// joinIter panic (slice bounds out of range at join_iters.go:192).
-// Results are cached per DoltStore lifetime and invalidated when dependencies
-// change (AddDependency, RemoveDependency).
-//
-// When includeWisps is false, only the issues/dependencies tables are scanned,
-// skipping the wisps/wisp_dependencies tables. This is safe when the caller only
-// needs blocked status for non-ephemeral issues (no cross-table blocking deps exist).
-// A cached result from includeWisps=true satisfies includeWisps=false requests.
-//
-// Caller must hold s.mu (at least RLock).
-func (s *DoltStore) computeBlockedIDs(ctx context.Context, includeWisps bool) ([]string, error) {
-	var result []string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		result, err = s.computeBlockedIDsForReadyWork(ctx, tx, includeWisps)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-func (s *DoltStore) computeBlockedIDsForReadyWork(ctx context.Context, tx *sql.Tx, includeWisps bool) ([]string, error) {
-	s.cacheMu.Lock()
-	if s.blockedIDsCached && (s.blockedIDsCacheIncludesWisps || !includeWisps) {
-		result := s.blockedIDsCache
-		s.cacheMu.Unlock()
-		return result, nil
-	}
-	s.cacheMu.Unlock()
-
-	result, _, err := issueops.ComputeBlockedIDsInTx(ctx, tx, includeWisps)
-	if err != nil {
-		return nil, err
-	}
-	blockedSet := make(map[string]bool, len(result))
-	for _, id := range result {
-		blockedSet[id] = true
-	}
-
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-	if s.blockedIDsCached && (s.blockedIDsCacheIncludesWisps || !includeWisps) {
-		return s.blockedIDsCache, nil
-	}
-	s.blockedIDsCache = result
-	s.blockedIDsCacheMap = blockedSet
-	s.blockedIDsCached = true
-	s.blockedIDsCacheIncludesWisps = includeWisps
-	return result, nil
-}
-
-// invalidateBlockedIDsCache clears the blocked IDs cache so the next call
-// to computeBlockedIDs will recompute from the database.
-func (s *DoltStore) invalidateBlockedIDsCache() {
-	s.cacheMu.Lock()
-	s.blockedIDsCached = false
-	s.blockedIDsCache = nil
-	s.blockedIDsCacheMap = nil
-	s.blockedIDsCacheIncludesWisps = false
-	s.cacheMu.Unlock()
-}
-
-// getChildrenOfDeferredParents returns IDs of issues whose parent has a future
-// defer_until date. Uses separate single-table queries to avoid correlated
-// cross-table JOIN subqueries that trigger Dolt joinIter hangs (GH#1190).
-// Caller must hold s.mu (at least RLock).
-func (s *DoltStore) getChildrenOfDeferredParents(ctx context.Context) ([]string, error) {
-	// Step 1: Get IDs of issues with future defer_until
-	deferredRows, err := s.queryContext(ctx, `
-		SELECT id FROM issues
-		WHERE defer_until IS NOT NULL AND defer_until > UTC_TIMESTAMP()
-	`)
-	if err != nil {
-		return nil, wrapQueryError("deferred parents: get deferred issues", err)
-	}
-	var deferredIDs []string
-	for deferredRows.Next() {
-		var id string
-		if err := deferredRows.Scan(&id); err != nil {
-			_ = deferredRows.Close()
-			return nil, wrapScanError("deferred parents: scan deferred issue", err)
-		}
-		deferredIDs = append(deferredIDs, id)
-	}
-	_ = deferredRows.Close()
-	if err := deferredRows.Err(); err != nil {
-		return nil, wrapQueryError("deferred parents: deferred rows", err)
-	}
-	if len(deferredIDs) == 0 {
-		return nil, nil
-	}
-
-	// Step 2: Get children of those deferred parents
-	return s.getChildrenOfIssues(ctx, deferredIDs)
-}
-
-// getChildrenOfIssues returns IDs of direct children (parent-child deps) of the given issue IDs.
-func (s *DoltStore) getChildrenOfIssues(ctx context.Context, parentIDs []string) ([]string, error) {
-	var result []string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		result, err = issueops.GetChildrenOfIssuesInTx(ctx, tx, parentIDs)
-		return err
-	})
-	return result, err
-}
-
-// getChildrenWithParents returns a map of childID -> parentID for direct children
-// (parent-child deps) of the given parent IDs.
-func (s *DoltStore) getChildrenWithParents(ctx context.Context, parentIDs []string) (map[string]string, error) {
-	var result map[string]string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		result, err = issueops.GetChildrenWithParentsInTx(ctx, tx, parentIDs)
-		return err
-	})
-	return result, err
-}
-
-func (s *DoltStore) getDescendantIDs(ctx context.Context, rootID string) ([]string, error) {
-	var result []string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		result, err = issueops.GetDescendantIDsInTx(ctx, tx, rootID, 0)
-		return err
-	})
-	return result, err
 }
 
 // GetMoleculeProgress returns progress stats for a molecule
@@ -245,9 +122,11 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 	// Route to correct table based on whether molecule is a wisp (bd-w2w)
 	issueTable := "issues"
 	depTable := "dependencies"
+	parentCol := "depends_on_issue_id"
 	if s.isActiveWisp(ctx, moleculeID) {
 		issueTable = "wisps"
 		depTable = "wisp_dependencies"
+		parentCol = "depends_on_wisp_id"
 	}
 
 	// Get molecule title
@@ -258,15 +137,12 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 		stats.MoleculeTitle = title.String
 	}
 
-	// Use separate single-table queries to avoid Dolt's joinIter panic
-	// (join_iters.go:192) which triggers on JOIN between issues and dependencies.
-
 	// Step 1: Get child issue IDs from dependencies table (single-table scan)
-	//nolint:gosec // G201: depTable is hardcoded to "dependencies" or "wisp_dependencies"
+	//nolint:gosec // G201: depTable and parentCol are hardcoded
 	depRows, err := s.queryContext(ctx, fmt.Sprintf(`
 		SELECT issue_id FROM %s
-		WHERE depends_on_id = ? AND type = 'parent-child'
-	`, depTable), moleculeID)
+		WHERE %s = ? AND type = 'parent-child'
+	`, depTable, parentCol), moleculeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get molecule children: %w", err)
 	}
