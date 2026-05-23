@@ -30,7 +30,10 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor 
 	if err != nil {
 		return fmt.Errorf("new batch context: %w", err)
 	}
-	if err := CreateIssueInTx(ctx, tx, bc, issue, actor); err != nil {
+	if err := PrepareIssueForInsert(issue, bc.CustomStatuses, bc.CustomTypes); err != nil {
+		return fmt.Errorf("promote wisp to issues: %w", err)
+	}
+	if _, err := InsertIssueIfNew(ctx, tx, "issues", issue); err != nil {
 		return fmt.Errorf("promote wisp to issues: %w", err)
 	}
 

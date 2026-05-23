@@ -236,10 +236,66 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	if aerr != nil {
 		return fmt.Errorf("affected by add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, aerr)
 	}
+	if dep.Type == types.DepBlocks || dep.Type == types.DepConditionalBlocks {
+		if err := markDirectBlockingDependencySourceInTx(ctx, tx, dep.IssueID, srcIsWisp, dep.DependsOnID, kind); err != nil {
+			return fmt.Errorf("mark direct is_blocked after add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+		}
+		affectedIssues, affectedWisps = removeSourceFromAffected(dep.IssueID, srcIsWisp, affectedIssues, affectedWisps)
+	}
 	if err := MarkIsBlockedInTx(ctx, tx, affectedIssues, affectedWisps); err != nil {
 		return fmt.Errorf("mark is_blocked after add dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 	}
 	return nil
+}
+
+func removeSourceFromAffected(source string, srcIsWisp bool, issueIDs, wispIDs []string) ([]string, []string) {
+	if srcIsWisp {
+		return issueIDs, removeID(wispIDs, source)
+	}
+	return removeID(issueIDs, source), wispIDs
+}
+
+func removeID(ids []string, remove string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	out := ids[:0]
+	for _, id := range ids {
+		if id != remove {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+//nolint:gosec // G201: table names are selected from fixed issue/wisp tables.
+func markDirectBlockingDependencySourceInTx(ctx context.Context, tx *sql.Tx, source string, srcIsWisp bool, target string, targetKind DepTargetKind) error {
+	sourceTable := "issues"
+	if srcIsWisp {
+		sourceTable = "wisps"
+	}
+	targetTable := ""
+	switch targetKind {
+	case DepTargetIssue:
+		targetTable = "issues"
+	case DepTargetWisp:
+		targetTable = "wisps"
+	default:
+		return nil
+	}
+
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE %s s SET s.is_blocked = 1
+		WHERE s.id = ?
+		  AND s.is_blocked = 0
+		  AND s.status <> 'closed' AND s.status <> 'pinned'
+		  AND EXISTS (
+		    SELECT 1 FROM %s t
+		    WHERE t.id = ?
+		      AND t.status <> 'closed' AND t.status <> 'pinned'
+		  )
+	`, sourceTable, targetTable), source, target)
+	return err
 }
 
 // cycleReachabilityQuery uses UNION distinct recursion so cyclic and diamond
@@ -415,6 +471,9 @@ func nullTimeValue(value sql.NullTime) any {
 
 func RetargetInboundDependenciesToWispInTx(ctx context.Context, tx *sql.Tx, id string) error {
 	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := checkRetargetTargetCollision(ctx, tx, table, "depends_on_issue_id", "depends_on_wisp_id", id); err != nil {
+			return err
+		}
 		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_wisp_id", id); err != nil {
 			return err
 		}
@@ -431,6 +490,9 @@ func RetargetInboundDependenciesToWispInTx(ctx context.Context, tx *sql.Tx, id s
 
 func RetargetInboundDependenciesToIssueInTx(ctx context.Context, tx *sql.Tx, id string) error {
 	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := checkRetargetTargetCollision(ctx, tx, table, "depends_on_wisp_id", "depends_on_issue_id", id); err != nil {
+			return err
+		}
 		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_issue_id", id); err != nil {
 			return err
 		}
@@ -456,6 +518,43 @@ func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, _, ne
 		}
 	}
 	return nil
+}
+
+//nolint:gosec // G201: table and typed columns are hardcoded constants.
+func checkRetargetTargetCollision(ctx context.Context, tx *sql.Tx, table, sourceCol, destCol, id string) error {
+	var conflictCols []string
+	switch destCol {
+	case "depends_on_issue_id":
+		conflictCols = []string{"depends_on_issue_id", "depends_on_external"}
+	case "depends_on_wisp_id":
+		conflictCols = []string{"depends_on_wisp_id", "depends_on_external"}
+	default:
+		return fmt.Errorf("checkRetargetTargetCollision: unsupported destination column %q", destCol)
+	}
+	if sourceCol != "depends_on_issue_id" && sourceCol != "depends_on_wisp_id" {
+		return fmt.Errorf("checkRetargetTargetCollision: unsupported source column %q", sourceCol)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 1 FROM %s moving
+		JOIN %s existing ON moving.issue_id = existing.issue_id
+		WHERE moving.%s = ?
+		  AND (existing.%s = ? OR existing.%s = ?)
+		LIMIT 1
+	`, table, table, sourceCol, conflictCols[0], conflictCols[1])
+
+	var found int
+	err := tx.QueryRowContext(ctx, query, id, id, id).Scan(&found)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		if isTableNotExistError(err) {
+			return nil
+		}
+		return fmt.Errorf("check retarget collision in %s: %w", table, err)
+	}
+	return fmt.Errorf("retarget to %s collides with existing dependency target in %s", id, table)
 }
 
 //nolint:gosec // G201: table and typedCol are hardcoded constants.
