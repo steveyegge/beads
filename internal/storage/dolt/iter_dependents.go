@@ -45,16 +45,21 @@ type doltDependentsIter struct {
 // matches GetDependentsWithMetadata. See the package doc for why the join
 // target per edge table is unambiguous.
 func (s *DoltStore) IterDependentsWithMetadata(ctx context.Context, issueID string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
+	// Resolve each edge's target from the split columns, NOT a physical
+	// depends_on_id: that generated column was dropped from both edge tables
+	// by migration 0043, so `d.depends_on_id` errors with 1105 on a post-split
+	// DB. Mirrors the count path (counts.go depTargetExpr) and the slice path
+	// (GetDependenciesWithMetadata, issueops.DepTargetExpr).
 	q := fmt.Sprintf(`
 		SELECT %s, d.type
 		FROM issues i
 		JOIN dependencies d ON d.issue_id = i.id
-		WHERE d.depends_on_id = ?
+		WHERE COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) = ?
 		UNION ALL
 		SELECT %s, d.type
 		FROM wisps w
 		JOIN wisp_dependencies d ON d.issue_id = w.id
-		WHERE d.depends_on_id = ?
+		WHERE COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) = ?
 		ORDER BY created_at ASC
 	`, prefixedIssueColumns("i"), prefixedIssueColumns("w"))
 	return s.iterIssuesWithDepType(ctx, q, issueID, issueID)
