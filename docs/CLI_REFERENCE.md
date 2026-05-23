@@ -1626,7 +1626,11 @@ Section requirements by type:
   task:     Acceptance Criteria
   feature:  Acceptance Criteria
   epic:     Success Criteria
+  decision: Decision, Rationale, Alternatives Considered
+  spike:    Goal, Findings
+  story:    Acceptance Criteria
   chore:    (none)
+  milestone: (none)
 
 Examples:
   bd lint                    # Lint all open issues
