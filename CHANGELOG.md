@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disabled unless a viewer or JSONL integration explicitly enables them. This
   keeps `.beads/issues.jsonl` as an optional export surface, not the default
   mutation path. ([GH#4062](https://github.com/gastownhall/beads/issues/4062))
+  Thanks [Kevin Glynn](https://github.com/kevglynn) for surfacing the JSONL
+  source-of-truth mismatch through the export cleanup work that led to this
+  change.
 
 - **Release workflow uses the checked-in beads-release formula** — the old release shell path now delegates to the formula-backed release workflow with CI gates.
 
