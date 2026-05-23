@@ -1192,11 +1192,22 @@ func getLinearHashLength(ctx context.Context) int {
 	return value
 }
 
-// syncIsScoped returns true when the user constrained the sync to a subset
-// of beads (via --parent, --type, --exclude-type, or specific IDs). The
-// parent reconcile pass is skipped on scoped syncs because it walks the
-// full local tree, which could mutate Linear-side state outside the scope
-// the user asked for.
+// syncIsScoped returns true when the user explicitly constrained THIS
+// invocation to a specific subset of beads (via --parent, --issues, or
+// --type). The parent reconcile pass is skipped on scoped syncs because
+// it walks the full local tree, which could mutate Linear-side state
+// outside the scope the user asked for.
+//
+// Notably ExcludeTypes is NOT a scoping signal: it merges with persistent
+// config (linear.exclude_types), and rigs that set it default-on (e.g.
+// "molecule,event") would otherwise have the reconcile pass permanently
+// disabled — bd-9w3 root cause. Reconcile only ever touches the parent
+// field on the child issue, so excluding types from push doesn't really
+// conflict with wiring up parent-child for the remaining types.
+//
+// TypeFilter IS kept as a scoping signal because --type is set only via
+// the CLI flag for this invocation; the user's intent to push a specific
+// subset is explicit.
 func syncIsScoped(opts *tracker.SyncOptions) bool {
 	if opts == nil {
 		return false
@@ -1204,7 +1215,7 @@ func syncIsScoped(opts *tracker.SyncOptions) bool {
 	if opts.ParentID != "" || len(opts.IssueIDs) > 0 {
 		return true
 	}
-	if len(opts.TypeFilter) > 0 || len(opts.ExcludeTypes) > 0 {
+	if len(opts.TypeFilter) > 0 {
 		return true
 	}
 	return false
