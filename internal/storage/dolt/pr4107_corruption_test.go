@@ -2,6 +2,7 @@ package dolt
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"sort"
@@ -500,6 +501,61 @@ func TestPR4107SearchIssuesWithCountsEphemeralFalseIncludesNoHistoryOnly(t *test
 	}
 }
 
+func TestPR4107Migration0047ExecutesLegacyWispDependencySplit(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	createPerm(t, ctx, store, "pr4107-legacy-issue-target")
+	createPerm(t, ctx, store, "pr4107-legacy-inherited-child")
+	createPerm(t, ctx, store, "pr4107-legacy-waiter")
+	createNoHistoryWisp(t, ctx, store, "pr4107-legacy-blocked-wisp-parent")
+	createNoHistoryWisp(t, ctx, store, "pr4107-legacy-wisp-target")
+	createNoHistoryWisp(t, ctx, store, "pr4107-legacy-wisp-source")
+	createNoHistoryWisp(t, ctx, store, "pr4107-legacy-external-source")
+	createNoHistoryWisp(t, ctx, store, "pr4107-legacy-spawner")
+	createNoHistoryWisp(t, ctx, store, "pr4107-legacy-active-child")
+
+	addDependency(t, ctx, store, "pr4107-legacy-inherited-child", "pr4107-legacy-blocked-wisp-parent", types.DepParentChild)
+	addDependency(t, ctx, store, "pr4107-legacy-waiter", "pr4107-legacy-spawner", types.DepWaitsFor)
+
+	replaceWispDependenciesWithLegacyShape(t, ctx, store)
+	insertLegacyWispDependency(t, ctx, store, "pr4107-legacy-blocked-wisp-parent", "pr4107-legacy-issue-target", types.DepBlocks)
+	insertLegacyWispDependency(t, ctx, store, "pr4107-legacy-wisp-source", "pr4107-legacy-wisp-target", types.DepBlocks)
+	insertLegacyWispDependency(t, ctx, store, "pr4107-legacy-external-source", "external:pr4107", types.DepBlocks)
+	insertLegacyWispDependency(t, ctx, store, "pr4107-legacy-active-child", "pr4107-legacy-spawner", types.DepParentChild)
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE issues
+		SET is_blocked = 0
+		WHERE id IN ('pr4107-legacy-inherited-child', 'pr4107-legacy-waiter')
+	`); err != nil {
+		t.Fatalf("seed stale issue is_blocked projections: %v", err)
+	}
+
+	runMigrationSQL(t, ctx, store, "../schema/migrations/0047_recompute_mixed_is_blocked.up.sql")
+
+	assertWispDependencyTarget(t, ctx, store, "pr4107-legacy-blocked-wisp-parent", "pr4107-legacy-issue-target", "", "")
+	assertWispDependencyTarget(t, ctx, store, "pr4107-legacy-wisp-source", "", "pr4107-legacy-wisp-target", "")
+	assertWispDependencyTarget(t, ctx, store, "pr4107-legacy-external-source", "", "", "external:pr4107")
+	assertWispDependencyTarget(t, ctx, store, "pr4107-legacy-active-child", "", "pr4107-legacy-spawner", "")
+	assertWispDependencyPrimaryKey(t, ctx, store, []string{"issue_id", "depends_on_id"})
+	for _, indexName := range []string{
+		"idx_wisp_dep_issue_target",
+		"idx_wisp_dep_wisp_target",
+		"idx_wisp_dep_external_target",
+		"idx_wisp_dep_type_target",
+	} {
+		assertWispDependencyIndexPresent(t, ctx, store, indexName)
+	}
+	for _, indexName := range []string{"idx_wisp_dep_depends", "idx_wisp_dep_type_depends"} {
+		assertWispDependencyIndexAbsent(t, ctx, store, indexName)
+	}
+	assertIsBlocked(t, ctx, store, "issues", "pr4107-legacy-inherited-child", true)
+	assertIsBlocked(t, ctx, store, "issues", "pr4107-legacy-waiter", true)
+}
+
 func createNoHistoryWisp(t *testing.T, ctx context.Context, store *DoltStore, id string) {
 	t.Helper()
 	issue := &types.Issue{
@@ -556,6 +612,132 @@ func dropWispIsBlockedProjection(t *testing.T, ctx context.Context, store *DoltS
 	if _, err := store.db.ExecContext(ctx, "ALTER TABLE wisps DROP COLUMN is_blocked"); err != nil {
 		t.Fatalf("drop wisps.is_blocked: %v", err)
 	}
+}
+
+func replaceWispDependenciesWithLegacyShape(t *testing.T, ctx context.Context, store *DoltStore) {
+	t.Helper()
+	for _, stmt := range []string{
+		"SET FOREIGN_KEY_CHECKS = 0",
+		"DROP TABLE IF EXISTS wisp_dependencies",
+		`CREATE TABLE wisp_dependencies (
+			issue_id VARCHAR(255) NOT NULL,
+			depends_on_id VARCHAR(255) NOT NULL,
+			type VARCHAR(32) NOT NULL DEFAULT 'blocks',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			created_by VARCHAR(255) DEFAULT '',
+			metadata JSON DEFAULT (JSON_OBJECT()),
+			thread_id VARCHAR(255) DEFAULT '',
+			PRIMARY KEY (issue_id, depends_on_id),
+			INDEX idx_wisp_dep_depends (depends_on_id),
+			INDEX idx_wisp_dep_type (type),
+			INDEX idx_wisp_dep_type_depends (type, depends_on_id)
+		)`,
+		"SET FOREIGN_KEY_CHECKS = 1",
+	} {
+		if _, err := store.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("prepare legacy wisp_dependencies shape: %v", err)
+		}
+	}
+}
+
+func insertLegacyWispDependency(t *testing.T, ctx context.Context, store *DoltStore, source, target string, depType types.DependencyType) {
+	t.Helper()
+	if _, err := store.db.ExecContext(ctx, `
+		INSERT INTO wisp_dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+		VALUES (?, ?, ?, NOW(), 'tester', JSON_OBJECT(), '')
+	`, source, target, depType); err != nil {
+		t.Fatalf("insert legacy wisp dependency %s -> %s: %v", source, target, err)
+	}
+}
+
+func assertWispDependencyTarget(t *testing.T, ctx context.Context, store *DoltStore, source, wantIssue, wantWisp, wantExternal string) {
+	t.Helper()
+	var issueID, wispID, external sql.NullString
+	err := store.db.QueryRowContext(ctx, `
+		SELECT depends_on_issue_id, depends_on_wisp_id, depends_on_external
+		FROM wisp_dependencies
+		WHERE issue_id = ?
+	`, source).Scan(&issueID, &wispID, &external)
+	if err != nil {
+		t.Fatalf("query split wisp dependency target for %s: %v", source, err)
+	}
+	if got := nullStringValue(issueID); got != wantIssue {
+		t.Fatalf("%s depends_on_issue_id = %q, want %q", source, got, wantIssue)
+	}
+	if got := nullStringValue(wispID); got != wantWisp {
+		t.Fatalf("%s depends_on_wisp_id = %q, want %q", source, got, wantWisp)
+	}
+	if got := nullStringValue(external); got != wantExternal {
+		t.Fatalf("%s depends_on_external = %q, want %q", source, got, wantExternal)
+	}
+}
+
+func assertWispDependencyPrimaryKey(t *testing.T, ctx context.Context, store *DoltStore, want []string) {
+	t.Helper()
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT COLUMN_NAME
+		FROM INFORMATION_SCHEMA.STATISTICS
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_NAME = 'wisp_dependencies'
+		  AND INDEX_NAME = 'PRIMARY'
+		ORDER BY SEQ_IN_INDEX
+	`)
+	if err != nil {
+		t.Fatalf("query wisp_dependencies primary key: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var got []string
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			t.Fatalf("scan wisp_dependencies primary key column: %v", err)
+		}
+		got = append(got, col)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("scan wisp_dependencies primary key rows: %v", err)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("wisp_dependencies PRIMARY columns = %v, want %v", got, want)
+	}
+}
+
+func assertWispDependencyIndexPresent(t *testing.T, ctx context.Context, store *DoltStore, indexName string) {
+	t.Helper()
+	if countWispDependencyIndex(t, ctx, store, indexName) == 0 {
+		t.Fatalf("wisp_dependencies index %s missing", indexName)
+	}
+}
+
+func assertWispDependencyIndexAbsent(t *testing.T, ctx context.Context, store *DoltStore, indexName string) {
+	t.Helper()
+	if count := countWispDependencyIndex(t, ctx, store, indexName); count != 0 {
+		t.Fatalf("wisp_dependencies index %s count = %d, want 0", indexName, count)
+	}
+}
+
+func countWispDependencyIndex(t *testing.T, ctx context.Context, store *DoltStore, indexName string) int {
+	t.Helper()
+	var count int
+	err := store.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM INFORMATION_SCHEMA.STATISTICS
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_NAME = 'wisp_dependencies'
+		  AND INDEX_NAME = ?
+	`, indexName).Scan(&count)
+	if err != nil {
+		t.Fatalf("query wisp_dependencies index %s: %v", indexName, err)
+	}
+	return count
+}
+
+func nullStringValue(s sql.NullString) string {
+	if !s.Valid {
+		return ""
+	}
+	return s.String
 }
 
 func runMigrationSQL(t *testing.T, ctx context.Context, store *DoltStore, path string) {
