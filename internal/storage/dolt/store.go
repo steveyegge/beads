@@ -39,6 +39,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/schema"
@@ -276,10 +277,14 @@ const (
 // this prevents the process from blocking forever.
 const cliExecTimeout = 5 * time.Minute
 
-// fsckTimeout is the maximum time to wait for dolt fsck to verify the local
-// chunk store before a push. fsck reads local files only; 30 seconds is ample
-// for any DB size we currently operate.
-const fsckTimeout = 30 * time.Second
+// defaultFSCKTimeout is the maximum time to wait for dolt fsck to verify the
+// local chunk store before a push. Large NBS stores can legitimately take
+// longer than the old 30s budget, so this is configurable through
+// BEADS_DOLT_FSCK_TIMEOUT. Set BEADS_DOLT_PRE_PUSH_FSCK=0 to skip the preflight.
+const defaultFSCKTimeout = 30 * time.Second
+
+// prePushFSCKCommandContext is injectable for tests.
+var prePushFSCKCommandContext = exec.CommandContext
 
 // Retry configuration for transient connection errors (stale pool connections,
 // brief network issues, server restarts).
@@ -1896,18 +1901,42 @@ func (s *DoltStore) credentialsForRemote(remote string) *remoteCredentials {
 	return nil
 }
 
+func prePushFSCKDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("BEADS_DOLT_PRE_PUSH_FSCK"))) {
+	case "0", "false", "no", "off", "skip", "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func prePushFSCKTimeout() time.Duration {
+	s := strings.TrimSpace(os.Getenv("BEADS_DOLT_FSCK_TIMEOUT"))
+	if s == "" {
+		return defaultFSCKTimeout
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return d
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		return time.Duration(n) * time.Second
+	}
+	log.Printf("invalid BEADS_DOLT_FSCK_TIMEOUT=%q, using %s", s, defaultFSCKTimeout)
+	return defaultFSCKTimeout
+}
+
 // prePushFSCK runs dolt fsck --quiet to verify local chunk integrity before
-// pushing. This prevents propagating Dolt remote corruption (dangling blob
-// references) that arise when concurrent pushes race on the remote manifest.
+// pushing. This prevents propagating Dolt corruption when local or remote state
+// already has dangling blob references.
 //
-// When multiple agents push simultaneously, one push's manifest update can
-// land before another's chunks finish uploading, leaving a manifest that
-// references chunks that were never stored. Any agent that then fetches and
-// re-pushes that remote faithfully propagates the dangling reference.
-//
-// If CLIDir is empty or .dolt/noms does not exist, the check is skipped.
-// Any fsck failure returns ErrDanglingReference — the push is NOT attempted.
+// If CLIDir is empty, .dolt/noms does not exist, the check is disabled, or fsck
+// cannot complete before the configured timeout, the check is skipped with a
+// warning. A completed fsck that reports integrity failures still aborts the
+// push with ErrDanglingReference.
 func (s *DoltStore) prePushFSCK(ctx context.Context) error {
+	if prePushFSCKDisabled() {
+		return nil
+	}
 	dir := s.CLIDir()
 	if dir == "" {
 		return nil
@@ -1915,13 +1944,28 @@ func (s *DoltStore) prePushFSCK(ctx context.Context) error {
 	if _, err := os.Stat(filepath.Join(dir, ".dolt", "noms")); os.IsNotExist(err) {
 		return nil
 	}
-	fsckCtx, cancel := context.WithTimeout(ctx, fsckTimeout)
+	timeout := prePushFSCKTimeout()
+	if timeout <= 0 {
+		return nil
+	}
+	fsckCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(fsckCtx, "dolt", "fsck", "--quiet") // #nosec G204 -- fixed command
+	cmd := prePushFSCKCommandContext(fsckCtx, "dolt", "fsck", "--quiet") // #nosec G204 -- fixed command
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		output := strings.TrimSpace(string(out))
+		if errors.Is(fsckCtx.Err(), context.DeadlineExceeded) {
+			if fsckOutputIndicatesIntegrityFailure(output) {
+				return fmt.Errorf("%w: aborting push to prevent propagating corrupt chunks: %s",
+					ErrDanglingReference, output)
+			}
+			log.Printf("pre-push fsck timed out after %s, skipping integrity check; set BEADS_DOLT_FSCK_TIMEOUT to a larger duration to require a full check", timeout)
+			return nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		// Distinguish "fsck couldn't run the integrity check" (environmental /
 		// tooling issue) from "fsck ran and found integrity problems" (the actual
 		// concern of PR #3447). Wrapping an open-failure as ErrDanglingReference
@@ -1945,6 +1989,10 @@ func (s *DoltStore) prePushFSCK(ctx context.Context) error {
 	return nil
 }
 
+func fsckOutputIndicatesIntegrityFailure(output string) bool {
+	return strings.TrimSpace(output) != "" && !fsckCouldNotOpen(output)
+}
+
 // fsckCouldNotOpen reports whether dolt fsck output indicates the check
 // could not run at all (as opposed to finding integrity problems). Matches
 // the known error phrasings dolt emits before any integrity work begins.
@@ -1959,33 +2007,124 @@ func fsckCouldNotOpen(output string) bool {
 	}
 }
 
+func doltPushLockDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("BEADS_DOLT_PUSH_LOCK"))) {
+	case "0", "false", "no", "off", "skip", "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func doltPushLockTimeout() time.Duration {
+	s := strings.TrimSpace(os.Getenv("BEADS_DOLT_PUSH_LOCK_TIMEOUT"))
+	if s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
+		}
+		if n, err := strconv.Atoi(s); err == nil {
+			return time.Duration(n) * time.Second
+		}
+		log.Printf("invalid BEADS_DOLT_PUSH_LOCK_TIMEOUT=%q, using default", s)
+	}
+	timeout := prePushFSCKTimeout() + cliExecTimeout + 30*time.Second
+	if timeout < cliExecTimeout {
+		return cliExecTimeout
+	}
+	return timeout
+}
+
+func (s *DoltStore) withDoltPushLock(ctx context.Context, fn func(context.Context) error) error {
+	f, err := s.acquireDoltPushLock(ctx)
+	if err != nil {
+		return err
+	}
+	if f != nil {
+		defer func() {
+			_ = lockfile.FlockUnlock(f)
+			_ = f.Close()
+		}()
+	}
+	return fn(ctx)
+}
+
+func (s *DoltStore) acquireDoltPushLock(ctx context.Context) (*os.File, error) {
+	if doltPushLockDisabled() {
+		return nil, nil
+	}
+	dir := s.CLIDir()
+	if dir == "" {
+		return nil, nil
+	}
+	lockDir := filepath.Join(dir, ".dolt")
+	if _, err := os.Stat(lockDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("check dolt push lock dir: %w", err)
+	}
+	lockPath := filepath.Join(lockDir, "beads-push.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600) // #nosec G304 -- lockPath is constrained to the Dolt repo dir.
+	if err != nil {
+		return nil, fmt.Errorf("open dolt push lock: %w", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, doltPushLockTimeout())
+	defer cancel()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := lockfile.FlockExclusiveNonBlocking(f); err == nil {
+			_ = f.Truncate(0)
+			_, _ = f.Seek(0, 0)
+			_, _ = fmt.Fprintf(f, "pid=%d\nstarted=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
+			return f, nil
+		} else if !lockfile.IsLocked(err) {
+			_ = f.Close()
+			return nil, fmt.Errorf("acquire dolt push lock: %w", err)
+		}
+
+		select {
+		case <-waitCtx.Done():
+			_ = f.Close()
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("%w: timed out after %s waiting for %s", ErrDoltPushInProgress, doltPushLockTimeout(), lockPath)
+			}
+			return nil, waitCtx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // doltCLIPush shells out to `dolt push` from the database directory.
 // Used for git-protocol remotes where CALL DOLT_PUSH times out through the SQL connection.
 // If creds is non-nil, credentials are set on the subprocess environment only,
 // avoiding process-wide env var races with concurrent goroutines.
 func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, creds *remoteCredentials) error {
-	if err := s.prePushFSCK(ctx); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
-	defer cancel()
-	args := []string{"push"}
-	if force {
-		args = append(args, "--force")
-	}
-	args = append(args, remote, s.branch)
-	cmd := exec.CommandContext(ctx, "dolt", args...) // #nosec G204 -- fixed command with validated remote/branch
-	cmd.Dir = s.CLIDir()
-	creds.applyToCmd(cmd)
-	if s.isS3Remote(ctx, remote) {
-		applyS3ChecksumEnvToCmd(cmd)
-	}
-	applyNoGitHooksToCmd(cmd) // GH#3724
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("dolt push failed: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	return nil
+	return s.withDoltPushLock(ctx, func(ctx context.Context) error {
+		if err := s.prePushFSCK(ctx); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
+		defer cancel()
+		args := []string{"push"}
+		if force {
+			args = append(args, "--force")
+		}
+		args = append(args, remote, s.branch)
+		cmd := exec.CommandContext(ctx, "dolt", args...) // #nosec G204 -- fixed command with validated remote/branch
+		cmd.Dir = s.CLIDir()
+		creds.applyToCmd(cmd)
+		if s.isS3Remote(ctx, remote) {
+			applyS3ChecksumEnvToCmd(cmd)
+		}
+		applyNoGitHooksToCmd(cmd) // GH#3724
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("dolt push failed: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+		return nil
+	})
 }
 
 // doltCLIPull shells out to `dolt pull` from the database directory.

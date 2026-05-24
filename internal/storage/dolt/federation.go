@@ -468,18 +468,20 @@ func (s *DoltStore) doltCLIPushToPeer(ctx context.Context, peer string, creds *r
 // doltCLIPushRefToPeer shells out to `dolt push` with a specific refspec.
 // The refspec can be a branch name or a "local:remote" mapping.
 func (s *DoltStore) doltCLIPushRefToPeer(ctx context.Context, peer string, refspec string, creds *remoteCredentials) error {
-	if err := s.prePushFSCK(ctx); err != nil {
-		return err
-	}
-	cmd := exec.CommandContext(ctx, "dolt", "push", peer, refspec) // #nosec G204 -- fixed command with validated peer/refspec
-	cmd.Dir = s.CLIDir()
-	creds.applyToCmd(cmd)
-	applyNoGitHooksToCmd(cmd) // GH#3724
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to push to peer %s: %s: %w", peer, strings.TrimSpace(string(out)), err)
-	}
-	return nil
+	return s.withDoltPushLock(ctx, func(ctx context.Context) error {
+		if err := s.prePushFSCK(ctx); err != nil {
+			return err
+		}
+		cmd := exec.CommandContext(ctx, "dolt", "push", peer, refspec) // #nosec G204 -- fixed command with validated peer/refspec
+		cmd.Dir = s.CLIDir()
+		creds.applyToCmd(cmd)
+		applyNoGitHooksToCmd(cmd) // GH#3724
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to push to peer %s: %s: %w", peer, strings.TrimSpace(string(out)), err)
+		}
+		return nil
+	})
 }
 
 // doltCLIPullFromPeer shells out to `dolt pull` for a specific peer remote.
