@@ -290,7 +290,7 @@ func getReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilter,
 	wispFilter := readyWorkWispIssueFilter(filter)
 	if filter.Limit <= 0 {
 		wispFilter.Limit = 0
-		wisps, err := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables)
+		wisps, err := searchTableInTxT(ctx, tx, "", wispFilter, WispsFilterTables, issueProjection)
 		if err != nil {
 			if isTableNotExistError(err) {
 				return nil, nil
