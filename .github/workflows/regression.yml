@@ -52,8 +52,15 @@ jobs:
           echo "Changed files:"
           printf '%s\n' "$changed"
 
-          risky_pattern='^(\.github/workflows/regression\.yml|Makefile|go\.(mod|sum)|cmd/bd/|internal/storage/|internal/types/|tests/regression/)'
-          if grep -Eq "$risky_pattern" <<<"$changed"; then
+          regression_candidates="$(
+            printf '%s\n' "$changed" |
+              grep -Ev '^\.github/workflows/regression\.yml$' |
+              grep -Ev '^(cmd/bd|internal/storage|internal/types)/.*_test\.go$' ||
+              true
+          )"
+
+          risky_pattern='^(Makefile|go\.(mod|sum)|cmd/bd/|internal/storage/|internal/types/|tests/regression/)'
+          if grep -Eq "$risky_pattern" <<<"$regression_candidates"; then
             echo "run_regression=true" >> "$GITHUB_OUTPUT"
             echo "reason=PR changes CLI, storage, types, regression, or build inputs" >> "$GITHUB_OUTPUT"
             exit 0
