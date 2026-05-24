@@ -71,6 +71,31 @@ func RecomputeIsBlockedInTx(ctx context.Context, tx *sql.Tx, issueIDs, wispIDs [
 	}
 }
 
+func MarkIsBlockedInTx(ctx context.Context, tx *sql.Tx, issueIDs, wispIDs []string) error {
+	if len(issueIDs) == 0 && len(wispIDs) == 0 {
+		return nil
+	}
+	for {
+		var changed int64
+
+		n, err := markIsBlockedPassForIssuesInTx(ctx, tx, issueIDs)
+		if err != nil {
+			return err
+		}
+		changed += n
+
+		n, err = markIsBlockedPassForWispsInTx(ctx, tx, wispIDs)
+		if err != nil {
+			return err
+		}
+		changed += n
+
+		if changed == 0 {
+			return nil
+		}
+	}
+}
+
 func RecomputeIsBlockedForIDsInTx(ctx context.Context, tx *sql.Tx, ids []string) error {
 	return RecomputeIsBlockedInTx(ctx, tx, ids, nil)
 }
@@ -85,7 +110,18 @@ func recomputeIsBlockedPassForIssuesInTx(ctx context.Context, tx *sql.Tx, ids []
 		return 0, nil
 	}
 
-	markBlockedTmpl := fmt.Sprintf(`
+	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTemplateForIssues(), unmarkBlockedTemplateForIssues(), ids)
+}
+
+func markIsBlockedPassForIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	return runMarkBatchedInTx(ctx, tx, markBlockedTemplateForIssues(), ids)
+}
+
+func markBlockedTemplateForIssues() string {
+	return fmt.Sprintf(`
 		UPDATE issues i SET i.is_blocked = 1
 		WHERE i.id IN (%%s)
 		  AND i.is_blocked = 0
@@ -126,8 +162,10 @@ func recomputeIsBlockedPassForIssuesInTx(ctx context.Context, tx *sql.Tx, ids []
 		    )
 		  )
 	`, waitsForGateBlockedSQL)
+}
 
-	markUnblockedTmpl := fmt.Sprintf(`
+func unmarkBlockedTemplateForIssues() string {
+	return fmt.Sprintf(`
 		UPDATE issues i SET i.is_blocked = 0
 		WHERE i.id IN (%%s)
 		  AND i.is_blocked = 1
@@ -170,8 +208,6 @@ func recomputeIsBlockedPassForIssuesInTx(ctx context.Context, tx *sql.Tx, ids []
 		    )
 		  )
 	`, waitsForGateBlockedSQL)
-
-	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTmpl, markUnblockedTmpl, ids)
 }
 
 //nolint:gosec // G201: SQL templates are constant; only IN-clause placeholders are formatted in.
@@ -180,7 +216,18 @@ func recomputeIsBlockedPassForWispsInTx(ctx context.Context, tx *sql.Tx, ids []s
 		return 0, nil
 	}
 
-	markBlockedTmpl := fmt.Sprintf(`
+	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTemplateForWisps(), unmarkBlockedTemplateForWisps(), ids)
+}
+
+func markIsBlockedPassForWispsInTx(ctx context.Context, tx *sql.Tx, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	return runMarkBatchedInTx(ctx, tx, markBlockedTemplateForWisps(), ids)
+}
+
+func markBlockedTemplateForWisps() string {
+	return fmt.Sprintf(`
 		UPDATE wisps w SET w.is_blocked = 1
 		WHERE w.id IN (%%s)
 		  AND w.is_blocked = 0
@@ -221,8 +268,10 @@ func recomputeIsBlockedPassForWispsInTx(ctx context.Context, tx *sql.Tx, ids []s
 		    )
 		  )
 	`, waitsForGateBlockedSQL)
+}
 
-	markUnblockedTmpl := fmt.Sprintf(`
+func unmarkBlockedTemplateForWisps() string {
+	return fmt.Sprintf(`
 		UPDATE wisps w SET w.is_blocked = 0
 		WHERE w.id IN (%%s)
 		  AND w.is_blocked = 1
@@ -265,8 +314,6 @@ func recomputeIsBlockedPassForWispsInTx(ctx context.Context, tx *sql.Tx, ids []s
 		    )
 		  )
 	`, waitsForGateBlockedSQL)
-
-	return runMarkUnmarkBatchedInTx(ctx, tx, markBlockedTmpl, markUnblockedTmpl, ids)
 }
 
 //nolint:gosec // G201: callers pass constant templates; only IN-clause placeholders are formatted in.
@@ -291,6 +338,26 @@ func runMarkUnmarkBatchedInTx(ctx context.Context, tx *sql.Tx, markTmpl, unmarkT
 			return changed, fmt.Errorf("recompute is_blocked (unmark): %w", err)
 		}
 		n, _ = res.RowsAffected()
+		changed += n
+	}
+	return changed, nil
+}
+
+//nolint:gosec // G201: callers pass constant templates; only IN-clause placeholders are formatted in.
+func runMarkBatchedInTx(ctx context.Context, tx *sql.Tx, markTmpl string, ids []string) (int64, error) {
+	var changed int64
+	for start := 0; start < len(ids); start += queryBatchSize {
+		end := start + queryBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		placeholders, args := buildSQLInClause(ids[start:end])
+
+		res, err := tx.ExecContext(ctx, fmt.Sprintf(markTmpl, placeholders), args...)
+		if err != nil {
+			return changed, fmt.Errorf("mark is_blocked: %w", err)
+		}
+		n, _ := res.RowsAffected()
 		changed += n
 	}
 	return changed, nil
@@ -444,6 +511,23 @@ func AffectedByDeletionInTx(
 	}
 	if err := loadBlockingDependersForIDsInTx(ctx, tx, "depends_on_wisp_id", deletedWisps, &issueSeed, issueSeen, &wispSeed, wispSeen); err != nil {
 		return nil, nil, err
+	}
+
+	if err := loadWaitersOnSpawnerIDsByColInTx(ctx, tx, "depends_on_issue_id", deletedIssues, &issueSeed, issueSeen, &wispSeed, wispSeen); err != nil {
+		return nil, nil, err
+	}
+	if err := loadWaitersOnSpawnerIDsByColInTx(ctx, tx, "depends_on_wisp_id", deletedWisps, &issueSeed, issueSeen, &wispSeed, wispSeen); err != nil {
+		return nil, nil, err
+	}
+	for _, id := range deletedIssues {
+		if err := loadWaitersWhoseSpawnerIsParentOfInTx(ctx, tx, id, false, &issueSeed, issueSeen, &wispSeed, wispSeen); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, id := range deletedWisps {
+		if err := loadWaitersWhoseSpawnerIsParentOfInTx(ctx, tx, id, true, &issueSeed, issueSeen, &wispSeed, wispSeen); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	for _, w := range []struct {

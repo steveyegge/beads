@@ -39,6 +39,18 @@ func acquireTestSlot() { testSem <- struct{}{} }
 // releaseTestSlot returns a semaphore slot.
 func releaseTestSlot() { <-testSem }
 
+func acquireAllTestSlots() {
+	for i := 0; i < cap(testSem); i++ {
+		acquireTestSlot()
+	}
+}
+
+func releaseAllTestSlots() {
+	for i := 0; i < cap(testSem); i++ {
+		releaseTestSlot()
+	}
+}
+
 // testContext returns a context with timeout for test operations
 func testContext(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()

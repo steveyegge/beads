@@ -977,6 +977,10 @@ func createBenchIssueBatch(b *testing.B, store *DoltStore, issues []*types.Issue
 	}
 }
 
+func ptrString(s string) *string {
+	return &s
+}
+
 func insertBenchIssues(ctx context.Context, tx *sql.Tx, table string, issues []*types.Issue) error {
 	const batchSize = 500
 	for start := 0; start < len(issues); start += batchSize {
@@ -987,7 +991,11 @@ func insertBenchIssues(ctx context.Context, tx *sql.Tx, table string, issues []*
 		var placeholders []string
 		var args []interface{}
 		for _, issue := range issues[start:end] {
-			placeholders = append(placeholders, "(?, ?, ?, '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			metadata := string(issue.Metadata)
+			if metadata == "" {
+				metadata = "{}"
+			}
+			placeholders = append(placeholders, "(?, ?, ?, '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args,
 				issue.ID,
 				issue.ContentHash,
@@ -995,20 +1003,22 @@ func insertBenchIssues(ctx context.Context, tx *sql.Tx, table string, issues []*
 				issue.Status,
 				issue.Priority,
 				issue.IssueType,
+				issue.Assignee,
 				issue.CreatedAt,
 				issue.UpdatedAt,
 				issue.DeferUntil,
 				issue.Ephemeral,
 				issue.NoHistory,
 				issue.Pinned,
+				metadata,
 			)
 		}
 		//nolint:gosec // G201: table is selected from fixed issue table names.
 		query := fmt.Sprintf(`
 			INSERT INTO %s (
 				id, content_hash, title, description, design, acceptance_criteria, notes,
-				status, priority, issue_type, created_at, updated_at, defer_until,
-				ephemeral, no_history, pinned
+				status, priority, issue_type, assignee, created_at, updated_at, defer_until,
+				ephemeral, no_history, pinned, metadata
 			) VALUES %s
 			ON DUPLICATE KEY UPDATE title = VALUES(title)
 		`, table, strings.Join(placeholders, ","))
@@ -1285,6 +1295,170 @@ func BenchmarkPerfReadyWorkLimited_LargeBlockedGraph(b *testing.B) {
 		if len(results) != filter.Limit {
 			b.Fatalf("GetReadyWork limited blocked graph returned %d issues, want %d", len(results), filter.Limit)
 		}
+	}
+}
+
+func BenchmarkPerfReadyWorkLimited_GasCityWispHeavy(b *testing.B) {
+	const (
+		wispCount    = 8000
+		readyLimit   = 20
+		gcAssignee   = "gascity/workflows.codex-min-11"
+		gcRoute      = "gascity/workflows.codex-min-11"
+		routeJSON    = `{"gc.routed_to":"gascity/workflows.codex-min-11"}`
+		emptyJSON    = `{}`
+		closedStatus = types.StatusClosed
+	)
+	future := time.Now().UTC().Add(24 * time.Hour)
+
+	makeWisp := func(id string, priority int, assignee string, metadata string, deferUntil *time.Time) *types.Issue {
+		return &types.Issue{
+			ID:         id,
+			Title:      id,
+			Status:     types.StatusOpen,
+			Priority:   priority,
+			IssueType:  types.TypeTask,
+			Assignee:   assignee,
+			Ephemeral:  true,
+			Metadata:   []byte(metadata),
+			DeferUntil: deferUntil,
+		}
+	}
+
+	cases := []struct {
+		name   string
+		filter types.WorkFilter
+		issues func() []*types.Issue
+	}{
+		{
+			name: "AssignedDenseLimit20Of8000",
+			filter: types.WorkFilter{
+				Assignee:         ptrString(gcAssignee),
+				IncludeEphemeral: true,
+				Limit:            readyLimit,
+				SortPolicy:       types.SortPolicyPriority,
+			},
+			issues: func() []*types.Issue {
+				issues := make([]*types.Issue, 0, wispCount)
+				for i := 0; i < wispCount; i++ {
+					issues = append(issues, makeWisp(
+						fmt.Sprintf("bench-perf-gc-assigned-wisp-%05d", i),
+						(i%4)+1,
+						gcAssignee,
+						emptyJSON,
+						nil,
+					))
+				}
+				return issues
+			},
+		},
+		{
+			name: "MetadataRouteDenseLimit20Of8000",
+			filter: types.WorkFilter{
+				Unassigned:       true,
+				MetadataFields:   map[string]string{"gc.routed_to": gcRoute},
+				IncludeEphemeral: true,
+				Limit:            readyLimit,
+				SortPolicy:       types.SortPolicyPriority,
+			},
+			issues: func() []*types.Issue {
+				issues := make([]*types.Issue, 0, wispCount)
+				for i := 0; i < wispCount; i++ {
+					issues = append(issues, makeWisp(
+						fmt.Sprintf("bench-perf-gc-routed-wisp-%05d", i),
+						(i%4)+1,
+						"",
+						routeJSON,
+						nil,
+					))
+				}
+				return issues
+			},
+		},
+		{
+			name: "AssignedSparseAfterDeferredLimit20Of8000",
+			filter: types.WorkFilter{
+				Assignee:         ptrString(gcAssignee),
+				IncludeEphemeral: true,
+				Limit:            readyLimit,
+				SortPolicy:       types.SortPolicyPriority,
+			},
+			issues: func() []*types.Issue {
+				issues := make([]*types.Issue, 0, wispCount)
+				for i := 0; i < wispCount-readyLimit; i++ {
+					issues = append(issues, makeWisp(
+						fmt.Sprintf("bench-perf-gc-deferred-wisp-%05d", i),
+						1,
+						gcAssignee,
+						emptyJSON,
+						&future,
+					))
+				}
+				for i := wispCount - readyLimit; i < wispCount; i++ {
+					issues = append(issues, makeWisp(
+						fmt.Sprintf("bench-perf-gc-ready-tail-wisp-%05d", i),
+						4,
+						gcAssignee,
+						emptyJSON,
+						nil,
+					))
+				}
+				return issues
+			},
+		},
+		{
+			name: "AssignedClosedNoiseLimit20Of8000",
+			filter: types.WorkFilter{
+				Assignee:         ptrString(gcAssignee),
+				IncludeEphemeral: true,
+				Limit:            readyLimit,
+				SortPolicy:       types.SortPolicyPriority,
+			},
+			issues: func() []*types.Issue {
+				issues := make([]*types.Issue, 0, wispCount)
+				for i := 0; i < wispCount-readyLimit; i++ {
+					wisp := makeWisp(
+						fmt.Sprintf("bench-perf-gc-closed-wisp-%05d", i),
+						1,
+						gcAssignee,
+						emptyJSON,
+						nil,
+					)
+					wisp.Status = closedStatus
+					issues = append(issues, wisp)
+				}
+				for i := wispCount - readyLimit; i < wispCount; i++ {
+					issues = append(issues, makeWisp(
+						fmt.Sprintf("bench-perf-gc-ready-closed-noise-wisp-%05d", i),
+						4,
+						gcAssignee,
+						emptyJSON,
+						nil,
+					))
+				}
+				return issues
+			},
+		},
+	}
+
+	ctx := context.Background()
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			store, cleanup := setupBenchStore(b)
+			defer cleanup()
+			createBenchIssueBatch(b, store, tc.issues())
+			b.ReportAllocs()
+			b.ReportMetric(float64(wispCount), "wisps")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				results, err := store.GetReadyWork(ctx, tc.filter)
+				if err != nil {
+					b.Fatalf("GetReadyWork gascity wisps: %v", err)
+				}
+				if len(results) != readyLimit {
+					b.Fatalf("GetReadyWork gascity wisps returned %d issues, want %d", len(results), readyLimit)
+				}
+			}
+		})
 	}
 }
 
