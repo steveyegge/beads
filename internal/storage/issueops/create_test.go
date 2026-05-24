@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -132,6 +134,53 @@ func TestPersistDependenciesReturnsTargetLookupErrors(t *testing.T) {
 	err := PersistDependencies(ctx, tx, []*types.Issue{issue}, "tester")
 	if err == nil || !strings.Contains(err.Error(), "failed to check dependency target target for source") {
 		t.Fatalf("error = %v, want dependency target lookup error", err)
+	}
+
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestPersistDependenciesSkipsValidationErrorsWhenConfigured(t *testing.T) {
+	ctx := context.Background()
+	db, mock, tx := beginMockTx(t)
+	defer db.Close()
+	issue := &types.Issue{
+		ID:        "source",
+		IssueType: types.TypeTask,
+		Dependencies: []*types.Dependency{{
+			DependsOnID: "source",
+			Type:        types.DepBlocks,
+		}},
+	}
+	var skipped []string
+
+	mock.ExpectQuery("SELECT 1 FROM wisps WHERE id = \\? LIMIT 1").
+		WithArgs("source").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT 1 FROM issues WHERE id = \\?").
+		WithArgs("source").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+
+	result, err := PersistDependenciesWithOptionsResult(ctx, tx, []*types.Issue{issue}, "tester", storage.BatchCreateOptions{
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped = append(skipped, issueID+" -> "+dependsOnID+": "+reason)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PersistDependenciesWithOptionsResult error = %v, want nil", err)
+	}
+	if len(result.ChangedTables) != 0 {
+		t.Fatalf("ChangedTables = %#v, want none", result.ChangedTables)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "source -> source") ||
+		!strings.Contains(skipped[0], "cannot depend on itself") {
+		t.Fatalf("skipped = %#v, want self-dependency detail", skipped)
 	}
 
 	mock.ExpectRollback()

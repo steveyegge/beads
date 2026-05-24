@@ -136,13 +136,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 }
 
 type importResultJSON struct {
-	Source    string   `json:"source"`
-	Created   int      `json:"created"`
-	Skipped   int      `json:"skipped"`
-	DedupHits int      `json:"dedup_skipped,omitempty"`
-	Memories  int      `json:"memories,omitempty"`
-	IDs       []string `json:"ids,omitempty"`
-	DryRun    bool     `json:"dry_run,omitempty"`
+	Source              string   `json:"source"`
+	Created             int      `json:"created"`
+	Skipped             int      `json:"skipped"`
+	DedupHits           int      `json:"dedup_skipped,omitempty"`
+	Memories            int      `json:"memories,omitempty"`
+	IDs                 []string `json:"ids,omitempty"`
+	SkippedDependencies []string `json:"skipped_dependencies,omitempty"`
+	DryRun              bool     `json:"dry_run,omitempty"`
 }
 
 func runImportFromReader(ctx context.Context, r io.Reader, source string) error {
@@ -247,6 +248,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		}
 		result.Created = importResult.Created
 		result.Skipped += importResult.Skipped
+		result.SkippedDependencies = append(result.SkippedDependencies, importResult.SkippedDependencies...)
 		for _, issue := range issues {
 			result.IDs = append(result.IDs, issue.ID)
 		}
@@ -276,6 +278,9 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		fmt.Fprintf(os.Stderr, " (%d duplicates skipped)", dedupHits)
 	}
 	fmt.Fprintln(os.Stderr)
+	for _, skipped := range result.SkippedDependencies {
+		fmt.Fprintf(os.Stderr, "Skipped dependency: %s\n", skipped)
+	}
 	return nil
 }
 

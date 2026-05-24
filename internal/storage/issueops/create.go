@@ -184,7 +184,7 @@ func CreateIssuesInTxWithResult(ctx context.Context, tx *sql.Tx, issues []*types
 		result.merge(issueResult.ChangedTables)
 	}
 
-	depResult, err := PersistDependenciesWithResult(ctx, tx, issues, actor)
+	depResult, err := PersistDependenciesWithOptionsResult(ctx, tx, issues, actor, opts)
 	if err != nil {
 		return CreateIssuesResult{}, err
 	}
@@ -570,6 +570,10 @@ func PersistDependencies(ctx context.Context, tx *sql.Tx, issues []*types.Issue,
 }
 
 func PersistDependenciesWithResult(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string) (CreateIssueResult, error) {
+	return PersistDependenciesWithOptionsResult(ctx, tx, issues, actor, storage.BatchCreateOptions{})
+}
+
+func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) (CreateIssueResult, error) {
 	var result CreateIssueResult
 	for _, issue := range issues {
 		if len(issue.Dependencies) == 0 {
@@ -599,6 +603,7 @@ func PersistDependenciesWithResult(ctx context.Context, tx *sql.Tx, issues []*ty
 					fmt.Sprintf("SELECT 1 FROM %s WHERE id = ?", lookupTable),
 					dep.DependsOnID).Scan(&exists); err != nil {
 					if err == sql.ErrNoRows {
+						recordSkippedDependency(opts, dep, "target not found")
 						continue
 					}
 					return result, fmt.Errorf("failed to check dependency target %s for %s: %w", dep.DependsOnID, dep.IssueID, err)
@@ -606,7 +611,11 @@ func PersistDependenciesWithResult(ctx context.Context, tx *sql.Tx, issues []*ty
 			}
 
 			if err := CheckDependencyCycleInTx(ctx, tx, dep, nil); err != nil {
-				return result, err
+				if opts.SkipDependencyValidationErrors {
+					recordSkippedDependency(opts, dep, err.Error())
+					continue
+				}
+				return result, fmt.Errorf("invalid dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 			}
 
 			createdAt := dep.CreatedAt
@@ -632,6 +641,13 @@ func PersistDependenciesWithResult(ctx context.Context, tx *sql.Tx, issues []*ty
 		}
 	}
 	return result, nil
+}
+
+func recordSkippedDependency(opts storage.BatchCreateOptions, dep *types.Dependency, reason string) {
+	if opts.OnSkippedDependency == nil || dep == nil {
+		return
+	}
+	opts.OnSkippedDependency(dep.IssueID, dep.DependsOnID, reason)
 }
 
 func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Issue) (map[string]bool, error) {

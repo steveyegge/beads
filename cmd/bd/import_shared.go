@@ -50,15 +50,26 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return &ImportResult{Skipped: len(issues)}, nil
 	}
 
+	var skippedDependencies []string
+	skippedDependencySet := make(map[string]struct{})
 	err := store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
-		OrphanHandling:       storage.OrphanAllow,
-		SkipPrefixValidation: opts.SkipPrefixValidation,
+		OrphanHandling:                 storage.OrphanAllow,
+		SkipPrefixValidation:           opts.SkipPrefixValidation,
+		SkipDependencyValidationErrors: true,
+		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+			skipped := fmt.Sprintf("%s -> %s: %s", issueID, dependsOnID, reason)
+			if _, ok := skippedDependencySet[skipped]; ok {
+				return
+			}
+			skippedDependencySet[skipped] = struct{}{}
+			skippedDependencies = append(skippedDependencies, skipped)
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &ImportResult{Created: len(issues)}, nil
+	return &ImportResult{Created: len(issues), SkippedDependencies: skippedDependencies}, nil
 }
 
 // importLocalResult holds counts from a local JSONL import.

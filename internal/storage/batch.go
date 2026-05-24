@@ -22,4 +22,9 @@ type BatchCreateOptions struct {
 	OrphanHandling OrphanHandling
 	// SkipPrefixValidation skips prefix validation for existing IDs (used during import)
 	SkipPrefixValidation bool
+	// SkipDependencyValidationErrors skips dependency validation failures that
+	// legacy imports tolerated, such as cycles or self-dependencies.
+	SkipDependencyValidationErrors bool
+	// OnSkippedDependency records dependency edges skipped during batch create.
+	OnSkippedDependency func(issueID, dependsOnID, reason string)
 }
