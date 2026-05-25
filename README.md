@@ -189,7 +189,7 @@ schema version mismatch: database is at v45, binary knows up to v42 (3 migration
     CGO_ENABLED=0 go build -tags gms_pure_go ./cmd/bd
 
   Or install the latest release:
-    go install github.com/steveyegge/beads/cmd/bd@latest
+    CGO_ENABLED=0 go install -tags gms_pure_go github.com/steveyegge/beads/cmd/bd@latest
 
   To proceed despite the risk (some read commands may still work):
     BD_IGNORE_SCHEMA_SKEW=1 bd <command>
