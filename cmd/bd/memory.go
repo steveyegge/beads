@@ -58,6 +58,7 @@ Examples:
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("remember")
+		CheckMigrationFreeze("remember")
 
 		if err := ensureDirectMode("remember requires direct database access"); err != nil {
 			FatalError("%v", err)

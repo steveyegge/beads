@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 func activeWorkspaceNotFoundError() string {
@@ -177,4 +179,76 @@ func CheckReadonly(operation string) {
 	if readonlyMode {
 		FatalError("operation '%s' is not allowed in read-only mode", operation)
 	}
+}
+
+// CheckMigrationFreeze exits with an error if a Gas Town migration freeze is active.
+// Call this at the start of write commands alongside CheckReadonly.
+// Safe to call from any directory: returns silently if not in a Gas Town workspace
+// or no freeze is active.
+//
+// Example:
+//
+//	var createCmd = &cobra.Command{
+//	    Run: func(cmd *cobra.Command, args []string) {
+//	        CheckReadonly("create")
+//	        CheckMigrationFreeze("create")
+//	        // ... rest of command
+//	    },
+//	}
+func CheckMigrationFreeze(operation string) {
+	townRoot := findTownRootForFreeze()
+	if townRoot == "" {
+		return
+	}
+	freezeFile := filepath.Join(townRoot, "MIGRATION-FREEZE")
+	if _, err := os.Stat(freezeFile); os.IsNotExist(err) {
+		return
+	}
+	operator := "unknown"
+	reason := ""
+	if data, err := os.ReadFile(freezeFile); err == nil {
+		parts := strings.SplitN(strings.TrimSpace(string(data)), "\t", 3)
+		if len(parts) >= 1 && parts[0] != "" {
+			operator = parts[0]
+		}
+		if len(parts) >= 3 {
+			reason = parts[2]
+		}
+	}
+	fmt.Fprintf(os.Stderr, "⛔ ERROR: town is frozen for migration (by %s).\n", operator)
+	if reason != "" {
+		fmt.Fprintf(os.Stderr, "   Reason: %s\n", reason)
+	}
+	fmt.Fprintf(os.Stderr, "   Clear the freeze: gt migrate thaw\n")
+	os.Exit(1)
+}
+
+// findTownRootForFreeze locates the Gas Town workspace root.
+// Checks GT_TOWN_ROOT/GT_ROOT env vars first (fast path for Gas Town sessions),
+// then walks up the directory tree looking for the outermost mayor/town.json.
+// Returns empty string if not in a Gas Town workspace.
+func findTownRootForFreeze() string {
+	for _, envName := range []string{"GT_TOWN_ROOT", "GT_ROOT"} {
+		if root := os.Getenv(envName); root != "" {
+			if _, err := os.Stat(filepath.Join(root, "mayor")); err == nil {
+				return root
+			}
+		}
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	var outermost string
+	for dir := cwd; ; {
+		if _, err := os.Stat(filepath.Join(dir, "mayor", "town.json")); err == nil {
+			outermost = dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return outermost
 }

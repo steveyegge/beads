@@ -84,6 +84,7 @@ func init() {
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
+	CheckMigrationFreeze("import")
 	ctx := rootCtx
 	if importInput != "" && len(args) > 0 {
 		return fmt.Errorf("use either --input or a positional file, not both")

@@ -28,6 +28,7 @@ create, update, show, or close operation).`,
 	Args: cobra.MinimumNArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("close")
+		CheckMigrationFreeze("close")
 
 		// If no IDs provided, use last touched issue
 		if len(args) == 0 {
