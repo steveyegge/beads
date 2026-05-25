@@ -158,10 +158,8 @@ func LogFieldChange(issueID, field, oldValue, newValue, actor, reason string) {
 }
 
 func newID() (string, error) {
-	// 8 bytes (64-bit) of entropy. 4 bytes (32-bit) collided in CI under the
-	// concurrency test's 2000-ID workload at the expected birthday rate
-	// (~0.05% per run; reproduced as ~0.13% locally).
-	var b [8]byte
+	// 16 bytes (128-bit) of entropy — birthday probability for 8000 IDs is ~9e-32.
+	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("failed to generate id: %w", err)
 	}
