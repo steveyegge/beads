@@ -1095,7 +1095,12 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		autoStartedServerDir: autoStartedDir,
 	}
 
-	if !cfg.ReadOnly {
+	if cfg.ReadOnly {
+		if err := schema.CheckForwardDrift(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	} else {
 		if err := store.initSchema(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
