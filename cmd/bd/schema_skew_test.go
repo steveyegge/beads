@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/schema"
 )
 
@@ -81,5 +82,31 @@ func TestIgnoreSchemaSkewFlagRegistered(t *testing.T) {
 	}
 	if f.Value.Type() != "bool" {
 		t.Errorf("--ignore-schema-skew flag type = %q, want bool", f.Value.Type())
+	}
+}
+
+// TestIgnoreSchemaSkewFlagPropagatesEnvVar verifies that PersistentPreRun
+// sets BD_IGNORE_SCHEMA_SKEW=1 when --ignore-schema-skew is true, so all
+// store-open paths see the escape hatch uniformly (not just checkSchemaSkew).
+func TestIgnoreSchemaSkewFlagPropagatesEnvVar(t *testing.T) {
+	t.Setenv("BD_IGNORE_SCHEMA_SKEW", "")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
+
+	config.ResetForTesting()
+	t.Cleanup(config.ResetForTesting)
+
+	savePersistentPreRunState(t)
+	old := ignoreSchemaSkew
+	ignoreSchemaSkew = true
+	t.Cleanup(func() { ignoreSchemaSkew = old })
+
+	if rootCmd.PersistentPreRun == nil {
+		t.Fatal("rootCmd.PersistentPreRun must be set")
+	}
+	rootCmd.PersistentPreRun(versionCmd, nil)
+
+	if got := os.Getenv("BD_IGNORE_SCHEMA_SKEW"); got != "1" {
+		t.Errorf("BD_IGNORE_SCHEMA_SKEW = %q after PersistentPreRun with --ignore-schema-skew; want 1", got)
 	}
 }
