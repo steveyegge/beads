@@ -2992,7 +2992,13 @@ bd dolt remote
 Add a Dolt remote (both SQL server and CLI)
 
 ```
-bd dolt remote add <name> <url>
+bd dolt remote add <name> <url> [flags]
+```
+
+**Flags:**
+
+```
+      --allow-git-origin   Allow adding a Dolt remote whose URL matches the git origin (proceed with a warning instead of aborting)
 ```
 
 ##### bd dolt remote list
