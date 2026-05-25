@@ -555,6 +555,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, remoteCheck)
 	// Don't fail overall for remote discrepancies, just warn
 
+	// Check 7f1: Dolt remote URL collision with git origin (be-7eu1d)
+	doltOriginCheck := convertWithCategory(doctor.CheckDoltRemoteGitOrigin(path), doctor.CategoryDolt)
+	result.Checks = append(result.Checks, doltOriginCheck)
+	// Don't fail overall for this — it's a warning, not an error
+
 	// Dolt health checks (connection, schema, issue count, status).
 	for _, dc := range doctor.RunDoltHealthChecks(path) {
 		result.Checks = append(result.Checks, convertDoctorCheck(dc))
