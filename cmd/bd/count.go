@@ -233,7 +233,7 @@ Examples:
 
 		// Use CountIssues for the total so multi-label issues aren't double-counted
 		// (--by-label buckets are not mutually exclusive, unlike status/priority/type).
-		total, err := store.CountIssues(ctx, filter)
+		total, err := store.CountIssues(ctx, "", filter)
 		if err != nil {
 			FatalError("%v", err)
 		}
