@@ -300,6 +300,65 @@ func TestImportFromLocalJSONL(t *testing.T) {
 		}
 	})
 
+	t.Run("skips mixed regular and wisp in-batch dependencies instead of aborting import", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		ctx := context.Background()
+		now := time.Now().UTC()
+		issues := []*types.Issue{
+			{
+				ID:        "test-mixed-regular",
+				Title:     "Regular source",
+				Status:    types.StatusOpen,
+				IssueType: types.TypeTask,
+				Priority:  2,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Dependencies: []*types.Dependency{{
+					DependsOnID: "test-mixed-wisp",
+					Type:        types.DepBlocks,
+				}},
+			},
+			{
+				ID:        "test-mixed-wisp",
+				Title:     "Wisp target",
+				Status:    types.StatusOpen,
+				IssueType: types.TypeTask,
+				Priority:  2,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Ephemeral: true,
+			},
+		}
+
+		result, err := importIssuesCore(ctx, "", store, issues, ImportOptions{SkipPrefixValidation: true})
+		if err != nil {
+			t.Fatalf("importIssuesCore failed: %v", err)
+		}
+		if result.Created != 2 {
+			t.Fatalf("Created = %d, want 2", result.Created)
+		}
+		if got := strings.Join(result.SkippedDependencies, "\n"); !strings.Contains(got, "test-mixed-regular -> test-mixed-wisp") ||
+			!strings.Contains(got, "cross-bucket dependency") {
+			t.Fatalf("SkippedDependencies = %#v, want mixed regular/wisp dependency detail", result.SkippedDependencies)
+		}
+
+		for _, id := range []string{"test-mixed-regular", "test-mixed-wisp"} {
+			if _, err := store.GetIssue(ctx, id); err != nil {
+				t.Fatalf("imported issue %s missing: %v", id, err)
+			}
+		}
+		deps, err := store.GetDependencyRecords(ctx, "test-mixed-regular")
+		if err != nil {
+			t.Fatalf("GetDependencyRecords(test-mixed-regular): %v", err)
+		}
+		if len(deps) != 0 {
+			t.Fatalf("test-mixed-regular deps = %#v, want none", deps)
+		}
+	})
+
 	t.Run("skips tombstone entries during import", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "dolt")

@@ -993,6 +993,58 @@ func TestCreateIssues(t *testing.T) {
 		te.assertRowNotExists(t, ctx, "wisps", wisp.ID)
 	})
 
+	t.Run("skips_mixed_batch_dependency_when_validation_errors_are_tolerated", func(t *testing.T) {
+		te := newTestEnv(t, "sk")
+		ctx := t.Context()
+
+		regular := &types.Issue{
+			ID:        "sk-regular-source",
+			Title:     "Regular source",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Dependencies: []*types.Dependency{{
+				DependsOnID: "sk-wisp-target",
+				Type:        types.DepBlocks,
+			}},
+		}
+		wisp := &types.Issue{
+			ID:        "sk-wisp-target",
+			Title:     "Wisp target",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			Ephemeral: true,
+		}
+		var skipped []string
+
+		err := te.store.CreateIssuesWithFullOptions(ctx, []*types.Issue{regular, wisp}, "tester", storage.BatchCreateOptions{
+			OrphanHandling:                 storage.OrphanAllow,
+			SkipPrefixValidation:           true,
+			SkipDependencyValidationErrors: true,
+			OnSkippedDependency: func(issueID, dependsOnID, reason string) {
+				skipped = append(skipped, fmt.Sprintf("%s -> %s: %s", issueID, dependsOnID, reason))
+			},
+		})
+		if err != nil {
+			t.Fatalf("CreateIssuesWithFullOptions: %v", err)
+		}
+		te.assertRowExists(t, ctx, "issues", regular.ID)
+		te.assertRowExists(t, ctx, "wisps", wisp.ID)
+		if len(skipped) != 1 ||
+			!strings.Contains(skipped[0], "sk-regular-source -> sk-wisp-target") ||
+			!strings.Contains(skipped[0], "cross-bucket dependency") {
+			t.Fatalf("skipped = %#v, want cross-bucket dependency detail", skipped)
+		}
+
+		var regularDeps, wispDeps int
+		te.queryScalar(t, ctx, "SELECT COUNT(*) FROM dependencies WHERE issue_id = ?", []any{regular.ID}, &regularDeps)
+		te.queryScalar(t, ctx, "SELECT COUNT(*) FROM wisp_dependencies WHERE issue_id = ?", []any{regular.ID}, &wispDeps)
+		if regularDeps != 0 || wispDeps != 0 {
+			t.Fatalf("persisted dependency counts = regular:%d wisp:%d, want none", regularDeps, wispDeps)
+		}
+	})
+
 	t.Run("rejects_wisp_dependency_cycle", func(t *testing.T) {
 		te := newTestEnv(t, "wc")
 		ctx := t.Context()

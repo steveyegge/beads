@@ -166,9 +166,11 @@ func CreateIssuesInTx(ctx context.Context, tx *sql.Tx, issues []*types.Issue, ac
 // CreateIssuesInTxWithResult creates issues and reports tables whose writes are
 // only knowable after SQL reconciliation, such as child counter advances.
 func CreateIssuesInTxWithResult(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) (CreateIssuesResult, error) {
-	if err := ValidateCreateIssuesMixedBucketDependencies(issues); err != nil {
+	filteredIssues, err := filterCreateIssuesMixedBucketDependencies(issues, opts)
+	if err != nil {
 		return CreateIssuesResult{}, err
 	}
+	issues = filteredIssues
 
 	bc, err := NewBatchContext(ctx, tx, opts)
 	if err != nil {
@@ -258,6 +260,11 @@ func stageableChangedTables(changed map[string]bool) map[string]bool {
 // backing tables per bucket, so a batch cannot create both ends atomically when
 // the edge crosses buckets.
 func ValidateCreateIssuesMixedBucketDependencies(issues []*types.Issue) error {
+	_, err := filterCreateIssuesMixedBucketDependencies(issues, storage.BatchCreateOptions{})
+	return err
+}
+
+func filterCreateIssuesMixedBucketDependencies(issues []*types.Issue, opts storage.BatchCreateOptions) ([]*types.Issue, error) {
 	batchWispByID := make(map[string]bool, len(issues))
 	hasRegular := false
 	hasWisp := false
@@ -276,15 +283,21 @@ func ValidateCreateIssuesMixedBucketDependencies(issues []*types.Issue) error {
 		}
 	}
 	if !hasRegular || !hasWisp {
-		return nil
+		return issues, nil
 	}
 
-	for _, issue := range issues {
+	var filteredIssues []*types.Issue
+	for issueIndex, issue := range issues {
 		if issue == nil {
 			continue
 		}
-		for _, dep := range issue.Dependencies {
+		var keptDeps []*types.Dependency
+		filteredDeps := false
+		for depIndex, dep := range issue.Dependencies {
 			if dep == nil {
+				if filteredDeps {
+					keptDeps = append(keptDeps, dep)
+				}
 				continue
 			}
 			sourceID := issue.ID
@@ -297,11 +310,33 @@ func ValidateCreateIssuesMixedBucketDependencies(issues []*types.Issue) error {
 			}
 			targetIsWisp, targetInBatch := batchWispByID[dep.DependsOnID]
 			if targetInBatch && sourceIsWisp != targetIsWisp {
-				return fmt.Errorf("mixed regular/wisp CreateIssues batch cannot include cross-bucket dependency %s -> %s; create the issues first, then add the in-batch dependency after both issues exist", sourceID, dep.DependsOnID)
+				if !opts.SkipDependencyValidationErrors {
+					return nil, fmt.Errorf("mixed regular/wisp CreateIssues batch cannot include cross-bucket dependency %s -> %s; create the issues first, then add the in-batch dependency after both issues exist", sourceID, dep.DependsOnID)
+				}
+				if !filteredDeps {
+					keptDeps = append([]*types.Dependency(nil), issue.Dependencies[:depIndex]...)
+					filteredDeps = true
+				}
+				recordSkippedDependencyEdge(opts, sourceID, dep.DependsOnID, "cross-bucket dependency between regular issue and wisp in the same batch")
+				continue
+			}
+			if filteredDeps {
+				keptDeps = append(keptDeps, dep)
 			}
 		}
+		if filteredDeps {
+			if filteredIssues == nil {
+				filteredIssues = append([]*types.Issue(nil), issues...)
+			}
+			issueCopy := *issue
+			issueCopy.Dependencies = keptDeps
+			filteredIssues[issueIndex] = &issueCopy
+		}
 	}
-	return nil
+	if filteredIssues != nil {
+		return filteredIssues, nil
+	}
+	return issues, nil
 }
 
 func createBlockedRecomputeIDs(issues []*types.Issue) ([]string, []string) {
@@ -644,10 +679,17 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 }
 
 func recordSkippedDependency(opts storage.BatchCreateOptions, dep *types.Dependency, reason string) {
-	if opts.OnSkippedDependency == nil || dep == nil {
+	if dep == nil {
 		return
 	}
-	opts.OnSkippedDependency(dep.IssueID, dep.DependsOnID, reason)
+	recordSkippedDependencyEdge(opts, dep.IssueID, dep.DependsOnID, reason)
+}
+
+func recordSkippedDependencyEdge(opts storage.BatchCreateOptions, issueID, dependsOnID, reason string) {
+	if opts.OnSkippedDependency == nil {
+		return
+	}
+	opts.OnSkippedDependency(issueID, dependsOnID, reason)
 }
 
 func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Issue) (map[string]bool, error) {
