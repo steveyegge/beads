@@ -562,15 +562,6 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 			keyToID[node.Key] = issues[i].ID
 		}
 
-		// Persist labels.
-		for i, node := range plan.Nodes {
-			for _, label := range node.Labels {
-				if err := tx.AddLabel(ctx, issues[i].ID, label, actor); err != nil {
-					return fmt.Errorf("node %q: adding label %q: %w", node.Key, label, err)
-				}
-			}
-		}
-
 		// Resolve MetadataRefs now that all IDs are known.
 		for i, node := range plan.Nodes {
 			if len(node.MetadataRefs) == 0 {

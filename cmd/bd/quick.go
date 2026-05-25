@@ -43,16 +43,12 @@ Example:
 			Status:    types.StatusOpen,
 			Priority:  priority,
 			IssueType: types.IssueType(issueType).Normalize(),
+			Labels:    mergeCreateLabels(labels, nil),
 		}
 
 		ctx := rootCtx
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			FatalError("%v", err)
-		}
-
-		// Add labels if specified (silently ignore failures)
-		for _, label := range labels {
-			_ = store.AddLabel(ctx, issue.ID, label, actor)
 		}
 
 		commandDidWrite.Store(true)
