@@ -8,13 +8,14 @@ import (
 
 type closedDeletionCandidateStats struct {
 	PinnedSkipped          int
+	NilSkipped             int
 	NonClosedSkipped       int
 	MissingClosedAtSkipped int
 	RecentClosedAtSkipped  int
 }
 
 func (s closedDeletionCandidateStats) SafetySkipped() int {
-	return s.NonClosedSkipped + s.MissingClosedAtSkipped + s.RecentClosedAtSkipped
+	return s.NilSkipped + s.NonClosedSkipped + s.MissingClosedAtSkipped + s.RecentClosedAtSkipped
 }
 
 func filterClosedDeletionCandidates(issues []*types.Issue, cutoff *time.Time) ([]*types.Issue, closedDeletionCandidateStats) {
@@ -23,7 +24,7 @@ func filterClosedDeletionCandidates(issues []*types.Issue, cutoff *time.Time) ([
 
 	for _, issue := range issues {
 		if issue == nil {
-			stats.MissingClosedAtSkipped++
+			stats.NilSkipped++
 			continue
 		}
 		if issue.Pinned {
@@ -52,8 +53,9 @@ func warnClosedDeletionSafetySkips(stats closedDeletionCandidateStats) {
 	if stats.SafetySkipped() == 0 {
 		return
 	}
-	WarnError("skipped %d deletion candidate(s) after closed_at safety recheck (non_closed=%d, missing_closed_at=%d, too_recent=%d)",
+	WarnError("skipped %d deletion candidate(s) after closed_at safety recheck (nil=%d, non_closed=%d, missing_closed_at=%d, too_recent=%d)",
 		stats.SafetySkipped(),
+		stats.NilSkipped,
 		stats.NonClosedSkipped,
 		stats.MissingClosedAtSkipped,
 		stats.RecentClosedAtSkipped,

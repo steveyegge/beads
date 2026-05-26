@@ -18,6 +18,7 @@ func TestFilterClosedDeletionCandidatesRechecksClosedAtCutoff(t *testing.T) {
 		{ID: "missing-closed-at", Status: types.StatusClosed},
 		{ID: "open-with-old-closed-at", Status: types.StatusOpen, ClosedAt: &oldClosedAt},
 		{ID: "pinned-old", Status: types.StatusClosed, ClosedAt: &oldClosedAt, Pinned: true},
+		nil,
 	}
 
 	filtered, stats := filterClosedDeletionCandidates(candidates, &cutoff)
@@ -36,6 +37,9 @@ func TestFilterClosedDeletionCandidatesRechecksClosedAtCutoff(t *testing.T) {
 	}
 	if stats.NonClosedSkipped != 1 {
 		t.Fatalf("NonClosedSkipped = %d, want 1", stats.NonClosedSkipped)
+	}
+	if stats.NilSkipped != 1 {
+		t.Fatalf("NilSkipped = %d, want 1", stats.NilSkipped)
 	}
 }
 
