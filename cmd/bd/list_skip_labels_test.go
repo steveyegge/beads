@@ -63,7 +63,7 @@ func TestSkipLabelsIssueView_AlwaysEmitsLabelsArray(t *testing.T) {
 
 	view := skipLabelsIssueView{
 		IssueWithCounts: &types.IssueWithCounts{
-			Issue: &types.Issue{ID: "be-1", Title: "x"},
+			Issue: &types.Issue{ID: "be-1", Title: "x", Labels: []string{"actual"}},
 		},
 		Labels: []string{},
 	}
@@ -75,8 +75,38 @@ func TestSkipLabelsIssueView_AlwaysEmitsLabelsArray(t *testing.T) {
 	if !strings.Contains(got, `"labels":[]`) {
 		t.Errorf("expected explicit labels:[] in JSON, got: %s", got)
 	}
+	if strings.Contains(got, "actual") {
+		t.Errorf("expected wrapper to suppress embedded issue labels, got: %s", got)
+	}
 	if !strings.Contains(got, `"id":"be-1"`) {
 		t.Errorf("expected id pass-through from embedded IssueWithCounts, got: %s", got)
+	}
+}
+
+func TestNewSkipLabelsListJSONResponse(t *testing.T) {
+	t.Parallel()
+
+	resp := newSkipLabelsListJSONResponse([]*types.IssueWithCounts{
+		{Issue: &types.Issue{ID: "be-1", Labels: []string{"backend"}}},
+		{Issue: &types.Issue{ID: "be-2"}},
+	})
+
+	if !resp.Meta.SkipLabels {
+		t.Fatal("expected skip_labels metadata")
+	}
+	if resp.Meta.Count != 2 {
+		t.Fatalf("count = %d, want 2", resp.Meta.Count)
+	}
+	out, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	got := string(out)
+	if strings.Contains(got, "backend") {
+		t.Fatalf("response leaked labels despite --skip-labels: %s", got)
+	}
+	if strings.Count(got, `"labels":[]`) != 2 {
+		t.Fatalf("expected explicit empty labels for both issues, got: %s", got)
 	}
 }
 

@@ -368,6 +368,33 @@ type skipLabelsIssueView struct {
 	Labels []string `json:"labels"`
 }
 
+type skipLabelsListJSONResponse struct {
+	Issues []skipLabelsIssueView `json:"issues"`
+	Meta   skipLabelsListMeta    `json:"meta"`
+}
+
+type skipLabelsListMeta struct {
+	SkipLabels bool `json:"skip_labels"`
+	Count      int  `json:"count"`
+}
+
+func newSkipLabelsListJSONResponse(issues []*types.IssueWithCounts) skipLabelsListJSONResponse {
+	views := make([]skipLabelsIssueView, len(issues))
+	for i, issue := range issues {
+		views[i] = skipLabelsIssueView{
+			IssueWithCounts: issue,
+			Labels:          []string{},
+		}
+	}
+	return skipLabelsListJSONResponse{
+		Issues: views,
+		Meta: skipLabelsListMeta{
+			SkipLabels: true,
+			Count:      len(views),
+		},
+	}
+}
+
 // skipLabelsConflicts returns the names of label-filter flags that conflict
 // with --skip-labels. Empty result means no conflict. AD-02 Wireframe 5.
 func skipLabelsConflicts(labels, labelsAny []string, labelPattern, labelRegex string, excludeLabels []string, noLabels bool) []string {
@@ -602,7 +629,7 @@ var listCmd = &cobra.Command{
 		excludeLabels = utils.NormalizeLabels(excludeLabels)
 
 		// Apply directory-aware label scoping if no labels explicitly provided (GH#541)
-		if len(labels) == 0 && len(labelsAny) == 0 {
+		if !skipLabels && len(labels) == 0 && len(labelsAny) == 0 {
 			if dirLabels := config.GetDirectoryLabels(); len(dirLabels) > 0 {
 				labelsAny = dirLabels
 			}
@@ -1042,6 +1069,11 @@ var listCmd = &cobra.Command{
 			}
 			if iwc == nil {
 				iwc = []*types.IssueWithCounts{}
+			}
+			if skipLabels {
+				outputJSON(newSkipLabelsListJSONResponse(iwc))
+				printTruncationHint(truncated, effectiveLimit)
+				return
 			}
 			outputJSON(iwc)
 			printTruncationHint(truncated, effectiveLimit)
