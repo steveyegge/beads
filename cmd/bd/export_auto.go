@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/atomicfile"
@@ -77,7 +78,19 @@ func maybeAutoExport(ctx context.Context, serverMode, allowEmptyOverwrite bool) 
 	state := loadExportAutoState(beadsDir)
 	interval := config.GetDuration("export.interval")
 	if interval == 0 {
-		interval = 60 * time.Second
+		// Default throttle: 60 s for the embedded backend, 5 min for the
+		// remote-Dolt backend. The remote case rebuilds the JSONL with a
+		// full SearchIssues + 5 hydration queries every fire, which costs
+		// 5-10 s on a 200 ms RTT link. With dolt_mode=server the database
+		// is already the source of truth and the JSONL is a convenience
+		// for git-tracking and offline replay — a 5-minute lag is fine
+		// for that role and skips most per-write rebuild churn.
+		// Users can override by setting export.interval explicitly.
+		if serverMode {
+			interval = 5 * time.Minute
+		} else {
+			interval = 60 * time.Second
+		}
 	}
 
 	// Change detection via Dolt commit hash. This is cheap, so do it before
@@ -368,11 +381,27 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
 		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-		allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
-		commentsMap, _ := store.GetCommentsForIssues(ctx, issueIDs)
-		commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
-		depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+		// Parallelize the five independent bulk-load calls. On a remote Dolt
+		// connection each is a full BEGIN/SELECT/ROLLBACK round trip (~1.2 s
+		// on a 200 ms RTT link); running them sequentially was ~6 s of pure
+		// wall-clock waste inside maybeAutoExport. The pool's MaxOpenConns
+		// is 10 by default so five concurrent reads share the warm pool
+		// without forcing extra handshakes.
+		var (
+			labelsMap     map[string][]string
+			allDeps       map[string][]*types.Dependency
+			commentsMap   map[string][]*types.Comment
+			commentCounts map[string]int
+			depCounts     map[string]*types.DependencyCounts
+			wg            sync.WaitGroup
+		)
+		wg.Add(5)
+		go func() { defer wg.Done(); labelsMap, _ = store.GetLabelsForIssues(ctx, issueIDs) }()
+		go func() { defer wg.Done(); allDeps, _ = store.GetDependencyRecordsForIssues(ctx, issueIDs) }()
+		go func() { defer wg.Done(); commentsMap, _ = store.GetCommentsForIssues(ctx, issueIDs) }()
+		go func() { defer wg.Done(); commentCounts, _ = store.GetCommentCounts(ctx, issueIDs) }()
+		go func() { defer wg.Done(); depCounts, _ = store.GetDependencyCounts(ctx, issueIDs) }()
+		wg.Wait()
 
 		for _, issue := range issues {
 			issue.Labels = labelsMap[issue.ID]
