@@ -248,6 +248,19 @@ func warnUnknownGraphFields(w io.Writer, unknown map[string][]string) []string {
 	return hintFields
 }
 
+// loadEmbeddedCustomTypes returns the project's custom issue types using the
+// embedded path's resolution order: store first, then config.yaml fallback.
+// Returns nil when neither source has any custom types. Safe to call when
+// store is nil (e.g., test contexts) — falls straight to the YAML source.
+func loadEmbeddedCustomTypes() []string {
+	if store != nil {
+		if ct, err := store.GetCustomTypes(rootCtx); err == nil && len(ct) > 0 {
+			return ct
+		}
+	}
+	return config.GetCustomTypesFromYAML()
+}
+
 // createIssuesFromGraph handles `bd create --graph <plan-file>`.
 // When dryRun is true, the plan is parsed and validated but no writes occur;
 // a preview is emitted to stdout (JSON when jsonOutput is set, otherwise
@@ -268,7 +281,7 @@ func createIssuesFromGraph(planFile string, dryRun bool, opts GraphApplyOptions)
 		FatalError("parsing graph plan: %v", err)
 	}
 
-	if err := validateGraphApplyPlan(&plan); err != nil {
+	if err := validateGraphApplyPlan(&plan, loadEmbeddedCustomTypes()); err != nil {
 		FatalError("invalid graph plan: %v", err)
 	}
 
@@ -354,20 +367,13 @@ func emitGraphApplyDryRun(plan *GraphApplyPlan) {
 	}
 }
 
-// validateGraphApplyPlan checks the plan for structural errors before any writes.
-func validateGraphApplyPlan(plan *GraphApplyPlan) error {
+// validateGraphApplyPlan checks the plan for structural errors before any
+// writes. customTypes is the set of project-extension types whose node types
+// should validate; pass nil/empty to restrict to built-in types only. The
+// caller is responsible for resolving customTypes (store + YAML overlay).
+func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 	if len(plan.Nodes) == 0 {
 		return fmt.Errorf("plan has no nodes")
-	}
-
-	// Load custom types so user-configured types (spec, session, etc.) are accepted.
-	var customTypes []string
-	if store != nil {
-		ct, _ := store.GetCustomTypes(rootCtx)
-		customTypes = ct
-	}
-	if len(customTypes) == 0 {
-		customTypes = config.GetCustomTypesFromYAML()
 	}
 
 	seenKeys := make(map[string]bool, len(plan.Nodes))

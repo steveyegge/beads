@@ -20,7 +20,6 @@ type ConfigUseCase interface {
 	VerifyInit(ctx context.Context) (VerifyResult, error)
 	GetCustomTypes(ctx context.Context) ([]string, error)
 	LoadCreateContext(ctx context.Context) (CreateContext, error)
-	SetIssuePrefix(ctx context.Context, prefix string) error
 }
 
 // CreateContext bundles the read-only config inputs that bd create needs
@@ -30,21 +29,6 @@ type CreateContext struct {
 	IssuePrefix     string
 	AllowedPrefixes string
 	CustomTypes     []string
-	// RoutingConfig holds the well-known routing.* / contributor.* keys.
-	// Only keys with non-empty values are present.
-	RoutingConfig map[string]string
-}
-
-// CreateContextRoutingKeys is the fixed set of config keys LoadCreateContext
-// reads into CreateContext.RoutingConfig. Exposed so the CLI can reuse the
-// same key list when overlaying YAML precedence on top of the DB values.
-var CreateContextRoutingKeys = []string{
-	"routing.mode",
-	"routing.contributor",
-	"routing.default",
-	"routing.maintainer",
-	"contributor.auto_route",
-	"contributor.planning_repo",
 }
 
 type Issue struct{}
@@ -104,16 +88,6 @@ func (u *configUseCaseImpl) GetCustomTypes(ctx context.Context) ([]string, error
 	return out, nil
 }
 
-func (u *configUseCaseImpl) SetIssuePrefix(ctx context.Context, prefix string) error {
-	if prefix == "" {
-		return fmt.Errorf("SetIssuePrefix: prefix must not be empty")
-	}
-	if err := u.cfgRepo.SetConfig(ctx, "issue_prefix", prefix); err != nil {
-		return fmt.Errorf("SetIssuePrefix: %w", err)
-	}
-	return nil
-}
-
 func (u *configUseCaseImpl) LoadCreateContext(ctx context.Context) (CreateContext, error) {
 	prefix, err := u.cfgRepo.GetConfig(ctx, "issue_prefix")
 	if err != nil {
@@ -127,22 +101,9 @@ func (u *configUseCaseImpl) LoadCreateContext(ctx context.Context) (CreateContex
 	if err != nil {
 		return CreateContext{}, fmt.Errorf("LoadCreateContext: read custom types: %w", err)
 	}
-
-	routing := make(map[string]string, len(CreateContextRoutingKeys))
-	for _, key := range CreateContextRoutingKeys {
-		v, err := u.cfgRepo.GetConfig(ctx, key)
-		if err != nil {
-			return CreateContext{}, fmt.Errorf("LoadCreateContext: read %s: %w", key, err)
-		}
-		if v != "" {
-			routing[key] = v
-		}
-	}
-
 	return CreateContext{
 		IssuePrefix:     prefix,
 		AllowedPrefixes: allowed,
 		CustomTypes:     customTypes,
-		RoutingConfig:   routing,
 	}, nil
 }
