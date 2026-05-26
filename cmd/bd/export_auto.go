@@ -59,7 +59,19 @@ func maybeAutoExport(ctx context.Context) {
 	state := loadExportAutoState(beadsDir)
 	interval := config.GetDuration("export.interval")
 	if interval == 0 {
-		interval = 60 * time.Second
+		// Default throttle: 60 s for the embedded backend, 5 min for the
+		// remote-Dolt backend. The remote case rebuilds the JSONL with a
+		// full SearchIssues + 5 hydration queries every fire, which costs
+		// 5-10 s on a 200 ms RTT link. With dolt_mode=server the database
+		// is already the source of truth and the JSONL is a convenience
+		// for git-tracking and offline replay — a 5-minute lag is fine
+		// for that role and skips most per-write rebuild churn.
+		// Users can override by setting export.interval explicitly.
+		if serverMode {
+			interval = 5 * time.Minute
+		} else {
+			interval = 60 * time.Second
+		}
 	}
 	if !state.Timestamp.IsZero() && time.Since(state.Timestamp) < interval {
 		debug.Logf("auto-export: throttled (last export %s ago, interval %s)\n",
