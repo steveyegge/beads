@@ -49,6 +49,12 @@ func (d ServerDSN) String() string {
 		// per parameterized query. On high-latency links this halves the cost
 		// of a typical SELECT … WHERE k = ? from 2 RTT to 1 RTT.
 		InterpolateParams: true,
+		// When MaxAllowedPacket is left at 0 the driver issues
+		// `SELECT @@max_allowed_packet` after the handshake to discover the
+		// server limit (≈1 extra RTT). Set a fixed 64 MiB ceiling — matches
+		// the driver's own DefaultMaxAllowedPacket constant — so the lookup
+		// query is skipped. bd never writes packets anywhere near this size.
+		MaxAllowedPacket: 64 * 1024 * 1024,
 	}
 	if d.TLS {
 		cfg.TLSConfig = "true"

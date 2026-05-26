@@ -16,18 +16,26 @@ import (
 // Delegates to issueops.SearchIssuesInTx for shared query logic, except when
 // the session-scoped cache (populated by preloadSessionCaches) tells us the
 // wisps table is empty or missing — in that case the wisps merge step is a
-// guaranteed no-op and we skip it to save a round trip.
+// guaranteed no-op, and we additionally run the search on a pooled *sql.Conn
+// instead of a tx, skipping the BEGIN/ROLLBACK round trips entirely. For a
+// remote Dolt server that drops SearchIssues from 4 RTT (~800ms) to 2 RTT
+// (~400ms), or 1 RTT (~200ms) when label hydration is also a no-op (empty
+// result set).
 func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	skipWispsMerge := s.canSkipWispsMerge(filter)
+	if s.canSkipWispsMerge(filter) {
+		var result []*types.Issue
+		err := s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
+			var err error
+			result, err = issueops.SearchIssuesNonWispInTx(ctx, q, query, filter)
+			return err
+		})
+		return result, err
+	}
 
 	var result []*types.Issue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		if skipWispsMerge {
-			result, err = issueops.SearchIssuesNonWispInTx(ctx, tx, query, filter)
-		} else {
-			result, err = issueops.SearchIssuesInTx(ctx, tx, query, filter)
-		}
+		result, err = issueops.SearchIssuesInTx(ctx, tx, query, filter)
 		return err
 	})
 	return result, err

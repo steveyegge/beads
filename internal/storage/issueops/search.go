@@ -2,7 +2,6 @@ package issueops
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
@@ -13,21 +12,24 @@ import (
 // skipping the wisps merge step. Callers that already know the wisps table is
 // empty or missing (e.g. via a session-scoped cache) can use this to save one
 // round trip per search on high-latency remote connections.
-func SearchIssuesNonWispInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	results, err := searchTableInTx(ctx, tx, query, filter, IssuesFilterTables)
+//
+// Accepts any SQLQuerier so the caller can pass a pooled *sql.Conn instead
+// of a *sql.Tx, dropping the BEGIN/ROLLBACK round trips for simple reads.
+func SearchIssuesNonWispInTx(ctx context.Context, q SQLQuerier, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	results, err := searchTableInTx(ctx, q, query, filter, IssuesFilterTables)
 	if err != nil {
 		return nil, fmt.Errorf("search issues: %w", err)
 	}
 	return results, nil
 }
 
-// SearchIssuesInTx executes a filtered issue search within an existing transaction.
+// SearchIssuesInTx executes a filtered issue search.
 // It queries the issues table, optionally merges wisps, and returns hydrated issues
-// with labels populated.
-func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+// with labels populated. Accepts any SQLQuerier (*sql.Tx, *sql.Conn, *sql.DB).
+func SearchIssuesInTx(ctx context.Context, q SQLQuerier, query string, filter types.IssueFilter) ([]*types.Issue, error) {
 	// Route ephemeral-only queries to wisps table.
 	if filter.Ephemeral != nil && *filter.Ephemeral {
-		results, err := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		results, err := searchTableInTx(ctx, q, query, filter, WispsFilterTables)
 		if err != nil && !isTableNotExistError(err) {
 			return nil, fmt.Errorf("search wisps (ephemeral filter): %w", err)
 		}
@@ -37,7 +39,7 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 		// Fall through: wisps table doesn't exist or returned no results
 	}
 
-	results, err := searchTableInTx(ctx, tx, query, filter, IssuesFilterTables)
+	results, err := searchTableInTx(ctx, q, query, filter, IssuesFilterTables)
 	if err != nil {
 		return nil, fmt.Errorf("search issues: %w", err)
 	}
@@ -50,7 +52,7 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 	// querying wisps here with Ephemeral=&false returns only NoHistory beads
 	// while correctly excluding true ephemeral wisps. (GH#3659)
 	if filter.Ephemeral == nil || !*filter.Ephemeral {
-		wispResults, wispErr := searchTableInTx(ctx, tx, query, filter, WispsFilterTables)
+		wispResults, wispErr := searchTableInTx(ctx, q, query, filter, WispsFilterTables)
 		if wispErr != nil && !isTableNotExistError(wispErr) {
 			return nil, fmt.Errorf("search wisps (merge): %w", wispErr)
 		}
@@ -71,7 +73,8 @@ func SearchIssuesInTx(ctx context.Context, tx *sql.Tx, query string, filter type
 }
 
 // searchTableInTx runs a filtered search against a specific table set (issues or wisps).
-func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter, tables FilterTables) ([]*types.Issue, error) {
+// Accepts any SQLQuerier so callers can choose tx or pooled conn.
+func searchTableInTx(ctx context.Context, q SQLQuerier, query string, filter types.IssueFilter, tables FilterTables) ([]*types.Issue, error) {
 	whereClauses, args, err := BuildIssueFilterClauses(query, filter, tables)
 	if err != nil {
 		return nil, err
@@ -91,7 +94,7 @@ func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 	querySQL := fmt.Sprintf(`SELECT %s FROM %s %s ORDER BY priority ASC, created_at DESC, id ASC %s`,
 		IssueSelectColumns, tables.Main, whereSQL, limitSQL)
 
-	rows, err := tx.QueryContext(ctx, querySQL, args...)
+	rows, err := q.QueryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search %s: %w", tables.Main, err)
 	}
@@ -126,7 +129,7 @@ func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 		// or wisps table, so every ID in `ids` belongs to tables.Labels.
 		// Skip the per-batch wisp-partition round-trip that the generic
 		// GetLabelsForIssuesInTx performs (GH#3414).
-		labelMap, labelErr := GetLabelsForIssuesFromTableInTx(ctx, tx, tables.Labels, ids)
+		labelMap, labelErr := GetLabelsForIssuesFromTableInTx(ctx, q, tables.Labels, ids)
 		if labelErr != nil {
 			return nil, fmt.Errorf("search %s: hydrate labels: %w", tables.Main, labelErr)
 		}
@@ -138,7 +141,7 @@ func searchTableInTx(ctx context.Context, tx *sql.Tx, query string, filter types
 
 		// Optionally hydrate dependencies in bulk (same batched pattern as labels).
 		if filter.IncludeDependencies {
-			depMap, depErr := GetDependencyRecordsForIssuesFromTableInTx(ctx, tx, tables.Dependencies, ids)
+			depMap, depErr := GetDependencyRecordsForIssuesFromTableInTx(ctx, q, tables.Dependencies, ids)
 			if depErr != nil {
 				return nil, fmt.Errorf("search %s: hydrate dependencies: %w", tables.Main, depErr)
 			}

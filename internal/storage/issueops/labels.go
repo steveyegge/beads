@@ -79,12 +79,14 @@ func GetLabelsForIssuesInTx(ctx context.Context, tx *sql.Tx, issueIDs []string, 
 // which queries either the issues or wisps table exclusively). It skips the
 // wisp-partition round-trip entirely. labelTable must be "labels" or
 // "wisp_labels"; callers route via FilterTables.
-func GetLabelsForIssuesFromTableInTx(ctx context.Context, tx *sql.Tx, labelTable string, issueIDs []string) (map[string][]string, error) {
+//
+// Accepts any SQLQuerier so callers can supply a pooled conn instead of a tx.
+func GetLabelsForIssuesFromTableInTx(ctx context.Context, q SQLQuerier, labelTable string, issueIDs []string) (map[string][]string, error) {
 	if len(issueIDs) == 0 {
 		return make(map[string][]string), nil
 	}
 	result := make(map[string][]string)
-	if err := getLabelsIntoFromTable(ctx, tx, labelTable, issueIDs, result); err != nil {
+	if err := getLabelsIntoFromTable(ctx, q, labelTable, issueIDs, result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -94,7 +96,7 @@ func GetLabelsForIssuesFromTableInTx(ctx context.Context, tx *sql.Tx, labelTable
 // and accumulates results into the provided map.
 //
 //nolint:gosec // G201: labelTable is "labels" or "wisp_labels" (hardcoded by callers).
-func getLabelsIntoFromTable(ctx context.Context, tx *sql.Tx, labelTable string, ids []string, result map[string][]string) error {
+func getLabelsIntoFromTable(ctx context.Context, q SQLQuerier, labelTable string, ids []string, result map[string][]string) error {
 	for start := 0; start < len(ids); start += queryBatchSize {
 		end := start + queryBatchSize
 		if end > len(ids) {
@@ -107,7 +109,7 @@ func getLabelsIntoFromTable(ctx context.Context, tx *sql.Tx, labelTable string, 
 			placeholders[i] = "?"
 			args[i] = id
 		}
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+		rows, err := q.QueryContext(ctx, fmt.Sprintf(
 			`SELECT issue_id, label FROM %s WHERE issue_id IN (%s) ORDER BY issue_id, label`,
 			labelTable, strings.Join(placeholders, ",")), args...)
 		if err != nil {

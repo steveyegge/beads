@@ -64,19 +64,21 @@ func GetDependencyRecordsForIssuesInTx(ctx context.Context, tx *sql.Tx, issueIDs
 // GetDependencyRecordsForIssuesFromTableInTx is a fast-path variant used by
 // callers that already know every ID belongs to a single dep table (e.g.
 // searchTableInTx). Skips the wisp-partition round-trip.
-func GetDependencyRecordsForIssuesFromTableInTx(ctx context.Context, tx *sql.Tx, depTable string, issueIDs []string) (map[string][]*types.Dependency, error) {
+//
+// Accepts any SQLQuerier so callers can supply a pooled conn instead of a tx.
+func GetDependencyRecordsForIssuesFromTableInTx(ctx context.Context, q SQLQuerier, depTable string, issueIDs []string) (map[string][]*types.Dependency, error) {
 	if len(issueIDs) == 0 {
 		return make(map[string][]*types.Dependency), nil
 	}
 	result := make(map[string][]*types.Dependency)
-	if err := getDependencyRecordsIntoFromTable(ctx, tx, depTable, issueIDs, result); err != nil {
+	if err := getDependencyRecordsIntoFromTable(ctx, q, depTable, issueIDs, result); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
 //nolint:gosec // G201: depTable is "dependencies" or "wisp_dependencies" (hardcoded by callers).
-func getDependencyRecordsIntoFromTable(ctx context.Context, tx *sql.Tx, depTable string, ids []string, result map[string][]*types.Dependency) error {
+func getDependencyRecordsIntoFromTable(ctx context.Context, q SQLQuerier, depTable string, ids []string, result map[string][]*types.Dependency) error {
 	for start := 0; start < len(ids); start += queryBatchSize {
 		end := start + queryBatchSize
 		if end > len(ids) {
@@ -89,7 +91,7 @@ func getDependencyRecordsIntoFromTable(ctx context.Context, tx *sql.Tx, depTable
 			placeholders[i] = "?"
 			args[i] = id
 		}
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+		rows, err := q.QueryContext(ctx, fmt.Sprintf(
 			`SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
 			 FROM %s WHERE issue_id IN (%s) ORDER BY issue_id`,
 			depTable, strings.Join(placeholders, ",")), args...)
