@@ -23,10 +23,6 @@ var migrateCmd = &cobra.Command{
 
 Without subcommand, checks and updates database metadata to current version.
 
-Flags:
-  --inspect   Show migration plan and database state for AI agent analysis
-  --dry-run   Preview the default metadata update (no effect with --inspect)
-
 Subcommands:
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
@@ -736,9 +732,6 @@ Example:
 	},
 }
 
-// migrateSchemaCmd is the "bd migrate schema" subcommand that idempotently
-// applies pending schema migrations. Store-open already migrates as a side
-// effect, so this subcommand makes the operation explicit and scriptable.
 var migrateSchemaCmd = &cobra.Command{
 	Use:   "schema",
 	Short: "Apply pending schema migrations (idempotent)",

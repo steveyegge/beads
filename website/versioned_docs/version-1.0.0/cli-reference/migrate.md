@@ -14,14 +14,10 @@ Database migration and data transformation commands.
 
 Without subcommand, checks and updates database metadata to current version.
 
-Flags:
-  --schema    Apply pending schema migrations (idempotent)
-  --inspect   Show migration plan and database state for AI agent analysis
-  --dry-run   Show what would be done without making changes
-
 Subcommands:
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
+  schema      Apply pending schema migrations (idempotent)
   sync        Set up sync.branch workflow for multi-clone setups
 
 
@@ -35,7 +31,6 @@ bd migrate [flags]
       --dry-run          Show what would be done without making changes
       --inspect          Show migration plan and database state for AI agent analysis
       --json             Output migration statistics in JSON format
-      --schema           Apply pending schema migrations (idempotent)
       --update-repo-id   Update repository ID (use after changing git remote)
       --yes              Auto-confirm prompts
 ```
@@ -109,6 +104,28 @@ bd migrate issues [flags]
       --type string        Filter by issue type (bug/feature/task/epic/chore/decision)
       --within-from-only   Only include dependencies from source repo (default true)
       --yes                Skip confirmation prompt
+```
+
+### bd migrate schema
+
+Apply pending schema migrations idempotently.
+
+Schema migrations also run automatically on store open, so this subcommand
+is typically a no-op. It exists to make migration explicit and observable
+in CI, release gates, and recovery scenarios.
+
+Example:
+  bd migrate schema
+  bd migrate schema --json
+
+```
+bd migrate schema [flags]
+```
+
+**Flags:**
+
+```
+      --json   Output in JSON format
 ```
 
 ### bd migrate sync
