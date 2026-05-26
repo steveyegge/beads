@@ -64,10 +64,13 @@ jobs:
           CGO_ENABLED: "0"
         run: go build -tags gms_pure_go -o /tmp/bd-puregeo ./cmd/bd
 
-      - name: Compile cmd/bd test binary (CGO_ENABLED=0, gms_pure_go)
+      - name: Compile pure-Go test binaries (CGO_ENABLED=0, gms_pure_go)
         env:
           CGO_ENABLED: "0"
-        run: go test -tags gms_pure_go -c -o /tmp/bd-cmd-puregeo-test ./cmd/bd
+        run: |
+          go test -tags gms_pure_go -c -o /tmp/bd-cmd-puregeo-test ./cmd/bd
+          go test -tags gms_pure_go -c -o /tmp/bd-embeddeddolt-puregeo-test ./internal/storage/embeddeddolt
+          go test -tags gms_pure_go -c -o /tmp/bd-tracker-puregeo-test ./internal/tracker
 
       - name: Run pure-Go cmd/bd test subset (CGO_ENABLED=0)
         env:
