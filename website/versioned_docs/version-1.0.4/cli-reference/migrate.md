@@ -14,6 +14,11 @@ Database migration and data transformation commands.
 
 Without subcommand, checks and updates database metadata to current version.
 
+Flags:
+  --schema    Apply pending schema migrations (idempotent)
+  --inspect   Show migration plan and database state for AI agent analysis
+  --dry-run   Show what would be done without making changes
+
 Subcommands:
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
@@ -30,6 +35,7 @@ bd migrate [flags]
       --dry-run          Show what would be done without making changes
       --inspect          Show migration plan and database state for AI agent analysis
       --json             Output migration statistics in JSON format
+      --schema           Apply pending schema migrations (idempotent)
       --update-repo-id   Update repository ID (use after changing git remote)
       --yes              Auto-confirm prompts
 ```

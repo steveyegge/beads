@@ -24,13 +24,13 @@ var migrateCmd = &cobra.Command{
 Without subcommand, checks and updates database metadata to current version.
 
 Flags:
-  --schema    Apply pending schema migrations (idempotent)
   --inspect   Show migration plan and database state for AI agent analysis
-  --dry-run   Show what would be done without making changes
+  --dry-run   Preview the default metadata update (no effect with --inspect)
 
 Subcommands:
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
+  schema      Apply pending schema migrations (idempotent)
   sync        Set up sync.branch workflow for multi-clone setups
 `,
 	Run: func(cmd *cobra.Command, _ []string) {
@@ -38,7 +38,6 @@ Subcommands:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		updateRepoID, _ := cmd.Flags().GetBool("update-repo-id")
 		inspect, _ := cmd.Flags().GetBool("inspect")
-		schemaFlag, _ := cmd.Flags().GetBool("schema")
 
 		// Block writes in readonly mode (migration modifies data, --inspect is read-only)
 		if !dryRun && !inspect {
@@ -54,11 +53,6 @@ Subcommands:
 		// Handle --inspect flag (show migration plan for AI agents)
 		if inspect {
 			handleInspect()
-			return
-		}
-
-		if schemaFlag {
-			handleSchemaMigrate()
 			return
 		}
 
@@ -742,12 +736,33 @@ Example:
 	},
 }
 
+// migrateSchemaCmd is the "bd migrate schema" subcommand that idempotently
+// applies pending schema migrations. Store-open already migrates as a side
+// effect, so this subcommand makes the operation explicit and scriptable.
+var migrateSchemaCmd = &cobra.Command{
+	Use:   "schema",
+	Short: "Apply pending schema migrations (idempotent)",
+	Long: `Apply pending schema migrations idempotently.
+
+Schema migrations also run automatically on store open, so this subcommand
+is typically a no-op. It exists to make migration explicit and observable
+in CI, release gates, and recovery scenarios.
+
+Example:
+  bd migrate schema
+  bd migrate schema --json`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, _ []string) {
+		CheckReadonly("migrate schema")
+		handleSchemaMigrate()
+	},
+}
+
 func init() {
 	migrateCmd.Flags().Bool("yes", false, "Auto-confirm prompts")
 	migrateCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
 	migrateCmd.Flags().Bool("update-repo-id", false, "Update repository ID (use after changing git remote)")
 	migrateCmd.Flags().Bool("inspect", false, "Show migration plan and database state for AI agent analysis")
-	migrateCmd.Flags().Bool("schema", false, "Apply pending schema migrations (idempotent)")
 	migrateCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output migration statistics in JSON format")
 
 	migrateSyncCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
@@ -759,6 +774,9 @@ func init() {
 	migrateHooksCmd.Flags().Bool("yes", false, "Skip confirmation prompt for --apply")
 	migrateHooksCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	migrateCmd.AddCommand(migrateHooksCmd)
+
+	migrateSchemaCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	migrateCmd.AddCommand(migrateSchemaCmd)
 
 	rootCmd.AddCommand(migrateCmd)
 }

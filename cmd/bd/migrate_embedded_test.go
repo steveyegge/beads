@@ -117,9 +117,9 @@ func TestEmbeddedMigrate(t *testing.T) {
 
 	t.Run("migrate_schema", func(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "sa")
-		out := bdMigrate(t, bd, dir, "--schema")
+		out := bdMigrate(t, bd, dir, "schema")
 		if !strings.Contains(out, "Schema") {
-			t.Errorf("expected 'Schema' in --schema output: %s", out)
+			t.Errorf("expected 'Schema' in 'migrate schema' output: %s", out)
 		}
 	})
 
@@ -127,9 +127,9 @@ func TestEmbeddedMigrate(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "si")
 		// First run: bd init already migrated to latest; this is the
 		// idempotent re-check. Should report current, not error.
-		first := bdMigrate(t, bd, dir, "--schema")
+		first := bdMigrate(t, bd, dir, "schema")
 		// Second run: must also succeed and report current.
-		second := bdMigrate(t, bd, dir, "--schema")
+		second := bdMigrate(t, bd, dir, "schema")
 		if !strings.Contains(first, "Schema") || !strings.Contains(second, "Schema") {
 			t.Errorf("expected 'Schema' in both runs:\nfirst:%s\nsecond:%s", first, second)
 		}
@@ -137,7 +137,7 @@ func TestEmbeddedMigrate(t *testing.T) {
 
 	t.Run("migrate_schema_json", func(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "sj")
-		out := bdMigrate(t, bd, dir, "--schema", "--json")
+		out := bdMigrate(t, bd, dir, "schema", "--json")
 		s := strings.TrimSpace(out)
 		start := strings.Index(s, "{")
 		if start < 0 {
@@ -156,6 +156,24 @@ func TestEmbeddedMigrate(t *testing.T) {
 		}
 		if status, _ := m["status"].(string); status != "current" && status != "applied" {
 			t.Errorf("unexpected status %q in JSON output: %v", status, m)
+		}
+	})
+
+	t.Run("migrate_schema_rejects_inspect", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "sx")
+		// --inspect lives on the parent migrate command, not on the schema
+		// subcommand. Passing it should error rather than silently apply.
+		out := bdMigrateFail(t, bd, dir, "schema", "--inspect")
+		if !strings.Contains(out, "unknown flag") && !strings.Contains(out, "inspect") {
+			t.Errorf("expected error about --inspect on 'migrate schema': %s", out)
+		}
+	})
+
+	t.Run("migrate_schema_rejects_dry_run", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "sd")
+		out := bdMigrateFail(t, bd, dir, "schema", "--dry-run")
+		if !strings.Contains(out, "unknown flag") && !strings.Contains(out, "dry-run") {
+			t.Errorf("expected error about --dry-run on 'migrate schema': %s", out)
 		}
 	})
 
