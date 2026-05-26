@@ -170,6 +170,10 @@ type DoltStore struct {
 	customTypeCached          bool
 	infraTypeCache            map[string]bool
 	infraTypeCached           bool
+	allConfigCache            map[string]string // cached result of GetAllConfig (populated by preloadSessionCaches)
+	allConfigCached           bool              // true once allConfigCache has been populated
+	wispsEmpty                bool              // true if wisps table is missing or empty (skip wisps probe in SearchIssues)
+	wispsStateKnown           bool              // true once wispsEmpty has been resolved
 	cacheMu                   sync.Mutex
 
 	// OTel span attribute cache (avoids per-call allocation)
@@ -1169,6 +1173,15 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			return nil, verifyErr
 		}
 	}
+
+	// Warm the per-store metadata caches (config map, custom statuses /
+	// types, infra types, wisps existence) in one round trip so the rest
+	// of the command does not pay 3-5 separate trips for data that almost
+	// never changes within a session. Best effort: failures leave the
+	// caches cold and lazy loaders cope.
+	preloadDone := sqlTraceStart("newServerMode.preloadSessionCaches")
+	store.preloadSessionCaches(ctx)
+	preloadDone("")
 
 	if isLocalHost(cfg.ServerHost) {
 		beadsDir := cfg.BeadsDir
