@@ -15,29 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// TestProxiedServerCreate mirrors TestEmbeddedCreate but exercises the
-// proxied-server path end-to-end: a real `dolt sql-server` is spawned for
-// each sub-test via `bd init --proxied-server`, the bd subprocess does its
-// work against the proxy, and direct SQL assertions go through a MySQL
-// client connected to the proxy's listener.
-//
-// Each sub-test gets a fresh project directory and a fresh proxy spawn.
-// Teardown calls proxy.Shutdown via t.Cleanup; a SIGINT/SIGTERM handler
-// covers the test-interrupted case. See proxied_integration_helpers_test.go
-// for the harness.
-//
-// Excluded versus the embedded suite (documented gaps, not regressions):
-//   - cross_repo / cross_repo_with_parent / with_git_remote — `--repo` is
-//     not supported on the proxied path.
-//   - concurrent — proxied concurrency belongs in a dedicated test that
-//     mirrors shared_server_integration_test.go's shape.
-//   - dry_run_parent_label_inheritance — the proxied single dry-run
-//     deliberately does not consult the DB (no UOW open), so parent
-//     labels are not inherited into the preview output.
-//
-// Proxied-only additions:
-//   - graph_basic, graph_dry_run_db_aware, graph_parent_child_top_level_ids
-//   - graph_initial_labels_not_duplicated
 func TestProxiedServerCreate(t *testing.T) {
 	requireProxiedServerEnv(t)
 
@@ -172,7 +149,6 @@ func TestProxiedServerCreate(t *testing.T) {
 		parent := bdProxiedCreate(t, bd, p.dir, "Parent issue")
 		child := bdProxiedCreate(t, bd, p.dir, "Child issue", "--deps", "blocks:"+parent.ID)
 
-		// "blocks:X" reverses direction: X depends on new issue.
 		db := openProxiedDB(t, p)
 		assertProxiedDepExists(t, db, parent.ID, child.ID)
 	})
@@ -215,14 +191,11 @@ func TestProxiedServerCreate(t *testing.T) {
 			"--deps", fmt.Sprintf("blocks:%s,related:%s", dep1.ID, dep2.ID))
 
 		db := openProxiedDB(t, p)
-		// blocks reverses direction; related keeps original direction.
 		assertProxiedDepExists(t, db, dep1.ID, child.ID)
 		assertProxiedDepExists(t, db, child.ID, dep2.ID)
 	})
 
 	t.Run("parent_child", func(t *testing.T) {
-		// `bd create --parent X` (single-issue) still mints child-counter
-		// IDs in proxied mode — only the graph path uses top-level IDs.
 		p := bdProxiedInit(t, bd, "pc")
 		parent := bdProxiedCreate(t, bd, p.dir, "Parent epic", "-t", "epic")
 		child := bdProxiedCreate(t, bd, p.dir, "Child task", "--parent", parent.ID)
@@ -382,7 +355,6 @@ func TestProxiedServerCreate(t *testing.T) {
 		if strings.Contains(string(out), "error") {
 			t.Errorf("dry-run produced error output: %s", out)
 		}
-		// Verify nothing was persisted: total row count is zero.
 		db := openProxiedDB(t, p)
 		var count int
 		if err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM issues").Scan(&count); err != nil {
@@ -510,10 +482,6 @@ A new feature
 	t.Run("discovered_from_inherits_source_repo", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "sr")
 
-		// Create the parent normally, then patch source_repo directly —
-		// `bd create` doesn't expose --source-repo, but the issues table
-		// has several NOT-NULL columns without defaults that make a raw
-		// INSERT brittle. UPDATE on a bd-created row is the cleanest seed.
 		parent := bdProxiedCreate(t, bd, p.dir, "Parent with source repo")
 		db := openProxiedDB(t, p)
 		if _, err := db.ExecContext(context.Background(),
@@ -543,8 +511,6 @@ A new feature
 			t.Errorf("expected title-related error, got: %s", out)
 		}
 	})
-
-	// ───────── Proxied-only graph coverage ─────────
 
 	t.Run("graph_basic", func(t *testing.T) {
 		p := bdProxiedInit(t, bd, "gb")
@@ -578,10 +544,6 @@ A new feature
 	})
 
 	t.Run("graph_parent_child_top_level_ids", func(t *testing.T) {
-		// Regression test for the deliberate behavior change: graph nodes
-		// with parent_key get TOP-LEVEL IDs (gA-abc123), not counter-style
-		// (gA-parent.1). Matches embedded executeGraphApply, diverges from
-		// the prior proxied path. Plus a parent-child dep links them.
 		p := bdProxiedInit(t, bd, "gpc")
 		plan := `{
   "nodes": [
@@ -613,12 +575,7 @@ A new feature
 	})
 
 	t.Run("graph_dry_run_db_aware", func(t *testing.T) {
-		// Regression test for #5/option-1B: graph dry-run opens a UOW and
-		// reads DB custom types so it can validate a custom type declared
-		// in DB-only (not YAML). Pre-1B, this dry-run would have rejected.
 		p := bdProxiedInit(t, bd, "gdr")
-
-		// Register a custom type in the DB only.
 		db := openProxiedDB(t, p)
 		_, err := db.ExecContext(context.Background(),
 			`REPLACE INTO config (`+"`key`"+`, value) VALUES (?, ?)`,
@@ -640,7 +597,6 @@ A new feature
 		if err != nil {
 			t.Fatalf("dry-run with DB-only custom type should succeed: %v\n%s", err, out)
 		}
-		// Nothing persisted.
 		var count int
 		if err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM issues").Scan(&count); err != nil {
 			t.Fatalf("count issues: %v", err)
@@ -678,7 +634,6 @@ A new feature
 		if len(labels) != 2 {
 			t.Fatalf("label count = %d, want 2 (no duplicates): %v", len(labels), labels)
 		}
-		// Verify exactly two label_added events too.
 		var eventCount int
 		if err := db.QueryRowContext(context.Background(),
 			"SELECT COUNT(*) FROM events WHERE issue_id = ? AND event_type = ?",

@@ -16,88 +16,53 @@ import (
 	"github.com/steveyegge/beads/internal/validation"
 )
 
-// createInput is the shared, parsed form of every `bd create` flag.
-// Both the embedded and proxied-server paths consume this struct so flag
-// parsing, conflict checks, and value coercion live in one place.
 type createInput struct {
-	// Mode selectors. Exactly one is set; if neither, single-issue mode.
-	markdownFile string
-	graphFile    string
-
-	// Single-issue identity / shape.
-	title       string
-	explicitID  string
-	parentID    string
-	issueType   string
-	priority    int
-	assignee    string
-	externalRef string
-	specID      string
-
-	// Body fields. Description has already had --skills / --context appended.
+	markdownFile       string
+	graphFile          string
+	title              string
+	explicitID         string
+	parentID           string
+	issueType          string
+	priority           int
+	assignee           string
+	externalRef        string
+	specID             string
 	description        string
 	design             string
 	acceptanceCriteria string
 	notes              string
 	appendNotes        string
-
-	// Labels & dependencies.
-	labels          []string // --labels and --label aliases merged
-	noInheritLabels bool
-	deps            []string
-	waitsFor        string
-	waitsForGate    string
-
-	// Behavior flags.
+	labels             []string
+	noInheritLabels    bool
+	deps               []string
+	waitsFor           string
+	waitsForGate       string
 	silent   bool
 	dryRun   bool
 	force    bool
 	validate bool
-
-	// Lifecycle.
 	ephemeral bool
 	noHistory bool
 	molType   types.MolType
 	wispType  types.WispType
-
-	// Event (only valid when issueType == "event").
 	eventCategory string
 	eventActor    string
 	eventTarget   string
 	eventPayload  string
-
-	// Scheduling.
 	dueAt      *time.Time
 	deferUntil *time.Time
-
-	// Metadata.
 	metadata    json.RawMessage
 	metadataSet bool
-
 	estimatedMinutes *int
-
-	// Routing.
 	repoOverride    string
 	repoOverrideSet bool
-
-	// Identity (resolved from env/git/global state at gather time).
 	actor     string
 	createdBy string
 	owner     string
-
-	// Cross-cutting (persistent flags).
 	jsonOutput bool
-
-	// LintIssue dispatch hint. Embedded/proxied paths run validation
-	// themselves; this records the user's intent.
-	// Values: "" (off) | "error" | "warn".
 	validationMode string
 }
 
-// gatherCreateInput pulls every flag value out of cobra, parses each into
-// its strongly-typed form, and applies the validation that does not require
-// database access. Callers downstream (runCreateEmbedded, runCreateProxied*)
-// receive a fully-validated input or this function FatalError's.
 func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 	in := createInput{}
 
@@ -105,7 +70,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 	in.graphFile, _ = cmd.Flags().GetString("graph")
 	in.dryRun, _ = cmd.Flags().GetBool("dry-run")
 
-	// Mode dispatch validation.
 	if in.markdownFile != "" && in.graphFile != "" {
 		FatalError("cannot specify both --file and --graph")
 	}
@@ -139,8 +103,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 	titleFlag, _ := cmd.Flags().GetString("title")
 	in.title = resolveTitle(args, titleFlag, in.markdownFile, in.graphFile)
 
-	// Body fields. Description is composed from getDescriptionFlag plus
-	// --skills / --context concatenation; design via getDesignFlag.
 	in.description, _ = getDescriptionFlag(cmd)
 	skills, _ := cmd.Flags().GetString("skills")
 	if skills != "" {
@@ -163,8 +125,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 	in.appendNotes, _ = cmd.Flags().GetString("append-notes")
 	in.specID, _ = cmd.Flags().GetString("spec-id")
 
-	// Description-required check only fires in single-issue mode. Markdown
-	// templates supply their own descriptions; graph nodes likewise.
 	if in.markdownFile == "" && in.graphFile == "" {
 		if in.description == "" && !isTestIssue(in.title) {
 			if config.GetBool("create.require-description") {
@@ -173,7 +133,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		}
 	}
 
-	// Priority — supports both "1" and "P1" formats.
 	priorityStr, _ := cmd.Flags().GetString("priority")
 	priority, err := validation.ValidatePriority(priorityStr)
 	if err != nil {
@@ -203,7 +162,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 	in.repoOverride, _ = cmd.Flags().GetString("repo")
 	in.repoOverrideSet = cmd.Flags().Changed("repo")
 
-	// MOL / wisp type validation.
 	if molTypeStr, _ := cmd.Flags().GetString("mol-type"); molTypeStr != "" {
 		mt := types.MolType(molTypeStr)
 		if !mt.IsValid() {
@@ -219,7 +177,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		in.wispType = wt
 	}
 
-	// Event flags require --type=event.
 	in.eventCategory, _ = cmd.Flags().GetString("event-category")
 	in.eventActor, _ = cmd.Flags().GetString("event-actor")
 	in.eventTarget, _ = cmd.Flags().GetString("event-target")
@@ -228,7 +185,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
 	}
 
-	// --due
 	if dueStr, _ := cmd.Flags().GetString("due"); dueStr != "" {
 		t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
 		if err != nil {
@@ -237,7 +193,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		in.dueAt = &t
 	}
 
-	// --defer (warns on past dates).
 	if deferStr, _ := cmd.Flags().GetString("defer"); deferStr != "" {
 		t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
 		if err != nil {
@@ -251,7 +206,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		in.deferUntil = &t
 	}
 
-	// --metadata (inline JSON or @file.json).
 	if cmd.Flags().Changed("metadata") {
 		metadataValue, _ := cmd.Flags().GetString("metadata")
 		var metadataJSON string
@@ -273,7 +227,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		in.metadataSet = true
 	}
 
-	// --estimate
 	if cmd.Flags().Changed("estimate") {
 		est, _ := cmd.Flags().GetInt("estimate")
 		if est < 0 {
@@ -282,16 +235,12 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		in.estimatedMinutes = &est
 	}
 
-	// Identity helpers.
 	in.actor = actor
 	in.createdBy = getActorWithGit()
 	in.owner = getOwner()
 
-	// Output mode.
 	in.jsonOutput = jsonOutput
 
-	// Validation mode hint. --validate forces error; otherwise use the
-	// validation.on-create config key.
 	in.validationMode = config.GetString("validation.on-create")
 	if in.validate {
 		in.validationMode = "error"
@@ -300,10 +249,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 	return in
 }
 
-// singleIssueOnlyFlags lists the flag names that only make sense for
-// single-issue mode. Both markdown templates (--file) and graph plans
-// (--graph) supply per-issue fields; passing any of these alongside the
-// batch flag is meaningless and likely a user error.
 var singleIssueOnlyFlags = []string{
 	"title",
 	"id", "parent", "no-inherit-labels",
@@ -317,12 +262,6 @@ var singleIssueOnlyFlags = []string{
 	"metadata", "estimate", "force", "wisp-type",
 }
 
-// rejectSingleIssueFlagsForMarkdown FatalErrors when any single-issue-only
-// flag has been explicitly set alongside --file. Per the proxied-server
-// create spec, markdown mode supplies every per-issue field via templates;
-// passing CLI fields for these is silently ignored on the embedded path
-// today and is treated as an error here for clarity. --mol-type is allowed
-// because markdown mode propagates it to every template.
 func rejectSingleIssueFlagsForMarkdown(cmd *cobra.Command) {
 	for _, name := range singleIssueOnlyFlags {
 		if cmd.Flags().Changed(name) {
@@ -331,11 +270,6 @@ func rejectSingleIssueFlagsForMarkdown(cmd *cobra.Command) {
 	}
 }
 
-// rejectSingleIssueFlagsForGraph FatalErrors when any single-issue-only
-// flag has been explicitly set alongside --graph. Per the spec, graph mode
-// honors only --dry-run, --ephemeral, --no-history, --silent, --json, and
-// --repo; --mol-type is also rejected here (graph plans don't carry
-// molecule semantics today).
 func rejectSingleIssueFlagsForGraph(cmd *cobra.Command) {
 	for _, name := range singleIssueOnlyFlags {
 		if cmd.Flags().Changed(name) {
@@ -347,8 +281,6 @@ func rejectSingleIssueFlagsForGraph(cmd *cobra.Command) {
 	}
 }
 
-// resolveTitle implements the single-issue title resolution rules. Returns
-// "" in markdown/graph mode (no positional title allowed there).
 func resolveTitle(args []string, titleFlag, markdownFile, graphFile string) string {
 	if markdownFile != "" || graphFile != "" {
 		return ""
@@ -361,9 +293,6 @@ func resolveTitle(args []string, titleFlag, markdownFile, graphFile string) stri
 		}
 		return args[0]
 	case len(args) > 0:
-		// Guard: reject positional args that look like flags (bd-2c0).
-		// When --help or other flags bypass Cobra's flag parsing (e.g.,
-		// programmatic invocation), they end up here as positional args.
 		if strings.HasPrefix(args[0], "-") {
 			FatalError("title %q looks like a flag (starts with '-').\n  Run 'bd create --help' for available options.\n  To use this title anyway, pass it explicitly: bd create --title=%q", args[0], args[0])
 		}
@@ -372,6 +301,6 @@ func resolveTitle(args []string, titleFlag, markdownFile, graphFile string) stri
 		return titleFlag
 	default:
 		FatalError("title required (or use --file to create from markdown)")
-		return "" // unreachable
+		return ""
 	}
 }
