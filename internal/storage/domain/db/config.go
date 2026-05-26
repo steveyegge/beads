@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 func NewConfigSQLRepository(runner Runner) domain.ConfigSQLRepository {
@@ -61,6 +63,13 @@ func (r *configSQLRepositoryImpl) GetConfig(ctx context.Context, key string) (st
 func (r *configSQLRepositoryImpl) SetConfig(ctx context.Context, key, value string) error {
 	if key == "issue_prefix" {
 		value = strings.TrimSuffix(value, "-")
+		existing, err := r.GetConfig(ctx, "issue_prefix")
+		if err != nil {
+			return err
+		}
+		if existing != "" && existing != value && os.Getenv(issueops.AllowPrefixMutationEnv) != "1" {
+			return fmt.Errorf("db: SetConfig issue_prefix: issue_prefix is identity state and cannot be changed from %q to %q without %s=1; use bd rename-prefix for migrations", existing, value, issueops.AllowPrefixMutationEnv)
+		}
 	}
 	if _, err := r.runner.ExecContext(ctx, "REPLACE INTO config (`key`, value) VALUES (?, ?)", key, value); err != nil {
 		return fmt.Errorf("db: SetConfig %s: %w", key, err)

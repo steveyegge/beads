@@ -2,6 +2,7 @@ package db
 
 import (
 	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 func (s *testSuite) TestConfigSQLRepository() {
@@ -23,6 +24,8 @@ func (s *testSuite) TestConfigSQLRepository() {
 		s.Run("Overwrite", s.configSetConfigOverwrite)
 		s.Run("IssuePrefixTrimsTrailingHyphen", s.configSetConfigIssuePrefixTrim)
 		s.Run("IssuePrefixWithoutHyphenUnchanged", s.configSetConfigIssuePrefixUnchanged)
+		s.Run("IssuePrefixRejectsMutation", s.configSetConfigIssuePrefixRejectsMutation)
+		s.Run("IssuePrefixAllowsBreakGlassMutation", s.configSetConfigIssuePrefixAllowsBreakGlassMutation)
 	})
 }
 
@@ -102,4 +105,27 @@ func (s *testSuite) configSetConfigIssuePrefixUnchanged() {
 	v, err := r.GetConfig(s.Ctx(), "issue_prefix")
 	s.Require().NoError(err)
 	s.Equal("bd", v)
+}
+
+func (s *testSuite) configSetConfigIssuePrefixRejectsMutation() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "issue_prefix", "bd"))
+	err := r.SetConfig(s.Ctx(), "issue_prefix", "bds")
+	s.Require().Error(err)
+	s.Contains(err.Error(), issueops.AllowPrefixMutationEnv)
+
+	v, getErr := r.GetConfig(s.Ctx(), "issue_prefix")
+	s.Require().NoError(getErr)
+	s.Equal("bd", v)
+}
+
+func (s *testSuite) configSetConfigIssuePrefixAllowsBreakGlassMutation() {
+	s.T().Setenv(issueops.AllowPrefixMutationEnv, "1")
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "issue_prefix", "bd"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "issue_prefix", "bds"))
+
+	v, err := r.GetConfig(s.Ctx(), "issue_prefix")
+	s.Require().NoError(err)
+	s.Equal("bds", v)
 }
