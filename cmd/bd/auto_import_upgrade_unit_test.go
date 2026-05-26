@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -16,7 +18,7 @@ import (
 // fakeFallbackStore satisfies storage.DoltStorage via an embedded nil
 // interface (any unimplemented method panics) and returns a configurable
 // Statistics. It does NOT implement jsonlImporter, so the type assertion
-// in maybeAutoImportJSONL fails and the server-mode fallback path is taken
+// in maybeAutoImportJSONL fails and the fallback importer path is taken
 // — exactly the path that lacked an emptiness guard prior to the fix.
 type fakeFallbackStore struct {
 	storage.DoltStorage // nil — panics on any non-overridden method
@@ -62,77 +64,97 @@ func swapFallbackImporter(t *testing.T, returnErr error) *atomic.Int32 {
 	return &count
 }
 
-// TestMaybeAutoImportJSONL_ServerModeFallback_SkipsWhenNonEmpty is the
+// TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenNonEmpty is the
 // regression test for the auto-import-on-non-empty data-clobber bug
 // introduced upstream by PR #3630.
 //
 // Pre-fix, maybeAutoImportJSONL had no top-level emptiness guard for
-// stores that did not implement jsonlImporter (i.e. server-mode dolt).
-// Every command unconditionally invoked importFromLocalJSONLFull, which
-// UPSERTs JSONL contents on top of live Dolt rows — silently clobbering
-// recent partial-update writes whose values had not yet been re-exported
-// to JSONL.
+// stores that did not implement jsonlImporter. Every command
+// unconditionally invoked importFromLocalJSONLFull, which UPSERTs JSONL
+// contents on top of live Dolt rows — silently clobbering recent
+// partial-update writes whose values had not yet been re-exported to
+// JSONL.
 //
 // This test fails on the buggy code (counter == 1) and passes after the
 // guard is restored (counter == 0).
-func TestMaybeAutoImportJSONL_ServerModeFallback_SkipsWhenNonEmpty(t *testing.T) {
+func TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenNonEmpty(t *testing.T) {
 	dir := t.TempDir()
 	writeAutoImportFixtureJSONL(t, dir)
 	count := swapFallbackImporter(t, errors.New("test importer should not run"))
 
 	store := &fakeFallbackStore{statsTotalIssues: 5}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 
 	if got := count.Load(); got != 0 {
-		t.Fatalf("regression: server-mode fallback importer was invoked %d time(s) on a non-empty store; expected 0 (top-level emptiness guard missing or broken)", got)
+		t.Fatalf("regression: fallback importer was invoked %d time(s) on a non-empty store; expected 0 (top-level emptiness guard missing or broken)", got)
 	}
 }
 
-func TestMaybeAutoImportJSONL_SkipsEntirelyInServerMode(t *testing.T) {
-	dir := t.TempDir()
-	writeAutoImportFixtureJSONL(t, dir)
-	count := swapFallbackImporter(t, errors.New("test importer should not run"))
+func TestShouldRunAutoImportJSONL(t *testing.T) {
+	store := &fakeFallbackStore{}
+	writeCmd := &cobra.Command{Use: "update"}
 
-	maybeAutoImportJSONL(context.Background(), nil, dir, true)
+	tests := []struct {
+		name        string
+		cmd         *cobra.Command
+		store       storage.DoltStorage
+		useReadOnly bool
+		globalFlag  bool
+		serverMode  bool
+		want        bool
+	}{
+		{name: "write command embedded", cmd: writeCmd, store: store, want: true},
+		{name: "server mode", cmd: writeCmd, store: store, serverMode: true, want: false},
+		{name: "read only", cmd: writeCmd, store: store, useReadOnly: true, want: false},
+		{name: "global", cmd: writeCmd, store: store, globalFlag: true, want: false},
+		{name: "import command", cmd: &cobra.Command{Use: "import"}, store: store, want: false},
+		{name: "nil store", cmd: writeCmd, want: false},
+		{name: "nil command", store: store, want: false},
+	}
 
-	if got := count.Load(); got != 0 {
-		t.Fatalf("server-mode auto-import invoked fallback importer %d time(s); expected 0", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldRunAutoImportJSONL(tt.cmd, tt.store, tt.useReadOnly, tt.globalFlag, tt.serverMode)
+			if got != tt.want {
+				t.Fatalf("shouldRunAutoImportJSONL() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
-// TestMaybeAutoImportJSONL_ServerModeFallback_SkipsWhenStatisticsNil covers
+// TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenStatisticsNil covers
 // the defensive nil-statistics guard: if the store reports no error but also
 // no counts, auto-import should skip rather than panic or assume emptiness.
-func TestMaybeAutoImportJSONL_ServerModeFallback_SkipsWhenStatisticsNil(t *testing.T) {
+func TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenStatisticsNil(t *testing.T) {
 	dir := t.TempDir()
 	writeAutoImportFixtureJSONL(t, dir)
 	count := swapFallbackImporter(t, errors.New("test importer should not run"))
 
 	store := &fakeFallbackStore{statsNil: true}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 
 	if got := count.Load(); got != 0 {
-		t.Fatalf("server-mode fallback importer was invoked %d time(s) when statistics were nil; expected 0", got)
+		t.Fatalf("fallback importer was invoked %d time(s) when statistics were nil; expected 0", got)
 	}
 }
 
-// TestMaybeAutoImportJSONL_ServerModeFallback_RunsWhenEmpty is the negative
+// TestMaybeAutoImportJSONL_FallbackImporter_RunsWhenEmpty is the negative
 // control. Without it, a future change that always short-circuits would
 // leave the regression test above passing vacuously.
 //
 // The substituted importer returns an error to short-circuit before
 // s.Commit is called, so the bare fakeFallbackStore (which panics on
 // every other method) does not need the full DoltStorage surface.
-func TestMaybeAutoImportJSONL_ServerModeFallback_RunsWhenEmpty(t *testing.T) {
+func TestMaybeAutoImportJSONL_FallbackImporter_RunsWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
 	writeAutoImportFixtureJSONL(t, dir)
 	count := swapFallbackImporter(t, errors.New("test importer: short-circuit before s.Commit"))
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 
 	if got := count.Load(); got != 1 {
-		t.Fatalf("server-mode fallback importer invoked %d time(s) on empty store; expected exactly 1", got)
+		t.Fatalf("fallback importer invoked %d time(s) on empty store; expected exactly 1", got)
 	}
 }
 
@@ -152,7 +174,7 @@ func TestMaybeAutoImportJSONL_UsesConfiguredImportPath(t *testing.T) {
 	t.Cleanup(func() { fallbackImporter = orig })
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 
 	wantPath := filepath.Join(dir, "beads.jsonl")
 	if gotPath != wantPath {

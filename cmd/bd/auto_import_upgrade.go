@@ -18,10 +18,10 @@ type jsonlImporter interface {
 }
 
 // fallbackImporter is the function maybeAutoImportJSONL invokes for stores
-// that do not implement jsonlImporter (server-mode dolt). It exists as a
-// package-level variable so tests can substitute a counter and verify the
-// top-level emptiness guard prevents the fallback path from running on a
-// non-empty database. Production builds always use importFromLocalJSONLFull.
+// that do not implement jsonlImporter. It exists as a package-level variable
+// so tests can substitute a counter and verify the top-level emptiness guard
+// prevents the fallback path from running on a non-empty database. Production
+// builds always use importFromLocalJSONLFull.
 var fallbackImporter = importFromLocalJSONLFull
 
 // maybeAutoImportJSONL checks whether the database is empty and the configured
@@ -30,22 +30,17 @@ var fallbackImporter = importFromLocalJSONLFull
 // .beads/dolt/) to 1.0+ (which uses .beads/embeddeddolt/) don't appear to
 // lose their issues.  See GH#2994.
 //
-// The top-level emptiness guard (GetStatistics) protects BOTH the
-// embedded fast-path and the server-mode fallback. The embedded
-// jsonlImporter has its own in-transaction emptiness check as a
-// concurrency-safe second line of defense; the fallback path's
-// importFromLocalJSONLFull uses INSERT … ON DUPLICATE KEY UPDATE
-// semantics under the hood, so without this guard a stale
-// issues.jsonl would be re-imposed on top of live Dolt rows on
-// every command, clobbering recent partial-update writes.
+// The top-level emptiness guard (GetStatistics) protects both the embedded
+// fast-path and the fallback path. The embedded jsonlImporter has its own
+// in-transaction emptiness check as a concurrency-safe second line of defense;
+// the fallback path's importFromLocalJSONLFull uses INSERT … ON DUPLICATE KEY
+// UPDATE semantics under the hood, so without this guard a stale issues.jsonl
+// would be re-imposed on top of live Dolt rows on every command, clobbering
+// recent partial-update writes.
 //
 // The function is best-effort: failures are logged as warnings but do not
 // prevent the store from being used.
-func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string, serverMode bool) {
-	if serverMode {
-		return
-	}
-
+func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir string) {
 	// Quick check: does the JSONL file exist and have content?
 	jsonlPath := configuredImportJSONLPath(beadsDir)
 	info, err := os.Stat(jsonlPath)
@@ -102,7 +97,7 @@ func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir s
 		return
 	}
 
-	// Fallback for non-embedded stores: multi-call path (original behavior).
+	// Fallback for stores without a single-transaction importer.
 	fmt.Fprintf(os.Stderr, "auto-importing %d bytes from %s into empty database...\n", info.Size(), jsonlPath)
 
 	result, err := fallbackImporter(ctx, s, jsonlPath)
