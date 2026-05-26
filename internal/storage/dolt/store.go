@@ -1171,28 +1171,37 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// CREATE DATABASE, information_schema queries may fail transiently
 	// even though Ping succeeded. This resolves within ~1s.
 	if !cfg.ReadOnly {
-		// Ensure dolt_ignore'd tables exist BEFORE running migrations.
-		// Migrations may reference these tables (e.g. 0027 alters wisps,
-		// 0030 inserts into local_metadata). After a clone or server restart
-		// these tables don't exist yet since they're not in committed data.
-		if err := versioncontrolops.EnsureIgnoredTables(ctx, db); err != nil {
-			return nil, fmt.Errorf("failed to ensure ignored tables: %w", err)
-		}
+		// Fast path: if local_metadata records that schema + compat
+		// migrations are already done at the current embedded schema
+		// version on this clone, the dolt_ignore'd tables that
+		// EnsureIgnoredTables checks for must also exist (they were
+		// created by the same chain we stamped after). Skip both with
+		// one SELECT instead of 7 SHOW TABLES + the migration probes
+		// (~1.6 s saved per write on a 200 ms RTT link).
+		if !schemaInitFastPathOK(ctx, db) {
+			// Ensure dolt_ignore'd tables exist BEFORE running migrations.
+			// Migrations may reference these tables (e.g. 0027 alters wisps,
+			// 0030 inserts into local_metadata). After a clone or server restart
+			// these tables don't exist yet since they're not in committed data.
+			if err := versioncontrolops.EnsureIgnoredTables(ctx, db); err != nil {
+				return nil, fmt.Errorf("failed to ensure ignored tables: %w", err)
+			}
 
-		schemaBO := backoff.NewExponentialBackOff()
-		schemaBO.InitialInterval = 100 * time.Millisecond
-		schemaBO.MaxElapsedTime = 5 * time.Second
-		if err := backoff.Retry(func() error {
-			schemaErr := store.initSchema(ctx)
-			if schemaErr != nil && isRetryableError(schemaErr) {
-				return schemaErr
+			schemaBO := backoff.NewExponentialBackOff()
+			schemaBO.InitialInterval = 100 * time.Millisecond
+			schemaBO.MaxElapsedTime = 5 * time.Second
+			if err := backoff.Retry(func() error {
+				schemaErr := store.initSchema(ctx)
+				if schemaErr != nil && isRetryableError(schemaErr) {
+					return schemaErr
+				}
+				if schemaErr != nil {
+					return backoff.Permanent(schemaErr)
+				}
+				return nil
+			}, backoff.WithContext(schemaBO, ctx)); err != nil {
+				return nil, fmt.Errorf("failed to initialize schema: %w", err)
 			}
-			if schemaErr != nil {
-				return backoff.Permanent(schemaErr)
-			}
-			return nil
-		}, backoff.WithContext(schemaBO, ctx)); err != nil {
-			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
 	}
 

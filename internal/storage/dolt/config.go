@@ -66,8 +66,19 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 	return nil
 }
 
-// GetConfig retrieves a configuration value
+// GetConfig retrieves a configuration value. Honors the per-store cache
+// populated by preloadSessionCaches so write commands (which typically
+// look up half a dozen config keys in their PreRun + PostRun hooks) do
+// not pay a round trip per key once the cache is warm.
 func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
+	s.cacheMu.Lock()
+	if s.allConfigCached {
+		v := s.allConfigCache[key]
+		s.cacheMu.Unlock()
+		return v, nil
+	}
+	s.cacheMu.Unlock()
+
 	var value string
 	err := s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
 		var err error
