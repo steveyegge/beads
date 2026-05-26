@@ -188,6 +188,7 @@ check-docs:
 	@echo "Building bd for docs checks..."
 	@CGO_ENABLED=0 go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o $(BUILD_DIR)/bd ./cmd/bd
 	@./scripts/check-doc-flags.sh ./bd
+	@./scripts/check-doc-freshness.sh
 
 # Clean build artifacts and benchmark profiles
 clean:
