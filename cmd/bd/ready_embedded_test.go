@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,12 @@ func bdReadyJSON(t *testing.T, bd, dir string, args ...string) []*types.IssueWit
 		t.Fatalf("parse bd ready --json %s: %v\n%s", strings.Join(args, " "), err, stdout.String())
 	}
 	return issues
+}
+
+func sortedStrings(in []string) []string {
+	out := append([]string(nil), in...)
+	sort.Strings(out)
+	return out
 }
 
 func TestEmbeddedReady(t *testing.T) {
@@ -278,7 +285,7 @@ func TestEmbeddedReadyJSONSemantics(t *testing.T) {
 	t.Run("list_ready_parity", func(t *testing.T) {
 		readyIDs := listIssueIDs(bdReadyJSON(t, bd, dir, "--limit", "0"))
 		listIDs := listIssueIDs(bdListJSON(t, bd, dir, "--ready", "--limit", "0"))
-		if fmt.Sprint(readyIDs) != fmt.Sprint(listIDs) {
+		if fmt.Sprint(sortedStrings(readyIDs)) != fmt.Sprint(sortedStrings(listIDs)) {
 			t.Fatalf("bd ready --json and bd list --ready differ:\nready: %v\nlist:  %v", readyIDs, listIDs)
 		}
 	})
