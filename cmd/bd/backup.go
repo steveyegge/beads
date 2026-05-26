@@ -14,6 +14,11 @@ var backupCmd = &cobra.Command{
 	Short: "Back up your beads database",
 	Long: `Back up your beads database for off-machine recovery.
 
+This is a Dolt-native database backup. It preserves the database state,
+including tables, branches, commit history, and working-set data. This is
+different from 'bd export', which writes issue records to JSONL for migration
+and interoperability.
+
 Commands:
   bd backup init <path>    Set up a backup destination (filesystem or DoltHub)
   bd backup sync           Push to configured backup destination

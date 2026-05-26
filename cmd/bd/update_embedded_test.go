@@ -51,11 +51,11 @@ func bdShowJSON(t *testing.T, bd, dir, id string) string {
 	cmd := exec.Command(bd, "show", id, "--json")
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd show %s --json failed: %v\n%s", id, err, out)
+		t.Fatalf("bd show %s --json failed: %v\nstdout:\n%s\nstderr:\n%s", id, err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // hasLabel checks if a label is present in the issue's labels.
@@ -265,6 +265,36 @@ func TestEmbeddedUpdate(t *testing.T) {
 		got := bdShow(t, bd, dir, issue.ID)
 		if got.ExternalRef == nil || *got.ExternalRef != "gh-42" {
 			t.Errorf("expected external_ref 'gh-42', got %v", got.ExternalRef)
+		}
+	})
+
+	// GH#3902: --external-ref "" must clear to SQL NULL (matching buildCreateIssue's
+	// pointer semantics), not write an empty string. Otherwise sync/tracker code
+	// that checks ExternalRef == nil silently misclassifies cleared refs as still
+	// tracked, and two cleared issues round-trip with different JSON shapes
+	// (cleared via CLI emits "external_ref":"" while never-set issues omit the field).
+	t.Run("update_external_ref_clear", func(t *testing.T) {
+		a := bdCreate(t, bd, dir, "ExtRef clear A", "--type", "task", "--external-ref", "ref-a")
+		b := bdCreate(t, bd, dir, "ExtRef clear B", "--type", "task", "--external-ref", "ref-b")
+
+		bdUpdate(t, bd, dir, a.ID, "--external-ref", "")
+		// Repeat clear must succeed for a second issue — historical UNIQUE
+		// constraint repro from the issue report.
+		bdUpdate(t, bd, dir, b.ID, "--external-ref", "")
+
+		gotA := bdShow(t, bd, dir, a.ID)
+		gotB := bdShow(t, bd, dir, b.ID)
+		if gotA.ExternalRef != nil {
+			t.Errorf("expected A.external_ref to be nil after clear, got %q", *gotA.ExternalRef)
+		}
+		if gotB.ExternalRef != nil {
+			t.Errorf("expected B.external_ref to be nil after clear, got %q", *gotB.ExternalRef)
+		}
+
+		// JSON output: cleared ref should be omitted via omitempty, not emitted as "".
+		rawA := bdShowJSON(t, bd, dir, a.ID)
+		if strings.Contains(rawA, `"external_ref"`) {
+			t.Errorf("expected external_ref field to be omitted from JSON after clear, got: %s", rawA)
 		}
 	})
 
@@ -712,11 +742,11 @@ func TestEmbeddedUpdate(t *testing.T) {
 		cmd := exec.Command(bd, "update", issue.ID, "--status", "in_progress", "--json")
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err != nil {
-			t.Fatalf("bd update --json failed: %v\n%s", err, out)
+			t.Fatalf("bd update --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		s := string(out)
+		s := stdout.String()
 		start := strings.Index(s, "[")
 		if start < 0 {
 			start = strings.Index(s, "{")
@@ -829,10 +859,7 @@ func TestEmbeddedUpdateConcurrent(t *testing.T) {
 			for i := 0; i < issuesPerWorker; i++ {
 				// Create an issue.
 				title := fmt.Sprintf("w%d-issue-%d", worker, i)
-				cmd := exec.Command(bd, "create", "--silent", title)
-				cmd.Dir = dir
-				cmd.Env = bdEnv(dir)
-				out, err := cmd.CombinedOutput()
+				out, err := bdRunWithFlockRetry(t, bd, dir, "create", "--silent", title)
 				if err != nil {
 					r.err = fmt.Errorf("create %d: %v\n%s", i, err, out)
 					results[worker] = r
@@ -883,13 +910,13 @@ func TestEmbeddedUpdateConcurrent(t *testing.T) {
 				listCmd := exec.Command(bd, "list", "--json", "--limit", "0")
 				listCmd.Dir = dir
 				listCmd.Env = bdEnv(dir)
-				listOut, err := listCmd.CombinedOutput()
+				listStdout, listStderr, err := runCommandBuffers(t, listCmd)
 				if err != nil {
-					r.err = fmt.Errorf("list after update %d: %v\n%s", i, err, listOut)
+					r.err = fmt.Errorf("list after update %d: %v\nstdout:\n%s\nstderr:\n%s", i, err, listStdout.String(), listStderr.String())
 					results[worker] = r
 					return
 				}
-				s := string(listOut)
+				s := listStdout.String()
 				start := strings.Index(s, "[")
 				if start < 0 {
 					r.listCounts = append(r.listCounts, 0)
@@ -897,7 +924,7 @@ func TestEmbeddedUpdateConcurrent(t *testing.T) {
 				}
 				var issues []json.RawMessage
 				if jsonErr := json.Unmarshal([]byte(s[start:]), &issues); jsonErr != nil {
-					r.err = fmt.Errorf("list parse %d: %v\nraw: %s", i, jsonErr, s)
+					r.err = fmt.Errorf("list parse %d: %v\nstdout:\n%s\nstderr:\n%s", i, jsonErr, s, listStderr.String())
 					results[worker] = r
 					return
 				}

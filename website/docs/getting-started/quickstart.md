@@ -251,11 +251,12 @@ bd stats
 
 ## Team sync
 
-Share issues with your team using Dolt remotes. Dolt stores data under `refs/dolt/data` on the same Git remote, separate from standard Git refs.
+Share issues with your team using Dolt remotes. Dolt stores data under `refs/dolt/data` on the same Git remote, separate from standard Git refs. In repos with `origin`, `bd init` configures that Dolt remote automatically.
 
 ```bash
-# Add a remote (GitHub example — also supports DoltHub, S3, GCS, local paths)
-bd dolt remote add origin git+ssh://git@github.com/org/repo.git
+# Verify the remote, or add one if the repo had no origin during init
+bd dolt remote list
+bd dolt remote add origin git+ssh://git@github.com/org/repo.git  # if needed
 
 # Push your issues
 bd dolt push
@@ -264,9 +265,9 @@ bd dolt push
 bd dolt pull
 ```
 
-When a teammate clones the repo, `bd bootstrap` auto-detects the existing database on `refs/dolt/data` and clones it — no manual remote setup needed.
+When a teammate clones the repo, `bd bootstrap` auto-detects the existing database on `refs/dolt/data`, clones it, and wires `origin` for future `bd dolt push` / `bd dolt pull`.
 
-See [Sync](/cli-reference/sync) for CLI details. For remote configuration and federation, see the repository docs [DOLT-BACKEND.md](https://github.com/gastownhall/beads/blob/main/docs/DOLT-BACKEND.md) and [FEDERATION-SETUP.md](https://github.com/gastownhall/beads/blob/main/FEDERATION-SETUP.md).
+See [`bd dolt`](/cli-reference/dolt) for CLI details. For remote configuration and federation, see the repository docs [DOLT.md](https://github.com/gastownhall/beads/blob/main/docs/DOLT.md) and [FEDERATION-SETUP.md](https://github.com/gastownhall/beads/blob/main/FEDERATION-SETUP.md).
 
 ## Optional: Notion sync
 
@@ -363,8 +364,8 @@ bd admin cleanup --force
 - Check graph integrity: `bd graph check`
 - Search issues: `bd list --status open`
 - Detect cycles: `bd dep cycles`
-- Gates for PR/CI sync: [Dependencies](/cli-reference/dependencies)
-- More sync scenarios: [Sync](/cli-reference/sync)
+- Gates for PR/CI sync: [`bd gate`](/cli-reference/gate)
+- More sync scenarios: [`bd dolt`](/cli-reference/dolt)
 - Full command list: [CLI Reference](/cli-reference)
 
 See the [repository README](https://github.com/gastownhall/beads/blob/main/README.md) for an overview and links to deeper docs.

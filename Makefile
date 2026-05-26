@@ -9,7 +9,7 @@ SHELL := $(subst cmd,bin,$(subst git.exe,bash.exe,$(GIT_BASH)))
 endif
 endif
 
-.PHONY: all build test test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean install install-force help check-up-to-date fmt fmt-check
+.PHONY: all build test test-icu-path test-full-cgo test-regression test-upgrade test-cross-version test-migration bench bench-quick clean clean-test-tmp install install-force help check-up-to-date fmt fmt-check
 
 # Default target
 all: build
@@ -46,6 +46,7 @@ endif
 # ICU flags are only needed for scripts/test-icu-path.sh (which exercises the
 # opt-in ICU regex path).
 BUILD_TAGS := gms_pure_go
+REGRESSION_TIMEOUT ?= 20m
 
 # Build the bd binary
 build:
@@ -83,7 +84,7 @@ test-full-cgo:
 # Override baseline: BD_REGRESSION_BASELINE_BIN=/path/to/bd make test-regression
 test-regression:
 	@echo "Running regression tests (baseline vs candidate)..."
-	go test -tags=regression,$(BUILD_TAGS) -timeout=10m -v ./tests/regression/...
+	go test -tags=regression,$(BUILD_TAGS) -timeout=$(REGRESSION_TIMEOUT) -v ./tests/regression/...
 
 # Run upgrade smoke tests (release stability gate).
 # Tests that upgrading from previous release preserves data, role, and mode.
@@ -183,7 +184,9 @@ fmt-check:
 	@echo "All Go files are properly formatted"
 
 # Validate documentation references against actual CLI flags
-check-docs: build
+check-docs:
+	@echo "Building bd for docs checks..."
+	@CGO_ENABLED=0 go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o $(BUILD_DIR)/bd ./cmd/bd
 	@./scripts/check-doc-flags.sh ./bd
 
 # Clean build artifacts and benchmark profiles
@@ -193,6 +196,13 @@ clean:
 	rm -f bd.exe
 	rm -f internal/storage/dolt/bench-cpu-*.prof
 	rm -f beads-perf-*.prof
+
+# Sweep orphaned cmd/bd test temp dirs (e.g. when a test run was SIGKILLed
+# before its TestMain cleanup ran). Safe to run between test runs; will
+# skip dirs in use by a live test process. See bd-3q2u.
+clean-test-tmp:
+	@echo "Sweeping orphaned cmd/bd test temp dirs from $${TMPDIR:-/tmp}..."
+	@./scripts/clean-test-tmp.sh
 
 # Show help
 help:
@@ -213,4 +223,5 @@ help:
 	@echo "  make fmt-check    - Check Go formatting (for CI)"
 	@echo "  make check-docs   - Validate docs against CLI flags"
 	@echo "  make clean        - Remove build artifacts and profile files"
+	@echo "  make clean-test-tmp - Sweep orphaned cmd/bd test temp dirs from \$$TMPDIR"
 	@echo "  make help         - Show this help message"

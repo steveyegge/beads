@@ -18,11 +18,11 @@ func bdRemember(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd remember %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd remember %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdRememberFail runs "bd remember" expecting failure.
@@ -46,11 +46,11 @@ func bdRecall(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd recall %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd recall %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdRecallFail runs "bd recall" expecting failure.
@@ -74,11 +74,11 @@ func bdMemories(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd memories %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd memories %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdForget runs "bd forget" with the given args and returns stdout.
@@ -88,11 +88,11 @@ func bdForget(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd forget %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd forget %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdForgetFail runs "bd forget" expecting failure.

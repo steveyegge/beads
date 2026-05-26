@@ -16,5 +16,4 @@ type BulkIssueStore interface {
 	ClaimReadyIssue(ctx context.Context, filter types.WorkFilter, actor string) (*types.Issue, error)
 	PromoteFromEphemeral(ctx context.Context, id string, actor string) error
 	GetNextChildID(ctx context.Context, parentID string) (string, error)
-	RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error
 }

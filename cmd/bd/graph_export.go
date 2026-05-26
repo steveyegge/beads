@@ -171,7 +171,7 @@ type HTMLEdge struct {
 }
 
 func buildHTMLGraphData(layout *GraphLayout, _ *TemplateSubgraph) []HTMLNode {
-	var nodes []HTMLNode
+	nodes := make([]HTMLNode, 0, len(layout.Nodes))
 	for _, node := range layout.Nodes {
 		nodes = append(nodes, HTMLNode{
 			ID:       node.Issue.ID,
@@ -187,7 +187,7 @@ func buildHTMLGraphData(layout *GraphLayout, _ *TemplateSubgraph) []HTMLNode {
 }
 
 func buildHTMLEdgeData(layout *GraphLayout, subgraph *TemplateSubgraph) []HTMLEdge {
-	var edges []HTMLEdge
+	edges := make([]HTMLEdge, 0, len(subgraph.Dependencies))
 	for _, dep := range subgraph.Dependencies {
 		if dep.Type != types.DepBlocks && dep.Type != types.DepParentChild {
 			continue

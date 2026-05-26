@@ -255,6 +255,38 @@ func TestRemoveHookCommand(t *testing.T) {
 		},
 	}
 
+	// Separate test: sibling commands within the same hook entry must be
+	// preserved when only the matching command is removed. The bug that
+	// prompted this test dropped the entire hook entry on first match,
+	// silently deleting any sibling commands in the same hooks array.
+	t.Run("preserves sibling commands in same hook entry", func(t *testing.T) {
+		hooks := map[string]interface{}{
+			"SessionStart": []interface{}{
+				map[string]interface{}{
+					"matcher": "",
+					"hooks": []interface{}{
+						map[string]interface{}{"type": "command", "command": "bd prime"},
+						map[string]interface{}{"type": "command", "command": "other-tool"},
+					},
+				},
+			},
+		}
+		removeHookCommand(hooks, "SessionStart", "bd prime")
+
+		entries, ok := hooks["SessionStart"].([]interface{})
+		if !ok || len(entries) != 1 {
+			t.Fatalf("expected 1 hook entry to remain, got %v", hooks["SessionStart"])
+		}
+		entryMap := entries[0].(map[string]interface{})
+		cmds := entryMap["hooks"].([]interface{})
+		if len(cmds) != 1 {
+			t.Fatalf("expected 1 sibling command to remain, got %d", len(cmds))
+		}
+		if cmds[0].(map[string]interface{})["command"] != "other-tool" {
+			t.Errorf("sibling command was lost; commands: %v", cmds)
+		}
+	})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			removeHookCommand(tt.existingHooks, tt.event, tt.command)
@@ -361,7 +393,7 @@ func TestInstallClaudeCleanupNullHooks(t *testing.T) {
 	if !ok {
 		t.Fatal("hooks section missing")
 	}
-	for _, event := range []string{"SessionStart", "PreCompact"} {
+	for _, event := range []string{"SessionStart"} {
 		eventHooks, ok := hooks[event].([]interface{})
 		if !ok {
 			t.Errorf("%s should be an array, not nil or missing", event)
@@ -386,9 +418,8 @@ func TestInstallClaudeUsesPrimeForClaudeHooks(t *testing.T) {
 	settingsJSON := string(data)
 
 	for _, want := range []string{
-		`"command": "bd prime"`,
+		`"command": "bd prime --hook-json"`,
 		`"SessionStart"`,
-		`"PreCompact"`,
 	} {
 		if !strings.Contains(settingsJSON, want) {
 			t.Fatalf("settings missing %q:\n%s", want, settingsJSON)
@@ -399,6 +430,26 @@ func TestInstallClaudeUsesPrimeForClaudeHooks(t *testing.T) {
 		if strings.Contains(settingsJSON, stale) {
 			t.Fatalf("settings contain stale Claude hook command %q:\n%s", stale, settingsJSON)
 		}
+	}
+}
+
+func TestClaudeSettingsUsesRemovedSyncCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"empty", "{}", false},
+		{"bd prime only", `{"hooks":{"PreCompact":[{"matcher":"","hooks":[{"type":"command","command":"bd prime"}]}]}}`, false},
+		{"bd sync hook", `{"hooks":{"PreCompact":[{"matcher":"","hooks":[{"type":"command","command":"bd sync"}]}]}}`, true},
+		{"bd sync with suffix", `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"bd sync --flush-only"}]}]}}`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeSettingsUsesRemovedSyncCommand([]byte(tt.raw)); got != tt.want {
+				t.Fatalf("claudeSettingsUsesRemovedSyncCommand() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -452,7 +503,7 @@ func TestHasBeadsHooks(t *testing.T) {
 			name: "has bd prime in PreCompact",
 			settingsData: map[string]interface{}{
 				"hooks": map[string]interface{}{
-					"PreCompact": []interface{}{
+					"SessionStart": []interface{}{
 						map[string]interface{}{
 							"matcher": "",
 							"hooks": []interface{}{
@@ -478,6 +529,44 @@ func TestHasBeadsHooks(t *testing.T) {
 								map[string]interface{}{
 									"type":    "command",
 									"command": "bd prime --stealth",
+								},
+							},
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "has bd prime --hook-json hook (current format)",
+			settingsData: map[string]interface{}{
+				"hooks": map[string]interface{}{
+					"SessionStart": []interface{}{
+						map[string]interface{}{
+							"matcher": "",
+							"hooks": []interface{}{
+								map[string]interface{}{
+									"type":    "command",
+									"command": "bd prime --hook-json",
+								},
+							},
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "has bd prime --stealth --hook-json hook (current format)",
+			settingsData: map[string]interface{}{
+				"hooks": map[string]interface{}{
+					"PreCompact": []interface{}{
+						map[string]interface{}{
+							"matcher": "",
+							"hooks": []interface{}{
+								map[string]interface{}{
+									"type":    "command",
+									"command": "bd prime --stealth --hook-json",
 								},
 							},
 						},
@@ -669,6 +758,8 @@ func TestInstallClaudeErrors(t *testing.T) {
 }
 
 func TestCheckClaudeScenarios(t *testing.T) {
+	stubDetectRenderOpts(t)
+
 	t.Run("global hooks", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), map[string]interface{}{
@@ -985,6 +1076,7 @@ func TestInstallClaudeWritesHooksWithoutPlugin(t *testing.T) {
 }
 
 func TestCheckClaudePluginManaged(t *testing.T) {
+	stubDetectRenderOpts(t)
 	env, stdout, _ := newClaudeTestEnv(t)
 
 	// Plugin enabled but no hooks in settings files

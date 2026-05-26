@@ -1,5 +1,7 @@
 package recipes
 
+import "fmt"
+
 // Template is the universal beads workflow template.
 // This content is written to all file-based recipes.
 const Template = `# Beads Issue Tracking
@@ -58,3 +60,47 @@ Run ` + "`bd prime`" + ` to get complete workflow documentation in AI-optimized 
 
 For detailed docs: see AGENTS.md, QUICKSTART.md, or run ` + "`bd --help`" + `
 `
+
+// CopilotInstructionsTemplate is the repository instructions file used by the
+// lightweight Copilot CLI plugin recipe.
+const CopilotInstructionsTemplate = `# GitHub Copilot Instructions
+
+This repository uses **Beads (bd)** for issue tracking.
+
+## Core Workflow
+
+- Use ` + "`bd ready`" + ` to find unblocked work
+- Use ` + "`bd create`" + ` to track new work
+- Use ` + "`bd update <id> --claim`" + ` before starting
+- Use ` + "`bd close <id>`" + ` when work is complete
+- Use ` + "`bd dolt push`" + ` at the end of the session
+
+## Context Loading
+
+Run ` + "`bd prime`" + ` for the full workflow context.
+
+If the Beads Copilot plugin is installed, Copilot CLI will automatically run
+` + "`bd prime`" + ` on session start and before compaction.
+`
+
+// ContentForPath returns the file content that should be written for a recipe path.
+func ContentForPath(recipe Recipe, path string) (string, error) {
+	switch recipe.Type {
+	case TypeFile:
+		if recipe.Content != "" {
+			return recipe.Content, nil
+		}
+		return Template, nil
+	case TypeMultiFile:
+		if len(recipe.Contents) == 0 {
+			return "", fmt.Errorf("recipe %q has no file contents", recipe.Name)
+		}
+		content, ok := recipe.Contents[path]
+		if !ok {
+			return "", fmt.Errorf("recipe %q has no content for %s", recipe.Name, path)
+		}
+		return content, nil
+	default:
+		return "", fmt.Errorf("recipe %q has unsupported type %q", recipe.Name, recipe.Type)
+	}
+}

@@ -27,12 +27,12 @@ func whereDiagHint() string {
 
 func workspaceDiagHint(includeWhere bool) string {
 	if includeWhere {
-		if isEmbeddedMode() {
+		if !usesSQLServer() {
 			return "run 'bd where' to inspect the resolved workspace, or 'bd init' to create a new database"
 		}
 		return "run 'bd where' to inspect the resolved workspace, run 'bd doctor' to diagnose, or 'bd init' to create a new database"
 	}
-	if isEmbeddedMode() {
+	if !usesSQLServer() {
 		return "check BEADS_DIR/worktree setup, or run 'bd init' to create a new database"
 	}
 	return "check BEADS_DIR/worktree setup, run 'bd doctor' to diagnose, or run 'bd init' to create a new database"

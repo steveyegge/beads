@@ -32,7 +32,7 @@ var (
 func buildBDUnderTest(t *testing.T) string {
 	t.Helper()
 	buildBDOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "bd-testbin-*")
+		dir, err := testTempDir("bd-testbin-*")
 		if err != nil {
 			buildBDErr = err
 			return

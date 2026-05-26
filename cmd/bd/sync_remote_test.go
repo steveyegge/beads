@@ -21,6 +21,8 @@ func TestNormalizeRemoteURL(t *testing.T) {
 		{"http://github.com/org/repo.git", "git+http://github.com/org/repo.git"},
 		{"ssh://git@github.com/org/repo.git", "git+ssh://git@github.com/org/repo.git"},
 		{"git@github.com:org/repo.git", "git+ssh://git@github.com/org/repo.git"},
+		{"C:/Users/alice/repos/beads.git", "git+C:/Users/alice/repos/beads.git"},
+		{`D:\repos\beads.git`, `git+D:\repos\beads.git`},
 
 		// Dolt remotesapi URLs — also converted (callers that need
 		// pass-through for user-provided URLs should skip normalization)

@@ -66,6 +66,34 @@ func TestRenderSectionFullSingleMarkers(t *testing.T) {
 	}
 }
 
+// TestRenderSectionFullIncludesArchPointer guards GH#3683: the rich
+// architecture blockquote in agents.md.tmpl only reaches greenfield
+// AGENTS.md files. For users running `bd init` over an existing AGENTS.md,
+// ReplaceSection only swaps content between the BEGIN/END markers — so a
+// one-line architecture pointer must live inside beads-section.md too, so
+// hash-freshness re-renders propagate it on subsequent runs.
+func TestRenderSectionFullIncludesArchPointer(t *testing.T) {
+	section := RenderSection(ProfileFull)
+	for _, want := range []string{"refs/dolt/data", "SYNC_CONCEPTS.md"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("full profile missing architecture pointer fragment %q", want)
+		}
+	}
+}
+
+// TestRenderSectionMinimalIncludesArchPointer guards GH#3683 for the
+// minimal profile. The minimal body is intentionally pointer-only, but a
+// single architecture sentence with the canonical SYNC_CONCEPTS.md URL
+// fits the profile's "point at the docs" character.
+func TestRenderSectionMinimalIncludesArchPointer(t *testing.T) {
+	section := RenderSection(ProfileMinimal)
+	for _, want := range []string{"refs/dolt/data", "SYNC_CONCEPTS.md"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("minimal profile missing architecture pointer fragment %q", want)
+		}
+	}
+}
+
 func TestRenderSectionMinimal(t *testing.T) {
 	section := RenderSection(ProfileMinimal)
 	if section == "" {
@@ -94,6 +122,29 @@ func TestRenderSectionMinimal(t *testing.T) {
 	}
 	if strings.Contains(section, "### Priorities") {
 		t.Error("minimal profile should not contain full priorities section")
+	}
+}
+
+func TestCodexSectionBody(t *testing.T) {
+	body := CodexSectionBody()
+	if body == "" {
+		t.Fatal("CodexSectionBody returned empty string")
+	}
+	for _, want := range []string{
+		"## Beads Issue Tracker",
+		"`beads` skill",
+		"bd ready",
+		"bd prime",
+		"bd remember",
+		"refs/dolt/data",
+		"SYNC_CONCEPTS.md",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("CodexSectionBody missing %q", want)
+		}
+	}
+	if strings.Contains(body, "BEGIN BEADS") || strings.Contains(body, "END BEADS") {
+		t.Error("CodexSectionBody should not include managed markers")
 	}
 }
 
@@ -364,5 +415,107 @@ func TestRenderSectionIncludesVersion(t *testing.T) {
 	}
 	if meta.Version != MarkerVersion {
 		t.Errorf("Version = %d, want %d", meta.Version, MarkerVersion)
+	}
+}
+
+func TestRenderSectionWithOptsNoRemoteFull(t *testing.T) {
+	opts := RenderOpts{HasRemote: false}
+	section := RenderSectionWithOpts(ProfileFull, opts)
+
+	if strings.Contains(section, "bd dolt push") {
+		t.Error("full profile with HasRemote=false should not contain 'bd dolt push'")
+	}
+
+	// Should still contain other session completion content
+	if !strings.Contains(section, "git push") {
+		t.Error("should still contain 'git push'")
+	}
+	if !strings.Contains(section, "Session Completion") {
+		t.Error("should still contain Session Completion section")
+	}
+}
+
+func TestRenderSectionWithOptsNoRemoteMinimal(t *testing.T) {
+	opts := RenderOpts{HasRemote: false}
+	section := RenderSectionWithOpts(ProfileMinimal, opts)
+
+	if strings.Contains(section, "bd dolt push") {
+		t.Error("minimal profile with HasRemote=false should not contain 'bd dolt push'")
+	}
+
+	if !strings.Contains(section, "git push") {
+		t.Error("should still contain 'git push'")
+	}
+}
+
+func TestRenderSectionWithOptsHasRemoteIncludesDoltPush(t *testing.T) {
+	opts := RenderOpts{HasRemote: true}
+	for _, profile := range []Profile{ProfileFull, ProfileMinimal} {
+		section := RenderSectionWithOpts(profile, opts)
+		if !strings.Contains(section, "bd dolt push") {
+			t.Errorf("%s profile with HasRemote=true should contain 'bd dolt push'", profile)
+		}
+	}
+}
+
+func TestRenderSectionBackwardCompatIncludesDoltPush(t *testing.T) {
+	// RenderSection (no opts) should default to HasRemote=true for backward compat
+	for _, profile := range []Profile{ProfileFull, ProfileMinimal} {
+		section := RenderSection(profile)
+		if !strings.Contains(section, "bd dolt push") {
+			t.Errorf("RenderSection(%s) should include 'bd dolt push' (backward compat)", profile)
+		}
+	}
+}
+
+func TestRenderSectionWithOptsDifferentHashes(t *testing.T) {
+	// HasRemote=true and HasRemote=false should produce different hashes
+	// since the content differs
+	withRemote := RenderSectionWithOpts(ProfileFull, RenderOpts{HasRemote: true})
+	withoutRemote := RenderSectionWithOpts(ProfileFull, RenderOpts{HasRemote: false})
+
+	meta1 := ParseMarker(strings.SplitN(withRemote, "\n", 2)[0])
+	meta2 := ParseMarker(strings.SplitN(withoutRemote, "\n", 2)[0])
+
+	if meta1 == nil || meta2 == nil {
+		t.Fatal("ParseMarker returned nil")
+	}
+	if meta1.Hash == meta2.Hash {
+		t.Error("HasRemote=true and HasRemote=false should produce different hashes")
+	}
+}
+
+func TestReplaceSectionWithOptsIdempotent(t *testing.T) {
+	opts := RenderOpts{HasRemote: false}
+	section := RenderSectionWithOpts(ProfileFull, opts)
+	content := "# Header\n\n" + section + "\n# Footer\n"
+
+	result, changed, err := ReplaceSectionWithOpts(content, ProfileFull, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if changed {
+		t.Error("should not change when section is already current with same opts")
+	}
+	if result != content {
+		t.Error("content should be unchanged")
+	}
+}
+
+func TestReplaceSectionWithOptsDetectsRemoteChange(t *testing.T) {
+	// Render with remote, then replace with no-remote opts → should detect as stale
+	withRemote := RenderSectionWithOpts(ProfileFull, RenderOpts{HasRemote: true})
+	content := "# Header\n\n" + withRemote + "\n# Footer\n"
+
+	noRemoteOpts := RenderOpts{HasRemote: false}
+	result, changed, err := ReplaceSectionWithOpts(content, ProfileFull, noRemoteOpts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed {
+		t.Error("should detect stale hash when remote state changes")
+	}
+	if strings.Contains(result, "bd dolt push") {
+		t.Error("replaced content should not contain 'bd dolt push' with HasRemote=false")
 	}
 }

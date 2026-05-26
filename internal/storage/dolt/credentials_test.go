@@ -67,6 +67,49 @@ func TestApplyS3ChecksumEnvToCmd(t *testing.T) {
 	}
 }
 
+func TestApplyNoGitHooksToCmd(t *testing.T) {
+	cmd := exec.Command("dolt", "push") // #nosec G204 -- test command is not executed
+	applyNoGitHooksToCmd(cmd)
+
+	var got string
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "GIT_CONFIG_PARAMETERS=") {
+			got = strings.TrimPrefix(e, "GIT_CONFIG_PARAMETERS=")
+			break
+		}
+	}
+	if want := "'core.hooksPath=/dev/null'"; got != want {
+		t.Fatalf("GIT_CONFIG_PARAMETERS = %q, want %q", got, want)
+	}
+}
+
+// TestApplyNoGitHooksToCmdComposesWithCredentials verifies the helper layers
+// cleanly on top of credential env vars, so callers that already populated
+// cmd.Env via remoteCredentials.applyToCmd keep their values.
+func TestApplyNoGitHooksToCmdComposesWithCredentials(t *testing.T) {
+	cmd := exec.Command("dolt", "push") // #nosec G204 -- test command is not executed
+	(&remoteCredentials{username: "user", password: "pass"}).applyToCmd(cmd)
+	applyNoGitHooksToCmd(cmd)
+
+	var gotHooks, gotUser, gotPassword string
+	for _, e := range cmd.Env {
+		switch {
+		case strings.HasPrefix(e, "GIT_CONFIG_PARAMETERS="):
+			gotHooks = strings.TrimPrefix(e, "GIT_CONFIG_PARAMETERS=")
+		case strings.HasPrefix(e, "DOLT_REMOTE_USER="):
+			gotUser = strings.TrimPrefix(e, "DOLT_REMOTE_USER=")
+		case strings.HasPrefix(e, "DOLT_REMOTE_PASSWORD="):
+			gotPassword = strings.TrimPrefix(e, "DOLT_REMOTE_PASSWORD=")
+		}
+	}
+	if gotHooks != "'core.hooksPath=/dev/null'" {
+		t.Fatalf("GIT_CONFIG_PARAMETERS = %q, want hook-disabling override", gotHooks)
+	}
+	if gotUser != "user" || gotPassword != "pass" {
+		t.Fatalf("credential env = user:%q password:%q (creds clobbered by applyNoGitHooksToCmd)", gotUser, gotPassword)
+	}
+}
+
 func TestWithRemoteOperationEnvRestoresS3ChecksumEnv(t *testing.T) {
 	t.Setenv(awsResponseChecksumValidationEnv, "when_supported")
 

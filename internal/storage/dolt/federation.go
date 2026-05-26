@@ -9,10 +9,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 )
+
+// federationStagingBranch is the temporary branch used to filter excluded
+// issue types before pushing to a federation peer.
+const federationStagingBranch = "__federation_push_staging"
 
 // FederatedStorage implementation for DoltStore
 // These methods enable peer-to-peer synchronization between workspaces.
@@ -21,19 +26,23 @@ import (
 // If credentials are stored for this peer, they are used automatically.
 // For git-protocol remotes, uses CLI `dolt push` to avoid MySQL connection timeouts.
 func (s *DoltStore) PushTo(ctx context.Context, peer string) error {
+	return s.pushRefToPeer(ctx, peer, s.branch)
+}
+
+// pushRefToPeer pushes a specific refspec to a peer remote. The refspec can be
+// a simple branch name ("main") or a mapping ("staging:main").
+func (s *DoltStore) pushRefToPeer(ctx context.Context, peer string, refspec string) error {
 	if s.isPeerGitProtocolRemote(ctx, peer) {
 		return s.withPeerCredentials(ctx, peer, func(creds *remoteCredentials) error {
-			return s.doltCLIPushToPeer(ctx, peer, creds)
+			return s.doltCLIPushRefToPeer(ctx, peer, refspec, creds)
 		})
 	}
 	return s.withPeerCredentials(ctx, peer, func(creds *remoteCredentials) error {
-		// Credential CLI routing: when peer has credentials and server is external,
-		// route through CLI subprocess (same rationale as store.go Push).
 		if s.shouldUseCLIForPeerCredentials(ctx, peer, creds) {
-			return s.doltCLIPushToPeer(ctx, peer, creds)
+			return s.doltCLIPushRefToPeer(ctx, peer, refspec, creds)
 		}
 		return withEnvCredentials(creds, func() error {
-			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", peer, s.branch); err != nil {
+			if err := s.execWithLongTimeout(ctx, "CALL DOLT_PUSH(?, ?)", peer, refspec); err != nil {
 				return fmt.Errorf("failed to push to peer %s: %w", peer, err)
 			}
 			return nil
@@ -333,8 +342,9 @@ func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*Sy
 		result.PulledCommits = 1 // Simplified - could count actual commits
 	}
 
-	// Step 5: Push our changes to peer
-	if err := s.PushTo(ctx, peer); err != nil {
+	// Step 5: Push our changes to peer, filtering excluded types.
+	excludeTypes := config.GetFederationConfig().ExcludeTypes
+	if err := s.filteredPushToPeer(ctx, peer, excludeTypes); err != nil {
 		// Push failure is not fatal - peer may not accept pushes
 		result.PushError = err
 	} else {
@@ -346,6 +356,81 @@ func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*Sy
 
 	result.EndTime = time.Now()
 	return result, nil
+}
+
+// filteredPushToPeer pushes to a peer after filtering out excluded issue types.
+// When excludeTypes is empty, delegates directly to PushTo (no filtering).
+//
+// For non-empty excludeTypes, the method creates a temporary staging branch,
+// deletes matching issues, commits the filtered state, and pushes the staging
+// branch to the peer using a refspec. The staging branch is always cleaned up.
+//
+// The special type "wisp" matches issues with ephemeral=true in the committed
+// issues table. Wisps normally live in dolt_ignore'd tables and are not pushed,
+// so this acts as a defense-in-depth safety net.
+func (s *DoltStore) filteredPushToPeer(ctx context.Context, peer string, excludeTypes []string) error {
+	if len(excludeTypes) == 0 {
+		return s.PushTo(ctx, peer)
+	}
+
+	// Pin a single connection for session-scoped branch operations.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("federation filter: acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	// Clean up any leftover staging branch from a previous failed run.
+	_, _ = conn.ExecContext(ctx, "CALL DOLT_BRANCH('-Df', ?)", federationStagingBranch)
+
+	// Create staging branch from the current branch.
+	if _, err := conn.ExecContext(ctx, "CALL DOLT_BRANCH(?, ?)", federationStagingBranch, s.branch); err != nil {
+		return fmt.Errorf("federation filter: create staging branch: %w", err)
+	}
+
+	// Ensure cleanup: restore original branch and delete staging.
+	defer func() {
+		_, _ = conn.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", s.branch)
+		_, _ = conn.ExecContext(ctx, "CALL DOLT_BRANCH('-Df', ?)", federationStagingBranch)
+	}()
+
+	// Checkout staging branch.
+	if err := versioncontrolops.CheckoutBranch(ctx, conn, federationStagingBranch); err != nil {
+		return fmt.Errorf("federation filter: checkout staging: %w", err)
+	}
+
+	// Delete excluded issues from the committed issues table.
+	deleted := false
+	for _, excludeType := range excludeTypes {
+		var result interface{ RowsAffected() (int64, error) }
+		var execErr error
+		if excludeType == "wisp" {
+			result, execErr = conn.ExecContext(ctx, "DELETE FROM issues WHERE ephemeral = 1")
+		} else {
+			result, execErr = conn.ExecContext(ctx, "DELETE FROM issues WHERE issue_type = ?", excludeType)
+		}
+		if execErr == nil {
+			if n, _ := result.RowsAffected(); n > 0 {
+				deleted = true
+			}
+		}
+	}
+
+	if deleted {
+		if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?)",
+			"federation: exclude private issue types"); err != nil {
+			return fmt.Errorf("federation filter: commit filtered state: %w", err)
+		}
+	}
+
+	// Restore original branch context before pushing.
+	if err := versioncontrolops.CheckoutBranch(ctx, conn, s.branch); err != nil {
+		return fmt.Errorf("federation filter: restore branch %s: %w", s.branch, err)
+	}
+
+	// Push staging branch to peer, mapped to the peer's expected branch name.
+	refspec := federationStagingBranch + ":" + s.branch
+	return s.pushRefToPeer(ctx, peer, refspec)
 }
 
 // isPeerGitProtocolRemote checks whether a specific peer remote URL uses the git wire
@@ -377,12 +462,19 @@ func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bo
 // Used for git-protocol remotes where CALL DOLT_PUSH times out through the SQL connection.
 // Credentials are set on the subprocess environment only via cmd.Env.
 func (s *DoltStore) doltCLIPushToPeer(ctx context.Context, peer string, creds *remoteCredentials) error {
+	return s.doltCLIPushRefToPeer(ctx, peer, s.branch, creds)
+}
+
+// doltCLIPushRefToPeer shells out to `dolt push` with a specific refspec.
+// The refspec can be a branch name or a "local:remote" mapping.
+func (s *DoltStore) doltCLIPushRefToPeer(ctx context.Context, peer string, refspec string, creds *remoteCredentials) error {
 	if err := s.prePushFSCK(ctx); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "dolt", "push", peer, s.branch) // #nosec G204 -- fixed command with validated peer/branch
+	cmd := exec.CommandContext(ctx, "dolt", "push", peer, refspec) // #nosec G204 -- fixed command with validated peer/refspec
 	cmd.Dir = s.CLIDir()
 	creds.applyToCmd(cmd)
+	applyNoGitHooksToCmd(cmd) // GH#3724
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to push to peer %s: %s: %w", peer, strings.TrimSpace(string(out)), err)

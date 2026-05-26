@@ -20,7 +20,7 @@ Data storage and sync are handled by Dolt (a version-controlled SQL database).
 
 ```
 .beads/
-├── config.toml        # Project config (git-tracked)
+├── config.yaml        # Project config (git-tracked)
 ├── metadata.json      # Backend metadata (git-tracked)
 └── dolt/              # Dolt database and server data (gitignored)
 ```
@@ -63,7 +63,7 @@ bd doctor --fix
 
 ## Protected Branches
 
-Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed.
+Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed. On new projects with a git `origin`, `bd init` configures that origin as the Dolt remote automatically.
 
 ## Git Worktrees
 

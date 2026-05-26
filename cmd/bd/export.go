@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/atomicfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -22,61 +23,73 @@ var exportCmd = &cobra.Command{
 Each line is a complete JSON object representing one issue, including its
 labels, dependencies, and comments.
 
-This command is for issue export, migration, and interoperability. It does
-not produce the JSONL backup snapshot used by 'bd backup restore'. For
-supported backup/restore flows, use 'bd backup', 'bd backup export-git',
+This command is for issue export, migration, and interoperability. It exports
+records from the issues table; it is not a full database backup and does not
+capture Dolt branches, commit history, working-set state, or non-issue tables.
+For supported full backup/restore flows, use 'bd backup init', 'bd backup sync',
 and 'bd backup restore'.
 
 By default, exports only regular issues (excluding infrastructure beads
 like agents, rigs, roles, and messages). Use --all to include everything.
 
-Memories (from 'bd remember') are included by default. Use --no-memories
-to exclude them.
+Memories (from 'bd remember') are excluded by default because they may
+contain sensitive agent context. Use --include-memories or --all to
+include them.
 
 EXAMPLES:
-  bd export                              # Export issues + memories to stdout
-  bd export -o backup.jsonl              # Export to file
-  bd export --no-memories                # Export issues only
-  bd export --all -o full.jsonl          # Include infra + templates + gates
+  bd export                              # Export issues to stdout
+  bd export -o issues.jsonl              # Export issues to file
+  bd export --include-memories           # Export issues + memories
+  bd export --all -o full.jsonl          # Include infra + templates + gates + memories
   bd export --scrub -o clean.jsonl       # Exclude test/pollution records`,
 	GroupID: "sync",
 	RunE:    runExport,
 }
 
 var (
-	exportOutput       string
-	exportAll          bool
-	exportIncludeInfra bool
-	exportScrub        bool
-	exportNoMemories   bool
+	exportOutput          string
+	exportAll             bool
+	exportIncludeInfra    bool
+	exportScrub           bool
+	exportNoMemories      bool
+	exportIncludeMemories bool
 )
 
 func init() {
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file path (default: stdout)")
-	exportCmd.Flags().BoolVar(&exportAll, "all", false, "Include all records (infra, templates, gates)")
+	exportCmd.Flags().BoolVar(&exportAll, "all", false, "Include all records (infra, templates, gates, memories)")
 	exportCmd.Flags().BoolVar(&exportIncludeInfra, "include-infra", false, "Include infrastructure beads (agents, rigs, roles, messages)")
 	exportCmd.Flags().BoolVar(&exportScrub, "scrub", false, "Exclude test/pollution records")
-	exportCmd.Flags().BoolVar(&exportNoMemories, "no-memories", false, "Exclude persistent memories from the export")
+	exportCmd.Flags().BoolVar(&exportIncludeMemories, "include-memories", false, "Include persistent memories (from 'bd remember') in the export")
+	exportCmd.Flags().BoolVar(&exportNoMemories, "no-memories", false, "Exclude persistent memories (deprecated: now the default)")
+	_ = exportCmd.Flags().MarkHidden("no-memories")
 	rootCmd.AddCommand(exportCmd)
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 
-	// Determine output destination
+	// Determine output destination. File output uses atomic writes
+	// (temp file + rename) so concurrent exports and crashes never
+	// leave a truncated or interleaved JSONL file.
 	var w io.Writer
+	var aw *atomicfile.Writer
 	if exportOutput != "" {
-		f, err := os.Create(exportOutput) //nolint:gosec // user-provided output path
+		var err error
+		aw, err = atomicfile.Create(exportOutput, 0o644)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
-		defer f.Close()
-		w = f
+		defer func() {
+			// Abort is a no-op if Close was already called.
+			_ = aw.Abort()
+		}()
+		w = aw
 	} else {
 		w = os.Stdout
 	}
 
-	// Build filter for issues table. Export all statuses (this is a backup tool).
+	// Build filter for issues table. Export all statuses by default.
 	filter := types.IssueFilter{Limit: 0}
 
 	// Exclude infra types by default (agents, rigs, roles, messages)
@@ -104,10 +117,14 @@ func runExport(cmd *cobra.Command, args []string) error {
 		filter.IsTemplate = &isTemplate
 	}
 
-	// Fetch all issues (persistent + wisps). SearchIssues with Ephemeral=nil
-	// already queries both the issues and wisps tables with ID-based dedup
-	// (see issueops/search.go). A separate Ephemeral=true query would cause
-	// every wisp to appear twice in the output (GH#3352).
+	// Exclude ephemeral wisps by default — they are private/transient and
+	// must not reach git history or external integrations (GH#3649).
+	// --all overrides to include everything.
+	if !exportAll {
+		persistentOnly := false
+		filter.Ephemeral = &persistentOnly
+	}
+
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
 		return fmt.Errorf("failed to search issues: %w", err)
@@ -180,9 +197,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 		count++
 	}
 
-	// Export memories if not excluded
+	// Export memories only when explicitly requested (GH#3650).
+	// Memories may contain sensitive agent context and are excluded by default.
 	memoryCount := 0
-	if !exportNoMemories {
+	if (exportIncludeMemories || exportAll) && !exportNoMemories {
 		allConfig, err := store.GetAllConfig(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to read config for memories: %w", err)
@@ -218,10 +236,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Sync to disk if writing to file
-	if f, ok := w.(*os.File); ok && f != os.Stdout {
-		if err := f.Sync(); err != nil {
-			return fmt.Errorf("failed to sync output file: %w", err)
+	// Finalize atomic write if writing to file (fsync + rename).
+	if aw != nil {
+		if err := aw.Close(); err != nil {
+			return fmt.Errorf("failed to finalize export file: %w", err)
 		}
 	}
 

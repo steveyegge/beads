@@ -229,6 +229,8 @@ func TestCheckAgentsDetectsStale(t *testing.T) {
 }
 
 func TestCheckAgentsCurrent(t *testing.T) {
+	stubDetectRenderOpts(t)
+
 	env, stdout, _ := newFactoryTestEnv(t)
 	section := agents.RenderSection(agents.ProfileFull)
 	if err := os.WriteFile(env.agentsPath, []byte(section), 0644); err != nil {
@@ -248,6 +250,8 @@ func TestCheckAgentsCurrent(t *testing.T) {
 }
 
 func TestCheckAgentsMinimalAcceptsFullProfile(t *testing.T) {
+	stubDetectRenderOpts(t)
+
 	env, _, _ := newFactoryTestEnv(t)
 	section := agents.RenderSection(agents.ProfileFull)
 	if err := os.WriteFile(env.agentsPath, []byte(section), 0644); err != nil {

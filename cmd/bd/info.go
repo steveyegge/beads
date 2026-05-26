@@ -210,6 +210,18 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "1.0.4",
+		Date:    "2026-05-07",
+		Changes: []string{
+			"NEW: bd init-safety plus --reinit-local/--discard-remote make remote-history destructive init paths explicit, with stable refusal exit codes 10/11/12",
+			"CHANGE: bd init --force is now local-only and deprecated in favor of --reinit-local; use --discard-remote only when intentionally replacing remote Dolt history",
+			"CHANGE: beads.OpenBestAvailable now returns (Storage, error); SDK callers must drop the removed Unlocker return value",
+			"FIX: bd close now uses routed ID resolution in contributor auto-routing workspaces, matching show/update behavior",
+			"FIX: Dolt-in-git internal refs/dolt/data pushes skip git hooks to avoid hook recursion",
+			"FIX: release workflow and packaging paths hardened for the v1.0.4 release attempt, including checked-in formula adoption and pure-Go test helper coverage",
+		},
+	},
+	{
 		Version: "1.0.3",
 		Date:    "2026-04-24",
 		Changes: []string{

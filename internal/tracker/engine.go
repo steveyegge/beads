@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -22,6 +23,21 @@ import (
 // syncTracer is the OTel tracer for tracker sync spans.
 var syncTracer = otel.Tracer("github.com/steveyegge/beads/tracker")
 
+// rateLimitExhaustedError is implemented by tracker errors (e.g.
+// linear.ErrRateLimitExhausted) that signal the API quota floor has been
+// hit and the sync loop should abort immediately rather than cascade the
+// error across every remaining issue.
+type rateLimitExhaustedError interface {
+	RateLimitExhausted() bool
+}
+
+// isRateLimitExhausted reports whether err (or any error it wraps) signals
+// that the API rate-limit circuit breaker has tripped.
+func isRateLimitExhausted(err error) bool {
+	var rle rateLimitExhaustedError
+	return errors.As(err, &rle) && rle.RateLimitExhausted()
+}
+
 // PullHooks contains optional callbacks that customize pull (import) behavior.
 // Trackers opt into behaviors by setting the hooks they need.
 type PullHooks struct {
@@ -39,6 +55,12 @@ type PullHooks struct {
 	// Called on the raw TrackerIssue before conversion to beads format.
 	// If nil, all issues are imported.
 	ShouldImport func(issue *TrackerIssue) bool
+
+	// AfterConvert is called after the external issue has been converted to
+	// a beads issue, transformed, and assigned an ID, but before it is stored.
+	// Hooks may mutate the conversion, for example by adding dependencies that
+	// should be created after all pulled issues have been saved.
+	AfterConvert func(ctx context.Context, extIssue *TrackerIssue, conv *IssueConversion, ref string, existing *types.Issue, opts SyncOptions) error
 }
 
 // PushHooks contains optional callbacks that customize push (export) behavior.
@@ -429,6 +451,14 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 			// Without this guard, pull silently overwrites local changes
 			// before conflict detection can compare timestamps.
 			if lastSync != nil && existing.UpdatedAt.After(*lastSync) && !allowOverwriteIDs[existing.ID] && !prelinkedHydrateIDs[existing.ID] {
+				stats.Skipped++
+				continue
+			}
+		}
+
+		if e.PullHooks != nil && e.PullHooks.AfterConvert != nil {
+			if err := e.PullHooks.AfterConvert(ctx, &extIssue, conv, ref, existing, opts); err != nil {
+				e.warn("Failed to prepare %s: %v", extIssue.Identifier, err)
 				stats.Skipped++
 				continue
 			}
@@ -903,8 +933,15 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 			// Create in external tracker
 			created, err := e.Tracker.CreateIssue(ctx, pushIssue)
 			if err != nil {
+				if isRateLimitExhausted(err) {
+					return stats, fmt.Errorf("sync aborted: %w", err)
+				}
 				e.warn("Failed to create %s in %s: %v", issue.ID, e.Tracker.DisplayName(), err)
 				stats.Errors++
+				if isRateLimitedErr(err) {
+					e.warnRateLimitAbort(err, len(issues)-stats.Created-stats.Updated-stats.Skipped-stats.Errors)
+					return stats, nil
+				}
 				continue
 			}
 
@@ -929,6 +966,9 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 			// Check if update is needed
 			if !forceIDs[issue.ID] {
 				extIssue, err := e.Tracker.FetchIssue(ctx, extID)
+				if isRateLimitExhausted(err) {
+					return stats, fmt.Errorf("sync aborted: %w", err)
+				}
 				if err == nil && extIssue != nil {
 					// ContentEqual hook: content-hash dedup to skip unnecessary API calls
 					if e.PushHooks != nil && e.PushHooks.ContentEqual != nil {
@@ -944,8 +984,15 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 			}
 
 			if _, err := e.Tracker.UpdateIssue(ctx, extID, pushIssue); err != nil {
+				if isRateLimitExhausted(err) {
+					return stats, fmt.Errorf("sync aborted: %w", err)
+				}
 				e.warn("Failed to update %s in %s: %v", issue.ID, e.Tracker.DisplayName(), err)
 				stats.Errors++
+				if isRateLimitedErr(err) {
+					e.warnRateLimitAbort(err, len(issues)-stats.Created-stats.Updated-stats.Skipped-stats.Errors)
+					return stats, nil
+				}
 				continue
 			}
 			stats.Updated++
@@ -1208,11 +1255,14 @@ func (e *Engine) dependencyIssueResolver(ctx context.Context, extraIssues []*typ
 			continue
 		}
 		ref := strings.TrimSpace(*candidate.ExternalRef)
-		if ref == "" || !e.Tracker.IsExternalRef(ref) {
+		if ref == "" {
 			continue
 		}
 		if _, exists := byExternal[ref]; !exists {
 			byExternal[ref] = candidate
+		}
+		if !e.Tracker.IsExternalRef(ref) {
+			continue
 		}
 		identifier := strings.TrimSpace(e.Tracker.ExtractIdentifier(ref))
 		if identifier != "" {

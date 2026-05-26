@@ -1,96 +1,103 @@
-// Package schema provides the unified schema definitions and migration runner
-// for both DoltStore and EmbeddedDoltStore. The embedded .up.sql migration
-// files are the single source of truth for the database schema.
 package schema
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"log"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 )
 
-// DBConn is the minimal interface satisfied by *sql.DB, *sql.Tx, and *sql.Conn.
-// It provides query and exec methods needed by the migration runner.
 type DBConn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+type dirtyTableState struct {
+	staged bool
+}
+
+var doltStatusTableNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 //go:embed migrations/*.up.sql
 var upMigrations embed.FS
 
+//go:embed migrations/ignored/*.up.sql
+var upIgnoredMigrations embed.FS
+
+type migrationSource struct {
+	files       embed.FS
+	dir         string
+	cursorTable string
+}
+
 var (
-	latestOnce sync.Once
-	latestVer  int
+	mainSource = migrationSource{
+		files:       upMigrations,
+		dir:         "migrations",
+		cursorTable: "schema_migrations",
+	}
+	ignoredSource = migrationSource{
+		files:       upIgnoredMigrations,
+		dir:         "migrations/ignored",
+		cursorTable: "ignored_schema_migrations",
+	}
 )
 
-const schemaMigrationsBootstrapSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (
-	version INT PRIMARY KEY,
-	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-)`
+var (
+	latestOnce        sync.Once
+	latestVer         int
+	latestIgnoredOnce sync.Once
+	latestIgnoredVer  int
+)
 
-// LatestVersion returns the highest version number among the embedded .up.sql files.
-// Computed once and cached.
 func LatestVersion() int {
 	latestOnce.Do(func() {
-		entries, err := fs.ReadDir(upMigrations, "migrations")
-		if err != nil {
-			panic(fmt.Sprintf("schema: failed to read embedded migrations: %v", err))
-		}
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
-				continue
-			}
-			v, err := parseVersion(e.Name())
-			if err != nil {
-				panic(fmt.Sprintf("schema: invalid migration filename %q: %v", e.Name(), err))
-			}
-			if v > latestVer {
-				latestVer = v
-			}
-		}
+		latestVer = mainSource.latest()
 	})
 	return latestVer
 }
 
-// AllMigrationsSQL returns the schema_migrations bootstrap plus all .up.sql
-// migration contents concatenated in order. Used by integration tests that need
-// to initialize a schema via dolt sql CLI.
+func LatestIgnoredVersion() int {
+	latestIgnoredOnce.Do(func() {
+		latestIgnoredVer = ignoredSource.latest()
+	})
+	return latestIgnoredVer
+}
+
+func CurrentVersion(ctx context.Context, db DBConn) (int, error) {
+	return mainSource.currentVersion(ctx, db)
+}
+
+func CurrentIgnoredVersion(ctx context.Context, db DBConn) (int, error) {
+	return ignoredSource.currentVersion(ctx, db)
+}
+
+func PendingVersions(ctx context.Context, db DBConn) ([]int, error) {
+	return mainSource.pendingVersions(ctx, db)
+}
+
+func PendingIgnoredVersions(ctx context.Context, db DBConn) ([]int, error) {
+	return ignoredSource.pendingVersions(ctx, db)
+}
+
 func AllMigrationsSQL() string {
-	entries, err := fs.ReadDir(upMigrations, "migrations")
-	if err != nil {
-		panic(fmt.Sprintf("schema: failed to read embedded migrations: %v", err))
-	}
-
-	type mf struct {
-		version int
-		name    string
-	}
-	var files []mf
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
-			continue
-		}
-		v, err := parseVersion(e.Name())
-		if err != nil {
-			continue
-		}
-		files = append(files, mf{version: v, name: e.Name()})
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
-
 	var b strings.Builder
-	b.WriteString(schemaMigrationsBootstrapSQL)
+	b.WriteString(mainSource.bootstrapSQL())
 	b.WriteString(";\n")
-	for _, f := range files {
-		data, err := upMigrations.ReadFile("migrations/" + f.name)
+	for _, f := range mainSource.list() {
+		data, err := mainSource.files.ReadFile(mainSource.dir + "/" + f.name)
 		if err != nil {
 			continue
 		}
@@ -100,7 +107,6 @@ func AllMigrationsSQL() string {
 	return b.String()
 }
 
-// parseVersion extracts the leading integer from a migration filename like "0001_create_issues.up.sql".
 func parseVersion(name string) (int, error) {
 	parts := strings.SplitN(name, "_", 2)
 	if len(parts) == 0 {
@@ -109,50 +115,401 @@ func parseVersion(name string) (int, error) {
 	return strconv.Atoi(parts[0])
 }
 
-// MigrateUp applies all embedded .up.sql migrations that haven't been applied yet.
-// Returns the number of migrations applied. Safe for use with both *sql.Tx and
-// *sql.DB — the caller controls transaction boundaries.
 func MigrateUp(ctx context.Context, db DBConn) (int, error) {
-	// Bootstrap the tracking table.
-	// Bootstrap with applied_at so migration 0032 can unconditionally drop it.
-	// After 0032 runs, the table has only the version column.
-	if _, err := db.ExecContext(ctx, schemaMigrationsBootstrapSQL); err != nil {
-		return 0, fmt.Errorf("creating schema_migrations table: %w", err)
+	needed, err := migrationWorkNeeded(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("checking schema migration work: %w", err)
 	}
-
-	// Find the current version.
-	var current int
-	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&current)
-	if err == sql.ErrNoRows {
-		current = 0
-	} else if err != nil {
-		return 0, fmt.Errorf("reading current migration version: %w", err)
-	}
-
-	// Fast path: if current version matches the highest embedded migration, nothing to do.
-	if current >= LatestVersion() {
+	if !needed {
 		return 0, nil
 	}
 
-	// If schema_migrations is empty but core tables already exist (e.g. restored
-	// from a DoltStore backup that doesn't track embedded migrations), backfill
-	// all versions so we don't re-run migrations that would fail on "already exists".
-	if current == 0 {
-		var tableCount int
-		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'issues' AND table_schema = DATABASE()").Scan(&tableCount); err == nil && tableCount > 0 {
-			return backfillMigrations(ctx, db)
+	dirtyBeforeAll, err := dirtyTables(ctx, db, false)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration status: %w", err)
+	}
+	if err := unstagePreExistingTables(ctx, db, dirtyBeforeAll); err != nil {
+		return 0, fmt.Errorf("unstaging pre-migration tables: %w", err)
+	}
+	dirtyBefore, err := committableDirtyTables(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration status: %w", err)
+	}
+	touchedDirtyTables, err := mainSource.pendingMigrationDirtyTables(ctx, db, dirtyBefore)
+	if err != nil {
+		return 0, fmt.Errorf("checking dirty tables against pending migrations: %w", err)
+	}
+	if len(touchedDirtyTables) > 0 {
+		return 0, fmt.Errorf("pending schema migrations alter pre-existing dirty tables: %s", strings.Join(touchedDirtyTables, ", "))
+	}
+	dirtyBeforeSignatures, err := dirtyTableSignatures(ctx, db, dirtyBefore)
+	if err != nil {
+		return 0, fmt.Errorf("reading pre-migration dirty table diffs: %w", err)
+	}
+	applied, err := mainSource.migrate(ctx, db)
+	if err != nil {
+		return applied, err
+	}
+
+	backfilled, err := ensureBackfilledCustomStatusesCustomTypes(ctx, db)
+	if err != nil {
+		return applied, fmt.Errorf("backfill custom tables: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "REPLACE INTO dolt_ignore VALUES ('ignored_schema_migrations', true)"); err != nil {
+		return applied, fmt.Errorf("registering ignored_schema_migrations in dolt_ignore: %w", err)
+	}
+
+	touchedIgnoredDirtyTables, err := ignoredSource.pendingMigrationDirtyTables(ctx, db, dirtyBeforeAll)
+	if err != nil {
+		return applied, fmt.Errorf("checking dirty tables against pending ignored migrations: %w", err)
+	}
+	if len(touchedIgnoredDirtyTables) > 0 {
+		return applied, fmt.Errorf("pending ignored schema migrations alter pre-existing dirty tables: %s", strings.Join(touchedIgnoredDirtyTables, ", "))
+	}
+
+	appliedIgnored, err := ignoredSource.migrate(ctx, db)
+	if err != nil {
+		return applied, fmt.Errorf("ignored migrations: %w", err)
+	}
+	if err := unstageIgnoredTables(ctx, db); err != nil {
+		return applied, fmt.Errorf("unstaging ignored migration tables: %w", err)
+	}
+
+	if applied == 0 && !backfilled && appliedIgnored == 0 {
+		return applied, nil
+	}
+	changedDirtyTables, err := changedDirtyTableSignatures(ctx, db, dirtyBeforeSignatures)
+	if err != nil {
+		return applied, fmt.Errorf("checking pre-existing dirty table diffs: %w", err)
+	}
+	if len(changedDirtyTables) > 0 {
+		return applied, fmt.Errorf("pre-existing dirty tables changed during schema migration: %s", strings.Join(changedDirtyTables, ", "))
+	}
+
+	staged, err := stageSchemaTables(ctx, db, dirtyBefore)
+	if err != nil {
+		return applied, fmt.Errorf("staging migrations: %w", err)
+	}
+	if !staged {
+		return applied, nil
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
+			return applied, fmt.Errorf("committing migrations: %w", err)
 		}
 	}
 
-	return runMigrations(ctx, db, current, false)
+	return applied, nil
 }
 
-// backfillMigrations runs all migrations in order, ignoring "already exists"
-// errors, and records each version. Used when a database is restored from a
-// backup that predates the schema_migrations tracking table — most of the
-// schema is already correct, but dolt_ignore'd tables (wisps) may be missing.
-func backfillMigrations(ctx context.Context, db DBConn) (int, error) {
-	return runMigrations(ctx, db, 0, true)
+func migrationWorkNeeded(ctx context.Context, db DBConn) (bool, error) {
+	if !mainSource.atLatest(ctx, db) || !ignoredSource.atLatest(ctx, db) {
+		return true, nil
+	}
+	return needsBackfilledCustomStatusesCustomTypes(ctx, db)
+}
+
+func committableDirtyTables(ctx context.Context, db DBConn) (map[string]dirtyTableState, error) {
+	tables, err := dirtyTables(ctx, db, true)
+	if err != nil {
+		return nil, err
+	}
+	delete(tables, mainSource.cursorTable)
+	delete(tables, ignoredSource.cursorTable)
+	return tables, nil
+}
+
+func stagedDirtyTables(tables map[string]dirtyTableState) []string {
+	var staged []string
+	for table, state := range tables {
+		if state.staged {
+			staged = append(staged, table)
+		}
+	}
+	sort.Strings(staged)
+	return staged
+}
+
+func unstagePreExistingTables(ctx context.Context, db DBConn, tables map[string]dirtyTableState) error {
+	staged := stagedDirtyTables(tables)
+	if len(staged) > 0 {
+		log.Printf("schema migration unstaging pre-existing staged tables: %s", strings.Join(staged, ", "))
+	}
+	for _, table := range staged {
+		if _, err := db.ExecContext(ctx, "CALL DOLT_RESET(?)", table); err != nil {
+			return fmt.Errorf("dolt reset %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+func unstageIgnoredTables(ctx context.Context, db DBConn) error {
+	tables, err := existingIgnoredTables(ctx, db)
+	if err != nil {
+		return err
+	}
+	return unstagePreExistingTables(ctx, db, tables)
+}
+
+func dirtyTableSignatures(ctx context.Context, db DBConn, tables map[string]dirtyTableState) (map[string]string, error) {
+	signatures := make(map[string]string, len(tables))
+	names := sortedDirtyTableNames(tables)
+	for _, table := range names {
+		signature, err := dirtyTableSignature(ctx, db, table)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", table, err)
+		}
+		signatures[table] = signature
+	}
+	return signatures, nil
+}
+
+func changedDirtyTableSignatures(ctx context.Context, db DBConn, before map[string]string) ([]string, error) {
+	var changed []string
+	names := sortedSignatureTableNames(before)
+	for _, table := range names {
+		signature, err := dirtyTableSignature(ctx, db, table)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", table, err)
+		}
+		if signature != before[table] {
+			changed = append(changed, table)
+		}
+	}
+	return changed, nil
+}
+
+func sortedDirtyTableNames(tables map[string]dirtyTableState) []string {
+	names := make([]string, 0, len(tables))
+	for table := range tables {
+		names = append(names, table)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedSignatureTableNames(signatures map[string]string) []string {
+	names := make([]string, 0, len(signatures))
+	for table := range signatures {
+		names = append(names, table)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func dirtyTableSignature(ctx context.Context, db DBConn, table string) (string, error) {
+	if !doltStatusTableNameRE.MatchString(table) {
+		return "", fmt.Errorf("unsafe dolt status table name %q", table)
+	}
+	//nolint:gosec // table comes from dolt_status; dolt_diff requires a literal table argument.
+	rows, err := db.QueryContext(ctx, "SELECT * FROM dolt_diff('HEAD', 'WORKING', "+sqlStringLiteral(table)+")")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", err
+	}
+
+	var rowSignatures []string
+	for rows.Next() {
+		values := make([]any, len(columns))
+		dest := make([]any, len(columns))
+		for i := range values {
+			dest[i] = &values[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return "", err
+		}
+
+		var b strings.Builder
+		for i, column := range columns {
+			if isDiffMetadataColumn(column) {
+				continue
+			}
+			b.WriteString(column)
+			b.WriteByte('=')
+			writeSignatureValue(&b, values[i])
+			b.WriteByte(0)
+		}
+		rowSignatures = append(rowSignatures, b.String())
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	sort.Strings(rowSignatures)
+
+	h := sha256.New()
+	for _, row := range rowSignatures {
+		_, _ = h.Write([]byte(row))
+		_, _ = h.Write([]byte{0xff})
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func isDiffMetadataColumn(column string) bool {
+	switch strings.ToLower(column) {
+	case "from_commit", "to_commit", "from_commit_date", "to_commit_date":
+		return true
+	default:
+		return false
+	}
+}
+
+func sqlStringLiteral(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `''`)
+	return "'" + s + "'"
+}
+
+func writeSignatureValue(b *strings.Builder, v any) {
+	switch typed := v.(type) {
+	case nil:
+		b.WriteString("<nil>")
+	case []byte:
+		b.Write(typed)
+	default:
+		b.WriteString(fmt.Sprintf("%v", typed))
+	}
+}
+
+func stageSchemaTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) (bool, error) {
+	dirtyAfter, err := dirtyTables(ctx, db, true)
+	if err != nil {
+		return false, err
+	}
+
+	tableSet := make(map[string]struct{})
+	for table := range dirtyAfter {
+		if _, wasDirty := dirtyBefore[table]; wasDirty {
+			continue
+		}
+		tableSet[table] = struct{}{}
+	}
+	tablesAfter, err := existingCommittableTables(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	for table := range tablesAfter {
+		if _, wasDirty := dirtyBefore[table]; wasDirty {
+			continue
+		}
+		tableSet[table] = struct{}{}
+	}
+
+	tables := make([]string, 0, len(tableSet))
+	for table := range tableSet {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+
+	for _, table := range tables {
+		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('-f', ?)", table); err != nil {
+			return false, fmt.Errorf("dolt add %s: %w", table, err)
+		}
+	}
+	return len(tables) > 0, nil
+}
+
+func existingCommittableTables(ctx context.Context, db DBConn) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT t.TABLE_NAME
+		FROM INFORMATION_SCHEMA.TABLES t
+		WHERE t.TABLE_SCHEMA = DATABASE()
+		  AND t.TABLE_TYPE = 'BASE TABLE'
+		  AND NOT EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			  AND t.TABLE_NAME LIKE di.pattern
+		  )
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]struct{})
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, err
+		}
+		tables[table] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
+func existingIgnoredTables(ctx context.Context, db DBConn) (map[string]dirtyTableState, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.table_name, s.staged
+		FROM dolt_status s
+		WHERE EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			  AND s.table_name LIKE di.pattern
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]dirtyTableState)
+	for rows.Next() {
+		var table string
+		var staged bool
+		if err := rows.Scan(&table, &staged); err != nil {
+			return nil, err
+		}
+		tables[table] = dirtyTableState{staged: staged}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
+func dirtyTables(ctx context.Context, db DBConn, excludeIgnored bool) (map[string]dirtyTableState, error) {
+	query := `
+		SELECT s.table_name, s.staged
+		FROM dolt_status s
+	`
+	if excludeIgnored {
+		query += `
+		WHERE NOT EXISTS (
+			SELECT 1 FROM dolt_ignore di
+			WHERE di.ignored = 1
+			AND s.table_name LIKE di.pattern
+		)
+		`
+	}
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]dirtyTableState)
+	for rows.Next() {
+		var table string
+		var staged bool
+		if err := rows.Scan(&table, &staged); err != nil {
+			return nil, err
+		}
+		state := tables[table]
+		state.staged = state.staged || staged
+		tables[table] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
 }
 
 type migrationFile struct {
@@ -160,81 +517,160 @@ type migrationFile struct {
 	name    string
 }
 
-// runMigrations collects all embedded .up.sql files with version > minVersion,
-// sorts them, and executes each one. DDL "already exists" errors and duplicate
-// version inserts are always tolerated to support concurrent initialization
-// (multiple processes racing to apply the same migration). When tolerateExisting
-// is true, ALL "already exists" errors are silently ignored (backfill path).
-func runMigrations(ctx context.Context, db DBConn, minVersion int, tolerateExisting bool) (int, error) {
-	entries, err := fs.ReadDir(upMigrations, "migrations")
-	if err != nil {
-		return 0, fmt.Errorf("reading embedded migrations: %w", err)
-	}
+func (m migrationSource) bootstrapSQL() string {
+	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+	version INT PRIMARY KEY,
+	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`, m.cursorTable)
+}
 
-	var pending []migrationFile
+func (m migrationSource) list() []migrationFile {
+	entries, err := fs.ReadDir(m.files, m.dir)
+	if err != nil {
+		panic(fmt.Sprintf("schema: failed to read embedded %s: %v", m.dir, err))
+	}
+	var files []migrationFile
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
 			continue
 		}
 		v, err := parseVersion(e.Name())
 		if err != nil {
-			return 0, fmt.Errorf("parsing migration filename %q: %w", e.Name(), err)
+			panic(fmt.Sprintf("schema: invalid migration filename %q: %v", e.Name(), err))
 		}
-		if v > minVersion {
-			pending = append(pending, migrationFile{version: v, name: e.Name()})
+		files = append(files, migrationFile{version: v, name: e.Name()})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
+	return files
+}
+
+func (m migrationSource) latest() int {
+	files := m.list()
+	if len(files) == 0 {
+		return 0
+	}
+	return files[len(files)-1].version
+}
+
+func (m migrationSource) atLatest(ctx context.Context, db DBConn) bool {
+	current, err := m.currentVersion(ctx, db)
+	if err != nil {
+		return false
+	}
+	return current >= m.latest()
+}
+
+func (m migrationSource) currentVersion(ctx context.Context, db DBConn) (int, error) {
+	var current int
+	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
+	if err == nil || err == sql.ErrNoRows {
+		return current, nil
+	}
+	if dberrors.IsTableNotExist(err) {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
+}
+
+func (m migrationSource) pendingVersions(ctx context.Context, db DBConn) ([]int, error) {
+	current, err := m.currentVersion(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	files := m.list()
+	pending := make([]int, 0, len(files))
+	for _, mf := range files {
+		if mf.version > current {
+			pending = append(pending, mf.version)
+		}
+	}
+	return pending, nil
+}
+
+func (m migrationSource) pendingMigrationDirtyTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) ([]string, error) {
+	if len(dirtyBefore) == 0 {
+		return nil, nil
+	}
+	current, err := m.currentVersion(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+
+	dirtyNames := sortedDirtyTableNames(dirtyBefore)
+	touched := make(map[string]struct{})
+	for _, mf := range m.list() {
+		if mf.version <= current {
+			continue
+		}
+		data, err := m.files.ReadFile(m.dir + "/" + mf.name)
+		if err != nil {
+			return nil, fmt.Errorf("reading migration %s: %w", mf.name, err)
+		}
+		sqlText := string(data)
+		for _, table := range dirtyNames {
+			if migrationSQLTouchesTable(sqlText, table) {
+				touched[table] = struct{}{}
+			}
 		}
 	}
 
-	sort.Slice(pending, func(i, j int) bool { return pending[i].version < pending[j].version })
+	names := make([]string, 0, len(touched))
+	for table := range touched {
+		names = append(names, table)
+	}
+	sort.Strings(names)
+	return names, nil
+}
 
-	if len(pending) == 0 {
+func migrationSQLTouchesTable(sqlText, table string) bool {
+	tableRef := "`?" + regexp.QuoteMeta(table) + "`?"
+	// This intentionally scans raw migration text so PREPARE strings that run
+	// DDL/DML are treated as real table touches.
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:alter\s+table|update|delete\s+from|insert(?:\s+ignore)?\s+into|replace\s+into|truncate\s+table|drop\s+table|create\s+table(?:\s+if\s+not\s+exists)?|rename\s+table)\s+` + tableRef + `\b`),
+		regexp.MustCompile(`(?i)\brename\s+table\b[^;]*\bto\s+` + tableRef + `\b`),
+		regexp.MustCompile(`(?i)\bcreate\s+(?:unique\s+)?index\b[^;]*\bon\s+` + tableRef + `\b`),
+		regexp.MustCompile(`(?i)\b(?:create\s+(?:or\s+replace\s+)?view|alter\s+view)\s+` + tableRef + `\b`),
+	}
+	for _, pattern := range patterns {
+		if pattern.MatchString(sqlText) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
+	if _, err := db.ExecContext(ctx, m.bootstrapSQL()); err != nil {
+		return 0, fmt.Errorf("creating %s: %w", m.cursorTable, err)
+	}
+
+	var current int
+	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
+	}
+
+	if current >= m.latest() {
 		return 0, nil
 	}
 
-	for _, mf := range pending {
-		data, err := upMigrations.ReadFile("migrations/" + mf.name)
+	count := 0
+	for _, mf := range m.list() {
+		if mf.version <= current {
+			continue
+		}
+		data, err := m.files.ReadFile(m.dir + "/" + mf.name)
 		if err != nil {
-			return 0, fmt.Errorf("reading migration %s: %w", mf.name, err)
+			return count, fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
-
-		// Execute statements individually. Multi-statement Exec can abort the
-		// batch on the first error, which under tolerateExisting silently skips
-		// subsequent DDL while still recording the version as applied (GH#3363).
-		for _, stmt := range splitStatements(string(data)) {
-			if _, err := db.ExecContext(ctx, stmt); err != nil {
-				if !tolerateExisting && !isConcurrentInitError(err) {
-					return 0, fmt.Errorf("migration %s: statement failed: %w", mf.name, err)
-				}
-			}
+		if _, err := db.ExecContext(ctx, string(data)); err != nil {
+			return count, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
-
-		// Always use INSERT IGNORE — concurrent processes may race to record
-		// the same migration version. Duplicate PK is expected and harmless.
-		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO schema_migrations (version) VALUES (?)", mf.version); err != nil {
-			if !isConcurrentInitError(err) {
-				return 0, fmt.Errorf("recording migration %s: %w", mf.name, err)
-			}
+		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+m.cursorTable+" (version) VALUES (?)", mf.version); err != nil {
+			return count, fmt.Errorf("recording %s in %s: %w", mf.name, m.cursorTable, err)
 		}
+		count++
 	}
-
-	return len(pending), nil
-}
-
-// isConcurrentInitError returns true for errors that are expected and harmless
-// during concurrent schema initialization, or when the desired state is already
-// present because a db was bootstrapped out-of-band:
-//   - "already exists" — table/index/key created by another process (1050, 1061)
-//   - "duplicate column" — ALTER TABLE ADD COLUMN raced (1060)
-//   - "duplicate key name" — CREATE INDEX raced (1061)
-//   - "serialization failure" — Dolt write conflict from concurrent transaction
-//   - "does not have column" — ALTER TABLE DROP COLUMN on already-missing column
-//     (Dolt 1105); symmetric with "duplicate column" above. Makes DROP COLUMN
-//     migrations idempotent across dbs bootstrapped with different base schemas.
-func isConcurrentInitError(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "already exists") ||
-		strings.Contains(msg, "duplicate column") ||
-		strings.Contains(msg, "duplicate key name") ||
-		strings.Contains(msg, "serialization failure") ||
-		strings.Contains(msg, "does not have column")
+	return count, nil
 }

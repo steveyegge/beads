@@ -20,8 +20,8 @@ This project uses [Beads (bd)](https://github.com/steveyegge/beads) for issue tr
 - Track ALL work in bd (never use markdown TODOs or comment-based task lists)
 - Use ` + "`bd ready`" + ` to find available work
 - Use ` + "`bd create`" + ` to track new issues/tasks/bugs
-- Use ` + "`bd dolt push`" + ` at end of session to sync with git remote
-- Git hooks auto-sync on commit/merge
+- Use ` + "`bd dolt push`" + ` at end of session to sync with the Dolt remote
+- Git hooks refresh exports and legacy fallbacks; Dolt remotes handle sync
 
 ## Quick Reference
 ` + "```bash" + `
@@ -32,7 +32,7 @@ bd create --title="..." --type=task  # Create new issue
 bd update <id> --claim               # Claim work atomically
 bd close <id>                         # Mark complete
 bd dep add <issue> <depends-on>       # Add dependency (issue depends on depends-on)
-bd dolt push                               # Sync with git remote
+bd dolt push                               # Sync with Dolt remote
 ` + "```" + `
 
 ## Workflow
@@ -40,7 +40,7 @@ bd dolt push                               # Sync with git remote
 2. Claim an issue atomically: ` + "`bd update <id> --claim`" + `
 3. Do the work
 4. Mark complete: ` + "`bd close <id>`" + `
-5. Sync: ` + "`bd dolt push`" + ` (or let git hooks handle it)
+5. Sync: ` + "`bd dolt push`" + `
 
 ## Context Loading
 Run ` + "`bd prime`" + ` to get complete workflow documentation in AI-optimized format (~1-2k tokens).

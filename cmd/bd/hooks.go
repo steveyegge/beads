@@ -753,8 +753,14 @@ func installHooksWithOptions(hookNames []string, force bool, shared bool, chain 
 		}
 	}
 
-	// Create hooks directory if it doesn't exist
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+	// Create hooks directory if it doesn't exist.
+	// Directories inside .beads/ use BeadsDirPerm (0700); git-managed hook
+	// dirs (.git/hooks, .beads-hooks) use 0755 so git can execute them.
+	hooksDirPerm := os.FileMode(0755)
+	if beadsHooks {
+		hooksDirPerm = config.BeadsDirPerm
+	}
+	if err := os.MkdirAll(hooksDir, hooksDirPerm); err != nil {
 		return fmt.Errorf("failed to create hooks directory: %w", err)
 	}
 
@@ -1341,8 +1347,13 @@ func exportJSONLForCommit() {
 		exportPath = "issues.jsonl"
 	}
 	fullPath := filepath.Join(beadsDir, exportPath)
+	if !preCommitHasStagedBeadsFiles(beadsDir) {
+		debug.Logf("pre-commit: skipping JSONL export — no staged .beads paths\n")
+		return
+	}
 
 	debug.Logf("pre-commit: exporting JSONL to %s\n", fullPath)
+	warnJSONLWithoutDoltRemote("pre-commit auto-export")
 
 	// Shell out to `bd export` which initializes its own store.
 	// Clear BD_GIT_HOOK from the subprocess env so that its
@@ -1377,8 +1388,104 @@ func exportJSONLForCommit() {
 	}
 }
 
+func preCommitHasStagedBeadsFiles(beadsDir string) bool {
+	cmdDir := exportSubprocessDir(beadsDir)
+	if hookRoot := hookWorkTreeRoot(); hookRoot != "" {
+		cmdDir = hookRoot
+	}
+	cmd := exec.Command("git", "diff", "--cached", "--name-only", "--", ".beads")
+	cmd.Dir = cmdDir
+	cmd.Env = scrubGitHookEnv(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		debug.Logf("pre-commit: failed to inspect staged .beads paths: %v\n", err)
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
 func exportSubprocessDir(beadsDir string) string {
 	return filepath.Dir(beadsDir)
+}
+
+// syncImportJSONLPath returns the JSONL path used by the legacy git-hook sync
+// import path. Existing projects may have customized export.path before
+// import.path existed, so keep importing from export.path unless import.path is
+// explicitly configured.
+func syncImportJSONLPath(beadsDir string) string {
+	if config.GetValueSource("import.path") == config.SourceDefault {
+		exportPath := config.GetString("export.path")
+		if exportPath != "" {
+			return filepath.Join(beadsDir, exportPath)
+		}
+	}
+	return configuredImportJSONLPath(beadsDir)
+}
+
+// importJSONLForSync imports JSONL into Dolt after a git
+// pull/merge/branch-checkout only for legacy projects with no Dolt remote.
+// When sync.remote is configured, Dolt remains the source of truth and JSONL
+// import is skipped because upsert-only import cannot reconcile stale exports.
+//
+// Errors are logged as warnings but never block the merge/checkout. The
+// import is upsert; running it on an unchanged JSONL is a no-op (bd
+// import returns "Error 1105: nothing to commit", which we tolerate).
+//
+// See GH#3729.
+func importJSONLForSync(reason string) {
+	if !config.GetBool("import.auto") {
+		return
+	}
+	if resolveSyncRemote() != "" {
+		debug.Logf("%s: skipping JSONL import because sync.remote is configured\n", reason)
+		return
+	}
+
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return
+	}
+
+	fullPath := syncImportJSONLPath(beadsDir)
+
+	if info, err := os.Stat(fullPath); err != nil || info.Size() == 0 {
+		return
+	}
+
+	debug.Logf("%s: importing JSONL from %s\n", reason, fullPath)
+	warnJSONLWithoutDoltRemote(reason + " JSONL import")
+
+	// Shell out to `bd import` — same pattern as exportJSONLForCommit.
+	// Clear BD_GIT_HOOK so the subprocess's own hook-detection logic
+	// doesn't suppress its work.
+	cmd := exec.Command("bd", "import", "--quiet", fullPath)
+	cmd.Dir = exportSubprocessDir(beadsDir)
+	cmd.Env = filterEnv(os.Environ(), "BD_GIT_HOOK")
+
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return
+	}
+	// Tolerate the no-op case: when JSONL matches Dolt exactly, bd import
+	// produces "nothing to commit" from the underlying Dolt commit. That
+	// is success for our purposes.
+	if strings.Contains(string(out), "nothing to commit") {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "beads: %s import warning: %v\n%s", reason, err, out)
+}
+
+func warnJSONLWithoutDoltRemote(reason string) {
+	if config.GetBool("no-git-ops") || resolveSyncRemote() != "" || !isGitRepo() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "beads: %s warning: no Dolt remote configured.\n", reason)
+	fmt.Fprintln(os.Stderr, "beads: .beads/issues.jsonl is an export, not cross-machine sync or source of truth.")
+	if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
+		fmt.Fprintf(os.Stderr, "beads: repair: bd dolt remote add origin %s && bd dolt push\n", normalizeRemoteURL(originURL))
+		return
+	}
+	fmt.Fprintln(os.Stderr, "beads: repair: add a git origin, then run 'bd dolt remote add origin <git-remote-url>' and 'bd dolt push'.")
 }
 
 // filterEnv returns a copy of env with entries matching the given key removed.
@@ -1393,7 +1500,9 @@ func filterEnv(env []string, key string) []string {
 	return out
 }
 
-// runPostMergeHook runs chained hooks after merge.
+// runPostMergeHook runs chained hooks after merge, then runs the legacy
+// JSONL import fallback only when no Dolt remote is configured. See GH#3729.
+//
 // Returns 0 on success (or if not applicable).
 //
 //nolint:unparam // Always returns 0 by design - warnings don't block merges
@@ -1402,6 +1511,7 @@ func runPostMergeHook() int {
 	if exitCode := runChainedHook("post-merge", nil); exitCode != 0 {
 		return exitCode
 	}
+	importJSONLForSync("post-merge")
 	return 0
 }
 
@@ -1415,7 +1525,11 @@ func runPrePushHook(args []string) int {
 	return 0
 }
 
-// runPostCheckoutHook runs chained hooks after branch checkout.
+// runPostCheckoutHook runs chained hooks after branch checkout, then runs
+// the legacy JSONL import fallback when the checkout was a branch switch
+// (flag=1) and no Dolt remote is configured. File-mode checkouts (flag=0)
+// are skipped to avoid spurious imports on `git checkout -- <file>`. See GH#3729.
+//
 // args: [previous-HEAD, new-HEAD, flag] where flag=1 for branch checkout
 // Returns 0 on success (or if not applicable).
 //
@@ -1424,6 +1538,9 @@ func runPostCheckoutHook(args []string) int {
 	// Run chained hook first (if exists)
 	if exitCode := runChainedHook("post-checkout", args); exitCode != 0 {
 		return exitCode
+	}
+	if len(args) >= 3 && args[2] == "1" {
+		importJSONLForSync("post-checkout")
 	}
 	return 0
 }

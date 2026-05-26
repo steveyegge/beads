@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -21,6 +22,37 @@ func IsActiveWispInTx(ctx context.Context, tx *sql.Tx, id string) bool {
 	return err == nil
 }
 
+func wispsTableEmptyOrMissingInTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var probe int
+	err := tx.QueryRowContext(ctx, "SELECT 1 FROM wisps LIMIT 1").Scan(&probe)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return true, nil
+	case isTableNotExistError(err):
+		return true, nil
+	default:
+		return false, err
+	}
+}
+
+//nolint:gosec // table is selected by callers from fixed optional wisp tables.
+func optionalTableExistsInTx(ctx context.Context, tx *sql.Tx, table string) (bool, error) {
+	var probe int
+	err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", table)).Scan(&probe)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return true, nil
+	case isTableNotExistError(err):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
 // WispIDSetInTx returns the subset of ids that are currently-active wisps
 // within the tx. The set is consistent for the tx's lifetime (Dolt MVCC).
 // Intended for hot-path partitioning where a batch of IDs must be split
@@ -35,6 +67,11 @@ func IsActiveWispInTx(ctx context.Context, tx *sql.Tx, id string) bool {
 func WispIDSetInTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]struct{}, error) {
 	set := make(map[string]struct{})
 	if len(ids) == 0 {
+		return set, nil
+	}
+	if empty, err := wispsTableEmptyOrMissingInTx(ctx, tx); err != nil {
+		return nil, fmt.Errorf("wisp id set: probe: %w", err)
+	} else if empty {
 		return set, nil
 	}
 	for start := 0; start < len(ids); start += queryBatchSize {
@@ -82,6 +119,72 @@ func partitionByWispSet(ids []string, wispSet map[string]struct{}) (wispIDs, per
 		}
 	}
 	return wispIDs, permIDs
+}
+
+// PartitionWispIDsInTx partitions a set of IDs into wisp vs non-wisp buckets
+// using a single batched `SELECT id FROM wisps WHERE id IN (...)` query per
+// queryBatchSize chunk, rather than one round-trip per ID. This is critical
+// for remote backends (Dolt) where per-ID round-trips multiply WAN latency
+// and can push bulk hydration past the context deadline (see GH#3414).
+// IDs not present in the wisps table are treated as permanent issue IDs.
+// Returned slices preserve the input ordering within each bucket.
+func PartitionWispIDsInTx(ctx context.Context, tx *sql.Tx, ids []string) (wispIDs, permIDs []string, err error) {
+	if len(ids) == 0 {
+		return nil, nil, nil
+	}
+
+	if empty, probeErr := wispsTableEmptyOrMissingInTx(ctx, tx); probeErr != nil {
+		return nil, nil, fmt.Errorf("partition wisp ids: probe: %w", probeErr)
+	} else if empty {
+		return nil, append([]string(nil), ids...), nil
+	}
+
+	wispSet := make(map[string]struct{}, len(ids))
+	for start := 0; start < len(ids); start += queryBatchSize {
+		end := start + queryBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		//nolint:gosec // G201: only ? placeholders in the IN clause.
+		rows, qErr := tx.QueryContext(ctx,
+			fmt.Sprintf("SELECT id FROM wisps WHERE id IN (%s)", strings.Join(placeholders, ",")),
+			args...)
+		if qErr != nil {
+			// Wisps table may not exist yet on older schemas — treat as "no wisps".
+			if isTableNotExistError(qErr) {
+				return nil, append([]string(nil), ids...), nil
+			}
+			return nil, nil, fmt.Errorf("partition wisp ids: %w", qErr)
+		}
+		for rows.Next() {
+			var id string
+			if scanErr := rows.Scan(&id); scanErr != nil {
+				_ = rows.Close()
+				return nil, nil, fmt.Errorf("partition wisp ids: scan: %w", scanErr)
+			}
+			wispSet[id] = struct{}{}
+		}
+		_ = rows.Close()
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return nil, nil, fmt.Errorf("partition wisp ids: rows: %w", rowsErr)
+		}
+	}
+
+	for _, id := range ids {
+		if _, ok := wispSet[id]; ok {
+			wispIDs = append(wispIDs, id)
+		} else {
+			permIDs = append(permIDs, id)
+		}
+	}
+	return wispIDs, permIDs, nil
 }
 
 // WispTableRouting returns the appropriate issue, label, event, and dependency

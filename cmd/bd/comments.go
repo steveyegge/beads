@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
-	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/uimd"
 )
 
 var commentsCmd = &cobra.Command{
@@ -17,7 +17,7 @@ var commentsCmd = &cobra.Command{
 	Long: `View or manage comments on an issue.
 
 Examples:
-  # List all comments on an issue
+  # List all comments on an issue (issue id is required — there is no "comments list")
   bd comments bd-123
 
   # List comments in JSON format
@@ -82,13 +82,31 @@ Examples:
 				ts = ts.Local()
 			}
 			fmt.Printf("[%s] at %s\n", comment.Author, ts.Format("2006-01-02 15:04"))
-			rendered := ui.RenderMarkdown(comment.Text)
+			rendered := uimd.RenderMarkdown(comment.Text)
 			// TrimRight removes trailing newlines that Glamour adds, preventing extra blank lines
 			for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
 				fmt.Printf("  %s\n", line)
 			}
 			fmt.Println()
 		}
+	},
+}
+
+// commentsMisplacedListCmd catches the reflexive "bd comments list" invocation (GH#3542).
+// Listing comments always requires an issue id: bd comments <issue-id>.
+var commentsMisplacedListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Invalid — use bd comments <issue-id> to list comments",
+	Run: func(cmd *cobra.Command, args []string) {
+		FatalErrorRespectJSON(`"bd comments list" is not valid.
+
+To list comments on an issue, run:
+  bd comments <issue-id>
+
+Example:
+  bd comments bd-123
+
+See: bd comments --help`)
 	},
 }
 
@@ -159,12 +177,7 @@ Examples:
 			FatalErrorRespectJSON("adding comment: %v", err)
 		}
 
-		// Embedded mode: flush Dolt commit.
-		if isEmbeddedMode() {
-			if _, err := store.CommitPending(ctx, author); err != nil {
-				FatalErrorRespectJSON("failed to commit: %v", err)
-			}
-		}
+		commandDidWrite.Store(true)
 
 		if jsonOutput {
 			outputJSON(comment)
@@ -176,6 +189,7 @@ Examples:
 }
 
 func init() {
+	commentsCmd.AddCommand(commentsMisplacedListCmd)
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsCmd.Flags().Bool("local-time", false, "Show timestamps in local time instead of UTC")
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")

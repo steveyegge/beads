@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -400,18 +399,6 @@ func TestDetectBootstrapAction_InitWhenOriginHasNoDoltRef(t *testing.T) {
 
 	if plan.Action != "init" {
 		t.Errorf("action = %q, want %q (no dolt ref on origin)", plan.Action, "init")
-	}
-}
-
-func runGitForBootstrapTest(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
 	}
 }
 
@@ -1349,47 +1336,37 @@ func TestFinalizeSyncedBootstrapIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestFinalizeSyncedBootstrapServerModePreservesMode verifies that when
-// metadata.json already declares dolt_mode=server (tracked in git),
-// finalizeSyncedBootstrap preserves server mode instead of resetting to
-// embedded. This is the root cause of GH#3343.
-func TestFinalizeSyncedBootstrapServerModePreservesMode(t *testing.T) {
-	t.Setenv("BEADS_DOLT_DATA_DIR", "")
-	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "")
-	t.Setenv("BEADS_DOLT_SERVER_HOST", "")
-	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
-	t.Setenv("BEADS_DOLT_SERVER_MODE", "")
-	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
-
+func TestApplyBootstrapMetadataRepair_UsesResolvedConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("BEADS_DIR", beadsDir)
 
-	// Simulate a workspace where metadata.json (tracked in git) declares
-	// server mode — the scenario from GH#3343.
-	cfg := &configfile.Config{
-		DoltMode:       configfile.DoltModeServer,
-		DoltServerHost: "127.0.0.1",
-		DoltServerPort: 3308,
-		DoltDatabase:   "beads_proj",
+	origResolve := resolveBootstrapAuthoritativeMetadata
+	resolveBootstrapAuthoritativeMetadata = func(path string, apply bool) (*configfile.Config, string, error) {
+		if path != tmpDir {
+			t.Fatalf("path = %q, want %q", path, tmpDir)
+		}
+		if !apply {
+			t.Fatal("expected apply=true")
+		}
+		return &configfile.Config{DoltMode: configfile.DoltModeServer, DoltDatabase: "canonical_db"}, "repaired dolt_database", nil
 	}
+	defer func() { resolveBootstrapAuthoritativeMetadata = origResolve }()
 
-	if err := finalizeSyncedBootstrap(beadsDir, "file:///tmp/fake.git", cfg, "beads_proj"); err != nil {
-		t.Fatalf("finalizeSyncedBootstrap failed: %v", err)
+	resolved, msg, err := applyBootstrapMetadataRepair(beadsDir, configfile.DefaultConfig(), true)
+	if err != nil {
+		t.Fatalf("applyBootstrapMetadataRepair failed: %v", err)
 	}
-
-	loaded, err := configfile.Load(beadsDir)
-	if err != nil || loaded == nil {
-		t.Fatalf("metadata.json missing: %v", err)
+	if resolved == nil {
+		t.Fatal("resolved config is nil")
 	}
-	if loaded.GetDoltMode() != configfile.DoltModeServer {
-		t.Errorf("dolt_mode = %q, want %q — server mode was not preserved", loaded.GetDoltMode(), configfile.DoltModeServer)
+	if resolved.GetDoltDatabase() != "canonical_db" {
+		t.Fatalf("GetDoltDatabase() = %q, want %q", resolved.GetDoltDatabase(), "canonical_db")
 	}
-	if loaded.GetDoltDatabase() != "beads_proj" {
-		t.Errorf("dolt_database = %q, want %q", loaded.GetDoltDatabase(), "beads_proj")
+	if msg != "repaired dolt_database" {
+		t.Fatalf("msg = %q, want %q", msg, "repaired dolt_database")
 	}
 }
 
@@ -1404,9 +1381,9 @@ func TestCloneFromRemoteRoutesToServerMode(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SERVER_MODE", "")
 	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
 
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+	tmpDir2 := t.TempDir()
+	beadsDir2 := filepath.Join(tmpDir2, ".beads")
+	if err := os.MkdirAll(beadsDir2, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1418,7 +1395,7 @@ func TestCloneFromRemoteRoutesToServerMode(t *testing.T) {
 		DoltServerPort: 3308,
 		DoltDatabase:   "beads_proj",
 	}
-	if err := cfg.Save(beadsDir); err != nil {
+	if err := cfg.Save(beadsDir2); err != nil {
 		t.Fatalf("save metadata.json: %v", err)
 	}
 
@@ -1426,7 +1403,7 @@ func TestCloneFromRemoteRoutesToServerMode(t *testing.T) {
 	// clone). Since no server is running, we expect a connection error —
 	// NOT a "dolt clone failed" error, which would indicate the filesystem
 	// path was taken.
-	err := cloneFromRemote(t.Context(), beadsDir, "file:///tmp/nonexistent.git", "beads_proj", cfg)
+	err := cloneFromRemote(t.Context(), beadsDir2, "file:///tmp/nonexistent.git", "beads_proj", cfg)
 	if err == nil {
 		t.Fatal("expected error (no server running), got nil")
 	}
@@ -1441,7 +1418,7 @@ func TestCloneFromRemoteRoutesToServerMode(t *testing.T) {
 	}
 
 	// Verify no local dolt directory was created.
-	doltDir := filepath.Join(beadsDir, "dolt")
+	doltDir := filepath.Join(beadsDir2, "dolt")
 	if _, err := os.Stat(doltDir); err == nil {
 		t.Errorf("local .beads/dolt/ directory was created — clone should have gone to server, not filesystem")
 	}

@@ -463,8 +463,10 @@ func countCrossRepoEdges(ctx context.Context, s storage.DoltStorage, migrationSe
 		}
 	}
 
-	// For incoming edges, we need to find all deps where depends_on_id is in
-	// the migration set but issue_id is not. Use GetAllDependencyRecords.
+	// For incoming edges, we need to find all deps whose resolved target is in
+	// the migration set but whose issue_id is not. Use GetAllDependencyRecords;
+	// the returned records expose the target via dep.DependsOnID (resolved from
+	// the typed columns).
 	allDeps, err := s.GetAllDependencyRecords(ctx)
 	if err != nil {
 		return dependencyStats{}, fmt.Errorf("failed to get all dependency records: %w", err)

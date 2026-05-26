@@ -167,7 +167,7 @@ Examples:
   bd doctor --fix -i     # Confirm each fix individually
   bd doctor --fix --fix-child-parent  # Also fix child→parent deps (opt-in)
   bd doctor --fix --force # Force repair even when database can't be opened
-  bd doctor --fix --source=jsonl # Rebuild database from JSONL (source of truth)
+  bd doctor --fix --source=jsonl # Rebuild database from a JSONL export
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file
@@ -184,7 +184,7 @@ Examples:
   bd doctor --migration=post   # Validate Dolt migration completed
   bd doctor --migration=pre --json  # Machine-parseable migration validation`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if isEmbeddedMode() {
+		if !usesSQLServer() {
 			fmt.Fprintln(os.Stderr, "Note: 'bd doctor' is not yet supported in embedded mode.")
 			fmt.Fprintln(os.Stderr, "")
 			fmt.Fprintln(os.Stderr, "For embedded mode troubleshooting:")
@@ -192,6 +192,10 @@ Examples:
 			fmt.Fprintln(os.Stderr, "  • Check bd version:        bd version")
 			fmt.Fprintln(os.Stderr, "  • Reinitialize if needed:  bd init --force")
 			fmt.Fprintln(os.Stderr, "  • Switch to server mode:   bd init --server")
+			os.Exit(0)
+		}
+		if usesProxiedServer() {
+			fmt.Fprintln(os.Stderr, "Note: 'bd doctor' is not yet supported in proxied-server mode.")
 			os.Exit(0)
 		}
 		// Use global jsonOutput set by PersistentPreRun
@@ -617,12 +621,12 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, bdPrimeOutputCheck)
 	// Don't fail overall check for prime output issues, just warn
 
-	// Check 11e: bd in PATH (needed for Claude hooks to work)
+	// Check 11d: bd in PATH (needed for Claude hooks and other integrations)
 	bdPathCheck := convertWithCategory(doctor.CheckBdInPath(), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, bdPathCheck)
 	// Don't fail overall check for missing bd in PATH, just warn
 
-	// Check 11f: Documentation bd prime references match installed version
+	// Check 11e: Documentation bd prime references match installed version
 	bdPrimeDocsCheck := convertWithCategory(doctor.CheckDocumentationBdPrimeReference(path), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, bdPrimeDocsCheck)
 	// Don't fail overall check for doc mismatch, just warn
@@ -631,6 +635,11 @@ func runDiagnostics(path string) doctorResult {
 	agentDocsCheck := convertWithCategory(doctor.CheckAgentDocumentation(path), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, agentDocsCheck)
 	// Don't fail overall check for missing docs, just warn
+
+	// Check 12a: AGENTS.md / CLAUDE.md user-authored divergence
+	agentDocDivergenceCheck := convertWithCategory(doctor.CheckAgentDocDivergence(path), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, agentDocDivergenceCheck)
+	// Don't fail overall check for divergence, just warn
 
 	// Check 13: Legacy beads slash commands in documentation
 	legacyDocsCheck := convertWithCategory(doctor.CheckLegacyBeadsSlashCommands(path), doctor.CategoryMetadata)

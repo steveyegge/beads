@@ -165,6 +165,7 @@ func TestShouldWireInitRemote(t *testing.T) {
 		syncURL           string
 		syncFromRemote    bool
 		syncURLFromConfig bool
+		syncURLFromGit    bool
 		want              bool
 	}{
 		{
@@ -173,11 +174,17 @@ func TestShouldWireInitRemote(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:              "plain git origin without dolt data",
+			name:              "unattributed url is not wired",
 			syncURL:           "git+https://github.com/org/plain-source.git",
 			syncFromRemote:    false,
 			syncURLFromConfig: false,
 			want:              false,
+		},
+		{
+			name:           "plain git origin without dolt data",
+			syncURL:        "git+https://github.com/org/plain-source.git",
+			syncURLFromGit: true,
+			want:           true,
 		},
 		{
 			name:              "git origin with refs/dolt/data",
@@ -197,10 +204,10 @@ func TestShouldWireInitRemote(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldWireInitRemote(tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig)
+			got := shouldWireInitRemote(tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, tt.syncURLFromGit)
 			if got != tt.want {
-				t.Errorf("shouldWireInitRemote(%q, %v, %v) = %v, want %v",
-					tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, got, tt.want)
+				t.Errorf("shouldWireInitRemote(%q, %v, %v, %v) = %v, want %v",
+					tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, tt.syncURLFromGit, got, tt.want)
 			}
 		})
 	}

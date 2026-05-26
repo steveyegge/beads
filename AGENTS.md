@@ -1,17 +1,38 @@
 # Agent Instructions
 
+<!-- bd-doctor-divergence: ok -->
+
 See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for full instructions.
 
 This file exists for compatibility with tools that look for AGENTS.md.
+
+The marker above tells `bd doctor` that the intentional divergence between
+this file and `CLAUDE.md` (different audiences, different reading orders) is
+expected and should not be flagged.
 
 ## Key Sections
 
 - **Issue Tracking** - How to use bd for work management
 - **Development Guidelines** - Code standards and testing
+- **Project Scope** - Read [docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md) before adding new feature surface area
 - **Visual Design System** - Status icons, colors, and semantic styling for CLI output
 - **Contributor Protection** - Read [CONTRIBUTING.md](CONTRIBUTING.md) before handling external PRs
+- **Maintainer PR Guidelines** - Read [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md) before triaging, landing, or closing PRs
+
+## Project Scope
+
+Before adding new feature surface area, read
+[docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md). Beads owns issue tracking
+primitives and should not encode orchestration-layer policy, become a storage
+engine, or casually expand the database schema when metadata would work.
 
 ## PR Safety for Agents
+
+Before triaging, reviewing, landing, closing, or otherwise maintaining PRs, read
+[PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md). The maintainer
+policy is to maximize community throughput: find useful contributor value,
+absorb or transform it locally when practical, preserve attribution, and use
+request-changes only as a last resort.
 
 Before implementing work, opening a PR, or merging/closing a PR, run the PR
 preflight:
@@ -34,6 +55,16 @@ and credit their design/tests.
 - Priority: `● P0` (filled circle with color)
 
 See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for full development guidelines.
+
+## Storage Boundary
+
+The canonical storage boundary is in
+[docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md#storage-boundary). In short:
+Beads talks to storage through a driver interface (`dolthub/driver` for Dolt).
+Do not add beads-side flocks, engine introspection, storage-specific retry or
+crash-recovery logic, or public SDK return types that leak driver internals.
+If the boundary is too narrow, widen the interface or route the issue to the
+driver instead of patching around it in beads.
 
 ## Agent Warning: Interactive Commands
 

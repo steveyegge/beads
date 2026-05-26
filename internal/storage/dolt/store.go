@@ -40,7 +40,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt/migrations"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
@@ -49,10 +48,6 @@ import (
 
 // DefaultSQLPort is the default port for dolt sql-server.
 const DefaultSQLPort = 3307
-
-// EnvDoltCLIDir points bd at the local Dolt database directory used for
-// subprocess CLI operations when the SQL server is externally managed.
-const EnvDoltCLIDir = "BEADS_DOLT_CLI_DIR"
 
 // testDatabasePrefixes are name prefixes that indicate a test database.
 // Used by isTestDatabaseName to prevent test databases from being created
@@ -154,6 +149,7 @@ var _ storage.PendingCommitter = (*DoltStore)(nil)
 var _ storage.GarbageCollector = (*DoltStore)(nil)
 var _ storage.Flattener = (*DoltStore)(nil)
 var _ storage.Compactor = (*DoltStore)(nil)
+var _ storage.SchemaMigrator = (*DoltStore)(nil)
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
@@ -167,19 +163,14 @@ type DoltStore struct {
 	readOnly      bool         // True if opened in read-only mode
 	credentialKey []byte       // Random encryption key for federation credentials
 
-	// Per-invocation caches (lifetime = DoltStore lifetime)
-	customStatusDetailedCache    []types.CustomStatus // cached result of GetCustomStatusesDetailed
-	customStatusCache            []string             // cached name-only result (derived from detailed)
-	customStatusCached           bool                 // true once cache has been populated
-	customTypeCache              []string             // cached result of GetCustomTypes
-	customTypeCached             bool                 // true once customTypeCache has been populated
-	infraTypeCache               map[string]bool      // cached result of GetInfraTypes
-	infraTypeCached              bool                 // true once infraTypeCache has been populated
-	blockedIDsCache              []string             // cached result of computeBlockedIDs
-	blockedIDsCacheMap           map[string]bool
-	blockedIDsCached             bool // true once blockedIDsCache has been populated
-	blockedIDsCacheIncludesWisps bool // true if cache was computed with wisps
-	cacheMu                      sync.Mutex
+	customStatusDetailedCache []types.CustomStatus
+	customStatusCache         []string
+	customStatusCached        bool
+	customTypeCache           []string
+	customTypeCached          bool
+	infraTypeCache            map[string]bool
+	infraTypeCached           bool
+	cacheMu                   sync.Mutex
 
 	// OTel span attribute cache (avoids per-call allocation)
 	spanAttrsOnce  sync.Once
@@ -196,7 +187,6 @@ type DoltStore struct {
 	remoteUser     string // Remote auth user for Hosted Dolt push/pull (optional)
 	remotePassword string // Remote auth password for Hosted Dolt push/pull (optional)
 	serverMode     bool   // true when connected to external dolt sql-server (not embedded)
-	serverOwner    doltserver.ServerMode
 
 	// autoStartedServerDir is set when this store triggered a dolt sql-server
 	// auto-start. Close() uses it to stop the server when the last store
@@ -242,6 +232,14 @@ type Config struct {
 	// rather than the embedded Dolt engine. Set by the store factory based
 	// on metadata.json dolt_mode or BEADS_DOLT_SERVER_MODE env var.
 	ServerMode bool
+
+	// ProxiedServer indicates this config targets a per-workspace proxied
+	// dolt sql-server (a parent proxy + a child dolt sql-server, both rooted
+	// at <BeadsDir>/proxieddb). Mutually exclusive with ServerMode: the
+	// proxied path owns its own connection details and does not consult
+	// ServerHost/Port/Socket/User. Set by the store factory based on
+	// metadata.json dolt_mode=proxied-server.
+	ProxiedServer bool
 
 	// AutoStart enables transparent server auto-start when connection fails.
 	// When true and the host is localhost, bd will start a dolt sql-server
@@ -299,6 +297,9 @@ func newServerRetryBackoff() backoff.BackOff {
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if schema.IsMigrationLockError(err) {
+		return true
 	}
 	errStr := strings.ToLower(err.Error())
 	// MySQL driver transient errors
@@ -611,17 +612,6 @@ func (s *DoltStore) withReadTx(ctx context.Context, fn func(tx *sql.Tx) error) e
 	return fn(tx)
 }
 
-// withRetryTx wraps withWriteTx with retry logic for serialization failures
-// (MySQL 1213 deadlock, 1205 lock wait timeout). These errors guarantee the
-// transaction was rolled back, so retrying is always safe.
-//
-// In shared-server mode the retry window is extended to 15s (from 5s) because
-// multiple worktrees sharing one server produce higher contention (GH#3140).
-//
-// Connection-level errors (broken pipe, bad connection) are NOT retried here
-// because they can occur after a successful commit, making retry unsafe for
-// non-idempotent operations. Callers that need connection-level retry should
-// use withRetry at a higher layer.
 func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = 25 * time.Millisecond
@@ -642,9 +632,6 @@ func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 	}, backoff.WithContext(bo, ctx))
 }
 
-// withWriteTx runs fn inside a transaction, committing on success.
-// Used for write operations that delegate SQL work to issueops functions.
-// The caller's fn should NOT call tx.Commit — withWriteTx handles that.
 func (s *DoltStore) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	if s.closed.Load() {
 		return ErrStoreClosed
@@ -653,11 +640,13 @@ func (s *DoltStore) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) 
 	if err != nil {
 		return fmt.Errorf("begin write tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
 	if err := fn(tx); err != nil {
-		return err
+		return errors.Join(err, tx.Rollback())
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit write tx: %w", err)
+	}
+	return nil
 }
 
 // uncommitted implicit transaction that Dolt rolls back on connection close,
@@ -1103,47 +1092,24 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remoteUser:           cfg.RemoteUser,
 		remotePassword:       cfg.RemotePassword,
 		serverMode:           true,
-		serverOwner:          doltserver.ResolveServerMode(beadsDir),
 		readOnly:             cfg.ReadOnly,
 		autoStartedServerDir: autoStartedDir,
 	}
 
-	// Schema initialization for server mode (idempotent).
-	// Short retry for Dolt "no root value found in session" race: after
-	// CREATE DATABASE, information_schema queries may fail transiently
-	// even though Ping succeeded. This resolves within ~1s.
 	if !cfg.ReadOnly {
-		// Ensure dolt_ignore'd tables exist BEFORE running migrations.
-		// Migrations may reference these tables (e.g. 0027 alters wisps,
-		// 0030 inserts into local_metadata). After a clone or server restart
-		// these tables don't exist yet since they're not in committed data.
-		if err := versioncontrolops.EnsureIgnoredTables(ctx, db); err != nil {
-			return nil, fmt.Errorf("failed to ensure ignored tables: %w", err)
-		}
-
-		schemaBO := backoff.NewExponentialBackOff()
-		schemaBO.InitialInterval = 100 * time.Millisecond
-		schemaBO.MaxElapsedTime = 5 * time.Second
-		if err := backoff.Retry(func() error {
-			schemaErr := store.initSchema(ctx)
-			if schemaErr != nil && isRetryableError(schemaErr) {
-				return schemaErr
-			}
-			if schemaErr != nil {
-				return backoff.Permanent(schemaErr)
-			}
-			return nil
-		}, backoff.WithContext(schemaBO, ctx)); err != nil {
+		if err := store.initSchema(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
 	}
 
-	// Project identity verification: detect cross-project data leakage (GH#2372).
-	// If the local metadata.json has a project_id and the database has one too,
-	// they must match. A mismatch means this client is connected to the wrong
-	// project's Dolt server — refuse to proceed.
 	if !cfg.CreateIfMissing {
-		if verifyErr := store.verifyProjectIdentity(ctx, cfg.BeadsDir); verifyErr != nil {
+		var verifyErr error
+		if cfg.Database == doltserver.GlobalDatabaseName {
+			verifyErr = store.verifyGlobalProjectIdentity(ctx, cfg.BeadsDir)
+		} else {
+			verifyErr = store.verifyProjectIdentity(ctx, cfg.BeadsDir)
+		}
+		if verifyErr != nil {
 			_ = db.Close()
 			return nil, verifyErr
 		}
@@ -1211,6 +1177,35 @@ func (s *DoltStore) verifyProjectIdentity(ctx context.Context, beadsDir string) 
 				"To diagnose: bd dolt status\n"+
 				"Do NOT run 'bd init' — your data likely exists, just on a different server.",
 			localID, dbID)
+	}
+	return nil
+}
+
+func (s *DoltStore) verifyGlobalProjectIdentity(ctx context.Context, beadsDir string) error {
+	if beadsDir == "" {
+		return nil
+	}
+
+	metaCfg, err := configfile.Load(beadsDir)
+	if err != nil || metaCfg == nil {
+		return nil
+	}
+	expectedID := metaCfg.GlobalProjectID
+	if expectedID == "" {
+		return nil
+	}
+
+	dbID, err := s.GetMetadata(ctx, "_project_id")
+	if err != nil || dbID == "" {
+		return nil
+	}
+
+	if expectedID != dbID {
+		return fmt.Errorf(
+			"GLOBAL PROJECT IDENTITY MISMATCH — refusing to connect\n\n"+
+				"  Expected global project ID (metadata.json): %s\n"+
+				"  Database project ID:                        %s\n\n"+
+				expectedID, dbID)
 	}
 	return nil
 }
@@ -1459,49 +1454,62 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 	return false, rows.Err()
 }
 
-// initSchemaOnDB applies pending schema migrations and DoltStore-specific
-// backward-compat transforms. Uses the shared schema.MigrateUp runner which
-// tracks applied versions in the schema_migrations table.
-func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
-	applied, err := schema.MigrateUp(ctx, db)
+// initSchemaOnDB applies pending schema migrations. schema.MigrateUp tracks
+// applied versions in schema_migrations and backfills legacy config-driven
+// tables. Returns the number of migrations applied.
+func initSchemaOnDB(ctx context.Context, db *sql.DB) (int, error) {
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("schema migration: %w", err)
+		return 0, fmt.Errorf("schema: pin connection: %w", err)
+	}
+	defer conn.Close()
+
+	var dbName string
+	if err := conn.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&dbName); err != nil {
+		return 0, fmt.Errorf("schema: read database name: %w", err)
 	}
 
-	if applied > 0 {
-		// Stage only schema tables — avoid DOLT_ADD('-A') which can sweep up
-		// unrelated dirty tables like config from concurrent operations (GH#2455).
-		schemaTables := []string{
-			"issues", "dependencies", "labels", "comments", "events",
-			"config", "metadata", "child_counters",
-			"issue_snapshots", "compaction_snapshots",
-			"routes", "issue_counter",
-			"interactions", "federation_peers",
-			"custom_statuses", "custom_types",
-			"dolt_ignore", "schema_migrations",
-		}
-		for _, table := range schemaTables {
-			_, _ = db.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
-		}
-		if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
-			if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
-				return fmt.Errorf("failed to commit schema migrations: %w", err)
-			}
-		}
+	applied, err := schema.MigrateUpWithLock(ctx, conn, dbName)
+	if err != nil {
+		return applied, fmt.Errorf("schema migration: %w", err)
 	}
+	return applied, nil
+}
 
-	// Run backward-compat migrations for databases that predate the embedded
-	// migration system (e.g. ALTER TABLE ADD COLUMN, historical data
-	// transforms). These are idempotent.
-	if err := migrations.RunCompatMigrations(db); err != nil {
-		return fmt.Errorf("failed to run compat migrations: %w", err)
-	}
-
-	return nil
+func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) (int, error) {
+	// Schema initialization for server mode is idempotent. Retry transient
+	// Dolt startup/catalog races and contended migration-lock attempts so
+	// concurrent bd processes converge instead of failing one unlucky waiter.
+	schemaBO := backoff.NewExponentialBackOff()
+	schemaBO.InitialInterval = 100 * time.Millisecond
+	// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a contended
+	// schema migration can time out once and still retry.
+	schemaBO.MaxElapsedTime = serverRetryMaxElapsed
+	var applied int
+	err := backoff.Retry(func() error {
+		var schemaErr error
+		applied, schemaErr = initSchemaOnDB(ctx, db)
+		if schemaErr != nil && isRetryableError(schemaErr) {
+			return schemaErr
+		}
+		if schemaErr != nil {
+			return backoff.Permanent(schemaErr)
+		}
+		return nil
+	}, backoff.WithContext(schemaBO, ctx))
+	return applied, err
 }
 
 func (s *DoltStore) initSchema(ctx context.Context) error {
-	return initSchemaOnDB(ctx, s.db)
+	_, err := initSchemaOnDBWithRetry(ctx, s.db)
+	return err
+}
+
+// ApplySchemaMigrations runs idempotent schema migrations under the
+// per-database advisory lock, with retry for transient lock contention.
+// Implements storage.SchemaMigrator.
+func (s *DoltStore) ApplySchemaMigrations(ctx context.Context) (int, error) {
+	return initSchemaOnDBWithRetry(ctx, s.db)
 }
 
 // IsClosed returns true if the store has been closed.
@@ -1553,36 +1561,13 @@ func (s *DoltStore) Path() string {
 // Use this instead of Path() when running dolt CLI commands that target the
 // actual database (e.g., remote add/remove, push, pull).
 func (s *DoltStore) CLIDir() string {
-	if dir := strings.TrimSpace(os.Getenv(EnvDoltCLIDir)); dir != "" {
-		return filepath.Clean(dir)
-	}
 	if s.serverMode && doltserver.IsSharedServerMode() && s.beadsDir != "" {
 		return filepath.Join(doltserver.ResolveDoltDir(s.beadsDir), s.database)
-	}
-	if s.requiresExplicitCLIDir() {
-		return ""
 	}
 	if s.dbPath == "" {
 		return ""
 	}
 	return filepath.Join(s.dbPath, s.database)
-}
-
-func (s *DoltStore) requiresExplicitCLIDir() bool {
-	return s.serverMode &&
-		s.serverOwner == doltserver.ServerModeExternal &&
-		!doltserver.IsSharedServerMode()
-}
-
-func (s *DoltStore) requireCLIDir(operation string) (string, error) {
-	dir := s.CLIDir()
-	if dir != "" {
-		return dir, nil
-	}
-	if s.requiresExplicitCLIDir() {
-		return "", fmt.Errorf("%s requires a local Dolt CLI database directory in external-server mode; set %s to the local Dolt database path or use a remote type supported by SQL DOLT_PUSH/DOLT_PULL", operation, EnvDoltCLIDir)
-	}
-	return "", fmt.Errorf("%s requires a local Dolt CLI database directory, but none is configured", operation)
 }
 
 // DoltGC runs Dolt garbage collection to reclaim disk space.
@@ -1889,9 +1874,6 @@ func (s *DoltStore) isGitProtocolRemote(ctx context.Context, remote string) bool
 				if !doltutil.IsGitProtocolURL(r.URL) {
 					return false
 				}
-				if s.requiresExplicitCLIDir() && s.CLIDir() == "" {
-					return true
-				}
 				// Verify remote exists in CLI directory before routing to CLI push/pull.
 				// When the dolt sql-server is externally managed, remotes may exist only
 				// on the server's filesystem, not in the local dbPath.
@@ -1997,10 +1979,6 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 	if err := s.prePushFSCK(ctx); err != nil {
 		return err
 	}
-	cliDir, err := s.requireCLIDir("dolt push")
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
 	defer cancel()
 	args := []string{"push"}
@@ -2009,11 +1987,12 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 	}
 	args = append(args, remote, s.branch)
 	cmd := exec.CommandContext(ctx, "dolt", args...) // #nosec G204 -- fixed command with validated remote/branch
-	cmd.Dir = cliDir
+	cmd.Dir = s.CLIDir()
 	creds.applyToCmd(cmd)
 	if s.isS3Remote(ctx, remote) {
 		applyS3ChecksumEnvToCmd(cmd)
 	}
+	applyNoGitHooksToCmd(cmd) // GH#3724
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("dolt push failed: %s: %w", strings.TrimSpace(string(out)), err)
@@ -2025,14 +2004,10 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 // Used for git-protocol remotes where CALL DOLT_PULL times out through the SQL connection.
 // If creds is non-nil, credentials are set on the subprocess environment only.
 func (s *DoltStore) doltCLIPull(ctx context.Context, remote string, creds *remoteCredentials) error {
-	cliDir, err := s.requireCLIDir("dolt pull")
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, cliExecTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "dolt", "pull", remote, s.branch) // #nosec G204 -- fixed command
-	cmd.Dir = cliDir
+	cmd.Dir = s.CLIDir()
 	creds.applyToCmd(cmd)
 	if s.isS3Remote(ctx, remote) {
 		applyS3ChecksumEnvToCmd(cmd)
@@ -2098,20 +2073,12 @@ func (s *DoltStore) pushToRemote(ctx context.Context, remote string, force bool)
 	if s.shouldUseCLIForCredentials(ctx, remote, creds) {
 		return s.doltCLIPush(ctx, remote, force, creds)
 	}
-	if !creds.empty() && s.requiresExplicitCLIDir() && s.CLIDir() == "" {
-		_, err := s.requireCLIDir("dolt push")
-		return err
-	}
 	// Cloud auth CLI routing: when cloud storage env vars (AZURE_*, AWS_*,
 	// etc.) are set and we're in server mode, route through CLI so the dolt
 	// subprocess inherits the current env. The SQL server may not have these
 	// vars if it was started in a different context (GH#6).
 	if s.shouldUseCLIForCloudAuth(remote) {
 		return s.doltCLIPush(ctx, remote, force, creds)
-	}
-	if s.requiresExplicitCLIDir() && s.CLIDir() == "" && s.hasCloudAuthForSQLRemote(ctx, remote) {
-		_, err := s.requireCLIDir("dolt push")
-		return err
 	}
 	// If the same remote exists in the local Dolt directory, prefer CLI push.
 	// This matches direct `dolt push` behavior and avoids sql-server mediated
@@ -2212,17 +2179,9 @@ func (s *DoltStore) pullFromRemote(ctx context.Context, remote string) (retErr e
 		}
 		return nil
 	}
-	if !creds.empty() && s.requiresExplicitCLIDir() && s.CLIDir() == "" {
-		_, err := s.requireCLIDir("dolt pull")
-		return err
-	}
 	// Cloud auth CLI routing (GH#6).
 	if s.shouldUseCLIForCloudAuth(remote) {
 		return s.doltCLIPull(ctx, remote, creds)
-	}
-	if s.requiresExplicitCLIDir() && s.CLIDir() == "" && s.hasCloudAuthForSQLRemote(ctx, remote) {
-		_, err := s.requireCLIDir("dolt pull")
-		return err
 	}
 	if s.remoteUser != "" && remote == s.remote {
 		return withRemoteOperationEnv(creds, s.isS3Remote(ctx, remote), func() error {
@@ -2376,20 +2335,12 @@ func (s *DoltStore) Branch(ctx context.Context, name string) (retErr error) {
 		)...),
 	)
 	defer func() { endSpan(span, retErr) }()
-	// Pin a single connection so DOLT_BRANCH and EnsureIgnoredTables run on
-	// the same session. Using s.db (pool) could dispatch them to different
-	// connections where the branch context differs.
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection for branch: %w", err)
 	}
 	defer conn.Close()
-	if err := versioncontrolops.CreateBranch(ctx, conn, name); err != nil {
-		return err
-	}
-	// dolt_ignore'd tables (wisps, wisp_*) don't carry over to new branches —
-	// ensure they exist on the newly created branch.
-	return schema.EnsureIgnoredTables(ctx, conn)
+	return versioncontrolops.CreateBranch(ctx, conn, name)
 }
 
 // Checkout switches to the specified branch
@@ -2401,9 +2352,6 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) (retErr error) 
 		)...),
 	)
 	defer func() { endSpan(span, retErr) }()
-	// Pin a single connection so DOLT_CHECKOUT and EnsureIgnoredTables run on
-	// the same session. DOLT_CHECKOUT is session-scoped — using s.db (pool)
-	// could dispatch EnsureIgnoredTables to a connection still on the old branch.
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection for checkout: %w", err)
@@ -2413,9 +2361,7 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) (retErr error) 
 		return err
 	}
 	s.branch = branch
-	// dolt_ignore'd tables (wisps, wisp_*) may not exist on the target branch —
-	// ensure they exist after checkout.
-	return schema.EnsureIgnoredTables(ctx, conn)
+	return nil
 }
 
 // Merge merges the specified branch into the current branch.
@@ -2494,15 +2440,3 @@ type DoltStatus = storage.Status
 
 // StatusEntry is an alias for storage.StatusEntry.
 type StatusEntry = storage.StatusEntry
-
-// RebuildStatusViews regenerates the ready_issues and blocked_issues views.
-// Views are now table-backed (static SQL), so no custom status parameter needed.
-func (s *DoltStore) RebuildStatusViews(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, BuildReadyIssuesView()); err != nil {
-		return fmt.Errorf("failed to rebuild ready_issues view: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, BuildBlockedIssuesView()); err != nil {
-		return fmt.Errorf("failed to rebuild blocked_issues view: %w", err)
-	}
-	return nil
-}

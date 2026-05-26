@@ -736,6 +736,12 @@ func TestInstallHooksBeads_WorktreeAccess(t *testing.T) {
 			t.Fatalf("Failed to create metadata.json: %v", err)
 		}
 
+		cmd := exec.Command("git", "commit", "--allow-empty", "--no-verify", "-m", "init")
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git commit failed: %v\n%s", err, string(output))
+		}
+
 		// Install hooks with --beads
 		if err := installHooksWithOptions(managedHookNames, false, false, false, true); err != nil {
 			t.Fatalf("installHooksWithOptions(beads=true) failed: %v", err)
@@ -761,7 +767,7 @@ func TestInstallHooksBeads_WorktreeAccess(t *testing.T) {
 
 		// Create a worktree and verify hooks are accessible from it
 		worktreeDir := filepath.Join(t.TempDir(), "worktree")
-		cmd := exec.Command("git", "worktree", "add", worktreeDir, "-b", "test-worktree")
+		cmd = exec.Command("git", "worktree", "add", worktreeDir, "-b", "test-worktree")
 		cmd.Dir = tmpDir
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add failed: %v\n%s", err, string(output))

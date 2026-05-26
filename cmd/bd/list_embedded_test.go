@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,11 +22,11 @@ func bdList(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd list %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd list %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdListJSON runs "bd list --json" and parses the result as an array of IssueWithCounts.
@@ -37,10 +36,8 @@ func bdListJSON(t *testing.T, bd, dir string, args ...string) []*types.IssueWith
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd list --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	// Parse stdout only; hints/warnings (e.g. truncation) go to stderr (GH#3212).
@@ -60,6 +57,35 @@ func bdListJSON(t *testing.T, bd, dir string, args ...string) []*types.IssueWith
 	return issues
 }
 
+type bdListSkipLabelsJSON struct {
+	SchemaVersion int `json:"schema_version"`
+	Issues        []struct {
+		ID     string   `json:"id"`
+		Labels []string `json:"labels"`
+	} `json:"issues"`
+	Meta struct {
+		SkipLabels bool `json:"skip_labels"`
+		Count      int  `json:"count"`
+	} `json:"meta"`
+}
+
+func bdListSkipLabelsJSONOutput(t *testing.T, bd, dir string, args ...string) bdListSkipLabelsJSON {
+	t.Helper()
+	fullArgs := append([]string{"list", "--json", "--skip-labels"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd list --json --skip-labels %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	var out bdListSkipLabelsJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("failed to parse skip-labels JSON output: %v\nraw: %s", err, stdout.String())
+	}
+	return out
+}
+
 // bdListCapture runs "bd list" and returns (stdout, stderr) separately.
 func bdListCapture(t *testing.T, bd, dir string, args ...string) (string, string) {
 	t.Helper()
@@ -67,10 +93,8 @@ func bdListCapture(t *testing.T, bd, dir string, args ...string) (string, string
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd list %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String(), stderr.String()
@@ -287,6 +311,25 @@ func TestEmbeddedList(t *testing.T) {
 		// openBug has both backend and urgent — should be excluded
 		if containsID(issues, seed.openBug) {
 			t.Error("openBug with backend+urgent should be excluded when --exclude-label urgent")
+		}
+	})
+
+	t.Run("skip_labels_json_suppresses_labeled_issue", func(t *testing.T) {
+		out := bdListSkipLabelsJSONOutput(t, bd, dir, "--id", seed.openBug)
+		if !out.Meta.SkipLabels {
+			t.Fatal("expected meta.skip_labels=true")
+		}
+		if out.Meta.Count != 1 || len(out.Issues) != 1 {
+			t.Fatalf("expected one issue and matching count, got count=%d issues=%d", out.Meta.Count, len(out.Issues))
+		}
+		if out.Issues[0].ID != seed.openBug {
+			t.Fatalf("expected issue %s, got %s", seed.openBug, out.Issues[0].ID)
+		}
+		if out.Issues[0].Labels == nil {
+			t.Fatal("expected labels field to be present as an empty array, got nil")
+		}
+		if len(out.Issues[0].Labels) != 0 {
+			t.Fatalf("--skip-labels JSON leaked labels: %v", out.Issues[0].Labels)
 		}
 	})
 
@@ -745,10 +788,7 @@ func TestEmbeddedListConcurrent(t *testing.T) {
 			for i := 0; i < issuesPerWorker; i++ {
 				// Create
 				title := fmt.Sprintf("w%d-issue-%d", worker, i)
-				cmd := exec.Command(bd, "create", "--silent", title)
-				cmd.Dir = dir
-				cmd.Env = bdEnv(dir)
-				out, err := cmd.CombinedOutput()
+				out, err := bdRunWithFlockRetry(t, bd, dir, "create", "--silent", title)
 				if err != nil {
 					r.err = fmt.Errorf("create %d: %v\n%s", i, err, out)
 					results[worker] = r
@@ -766,14 +806,14 @@ func TestEmbeddedListConcurrent(t *testing.T) {
 				listCmd := exec.Command(bd, "list", "--json", "--limit", "0")
 				listCmd.Dir = dir
 				listCmd.Env = bdEnv(dir)
-				listOut, err := listCmd.CombinedOutput()
+				listStdout, listStderr, err := runCommandBuffers(t, listCmd)
 				if err != nil {
-					r.err = fmt.Errorf("list after create %d: %v\n%s", i, err, listOut)
+					r.err = fmt.Errorf("list after create %d: %v\nstdout:\n%s\nstderr:\n%s", i, err, listStdout.String(), listStderr.String())
 					results[worker] = r
 					return
 				}
 				// Parse JSON array to count issues
-				s := string(listOut)
+				s := listStdout.String()
 				start := strings.Index(s, "[")
 				if start < 0 {
 					r.listCounts = append(r.listCounts, 0)
@@ -781,7 +821,7 @@ func TestEmbeddedListConcurrent(t *testing.T) {
 				}
 				var issues []json.RawMessage
 				if jsonErr := json.Unmarshal([]byte(s[start:]), &issues); jsonErr != nil {
-					r.err = fmt.Errorf("list parse after create %d: %v\nraw: %s", i, jsonErr, s)
+					r.err = fmt.Errorf("list parse after create %d: %v\nstdout:\n%s\nstderr:\n%s", i, jsonErr, s, listStderr.String())
 					results[worker] = r
 					return
 				}

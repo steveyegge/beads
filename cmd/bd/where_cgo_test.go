@@ -47,9 +47,9 @@ func TestWhereCommand_ReadsPrefixFromEmbeddedStore(t *testing.T) {
 		t.Fatalf("save metadata: %v", err)
 	}
 
-	store, err := embeddeddolt.New(context.Background(), beadsDir, "embedcfg", "main")
+	store, err := embeddeddolt.Open(context.Background(), beadsDir, "embedcfg", "main")
 	if err != nil {
-		t.Fatalf("embeddeddolt.New: %v", err)
+		t.Fatalf("embeddeddolt.Open: %v", err)
 	}
 	if err := store.SetConfig(context.Background(), "issue_prefix", "storeprefix"); err != nil {
 		_ = store.Close()

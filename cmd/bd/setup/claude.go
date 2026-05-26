@@ -137,23 +137,34 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		}
 	}
 
-	command := "bd prime"
+	command := "bd prime --hook-json"
 	if stealth {
-		command = "bd prime --stealth"
+		command = "bd prime --stealth --hook-json"
 	}
 
-	// GH#3192: Skip writing hooks if the beads plugin is already providing them.
-	// The plugin declares identical SessionStart/PreCompact hooks in plugin.json,
-	// so project-level hooks would fire bd prime twice per session.
+	// Migration sweep: remove bare "bd prime" variants registered by older
+	// installations. Claude Code's current context-injection contract uses
+	// the SessionStart JSON envelope; SessionStart also fires after compaction
+	// with source=compact, so PreCompact no longer needs a bd prime hook.
+	legacyBareVariants := []string{"bd prime", "bd prime --stealth"}
+	for _, legacy := range legacyBareVariants {
+		if legacy == command {
+			continue
+		}
+		removeHookCommand(hooks, "SessionStart", legacy)
+		removeHookCommand(hooks, "PreCompact", legacy)
+	}
+	removeHookCommand(hooks, "PreCompact", "bd prime --hook-json")
+	removeHookCommand(hooks, "PreCompact", "bd prime --stealth --hook-json")
+
+	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
+	// so project-level hooks don't fire bd prime twice per session.
 	pluginManaged := hasBeadsPlugin(env)
 	if pluginManaged {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Beads plugin detected — hooks are plugin-managed, skipping")
 	} else {
 		if addHookCommand(hooks, "SessionStart", command) {
 			_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
-		}
-		if addHookCommand(hooks, "PreCompact", command) {
-			_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact hook")
 		}
 	}
 
@@ -176,10 +187,10 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 				var legacySettings map[string]interface{}
 				if json.Unmarshal(legacyData, &legacySettings) == nil {
 					if legacyHooks, ok := legacySettings["hooks"].(map[string]interface{}); ok {
-						removeHookCommand(legacyHooks, "SessionStart", "bd prime")
-						removeHookCommand(legacyHooks, "PreCompact", "bd prime")
-						removeHookCommand(legacyHooks, "SessionStart", "bd prime --stealth")
-						removeHookCommand(legacyHooks, "PreCompact", "bd prime --stealth")
+						for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
+							removeHookCommand(legacyHooks, "SessionStart", v)
+							removeHookCommand(legacyHooks, "PreCompact", v)
+						}
 						if migrated, marshalErr := json.MarshalIndent(legacySettings, "", "  "); marshalErr == nil {
 							if writeErr := env.writeFile(legacyPath, migrated); writeErr == nil {
 								_, _ = fmt.Fprintf(env.stdout, "✓ Migrated hooks from %s\n", legacyPath)
@@ -204,6 +215,64 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	return nil
 }
 
+// claudeSettingsUsesRemovedSyncCommand reports whether any hook command references
+// bd sync (removed as a real command; GH#3546).
+func claudeSettingsUsesRemovedSyncCommand(data []byte) bool {
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	for _, raw := range hooks {
+		eventHooks, ok := raw.([]interface{})
+		if !ok {
+			continue
+		}
+		for _, hook := range eventHooks {
+			hookMap, ok := hook.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			cmds, ok := hookMap["hooks"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, c := range cmds {
+				cmdMap, ok := c.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				command, _ := cmdMap["command"].(string)
+				if strings.Contains(command, "bd sync") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func warnIfClaudeHooksUseRemovedSync(env claudeEnv) {
+	paths := []string{
+		projectSettingsPath(env.projectDir),
+		globalSettingsPath(env.homeDir),
+		legacyProjectSettingsPath(env.projectDir),
+	}
+	for _, p := range paths {
+		data, err := env.readFile(p)
+		if err != nil {
+			continue
+		}
+		if !claudeSettingsUsesRemovedSyncCommand(data) {
+			continue
+		}
+		_, _ = fmt.Fprintf(env.stderr, "Warning: %s contains a hook using removed \"bd sync\". Run bd setup claude to refresh hooks (bd prime / bd dolt push), or edit settings manually.\n", p)
+	}
+}
+
 // CheckClaude checks if Claude integration is installed
 func CheckClaude() {
 	env, err := claudeEnvProvider()
@@ -218,6 +287,8 @@ func CheckClaude() {
 }
 
 func checkClaude(env claudeEnv) error {
+	warnIfClaudeHooksUseRemovedSync(env)
+
 	projectSettings := projectSettingsPath(env.projectDir)
 	globalSettings := globalSettingsPath(env.homeDir)
 	legacySettings := legacyProjectSettingsPath(env.projectDir)
@@ -279,10 +350,10 @@ func removeClaude(env claudeEnv, global bool) error {
 		if !ok {
 			_, _ = fmt.Fprintln(env.stdout, "No hooks found")
 		} else {
-			removeHookCommand(hooks, "SessionStart", "bd prime")
-			removeHookCommand(hooks, "PreCompact", "bd prime")
-			removeHookCommand(hooks, "SessionStart", "bd prime --stealth")
-			removeHookCommand(hooks, "PreCompact", "bd prime --stealth")
+			for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
+				removeHookCommand(hooks, "SessionStart", v)
+				removeHookCommand(hooks, "PreCompact", v)
+			}
 
 			data, err = json.MarshalIndent(settings, "", "  ")
 			if err != nil {
@@ -304,10 +375,10 @@ func removeClaude(env claudeEnv, global bool) error {
 			var legacySettings map[string]interface{}
 			if json.Unmarshal(legacyData, &legacySettings) == nil {
 				if legacyHooks, ok := legacySettings["hooks"].(map[string]interface{}); ok {
-					removeHookCommand(legacyHooks, "SessionStart", "bd prime")
-					removeHookCommand(legacyHooks, "PreCompact", "bd prime")
-					removeHookCommand(legacyHooks, "SessionStart", "bd prime --stealth")
-					removeHookCommand(legacyHooks, "PreCompact", "bd prime --stealth")
+					for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
+						removeHookCommand(legacyHooks, "SessionStart", v)
+						removeHookCommand(legacyHooks, "PreCompact", v)
+					}
 					if migrated, marshalErr := json.MarshalIndent(legacySettings, "", "  "); marshalErr == nil {
 						_ = env.writeFile(legacyPath, migrated)
 					}
@@ -372,15 +443,17 @@ func addHookCommand(hooks map[string]interface{}, event, command string) bool {
 	return true
 }
 
-// removeHookCommand removes a hook command from an event
+// removeHookCommand removes a specific command from an event's hook entries.
+// Only the matching command object is removed; sibling commands in the same
+// hook entry are preserved. A hook entry is dropped only when its command list
+// becomes empty after filtering.
 func removeHookCommand(hooks map[string]interface{}, event, command string) {
 	eventHooks, ok := hooks[event].([]interface{})
 	if !ok {
 		return
 	}
 
-	// Filter out bd prime hooks
-	// Initialize as empty slice (not nil) to avoid JSON null serialization
+	// Initialize as empty slice (not nil) to avoid JSON null serialization.
 	filtered := make([]interface{}, 0, len(eventHooks))
 	for _, hook := range eventHooks {
 		hookMap, ok := hook.(map[string]interface{})
@@ -395,21 +468,30 @@ func removeHookCommand(hooks map[string]interface{}, event, command string) {
 			continue
 		}
 
-		keepHook := true
+		// Filter only the matching command; preserve any siblings.
+		remaining := make([]interface{}, 0, len(commands))
+		removed := false
 		for _, cmd := range commands {
 			cmdMap, ok := cmd.(map[string]interface{})
 			if !ok {
+				remaining = append(remaining, cmd)
 				continue
 			}
 			if cmdMap["command"] == command {
-				keepHook = false
-				fmt.Printf("✓ Removed %s hook\n", event)
-				break
+				removed = true
+				continue
 			}
+			remaining = append(remaining, cmd)
 		}
 
-		if keepHook {
-			filtered = append(filtered, hook)
+		if removed {
+			fmt.Printf("✓ Removed %s hook\n", event)
+		}
+
+		// Drop the hook entry only when it has no commands left.
+		if len(remaining) > 0 {
+			hookMap["hooks"] = remaining
+			filtered = append(filtered, hookMap)
 		}
 	}
 
@@ -424,8 +506,8 @@ func removeHookCommand(hooks map[string]interface{}, event, command string) {
 }
 
 // hasBeadsPlugin checks if the beads Claude Code plugin is enabled in any
-// settings file. The plugin declares its own SessionStart/PreCompact hooks
-// in plugin.json, so project-level hooks from bd setup claude would duplicate them.
+// settings file. The plugin declares its own SessionStart hooks in plugin.json,
+// so project-level hooks from bd setup claude would duplicate them.
 func hasBeadsPlugin(env claudeEnv) bool {
 	paths := []string{
 		projectSettingsPath(env.projectDir),
@@ -502,9 +584,10 @@ func hasBeadsHooks(settingsPath string) bool {
 				if !ok {
 					continue
 				}
-				// Check for either variant
-				cmd := cmdMap["command"]
-				if cmd == "bd prime" || cmd == "bd prime --stealth" {
+				// Recognize both current (--hook-json) and legacy bare variants.
+				switch cmdMap["command"] {
+				case "bd prime", "bd prime --stealth",
+					"bd prime --hook-json", "bd prime --stealth --hook-json":
 					return true
 				}
 			}

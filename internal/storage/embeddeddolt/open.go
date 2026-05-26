@@ -48,8 +48,8 @@ func OpenSQL(ctx context.Context, dir, database, branch string) (*sql.DB, func()
 	}
 
 	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
 	db.SetConnMaxIdleTime(0)
 	db.SetConnMaxLifetime(0)
 

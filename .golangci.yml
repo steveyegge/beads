@@ -147,6 +147,11 @@ linters:
         linters:
           - unparam
         text: 'getConfig'
+      # unparam: ctx kept for context propagation; callers currently all pass rootCtx
+      - path: 'cmd/bd/linear\.go'
+        linters:
+          - unparam
+        text: 'getLinearConfig'
       # misspell: "cancelled" is intentional - matching GitHub API response values
       - path: 'cmd/bd/gate\.go'
         linters:

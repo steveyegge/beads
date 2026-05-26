@@ -21,8 +21,8 @@ var importCmd = &cobra.Command{
 	Short: "Import issues from a JSONL file or stdin into the database",
 	Long: `Import issues from a JSONL file (newline-delimited JSON) into the database.
 
-If no file is specified, imports from .beads/issues.jsonl (the git-tracked
-export). Use "-" to read from stdin. This is the incremental counterpart to
+If no file is specified, imports from the configured import.path under .beads/
+(default: issues.jsonl). Use "-" to read from stdin. This is the incremental counterpart to
 'bd export': new issues are created and existing issues are updated (upsert
 semantics).
 
@@ -30,11 +30,35 @@ Memory records (lines with "_type":"memory") are automatically detected and
 imported as persistent memories (equivalent to 'bd remember'). This makes
 'bd export | bd import' a full round-trip for both issues and memories.
 
-Each JSONL line should map to an issue with at minimum "title". Optional
-fields: description, issue_type (type), priority, acceptance_criteria.
+Each JSONL line should map to an issue. The importer accepts every field
+'bd export' emits — see 'bd export' output for the canonical schema. Only
+"title" is required; everything else is optional.
+
+Common fields:
+  title                  Required. Short summary.
+  description            Long-form body.
+  design, notes,         Additional content sections.
+    acceptance_criteria
+  issue_type             bug | feature | task | epic | chore | ...
+  priority               0-4 (0 = critical). 0 is preserved (no omitempty).
+  status                 open | in_progress | blocked | closed | ...
+                         (rows with status "tombstone" are skipped)
+  assignee, owner,       Ownership metadata.
+    created_by
+  labels                 Array of strings.
+  dependencies           Array of {issue_id, depends_on_id, type, ...}.
+  comments               Array of comment objects.
+  external_ref,          Cross-system identifiers (e.g. "gh-9").
+    source_system
+  due_at, defer_until    RFC3339 timestamps for scheduling.
+  metadata               Arbitrary JSON object preserved verbatim.
+
+Timestamps (created_at, updated_at, started_at, closed_at) are preserved
+when present in the JSONL and otherwise filled in by the importer. The
+legacy "wisp" boolean is accepted as an alias for "ephemeral".
 
 EXAMPLES:
-  bd import                        # Import from .beads/issues.jsonl
+  bd import                        # Import from configured import.path
   bd import backup.jsonl           # Import from a specific file
   bd import -i backup.jsonl        # Legacy alias for a specific file
   bd import -                      # Read JSONL from stdin
@@ -85,7 +109,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		if globalFlag {
 			jsonlPath = filepath.Join(beadsDir, "global-issues.jsonl")
 		} else {
-			jsonlPath = filepath.Join(beadsDir, "issues.jsonl")
+			jsonlPath = configuredImportJSONLPath(beadsDir)
 		}
 	}
 
@@ -112,13 +136,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 }
 
 type importResultJSON struct {
-	Source    string   `json:"source"`
-	Created   int      `json:"created"`
-	Skipped   int      `json:"skipped"`
-	DedupHits int      `json:"dedup_skipped,omitempty"`
-	Memories  int      `json:"memories,omitempty"`
-	IDs       []string `json:"ids,omitempty"`
-	DryRun    bool     `json:"dry_run,omitempty"`
+	Source              string   `json:"source"`
+	Created             int      `json:"created"`
+	Skipped             int      `json:"skipped"`
+	DedupHits           int      `json:"dedup_skipped,omitempty"`
+	Memories            int      `json:"memories,omitempty"`
+	IDs                 []string `json:"ids,omitempty"`
+	SkippedDependencies []string `json:"skipped_dependencies,omitempty"`
+	DryRun              bool     `json:"dry_run,omitempty"`
 }
 
 func runImportFromReader(ctx context.Context, r io.Reader, source string) error {
@@ -223,6 +248,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		}
 		result.Created = importResult.Created
 		result.Skipped += importResult.Skipped
+		result.SkippedDependencies = append(result.SkippedDependencies, importResult.SkippedDependencies...)
 		for _, issue := range issues {
 			result.IDs = append(result.IDs, issue.ID)
 		}
@@ -252,6 +278,9 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		fmt.Fprintf(os.Stderr, " (%d duplicates skipped)", dedupHits)
 	}
 	fmt.Fprintln(os.Stderr)
+	for _, skipped := range result.SkippedDependencies {
+		fmt.Fprintf(os.Stderr, "Skipped dependency: %s\n", skipped)
+	}
 	return nil
 }
 

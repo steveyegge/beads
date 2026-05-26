@@ -69,8 +69,10 @@ echo "  • cmd/bd/version.go"
 update_file "cmd/bd/version.go" "Version = \"$CURRENT_VERSION\"" "Version = \"$NEW_VERSION\""
 
 # 2. Plugin JSON files
-echo "  • .claude-plugin/*.json"
-update_file "claude-plugin/.claude-plugin/plugin.json" "\"version\": \"$CURRENT_VERSION\"" "\"version\": \"$NEW_VERSION\""
+echo "  • plugin metadata"
+update_file "plugins/beads/.claude-plugin/plugin.json" "\"version\": \"$CURRENT_VERSION\"" "\"version\": \"$NEW_VERSION\""
+update_file "plugins/beads/.codex-plugin/plugin.json" "\"version\": \"$CURRENT_VERSION\"" "\"version\": \"$NEW_VERSION\""
+update_file "plugins/beads/.copilot-plugin/plugin.json" "\"version\": \"$CURRENT_VERSION\"" "\"version\": \"$NEW_VERSION\""
 update_file ".claude-plugin/marketplace.json" "\"version\": \"$CURRENT_VERSION\"" "\"version\": \"$NEW_VERSION\""
 
 # 3. MCP Python package
@@ -112,4 +114,7 @@ echo ""
 echo "Next steps:"
 echo "  • Update CHANGELOG.md with release notes"
 echo "  • Update cmd/bd/info.go versionChanges"
+echo "  • Snapshot release docs: cd website && npm ci && npx docusaurus docs:version $NEW_VERSION"
+echo "  • Set website/docusaurus.config.ts lastVersion to $NEW_VERSION"
+echo "  • Regenerate docs artifacts: ./scripts/generate-cli-docs.sh ./bd && ./scripts/generate-llms-full.sh"
 echo "  • Or use: bd mol wisp beads-release --var version=$NEW_VERSION"

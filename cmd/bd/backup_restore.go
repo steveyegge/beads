@@ -21,6 +21,10 @@ var backupRestoreCmd = &cobra.Command{
 By default, reads from .beads/backup/ (or the configured backup directory).
 Optionally specify a path to a directory containing a Dolt backup.
 
+This restores a full database backup created by 'bd backup sync' or an
+equivalent Dolt backup. JSONL files produced by 'bd export' are issue exports,
+not restore targets for this command.
+
 Use --force to overwrite an existing database with the backup contents.
 
 The database must already be initialized (run 'bd init' first if needed).

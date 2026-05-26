@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade Notes
+
+- **JSONL auto-export and auto-staging are now opt-in.** Repositories that
+  relied on the previous implicit default should set it explicitly before or
+  after upgrading:
+
+  ```bash
+  bd config set export.auto true
+  bd config set export.git-add true
+  ```
+
+  Dolt is the primary datastore. `.beads/issues.jsonl` is now treated as an
+  optional export for viewers such as `bv`, interchange, and issue-level
+  migration. It is not the canonical git-tracked source of truth, not
+  cross-machine sync, and not a full database backup. Use `bd dolt push` /
+  `bd dolt pull` for sync and `bd backup` for restorable database backups.
+  Existing repositories that already have `export.auto: true` or
+  `export.git-add: true` configured keep that behavior.
+
+### Added
+
+- **Foreign keys across issue and wisp tables.** Migrations `0040`–`0042` and the new `ignored/0001`–`ignored/0004` add explicit FKs with `ON DELETE CASCADE ON UPDATE CASCADE` on `dependencies`, `labels`, `comments`, `events`, `issue_snapshots`, `compaction_snapshots`, `child_counters`, and the matching `wisp_*` tables. Deleting or renaming a parent row now cascades automatically — the manual cleanup loops in `issueops/delete.go`, `dolt/wisps.go`, `dolt/ephemeral_routing.go`, and `cmd/bd/rename_prefix.go` have been removed (net ~300 lines down). ([#3952](https://github.com/gastownhall/beads/pull/3952))
+- **`issueops.DeleteWispFromDependenciesInTx` / `UpdateWispIDInDependenciesInTx`.** Because Dolt forbids foreign keys from tracked tables (`dependencies`) to `dolt_ignore`'d tables (`wisps`), wisp deletion and rename now invoke these helpers explicitly to keep `dependencies.depends_on_wisp_id` consistent. The standard store APIs (`DeleteIssue`, `UpdateIssueID`, `deleteWispBatch`, etc.) wire them up automatically; only call them directly if you bypass those entry points. ([#3952](https://github.com/gastownhall/beads/pull/3952))
+
+### Changed
+
+- **`dependencies.depends_on_id` is now a STORED generated column.** The polymorphic target has been split into three typed columns: `depends_on_issue_id`, `depends_on_wisp_id`, `depends_on_external`. `depends_on_id` remains as `COALESCE(...) STORED` for read paths; **writes to `depends_on_id` will fail** — code that inserts dependencies must populate exactly one typed column (enforced by a new `ck_dep_one_target` CHECK). Same split mirrored to `wisp_dependencies` with a corresponding `ck_wisp_dep_one_target`. Migrations `0041` (tracked) and `ignored/0003` (wisps) perform the column split, copy existing rows by classifying their targets against `issues` / `wisps`, and add the new typed-target indexes. ([#3952](https://github.com/gastownhall/beads/pull/3952))
+- **Most existing dependency-table FKs now use `ON UPDATE CASCADE`.** Migration `0042` rebuilds `fk_dep_issue`, `fk_labels_issue`, `fk_comments_issue`, `fk_events_issue`, `fk_snapshots_issue`, and `fk_comp_snap_issue` to cascade on both delete and update. Same treatment for the wisp-side FKs in `ignored/0003`. Prefix rename and ID-update paths rely on this cascade instead of touching aux tables manually. ([#3952](https://github.com/gastownhall/beads/pull/3952))
+- **Migrations `0041` and `0042` are intentionally irreversible.** The matching `.down.sql` files are documented no-ops because rebuilding the polymorphic column from typed columns would require schema-aware backfill that the storage layer no longer performs. Restore from a prior `dolt` commit if rollback is required. ([#3952](https://github.com/gastownhall/beads/pull/3952))
+
+### Fixed
+
+- **JSONL auto-export shrink guard** - when opt-in `export.auto` is enabled,
+  auto-export now refuses to overwrite an existing `.beads/issues.jsonl` that
+  contains records outside the auto-export scope (memories, infrastructure
+  beads, templates, ephemeral wisps, or unknown record types). This prevents
+  a viewer/interchange refresh from silently replacing a richer JSONL file
+  with the filtered auto-export subset. ([#4069](https://github.com/gastownhall/beads/issues/4069))
+- `bd quick` now treats label insertion as part of issue creation: label
+  failures abort the create instead of being silently dropped.
+- **`bd dolt status` reports externally-managed local servers truthfully** - when a rig is configured as `dolt_mode: server` pointing at a local host but `dolt.auto-start: false` (so an orchestrator or systemd owns the sql-server lifecycle), `bd dolt status` previously said `not running` because no PID file existed. It now SQL-probes the configured endpoint, matching the path already used for non-local hosts, and reports `running (external)` with host/port/database/version when the server answers. **JSON output shape change**: on affected rigs, `bd dolt status --json` now emits `{"running": true, "mode": "external", ...}` instead of `{"running": false, "pid": 0, ...}`. Automation that parsed the old `running:false` as a "needs restart" sentinel should switch to checking `running` directly. (be-0eyj, [#3550](https://github.com/gastownhall/beads/pull/3550))
+
+## [1.0.4] - 2026-05-07
+
 ### Added
 
 - **`bd init --reinit-local` / `--discard-remote`** — named-intent flags for local re-initialization and explicit remote-history override. Replaces the overloaded `--force`. See [`bd help init-safety`](docs/adr/0002-init-safety-invariants.md) and [`docs/RECOVERY.md`](docs/RECOVERY.md).
@@ -15,15 +59,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **[ADR 0002 — `bd init` safety invariants](docs/adr/0002-init-safety-invariants.md)** — encodes the single-source identity rule, scope-bound `--force`/`--reinit-local`, the `CheckRemoteSafety` chokepoint, the error-text-no-echo rule, and the race-safety invariant.
 - **[`docs/RECOVERY.md`](docs/RECOVERY.md)** — playbooks for each named init refusal.
 - **CODEOWNERS** — `cmd/bd/init*.go` routes review to maintainers with an ADR-linked acknowledgment requirement.
+- **`bd -C <path>`** — run bd from another directory without changing the caller's shell cwd. Useful for hooks, agents, and scripts that coordinate multiple workspaces.
+- **`bd close --reason-file`** — reads close reasons from a file or stdin, matching existing body-file workflows.
+- **Linear sync throughput and correctness improvements** — batch create/update, idempotency markers, retry-after handling, OAuth client-credentials support, and workspace-level sync locking.
+- **Shared Beads plugin package** — Claude and Codex plugin metadata now ship together from the repository.
 
 ### Changed
 
 - **`bd init --force` semantics narrowed to local-only** — `--force` (or `--reinit-local`) bypasses only the LOCAL data-safety guard. It does NOT authorize silent divergence of remote history. When origin has `refs/dolt/data`, `bd init --force` now refuses with exit code 10 unless `--discard-remote` is also passed. Fixes the long-standing footgun where `bd init --force` in a repo with remote Dolt history silently set up an orphan branch that failed to push.
 - **Init refusal messages follow What/Why/Next structure** — runtime error text no longer echoes copy-pasteable destructive invocations. Token values and exact override commands live in `bd help init-safety` and `docs/RECOVERY.md` only. Closes the failure class where an AI agent destroyed 247 issues by pattern-matching on the tool's own error output (`58f5989bf`).
+- **`beads.OpenBestAvailable` signature changed (breaking)** — returns `(Storage, error)` instead of `(Storage, Unlocker, error)`. The per-open flock and `Unlocker` return value were removed; the embedded Dolt engine handles its own concurrency internally. External SDK consumers that call `OpenBestAvailable` must drop the second return value. ([PR #3614](https://github.com/gastownhall/beads/pull/3614))
+- **Embedded-mode flock removed** — the process-lifetime exclusive flock on `.beads/embeddeddolt/` has been removed. Concurrent `bd` processes now open the embedded engine independently. If the GH#2571 nil-deref stack (`NewConnector` → `DoltDB.SetCrashOnFatalError` → `CollectDBs`) resurfaces under concurrent access, it should be filed and fixed in `dolthub/driver`, not reintroduced as a beads-side flock. ([PR #3614](https://github.com/gastownhall/beads/pull/3614))
+- **Auto-export is now opt-in by default** — repositories without explicit
+  `export.auto` / `export.git-add` settings leave JSONL refresh and staging
+  disabled unless a viewer or JSONL integration explicitly enables them. This
+  keeps `.beads/issues.jsonl` as an optional export surface, not the default
+  mutation path. ([GH#4062](https://github.com/gastownhall/beads/issues/4062))
+  Thanks [Kevin Glynn](https://github.com/kevglynn) for surfacing the JSONL
+  source-of-truth mismatch through the export cleanup work that led to this
+  change.
+
+- **Release workflow uses the checked-in beads-release formula** — the old release shell path now delegates to the formula-backed release workflow with CI gates.
 
 ### Deprecated
 
 - **`bd init --force`** — deprecated alias for `--reinit-local`. Continues to work for ≥2 releases, emits a `DeprecationWarning`, routes internally to `--reinit-local`. Use `--reinit-local` going forward. CI and scripts are unaffected for the duration of the deprecation window.
+
+### Fixed
+
+- **`bd close <id>` in contributor auto-routing mode** — `bd close` now resolves IDs through the same routing fallback as `bd show` and `bd update`. Previously `bd close` errored with `no issue found matching <id>` in workspaces with `routing.mode=auto`, `routing.contributor=<path>`, and `beads.role=contributor` — even for IDs that `bd create` had just returned, because the issue lived in the routed planning store while `bd close` only checked the local primary. Bulk close (`bd close <id1> <id2> ...`) is also fixed by sharing one routed-store handle across the close batch. Fixes [#3608](https://github.com/gastownhall/beads/issues/3608).
+- **Dolt-in-git hook recursion** — internal pushes of `refs/dolt/data` skip git hooks, preventing sync loops. Fixes [#3724](https://github.com/gastownhall/beads/issues/3724).
+- **Hook setup and migration safety** — generated hooks no longer drop sibling commands, stale Claude hooks are warned about, and post-pull/checkout auto-import keeps committed `.beads/issues.jsonl` state fresh.
+- **Dependency display and routing** — dependency trees show blocked state only for genuine blockers, tolerate unresolved IDs in batch output, and include dependency type information.
+- **Export filtering** — closed memories and ephemeral wisps are excluded from default exports, and NoHistory beads survive explicit filters.
+- **Graph/list regressions** — graph HTML emits empty arrays instead of `null`, merges disconnected components for `--all --html`, and list output avoids duplicate issues with multiple blockers.
+- **Configuration documentation and validation drift** — stale TOML/`BEADS_*` references were corrected to YAML/`BD_*`, and secret keys are refused in git-tracked config.
+- **Release preflight and packaging** — release formula adoption, script selection, pure-Go test helpers, Windows install cleanup, and generated CLI reference paths were hardened for the v1.0.4 release attempt.
 
 ## [1.0.3] - 2026-04-24
 

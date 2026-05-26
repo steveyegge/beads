@@ -28,6 +28,7 @@ Configuration is stored per-project in the beads database and is version-control
 
 Common namespaces:
   - export.*          Auto-export settings (stored in config.yaml)
+  - import.*          JSONL import settings (stored in config.yaml)
   - jira.*            Jira integration settings
   - linear.*          Linear integration settings
   - github.*          GitHub integration settings
@@ -36,14 +37,25 @@ Common namespaces:
   - doctor.suppress.* Suppress specific bd doctor warnings (GH#1095)
 
 Auto-Export (config.yaml):
-  Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv) and git-based sync.
+  Optional JSONL export to .beads/issues.jsonl after write commands (throttled).
+  Useful for viewers (bv), interchange, and issue-level migration; not a backup.
+  It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
+  Disabled by default. Enable only for integrations that need fresh JSONL.
+  Auto-staging is separate and disabled by default.
 
   Keys:
-    export.auto       Enable/disable auto-export (default: true)
+    export.auto       Enable/disable auto-export (default: false)
     export.path       Output filename relative to .beads/ (default: issues.jsonl)
     export.interval   Minimum time between exports (default: 60s)
-    export.git-add    Auto-stage the export file (default: true)
+    export.git-add    Auto-stage the export file (default: false)
+
+Auto-Import (config.yaml):
+  Reads .beads/issues.jsonl by default when a JSONL import path is implied.
+  Use a relative filename/path so the import stays within the project .beads/
+  directory and remains portable across machines.
+
+  Keys:
+    import.path       Input filename relative to .beads/ (default: issues.jsonl)
 
 Custom Status States:
   You can define custom status states for multi-step pipelines using the
@@ -64,16 +76,21 @@ Suppressing Doctor Warnings:
   To unsuppress: bd config unset doctor.suppress.<slug>
 
 Examples:
-  bd config set export.auto false                      # Disable auto-export
+  bd config set export.auto true                       # Enable auto-export for viewer integrations
   bd config set export.path "beads.jsonl"              # Custom export filename
+  bd config set import.path "beads.jsonl"              # Custom import filename
+  bd config set export.git-add true                    # Also stage the export file
   bd config set jira.url "https://company.atlassian.net"
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
+  bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
   bd config get export.auto
   bd config list
   bd config unset jira.url`,
 }
+
+var forceGitTracked bool
 
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
@@ -94,6 +111,12 @@ var configSetCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if key == "dolt.debug" && !usesSQLServer() {
+			fmt.Fprintln(os.Stderr, "Error: dolt.debug requires a sql-server-backed project (embedded mode has no managed server).")
+			fmt.Fprintln(os.Stderr, "  To migrate: re-init with 'bd init --server' or 'bd init --shared-server'.")
+			os.Exit(1)
+		}
+
 		// Warn on unrecognized config keys so typos don't silently become
 		// no-ops. The custom.* namespace is exempt (user-extensible). GH#3293.
 		if !isRecognizedConfigKey(key) {
@@ -104,6 +127,16 @@ var configSetCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Warning: %q is not a recognized config key. Use 'custom.*' for user-defined keys.\n", key)
 			}
 			fmt.Fprintf(os.Stderr, "Run 'bd config --help' for valid namespaces.\n")
+		}
+
+		// Refuse to write secret keys to git-tracked config files unless
+		// --force-git-tracked is set. This prevents accidental exposure of
+		// API keys and tokens in git history.
+		if !forceGitTracked {
+			if err := config.CheckSecretKeyGitSafety(key); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		// Check if this is a yaml-only key (startup settings like no-db, etc.)
@@ -173,9 +206,7 @@ var configSetCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error setting config: %v\n", err)
 			os.Exit(1)
 		}
-		if _, err := store.CommitPending(ctx, getActor()); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to commit config change: %v\n", err)
-		}
+		commandDidWrite.Store(true)
 
 		if jsonOutput {
 			outputJSON(map[string]string{
@@ -446,9 +477,7 @@ var configUnsetCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error deleting config: %v\n", err)
 			os.Exit(1)
 		}
-		if _, err := store.CommitPending(ctx, getActor()); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to commit config change: %v\n", err)
-		}
+		commandDidWrite.Store(true)
 
 		if jsonOutput {
 			outputJSON(map[string]string{
@@ -671,6 +700,16 @@ Examples:
 			}
 		}
 
+		// Phase 3b: Check git-tracked secret safety for yaml keys
+		if !forceGitTracked {
+			for _, p := range yamlPairs {
+				if err := config.CheckSecretKeyGitSafety(p.key); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+			}
+		}
+
 		// Phase 4: Write yaml-only keys
 		for _, p := range yamlPairs {
 			if err := config.SetYamlConfig(p.key, p.value); err != nil {
@@ -702,9 +741,7 @@ Examples:
 					os.Exit(1)
 				}
 			}
-			if _, err := store.CommitPending(ctx, getActor()); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to commit config changes: %v\n", err)
-			}
+			commandDidWrite.Store(true)
 		}
 
 		// Phase 7: Output results
@@ -741,7 +778,7 @@ Examples:
 // recognizedConfigPrefixes lists valid top-level config namespaces.
 // Keys under custom.* are always accepted (user-extensible).
 var recognizedConfigPrefixes = []string{
-	"export.", "dolt.", "jira.", "linear.", "github.", "custom.",
+	"export.", "import.", "dolt.", "jira.", "linear.", "github.", "custom.",
 	"status.", "doctor.suppress.", "routing.", "sync.", "git.",
 	"directory.", "repos.", "external_projects.", "validation.",
 	"hierarchy.", "ai.", "backup.", "federation.",
@@ -841,6 +878,9 @@ func levenshteinDistance(a, b string) int {
 }
 
 func init() {
+	configSetCmd.Flags().BoolVar(&forceGitTracked, "force-git-tracked", false, "Allow writing secret keys to git-tracked config files (use with caution)")
+	configSetManyCmd.Flags().BoolVar(&forceGitTracked, "force-git-tracked", false, "Allow writing secret keys to git-tracked config files (use with caution)")
+
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configSetManyCmd)
 	configCmd.AddCommand(configGetCmd)

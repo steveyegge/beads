@@ -70,18 +70,6 @@ bd init --server
 export BEADS_DOLT_SERVER_MODE=1
 ```
 
-For externally managed servers, set `BEADS_DOLT_CLI_DIR` when a sync operation
-must fall back to the local Dolt CLI, such as git-protocol remotes or
-credentials/cloud auth that only exist in the current shell:
-
-```bash
-export BEADS_DOLT_CLI_DIR=/path/to/dolt-data/beads
-```
-
-The value must be the actual Dolt database directory where `dolt push` or
-`dolt pull` can run, not the parent server root. Remote types supported by
-SQL `DOLT_PUSH` / `DOLT_PULL` do not need this setting.
-
 ```yaml
 # .beads/config.yaml (server mode settings)
 dolt:
@@ -100,6 +88,12 @@ Switch to server mode when you need:
 
 You can migrate data between embedded mode and server mode using `bd backup`.
 Both directions preserve full Dolt commit history.
+
+`bd export` is not a substitute for this flow. JSONL exports contain issue
+records from the issues table for migration and interoperability; they do not
+capture Dolt branches, full commit history, working-set state, or non-issue
+tables. Use `bd backup` or a manual Dolt backup when you need a restorable
+database backup.
 
 ### Server → Embedded
 
@@ -170,10 +164,10 @@ Both directions preserve full Dolt commit history.
 ### Notes
 
 - Data locations differ between modes: `.beads/embeddeddolt/` (embedded) vs `.beads/dolt/` (server)
-- The backup directory is a full Dolt backup — it can be on a local drive, NAS, or DoltHub
+- The backup directory is a full Dolt backup, not an `issues.jsonl` export — it can be on a local drive, NAS, or DoltHub
 - You can also migrate via Dolt remotes (`bd dolt push` / `bd dolt pull`) if both projects share a remote
 
-See also [DOLT-BACKEND.md](DOLT-BACKEND.md#migrating-between-backends).
+The sections below are the canonical backend migration reference.
 
 ## Federation (Peer-to-Peer Sync)
 
@@ -258,8 +252,9 @@ When someone clones a repository that uses Dolt backend:
 
 If `sync.remote` is set in `.beads/config.yaml`, that takes precedence
 over auto-detection. Any Dolt-compatible remote URL is supported (DoltHub,
-S3, GCS, file, or git). `bd init` will warn if it detects `refs/dolt/data`
-on origin and suggest using `bd bootstrap` instead.
+S3, GCS, file, or git). On brand-new projects, `bd init` auto-detects
+`git origin` and persists it as `sync.remote`, so the first `bd dolt push`
+publishes Dolt history to `refs/dolt/data` on the same git remote.
 
 ### Verifying Bootstrap Worked
 
@@ -354,9 +349,6 @@ dolt:
   # at ~/.beads/shared-server/. Each project uses its own database (prefix-based).
   # Eliminates port conflicts and reduces resource usage on multi-project machines.
   shared-server: false   # true | false
-
-  # Idle auto-stop timeout for the Dolt server (default: "30m", "0" disables)
-  idle-timeout: 30m
 ```
 
 ### Environment Variables

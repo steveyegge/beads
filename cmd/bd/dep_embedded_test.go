@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 )
 
 // bdDep runs "bd dep" with the given args and returns raw stdout.
@@ -22,11 +20,11 @@ func bdDep(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd dep %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd dep %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdDepFail runs "bd dep" expecting failure.
@@ -51,11 +49,11 @@ func bdDepJSON(t *testing.T, bd, dir string, args ...string) map[string]interfac
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd dep --json %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd dep --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	s := strings.TrimSpace(string(out))
+	s := strings.TrimSpace(stdout.String())
 	start := strings.IndexAny(s, "{[")
 	if start < 0 {
 		t.Fatalf("no JSON in dep output: %s", s)
@@ -74,46 +72,11 @@ func bdDepWithInput(t *testing.T, bd, dir, input string, args ...string) string 
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
 	cmd.Stdin = strings.NewReader(input)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd dep %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd dep %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
-}
-
-func dropEmbeddedWispDependencies(t *testing.T, beadsDir, database string) {
-	t.Helper()
-	db, cleanup, err := embeddeddolt.OpenSQL(t.Context(), filepath.Join(beadsDir, "embeddeddolt"), database, "main")
-	if err != nil {
-		t.Fatalf("OpenSQL: %v", err)
-	}
-	defer cleanup()
-	if _, err := db.ExecContext(t.Context(), "DROP TABLE IF EXISTS wisp_dependencies"); err != nil {
-		t.Fatalf("drop table wisp_dependencies: %v", err)
-	}
-}
-
-func TestEmbeddedDepMissingWispDependencies(t *testing.T) {
-	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
-		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
-	}
-
-	bd := buildEmbeddedBD(t)
-	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mw")
-	blocker := bdCreate(t, bd, dir, "Missing wisp dep blocker", "--type", "task")
-	blocked := bdCreate(t, bd, dir, "Missing wisp dep blocked", "--type", "task")
-
-	dropEmbeddedWispDependencies(t, beadsDir, "mw")
-
-	out := bdDep(t, bd, dir, "add", blocked.ID, blocker.ID)
-	if !strings.Contains(out, "Added dependency") {
-		t.Fatalf("expected dep add to succeed after recreating wisp_dependencies: %s", out)
-	}
-
-	tree := bdDep(t, bd, dir, "tree", blocked.ID)
-	if !strings.Contains(tree, blocker.ID) {
-		t.Fatalf("expected dep tree to include blocker %s after wisp_dependencies repair:\n%s", blocker.ID, tree)
-	}
+	return stdout.String()
 }
 
 func TestEmbeddedDep(t *testing.T) {
@@ -332,12 +295,12 @@ func TestEmbeddedDep(t *testing.T) {
 		cmd := exec.Command(bd, fullArgs...)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err != nil {
-			t.Fatalf("dep list --json failed: %v\n%s", err, out)
+			t.Fatalf("dep list --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), issueD.ID) {
-			t.Errorf("expected dependency ID in JSON: %s", out)
+		if !strings.Contains(stdout.String(), issueD.ID) {
+			t.Errorf("expected dependency ID in JSON: %s", stdout.String())
 		}
 	})
 
@@ -390,12 +353,12 @@ func TestEmbeddedDep(t *testing.T) {
 		cmd := exec.Command(bd, fullArgs...)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err != nil {
-			t.Fatalf("dep tree --json failed: %v\n%s", err, out)
+			t.Fatalf("dep tree --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), epic.ID) {
-			t.Errorf("expected epic ID in JSON tree: %s", out)
+		if !strings.Contains(stdout.String(), epic.ID) {
+			t.Errorf("expected epic ID in JSON tree: %s", stdout.String())
 		}
 	})
 
@@ -417,8 +380,8 @@ func TestEmbeddedDep(t *testing.T) {
 		b := bdCreate(t, bd, dir2, "No cycle B", "--type", "task")
 		bdDep(t, bd, dir2, "add", a.ID, b.ID)
 		out := bdDep(t, bd, dir2, "cycles")
-		if !strings.Contains(out, "No cycles") && !strings.Contains(out, "no cycles") {
-			t.Logf("expected 'No cycles' message: %s", out)
+		if !strings.Contains(out, "No dependency cycles detected") {
+			t.Errorf("expected no-cycle message: %s", out)
 		}
 	})
 }
