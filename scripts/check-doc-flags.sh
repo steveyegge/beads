@@ -157,7 +157,14 @@ if [ -f "$CLI_REF" ]; then
         done
 
         if [ -x "$PROJECT_ROOT/scripts/generate-cli-docs.sh" ]; then
-            if "$PROJECT_ROOT/scripts/generate-cli-docs.sh" --check "$BD"; then
+            BD_FOR_GEN="$BD"
+            if ! [ -x "$BD_FOR_GEN" ]; then
+                BD_FOR_GEN="$(command -v "$BD" 2>/dev/null || true)"
+            fi
+            if [ -z "$BD_FOR_GEN" ]; then
+                echo "FAIL: Could not resolve bd binary path for CLI docs freshness check"
+                ERRORS=$((ERRORS + 1))
+            elif "$PROJECT_ROOT/scripts/generate-cli-docs.sh" --check "$BD_FOR_GEN"; then
                 echo "PASS: Generated CLI docs are fresh"
             else
                 ERRORS=$((ERRORS + 1))
@@ -172,6 +179,27 @@ if [ -f "$CLI_REF" ]; then
     fi
 else
     echo "FAIL: docs/CLI_REFERENCE.md not found"
+    ERRORS=$((ERRORS + 1))
+fi
+
+echo ""
+
+# --- Check 5: Plugin CLI reference must stay a pointer ---
+echo "=== Check 5: Plugin CLI reference pointer policy ==="
+
+PLUGIN_CLI_REF="$PROJECT_ROOT/plugins/beads/skills/beads/resources/CLI_REFERENCE.md"
+if [ -f "$PLUGIN_CLI_REF" ]; then
+    if grep -q 'This skill does not bundle a copied CLI command reference' "$PLUGIN_CLI_REF" \
+        && grep -q 'docs/CLI_REFERENCE.md' "$PLUGIN_CLI_REF"; then
+        echo "PASS: plugin CLI resource is a pointer to live/canonical references"
+    else
+        echo "FAIL: plugin CLI resource drifted from pointer policy"
+        echo "  Expected pointer language and canonical docs/CLI_REFERENCE.md reference in:"
+        echo "  plugins/beads/skills/beads/resources/CLI_REFERENCE.md"
+        ERRORS=$((ERRORS + 1))
+    fi
+else
+    echo "FAIL: plugin CLI resource missing: plugins/beads/skills/beads/resources/CLI_REFERENCE.md"
     ERRORS=$((ERRORS + 1))
 fi
 

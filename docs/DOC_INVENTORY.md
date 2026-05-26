@@ -25,6 +25,7 @@ freshness source.
 | Doc | Freshness path |
 |---|---|
 | `CLI_REFERENCE.md` | Generated from `bd help --all`. |
+| `plugins/beads/skills/beads/resources/CLI_REFERENCE.md` | Pointer-only doc: must link to live CLI help and canonical generated `docs/CLI_REFERENCE.md`; do not duplicate generated command tables. |
 | `CONFIG.md` | `Last reviewed:` marker tied to `cmd/bd/main.go`, `cmd/bd/config.go`, and `internal/configfile/`. |
 | `SETUP.md` | `Last reviewed:` marker tied to `cmd/bd/setup*.go` and `internal/recipes/`. |
 | `ADO_CONFIG.md` | `Last reviewed:` marker tied to `cmd/bd/ado*.go` and `internal/ado/`. |
@@ -54,6 +55,7 @@ Follow-up automation should replace marker-only checks with generated or
 | `CLAUDE.md` | Revise | Kept as architecture orientation only; command/workflow duplication was reduced in favour of root `AGENTS.md` and `AGENT_INSTRUCTIONS.md`. |
 | `CLI_REFERENCE.md` | Keep/generated | Generated command reference from live help output. |
 | `CI_TEST_SURFACE_AUDIT.md` | Keep with freshness | Snapshot of local validation commands, GitHub Actions coverage, gaps, and CI cleanup roadmap. |
+| `plugins/beads/skills/beads/resources/CLI_REFERENCE.md` | Keep pointer | Plugin skill resource intentionally points at live CLI sources to avoid duplicate generated command snapshots. |
 | `CODEX_INTEGRATION.md` | Keep | User-facing Codex integration guide. |
 | `COLLISION_MATH.md` | Keep | Mathematical background; low product drift. |
 | `COMMUNITY_TOOLS.md` | Keep | Curated external tools list; external links need periodic review. |
