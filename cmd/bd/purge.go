@@ -115,13 +115,15 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 	}
 
 	// Parse --older-than duration (e.g., "7d", "30d", "24h", or just "30" for days)
+	var cutoff *time.Time
 	if olderThan != "" {
 		days, err := parseHumanDuration(olderThan)
 		if err != nil {
 			FatalError("invalid --older-than value %q: %v", olderThan, err)
 		}
-		cutoff := time.Now().AddDate(0, 0, -days)
-		filter.ClosedBefore = &cutoff
+		cutoffTime := time.Now().UTC().AddDate(0, 0, -days)
+		cutoff = &cutoffTime
+		filter.ClosedBefore = cutoff
 	}
 
 	// Get matching issues
@@ -141,17 +143,10 @@ func runPurgeOrPrune(cmd *cobra.Command, scope purgeScope) {
 		closedIssues = matched
 	}
 
-	// Filter out pinned beads
-	pinnedCount := 0
-	filtered := make([]*types.Issue, 0, len(closedIssues))
-	for _, issue := range closedIssues {
-		if issue.Pinned {
-			pinnedCount++
-			continue
-		}
-		filtered = append(filtered, issue)
-	}
-	closedIssues = filtered
+	var safetyStats closedDeletionCandidateStats
+	closedIssues, safetyStats = filterClosedDeletionCandidates(closedIssues, cutoff)
+	pinnedCount := safetyStats.PinnedSkipped
+	warnClosedDeletionSafetySkips(safetyStats)
 
 	// Report nothing-to-do
 	if len(closedIssues) == 0 {
