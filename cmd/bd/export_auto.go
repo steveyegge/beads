@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/atomicfile"
@@ -177,11 +178,27 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
 		}
-		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
-		allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
-		commentsMap, _ := store.GetCommentsForIssues(ctx, issueIDs)
-		commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
-		depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+		// Parallelize the five independent bulk-load calls. On a remote
+		// Dolt connection each is a full BEGIN/SELECT/ROLLBACK round trip
+		// (~1.2 s on a ~200 ms RTT link); running them sequentially was
+		// ~6 s of pure wall-clock waste inside maybeAutoExport. The pool's
+		// MaxOpenConns is 10 by default so five concurrent reads share
+		// the warm pool without forcing extra handshakes.
+		var (
+			labelsMap     map[string][]string
+			allDeps       map[string][]*types.Dependency
+			commentsMap   map[string][]*types.Comment
+			commentCounts map[string]int
+			depCounts     map[string]*types.DependencyCounts
+			wg            sync.WaitGroup
+		)
+		wg.Add(5)
+		go func() { defer wg.Done(); labelsMap, _ = store.GetLabelsForIssues(ctx, issueIDs) }()
+		go func() { defer wg.Done(); allDeps, _ = store.GetDependencyRecordsForIssues(ctx, issueIDs) }()
+		go func() { defer wg.Done(); commentsMap, _ = store.GetCommentsForIssues(ctx, issueIDs) }()
+		go func() { defer wg.Done(); commentCounts, _ = store.GetCommentCounts(ctx, issueIDs) }()
+		go func() { defer wg.Done(); depCounts, _ = store.GetDependencyCounts(ctx, issueIDs) }()
+		wg.Wait()
 
 		for _, issue := range issues {
 			issue.Labels = labelsMap[issue.ID]
