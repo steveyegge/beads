@@ -56,9 +56,9 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 // GetConfig retrieves a configuration value
 func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 	var value string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
 		var err error
-		value, err = issueops.GetConfigInTx(ctx, tx, key)
+		value, err = issueops.GetConfigInTx(ctx, q, key)
 		return err
 	})
 	return value, err
@@ -67,9 +67,9 @@ func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 // GetAllConfig retrieves all configuration values
 func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error) {
 	var result map[string]string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
 		var err error
-		result, err = issueops.GetAllConfigInTx(ctx, tx)
+		result, err = issueops.GetAllConfigInTx(ctx, q)
 		return err
 	})
 	return result, err
@@ -92,9 +92,9 @@ func (s *DoltStore) SetMetadata(ctx context.Context, key, value string) error {
 // GetMetadata retrieves a metadata value
 func (s *DoltStore) GetMetadata(ctx context.Context, key string) (string, error) {
 	var value string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
 		var err error
-		value, err = issueops.GetMetadataInTx(ctx, tx, key)
+		value, err = issueops.GetMetadataInTx(ctx, q, key)
 		return err
 	})
 	return value, err
@@ -112,9 +112,9 @@ func (s *DoltStore) SetLocalMetadata(ctx context.Context, key, value string) err
 // Returns ("", nil) if the key does not exist.
 func (s *DoltStore) GetLocalMetadata(ctx context.Context, key string) (string, error) {
 	var value string
-	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
 		var err error
-		value, err = issueops.GetLocalMetadataInTx(ctx, tx, key)
+		value, err = issueops.GetLocalMetadataInTx(ctx, q, key)
 		return err
 	})
 	return value, err

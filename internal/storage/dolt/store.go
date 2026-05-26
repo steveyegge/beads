@@ -41,6 +41,7 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"github.com/steveyegge/beads/internal/types"
@@ -609,6 +610,28 @@ func (s *DoltStore) withReadTx(ctx context.Context, fn func(tx *sql.Tx) error) e
 	}
 	defer func() { _ = tx.Rollback() }()
 	return fn(tx)
+}
+
+// withReadConn runs fn against a single pooled connection without wrapping
+// it in a transaction. For simple single-statement reads against a Dolt SQL
+// server in autocommit mode this saves 2 round trips per call (BEGIN +
+// ROLLBACK) compared to withReadTx — a 2-3x speedup on high-latency links.
+//
+// Use this only for reads that do not need snapshot isolation across multiple
+// statements. For multi-statement read groups (e.g. SearchIssues + label
+// hydration) keep using withReadTx so the queries see a consistent view.
+func (s *DoltStore) withReadConn(ctx context.Context, fn func(q issueops.SQLQuerier) error) error {
+	if s.closed.Load() {
+		return ErrStoreClosed
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire read conn: %w", err)
+	}
+	defer func() { _ = conn.Close() }() // releases the conn back to the pool
+	return fn(conn)
 }
 
 func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
@@ -1341,20 +1364,29 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	// pairs in dolt-server.log).
 	applyPoolLimits(db, cfg)
 
-	// Ensure database exists (may need to create it)
-	// First connect without database to create it
-	initConnStr := buildServerDSN(cfg, "")
-	initDB, err := sql.Open("mysql", initConnStr)
-	if err != nil {
-		_ = db.Close()
-		return nil, "", fmt.Errorf("failed to open init connection: %w", err)
-	}
-	defer func() { _ = initDB.Close() }()
-
 	// Validate database name to prevent SQL injection via backtick escaping
 	if err := ValidateDatabaseName(cfg.Database); err != nil {
 		_ = db.Close()
 		return nil, "", fmt.Errorf("invalid database name %q: %w", cfg.Database, err)
+	}
+
+	// Fast path: when we are not allowed to create the database, the SHOW
+	// DATABASES probe is wasted work in the common case where the database
+	// exists. Just ping the main pool — the MySQL handshake will fail with
+	// error 1049 ("Unknown database") if it does not exist. This saves a
+	// full MySQL handshake + SHOW DATABASES round trip on every read-only
+	// command (≈3 RTT on high-latency links). For init/bootstrap paths
+	// (CreateIfMissing=true) we still run the dual-pool dance below.
+	if !cfg.CreateIfMissing {
+		if err := db.PingContext(ctx); err != nil {
+			_ = db.Close()
+			if isDatabaseNotFoundError(err) {
+				return nil, "", databaseNotFoundError(cfg)
+			}
+			return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w",
+				cfg.ServerHost, cfg.ServerPort, err)
+		}
+		return db, connStr, nil
 	}
 
 	// FIREWALL: Never create test databases on the production server.
@@ -1367,6 +1399,17 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 				"this is a test database name on the production server (see DOLT-WAR-ROOM.md)",
 			cfg.Database, cfg.ServerPort)
 	}
+
+	// Slow path (init/bootstrap): connect without a database selected so we
+	// can SHOW DATABASES / CREATE DATABASE without depending on the target
+	// existing yet.
+	initConnStr := buildServerDSN(cfg, "")
+	initDB, err := sql.Open("mysql", initConnStr)
+	if err != nil {
+		_ = db.Close()
+		return nil, "", fmt.Errorf("failed to open init connection: %w", err)
+	}
+	defer func() { _ = initDB.Close() }()
 
 	// Check if the database already exists before deciding whether to create it.
 	// This prevents the shadow database bug: without CreateIfMissing, connecting
@@ -1384,11 +1427,6 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	}
 
 	if !dbExists {
-		if !cfg.CreateIfMissing {
-			_ = db.Close()
-			return nil, "", databaseNotFoundError(cfg)
-		}
-
 		_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database)) //nolint:gosec // G201: cfg.Database validated by ValidateDatabaseName above
 		if err != nil {
 			// Dolt may return error 1007 even with IF NOT EXISTS - ignore if database already exists
@@ -1429,6 +1467,20 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	}
 
 	return db, connStr, nil
+}
+
+// isDatabaseNotFoundError reports whether err is a MySQL error 1049
+// ("Unknown database"). Used by the fast-path open to map a missing-DB
+// handshake failure to the project-level databaseNotFoundError.
+func isDatabaseNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if me, ok := err.(*mysql.MySQLError); ok && me.Number == 1049 {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "error 1049") || strings.Contains(msg, "unknown database")
 }
 
 // databaseExistsOnServer checks if a database with the exact given name exists
