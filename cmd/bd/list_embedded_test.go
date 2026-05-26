@@ -57,6 +57,35 @@ func bdListJSON(t *testing.T, bd, dir string, args ...string) []*types.IssueWith
 	return issues
 }
 
+type bdListSkipLabelsJSON struct {
+	SchemaVersion int `json:"schema_version"`
+	Issues        []struct {
+		ID     string   `json:"id"`
+		Labels []string `json:"labels"`
+	} `json:"issues"`
+	Meta struct {
+		SkipLabels bool `json:"skip_labels"`
+		Count      int  `json:"count"`
+	} `json:"meta"`
+}
+
+func bdListSkipLabelsJSONOutput(t *testing.T, bd, dir string, args ...string) bdListSkipLabelsJSON {
+	t.Helper()
+	fullArgs := append([]string{"list", "--json", "--skip-labels"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd list --json --skip-labels %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	var out bdListSkipLabelsJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("failed to parse skip-labels JSON output: %v\nraw: %s", err, stdout.String())
+	}
+	return out
+}
+
 // bdListCapture runs "bd list" and returns (stdout, stderr) separately.
 func bdListCapture(t *testing.T, bd, dir string, args ...string) (string, string) {
 	t.Helper()
@@ -282,6 +311,25 @@ func TestEmbeddedList(t *testing.T) {
 		// openBug has both backend and urgent — should be excluded
 		if containsID(issues, seed.openBug) {
 			t.Error("openBug with backend+urgent should be excluded when --exclude-label urgent")
+		}
+	})
+
+	t.Run("skip_labels_json_suppresses_labeled_issue", func(t *testing.T) {
+		out := bdListSkipLabelsJSONOutput(t, bd, dir, "--id", seed.openBug)
+		if !out.Meta.SkipLabels {
+			t.Fatal("expected meta.skip_labels=true")
+		}
+		if out.Meta.Count != 1 || len(out.Issues) != 1 {
+			t.Fatalf("expected one issue and matching count, got count=%d issues=%d", out.Meta.Count, len(out.Issues))
+		}
+		if out.Issues[0].ID != seed.openBug {
+			t.Fatalf("expected issue %s, got %s", seed.openBug, out.Issues[0].ID)
+		}
+		if out.Issues[0].Labels == nil {
+			t.Fatal("expected labels field to be present as an empty array, got nil")
+		}
+		if len(out.Issues[0].Labels) != 0 {
+			t.Fatalf("--skip-labels JSON leaked labels: %v", out.Issues[0].Labels)
 		}
 	})
 

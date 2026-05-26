@@ -91,11 +91,11 @@ func runFilterSearchQueryInTx(ctx context.Context, tx *sql.Tx, query string, fil
 		limitSQL = fmt.Sprintf("LIMIT %d", filter.Limit)
 	}
 	const orderBy = "ORDER BY i.priority ASC, i.created_at DESC, i.id ASC"
-	return runSearchQueryInTx(ctx, tx, tables, whereSQL, orderBy, limitSQL, args, includeWispReverseDeps)
+	return runSearchQueryInTx(ctx, tx, tables, whereSQL, orderBy, limitSQL, args, includeWispReverseDeps, filter.SkipLabels)
 }
 
 //nolint:gosec // G201: SQL fragments are caller-built from hardcoded shapes
-func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, whereSQL, orderBySQL, limitSQL string, args []interface{}, includeWispReverseDeps bool) ([]*types.IssueWithCounts, error) {
+func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, whereSQL, orderBySQL, limitSQL string, args []interface{}, includeWispReverseDeps bool, skipLabels bool) ([]*types.IssueWithCounts, error) {
 	reverseBlockerSelect := `
 				SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS dep_id
 				FROM dependencies WHERE type = 'blocks'
@@ -108,20 +108,28 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 		`
 	}
 
+	labelsSelect := "l.labels_json AS labels_json"
+	labelsJoin := fmt.Sprintf(`
+		LEFT JOIN (
+			SELECT issue_id, JSON_ARRAYAGG(label) AS labels_json
+			FROM %s
+			GROUP BY issue_id
+		) l ON l.issue_id = i.id`, tables.Labels)
+	if skipLabels {
+		labelsSelect = "NULL AS labels_json"
+		labelsJoin = ""
+	}
+
 	searchSQL := fmt.Sprintf(`
 		SELECT %s,
-			l.labels_json    AS labels_json,
+			%s,
 			COALESCE(dc.cnt, 0) AS dep_count,
 			COALESCE(rc.cnt, 0) AS rdep_count,
 			COALESCE(cc.cnt, 0) AS comment_count,
 			pc.parent_id     AS parent_id,
 			d.deps_json      AS deps_json
 		FROM %s i
-		LEFT JOIN (
-			SELECT issue_id, JSON_ARRAYAGG(label) AS labels_json
-			FROM %s
-			GROUP BY issue_id
-		) l ON l.issue_id = i.id
+		%s
 		LEFT JOIN (
 			SELECT issue_id, COUNT(*) AS cnt
 			FROM %s
@@ -155,8 +163,9 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 		%s
 	`,
 		readyWorkIssueColumns,
+		labelsSelect,
 		tables.Main,
-		tables.Labels,
+		labelsJoin,
 		tables.Dependencies,
 		reverseBlockerSelect,
 		tables.Comments,
