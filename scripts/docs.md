@@ -28,8 +28,9 @@ Generates maintained CLI reference docs from the live Cobra command tree exposed
 - `docs/CLI_REFERENCE.md` from `bd help --all`
 - `website/docs/cli-reference/*.md` from `bd help --list` and `bd help --doc <command>`
 - `website/versioned_docs/version-1.0.0/cli-reference/*.md` so the published default docs and llms artifact source stay in sync
+- `website/static/llms-full.txt` freshness is checked from the same generated website docs tree
 
-`scripts/check-doc-flags.sh` runs the `--check` mode in CI and fails when live top-level commands are missing from generated docs.
+`scripts/check-doc-flags.sh` runs the `--check` mode in CI and fails when live top-level commands are missing from generated docs or `llms-full.txt` is stale.
 
 ## check-doc-freshness.sh
 

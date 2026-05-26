@@ -142,6 +142,15 @@ generate_all() {
 
 if [ "$CHECK_MODE" -eq 1 ]; then
     TMP_OUTPUT_DIR="$(mktemp -d)"
+    mkdir -p "$TMP_OUTPUT_DIR/website"
+    cp -Rf "$PROJECT_ROOT/website/docs" "$TMP_OUTPUT_DIR/website/docs"
+    if [ -d "$PROJECT_ROOT/website/versioned_docs" ]; then
+        cp -Rf "$PROJECT_ROOT/website/versioned_docs" "$TMP_OUTPUT_DIR/website/versioned_docs"
+    fi
+    if [ -f "$PROJECT_ROOT/website/versions.json" ]; then
+        cp -f "$PROJECT_ROOT/website/versions.json" "$TMP_OUTPUT_DIR/website/versions.json"
+    fi
+
     generate_all "$TMP_OUTPUT_DIR"
 
     if ! diff -qr \
@@ -171,6 +180,8 @@ if [ "$CHECK_MODE" -eq 1 ]; then
             fi
         fi
     done
+
+    "$PROJECT_ROOT/scripts/generate-llms-full.sh" --check --source-root "$TMP_OUTPUT_DIR"
 
     echo "PASS: generated CLI docs are fresh"
 else
