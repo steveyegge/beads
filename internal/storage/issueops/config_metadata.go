@@ -4,20 +4,37 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 )
+
+const AllowPrefixMutationEnv = "BEADS_ALLOW_PREFIX_MUTATION"
 
 // SetConfigInTx sets a configuration value within an existing transaction.
 // Normalizes issue_prefix by stripping trailing hyphens.
 func SetConfigInTx(ctx context.Context, tx *sql.Tx, key, value string) error {
 	if key == "issue_prefix" {
 		value = strings.TrimSuffix(value, "-")
+		if err := rejectPrefixMutationUnlessAllowed(ctx, tx, value); err != nil {
+			return err
+		}
 	}
 	_, err := tx.ExecContext(ctx, "REPLACE INTO config (`key`, value) VALUES (?, ?)", key, value)
 	if err != nil {
 		return fmt.Errorf("set config %s: %w", key, err)
 	}
 	return nil
+}
+
+func rejectPrefixMutationUnlessAllowed(ctx context.Context, tx *sql.Tx, value string) error {
+	existing, err := GetConfigInTx(ctx, tx, "issue_prefix")
+	if err != nil {
+		return err
+	}
+	if existing == "" || existing == value || os.Getenv(AllowPrefixMutationEnv) == "1" {
+		return nil
+	}
+	return fmt.Errorf("issue_prefix is identity state and cannot be changed from %q to %q without %s=1; use bd rename-prefix for migrations", existing, value, AllowPrefixMutationEnv)
 }
 
 // GetConfigInTx retrieves a configuration value within an existing transaction.

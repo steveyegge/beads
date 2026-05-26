@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -124,7 +125,9 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		if len(issues) == 0 {
 			fmt.Printf("No issues to rename. Updating prefix to %s\n", newPrefix)
 			if !dryRun {
-				if err := store.SetConfig(ctx, "issue_prefix", newPrefix); err != nil {
+				if err := withPrefixMutationAllowed(func() error {
+					return store.SetConfig(ctx, "issue_prefix", newPrefix)
+				}); err != nil {
 					FatalError("failed to update prefix: %v", err)
 				}
 				commandDidWrite.Store(true)
@@ -168,6 +171,21 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		commandDidWrite.Store(true)
 	},
+}
+
+func withPrefixMutationAllowed(fn func() error) error {
+	previous, hadPrevious := os.LookupEnv(issueops.AllowPrefixMutationEnv)
+	if err := os.Setenv(issueops.AllowPrefixMutationEnv, "1"); err != nil {
+		return err
+	}
+	defer func() {
+		if hadPrevious {
+			_ = os.Setenv(issueops.AllowPrefixMutationEnv, previous)
+		} else {
+			_ = os.Unsetenv(issueops.AllowPrefixMutationEnv)
+		}
+	}()
+	return fn()
 }
 
 func validatePrefix(prefix string) error {
@@ -324,7 +342,9 @@ func repairPrefixes(ctx context.Context, st storage.DoltStorage, actorName strin
 	}
 
 	// Set the new prefix in config
-	if err := st.SetConfig(ctx, "issue_prefix", targetPrefix); err != nil {
+	if err := withPrefixMutationAllowed(func() error {
+		return st.SetConfig(ctx, "issue_prefix", targetPrefix)
+	}); err != nil {
 		return fmt.Errorf("failed to update config: %w", err)
 	}
 
@@ -383,7 +403,9 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 		}
 	}
 
-	if err := store.SetConfig(ctx, "issue_prefix", newPrefix); err != nil {
+	if err := withPrefixMutationAllowed(func() error {
+		return store.SetConfig(ctx, "issue_prefix", newPrefix)
+	}); err != nil {
 		return fmt.Errorf("failed to update config: %w", err)
 	}
 

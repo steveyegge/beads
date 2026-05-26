@@ -14,6 +14,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/testutil"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -327,6 +328,55 @@ func TestSetConfigNormalizesIssuePrefix(t *testing.T) {
 	}
 	if value != "gt" {
 		t.Errorf("expected issue_prefix 'gt' (trailing hyphen stripped), got %q", value)
+	}
+}
+
+func TestSetConfigRejectsIssuePrefixMutation(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("initial SetConfig failed: %v", err)
+	}
+	if err := store.SetConfig(ctx, "issue_prefix", "bds"); err == nil {
+		t.Fatal("expected issue_prefix mutation to fail without break-glass env")
+	} else if !strings.Contains(err.Error(), issueops.AllowPrefixMutationEnv) {
+		t.Fatalf("expected error to mention %s, got: %v", issueops.AllowPrefixMutationEnv, err)
+	}
+
+	value, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if value != "bd" {
+		t.Fatalf("issue_prefix mutated despite rejection: got %q", value)
+	}
+}
+
+func TestSetConfigAllowsIssuePrefixMutationWithBreakGlass(t *testing.T) {
+	t.Setenv(issueops.AllowPrefixMutationEnv, "1")
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("initial SetConfig failed: %v", err)
+	}
+	if err := store.SetConfig(ctx, "issue_prefix", "bds"); err != nil {
+		t.Fatalf("break-glass SetConfig failed: %v", err)
+	}
+
+	value, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if value != "bds" {
+		t.Fatalf("issue_prefix = %q, want bds", value)
 	}
 }
 
