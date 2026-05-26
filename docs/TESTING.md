@@ -192,6 +192,11 @@ The test script is designed to work seamlessly with CI/CD:
   run: make test
 ```
 
+For the current CI/test-surface inventory and cleanup roadmap, see
+[CI_TEST_SURFACE_AUDIT.md](CI_TEST_SURFACE_AUDIT.md). That audit documents
+where local commands and GitHub Actions currently diverge before the CI cleanup
+work starts changing workflow behavior.
+
 ## Debugging Test Failures
 
 ### Get detailed output

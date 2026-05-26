@@ -17,7 +17,7 @@ freshness source.
 | Architecture | `ARCHITECTURE.md`, `INTERNALS.md`, `DOLT.md`, `adr/`, `design/` | Durable structure, package boundaries, storage model, and invariants live here. |
 | Behaviour/reference | `CLI_REFERENCE.md`, `CONFIG.md`, `SETUP.md`, `JSON_SCHEMA.md`, `RECOVERY.md`, `ERROR_HANDLING.md`, `TROUBLESHOOTING.md` | CLI/config/runtime contracts live here and need generation or freshness review. |
 | User-facing workflow | `INSTALLING.md`, `QUICKSTART.md`, `FAQ.md`, `SYNC_SETUP.md`, integration guides, `WORKTREES.md`, `UNINSTALLING.md` | Task-oriented user docs live here; avoid duplicating implementation tables unless linked to reference docs. |
-| Maintainer/operator | root `RELEASING.md`, `RELEASE-STABILITY-GATE.md`, `LINTING.md`, `SECURITY-DEPENDENCY-EXCEPTIONS.md`, `PERFORMANCE_TESTING.md` | Maintainer process docs stay active only when tied to current scripts/checks. |
+| Maintainer/operator | root `RELEASING.md`, `RELEASE-STABILITY-GATE.md`, `LINTING.md`, `SECURITY-DEPENDENCY-EXCEPTIONS.md`, `PERFORMANCE_TESTING.md`, `CI_TEST_SURFACE_AUDIT.md` | Maintainer process docs stay active only when tied to current scripts/checks. |
 | Historical/staged | `staged-for-removal/` | Resolved audits, stale duplicates, and unsupported snapshots are preserved here until deleted or rescued. |
 
 ## Reference Freshness
@@ -53,6 +53,7 @@ Follow-up automation should replace marker-only checks with generated or
 | `CLAUDE_INTEGRATION.md` | Keep | Design/user guide for Claude setup; paired with `SETUP.md`. |
 | `CLAUDE.md` | Revise | Kept as architecture orientation only; command/workflow duplication was reduced in favour of root `AGENTS.md` and `AGENT_INSTRUCTIONS.md`. |
 | `CLI_REFERENCE.md` | Keep/generated | Generated command reference from live help output. |
+| `CI_TEST_SURFACE_AUDIT.md` | Keep with freshness | Snapshot of local validation commands, GitHub Actions coverage, gaps, and CI cleanup roadmap. |
 | `CODEX_INTEGRATION.md` | Keep | User-facing Codex integration guide. |
 | `COLLISION_MATH.md` | Keep | Mathematical background; low product drift. |
 | `COMMUNITY_TOOLS.md` | Keep | Curated external tools list; external links need periodic review. |
