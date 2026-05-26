@@ -40,7 +40,6 @@ import (
 //   - graph_initial_labels_not_duplicated
 func TestProxiedServerCreate(t *testing.T) {
 	requireProxiedServerEnv(t)
-	t.Parallel()
 
 	bd := buildEmbeddedBD(t)
 

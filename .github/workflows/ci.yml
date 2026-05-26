@@ -254,6 +254,53 @@ jobs:
           BEADS_TEST_BD_BINARY: /tmp/bd-uow-test
         run: go test -tags gms_pure_go -race -count=1 -v ./internal/storage/domain/... ./internal/storage/uow/...
 
+  # End-to-end coverage for `bd create` in proxied-server mode. Each sub-test
+  # spawns a real dolt sql-server via the proxy and exercises the CLI
+  # subprocess against it (see cmd/bd/create_proxied_integration_test.go).
+  #
+  # Companion to test-domain-uow (which tests the storage/uow layer); this
+  # job is the CLI-side gate that ensures the proxied bd create path stays
+  # at parity with the embedded path's behavior.
+  #
+  # The package-level testcontainers Dolt singleton (started by
+  # cmd/bd/test_dolt_server_cgo_test.go) is automatically skipped when
+  # BEADS_TEST_PROXIED_SERVER=1 is set, so this lane is ~50s faster than
+  # it would otherwise be.
+  test-proxied-server-cmd:
+    name: Test (proxied-server cmd)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt CLI
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Verify dolt on PATH
+        run: dolt version
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Pre-build bd binary for proxied integration tests
+        # The test's buildEmbeddedBD helper picks up BEADS_TEST_BD_BINARY,
+        # skipping a per-test ~45s rebuild for each invocation.
+        run: go build -tags gms_pure_go -o /tmp/bd-proxied-test ./cmd/bd
+
+      - name: Test proxied-server bd create
+        env:
+          BEADS_TEST_PROXIED_SERVER: "1"
+          BEADS_TEST_BD_BINARY: /tmp/bd-proxied-test
+        run: go test -tags gms_pure_go -count=1 -timeout=10m -v -run '^TestProxiedServerCreate$' ./cmd/bd/
+
   # Embedded Dolt tests - test the in-process Dolt engine (no server required)
   #
   # Split into: build → storage tests + parallel cmd test shards.
