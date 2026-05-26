@@ -6,7 +6,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestImportFromLocalJSONL(t *testing.T) {
@@ -209,6 +213,149 @@ func TestImportFromLocalJSONL(t *testing.T) {
 		}
 		if child2.Title != "Child 2" {
 			t.Errorf("Child 2 title changed unexpectedly: got %q", child2.Title)
+		}
+	})
+
+	t.Run("skips cyclic and self dependencies instead of aborting import", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		ctx := context.Background()
+		now := time.Now().UTC()
+		issues := []*types.Issue{
+			{
+				ID:        "test-cycle-a",
+				Title:     "Cycle A",
+				Status:    types.StatusOpen,
+				IssueType: types.TypeTask,
+				Priority:  2,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Dependencies: []*types.Dependency{{
+					DependsOnID: "test-cycle-b",
+					Type:        types.DepBlocks,
+				}},
+			},
+			{
+				ID:        "test-cycle-b",
+				Title:     "Cycle B",
+				Status:    types.StatusOpen,
+				IssueType: types.TypeTask,
+				Priority:  2,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Dependencies: []*types.Dependency{{
+					DependsOnID: "test-cycle-a",
+					Type:        types.DepBlocks,
+				}},
+			},
+			{
+				ID:        "test-self",
+				Title:     "Self dependency",
+				Status:    types.StatusOpen,
+				IssueType: types.TypeTask,
+				Priority:  2,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Dependencies: []*types.Dependency{{
+					DependsOnID: "test-self",
+					Type:        types.DepBlocks,
+				}},
+			},
+		}
+
+		result, err := importIssuesCore(ctx, "", store, issues, ImportOptions{SkipPrefixValidation: true})
+		if err != nil {
+			t.Fatalf("importIssuesCore failed: %v", err)
+		}
+		if result.Created != 3 {
+			t.Fatalf("Created = %d, want 3", result.Created)
+		}
+		if got := strings.Join(result.SkippedDependencies, "\n"); !strings.Contains(got, "test-cycle-b -> test-cycle-a") ||
+			!strings.Contains(got, "test-self -> test-self") {
+			t.Fatalf("SkippedDependencies = %#v, want cycle and self-dependency details", result.SkippedDependencies)
+		}
+
+		for _, id := range []string{"test-cycle-a", "test-cycle-b", "test-self"} {
+			if _, err := store.GetIssue(ctx, id); err != nil {
+				t.Fatalf("imported issue %s missing: %v", id, err)
+			}
+		}
+		deps, err := store.GetDependencyRecords(ctx, "test-cycle-a")
+		if err != nil {
+			t.Fatalf("GetDependencyRecords(test-cycle-a): %v", err)
+		}
+		if len(deps) != 1 || deps[0].DependsOnID != "test-cycle-b" {
+			t.Fatalf("test-cycle-a deps = %#v, want only test-cycle-a -> test-cycle-b", deps)
+		}
+		for _, id := range []string{"test-cycle-b", "test-self"} {
+			deps, err := store.GetDependencyRecords(ctx, id)
+			if err != nil {
+				t.Fatalf("GetDependencyRecords(%s): %v", id, err)
+			}
+			if len(deps) != 0 {
+				t.Fatalf("%s deps = %#v, want none", id, deps)
+			}
+		}
+	})
+
+	t.Run("skips mixed regular and wisp in-batch dependencies instead of aborting import", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		ctx := context.Background()
+		now := time.Now().UTC()
+		issues := []*types.Issue{
+			{
+				ID:        "test-mixed-regular",
+				Title:     "Regular source",
+				Status:    types.StatusOpen,
+				IssueType: types.TypeTask,
+				Priority:  2,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Dependencies: []*types.Dependency{{
+					DependsOnID: "test-mixed-wisp",
+					Type:        types.DepBlocks,
+				}},
+			},
+			{
+				ID:        "test-mixed-wisp",
+				Title:     "Wisp target",
+				Status:    types.StatusOpen,
+				IssueType: types.TypeTask,
+				Priority:  2,
+				CreatedAt: now,
+				UpdatedAt: now,
+				Ephemeral: true,
+			},
+		}
+
+		result, err := importIssuesCore(ctx, "", store, issues, ImportOptions{SkipPrefixValidation: true})
+		if err != nil {
+			t.Fatalf("importIssuesCore failed: %v", err)
+		}
+		if result.Created != 2 {
+			t.Fatalf("Created = %d, want 2", result.Created)
+		}
+		if got := strings.Join(result.SkippedDependencies, "\n"); !strings.Contains(got, "test-mixed-regular -> test-mixed-wisp") ||
+			!strings.Contains(got, "cross-bucket dependency") {
+			t.Fatalf("SkippedDependencies = %#v, want mixed regular/wisp dependency detail", result.SkippedDependencies)
+		}
+
+		for _, id := range []string{"test-mixed-regular", "test-mixed-wisp"} {
+			if _, err := store.GetIssue(ctx, id); err != nil {
+				t.Fatalf("imported issue %s missing: %v", id, err)
+			}
+		}
+		deps, err := store.GetDependencyRecords(ctx, "test-mixed-regular")
+		if err != nil {
+			t.Fatalf("GetDependencyRecords(test-mixed-regular): %v", err)
+		}
+		if len(deps) != 0 {
+			t.Fatalf("test-mixed-regular deps = %#v, want none", deps)
 		}
 	})
 

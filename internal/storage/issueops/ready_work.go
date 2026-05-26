@@ -21,6 +21,42 @@ type readyWorkPredicates struct {
 	deferredChildIDs []string
 }
 
+type readyWorkOrder struct {
+	sql  string
+	args []interface{}
+}
+
+func readyWorkPageSize(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+	const minPageSize = 100
+	if limit < minPageSize {
+		return minPageSize
+	}
+	return limit
+}
+
+func buildReadyWorkOrder(policy types.SortPolicy) readyWorkOrder {
+	switch policy {
+	case types.SortPolicyOldest:
+		return readyWorkOrder{sql: "ORDER BY created_at ASC, id ASC"}
+	case types.SortPolicyPriority:
+		return readyWorkOrder{sql: "ORDER BY priority ASC, created_at DESC, id ASC"}
+	case types.SortPolicyHybrid, "":
+		recentCutoff := time.Now().UTC().Add(-48 * time.Hour)
+		return readyWorkOrder{
+			sql: `ORDER BY
+			CASE WHEN created_at >= ? THEN 0 ELSE 1 END ASC,
+			CASE WHEN created_at >= ? THEN priority ELSE 999 END ASC,
+			created_at ASC, id ASC`,
+			args: []interface{}{recentCutoff, recentCutoff},
+		}
+	default:
+		return readyWorkOrder{sql: "ORDER BY priority ASC, created_at DESC, id ASC"}
+	}
+}
+
 func buildReadyWorkPredicates(ctx context.Context, tx *sql.Tx, filter types.WorkFilter, tables FilterTables) (*readyWorkPredicates, error) {
 	var statusClause string
 	if filter.Status != "" {
@@ -154,22 +190,8 @@ func buildReadyWorkPredicates(ctx context.Context, tx *sql.Tx, filter types.Work
 
 	whereSQL := "WHERE " + strings.Join(whereClauses, " AND ")
 
-	var orderBySQL string
-	switch filter.SortPolicy {
-	case types.SortPolicyOldest:
-		orderBySQL = "ORDER BY created_at ASC, id ASC"
-	case types.SortPolicyPriority:
-		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
-	case types.SortPolicyHybrid, "":
-		recentCutoff := time.Now().UTC().Add(-48 * time.Hour)
-		orderBySQL = `ORDER BY
-			CASE WHEN created_at >= ? THEN 0 ELSE 1 END ASC,
-			CASE WHEN created_at >= ? THEN priority ELSE 999 END ASC,
-			created_at ASC, id ASC`
-		args = append(args, recentCutoff, recentCutoff)
-	default:
-		orderBySQL = "ORDER BY priority ASC, created_at DESC, id ASC"
-	}
+	orderBy := buildReadyWorkOrder(filter.SortPolicy)
+	args = append(args, orderBy.args...)
 
 	var limitSQL string
 	if filter.Limit > 0 {
@@ -178,7 +200,7 @@ func buildReadyWorkPredicates(ctx context.Context, tx *sql.Tx, filter types.Work
 
 	return &readyWorkPredicates{
 		whereSQL:         whereSQL,
-		orderBySQL:       orderBySQL,
+		orderBySQL:       orderBy.sql,
 		limitSQL:         limitSQL,
 		args:             args,
 		deferredChildIDs: deferredChildIDs,
@@ -266,15 +288,125 @@ func getReadyWispsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilter,
 	}
 
 	wispFilter := readyWorkWispIssueFilter(filter)
-	wispFilter.Limit = 0
-	wisps, err := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables)
-	if err != nil {
-		if isTableNotExistError(err) {
-			return nil, nil
+	if filter.Limit <= 0 {
+		wispFilter.Limit = 0
+		wisps, err := searchTableInTx(ctx, tx, "", wispFilter, WispsFilterTables)
+		if err != nil {
+			if isTableNotExistError(err) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("search wisps (ready work): %w", err)
 		}
-		return nil, fmt.Errorf("search wisps (ready work): %w", err)
+		return filterReadyWispsInTx(ctx, tx, filter, wisps, deferredChildIDs)
 	}
-	return filterReadyWispsInTx(ctx, tx, filter, wisps, deferredChildIDs)
+
+	pageSize := readyWorkPageSize(filter.Limit)
+	orderBy := buildReadyWorkOrder(filter.SortPolicy)
+	ready := make([]*types.Issue, 0, filter.Limit)
+	for offset := 0; len(ready) < filter.Limit; offset += pageSize {
+		pageIDs, err := queryReadyWispIssueIDPage(ctx, tx, wispFilter, !filter.IncludeDeferred, orderBy, pageSize, offset)
+		if err != nil {
+			if isTableNotExistError(err) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("search wisps (ready work): %w", err)
+		}
+		if len(pageIDs) == 0 {
+			break
+		}
+
+		pageWisps, err := getWispIssuesByIDsInOrderInTx(ctx, tx, pageIDs)
+		if err != nil {
+			return nil, fmt.Errorf("search wisps (ready work): %w", err)
+		}
+		pageReady, err := filterReadyWispsInTx(ctx, tx, filter, pageWisps, deferredChildIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, wisp := range pageReady {
+			ready = append(ready, wisp)
+			if len(ready) >= filter.Limit {
+				break
+			}
+		}
+		if len(pageIDs) < pageSize {
+			break
+		}
+	}
+	return ready, nil
+}
+
+func queryReadyWispIssueIDPage(ctx context.Context, tx *sql.Tx, filter types.IssueFilter, excludeDeferred bool, orderBy readyWorkOrder, limit, offset int) ([]string, error) {
+	fromSQL, labelWhere, labelArgs, labelDriven, filterForClauses := buildLabelDrivenSearch(filter, WispsFilterTables)
+	whereClauses, args, err := BuildIssueFilterClauses("", filterForClauses, WispsFilterTables)
+	if err != nil {
+		return nil, err
+	}
+	if len(labelWhere) > 0 {
+		whereClauses = append(labelWhere, whereClauses...)
+		args = append(labelArgs, args...)
+	}
+	if excludeDeferred {
+		whereClauses = append(whereClauses, "(defer_until IS NULL OR defer_until <= UTC_TIMESTAMP())")
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	selectSQL := "SELECT "
+	if labelDriven {
+		selectSQL = "SELECT DISTINCT "
+	}
+	args = append(args, orderBy.args...)
+	//nolint:gosec // G201: SQL fragments are fixed table/column names and parameterized filters; limit/offset are ints.
+	query := fmt.Sprintf(`%sid FROM %s %s %s LIMIT %d OFFSET %d`,
+		selectSQL, fromSQL, whereSQL, orderBy.sql, limit, offset)
+
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search wisps: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("search wisps: scan id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("search wisps: rows: %w", err)
+	}
+	return ids, nil
+}
+
+func getWispIssuesByIDsInOrderInTx(ctx context.Context, tx *sql.Tx, ids []string) ([]*types.Issue, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	wispSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		wispSet[id] = struct{}{}
+	}
+	issues, err := GetIssuesByIDsInTx(ctx, tx, ids, wispSet)
+	if err != nil {
+		return nil, err
+	}
+	issueMap := make(map[string]*types.Issue, len(issues))
+	for _, issue := range issues {
+		issueMap[issue.ID] = issue
+	}
+	ordered := make([]*types.Issue, 0, len(ids))
+	for _, id := range ids {
+		if issue, ok := issueMap[id]; ok {
+			ordered = append(ordered, issue)
+		}
+	}
+	return ordered, nil
 }
 
 func readyWorkExcludeTypes(extra []types.IssueType) []types.IssueType {

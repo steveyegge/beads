@@ -12,11 +12,16 @@ import (
 )
 
 func GetReadyWorkWithCountsInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilter) ([]*types.IssueWithCounts, error) {
+	wispDepsExist, err := optionalTableExistsInTx(ctx, tx, "wisp_dependencies")
+	if err != nil {
+		return nil, fmt.Errorf("get ready work with counts: wisp dependency probe: %w", err)
+	}
+
 	issuePreds, err := buildReadyWorkPredicates(ctx, tx, filter, IssuesFilterTables)
 	if err != nil {
 		return nil, err
 	}
-	out, err := runSearchQueryInTx(ctx, tx, IssuesFilterTables, issuePreds.whereSQL, issuePreds.orderBySQL, issuePreds.limitSQL, issuePreds.args)
+	out, err := runSearchQueryInTx(ctx, tx, IssuesFilterTables, issuePreds.whereSQL, issuePreds.orderBySQL, issuePreds.limitSQL, issuePreds.args, wispDepsExist)
 	if err != nil {
 		return nil, err
 	}
@@ -28,12 +33,15 @@ func GetReadyWorkWithCountsInTx(ctx context.Context, tx *sql.Tx, filter types.Wo
 	if empty {
 		return out, nil
 	}
+	if !wispDepsExist {
+		return out, nil
+	}
 
 	wispPreds, err := buildReadyWorkPredicates(ctx, tx, filter, WispsFilterTables)
 	if err != nil {
 		return nil, err
 	}
-	wisps, err := runSearchQueryInTx(ctx, tx, WispsFilterTables, wispPreds.whereSQL, wispPreds.orderBySQL, wispPreds.limitSQL, wispPreds.args)
+	wisps, err := runSearchQueryInTx(ctx, tx, WispsFilterTables, wispPreds.whereSQL, wispPreds.orderBySQL, wispPreds.limitSQL, wispPreds.args, true)
 	if err != nil {
 		if isTableNotExistError(err) {
 			return out, nil

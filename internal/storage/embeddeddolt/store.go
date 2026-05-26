@@ -28,6 +28,7 @@ var _ storage.StoreLocator = (*EmbeddedDoltStore)(nil)
 var _ storage.GarbageCollector = (*EmbeddedDoltStore)(nil)
 var _ storage.Flattener = (*EmbeddedDoltStore)(nil)
 var _ storage.Compactor = (*EmbeddedDoltStore)(nil)
+var _ storage.SchemaMigrator = (*EmbeddedDoltStore)(nil)
 
 // EmbeddedDoltStore implements storage.DoltStorage backed by the embedded Dolt engine.
 // Each method call opens a short-lived connection, executes within an explicit
@@ -140,6 +141,25 @@ func (s *EmbeddedDoltStore) withConn(ctx context.Context, commit bool, fn func(t
 		return
 	}
 	return
+}
+
+func (s *EmbeddedDoltStore) ApplySchemaMigrations(ctx context.Context) (int, error) {
+	if s.closed.Load() {
+		return 0, errClosed
+	}
+	db, cleanup, err := OpenSQL(ctx, s.dataDir, s.database, s.branch)
+	if err != nil {
+		return 0, fmt.Errorf("embeddeddolt: open db: %w", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("embeddeddolt: pin connection: %w", err)
+	}
+	defer conn.Close()
+
+	return schema.MigrateUp(ctx, conn)
 }
 
 func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {

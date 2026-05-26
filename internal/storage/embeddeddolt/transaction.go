@@ -45,16 +45,26 @@ func (t *embeddedTransaction) CreateIssue(ctx context.Context, issue *types.Issu
 	if err != nil {
 		return err
 	}
-	t.dirty.MarkDirty("issues")
-	t.dirty.MarkDirty("events")
-	return issueops.CreateIssueInTx(ctx, t.tx, bc, issue, actor)
+	result, err := issueops.CreateIssueInTxWithResult(ctx, t.tx, bc, issue, actor)
+	if err != nil {
+		return err
+	}
+	for table := range issueops.CreateIssueDirtyTables(ctx, issue, result) {
+		t.dirty.MarkDirty(table)
+	}
+	return nil
 }
 
 func (t *embeddedTransaction) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
-	for _, issue := range issues {
-		if err := t.CreateIssue(ctx, issue, actor); err != nil {
-			return err
-		}
+	result, err := issueops.CreateIssuesInTxWithResult(ctx, t.tx, issues, actor, storage.BatchCreateOptions{
+		OrphanHandling:       storage.OrphanAllow,
+		SkipPrefixValidation: true,
+	})
+	if err != nil {
+		return err
+	}
+	for table := range issueops.CreateIssuesDirtyTables(ctx, issues, result) {
+		t.dirty.MarkDirty(table)
 	}
 	return nil
 }
@@ -95,11 +105,15 @@ func (t *embeddedTransaction) AddDependency(ctx context.Context, dep *types.Depe
 }
 
 func (t *embeddedTransaction) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, addOpts storage.DependencyAddOptions) error {
-	t.dirty.MarkDirty("dependencies")
-	return issueops.AddDependencyInTx(ctx, t.tx, dep, actor, issueops.AddDependencyOpts{
+	_, _, _, depTable := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, dep.IssueID))
+	if err := issueops.AddDependencyInTx(ctx, t.tx, dep, actor, issueops.AddDependencyOpts{
 		IsCrossPrefix:  types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
 		SkipCycleCheck: addOpts.SkipCycleCheck,
-	})
+	}); err != nil {
+		return err
+	}
+	t.dirty.MarkDirty(depTable)
+	return nil
 }
 
 func (t *embeddedTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
@@ -188,7 +202,12 @@ func (t *embeddedTransaction) CreateIssueImport(ctx context.Context, issue *type
 	if err != nil {
 		return err
 	}
-	t.dirty.MarkDirty("issues")
-	t.dirty.MarkDirty("events")
-	return issueops.CreateIssueInTx(ctx, t.tx, bc, issue, actor)
+	result, err := issueops.CreateIssueInTxWithResult(ctx, t.tx, bc, issue, actor)
+	if err != nil {
+		return err
+	}
+	for table := range issueops.CreateIssueDirtyTables(ctx, issue, result) {
+		t.dirty.MarkDirty(table)
+	}
+	return nil
 }

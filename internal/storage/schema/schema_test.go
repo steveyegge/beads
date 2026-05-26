@@ -152,6 +152,27 @@ func TestMigration0035HandlesLegacyWispDependenciesShape(t *testing.T) {
 	}
 }
 
+func TestMigration0047HandlesLegacyWispDependenciesShape(t *testing.T) {
+	sql, err := os.ReadFile("migrations/0047_recompute_mixed_is_blocked.up.sql")
+	if err != nil {
+		t.Fatalf("read 0047 up migration: %v", err)
+	}
+
+	body := string(sql)
+	for _, want := range []string{
+		"@wisp_dependencies_needs_split",
+		"ALTER TABLE wisp_dependencies ADD COLUMN depends_on_issue_id",
+		"ALTER TABLE wisp_dependencies ADD COLUMN depends_on_wisp_id",
+		"ALTER TABLE wisp_dependencies ADD COLUMN depends_on_id VARCHAR(255) AS",
+		"cd.depends_on_issue_id",
+		"d.depends_on_wisp_id",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("0047 migration missing legacy wisp_dependencies compatibility marker %q", want)
+		}
+	}
+}
+
 func TestStageSchemaTablesSkipsIgnoredTables(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

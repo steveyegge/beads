@@ -314,6 +314,61 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
+	t.Run("fork_auto_contributor", func(t *testing.T) {
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		origin := filepath.Join(dir, "origin.git")
+		upstream := filepath.Join(dir, "upstream.git")
+		for _, bareRepo := range []string{origin, upstream} {
+			if err := os.MkdirAll(bareRepo, 0755); err != nil {
+				t.Fatalf("mkdir %s: %v", bareRepo, err)
+			}
+			cmd := exec.Command("git", "init", "--bare")
+			cmd.Dir = bareRepo
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git init --bare %s failed: %v\n%s", bareRepo, err, out)
+			}
+		}
+		for name, url := range map[string]string{"origin": origin, "upstream": upstream} {
+			cmd := exec.Command("git", "remote", "add", name, url)
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git remote add %s failed: %v\n%s", name, err, out)
+			}
+		}
+
+		out := runBDInit(t, bd, dir, "--prefix", "forkauto")
+		if strings.Contains(out, "Fork detected") {
+			t.Errorf("--quiet should suppress fork auto-routing output, got:\n%s", out)
+		}
+
+		beadsDir := filepath.Join(dir, ".beads")
+		planningDir := filepath.Join(dir, ".beads-planning")
+		if val := readBack(t, beadsDir, "forkauto", "routing.mode", false); val != "auto" {
+			t.Errorf("routing.mode: got %q, want %q", val, "auto")
+		}
+		if val := readBack(t, beadsDir, "forkauto", "routing.contributor", false); val != planningDir {
+			t.Errorf("routing.contributor: got %q, want %q", val, planningDir)
+		}
+		if val := readBack(t, beadsDir, "forkauto", "sync.remote", false); val != "upstream" {
+			t.Errorf("sync.remote: got %q, want %q", val, "upstream")
+		}
+		if _, err := os.Stat(filepath.Join(planningDir, ".beads")); err != nil {
+			t.Errorf("planning .beads missing: %v", err)
+		}
+
+		roleCmd := exec.Command("git", "config", "--get", "beads.role")
+		roleCmd.Dir = dir
+		roleOut, err := roleCmd.Output()
+		if err != nil {
+			t.Fatalf("git config --get beads.role failed: %v", err)
+		}
+		if role := strings.TrimSpace(string(roleOut)); role != "contributor" {
+			t.Errorf("beads.role: got %q, want %q", role, "contributor")
+		}
+	})
+
 	t.Run("prefix_trailing_hyphen", func(t *testing.T) {
 		_, beadsDir, _ := bdInit(t, bd, "--prefix", "test-")
 		if val := readBack(t, beadsDir, "test", "issue_prefix", false); val != "test" {

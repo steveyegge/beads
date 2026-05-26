@@ -235,6 +235,10 @@ type Flattener interface {
 	Flatten(ctx context.Context) error
 }
 
+type SchemaMigrator interface {
+	ApplySchemaMigrations(ctx context.Context) (applied int, err error)
+}
+
 // Compactor squashes old Dolt commits while preserving recent ones.
 // Callers should type-assert to this interface for selective history compaction.
 type Compactor interface {

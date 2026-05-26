@@ -251,7 +251,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 
 		totalReady := len(issues)
 		truncated := false
-		if filter.Limit > 0 && len(issues) == filter.Limit {
+		if !jsonOutput && filter.Limit > 0 && len(issues) == filter.Limit {
 			countFilter := filter
 			countFilter.Limit = 0
 			allIssues, countErr := activeStore.GetReadyWork(ctx, countFilter)

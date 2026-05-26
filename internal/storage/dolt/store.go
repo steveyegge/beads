@@ -149,6 +149,7 @@ var _ storage.PendingCommitter = (*DoltStore)(nil)
 var _ storage.GarbageCollector = (*DoltStore)(nil)
 var _ storage.Flattener = (*DoltStore)(nil)
 var _ storage.Compactor = (*DoltStore)(nil)
+var _ storage.SchemaMigrator = (*DoltStore)(nil)
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
@@ -1095,26 +1096,8 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		autoStartedServerDir: autoStartedDir,
 	}
 
-	// Schema initialization for server mode (idempotent).
-	// Short retry for Dolt "no root value found in session" race: after
-	// CREATE DATABASE, information_schema queries may fail transiently
-	// even though Ping succeeded. This resolves within ~1s.
 	if !cfg.ReadOnly {
-		schemaBO := backoff.NewExponentialBackOff()
-		schemaBO.InitialInterval = 100 * time.Millisecond
-		// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a
-		// contended schema migration can time out once and still retry.
-		schemaBO.MaxElapsedTime = 15 * time.Second
-		if err := backoff.Retry(func() error {
-			schemaErr := store.initSchema(ctx)
-			if schemaErr != nil && isRetryableError(schemaErr) {
-				return schemaErr
-			}
-			if schemaErr != nil {
-				return backoff.Permanent(schemaErr)
-			}
-			return nil
-		}, backoff.WithContext(schemaBO, ctx)); err != nil {
+		if err := store.initSchema(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
 	}
@@ -1473,28 +1456,60 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 
 // initSchemaOnDB applies pending schema migrations. schema.MigrateUp tracks
 // applied versions in schema_migrations and backfills legacy config-driven
-// tables.
-func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
+// tables. Returns the number of migrations applied.
+func initSchemaOnDB(ctx context.Context, db *sql.DB) (int, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("schema: pin connection: %w", err)
+		return 0, fmt.Errorf("schema: pin connection: %w", err)
 	}
 	defer conn.Close()
 
 	var dbName string
 	if err := conn.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&dbName); err != nil {
-		return fmt.Errorf("schema: read database name: %w", err)
+		return 0, fmt.Errorf("schema: read database name: %w", err)
 	}
 
-	if _, err := schema.MigrateUpWithLock(ctx, conn, dbName); err != nil {
-		return fmt.Errorf("schema migration: %w", err)
+	applied, err := schema.MigrateUpWithLock(ctx, conn, dbName)
+	if err != nil {
+		return applied, fmt.Errorf("schema migration: %w", err)
 	}
+	return applied, nil
+}
 
-	return nil
+func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) (int, error) {
+	// Schema initialization for server mode is idempotent. Retry transient
+	// Dolt startup/catalog races and contended migration-lock attempts so
+	// concurrent bd processes converge instead of failing one unlucky waiter.
+	schemaBO := backoff.NewExponentialBackOff()
+	schemaBO.InitialInterval = 100 * time.Millisecond
+	// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a contended
+	// schema migration can time out once and still retry.
+	schemaBO.MaxElapsedTime = serverRetryMaxElapsed
+	var applied int
+	err := backoff.Retry(func() error {
+		var schemaErr error
+		applied, schemaErr = initSchemaOnDB(ctx, db)
+		if schemaErr != nil && isRetryableError(schemaErr) {
+			return schemaErr
+		}
+		if schemaErr != nil {
+			return backoff.Permanent(schemaErr)
+		}
+		return nil
+	}, backoff.WithContext(schemaBO, ctx))
+	return applied, err
 }
 
 func (s *DoltStore) initSchema(ctx context.Context) error {
-	return initSchemaOnDB(ctx, s.db)
+	_, err := initSchemaOnDBWithRetry(ctx, s.db)
+	return err
+}
+
+// ApplySchemaMigrations runs idempotent schema migrations under the
+// per-database advisory lock, with retry for transient lock contention.
+// Implements storage.SchemaMigrator.
+func (s *DoltStore) ApplySchemaMigrations(ctx context.Context) (int, error) {
+	return initSchemaOnDBWithRetry(ctx, s.db)
 }
 
 // IsClosed returns true if the store has been closed.

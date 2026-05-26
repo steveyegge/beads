@@ -37,6 +37,22 @@ func wispsTableEmptyOrMissingInTx(ctx context.Context, tx *sql.Tx) (bool, error)
 	}
 }
 
+//nolint:gosec // table is selected by callers from fixed optional wisp tables.
+func optionalTableExistsInTx(ctx context.Context, tx *sql.Tx, table string) (bool, error) {
+	var probe int
+	err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s LIMIT 1", table)).Scan(&probe)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return true, nil
+	case isTableNotExistError(err):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
 // WispIDSetInTx returns the subset of ids that are currently-active wisps
 // within the tx. The set is consistent for the tx's lifetime (Dolt MVCC).
 // Intended for hot-path partitioning where a batch of IDs must be split

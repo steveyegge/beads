@@ -48,8 +48,39 @@ func NewBatchContext(ctx context.Context, tx *sql.Tx, opts storage.BatchCreateOp
 }
 
 func CreateIssueInTx(ctx context.Context, tx *sql.Tx, bc *BatchContext, issue *types.Issue, actor string) error {
+	_, err := CreateIssueInTxWithResult(ctx, tx, bc, issue, actor)
+	return err
+}
+
+// CreateIssueResult reports the tables actually written by CreateIssueInTx.
+type CreateIssueResult struct {
+	ChangedTables map[string]bool
+}
+
+func (r *CreateIssueResult) markChanged(table string) {
+	if table == "" {
+		return
+	}
+	if r.ChangedTables == nil {
+		r.ChangedTables = map[string]bool{}
+	}
+	r.ChangedTables[table] = true
+}
+
+func mergeChangedTables(dst map[string]bool, src map[string]bool) map[string]bool {
+	for table := range src {
+		if dst == nil {
+			dst = map[string]bool{}
+		}
+		dst[table] = true
+	}
+	return dst
+}
+
+func CreateIssueInTxWithResult(ctx context.Context, tx *sql.Tx, bc *BatchContext, issue *types.Issue, actor string) (CreateIssueResult, error) {
+	var result CreateIssueResult
 	if err := PrepareIssueForInsert(issue, bc.CustomStatuses, bc.CustomTypes); err != nil {
-		return err
+		return result, err
 	}
 
 	issueTable, eventTable := TableRouting(issue)
@@ -66,57 +97,249 @@ func CreateIssueInTx(ctx context.Context, tx *sql.Tx, bc *BatchContext, issue *t
 		var err error
 		issue.ID, err = GenerateIssueIDInTable(ctx, tx, issueTable, prefix, issue, actor)
 		if err != nil {
-			return fmt.Errorf("failed to generate issue ID: %w", err)
+			return result, fmt.Errorf("failed to generate issue ID: %w", err)
 		}
 	} else if !bc.Opts.SkipPrefixValidation {
 		if err := ValidateIssueIDPrefix(issue.ID, bc.ConfigPrefix, bc.AllowedPrefixes); err != nil {
-			return fmt.Errorf("prefix validation failed for %s: %w", issue.ID, err)
+			return result, fmt.Errorf("prefix validation failed for %s: %w", issue.ID, err)
 		}
 	}
 
 	if skip, err := CheckOrphan(ctx, tx, issue, issueTable, bc.Opts.OrphanHandling); err != nil {
-		return err
+		return result, err
 	} else if skip {
-		return nil
+		return result, nil
 	}
 
 	isNew, err := InsertIssueIfNew(ctx, tx, issueTable, issue)
 	if err != nil {
-		return err
+		return result, err
 	}
+	result.markChanged(issueTable)
 
 	if isNew {
 		if err := RecordEventInTable(ctx, tx, eventTable, issue.ID, types.EventCreated, actor, ""); err != nil {
-			return fmt.Errorf("failed to record event for %s: %w", issue.ID, err)
+			return result, fmt.Errorf("failed to record event for %s: %w", issue.ID, err)
 		}
+		result.markChanged(eventTable)
 	}
 
-	if err := PersistLabels(ctx, tx, issue); err != nil {
-		return err
+	labelResult, err := PersistLabels(ctx, tx, issue, actor, eventTable)
+	if err != nil {
+		return result, err
 	}
-	return PersistComments(ctx, tx, issue)
+	result.ChangedTables = mergeChangedTables(result.ChangedTables, labelResult.ChangedTables)
+	commentResult, err := PersistComments(ctx, tx, issue)
+	if err != nil {
+		return result, err
+	}
+	result.ChangedTables = mergeChangedTables(result.ChangedTables, commentResult.ChangedTables)
+	return result, nil
+}
+
+// CreateIssuesResult reports side effects that callers need for selective
+// Dolt staging after CreateIssuesInTxWithResult returns.
+type CreateIssuesResult struct {
+	ChangedTables             map[string]bool
+	ChangedChildCounterTables map[string]bool
+}
+
+func (r *CreateIssuesResult) markChanged(table string) {
+	if table == "" {
+		return
+	}
+	if r.ChangedTables == nil {
+		r.ChangedTables = map[string]bool{}
+	}
+	r.ChangedTables[table] = true
+}
+
+func (r *CreateIssuesResult) merge(changed map[string]bool) {
+	r.ChangedTables = mergeChangedTables(r.ChangedTables, changed)
 }
 
 func CreateIssuesInTx(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
+	_, err := CreateIssuesInTxWithResult(ctx, tx, issues, actor, opts)
+	return err
+}
+
+// CreateIssuesInTxWithResult creates issues and reports tables whose writes are
+// only knowable after SQL reconciliation, such as child counter advances.
+func CreateIssuesInTxWithResult(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) (CreateIssuesResult, error) {
+	filteredIssues, err := filterCreateIssuesMixedBucketDependencies(issues, opts)
+	if err != nil {
+		return CreateIssuesResult{}, err
+	}
+	issues = filteredIssues
+
 	bc, err := NewBatchContext(ctx, tx, opts)
 	if err != nil {
-		return err
+		return CreateIssuesResult{}, err
 	}
 
+	result := CreateIssuesResult{}
 	for _, issue := range issues {
-		if err := CreateIssueInTx(ctx, tx, bc, issue, actor); err != nil {
-			return err
+		issueResult, err := CreateIssueInTxWithResult(ctx, tx, bc, issue, actor)
+		if err != nil {
+			return CreateIssuesResult{}, err
+		}
+		result.merge(issueResult.ChangedTables)
+	}
+
+	depResult, err := PersistDependenciesWithOptionsResult(ctx, tx, issues, actor, opts)
+	if err != nil {
+		return CreateIssuesResult{}, err
+	}
+	result.merge(depResult.ChangedTables)
+
+	changedCounters, err := ReconcileChildCounters(ctx, tx, issues)
+	if err != nil {
+		return CreateIssuesResult{}, err
+	}
+	result.ChangedChildCounterTables = changedCounters
+	for table := range changedCounters {
+		result.markChanged(table)
+	}
+	issueIDs, wispIDs := createBlockedRecomputeIDs(issues)
+	if err := RecomputeIsBlockedInTx(ctx, tx, issueIDs, wispIDs); err != nil {
+		return CreateIssuesResult{}, err
+	}
+	if len(issueIDs) > 0 {
+		result.markChanged("issues")
+	}
+	if len(wispIDs) > 0 {
+		result.markChanged("wisps")
+	}
+	return result, nil
+}
+
+// CreateIssueDirtyTables returns the regular Dolt tables CreateIssueInTx may
+// dirty for the given issue. Wisp tables are intentionally omitted because they
+// are Dolt-ignored and cannot be staged.
+func CreateIssueDirtyTables(ctx context.Context, issue *types.Issue, result CreateIssueResult) map[string]bool {
+	dirty := stageableChangedTables(result.ChangedTables)
+	if issue == nil {
+		return dirty
+	}
+	if parentID, childNum, ok := ParseHierarchicalID(issue.ID); ok &&
+		storage.HasReservedChildCounter(ctx, parentID, childNum) {
+		dirty["child_counters"] = true
+	}
+	return dirty
+}
+
+// CreateIssuesDirtyTables returns the regular Dolt tables CreateIssuesInTx may
+// dirty, including child counters that reconciliation actually advanced.
+func CreateIssuesDirtyTables(ctx context.Context, issues []*types.Issue, result CreateIssuesResult) map[string]bool {
+	dirty := stageableChangedTables(result.ChangedTables)
+	for _, issue := range issues {
+		if issue == nil {
+			continue
+		}
+		if parentID, childNum, ok := ParseHierarchicalID(issue.ID); ok &&
+			storage.HasReservedChildCounter(ctx, parentID, childNum) {
+			dirty["child_counters"] = true
 		}
 	}
+	return dirty
+}
 
-	if err := PersistDependencies(ctx, tx, issues, actor); err != nil {
-		return err
+func stageableChangedTables(changed map[string]bool) map[string]bool {
+	dirty := map[string]bool{}
+	for table := range changed {
+		if table == "wisps" || strings.HasPrefix(table, "wisp_") {
+			continue
+		}
+		dirty[table] = true
+	}
+	return dirty
+}
+
+// ValidateCreateIssuesMixedBucketDependencies rejects same-batch dependency
+// edges between regular issues and wisps. Dependencies are stored in separate
+// backing tables per bucket, so a batch cannot create both ends atomically when
+// the edge crosses buckets.
+func ValidateCreateIssuesMixedBucketDependencies(issues []*types.Issue) error {
+	_, err := filterCreateIssuesMixedBucketDependencies(issues, storage.BatchCreateOptions{})
+	return err
+}
+
+func filterCreateIssuesMixedBucketDependencies(issues []*types.Issue, opts storage.BatchCreateOptions) ([]*types.Issue, error) {
+	batchWispByID := make(map[string]bool, len(issues))
+	hasRegular := false
+	hasWisp := false
+	for _, issue := range issues {
+		if issue == nil {
+			continue
+		}
+		isWisp := IsWisp(issue)
+		if isWisp {
+			hasWisp = true
+		} else {
+			hasRegular = true
+		}
+		if issue.ID != "" {
+			batchWispByID[issue.ID] = isWisp
+		}
+	}
+	if !hasRegular || !hasWisp {
+		return issues, nil
 	}
 
-	if err := ReconcileChildCounters(ctx, tx, issues); err != nil {
-		return err
+	var filteredIssues []*types.Issue
+	for issueIndex, issue := range issues {
+		if issue == nil {
+			continue
+		}
+		var keptDeps []*types.Dependency
+		filteredDeps := false
+		for depIndex, dep := range issue.Dependencies {
+			if dep == nil {
+				if filteredDeps {
+					keptDeps = append(keptDeps, dep)
+				}
+				continue
+			}
+			sourceID := issue.ID
+			sourceIsWisp := IsWisp(issue)
+			if dep.IssueID != "" {
+				sourceID = dep.IssueID
+				if isWisp, ok := batchWispByID[sourceID]; ok {
+					sourceIsWisp = isWisp
+				}
+			}
+			targetIsWisp, targetInBatch := batchWispByID[dep.DependsOnID]
+			if targetInBatch && sourceIsWisp != targetIsWisp {
+				if !opts.SkipDependencyValidationErrors {
+					return nil, fmt.Errorf("mixed regular/wisp CreateIssues batch cannot include cross-bucket dependency %s -> %s; create the issues first, then add the in-batch dependency after both issues exist", sourceID, dep.DependsOnID)
+				}
+				if !filteredDeps {
+					keptDeps = append([]*types.Dependency(nil), issue.Dependencies[:depIndex]...)
+					filteredDeps = true
+				}
+				recordSkippedDependencyEdge(opts, sourceID, dep.DependsOnID, "cross-bucket dependency between regular issue and wisp in the same batch")
+				continue
+			}
+			if filteredDeps {
+				keptDeps = append(keptDeps, dep)
+			}
+		}
+		if filteredDeps {
+			if filteredIssues == nil {
+				filteredIssues = append([]*types.Issue(nil), issues...)
+			}
+			issueCopy := *issue
+			issueCopy.Dependencies = keptDeps
+			filteredIssues[issueIndex] = &issueCopy
+		}
 	}
+	if filteredIssues != nil {
+		return filteredIssues, nil
+	}
+	return issues, nil
+}
 
+func createBlockedRecomputeIDs(issues []*types.Issue) ([]string, []string) {
 	issueSeen := make(map[string]bool, len(issues))
 	wispSeen := make(map[string]bool, len(issues))
 	issueIDs := make([]string, 0, len(issues))
@@ -144,6 +367,9 @@ func CreateIssuesInTx(ctx context.Context, tx *sql.Tx, issues []*types.Issue, ac
 		isWisp := IsWisp(issue)
 		add(issue.ID, isWisp)
 		for _, dep := range issue.Dependencies {
+			if dep == nil {
+				continue
+			}
 			src := dep.IssueID
 			if src == "" {
 				src = issue.ID
@@ -151,7 +377,7 @@ func CreateIssuesInTx(ctx context.Context, tx *sql.Tx, issues []*types.Issue, ac
 			add(src, isWisp)
 		}
 	}
-	return RecomputeIsBlockedInTx(ctx, tx, issueIDs, wispIDs)
+	return issueIDs, wispIDs
 }
 
 // PrepareIssueForInsert normalizes timestamps, validates, and computes the content hash.
@@ -283,31 +509,54 @@ func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue 
 	return existingCount == 0, nil
 }
 
-func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
+func PersistLabels(ctx context.Context, tx *sql.Tx, issue *types.Issue, actor, eventTable string) (CreateIssueResult, error) {
+	var result CreateIssueResult
 	if len(issue.Labels) == 0 {
-		return nil
+		return result, nil
 	}
 	labelTable := "labels"
 	if IsWisp(issue) {
 		labelTable = "wisp_labels"
 	}
+	seen := make(map[string]struct{}, len(issue.Labels))
 	for _, label := range issue.Labels {
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
 		//nolint:gosec // G201: table is determined by ephemeral flag
-		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO %s (issue_id, label)
+		sqlResult, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT IGNORE INTO %s (issue_id, label)
 			VALUES (?, ?)
-			ON DUPLICATE KEY UPDATE label = label
 		`, labelTable), issue.ID, label)
 		if err != nil {
-			return fmt.Errorf("failed to insert label %q for %s: %w", label, issue.ID, err)
+			return result, fmt.Errorf("failed to insert label %q for %s: %w", label, issue.ID, err)
 		}
+		rowsAffected, err := sqlResult.RowsAffected()
+		if err != nil {
+			return result, fmt.Errorf("failed to check label insert result for %q on %s: %w", label, issue.ID, err)
+		}
+		if rowsAffected == 0 {
+			continue
+		}
+		result.markChanged(labelTable)
+		comment := "Added label: " + label
+		//nolint:gosec // G201: eventTable is determined by ephemeral flag
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s (issue_id, event_type, actor, comment)
+			VALUES (?, ?, ?, ?)
+		`, eventTable), issue.ID, types.EventLabelAdded, actor, comment); err != nil {
+			return result, fmt.Errorf("failed to record label event %q for %s: %w", label, issue.ID, err)
+		}
+		result.markChanged(eventTable)
 	}
-	return nil
+	return result, nil
 }
 
-func PersistComments(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
+func PersistComments(ctx context.Context, tx *sql.Tx, issue *types.Issue) (CreateIssueResult, error) {
+	var result CreateIssueResult
 	if len(issue.Comments) == 0 {
-		return nil
+		return result, nil
 	}
 	commentTable := "comments"
 	if IsWisp(issue) {
@@ -324,10 +573,10 @@ func PersistComments(ctx context.Context, tx *sql.Tx, issue *types.Issue) error 
 		var exists int
 		//nolint:gosec // G201: table is determined by ephemeral flag
 		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
-			SELECT COUNT(*) FROM %s
-			WHERE issue_id = ? AND author = ? AND created_at = ? AND text = ?
-		`, commentTable), issue.ID, comment.Author, createdAt, comment.Text).Scan(&exists); err != nil {
-			return fmt.Errorf("failed to check comment existence for %s: %w", issue.ID, err)
+				SELECT COUNT(*) FROM %s
+				WHERE issue_id = ? AND author = ? AND created_at = ? AND text = ?
+			`, commentTable), issue.ID, comment.Author, createdAt, comment.Text).Scan(&exists); err != nil {
+			return result, fmt.Errorf("failed to check comment existence for %s: %w", issue.ID, err)
 		}
 		if exists > 0 {
 			continue
@@ -343,13 +592,24 @@ func PersistComments(ctx context.Context, tx *sql.Tx, issue *types.Issue) error 
 			VALUES (?, ?, ?, ?, ?)
 		`, commentTable), commentID, issue.ID, comment.Author, comment.Text, createdAt)
 		if err != nil {
-			return fmt.Errorf("failed to insert comment for %s: %w", issue.ID, err)
+			return result, fmt.Errorf("failed to insert comment for %s: %w", issue.ID, err)
 		}
+		result.markChanged(commentTable)
 	}
-	return nil
+	return result, nil
 }
 
 func PersistDependencies(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string) error {
+	_, err := PersistDependenciesWithResult(ctx, tx, issues, actor)
+	return err
+}
+
+func PersistDependenciesWithResult(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string) (CreateIssueResult, error) {
+	return PersistDependenciesWithOptionsResult(ctx, tx, issues, actor, storage.BatchCreateOptions{})
+}
+
+func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) (CreateIssueResult, error) {
+	var result CreateIssueResult
 	for _, issue := range issues {
 		if len(issue.Dependencies) == 0 {
 			continue
@@ -377,8 +637,20 @@ func PersistDependencies(ctx context.Context, tx *sql.Tx, issues []*types.Issue,
 				if err := tx.QueryRowContext(ctx,
 					fmt.Sprintf("SELECT 1 FROM %s WHERE id = ?", lookupTable),
 					dep.DependsOnID).Scan(&exists); err != nil {
+					if err == sql.ErrNoRows {
+						recordSkippedDependency(opts, dep, "target not found")
+						continue
+					}
+					return result, fmt.Errorf("failed to check dependency target %s for %s: %w", dep.DependsOnID, dep.IssueID, err)
+				}
+			}
+
+			if err := CheckDependencyCycleInTx(ctx, tx, dep, nil); err != nil {
+				if opts.SkipDependencyValidationErrors {
+					recordSkippedDependency(opts, dep, err.Error())
 					continue
 				}
+				return result, fmt.Errorf("invalid dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 			}
 
 			createdAt := dep.CreatedAt
@@ -386,28 +658,53 @@ func PersistDependencies(ctx context.Context, tx *sql.Tx, issues []*types.Issue,
 				createdAt = time.Now().UTC()
 			}
 			//nolint:gosec // G201: depTable is one of two hardcoded constants; target column from DepTargetKind.Column()
-			_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-				INSERT INTO %s (issue_id, %s, type, created_by, created_at)
-				VALUES (?, ?, ?, ?, ?)
-				ON DUPLICATE KEY UPDATE type = type
-			`, depTable, kind.Column()), dep.IssueID, dep.DependsOnID, dep.Type, actor, createdAt)
+			sqlResult, err := tx.ExecContext(ctx, fmt.Sprintf(`
+					INSERT INTO %s (issue_id, %s, type, created_by, created_at)
+					VALUES (?, ?, ?, ?, ?)
+					ON DUPLICATE KEY UPDATE type = type
+				`, depTable, kind.Column()), dep.IssueID, dep.DependsOnID, dep.Type, actor, createdAt)
 			if err != nil {
-				return fmt.Errorf("failed to insert dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+				return result, fmt.Errorf("failed to insert dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+			}
+			rowsAffected, err := sqlResult.RowsAffected()
+			if err != nil {
+				return result, fmt.Errorf("failed to check dependency insert result for %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
+			}
+			if rowsAffected > 0 {
+				result.markChanged(depTable)
 			}
 		}
 	}
-	return nil
+	return result, nil
 }
 
-func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Issue) error {
+func recordSkippedDependency(opts storage.BatchCreateOptions, dep *types.Dependency, reason string) {
+	if dep == nil {
+		return
+	}
+	recordSkippedDependencyEdge(opts, dep.IssueID, dep.DependsOnID, reason)
+}
+
+func recordSkippedDependencyEdge(opts storage.BatchCreateOptions, issueID, dependsOnID, reason string) {
+	if opts.OnSkippedDependency == nil {
+		return
+	}
+	opts.OnSkippedDependency(issueID, dependsOnID, reason)
+}
+
+func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Issue) (map[string]bool, error) {
 	type bucket struct {
 		maxChild int
 		isWisp   bool
 		known    bool
 	}
 	parents := make(map[string]*bucket)
+	var changed map[string]bool
 
 	for _, issue := range issues {
+		if issue == nil {
+			continue
+		}
 		if IsWisp(issue) {
 			if b, ok := parents[issue.ID]; ok {
 				b.isWisp, b.known = true, true
@@ -418,6 +715,9 @@ func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Iss
 	}
 
 	for _, issue := range issues {
+		if issue == nil {
+			continue
+		}
 		parentID, childNum, ok := ParseHierarchicalID(issue.ID)
 		if !ok {
 			continue
@@ -443,13 +743,28 @@ func ReconcileChildCounters(ctx context.Context, tx *sql.Tx, issues []*types.Iss
 		if b.isWisp {
 			table = "wisp_child_counters"
 		}
+		var current int
+		//nolint:gosec // G201: table is one of two hardcoded constants.
+		err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+			SELECT last_child FROM %s WHERE parent_id = ?
+		`, table), parentID).Scan(&current)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("failed to read child counter for %s: %w", parentID, err)
+		}
+		if err == nil && current >= b.maxChild {
+			continue
+		}
 		//nolint:gosec // G201: table is one of two hardcoded constants.
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO %s (parent_id, last_child) VALUES (?, ?)
 			ON DUPLICATE KEY UPDATE last_child = GREATEST(last_child, ?)
 		`, table), parentID, b.maxChild, b.maxChild); err != nil {
-			return fmt.Errorf("failed to reconcile child counter for %s: %w", parentID, err)
+			return nil, fmt.Errorf("failed to reconcile child counter for %s: %w", parentID, err)
 		}
+		if changed == nil {
+			changed = map[string]bool{}
+		}
+		changed[table] = true
 	}
-	return nil
+	return changed, nil
 }

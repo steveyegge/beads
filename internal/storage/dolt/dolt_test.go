@@ -39,6 +39,18 @@ func acquireTestSlot() { testSem <- struct{}{} }
 // releaseTestSlot returns a semaphore slot.
 func releaseTestSlot() { <-testSem }
 
+func acquireAllTestSlots() {
+	for i := 0; i < cap(testSem); i++ {
+		acquireTestSlot()
+	}
+}
+
+func releaseAllTestSlots() {
+	for i := 0; i < cap(testSem); i++ {
+		releaseTestSlot()
+	}
+}
+
 // testContext returns a context with timeout for test operations
 func testContext(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()
@@ -113,7 +125,7 @@ func setupTestStore(t *testing.T) (*DoltStore, func()) {
 
 	// Create an isolated branch for this test
 	_, branchCleanup := testutil.StartTestBranch(t, store.db, testSharedDB)
-	if err := initSchemaOnDB(ctx, store.db); err != nil {
+	if _, err := initSchemaOnDB(ctx, store.db); err != nil {
 		branchCleanup()
 		store.Close()
 		os.RemoveAll(tmpDir)

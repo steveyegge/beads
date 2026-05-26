@@ -435,7 +435,7 @@ func (w *workspace) snapshot(listArgs ...string) string {
 		if !ok || id == "" {
 			continue
 		}
-		showOut := w.run("show", id, "--json")
+		showOut := w.showJSONForSnapshot(id)
 
 		// bd show --json may return a JSON array or single object
 		var showArr []map[string]any
@@ -451,6 +451,18 @@ func (w *workspace) snapshot(listArgs ...string) string {
 		w.t.Logf("WARNING: snapshot: bd show %s returned unparseable JSON: %s", id, showOut)
 	}
 	return buf.String()
+}
+
+func (w *workspace) showJSONForSnapshot(id string) string {
+	args := []string{"show", id, "--json"}
+	if w.supportsStreamedShowPayloads() {
+		args = append(args, "--include-dependents", "--include-comments")
+	}
+	return w.run(args...)
+}
+
+func (w *workspace) supportsStreamedShowPayloads() bool {
+	return candidateBin != "" && w.bdPath == candidateBin
 }
 
 // export returns a JSONL snapshot of the workspace. This replaces the removed
@@ -618,14 +630,11 @@ func normalizeIssue(m map[string]any) {
 	}
 
 	// normalizeDepSubobject strips volatile/internal fields from a dependency
-	// or dependent sub-object as returned by bd show --json.
+	// or dependent sub-object as returned by bd show --json. The candidate's
+	// streamed show payload intentionally returns shallow related issues, while
+	// the old baseline export included deeper issue fields. Compare the stable
+	// relationship identity, not the nested issue's full payload.
 	normalizeDepSubobject := func(dm map[string]any) {
-		delete(dm, "created_at")
-		delete(dm, "updated_at")
-		delete(dm, "closed_at")
-		delete(dm, "close_reason")
-		delete(dm, "thread_id")
-		delete(dm, "created_by")
 		// Normalize dependency_type → type
 		if dt, ok := dm["dependency_type"]; ok {
 			if _, hasType := dm["type"]; !hasType {
@@ -637,6 +646,22 @@ func normalizeIssue(m map[string]any) {
 		if md, ok := dm["metadata"]; ok {
 			if mdStr, _ := md.(string); mdStr == "" || mdStr == "{}" {
 				delete(dm, "metadata")
+			}
+		}
+		keep := map[string]bool{
+			"id":            true,
+			"issue_id":      true,
+			"depends_on_id": true,
+			"title":         true,
+			"status":        true,
+			"issue_type":    true,
+			"priority":      true,
+			"type":          true,
+			"metadata":      true,
+		}
+		for k := range dm {
+			if !keep[k] {
+				delete(dm, k)
 			}
 		}
 	}
