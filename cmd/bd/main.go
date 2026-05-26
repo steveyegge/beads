@@ -1109,16 +1109,19 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Auto-backup: export JSONL to .beads/backup/ if enabled and due
-		maybeAutoBackup(rootCtx)
-
-		// Auto-export: write git-tracked JSONL for portability if enabled and due
-		maybeAutoExport(rootCtx)
-
-		// Auto-push: push to Dolt remote if enabled and due.
-		// Skip for read-only commands to avoid unnecessary network operations
-		// and metadata writes on commands like bd list/show/ready (GH#2191).
+		// Auto-backup, auto-export, auto-push: skip for read-only commands.
+		// These post-run maintenance tasks issue extra round trips (GetCurrentCommit,
+		// SearchIssues for export, etc.) that bloat a "free" bd list/show/ready
+		// against a remote Dolt server by ~1s. They make sense after mutations,
+		// not after pure reads, since a read can't have produced data to back up.
 		if !isReadOnlyCommand(cmd.Name()) {
+			// Auto-backup: export JSONL to .beads/backup/ if enabled and due
+			maybeAutoBackup(rootCtx)
+
+			// Auto-export: write git-tracked JSONL for portability if enabled and due
+			maybeAutoExport(rootCtx)
+
+			// Auto-push: push to Dolt remote if enabled and due.
 			maybeAutoPush(rootCtx)
 		}
 
