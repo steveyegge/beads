@@ -670,34 +670,6 @@ func (s *configStore) IterWisps(_ context.Context, _ types.WispFilter) (storage.
 
 func (s *configStore) Close() error { return nil }
 
-func (s *configStore) IterIssues(_ context.Context, _ string, _ types.IssueFilter) (storage.Iter[types.Issue], error) {
-	return storage.NewSliceIter[types.Issue](nil), nil
-}
-func (s *configStore) IterDependentsWithMetadata(_ context.Context, _ string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
-	return storage.NewSliceIter[types.IssueWithDependencyMetadata](nil), nil
-}
-func (s *configStore) IterDependenciesWithMetadata(_ context.Context, _ string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
-	return storage.NewSliceIter[types.IssueWithDependencyMetadata](nil), nil
-}
-func (s *configStore) IterIssueComments(_ context.Context, _ string) (storage.Iter[types.Comment], error) {
-	return storage.NewSliceIter[types.Comment](nil), nil
-}
-func (s *configStore) IterEvents(_ context.Context, _ string, _ int) (storage.Iter[types.Event], error) {
-	return storage.NewSliceIter[types.Event](nil), nil
-}
-func (s *configStore) IterAllEventsSince(_ context.Context, _ time.Time) (storage.Iter[types.Event], error) {
-	return storage.NewSliceIter[types.Event](nil), nil
-}
-func (s *configStore) IterReadyWork(_ context.Context, _ types.WorkFilter) (storage.Iter[types.Issue], error) {
-	return storage.NewSliceIter[types.Issue](nil), nil
-}
-func (s *configStore) IterBlockedIssues(_ context.Context, _ types.WorkFilter) (storage.Iter[types.BlockedIssue], error) {
-	return storage.NewSliceIter[types.BlockedIssue](nil), nil
-}
-func (s *configStore) IterWisps(_ context.Context, _ types.WispFilter) (storage.Iter[types.Issue], error) {
-	return storage.NewSliceIter[types.Issue](nil), nil
-}
-
 func TestFetchIssuesIncludesPullJQLInQuery(t *testing.T) {
 	var capturedJQL string
 
