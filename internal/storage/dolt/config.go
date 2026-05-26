@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
@@ -34,7 +35,10 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 		return err
 	}
 
-	// Invalidate caches for keys that affect cached data
+	// Invalidate caches for keys that affect cached data. The all-config
+	// cache is also invalidated on every SetConfig because keys outside the
+	// switch list above (routing.*, contributor.*, custom.*) are read via
+	// GetAllConfig from the routing module.
 	s.cacheMu.Lock()
 	switch key {
 	case "status.custom":
@@ -48,6 +52,8 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 		s.infraTypeCached = false
 		s.infraTypeCache = nil
 	}
+	s.allConfigCached = false
+	s.allConfigCache = nil
 	s.cacheMu.Unlock()
 
 	// Rebuild status views when custom statuses change
@@ -71,8 +77,135 @@ func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 	return value, err
 }
 
-// GetAllConfig retrieves all configuration values
+// preloadSessionCaches warms the per-store caches that bd list / show /
+// ready would otherwise populate via separate round trips on every command.
+// Best-effort: any failure leaves the caches cold and the lazy loaders take
+// over. Designed to be called once, from newServerMode, on a freshly
+// established connection — adds at most one round trip up front in exchange
+// for eliminating ~4-6 round trips spread across the rest of the command.
+//
+// Caches populated:
+//   - allConfigCache (every config key/value pair)
+//   - customStatusCache + customStatusDetailedCache (derived from
+//     status.custom config string, matching the resolver's fallback path)
+//   - customTypeCache (derived from types.custom)
+//   - infraTypeCache (derived from types.infra, default list otherwise)
+//   - wispsStateKnown / wispsEmpty (cheap existence probe used to skip
+//     the per-SearchIssues wisps probe)
+//
+// The custom-status / custom-type derivations skip the normalized
+// custom_statuses / custom_types tables on purpose: those tables are kept
+// in sync with the config strings by SetConfig + SyncCustomStatusesTable,
+// and reading from the config string saves us another round trip without
+// changing the resolved value in normal operation.
+func (s *DoltStore) preloadSessionCaches(ctx context.Context) {
+	// Use the raw conn helper (no BEGIN/ROLLBACK) and send both queries as
+	// a single multi-statement payload — server processes them back-to-back
+	// in one round trip.
+	_ = s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
+		rows, err := q.QueryContext(ctx,
+			"SELECT `key`, value FROM config; "+
+				"SELECT 1 FROM wisps LIMIT 1")
+		if err != nil {
+			// Most likely: a pre-migration database without the config or
+			// wisps table. Leave caches cold and let the lazy loaders cope.
+			return nil
+		}
+		defer rows.Close()
+
+		// --- result set 1: config table ---
+		all := make(map[string]string)
+		for rows.Next() {
+			var k, v sql.NullString
+			if scanErr := rows.Scan(&k, &v); scanErr == nil && k.Valid {
+				all[k.String] = v.String
+			}
+		}
+
+		// --- result set 2: wisps probe (may not exist on old schemas) ---
+		wispsEmpty := true
+		if rows.NextResultSet() {
+			if rows.Next() {
+				wispsEmpty = false // at least one row → not empty
+			}
+		} else {
+			// Driver reported no next set — usually means the wisps query
+			// errored. Treat as missing/empty so we still skip the probe.
+			wispsEmpty = true
+		}
+
+		s.cacheMu.Lock()
+		s.allConfigCache = all
+		s.allConfigCached = true
+
+		// Custom statuses (derive from status.custom string)
+		if v := all["status.custom"]; v != "" {
+			if parsed, perr := types.ParseCustomStatusConfig(v); perr == nil {
+				s.customStatusDetailedCache = parsed
+				s.customStatusCache = types.CustomStatusNames(parsed)
+			}
+		}
+		s.customStatusCached = true
+
+		// Custom types (derive from types.custom string)
+		if v := all["types.custom"]; v != "" {
+			s.customTypeCache = parseCommaListFromConfig(v)
+		}
+		s.customTypeCached = true
+
+		// Infra types (derive from types.infra string, default list otherwise)
+		var infraList []string
+		if v := all["types.infra"]; v != "" {
+			infraList = parseCommaListFromConfig(v)
+		} else {
+			infraList = storage.DefaultInfraTypes()
+		}
+		m := make(map[string]bool, len(infraList))
+		for _, t := range infraList {
+			if t = strings.TrimSpace(t); t != "" {
+				m[t] = true
+			}
+		}
+		s.infraTypeCache = m
+		s.infraTypeCached = true
+
+		// Wisps existence
+		s.wispsEmpty = wispsEmpty
+		s.wispsStateKnown = true
+		s.cacheMu.Unlock()
+		return nil
+	})
+}
+
+// parseCommaListFromConfig splits a comma-separated config value into trimmed
+// non-empty entries. Mirrors the helper in issueops without importing it.
+func parseCommaListFromConfig(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// GetAllConfig retrieves all configuration values. Honors the per-store
+// cache populated by preloadSessionCaches so the routing module and other
+// repeat callers do not incur a round trip after store-open.
 func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error) {
+	s.cacheMu.Lock()
+	if s.allConfigCached {
+		// Copy so callers can mutate without poisoning the cache.
+		out := make(map[string]string, len(s.allConfigCache))
+		for k, v := range s.allConfigCache {
+			out[k] = v
+		}
+		s.cacheMu.Unlock()
+		return out, nil
+	}
+	s.cacheMu.Unlock()
+
 	var result map[string]string
 	err := s.withReadConn(ctx, func(q issueops.SQLQuerier) error {
 		var err error
@@ -84,9 +217,16 @@ func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error)
 
 // DeleteConfig removes a configuration value
 func (s *DoltStore) DeleteConfig(ctx context.Context, key string) error {
-	return s.withRetryTx(ctx, func(tx *sql.Tx) error {
+	err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
 		return issueops.DeleteConfigInTx(ctx, tx, key)
 	})
+	if err == nil {
+		s.cacheMu.Lock()
+		s.allConfigCached = false
+		s.allConfigCache = nil
+		s.cacheMu.Unlock()
+	}
+	return err
 }
 
 // SetMetadata sets a metadata value

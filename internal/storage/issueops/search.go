@@ -9,6 +9,18 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// SearchIssuesNonWispInTx runs a filtered search against the issues table only,
+// skipping the wisps merge step. Callers that already know the wisps table is
+// empty or missing (e.g. via a session-scoped cache) can use this to save one
+// round trip per search on high-latency remote connections.
+func SearchIssuesNonWispInTx(ctx context.Context, tx *sql.Tx, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	results, err := searchTableInTx(ctx, tx, query, filter, IssuesFilterTables)
+	if err != nil {
+		return nil, fmt.Errorf("search issues: %w", err)
+	}
+	return results, nil
+}
+
 // SearchIssuesInTx executes a filtered issue search within an existing transaction.
 // It queries the issues table, optionally merges wisps, and returns hydrated issues
 // with labels populated.
