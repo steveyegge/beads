@@ -45,6 +45,10 @@ func (d ServerDSN) String() string {
 		MultiStatements:      true,
 		Timeout:              timeout,
 		AllowNativePasswords: true,
+		// Client-side param substitution avoids a COM_STMT_PREPARE round trip
+		// per parameterized query. On high-latency links this halves the cost
+		// of a typical SELECT … WHERE k = ? from 2 RTT to 1 RTT.
+		InterpolateParams: true,
 	}
 	if d.TLS {
 		cfg.TLSConfig = "true"
