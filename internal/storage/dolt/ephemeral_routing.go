@@ -191,6 +191,7 @@ func (s *DoltStore) PromoteFromEphemeral(ctx context.Context, id string, actor s
 	}); err != nil {
 		return err
 	}
+	s.invalidateWispCountCache()
 	return nil
 }
 
