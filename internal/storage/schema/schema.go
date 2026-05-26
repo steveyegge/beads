@@ -76,6 +76,22 @@ func LatestIgnoredVersion() int {
 	return latestIgnoredVer
 }
 
+func CurrentVersion(ctx context.Context, db DBConn) (int, error) {
+	return mainSource.currentVersion(ctx, db)
+}
+
+func CurrentIgnoredVersion(ctx context.Context, db DBConn) (int, error) {
+	return ignoredSource.currentVersion(ctx, db)
+}
+
+func PendingVersions(ctx context.Context, db DBConn) ([]int, error) {
+	return mainSource.pendingVersions(ctx, db)
+}
+
+func PendingIgnoredVersions(ctx context.Context, db DBConn) ([]int, error) {
+	return ignoredSource.pendingVersions(ctx, db)
+}
+
 func AllMigrationsSQL() string {
 	var b strings.Builder
 	b.WriteString(mainSource.bootstrapSQL())
@@ -112,14 +128,9 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration status: %w", err)
 	}
-	// Schema migration needs a clean staged set so the migration commit
-	// contains only schema-owned tables. Pre-existing staged tables are reset
-	// here and left dirty but unstaged; dirtyTableSignatures below preserves
-	// their data state and rejects unexpected content changes.
 	if err := unstagePreExistingTables(ctx, db, dirtyBeforeAll); err != nil {
 		return 0, fmt.Errorf("unstaging pre-migration tables: %w", err)
 	}
-
 	dirtyBefore, err := committableDirtyTables(ctx, db)
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration status: %w", err)
@@ -559,6 +570,21 @@ func (m migrationSource) currentVersion(ctx context.Context, db DBConn) (int, er
 		return 0, nil
 	}
 	return 0, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
+}
+
+func (m migrationSource) pendingVersions(ctx context.Context, db DBConn) ([]int, error) {
+	current, err := m.currentVersion(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	files := m.list()
+	pending := make([]int, 0, len(files))
+	for _, mf := range files {
+		if mf.version > current {
+			pending = append(pending, mf.version)
+		}
+	}
+	return pending, nil
 }
 
 func (m migrationSource) pendingMigrationDirtyTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) ([]string, error) {
