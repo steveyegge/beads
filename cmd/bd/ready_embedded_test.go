@@ -16,6 +16,23 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+func bdReadyJSON(t *testing.T, bd, dir string, args ...string) []*types.IssueWithCounts {
+	t.Helper()
+	fullArgs := append([]string{"ready", "--json"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd ready --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	var issues []*types.IssueWithCounts
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &issues); err != nil {
+		t.Fatalf("parse bd ready --json %s: %v\n%s", strings.Join(args, " "), err, stdout.String())
+	}
+	return issues
+}
+
 func TestEmbeddedReady(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -229,6 +246,68 @@ func TestEmbeddedReady(t *testing.T) {
 		out2, err2 := cmd2.CombinedOutput()
 		if err2 == nil {
 			t.Fatalf("second bd ready (no -C) should have failed in tmpDir, got: %s", out2)
+		}
+	})
+}
+
+func TestEmbeddedReadyJSONSemantics(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "rj")
+
+	blocker := bdCreate(t, bd, dir, "Ready JSON blocker", "--type", "task")
+	blocked := bdCreate(t, bd, dir, "Ready JSON blocked", "--type", "task")
+	ready := bdCreate(t, bd, dir, "Ready JSON control", "--type", "task")
+	bdDepAdd(t, bd, dir, blocked.ID, blocker.ID)
+
+	t.Run("json_excludes_blocked", func(t *testing.T) {
+		issues := bdReadyJSON(t, bd, dir, "--limit", "0")
+		ids := listIssueIDs(issues)
+		if containsID(issues, blocked.ID) {
+			t.Fatalf("bd ready --json included blocked issue %s: %v", blocked.ID, ids)
+		}
+		if !containsID(issues, ready.ID) {
+			t.Fatalf("bd ready --json missing ready issue %s: %v", ready.ID, ids)
+		}
+	})
+
+	t.Run("list_ready_parity", func(t *testing.T) {
+		readyIDs := listIssueIDs(bdReadyJSON(t, bd, dir, "--limit", "0"))
+		listIDs := listIssueIDs(bdListJSON(t, bd, dir, "--ready", "--limit", "0"))
+		if fmt.Sprint(readyIDs) != fmt.Sprint(listIDs) {
+			t.Fatalf("bd ready --json and bd list --ready differ:\nready: %v\nlist:  %v", readyIDs, listIDs)
+		}
+	})
+
+	t.Run("global_limit_after_issue_wisp_merge", func(t *testing.T) {
+		bdCreate(t, bd, dir, "Ready JSON low priority issue", "--type", "task", "--priority", "4")
+		highWisp := bdCreate(t, bd, dir, "Ready JSON high priority wisp", "--type", "task", "--priority", "0", "--no-history")
+
+		issues := bdReadyJSON(t, bd, dir, "--sort", "priority", "--limit", "1")
+		if len(issues) != 1 {
+			t.Fatalf("bd ready --json --limit 1 returned %d issues: %v", len(issues), listIssueIDs(issues))
+		}
+		if issues[0].ID != highWisp.ID {
+			t.Fatalf("bd ready --json limited ID = %s, want high-priority wisp %s (all %v)", issues[0].ID, highWisp.ID, listIssueIDs(issues))
+		}
+	})
+
+	t.Run("include_ephemeral_excludes_blocked_wisps", func(t *testing.T) {
+		ephBlocker := bdCreate(t, bd, dir, "Ready JSON ephemeral blocker", "--type", "task", "--ephemeral")
+		ephBlocked := bdCreate(t, bd, dir, "Ready JSON ephemeral blocked", "--type", "task", "--ephemeral")
+		ephReady := bdCreate(t, bd, dir, "Ready JSON ephemeral ready", "--type", "task", "--ephemeral")
+		bdDepAdd(t, bd, dir, ephBlocked.ID, ephBlocker.ID)
+
+		issues := bdReadyJSON(t, bd, dir, "--include-ephemeral", "--limit", "0")
+		if containsID(issues, ephBlocked.ID) {
+			t.Fatalf("bd ready --json --include-ephemeral included blocked wisp %s: %v", ephBlocked.ID, listIssueIDs(issues))
+		}
+		if !containsID(issues, ephReady.ID) {
+			t.Fatalf("bd ready --json --include-ephemeral missing ready wisp %s: %v", ephReady.ID, listIssueIDs(issues))
 		}
 	})
 }
