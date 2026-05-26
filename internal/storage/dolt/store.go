@@ -1476,7 +1476,7 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) (int, error) {
 	return applied, nil
 }
 
-func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) error {
+func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) (int, error) {
 	// Schema initialization for server mode is idempotent. Retry transient
 	// Dolt startup/catalog races and contended migration-lock attempts so
 	// concurrent bd processes converge instead of failing one unlucky waiter.
@@ -1485,8 +1485,10 @@ func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) error {
 	// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a contended
 	// schema migration can time out once and still retry.
 	schemaBO.MaxElapsedTime = serverRetryMaxElapsed
-	return backoff.Retry(func() error {
-		schemaErr := initSchemaOnDB(ctx, db)
+	var applied int
+	err := backoff.Retry(func() error {
+		var schemaErr error
+		applied, schemaErr = initSchemaOnDB(ctx, db)
 		if schemaErr != nil && isRetryableError(schemaErr) {
 			return schemaErr
 		}
@@ -1495,9 +1497,18 @@ func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) error {
 		}
 		return nil
 	}, backoff.WithContext(schemaBO, ctx))
+	return applied, err
 }
 
 func (s *DoltStore) initSchema(ctx context.Context) error {
+	_, err := initSchemaOnDBWithRetry(ctx, s.db)
+	return err
+}
+
+// ApplySchemaMigrations runs idempotent schema migrations under the
+// per-database advisory lock, with retry for transient lock contention.
+// Implements storage.SchemaMigrator.
+func (s *DoltStore) ApplySchemaMigrations(ctx context.Context) (int, error) {
 	return initSchemaOnDBWithRetry(ctx, s.db)
 }
 
