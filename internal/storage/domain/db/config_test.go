@@ -35,6 +35,11 @@ func (s *testSuite) TestConfigSQLRepository() {
 		s.Run("MissingKeyReturnsEmpty", s.configGetAllowedPrefixesMissing)
 		s.Run("ReturnsRawValue", s.configGetAllowedPrefixesRawValue)
 	})
+	s.Run("GetAdaptiveIDConfig", func() {
+		s.Run("MissingKeysReturnsDefaults", s.configGetAdaptiveIDConfigDefaults)
+		s.Run("OverridesApplied", s.configGetAdaptiveIDConfigOverrides)
+		s.Run("MalformedValuesFallBackToDefaults", s.configGetAdaptiveIDConfigMalformed)
+	})
 }
 
 func (s *testSuite) configRepo() domain.ConfigSQLRepository {
@@ -165,4 +170,36 @@ func (s *testSuite) configGetAllowedPrefixesRawValue() {
 	got, err := r.GetAllowedPrefixes(s.Ctx())
 	s.Require().NoError(err)
 	s.Equal("hacker-news, me-py-toolkit, hq-cv", got)
+}
+
+func (s *testSuite) configGetAdaptiveIDConfigDefaults() {
+	got, err := s.configRepo().GetAdaptiveIDConfig(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal(domain.DefaultAdaptiveConfig(), got)
+}
+
+func (s *testSuite) configGetAdaptiveIDConfigOverrides() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_collision_prob", "0.05"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "min_hash_length", "4"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_hash_length", "7"))
+
+	got, err := r.GetAdaptiveIDConfig(s.Ctx())
+	s.Require().NoError(err)
+	s.InDelta(0.05, got.MaxCollisionProbability, 0.0001)
+	s.Equal(4, got.MinLength)
+	s.Equal(7, got.MaxLength)
+}
+
+func (s *testSuite) configGetAdaptiveIDConfigMalformed() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_collision_prob", "not-a-float"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "min_hash_length", "nope"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_hash_length", ""))
+
+	got, err := r.GetAdaptiveIDConfig(s.Ctx())
+	s.Require().NoError(err)
+	// All three should fall back to defaults: malformed values are silently
+	// ignored to match the embedded GetAdaptiveConfigTx behavior.
+	s.Equal(domain.DefaultAdaptiveConfig(), got)
 }

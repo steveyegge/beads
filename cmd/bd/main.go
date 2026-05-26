@@ -838,6 +838,22 @@ var rootCmd = &cobra.Command{
 			preserveRedirectSourceDatabase(beads.GetRedirectInfo().LocalDir)
 		}
 
+		// Proxied-server mode short-circuit. Proxied projects have NO
+		// on-disk database file — the data lives behind a dolt sql-server
+		// rooted under .beads/proxieddb/. Without this early detection,
+		// FindDatabasePath() below returns "" and the "no beads database
+		// found" gate fatals before the proxied-server branch later in
+		// this function ever runs. We seed dbPath with the .beads dir so
+		// the gate passes; the proxied branch (search for proxiedServerMode
+		// below) reads beadsDir directly and never inspects dbPath.
+		if dbPath == "" {
+			if bd := beads.FindBeadsDir(); bd != "" {
+				if cfg, _ := configfile.Load(bd); cfg != nil && cfg.IsDoltProxiedServerMode() {
+					dbPath = bd
+				}
+			}
+		}
+
 		// Initialize database path
 		if dbPath == "" {
 			// Use public API to find database (same logic as extensions)

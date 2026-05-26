@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -174,6 +175,141 @@ func (r *issueSQLRepositoryImpl) GetByIDs(ctx context.Context, ids []string, opt
 		return nil, fmt.Errorf("db: GetByIDs: rows: %w", err)
 	}
 	return out, nil
+}
+
+// Exists returns true when a row with id is present in the routed table.
+// Used by the hash-mode ID minter to probe for collisions without paying
+// the cost of fetching the full row.
+func (r *issueSQLRepositoryImpl) Exists(ctx context.Context, id string, opts domain.IssueTableOpts) (bool, error) {
+	if id == "" {
+		return false, errors.New("db: Exists: id must not be empty")
+	}
+	table := pickIssueTable(opts.UseWispsTable)
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	row := r.runner.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id = ? LIMIT 1", table), id)
+	var one int
+	err := row.Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("db: Exists %s: %w", id, err)
+	}
+	return true, nil
+}
+
+// CountForPrefix returns the number of top-level issues sharing the prefix
+// in the routed table. Child IDs (those containing '.' in their suffix) are
+// excluded so adaptive sizing reflects top-level density only — matches
+// issueops.GetAdaptiveIDLengthTx.
+func (r *issueSQLRepositoryImpl) CountForPrefix(ctx context.Context, prefix string, opts domain.IssueTableOpts) (int, error) {
+	if prefix == "" {
+		return 0, errors.New("db: CountForPrefix: prefix must not be empty")
+	}
+	table := pickIssueTable(opts.UseWispsTable)
+	var count int
+	//nolint:gosec // G201: table is one of two hardcoded constants
+	err := r.runner.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM %s
+		WHERE id LIKE CONCAT(?, '-%%')
+		  AND INSTR(SUBSTRING(id, LENGTH(?) + 2), '.') = 0
+	`, table), prefix, prefix).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("db: CountForPrefix %s: %w", prefix, err)
+	}
+	return count, nil
+}
+
+// NextCounterID atomically increments and returns the next sequential value
+// from the issue_counter row for the prefix. Counter mode applies only to
+// the `issues` table (wisps always use hash mode). On a missing counter row,
+// seeds from the max existing numeric suffix, retries the UPDATE, and as a
+// last resort INSERTs (prefix, 1). Mirrors issueops.NextCounterIDTx.
+func (r *issueSQLRepositoryImpl) NextCounterID(ctx context.Context, prefix string) (int, error) {
+	if prefix == "" {
+		return 0, errors.New("db: NextCounterID: prefix must not be empty")
+	}
+
+	res, err := r.runner.ExecContext(ctx, "UPDATE issue_counter SET last_id = last_id + 1 WHERE prefix = ?", prefix)
+	if err != nil {
+		return 0, fmt.Errorf("db: NextCounterID: increment %q: %w", prefix, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("db: NextCounterID: rows affected %q: %w", prefix, err)
+	}
+
+	if rows == 0 {
+		if err := r.seedCounterFromExisting(ctx, prefix); err != nil {
+			return 0, fmt.Errorf("db: NextCounterID: seed %q: %w", prefix, err)
+		}
+		res, err = r.runner.ExecContext(ctx, "UPDATE issue_counter SET last_id = last_id + 1 WHERE prefix = ?", prefix)
+		if err != nil {
+			return 0, fmt.Errorf("db: NextCounterID: increment after seed %q: %w", prefix, err)
+		}
+		rows, err = res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("db: NextCounterID: rows affected after seed %q: %w", prefix, err)
+		}
+		if rows == 0 {
+			if _, err := r.runner.ExecContext(ctx, "INSERT INTO issue_counter (prefix, last_id) VALUES (?, 1)", prefix); err != nil {
+				return 0, fmt.Errorf("db: NextCounterID: insert initial %q: %w", prefix, err)
+			}
+		}
+	}
+
+	var nextID int
+	if err := r.runner.QueryRowContext(ctx, "SELECT last_id FROM issue_counter WHERE prefix = ?", prefix).Scan(&nextID); err != nil {
+		return 0, fmt.Errorf("db: NextCounterID: read last_id %q: %w", prefix, err)
+	}
+	return nextID, nil
+}
+
+// seedCounterFromExisting scans the issues table for the highest numeric
+// suffix on the prefix and seeds the issue_counter row when missing. Skips
+// child IDs (suffix contains '.'). Returns nil when no eligible rows exist.
+func (r *issueSQLRepositoryImpl) seedCounterFromExisting(ctx context.Context, prefix string) error {
+	var existing int
+	err := r.runner.QueryRowContext(ctx, "SELECT last_id FROM issue_counter WHERE prefix = ?", prefix).Scan(&existing)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read existing counter %q: %w", prefix, err)
+	}
+
+	rows, err := r.runner.QueryContext(ctx, "SELECT id FROM issues WHERE id LIKE CONCAT(?, '-%')", prefix)
+	if err != nil {
+		return fmt.Errorf("scan issues for %q: %w", prefix, err)
+	}
+	defer rows.Close()
+
+	maxNum := 0
+	pfxDash := prefix + "-"
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		suffix := strings.TrimPrefix(id, pfxDash)
+		if strings.Contains(suffix, ".") {
+			continue
+		}
+		if n, err := strconv.Atoi(suffix); err == nil && n > maxNum {
+			maxNum = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate issues for %q: %w", prefix, err)
+	}
+
+	if maxNum > 0 {
+		if _, err := r.runner.ExecContext(ctx, "INSERT INTO issue_counter (prefix, last_id) VALUES (?, ?)", prefix, maxNum); err != nil {
+			return fmt.Errorf("seed counter %q at %d: %w", prefix, maxNum, err)
+		}
+	}
+	return nil
 }
 
 func (r *issueSQLRepositoryImpl) Search(ctx context.Context, filter types.IssueFilter, opts domain.IssueTableOpts) ([]*types.Issue, error) {

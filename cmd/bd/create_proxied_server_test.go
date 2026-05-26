@@ -2,10 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -279,4 +282,60 @@ func TestParseMarkdownDepSpecs_DoesNotSwapBlocks(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %#v, want %#v (no swap-direction)", got, want)
 	}
+}
+
+func TestResolveProxiedCustomTypes_PrefersDBTypes(t *testing.T) {
+	got := resolveProxiedCustomTypes([]string{"db-a", "db-b"})
+	if !reflect.DeepEqual(got, []string{"db-a", "db-b"}) {
+		t.Errorf("got %#v, want [db-a db-b] — DB types must win when non-empty", got)
+	}
+}
+
+func TestResolveProxiedCustomTypes_FallsBackToYAML(t *testing.T) {
+	restore := withTestYAMLCustomTypes(t, "molecule,gate,convoy")
+	defer restore()
+
+	for _, dbTypes := range [][]string{nil, {}} {
+		got := resolveProxiedCustomTypes(dbTypes)
+		if !reflect.DeepEqual(got, []string{"molecule", "gate", "convoy"}) {
+			t.Errorf("dbTypes=%v: got %#v, want YAML fallback [molecule gate convoy]", dbTypes, got)
+		}
+	}
+}
+
+func TestResolveProxiedCustomTypes_EmptyEverywhere(t *testing.T) {
+	restore := withTestYAMLCustomTypes(t, "")
+	defer restore()
+
+	got := resolveProxiedCustomTypes(nil)
+	if len(got) != 0 {
+		t.Errorf("expected empty result, got %#v", got)
+	}
+}
+
+// withTestYAMLCustomTypes writes a temporary .beads/config.yaml with the
+// given comma-separated types.custom value, re-initializes the config
+// package, and returns a restore function the caller defers. Yields nil
+// for an empty value (no key emitted).
+func withTestYAMLCustomTypes(t *testing.T, customCSV string) func() {
+	t.Helper()
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	var content string
+	if customCSV != "" {
+		content = "types:\n  custom: \"" + customCSV + "\"\n"
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+	t.Chdir(tmpDir)
+
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+	return func() { config.ResetForTesting() }
 }

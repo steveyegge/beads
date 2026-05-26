@@ -54,6 +54,26 @@ func (s *testSuite) TestIssueSQLRepository() {
 		s.Run("SearchReadsFromWispsTable", s.issueWispSearch)
 		s.Run("CrossRoutedLookupsAreEmpty", s.issueWispIsolated)
 	})
+	s.Run("Exists", func() {
+		s.Run("MissingReturnsFalse", s.issueExistsMissing)
+		s.Run("PresentReturnsTrue", s.issueExistsPresent)
+		s.Run("EmptyIDReturnsError", s.issueExistsEmptyID)
+		s.Run("RoutedToWisps", s.issueExistsWispRouting)
+	})
+	s.Run("CountForPrefix", func() {
+		s.Run("EmptyTableReturnsZero", s.issueCountForPrefixEmpty)
+		s.Run("CountsMatching", s.issueCountForPrefixMatches)
+		s.Run("ExcludesChildIDs", s.issueCountForPrefixExcludesChildren)
+		s.Run("RoutedToWisps", s.issueCountForPrefixWispRouting)
+		s.Run("EmptyPrefixReturnsError", s.issueCountForPrefixEmptyPrefix)
+	})
+	s.Run("NextCounterID", func() {
+		s.Run("FreshDBInsertsAtOne", s.issueNextCounterIDFresh)
+		s.Run("MonotonicIncrement", s.issueNextCounterIDIncrement)
+		s.Run("SeedsFromMaxExisting", s.issueNextCounterIDSeedsFromMax)
+		s.Run("IgnoresChildIDsWhenSeeding", s.issueNextCounterIDSeedSkipsChildren)
+		s.Run("EmptyPrefixReturnsError", s.issueNextCounterIDEmptyPrefix)
+	})
 }
 
 func (s *testSuite) issueRepo() domain.IssueSQLRepository {
@@ -462,4 +482,152 @@ func (s *testSuite) issueWispIsolated() {
 	got, err := r.GetByIDs(s.Ctx(), []string{"bd-iss-iso-perm"}, domain.IssueTableOpts{UseWispsTable: true})
 	s.Require().NoError(err)
 	s.Empty(got)
+}
+
+func (s *testSuite) issueExistsMissing() {
+	r := s.issueRepo()
+	got, err := r.Exists(s.Ctx(), "bd-not-there", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.False(got)
+}
+
+func (s *testSuite) issueExistsPresent() {
+	r := s.issueRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("bd-exists-yes", "present"), "tester", domain.InsertIssueOpts{}))
+	got, err := r.Exists(s.Ctx(), "bd-exists-yes", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.True(got)
+}
+
+func (s *testSuite) issueExistsEmptyID() {
+	r := s.issueRepo()
+	_, err := r.Exists(s.Ctx(), "", domain.IssueTableOpts{})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "id must not be empty")
+}
+
+func (s *testSuite) issueExistsWispRouting() {
+	r := s.issueRepo()
+	w := newTestIssue("bd-exists-wisp", "wisp")
+	w.Ephemeral = true
+	s.Require().NoError(r.Insert(s.Ctx(), w, "tester", domain.InsertIssueOpts{UseWispsTable: true}))
+
+	got, err := r.Exists(s.Ctx(), "bd-exists-wisp", domain.IssueTableOpts{UseWispsTable: true})
+	s.Require().NoError(err)
+	s.True(got, "should find wisp via wisps table")
+
+	got, err = r.Exists(s.Ctx(), "bd-exists-wisp", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.False(got, "should not find wisp via issues table")
+}
+
+func (s *testSuite) issueCountForPrefixEmpty() {
+	// Use a fresh prefix that no prior test inserts under. The suite shares
+	// state across s.Run subtests within a single TestXxx method, so we
+	// can't rely on "bd" being empty here.
+	r := s.issueRepo()
+	got, err := r.CountForPrefix(s.Ctx(), "cfpEmpty", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.Equal(0, got)
+}
+
+func (s *testSuite) issueCountForPrefixMatches() {
+	r := s.issueRepo()
+	for _, id := range []string{"cfpMat-c1", "cfpMat-c2", "cfpMat-c3"} {
+		s.Require().NoError(r.Insert(s.Ctx(), newTestIssue(id, id), "tester", domain.InsertIssueOpts{}))
+	}
+	// Decoy with a different prefix should not be counted.
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("cfpMatX-c1", "decoy"), "tester", domain.InsertIssueOpts{}))
+
+	got, err := r.CountForPrefix(s.Ctx(), "cfpMat", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.Equal(3, got)
+}
+
+func (s *testSuite) issueCountForPrefixExcludesChildren() {
+	r := s.issueRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("cfpChld-parent", "parent"), "tester", domain.InsertIssueOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("cfpChld-parent.1", "child 1"), "tester", domain.InsertIssueOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("cfpChld-parent.2", "child 2"), "tester", domain.InsertIssueOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("cfpChld-sibling", "sibling"), "tester", domain.InsertIssueOpts{}))
+
+	got, err := r.CountForPrefix(s.Ctx(), "cfpChld", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.Equal(2, got, "child IDs containing '.' must not be counted")
+}
+
+func (s *testSuite) issueCountForPrefixWispRouting() {
+	r := s.issueRepo()
+	w := newTestIssue("cfpWisp-c1", "wisp count")
+	w.Ephemeral = true
+	s.Require().NoError(r.Insert(s.Ctx(), w, "tester", domain.InsertIssueOpts{UseWispsTable: true}))
+
+	got, err := r.CountForPrefix(s.Ctx(), "cfpWisp", domain.IssueTableOpts{UseWispsTable: true})
+	s.Require().NoError(err)
+	s.Equal(1, got)
+	got, err = r.CountForPrefix(s.Ctx(), "cfpWisp", domain.IssueTableOpts{})
+	s.Require().NoError(err)
+	s.Equal(0, got, "issues table should not see wisp rows")
+}
+
+func (s *testSuite) issueCountForPrefixEmptyPrefix() {
+	r := s.issueRepo()
+	_, err := r.CountForPrefix(s.Ctx(), "", domain.IssueTableOpts{})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "prefix must not be empty")
+}
+
+func (s *testSuite) issueNextCounterIDFresh() {
+	// Unique prefix per subtest because subtests share state within a single
+	// TestXxx method (testify suite quirk).
+	r := s.issueRepo()
+	got, err := r.NextCounterID(s.Ctx(), "ctrFresh")
+	s.Require().NoError(err)
+	s.Equal(1, got, "first counter call on a fresh prefix should yield 1")
+}
+
+func (s *testSuite) issueNextCounterIDIncrement() {
+	r := s.issueRepo()
+	a, err := r.NextCounterID(s.Ctx(), "ctrInc")
+	s.Require().NoError(err)
+	b, err := r.NextCounterID(s.Ctx(), "ctrInc")
+	s.Require().NoError(err)
+	c, err := r.NextCounterID(s.Ctx(), "ctrInc")
+	s.Require().NoError(err)
+	s.Equal(a+1, b)
+	s.Equal(b+1, c)
+
+	// Sanity: another prefix is independent.
+	other, err := r.NextCounterID(s.Ctx(), "ctrIncAlt")
+	s.Require().NoError(err)
+	s.Equal(1, other)
+}
+
+func (s *testSuite) issueNextCounterIDSeedsFromMax() {
+	r := s.issueRepo()
+	// Pre-seed two issues with numeric suffixes; no issue_counter row exists.
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("ctrSeed-7", "seven"), "tester", domain.InsertIssueOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("ctrSeed-12", "twelve"), "tester", domain.InsertIssueOpts{}))
+
+	got, err := r.NextCounterID(s.Ctx(), "ctrSeed")
+	s.Require().NoError(err)
+	s.Equal(13, got, "should seed from max(7,12)=12 and return 13")
+}
+
+func (s *testSuite) issueNextCounterIDSeedSkipsChildren() {
+	r := s.issueRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("ctrSkip-3", "three"), "tester", domain.InsertIssueOpts{}))
+	// A child of ctrSkip-3 with a numeric child suffix — must be skipped during seed.
+	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("ctrSkip-3.99", "child"), "tester", domain.InsertIssueOpts{}))
+
+	got, err := r.NextCounterID(s.Ctx(), "ctrSkip")
+	s.Require().NoError(err)
+	s.Equal(4, got, "must ignore child IDs when seeding from max")
+}
+
+func (s *testSuite) issueNextCounterIDEmptyPrefix() {
+	r := s.issueRepo()
+	_, err := r.NextCounterID(s.Ctx(), "")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "prefix must not be empty")
 }

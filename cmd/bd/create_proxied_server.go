@@ -10,12 +10,25 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
 )
+
+// resolveProxiedCustomTypes mirrors loadEmbeddedCustomTypes' DB-first
+// resolution: prefer custom types from the DB (cctx.CustomTypes via
+// LoadCreateContext), and fall back to config.yaml when the DB is empty.
+// Keeps proxied custom-type validation in sync with the embedded path so a
+// project that declares types in config.yaml only still validates.
+func resolveProxiedCustomTypes(dbTypes []string) []string {
+	if len(dbTypes) > 0 {
+		return dbTypes
+	}
+	return config.GetCustomTypesFromYAML()
+}
 
 func runCreateProxiedServer(cmd *cobra.Command, ctx context.Context, in createInput) {
 	if in.repoOverrideSet {
@@ -76,9 +89,10 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 	uw, cctx := proxiedOpenUOW(ctx)
 	defer uw.Close(ctx)
 
+	customTypes := resolveProxiedCustomTypes(cctx.CustomTypes)
 	if in.issueType != "" {
 		it := types.IssueType(in.issueType).Normalize()
-		if !it.IsValidWithCustom(cctx.CustomTypes) {
+		if !it.IsValidWithCustom(customTypes) {
 			FatalError("invalid type %q (allowed: built-ins plus configured custom types)", in.issueType)
 		}
 	}
@@ -218,11 +232,12 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 	uw, cctx := proxiedOpenUOW(ctx)
 	defer uw.Close(ctx)
 
+	customTypes := resolveProxiedCustomTypes(cctx.CustomTypes)
 	for _, b := range builds {
 		if b.template.IssueType == "" {
 			continue
 		}
-		if !b.template.IssueType.IsValidWithCustom(cctx.CustomTypes) {
+		if !b.template.IssueType.IsValidWithCustom(customTypes) {
 			FatalError("template %q: invalid type %q", b.template.Title, b.template.IssueType)
 		}
 	}
@@ -253,9 +268,9 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 
 	var result domain.CreateIssuesResult
 	if in.ephemeral {
-		result, err = uw.IssueUseCase().CreateWisps(ctx, paramsList, in.createdBy, domain.CreateIssuesOpts{})
+		result, err = uw.IssueUseCase().CreateWisps(ctx, paramsList, in.createdBy)
 	} else {
-		result, err = uw.IssueUseCase().CreateIssues(ctx, paramsList, in.createdBy, domain.CreateIssuesOpts{})
+		result, err = uw.IssueUseCase().CreateIssues(ctx, paramsList, in.createdBy)
 	}
 	if err != nil {
 		FatalError("creating issues from markdown: %v", err)
@@ -325,7 +340,23 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	}
 
 	if in.dryRun {
-		if err := validateGraphApplyPlan(&plan, loadEmbeddedCustomTypes()); err != nil {
+		// Dry-run uses the same DB-first / YAML-fallback resolution as live
+		// so the two paths cannot disagree on a plan's validity. Failures
+		// here are real (no UOW provider, unreachable DB, etc.) — surface
+		// them rather than silently weakening dry-run validation.
+		if uowProvider == nil {
+			FatalError("proxied-server UOW provider not initialized")
+		}
+		dryUW, err := uowProvider.NewUOW(ctx)
+		if err != nil {
+			FatalError("open unit of work: %v", err)
+		}
+		cctx, err := dryUW.ConfigUseCase().LoadCreateContext(ctx)
+		dryUW.Close(ctx)
+		if err != nil {
+			FatalError("load create context: %v", err)
+		}
+		if err := validateGraphApplyPlan(&plan, resolveProxiedCustomTypes(cctx.CustomTypes)); err != nil {
 			FatalError("invalid graph plan: %v", err)
 		}
 		emitGraphApplyDryRun(&plan)
@@ -335,7 +366,7 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	uw, cctx := proxiedOpenUOW(ctx)
 	defer uw.Close(ctx)
 
-	if err := validateGraphApplyPlan(&plan, cctx.CustomTypes); err != nil {
+	if err := validateGraphApplyPlan(&plan, resolveProxiedCustomTypes(cctx.CustomTypes)); err != nil {
 		FatalError("invalid graph plan: %v", err)
 	}
 

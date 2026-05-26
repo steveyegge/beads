@@ -14,6 +14,7 @@ type ConfigSQLRepository interface {
 
 	GetCustomTypes(ctx context.Context) ([]string, error)
 	GetAllowedPrefixes(ctx context.Context) (string, error)
+	GetAdaptiveIDConfig(ctx context.Context) (AdaptiveIDConfig, error)
 }
 
 type ConfigUseCase interface {

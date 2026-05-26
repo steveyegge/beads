@@ -4,21 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-type OrphanHandling int
-
-const (
-	OrphanAllow OrphanHandling = iota
-	OrphanReject
-)
-
 type InsertIssueOpts struct {
-	SkipPrefixValidation bool
-	OrphanHandling       OrphanHandling
-	UseWispsTable        bool
+	UseWispsTable bool
 }
 
 type IssueTableOpts struct {
@@ -34,6 +28,19 @@ type IssueSQLRepository interface {
 	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
 
 	Search(ctx context.Context, filter types.IssueFilter, opts IssueTableOpts) ([]*types.Issue, error)
+
+	// Exists returns true if an issue with id exists in the routed table.
+	Exists(ctx context.Context, id string, opts IssueTableOpts) (bool, error)
+
+	// CountForPrefix returns the number of top-level issues sharing the prefix
+	// in the routed table. Child IDs (containing '.' in the suffix) are
+	// excluded so adaptive sizing reflects only top-level density.
+	CountForPrefix(ctx context.Context, prefix string, opts IssueTableOpts) (int, error)
+
+	// NextCounterID atomically increments and returns the next counter value
+	// for the prefix in counter mode. Seeds from the max existing numeric
+	// suffix when the counter row is missing. Counter mode is `issues`-only.
+	NextCounterID(ctx context.Context, prefix string) (int, error)
 }
 
 type CreateIssueParams struct {
@@ -46,7 +53,6 @@ type CreateIssueParams struct {
 	WaitsFor                *WaitsForSpec
 	DiscoveredFromParent    string
 	ForcePrefix             bool
-	PrefixOverride          string
 }
 
 type DependencySpec struct {
@@ -65,11 +71,6 @@ type CreateIssueResult struct {
 	Issue            *types.Issue
 	InheritedLabels  []string
 	PostCreateWrites bool
-}
-
-type CreateIssuesOpts struct {
-	OrphanHandling       OrphanHandling
-	SkipPrefixValidation bool
 }
 
 type CreateIssuesResult struct {
@@ -126,7 +127,7 @@ type IssueUseCase interface {
 	GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error)
 	ListIssues(ctx context.Context, filter types.IssueFilter, proj ListProjection) (ListResult, error)
 	CreateIssue(ctx context.Context, params CreateIssueParams, actor string) (CreateIssueResult, error)
-	CreateIssues(ctx context.Context, params []CreateIssueParams, actor string, opts CreateIssuesOpts) (CreateIssuesResult, error)
+	CreateIssues(ctx context.Context, params []CreateIssueParams, actor string) (CreateIssuesResult, error)
 	UpdateIssue(ctx context.Context, id string, updates map[string]any, actor string) error
 	ApplyIssueGraph(ctx context.Context, plan GraphPlan, actor string) (GraphApplyResult, error)
 
@@ -134,7 +135,7 @@ type IssueUseCase interface {
 	GetWispsByIDs(ctx context.Context, ids []string) ([]*types.Issue, error)
 	ListWisps(ctx context.Context, filter types.IssueFilter, proj ListProjection) (ListResult, error)
 	CreateWisp(ctx context.Context, params CreateIssueParams, actor string) (CreateIssueResult, error)
-	CreateWisps(ctx context.Context, params []CreateIssueParams, actor string, opts CreateIssuesOpts) (CreateIssuesResult, error)
+	CreateWisps(ctx context.Context, params []CreateIssueParams, actor string) (CreateIssuesResult, error)
 	UpdateWisp(ctx context.Context, id string, updates map[string]any, actor string) error
 	ApplyWispGraph(ctx context.Context, plan GraphPlan, actor string) (GraphApplyResult, error)
 }
@@ -373,6 +374,14 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		issue.Status = types.StatusOpen
 	}
 
+	// Set CreatedAt before the mint path: GenerateHashID hashes timestamp,
+	// so it must be stable across the candidate loop and the eventual
+	// db.Insert (which would otherwise normalize a zero value to a later
+	// time and break candidate reproducibility on retry).
+	if issue.CreatedAt.IsZero() {
+		issue.CreatedAt = time.Now().UTC()
+	}
+
 	switch {
 	case params.ExplicitID != "":
 		issue.ID = params.ExplicitID
@@ -383,7 +392,11 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		}
 		issue.ID = childID
 	case issue.ID == "":
-		return CreateIssueResult{}, fmt.Errorf("create: top-level ID generation is not yet implemented; provide ExplicitID or ParentID")
+		minted, err := u.mintTopLevelID(ctx, issue, actor, useWisp)
+		if err != nil {
+			return CreateIssueResult{}, fmt.Errorf("create: mint top-level ID: %w", err)
+		}
+		issue.ID = minted
 	}
 
 	if params.DiscoveredFromParent != "" {
@@ -392,10 +405,7 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		}
 	}
 
-	insertOpts := InsertIssueOpts{
-		SkipPrefixValidation: !params.ForcePrefix,
-		UseWispsTable:        useWisp,
-	}
+	insertOpts := InsertIssueOpts{UseWispsTable: useWisp}
 	if err := u.issueRepo.Insert(ctx, issue, actor, insertOpts); err != nil {
 		return CreateIssueResult{}, fmt.Errorf("create: insert: %w", err)
 	}
@@ -482,15 +492,15 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 	return result, nil
 }
 
-func (u *issueUseCaseImpl) CreateIssues(ctx context.Context, params []CreateIssueParams, actor string, opts CreateIssuesOpts) (CreateIssuesResult, error) {
-	return u.createMany(ctx, params, actor, opts, false)
+func (u *issueUseCaseImpl) CreateIssues(ctx context.Context, params []CreateIssueParams, actor string) (CreateIssuesResult, error) {
+	return u.createMany(ctx, params, actor, false)
 }
 
-func (u *issueUseCaseImpl) CreateWisps(ctx context.Context, params []CreateIssueParams, actor string, opts CreateIssuesOpts) (CreateIssuesResult, error) {
-	return u.createMany(ctx, params, actor, opts, true)
+func (u *issueUseCaseImpl) CreateWisps(ctx context.Context, params []CreateIssueParams, actor string) (CreateIssuesResult, error) {
+	return u.createMany(ctx, params, actor, true)
 }
 
-func (u *issueUseCaseImpl) createMany(ctx context.Context, params []CreateIssueParams, actor string, _ CreateIssuesOpts, useWisp bool) (CreateIssuesResult, error) {
+func (u *issueUseCaseImpl) createMany(ctx context.Context, params []CreateIssueParams, actor string, useWisp bool) (CreateIssuesResult, error) {
 	result := CreateIssuesResult{}
 	for i := range params {
 		r, err := u.create(ctx, params[i], actor, useWisp)
@@ -512,68 +522,75 @@ func (u *issueUseCaseImpl) ApplyWispGraph(ctx context.Context, plan GraphPlan, a
 
 func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor string, useWisp bool) (GraphApplyResult, error) {
 	keyToID := make(map[string]string, len(plan.Nodes))
+	pendingAssignees := make(map[int]string, len(plan.Nodes))
 
+	// Pass 1 — create every node as a top-level issue. We deliberately do
+	// not pass ParentID to u.create: graph nodes with parent_key/parent_id
+	// receive top-level hash (or counter) IDs and have their parent linkage
+	// added as a separate parent-child dep below. This matches embedded
+	// executeGraphApply (cmd/bd/graph_apply.go) and lets children precede
+	// parents in plan order — keyToID is only consulted after every node
+	// has minted its ID.
 	for i, node := range plan.Nodes {
 		if node.Issue == nil {
 			return GraphApplyResult{}, fmt.Errorf("applyGraph: node %d (key=%q) has nil Issue", i, node.Key)
 		}
 
-		parentID := node.ParentID
-		if node.ParentKey != "" {
-			id, ok := keyToID[node.ParentKey]
-			if !ok {
-				return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q references undefined parent_key %q (parents must precede children in plan order)", node.Key, node.ParentKey)
-			}
-			parentID = id
-		}
-
-		deferredAssignee := ""
 		if node.AssignAfterCreate {
-			deferredAssignee = node.Assignee
+			pendingAssignees[i] = node.Assignee
 			node.Issue.Assignee = ""
 		} else if node.Assignee != "" {
 			node.Issue.Assignee = node.Assignee
 		}
 
 		params := CreateIssueParams{
-			Issue:    node.Issue,
-			ParentID: parentID,
-			Labels:   node.Labels,
+			Issue:  node.Issue,
+			Labels: node.Labels,
 		}
 		r, err := u.create(ctx, params, actor, useWisp)
 		if err != nil {
 			return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: %w", node.Key, err)
 		}
 		keyToID[node.Key] = r.Issue.ID
-
-		if deferredAssignee != "" {
-			if err := u.issueRepo.Update(ctx, r.Issue.ID, map[string]any{"assignee": deferredAssignee}, actor, IssueTableOpts{UseWispsTable: useWisp}); err != nil {
-				return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: defer assignee: %w", node.Key, err)
-			}
-		}
 	}
 
+	// Build the (childID, parentID) pair set and validate that any planned
+	// parent-child link does not close a cycle through planned edges or
+	// already-existing dependencies in the store. This must run before any
+	// dep inserts to catch the violation before we've written anything.
+	parentDepPairs := graphParentDepPairs(plan.Nodes, keyToID)
+	if err := u.validatePlannedBlockingPaths(ctx, plan, keyToID, parentDepPairs, useWisp); err != nil {
+		return GraphApplyResult{}, err
+	}
+
+	// Pass 2 — insert edge deps. Deduplicate against the parent-child pairs:
+	//   - Same pair, parent-child type → skip (pass 3 will insert it).
+	//   - Same pair, different type   → error (conflicting edge over a parent-child link).
+	//   - Reverse pair, blocking type → error (creates a parent → child blocking cycle).
 	for i, edge := range plan.Edges {
-		fromID := edge.FromID
-		if edge.FromKey != "" {
-			id, ok := keyToID[edge.FromKey]
-			if !ok {
-				return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d references undefined from_key %q", i, edge.FromKey)
-			}
-			fromID = id
+		fromID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
+		if fromID == "" {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d references undefined from_key %q", i, edge.FromKey)
 		}
-		toID := edge.ToID
-		if edge.ToKey != "" {
-			id, ok := keyToID[edge.ToKey]
-			if !ok {
-				return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d references undefined to_key %q", i, edge.ToKey)
-			}
-			toID = id
+		toID := resolveEdgeRef(edge.ToKey, edge.ToID, keyToID)
+		if toID == "" {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d references undefined to_key %q", i, edge.ToKey)
 		}
 		depType := edge.Type
 		if depType == "" {
 			depType = types.DepBlocks
 		}
+
+		if parentDepPairs[depPairKey(fromID, toID)] {
+			if depType == types.DepParentChild {
+				continue
+			}
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d %s->%s duplicates a parent-child relationship with dependency type %q", i, fromID, toID, depType)
+		}
+		if parentDepPairs[depPairKey(toID, fromID)] && cycleRelevantDepType(depType) {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d %s->%s creates a blocking reverse of a parent-child relationship", i, fromID, toID)
+		}
+
 		dep := &types.Dependency{
 			IssueID:     fromID,
 			DependsOnID: toID,
@@ -584,5 +601,293 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		}
 	}
 
+	// Pass 3 — insert parent-child deps now that all IDs are known.
+	for _, node := range plan.Nodes {
+		parentID := node.ParentID
+		if node.ParentKey != "" {
+			parentID = keyToID[node.ParentKey]
+		}
+		if parentID == "" {
+			continue
+		}
+		childID := keyToID[node.Key]
+		dep := &types.Dependency{
+			IssueID:     childID,
+			DependsOnID: parentID,
+			Type:        types.DepParentChild,
+		}
+		if err := u.depRepo.Insert(ctx, dep, actor, DepInsertOpts{UseWispsTable: useWisp}); err != nil {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: parent-child dep %s->%s: %w", node.Key, childID, parentID, err)
+		}
+	}
+
+	// Pass 4 — apply deferred assignees.
+	for i, assignee := range pendingAssignees {
+		if assignee == "" {
+			continue
+		}
+		id := keyToID[plan.Nodes[i].Key]
+		if err := u.issueRepo.Update(ctx, id, map[string]any{"assignee": assignee}, actor, IssueTableOpts{UseWispsTable: useWisp}); err != nil {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: defer assignee: %w", plan.Nodes[i].Key, err)
+		}
+	}
+
 	return GraphApplyResult{IDs: keyToID}, nil
+}
+
+// graphParentDepPairs encodes the (childID, parentID) parent-child pairs
+// implied by the plan's node ParentKey/ParentID fields. Used by applyGraph
+// to dedup explicit edges against implicit parent-child relationships and
+// to seed the in-memory adjacency for live cycle detection.
+func graphParentDepPairs(nodes []GraphNode, keyToID map[string]string) map[string]bool {
+	pairs := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		parentID := n.ParentID
+		if n.ParentKey != "" {
+			parentID = keyToID[n.ParentKey]
+		}
+		childID := keyToID[n.Key]
+		if childID == "" || parentID == "" {
+			continue
+		}
+		pairs[depPairKey(childID, parentID)] = true
+	}
+	return pairs
+}
+
+// depPairKey encodes an ordered (issueID, dependsOnID) pair using a NUL
+// separator so the two halves can be recovered unambiguously without ID
+// characters colliding with the delimiter.
+func depPairKey(issueID, dependsOnID string) string {
+	return issueID + "\x00" + dependsOnID
+}
+
+// depPairIDs decodes a key produced by depPairKey, returning (from, to, ok).
+func depPairIDs(pair string) (string, string, bool) {
+	for i := 0; i < len(pair); i++ {
+		if pair[i] == 0 {
+			return pair[:i], pair[i+1:], true
+		}
+	}
+	return "", "", false
+}
+
+// cycleRelevantDepType returns true for dep types whose presence in the
+// reverse direction of a parent-child link would form a cycle.
+func cycleRelevantDepType(t types.DependencyType) bool {
+	return t == types.DepBlocks || t == types.DepConditionalBlocks
+}
+
+// resolveEdgeRef returns the ID for an edge endpoint: the keyToID lookup
+// when key is set, else the explicit id. Returns "" when neither resolves,
+// which the caller should treat as a structural error.
+func resolveEdgeRef(key, id string, keyToID map[string]string) string {
+	if key != "" {
+		return keyToID[key]
+	}
+	return id
+}
+
+// validatePlannedBlockingPaths rejects plans that would close a cycle
+// once the parent-child deps are inserted. The adjacency it walks combines
+// the planned parent-child pairs (child → parent), the cycle-relevant
+// planned edges (excluding reverse-of-parent-child which is rejected by
+// applyGraph's dedup pass), and live AffectsReadyWork dependencies pulled
+// lazily from the store via depRepo. Mirrors embedded
+// validateGraphApplyPlannedParentBlockingPaths.
+func (u *issueUseCaseImpl) validatePlannedBlockingPaths(
+	ctx context.Context,
+	plan GraphPlan,
+	keyToID map[string]string,
+	parentDepPairs map[string]bool,
+	useWisp bool,
+) error {
+	adj := make(map[string][]string)
+	for pair := range parentDepPairs {
+		fromID, toID, ok := depPairIDs(pair)
+		if ok {
+			adj[fromID] = append(adj[fromID], toID)
+		}
+	}
+	for _, edge := range plan.Edges {
+		depType := edge.Type
+		if depType == "" {
+			depType = types.DepBlocks
+		}
+		if !depType.AffectsReadyWork() {
+			continue
+		}
+		fromID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
+		toID := resolveEdgeRef(edge.ToKey, edge.ToID, keyToID)
+		if fromID == "" || toID == "" {
+			continue
+		}
+		// Skip the reverse-of-parent-child case for cycle-relevant types —
+		// applyGraph's edge dedup already errors on those with a clearer
+		// message, so we don't want them showing up here as ambiguous
+		// "blocking path" errors.
+		if cycleRelevantDepType(depType) && parentDepPairs[depPairKey(toID, fromID)] {
+			continue
+		}
+		adj[fromID] = append(adj[fromID], toID)
+	}
+
+	depCache := make(map[string][]*types.Dependency)
+	for _, node := range plan.Nodes {
+		parentID := node.ParentID
+		if node.ParentKey != "" {
+			parentID = keyToID[node.ParentKey]
+		}
+		childID := keyToID[node.Key]
+		if childID == "" || parentID == "" {
+			continue
+		}
+		hasPath, err := u.graphHasPath(ctx, adj, depCache, parentID, childID, useWisp)
+		if err != nil {
+			return err
+		}
+		if hasPath {
+			return fmt.Errorf("applyGraph: node %q: planned blocking dependencies create a path from parent %q to child %q", node.Key, parentID, childID)
+		}
+	}
+	return nil
+}
+
+// graphHasPath returns true if fromID can reach toID by following the
+// in-memory adjacency (planned parent-child + planned blocking edges) and
+// existing AffectsReadyWork deps loaded lazily from the store. Per-node
+// dep fetches are cached so each visited node hits the DB at most once.
+func (u *issueUseCaseImpl) graphHasPath(
+	ctx context.Context,
+	adj map[string][]string,
+	depCache map[string][]*types.Dependency,
+	fromID, toID string,
+	useWisp bool,
+) (bool, error) {
+	seen := make(map[string]bool)
+	var visit func(string) (bool, error)
+	visit = func(id string) (bool, error) {
+		if id == toID {
+			return true, nil
+		}
+		if seen[id] {
+			return false, nil
+		}
+		seen[id] = true
+		for _, next := range adj[id] {
+			found, err := visit(next)
+			if err != nil || found {
+				return found, err
+			}
+		}
+		deps, ok := depCache[id]
+		if !ok {
+			res, err := u.depRepo.ListByIssueIDs(ctx, []string{id}, DepListOpts{
+				Direction:     DepDirectionOut,
+				UseWispsTable: useWisp,
+			})
+			if err != nil {
+				return false, fmt.Errorf("applyGraph: read existing deps for %s: %w", id, err)
+			}
+			deps = res.Outgoing[id]
+			depCache[id] = deps
+		}
+		for _, dep := range deps {
+			if !dep.Type.AffectsReadyWork() {
+				continue
+			}
+			found, err := visit(dep.DependsOnID)
+			if err != nil || found {
+				return found, err
+			}
+		}
+		return false, nil
+	}
+	return visit(fromID)
+}
+
+// resolveTopLevelPrefix picks the prefix for a freshly-minted top-level ID,
+// mirroring the embedded path's precedence (issueops/create.go:88-96 and
+// dolt/wisps.go wispPrefix). Reads issue_prefix from config once and trims
+// the trailing hyphen so a config value of "bd-" yields "bd-<hash>" rather
+// than "bd--<hash>".
+func (u *issueUseCaseImpl) resolveTopLevelPrefix(ctx context.Context, issue *types.Issue, useWisp bool) (string, error) {
+	if issue.PrefixOverride != "" {
+		return issue.PrefixOverride, nil
+	}
+
+	configPrefix, err := u.cfgRepo.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		return "", fmt.Errorf("read issue_prefix: %w", err)
+	}
+	configPrefix = strings.TrimSuffix(configPrefix, "-")
+	if configPrefix == "" {
+		return "", fmt.Errorf("issue_prefix config is missing")
+	}
+
+	switch {
+	case issue.IDPrefix != "":
+		return configPrefix + "-" + issue.IDPrefix, nil
+	case useWisp:
+		return configPrefix + "-wisp", nil
+	}
+	return configPrefix, nil
+}
+
+// mintTopLevelID generates a fresh top-level ID for an issue that has no
+// ExplicitID and no ParentID. Honors counter mode for non-wisps (config key
+// issue_id_mode=counter); otherwise uses adaptive hash-mode IDs that mirror
+// issueops.GenerateIssueIDInTable. Reads issue.CreatedAt (caller must have
+// stabilized it before this call so retries hash the same value).
+func (u *issueUseCaseImpl) mintTopLevelID(ctx context.Context, issue *types.Issue, actor string, useWisp bool) (string, error) {
+	prefix, err := u.resolveTopLevelPrefix(ctx, issue, useWisp)
+	if err != nil {
+		return "", err
+	}
+
+	// Counter mode applies only to the issues table — wisps always hash-mint
+	// because there is no wisp_counter table and ephemeral churn would make
+	// a monotonic counter meaningless.
+	if !useWisp {
+		mode, err := u.cfgRepo.GetConfig(ctx, "issue_id_mode")
+		if err != nil {
+			return "", fmt.Errorf("read issue_id_mode: %w", err)
+		}
+		if mode == "counter" {
+			n, err := u.issueRepo.NextCounterID(ctx, prefix)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%s-%d", prefix, n), nil
+		}
+	}
+
+	cfg, err := u.cfgRepo.GetAdaptiveIDConfig(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read adaptive id config: %w", err)
+	}
+	tableOpts := IssueTableOpts{UseWispsTable: useWisp}
+
+	count, err := u.issueRepo.CountForPrefix(ctx, prefix, tableOpts)
+	if err != nil {
+		return "", err
+	}
+	baseLength := ComputeAdaptiveLength(count, cfg)
+	if baseLength > cfg.MaxLength {
+		baseLength = cfg.MaxLength
+	}
+
+	for length := baseLength; length <= cfg.MaxLength; length++ {
+		for nonce := 0; nonce < 10; nonce++ {
+			candidate := idgen.GenerateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+			exists, err := u.issueRepo.Exists(ctx, candidate, tableOpts)
+			if err != nil {
+				return "", err
+			}
+			if !exists {
+				return candidate, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique ID for prefix %q after lengths %d..%d with 10 nonces each", prefix, baseLength, cfg.MaxLength)
 }

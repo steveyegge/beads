@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
@@ -105,4 +106,37 @@ func (r *configSQLRepositoryImpl) GetAllowedPrefixes(ctx context.Context) (strin
 		return "", fmt.Errorf("db: GetAllowedPrefixes: %w", err)
 	}
 	return value, nil
+}
+
+// GetAdaptiveIDConfig reads adaptive ID config keys from the `config` table,
+// layering any overrides on top of the defaults. Missing or malformed values
+// fall back to defaults (best-effort, matching GetAdaptiveConfigTx).
+func (r *configSQLRepositoryImpl) GetAdaptiveIDConfig(ctx context.Context) (domain.AdaptiveIDConfig, error) {
+	cfg := domain.DefaultAdaptiveConfig()
+
+	if probStr, err := r.GetConfig(ctx, "max_collision_prob"); err != nil {
+		return cfg, fmt.Errorf("db: GetAdaptiveIDConfig: read max_collision_prob: %w", err)
+	} else if probStr != "" {
+		if prob, perr := strconv.ParseFloat(probStr, 64); perr == nil {
+			cfg.MaxCollisionProbability = prob
+		}
+	}
+
+	if minStr, err := r.GetConfig(ctx, "min_hash_length"); err != nil {
+		return cfg, fmt.Errorf("db: GetAdaptiveIDConfig: read min_hash_length: %w", err)
+	} else if minStr != "" {
+		if v, perr := strconv.Atoi(minStr); perr == nil {
+			cfg.MinLength = v
+		}
+	}
+
+	if maxStr, err := r.GetConfig(ctx, "max_hash_length"); err != nil {
+		return cfg, fmt.Errorf("db: GetAdaptiveIDConfig: read max_hash_length: %w", err)
+	} else if maxStr != "" {
+		if v, perr := strconv.Atoi(maxStr); perr == nil {
+			cfg.MaxLength = v
+		}
+	}
+
+	return cfg, nil
 }
