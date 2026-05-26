@@ -358,6 +358,9 @@ Configuration keys use dot-notation namespaces to organize settings:
 - `export.write_manifest` - Write .manifest.json with export metadata (default: false)
 - `auto_export.error_policy` - Override error policy for auto-exports (default: `best-effort`)
 - `import.auto` - Legacy hook fallback that imports JSONL after git merge/checkout only when no Dolt remote is configured (default: `true`)
+- `ai.model` - Anthropic-compatible model for AI compaction and duplicate detection (default: `claude-haiku-4-5-20251001`; MiniMax examples: `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`)
+- `ai.api_key` - Local config fallback for AI calls. Prefer `ANTHROPIC_API_KEY` or `MINIMAX_API_KEY` environment variables for secrets.
+- `ai.base_url` - Optional Anthropic-compatible API base URL. Can also be set with `BD_AI_BASE_URL`; `MINIMAX_API_KEY` defaults to `https://api.minimax.io/anthropic` unless `MINIMAX_BASE_URL` is set.
 - `sync.branch` - Name of the dedicated sync branch for beads data (see docs/PROTECTED_BRANCHES.md)
 - `sync.require_confirmation_on_mass_delete` - Require interactive confirmation before pushing when >50% of issues vanish during a merge AND more than 5 issues existed before (default: `false`)
 
@@ -1008,6 +1011,7 @@ jira_project = get_config("jira.project")
 Some bd commands automatically use configuration:
 
 - `bd admin compact` uses `compact_tier1_days`, `compact_tier1_dep_levels`, etc.
+- `bd compact --auto` and `bd find-duplicates --method ai` use `ANTHROPIC_API_KEY`, `MINIMAX_API_KEY`, or `ai.api_key`; set `ai.base_url` or `BD_AI_BASE_URL` for other Anthropic-compatible endpoints.
 - `bd init` sets `issue_prefix`
 
 External integration scripts can read configuration to sync with Jira, Linear, GitHub, etc.

@@ -253,6 +253,7 @@ func Initialize() error {
 
 	// AI configuration defaults
 	v.SetDefault("ai.model", "claude-haiku-4-5-20251001")
+	v.SetDefault("ai.base_url", "")
 
 	// Output configuration (GH#1384)
 	// Controls title display in command feedback messages.
@@ -682,6 +683,55 @@ func Set(key string, value interface{}) {
 // Override via: bd config set ai.model "model-name" or BD_AI_MODEL=model-name
 func DefaultAIModel() string {
 	return GetString("ai.model")
+}
+
+// AIAPIKeySource identifies where the active Anthropic-compatible API key came from.
+type AIAPIKeySource string
+
+const (
+	AIAPIKeySourceNone         AIAPIKeySource = ""
+	AIAPIKeySourceAnthropicEnv AIAPIKeySource = "ANTHROPIC_API_KEY" //nolint:gosec // Environment variable name, not a credential.
+	AIAPIKeySourceMiniMaxEnv   AIAPIKeySource = "MINIMAX_API_KEY"   //nolint:gosec // Environment variable name, not a credential.
+	AIAPIKeySourceConfig       AIAPIKeySource = "ai.api_key"
+	AIAPIKeySourceExplicit     AIAPIKeySource = "explicit"
+
+	MiniMaxDefaultBaseURL = "https://api.minimax.io/anthropic"
+)
+
+// ResolveAIAPIKey returns the API key for Anthropic-compatible AI calls.
+//
+// Precedence: ANTHROPIC_API_KEY > MINIMAX_API_KEY > ai.api_key > explicit.
+func ResolveAIAPIKey(explicit string) (string, AIAPIKeySource) {
+	if envKey := os.Getenv("ANTHROPIC_API_KEY"); envKey != "" {
+		return envKey, AIAPIKeySourceAnthropicEnv
+	}
+	if envKey := os.Getenv("MINIMAX_API_KEY"); envKey != "" {
+		return envKey, AIAPIKeySourceMiniMaxEnv
+	}
+	if configKey := GetString("ai.api_key"); configKey != "" {
+		return configKey, AIAPIKeySourceConfig
+	}
+	if explicit != "" {
+		return explicit, AIAPIKeySourceExplicit
+	}
+	return "", AIAPIKeySourceNone
+}
+
+// DefaultAIBaseURL returns the configured base URL for Anthropic-compatible AI calls.
+//
+// Precedence: ai.base_url (or BD_AI_BASE_URL) > MINIMAX_BASE_URL > MiniMax default
+// when MINIMAX_API_KEY selected the key. Empty means use the SDK's Anthropic default.
+func DefaultAIBaseURL(keySource AIAPIKeySource) string {
+	if baseURL := GetString("ai.base_url"); baseURL != "" {
+		return baseURL
+	}
+	if keySource == AIAPIKeySourceMiniMaxEnv {
+		if baseURL := os.Getenv("MINIMAX_BASE_URL"); baseURL != "" {
+			return baseURL
+		}
+		return MiniMaxDefaultBaseURL
+	}
+	return ""
 }
 
 // AllSettings returns all configuration settings as a map
