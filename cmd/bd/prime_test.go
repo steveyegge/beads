@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -202,6 +203,32 @@ func TestPrimeMemoriesOnlyNoMemories(t *testing.T) {
 	}
 	if strings.Contains(output, "Essential Commands") {
 		t.Fatalf("memories-only output should not include the full workflow guide: %s", output)
+	}
+}
+
+func TestFormatMemoriesForPrimeTimesOutOpeningStore(t *testing.T) {
+	oldStore := store
+	oldStoreActive := storeActive
+	oldEnsure := ensureStoreActiveForPrime
+	store = nil
+	storeActive = false
+	ensureStoreActiveForPrime = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	t.Cleanup(func() {
+		store = oldStore
+		storeActive = oldStoreActive
+		ensureStoreActiveForPrime = oldEnsure
+	})
+	t.Setenv(primeStoreTimeoutEnv, "1ms")
+
+	out := formatMemoriesForPrime(false)
+	if !strings.Contains(out, "timed out") {
+		t.Fatalf("expected timeout warning in prime memory output, got %q", out)
+	}
+	if !strings.Contains(out, "stale storage lock") {
+		t.Fatalf("expected stale-lock guidance in prime memory output, got %q", out)
 	}
 }
 

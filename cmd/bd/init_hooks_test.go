@@ -209,18 +209,27 @@ func TestGenerateHookSection_Timeout(t *testing.T) {
 	if !strings.Contains(section, "command -v timeout") {
 		t.Error("section missing timeout availability check")
 	}
+	if !strings.Contains(section, "command -v gtimeout") {
+		t.Error("section missing gtimeout fallback for macOS coreutils")
+	}
+	if !strings.Contains(section, "perl -e 'alarm shift; exec @ARGV'") {
+		t.Error("section missing perl alarm fallback for stock macOS")
+	}
 
 	// Timeout exit code (124) must be handled gracefully — continue, don't block git
 	if !strings.Contains(section, "_bd_exit -eq 124") {
 		t.Error("section missing timeout exit code handling")
 	}
+	if !strings.Contains(section, "_bd_exit -eq 142") {
+		t.Error("section missing SIGALRM timeout exit code handling")
+	}
 	if !strings.Contains(section, "timed out") {
 		t.Error("section missing timeout warning message")
 	}
 
-	// Fallback path when timeout command is not available (e.g. macOS without coreutils)
-	if !strings.Contains(section, "else") {
-		t.Error("section missing fallback for systems without timeout command")
+	// Last-resort path is explicit when no timeout implementation is available.
+	if !strings.Contains(section, "running without timeout") {
+		t.Error("section missing clear fallback warning for systems without timeout support")
 	}
 }
 
