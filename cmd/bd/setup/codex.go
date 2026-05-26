@@ -82,6 +82,17 @@ func InstallCodex(global bool) {
 	}
 }
 
+// InstallCodexProject installs project-local Codex integration, returning an
+// error instead of exiting. Used by bd init to integrate Codex setup
+// automatically.
+func InstallCodexProject() error {
+	env, err := codexEnvProvider()
+	if err != nil {
+		return err
+	}
+	return installCodex(env, false)
+}
+
 func installCodex(env codexEnv, global bool) error {
 	if err := installAgentSkill(codexAgentSkillEnv(env, global)); err != nil {
 		return err

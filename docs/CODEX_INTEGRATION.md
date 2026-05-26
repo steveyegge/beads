@@ -8,7 +8,7 @@ Beads supports Codex through the shared `beads` skill, `AGENTS.md` guidance, and
 bd setup codex
 ```
 
-Project setup writes:
+`bd init` also runs this project setup by default unless `--skip-agents` or `--stealth` is used. Project setup writes:
 
 - `.agents/skills/beads/` for the Beads skill.
 - `AGENTS.md` with a managed Beads section.

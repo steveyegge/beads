@@ -3409,7 +3409,7 @@ bd init [flags]
       --server-user string                Dolt server MySQL user (default: root)
       --setup-exclude                     Configure .git/info/exclude to keep beads files local (for forks)
       --shared-server                     Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
-      --skip-agents                       Skip AGENTS.md and Claude settings generation
+      --skip-agents                       Skip AGENTS.md and Claude/Codex setup generation
       --skip-hooks                        Skip git hooks installation
       --stealth                           Enable stealth mode: global gitattributes and gitignore, no local repo tracking
       --team                              Run team workflow setup wizard
@@ -3512,7 +3512,7 @@ by default. This approach:
   • bd prime provides dynamic, always-current workflow details
   • Hooks auto-inject bd prime at session start
 
-For agents that don't support hooks (Codex, Factory, etc.), use
+For agents or environments that do not auto-inject hook output, use
 'bd init --agents-profile=full' to embed the complete command reference.
 
 ```
@@ -3606,8 +3606,8 @@ include cursor, claude, copilot, gemini, aider, factory, codex, mux, opencode, j
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
-  bd setup codex           # Install Codex skill + AGENTS.md guidance
-  bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
+  bd setup codex           # Install Codex skill + AGENTS.md guidance + native hooks
+  bd setup codex --global  # Install global Codex skill + guidance + native hooks
   bd setup copilot         # Install Copilot CLI plugin + repository instructions
   bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
   bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
