@@ -63,7 +63,6 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		FatalError("%v", err)
 	}
 
-	// Dry-run: render preview from input; no DB.
 	if in.dryRun {
 		previewIssue := buildCreateIssueFromInput(in)
 		if in.jsonOutput {
@@ -74,7 +73,6 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		return
 	}
 
-	// --- DB-dependent work ---
 	uw, cctx := proxiedOpenUOW(ctx)
 	defer uw.Close(ctx)
 
@@ -127,10 +125,7 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 		fmt.Printf("%s Created issue: %s\n", ui.RenderPass("✓"), formatFeedbackID(result.Issue.ID, result.Issue.Title))
 		fmt.Printf("  Priority: P%d\n", result.Issue.Priority)
 		fmt.Printf("  Status: %s\n", result.Issue.Status)
-		// Tips intentionally skipped on the proxied path.
 	}
-
-	SetLastTouchedID(result.Issue.ID)
 }
 
 func runCreateLintIssue(in createInput) {
@@ -150,9 +145,6 @@ func runCreateLintIssue(in createInput) {
 	}
 }
 
-// buildCreateIssueFromInput adapts createInput into a *types.Issue via the
-// existing buildCreateIssue helper. Both modes (dry-run and live) use this
-// so the issue shape stays in lockstep with the embedded path.
 func buildCreateIssueFromInput(in createInput) *types.Issue {
 	return buildCreateIssue(createIssueParams{
 		ID:                 in.explicitID,
@@ -183,10 +175,6 @@ func buildCreateIssueFromInput(in createInput) *types.Issue {
 	})
 }
 
-// runCreateProxiedMarkdown parses a markdown file and creates each template
-// as an issue inside one UOW transaction. Mirrors the embedded path's
-// IssueTemplate → Issue mapping; uses IssueUseCase.CreateIssues (or
-// CreateWisps when --ephemeral) so the whole batch lands atomically.
 func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createInput) {
 	templates, err := parseMarkdownFile(in.markdownFile)
 	if err != nil {
@@ -213,11 +201,11 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 		}
 	}
 
-	// Parse per-template deps (pure) before opening the UOW so we fail fast.
 	type templateBuild struct {
 		template *IssueTemplate
 		deps     []domain.DependencySpec
 	}
+
 	builds := make([]templateBuild, 0, len(templates))
 	for _, t := range templates {
 		deps, err := parseMarkdownDepSpecs(t.Dependencies, t.Title)
@@ -282,18 +270,13 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 		outputJSON(result.Issues)
 		return
 	}
+
 	fmt.Printf("%s Created %d issues from %s:\n", ui.RenderPass("✓"), len(result.Issues), in.markdownFile)
 	for _, issue := range result.Issues {
 		fmt.Printf("  %s: %s [P%d, %s]\n", issue.ID, issue.Title, issue.Priority, issue.IssueType)
 	}
 }
 
-// parseMarkdownDepSpecs mirrors the embedded markdown path's dep parsing:
-// "type:id" → typed edge, bare "id" → blocks edge. Does NOT support the
-// alias / swap-direction operators that --deps accepts (depends-on:,
-// blocked-by:, blocks: with swap). Markdown templates are an authoring
-// surface, not a CLI flag — keeping the syntax minimal matches the
-// embedded behavior so users see identical results across modes.
 func parseMarkdownDepSpecs(deps []string, templateTitle string) ([]domain.DependencySpec, error) {
 	var out []domain.DependencySpec
 	for _, raw := range deps {
@@ -327,11 +310,6 @@ func parseMarkdownDepSpecs(deps []string, templateTitle string) ([]domain.Depend
 	return out, nil
 }
 
-// runCreateProxiedGraph reads a graph plan and applies it atomically against
-// the proxied UOW. Mirrors createIssuesFromGraph's shape: parse file,
-// detect unknown fields, validate plan, dry-run preview OR execute via
-// IssueUseCase.ApplyIssueGraph (CreateWisps variant when --ephemeral),
-// then resolve MetadataRefs as post-create UpdateIssue calls.
 func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput) {
 	data, err := os.ReadFile(in.graphFile) // #nosec G304 -- user-provided path is intentional
 	if err != nil {
@@ -346,9 +324,6 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 		FatalError("parsing graph plan: %v", err)
 	}
 
-	// Dry-run path: no UOW. Falls back to YAML-only custom types in proxied
-	// mode (store is nil), which is the same fidelity the embedded path
-	// offers when called outside an open store.
 	if in.dryRun {
 		if err := validateGraphApplyPlan(&plan, loadEmbeddedCustomTypes()); err != nil {
 			FatalError("invalid graph plan: %v", err)
@@ -376,9 +351,6 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 		FatalError("graph create: %v", err)
 	}
 
-	// Resolve MetadataRefs now that all IDs are known. IssueUseCase
-	// doesn't perform this step itself — each node with refs gets a
-	// post-create UpdateIssue carrying the merged metadata.
 	for _, node := range plan.Nodes {
 		if len(node.MetadataRefs) == 0 {
 			continue
@@ -413,6 +385,7 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	if commitMsg == "" {
 		commitMsg = fmt.Sprintf("bd: graph-apply %d nodes", len(plan.Nodes))
 	}
+
 	if err := uw.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
 		FatalError("commit: %v", err)
 	}
@@ -421,21 +394,19 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 		outputJSON(GraphApplyResult{IDs: result.IDs})
 		return
 	}
+
 	fmt.Printf("Created %d issues\n", len(result.IDs))
 	keys := make([]string, 0, len(result.IDs))
 	for k := range result.IDs {
 		keys = append(keys, k)
 	}
+
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Printf("  %s -> %s\n", k, result.IDs[k])
 	}
 }
 
-// buildDomainGraphPlan converts the CLI-facing GraphApplyPlan into the
-// domain GraphPlan accepted by IssueUseCase.ApplyIssueGraph. Per-node
-// materialization happens in materializeGraphNodeIssue so the --ephemeral /
-// --no-history opts flow through.
 func buildDomainGraphPlan(plan GraphApplyPlan, in createInput) domain.GraphPlan {
 	nodes := make([]domain.GraphNode, 0, len(plan.Nodes))
 	for _, n := range plan.Nodes {
@@ -463,11 +434,6 @@ func buildDomainGraphPlan(plan GraphApplyPlan, in createInput) domain.GraphPlan 
 	return domain.GraphPlan{Nodes: nodes, Edges: edges}
 }
 
-// materializeGraphNodeIssue builds the *types.Issue that the use case
-// stores for a single graph node. Applies plan-wide options (--ephemeral,
-// --no-history) and identity (createdBy/owner). The use case handles the
-// AssignAfterCreate deferred-assignee dance, so the Assignee field is left
-// for the domain layer to populate via node.Assignee.
 func materializeGraphNodeIssue(n GraphApplyNode, in createInput) *types.Issue {
 	issueType := types.IssueType(n.Type)
 	if issueType == "" {

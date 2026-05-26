@@ -10,14 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// NOTE: End-to-end integration tests against a real proxied dolt sql-server
-// (spawning the proxy via newProxiedServerUOWProvider and running
-// `bd create` through cobra) belong in a follow-up alongside the existing
-// internal/storage/uow/doltserver_provider_test.go harness. The unit tests
-// in this file cover the new pure helpers and CLI-shaped mappers added by
-// tasks #13–#16 — buildCreateIssueFromInput, materializeGraphNodeIssue,
-// buildDomainGraphPlan, parseMarkdownDepSpecs — without booting a server.
-
 func TestBuildCreateIssueFromInput_PopulatesAllFields(t *testing.T) {
 	due := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	defer1 := time.Date(2026, 5, 30, 9, 0, 0, 0, time.UTC)
