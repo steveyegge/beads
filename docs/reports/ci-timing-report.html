@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI Timing Report</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f7f8fa;
+  --fg: #20242a;
+  --muted: #5d6673;
+  --line: #d8dde6;
+  --panel: #ffffff;
+  --accent: #0b6bcb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418;
+    --fg: #eceff4;
+    --muted: #aab3c2;
+    --line: #2e3642;
+    --panel: #181d24;
+    --accent: #78b7ff;
+  }
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 32px 20px 56px;
+}
+h1, h2 {
+  line-height: 1.2;
+}
+h1 {
+  font-size: 2rem;
+  margin: 0 0 1rem;
+}
+h2 {
+  border-top: 1px solid var(--line);
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+}
+p, li {
+  color: var(--muted);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+th, td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-weight: 650;
+}
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+</style>
+</head>
+<body>
+<main>
+<h1>CI Timing Report</h1>
+<p>Generated: 2026-05-26 22:39 UTC</p>
+<p>Repository: `gastownhall/beads`</p>
+<p>Command: `python3 scripts/ci/ci_timing_report.py --repo gastownhall/beads --runs 120 --out-dir docs/reports`</p>
+<h2>Data Set</h2>
+<ul>
+<li>Recent workflow runs requested: 120</li>
+<li>Workflow runs returned: 120</li>
+<li>Completed runs analyzed: 114</li>
+<li>Jobs analyzed: 1466</li>
+<li>Incomplete runs at collection time: 6</li>
+<li>Cancelled runs: 5</li>
+<li>Failed/non-success non-cancelled runs: 8</li>
+<li>Successful PR CI wall-clock P50/P95: 11.6m / 14.1m</li>
+<li>All successful workflow wall-clock P50/P95: 9.4m / 12.8m</li>
+<li>Run queue P50/P95: 0s / 0s</li>
+<li>Job queue P50/P95: 2s / 49s</li>
+</ul>
+<p>GitHub `run_started_at` is currently equal to `created_at` for most runs, so run-level queue time is less useful than per-job queue time. Job queue time uses `job.created_at` to `job.started_at` when present.</p>
+<h2>Checked Workflow Files</h2>
+<table><thead><tr><th>Workflow</th><th>Local file</th></tr></thead><tbody>
+<tr><td>CI</td><td>`.github/workflows/ci.yml`</td></tr>
+<tr><td>Cross-Version Smoke Tests</td><td>`.github/workflows/cross-version-smoke.yml`</td></tr>
+<tr><td>Regression Tests</td><td>`.github/workflows/regression.yml`</td></tr>
+<tr><td>nix build</td><td>`.github/workflows/nix-build.yml`</td></tr>
+<tr><td>Nightly Full Tests</td><td>`.github/workflows/nightly.yml`</td></tr>
+<tr><td>Migration Test Harness</td><td>`.github/workflows/migration-test.yml`</td></tr>
+</tbody></table>
+<h2>Wall-Clock by Workflow and Event</h2>
+<table><thead><tr><th>Workflow</th><th>Event</th><th>Runs</th><th>Success</th><th>P50</th><th>P95</th><th>Max</th></tr></thead><tbody>
+<tr><td>CI</td><td>pull_request</td><td>29</td><td>23</td><td>11.4m</td><td>15.7m</td><td>16.2m</td></tr>
+<tr><td>CI</td><td>push</td><td>4</td><td>4</td><td>11.7m</td><td>13.5m</td><td>13.5m</td></tr>
+<tr><td>Copilot</td><td>dynamic</td><td>1</td><td>1</td><td>46s</td><td>46s</td><td>46s</td></tr>
+<tr><td>Cross-Version Smoke Tests</td><td>pull_request</td><td>29</td><td>29</td><td>3.2m</td><td>4.5m</td><td>4.7m</td></tr>
+<tr><td>Deploy Documentation</td><td>push</td><td>3</td><td>3</td><td>2.3m</td><td>2.5m</td><td>2.5m</td></tr>
+<tr><td>Nightly Full Tests</td><td>schedule</td><td>1</td><td>0</td><td>10.6m</td><td>10.6m</td><td>10.6m</td></tr>
+<tr><td>Regression Tests</td><td>pull_request</td><td>31</td><td>30</td><td>9.5m</td><td>10.9m</td><td>11.3m</td></tr>
+<tr><td>Regression Tests</td><td>push</td><td>5</td><td>5</td><td>9.6m</td><td>9.8m</td><td>9.8m</td></tr>
+<tr><td>Update vendorHash for dependabot Go bumps</td><td>pull_request_target</td><td>3</td><td>0</td><td>1s</td><td>1s</td><td>1s</td></tr>
+<tr><td>nix build</td><td>pull_request</td><td>3</td><td>3</td><td>3.5m</td><td>3.6m</td><td>3.6m</td></tr>
+</tbody></table>
+<h2>Slowest Jobs</h2>
+<table><thead><tr><th>Job</th><th>Runs</th><th>Workflow</th><th>P50</th><th>P95</th><th>Max</th><th>Failure rate</th><th>Queue P95</th></tr></thead><tbody>
+<tr><td>Test (macos-latest)</td><td>37</td><td>CI</td><td>9.0m</td><td>11.9m</td><td>15.6m</td><td>16%</td><td>17s</td></tr>
+<tr><td>Test (ubuntu-latest)</td><td>37</td><td>CI</td><td>10.3m</td><td>10.6m</td><td>10.7m</td><td>16%</td><td>44s</td></tr>
+<tr><td>Full Test Suite</td><td>1</td><td>Nightly Full Tests</td><td>10.5m</td><td>10.5m</td><td>10.5m</td><td>100%</td><td>3s</td></tr>
+<tr><td>Differential Regression (v0.49.6 baseline)</td><td>36</td><td>Regression Tests</td><td>9.2m</td><td>9.6m</td><td>10.6m</td><td>3%</td><td>16s</td></tr>
+<tr><td>Test (Embedded Dolt Storage)</td><td>37</td><td>CI</td><td>6.1m</td><td>6.5m</td><td>7.6m</td><td>11%</td><td>30s</td></tr>
+<tr><td>Test (Embedded Dolt Cmd shard)</td><td>640</td><td>CI</td><td>2.6m</td><td>6.1m</td><td>8.1m</td><td>3%</td><td>1.4m</td></tr>
+<tr><td>Test (Windows - smoke)</td><td>37</td><td>CI</td><td>2.7m</td><td>5.6m</td><td>7.2m</td><td>3%</td><td>8s</td></tr>
+<tr><td>Build (Embedded Dolt)</td><td>37</td><td>CI</td><td>4.5m</td><td>4.7m</td><td>4.7m</td><td>11%</td><td>34s</td></tr>
+<tr><td>Test (storage domain + uow)</td><td>37</td><td>CI</td><td>3.7m</td><td>4.0m</td><td>4.0m</td><td>5%</td><td>3s</td></tr>
+<tr><td>Test Nix Flake</td><td>37</td><td>CI</td><td>3.5m</td><td>3.8m</td><td>3.9m</td><td>5%</td><td>1.0m</td></tr>
+<tr><td>nix build .#default</td><td>3</td><td>nix build</td><td>3.5m</td><td>3.5m</td><td>3.5m</td><td>0%</td><td>2s</td></tr>
+<tr><td>Upgrade smoke (version shard)</td><td>150</td><td>Cross-Version Smoke Tests</td><td>2.9m</td><td>3.1m</td><td>3.2m</td><td>3%</td><td>33s</td></tr>
+<tr><td>Lint</td><td>37</td><td>CI</td><td>2.8m</td><td>3.0m</td><td>3.1m</td><td>8%</td><td>38s</td></tr>
+<tr><td>build</td><td>3</td><td>Deploy Documentation</td><td>1.9m</td><td>2.0m</td><td>2.0m</td><td>0%</td><td>3s</td></tr>
+<tr><td>Check cmd/bd pure-Go tests compile (CGO_ENABLED=0)</td><td>37</td><td>CI</td><td>1.4m</td><td>1.5m</td><td>1.5m</td><td>3%</td><td>3s</td></tr>
+<tr><td>Check doc flags freshness</td><td>37</td><td>CI</td><td>1.2m</td><td>1.3m</td><td>1.6m</td><td>5%</td><td>35s</td></tr>
+<tr><td>copilot-pull-request-reviewer</td><td>1</td><td>Copilot</td><td>40s</td><td>40s</td><td>40s</td><td>0%</td><td>2s</td></tr>
+<tr><td>Check formatting</td><td>37</td><td>CI</td><td>16s</td><td>22s</td><td>35s</td><td>8%</td><td>1.1m</td></tr>
+<tr><td>Detect CI tier</td><td>37</td><td>CI</td><td>13s</td><td>21s</td><td>35s</td><td>3%</td><td>38s</td></tr>
+<tr><td>Check for .beads changes</td><td>37</td><td>CI</td><td>12s</td><td>19s</td><td>35s</td><td>3%</td><td>51s</td></tr>
+</tbody></table>
+<h2>Critical Path</h2>
+<p>For successful PR CI runs, the tail job is the last successful job to complete in the workflow run. This is the best available proxy for the Actions critical path from public run/job metadata.</p>
+<table><thead><tr><th>Tail job</th><th>Runs ending here</th><th>Median job duration</th></tr></thead><tbody>
+<tr><td>Test (Embedded Dolt Cmd shard)</td><td>19</td><td>6.6m</td></tr>
+<tr><td>Test (Embedded Dolt Storage)</td><td>2</td><td>6.2m</td></tr>
+<tr><td>Test (macos-latest)</td><td>1</td><td>11.9m</td></tr>
+<tr><td>Test (ubuntu-latest)</td><td>1</td><td>10.0m</td></tr>
+</tbody></table>
+<h2>Failure and Flakiness Suspects</h2>
+<p>Failures are stronger flake suspects than cancellations; cancellations often come from concurrency replacing older PR runs.</p>
+<table><thead><tr><th>Job</th><th>Failures</th><th>Cancels</th><th>Runs</th><th>Failure rate</th><th>Non-success rate</th><th>P95 duration</th></tr></thead><tbody>
+<tr><td>Test (Embedded Dolt Cmd shard)</td><td>2</td><td>20</td><td>640</td><td>0%</td><td>3%</td><td>6.1m</td></tr>
+<tr><td>Test (macos-latest)</td><td>2</td><td>4</td><td>37</td><td>5%</td><td>16%</td><td>11.9m</td></tr>
+<tr><td>Test (ubuntu-latest)</td><td>2</td><td>4</td><td>37</td><td>5%</td><td>16%</td><td>10.6m</td></tr>
+<tr><td>Check formatting</td><td>2</td><td>1</td><td>37</td><td>5%</td><td>8%</td><td>22s</td></tr>
+<tr><td>Build (Embedded Dolt)</td><td>1</td><td>3</td><td>37</td><td>3%</td><td>11%</td><td>4.7m</td></tr>
+<tr><td>Lint</td><td>1</td><td>2</td><td>37</td><td>3%</td><td>8%</td><td>3.0m</td></tr>
+<tr><td>Check doc flags freshness</td><td>1</td><td>1</td><td>37</td><td>3%</td><td>5%</td><td>1.3m</td></tr>
+<tr><td>Full Test Suite</td><td>1</td><td>0</td><td>1</td><td>100%</td><td>100%</td><td>10.5m</td></tr>
+<tr><td>Differential Regression (v0.49.6 baseline)</td><td>1</td><td>0</td><td>36</td><td>3%</td><td>3%</td><td>9.6m</td></tr>
+<tr><td>Upgrade smoke (version shard)</td><td>0</td><td>5</td><td>150</td><td>0%</td><td>3%</td><td>3.1m</td></tr>
+<tr><td>Test (Embedded Dolt Storage)</td><td>0</td><td>4</td><td>37</td><td>0%</td><td>11%</td><td>6.5m</td></tr>
+<tr><td>Test (Embedded Dolt Cmd ${{ matrix.shard }}/${{ strategy.job-total }})</td><td>0</td><td>3</td><td>5</td><td>0%</td><td>60%</td><td>0s</td></tr>
+<tr><td>Test (storage domain + uow)</td><td>0</td><td>2</td><td>37</td><td>0%</td><td>5%</td><td>4.0m</td></tr>
+<tr><td>Test Nix Flake</td><td>0</td><td>2</td><td>37</td><td>0%</td><td>5%</td><td>3.8m</td></tr>
+<tr><td>Test (Windows - smoke)</td><td>0</td><td>1</td><td>37</td><td>0%</td><td>3%</td><td>5.6m</td></tr>
+</tbody></table>
+<h2>Skipped and Pending Patterns</h2>
+<table><thead><tr><th>Job</th><th>Skipped</th><th>Observations</th></tr></thead><tbody>
+<tr><td>Check for .beads changes</td><td>6</td><td>Mostly expected conditional gating or cancelled superseded runs.</td></tr>
+<tr><td>Update default.nix vendorHash</td><td>3</td><td>Mostly expected conditional gating or cancelled superseded runs.</td></tr>
+<tr><td>Test (Embedded Dolt Storage)</td><td>2</td><td>Mostly expected conditional gating or cancelled superseded runs.</td></tr>
+<tr><td>Test (Embedded Dolt Cmd ${{ matrix.shard }}/${{ strategy.job-total }})</td><td>2</td><td>Mostly expected conditional gating or cancelled superseded runs.</td></tr>
+<tr><td>Differential Regression (v0.49.6 baseline)</td><td>2</td><td>Mostly expected conditional gating or cancelled superseded runs.</td></tr>
+<tr><td>Build (Embedded Dolt)</td><td>1</td><td>Mostly expected conditional gating or cancelled superseded runs.</td></tr>
+<tr><td>Regression Tests run 26479093922</td><td>0</td><td>`in_progress` at collection time.</td></tr>
+<tr><td>CI run 26479093903</td><td>0</td><td>`in_progress` at collection time.</td></tr>
+<tr><td>Regression Tests run 26479089036</td><td>0</td><td>`in_progress` at collection time.</td></tr>
+<tr><td>CI run 26479089035</td><td>0</td><td>`in_progress` at collection time.</td></tr>
+<tr><td>Cross-Version Smoke Tests run 26479089033</td><td>0</td><td>`in_progress` at collection time.</td></tr>
+<tr><td>Regression Tests run 26478907498</td><td>0</td><td>`in_progress` at collection time.</td></tr>
+</tbody></table>
+<h2>Cost and Noise Hot Spots</h2>
+<ul>
+<li>Successful job runner time in sample: 4164.3m.</li>
+<li>macOS successful job time: 323.3m. This is a premium hosted runner lane and should stay risk-gated.</li>
+<li>Windows successful job time: 110.8m. It is currently a smoke lane, which is appropriate.</li>
+<li>Embedded Dolt successful job time: 2264.5m across build/storage/cmd shard jobs. The shard fan-out is the dominant PR noise source when enabled.</li>
+<li>Codecov uploads are steps inside the Linux test job rather than separate jobs in the public Jobs API. They are `continue-on-error`, so they add log/check noise and possible tail latency but usually should not block.</li>
+</ul>
+<h2>Tier Recommendations</h2>
+<table><thead><tr><th>Tier</th><th>Recommended contents</th><th>Why</th></tr></thead><tbody>
+<tr><td>Fast PR</td><td>build-tag policy, version consistency, no-beads check, doc flags, fmt, lint, Linux pure-Go short test, Windows smoke</td><td>Keeps default PR feedback focused on broad regressions and low queue/cost jobs.</td></tr>
+<tr><td>Risk PR</td><td>storage domain/uow, macOS race test, Cross-Version Smoke Tests, Regression Tests, Nix path workflow</td><td>Run when touched paths or labels indicate storage, packaging, release compatibility, Nix, or CLI behavior risk.</td></tr>
+<tr><td>Merge queue</td><td>Fast PR plus Linux short test, Windows smoke, regression detector, selected risk jobs for touched paths</td><td>Protects `main` without forcing every contributor edit through the full embedded matrix.</td></tr>
+<tr><td>Main push</td><td>Full CI as currently defined, docs deploy, regression, Nix when inputs changed</td><td>Main can absorb broader coverage after merge while preserving signal for regressions introduced by integration.</td></tr>
+<tr><td>Nightly</td><td>Nightly Full Tests, full embedded Dolt matrix, migration fidelity, longer cross-version count</td><td>Expensive and compatibility-heavy jobs belong here unless a PR explicitly changes the covered surface.</td></tr>
+<tr><td>Manual</td><td>Release, Test PyPI Publish, update flake/vendor hash workflows</td><td>Operator-triggered or bot-maintenance workflows should remain outside default PR critical path.</td></tr>
+</tbody></table>
+<h2>Key Findings</h2>
+<ul>
+<li>Recent successful PR CI P50/P95 wall-clock is 11.6m / 14.1m.</li>
+<li>CI critical path is typically the longest Linux/macOS short test lane, storage/uow, or embedded cmd shard when the embedded tier is enabled.</li>
+<li>Regression Tests are quick when skipped by detector, but become a meaningful PR lane when path risk or labels enable the differential suite.</li>
+<li>Cross-Version Smoke Tests are parallel version shards; they are bounded, but they create check noise on routine PRs.</li>
+<li>The embedded Dolt build plus 20 cmd shards has high aggregate runner-minute cost and should remain risk-gated, main/nightly, or manually requested.</li>
+</ul>
+</main>
+</body>
+</html>
