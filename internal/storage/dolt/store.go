@@ -604,12 +604,21 @@ func (s *DoltStore) withReadTx(ctx context.Context, fn func(tx *sql.Tx) error) e
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	beginDone := sqlTraceStart("withReadTx.BeginTx")
 	tx, err := s.db.BeginTx(ctx, nil)
+	beginDone("")
 	if err != nil {
 		return fmt.Errorf("begin read tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	return fn(tx)
+	defer func() {
+		rbDone := sqlTraceStart("withReadTx.Rollback")
+		_ = tx.Rollback()
+		rbDone("")
+	}()
+	fnDone := sqlTraceStart("withReadTx.fn")
+	err = fn(tx)
+	fnDone("")
+	return err
 }
 
 // withReadConn runs fn against a single pooled connection without wrapping
@@ -626,12 +635,17 @@ func (s *DoltStore) withReadConn(ctx context.Context, fn func(q issueops.SQLQuer
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	connDone := sqlTraceStart("withReadConn.Conn")
 	conn, err := s.db.Conn(ctx)
+	connDone("")
 	if err != nil {
 		return fmt.Errorf("acquire read conn: %w", err)
 	}
 	defer func() { _ = conn.Close() }() // releases the conn back to the pool
-	return fn(conn)
+	fnDone := sqlTraceStart("withReadConn.fn")
+	err = fn(conn)
+	fnDone("")
+	return err
 }
 
 func (s *DoltStore) withRetryTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
@@ -798,6 +812,7 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 			attribute.String("db.statement", spanSQL(query)),
 		)...),
 	)
+	traceDone := sqlTraceStart("DoltStore.queryContext")
 	var rows *sql.Rows
 	err := s.withRetry(ctx, func() error {
 		// Close any Rows from a previous failed attempt to avoid leaking connections.
@@ -809,6 +824,7 @@ func (s *DoltStore) queryContext(ctx context.Context, query string, args ...any)
 		rows, queryErr = s.db.QueryContext(ctx, query, args...)
 		return queryErr
 	})
+	traceDone("q=%s", spanSQL(query))
 	finalErr := wrapLockError(err)
 	endSpan(span, finalErr)
 	return rows, finalErr
@@ -991,16 +1007,29 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 
 	// Fail-fast connectivity check before MySQL protocol initialization.
 	// This gives an immediate, clear error if the Dolt server isn't running,
-	// rather than waiting for MySQL driver timeouts.
+	// rather than waiting for MySQL driver timeouts, and is what triggers the
+	// auto-start path for local repo-managed servers.
+	//
+	// For remote, non-local TCP servers the preflight dial just burns one
+	// round trip every command — the MySQL driver's own Timeout already
+	// fast-fails when the server is unreachable, and auto-start is not an
+	// option anyway. Skip the preflight in that case.
 	var addr string
 	var conn net.Conn
 	var dialErr error
-	if cfg.ServerSocket != "" {
-		addr = cfg.ServerSocket
-		conn, dialErr = net.DialTimeout("unix", cfg.ServerSocket, 500*time.Millisecond)
+	skipPreflight := cfg.ServerSocket == "" && !isLocalHost(cfg.ServerHost)
+	if !skipPreflight {
+		dialDone := sqlTraceStart("newServerMode.preflightDial")
+		if cfg.ServerSocket != "" {
+			addr = cfg.ServerSocket
+			conn, dialErr = net.DialTimeout("unix", cfg.ServerSocket, 500*time.Millisecond)
+		} else {
+			addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
+			conn, dialErr = net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		}
+		dialDone("addr=%s", addr)
 	} else {
 		addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
-		conn, dialErr = net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	}
 	if dialErr != nil {
 		// Auto-start: if enabled and connecting locally via TCP, start a server.
@@ -1069,7 +1098,9 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 				addr, dialErr, hint)
 		}
 	}
-	_ = conn.Close()
+	if conn != nil {
+		_ = conn.Close()
+	}
 
 	// If this process already owns a test-started auto-start server, later
 	// stores sharing it must participate in the refcount so one Close() does
@@ -1084,16 +1115,16 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	}
 
 	// Server mode: connect via MySQL protocol to dolt sql-server
+	openDone := sqlTraceStart("newServerMode.openServerConnection")
 	db, connStr, err := openServerConnection(ctx, cfg)
+	openDone("")
 	if err != nil {
 		return nil, err
 	}
-
-	// Test connection
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
-	}
+	// openServerConnection already pinged on the fast (read-only) path and
+	// already ran the catalog-wait ping on the create-if-missing path, so a
+	// second PingContext here would be a wasted ~1 RTT (~200 ms on a remote
+	// Dolt connection).
 
 	beadsDir := cfg.BeadsDir
 	if beadsDir == "" && cfg.Path != "" {
@@ -1125,12 +1156,14 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	}
 
 	if !cfg.CreateIfMissing {
+		vidDone := sqlTraceStart("newServerMode.verifyProjectIdentity")
 		var verifyErr error
 		if cfg.Database == doltserver.GlobalDatabaseName {
 			verifyErr = store.verifyGlobalProjectIdentity(ctx, cfg.BeadsDir)
 		} else {
 			verifyErr = store.verifyProjectIdentity(ctx, cfg.BeadsDir)
 		}
+		vidDone("")
 		if verifyErr != nil {
 			_ = db.Close()
 			return nil, verifyErr
@@ -1378,7 +1411,10 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 	// command (≈3 RTT on high-latency links). For init/bootstrap paths
 	// (CreateIfMissing=true) we still run the dual-pool dance below.
 	if !cfg.CreateIfMissing {
-		if err := db.PingContext(ctx); err != nil {
+		pingDone := sqlTraceStart("openServerConnection.fastPath.Ping")
+		err := db.PingContext(ctx)
+		pingDone("")
+		if err != nil {
 			_ = db.Close()
 			if isDatabaseNotFoundError(err) {
 				return nil, "", databaseNotFoundError(cfg)
