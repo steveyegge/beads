@@ -46,6 +46,12 @@ func GetIssueCommentsInTx(ctx context.Context, tx *sql.Tx, issueID string) ([]*t
 // GetCommentCountsInTx returns comment counts per issue ID within a transaction.
 // Routes each ID to comments or wisp_comments based on wisp status.
 // Uses batched IN clauses (queryBatchSize) to avoid query-planner spikes.
+//
+// Partitioning is done via PartitionWispIDsInTx so the wisp routing decision
+// costs one batched `SELECT id FROM wisps WHERE id IN (...)` round trip,
+// not one round trip per ID. Without this, hydrating comment counts for 200
+// issues over a ~200 ms RTT link spent ~40 s in per-ID IsActiveWispInTx
+// calls (see GH#3239 and the round-5 perf write trace).
 func GetCommentCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string) (map[string]int, error) {
 	if len(issueIDs) == 0 {
 		return make(map[string]int), nil
@@ -53,13 +59,9 @@ func GetCommentCountsInTx(ctx context.Context, tx *sql.Tx, issueIDs []string) (m
 
 	result := make(map[string]int)
 
-	var wispIDs, permIDs []string
-	for _, id := range issueIDs {
-		if IsActiveWispInTx(ctx, tx, id) {
-			wispIDs = append(wispIDs, id)
-		} else {
-			permIDs = append(permIDs, id)
-		}
+	wispIDs, permIDs, err := PartitionWispIDsInTx(ctx, tx, issueIDs)
+	if err != nil {
+		return nil, fmt.Errorf("partition wisp ids: %w", err)
 	}
 
 	for _, pair := range []struct {
