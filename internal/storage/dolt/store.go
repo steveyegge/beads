@@ -1561,10 +1561,30 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 	return false, rows.Err()
 }
 
+// schemaInitDoneKey is the local_metadata key used to remember that the
+// schema + compat migrations have been brought up to date for this clone.
+// The stored value is the embedded schema.LatestVersion() that was current
+// when the stamp was written. An older bd binary stamps a lower value, so a
+// newer bd binary (with more embedded migrations) will see stamped <
+// LatestVersion() and re-run its migrations correctly.
+const schemaInitDoneKey = "bd_schema_init_done_at_version"
+
 // initSchemaOnDB applies pending schema migrations and DoltStore-specific
 // backward-compat transforms. Uses the shared schema.MigrateUp runner which
 // tracks applied versions in the schema_migrations table.
+//
+// Fast path: if local_metadata already records that this clone has had
+// schema + compat migrations run at the current embedded schema version,
+// the entire chain is skipped. On a remote Dolt server this avoids the
+// 17 backward-compat-migration idempotent probes (~40 SQL round trips,
+// ~8 s end-to-end at 200 ms RTT). The stamp is rewritten only after a
+// successful full run, so on a fresh clone the first command pays the
+// full cost as before.
 func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
+	if schemaInitFastPathOK(ctx, db) {
+		return nil
+	}
+
 	applied, err := schema.MigrateUp(ctx, db)
 	if err != nil {
 		return fmt.Errorf("schema migration: %w", err)
@@ -1599,7 +1619,38 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("failed to run compat migrations: %w", err)
 	}
 
+	// Stamp completion in the dolt-ignored local_metadata table so future
+	// store opens can take the fast path. Best-effort — failing to stamp
+	// just means the next open re-runs the (idempotent) chain.
+	stampSchemaInitDone(ctx, db)
 	return nil
+}
+
+// schemaInitFastPathOK reports whether local_metadata records that the
+// schema + compat chain has already been brought up to the embedded latest
+// version. Any error (table missing on a fresh DB, missing row, malformed
+// value, transient network glitch) returns false, falling through to the
+// full migration path.
+func schemaInitFastPathOK(ctx context.Context, db *sql.DB) bool {
+	var stamped string
+	if err := db.QueryRowContext(ctx,
+		"SELECT value FROM local_metadata WHERE `key` = ?", schemaInitDoneKey,
+	).Scan(&stamped); err != nil {
+		return false
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(stamped))
+	if err != nil {
+		return false
+	}
+	return v >= schema.LatestVersion()
+}
+
+func stampSchemaInitDone(ctx context.Context, db *sql.DB) {
+	// local_metadata is dolt-ignored, so this write never makes it into
+	// commit history — exactly what we want for clone-local cache state.
+	_, _ = db.ExecContext(ctx,
+		"REPLACE INTO local_metadata (`key`, value) VALUES (?, ?)",
+		schemaInitDoneKey, strconv.Itoa(schema.LatestVersion()))
 }
 
 func (s *DoltStore) initSchema(ctx context.Context) error {

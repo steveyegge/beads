@@ -10,6 +10,23 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// storeAlreadyHasIssues reports whether the given store's `issues` table
+// already contains at least one row. Used by maybeAutoImportJSONL to skip
+// the slow server-mode fallback import when the database is clearly not
+// empty (a re-import on every write is a v1.0.4 server-mode bug — see
+// GH#3880 and GH#4128).
+//
+// Best-effort: any error (table missing, transient network glitch, etc.)
+// is treated as "unknown emptiness", which preserves the pre-existing
+// behaviour of attempting the import.
+func storeAlreadyHasIssues(ctx context.Context, s storage.DoltStorage) bool {
+	issues, err := s.SearchIssues(ctx, "", types.IssueFilter{Limit: 1})
+	if err != nil {
+		return false
+	}
+	return len(issues) > 0
+}
+
 // jsonlImporter is implemented by stores that support single-transaction
 // JSONL import (currently EmbeddedDoltStore). Stores that don't implement
 // this fall back to the multi-call path.
@@ -71,6 +88,17 @@ func maybeAutoImportJSONL(ctx context.Context, s storage.DoltStorage, beadsDir s
 	}
 
 	// Fallback for non-embedded stores: multi-call path (original behavior).
+	// In server mode this path has no atomic emptiness check, so on v1.0.4
+	// every write triggered a full re-import of issues.jsonl (~150 s for a
+	// 200-issue corpus over a ~200 ms RTT link). Guard with a cheap probe
+	// of the issues table — if the database already has data, we have
+	// nothing to import. Matches the spirit of the embedded path's
+	// in-transaction emptiness check (see ImportJSONLData). See GH#3880
+	// and GH#4128.
+	if storeAlreadyHasIssues(ctx, s) {
+		return
+	}
+
 	fmt.Fprintf(os.Stderr, "auto-importing %d bytes from %s into empty database...\n", info.Size(), jsonlPath)
 
 	result, err := importFromLocalJSONLFull(ctx, s, jsonlPath)
