@@ -102,12 +102,7 @@ Reference for bd Latest. Generated from `bd help --all`.
   - [bd backup sync](#bd-backup-sync) — Push database to configured Dolt backup
 - [bd branch](#bd-branch) — List or create branches
 - [bd export](#bd-export) — Export issues to JSONL format
-- [bd federation](#bd-federation) — Manage peer-to-peer federation with other workspaces
-  - [bd federation add-peer](#bd-federation-add-peer) — Add a federation peer with optional SQL credentials
-  - [bd federation list-peers](#bd-federation-list-peers) — List configured federation peers
-  - [bd federation remove-peer](#bd-federation-remove-peer) — Remove a federation peer
-  - [bd federation status](#bd-federation-status) — Show federation sync status
-  - [bd federation sync](#bd-federation-sync) — Synchronize with a peer town
+- [bd federation](#bd-federation) — Manage peer-to-peer federation (requires CGO)
 - [bd import](#bd-import) — Import issues from a JSONL file or stdin into the database
 - [bd restore](#bd-restore) — Restore full history of a compacted issue from Dolt history
 - [bd vc](#bd-vc) — Version control operations
@@ -2372,114 +2367,17 @@ bd export [flags]
 
 ### bd federation
 
-Manage peer-to-peer federation between Dolt-backed beads databases.
+Federation commands require CGO and the Dolt storage backend.
+
+This binary was built without CGO support. To use federation features:
+  1. Use pre-built binaries from GitHub releases, or
+  2. Build from source with CGO enabled
 
 Federation enables synchronized issue tracking across multiple workspaces,
 each maintaining their own Dolt database while sharing updates via remotes.
 
-Requires the Dolt storage backend.
-
 ```
 bd federation
-```
-
-#### bd federation add-peer
-
-Add a new federation peer remote with optional SQL user authentication.
-
-The URL can be:
-  - dolthub://org/repo      DoltHub hosted repository
-  - host:port/database      Direct dolt sql-server connection
-  - file:///path/to/repo    Local file path (for testing)
-
-Credentials are encrypted and stored locally. They are used automatically
-when syncing with the peer. If --user is provided without --password,
-you will be prompted for the password interactively.
-
-Examples:
-  bd federation add-peer town-beta dolthub://acme/town-beta-beads
-  bd federation add-peer town-gamma 192.168.1.100:3306/beads --user sync-bot
-  bd federation add-peer partner https://partner.example.com/beads --user admin --password secret
-
-```
-bd federation add-peer <name> <url> [flags]
-```
-
-**Flags:**
-
-```
-  -p, --password string      SQL password (prompted if --user set without --password)
-      --sovereignty string   Sovereignty tier (T1, T2, T3, T4)
-  -u, --user string          SQL username for authentication
-```
-
-#### bd federation list-peers
-
-List configured federation peers
-
-```
-bd federation list-peers
-```
-
-#### bd federation remove-peer
-
-Remove a federation peer
-
-```
-bd federation remove-peer <name>
-```
-
-#### bd federation status
-
-Show synchronization status with peer towns.
-
-Displays:
-  - Configured peers and their URLs
-  - Commits ahead/behind each peer
-  - Whether there are unresolved conflicts
-
-Examples:
-  bd federation status                    # Status for all peers
-  bd federation status --peer town-beta   # Status for specific peer
-
-```
-bd federation status [--peer name] [flags]
-```
-
-**Flags:**
-
-```
-      --peer string   Specific peer to check
-```
-
-#### bd federation sync
-
-Pull from and push to peer towns.
-
-Without --peer, syncs with all configured peers.
-With --peer, syncs only with the specified peer.
-
-Handles merge conflicts using the configured strategy:
-  --strategy ours    Keep local changes on conflict
-  --strategy theirs  Accept remote changes on conflict
-
-If no strategy is specified and conflicts occur, the sync will pause
-and report which tables have conflicts for manual resolution.
-
-Examples:
-  bd federation sync                      # Sync with all peers
-  bd federation sync --peer town-beta     # Sync with specific peer
-  bd federation sync --strategy theirs    # Auto-resolve using remote values
-
-```
-bd federation sync [--peer name] [flags]
-```
-
-**Flags:**
-
-```
-      --peer string       Specific peer to sync with
-      --strategy string   Conflict resolution strategy (ours|theirs)
 ```
 
 ### bd import
@@ -3483,39 +3381,46 @@ bd init [flags]
 **Flags:**
 
 ```
-      --agents-file string                  Custom filename for agent instructions (default: AGENTS.md)
-      --agents-profile string               AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
-      --agents-template string              Path to custom AGENTS.md template (overrides embedded default)
-      --backend string                      Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
-      --contributor                         Run OSS contributor setup wizard
-      --database string                     Use existing server database name (overrides prefix-based naming)
-      --debug                               Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
-      --destroy-token string                Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
-      --discard-remote                      Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
-      --external                            Server is externally managed (skip server startup); use with --shared-server or --server
-      --force                               Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
-      --from-jsonl                          Import issues from configured import.path instead of git history
-      --non-interactive                     Skip all interactive prompts (auto-detected in CI or non-TTY environments)
-  -p, --prefix string                       Issue prefix (default: current directory name)
-      --proxied-server                      [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
-      --proxied-server-config-path string   [EXPERIMENTAL] Absolute path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one. Relative paths are rejected.
-      --proxied-server-log-path string      [EXPERIMENTAL] Absolute path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log. Relative paths are rejected.
-      --proxied-server-root-path string     [EXPERIMENTAL] Absolute directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it. Relative paths are rejected.
-  -q, --quiet                               Suppress output (quiet mode)
-      --reinit-local                        Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
-      --remote string                       Dolt remote URL to clone from and persist as sync.remote
-      --role string                         Set beads role without prompting: "maintainer" or "contributor"
-      --server                              Use external dolt sql-server instead of embedded engine
-      --server-host string                  Dolt server host (default: 127.0.0.1)
-      --server-port int                     Dolt server port (default: 3307)
-      --server-socket string                Unix domain socket path (overrides host/port)
-      --server-user string                  Dolt server MySQL user (default: root)
-      --setup-exclude                       Configure .git/info/exclude to keep beads files local (for forks)
-      --shared-server                       Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
-      --skip-agents                         Skip AGENTS.md and Claude/Codex setup generation
-      --skip-hooks                          Skip git hooks installation
-      --stealth                             Enable stealth mode: global gitattributes and gitignore, no local repo tracking
-      --team                                Run team workflow setup wizard
+      --agents-file string                             Custom filename for agent instructions (default: AGENTS.md)
+      --agents-profile string                          AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
+      --agents-template string                         Path to custom AGENTS.md template (overrides embedded default)
+      --backend string                                 Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
+      --contributor                                    Run OSS contributor setup wizard
+      --database string                                Use existing server database name (overrides prefix-based naming)
+      --debug                                          Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
+      --destroy-token string                           Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
+      --discard-remote                                 Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
+      --external                                       Server is externally managed (skip server startup); use with --shared-server or --server
+      --force                                          Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
+      --from-jsonl                                     Import issues from configured import.path instead of git history
+      --non-interactive                                Skip all interactive prompts (auto-detected in CI or non-TTY environments)
+  -p, --prefix string                                  Issue prefix (default: current directory name)
+      --proxied-server                                 [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
+      --proxied-server-config-path string              [EXPERIMENTAL] Absolute path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one. Relative paths are rejected.
+      --proxied-server-external-host string            [EXPERIMENTAL] Hostname or IP of an externally-managed dolt sql-server the proxy should front (proxied-server mode only). Mutually exclusive with --proxied-server-external-socket-path.
+      --proxied-server-external-keep-alive duration    [EXPERIMENTAL] TCP keepalive period for the proxy→external connection. Zero uses the package default (30s).
+      --proxied-server-external-port int               [EXPERIMENTAL] TCP port of the externally-managed dolt sql-server (proxied-server mode only). Required when --proxied-server-external-host is set.
+      --proxied-server-external-socket-path string     [EXPERIMENTAL] Absolute unix socket path of the externally-managed dolt sql-server (proxied-server mode only). Mutually exclusive with --proxied-server-external-host. Relative paths are rejected.
+      --proxied-server-external-tls                    [EXPERIMENTAL] Require TLS when connecting to the externally-managed dolt sql-server (proxied-server mode only).
+      --proxied-server-external-tls-cert-path string   [EXPERIMENTAL] Absolute path to a client TLS certificate (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-key-path. Relative paths are rejected.
+      --proxied-server-external-tls-key-path string    [EXPERIMENTAL] Absolute path to the client TLS private key (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-cert-path. Relative paths are rejected.
+      --proxied-server-log-path string                 [EXPERIMENTAL] Absolute path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log. Relative paths are rejected.
+      --proxied-server-root-path string                [EXPERIMENTAL] Absolute directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it. Relative paths are rejected.
+  -q, --quiet                                          Suppress output (quiet mode)
+      --reinit-local                                   Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
+      --remote string                                  Dolt remote URL to clone from and persist as sync.remote
+      --role string                                    Set beads role without prompting: "maintainer" or "contributor"
+      --server                                         Use external dolt sql-server instead of embedded engine
+      --server-host string                             Dolt server host (default: 127.0.0.1)
+      --server-port int                                Dolt server port (default: 3307)
+      --server-socket string                           Unix domain socket path (overrides host/port)
+      --server-user string                             Dolt server MySQL user (default: root)
+      --setup-exclude                                  Configure .git/info/exclude to keep beads files local (for forks)
+      --shared-server                                  Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
+      --skip-agents                                    Skip AGENTS.md and Claude/Codex setup generation
+      --skip-hooks                                     Skip git hooks installation
+      --stealth                                        Enable stealth mode: global gitattributes and gitignore, no local repo tracking
+      --team                                           Run team workflow setup wizard
 ```
 
 ### bd kv
