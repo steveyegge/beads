@@ -487,6 +487,8 @@ func TestInitCommandRegistersProxiedServerExternalFlags(t *testing.T) {
 		{"proxied-server-external-host", ""},
 		{"proxied-server-external-port", "0"},
 		{"proxied-server-external-socket-path", ""},
+		{"proxied-server-external-user", ""},
+		{"proxied-server-external-password", ""},
 		{"proxied-server-external-tls", "false"},
 		{"proxied-server-external-tls-cert-path", ""},
 		{"proxied-server-external-tls-key-path", ""},

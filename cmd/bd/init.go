@@ -111,6 +111,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		externalHost, _ := cmd.Flags().GetString("proxied-server-external-host")
 		externalPort, _ := cmd.Flags().GetInt("proxied-server-external-port")
 		externalSocketPath, _ := cmd.Flags().GetString("proxied-server-external-socket-path")
+		externalUser, _ := cmd.Flags().GetString("proxied-server-external-user")
+		externalPassword, _ := cmd.Flags().GetString("proxied-server-external-password")
 		externalTLS, _ := cmd.Flags().GetBool("proxied-server-external-tls")
 		externalTLSCertPath, _ := cmd.Flags().GetString("proxied-server-external-tls-cert-path")
 		externalTLSKeyPath, _ := cmd.Flags().GetString("proxied-server-external-tls-key-path")
@@ -168,6 +170,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 
 		externalProvided := externalHost != "" || externalPort != 0 || externalSocketPath != "" ||
+			externalUser != "" || externalPassword != "" ||
 			externalTLS || externalTLSCertPath != "" || externalTLSKeyPath != "" || externalKeepAlive != 0
 		if externalProvided && !initProxiedServer {
 			FatalError("--proxied-server-external-* flags require --proxied-server")
@@ -175,12 +178,17 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		if externalProvided && (serverConfigPath != "" || serverLogPath != "" || serverRootPath != "") {
 			FatalError("--proxied-server-external-* flags cannot be combined with --proxied-server-config-path / --proxied-server-log-path / --proxied-server-root-path")
 		}
+		if externalProvided && debugMode {
+			FatalError("--debug cannot be combined with --proxied-server-external-* (debug applies to the managed dolt sql-server only)")
+		}
 		var externalConfig *configfile.ExternalDoltConfig
 		if externalProvided {
 			cfg := configfile.ExternalDoltConfig{
 				Host:            externalHost,
 				Port:            externalPort,
 				Socket:          externalSocketPath,
+				User:            externalUser,
+				Password:        externalPassword,
 				TLSRequired:     externalTLS,
 				TLSCert:         externalTLSCertPath,
 				TLSKey:          externalTLSKeyPath,
@@ -1666,6 +1674,8 @@ func init() {
 	initCmd.Flags().String("proxied-server-external-host", "", "[EXPERIMENTAL] Hostname or IP of an externally-managed dolt sql-server the proxy should front (proxied-server mode only). Mutually exclusive with --proxied-server-external-socket-path.")
 	initCmd.Flags().Int("proxied-server-external-port", 0, "[EXPERIMENTAL] TCP port of the externally-managed dolt sql-server (proxied-server mode only). Required when --proxied-server-external-host is set.")
 	initCmd.Flags().String("proxied-server-external-socket-path", "", "[EXPERIMENTAL] Absolute unix socket path of the externally-managed dolt sql-server (proxied-server mode only). Mutually exclusive with --proxied-server-external-host. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-external-user", "", "[EXPERIMENTAL] MySQL user for the externally-managed dolt sql-server (proxied-server mode only). Defaults to \"root\" when empty.")
+	initCmd.Flags().String("proxied-server-external-password", "", "[EXPERIMENTAL] MySQL password for the externally-managed dolt sql-server (proxied-server mode only). Empty by default.")
 	initCmd.Flags().Bool("proxied-server-external-tls", false, "[EXPERIMENTAL] Require TLS when connecting to the externally-managed dolt sql-server (proxied-server mode only).")
 	initCmd.Flags().String("proxied-server-external-tls-cert-path", "", "[EXPERIMENTAL] Absolute path to a client TLS certificate (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-key-path. Relative paths are rejected.")
 	initCmd.Flags().String("proxied-server-external-tls-key-path", "", "[EXPERIMENTAL] Absolute path to the client TLS private key (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-cert-path. Relative paths are rejected.")

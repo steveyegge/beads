@@ -7,14 +7,27 @@ import (
 	"time"
 )
 
+const (
+	ExternalDoltConfigDefaultUser = "root"
+)
+
 type ExternalDoltConfig struct {
 	Host            string        `json:"host,omitempty"`
 	Port            int           `json:"port,omitempty"`
 	Socket          string        `json:"socket,omitempty"`
+	User            string        `json:"user,omitempty"`
+	Password        string        `json:"password,omitempty"`
 	TLSRequired     bool          `json:"tls_required,omitempty"`
 	TLSCert         string        `json:"tls_cert,omitempty"`
 	TLSKey          string        `json:"tls_key,omitempty"`
 	KeepAlivePeriod time.Duration `json:"keep_alive_period,omitempty"`
+}
+
+func (c ExternalDoltConfig) ResolvedUser() string {
+	if c.User == "" {
+		return ExternalDoltConfigDefaultUser
+	}
+	return c.User
 }
 
 func (c ExternalDoltConfig) Validate() error {
