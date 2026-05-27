@@ -1440,6 +1440,30 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
+	t.Run("local_env_host_overrides_remote_config_host", func(t *testing.T) {
+		// Env host has higher precedence than config.yaml host. A local env
+		// host should not inherit or report a lower-precedence remote config host.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.host: 100.111.197.110\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "envlocal", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = append(bdEnv(dir), "BEADS_DOLT_SERVER_HOST=127.0.0.1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("local env host should override remote config host, but init failed:\n%s", out)
+		}
+	})
+
 	t.Run("config_yaml_dolt_mode_server_metadata", func(t *testing.T) {
 		// When dolt.mode: server is set in config.yaml and init runs in
 		// embedded mode (no server available), the metadata.json should
@@ -1485,6 +1509,38 @@ func TestEmbeddedInit(t *testing.T) {
 				!strings.Contains(output, "dial") && !strings.Contains(output, "refused") {
 				t.Errorf("expected server connection error, got:\n%s", output)
 			}
+		}
+	})
+
+	t.Run("config_yaml_server_mode_allows_hyphenated_database_name", func(t *testing.T) {
+		// Server mode allows hyphens in database names. dolt.mode: server from
+		// config.yaml must be applied before embedded-mode database validation.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.mode: server\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "hyphendb", "--database", "server-db", "--non-interactive", "--quiet")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected server init to fail without a server, but it succeeded:\n%s", out)
+		}
+		output := string(out)
+		if strings.Contains(output, "hyphens which are invalid in embedded mode") {
+			t.Fatalf("config.yaml dolt.mode: server was applied too late:\n%s", output)
+		}
+		if !strings.Contains(output, "connect") && !strings.Contains(output, "server") &&
+			!strings.Contains(output, "dial") && !strings.Contains(output, "refused") {
+			t.Errorf("expected server connection error, got:\n%s", output)
 		}
 	})
 }
