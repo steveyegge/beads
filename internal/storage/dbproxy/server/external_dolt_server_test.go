@@ -314,6 +314,9 @@ func TestExternalDoltServer_Dial(t *testing.T) {
 
 	t.Run("unix socket dial against a live listener succeeds", func(t *testing.T) {
 		sockPath := filepath.Join(t.TempDir(), "dolt.sock")
+		if len(sockPath) >= 104 {
+			t.Skipf("socket path too long (%d bytes): %s", len(sockPath), sockPath)
+		}
 		ln, err := net.Listen("unix", sockPath)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = ln.Close() })
