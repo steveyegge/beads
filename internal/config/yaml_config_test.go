@@ -566,6 +566,36 @@ func TestValidateYamlConfigValue_DoltDebug(t *testing.T) {
 	}
 }
 
+func TestValidateYamlConfigValue_DoltMode(t *testing.T) {
+	if err := validateYamlConfigValue("dolt.mode", "server"); err != nil {
+		t.Errorf("expected 'server' to be valid: %v", err)
+	}
+	if err := validateYamlConfigValue("dolt.mode", "embedded"); err != nil {
+		t.Errorf("expected 'embedded' to be valid: %v", err)
+	}
+	if err := validateYamlConfigValue("dolt.mode", "SERVER"); err != nil {
+		t.Errorf("expected 'SERVER' to be valid (case-insensitive): %v", err)
+	}
+	if err := validateYamlConfigValue("dolt.mode", "Embedded"); err != nil {
+		t.Errorf("expected 'Embedded' to be valid (case-insensitive): %v", err)
+	}
+	if err := validateYamlConfigValue("dolt.mode", "invalid"); err == nil {
+		t.Error("expected 'invalid' to be invalid")
+	}
+	if err := validateYamlConfigValue("dolt.mode", ""); err == nil {
+		t.Error("expected empty string to be invalid")
+	}
+	if err := validateYamlConfigValue("dolt.mode", "1"); err == nil {
+		t.Error("expected '1' to be invalid")
+	}
+	if err := validateYamlConfigValue("dolt.mode", "local"); err == nil {
+		t.Error("expected 'local' to be invalid")
+	}
+	if err := validateYamlConfigValue("dolt.mode", "remote"); err == nil {
+		t.Error("expected 'remote' to be invalid")
+	}
+}
+
 func TestIsSecretKey(t *testing.T) {
 	tests := []struct {
 		key      string
