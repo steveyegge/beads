@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +16,28 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dbproxy/server"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
 )
+
+type ErrUpstreamMismatch struct {
+	RootDir string
+	Want    string
+	Have    string
+}
+
+func (e *ErrUpstreamMismatch) Error() string {
+	return fmt.Sprintf("proxy at %s fronts upstream %s, not %s", e.RootDir, e.Have, e.Want)
+}
+
+func IsUpstreamMismatch(err error) bool {
+	var m *ErrUpstreamMismatch
+	return errors.As(err, &m)
+}
+
+func intendedUpstreamID(opts OpenOpts) string {
+	if opts.Backend == BackendExternal {
+		return server.ExternalDoltServerID(opts.External)
+	}
+	return ""
+}
 
 type Endpoint struct {
 	Host string
@@ -82,13 +105,21 @@ func GetCreateDatabaseProxyServerEndpoint(rootDir string, opts OpenOpts) (Endpoi
 	poll := time.NewTicker(openPollInterval)
 	defer poll.Stop()
 
+	want := intendedUpstreamID(opts)
+
 	var lastSpawnErr error
 	for {
-		if ep, ok := readAndDial(rootDir); ok {
+		if ep, pf, ok := readAndDial(rootDir); ok {
+			if want != "" && pf.UpstreamID != "" && pf.UpstreamID != want {
+				return Endpoint{}, &ErrUpstreamMismatch{
+					RootDir: rootDir,
+					Want:    want,
+					Have:    pf.UpstreamID,
+				}
+			}
 			return ep, nil
 		}
 
-		// unlocked prior to spawn of child process
 		lock, err := util.TryLock(filepath.Join(rootDir, LockFileName))
 		switch {
 		case err == nil:
@@ -155,7 +186,7 @@ func spawnAndHandoff(rootDir string, opts OpenOpts, deadline time.Time, lock *ut
 	defer poll.Stop()
 
 	for {
-		if ep, ok := readAndDial(rootDir); ok {
+		if ep, _, ok := readAndDial(rootDir); ok {
 			return ep, nil
 		}
 		select {
@@ -261,16 +292,16 @@ func forkExecChild(rootDir string, opts OpenOpts, port int, lock *util.Lock) (*e
 	return cmd, done, nil
 }
 
-func readAndDial(rootDir string) (Endpoint, bool) {
+func readAndDial(rootDir string) (Endpoint, *pidfile.PidFile, bool) {
 	pf, err := pidfile.Read(rootDir, PIDFileName)
 	if err != nil || pf == nil {
-		return Endpoint{}, false
+		return Endpoint{}, nil, false
 	}
 	ep := Endpoint{Host: "127.0.0.1", Port: pf.Port}
 	if !probePort(ep, 500*time.Millisecond) {
-		return Endpoint{}, false
+		return Endpoint{}, nil, false
 	}
-	return ep, true
+	return ep, pf, true
 }
 
 func probePort(ep Endpoint, timeout time.Duration) bool {

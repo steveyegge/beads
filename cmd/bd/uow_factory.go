@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -37,8 +36,23 @@ func newExternalProxiedServerUOWProvider(
 	beadsDir, database string,
 	external *configfile.ExternalDoltConfig,
 ) (uow.UnitOfWorkProvider, error) {
-	rootPath := proxiedServerRoot(beadsDir)
-	logPath := filepath.Join(rootPath, proxiedServerLogName)
+	rootPath, err := resolveProxiedServerRootPath(beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("newExternalProxiedServerUOWProvider: resolve root path: %w", err)
+	}
+	if err := validateProxiedServerRootPath(rootPath); err != nil {
+		return nil, fmt.Errorf("newExternalProxiedServerUOWProvider: proxied server root (from env or %s): %w", configfile.ProxiedServerClientInfoFileName, err)
+	}
+
+	logPath, isCustomLog, err := resolveProxiedServerLogPath(beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("newExternalProxiedServerUOWProvider: resolve log path: %w", err)
+	}
+	if isCustomLog {
+		if err := validateProxiedServerLogPath(logPath); err != nil {
+			return nil, fmt.Errorf("newExternalProxiedServerUOWProvider: proxied server log (from env or %s): %w", configfile.ProxiedServerClientInfoFileName, err)
+		}
+	}
 
 	if err := os.MkdirAll(rootPath, config.BeadsDirPerm); err != nil {
 		return nil, fmt.Errorf("newExternalProxiedServerUOWProvider: mkdir %s: %w", rootPath, err)

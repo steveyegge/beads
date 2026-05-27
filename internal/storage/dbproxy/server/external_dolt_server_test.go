@@ -186,6 +186,24 @@ func TestExternalDoltServer_ID(t *testing.T) {
 	})
 }
 
+func TestExternalDoltServerID_PureFunctionMatchesServer(t *testing.T) {
+	cfg := configfile.ExternalDoltConfig{Host: "db", Port: 3306}
+	srv, err := NewExternalDoltServer(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, srv.ID(context.Background()), ExternalDoltServerID(cfg))
+}
+
+func TestExternalDoltServerID_AuthFieldsDoNotChangeID(t *testing.T) {
+	base := configfile.ExternalDoltConfig{Host: "db", Port: 3306}
+	withAuth := base
+	withAuth.User = "beads"
+	withAuth.Password = "secret"
+	withAuth.TLSRequired = true
+	withAuth.TLSCert = "/etc/beads/client.pem"
+	withAuth.TLSKey = "/etc/beads/client.key"
+	assert.Equal(t, ExternalDoltServerID(base), ExternalDoltServerID(withAuth))
+}
+
 func TestExternalDoltServer_DSN(t *testing.T) {
 	t.Run("tcp without tls", func(t *testing.T) {
 		s, err := NewExternalDoltServer(configfile.ExternalDoltConfig{Host: "db", Port: 3306})

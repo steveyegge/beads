@@ -38,9 +38,8 @@ func NewExternalDoltServer(cfg configfile.ExternalDoltConfig) (*ExternalDoltServ
 	if keepAlive == 0 {
 		keepAlive = defaultKeepAlivePeriod
 	}
-	sum := sha256.Sum256([]byte(externalDoltServerTarget(cfg)))
 	return &ExternalDoltServer{
-		id:              hex.EncodeToString(sum[:]),
+		id:              ExternalDoltServerID(cfg),
 		host:            cfg.Host,
 		port:            cfg.Port,
 		socket:          cfg.Socket,
@@ -49,6 +48,11 @@ func NewExternalDoltServer(cfg configfile.ExternalDoltConfig) (*ExternalDoltServ
 		tlsKey:          cfg.TLSKey,
 		keepAlivePeriod: keepAlive,
 	}, nil
+}
+
+func ExternalDoltServerID(cfg configfile.ExternalDoltConfig) string {
+	sum := sha256.Sum256([]byte(externalDoltServerTarget(cfg)))
+	return hex.EncodeToString(sum[:])
 }
 
 func externalDoltServerTarget(cfg configfile.ExternalDoltConfig) string {

@@ -175,8 +175,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		if externalProvided && !initProxiedServer {
 			FatalError("--proxied-server-external-* flags require --proxied-server")
 		}
-		if externalProvided && (serverConfigPath != "" || serverLogPath != "" || serverRootPath != "") {
-			FatalError("--proxied-server-external-* flags cannot be combined with --proxied-server-config-path / --proxied-server-log-path / --proxied-server-root-path")
+		if externalProvided && serverConfigPath != "" {
+			FatalError("--proxied-server-external-* flags cannot be combined with --proxied-server-config-path (external mode has no managed dolt sql-server to configure)")
 		}
 		if externalProvided && debugMode {
 			FatalError("--debug cannot be combined with --proxied-server-external-* (debug applies to the managed dolt sql-server only)")

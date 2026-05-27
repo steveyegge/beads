@@ -33,6 +33,36 @@ func TestNewExternalProxiedServerUOWProvider_CreatesRootDir(t *testing.T) {
 
 	wantRoot := proxiedServerRoot(beadsDir)
 	assert.DirExists(t, wantRoot, "external provider should create the proxied server root dir before validating")
-	wantLog := filepath.Join(wantRoot, proxiedServerLogName)
-	_ = wantLog
+}
+
+func TestNewExternalProxiedServerUOWProvider_HonorsCustomRootPath(t *testing.T) {
+	beadsDir := t.TempDir()
+	customRoot := filepath.Join(t.TempDir(), "custom-proxy-root")
+
+	require.NoError(t, configfile.SaveProxiedServerClientInfo(beadsDir, &configfile.ProxiedServerClientInfo{
+		RootPath: customRoot,
+		External: &configfile.ExternalDoltConfig{Host: "db.invalid"},
+	}))
+
+	_, err := newProxiedServerUOWProvider(context.Background(), beadsDir)
+	require.Error(t, err, "invalid external config must surface a validation error")
+
+	assert.DirExists(t, customRoot, "external provider should create the custom root dir, not the default")
+	assert.NoDirExists(t, proxiedServerRoot(beadsDir), "default root must not be created when a custom RootPath is set")
+}
+
+func TestNewExternalProxiedServerUOWProvider_HonorsCustomLogPath(t *testing.T) {
+	beadsDir := t.TempDir()
+	customLogDir := t.TempDir()
+	customLog := filepath.Join(customLogDir, "external.log")
+
+	require.NoError(t, configfile.SaveProxiedServerClientInfo(beadsDir, &configfile.ProxiedServerClientInfo{
+		LogPath:  customLog,
+		External: &configfile.ExternalDoltConfig{Host: "db.invalid"},
+	}))
+
+	_, err := newProxiedServerUOWProvider(context.Background(), beadsDir)
+	require.Error(t, err, "invalid external config must surface a validation error")
+	assert.Contains(t, err.Error(), "Host requires Port",
+		"external code path must be the one reached; got: %v", err)
 }
