@@ -318,9 +318,9 @@ func TestInstallAgentsSymlinkSafety(t *testing.T) {
 	realFile := filepath.Join(dir, "AGENTS.md")
 	linkPath := filepath.Join(dir, "CLAUDE.md")
 
-	// Write full profile content to the real file
-	fullSection := agents.RenderSection(agents.ProfileFull)
-	if err := os.WriteFile(realFile, []byte(fullSection), 0644); err != nil {
+	// Seed the target with content that should remain unchanged.
+	original := "# Existing target content\n"
+	if err := os.WriteFile(realFile, []byte(original), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -345,13 +345,26 @@ func TestInstallAgentsSymlinkSafety(t *testing.T) {
 		t.Fatalf("installAgents via symlink: %v", err)
 	}
 
-	// Read the real file — should still have full profile
+	// Symlink should still be a symlink.
+	if info, err := os.Lstat(linkPath); err != nil {
+		t.Fatalf("lstat symlink: %v", err)
+	} else if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("expected CLAUDE.md to remain a symlink")
+	}
+
+	// Read the real file — should be untouched (no managed section injection).
 	data, err := os.ReadFile(realFile)
 	if err != nil {
 		t.Fatalf("read real file: %v", err)
 	}
-	if !strings.Contains(string(data), "profile:full") {
-		t.Error("symlink target should preserve full profile")
+	if string(data) != original {
+		t.Errorf("symlink target changed:\n got: %q\nwant: %q", string(data), original)
+	}
+	if strings.Contains(string(data), "BEGIN BEADS INTEGRATION") {
+		t.Error("symlink target should not receive managed section")
+	}
+	if !strings.Contains(stdout.String(), "is a symlink; skipping managed section injection") {
+		t.Error("expected skip warning in output")
 	}
 }
 
