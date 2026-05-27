@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -31,6 +32,30 @@ func pickDepTable(useWisps bool) string {
 		return "wisp_dependencies"
 	}
 	return "dependencies"
+}
+
+// pickDepTargetColumn classifies a dependency target and returns the typed
+// column it must be inserted into. Mirrors embedded issueops.ClassifyDepTarget
+// + DepTargetKind.Column(): wisp targets go to depends_on_wisp_id, "external:"
+// prefixed ids to depends_on_external, everything else to depends_on_issue_id.
+// Wisp detection probes the wisps table; (false, nil) is returned for missing
+// or empty wisps schemas so a fresh DB without wisps still works.
+func (r *dependencySQLRepositoryImpl) pickDepTargetColumn(ctx context.Context, dependsOnID string) (string, error) {
+	if strings.HasPrefix(dependsOnID, "external:") {
+		return "depends_on_external", nil
+	}
+	var probe int
+	err := r.runner.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", dependsOnID).Scan(&probe)
+	switch {
+	case err == nil:
+		return "depends_on_wisp_id", nil
+	case errors.Is(err, sql.ErrNoRows):
+		return "depends_on_issue_id", nil
+	case dberrors.IsTableNotExist(err):
+		return "depends_on_issue_id", nil
+	default:
+		return "", fmt.Errorf("classify dep target %s: %w", dependsOnID, err)
+	}
 }
 
 func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dependency, actor string, opts domain.DepInsertOpts) error {
@@ -79,11 +104,16 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		return fmt.Errorf("db: DependencySQLRepository.Insert: check existing: %w", err)
 	}
 
-	//nolint:gosec // G201: table is one of two hardcoded constants
+	targetCol, err := r.pickDepTargetColumn(ctx, dep.DependsOnID)
+	if err != nil {
+		return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
+	}
+
+	//nolint:gosec // G201: table is one of two hardcoded constants; targetCol is from pickDepTargetColumn
 	if _, err := r.runner.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (issue_id, depends_on_issue_id, type, created_at, created_by, metadata, thread_id)
+		INSERT INTO %s (issue_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, table),
+	`, table, targetCol),
 		dep.IssueID, dep.DependsOnID, string(dep.Type),
 		time.Now().UTC(), actor, metadata, dep.ThreadID,
 	); err != nil {

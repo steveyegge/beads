@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/storage/domain"
 )
 
@@ -26,13 +27,23 @@ func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentI
 		return "", errors.New("db: ChildCounterSQLRepository.NextChildID: parentID must not be empty")
 	}
 
+	// Route by the parent's *actual* table, authoritative over any caller
+	// hint. Mirrors embedded issueops.GetNextChildIDTx: a wisp child of a
+	// regular parent (--ephemeral --parent <regular>) or a regular child of
+	// a wisp parent would otherwise either fail FK constraints or record
+	// counters in the wrong table. opts.UseWispsTable is now ignored.
+	_ = opts // honored only via parent probe; see comment above
 	counterTable, issueTable := "child_counters", "issues"
-	if opts.UseWispsTable {
+	parentIsWisp, err := r.parentIsActiveWisp(ctx, parentID)
+	if err != nil {
+		return "", fmt.Errorf("db: ChildCounterSQLRepository.NextChildID: probe parent table for %s: %w", parentID, err)
+	}
+	if parentIsWisp {
 		counterTable, issueTable = "wisp_child_counters", "wisps"
 	}
 
 	var lastChild int
-	err := r.runner.QueryRowContext(ctx,
+	err = r.runner.QueryRowContext(ctx,
 		//nolint:gosec // G201: counterTable is one of two hardcoded constants
 		fmt.Sprintf("SELECT last_child FROM %s WHERE parent_id = ?", counterTable),
 		parentID,
@@ -77,6 +88,24 @@ func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentI
 	}
 
 	return fmt.Sprintf("%s.%d", parentID, next), nil
+}
+
+// parentIsActiveWisp reports whether parentID exists in the wisps table.
+// Returns (false, nil) when the wisps table is absent or empty so that
+// fresh schemas without wisps still work. Other SQL errors propagate.
+func (r *childCounterSQLRepositoryImpl) parentIsActiveWisp(ctx context.Context, parentID string) (bool, error) {
+	var probe int
+	err := r.runner.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", parentID).Scan(&probe)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case dberrors.IsTableNotExist(err):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func parseChildSuffix(id string) (int, bool) {

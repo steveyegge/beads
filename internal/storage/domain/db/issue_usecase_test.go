@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
@@ -165,26 +166,159 @@ func (s *testSuite) TestIssueUseCase_ApplyGraph() {
 	s.Run("WispGraphRoutesToWispTables", s.applyGraphWispRouting)
 }
 
+// TestIssueUseCase_MixedParentChildRouting covers maphew's P1 review on the
+// child-counter and dependency target-column routing fixes:
+//   - WispChildOfRegularParent: --ephemeral with --parent <regular issue>
+//   - DepTargetClassification: wisp / regular / external targets each land
+//     in their typed column on dep insert.
+func (s *testSuite) TestIssueUseCase_MixedParentChildRouting() {
+	s.Run("WispChildOfRegularParent", s.mixedWispChildOfRegularParent)
+	s.Run("DepTargetClassification", s.mixedDepTargetClassification)
+}
+
+// mixedWispChildOfRegularParent verifies that creating a wisp child under a
+// regular parent routes the child-counter row to child_counters (the parent's
+// table), not wisp_child_counters. Pre-fix this called wisp_child_counters
+// with parent_id = <regular issue id>, which either FK-failed or recorded the
+// counter in the wrong table.
+func (s *testSuite) mixedWispChildOfRegularParent() {
+	s.resetMintConfig("mw", "")
+	uc := s.issueUseCase()
+
+	// Create a regular epic parent.
+	pRes, err := uc.CreateIssue(s.Ctx(), domain.CreateIssueParams{
+		Issue: &types.Issue{Title: "regular parent", IssueType: types.TypeEpic, Priority: 2},
+	}, "tester")
+	s.Require().NoError(err)
+	parentID := pRes.Issue.ID
+
+	// Now create a wisp child of the regular parent.
+	cRes, err := uc.CreateWisp(s.Ctx(), domain.CreateIssueParams{
+		Issue:    &types.Issue{Title: "wisp child", IssueType: types.TypeTask, Priority: 2, Ephemeral: true},
+		ParentID: parentID,
+	}, "tester")
+	s.Require().NoError(err)
+	childID := cRes.Issue.ID
+	s.True(strings.HasPrefix(childID, parentID+"."), "child ID %q should start with %q.", childID, parentID)
+
+	// Counter row must live in child_counters (parent's table), not
+	// wisp_child_counters. Pre-fix the call routed by the child's useWisp.
+	var regularCounter, wispCounter int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM child_counters WHERE parent_id = ?", parentID).Scan(&regularCounter))
+	s.Equal(1, regularCounter, "regular parent's counter must land in child_counters")
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM wisp_child_counters WHERE parent_id = ?", parentID).Scan(&wispCounter))
+	s.Equal(0, wispCounter, "regular parent's counter must NOT land in wisp_child_counters")
+
+	// The wisp child itself lives in wisps; the regular parent in issues.
+	var wispChildExists, regularParentExists int
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM wisps WHERE id = ?", childID).Scan(&wispChildExists))
+	s.Equal(1, wispChildExists, "wisp child must live in wisps table")
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT COUNT(*) FROM issues WHERE id = ?", parentID).Scan(&regularParentExists))
+	s.Equal(1, regularParentExists, "regular parent must live in issues table")
+
+	// Parent-child dep: written by domain.create() with useWisp=true →
+	// wisp_dependencies. Target is a regular issue → depends_on_issue_id.
+	deps := s.loadDepRows("wisp_dependencies", "mw-%")
+	s.Require().Len(deps, 1)
+	s.Equal(childID, deps[0].issueID)
+	s.Equal(parentID, deps[0].dependsOnID)
+	s.Equal(string(types.DepParentChild), deps[0].depType)
+	s.Equal("depends_on_issue_id", deps[0].targetColumn(),
+		"regular-issue target must use depends_on_issue_id, got %+v", deps[0])
+}
+
+// mixedDepTargetClassification covers maphew's P1 #2: dependency Insert must
+// pick the right typed column based on the target's kind. We construct three
+// edges from a single source issue to: a regular issue, a wisp, and an
+// external ref. Each must land in its respective column.
+func (s *testSuite) mixedDepTargetClassification() {
+	s.resetMintConfig("dx", "")
+	uc := s.issueUseCase()
+	depRepo := NewDependencySQLRepository(s.Runner())
+
+	// Source + regular issue target.
+	src, err := uc.CreateIssue(s.Ctx(), domain.CreateIssueParams{
+		Issue: &types.Issue{Title: "source", IssueType: types.TypeTask, Priority: 2},
+	}, "tester")
+	s.Require().NoError(err)
+	regular, err := uc.CreateIssue(s.Ctx(), domain.CreateIssueParams{
+		Issue: &types.Issue{Title: "regular target", IssueType: types.TypeTask, Priority: 2},
+	}, "tester")
+	s.Require().NoError(err)
+	wisp, err := uc.CreateWisp(s.Ctx(), domain.CreateIssueParams{
+		Issue: &types.Issue{Title: "wisp target", IssueType: types.TypeTask, Priority: 2, Ephemeral: true},
+	}, "tester")
+	s.Require().NoError(err)
+
+	// Use "related" so the writes don't trip the epic/task blocking rules.
+	s.Require().NoError(depRepo.Insert(s.Ctx(), &types.Dependency{
+		IssueID: src.Issue.ID, DependsOnID: regular.Issue.ID, Type: types.DepRelated,
+	}, "tester", domain.DepInsertOpts{}))
+	s.Require().NoError(depRepo.Insert(s.Ctx(), &types.Dependency{
+		IssueID: src.Issue.ID, DependsOnID: wisp.Issue.ID, Type: types.DepRelated,
+	}, "tester", domain.DepInsertOpts{}))
+	s.Require().NoError(depRepo.Insert(s.Ctx(), &types.Dependency{
+		IssueID: src.Issue.ID, DependsOnID: "external:GH-42", Type: types.DepRelated,
+	}, "tester", domain.DepInsertOpts{}))
+
+	deps := s.loadDepRows("dependencies", "dx-%")
+	s.Require().Len(deps, 3)
+
+	byTarget := make(map[string]depRow, len(deps))
+	for _, d := range deps {
+		byTarget[d.dependsOnID] = d
+	}
+	s.Equal("depends_on_issue_id", byTarget[regular.Issue.ID].targetColumn(),
+		"regular target must use depends_on_issue_id, got %+v", byTarget[regular.Issue.ID])
+	s.Equal("depends_on_wisp_id", byTarget[wisp.Issue.ID].targetColumn(),
+		"wisp target must use depends_on_wisp_id, got %+v", byTarget[wisp.Issue.ID])
+	s.Equal("depends_on_external", byTarget["external:GH-42"].targetColumn(),
+		"external: target must use depends_on_external, got %+v", byTarget["external:GH-42"])
+}
+
 // depRow models a single row from the dependencies / wisp_dependencies table
 // for direct verification inside tests.
 type depRow struct {
-	issueID     string
-	dependsOnID string
-	depType     string
+	issueID      string
+	dependsOnID  string
+	depType      string
+	depsOnIssue  sql.NullString
+	depsOnWisp   sql.NullString
+	depsOnExtern sql.NullString
+}
+
+// targetColumn returns the typed column the row was written into. Used by
+// wisp-routing tests to assert deps land in depends_on_wisp_id when the
+// target is a wisp, not depends_on_issue_id (regression for maphew's review).
+func (r depRow) targetColumn() string {
+	switch {
+	case r.depsOnIssue.Valid:
+		return "depends_on_issue_id"
+	case r.depsOnWisp.Valid:
+		return "depends_on_wisp_id"
+	case r.depsOnExtern.Valid:
+		return "depends_on_external"
+	default:
+		return ""
+	}
 }
 
 func (s *testSuite) loadDepRows(table, prefixLike string) []depRow {
 	rows, err := s.Runner().QueryContext(s.Ctx(),
 		//nolint:gosec // G201: table is one of two hardcoded constants for tests
-		"SELECT issue_id, depends_on_issue_id, type FROM "+table+" WHERE issue_id LIKE ? OR depends_on_issue_id LIKE ? ORDER BY issue_id, depends_on_issue_id, type",
-		prefixLike, prefixLike,
+		"SELECT issue_id, COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id, type, depends_on_issue_id, depends_on_wisp_id, depends_on_external FROM "+table+" WHERE issue_id LIKE ? OR depends_on_issue_id LIKE ? OR depends_on_wisp_id LIKE ? OR depends_on_external LIKE ? ORDER BY issue_id, depends_on_id, type",
+		prefixLike, prefixLike, prefixLike, prefixLike,
 	)
 	s.Require().NoError(err)
 	defer rows.Close()
 	var out []depRow
 	for rows.Next() {
 		var r depRow
-		s.Require().NoError(rows.Scan(&r.issueID, &r.dependsOnID, &r.depType))
+		s.Require().NoError(rows.Scan(&r.issueID, &r.dependsOnID, &r.depType, &r.depsOnIssue, &r.depsOnWisp, &r.depsOnExtern))
 		out = append(out, r)
 	}
 	s.Require().NoError(rows.Err())
@@ -420,4 +554,9 @@ func (s *testSuite) applyGraphWispRouting() {
 	s.Equal(string(types.DepParentChild), wispDeps[0].depType)
 	s.Equal(res.IDs["c"], wispDeps[0].issueID)
 	s.Equal(res.IDs["p"], wispDeps[0].dependsOnID)
+	// Wisp→wisp edge must land in depends_on_wisp_id, not depends_on_issue_id.
+	// Maphew's P1 review: prior code unconditionally wrote depends_on_issue_id,
+	// which would break FK/cascade/rename and wisp-aware dep filters.
+	s.Equal("depends_on_wisp_id", wispDeps[0].targetColumn(),
+		"wisp-target dep must use depends_on_wisp_id, got %+v", wispDeps[0])
 }
