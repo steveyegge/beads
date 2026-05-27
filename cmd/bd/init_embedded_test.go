@@ -1359,9 +1359,9 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
-	t.Run("port_only_without_server_mode_fails", func(t *testing.T) {
-		// When dolt.port is set but dolt.mode is not server, bd init must
-		// hard-fail — embedded mode has no port.
+	t.Run("port_only_without_server_mode_succeeds", func(t *testing.T) {
+		// dolt.port alone is ambient test plumbing — not server-mode intent.
+		// bd init should succeed and create an embedded database.
 		dir := t.TempDir()
 		initGitRepoAt(t, dir)
 
@@ -1378,12 +1378,8 @@ func TestEmbeddedInit(t *testing.T) {
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
 		out, err := cmd.CombinedOutput()
-		if err == nil {
-			t.Fatalf("expected bd init to fail with port set and no server mode, but it succeeded:\n%s", out)
-		}
-		output := string(out)
-		if !strings.Contains(output, "server mode is not enabled") {
-			t.Errorf("expected error about server mode not enabled, got:\n%s", output)
+		if err != nil {
+			t.Fatalf("expected bd init to succeed with port-only config, but it failed:\n%s", out)
 		}
 	})
 
