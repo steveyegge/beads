@@ -479,6 +479,28 @@ func TestInitCommandRegistersServerRootPathFlag(t *testing.T) {
 	assert.Equal(t, "", flag.DefValue, "--proxied-server-root-path should default to empty")
 }
 
+func TestInitCommandRegistersProxiedServerExternalFlags(t *testing.T) {
+	cases := []struct {
+		name        string
+		defaultText string
+	}{
+		{"proxied-server-external-host", ""},
+		{"proxied-server-external-port", "0"},
+		{"proxied-server-external-socket-path", ""},
+		{"proxied-server-external-tls", "false"},
+		{"proxied-server-external-tls-cert-path", ""},
+		{"proxied-server-external-tls-key-path", ""},
+		{"proxied-server-external-keep-alive", "0s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := initCmd.Flags().Lookup(tc.name)
+			require.NotNil(t, f, "init command does not register --%s", tc.name)
+			assert.Equal(t, tc.defaultText, f.DefValue, "--%s default", tc.name)
+		})
+	}
+}
+
 // TestResolveProxiedServerRootPath mirrors TestResolveProxiedServerLogPath /
 // TestResolveProxiedServerConfigPath for the root-path resolver.
 func TestResolveProxiedServerRootPath(t *testing.T) {

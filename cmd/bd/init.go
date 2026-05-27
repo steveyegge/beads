@@ -108,15 +108,22 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		serverConfigPath, _ := cmd.Flags().GetString("proxied-server-config-path")
 		serverLogPath, _ := cmd.Flags().GetString("proxied-server-log-path")
 		serverRootPath, _ := cmd.Flags().GetString("proxied-server-root-path")
+		externalHost, _ := cmd.Flags().GetString("proxied-server-external-host")
+		externalPort, _ := cmd.Flags().GetInt("proxied-server-external-port")
+		externalSocketPath, _ := cmd.Flags().GetString("proxied-server-external-socket-path")
+		externalTLS, _ := cmd.Flags().GetBool("proxied-server-external-tls")
+		externalTLSCertPath, _ := cmd.Flags().GetString("proxied-server-external-tls-cert-path")
+		externalTLSKeyPath, _ := cmd.Flags().GetString("proxied-server-external-tls-key-path")
+		externalKeepAlive, _ := cmd.Flags().GetDuration("proxied-server-external-keep-alive")
 		if os.Getenv("BEADS_DOLT_PROXIED_SERVER") == "1" {
 			initProxiedServer = true
 		}
-		if initProxiedServer {
-			// Proxied-server mode has no local Dolt init lifecycle yet. When it
-			// is implemented, that path must mark any local .dolt/ it creates or
-			// acknowledges with doltserver.MarkDoltDirCompatible.
-			FatalError("--proxied-server is not yet implemented")
-		}
+		// if initProxiedServer {
+		// 	// Proxied-server mode has no local Dolt init lifecycle yet. When it
+		// 	// is implemented, that path must mark any local .dolt/ it creates or
+		// 	// acknowledges with doltserver.MarkDoltDirCompatible.
+		// 	FatalError("--proxied-server is not yet implemented")
+		// }
 		if initProxiedServer && initServerMode {
 			FatalError("--server and --proxied-server are mutually exclusive")
 		}
@@ -158,6 +165,31 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			if err := validateProxiedServerRootPath(serverRootPath); err != nil {
 				FatalError("--proxied-server-root-path %v", err)
 			}
+		}
+
+		externalProvided := externalHost != "" || externalPort != 0 || externalSocketPath != "" ||
+			externalTLS || externalTLSCertPath != "" || externalTLSKeyPath != "" || externalKeepAlive != 0
+		if externalProvided && !initProxiedServer {
+			FatalError("--proxied-server-external-* flags require --proxied-server")
+		}
+		if externalProvided && (serverConfigPath != "" || serverLogPath != "" || serverRootPath != "") {
+			FatalError("--proxied-server-external-* flags cannot be combined with --proxied-server-config-path / --proxied-server-log-path / --proxied-server-root-path")
+		}
+		var externalConfig *configfile.ExternalDoltConfig
+		if externalProvided {
+			cfg := configfile.ExternalDoltConfig{
+				Host:            externalHost,
+				Port:            externalPort,
+				Socket:          externalSocketPath,
+				TLSRequired:     externalTLS,
+				TLSCert:         externalTLSCertPath,
+				TLSKey:          externalTLSKeyPath,
+				KeepAlivePeriod: externalKeepAlive,
+			}
+			if err := cfg.Validate(); err != nil {
+				FatalError("--proxied-server-external-*: %v", err)
+			}
+			externalConfig = &cfg
 		}
 
 		// Handle --backend flag: "dolt" is the only supported backend.
@@ -242,6 +274,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				serverConfigPath:  serverConfigPath,
 				serverLogPath:     serverLogPath,
 				serverRootPath:    serverRootPath,
+				externalConfig:    externalConfig,
 				quiet:             quiet,
 				stealth:           stealth,
 				skipHooks:         skipHooks,
@@ -1630,6 +1663,13 @@ func init() {
 	initCmd.Flags().String("proxied-server-config-path", "", "[EXPERIMENTAL] Absolute path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one. Relative paths are rejected.")
 	initCmd.Flags().String("proxied-server-log-path", "", "[EXPERIMENTAL] Absolute path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log. Relative paths are rejected.")
 	initCmd.Flags().String("proxied-server-root-path", "", "[EXPERIMENTAL] Absolute directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-external-host", "", "[EXPERIMENTAL] Hostname or IP of an externally-managed dolt sql-server the proxy should front (proxied-server mode only). Mutually exclusive with --proxied-server-external-socket-path.")
+	initCmd.Flags().Int("proxied-server-external-port", 0, "[EXPERIMENTAL] TCP port of the externally-managed dolt sql-server (proxied-server mode only). Required when --proxied-server-external-host is set.")
+	initCmd.Flags().String("proxied-server-external-socket-path", "", "[EXPERIMENTAL] Absolute unix socket path of the externally-managed dolt sql-server (proxied-server mode only). Mutually exclusive with --proxied-server-external-host. Relative paths are rejected.")
+	initCmd.Flags().Bool("proxied-server-external-tls", false, "[EXPERIMENTAL] Require TLS when connecting to the externally-managed dolt sql-server (proxied-server mode only).")
+	initCmd.Flags().String("proxied-server-external-tls-cert-path", "", "[EXPERIMENTAL] Absolute path to a client TLS certificate (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-key-path. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-external-tls-key-path", "", "[EXPERIMENTAL] Absolute path to the client TLS private key (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-cert-path. Relative paths are rejected.")
+	initCmd.Flags().Duration("proxied-server-external-keep-alive", 0, "[EXPERIMENTAL] TCP keepalive period for the proxy→external connection. Zero uses the package default (30s).")
 
 	rootCmd.AddCommand(initCmd)
 }
