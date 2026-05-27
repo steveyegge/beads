@@ -556,6 +556,11 @@ func validateYamlConfigValue(key, value string) error {
 		if lower != "true" && lower != "false" {
 			return fmt.Errorf("dolt.debug must be \"true\" or \"false\", got %q", value)
 		}
+	case "dolt.mode":
+		lower := strings.ToLower(value)
+		if lower != "server" && lower != "embedded" {
+			return fmt.Errorf("dolt.mode must be \"server\" or \"embedded\", got %q", value)
+		}
 	}
 	return nil
 }
