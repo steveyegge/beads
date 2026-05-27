@@ -111,12 +111,12 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		if os.Getenv("BEADS_DOLT_PROXIED_SERVER") == "1" {
 			initProxiedServer = true
 		}
-		// if initProxiedServer {
-		// 	// Proxied-server mode has no local Dolt init lifecycle yet. When it
-		// 	// is implemented, that path must mark any local .dolt/ it creates or
-		// 	// acknowledges with doltserver.MarkDoltDirCompatible.
-		// 	FatalError("--proxied-server is not yet implemented")
-		// }
+		if initProxiedServer {
+			// Proxied-server mode has no local Dolt init lifecycle yet. When it
+			// is implemented, that path must mark any local .dolt/ it creates or
+			// acknowledges with doltserver.MarkDoltDirCompatible.
+			FatalError("--proxied-server is not yet implemented")
+		}
 		if initProxiedServer && initServerMode {
 			FatalError("--server and --proxied-server are mutually exclusive")
 		}
