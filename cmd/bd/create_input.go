@@ -37,30 +37,29 @@ type createInput struct {
 	deps               []string
 	waitsFor           string
 	waitsForGate       string
-	silent   bool
-	dryRun   bool
-	force    bool
-	validate bool
-	ephemeral bool
-	noHistory bool
-	molType   types.MolType
-	wispType  types.WispType
-	eventCategory string
-	eventActor    string
-	eventTarget   string
-	eventPayload  string
-	dueAt      *time.Time
-	deferUntil *time.Time
-	metadata    json.RawMessage
-	metadataSet bool
-	estimatedMinutes *int
-	repoOverride    string
-	repoOverrideSet bool
-	actor     string
-	createdBy string
-	owner     string
-	jsonOutput bool
-	validationMode string
+	silent             bool
+	dryRun             bool
+	force              bool
+	validate           bool
+	ephemeral          bool
+	noHistory          bool
+	molType            types.MolType
+	wispType           types.WispType
+	eventCategory      string
+	eventActor         string
+	eventTarget        string
+	eventPayload       string
+	dueAt              *time.Time
+	deferUntil         *time.Time
+	metadata           json.RawMessage
+	metadataSet        bool
+	estimatedMinutes   *int
+	repoOverride       string
+	repoOverrideSet    bool
+	createdBy          string
+	owner              string
+	jsonOutput         bool
+	validationMode     string
 }
 
 func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
@@ -235,7 +234,6 @@ func gatherCreateInput(cmd *cobra.Command, args []string) createInput {
 		in.estimatedMinutes = &est
 	}
 
-	in.actor = actor
 	in.createdBy = getActorWithGit()
 	in.owner = getOwner()
 

@@ -77,11 +77,38 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 	}
 
 	if in.dryRun {
+		previewLabels := in.labels
+		if in.parentID != "" {
+			// Mirror the embedded dry-run: validate parent exists and (when
+			// label inheritance is on) merge parent labels into the preview.
+			// Opens a UOW only for the lookup; Close rolls back, so this
+			// stays read-only.
+			if uowProvider == nil {
+				FatalError("proxied-server UOW provider not initialized")
+			}
+			dryUW, err := uowProvider.NewUOW(ctx)
+			if err != nil {
+				FatalError("open unit of work: %v", err)
+			}
+			if _, err := dryUW.IssueUseCase().GetIssue(ctx, in.parentID); err != nil {
+				dryUW.Close(ctx)
+				FatalError("parent issue %s not found: %v", in.parentID, err)
+			}
+			if !in.noInheritLabels {
+				inherited, lerr := dryUW.LabelUseCase().GetLabels(ctx, in.parentID)
+				if lerr != nil {
+					dryUW.Close(ctx)
+					FatalError("dry-run inherit labels: %v", lerr)
+				}
+				previewLabels = mergeCreateLabels(in.labels, inherited)
+			}
+			dryUW.Close(ctx)
+		}
 		previewIssue := buildCreateIssueFromInput(in)
 		if in.jsonOutput {
 			outputJSON(previewIssue)
 		} else {
-			renderCreateDryRunPreview(previewIssue, in.labels, in.deps)
+			renderCreateDryRunPreview(previewIssue, previewLabels, in.deps)
 		}
 		return
 	}
@@ -380,36 +407,6 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	}
 	if err != nil {
 		FatalError("graph create: %v", err)
-	}
-
-	for _, node := range plan.Nodes {
-		if len(node.MetadataRefs) == 0 {
-			continue
-		}
-		merged := make(map[string]string, len(node.Metadata)+len(node.MetadataRefs))
-		for k, v := range node.Metadata {
-			merged[k] = v
-		}
-		for metaKey, refKey := range node.MetadataRefs {
-			resolvedID, ok := result.IDs[refKey]
-			if !ok {
-				FatalError("node %q: metadata_ref %q references unknown key %q", node.Key, metaKey, refKey)
-			}
-			merged[metaKey] = resolvedID
-		}
-		metaJSON, err := json.Marshal(merged)
-		if err != nil {
-			FatalError("node %q: marshaling merged metadata: %v", node.Key, err)
-		}
-		updates := map[string]any{"metadata": json.RawMessage(metaJSON)}
-		if in.ephemeral {
-			err = uw.IssueUseCase().UpdateWisp(ctx, result.IDs[node.Key], updates, in.createdBy)
-		} else {
-			err = uw.IssueUseCase().UpdateIssue(ctx, result.IDs[node.Key], updates, in.createdBy)
-		}
-		if err != nil {
-			FatalError("node %q: updating metadata refs: %v", node.Key, err)
-		}
 	}
 
 	commitMsg := plan.CommitMessage

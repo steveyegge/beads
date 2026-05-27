@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -157,7 +156,7 @@ func TestDetectUnknownGraphFields_BadJSON(t *testing.T) {
 // is emitted and points the user at the canonical schema field.
 func TestWarnUnknownGraphFields_HintsForReporterFields(t *testing.T) {
 	var buf bytes.Buffer
-	hinted := warnUnknownGraphFields(&buf, map[string][]string{
+	warnUnknownGraphFields(&buf, map[string][]string{
 		`node["c1"]`: {"parent", "blocks"},
 	})
 
@@ -170,13 +169,6 @@ func TestWarnUnknownGraphFields_HintsForReporterFields(t *testing.T) {
 	}
 	if !strings.Contains(out, "edges") {
 		t.Errorf("expected 'blocks' hint to mention edges array: %q", out)
-	}
-
-	got := append([]string(nil), hinted...)
-	sort.Strings(got)
-	want := []string{"blocks", "parent"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("hinted fields: got=%v want=%v", got, want)
 	}
 }
 

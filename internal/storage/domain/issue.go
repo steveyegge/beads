@@ -554,6 +554,37 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		keyToID[node.Key] = r.Issue.ID
 	}
 
+	// Pass 2 — resolve MetadataRefs now that every node has a minted ID.
+	// Merges the resolved IDs into the issue's existing metadata JSON and
+	// writes the result back via Update. Kept inside applyGraph so the CLI
+	// cannot bypass this step; the proxied caller used to do it post-call.
+	for _, node := range plan.Nodes {
+		if len(node.MetadataRefs) == 0 {
+			continue
+		}
+		merged := make(map[string]string, len(node.MetadataRefs))
+		if len(node.Issue.Metadata) > 0 {
+			if err := json.Unmarshal(node.Issue.Metadata, &merged); err != nil {
+				return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: re-parsing metadata: %w", node.Key, err)
+			}
+		}
+		for metaKey, refKey := range node.MetadataRefs {
+			resolvedID, ok := keyToID[refKey]
+			if !ok {
+				return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: metadata_ref %q references unknown key %q", node.Key, metaKey, refKey)
+			}
+			merged[metaKey] = resolvedID
+		}
+		metaJSON, err := json.Marshal(merged)
+		if err != nil {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: marshaling merged metadata: %w", node.Key, err)
+		}
+		updates := map[string]any{"metadata": json.RawMessage(metaJSON)}
+		if err := u.issueRepo.Update(ctx, keyToID[node.Key], updates, actor, IssueTableOpts{UseWispsTable: useWisp}); err != nil {
+			return GraphApplyResult{}, fmt.Errorf("applyGraph: node %q: updating metadata refs: %w", node.Key, err)
+		}
+	}
+
 	// Build the (childID, parentID) pair set and validate that any planned
 	// parent-child link does not close a cycle through planned edges or
 	// already-existing dependencies in the store. This must run before any
@@ -563,10 +594,19 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		return GraphApplyResult{}, err
 	}
 
-	// Pass 2 — insert edge deps. Deduplicate against the parent-child pairs:
-	//   - Same pair, parent-child type → skip (pass 3 will insert it).
+	// Pass 3 — insert edge deps. Deduplicate against the parent-child pairs:
+	//   - Same pair, parent-child type → skip (pass 4 will insert it).
 	//   - Same pair, different type   → error (conflicting edge over a parent-child link).
 	//   - Reverse pair, blocking type → error (creates a parent → child blocking cycle).
+	//
+	// Cycle-check skip optimization (matches embedded executeGraphApply):
+	// when every cycle-relevant edge in the plan is fully local (both
+	// endpoints by key, neither by ID), the CLI-side local cycle validator
+	// has already proven the planned subgraph is acyclic and
+	// validatePlannedBlockingPaths has covered parent-child paths against
+	// live deps. In that case the per-edge HasCycle SQL probe is skipped.
+	// Edges that reference external IDs always pay for HasCycle.
+	planCanSkipCycleCheck := applyGraphPlanCanSkipSQLCycleChecks(plan)
 	for i, edge := range plan.Edges {
 		fromID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
 		if fromID == "" {
@@ -591,6 +631,16 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 			return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d %s->%s creates a blocking reverse of a parent-child relationship", i, fromID, toID)
 		}
 
+		if cycleRelevantDepType(depType) && !(planCanSkipCycleCheck && applyGraphEdgeCanSkipSQLCycleCheck(edge, depType)) {
+			cycle, err := u.depRepo.HasCycle(ctx, fromID, toID)
+			if err != nil {
+				return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d cycle check: %w", i, err)
+			}
+			if cycle {
+				return GraphApplyResult{}, fmt.Errorf("applyGraph: edge %d (%s -> %s): would create a cycle", i, fromID, toID)
+			}
+		}
+
 		dep := &types.Dependency{
 			IssueID:     fromID,
 			DependsOnID: toID,
@@ -601,7 +651,7 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		}
 	}
 
-	// Pass 3 — insert parent-child deps now that all IDs are known.
+	// Pass 4 — insert parent-child deps now that all IDs are known.
 	for _, node := range plan.Nodes {
 		parentID := node.ParentID
 		if node.ParentKey != "" {
@@ -621,7 +671,7 @@ func (u *issueUseCaseImpl) applyGraph(ctx context.Context, plan GraphPlan, actor
 		}
 	}
 
-	// Pass 4 — apply deferred assignees.
+	// Pass 5 — apply deferred assignees.
 	for i, assignee := range pendingAssignees {
 		if assignee == "" {
 			continue
@@ -676,6 +726,39 @@ func depPairIDs(pair string) (string, string, bool) {
 // reverse direction of a parent-child link would form a cycle.
 func cycleRelevantDepType(t types.DependencyType) bool {
 	return t == types.DepBlocks || t == types.DepConditionalBlocks
+}
+
+// applyGraphPlanCanSkipSQLCycleChecks returns true when every cycle-relevant
+// edge in the plan is purely local (both endpoints by key, neither by ID).
+// In that case the CLI-side local cycle validator has already proven the
+// planned subgraph is acyclic, and no per-edge SQL HasCycle probe is needed
+// in applyGraph's edge pass. Non-cycle-relevant edges (e.g. "related") do
+// not gate the skip. Mirrors embedded graphApplyPlanCanSkipSQLCycleChecks.
+func applyGraphPlanCanSkipSQLCycleChecks(plan GraphPlan) bool {
+	for _, edge := range plan.Edges {
+		depType := edge.Type
+		if depType == "" {
+			depType = types.DepBlocks
+		}
+		if !cycleRelevantDepType(depType) {
+			continue
+		}
+		if !applyGraphEdgeCanSkipSQLCycleCheck(edge, depType) {
+			return false
+		}
+	}
+	return true
+}
+
+// applyGraphEdgeCanSkipSQLCycleCheck returns true when the edge is fully
+// local (both endpoints by key, neither by ID) and the dep type is
+// cycle-relevant. An edge that references an external ID always pays for
+// HasCycle because the local validator never saw the external graph.
+func applyGraphEdgeCanSkipSQLCycleCheck(edge GraphEdge, depType types.DependencyType) bool {
+	if edge.FromKey == "" || edge.ToKey == "" || edge.FromID != "" || edge.ToID != "" {
+		return false
+	}
+	return cycleRelevantDepType(depType)
 }
 
 // resolveEdgeRef returns the ID for an edge endpoint: the keyToID lookup
