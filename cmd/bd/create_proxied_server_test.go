@@ -15,7 +15,9 @@ import (
 
 func TestBuildCreateIssueFromInput_PopulatesAllFields(t *testing.T) {
 	due := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	defer1 := time.Date(2026, 5, 30, 9, 0, 0, 0, time.UTC)
+	// Future defer time so the status assertion below is deterministic
+	// regardless of wall-clock date (a future --defer yields StatusDeferred).
+	defer1 := time.Now().Add(48 * time.Hour).UTC()
 	est := 90
 	meta := json.RawMessage(`{"k":"v"}`)
 
@@ -61,8 +63,8 @@ func TestBuildCreateIssueFromInput_PopulatesAllFields(t *testing.T) {
 	if got.Priority != 1 {
 		t.Errorf("Priority = %d", got.Priority)
 	}
-	if got.Status != types.StatusOpen {
-		t.Errorf("Status = %q, want %q", got.Status, types.StatusOpen)
+	if got.Status != types.StatusDeferred {
+		t.Errorf("Status = %q, want %q (future --defer)", got.Status, types.StatusDeferred)
 	}
 	if got.ExternalRef == nil || *got.ExternalRef != "gh-9" {
 		t.Errorf("ExternalRef = %v, want pointer to gh-9", got.ExternalRef)
