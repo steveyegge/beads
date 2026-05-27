@@ -524,6 +524,19 @@ func (m migrationSource) bootstrapSQL() string {
 )`, m.cursorTable)
 }
 
+func checkNoDuplicateVersions(files []migrationFile) {
+	seen := make(map[int]string, len(files))
+	for _, m := range files {
+		if prior, ok := seen[m.version]; ok {
+			panic(fmt.Sprintf(
+				"schema: duplicate migration version %d: %q and %q — renumber one before commit",
+				m.version, prior, m.name,
+			))
+		}
+		seen[m.version] = m.name
+	}
+}
+
 func (m migrationSource) list() []migrationFile {
 	entries, err := fs.ReadDir(m.files, m.dir)
 	if err != nil {
@@ -540,6 +553,7 @@ func (m migrationSource) list() []migrationFile {
 		}
 		files = append(files, migrationFile{version: v, name: e.Name()})
 	}
+	checkNoDuplicateVersions(files)
 	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
 	return files
 }
