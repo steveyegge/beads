@@ -240,6 +240,27 @@ func (r *beadsDirFSRepositoryImpl) ReadBeadsConfig(ctx context.Context) (*config
 	return cfg, nil
 }
 
+func (r *beadsDirFSRepositoryImpl) WriteProxiedServerClientInfo(ctx context.Context, info *configfile.ProxiedServerClientInfo) error {
+	if r.beadsDir == "" {
+		return fmt.Errorf("fs: WriteProxiedServerClientInfo: beadsDir not resolved")
+	}
+	if err := configfile.SaveProxiedServerClientInfo(r.beadsDir, info); err != nil {
+		return fmt.Errorf("fs: WriteProxiedServerClientInfo: %w", err)
+	}
+	return nil
+}
+
+func (r *beadsDirFSRepositoryImpl) ReadProxiedServerClientInfo(ctx context.Context) (*configfile.ProxiedServerClientInfo, error) {
+	if r.beadsDir == "" {
+		return nil, fmt.Errorf("fs: ReadProxiedServerClientInfo: beadsDir not resolved")
+	}
+	info, err := configfile.LoadProxiedServerClientInfo(r.beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("fs: ReadProxiedServerClientInfo: %w", err)
+	}
+	return info, nil
+}
+
 func fileExists(path, opLabel string) (bool, error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {

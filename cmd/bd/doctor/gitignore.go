@@ -36,6 +36,8 @@ push-state.json
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
+proxied_server_client_info.json
+
 # Worktree redirect file (contains relative path to main repo's .beads/)
 # Must not be committed as paths would be wrong in other clones
 redirect
@@ -120,6 +122,7 @@ var requiredPatterns = []string{
 	"*.lock",
 	"*.corrupt.backup/",
 	".beads-credential-key",
+	"proxied_server_client_info.json",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date.
