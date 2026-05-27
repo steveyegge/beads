@@ -204,12 +204,20 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 
 	// Install minimal beads section in CLAUDE.md.
 	// Hooks handle the heavy lifting via bd prime; CLAUDE.md just needs a pointer.
-	if err := installAgents(claudeAgentsEnv(env), claudeAgentsIntegration); err != nil {
+	agentsEnv := claudeAgentsEnv(env)
+	agentsSkipped := false
+	agentsEnv.skipped = &agentsSkipped
+	if err := installAgents(agentsEnv, claudeAgentsIntegration); err != nil {
 		// Non-fatal: hooks are already installed
 		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", claudeInstructionsFile, err)
 	}
 
-	_, _ = fmt.Fprintln(env.stdout, "\n✓ Claude Code integration installed")
+	if agentsSkipped {
+		_, _ = fmt.Fprintln(env.stdout, "\n✓ Claude Code hooks installed")
+		_, _ = fmt.Fprintf(env.stdout, "  Agent instructions skipped: %s is a symlink\n", claudeInstructionsFile)
+	} else {
+		_, _ = fmt.Fprintln(env.stdout, "\n✓ Claude Code integration installed")
+	}
 	_, _ = fmt.Fprintf(env.stdout, "  Settings: %s\n", settingsPath)
 	_, _ = fmt.Fprintln(env.stdout, "\nRestart Claude Code for changes to take effect.")
 	return nil

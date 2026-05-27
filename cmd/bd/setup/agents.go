@@ -33,6 +33,7 @@ type agentsEnv struct {
 	agentsPath string
 	stdout     io.Writer
 	stderr     io.Writer
+	skipped    *bool
 }
 
 type agentsIntegration struct {
@@ -87,6 +88,12 @@ func agentsFileName(path string) string {
 	return base
 }
 
+func (env agentsEnv) markSkipped() {
+	if env.skipped != nil {
+		*env.skipped = true
+	}
+}
+
 func installAgents(env agentsEnv, integration agentsIntegration) error {
 	_, _ = fmt.Fprintf(env.stdout, "Installing %s integration...\n", integration.name)
 	agentsFile := agentsFileName(env.agentsPath)
@@ -101,6 +108,7 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 			targetHint = fmt.Sprintf(" to %s", target)
 		}
 		_, _ = fmt.Fprintf(env.stderr, "Warning: %s is a symlink%s; skipping managed section injection to preserve link mode/content. Update the target file directly, or replace the symlink with a regular file and re-run '%s'.\n", agentsFile, targetHint, integration.setupCommand)
+		env.markSkipped()
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
 		_, _ = fmt.Fprintf(env.stderr, "Error: failed to inspect %s: %v\n", env.agentsPath, err)

@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Symlinked `CLAUDE.md` repair guidance** - troubleshooting docs now include
+  a tested `git update-index --cacheinfo` recipe for repositories that already
+  contain a corrupted `mode 120000` `CLAUDE.md` entry with Markdown content.
+  The setup bug was fixed in [#4192](https://github.com/gastownhall/beads/pull/4192);
+  this note is for repairing affected clones.
 - **Codex hook metadata isolation** - Codex hook metadata now lives under
   `.codex-plugin/hooks/`, preventing Claude from loading Codex-only hooks from
   the shared plugin root while keeping Codex setup pointed at `bd codex-hook`.

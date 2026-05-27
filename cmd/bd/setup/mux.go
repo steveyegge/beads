@@ -212,11 +212,16 @@ func InstallMux(project bool, global bool) {
 }
 
 func installMux(env agentsEnv, project bool, global bool) error {
+	rootSkipped := false
+	env.skipped = &rootSkipped
 	if err := installAgents(env, muxIntegration); err != nil {
 		return err
 	}
 	if err := installMuxProjectHooks(env); err != nil {
 		return err
+	}
+	if rootSkipped {
+		_, _ = fmt.Fprintf(env.stdout, "✓ Mux hooks installed; managed section skipped for symlinked %s\n", env.agentsPath)
 	}
 
 	if project {
@@ -227,8 +232,13 @@ func installMux(env agentsEnv, project bool, global bool) error {
 
 		projectEnv := env
 		projectEnv.agentsPath = projectPath
+		projectSkipped := false
+		projectEnv.skipped = &projectSkipped
 		if err := installAgents(projectEnv, muxProjectIntegration); err != nil {
 			return err
+		}
+		if projectSkipped {
+			_, _ = fmt.Fprintf(env.stdout, "✓ Mux project hooks installed; managed section skipped for symlinked %s\n", projectPath)
 		}
 	}
 
@@ -246,7 +256,15 @@ func installMux(env agentsEnv, project bool, global bool) error {
 
 	globalEnv := env
 	globalEnv.agentsPath = globalPath
-	return installAgents(globalEnv, muxGlobalIntegration)
+	globalSkipped := false
+	globalEnv.skipped = &globalSkipped
+	if err := installAgents(globalEnv, muxGlobalIntegration); err != nil {
+		return err
+	}
+	if globalSkipped {
+		_, _ = fmt.Fprintf(env.stdout, "✓ Mux global setup completed; managed section skipped for symlinked %s\n", globalPath)
+	}
+	return nil
 }
 
 // CheckMux checks if Mux integration is installed.
