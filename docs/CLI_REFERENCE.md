@@ -346,6 +346,9 @@ Close one or more issues.
 If no issue ID is provided, closes the last touched issue (from most recent
 create, update, show, or close operation).
 
+When closing multiple issues, provide one --reason for all IDs or repeat
+--reason once per ID in the same order.
+
 ```
 bd close [id...] [flags]
 ```
