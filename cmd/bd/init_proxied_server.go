@@ -30,6 +30,7 @@ type initProxiedServerInput struct {
 	serverConfigPath  string
 	serverLogPath     string
 	serverRootPath    string
+	externalConfig    *configfile.ExternalDoltConfig
 	quiet             bool
 	stealth           bool
 	skipHooks         bool
@@ -116,7 +117,7 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 	}
 	configYAMLBody := renderInitConfigYAML("", false)
 
-	clientInfo, err := buildProxiedServerClientInfo(in.serverRootPath, in.serverConfigPath, in.serverLogPath)
+	clientInfo, err := buildProxiedServerClientInfo(in.serverRootPath, in.serverConfigPath, in.serverLogPath, in.externalConfig)
 	if err != nil {
 		FatalError("%v", err)
 	}
@@ -252,8 +253,8 @@ func composeProxiedServerMetadataJSON(in proxiedMetadataInputs) ([]byte, error) 
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
-func buildProxiedServerClientInfo(rootPath, configPath, logPath string) (*configfile.ProxiedServerClientInfo, error) {
-	if rootPath == "" && configPath == "" && logPath == "" {
+func buildProxiedServerClientInfo(rootPath, configPath, logPath string, external *configfile.ExternalDoltConfig) (*configfile.ProxiedServerClientInfo, error) {
+	if rootPath == "" && configPath == "" && logPath == "" && external == nil {
 		return nil, nil
 	}
 	clean := func(p string) (string, error) {
@@ -277,10 +278,16 @@ func buildProxiedServerClientInfo(rootPath, configPath, logPath string) (*config
 	if err != nil {
 		return nil, err
 	}
+	if external != nil {
+		if err := external.Validate(); err != nil {
+			return nil, fmt.Errorf("buildProxiedServerClientInfo: %w", err)
+		}
+	}
 	return &configfile.ProxiedServerClientInfo{
 		RootPath:   rootAbs,
 		ConfigPath: configAbs,
 		LogPath:    logAbs,
+		External:   external,
 	}, nil
 }
 

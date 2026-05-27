@@ -10,9 +10,10 @@ import (
 const ProxiedServerClientInfoFileName = "proxied_server_client_info.json"
 
 type ProxiedServerClientInfo struct {
-	RootPath   string `json:"root_path,omitempty"`
-	ConfigPath string `json:"config_path,omitempty"`
-	LogPath    string `json:"log_path,omitempty"`
+	RootPath   string              `json:"root_path,omitempty"`
+	ConfigPath string              `json:"config_path,omitempty"`
+	LogPath    string              `json:"log_path,omitempty"`
+	External   *ExternalDoltConfig `json:"external,omitempty"`
 }
 
 func ProxiedServerClientInfoPath(beadsDir string) string {
