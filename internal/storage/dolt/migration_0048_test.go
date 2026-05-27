@@ -11,13 +11,13 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// TestMigration0033_RoundTrip covers the be-eei (D4v2) reversibility
-// acceptance criterion: migration 0033 must round-trip cleanly with the row
+// TestMigration0048_RoundTrip covers the be-eei (D4v2) reversibility
+// acceptance criterion: migration 0048 must round-trip cleanly with the row
 // population intact. Sequence: setup (migration already applied by
 // setupTestStore) → verify the D4v2 index set is present and the dropped
-// legacy index is absent → seed a non-trivial row fixture → run the 0033
+// legacy index is absent → seed a non-trivial row fixture → run the 0048
 // down SQL → verify the D4v2 indexes are gone, the legacy idx_issues_status
-// is restored, and row count is unchanged → run the 0033 up SQL again →
+// is restored, and row count is unchanged → run the 0048 up SQL again →
 // verify the D4v2 indexes are back, the legacy index is dropped, and a
 // sampled row set still matches.
 //
@@ -30,7 +30,7 @@ import (
 // pushing the test beyond a reasonable timeout; the bench suite
 // (BenchmarkGetStaleIssues_10K, BenchmarkCreateIssue_Existing10K) covers
 // 10K-scale separately through seedForSummaryBench.
-func TestMigration0033_RoundTrip(t *testing.T) {
+func TestMigration0048_RoundTrip(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
@@ -41,7 +41,7 @@ func TestMigration0033_RoundTrip(t *testing.T) {
 	defer cancel()
 
 	// D4v2 (be-eei §4): composite (status, updated_at) replaces the
-	// pre-0033 idx_issues_status, and standalone idx_issues_defer_until is
+	// pre-0048 idx_issues_status, and standalone idx_issues_defer_until is
 	// added. idx_issues_status must not coexist with the composite after
 	// migration up.
 	d4v2Indexes := []string{
@@ -52,7 +52,7 @@ func TestMigration0033_RoundTrip(t *testing.T) {
 
 	// Phase 1: post-initial-migration. Composite + defer_until must exist,
 	// and the legacy idx_issues_status must be gone, because setupTestStore
-	// runs every embedded .up.sql including 0033.
+	// runs every embedded .up.sql including 0048.
 	assertIndexesPresent(t, ctx, store, d4v2Indexes, "after initial migration")
 	assertIndexesAbsent(t, ctx, store, legacyStatusIndex, "after initial migration")
 
@@ -71,7 +71,7 @@ func TestMigration0033_RoundTrip(t *testing.T) {
 
 	// Phase 2: apply the down SQL. D4v2 indexes must disappear; legacy
 	// idx_issues_status must come back; rows must not change.
-	runMigrationSQL(t, ctx, store, downSQL0033)
+	runMigrationStmts(t, ctx, store, downSQL0048)
 	assertIndexesAbsent(t, ctx, store, d4v2Indexes, "after down migration")
 	assertIndexesPresent(t, ctx, store, legacyStatusIndex, "after down migration")
 	if got := countIssues(t, ctx, store); got != wantCount {
@@ -80,7 +80,7 @@ func TestMigration0033_RoundTrip(t *testing.T) {
 
 	// Phase 3: re-apply the up SQL. D4v2 indexes must return; legacy index
 	// drops again; rows must still be byte-identical against the sample.
-	runMigrationSQL(t, ctx, store, upSQL0033)
+	runMigrationStmts(t, ctx, store, upSQL0048)
 	assertIndexesPresent(t, ctx, store, d4v2Indexes, "after re-running up migration")
 	assertIndexesAbsent(t, ctx, store, legacyStatusIndex, "after re-running up migration")
 	if got := countIssues(t, ctx, store); got != wantCount {
@@ -89,25 +89,25 @@ func TestMigration0033_RoundTrip(t *testing.T) {
 	verifySampleIssues(t, ctx, store, sampleIDs)
 }
 
-// upSQL0033 / downSQL0033 are the literal statements from
-// migrations/0033_add_date_indexes.{up,down}.sql. Kept inline so the test is
+// upSQL0048 / downSQL0048 are the literal statements from
+// migrations/0048_add_date_indexes.{up,down}.sql. Kept inline so the test is
 // self-contained and catches divergence if the embedded .sql ever gets
 // hand-edited away from the shipped DDL. Statement order matters: be-eei §8
 // guardrail 1 requires DROP idx_issues_status → CREATE composite → CREATE
 // defer_until on the way up, and the exact reverse on the way down.
-var upSQL0033 = []string{
+var upSQL0048 = []string{
 	"DROP INDEX idx_issues_status ON issues",
 	"CREATE INDEX idx_issues_status_updated_at ON issues (status, updated_at)",
 	"CREATE INDEX idx_issues_defer_until ON issues (defer_until)",
 }
 
-var downSQL0033 = []string{
+var downSQL0048 = []string{
 	"DROP INDEX idx_issues_defer_until ON issues",
 	"DROP INDEX idx_issues_status_updated_at ON issues",
 	"CREATE INDEX idx_issues_status ON issues (status)",
 }
 
-func runMigrationSQL(t *testing.T, ctx context.Context, store *DoltStore, stmts []string) {
+func runMigrationStmts(t *testing.T, ctx context.Context, store *DoltStore, stmts []string) {
 	t.Helper()
 	for _, stmt := range stmts {
 		if _, err := store.db.ExecContext(ctx, stmt); err != nil {
@@ -258,13 +258,13 @@ func verifySampleIssues(t *testing.T, ctx context.Context, store *DoltStore, ids
 	}
 }
 
-// TestMigration0033_ExplainCapture prints EXPLAIN output for the two read
+// TestMigration0048_ExplainCapture prints EXPLAIN output for the two read
 // shapes D4v2 targets (bd stale's status+updated_at predicate, and bd ready's
 // deferred-parents defer_until predicate) so the PR description can cite the
 // planner's index usage — be-eei §8 guardrail 4. Not a pass/fail gate — the
 // `go test -v` output is the artifact and the reviewer validates it. Skipped
 // unless explicitly opted in to keep CI quiet.
-func TestMigration0033_ExplainCapture(t *testing.T) {
+func TestMigration0048_ExplainCapture(t *testing.T) {
 	if testing.Short() {
 		t.Skip("explain capture is verbose; run with -v explicitly")
 	}
