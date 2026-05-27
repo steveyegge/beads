@@ -257,6 +257,26 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			_ = os.Setenv("BEADS_DOLT_DEBUG", "1")
 		}
 
+		// Initialize config (PersistentPreRun doesn't run for init command).
+		// This must happen before validation that depends on server/embedded
+		// mode so dolt.mode from config.yaml is treated like --server.
+		if err := config.Initialize(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
+			// Non-fatal - continue with defaults
+		}
+
+		// config.yaml fallback for dolt.mode: if --server wasn't passed and
+		// env var didn't set it, check config.yaml for dolt.mode: server.
+		if !initServerMode {
+			if modeVal := config.GetYamlConfig("dolt.mode"); strings.EqualFold(modeVal, "server") {
+				initServerMode = true
+				serverMode = initServerMode
+				if cmdCtx != nil {
+					cmdCtx.ServerMode = initServerMode
+				}
+			}
+		}
+
 		// Reject hyphens in --database for embedded mode. Must run AFTER
 		// serverMode is set above — otherwise !usesSQLServer() always returns
 		// true and incorrectly rejects server-mode names (GH#3231).
@@ -265,10 +285,32 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				database, sanitizeDBName(database))
 		}
 
-		// Initialize config (PersistentPreRun doesn't run for init command)
-		if err := config.Initialize(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
-			// Non-fatal - continue with defaults
+		// Hard fail: if a remote dolt.host is configured, server mode MUST
+		// be active — embedded mode has no host. dolt.port alone is ambient
+		// plumbing (e.g. test harnesses) and is not treated as server intent.
+		if !initServerMode {
+			configHost := config.GetYamlConfig("dolt.host")
+			envHost := os.Getenv("BEADS_DOLT_SERVER_HOST")
+			configPort := config.GetYamlConfig("dolt.port")
+			envPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
+
+			effectiveHost := configHost
+			hostSource := "config.yaml"
+			if envHost != "" {
+				effectiveHost = envHost
+				hostSource = "environment"
+			}
+
+			if effectiveHost != "" && !isLocalHost(effectiveHost) {
+				detail := fmt.Sprintf("dolt.host (%s) is", effectiveHost)
+				if configPort != "" || envPort != "" {
+					detail = fmt.Sprintf("dolt.host (%s) and dolt.port are", effectiveHost)
+				}
+				FatalError("%s set via %s but server mode is not enabled.\n"+
+					"  Embedded mode has no host/port — these settings require server mode.\n"+
+					"  Set dolt.mode: server in %s or pass --server to bd init.",
+					detail, hostSource, config.UserConfigYamlPath())
+			}
 		}
 
 		// Safety guard: check for existing beads data.

@@ -347,6 +347,32 @@ func projectConfigPathFromLoadedState() string {
 	return configPath
 }
 
+// UserConfigYamlPath returns the platform-appropriate path for the
+// user-level config.yaml file. On Linux this is typically
+// ~/.config/bd/config.yaml; on macOS it checks ~/.config/bd/ first
+// (the documented cross-platform path) and falls back to
+// ~/Library/Application Support/bd/.
+func UserConfigYamlPath() string {
+	// Prefer ~/.config/bd/config.yaml — it's the documented path and
+	// works on all platforms after GH#3532.
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		xdgPath := filepath.Join(homeDir, ".config", "bd", "config.yaml")
+		if _, err := os.Stat(xdgPath); err == nil {
+			return xdgPath
+		}
+		// If it doesn't exist yet, still prefer it as the recommendation
+		// unless the os.UserConfigDir() path already has a file.
+		if configDir, err := os.UserConfigDir(); err == nil {
+			osPath := filepath.Join(configDir, "bd", "config.yaml")
+			if _, err := os.Stat(osPath); err == nil {
+				return osPath
+			}
+		}
+		return xdgPath // recommend the cross-platform path
+	}
+	return "~/.config/bd/config.yaml" // fallback display string
+}
+
 func findProjectBeadsDir() string {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -529,6 +555,11 @@ func validateYamlConfigValue(key, value string) error {
 		lower := strings.ToLower(value)
 		if lower != "true" && lower != "false" {
 			return fmt.Errorf("dolt.debug must be \"true\" or \"false\", got %q", value)
+		}
+	case "dolt.mode":
+		lower := strings.ToLower(value)
+		if lower != "server" && lower != "embedded" {
+			return fmt.Errorf("dolt.mode must be \"server\" or \"embedded\", got %q", value)
 		}
 	}
 	return nil

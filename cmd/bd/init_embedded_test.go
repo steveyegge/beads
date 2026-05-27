@@ -1327,6 +1327,222 @@ func TestEmbeddedInit(t *testing.T) {
 			t.Errorf("issue_prefix: got %q, want %q", val, want)
 		}
 	})
+
+	t.Run("remote_host_without_server_mode_fails", func(t *testing.T) {
+		// When dolt.host is set to a remote address but server mode is not
+		// enabled, bd init must hard-fail (not fall through to embedded).
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.host: 100.111.197.110\ndolt.port: 3306\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "ambi", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected bd init to fail with remote host and no server mode, but it succeeded:\n%s", out)
+		}
+		output := string(out)
+		if !strings.Contains(output, "server mode is not enabled") {
+			t.Errorf("expected error about server mode not enabled, got:\n%s", output)
+		}
+		if !strings.Contains(output, "100.111.197.110") {
+			t.Errorf("error should mention the configured host, got:\n%s", output)
+		}
+	})
+
+	t.Run("port_only_without_server_mode_succeeds", func(t *testing.T) {
+		// dolt.port alone is ambient test plumbing — not server-mode intent.
+		// bd init should succeed and create an embedded database.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.port: 3306\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "ponly", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("expected bd init to succeed with port-only config, but it failed:\n%s", out)
+		}
+	})
+
+	t.Run("host_only_without_server_mode_fails", func(t *testing.T) {
+		// Remote dolt.host without dolt.port must still hard-fail
+		// when server mode is not enabled.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.host: 100.111.197.110\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "honly", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected bd init to fail with remote host and no server mode, but it succeeded:\n%s", out)
+		}
+		output := string(out)
+		if !strings.Contains(output, "server mode is not enabled") {
+			t.Errorf("expected error about server mode not enabled, got:\n%s", output)
+		}
+		if !strings.Contains(output, "100.111.197.110") {
+			t.Errorf("error should mention the configured host, got:\n%s", output)
+		}
+	})
+
+	t.Run("ambiguous_host_local_no_warning", func(t *testing.T) {
+		// When dolt.host is localhost, no warning should appear even without --quiet.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.host: 127.0.0.1\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "ahloc", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd init failed: %v\n%s", err, out)
+		}
+		if strings.Contains(string(out), "Warning: dolt.host") {
+			t.Errorf("local host should not trigger warning, got:\n%s", out)
+		}
+	})
+
+	t.Run("local_env_host_overrides_remote_config_host", func(t *testing.T) {
+		// Env host has higher precedence than config.yaml host. A local env
+		// host should not inherit or report a lower-precedence remote config host.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.host: 100.111.197.110\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "envlocal", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = append(bdEnv(dir), "BEADS_DOLT_SERVER_HOST=127.0.0.1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("local env host should override remote config host, but init failed:\n%s", out)
+		}
+	})
+
+	t.Run("config_yaml_dolt_mode_server_metadata", func(t *testing.T) {
+		// When dolt.mode: server is set in config.yaml and init runs in
+		// embedded mode (no server available), the metadata.json should
+		// still reflect that server mode was requested. We verify by
+		// checking that the init process attempted server mode.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.mode: server\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		// With dolt.mode: server and no actual server, init should fail
+		// with a connection error — proving that config.yaml triggered
+		// server mode.
+		cmd := exec.Command(bd, "init", "--prefix", "srvmode", "--non-interactive", "--quiet")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		// We expect failure because there's no server to connect to.
+		// The key assertion is that it tried server mode at all.
+		if err == nil {
+			// If it succeeded, it created an embedded DB — meaning
+			// config.yaml dolt.mode was ignored.
+			beadsDir := filepath.Join(dir, ".beads")
+			cfg, loadErr := configfile.Load(beadsDir)
+			if loadErr != nil {
+				t.Fatalf("bd init succeeded but cannot load metadata: %v", loadErr)
+			}
+			if strings.ToLower(cfg.DoltMode) != "server" {
+				t.Errorf("expected DoltMode=server in metadata, got %q (config.yaml dolt.mode: server was ignored)", cfg.DoltMode)
+			}
+		} else {
+			// Init failed — check that the error is connection-related,
+			// which proves server mode was attempted.
+			output := string(out)
+			if !strings.Contains(output, "connect") && !strings.Contains(output, "server") &&
+				!strings.Contains(output, "dial") && !strings.Contains(output, "refused") {
+				t.Errorf("expected server connection error, got:\n%s", output)
+			}
+		}
+	})
+
+	t.Run("config_yaml_server_mode_allows_hyphenated_database_name", func(t *testing.T) {
+		// Server mode allows hyphens in database names. dolt.mode: server from
+		// config.yaml must be applied before embedded-mode database validation.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.mode: server\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "hyphendb", "--database", "server-db", "--non-interactive", "--quiet")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected server init to fail without a server, but it succeeded:\n%s", out)
+		}
+		output := string(out)
+		if strings.Contains(output, "hyphens which are invalid in embedded mode") {
+			t.Fatalf("config.yaml dolt.mode: server was applied too late:\n%s", output)
+		}
+		if !strings.Contains(output, "connect") && !strings.Contains(output, "server") &&
+			!strings.Contains(output, "dial") && !strings.Contains(output, "refused") {
+			t.Errorf("expected server connection error, got:\n%s", output)
+		}
+	})
 }
 
 // TestEmbeddedInitConcurrent verifies the exclusive flock prevents concurrent
