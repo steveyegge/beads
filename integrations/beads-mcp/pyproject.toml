@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
     "fastmcp==3.3.1",
-    "pydantic==2.13.3",
+    "pydantic==2.13.4",
     "pydantic-settings==2.14.0",
 ]
 authors = [
