@@ -95,7 +95,12 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	// can unexpectedly mutate other instruction files and, in some workflows,
 	// corrupt tracked symlink entries.
 	if info, err := os.Lstat(env.agentsPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		_, _ = fmt.Fprintf(env.stdout, "Warning: %s is a symlink; skipping managed section injection to preserve link mode/content\n", agentsFile)
+		target, readErr := os.Readlink(env.agentsPath)
+		targetHint := ""
+		if readErr == nil && target != "" {
+			targetHint = fmt.Sprintf(" to %s", target)
+		}
+		_, _ = fmt.Fprintf(env.stderr, "Warning: %s is a symlink%s; skipping managed section injection to preserve link mode/content. Update the target file directly, or replace the symlink with a regular file and re-run '%s'.\n", agentsFile, targetHint, integration.setupCommand)
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
 		_, _ = fmt.Fprintf(env.stderr, "Error: failed to inspect %s: %v\n", env.agentsPath, err)

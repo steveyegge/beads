@@ -363,8 +363,47 @@ func TestInstallAgentsSymlinkSafety(t *testing.T) {
 	if strings.Contains(string(data), "BEGIN BEADS INTEGRATION") {
 		t.Error("symlink target should not receive managed section")
 	}
-	if !strings.Contains(stdout.String(), "is a symlink; skipping managed section injection") {
-		t.Error("expected skip warning in output")
+	if stdout.String() != "Installing ClaudeCode integration...\n" {
+		t.Errorf("expected stdout to contain only install start, got: %q", stdout.String())
+	}
+	stderrText := stderr.String()
+	if !strings.Contains(stderrText, "CLAUDE.md is a symlink to "+realFile) {
+		t.Errorf("expected warning to include symlink target, got: %s", stderrText)
+	}
+	if !strings.Contains(stderrText, "re-run 'bd setup claude'") {
+		t.Errorf("expected warning to include corrective command, got: %s", stderrText)
+	}
+}
+
+func TestInstallAgentsInspectError(t *testing.T) {
+	dir := t.TempDir()
+	notDir := filepath.Join(dir, "not-dir")
+	if err := os.WriteFile(notDir, []byte("not a directory"), 0644); err != nil {
+		t.Fatalf("write sentinel file: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	env := agentsEnv{
+		agentsPath: filepath.Join(notDir, "AGENTS.md"),
+		stdout:     stdout,
+		stderr:     stderr,
+	}
+	integration := agentsIntegration{
+		name:         "TestAgent",
+		setupCommand: "bd setup testagent",
+		profile:      agents.ProfileMinimal,
+	}
+
+	err := installAgents(env, integration)
+	if err == nil {
+		t.Fatal("expected inspect error")
+	}
+	if os.IsNotExist(err) {
+		t.Fatalf("expected non-not-exist error, got: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Error: failed to inspect") {
+		t.Errorf("expected inspect error on stderr, got: %s", stderr.String())
 	}
 }
 
