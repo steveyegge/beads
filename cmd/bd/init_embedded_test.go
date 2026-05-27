@@ -1383,6 +1383,37 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
+	t.Run("host_only_without_server_mode_fails", func(t *testing.T) {
+		// Remote dolt.host without dolt.port must still hard-fail
+		// when server mode is not enabled.
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+
+		xdgDir := filepath.Join(dir, ".config", "bd")
+		if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(xdgDir, "config.yaml"),
+			[]byte("dolt.host: 100.111.197.110\n"), 0o600); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "honly", "--non-interactive")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected bd init to fail with remote host and no server mode, but it succeeded:\n%s", out)
+		}
+		output := string(out)
+		if !strings.Contains(output, "server mode is not enabled") {
+			t.Errorf("expected error about server mode not enabled, got:\n%s", output)
+		}
+		if !strings.Contains(output, "100.111.197.110") {
+			t.Errorf("error should mention the configured host, got:\n%s", output)
+		}
+	})
+
 	t.Run("ambiguous_host_local_no_warning", func(t *testing.T) {
 		// When dolt.host is localhost, no warning should appear even without --quiet.
 		dir := t.TempDir()
