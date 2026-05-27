@@ -14,11 +14,22 @@ type ConfigSQLRepository interface {
 
 	GetCustomTypes(ctx context.Context) ([]string, error)
 	GetAllowedPrefixes(ctx context.Context) (string, error)
+	GetAdaptiveIDConfig(ctx context.Context) (AdaptiveIDConfig, error)
 }
 
 type ConfigUseCase interface {
 	VerifyInit(ctx context.Context) (VerifyResult, error)
 	GetCustomTypes(ctx context.Context) ([]string, error)
+	LoadCreateContext(ctx context.Context) (CreateContext, error)
+}
+
+// CreateContext bundles the read-only config inputs that bd create needs
+// before inserting an issue. Returned by ConfigUseCase.LoadCreateContext in
+// a single round trip to keep the proxied-server path cheap.
+type CreateContext struct {
+	IssuePrefix     string
+	AllowedPrefixes string
+	CustomTypes     []string
 }
 
 type Issue struct{}
@@ -76,4 +87,24 @@ func (u *configUseCaseImpl) GetCustomTypes(ctx context.Context) ([]string, error
 		return nil, fmt.Errorf("GetCustomTypes: %w", err)
 	}
 	return out, nil
+}
+
+func (u *configUseCaseImpl) LoadCreateContext(ctx context.Context) (CreateContext, error) {
+	prefix, err := u.cfgRepo.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		return CreateContext{}, fmt.Errorf("LoadCreateContext: read issue_prefix: %w", err)
+	}
+	allowed, err := u.cfgRepo.GetAllowedPrefixes(ctx)
+	if err != nil {
+		return CreateContext{}, fmt.Errorf("LoadCreateContext: read allowed_prefixes: %w", err)
+	}
+	customTypes, err := u.cfgRepo.GetCustomTypes(ctx)
+	if err != nil {
+		return CreateContext{}, fmt.Errorf("LoadCreateContext: read custom types: %w", err)
+	}
+	return CreateContext{
+		IssuePrefix:     prefix,
+		AllowedPrefixes: allowed,
+		CustomTypes:     customTypes,
+	}, nil
 }

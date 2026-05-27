@@ -838,6 +838,14 @@ var rootCmd = &cobra.Command{
 			preserveRedirectSourceDatabase(beads.GetRedirectInfo().LocalDir)
 		}
 
+		if dbPath == "" {
+			if bd := beads.FindBeadsDir(); bd != "" {
+				if cfg, _ := configfile.Load(bd); cfg != nil && cfg.IsDoltProxiedServerMode() {
+					dbPath = bd
+				}
+			}
+		}
+
 		// Initialize database path
 		if dbPath == "" {
 			// Use public API to find database (same logic as extensions)

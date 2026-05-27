@@ -24,6 +24,22 @@ func (s *testSuite) TestConfigSQLRepository() {
 		s.Run("IssuePrefixTrimsTrailingHyphen", s.configSetConfigIssuePrefixTrim)
 		s.Run("IssuePrefixWithoutHyphenUnchanged", s.configSetConfigIssuePrefixUnchanged)
 	})
+	s.Run("GetCustomTypes", func() {
+		s.Run("MissingKeyReturnsNil", s.configGetCustomTypesMissing)
+		s.Run("EmptyValueReturnsNil", s.configGetCustomTypesEmpty)
+		s.Run("CommaSeparated", s.configGetCustomTypesCommaSeparated)
+		s.Run("JSONArray", s.configGetCustomTypesJSONArray)
+		s.Run("TrimsWhitespaceAndSkipsEmpty", s.configGetCustomTypesTrimsAndSkipsEmpty)
+	})
+	s.Run("GetAllowedPrefixes", func() {
+		s.Run("MissingKeyReturnsEmpty", s.configGetAllowedPrefixesMissing)
+		s.Run("ReturnsRawValue", s.configGetAllowedPrefixesRawValue)
+	})
+	s.Run("GetAdaptiveIDConfig", func() {
+		s.Run("MissingKeysReturnsDefaults", s.configGetAdaptiveIDConfigDefaults)
+		s.Run("OverridesApplied", s.configGetAdaptiveIDConfigOverrides)
+		s.Run("MalformedValuesFallBackToDefaults", s.configGetAdaptiveIDConfigMalformed)
+	})
 }
 
 func (s *testSuite) configRepo() domain.ConfigSQLRepository {
@@ -102,4 +118,88 @@ func (s *testSuite) configSetConfigIssuePrefixUnchanged() {
 	v, err := r.GetConfig(s.Ctx(), "issue_prefix")
 	s.Require().NoError(err)
 	s.Equal("bd", v)
+}
+
+func (s *testSuite) configGetCustomTypesMissing() {
+	got, err := s.configRepo().GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Nil(got)
+}
+
+func (s *testSuite) configGetCustomTypesEmpty() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", ""))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Nil(got)
+}
+
+func (s *testSuite) configGetCustomTypesCommaSeparated() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", "molecule,gate,convoy"))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal([]string{"molecule", "gate", "convoy"}, got)
+}
+
+func (s *testSuite) configGetCustomTypesJSONArray() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", `["gate","convoy"]`))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal([]string{"gate", "convoy"}, got)
+}
+
+func (s *testSuite) configGetCustomTypesTrimsAndSkipsEmpty() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "types.custom", "  alpha , , beta  ,"))
+	got, err := r.GetCustomTypes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal([]string{"alpha", "beta"}, got)
+}
+
+func (s *testSuite) configGetAllowedPrefixesMissing() {
+	got, err := s.configRepo().GetAllowedPrefixes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal("", got)
+}
+
+func (s *testSuite) configGetAllowedPrefixesRawValue() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "allowed_prefixes", "hacker-news, me-py-toolkit, hq-cv"))
+	got, err := r.GetAllowedPrefixes(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal("hacker-news, me-py-toolkit, hq-cv", got)
+}
+
+func (s *testSuite) configGetAdaptiveIDConfigDefaults() {
+	got, err := s.configRepo().GetAdaptiveIDConfig(s.Ctx())
+	s.Require().NoError(err)
+	s.Equal(domain.DefaultAdaptiveConfig(), got)
+}
+
+func (s *testSuite) configGetAdaptiveIDConfigOverrides() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_collision_prob", "0.05"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "min_hash_length", "4"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_hash_length", "7"))
+
+	got, err := r.GetAdaptiveIDConfig(s.Ctx())
+	s.Require().NoError(err)
+	s.InDelta(0.05, got.MaxCollisionProbability, 0.0001)
+	s.Equal(4, got.MinLength)
+	s.Equal(7, got.MaxLength)
+}
+
+func (s *testSuite) configGetAdaptiveIDConfigMalformed() {
+	r := s.configRepo()
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_collision_prob", "not-a-float"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "min_hash_length", "nope"))
+	s.Require().NoError(r.SetConfig(s.Ctx(), "max_hash_length", ""))
+
+	got, err := r.GetAdaptiveIDConfig(s.Ctx())
+	s.Require().NoError(err)
+	// All three should fall back to defaults: malformed values are silently
+	// ignored to match the embedded GetAdaptiveConfigTx behavior.
+	s.Equal(domain.DefaultAdaptiveConfig(), got)
 }
