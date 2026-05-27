@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	defaultBranch          = "main"
-	defaultProxyIdleTimout = 30 * time.Second
+	defaultBranch           = "main"
+	defaultProxyIdleTimeout = 30 * time.Second
 )
 
 type doltSQLProvider struct {

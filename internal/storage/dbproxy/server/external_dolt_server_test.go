@@ -197,7 +197,6 @@ func TestExternalDoltServerID_AuthFieldsDoNotChangeID(t *testing.T) {
 	base := configfile.ExternalDoltConfig{Host: "db", Port: 3306}
 	withAuth := base
 	withAuth.User = "beads"
-	withAuth.Password = "secret"
 	withAuth.TLSRequired = true
 	withAuth.TLSCert = "/etc/beads/client.pem"
 	withAuth.TLSKey = "/etc/beads/client.key"

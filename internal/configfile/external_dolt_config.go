@@ -9,6 +9,7 @@ import (
 
 const (
 	ExternalDoltConfigDefaultUser = "root"
+	ExternalDoltPasswordEnvVar    = "BEADS_PROXIED_SERVER_EXTERNAL_PASSWORD" // #nosec G101 -- env var name, not a credential
 )
 
 type ExternalDoltConfig struct {
@@ -16,7 +17,6 @@ type ExternalDoltConfig struct {
 	Port            int           `json:"port,omitempty"`
 	Socket          string        `json:"socket,omitempty"`
 	User            string        `json:"user,omitempty"`
-	Password        string        `json:"password,omitempty"`
 	TLSRequired     bool          `json:"tls_required,omitempty"`
 	TLSCert         string        `json:"tls_cert,omitempty"`
 	TLSKey          string        `json:"tls_key,omitempty"`

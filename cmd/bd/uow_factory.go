@@ -65,7 +65,7 @@ func newExternalProxiedServerUOWProvider(
 		logPath,
 		*external,
 		external.ResolvedUser(),
-		external.Password,
+		os.Getenv(configfile.ExternalDoltPasswordEnvVar),
 	)
 }
 
