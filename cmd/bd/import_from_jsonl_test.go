@@ -163,6 +163,57 @@ func TestImportFromLocalJSONL(t *testing.T) {
 		}
 	})
 
+	t.Run("stale JSONL does not clobber newer local issue", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		ctx := context.Background()
+		createdAt := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		localUpdatedAt := createdAt.Add(2 * time.Hour)
+		local := &types.Issue{
+			ID:        "test-stale-import",
+			Title:     "newer local title",
+			Status:    types.StatusInProgress,
+			IssueType: types.TypeTask,
+			Priority:  1,
+			CreatedAt: createdAt,
+			UpdatedAt: localUpdatedAt,
+		}
+		if err := store.CreateIssue(ctx, local, "test"); err != nil {
+			t.Fatalf("CreateIssue local: %v", err)
+		}
+
+		jsonlContent := `{"id":"test-stale-import","title":"stale exported title","status":"open","priority":3,"issue_type":"task","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T01:00:00Z"}
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		count, err := importFromLocalJSONL(ctx, store, jsonlPath)
+		if err != nil {
+			t.Fatalf("importFromLocalJSONL failed: %v", err)
+		}
+		if count != 0 {
+			t.Fatalf("Expected stale import to import 0 issues, got %d", count)
+		}
+
+		got, err := store.GetIssue(ctx, "test-stale-import")
+		if err != nil {
+			t.Fatalf("GetIssue: %v", err)
+		}
+		if got.Title != "newer local title" {
+			t.Fatalf("stale JSONL clobbered title: got %q", got.Title)
+		}
+		if got.Status != types.StatusInProgress {
+			t.Fatalf("stale JSONL clobbered status: got %q", got.Status)
+		}
+		if got.Priority != 1 {
+			t.Fatalf("stale JSONL clobbered priority: got %d", got.Priority)
+		}
+	})
+
 	t.Run("child counter reconciled after JSONL import prevents overwrites", func(t *testing.T) {
 		// Regression test for GH#2166: bd create --parent after bd init --from-jsonl
 		// must not overwrite existing child issues. The child_counters table

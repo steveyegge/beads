@@ -249,19 +249,18 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.Created = importResult.Created
 		result.Skipped += importResult.Skipped
 		result.SkippedDependencies = append(result.SkippedDependencies, importResult.SkippedDependencies...)
-		for _, issue := range issues {
-			result.IDs = append(result.IDs, issue.ID)
-		}
+		result.IDs = append(result.IDs, importResult.ImportedIDs...)
 	}
 
-	// Commit
-	commitMsg := fmt.Sprintf("bd import: %d issues", result.Created)
-	if result.Memories > 0 {
-		commitMsg += fmt.Sprintf(", %d memories", result.Memories)
-	}
-	commitMsg += fmt.Sprintf(" from %s", filepath.Base(source))
-	if err := store.Commit(ctx, commitMsg); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	if result.Created > 0 || result.Memories > 0 {
+		commitMsg := fmt.Sprintf("bd import: %d issues", result.Created)
+		if result.Memories > 0 {
+			commitMsg += fmt.Sprintf(", %d memories", result.Memories)
+		}
+		commitMsg += fmt.Sprintf(" from %s", filepath.Base(source))
+		if err := store.Commit(ctx, commitMsg); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
 	}
 
 	if jsonOutput {
@@ -276,6 +275,9 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	fmt.Fprintf(os.Stderr, " from %s", source)
 	if dedupHits > 0 {
 		fmt.Fprintf(os.Stderr, " (%d duplicates skipped)", dedupHits)
+	}
+	if staleSkipped := result.Skipped - dedupHits; staleSkipped > 0 {
+		fmt.Fprintf(os.Stderr, " (%d stale skipped)", staleSkipped)
 	}
 	fmt.Fprintln(os.Stderr)
 	for _, skipped := range result.SkippedDependencies {
