@@ -34,12 +34,6 @@ func pickDepTable(useWisps bool) string {
 	return "dependencies"
 }
 
-// pickDepTargetColumn classifies a dependency target and returns the typed
-// column it must be inserted into. Mirrors embedded issueops.ClassifyDepTarget
-// + DepTargetKind.Column(): wisp targets go to depends_on_wisp_id, "external:"
-// prefixed ids to depends_on_external, everything else to depends_on_issue_id.
-// Wisp detection probes the wisps table; (false, nil) is returned for missing
-// or empty wisps schemas so a fresh DB without wisps still works.
 func (r *dependencySQLRepositoryImpl) pickDepTargetColumn(ctx context.Context, dependsOnID string) (string, error) {
 	if strings.HasPrefix(dependsOnID, "external:") {
 		return "depends_on_external", nil

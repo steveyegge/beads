@@ -30,9 +30,6 @@ func (s *testSuite) issueUseCase() domain.IssueUseCase {
 	)
 }
 
-// resetMintConfig seeds the two config keys the mint path reads, so each
-// subtest sees a clean state. testify's suite SetupTest doesn't run between
-// s.Run subtests within a single Test method, so we explicitly reset.
 func (s *testSuite) resetMintConfig(prefix, idMode string) {
 	r := NewConfigSQLRepository(s.Runner())
 	s.Require().NoError(r.SetConfig(s.Ctx(), "issue_prefix", prefix))
@@ -60,8 +57,6 @@ func (s *testSuite) useCaseMintHashMode() {
 }
 
 func (s *testSuite) useCaseMintCounterMode() {
-	// Use a unique prefix so the counter row doesn't collide with earlier
-	// subtests that exercise NextCounterID directly under a different name.
 	s.resetMintConfig("ucCnt", "counter")
 	uc := s.issueUseCase()
 
@@ -79,8 +74,6 @@ func (s *testSuite) useCaseMintCounterMode() {
 }
 
 func (s *testSuite) useCaseMintWispIgnoresCounterMode() {
-	// Even with counter mode enabled, wisps must hash-mint because there is
-	// no wisp_counter table. This locks in the embedded contract.
 	s.resetMintConfig("ucWcnt", "counter")
 	uc := s.issueUseCase()
 
@@ -145,8 +138,6 @@ func (s *testSuite) useCaseMintWispPrefix() {
 }
 
 func (s *testSuite) useCaseMintMissingPrefix() {
-	// Explicitly clear issue_prefix; prior subtests have seeded "bd"/"ucCnt"
-	// etc. and that state persists across s.Run subtests.
 	s.resetMintConfig("", "")
 	uc := s.issueUseCase()
 	_, err := uc.CreateIssue(s.Ctx(), domain.CreateIssueParams{
@@ -166,33 +157,21 @@ func (s *testSuite) TestIssueUseCase_ApplyGraph() {
 	s.Run("WispGraphRoutesToWispTables", s.applyGraphWispRouting)
 }
 
-// TestIssueUseCase_MixedParentChildRouting covers maphew's P1 review on the
-// child-counter and dependency target-column routing fixes:
-//   - WispChildOfRegularParent: --ephemeral with --parent <regular issue>
-//   - DepTargetClassification: wisp / regular / external targets each land
-//     in their typed column on dep insert.
 func (s *testSuite) TestIssueUseCase_MixedParentChildRouting() {
 	s.Run("WispChildOfRegularParent", s.mixedWispChildOfRegularParent)
 	s.Run("DepTargetClassification", s.mixedDepTargetClassification)
 }
 
-// mixedWispChildOfRegularParent verifies that creating a wisp child under a
-// regular parent routes the child-counter row to child_counters (the parent's
-// table), not wisp_child_counters. Pre-fix this called wisp_child_counters
-// with parent_id = <regular issue id>, which either FK-failed or recorded the
-// counter in the wrong table.
 func (s *testSuite) mixedWispChildOfRegularParent() {
 	s.resetMintConfig("mw", "")
 	uc := s.issueUseCase()
 
-	// Create a regular epic parent.
 	pRes, err := uc.CreateIssue(s.Ctx(), domain.CreateIssueParams{
 		Issue: &types.Issue{Title: "regular parent", IssueType: types.TypeEpic, Priority: 2},
 	}, "tester")
 	s.Require().NoError(err)
 	parentID := pRes.Issue.ID
 
-	// Now create a wisp child of the regular parent.
 	cRes, err := uc.CreateWisp(s.Ctx(), domain.CreateIssueParams{
 		Issue:    &types.Issue{Title: "wisp child", IssueType: types.TypeTask, Priority: 2, Ephemeral: true},
 		ParentID: parentID,
@@ -201,8 +180,6 @@ func (s *testSuite) mixedWispChildOfRegularParent() {
 	childID := cRes.Issue.ID
 	s.True(strings.HasPrefix(childID, parentID+"."), "child ID %q should start with %q.", childID, parentID)
 
-	// Counter row must live in child_counters (parent's table), not
-	// wisp_child_counters. Pre-fix the call routed by the child's useWisp.
 	var regularCounter, wispCounter int
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
 		"SELECT COUNT(*) FROM child_counters WHERE parent_id = ?", parentID).Scan(&regularCounter))
@@ -211,7 +188,6 @@ func (s *testSuite) mixedWispChildOfRegularParent() {
 		"SELECT COUNT(*) FROM wisp_child_counters WHERE parent_id = ?", parentID).Scan(&wispCounter))
 	s.Equal(0, wispCounter, "regular parent's counter must NOT land in wisp_child_counters")
 
-	// The wisp child itself lives in wisps; the regular parent in issues.
 	var wispChildExists, regularParentExists int
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
 		"SELECT COUNT(*) FROM wisps WHERE id = ?", childID).Scan(&wispChildExists))
@@ -220,8 +196,6 @@ func (s *testSuite) mixedWispChildOfRegularParent() {
 		"SELECT COUNT(*) FROM issues WHERE id = ?", parentID).Scan(&regularParentExists))
 	s.Equal(1, regularParentExists, "regular parent must live in issues table")
 
-	// Parent-child dep: written by domain.create() with useWisp=true →
-	// wisp_dependencies. Target is a regular issue → depends_on_issue_id.
 	deps := s.loadDepRows("wisp_dependencies", "mw-%")
 	s.Require().Len(deps, 1)
 	s.Equal(childID, deps[0].issueID)
@@ -231,16 +205,11 @@ func (s *testSuite) mixedWispChildOfRegularParent() {
 		"regular-issue target must use depends_on_issue_id, got %+v", deps[0])
 }
 
-// mixedDepTargetClassification covers maphew's P1 #2: dependency Insert must
-// pick the right typed column based on the target's kind. We construct three
-// edges from a single source issue to: a regular issue, a wisp, and an
-// external ref. Each must land in its respective column.
 func (s *testSuite) mixedDepTargetClassification() {
 	s.resetMintConfig("dx", "")
 	uc := s.issueUseCase()
 	depRepo := NewDependencySQLRepository(s.Runner())
 
-	// Source + regular issue target.
 	src, err := uc.CreateIssue(s.Ctx(), domain.CreateIssueParams{
 		Issue: &types.Issue{Title: "source", IssueType: types.TypeTask, Priority: 2},
 	}, "tester")
@@ -254,7 +223,6 @@ func (s *testSuite) mixedDepTargetClassification() {
 	}, "tester")
 	s.Require().NoError(err)
 
-	// Use "related" so the writes don't trip the epic/task blocking rules.
 	s.Require().NoError(depRepo.Insert(s.Ctx(), &types.Dependency{
 		IssueID: src.Issue.ID, DependsOnID: regular.Issue.ID, Type: types.DepRelated,
 	}, "tester", domain.DepInsertOpts{}))
@@ -280,8 +248,6 @@ func (s *testSuite) mixedDepTargetClassification() {
 		"external: target must use depends_on_external, got %+v", byTarget["external:GH-42"])
 }
 
-// depRow models a single row from the dependencies / wisp_dependencies table
-// for direct verification inside tests.
 type depRow struct {
 	issueID      string
 	dependsOnID  string
@@ -291,9 +257,6 @@ type depRow struct {
 	depsOnExtern sql.NullString
 }
 
-// targetColumn returns the typed column the row was written into. Used by
-// wisp-routing tests to assert deps land in depends_on_wisp_id when the
-// target is a wisp, not depends_on_issue_id (regression for maphew's review).
 func (r depRow) targetColumn() string {
 	switch {
 	case r.depsOnIssue.Valid:
@@ -340,7 +303,6 @@ func (s *testSuite) applyGraphChildrenBeforeParents() {
 	s.resetMintConfig("gA", "")
 	uc := s.issueUseCase()
 
-	// Child appears first; parent reference must still resolve.
 	child := newGraphNode("child", "child node")
 	child.ParentKey = "parent"
 	parent := newGraphNode("parent", "parent node")
@@ -372,9 +334,6 @@ func (s *testSuite) applyGraphParentChildEdgeDedup() {
 	child.ParentKey = "parent"
 	parent := newGraphNode("parent", "parent")
 
-	// Explicit parent-child edge over the same pair the node already
-	// implies — applyGraph should silently skip it and the parent-child
-	// pass should insert exactly one row.
 	res, err := uc.ApplyIssueGraph(s.Ctx(), domain.GraphPlan{
 		Nodes: []domain.GraphNode{parent, child},
 		Edges: []domain.GraphEdge{{
@@ -400,8 +359,6 @@ func (s *testSuite) applyGraphDifferentTypeOverPair() {
 	child.ParentKey = "parent"
 	parent := newGraphNode("parent", "parent")
 
-	// Edge in the same direction as the parent-child pair but with a
-	// different dep type — must error before any deps are written.
 	_, err := uc.ApplyIssueGraph(s.Ctx(), domain.GraphPlan{
 		Nodes: []domain.GraphNode{parent, child},
 		Edges: []domain.GraphEdge{{
@@ -425,8 +382,6 @@ func (s *testSuite) applyGraphReverseBlocking() {
 	child.ParentKey = "parent"
 	parent := newGraphNode("parent", "parent")
 
-	// Reverse direction (parent blocks child) is forbidden because it would
-	// create a cycle once the parent-child link is inserted.
 	_, err := uc.ApplyIssueGraph(s.Ctx(), domain.GraphPlan{
 		Nodes: []domain.GraphNode{parent, child},
 		Edges: []domain.GraphEdge{{
@@ -446,7 +401,6 @@ func (s *testSuite) applyGraphLiveCycle() {
 	s.resetMintConfig("gE", "")
 	uc := s.issueUseCase()
 
-	// Seed two existing issues with an existing blocks dep: X blocks Y.
 	issueRepo := NewIssueSQLRepository(s.Runner())
 	x := newTestIssue("gE-existing-x", "existing X")
 	y := newTestIssue("gE-existing-y", "existing Y")
@@ -460,9 +414,6 @@ func (s *testSuite) applyGraphLiveCycle() {
 		Type:        types.DepBlocks,
 	}, "seeder", domain.DepInsertOpts{}))
 
-	// Plan creates parent + child with planned edges that, combined with
-	// the existing X→Y dep, form a path parent → X → Y → child. The
-	// parent-child link about to be inserted would then close a cycle.
 	parent := newGraphNode("parent", "new parent")
 	child := newGraphNode("child", "new child")
 	child.ParentKey = "parent"
@@ -477,7 +428,6 @@ func (s *testSuite) applyGraphLiveCycle() {
 	s.Require().Error(err)
 	s.Contains(err.Error(), "planned blocking dependencies create a path from parent")
 
-	// No parent-child dep should have landed.
 	deps := s.loadDepRows("dependencies", "gE-%")
 	for _, d := range deps {
 		s.NotEqual(string(types.DepParentChild), d.depType, "parent-child dep must not be written when live cycle detected: %+v", d)
@@ -541,22 +491,17 @@ func (s *testSuite) applyGraphWispRouting() {
 	s.True(strings.HasPrefix(res.IDs["p"], "gG-wisp-"), "wisp parent should carry the -wisp suffix, got %q", res.IDs["p"])
 	s.True(strings.HasPrefix(res.IDs["c"], "gG-wisp-"), "wisp child should carry the -wisp suffix, got %q", res.IDs["c"])
 
-	// Verify no rows landed in the regular tables.
 	regular := s.loadDepRows("dependencies", "gG-%")
 	s.Empty(regular, "no deps should appear in dependencies table for a wisp graph")
 	regularIssues := 0
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(), "SELECT COUNT(*) FROM issues WHERE id LIKE ?", "gG-%").Scan(&regularIssues))
 	s.Equal(0, regularIssues, "wisp graph issues must not land in `issues`")
 
-	// And the wisp tables have the expected shape.
 	wispDeps := s.loadDepRows("wisp_dependencies", "gG-%")
 	s.Require().Len(wispDeps, 1)
 	s.Equal(string(types.DepParentChild), wispDeps[0].depType)
 	s.Equal(res.IDs["c"], wispDeps[0].issueID)
 	s.Equal(res.IDs["p"], wispDeps[0].dependsOnID)
-	// Wisp→wisp edge must land in depends_on_wisp_id, not depends_on_issue_id.
-	// Maphew's P1 review: prior code unconditionally wrote depends_on_issue_id,
-	// which would break FK/cascade/rename and wisp-aware dep filters.
 	s.Equal("depends_on_wisp_id", wispDeps[0].targetColumn(),
 		"wisp-target dep must use depends_on_wisp_id, got %+v", wispDeps[0])
 }

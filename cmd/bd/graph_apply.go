@@ -244,10 +244,6 @@ func warnUnknownGraphFields(w io.Writer, unknown map[string][]string) {
 	}
 }
 
-// loadEmbeddedCustomTypes returns the project's custom issue types using the
-// embedded path's resolution order: store first, then config.yaml fallback.
-// Returns nil when neither source has any custom types. Safe to call when
-// store is nil (e.g., test contexts) — falls straight to the YAML source.
 func loadEmbeddedCustomTypes() []string {
 	if store != nil {
 		if ct, err := store.GetCustomTypes(rootCtx); err == nil && len(ct) > 0 {
@@ -363,10 +359,6 @@ func emitGraphApplyDryRun(plan *GraphApplyPlan) {
 	}
 }
 
-// validateGraphApplyPlan checks the plan for structural errors before any
-// writes. customTypes is the set of project-extension types whose node types
-// should validate; pass nil/empty to restrict to built-in types only. The
-// caller is responsible for resolving customTypes (store + YAML overlay).
 func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 	if len(plan.Nodes) == 0 {
 		return fmt.Errorf("plan has no nodes")

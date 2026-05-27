@@ -108,9 +108,6 @@ func (r *configSQLRepositoryImpl) GetAllowedPrefixes(ctx context.Context) (strin
 	return value, nil
 }
 
-// GetAdaptiveIDConfig reads adaptive ID config keys from the `config` table,
-// layering any overrides on top of the defaults. Missing or malformed values
-// fall back to defaults (best-effort, matching GetAdaptiveConfigTx).
 func (r *configSQLRepositoryImpl) GetAdaptiveIDConfig(ctx context.Context) (domain.AdaptiveIDConfig, error) {
 	cfg := domain.DefaultAdaptiveConfig()
 

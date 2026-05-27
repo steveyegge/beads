@@ -18,11 +18,6 @@ import (
 	"github.com/steveyegge/beads/internal/validation"
 )
 
-// resolveProxiedCustomTypes mirrors loadEmbeddedCustomTypes' DB-first
-// resolution: prefer custom types from the DB (cctx.CustomTypes via
-// LoadCreateContext), and fall back to config.yaml when the DB is empty.
-// Keeps proxied custom-type validation in sync with the embedded path so a
-// project that declares types in config.yaml only still validates.
 func resolveProxiedCustomTypes(dbTypes []string) []string {
 	if len(dbTypes) > 0 {
 		return dbTypes
@@ -79,10 +74,6 @@ func runCreateProxiedSingle(_ *cobra.Command, ctx context.Context, in createInpu
 	if in.dryRun {
 		previewLabels := in.labels
 		if in.parentID != "" {
-			// Mirror the embedded dry-run: validate parent exists and (when
-			// label inheritance is on) merge parent labels into the preview.
-			// Opens a UOW only for the lookup; Close rolls back, so this
-			// stays read-only.
 			if uowProvider == nil {
 				FatalError("proxied-server UOW provider not initialized")
 			}
@@ -225,7 +216,6 @@ func runCreateProxiedMarkdown(_ *cobra.Command, ctx context.Context, in createIn
 		FatalError("no issues found in markdown file")
 	}
 
-	// Per-template template validation (no DB).
 	if in.validationMode == "error" || in.validationMode == "warn" {
 		for _, t := range templates {
 			lintIssue := &types.Issue{
@@ -367,10 +357,6 @@ func runCreateProxiedGraph(_ *cobra.Command, ctx context.Context, in createInput
 	}
 
 	if in.dryRun {
-		// Dry-run uses the same DB-first / YAML-fallback resolution as live
-		// so the two paths cannot disagree on a plan's validity. Failures
-		// here are real (no UOW provider, unreachable DB, etc.) — surface
-		// them rather than silently weakening dry-run validation.
 		if uowProvider == nil {
 			FatalError("proxied-server UOW provider not initialized")
 		}

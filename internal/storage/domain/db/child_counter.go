@@ -22,17 +22,11 @@ type childCounterSQLRepositoryImpl struct {
 
 var _ domain.ChildCounterSQLRepository = (*childCounterSQLRepositoryImpl)(nil)
 
-func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentID string, opts domain.ChildCounterOpts) (string, error) {
+func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentID string, _ domain.ChildCounterOpts) (string, error) {
 	if parentID == "" {
 		return "", errors.New("db: ChildCounterSQLRepository.NextChildID: parentID must not be empty")
 	}
 
-	// Route by the parent's *actual* table, authoritative over any caller
-	// hint. Mirrors embedded issueops.GetNextChildIDTx: a wisp child of a
-	// regular parent (--ephemeral --parent <regular>) or a regular child of
-	// a wisp parent would otherwise either fail FK constraints or record
-	// counters in the wrong table. opts.UseWispsTable is now ignored.
-	_ = opts // honored only via parent probe; see comment above
 	counterTable, issueTable := "child_counters", "issues"
 	parentIsWisp, err := r.parentIsActiveWisp(ctx, parentID)
 	if err != nil {
@@ -90,9 +84,6 @@ func (r *childCounterSQLRepositoryImpl) NextChildID(ctx context.Context, parentI
 	return fmt.Sprintf("%s.%d", parentID, next), nil
 }
 
-// parentIsActiveWisp reports whether parentID exists in the wisps table.
-// Returns (false, nil) when the wisps table is absent or empty so that
-// fresh schemas without wisps still work. Other SQL errors propagate.
 func (r *childCounterSQLRepositoryImpl) parentIsActiveWisp(ctx context.Context, parentID string) (bool, error) {
 	var probe int
 	err := r.runner.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", parentID).Scan(&probe)

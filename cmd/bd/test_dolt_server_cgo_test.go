@@ -26,16 +26,7 @@ var testSharedConn *sql.DB
 // on a dynamic port using the shared testutil helper. This prevents tests
 // from creating testdb_* databases on the production Dolt server.
 // Returns a cleanup function that stops the server and removes the container.
-//
-// Skipped when only embedded tests are requested (BEADS_TEST_EMBEDDED_DOLT=1)
-// or when only the proxied-server integration suite is requested
-// (BEADS_TEST_PROXIED_SERVER=1) — both flavors run bd as subprocesses
-// against their own dolt processes and never touch the package-level
-// testcontainers Dolt singleton.
 func startTestDoltServer() func() {
-	// Skip Docker container when only embedded or proxied-server tests are
-	// requested. Both run bd as a subprocess and bring their own dolt — the
-	// shared testcontainers Dolt below would just be ~50s of unused startup.
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") == "1" {
 		return func() {}
 	}

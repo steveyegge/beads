@@ -28,7 +28,7 @@ func TestBuildCreateIssueFromInput_PopulatesAllFields(t *testing.T) {
 		notes:              "Notes",
 		specID:             "spec-1",
 		priority:           1,
-		issueType:          "feat", // alias for feature → normalize to "feature"
+		issueType:          "feat",
 		assignee:           "alice",
 		externalRef:        "gh-9",
 		estimatedMinutes:   &est,
@@ -135,7 +135,6 @@ func TestMaterializeGraphNodeIssue_DefaultsAndOpts(t *testing.T) {
 		if !issue.Ephemeral {
 			t.Errorf("ephemeral not propagated")
 		}
-		// Inverse case:
 		issue2 := materializeGraphNodeIssue(GraphApplyNode{Key: "n", Title: "N"}, createInput{
 			noHistory: true,
 		})
@@ -184,7 +183,7 @@ func TestBuildDomainGraphPlan(t *testing.T) {
 				MetadataRefs: map[string]string{"parent_id": "root"}, Labels: []string{"a", "b"}},
 		},
 		Edges: []GraphApplyEdge{
-			{FromKey: "child", ToKey: "root", Type: ""}, // empty defaults to blocks
+			{FromKey: "child", ToKey: "root", Type: ""},
 			{FromKey: "child", ToKey: "root", Type: "related"},
 			{FromID: "ext-1", ToID: "ext-2", Type: "blocks"},
 		},
@@ -195,11 +194,9 @@ func TestBuildDomainGraphPlan(t *testing.T) {
 	if len(got.Nodes) != 2 {
 		t.Fatalf("nodes len = %d", len(got.Nodes))
 	}
-	// Root node mapping
 	if got.Nodes[0].Key != "root" || got.Nodes[0].Issue == nil || got.Nodes[0].Issue.IssueType != types.TypeEpic {
 		t.Errorf("root node wrong: %+v", got.Nodes[0])
 	}
-	// Child node mapping (key/parent_key/assignee/AssignAfterCreate/labels/metadata_refs)
 	c := got.Nodes[1]
 	if c.ParentKey != "root" {
 		t.Errorf("child ParentKey = %q", c.ParentKey)
@@ -217,15 +214,12 @@ func TestBuildDomainGraphPlan(t *testing.T) {
 	if len(got.Edges) != 3 {
 		t.Fatalf("edges len = %d", len(got.Edges))
 	}
-	// Empty edge type → blocks
 	if got.Edges[0].Type != types.DepBlocks {
 		t.Errorf("empty edge type = %q, want blocks", got.Edges[0].Type)
 	}
-	// Typed edge preserved
 	if got.Edges[1].Type != types.DependencyType("related") {
 		t.Errorf("typed edge = %q", got.Edges[1].Type)
 	}
-	// ID-only edges propagate
 	if got.Edges[2].FromID != "ext-1" || got.Edges[2].ToID != "ext-2" {
 		t.Errorf("ID edge lost: %+v", got.Edges[2])
 	}
@@ -243,7 +237,6 @@ func TestParseMarkdownDepSpecs(t *testing.T) {
 		{"bare id → blocks edge", []string{"bd-1"},
 			[]domain.DependencySpec{{Type: types.DepBlocks, TargetID: "bd-1"}}, false},
 		{"type:id preserved verbatim (no alias)", []string{"depends-on:bd-2"},
-			// markdown parser does NOT remap depends-on→blocks; it stays as-is.
 			[]domain.DependencySpec{{Type: types.DependencyType("depends-on"), TargetID: "bd-2"}}, false},
 		{"discovered-from preserved", []string{"discovered-from:bd-3"},
 			[]domain.DependencySpec{{Type: types.DepDiscoveredFrom, TargetID: "bd-3"}}, false},
@@ -271,9 +264,6 @@ func TestParseMarkdownDepSpecs(t *testing.T) {
 }
 
 func TestParseMarkdownDepSpecs_DoesNotSwapBlocks(t *testing.T) {
-	// Markdown's "blocks:bd-X" is interpreted as a typed edge, NOT
-	// swap-direction. This intentionally diverges from --deps semantics so
-	// embedded and proxied markdown modes produce identical edges.
 	got, err := parseMarkdownDepSpecs([]string{"blocks:bd-5"}, "T")
 	if err != nil {
 		t.Fatalf("error: %v", err)
@@ -313,10 +303,6 @@ func TestResolveProxiedCustomTypes_EmptyEverywhere(t *testing.T) {
 	}
 }
 
-// withTestYAMLCustomTypes writes a temporary .beads/config.yaml with the
-// given comma-separated types.custom value, re-initializes the config
-// package, and returns a restore function the caller defers. Yields nil
-// for an empty value (no key emitted).
 func withTestYAMLCustomTypes(t *testing.T, customCSV string) func() {
 	t.Helper()
 	tmpDir := t.TempDir()

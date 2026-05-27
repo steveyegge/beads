@@ -177,9 +177,6 @@ func (r *issueSQLRepositoryImpl) GetByIDs(ctx context.Context, ids []string, opt
 	return out, nil
 }
 
-// Exists returns true when a row with id is present in the routed table.
-// Used by the hash-mode ID minter to probe for collisions without paying
-// the cost of fetching the full row.
 func (r *issueSQLRepositoryImpl) Exists(ctx context.Context, id string, opts domain.IssueTableOpts) (bool, error) {
 	if id == "" {
 		return false, errors.New("db: Exists: id must not be empty")
@@ -198,10 +195,6 @@ func (r *issueSQLRepositoryImpl) Exists(ctx context.Context, id string, opts dom
 	return true, nil
 }
 
-// CountForPrefix returns the number of top-level issues sharing the prefix
-// in the routed table. Child IDs (those containing '.' in their suffix) are
-// excluded so adaptive sizing reflects top-level density only — matches
-// issueops.GetAdaptiveIDLengthTx.
 func (r *issueSQLRepositoryImpl) CountForPrefix(ctx context.Context, prefix string, opts domain.IssueTableOpts) (int, error) {
 	if prefix == "" {
 		return 0, errors.New("db: CountForPrefix: prefix must not be empty")
@@ -221,11 +214,6 @@ func (r *issueSQLRepositoryImpl) CountForPrefix(ctx context.Context, prefix stri
 	return count, nil
 }
 
-// NextCounterID atomically increments and returns the next sequential value
-// from the issue_counter row for the prefix. Counter mode applies only to
-// the `issues` table (wisps always use hash mode). On a missing counter row,
-// seeds from the max existing numeric suffix, retries the UPDATE, and as a
-// last resort INSERTs (prefix, 1). Mirrors issueops.NextCounterIDTx.
 func (r *issueSQLRepositoryImpl) NextCounterID(ctx context.Context, prefix string) (int, error) {
 	if prefix == "" {
 		return 0, errors.New("db: NextCounterID: prefix must not be empty")
@@ -266,9 +254,6 @@ func (r *issueSQLRepositoryImpl) NextCounterID(ctx context.Context, prefix strin
 	return nextID, nil
 }
 
-// seedCounterFromExisting scans the issues table for the highest numeric
-// suffix on the prefix and seeds the issue_counter row when missing. Skips
-// child IDs (suffix contains '.'). Returns nil when no eligible rows exist.
 func (r *issueSQLRepositoryImpl) seedCounterFromExisting(ctx context.Context, prefix string) error {
 	var existing int
 	err := r.runner.QueryRowContext(ctx, "SELECT last_id FROM issue_counter WHERE prefix = ?", prefix).Scan(&existing)
