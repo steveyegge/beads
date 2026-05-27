@@ -224,7 +224,11 @@ func unknownKeys(have map[string]json.RawMessage, known map[string]struct{}) []s
 
 // warnUnknownGraphFields prints a single warning line per location in the
 // plan with one or more unknown fields, plus a per-field hint when one is
-// available. Output goes to w (typically os.Stderr). (GH#3367)
+// available. Output goes to w (typically os.Stderr). Returns the sorted
+// list of distinct unknown field names for test assertion; production
+// callers may safely ignore the result. (GH#3367)
+//
+//nolint:unparam // return value used by tests for assertion; production callers ignore
 func warnUnknownGraphFields(w io.Writer, unknown map[string][]string) []string {
 	if len(unknown) == 0 {
 		return nil
