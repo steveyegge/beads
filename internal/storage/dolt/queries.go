@@ -10,15 +10,39 @@ import (
 )
 
 // SearchIssues finds issues matching query and filters.
-// Delegates to issueops.SearchIssuesInTx for shared query logic.
+// Delegates to issueops.SearchIssuesInTx for shared query logic, except when
+// the session-scoped cache (populated by preloadSessionCaches) tells us the
+// wisps table is empty or missing — in that case the wisps merge step is a
+// guaranteed no-op and we skip it to save a round trip per search.
 func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	skipWispsMerge := s.canSkipWispsMerge(filter)
+
 	var result []*types.Issue
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		result, err = issueops.SearchIssuesInTx(ctx, tx, query, filter)
+		if skipWispsMerge {
+			result, err = issueops.SearchIssuesNonWispInTx(ctx, tx, query, filter)
+		} else {
+			result, err = issueops.SearchIssuesInTx(ctx, tx, query, filter)
+		}
 		return err
 	})
 	return result, err
+}
+
+// canSkipWispsMerge reports whether the wisps merge step in SearchIssues can
+// be skipped safely. True when the per-store cache knows the wisps table is
+// empty or missing AND the caller is not explicitly asking for ephemeral
+// rows (which would route directly to wisps).
+func (s *DoltStore) canSkipWispsMerge(filter types.IssueFilter) bool {
+	if filter.Ephemeral != nil && *filter.Ephemeral {
+		return false
+	}
+	s.cacheMu.Lock()
+	known := s.wispsStateKnown
+	empty := s.wispsEmpty
+	s.cacheMu.Unlock()
+	return known && empty
 }
 
 func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {

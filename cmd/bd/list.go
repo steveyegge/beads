@@ -1133,9 +1133,14 @@ var listCmd = &cobra.Command{
 			}
 
 			// Regular tree display (no parent filter)
-			// Load dependencies for tree structure
-			// Best effort: display gracefully degrades with empty data
-			allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
+			// Load dependencies for tree structure (skipped when there are no
+			// issues — the dependency query would otherwise burn a full read
+			// transaction against the remote server for an empty result set).
+			// Best effort: display gracefully degrades with empty data.
+			var allDeps map[string][]*types.Dependency
+			if len(issues) > 0 {
+				allDeps, _ = activeStore.GetAllDependencyRecords(ctx)
+			}
 			displayPrettyListWithDeps(issues, false, allDeps)
 			printTruncationHint(truncated, effectiveLimit)
 			printSkipLabelsFooter(skipLabels)
