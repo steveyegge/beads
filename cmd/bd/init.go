@@ -105,7 +105,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		externalServer, _ := cmd.Flags().GetBool("external")
 		debugMode, _ := cmd.Flags().GetBool("debug")
 		initProxiedServer, _ := cmd.Flags().GetBool("proxied-server")
-		serverConfigPath, _ := cmd.Flags().GetString("proxied-server-config")
+		serverConfigPath, _ := cmd.Flags().GetString("proxied-server-config-path")
 		serverLogPath, _ := cmd.Flags().GetString("proxied-server-log-path")
 		serverRootPath, _ := cmd.Flags().GetString("proxied-server-root-path")
 		if os.Getenv("BEADS_DOLT_PROXIED_SERVER") == "1" {
@@ -128,26 +128,35 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 		if serverConfigPath != "" {
 			if !initProxiedServer {
-				FatalError("--proxied-server-config requires --proxied-server")
+				FatalError("--proxied-server-config-path requires --proxied-server")
+			}
+			if !filepath.IsAbs(serverConfigPath) {
+				FatalError("--proxied-server-config-path must be an absolute path, got %q", serverConfigPath)
 			}
 			if err := validateProxiedServerConfig(serverConfigPath); err != nil {
-				FatalError("%v", err)
+				FatalError("--proxied-server-config-path %v", err)
 			}
 		}
 		if serverLogPath != "" {
 			if !initProxiedServer {
 				FatalError("--proxied-server-log-path requires --proxied-server")
 			}
+			if !filepath.IsAbs(serverLogPath) {
+				FatalError("--proxied-server-log-path must be an absolute path, got %q", serverLogPath)
+			}
 			if err := validateProxiedServerLogPath(serverLogPath); err != nil {
-				FatalError("%v", err)
+				FatalError("--proxied-server-log-path %v", err)
 			}
 		}
 		if serverRootPath != "" {
 			if !initProxiedServer {
 				FatalError("--proxied-server-root-path requires --proxied-server")
 			}
+			if !filepath.IsAbs(serverRootPath) {
+				FatalError("--proxied-server-root-path must be an absolute path, got %q", serverRootPath)
+			}
 			if err := validateProxiedServerRootPath(serverRootPath); err != nil {
-				FatalError("%v", err)
+				FatalError("--proxied-server-root-path %v", err)
 			}
 		}
 
@@ -1065,17 +1074,6 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					}
 				}
 
-				if usesProxiedServer() {
-					if serverConfigPath != "" {
-						cfg.DoltProxiedServerConfig = serverConfigPath
-					}
-					if serverLogPath != "" {
-						cfg.DoltProxiedServerLog = serverLogPath
-					}
-					if serverRootPath != "" {
-						cfg.DoltProxiedServerRootPath = serverRootPath
-					}
-				}
 			}
 
 			if err := cfg.Save(beadsDir); err != nil {
@@ -1629,9 +1627,9 @@ func init() {
 	initCmd.Flags().Bool("external", false, "Server is externally managed (skip server startup); use with --shared-server or --server")
 	initCmd.Flags().Bool("debug", false, "Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.")
 	initCmd.Flags().Bool("proxied-server", false, "[EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb")
-	initCmd.Flags().String("proxied-server-config", "", "[EXPERIMENTAL] Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.")
-	initCmd.Flags().String("proxied-server-log-path", "", "[EXPERIMENTAL] Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.")
-	initCmd.Flags().String("proxied-server-root-path", "", "[EXPERIMENTAL] Directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it.")
+	initCmd.Flags().String("proxied-server-config-path", "", "[EXPERIMENTAL] Absolute path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-log-path", "", "[EXPERIMENTAL] Absolute path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-root-path", "", "[EXPERIMENTAL] Absolute directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it. Relative paths are rejected.")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -1706,7 +1704,10 @@ func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
 
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
 		if cfg.IsDoltProxiedServerMode() {
-			proxiedRoot := resolveProxiedServerRootPath(beadsDir, cfg)
+			proxiedRoot, rootErr := resolveProxiedServerRootPath(beadsDir)
+			if rootErr != nil {
+				return fmt.Errorf("resolve proxied server root: %w", rootErr)
+			}
 			if info, statErr := os.Stat(proxiedRoot); statErr == nil && info.IsDir() {
 				return fmt.Errorf(`
 %s Found existing Dolt database: %s

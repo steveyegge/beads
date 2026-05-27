@@ -25,18 +25,15 @@ type Config struct {
 	// Dolt connection mode configuration (bd-dolt.2.2)
 	// "embedded" (default for standalone) runs Dolt in-process.
 	// "server" connects to an external dolt sql-server (required for orchestrator / multi-writer).
-	DoltMode                  string `json:"dolt_mode,omitempty"`            // "embedded" (default) or "server"
-	DoltServerHost            string `json:"dolt_server_host,omitempty"`     // Server host (default: 127.0.0.1)
-	DoltServerPort            int    `json:"dolt_server_port,omitempty"`     // Server port (default: 3307)
-	DoltServerSocket          string `json:"dolt_server_socket,omitempty"`   // Unix domain socket path (overrides host/port)
-	DoltServerUser            string `json:"dolt_server_user,omitempty"`     // MySQL user (default: root)
-	DoltDatabase              string `json:"dolt_database,omitempty"`        // SQL database name (default: beads)
-	DoltServerTLS             bool   `json:"dolt_server_tls,omitempty"`      // Enable TLS for server connections (required for Hosted Dolt)
-	DoltDataDir               string `json:"dolt_data_dir,omitempty"`        // Custom dolt data directory (absolute path; default: .beads/dolt)
-	DoltRemotesAPIPort        int    `json:"dolt_remotesapi_port,omitempty"` // Dolt remotesapi port for federation (default: 8080)
-	DoltProxiedServerConfig   string `json:"dolt_proxied_server_config,omitempty"`
-	DoltProxiedServerLog      string `json:"dolt_proxied_server_log,omitempty"`
-	DoltProxiedServerRootPath string `json:"dolt_proxied_server_root_path,omitempty"`
+	DoltMode           string `json:"dolt_mode,omitempty"`            // "embedded" (default) or "server"
+	DoltServerHost     string `json:"dolt_server_host,omitempty"`     // Server host (default: 127.0.0.1)
+	DoltServerPort     int    `json:"dolt_server_port,omitempty"`     // Server port (default: 3307)
+	DoltServerSocket   string `json:"dolt_server_socket,omitempty"`   // Unix domain socket path (overrides host/port)
+	DoltServerUser     string `json:"dolt_server_user,omitempty"`     // MySQL user (default: root)
+	DoltDatabase       string `json:"dolt_database,omitempty"`        // SQL database name (default: beads)
+	DoltServerTLS      bool   `json:"dolt_server_tls,omitempty"`      // Enable TLS for server connections (required for Hosted Dolt)
+	DoltDataDir        string `json:"dolt_data_dir,omitempty"`        // Custom dolt data directory (absolute path; default: .beads/dolt)
+	DoltRemotesAPIPort int    `json:"dolt_remotesapi_port,omitempty"` // Dolt remotesapi port for federation (default: 8080)
 	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
 
 	// Project identity — unique ID generated at bd init time.
@@ -117,15 +114,6 @@ func (c *Config) Save(beadsDir string) error {
 	saved := *c
 	if filepath.IsAbs(saved.DoltDataDir) {
 		saved.DoltDataDir = ""
-	}
-	if filepath.IsAbs(saved.DoltProxiedServerConfig) {
-		saved.DoltProxiedServerConfig = ""
-	}
-	if filepath.IsAbs(saved.DoltProxiedServerLog) {
-		saved.DoltProxiedServerLog = ""
-	}
-	if filepath.IsAbs(saved.DoltProxiedServerRootPath) {
-		saved.DoltProxiedServerRootPath = ""
 	}
 
 	data, err := json.MarshalIndent(&saved, "", "  ")
@@ -425,45 +413,6 @@ func (c *Config) GetDoltDataDir() string {
 		return d
 	}
 	return c.DoltDataDir
-}
-
-func (c *Config) GetDoltProxiedServerConfig(beadsDir string) string {
-	if p := os.Getenv("BEADS_PROXIED_SERVER_CONFIG"); p != "" {
-		return p
-	}
-	if c.DoltProxiedServerConfig == "" {
-		return ""
-	}
-	if filepath.IsAbs(c.DoltProxiedServerConfig) {
-		return c.DoltProxiedServerConfig
-	}
-	return filepath.Join(beadsDir, c.DoltProxiedServerConfig)
-}
-
-func (c *Config) GetDoltProxiedServerLog(beadsDir string) string {
-	if p := os.Getenv("BEADS_PROXIED_SERVER_LOG"); p != "" {
-		return p
-	}
-	if c.DoltProxiedServerLog == "" {
-		return ""
-	}
-	if filepath.IsAbs(c.DoltProxiedServerLog) {
-		return c.DoltProxiedServerLog
-	}
-	return filepath.Join(beadsDir, c.DoltProxiedServerLog)
-}
-
-func (c *Config) GetDoltProxiedServerRootPath(beadsDir string) string {
-	if p := os.Getenv("BEADS_PROXIED_SERVER_ROOT_PATH"); p != "" {
-		return p
-	}
-	if c.DoltProxiedServerRootPath == "" {
-		return ""
-	}
-	if filepath.IsAbs(c.DoltProxiedServerRootPath) {
-		return c.DoltProxiedServerRootPath
-	}
-	return filepath.Join(beadsDir, c.DoltProxiedServerRootPath)
 }
 
 // GetDoltRemotesAPIPort returns the Dolt remotesapi port used for federation.

@@ -26,20 +26,26 @@ func newProxiedServerUOWProvider(ctx context.Context, beadsDir string) (uow.Unit
 		database = persisted.GetDoltDatabase()
 	}
 
-	rootPath := resolveProxiedServerRootPath(beadsDir, persisted)
+	rootPath, err := resolveProxiedServerRootPath(beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("newProxiedServerUOWProvider: resolve root path: %w", err)
+	}
 	if err := validateProxiedServerRootPath(rootPath); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("newProxiedServerUOWProvider: proxied server root (from env or %s): %w", configfile.ProxiedServerClientInfoFileName, err)
 	}
 
-	configPath, err := ensureProxiedServerConfig(beadsDir, persisted)
+	configPath, err := ensureProxiedServerConfig(beadsDir)
 	if err != nil {
 		return nil, err
 	}
 
-	logPath, isCustomLog := resolveProxiedServerLogPath(beadsDir, persisted)
+	logPath, isCustomLog, err := resolveProxiedServerLogPath(beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("newProxiedServerUOWProvider: resolve log path: %w", err)
+	}
 	if isCustomLog {
 		if err := validateProxiedServerLogPath(logPath); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("newProxiedServerUOWProvider: proxied server log (from env or %s): %w", configfile.ProxiedServerClientInfoFileName, err)
 		}
 	}
 
