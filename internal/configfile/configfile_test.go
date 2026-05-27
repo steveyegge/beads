@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 )
@@ -526,6 +527,75 @@ func TestProxiedServerClientInfo_RoundTrip(t *testing.T) {
 		}
 		if *got != *want {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("external section survives save/load", func(t *testing.T) {
+		sub := t.TempDir()
+		want := &ProxiedServerClientInfo{
+			External: &ExternalDoltConfig{
+				Host:            "db.internal",
+				Port:            3306,
+				TLSRequired:     true,
+				TLSCert:         "/etc/beads/client.pem",
+				TLSKey:          "/etc/beads/client.key",
+				KeepAlivePeriod: 45 * time.Second,
+			},
+		}
+		if err := SaveProxiedServerClientInfo(sub, want); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		got, err := LoadProxiedServerClientInfo(sub)
+		if err != nil || got == nil {
+			t.Fatalf("Load: %v got=%v", err, got)
+		}
+		if got.RootPath != "" || got.ConfigPath != "" || got.LogPath != "" {
+			t.Errorf("local fields leaked into external-only sidecar: %+v", got)
+		}
+		if got.External == nil {
+			t.Fatalf("External section dropped on round-trip")
+		}
+		if *got.External != *want.External {
+			t.Errorf("got %+v, want %+v", got.External, want.External)
+		}
+	})
+
+	t.Run("local fields and external section coexist", func(t *testing.T) {
+		sub := t.TempDir()
+		want := &ProxiedServerClientInfo{
+			RootPath: "/var/lib/beads/proxieddb",
+			External: &ExternalDoltConfig{Socket: "/var/run/dolt.sock"},
+		}
+		if err := SaveProxiedServerClientInfo(sub, want); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		got, err := LoadProxiedServerClientInfo(sub)
+		if err != nil || got == nil {
+			t.Fatalf("Load: %v got=%v", err, got)
+		}
+		if got.RootPath != want.RootPath {
+			t.Errorf("RootPath = %q, want %q", got.RootPath, want.RootPath)
+		}
+		if got.External == nil || got.External.Socket != "/var/run/dolt.sock" {
+			t.Errorf("External round-trip lost data: %+v", got.External)
+		}
+	})
+
+	t.Run("legacy sidecar without external section still loads", func(t *testing.T) {
+		sub := t.TempDir()
+		legacy := []byte(`{"root_path":"/var/lib/beads/proxieddb","config_path":"/etc/dolt/server.yaml","log_path":"/var/log/beads/server.log"}`)
+		if err := os.WriteFile(ProxiedServerClientInfoPath(sub), legacy, 0o600); err != nil {
+			t.Fatalf("seed legacy: %v", err)
+		}
+		got, err := LoadProxiedServerClientInfo(sub)
+		if err != nil || got == nil {
+			t.Fatalf("Load: %v got=%v", err, got)
+		}
+		if got.External != nil {
+			t.Errorf("External should be nil for legacy sidecar, got %+v", got.External)
+		}
+		if got.RootPath != "/var/lib/beads/proxieddb" {
+			t.Errorf("RootPath = %q, want /var/lib/beads/proxieddb", got.RootPath)
 		}
 	})
 }
