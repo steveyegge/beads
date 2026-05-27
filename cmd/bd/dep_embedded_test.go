@@ -362,6 +362,34 @@ func TestEmbeddedDep(t *testing.T) {
 		}
 	})
 
+	t.Run("tree_ignores_bidirectional_relates_to", func(t *testing.T) {
+		root := bdCreate(t, bd, dir, "Tree relates root", "--type", "task")
+		blocker := bdCreate(t, bd, dir, "Tree real blocker", "--type", "task")
+		related := bdCreate(t, bd, dir, "Tree loose relation", "--type", "task")
+
+		bdDep(t, bd, dir, "add", root.ID, blocker.ID, "--type", "blocks")
+		bdDep(t, bd, dir, "add", root.ID, related.ID, "--type", "relates-to")
+		bdDep(t, bd, dir, "add", related.ID, root.ID, "--type", "relates-to")
+
+		listOut := bdDep(t, bd, dir, "list", root.ID)
+		if !strings.Contains(listOut, related.ID) || !strings.Contains(listOut, "relates-to") {
+			t.Fatalf("expected relates-to edge in dep list output: %s", listOut)
+		}
+
+		treeOut := bdDep(t, bd, dir, "tree", root.ID)
+		if !strings.Contains(treeOut, root.ID) || !strings.Contains(treeOut, blocker.ID) {
+			t.Fatalf("expected root and real blocker in dep tree: %s", treeOut)
+		}
+		if strings.Contains(treeOut, related.ID) {
+			t.Fatalf("relates-to edge should not render as a dependency tree edge: %s", treeOut)
+		}
+
+		upOut := bdDep(t, bd, dir, "tree", related.ID, "--direction", "up")
+		if strings.Contains(upOut, root.ID) {
+			t.Fatalf("reverse relates-to edge should not render as a dependent tree edge: %s", upOut)
+		}
+	})
+
 	// ===== dep cycles =====
 
 	t.Run("cycles_detect", func(t *testing.T) {
