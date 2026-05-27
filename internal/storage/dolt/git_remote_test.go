@@ -1158,10 +1158,9 @@ func TestGitRemoteExternalServerRouting(t *testing.T) {
 	runCmd(t, testdbDir, "dolt", "init", "--name", "test", "--email", "test@test.com")
 	runCmd(t, testdbDir, "dolt", "remote", "add", "origin", "git+https://example.com/test.git")
 
-	initSchemaSQL := schema.AllMigrationsSQL() + "\nCALL DOLT_ADD('.');\nCALL DOLT_COMMIT('-Am', 'Genesis: schema and config');"
-	runDoltSQL(t, testdbDir, initSchemaSQL)
-
-	// Start sql-server from the server root
+	// Start the server before opening the store so New() initializes schema via
+	// the normal migration path. A single dolt sql -q script over all migrations
+	// can leave Dolt's analyzer unaware of columns added earlier in the script.
 	port, err := testutil.FindFreePort()
 	if err != nil {
 		t.Fatalf("failed to find free port: %v", err)
@@ -1275,10 +1274,9 @@ func TestCredentialCLIRoutingE2E(t *testing.T) {
 	// Add remote to server's testdb (so SQL DOLT_REMOTE -v can see it)
 	runCmd(t, testdbDir, "dolt", "remote", "add", "origin", remoteURL)
 
-	initSchemaSQL := schema.AllMigrationsSQL() + "\nCALL DOLT_ADD('.');\nCALL DOLT_COMMIT('-Am', 'Genesis: schema and config');"
-	runDoltSQL(t, testdbDir, initSchemaSQL)
-
-	// 3. Start dolt sql-server from server root
+	// Start the server before opening the store so New() initializes schema via
+	// the normal migration path. A single dolt sql -q script over all migrations
+	// can leave Dolt's analyzer unaware of columns added earlier in the script.
 	port, err := testutil.FindFreePort()
 	if err != nil {
 		t.Fatalf("failed to find free port: %v", err)
