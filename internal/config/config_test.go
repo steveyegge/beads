@@ -1691,7 +1691,7 @@ func TestInitialize_ExternalBEADSDirDoesNotMergeCallerProjectConfig(t *testing.T
 	}
 }
 
-func TestIssuePrefixKeyNamingInYAML(t *testing.T) {
+func TestViperIssuePrefixKeysAreDistinct(t *testing.T) {
 	restore := envSnapshot(t)
 	defer restore()
 
@@ -1701,7 +1701,7 @@ func TestIssuePrefixKeyNamingInYAML(t *testing.T) {
 		t.Fatalf("failed to create .beads: %v", err)
 	}
 
-	// Explicitly include both forms to lock in parser behavior for diagnostics.
+	// ReadConfigPrefix diagnostics rely on viper keeping these YAML keys distinct.
 	content := "issue-prefix: canonical\nissue_prefix: legacy_underscore\n"
 	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatalf("failed to write config.yaml: %v", err)
