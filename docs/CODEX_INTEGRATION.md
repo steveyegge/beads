@@ -19,7 +19,7 @@ Global setup uses `bd setup codex --global` and writes under `$CODEX_HOME` when 
 
 ## Plugin-Managed Hooks
 
-The bundled Codex plugin declares `"hooks": "./hooks/hooks.json"` in `plugins/beads/.codex-plugin/plugin.json`. On Codex 0.129.0+, use `/hooks` to inspect or toggle these handlers.
+The bundled Codex plugin keeps its hook config at `plugins/beads/.codex-plugin/hooks/hooks.json`; `plugins/beads/.codex-plugin/plugin.json` declares it as `"hooks": "./hooks/hooks.json"`. On Codex 0.129.0+, use `/hooks` to inspect or toggle these handlers.
 
 The plugin and `bd setup codex` fallback install the same lifecycle:
 

@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Codex hook metadata isolation** - Codex hook metadata now lives under
+  `.codex-plugin/hooks/`, preventing Claude from loading Codex-only hooks from
+  the shared plugin root while keeping Codex setup pointed at `bd codex-hook`.
+  ([#3924](https://github.com/gastownhall/beads/issues/3924))
 - **JSONL auto-export shrink guard** - when opt-in `export.auto` is enabled,
   auto-export now refuses to overwrite an existing `.beads/issues.jsonl` that
   contains records outside the auto-export scope (memories, infrastructure
