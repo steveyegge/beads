@@ -420,6 +420,30 @@ func TestEmbeddedList(t *testing.T) {
 		}
 	})
 
+	// Regression for gastownhall/beads#3936: relates-to between two epics
+	// must not nest them in `bd list` tree mode, and a bidirectional
+	// relates-to must not silently drop both epics from the output.
+	t.Run("tree_relates_to_does_not_nest_or_drop_epics", func(t *testing.T) {
+		epicA := bdCreate(t, bd, dir, "Relates Epic A", "--type", "epic", "--priority", "2")
+		epicB := bdCreate(t, bd, dir, "Relates Epic B", "--type", "epic", "--priority", "2")
+
+		bdDep(t, bd, dir, "add", epicA.ID, epicB.ID, "--type", "relates-to")
+		out := bdList(t, bd, dir, "--no-pager", "--type", "epic")
+		if !strings.Contains(out, epicA.ID) || !strings.Contains(out, epicB.ID) {
+			t.Fatalf("one-direction relates-to should keep both epics visible:\n%s", out)
+		}
+		if strings.Contains(out, "└── "+epicA.ID) || strings.Contains(out, "└── "+epicB.ID) ||
+			strings.Contains(out, "├── "+epicA.ID) || strings.Contains(out, "├── "+epicB.ID) {
+			t.Fatalf("relates-to must not nest epics under each other:\n%s", out)
+		}
+
+		bdDep(t, bd, dir, "add", epicB.ID, epicA.ID, "--type", "relates-to")
+		out = bdList(t, bd, dir, "--no-pager", "--type", "epic")
+		if !strings.Contains(out, epicA.ID) || !strings.Contains(out, epicB.ID) {
+			t.Fatalf("bidirectional relates-to must not drop epics from tree output:\n%s", out)
+		}
+	})
+
 	t.Run("ready_parent_filter_includes_grandchildren", func(t *testing.T) {
 		parent := bdCreate(t, bd, dir, "Ready parent recursive", "--type", "epic")
 		child := bdCreate(t, bd, dir, "Ready child recursive", "--type", "task", "--parent", parent.ID)
