@@ -283,15 +283,12 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Hard fail: if dolt.host or dolt.port are configured, server mode
-		// MUST be active — embedded mode has no host/port. This catches
-		// misconfigurations where a user set dolt.host/dolt.port but forgot
-		// dolt.mode: server (or --server).
+		// Hard fail: if a remote dolt.host is configured, server mode MUST
+		// be active — embedded mode has no host. dolt.port alone is ambient
+		// plumbing (e.g. test harnesses) and is not treated as server intent.
 		if !initServerMode {
 			configHost := config.GetYamlConfig("dolt.host")
-			configPort := config.GetYamlConfig("dolt.port")
 			envHost := os.Getenv("BEADS_DOLT_SERVER_HOST")
-			envPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
 
 			remoteHost := ""
 			if envHost != "" && !isLocalHost(envHost) {
@@ -300,20 +297,16 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				remoteHost = configHost
 			}
 
-			hasPort := envPort != "" || configPort != ""
-
-			if remoteHost != "" || hasPort {
+			if remoteHost != "" {
 				src := "config.yaml"
-				if envHost != "" || envPort != "" {
+				if envHost != "" {
 					src = "environment"
 				}
-				detail := ""
-				if remoteHost != "" && hasPort {
+				configPort := config.GetYamlConfig("dolt.port")
+				envPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
+				detail := fmt.Sprintf("dolt.host (%s) is", remoteHost)
+				if configPort != "" || envPort != "" {
 					detail = fmt.Sprintf("dolt.host (%s) and dolt.port are", remoteHost)
-				} else if remoteHost != "" {
-					detail = fmt.Sprintf("dolt.host (%s) is", remoteHost)
-				} else {
-					detail = "dolt.port is"
 				}
 				FatalError("%s set via %s but server mode is not enabled.\n"+
 					"  Embedded mode has no host/port — these settings require server mode.\n"+
