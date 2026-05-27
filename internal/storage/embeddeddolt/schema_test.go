@@ -101,7 +101,12 @@ func TestSchemaAfterInit(t *testing.T) {
 		},
 		"wisp_dependencies": {
 			"thread_id", "metadata", "idx_wisp_dep_type",
-			"idx_wisp_dep_wisp_target", "idx_wisp_dep_issue_target",
+			// On wisp_dependencies the per-target indexes survive only as the
+			// FK-backed indexes (ignored migration 0003 ADD INDEX is then
+			// dropped/replaced when ignored 0005 re-adds the FK constraint).
+			// Cf. dependencies, where main migration 0041 keeps the explicit
+			// idx_dep_*_target names.
+			"fk_wisp_dep_wisp_target", "fk_wisp_dep_issue_target",
 		},
 	}
 
