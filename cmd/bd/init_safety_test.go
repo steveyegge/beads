@@ -213,6 +213,89 @@ func TestShouldWireInitRemote(t *testing.T) {
 	}
 }
 
+func TestShouldConfigureInitDoltRemoteHonorsLocalOnly(t *testing.T) {
+	tests := []struct {
+		name              string
+		syncURL           string
+		syncFromRemote    bool
+		syncURLFromConfig bool
+		syncURLFromGit    bool
+		localOnly         bool
+		wantConfigure     bool
+		wantWire          bool
+	}{
+		{
+			name:           "git origin configures by default",
+			syncURL:        "git+https://github.com/org/project.git",
+			syncURLFromGit: true,
+			wantConfigure:  true,
+			wantWire:       true,
+		},
+		{
+			name:           "local only suppresses init remote wiring without changing predicate",
+			syncURL:        "git+https://github.com/org/project.git",
+			syncURLFromGit: true,
+			localOnly:      true,
+			wantConfigure:  false,
+			wantWire:       true,
+		},
+		{
+			name:          "no url remains false",
+			localOnly:     true,
+			wantConfigure: false,
+			wantWire:      false,
+		},
+		{
+			name:              "explicit sync remote configures when local only is false",
+			syncURL:           "https://dolt.example.invalid/repo",
+			syncURLFromConfig: true,
+			wantConfigure:     true,
+			wantWire:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotConfigure := shouldConfigureInitDoltRemote(tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, tt.syncURLFromGit, tt.localOnly)
+			if gotConfigure != tt.wantConfigure {
+				t.Errorf("shouldConfigureInitDoltRemote(..., localOnly=%v) = %v, want %v", tt.localOnly, gotConfigure, tt.wantConfigure)
+			}
+			gotWire := shouldWireInitRemote(tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, tt.syncURLFromGit)
+			if gotWire != tt.wantWire {
+				t.Errorf("shouldWireInitRemote(...) = %v, want %v", gotWire, tt.wantWire)
+			}
+		})
+	}
+}
+
+func TestLocalOnlyInitSkipsConfigureButPersistsExplicitRemote(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+		t.Fatalf("mkdir beads dir: %v", err)
+	}
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("dolt.local-only: true\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	remote := "git+ssh://git@example.com/org/project.git"
+	if shouldConfigureInitDoltRemote(remote, false, true, false, true) {
+		t.Fatal("local-only init should not configure a Dolt remote")
+	}
+
+	if err := persistInitSyncRemote(beadsDir, remote, remote, false, true, false); err != nil {
+		t.Fatalf("persistInitSyncRemote failed: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), `sync.remote: "git+ssh://git@example.com/org/project.git"`) &&
+		!strings.Contains(string(data), "sync.remote: git+ssh://git@example.com/org/project.git") {
+		t.Fatalf("sync.remote was not persisted under local-only config:\n%s", data)
+	}
+}
+
 // TestFormatDestroyToken asserts the token format contract that
 // bd help init-safety documents. If this format changes, help text
 // and the ADR must update together.
