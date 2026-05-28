@@ -32,6 +32,6 @@ func TestBuildCreateIssueEmptyExternalRefIsNil(t *testing.T) {
 	})
 
 	if issue.ExternalRef != nil {
-		t.Fatalf("ExternalRef = %q, want nil", *issue.ExternalRef)
+		t.Fatalf("ExternalRef = %v, want nil", issue.ExternalRef)
 	}
 }
