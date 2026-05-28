@@ -187,12 +187,20 @@ internal/*/       - Various internal package tests
 
 ## Continuous Integration
 
-The current CI workflow does not call `scripts/test.sh` for the main PR Go test
-matrix. Until CI wrapper migration is complete, reproduce exact CI behavior from
-the command documented in the failing workflow or in the CI cleanup plan.
+The current CI workflow does not yet call the `scripts/ci/*` wrappers for every
+job. Until workflow migration is complete, use the command documented in the
+failing workflow when reproducing an existing status check exactly.
 
 Use `scripts/test.sh` for local default validation and targeted development
 runs.
+
+Use the CI wrappers for the accepted target PR contracts:
+
+```bash
+make ci-pr-core
+make ci-pr-policy
+make ci-pr-lint
+```
 
 ### Coverage Signal Policy
 

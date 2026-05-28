@@ -2,6 +2,21 @@
 
 Utility scripts for maintaining the beads project.
 
+## ci/
+
+Repository-owned CI command wrappers. These scripts are the source of truth for
+the target CI tiers; Make targets are aliases for local discoverability.
+
+```bash
+make ci-pr-core
+make ci-pr-policy
+make ci-pr-lint
+```
+
+Each wrapper auto-detects the repository root, sources `.buildflags` when it
+invokes Go in the default build mode, and records per-command timing through
+`scripts/ci/lib/timing.sh`.
+
 ## pr-preflight.sh
 
 Read-only PR safety check for agents and maintainers.
