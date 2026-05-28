@@ -163,6 +163,10 @@ func logConfigDiscovery(beadsDir, reason string) {
 		reason, beadsDir, metadataErr == nil, metadataErr, yamlErr == nil, yamlErr)
 }
 
+func shouldLogDefaultDoltDatabase(cfg *configfile.Config) bool {
+	return cfg != nil && cfg.DoltDatabase == "" && os.Getenv("BEADS_DOLT_SERVER_DATABASE") == ""
+}
+
 // loadBeadsSelectionEnvFile loads only the selector keys needed for early
 // workspace/database discovery. Unlike loadBeadsEnvFile, this intentionally
 // limits itself to BEADS_DIR / BEADS_DB / BD_DB so caller credentials and
@@ -970,7 +974,7 @@ var rootCmd = &cobra.Command{
 			// Always set database name (needed for bootstrap to find
 			// prefix-based databases like "beads_hq"; see #1669)
 			doltCfg.Database = cfg.GetDoltDatabase()
-			if cfg.DoltDatabase == "" && os.Getenv("BEADS_DOLT_SERVER_DATABASE") == "" {
+			if shouldLogDefaultDoltDatabase(cfg) {
 				logConfigDiscovery(beadsDir, fmt.Sprintf("metadata loaded without dolt_database; using default database name %q", configfile.DefaultDoltDatabase))
 			}
 
