@@ -3,6 +3,7 @@ package fix
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/configfile"
@@ -13,6 +14,7 @@ import (
 
 type remoteConsistencyContext struct {
 	beadsDir string
+	doltDir  string
 	dbDir    string
 	cfg      *configfile.Config
 }
@@ -20,11 +22,22 @@ type remoteConsistencyContext struct {
 // RemoteConsistency fixes remote discrepancies between SQL server and CLI.
 // For one-side-only remotes, it adds the missing side.
 // Conflicts (different URLs) are skipped — they require manual resolution.
+//
+// Also handles the wrong-directory case where remotes were added at the dolt
+// server root (.beads/dolt/) instead of the database subdirectory
+// (.beads/dolt/<db>/): those are migrated into the database dir so CLI
+// push/pull can find them. The dolt server itself already persists remotes in
+// .dolt/repo_state.json and reloads them on startup, so no per-store-open
+// sync is needed.
 func RemoteConsistency(repoPath string) error {
 	ctx, err := resolveRemoteConsistencyContext(repoPath)
 	if err != nil {
 		return err
 	}
+
+	// Migrate any remotes stranded in the server root into the database dir
+	// before diffing — otherwise they'd show up as missing on the CLI side.
+	migrateServerRootRemotes(ctx)
 
 	// Get SQL remotes
 	db, err := openFixDB(ctx.beadsDir, ctx.cfg)
@@ -102,9 +115,42 @@ func resolveRemoteConsistencyContext(repoPath string) (remoteConsistencyContext,
 
 	return remoteConsistencyContext{
 		beadsDir: beadsDir,
+		doltDir:  doltDir,
 		dbDir:    filepath.Join(doltDir, dbName),
 		cfg:      cfg,
 	}, nil
+}
+
+// migrateServerRootRemotes copies any remotes that were added at the dolt
+// server root (.beads/dolt/) into the database subdirectory (.beads/dolt/<db>/)
+// where CLI push/pull actually targets. This addresses the common user error
+// of running `dolt remote add` one directory up from where the dolt CLI looks
+// for it. Best-effort: errors are logged but not fatal.
+func migrateServerRootRemotes(ctx remoteConsistencyContext) {
+	rootDir := ctx.doltDir
+	if rootDir == "" || rootDir == ctx.dbDir {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(rootDir, ".dolt")); err != nil {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(ctx.dbDir, ".dolt")); err != nil {
+		return
+	}
+	rootRemotes, err := doltutil.ListCLIRemotes(rootDir)
+	if err != nil || len(rootRemotes) == 0 {
+		return
+	}
+	for _, r := range rootRemotes {
+		if doltutil.FindCLIRemote(ctx.dbDir, r.Name) != "" {
+			continue
+		}
+		if err := doltutil.AddCLIRemote(ctx.dbDir, r.Name, r.URL); err != nil {
+			fmt.Printf("  Warning: could not migrate root remote %s: %v\n", r.Name, err)
+			continue
+		}
+		fmt.Printf("  Migrated remote from server root to database dir: %s → %s\n", r.Name, r.URL)
+	}
 }
 
 func openFixDB(beadsDir string, cfg *configfile.Config) (*sql.DB, error) {

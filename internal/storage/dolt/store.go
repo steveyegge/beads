@@ -1132,13 +1132,6 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// replaces the former branch-per-worker approach (BD_BRANCH).
 	store.branch = "main"
 
-	// GH#2315: Sync CLI remotes into SQL server on store open.
-	// After a server restart, dolt_remotes is empty (not persisted across sessions).
-	// CLI remotes survive in .dolt/config. Re-register them so DOLT_PUSH/DOLT_PULL work.
-	if !cfg.ReadOnly {
-		store.syncCLIRemotesToSQL(ctx)
-	}
-
 	// Register observable pool gauges for diagnosing shared-server degradation (GH#3140).
 	// These report sql.DB.Stats() on each OTel scrape — no-op when telemetry is off.
 	store.registerPoolGauges()
