@@ -585,11 +585,12 @@ Repeat prebuilt-binary hybrid run: 26604010187, commit
 The repeat run passed and remained below the target: about 11m38s from dispatch
 creation to completion, and about 10m41s from first job start to completion.
 The `cmd/bd` tail was 410s, compared to 394s in the first prebuilt sample.
-Promote this prebuilt eight-way hybrid as the every-`main` Linux no-short
-integration shape once the build-artifact stage is wired into the main
-workflow. Further optimization should target precompiling the `cmd/bd` test
-binary itself or reducing the remaining slow test bodies, not adding more
-count-based shards.
+This prebuilt eight-way hybrid is now the first promoted every-`main` Linux
+no-short integration shape in `.github/workflows/ci.yml`: six package shards
+exclude `cmd/bd`, eight `cmd/bd` shards split by top-level test name, and all
+shards consume the `ci-build-artifacts` `bd-linux-gms-pure` binary. Further
+optimization should target precompiling the `cmd/bd` test binary itself or
+reducing the remaining slow test bodies, not adding more count-based shards.
 
 ## Package Gates
 
@@ -698,6 +699,8 @@ checks pass.
 5. Add package wrappers and risk/measurement usage for MCP, npm, and website.
 6. Perform the mandatory `testing.Short()` audit and cleanup.
 7. Promote measured suites to `main` or scheduled jobs based on wall-clock data.
+   The measured prebuilt Linux no-short integration hybrid is promoted to
+   every-`main` CI on branch `ci/bd-am3.1-wrapper-commands`.
 8. Harden release workflows to reuse package wrappers before publishing.
 9. Split workflows by tier/domain once wrappers are stable:
    `pr.yml`, `pr-risk.yml`, `main.yml`, `release.yml`, and `nightly.yml`.
