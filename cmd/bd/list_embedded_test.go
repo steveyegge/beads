@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,11 +22,11 @@ func bdList(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd list %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd list %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdListJSON runs "bd list --json" and parses the result as an array of IssueWithCounts.
@@ -37,10 +36,8 @@ func bdListJSON(t *testing.T, bd, dir string, args ...string) []*types.IssueWith
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd list --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	// Parse stdout only; hints/warnings (e.g. truncation) go to stderr (GH#3212).
@@ -60,6 +57,35 @@ func bdListJSON(t *testing.T, bd, dir string, args ...string) []*types.IssueWith
 	return issues
 }
 
+type bdListSkipLabelsJSON struct {
+	SchemaVersion int `json:"schema_version"`
+	Issues        []struct {
+		ID     string   `json:"id"`
+		Labels []string `json:"labels"`
+	} `json:"issues"`
+	Meta struct {
+		SkipLabels bool `json:"skip_labels"`
+		Count      int  `json:"count"`
+	} `json:"meta"`
+}
+
+func bdListSkipLabelsJSONOutput(t *testing.T, bd, dir string, args ...string) bdListSkipLabelsJSON {
+	t.Helper()
+	fullArgs := append([]string{"list", "--json", "--skip-labels"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
+		t.Fatalf("bd list --json --skip-labels %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	var out bdListSkipLabelsJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("failed to parse skip-labels JSON output: %v\nraw: %s", err, stdout.String())
+	}
+	return out
+}
+
 // bdListCapture runs "bd list" and returns (stdout, stderr) separately.
 func bdListCapture(t *testing.T, bd, dir string, args ...string) (string, string) {
 	t.Helper()
@@ -67,10 +93,8 @@ func bdListCapture(t *testing.T, bd, dir string, args ...string) (string, string
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := runCommandBuffers(t, cmd)
+	if err != nil {
 		t.Fatalf("bd list %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String(), stderr.String()
@@ -290,6 +314,25 @@ func TestEmbeddedList(t *testing.T) {
 		}
 	})
 
+	t.Run("skip_labels_json_suppresses_labeled_issue", func(t *testing.T) {
+		out := bdListSkipLabelsJSONOutput(t, bd, dir, "--id", seed.openBug)
+		if !out.Meta.SkipLabels {
+			t.Fatal("expected meta.skip_labels=true")
+		}
+		if out.Meta.Count != 1 || len(out.Issues) != 1 {
+			t.Fatalf("expected one issue and matching count, got count=%d issues=%d", out.Meta.Count, len(out.Issues))
+		}
+		if out.Issues[0].ID != seed.openBug {
+			t.Fatalf("expected issue %s, got %s", seed.openBug, out.Issues[0].ID)
+		}
+		if out.Issues[0].Labels == nil {
+			t.Fatal("expected labels field to be present as an empty array, got nil")
+		}
+		if len(out.Issues[0].Labels) != 0 {
+			t.Fatalf("--skip-labels JSON leaked labels: %v", out.Issues[0].Labels)
+		}
+	})
+
 	// --- C. Status/special filtering ---
 	// Note: --ready, --pinned, --status closed/deferred/in_progress tests are
 	// skipped because bd update and bd close are not yet implemented on
@@ -374,6 +417,30 @@ func TestEmbeddedList(t *testing.T) {
 		}
 		if strings.Contains(out, blockedChild.ID) {
 			t.Errorf("blocked child %s should not appear in ready parent tree:\n%s", blockedChild.ID, out)
+		}
+	})
+
+	// Regression for gastownhall/beads#3936: relates-to between two epics
+	// must not nest them in `bd list` tree mode, and a bidirectional
+	// relates-to must not silently drop both epics from the output.
+	t.Run("tree_relates_to_does_not_nest_or_drop_epics", func(t *testing.T) {
+		epicA := bdCreate(t, bd, dir, "Relates Epic A", "--type", "epic", "--priority", "2")
+		epicB := bdCreate(t, bd, dir, "Relates Epic B", "--type", "epic", "--priority", "2")
+
+		bdDep(t, bd, dir, "add", epicA.ID, epicB.ID, "--type", "relates-to")
+		out := bdList(t, bd, dir, "--no-pager", "--type", "epic")
+		if !strings.Contains(out, epicA.ID) || !strings.Contains(out, epicB.ID) {
+			t.Fatalf("one-direction relates-to should keep both epics visible:\n%s", out)
+		}
+		if strings.Contains(out, "└── "+epicA.ID) || strings.Contains(out, "└── "+epicB.ID) ||
+			strings.Contains(out, "├── "+epicA.ID) || strings.Contains(out, "├── "+epicB.ID) {
+			t.Fatalf("relates-to must not nest epics under each other:\n%s", out)
+		}
+
+		bdDep(t, bd, dir, "add", epicB.ID, epicA.ID, "--type", "relates-to")
+		out = bdList(t, bd, dir, "--no-pager", "--type", "epic")
+		if !strings.Contains(out, epicA.ID) || !strings.Contains(out, epicB.ID) {
+			t.Fatalf("bidirectional relates-to must not drop epics from tree output:\n%s", out)
 		}
 	})
 
@@ -763,10 +830,8 @@ func TestEmbeddedListConcurrent(t *testing.T) {
 				listCmd := exec.Command(bd, "list", "--json", "--limit", "0")
 				listCmd.Dir = dir
 				listCmd.Env = bdEnv(dir)
-				var listStdout, listStderr bytes.Buffer
-				listCmd.Stdout = &listStdout
-				listCmd.Stderr = &listStderr
-				if err := listCmd.Run(); err != nil {
+				listStdout, listStderr, err := runCommandBuffers(t, listCmd)
+				if err != nil {
 					r.err = fmt.Errorf("list after create %d: %v\nstdout:\n%s\nstderr:\n%s", i, err, listStdout.String(), listStderr.String())
 					results[worker] = r
 					return

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
@@ -27,6 +29,33 @@ var (
 	primeMemoriesOnly bool
 	primeHookJSONMode bool
 )
+
+const (
+	primeStoreTimeoutEnv     = "BEADS_PRIME_TIMEOUT"
+	primeStoreTimeoutDefault = 10 * time.Second
+)
+
+var ensureStoreActiveForPrime = ensureStoreActiveWithContext
+
+func primeStoreTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(primeStoreTimeoutEnv))
+	if raw == "" {
+		return primeStoreTimeoutDefault
+	}
+	if d, err := time.ParseDuration(raw); err == nil {
+		if d > 0 {
+			return d
+		}
+		return primeStoreTimeoutDefault
+	}
+	if d, err := time.ParseDuration(raw + "s"); err == nil {
+		if d > 0 {
+			return d
+		}
+		return primeStoreTimeoutDefault
+	}
+	return primeStoreTimeoutDefault
+}
 
 // resolveGlobalPrimePath returns the path to ~/.config/beads/PRIME.md if it
 // exists. configDirOverride is used for testing; pass "" for production.
@@ -305,7 +334,17 @@ func outputMemoriesOnlyContext(w io.Writer) error {
 func formatMemoriesForPrime(compact bool) string {
 	// Try to initialize store if not already active (prime may run before other commands)
 	if store == nil {
-		if err := ensureDirectMode("memory injection"); err != nil {
+		timeout := primeStoreTimeout()
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if timeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		if err := ensureStoreActiveForPrime(ctx); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return formatPrimeMemoryTimeout(compact, timeout)
+			}
 			return "" // Silently skip — store unavailable
 		}
 	}
@@ -352,6 +391,17 @@ func formatMemoriesForPrime(compact bool) string {
 		}
 	}
 	return sb.String()
+}
+
+func formatPrimeMemoryTimeout(compact bool, timeout time.Duration) string {
+	if timeout <= 0 {
+		timeout = primeStoreTimeoutDefault
+	}
+	msg := fmt.Sprintf("Skipped: timed out after %s opening beads storage. Another bd process or stale storage lock may be blocking memory injection; run `bd doctor` and stop stuck bd processes before retrying.", timeout.Round(time.Millisecond))
+	if compact {
+		return "\n## Memories\n- " + msg + "\n"
+	}
+	return "\n## Persistent Memories\n\n" + msg + "\n"
 }
 
 // maybePullStaleLinearData checks if Linear data is stale and auto-pulls

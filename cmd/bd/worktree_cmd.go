@@ -434,14 +434,14 @@ func runWorktreeInfo(cmd *cobra.Command, args []string) error {
 // This is used for worktree operations that need to run in a specific location
 // (either the CWD repo root or a specific worktree path).
 //
-// Security: Sets GIT_HOOKS_PATH and GIT_TEMPLATE_DIR to disable hooks/templates
+// Security: Sets core.hooksPath and GIT_TEMPLATE_DIR to disable hooks/templates
 // for defense-in-depth, matching the pattern in RepoContext.GitCmd().
 func gitCmdInDir(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	gitArgs := append([]string{"-c", "core.hooksPath="}, args...)
+	cmd := exec.CommandContext(ctx, "git", gitArgs...)
 	cmd.Dir = dir
 	// Security: Disable git hooks and templates (SEC-001, SEC-002)
 	cmd.Env = append(os.Environ(),
-		"GIT_HOOKS_PATH=",
 		"GIT_TEMPLATE_DIR=",
 	)
 	return cmd

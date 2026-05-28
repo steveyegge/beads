@@ -1,0 +1,317 @@
+# Required Check Topology
+
+Status: design proposal. Do not change branch protection until the workflow
+changes below have landed and the new check has appeared on at least one recent
+commit.
+
+## Problem
+
+GitHub branch protection should require one stable PR gate while still letting
+CI skip expensive risk checks on low-risk pull requests. The required gate must
+not be a path-filtered workflow or a conditionally-triggered workflow, because
+GitHub leaves required checks pending when the whole workflow is skipped by
+path filters, branch filters, or commit-message skip directives.
+
+GitHub's safe distinction is:
+
+- A skipped workflow can leave a required check pending.
+- A skipped job inside a workflow reports success.
+- A job that depends on other jobs must use an always-running condition when it
+  is the required aggregate, otherwise upstream failures can skip the aggregate.
+- Any required Actions check used with merge queue must run on `merge_group`.
+
+References:
+
+- <https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/skipping-workflow-runs>
+- <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks>
+- <https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions>
+
+## Current State
+
+Current PR-related workflow names:
+
+- `.github/workflows/ci.yml`: `CI`
+  Runs on `pull_request`, `push` to `main`, and `merge_group`. Contains fast
+  jobs plus conditional embedded Dolt jobs.
+- `.github/workflows/regression.yml`: `Regression Tests`
+  Runs on `pull_request`, `push` to `main`, and manual dispatch. Does not
+  currently run on `merge_group`. Uses job-level conditional regression
+  execution.
+- `.github/workflows/cross-version-smoke.yml`: `Cross-Version Smoke Tests`
+  Runs on every PR to `main`, tag pushes, and manual dispatch. Does not
+  currently run on `merge_group`.
+- `.github/workflows/nix-build.yml`: `nix build`
+  Uses workflow-level `paths` filters on `pull_request` and `push`. This
+  workflow must not be directly required.
+- `.github/workflows/update-vendor-hash.yml`:
+  `Update vendorHash for dependabot Go bumps`
+  Runs on `pull_request_target` for Dependabot Go bumps. It mutates Dependabot
+  branches and must not be a required PR check.
+
+As of 2026-05-26, the live `gastownhall/beads` ruleset named
+`Protect main - light (beads and gastown)` enforces deletion and non-fast-forward
+protection on the default branch. It does not currently require status checks.
+
+## Required Check Contract
+
+After rollout, branch protection or the default-branch ruleset should require
+exactly this GitHub Actions check:
+
+- Required check name: `CI Gate / Required`
+- Source: GitHub Actions
+- Required on: pull requests and merge queue groups targeting `main`
+
+Do not require these existing check names directly:
+
+- `Detect CI tier`
+- `Check build-tag policy`
+- `Check cmd/bd pure-Go tests compile (CGO_ENABLED=0)`
+- `Check version consistency`
+- `Check doc flags freshness`
+- `Check for .beads changes`
+- `Test (ubuntu-latest)`
+- `Test (macos-latest)`
+- `Test (storage domain + uow)`
+- `Build (Embedded Dolt)`
+- `Test (Embedded Dolt Storage)`
+- `Test (Embedded Dolt Cmd 1/20)` through `Test (Embedded Dolt Cmd 20/20)`
+- `Test (Windows - smoke)`
+- `Check formatting`
+- `Lint`
+- `Test Nix Flake`
+- `Differential Regression (v0.49.6 baseline)`
+- `Upgrade smoke (<version> -> candidate)`
+- `Resolve versions to test`
+- `nix build .#default`
+
+Those checks should remain visible for diagnosis, but only the aggregate gate is
+branch-protection required.
+
+## Workflow Topology
+
+### 1. Keep the Required Workflow Always Triggered
+
+`.github/workflows/ci.yml` is the required workflow owner. Its trigger must stay
+unfiltered:
+
+```yaml
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  merge_group:
+```
+
+Do not add `paths`, `paths-ignore`, or narrower branch filters to this workflow.
+Path and risk decisions belong in detector jobs and job-level `if` conditions.
+
+### 2. Add the Aggregate Gate Job
+
+Add one final job to `.github/workflows/ci.yml`:
+
+<!-- markdownlint-disable MD013 -->
+
+```yaml
+  ci-gate:
+    name: CI Gate / Required
+    runs-on: ubuntu-latest
+    needs:
+      - detect-ci-tier
+      - check-build-tags
+      - check-cmd-bd-puregeo-tests
+      - check-version-consistency
+      - check-doc-flags
+      - check-no-beads-changes
+      - test
+      - test-domain-uow
+      - build-embedded
+      - test-embedded-storage
+      - test-embedded-cmd
+      - test-windows
+      - fmt-check
+      - lint
+      - test-nix
+    if: ${{ always() }}
+    steps:
+      - name: Evaluate CI gate
+        env:
+          FULL_EMBEDDED: ${{ needs.detect-ci-tier.outputs.full_embedded }}
+          DETECT_CI_TIER: ${{ needs.detect-ci-tier.result }}
+          CHECK_BUILD_TAGS: ${{ needs.check-build-tags.result }}
+          CHECK_CMD_BD_PUREGEO_TESTS: ${{ needs.check-cmd-bd-puregeo-tests.result }}
+          CHECK_VERSION_CONSISTENCY: ${{ needs.check-version-consistency.result }}
+          CHECK_DOC_FLAGS: ${{ needs.check-doc-flags.result }}
+          CHECK_NO_BEADS_CHANGES: ${{ needs.check-no-beads-changes.result }}
+          TEST: ${{ needs.test.result }}
+          TEST_DOMAIN_UOW: ${{ needs.test-domain-uow.result }}
+          BUILD_EMBEDDED: ${{ needs.build-embedded.result }}
+          TEST_EMBEDDED_STORAGE: ${{ needs.test-embedded-storage.result }}
+          TEST_EMBEDDED_CMD: ${{ needs.test-embedded-cmd.result }}
+          TEST_WINDOWS: ${{ needs.test-windows.result }}
+          FMT_CHECK: ${{ needs.fmt-check.result }}
+          LINT: ${{ needs.lint.result }}
+          TEST_NIX: ${{ needs.test-nix.result }}
+        run: bash .github/scripts/ci-gate.sh
+```
+
+<!-- markdownlint-enable MD013 -->
+
+Add `.github/scripts/ci-gate.sh` as a small shell evaluator. It should fail on
+any `failure` or `cancelled` result. It should accept `skipped` only for jobs
+that are intentionally absent for that event or risk tier:
+
+- `CHECK_NO_BEADS_CHANGES=skipped` is acceptable on `push` and `merge_group`
+  because the job is PR-only.
+- `BUILD_EMBEDDED`, `TEST_EMBEDDED_STORAGE`, and `TEST_EMBEDDED_CMD` may be
+  `skipped` only when `FULL_EMBEDDED != true`.
+- All fast jobs must be `success`.
+
+This keeps branch protection pointed at one job while preserving the underlying
+job names and logs.
+
+### 3. Keep Risk Decisions at Job Level
+
+Conditional risk checks should use this pattern:
+
+```yaml
+  detect-risk:
+    name: Detect risk
+    outputs:
+      run_risk: ${{ steps.detect.outputs.run_risk }}
+
+  risk-check:
+    name: Risk check
+    needs: detect-risk
+    if: needs.detect-risk.outputs.run_risk == 'true'
+
+  ci-gate:
+    name: CI Gate / Required
+    needs: [detect-risk, risk-check]
+    if: ${{ always() }}
+```
+
+The required aggregate should treat `risk-check=skipped` as success only when
+`detect-risk.outputs.run_risk != true`. If the detector wanted the risk check
+and the risk check is skipped, failed, or cancelled, the aggregate must fail.
+
+Do not use this pattern for required checks:
+
+```yaml
+on:
+  pull_request:
+    paths:
+      - 'go.mod'
+      - 'go.sum'
+```
+
+If that workflow or one of its jobs is made required, PRs that do not touch the
+listed paths can be blocked waiting for a check that GitHub never creates.
+
+## Conditional Check Placement
+
+### Embedded Dolt Matrix
+
+The current embedded Dolt topology already fits the required-check model:
+
+- `detect-ci-tier` always runs.
+- `build-embedded`, `test-embedded-storage`, and `test-embedded-cmd` use
+  job-level `if`.
+- `.github/scripts/ci-embedded-tier.sh` runs full embedded coverage for
+  `push`, `merge_group`, unavailable PR diff bounds, and risky paths.
+- Docs-only PRs can skip the embedded matrix without leaving the required gate
+  pending, because the aggregate job still runs.
+
+### Regression Tests
+
+`Regression Tests` can stay visible as a non-required workflow. If regression
+becomes branch-protection relevant, do not require
+`Differential Regression (v0.49.6 baseline)` directly.
+
+Use one of these narrow changes instead:
+
+1. Move the regression detector and regression job into `ci.yml`, wire them into
+   `CI Gate / Required`, and add `merge_group` behavior that defaults to running
+   regression.
+2. Keep `regression.yml` separate, remove any workflow-level skip filters, add
+   `merge_group`, add a final `Regression Gate / Informational` aggregate, and
+   leave it non-required unless branch protection is intentionally expanded.
+
+The preferred required-check topology keeps only `CI Gate / Required` required.
+
+### Nix Build
+
+`.github/workflows/nix-build.yml` currently uses workflow-level `paths` filters.
+Keep `nix build .#default` non-required.
+
+If the full Nix build must affect mergeability, move it into `ci.yml` behind a
+detector and job-level `if`, then teach `CI Gate / Required` when a skipped Nix
+build is acceptable. Do not make the path-filtered `nix build` workflow or
+`nix build .#default` job directly required.
+
+### Cross-Version Smoke
+
+`Cross-Version Smoke Tests` should remain non-required for ordinary PRs unless
+maintainers explicitly choose to pay that cost in the aggregate gate. If it
+becomes required, add `merge_group` and put it behind a detector plus aggregate
+inside the required topology. Do not require matrix-expanded
+`Upgrade smoke (<version> -> candidate)` jobs directly.
+
+## Merge Queue Behavior
+
+The required `CI Gate / Required` check must be reported for `merge_group`.
+Otherwise, GitHub can enqueue a PR and then fail to merge because the required
+check was never reported for the synthetic merge group commit.
+
+Policy for `merge_group`:
+
+- `CI` must include `merge_group`.
+- `detect-ci-tier` should keep treating `merge_group` as full embedded coverage.
+- Any risk detector added to the required topology should default to run on
+  `merge_group`, because the merge group commit may combine individually safe
+  PRs into a risky integration state.
+- The aggregate gate should evaluate the merge group results exactly like PR
+  results, except PR-only hygiene checks such as `Check for .beads changes` may
+  be skipped by design.
+
+## Rollout Steps
+
+1. Add `.github/scripts/ci-gate.sh` and the `ci-gate` job to `ci.yml`.
+2. Open a PR and verify the new check name appears exactly as
+   `CI Gate / Required` from GitHub Actions.
+3. Verify the gate succeeds on a docs-only PR where embedded jobs are skipped.
+4. Verify the gate succeeds on a risky PR or manual test branch where embedded
+   jobs run and pass.
+5. Verify a deliberately failing underlying job makes `CI Gate / Required` fail.
+6. Verify a merge queue run reports `CI Gate / Required` on the merge group.
+7. Update the default-branch ruleset or branch protection to require only
+   `CI Gate / Required` from GitHub Actions.
+8. Remove any direct requirements for individual CI, regression, Nix, or
+   cross-version job names.
+
+## Rollback Steps
+
+1. Remove `CI Gate / Required` from the default-branch ruleset or branch
+   protection.
+2. Restore the previous required check list if one existed.
+3. Revert the workflow commit that added the aggregate gate job and evaluator.
+4. Confirm a fresh PR no longer waits for `CI Gate / Required`.
+
+If rollback is needed because the aggregate logic is wrong, prefer first
+relaxing branch protection to remove the aggregate requirement. That unblocks
+merges without hiding the failed workflow logs needed for diagnosis.
+
+## Commit-Message Skip Directives
+
+The topology above prevents pending required checks caused by path-filtered and
+branch-filtered workflows. GitHub can still skip `push` and `pull_request`
+workflows when the HEAD commit message contains skip directives such as
+`[skip ci]`. If maintainers want a hard guarantee that commit-message skips
+fail closed instead of pending, the required check must be emitted by a tiny
+trusted reporter that is not itself skipped by those directives, for example a
+`pull_request_target` workflow that does not check out or run PR code and
+creates a check run named `CI Gate / Required` on the PR head SHA after
+inspecting the untrusted `pull_request` workflow results.
+
+That reporter is intentionally outside the narrow first rollout. Until then,
+do not use commit-message skip directives on PRs targeting `main`.

@@ -528,7 +528,7 @@ func TestGitRemoteRoundTripAllTables(t *testing.T) {
 	}
 
 	// Verify dependency
-	depRows := queryCSV(t, cloneDir, "SELECT depends_on_id FROM dependencies WHERE issue_id = 'rt-child'")
+	depRows := queryCSV(t, cloneDir, "SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id FROM dependencies WHERE issue_id = 'rt-child'")
 	if len(depRows) != 1 {
 		t.Errorf("clone: expected 1 dependency, got %d", len(depRows))
 	} else if depRows[0]["depends_on_id"] != "rt-parent" {
@@ -537,7 +537,7 @@ func TestGitRemoteRoundTripAllTables(t *testing.T) {
 
 	// Verify blocked status (rt-child depends on open rt-parent)
 	blockerCount := queryCount(t, cloneDir,
-		`SELECT COUNT(*) FROM dependencies d JOIN issues i ON d.depends_on_id = i.id `+
+		`SELECT COUNT(*) FROM dependencies d JOIN issues i ON d.depends_on_issue_id = i.id `+
 			`WHERE d.issue_id = 'rt-child' AND i.status IN ('open', 'in_progress')`)
 	if blockerCount != 1 {
 		t.Errorf("clone: expected rt-child to be blocked by 1 issue, got %d", blockerCount)

@@ -24,15 +24,15 @@ curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/inst
 cd your-project
 bd init
 
-# Optional: install richer instructions for your agent
-bd setup codex    # Codex CLI - creates/updates AGENTS.md
+# Optional: refresh or install richer instructions for your agent
+bd setup codex    # Codex CLI - installs skill, AGENTS.md guidance, and hooks
 bd setup claude   # Claude Code - installs hooks/settings
 bd setup factory  # Factory.ai Droid - creates/updates AGENTS.md
 ```
 
 **Note:** Beads is a CLI tool you install once and use everywhere. You don't need to clone this repository into your project.
 
-`bd init` creates or updates `AGENTS.md` by default so agents can discover the beads workflow. It skips agent files only when you pass `--skip-agents` or `--stealth`, or when you configure a custom agent file. Use `bd setup --list` to see supported integrations, including `bd setup codex`, `bd setup factory`, `bd setup claude`, `bd setup mux`, `bd setup cursor`, and more. See [Agent and IDE setup](docs/SETUP.md).
+`bd init` creates or updates `AGENTS.md` by default so agents can discover the beads workflow, and also installs project Claude/Codex integrations unless you pass `--skip-agents` or `--stealth`. Use `bd setup --list` to see supported integrations, including `bd setup codex`, `bd setup factory`, `bd setup claude`, `bd setup mux`, `bd setup cursor`, and more. See [Agent and IDE setup](docs/SETUP.md).
 
 Manual copy-paste is only for unsupported agents, existing projects where you cannot rerun `bd init`/`bd setup`, or custom instruction files. In those cases, run `bd onboard` and paste the printed snippet into the file your agent reads.
 
@@ -122,7 +122,8 @@ This is the recommended mode for most users.
 When the git repo has an `origin` remote, `bd init` configures a Dolt remote
 named `origin` automatically. Cross-machine sync uses `bd dolt push` and
 `bd dolt pull` against `refs/dolt/data`; `.beads/issues.jsonl` is an export
-for viewers, interchange, and backup, not the source of truth.
+for viewers and interchange, not the source of truth or a full database
+backup.
 
 ### Server Mode
 
@@ -165,6 +166,11 @@ bd backup restore --force /path/to/backup
 
 See [docs/DOLT.md](docs/DOLT.md#migrating-between-backends) for full
 migration instructions.
+
+`bd export` and `.beads/issues.jsonl` are issue-table exports. They are useful
+for review, migration, and interoperability, but they do not capture Dolt
+branches, commit history, working-set state, or non-issue tables. Use
+`bd backup` or a manual Dolt backup when you need a restorable database backup.
 
 ## 🌐 Community Tools
 

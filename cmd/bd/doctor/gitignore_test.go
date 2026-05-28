@@ -1812,7 +1812,7 @@ func TestEnsureProjectGitignore_CreatesFile(t *testing.T) {
 	if !strings.Contains(contentStr, "*.db") {
 		t.Error("Expected *.db pattern in .gitignore")
 	}
-	if !strings.Contains(contentStr, projectGitignoreComment) {
+	if !strings.Contains(contentStr, ProjectGitignoreHeader) {
 		t.Error("Expected section comment in .gitignore")
 	}
 }

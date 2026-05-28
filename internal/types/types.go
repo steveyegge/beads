@@ -759,6 +759,13 @@ type IssueDetails struct {
 	Comments     []*Comment                     `json:"comments,omitempty"`
 	Parent       *string                        `json:"parent,omitempty"`
 
+	// Cardinality fields — emitted by default (count-only mode).
+	// Slice fields (Dependents, Comments) are nil when count-only is active.
+	// Use --include-dependents / --include-comments to populate the slices.
+	DependentCount  *int64 `json:"dependent_count,omitempty"`
+	DependencyCount *int64 `json:"dependency_count,omitempty"`
+	CommentCount    *int64 `json:"comment_count,omitempty"`
+
 	// Epic progress fields (populated only for issue_type=epic with children)
 	EpicTotalChildren  *int  `json:"epic_total_children,omitempty"`
 	EpicClosedChildren *int  `json:"epic_closed_children,omitempty"`
@@ -1270,6 +1277,15 @@ type IssueFilter struct {
 	// Hydration options — control which relational data is populated on returned issues.
 	// Labels are always hydrated. Dependencies are not by default (for performance).
 	IncludeDependencies bool // When true, populate Issue.Dependencies with []*Dependency records
+
+	// SkipLabels suppresses label hydration. When true, the labels JOIN is
+	// skipped and Issue.Labels is left nil (callers MUST treat as empty).
+	// Opt-in performance flag for the bd list --skip-labels code path.
+	SkipLabels bool
+
+	// Performance escape hatches
+	SkipWisps  bool // Q2: skip wisps table merge entirely (for callers that never return ephemeral results)
+	NoIDShrink bool // Q3: force Pattern A (full 47-col scan) even when Limit > 0
 }
 
 // SortPolicy determines how ready work is ordered
@@ -1331,8 +1347,9 @@ type WorkFilter struct {
 	IncludeDeferred bool // If true, include issues with future defer_until timestamps
 
 	// Ephemeral issue filtering
-	// By default, GetReadyWork excludes ephemeral issues (wisps).
-	// Set to true to include them (e.g., for merge-request processing).
+	// By default, GetReadyWork excludes ephemeral wisps but includes
+	// no-history wisps because they are durable work items without Dolt history.
+	// Set to true to include ephemeral wisps too (e.g., for merge-request processing).
 	IncludeEphemeral bool
 
 	// Type exclusion: exclude issues with these types from results.

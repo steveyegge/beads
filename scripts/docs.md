@@ -28,8 +28,24 @@ Generates maintained CLI reference docs from the live Cobra command tree exposed
 - `docs/CLI_REFERENCE.md` from `bd help --all`
 - `website/docs/cli-reference/*.md` from `bd help --list` and `bd help --doc <command>`
 - `website/versioned_docs/version-1.0.0/cli-reference/*.md` so the published default docs and llms artifact source stay in sync
+- `website/static/llms-full.txt` freshness is checked from the same generated website docs tree
 
-`scripts/check-doc-flags.sh` runs the `--check` mode in CI and fails when live top-level commands are missing from generated docs.
+`scripts/check-doc-flags.sh` runs the `--check` mode in CI and fails when live top-level commands are missing from generated docs or `llms-full.txt` is stale.
+
+## check-doc-freshness.sh
+
+Validates marker-based freshness for reference-shaped docs that are not generated from a single clean source.
+
+### Usage
+
+```bash
+./scripts/check-doc-freshness.sh
+make check-docs
+```
+
+The script currently checks the reference docs named in `docs/DOC_INVENTORY.md`: `CONFIG.md`, `SETUP.md`, `ADO_CONFIG.md`, `JSON_SCHEMA.md`, `RECOVERY.md`, `ERROR_HANDLING.md`, `LINTING.md`, and `design/otel/otel-data-model.md`. Each doc must be listed in the inventory, include a recent `Last reviewed:` marker, include a `Freshness source:` marker, and name source paths or globs that exist in the repository.
+
+Set `DOC_FRESHNESS_MAX_AGE_DAYS` to override the default 90-day review window. Set `DOC_FRESHNESS_TODAY=YYYY-MM-DD` when testing date behaviour.
 
 ### How it fits into the larger codebase
 

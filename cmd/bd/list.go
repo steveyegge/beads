@@ -308,6 +308,150 @@ func sortIssues(issues []*types.Issue, sortBy string, reverse bool) {
 	})
 }
 
+func sortIssuesWithCounts(items []*types.IssueWithCounts, sortBy string, reverse bool) {
+	if sortBy == "" {
+		return
+	}
+	slices.SortFunc(items, func(a, b *types.IssueWithCounts) int {
+		if a == nil || a.Issue == nil {
+			if b == nil || b.Issue == nil {
+				return 0
+			}
+			return 1
+		}
+		if b == nil || b.Issue == nil {
+			return -1
+		}
+		var result int
+		switch sortBy {
+		case "priority":
+			result = cmp.Compare(a.Priority, b.Priority)
+		case "created":
+			result = b.CreatedAt.Compare(a.CreatedAt)
+		case "updated":
+			result = b.UpdatedAt.Compare(a.UpdatedAt)
+		case "closed":
+			if a.ClosedAt == nil && b.ClosedAt == nil {
+				result = 0
+			} else if a.ClosedAt == nil {
+				result = 1
+			} else if b.ClosedAt == nil {
+				result = -1
+			} else {
+				result = b.ClosedAt.Compare(*a.ClosedAt)
+			}
+		case "status":
+			result = cmp.Compare(a.Status, b.Status)
+		case "id":
+			result = utils.NaturalCompareIDs(a.ID, b.ID)
+		case "title":
+			result = cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title))
+		case "type":
+			result = cmp.Compare(a.IssueType, b.IssueType)
+		case "assignee":
+			result = cmp.Compare(a.Assignee, b.Assignee)
+		default:
+			result = 0
+		}
+		if reverse {
+			return -result
+		}
+		return result
+	})
+}
+
+// skipLabelsIssueView wraps IssueWithCounts so the JSON encoder always emits
+// `labels: []` regardless of the omitempty tag on Issue.Labels. AD-02 contract:
+// with --skip-labels, every issue's labels field is present and empty.
+type skipLabelsIssueView struct {
+	*types.IssueWithCounts
+	Labels []string `json:"labels"`
+}
+
+type skipLabelsListJSONResponse struct {
+	Issues []skipLabelsIssueView `json:"issues"`
+	Meta   skipLabelsListMeta    `json:"meta"`
+}
+
+type skipLabelsListMeta struct {
+	SkipLabels bool `json:"skip_labels"`
+	Count      int  `json:"count"`
+}
+
+func newSkipLabelsListJSONResponse(issues []*types.IssueWithCounts) skipLabelsListJSONResponse {
+	views := make([]skipLabelsIssueView, len(issues))
+	for i, issue := range issues {
+		views[i] = skipLabelsIssueView{
+			IssueWithCounts: issue,
+			Labels:          []string{},
+		}
+	}
+	return skipLabelsListJSONResponse{
+		Issues: views,
+		Meta: skipLabelsListMeta{
+			SkipLabels: true,
+			Count:      len(views),
+		},
+	}
+}
+
+// skipLabelsConflicts returns the names of label-filter flags that conflict
+// with --skip-labels. Empty result means no conflict. AD-02 Wireframe 5.
+func skipLabelsConflicts(labels, labelsAny []string, labelPattern, labelRegex string, excludeLabels []string, noLabels bool) []string {
+	var conflicts []string
+	if len(labels) > 0 {
+		conflicts = append(conflicts, "--label")
+	}
+	if len(labelsAny) > 0 {
+		conflicts = append(conflicts, "--label-any")
+	}
+	if labelPattern != "" {
+		conflicts = append(conflicts, "--label-pattern")
+	}
+	if labelRegex != "" {
+		conflicts = append(conflicts, "--label-regex")
+	}
+	if len(excludeLabels) > 0 {
+		conflicts = append(conflicts, "--exclude-label")
+	}
+	if noLabels {
+		conflicts = append(conflicts, "--no-labels")
+	}
+	return conflicts
+}
+
+// skipLabelsFooterText is the AD-02 Wireframe 2 footer note.
+// The leading newline keeps the note visually distinct from the table.
+func skipLabelsFooterText() string {
+	return "\nnote: --skip-labels in effect — labels suppressed in output.\n"
+}
+
+// printSkipLabelsFooter writes the AD-02 footer to stdout when the flag is set
+// and --quiet is not. Used by output paths that don't go through the buffered
+// pager (pretty/tree mode).
+func printSkipLabelsFooter(skipLabels bool) {
+	if !skipLabels || isQuiet() {
+		return
+	}
+	fmt.Print(skipLabelsFooterText())
+}
+
+// formatSkipLabelsConflictError builds the user-facing error message for AD-02
+// Wireframe 5. The got: line echoes the conflicting flags so the user can see
+// which input to remove without re-reading their command line.
+func formatSkipLabelsConflictError(conflicts []string) string {
+	return fmt.Sprintf(
+		"error: --skip-labels cannot be combined with --label,\n"+
+			"       --label-any, --label-pattern, --label-regex,\n"+
+			"       --exclude-label, or --no-labels (the filter).\n"+
+			"       (got: --skip-labels %s)\n"+
+			"reason: --skip-labels suppresses the labels JOIN that those\n"+
+			"        filters depend on.\n\n"+
+			"To filter by labels: drop --skip-labels.\n"+
+			"To get a label-free result fast: drop --label flags.\n",
+		strings.Join(conflicts, " "))
+}
+
 // knownListFlags maps bare words that users might pass as positional args
 // but are actually flag names. Each maps to a hint for the error message.
 var knownListFlags = map[string]string{
@@ -385,6 +529,17 @@ var listCmd = &cobra.Command{
 		emptyDesc, _ := cmd.Flags().GetBool("empty-description")
 		noAssignee, _ := cmd.Flags().GetBool("no-assignee")
 		noLabels, _ := cmd.Flags().GetBool("no-labels")
+
+		// Hydration toggle (AD-02): suppress the labels JOIN entirely.
+		// Distinct from --no-labels (filter rows where labels=[]).
+		skipLabels, _ := cmd.Flags().GetBool("skip-labels")
+		if skipLabels {
+			conflicts := skipLabelsConflicts(labels, labelsAny, labelPattern, labelRegex, excludeLabels, noLabels)
+			if len(conflicts) > 0 {
+				fmt.Fprint(os.Stderr, formatSkipLabelsConflictError(conflicts))
+				os.Exit(2)
+			}
+		}
 
 		// Priority range flags
 		priorityMinStr, _ := cmd.Flags().GetString("priority-min")
@@ -474,7 +629,7 @@ var listCmd = &cobra.Command{
 		excludeLabels = utils.NormalizeLabels(excludeLabels)
 
 		// Apply directory-aware label scoping if no labels explicitly provided (GH#541)
-		if len(labels) == 0 && len(labelsAny) == 0 {
+		if !skipLabels && len(labels) == 0 && len(labelsAny) == 0 {
 			if dirLabels := config.GetDirectoryLabels(); len(dirLabels) > 0 {
 				labelsAny = dirLabels
 			}
@@ -708,6 +863,9 @@ var listCmd = &cobra.Command{
 		if noLabels {
 			filter.NoLabels = true
 		}
+		if skipLabels {
+			filter.SkipLabels = true
+		}
 
 		// Priority ranges
 		if cmd.Flags().Changed("priority-min") {
@@ -888,7 +1046,40 @@ var listCmd = &cobra.Command{
 			activeStore = routedStore
 		}
 
-		// Direct mode
+		if watchMode {
+			watchIssues(ctx, activeStore, filter, readyFlag, parentID, sortBy, reverse, effectiveLimit)
+			return
+		}
+
+		if jsonOutput {
+			var iwc []*types.IssueWithCounts
+			var err error
+			if readyFlag {
+				iwc, err = activeStore.GetReadyWorkWithCounts(ctx, readyWorkFilterFromIssueFilter(filter))
+			} else {
+				iwc, err = activeStore.SearchIssuesWithCounts(ctx, "", filter)
+			}
+			if err != nil {
+				FatalError("%v", err)
+			}
+			sortIssuesWithCounts(iwc, sortBy, reverse)
+			truncated := effectiveLimit > 0 && len(iwc) > effectiveLimit
+			if truncated {
+				iwc = iwc[:effectiveLimit]
+			}
+			if iwc == nil {
+				iwc = []*types.IssueWithCounts{}
+			}
+			if skipLabels {
+				outputJSON(newSkipLabelsListJSONResponse(iwc))
+				printTruncationHint(truncated, effectiveLimit)
+				return
+			}
+			outputJSON(iwc)
+			printTruncationHint(truncated, effectiveLimit)
+			return
+		}
+
 		var issues []*types.Issue
 		if readyFlag {
 			// Use blocker-aware GetReadyWork semantics (GH#3478).
@@ -901,6 +1092,11 @@ var listCmd = &cobra.Command{
 				FatalError("%v", err)
 			}
 		} else {
+			// Skip wisps merge when the caller doesn't need ephemeral results
+			// (no --include-infra, not an infra type request). Q2 perf opt.
+			if !includeInfra && (issueType == "" || !isInfra(issueType)) {
+				filter.SkipWisps = true
+			}
 			var err error
 			issues, err = activeStore.SearchIssues(ctx, "", filter)
 			if err != nil {
@@ -916,12 +1112,6 @@ var listCmd = &cobra.Command{
 		truncated := effectiveLimit > 0 && len(issues) > effectiveLimit
 		if truncated {
 			issues = issues[:effectiveLimit]
-		}
-
-		// Handle watch mode (GH#654) - must be before other output modes
-		if watchMode {
-			watchIssues(ctx, activeStore, filter, readyFlag, parentID, sortBy, reverse, effectiveLimit)
-			return
 		}
 
 		// Handle pretty format (GH#654)
@@ -943,6 +1133,7 @@ var listCmd = &cobra.Command{
 				// Best effort: display gracefully degrades with empty data
 				allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
 				displayPrettyListWithDeps(treeIssues, false, allDeps)
+				printSkipLabelsFooter(skipLabels)
 				return
 			}
 
@@ -952,6 +1143,7 @@ var listCmd = &cobra.Command{
 			allDeps, _ := activeStore.GetAllDependencyRecords(ctx)
 			displayPrettyListWithDeps(issues, false, allDeps)
 			printTruncationHint(truncated, effectiveLimit)
+			printSkipLabelsFooter(skipLabels)
 			return
 		}
 
@@ -964,62 +1156,17 @@ var listCmd = &cobra.Command{
 			return
 		}
 
-		if jsonOutput {
-			// Get labels and dependency counts in bulk (single query instead of N queries)
-			issueIDs := make([]string, len(issues))
-			for i, issue := range issues {
-				issueIDs[i] = issue.ID
-			}
-			// Best effort: display gracefully degrades with empty data
-			labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
-			depCounts, _ := activeStore.GetDependencyCounts(ctx, issueIDs)
-			allDeps, _ := activeStore.GetDependencyRecordsForIssues(ctx, issueIDs)
-			commentCounts, _ := activeStore.GetCommentCounts(ctx, issueIDs)
-
-			// Populate labels and dependencies for JSON output
-			for _, issue := range issues {
-				issue.Labels = labelsMap[issue.ID]
-				issue.Dependencies = allDeps[issue.ID]
-			}
-
-			// Build response with counts + computed parent (bd-ym8c)
-			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
-			for i, issue := range issues {
-				counts := depCounts[issue.ID]
-				if counts == nil {
-					counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
-				}
-				// Compute parent from dependency records
-				var parent *string
-				for _, dep := range allDeps[issue.ID] {
-					if dep.Type == types.DepParentChild {
-						parent = &dep.DependsOnID
-						break
-					}
-				}
-				issuesWithCounts[i] = &types.IssueWithCounts{
-					Issue:           issue,
-					DependencyCount: counts.DependencyCount,
-					DependentCount:  counts.DependentCount,
-					CommentCount:    commentCounts[issue.ID],
-					Parent:          parent,
-				}
-			}
-			outputJSON(issuesWithCounts)
-			printTruncationHint(truncated, effectiveLimit)
-			return
-		}
-
 		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
 
-		// Load labels in bulk for display
 		issueIDs := make([]string, len(issues))
+		labelsMap := make(map[string][]string, len(issues))
 		for i, issue := range issues {
 			issueIDs[i] = issue.ID
+			if len(issue.Labels) > 0 {
+				labelsMap[issue.ID] = issue.Labels
+			}
 		}
-		// Best effort: display gracefully degrades with empty data
-		labelsMap, _ := activeStore.GetLabelsForIssues(ctx, issueIDs)
 
 		// Load blocking info for displayed issues only (bd-7di).
 		// Previously loaded ALL dependency records which was O(total_issues) and took 2-4s.
@@ -1042,7 +1189,7 @@ var listCmd = &cobra.Command{
 			buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
 			for _, issue := range issues {
 				labels := labelsMap[issue.ID]
-				formatIssueLong(&buf, issue, labels)
+				formatIssueLong(&buf, issue, labels, skipLabels)
 			}
 		} else {
 			// Compact format: one line per issue
@@ -1050,6 +1197,11 @@ var listCmd = &cobra.Command{
 				labels := labelsMap[issue.ID]
 				formatIssueCompact(&buf, issue, labels, blockedByMap[issue.ID], blocksMap[issue.ID], parentMap[issue.ID])
 			}
+		}
+
+		// AD-02: footer note when --skip-labels is in effect (suppressed under --quiet).
+		if skipLabels && !isQuiet() {
+			buf.WriteString(skipLabelsFooterText())
 		}
 
 		// Output with pager support
@@ -1105,6 +1257,13 @@ func init() {
 	listCmd.Flags().Bool("empty-description", false, "Filter issues with empty or missing description")
 	listCmd.Flags().Bool("no-assignee", false, "Filter issues with no assignee")
 	listCmd.Flags().Bool("no-labels", false, "Filter issues with no labels")
+
+	// Hydration toggle (AD-02). Distinct from --no-labels (filter).
+	listCmd.Flags().Bool("skip-labels", false,
+		"Skip label hydration. The labels field in output will be empty regardless "+
+			"of actual labels. Use only when the caller does not depend on label data. "+
+			"Cannot combine with --label, --label-any, --label-pattern, --label-regex, "+
+			"--exclude-label, or --no-labels.")
 
 	// Priority ranges
 	listCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")

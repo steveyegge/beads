@@ -63,9 +63,13 @@ var YamlOnlyKeys = map[string]bool{
 	"backup.git-push": true,
 	"backup.git-repo": true,
 
+	// Import settings
+	"import.path": true,
+
 	// Dolt server settings
 	"dolt.shared-server": true, // Shared Dolt server at ~/.beads/shared-server/ (GH#2377)
 	"dolt.max-conns":     true, // Connection pool size override (default 10, GH#3140)
+	"dolt.debug":         true, // Debug-mode dolt sql-server: --loglevel=debug + --prof cpu
 
 	// Secrets: tokens and API keys must NOT be stored in the Dolt database
 	// because that data is pushed to remotes, triggering secret-scanning
@@ -74,6 +78,9 @@ var YamlOnlyKeys = map[string]bool{
 	"linear.api_key":             true,
 	"linear.oauth_client_id":     true,
 	"linear.oauth_client_secret": true,
+	"jira.api_token":             true,
+	"gitlab.token":               true,
+	"ado.pat":                    true,
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml
@@ -343,6 +350,32 @@ func projectConfigPathFromLoadedState() string {
 	return configPath
 }
 
+// UserConfigYamlPath returns the platform-appropriate path for the
+// user-level config.yaml file. On Linux this is typically
+// ~/.config/bd/config.yaml; on macOS it checks ~/.config/bd/ first
+// (the documented cross-platform path) and falls back to
+// ~/Library/Application Support/bd/.
+func UserConfigYamlPath() string {
+	// Prefer ~/.config/bd/config.yaml — it's the documented path and
+	// works on all platforms after GH#3532.
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		xdgPath := filepath.Join(homeDir, ".config", "bd", "config.yaml")
+		if _, err := os.Stat(xdgPath); err == nil {
+			return xdgPath
+		}
+		// If it doesn't exist yet, still prefer it as the recommendation
+		// unless the os.UserConfigDir() path already has a file.
+		if configDir, err := os.UserConfigDir(); err == nil {
+			osPath := filepath.Join(configDir, "bd", "config.yaml")
+			if _, err := os.Stat(osPath); err == nil {
+				return osPath
+			}
+		}
+		return xdgPath // recommend the cross-platform path
+	}
+	return "~/.config/bd/config.yaml" // fallback display string
+}
+
 func findProjectBeadsDir() string {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -488,21 +521,6 @@ func isDuration(s string) bool {
 	return isNumeric(s[:len(s)-1])
 }
 
-func needsQuoting(s string) bool {
-	// Quote if contains special YAML characters
-	special := []string{":", "#", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "'", "\"", "%", "@", "`"}
-	for _, c := range special {
-		if strings.Contains(s, c) {
-			return true
-		}
-	}
-	// Quote if starts/ends with whitespace
-	if strings.TrimSpace(s) != s {
-		return true
-	}
-	return false
-}
-
 // validateYamlConfigValue validates a configuration value before setting.
 // Returns an error if the value is invalid for the given key.
 func validateYamlConfigValue(key, value string) error {
@@ -520,6 +538,16 @@ func validateYamlConfigValue(key, value string) error {
 		lower := strings.ToLower(value)
 		if lower != "true" && lower != "false" {
 			return fmt.Errorf("dolt.shared-server must be \"true\" or \"false\", got %q", value)
+		}
+	case "dolt.debug":
+		lower := strings.ToLower(value)
+		if lower != "true" && lower != "false" {
+			return fmt.Errorf("dolt.debug must be \"true\" or \"false\", got %q", value)
+		}
+	case "dolt.mode":
+		lower := strings.ToLower(value)
+		if lower != "server" && lower != "embedded" {
+			return fmt.Errorf("dolt.mode must be \"server\" or \"embedded\", got %q", value)
 		}
 	}
 	return nil

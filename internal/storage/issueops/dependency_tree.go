@@ -47,6 +47,9 @@ func buildDependencyTreeInTx(ctx context.Context, tx *sql.Tx, issueID string, de
 	// TreeNode doesn't have Children field - return flat list
 	nodes := []*types.TreeNode{node}
 	for _, rel := range related {
+		if !isDependencyTreeEdge(rel.DependencyType) {
+			continue
+		}
 		children, err := buildDependencyTreeInTx(ctx, tx, rel.ID, depth+1, maxDepth, reverse, visited, issueID, rel.DependencyType)
 		if err != nil {
 			return nil, err
@@ -55,4 +58,8 @@ func buildDependencyTreeInTx(ctx context.Context, tx *sql.Tx, issueID string, de
 	}
 
 	return nodes, nil
+}
+
+func isDependencyTreeEdge(depType types.DependencyType) bool {
+	return depType != types.DepRelatesTo
 }

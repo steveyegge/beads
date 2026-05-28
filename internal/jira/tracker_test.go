@@ -6,10 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
@@ -548,6 +551,9 @@ func (s *configStore) ReopenIssue(_ context.Context, _, _, _ string) error     {
 func (s *configStore) UpdateIssueType(_ context.Context, _, _, _ string) error { return nil }
 func (s *configStore) CloseIssue(_ context.Context, _, _, _, _ string) error   { return nil }
 func (s *configStore) DeleteIssue(_ context.Context, _ string) error           { return nil }
+func (s *configStore) SearchIssuesWithCounts(_ context.Context, _ string, _ types.IssueFilter) ([]*types.IssueWithCounts, error) {
+	return nil, nil
+}
 func (s *configStore) SearchIssues(_ context.Context, _ string, _ types.IssueFilter) ([]*types.Issue, error) {
 	return nil, nil
 }
@@ -579,6 +585,9 @@ func (s *configStore) GetIssuesByLabel(_ context.Context, _ string) ([]*types.Is
 	return nil, nil
 }
 func (s *configStore) GetReadyWork(_ context.Context, _ types.WorkFilter) ([]*types.Issue, error) {
+	return nil, nil
+}
+func (s *configStore) GetReadyWorkWithCounts(_ context.Context, _ types.WorkFilter) ([]*types.IssueWithCounts, error) {
 	return nil, nil
 }
 func (s *configStore) GetBlockedIssues(_ context.Context, _ types.WorkFilter) ([]*types.BlockedIssue, error) {
@@ -621,7 +630,51 @@ func (s *configStore) SlotGet(_ context.Context, _, _ string) (string, error) {
 	return "", nil
 }
 func (s *configStore) SlotClear(_ context.Context, _, _, _ string) error { return nil }
-func (s *configStore) Close() error                                      { return nil }
+
+func (s *configStore) CountIssues(_ context.Context, _ string, _ types.IssueFilter) (int64, error) {
+	return 0, nil
+}
+func (s *configStore) CountIssuesByGroup(_ context.Context, _ types.IssueFilter, _ string) (map[string]int, error) {
+	return nil, nil
+}
+func (s *configStore) CountDependents(_ context.Context, _ string) (int64, error)   { return 0, nil }
+func (s *configStore) CountDependencies(_ context.Context, _ string) (int64, error) { return 0, nil }
+func (s *configStore) CountIssueComments(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
+func (s *configStore) CountEvents(_ context.Context, _ string, _ int) (int64, error) {
+	return 0, nil
+}
+
+func (s *configStore) IterIssues(_ context.Context, _ string, _ types.IssueFilter) (storage.Iter[types.Issue], error) {
+	return storage.NewSliceIter[types.Issue](nil), nil
+}
+func (s *configStore) IterDependentsWithMetadata(_ context.Context, _ string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
+	return storage.NewSliceIter[types.IssueWithDependencyMetadata](nil), nil
+}
+func (s *configStore) IterDependenciesWithMetadata(_ context.Context, _ string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
+	return storage.NewSliceIter[types.IssueWithDependencyMetadata](nil), nil
+}
+func (s *configStore) IterIssueComments(_ context.Context, _ string) (storage.Iter[types.Comment], error) {
+	return storage.NewSliceIter[types.Comment](nil), nil
+}
+func (s *configStore) IterEvents(_ context.Context, _ string, _ int) (storage.Iter[types.Event], error) {
+	return storage.NewSliceIter[types.Event](nil), nil
+}
+func (s *configStore) IterAllEventsSince(_ context.Context, _ time.Time) (storage.Iter[types.Event], error) {
+	return storage.NewSliceIter[types.Event](nil), nil
+}
+func (s *configStore) IterReadyWork(_ context.Context, _ types.WorkFilter) (storage.Iter[types.Issue], error) {
+	return storage.NewSliceIter[types.Issue](nil), nil
+}
+func (s *configStore) IterBlockedIssues(_ context.Context, _ types.WorkFilter) (storage.Iter[types.BlockedIssue], error) {
+	return storage.NewSliceIter[types.BlockedIssue](nil), nil
+}
+func (s *configStore) IterWisps(_ context.Context, _ types.WispFilter) (storage.Iter[types.Issue], error) {
+	return storage.NewSliceIter[types.Issue](nil), nil
+}
+
+func (s *configStore) Close() error { return nil }
 
 func TestFetchIssuesIncludesPullJQLInQuery(t *testing.T) {
 	var capturedJQL string
@@ -706,11 +759,12 @@ func TestFetchIssuesWithoutPullJQLOmitsExtraFilter(t *testing.T) {
 }
 
 func TestInitLoadsCustomStatusMapFromAllConfig(t *testing.T) {
+	// jira.api_token is yaml-only (secret), so set it via env var.
+	t.Setenv("JIRA_API_TOKEN", "token123")
 	store := &configStore{
 		data: map[string]string{
 			"jira.url":                    "https://example.atlassian.net",
 			"jira.project":                "PROJ",
-			"jira.api_token":              "token123",
 			"jira.status_map.open":        "Backlog",
 			"jira.status_map.in_progress": "Active Sprint",
 			"jira.status_map.review":      "Code Review", // custom non-standard beads status
@@ -743,11 +797,12 @@ func TestInitLoadsCustomStatusMapFromAllConfig(t *testing.T) {
 }
 
 func TestInitLoadsCustomTypeMapFromAllConfig(t *testing.T) {
+	// jira.api_token is yaml-only (secret), so set it via env var.
+	t.Setenv("JIRA_API_TOKEN", "token123")
 	store := &configStore{
 		data: map[string]string{
 			"jira.url":              "https://example.atlassian.net",
 			"jira.project":          "PROJ",
-			"jira.api_token":        "token123",
 			"jira.type_map.story":   "User Story",
 			"jira.type_map.feature": "Feature",
 		},
@@ -792,11 +847,12 @@ func TestInitLoadsCustomTypeMapFromAllConfig(t *testing.T) {
 }
 
 func TestInitLoadsCustomPriorityMapFromAllConfig(t *testing.T) {
+	// jira.api_token is yaml-only (secret), so set it via env var.
+	t.Setenv("JIRA_API_TOKEN", "token123")
 	store := &configStore{
 		data: map[string]string{
 			"jira.url":            "https://example.atlassian.net",
 			"jira.project":        "PROJ",
-			"jira.api_token":      "token123",
 			"jira.priority_map.0": "Critical",
 			"jira.priority_map.2": "Normal",
 		},
@@ -892,5 +948,78 @@ func TestPriorityMapCaseInsensitiveMatch(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("PriorityToBeads(%q) = %d, want %d", tt.name, got, tt.want)
 		}
+	}
+}
+
+// TestGetConfig_YamlOnlyKeyBypassesStore verifies that yaml-only keys
+// (e.g. jira.api_token) bypass the Dolt store entirely. A nil store proves
+// the store is never dereferenced; before the fix this would panic.
+func TestGetConfig_YamlOnlyKeyBypassesStore(t *testing.T) {
+	ctx := context.Background()
+	tr := &Tracker{store: nil}
+
+	t.Run("falls back to env var", func(t *testing.T) {
+		t.Setenv("JIRA_API_TOKEN", "env-token-value")
+		got, err := tr.getConfig(ctx, "jira.api_token", "JIRA_API_TOKEN")
+		if err != nil {
+			t.Fatalf("getConfig returned error: %v", err)
+		}
+		if got != "env-token-value" {
+			t.Errorf("getConfig(jira.api_token) = %q, want %q", got, "env-token-value")
+		}
+	})
+
+	t.Run("returns empty when no value is set", func(t *testing.T) {
+		t.Setenv("JIRA_API_TOKEN", "")
+		got, err := tr.getConfig(ctx, "jira.api_token", "JIRA_API_TOKEN")
+		if err != nil {
+			t.Fatalf("getConfig returned error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("getConfig(jira.api_token) = %q, want empty", got)
+		}
+	})
+}
+
+// TestGetConfig_YamlOnlyKeyReadsFromYaml verifies that jira.api_token is
+// read from .beads/config.yaml when set there, without depending on the
+// JIRA_API_TOKEN env var.
+func TestGetConfig_YamlOnlyKeyReadsFromYaml(t *testing.T) {
+	const wantToken = "yaml-config-token-value"
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	yamlBody := "jira.api_token: \"" + wantToken + "\"\n"
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(yamlBody), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	t.Setenv("JIRA_API_TOKEN", "")
+	t.Setenv("BEADS_DIR", "")
+	t.Setenv("BEADS_TEST_IGNORE_REPO_CONFIG", "1")
+	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Chdir(tmpDir)
+
+	config.ResetForTesting()
+	t.Cleanup(config.ResetForTesting)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+
+	if got := config.GetString("jira.api_token"); got != wantToken {
+		t.Fatalf("config.GetString(jira.api_token) = %q, want %q (yaml not loaded?)", got, wantToken)
+	}
+
+	tr := &Tracker{store: nil}
+	got, err := tr.getConfig(context.Background(), "jira.api_token", "JIRA_API_TOKEN")
+	if err != nil {
+		t.Fatalf("getConfig returned error: %v", err)
+	}
+	if got != wantToken {
+		t.Errorf("getConfig(jira.api_token) = %q, want %q (yaml value)", got, wantToken)
 	}
 }

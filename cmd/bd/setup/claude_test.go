@@ -1075,6 +1075,46 @@ func TestInstallClaudeWritesHooksWithoutPlugin(t *testing.T) {
 	}
 }
 
+func TestInstallClaudeReportsSkippedSymlinkInstructions(t *testing.T) {
+	env, stdout, stderr := newClaudeTestEnv(t)
+	target := filepath.Join(env.projectDir, "AGENTS.md")
+	if err := os.WriteFile(target, []byte("# Shared instructions\n"), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(env.projectDir, claudeInstructionsFile)
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Claude Code hooks installed") {
+		t.Fatalf("expected partial hook success message, got:\n%s", out)
+	}
+	if strings.Contains(out, "Claude Code integration installed") {
+		t.Fatalf("should not report full integration success when instructions are skipped:\n%s", out)
+	}
+	if !strings.Contains(out, "Agent instructions skipped: CLAUDE.md is a symlink") {
+		t.Fatalf("expected skipped instructions summary, got:\n%s", out)
+	}
+	if !strings.Contains(stderr.String(), "CLAUDE.md is a symlink") {
+		t.Fatalf("expected symlink warning on stderr, got:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(projectSettingsPath(env.projectDir)); err != nil {
+		t.Fatalf("settings should still be installed: %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if strings.Contains(string(data), "BEGIN BEADS INTEGRATION") {
+		t.Fatalf("symlink target should remain untouched:\n%s", data)
+	}
+}
+
 func TestCheckClaudePluginManaged(t *testing.T) {
 	stubDetectRenderOpts(t)
 	env, stdout, _ := newClaudeTestEnv(t)

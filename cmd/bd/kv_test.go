@@ -202,6 +202,7 @@ func TestValidateKVKey(t *testing.T) {
 		{"jira prefix", "jira.url", true, "reserved prefix"},
 		{"linear prefix", "linear.key", true, "reserved prefix"},
 		{"export prefix", "export.path", true, "reserved prefix"},
+		{"import prefix", "import.path", true, "reserved prefix"},
 	}
 
 	for _, tc := range testCases {

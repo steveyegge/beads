@@ -20,11 +20,11 @@ func bdDep(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd dep %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd dep %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdDepFail runs "bd dep" expecting failure.
@@ -49,11 +49,11 @@ func bdDepJSON(t *testing.T, bd, dir string, args ...string) map[string]interfac
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd dep --json %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd dep --json %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	s := strings.TrimSpace(string(out))
+	s := strings.TrimSpace(stdout.String())
 	start := strings.IndexAny(s, "{[")
 	if start < 0 {
 		t.Fatalf("no JSON in dep output: %s", s)
@@ -72,11 +72,11 @@ func bdDepWithInput(t *testing.T, bd, dir, input string, args ...string) string 
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
 	cmd.Stdin = strings.NewReader(input)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd dep %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd dep %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 func TestEmbeddedDep(t *testing.T) {
@@ -295,12 +295,12 @@ func TestEmbeddedDep(t *testing.T) {
 		cmd := exec.Command(bd, fullArgs...)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err != nil {
-			t.Fatalf("dep list --json failed: %v\n%s", err, out)
+			t.Fatalf("dep list --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), issueD.ID) {
-			t.Errorf("expected dependency ID in JSON: %s", out)
+		if !strings.Contains(stdout.String(), issueD.ID) {
+			t.Errorf("expected dependency ID in JSON: %s", stdout.String())
 		}
 	})
 
@@ -353,12 +353,40 @@ func TestEmbeddedDep(t *testing.T) {
 		cmd := exec.Command(bd, fullArgs...)
 		cmd.Dir = dir
 		cmd.Env = bdEnv(dir)
-		out, err := cmd.CombinedOutput()
+		stdout, stderr, err := runCommandBuffers(t, cmd)
 		if err != nil {
-			t.Fatalf("dep tree --json failed: %v\n%s", err, out)
+			t.Fatalf("dep tree --json failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(string(out), epic.ID) {
-			t.Errorf("expected epic ID in JSON tree: %s", out)
+		if !strings.Contains(stdout.String(), epic.ID) {
+			t.Errorf("expected epic ID in JSON tree: %s", stdout.String())
+		}
+	})
+
+	t.Run("tree_ignores_bidirectional_relates_to", func(t *testing.T) {
+		root := bdCreate(t, bd, dir, "Tree relates root", "--type", "task")
+		blocker := bdCreate(t, bd, dir, "Tree real blocker", "--type", "task")
+		related := bdCreate(t, bd, dir, "Tree loose relation", "--type", "task")
+
+		bdDep(t, bd, dir, "add", root.ID, blocker.ID, "--type", "blocks")
+		bdDep(t, bd, dir, "add", root.ID, related.ID, "--type", "relates-to")
+		bdDep(t, bd, dir, "add", related.ID, root.ID, "--type", "relates-to")
+
+		listOut := bdDep(t, bd, dir, "list", root.ID)
+		if !strings.Contains(listOut, related.ID) || !strings.Contains(listOut, "relates-to") {
+			t.Fatalf("expected relates-to edge in dep list output: %s", listOut)
+		}
+
+		treeOut := bdDep(t, bd, dir, "tree", root.ID)
+		if !strings.Contains(treeOut, root.ID) || !strings.Contains(treeOut, blocker.ID) {
+			t.Fatalf("expected root and real blocker in dep tree: %s", treeOut)
+		}
+		if strings.Contains(treeOut, related.ID) {
+			t.Fatalf("relates-to edge should not render as a dependency tree edge: %s", treeOut)
+		}
+
+		upOut := bdDep(t, bd, dir, "tree", related.ID, "--direction", "up")
+		if strings.Contains(upOut, root.ID) {
+			t.Fatalf("reverse relates-to edge should not render as a dependent tree edge: %s", upOut)
 		}
 	})
 
@@ -380,8 +408,8 @@ func TestEmbeddedDep(t *testing.T) {
 		b := bdCreate(t, bd, dir2, "No cycle B", "--type", "task")
 		bdDep(t, bd, dir2, "add", a.ID, b.ID)
 		out := bdDep(t, bd, dir2, "cycles")
-		if !strings.Contains(out, "No cycles") && !strings.Contains(out, "no cycles") {
-			t.Logf("expected 'No cycles' message: %s", out)
+		if !strings.Contains(out, "No dependency cycles detected") {
+			t.Errorf("expected no-cycle message: %s", out)
 		}
 	})
 }

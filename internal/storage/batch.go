@@ -29,4 +29,9 @@ type BatchCreateOptions struct {
 	// again (cf. PR #3630), auto-import degrades to a harmless no-op instead
 	// of clobbering live rows. Explicit `bd import` keeps UPSERT semantics.
 	ConflictSkip bool
+	// SkipDependencyValidationErrors skips dependency validation failures that
+	// legacy imports tolerated, such as cycles or self-dependencies.
+	SkipDependencyValidationErrors bool
+	// OnSkippedDependency records dependency edges skipped during batch create.
+	OnSkippedDependency func(issueID, dependsOnID, reason string)
 }

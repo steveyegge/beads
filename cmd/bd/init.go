@@ -53,17 +53,17 @@ Pass --server to use an external dolt sql-server instead. In server mode,
 set connection details with --server-host, --server-port, and --server-user.
 Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
-Auto-export is enabled by default. After every write command, bd exports
-issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv), interchange, and backups up to date without extra steps.
-Cross-machine sync uses Dolt remotes, not JSONL import/export.
-To disable: bd config set export.auto false
+Auto-export is optional. When enabled, bd exports issues to
+.beads/issues.jsonl after write commands (throttled to once per 60s). This is
+for viewers (bv), interchange, and issue-level migration; not backup.
+Cross-machine sync and backups use Dolt remotes/backups, not JSONL import/export.
+To enable: bd config set export.auto true
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
   Skips all interactive prompts, using sensible defaults:
   • Role defaults to "maintainer" (override with --role)
   • Fork exclude auto-configured when fork detected
-  • Auto-export left at default (enabled)
+  • Auto-export left at default (disabled)
   • --contributor and --team flags are rejected (wizards require interaction)
   Also auto-detected when stdin is not a terminal or CI=true is set.`,
 	Run: func(cmd *cobra.Command, _ []string) {
@@ -103,14 +103,26 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 		sharedServer, _ := cmd.Flags().GetBool("shared-server")
 		externalServer, _ := cmd.Flags().GetBool("external")
+		debugMode, _ := cmd.Flags().GetBool("debug")
 		initProxiedServer, _ := cmd.Flags().GetBool("proxied-server")
-		serverConfigPath, _ := cmd.Flags().GetString("proxied-server-config")
+		serverConfigPath, _ := cmd.Flags().GetString("proxied-server-config-path")
 		serverLogPath, _ := cmd.Flags().GetString("proxied-server-log-path")
 		serverRootPath, _ := cmd.Flags().GetString("proxied-server-root-path")
+		externalHost, _ := cmd.Flags().GetString("proxied-server-external-host")
+		externalPort, _ := cmd.Flags().GetInt("proxied-server-external-port")
+		externalSocketPath, _ := cmd.Flags().GetString("proxied-server-external-socket-path")
+		externalUser, _ := cmd.Flags().GetString("proxied-server-external-user")
+		externalTLS, _ := cmd.Flags().GetBool("proxied-server-external-tls")
+		externalTLSCertPath, _ := cmd.Flags().GetString("proxied-server-external-tls-cert-path")
+		externalTLSKeyPath, _ := cmd.Flags().GetString("proxied-server-external-tls-key-path")
+		externalKeepAlive, _ := cmd.Flags().GetDuration("proxied-server-external-keep-alive")
 		if os.Getenv("BEADS_DOLT_PROXIED_SERVER") == "1" {
 			initProxiedServer = true
 		}
 		if initProxiedServer {
+			// Proxied-server mode has no local Dolt init lifecycle yet. When it
+			// is implemented, that path must mark any local .dolt/ it creates or
+			// acknowledges with doltserver.MarkDoltDirCompatible.
 			FatalError("--proxied-server is not yet implemented")
 		}
 		if initProxiedServer && initServerMode {
@@ -124,27 +136,66 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 		if serverConfigPath != "" {
 			if !initProxiedServer {
-				FatalError("--proxied-server-config requires --proxied-server")
+				FatalError("--proxied-server-config-path requires --proxied-server")
+			}
+			if !filepath.IsAbs(serverConfigPath) {
+				FatalError("--proxied-server-config-path must be an absolute path, got %q", serverConfigPath)
 			}
 			if err := validateProxiedServerConfig(serverConfigPath); err != nil {
-				FatalError("%v", err)
+				FatalError("--proxied-server-config-path %v", err)
 			}
 		}
 		if serverLogPath != "" {
 			if !initProxiedServer {
 				FatalError("--proxied-server-log-path requires --proxied-server")
 			}
+			if !filepath.IsAbs(serverLogPath) {
+				FatalError("--proxied-server-log-path must be an absolute path, got %q", serverLogPath)
+			}
 			if err := validateProxiedServerLogPath(serverLogPath); err != nil {
-				FatalError("%v", err)
+				FatalError("--proxied-server-log-path %v", err)
 			}
 		}
 		if serverRootPath != "" {
 			if !initProxiedServer {
 				FatalError("--proxied-server-root-path requires --proxied-server")
 			}
-			if err := validateProxiedServerRootPath(serverRootPath); err != nil {
-				FatalError("%v", err)
+			if !filepath.IsAbs(serverRootPath) {
+				FatalError("--proxied-server-root-path must be an absolute path, got %q", serverRootPath)
 			}
+			if err := validateProxiedServerRootPath(serverRootPath); err != nil {
+				FatalError("--proxied-server-root-path %v", err)
+			}
+		}
+
+		externalProvided := externalHost != "" || externalPort != 0 || externalSocketPath != "" ||
+			externalUser != "" ||
+			externalTLS || externalTLSCertPath != "" || externalTLSKeyPath != "" || externalKeepAlive != 0
+		if externalProvided && !initProxiedServer {
+			FatalError("--proxied-server-external-* flags require --proxied-server")
+		}
+		if externalProvided && serverConfigPath != "" {
+			FatalError("--proxied-server-external-* flags cannot be combined with --proxied-server-config-path (external mode has no managed dolt sql-server to configure)")
+		}
+		if externalProvided && debugMode {
+			FatalError("--debug cannot be combined with --proxied-server-external-* (debug applies to the managed dolt sql-server only)")
+		}
+		var externalConfig *configfile.ExternalDoltConfig
+		if externalProvided {
+			cfg := configfile.ExternalDoltConfig{
+				Host:            externalHost,
+				Port:            externalPort,
+				Socket:          externalSocketPath,
+				User:            externalUser,
+				TLSRequired:     externalTLS,
+				TLSCert:         externalTLSCertPath,
+				TLSKey:          externalTLSKeyPath,
+				KeepAlivePeriod: externalKeepAlive,
+			}
+			if err := cfg.Validate(); err != nil {
+				FatalError("--proxied-server-external-*: %v", err)
+			}
+			externalConfig = &cfg
 		}
 
 		// Handle --backend flag: "dolt" is the only supported backend.
@@ -157,7 +208,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			fmt.Fprintf(os.Stderr, "  bd init\n\n")
 			fmt.Fprintf(os.Stderr, "To import issues from an existing JSONL export:\n")
 			fmt.Fprintf(os.Stderr, "  bd init --from-jsonl\n\n")
-			fmt.Fprintf(os.Stderr, "See: https://github.com/steveyegge/beads/blob/main/docs/DOLT-BACKEND.md\n")
+			fmt.Fprintf(os.Stderr, "See: https://github.com/gastownhall/beads/blob/main/docs/DOLT.md\n")
 			os.Exit(1)
 		} else if backendFlag != "" && backendFlag != "dolt" {
 			FatalError("unknown backend %q: only \"dolt\" is supported", backendFlag)
@@ -218,11 +269,60 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			cmdCtx.ProxiedServerMode = initProxiedServer
 		}
 
+		if initProxiedServer {
+			runInitProxiedServer(cmd, rootCtx, initProxiedServerInput{
+				prefix:            prefix,
+				database:          database,
+				roleFlag:          roleFlag,
+				initRemote:        initRemote,
+				initRemoteChanged: initRemoteChanged,
+				destroyToken:      destroyToken,
+				serverConfigPath:  serverConfigPath,
+				serverLogPath:     serverLogPath,
+				serverRootPath:    serverRootPath,
+				externalConfig:    externalConfig,
+				quiet:             quiet,
+				stealth:           stealth,
+				skipHooks:         skipHooks,
+				skipAgents:        skipAgents,
+				reinitLocal:       reinitLocal,
+				contributor:       contributor,
+				team:              team,
+				fromJSONL:         fromJSONL,
+				nonInteractive:    nonInteractive,
+			})
+			return
+		}
+
 		// Propagate --shared-server flag to env so that IsSharedServerMode(),
 		// ResolveDoltDir(), and DefaultConfig() all see shared mode immediately
 		// (before config.yaml exists). Safe: init runs once and exits.
 		if sharedServer {
 			_ = os.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+		}
+
+		if debugMode {
+			_ = os.Setenv("BEADS_DOLT_DEBUG", "1")
+		}
+
+		// Initialize config (PersistentPreRun doesn't run for init command).
+		// This must happen before validation that depends on server/embedded
+		// mode so dolt.mode from config.yaml is treated like --server.
+		if err := config.Initialize(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
+			// Non-fatal - continue with defaults
+		}
+
+		// config.yaml fallback for dolt.mode: if --server wasn't passed and
+		// env var didn't set it, check config.yaml for dolt.mode: server.
+		if !initServerMode {
+			if modeVal := config.GetYamlConfig("dolt.mode"); strings.EqualFold(modeVal, "server") {
+				initServerMode = true
+				serverMode = initServerMode
+				if cmdCtx != nil {
+					cmdCtx.ServerMode = initServerMode
+				}
+			}
 		}
 
 		// Reject hyphens in --database for embedded mode. Must run AFTER
@@ -233,10 +333,32 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				database, sanitizeDBName(database))
 		}
 
-		// Initialize config (PersistentPreRun doesn't run for init command)
-		if err := config.Initialize(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
-			// Non-fatal - continue with defaults
+		// Hard fail: if a remote dolt.host is configured, server mode MUST
+		// be active — embedded mode has no host. dolt.port alone is ambient
+		// plumbing (e.g. test harnesses) and is not treated as server intent.
+		if !initServerMode {
+			configHost := config.GetYamlConfig("dolt.host")
+			envHost := os.Getenv("BEADS_DOLT_SERVER_HOST")
+			configPort := config.GetYamlConfig("dolt.port")
+			envPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
+
+			effectiveHost := configHost
+			hostSource := "config.yaml"
+			if envHost != "" {
+				effectiveHost = envHost
+				hostSource = "environment"
+			}
+
+			if effectiveHost != "" && !isLocalHost(effectiveHost) {
+				detail := fmt.Sprintf("dolt.host (%s) is", effectiveHost)
+				if configPort != "" || envPort != "" {
+					detail = fmt.Sprintf("dolt.host (%s) and dolt.port are", effectiveHost)
+				}
+				FatalError("%s set via %s but server mode is not enabled.\n"+
+					"  Embedded mode has no host/port — these settings require server mode.\n"+
+					"  Set dolt.mode: server in %s or pass --server to bd init.",
+					detail, hostSource, config.UserConfigYamlPath())
+			}
 		}
 
 		// Safety guard: check for existing beads data.
@@ -261,7 +383,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				fmt.Fprintf(os.Stderr, "  This action CANNOT be undone. All issues, dependencies, and\n")
 				fmt.Fprintf(os.Stderr, "  Dolt commit history will be permanently lost.\n\n")
 				fmt.Fprintf(os.Stderr, "  Before proceeding, consider:\n")
-				fmt.Fprintf(os.Stderr, "    bd export > backup.jsonl    # Export issues to JSONL\n")
+				fmt.Fprintf(os.Stderr, "    bd export > issue-export.jsonl    # Export issue records, not full DB state\n")
 				fmt.Fprintf(os.Stderr, "    bd dolt status              # Check if this is a server config issue\n\n")
 				if term.IsTerminal(int(os.Stdin.Fd())) {
 					fmt.Fprintf(os.Stderr, "Type 'destroy %d issues' to confirm: ", count)
@@ -286,7 +408,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					} else {
 						fmt.Fprintf(os.Stderr, "Refusing to destroy %d issues in non-interactive mode.\n", count)
 						fmt.Fprintf(os.Stderr, "  See 'bd help init-safety' for the required --destroy-token format.\n")
-						fmt.Fprintf(os.Stderr, "  Or export first: bd export > backup.jsonl\n")
+						fmt.Fprintf(os.Stderr, "  Or export issue records first: bd export > issue-export.jsonl\n")
 						os.Exit(ExitDestroyTokenMissing)
 					}
 				}
@@ -782,7 +904,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// ensuring the server is reachable and the port file exists.
 		if !externalServer && (sharedServer || doltserver.IsSharedServerMode()) {
 			if sharedDir, err := doltserver.SharedServerDir(); err == nil {
-				if state, _ := doltserver.IsRunning(sharedDir); state == nil || !state.Running {
+				state, _ := doltserver.IsRunning(sharedDir)
+				if state == nil || !state.Running {
 					if _, startErr := doltserver.Start(sharedDir); startErr != nil {
 						fmt.Fprintf(os.Stderr, "Error: failed to start shared Dolt server: %v\n", startErr)
 						os.Exit(1)
@@ -790,6 +913,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					if !quiet {
 						fmt.Printf("  %s Shared Dolt server started\n", ui.RenderPass("✓"))
 					}
+				} else if debugMode {
+					fmt.Fprintf(os.Stderr, "Warning: shared Dolt server (PID %d, port %d) is already running without debug flags.\n", state.PID, state.Port)
+					fmt.Fprintf(os.Stderr, "  Restart to pick up debug mode:\n")
+					fmt.Fprintf(os.Stderr, "    bd dolt stop && bd dolt start\n")
 				}
 			}
 
@@ -986,17 +1113,6 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					}
 				}
 
-				if usesProxiedServer() {
-					if serverConfigPath != "" {
-						cfg.DoltProxiedServerConfig = serverConfigPath
-					}
-					if serverLogPath != "" {
-						cfg.DoltProxiedServerLog = serverLogPath
-					}
-					if serverRootPath != "" {
-						cfg.DoltProxiedServerRootPath = serverRootPath
-					}
-				}
 			}
 
 			if err := cfg.Save(beadsDir); err != nil {
@@ -1037,6 +1153,18 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				}
 			}
 
+			if debugMode {
+				if err := config.SetYamlConfig("dolt.debug", "true"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to persist dolt.debug: %v\n", err)
+				} else if !quiet {
+					serverDir := doltserver.ResolveServerDir(beadsDir)
+					fmt.Printf("  %s Debug mode enabled\n", ui.RenderPass("✓"))
+					fmt.Printf("      Server log:  %s\n", doltserver.LogPath(serverDir))
+					fmt.Printf("      Profile dir: %s\n", doltserver.DebugProfileDir(beadsDir))
+					fmt.Printf("      Note: cpu.pprof is written when the server exits cleanly (bd dolt stop).\n")
+				}
+			}
+
 			// In stealth mode, persist no-git-ops: true so bd prime
 			// automatically uses stealth session-close protocol (GH#2159)
 			if stealth {
@@ -1064,7 +1192,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// Import from local JSONL if requested (GH#2023).
 		// This must run after the store is created and prefix is set.
 		if fromJSONL {
-			localJSONLPath := filepath.Join(beadsDir, "issues.jsonl")
+			localJSONLPath := configuredImportJSONLPath(beadsDir)
 			if _, statErr := os.Stat(localJSONLPath); os.IsNotExist(statErr) {
 				_ = store.Close()
 				FatalError("--from-jsonl specified but %s does not exist", localJSONLPath)
@@ -1173,6 +1301,15 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
+		// Auto-configure contributor routing for fork repos (bd-umbf Child 1).
+		// Non-interactive, idempotent; only fires when upstream remote detected
+		// and routing.contributor is not already set.
+		if !contributor && isGitRepo() {
+			if err := autoConfigureForkContributor(ctx, store, quiet || nonInteractive, roleFlag); err != nil && !quiet {
+				fmt.Fprintf(os.Stderr, "Warning: failed to auto-configure fork contributor routing: %v\n", err)
+			}
+		}
+
 		// Auto-commit Dolt state so bd doctor doesn't warn about uncommitted
 		// changes and users don't need a separate "bd vc commit" step.
 		if err := store.Commit(ctx, "bd init"); err != nil {
@@ -1184,6 +1321,12 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 
 		if err := store.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
+		}
+
+		if initServerMode {
+			if err := doltserver.MarkDoltDirCompatible(storagePath); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write Dolt compatibility marker at %s: %v\n", storagePath, err)
+			}
 		}
 
 		// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
@@ -1223,22 +1366,23 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Auto-export prompt: enabled by default, let user opt out interactively (GH#2973).
-		// In non-interactive mode the default (enabled) is kept.
+		// Auto-export prompt: disabled by default, let users opt in
+		// interactively for viewers and other JSONL integrations (GH#4062).
+		// In non-interactive mode the default (disabled) is kept.
 		if !nonInteractive && !quiet {
 			wantExport, err := promptAutoExport()
 			if err != nil && isCanceled(err) {
 				fmt.Fprintln(os.Stderr, "Setup canceled.")
 				exitCanceled()
 			}
-			if !wantExport {
-				if err := config.SetYamlConfig("export.auto", "false"); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to disable auto-export: %v\n", err)
+			if wantExport {
+				if err := config.SetYamlConfig("export.auto", "true"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to enable auto-export: %v\n", err)
 				} else {
-					fmt.Printf("  %s Auto-export disabled (enable later with: bd config set export.auto true)\n", ui.RenderPass("✓"))
+					fmt.Printf("  %s Auto-export enabled -> .beads/issues.jsonl\n", ui.RenderPass("✓"))
 				}
 			} else if !quiet {
-				fmt.Printf("  %s Auto-export enabled → .beads/issues.jsonl\n", ui.RenderPass("✓"))
+				fmt.Printf("  %s Auto-export disabled (enable later with: bd config set export.auto true)\n", ui.RenderPass("✓"))
 			}
 		}
 
@@ -1324,12 +1468,18 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Auto-setup Claude hooks for project (writes to .claude/settings.json)
-		// so bd prime runs automatically. Skip in stealth mode or when agents are skipped.
+		// Auto-setup Claude hooks and Codex project integration. Skip in stealth
+		// mode or when agents are skipped.
 		if !stealth && !skipAgents && !isBareGitRepo() {
 			if err := setup.InstallClaudeProject(stealth); err != nil {
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "Warning: failed to setup Claude hooks: %v\n", err)
+				}
+				// Non-fatal - continue with init
+			}
+			if err := setup.InstallCodexProject(); err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "Warning: failed to setup Codex integration: %v\n", err)
 				}
 				// Non-fatal - continue with init
 			}
@@ -1357,6 +1507,13 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				if _, statErr := os.Stat("CLAUDE.md"); statErr == nil {
 					claudeMdCmd := exec.Command("git", "add", "CLAUDE.md")
 					_ = claudeMdCmd.Run()
+				}
+				// Also stage Codex project integration files if created by setup
+				for _, path := range []string{".agents", ".codex"} {
+					if _, statErr := os.Stat(path); statErr == nil {
+						codexCmd := exec.Command("git", "add", path)
+						_ = codexCmd.Run()
+					}
 				}
 				// Also stage .gitignore if modified by EnsureProjectGitignore
 				if _, statErr := os.Stat(".gitignore"); statErr == nil {
@@ -1480,11 +1637,11 @@ func init() {
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")
 	initCmd.Flags().Bool("setup-exclude", false, "Configure .git/info/exclude to keep beads files local (for forks)")
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
-	initCmd.Flags().Bool("skip-agents", false, "Skip AGENTS.md and Claude settings generation")
+	initCmd.Flags().Bool("skip-agents", false, "Skip AGENTS.md and Claude/Codex setup generation")
 	initCmd.Flags().Bool("force", false, "Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').")
 	initCmd.Flags().Bool("reinit-local", false, "Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.")
 	initCmd.Flags().Bool("discard-remote", false, "Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.")
-	initCmd.Flags().Bool("from-jsonl", false, "Import issues from .beads/issues.jsonl instead of git history")
+	initCmd.Flags().Bool("from-jsonl", false, "Import issues from configured import.path instead of git history")
 	initCmd.Flags().String("destroy-token", "", "Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 	initCmd.Flags().String("agents-profile", "", "AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)")
@@ -1507,10 +1664,19 @@ func init() {
 	initCmd.Flags().String("database", "", "Use existing server database name (overrides prefix-based naming)")
 	initCmd.Flags().Bool("shared-server", false, "Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)")
 	initCmd.Flags().Bool("external", false, "Server is externally managed (skip server startup); use with --shared-server or --server")
+	initCmd.Flags().Bool("debug", false, "Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.")
 	initCmd.Flags().Bool("proxied-server", false, "[EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb")
-	initCmd.Flags().String("proxied-server-config", "", "[EXPERIMENTAL] Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.")
-	initCmd.Flags().String("proxied-server-log-path", "", "[EXPERIMENTAL] Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.")
-	initCmd.Flags().String("proxied-server-root-path", "", "[EXPERIMENTAL] Directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it.")
+	initCmd.Flags().String("proxied-server-config-path", "", "[EXPERIMENTAL] Absolute path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-log-path", "", "[EXPERIMENTAL] Absolute path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-root-path", "", "[EXPERIMENTAL] Absolute directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-external-host", "", "[EXPERIMENTAL] Hostname or IP of an externally-managed dolt sql-server the proxy should front (proxied-server mode only). Mutually exclusive with --proxied-server-external-socket-path.")
+	initCmd.Flags().Int("proxied-server-external-port", 0, "[EXPERIMENTAL] TCP port of the externally-managed dolt sql-server (proxied-server mode only). Required when --proxied-server-external-host is set.")
+	initCmd.Flags().String("proxied-server-external-socket-path", "", "[EXPERIMENTAL] Absolute unix socket path of the externally-managed dolt sql-server (proxied-server mode only). Mutually exclusive with --proxied-server-external-host. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-external-user", "", "[EXPERIMENTAL] MySQL user for the externally-managed dolt sql-server (proxied-server mode only). Defaults to \"root\" when empty. Password is read at runtime from $BEADS_PROXIED_SERVER_EXTERNAL_PASSWORD and is never persisted to disk.")
+	initCmd.Flags().Bool("proxied-server-external-tls", false, "[EXPERIMENTAL] Require TLS when connecting to the externally-managed dolt sql-server (proxied-server mode only).")
+	initCmd.Flags().String("proxied-server-external-tls-cert-path", "", "[EXPERIMENTAL] Absolute path to a client TLS certificate (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-key-path. Relative paths are rejected.")
+	initCmd.Flags().String("proxied-server-external-tls-key-path", "", "[EXPERIMENTAL] Absolute path to the client TLS private key (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-cert-path. Relative paths are rejected.")
+	initCmd.Flags().Duration("proxied-server-external-keep-alive", 0, "[EXPERIMENTAL] TCP keepalive period for the proxy→external connection. Zero uses the package default (30s).")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -1585,7 +1751,10 @@ func checkExistingBeadsDataAt(beadsDir string, prefix string) error {
 
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
 		if cfg.IsDoltProxiedServerMode() {
-			proxiedRoot := resolveProxiedServerRootPath(beadsDir, cfg)
+			proxiedRoot, rootErr := resolveProxiedServerRootPath(beadsDir)
+			if rootErr != nil {
+				return fmt.Errorf("resolve proxied server root: %w", rootErr)
+			}
 			if info, statErr := os.Stat(proxiedRoot); statErr == nil && info.IsDir() {
 				return fmt.Errorf(`
 %s Found existing Dolt database: %s
@@ -1628,7 +1797,7 @@ To use the existing database:
   Just run bd commands normally (e.g., %s)
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), prefix)
@@ -1689,7 +1858,7 @@ To use the existing database:
   Just run bd commands normally (e.g., %s)
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), location, ui.RenderAccent("bd list"), prefix)
@@ -1718,7 +1887,7 @@ To use the existing database:
   The redirect will route to the canonical database.
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), prefix)
@@ -1738,7 +1907,7 @@ To use the existing database:
   Just run bd commands normally (e.g., %s)
 
 If the database is genuinely corrupt and unrecoverable:
-  bd export > backup.jsonl              # Back up first!
+  bd export > issue-export.jsonl        # Export issue records first
   bd init --reinit-local --prefix %s    # Then reinitialize
 
 Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), prefix)
@@ -1925,12 +2094,13 @@ func promptContributorMode() (isContributor bool, err error) {
 	return isContributor, nil
 }
 
-// promptAutoExport asks the user whether to keep auto-export enabled (the default).
-// Returns true to keep it enabled, false to disable.
+// promptAutoExport asks the user whether to enable optional auto-export.
+// Returns true to enable it, false to leave it disabled.
 func promptAutoExport() (bool, error) {
-	fmt.Printf("\n%s Auto-export keeps .beads/issues.jsonl up to date after every write command.\n", ui.RenderAccent("▶"))
-	fmt.Println("  This is useful for viewers (bv), interchange, and backups. Dolt remotes handle sync.")
-	fmt.Print("\nEnable auto-export? [Y/n]: ")
+	fmt.Printf("\n%s Auto-export can keep .beads/issues.jsonl up to date after write commands.\n", ui.RenderAccent("▶"))
+	fmt.Println("  This optional JSONL export is useful for viewers (bv), interchange, and issue-level migration.")
+	fmt.Println("  Dolt remotes/backups handle cross-machine sync and backup.")
+	fmt.Print("\nEnable auto-export? [y/N]: ")
 
 	reader := bufio.NewReader(os.Stdin)
 	response, err := readLineWithContext(getRootContext(), reader, os.Stdin)
@@ -1942,8 +2112,8 @@ func promptAutoExport() (bool, error) {
 	}
 	response = strings.TrimSpace(strings.ToLower(response))
 
-	// Default to yes (empty or "y" or "yes")
-	return response == "" || response == "y" || response == "yes", nil
+	// Default to no. Users and integrations can enable it explicitly.
+	return response == "y" || response == "yes", nil
 }
 
 func shouldWireInitRemote(syncURL string, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin bool) bool {
@@ -1995,8 +2165,7 @@ func printInitNoDoltRemoteWarning() {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "  To enable durable sync, add a git origin and then run:")
-	fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt remote add origin <git-remote-url>"))
-	fmt.Fprintf(os.Stderr, "    %s\n\n", ui.RenderAccent("bd dolt push"))
+	fmt.Fprintf(os.Stderr, "    %s\n", ui.RenderAccent("bd dolt push"))
 }
 
 type initSyncRemoteSource int

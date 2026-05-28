@@ -50,12 +50,12 @@ echo ""
 
 LATEST_DOCS_VERSION=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' website/versions.json | head -1 | tr -d '"' || true)
 LAST_VERSION=$(grep -oE "lastVersion: '[0-9]+\.[0-9]+\.[0-9]+'" website/docusaurus.config.ts | head -1 | sed "s/.*'\([^']*\)'.*/\1/" || true)
-LLMS_VERSION=$(grep -oE 'version: [0-9]+\.[0-9]+\.[0-9]+' website/static/llms-full.txt | head -1 | sed 's/version: //' || true)
+LLMS_VERSION_LABEL=$(grep -oE 'version: [^)]+' website/static/llms-full.txt | head -1 | sed 's/version: //' || true)
 CLI_REF_LABEL=$(grep -oE 'Reference for bd v[0-9]+\.[0-9]+\.[0-9]+' "website/versioned_docs/version-$CANONICAL/cli-reference/index.md" 2>/dev/null | head -1 | sed 's/Reference for bd v//' || true)
 
 check_equal "website/versions.json latest docs version" "$LATEST_DOCS_VERSION" "$CANONICAL"
 check_equal "website/docusaurus.config.ts lastVersion" "$LAST_VERSION" "$CANONICAL"
-check_equal "website/static/llms-full.txt source version" "$LLMS_VERSION" "$CANONICAL"
+check_equal "website/static/llms-full.txt source version label" "$LLMS_VERSION_LABEL" "latest released"
 check_equal "versioned CLI reference label" "$CLI_REF_LABEL" "$CANONICAL"
 
 check_exists "versioned docs snapshot" "website/versioned_docs/version-$CANONICAL"

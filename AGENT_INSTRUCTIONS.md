@@ -63,6 +63,12 @@ into temp repos and produce flaky test behavior.
 
 **Warning:** bd will warn you when creating issues with "Test" prefix in the production database. Always use `BEADS_DB` for manual testing.
 
+**Tmpfs hosts:** the `cmd/bd` test suite creates an isolated `$HOME` and several
+test binaries under `$TMPDIR`. They are normally cleaned by the test process,
+but a SIGKILLed or OOMed run can leave orphans behind. On hosts where `/tmp`
+is tmpfs (e.g. Fedora Atomic / Bluefin), run `make clean-test-tmp` between
+test runs if `du -sh /tmp/beads-* /tmp/bd-*` shows accumulation. See bd-3q2u.
+
 ### Before Committing
 
 1. **Run tests**: `make test` (or `./scripts/test.sh`)
@@ -532,7 +538,7 @@ This handles the entire release workflow automatically, including waiting ~5 min
 6. Update Homebrew: `./scripts/update-homebrew.sh <version>` (waits for GitHub Actions)
 7. Verify: `brew update && brew upgrade beads && bd version`
 
-See [docs/RELEASING.md](docs/RELEASING.md) for complete manual instructions.
+See [RELEASING.md](RELEASING.md) for complete manual instructions.
 
 ## Checking GitHub Issues and PRs
 

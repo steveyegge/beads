@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -16,11 +17,11 @@ func bdPrune(t *testing.T, bd, dir string, args ...string) string {
 	cmd := exec.Command(bd, fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := runCommandBuffers(t, cmd)
 	if err != nil {
-		t.Fatalf("bd prune %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("bd prune %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 // bdPruneFail runs "bd prune" expecting failure and returns combined output.
@@ -88,6 +89,44 @@ func TestEmbeddedPrune(t *testing.T) {
 		listing := bdList(t, bd, dir, "--status=closed", "--json")
 		if strings.Contains(listing, target) {
 			t.Errorf("expected %s to be deleted, still present in: %s", target, listing)
+		}
+	})
+
+	t.Run("prune_last_issue_removes_gitignored_auto_export", func(t *testing.T) {
+		dir, beadsDir, _ := bdInit(t, bd, "--prefix", "pjx")
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".beads/\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{
+			{"config", "set", "export.auto", "true"},
+			{"config", "set", "export.git-add", "true"},
+		} {
+			cmd := exec.Command(bd, args...)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("bd %s failed: %v\n%s", strings.Join(args, " "), err, out)
+			}
+		}
+
+		target := createAndClose(t, bd, dir, "Closed exported task")
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+		cmd := exec.Command(bd, "export", "-o", jsonlPath)
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bd export failed: %v\n%s", err, out)
+		}
+		if _, err := os.Stat(jsonlPath); err != nil {
+			t.Fatalf("expected stale JSONL before prune: %v", err)
+		}
+		if err := os.Remove(filepath.Join(beadsDir, exportAutoStateFile)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+
+		bdPrune(t, bd, dir, "--pattern", target, "--force")
+		if _, err := os.Stat(jsonlPath); !os.IsNotExist(err) {
+			t.Fatalf("expected prune of last issue to remove stale JSONL, stat err=%v", err)
 		}
 	})
 

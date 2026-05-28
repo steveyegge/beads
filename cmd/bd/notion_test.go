@@ -20,7 +20,7 @@ import (
 )
 
 func TestNotionCommandsRegistered(t *testing.T) {
-	t.Parallel()
+	// Not parallel: Find mutates Cobra flag state on the global command tree.
 
 	for _, name := range []string{"init", "connect", "status", "sync"} {
 		if _, _, err := notionCmd.Find([]string{name}); err != nil {

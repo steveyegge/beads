@@ -613,7 +613,7 @@ func buildSharedServerTestBinary(t *testing.T) string {
 			sharedServerBuildErr = fmt.Errorf("getwd: %w", err)
 			return
 		}
-		buildDir, err := os.MkdirTemp("", "beads-shared-server-bd-*")
+		buildDir, err := testTempDir("beads-shared-server-bd-*")
 		if err != nil {
 			sharedServerBuildErr = fmt.Errorf("mkdirtemp: %w", err)
 			return
