@@ -161,6 +161,28 @@ func runExport(cmd *cobra.Command, args []string) error {
 		issue.Comments = commentsMap[issue.ID]
 	}
 
+	// Sort issues for deterministic JSONL output (GH#4127).
+	// SearchIssues has ORDER BY but wisp-merge can break that ordering.
+	sort.SliceStable(issues, func(i, j int) bool {
+		if issues[i].Priority != issues[j].Priority {
+			return issues[i].Priority < issues[j].Priority
+		}
+		if !issues[i].CreatedAt.Equal(issues[j].CreatedAt) {
+			return issues[i].CreatedAt.After(issues[j].CreatedAt)
+		}
+		return issues[i].ID < issues[j].ID
+	})
+
+	// Sort sub-objects within each issue for stable nested ordering.
+	for _, issue := range issues {
+		sort.Slice(issue.Dependencies, func(a, b int) bool {
+			if issue.Dependencies[a].DependsOnID != issue.Dependencies[b].DependsOnID {
+				return issue.Dependencies[a].DependsOnID < issue.Dependencies[b].DependsOnID
+			}
+			return issue.Dependencies[a].Type < issue.Dependencies[b].Type
+		})
+	}
+
 	// Write JSONL: one JSON object per line
 	count := 0
 	for _, issue := range issues {
