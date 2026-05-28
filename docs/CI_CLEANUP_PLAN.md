@@ -65,6 +65,57 @@ Wrapper rules:
 - Keep CI-specific reporting such as `gotestsum`, JUnit, and artifacts in the
   workflow layer unless the wrapper needs to own the behavior.
 
+## Build Artifact Stage
+
+Target CI topology should start with a required Linux `build` stage that owns
+static validation and expensive reusable compilation. Test, package, smoke, and
+risk jobs should depend on that stage and consume its artifacts instead of
+rebuilding equivalent binaries independently.
+
+The first-stage job should include:
+
+- Static/policy gates: build-tag policy, unsupported install guidance, version
+  consistency, generated CLI docs freshness, `.beads/issues.jsonl` protection,
+  `gofmt`, and `golangci-lint`.
+- A Linux `bd` subprocess binary built with the repository default build tags
+  from `.buildflags`.
+- Artifact checksums and a short build manifest recording commit, Go version,
+  build tags, and artifact names.
+- Shard manifests for any measured stable shards so downstream jobs test the
+  same commit-derived assignment.
+
+Artifacts should use short retention and immutable names scoped to the run, not
+branch-global names. Downstream jobs should verify the checksum when practical
+and pass the downloaded `bd` path through `BEADS_TEST_BD_BINARY` for
+subprocess-style tests.
+
+Initial artifact set:
+
+| Artifact | Producer | Consumers |
+|---|---|---|
+| `bd-linux-gms-pure` | Linux build stage | PR/main smoke, package checks, cross-version smoke candidate, `cmd/bd` subprocess tests through `BEADS_TEST_BD_BINARY`. |
+| `linux-integration-packages-*` | Linux build stage or integration setup | No-short integration package shards. |
+| `linux-integration-cmd-bd-tests-*` | Linux build stage or integration setup | `cmd/bd` integration shards. |
+| `embedded-test-binaries` | Embedded build stage when applicable | Embedded storage and `cmd/bd` shards. Existing workflow already follows this pattern. |
+| `bd-cmd-test-linux-integration-race` | Future measured build stage | Candidate replacement for `go test` compilation in `cmd/bd` integration shards. |
+
+Do not share Linux artifacts with macOS or Windows jobs. Platform-specific
+main/release jobs need their own build stages if they should reuse artifacts.
+Do not reuse untrusted PR artifacts in privileged release workflows; release
+jobs must build or verify release artifacts in the release context.
+
+For PR and merge queue, the target shape is:
+
+1. `build`: required static validation plus reusable Linux artifacts.
+2. `pr-core`: required Linux short tests, consuming the prebuilt `bd` binary for
+   subprocess tests.
+3. Optional required-when-applicable risk jobs, also consuming build artifacts.
+
+For `main`, keep the same first-stage pattern but broaden consumers to the
+measured main lanes: Linux no-short integration, embedded, regression, coverage,
+macOS short, and Windows smoke. Main can tolerate more jobs than PRs, but should
+still avoid rebuilding the same Linux candidate binary in each consumer.
+
 ### `pr-core`
 
 Initial wrapper behavior must preserve the current Linux PR command exactly:
@@ -605,15 +656,18 @@ checks pass.
 2. Wire existing workflows to wrappers with no intentional behavior drift.
    Additive PR timing jobs exist on branch `ci/bd-am3.1-wrapper-commands`; the
    existing direct jobs remain in place until the wrapper jobs are promoted.
-3. Add the manual measurement workflow and pinned `gotestsum`.
+3. Introduce the Linux `build` stage and route PR/merge queue consumers through
+   its reusable `bd` artifact. Keep behavior equivalent while measuring the
+   artifact handoff overhead.
+4. Add the manual measurement workflow and pinned `gotestsum`.
    Initial workflow exists on branch `ci/bd-am3.1-wrapper-commands`; the legacy
    Linux coverage install has been pinned from `gotestsum@latest` to
    `gotestsum@v1.13.0`.
-4. Add package wrappers and risk/measurement usage for MCP, npm, and website.
-5. Perform the mandatory `testing.Short()` audit and cleanup.
-6. Promote measured suites to `main` or scheduled jobs based on wall-clock data.
-7. Harden release workflows to reuse package wrappers before publishing.
-8. Split workflows by tier/domain once wrappers are stable:
+5. Add package wrappers and risk/measurement usage for MCP, npm, and website.
+6. Perform the mandatory `testing.Short()` audit and cleanup.
+7. Promote measured suites to `main` or scheduled jobs based on wall-clock data.
+8. Harden release workflows to reuse package wrappers before publishing.
+9. Split workflows by tier/domain once wrappers are stable:
    `pr.yml`, `pr-risk.yml`, `main.yml`, `release.yml`, and `nightly.yml`.
 
 ## Deferred Decisions
@@ -622,4 +676,5 @@ checks pass.
 - Whether no-CGO should become a full all-package gate or remain focused.
 - Coverage thresholds for promoted main suites.
 - Final sharding strategy for macOS, integration, and embedded jobs.
+- Whether to promote a precompiled `cmd/bd` test binary after measurement.
 - npm lockfile policy for `npm-package`.
