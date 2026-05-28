@@ -17,6 +17,7 @@ on:
           - macos-short
           - macos-candidates
           - linux-integration
+          - linux-integration-sharded
           - linux-integration-coverage
           - cross-version-smoke
           - nix

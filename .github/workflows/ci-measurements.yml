@@ -24,6 +24,7 @@ on:
           - macos-short
           - macos-candidates
           - linux-integration
+          - linux-integration-sharded
           - linux-integration-coverage
           - cross-version-smoke
           - nix
@@ -193,6 +194,71 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ci-measure-linux-integration
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  linux-integration-sharded:
+    name: Measure Linux integration shard ${{ matrix.shard }}/6
+    if: ${{ inputs.suite == 'linux-integration-sharded' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Measure shard
+        env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL_SHARDS: 6
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          source scripts/ci/lib/timing.sh
+
+          ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
+
+          mapfile -t packages < <(
+            GO_TEST_SHARD_TAGS=integration,gms_pure_go \
+              scripts/ci/go-test-shard-packages.sh "$SHARD" "$TOTAL_SHARDS"
+          )
+          package_manifest="artifacts/linux-integration-packages-${SHARD}-of-${TOTAL_SHARDS}.txt"
+          printf '%s\n' "${packages[@]}" | tee "$package_manifest"
+
+          if [[ "${#packages[@]}" -eq 0 ]]; then
+            echo "No packages assigned to shard ${SHARD}/${TOTAL_SHARDS}; skipping go test"
+            exit 0
+          fi
+
+          ci_time "linux integration shard ${SHARD}/${TOTAL_SHARDS} go test" -- \
+            env BEADS_TEST_SKIP=dolt gotestsum \
+              --junitfile "artifacts/linux-integration-shard-${SHARD}-of-${TOTAL_SHARDS}.xml" \
+              --format testdox \
+              -- -v -race -tags=integration,gms_pure_go -timeout=30m "${packages[@]}"
+
+      - name: Upload measurement artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-measure-linux-integration-shard-${{ matrix.shard }}-of-6
           path: artifacts/
           retention-days: 7
           if-no-files-found: ignore

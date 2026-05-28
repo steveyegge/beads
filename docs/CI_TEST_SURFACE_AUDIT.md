@@ -350,8 +350,8 @@ For every tier, capture enough artifacts to debug failures without rerunning:
 
 1. Turn this audit into a shorter `docs/CI.md` policy once maintainers agree on
    the tier names.
-2. Collect manual measurements from `.github/workflows/ci-measurements.yml`
-   before promoting additional suites or changing main-branch breadth.
+2. Run the `linux-integration-sharded` measurement suite and use the shard
+   wall-clock tails to size the first `main` no-short integration promotion.
 3. Promote the additive PR wrapper jobs after repeated measurements confirm
    they preserve the current required PR behavior.
 4. Add a no-CGO all-package compile/test gate or explicitly document why the

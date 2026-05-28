@@ -194,6 +194,9 @@ Selectable measurement suites:
 - `macos-candidates`: macOS no-short and integration-tag candidates.
 - `linux-integration`: current nightly-style integration run with
   `BEADS_TEST_SKIP=dolt`.
+- `linux-integration-sharded`: same Linux integration command split across six
+  stable Go package shards. Each shard uploads the package list and JUnit
+  output so wall-clock tails can drive the promotion shard count.
 - `linux-integration-coverage`: same integration shape with coverage generation
   and a coverage summary, but no threshold.
 - `cross-version-smoke`: one previous-release smoke sample, optionally pinned
@@ -335,6 +338,14 @@ Roadmap updates from the measurement evidence:
 - Use the collected per-command timings to shard around the long poles: Go
   package tests, candidate binary builds for package/smoke jobs, and macOS
   integration-tag tests.
+
+Action taken from this evidence:
+
+- Added `linux-integration-sharded`, a six-way package-sharded measurement lane
+  for the no-short Linux integration command. The first sharded run should
+  replace the unsharded `linux-integration` sample for main-promotion sizing;
+  keep unsharded coverage as a background measurement until coverage merge and
+  shard-count policy are explicit.
 
 ## Package Gates
 
