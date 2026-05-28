@@ -17,6 +17,19 @@ Each wrapper auto-detects the repository root, sources `.buildflags` when it
 invokes Go in the default build mode, and records per-command timing through
 `scripts/ci/lib/timing.sh`.
 
+Broad Go test wrappers also source `scripts/ci/lib/test-env.sh`, which creates a
+temporary HOME/XDG/Dolt root, isolates Git global/system config, clears runtime
+Beads/Dolt environment variables, and sets `BEADS_TEST_SKIP=dolt` before tests
+run. This keeps local `make test` and `make ci-pr-core` results comparable to
+the fast PR-core contract even on shared agent hosts. Set
+`BEADS_TEST_ENV_RUN_DOLT=1` only when intentionally running the Dolt-dependent
+tests through these broad wrappers, or `BEADS_TEST_ENV_DISABLE=1` when debugging
+against your real local configuration.
+
+The broad Go wrappers also cap package and test parallelism to `4` by default
+(`GO_TEST_PKG_PARALLEL` and `GO_TEST_PARALLEL`). This avoids turning high-core
+shared hosts into a different test topology than GitHub Actions.
+
 ## pr-preflight.sh
 
 Read-only PR safety check for agents and maintainers.
