@@ -33,6 +33,8 @@ func (f *fakeFallbackStore) GetStatistics(_ context.Context) (*types.Statistics,
 	return &types.Statistics{TotalIssues: f.statsTotalIssues}, nil
 }
 
+func (f *fakeFallbackStore) Commit(_ context.Context, _ string) error { return nil }
+
 func writeAutoImportFixtureJSONL(t *testing.T, dir string) {
 	t.Helper()
 	writeAutoImportFixtureJSONLNamed(t, dir, "issues.jsonl")
@@ -179,5 +181,62 @@ func TestMaybeAutoImportJSONL_UsesConfiguredImportPath(t *testing.T) {
 	wantPath := filepath.Join(dir, "beads.jsonl")
 	if gotPath != wantPath {
 		t.Fatalf("auto-import path = %q, want %q", gotPath, wantPath)
+	}
+}
+
+func TestMaybeAutoImportJSONL_FailedImportStampPreventsRepeatedImport(t *testing.T) {
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONL(t, dir)
+	count := swapFallbackImporter(t, errors.New("test importer failed"))
+
+	store := &fakeFallbackStore{statsTotalIssues: 0}
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+
+	if got := count.Load(); got != 1 {
+		t.Fatalf("fallback importer invoked %d time(s), want 1 for unchanged JSONL after failed attempt stamp", got)
+	}
+}
+
+func TestMaybeAutoImportJSONL_SuccessStampPreventsRepeatedImport(t *testing.T) {
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONL(t, dir)
+	orig := fallbackImporter
+	var count atomic.Int32
+	fallbackImporter = func(_ context.Context, _ storage.DoltStorage, _ string) (*importLocalResult, error) {
+		count.Add(1)
+		return &importLocalResult{Issues: 1}, nil
+	}
+	t.Cleanup(func() { fallbackImporter = orig })
+
+	store := &fakeFallbackStore{statsTotalIssues: 0}
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+
+	if got := count.Load(); got != 1 {
+		t.Fatalf("fallback importer invoked %d time(s), want 1 for unchanged JSONL after success stamp", got)
+	}
+}
+
+func TestMaybeAutoImportJSONL_ChangedJSONLBypassesSuccessStamp(t *testing.T) {
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONL(t, dir)
+	orig := fallbackImporter
+	var count atomic.Int32
+	fallbackImporter = func(_ context.Context, _ storage.DoltStorage, _ string) (*importLocalResult, error) {
+		count.Add(1)
+		return &importLocalResult{Issues: 1}, nil
+	}
+	t.Cleanup(func() { fallbackImporter = orig })
+
+	store := &fakeFallbackStore{statsTotalIssues: 0}
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	if err := os.WriteFile(filepath.Join(dir, "issues.jsonl"), []byte(`{"_type":"issue","id":"unit-2","title":"changed","status":"open","priority":2,"issue_type":"task"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	maybeAutoImportJSONL(context.Background(), store, dir, false)
+
+	if got := count.Load(); got != 2 {
+		t.Fatalf("fallback importer invoked %d time(s), want 2 after JSONL changed", got)
 	}
 }
