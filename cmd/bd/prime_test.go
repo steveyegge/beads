@@ -17,6 +17,7 @@ func TestOutputContextFunction(t *testing.T) {
 		stealthMode   bool
 		ephemeralMode bool
 		localOnlyMode bool
+		noPushMode    bool
 		expectText    []string
 		rejectText    []string
 	}{
@@ -26,7 +27,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   false,
 			ephemeralMode: false,
 			localOnlyMode: false,
-			expectText:    []string{"Beads Workflow Context", "bd dolt push", "git push"},
+			expectText:    []string{"Beads Workflow Context", "bd dolt push", "Team-maintainer behavior is opt-in", "conservative by default"},
 			rejectText:    []string{"bd export", "--from-main"},
 		},
 		{
@@ -37,6 +38,16 @@ func TestOutputContextFunction(t *testing.T) {
 			localOnlyMode: false,
 			expectText:    []string{"Beads Workflow Context", "bd dolt pull", "ephemeral branch"},
 			rejectText:    []string{"bd export", "git push", "--from-main"},
+		},
+		{
+			name:          "CLI no-push",
+			mcpMode:       false,
+			stealthMode:   false,
+			ephemeralMode: false,
+			localOnlyMode: false,
+			noPushMode:    true,
+			expectText:    []string{"Beads Workflow Context", "push disabled", "report handoff"},
+			rejectText:    []string{"bd export", "--from-main"},
 		},
 		{
 			name:          "CLI Stealth",
@@ -80,7 +91,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   false,
 			ephemeralMode: false,
 			localOnlyMode: false,
-			expectText:    []string{"Beads Issue Tracker Active", "git push"},
+			expectText:    []string{"Beads Issue Tracker Active", "Team-maintainer behavior is opt-in"},
 			rejectText:    []string{"bd export", "--from-main"},
 		},
 		{
@@ -91,6 +102,16 @@ func TestOutputContextFunction(t *testing.T) {
 			localOnlyMode: false,
 			expectText:    []string{"Beads Issue Tracker Active", "ephemeral branch"},
 			rejectText:    []string{"bd export", "git push", "--from-main"},
+		},
+		{
+			name:          "MCP no-push",
+			mcpMode:       true,
+			stealthMode:   false,
+			ephemeralMode: false,
+			localOnlyMode: false,
+			noPushMode:    true,
+			expectText:    []string{"Beads Issue Tracker Active", "push disabled"},
+			rejectText:    []string{"bd export", "--from-main"},
 		},
 		{
 			name:          "MCP Stealth",
@@ -134,6 +155,7 @@ func TestOutputContextFunction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer stubIsEphemeralBranch(tt.ephemeralMode)()
 			defer stubPrimeHasGitRemote(!tt.localOnlyMode)() // localOnly = !primeHasGitRemote
+			defer stubPrimeNoPushConfigured(tt.noPushMode)()
 
 			var buf bytes.Buffer
 			err := outputPrimeContext(&buf, tt.mcpMode, tt.stealthMode)
@@ -292,6 +314,18 @@ func stubPrimeHasGitRemote(hasRemote bool) func() {
 	}
 	return func() {
 		primeHasGitRemote = original
+	}
+}
+
+// stubPrimeNoPushConfigured temporarily replaces primeNoPushConfigured
+// with a stub returning noPush.
+func stubPrimeNoPushConfigured(noPush bool) func() {
+	original := primeNoPushConfigured
+	primeNoPushConfigured = func() bool {
+		return noPush
+	}
+	return func() {
+		primeNoPushConfigured = original
 	}
 }
 
