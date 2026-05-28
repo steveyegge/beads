@@ -45,6 +45,8 @@ Use Homebrew, npm, or the install script if you do not specifically need `go ins
 
 ICU headers are not required. The embedded-capable command uses `gms_pure_go` so go-mysql-server uses Go's stdlib regexp instead of ICU.
 
+Use the `github.com/steveyegge/beads` path for `go install`. The repository now lives under `gastownhall/beads`, but released Go modules still declare `github.com/steveyegge/beads` for compatibility.
+
 ## Platform-Specific Installation
 
 ### macOS
