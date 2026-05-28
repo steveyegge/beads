@@ -238,13 +238,6 @@ Examples:
 			FatalError("%v", err)
 		}
 
-		// Use CountIssues for the total so multi-label issues aren't double-counted
-		// (--by-label buckets are not mutually exclusive, unlike status/priority/type).
-		total, err := store.CountIssues(ctx, "", filter)
-		if err != nil {
-			FatalError("%v", err)
-		}
-
 		// Sort for consistent output
 		slices.SortFunc(groups, func(a, b GroupCount) int {
 			return cmp.Compare(a.Group, b.Group)
