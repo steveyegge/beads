@@ -161,9 +161,16 @@ be fixed forward or reverted promptly.
 Add a manual-dispatch workflow before changing tier breadth.
 
 Initial implementation lives in `.github/workflows/ci-measurements.yml` on
-branch `ci/bd-am3.1-wrapper-commands`. It runs only from `workflow_dispatch` and
-measures one selected suite per dispatch so maintainers can control macOS,
-package, and integration cost.
+branch `ci/bd-am3.1-wrapper-commands`. It is manual-only for human operators:
+direct `workflow_dispatch` when available, or `workflow_call` from the existing
+nightly workflow while the new workflow file is still branch-local. It measures
+one selected suite per dispatch so maintainers can control macOS, package, and
+integration cost.
+
+Until `.github/workflows/ci-measurements.yml` exists on `main`, dispatch it from
+the branch through the existing `Nightly Full Tests` workflow by selecting any
+suite other than `full-test`. After the measurement workflow is on `main`, it
+can be dispatched directly.
 
 Measurement requirements:
 

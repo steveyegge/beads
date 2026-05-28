@@ -1,6 +1,17 @@
 name: CI Measurements
 
 on:
+  workflow_call:
+    inputs:
+      suite:
+        description: "Suite to measure"
+        required: true
+        type: string
+      smoke_version:
+        description: "Optional previous release for cross-version-smoke"
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       suite:
