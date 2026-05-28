@@ -154,6 +154,19 @@ func loadBeadsEnvFile(beadsDir string) {
 	_ = gotenv.Load(envFile)
 }
 
+func logConfigDiscovery(beadsDir, reason string) {
+	metadataPath := filepath.Join(beadsDir, configfile.ConfigFileName)
+	configYAMLPath := filepath.Join(beadsDir, "config.yaml")
+	_, metadataErr := os.Stat(metadataPath)
+	_, yamlErr := os.Stat(configYAMLPath)
+	debug.Logf("Debug: %s at %s -> metadata=%v (%v), config.yaml=%v (%v)\n",
+		reason, beadsDir, metadataErr == nil, metadataErr, yamlErr == nil, yamlErr)
+}
+
+func shouldLogDefaultDoltDatabase(cfg *configfile.Config) bool {
+	return cfg != nil && cfg.DoltDatabase == "" && os.Getenv("BEADS_DOLT_SERVER_DATABASE") == ""
+}
+
 // loadBeadsSelectionEnvFile loads only the selector keys needed for early
 // workspace/database discovery. Unlike loadBeadsEnvFile, this intentionally
 // limits itself to BEADS_DIR / BEADS_DB / BD_DB so caller credentials and
@@ -961,6 +974,9 @@ var rootCmd = &cobra.Command{
 			// Always set database name (needed for bootstrap to find
 			// prefix-based databases like "beads_hq"; see #1669)
 			doltCfg.Database = cfg.GetDoltDatabase()
+			if shouldLogDefaultDoltDatabase(cfg) {
+				logConfigDiscovery(beadsDir, fmt.Sprintf("metadata loaded without dolt_database; using default database name %q", configfile.DefaultDoltDatabase))
+			}
 
 			doltCfg.ServerHost = cfg.GetDoltServerHost()
 			// Use doltserver.DefaultConfig for port resolution (env > port file >
@@ -973,12 +989,7 @@ var rootCmd = &cobra.Command{
 			doltCfg.ServerPassword = cfg.GetDoltServerPasswordForPort(doltCfg.ServerPort)
 			doltCfg.ServerTLS = cfg.GetDoltServerTLS()
 		} else if cfgErr == nil {
-			metadataPath := filepath.Join(beadsDir, configfile.ConfigFileName)
-			configYAMLPath := filepath.Join(beadsDir, "config.yaml")
-			_, metadataErr := os.Stat(metadataPath)
-			_, yamlErr := os.Stat(configYAMLPath)
-			debug.Logf("Debug: config discovery at %s -> metadata=%v (%v), config.yaml=%v (%v)\n",
-				beadsDir, metadataErr == nil, metadataErr, yamlErr == nil, yamlErr)
+			logConfigDiscovery(beadsDir, "config discovery")
 			// Load returned (nil, nil) — no config file found.
 			// Fall back to the canonical default database name; matches the
 			// behavior of newDoltStoreFromConfig / newReadOnlyStoreFromConfig
