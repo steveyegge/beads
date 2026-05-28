@@ -186,6 +186,32 @@ Measure at least:
 - Full `nix build`.
 - Package checks for MCP, npm, and website.
 
+### Initial Wrapper Measurement Snapshot
+
+First sample: PR #4211, workflow run 26549957718, commit
+`c5fd8fc34b3f28ab5a507b02a8fc9f1faf051d13`.
+
+This sample was collected from additive wrapper jobs on the cleanup branch, not
+from `main`. Treat it as a measurement smoke test and first baseline only; do
+not make final tiering or sharding decisions from one run.
+
+| Wrapper | Job wall clock | Wrapper command timing | Current long pole |
+|---|---:|---:|---|
+| `pr-policy` | 91s | 65s | `build bd for docs checks` at 53s |
+| `pr-core` | 593s | 577s | `go test -race -short -skip '^TestEmbedded' ./...` |
+| `pr-lint` | 211s | 143s, plus 54s tool install | `golangci-lint` at 143s |
+
+Same-run job-level observations:
+
+- Existing Linux short test job took 607s, matching the new `pr-core` wrapper
+  shape closely enough for the first no-drift check.
+- macOS short test took 383s; keep it off PRs and measure again before deciding
+  whether to shard main-platform coverage.
+- Windows smoke took 237s; keep it as smoke-only until there is evidence that
+  broader Windows tests are worth the queue cost.
+- Embedded Dolt had a slow-shard tail: storage 355s, cmd 19/20 403s, cmd 7/20
+  387s, and cmd 4/20 334s. Sharding decisions should use repeated samples.
+
 ## Package Gates
 
 Package checks should be reusable from PR risk jobs, measurement jobs, `main`,
@@ -277,7 +303,10 @@ checks pass.
 ## Implementation Order
 
 1. Add `scripts/ci/*` wrappers and `scripts/ci/lib/timing.sh`; add Make aliases.
+   Initial PR wrappers exist on branch `ci/bd-am3.1-wrapper-commands`.
 2. Wire existing workflows to wrappers with no intentional behavior drift.
+   Additive PR timing jobs exist on branch `ci/bd-am3.1-wrapper-commands`; the
+   existing direct jobs remain in place until the wrapper jobs are promoted.
 3. Add the manual measurement workflow and pinned `gotestsum`.
 4. Add package wrappers and risk/measurement usage for MCP, npm, and website.
 5. Perform the mandatory `testing.Short()` audit and cleanup.
