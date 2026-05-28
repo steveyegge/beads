@@ -1115,7 +1115,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
-	if isLocalHost(cfg.ServerHost) {
+	if isLocalHost(cfg.ServerHost) && shouldPersistResolvedPortFile() {
 		beadsDir := cfg.BeadsDir
 		if beadsDir == "" && cfg.Path != "" {
 			beadsDir = filepath.Dir(cfg.Path)
@@ -1139,6 +1139,10 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	store.registerPoolGauges()
 
 	return store, nil
+}
+
+func shouldPersistResolvedPortFile() bool {
+	return os.Getenv("BEADS_DOLT_SERVER_PORT") == "" && os.Getenv("BEADS_DOLT_PORT") == ""
 }
 
 // verifyProjectIdentity checks that the database belongs to the expected project.

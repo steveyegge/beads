@@ -540,6 +540,45 @@ gt dolt sql              # Open SQL shell
 
 Server runs on port 3307 (avoids MySQL conflict on 3306).
 
+### Standalone-to-managed-city handoff
+
+When an existing standalone project is later added to a managed city or
+orchestrator, avoid letting two Dolt servers become sources of truth for the
+same beads database name. A common split-brain symptom is that `.beads/dolt-server.port`
+points at the old standalone server while the shell environment points `bd` at
+the managed server with `BEADS_DOLT_PORT` or `BEADS_DOLT_SERVER_PORT`.
+
+Check before migrating:
+
+```bash
+bd doctor
+bd dolt status
+```
+
+`bd doctor` warns when the runtime managed port differs from the local port
+file. The warning is intentionally diagnostic only; do not delete the local port
+file until the standalone store has been exported and imported into the managed
+server.
+
+Safe manual handoff:
+
+```bash
+# From the standalone project, without managed-city port overrides:
+unset BEADS_DOLT_PORT BEADS_DOLT_SERVER_PORT
+bd backup
+bd export > /tmp/beads-standalone.jsonl
+bd dolt stop
+
+# Then enter the managed-city environment and import into its Dolt server:
+bd import /tmp/beads-standalone.jsonl
+bd doctor
+```
+
+After `bd doctor` shows one healthy store and the imported issue count is
+correct, archive the old local Dolt data directory instead of deleting it
+immediately. Keep the backup until the managed city has been pushed or otherwise
+snapshotted.
+
 ### Shared Server Mode
 
 On machines with multiple beads projects, each project normally starts its own Dolt server.
