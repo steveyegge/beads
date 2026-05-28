@@ -3621,6 +3621,7 @@ bd dep tree [issue-id] [flags]
       --direction string   Tree direction: 'down' (dependencies), 'up' (dependents), or 'both'
       --format string      Output format: 'mermaid' for Mermaid.js flowchart
   -d, --max-depth int      Maximum tree depth to display (safety limit) (default 50)
+      --max-rows int       Hard upper bound on rows fetched from storage. Returns a non-zero exit (code 2) and an error to stderr if exceeded. 0 disables (the default). Overrides BEADS_MAX_ROWS for this invocation. Useful in CI/agent rigs that want a circuit breaker against pathological queries.
       --reverse            Show dependent tree (deprecated: use --direction=up)
       --show-all-paths     Show all paths to nodes (no deduplication for diamond dependencies)
       --status string      Filter to only show issues with this status (open, in_progress, blocked, deferred, closed)
@@ -4377,6 +4378,7 @@ bd find-duplicates [flags]
 
 ```
   -n, --limit int         Maximum number of pairs to show (default 50)
+      --max-rows int      Hard upper bound on rows fetched from storage. Returns a non-zero exit (code 2) and an error to stderr if exceeded. 0 disables (the default). Overrides BEADS_MAX_ROWS for this invocation. Useful in CI/agent rigs that want a circuit breaker against pathological queries.
       --method string     Detection method: mechanical, ai (default "mechanical")
       --model string      AI model to use (only with --method ai; default from config ai.model)
   -s, --status string     Filter by status (default: non-closed)
@@ -5057,11 +5059,12 @@ bd graph [issue-id] [flags]
 **Flags:**
 
 ```
-      --all       Show graph for all open issues
-      --box       ASCII boxes showing layers
-      --compact   Tree format, one line per issue, more scannable
-      --dot       Output Graphviz DOT format (pipe to: dot -Tsvg > graph.svg)
-      --html      Output self-contained interactive HTML (redirect to file)
+      --all            Show graph for all open issues
+      --box            ASCII boxes showing layers
+      --compact        Tree format, one line per issue, more scannable
+      --dot            Output Graphviz DOT format (pipe to: dot -Tsvg > graph.svg)
+      --html           Output self-contained interactive HTML (redirect to file)
+      --max-rows int   Hard upper bound on rows fetched from storage. Returns a non-zero exit (code 2) and an error to stderr if exceeded. 0 disables (the default). Overrides BEADS_MAX_ROWS for this invocation. Useful in CI/agent rigs that want a circuit breaker against pathological queries.
 ```
 
 ### bd graph check
@@ -5404,83 +5407,6 @@ bd info [flags]
 
 </document>
 
-<document path="docs/cli-reference/init-safety.md">
-
-
-<!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc init-safety`
-
-## bd init-safety
-
-bd init flag safety contract.
-
-Every bd init invocation resolves project_id from exactly one explicitly
-named source (local reinit, remote adoption, or a fresh mint). When the
-source is ambiguous, bd init refuses.
-
-FLAG SURFACE
-
-  bd init                       Mint a new identity. Bootstraps from
-                                origin if it has refs/dolt/data.
-
-  bd init --reinit-local        Re-initialize local .beads/ over existing
-                                local data. Does NOT authorize discarding
-                                remote history. If origin has Dolt data
-                                this will refuse — pair with
-                                --discard-remote to override.
-
-  bd init --reinit-local \      Discard the remote's Dolt history and
-      --discard-remote          replace it with the local reinit. First
-                                bd dolt push after this will be a
-                                history-replacing force-push.
-
-  bd init --force               Deprecated alias for --reinit-local.
-                                Kept working for ≥2 releases.
-
-ADOPTING A REMOTE
-
-  If you want to use the remote's existing history, use:
-
-      bd bootstrap
-
-  bd init will automatically suggest this when a remote is detected.
-
-DESTROY-TOKEN (non-interactive only)
-
-  When running with no TTY (CI, agents, piped input), --discard-remote
-  requires an explicit --destroy-token value. The token format is:
-
-      DESTROY-&lt;issue-prefix&gt;
-
-  For example, if your issue prefix is "bd", the token is "DESTROY-bd":
-
-      bd init --reinit-local --discard-remote --destroy-token=DESTROY-bd
-
-  In interactive (TTY) mode you confirm via a typed prompt instead. The
-  token is not echoed by bd's runtime error messages — this is a
-  deliberate guard against pattern-matched one-liners (see
-  docs/adr/0002-init-safety-invariants.md).
-
-EXIT CODES
-
-  10    refused: remote has Dolt history and you passed --force/--reinit-local
-        without --discard-remote
-  11    refused: existing local data and you declined the destroy confirm
-  12    refused: --discard-remote passed without a valid --destroy-token
-        (non-interactive mode)
-
-RECOVERY
-
-  If you hit a refusal, see docs/RECOVERY.md for step-by-step recovery
-  playbooks for each exit code.
-
-
-```
-bd init-safety
-```
-
-</document>
-
 <document path="docs/cli-reference/init.md">
 
 
@@ -5571,6 +5497,83 @@ bd init [flags]
       --skip-hooks                                     Skip git hooks installation
       --stealth                                        Enable stealth mode: global gitattributes and gitignore, no local repo tracking
       --team                                           Run team workflow setup wizard
+```
+
+</document>
+
+<document path="docs/cli-reference/init-safety.md">
+
+
+<!-- AUTO-GENERATED: do not edit manually -->
+Generated from `bd help --doc init-safety`
+
+## bd init-safety
+
+bd init flag safety contract.
+
+Every bd init invocation resolves project_id from exactly one explicitly
+named source (local reinit, remote adoption, or a fresh mint). When the
+source is ambiguous, bd init refuses.
+
+FLAG SURFACE
+
+  bd init                       Mint a new identity. Bootstraps from
+                                origin if it has refs/dolt/data.
+
+  bd init --reinit-local        Re-initialize local .beads/ over existing
+                                local data. Does NOT authorize discarding
+                                remote history. If origin has Dolt data
+                                this will refuse — pair with
+                                --discard-remote to override.
+
+  bd init --reinit-local \      Discard the remote's Dolt history and
+      --discard-remote          replace it with the local reinit. First
+                                bd dolt push after this will be a
+                                history-replacing force-push.
+
+  bd init --force               Deprecated alias for --reinit-local.
+                                Kept working for ≥2 releases.
+
+ADOPTING A REMOTE
+
+  If you want to use the remote's existing history, use:
+
+      bd bootstrap
+
+  bd init will automatically suggest this when a remote is detected.
+
+DESTROY-TOKEN (non-interactive only)
+
+  When running with no TTY (CI, agents, piped input), --discard-remote
+  requires an explicit --destroy-token value. The token format is:
+
+      DESTROY-&lt;issue-prefix&gt;
+
+  For example, if your issue prefix is "bd", the token is "DESTROY-bd":
+
+      bd init --reinit-local --discard-remote --destroy-token=DESTROY-bd
+
+  In interactive (TTY) mode you confirm via a typed prompt instead. The
+  token is not echoed by bd's runtime error messages — this is a
+  deliberate guard against pattern-matched one-liners (see
+  docs/adr/0002-init-safety-invariants.md).
+
+EXIT CODES
+
+  10    refused: remote has Dolt history and you passed --force/--reinit-local
+        without --discard-remote
+  11    refused: existing local data and you declined the destroy confirm
+  12    refused: --discard-remote passed without a valid --destroy-token
+        (non-interactive mode)
+
+RECOVERY
+
+  If you hit a refusal, see docs/RECOVERY.md for step-by-step recovery
+  playbooks for each exit code.
+
+
+```
+bd init-safety
 ```
 
 </document>
@@ -6158,6 +6161,7 @@ bd list [flags]
       --label-regex string           Filter by label regex pattern (e.g., 'tech-(debt|legacy)')
   -n, --limit int                    Limit results (default 50, use 0 for unlimited) (default 50)
       --long                         Show detailed multi-line output for each issue
+      --max-rows int                 Hard upper bound on rows fetched from storage. Returns a non-zero exit (code 2) and an error to stderr if exceeded. 0 disables (the default). Overrides BEADS_MAX_ROWS for this invocation. Useful in CI/agent rigs that want a circuit breaker against pathological queries.
       --metadata-field stringArray   Filter by metadata field (key=value, repeatable)
       --mol-type string              Filter by molecule type: swarm, patrol, or work
       --no-assignee                  Filter issues with no assignee
@@ -7753,6 +7757,7 @@ bd ready [flags]
   -l, --label strings                Filter by labels (AND: must have ALL). Can combine with --label-any
       --label-any strings            Filter by labels (OR: must have AT LEAST ONE). Can combine with --label
   -n, --limit int                    Maximum issues to show (use 0 for unlimited) (default 100)
+      --max-rows int                 Hard upper bound on rows fetched from storage. Returns a non-zero exit (code 2) and an error to stderr if exceeded. 0 disables (the default). Overrides BEADS_MAX_ROWS for this invocation. Useful in CI/agent rigs that want a circuit breaker against pathological queries.
       --metadata-field stringArray   Filter by metadata field (key=value, repeatable)
       --mol string                   Filter to steps within a specific molecule
       --mol-type string              Filter by molecule type: swarm, patrol, or work
@@ -7817,6 +7822,34 @@ bd remember "<insight>" [flags]
 
 </document>
 
+<document path="docs/cli-reference/rename.md">
+
+
+<!-- AUTO-GENERATED: do not edit manually -->
+Generated from `bd help --doc rename`
+
+## bd rename
+
+Rename an issue from one ID to another.
+
+This updates:
+- The issue's primary ID
+- All references in other issues (descriptions, titles, notes, etc.)
+- Dependencies pointing to/from this issue
+- Labels, comments, and events
+
+Examples:
+  bd rename bd-w382l bd-dolt     # Rename to memorable ID
+  bd rename gt-abc123 gt-auth    # Use descriptive ID
+
+Note: The new ID must use a valid prefix for this database.
+
+```
+bd rename <old-id> <new-id>
+```
+
+</document>
+
 <document path="docs/cli-reference/rename-prefix.md">
 
 
@@ -7862,34 +7895,6 @@ bd rename-prefix <new-prefix> [flags]
 ```
       --dry-run   Preview changes without applying them
       --repair    Repair database with multiple prefixes by consolidating them
-```
-
-</document>
-
-<document path="docs/cli-reference/rename.md">
-
-
-<!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc rename`
-
-## bd rename
-
-Rename an issue from one ID to another.
-
-This updates:
-- The issue's primary ID
-- All references in other issues (descriptions, titles, notes, etc.)
-- Dependencies pointing to/from this issue
-- Labels, comments, and events
-
-Examples:
-  bd rename bd-w382l bd-dolt     # Rename to memorable ID
-  bd rename gt-abc123 gt-auth    # Use descriptive ID
-
-Note: The new ID must use a valid prefix for this database.
-
-```
-bd rename <old-id> <new-id>
 ```
 
 </document>
@@ -8441,6 +8446,40 @@ bd state list <issue-id>
 
 </document>
 
+<document path="docs/cli-reference/statuses.md">
+
+
+<!-- AUTO-GENERATED: do not edit manually -->
+Generated from `bd help --doc statuses`
+
+## bd statuses
+
+List all valid issue statuses and their categories.
+
+Built-in statuses (open, in_progress, blocked, etc.) are always valid.
+Additional statuses can be configured via status.custom:
+
+  bd config set status.custom "in_review:active,qa_testing:wip,on_hold:frozen"
+
+Categories control behavior:
+  active  — appears in 'bd ready' and default 'bd list'
+  wip     — excluded from 'bd ready', visible in default 'bd list'
+  done    — excluded from 'bd ready' and default 'bd list'
+  frozen  — excluded from 'bd ready' and default 'bd list'
+
+Statuses without a category (legacy format) are valid but excluded from 'bd ready'.
+
+Examples:
+  bd statuses            # List all statuses with icons and categories
+  bd statuses --json     # Output as JSON
+
+
+```
+bd statuses
+```
+
+</document>
+
 <document path="docs/cli-reference/status.md">
 
 
@@ -8483,40 +8522,6 @@ bd status [flags]
       --all           Show all issues (default behavior)
       --assigned      Show issues assigned to current user
       --no-activity   Skip git activity tracking (faster)
-```
-
-</document>
-
-<document path="docs/cli-reference/statuses.md">
-
-
-<!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc statuses`
-
-## bd statuses
-
-List all valid issue statuses and their categories.
-
-Built-in statuses (open, in_progress, blocked, etc.) are always valid.
-Additional statuses can be configured via status.custom:
-
-  bd config set status.custom "in_review:active,qa_testing:wip,on_hold:frozen"
-
-Categories control behavior:
-  active  — appears in 'bd ready' and default 'bd list'
-  wip     — excluded from 'bd ready', visible in default 'bd list'
-  done    — excluded from 'bd ready' and default 'bd list'
-  frozen  — excluded from 'bd ready' and default 'bd list'
-
-Statuses without a category (legacy format) are valid but excluded from 'bd ready'.
-
-Examples:
-  bd statuses            # List all statuses with icons and categories
-  bd statuses --json     # Output as JSON
-
-
-```
-bd statuses
 ```
 
 </document>
