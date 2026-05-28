@@ -359,6 +359,18 @@ First sharded run: 26569078396, commit
 | 5/6 | 36s | Pass | Lightweight shard. |
 | 6/6 | 77s | Pass | Lightweight shard. |
 
+Follow-up after fixing the `internal/beads` duplicate `TestMain`: 26569719809,
+commit `bc78a25a8c3773012c476ecd9adb275770e75f05`.
+
+| Shard | Go test time | Result |
+|---:|---:|---|
+| 1/6 | 542s | Pass |
+| 2/6 | 177s | Pass |
+| 3/6 | 177s | Pass |
+| 4/6 | 170s | Pass |
+| 5/6 | 38s | Pass |
+| 6/6 | 61s | Pass |
+
 Package sharding is useful but not enough by itself: the full wall-clock tail is
 still the `cmd/bd` shard. The next optimization should split `cmd/bd` by
 top-level test names, then keep package sharding for the remaining packages.
