@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"errors"
@@ -21,7 +20,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/ui"
-	"golang.org/x/term"
 )
 
 var doltCmd = &cobra.Command{
@@ -868,34 +866,6 @@ Use --dry-run to see what would be dropped without actually dropping.`,
 	},
 }
 
-// confirmOverwrite prompts the user to confirm overwriting an existing remote.
-// Returns true if the user confirms. Returns true without prompting if stdin is
-// not a terminal (non-interactive/CI contexts).
-func confirmOverwrite(surface, name, existingURL, newURL string) bool {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return true
-	}
-	fmt.Printf("  Remote %q already exists on %s: %s\n", name, surface, existingURL)
-	fmt.Printf("  Overwrite with: %s\n", newURL)
-	fmt.Print("  Overwrite? (y/N): ")
-	reader := bufio.NewReader(os.Stdin)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	response = strings.TrimSpace(strings.ToLower(response))
-	return response == "y" || response == "yes"
-}
-
-func findRemoteURL(remotes []storage.RemoteInfo, name string) string {
-	for _, r := range remotes {
-		if r.Name == name {
-			return r.URL
-		}
-	}
-	return ""
-}
-
 // --- Dolt remote management commands ---
 
 var doltRemoteCmd = &cobra.Command{
@@ -911,7 +881,7 @@ Subcommands:
 
 var doltRemoteAddCmd = &cobra.Command{
 	Use:   "add <name> <url>",
-	Short: "Add a Dolt remote (both SQL server and CLI)",
+	Short: "Add a Dolt remote",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
@@ -922,33 +892,13 @@ var doltRemoteAddCmd = &cobra.Command{
 		}
 		name, url := args[0], args[1]
 
-		sqlRemotes, err := st.ListRemotes(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing remotes: %v\n", err)
+		if err := st.AddRemote(ctx, name, url); err != nil {
+			if jsonOutput {
+				outputJSONError(err, "remote_add_failed")
+			} else {
+				fmt.Fprintf(os.Stderr, "Error adding remote: %v\n", err)
+			}
 			os.Exit(1)
-		}
-		sqlURL := findRemoteURL(sqlRemotes, name)
-
-		if sqlURL != "" && sqlURL != url {
-			if !confirmOverwrite("Dolt", name, sqlURL, url) {
-				fmt.Println("Canceled.")
-				return
-			}
-			if err := st.RemoveRemote(ctx, name); err != nil {
-				fmt.Fprintf(os.Stderr, "Error removing existing remote: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		if sqlURL != url {
-			if err := st.AddRemote(ctx, name, url); err != nil {
-				if jsonOutput {
-					outputJSONError(err, "remote_add_failed")
-				} else {
-					fmt.Fprintf(os.Stderr, "Error adding remote: %v\n", err)
-				}
-				os.Exit(1)
-			}
 		}
 
 		if name == "origin" {
@@ -1020,16 +970,6 @@ var doltRemoteRemoveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		name := args[0]
-
-		remotes, err := st.ListRemotes(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing remotes: %v\n", err)
-			os.Exit(1)
-		}
-		if findRemoteURL(remotes, name) == "" {
-			fmt.Fprintf(os.Stderr, "Error: remote %q not found\n", name)
-			os.Exit(1)
-		}
 
 		if err := st.RemoveRemote(ctx, name); err != nil {
 			if jsonOutput {
