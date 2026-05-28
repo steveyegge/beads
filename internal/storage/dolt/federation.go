@@ -354,11 +354,6 @@ func (s *DoltStore) filteredPushToPeer(ctx context.Context, peer string, exclude
 	return s.pushRefToPeer(ctx, peer, refspec)
 }
 
-// isPeerGitProtocolRemote checks whether a specific peer remote URL uses the git wire
-// protocol and is available for CLI-based push/pull/fetch. Git-protocol remotes (SSH,
-// git+https://, git://) are routed to CLI operations because the SQL server may lack
-// the git credentials or SSH keys needed for network I/O to external git hosts.
-// Returns false when the remote exists only on an externally-managed server's filesystem.
 func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bool {
 	remotes, err := s.ListRemotes(ctx)
 	if err != nil {
@@ -366,17 +361,10 @@ func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bo
 	}
 	for _, r := range remotes {
 		if r.Name == peer {
-			return doltutil.IsGitProtocolURL(r.URL) && s.CLIDir() != ""
+			return doltutil.IsGitProtocolURL(r.URL)
 		}
 	}
 	return false
-}
-
-// doltCLIPushToPeer shells out to `dolt push` for a specific peer remote.
-// Used for git-protocol remotes where CALL DOLT_PUSH times out through the SQL connection.
-// Credentials are set on the subprocess environment only via cmd.Env.
-func (s *DoltStore) doltCLIPushToPeer(ctx context.Context, peer string, creds *remoteCredentials) error {
-	return s.doltCLIPushRefToPeer(ctx, peer, s.branch, creds)
 }
 
 // doltCLIPushRefToPeer shells out to `dolt push` with a specific refspec.

@@ -652,15 +652,8 @@ func (s *DoltStore) shouldUseCLIForCredentials(ctx context.Context, remote strin
 	return false
 }
 
-// shouldUseCLIForLocalRemote returns true when the SQL-visible remote also
-// exists in the local CLI directory with the same URL. In that case the CLI
-// and SQL paths target the same remote, and CLI push is closer to direct
-// `dolt push` behavior than CALL DOLT_PUSH through the sql-server.
 func (s *DoltStore) shouldUseCLIForLocalRemote(ctx context.Context, remote string) bool {
 	if !s.serverMode {
-		return false
-	}
-	if s.CLIDir() == "" {
 		return false
 	}
 	sqlRemotes, err := s.ListRemotes(ctx)

@@ -1897,12 +1897,6 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 	return msg
 }
 
-// isGitProtocolRemote checks whether the configured remote uses the git wire protocol
-// and is available for CLI-based push/pull. Git-protocol remotes (git+ssh://, ssh://,
-// git@host:path, git+https://, git://) are routed to CLI operations because the SQL
-// server may lack the git credentials, SSH keys, or credential helpers needed for
-// network I/O to external git hosts. Returns false when the remote exists only on
-// an externally-managed server's filesystem and not in the local dbPath.
 func (s *DoltStore) isGitProtocolRemote(ctx context.Context, remote string) bool {
 	remotes, err := s.ListRemotes(ctx)
 	if err != nil {
@@ -1910,7 +1904,7 @@ func (s *DoltStore) isGitProtocolRemote(ctx context.Context, remote string) bool
 	}
 	for _, r := range remotes {
 		if r.Name == remote {
-			return doltutil.IsGitProtocolURL(r.URL) && s.CLIDir() != ""
+			return doltutil.IsGitProtocolURL(r.URL)
 		}
 	}
 	return false
@@ -2106,9 +2100,6 @@ func (s *DoltStore) pushToRemote(ctx context.Context, remote string, force bool)
 	if s.shouldUseCLIForCloudAuth(ctx, remote) {
 		return s.doltCLIPush(ctx, remote, force, creds)
 	}
-	// If the same remote exists in the local Dolt directory, prefer CLI push.
-	// This matches direct `dolt push` behavior and avoids sql-server mediated
-	// DOLT_PUSH failures for Hosted Dolt HTTPS remotes (GH#3358).
 	if s.shouldUseCLIForLocalRemote(ctx, remote) {
 		return s.doltCLIPush(ctx, remote, force, creds)
 	}
