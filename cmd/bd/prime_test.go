@@ -25,7 +25,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   false,
 			ephemeralMode: false,
 			localOnlyMode: false,
-			expectText:    []string{"Beads Workflow Context", "bd dolt push", "git push"},
+			expectText:    []string{"Beads Workflow Context", "bd dolt push", "team-maintainer", "conservative by default"},
 			rejectText:    []string{"bd export", "--from-main"},
 		},
 		{
@@ -79,7 +79,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   false,
 			ephemeralMode: false,
 			localOnlyMode: false,
-			expectText:    []string{"Beads Issue Tracker Active", "git push"},
+			expectText:    []string{"Beads Issue Tracker Active", "team-maintainer", "conservative/minimal"},
 			rejectText:    []string{"bd export", "--from-main"},
 		},
 		{
