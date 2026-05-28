@@ -306,15 +306,15 @@ func TestToJSONValue(t *testing.T) {
 		expected string
 	}{
 		{"hello", `"hello"`},
-		{"42", "42"},
-		{"3.14", "3.14"},
-		{"true", "true"},
-		{"false", "false"},
-		{"null", "null"},
+		{"42", `"42"`},
+		{"3.14", `"3.14"`},
+		{"true", `"true"`},
+		{"false", `"false"`},
+		{"null", `"null"`},
 		{"", `""`},
 		{"hello world", `"hello world"`},
-		{"0", "0"},
-		{"-1", "-1"},
+		{"0", `"0"`},
+		{"-1", `"-1"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

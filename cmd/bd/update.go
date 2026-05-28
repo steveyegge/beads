@@ -568,25 +568,10 @@ func applyMetadataEdits(existing json.RawMessage, setFlags, unsetFlags []string)
 	return json.RawMessage(result), nil
 }
 
-// toJSONValue converts a string value to its most appropriate JSON representation.
-// Recognizes numbers, booleans, and null; everything else becomes a JSON string.
+// toJSONValue stores a CLI metadata value as a JSON string.
+// Previous behavior inferred types (numbers, booleans) from content,
+// which silently broke map[string]string round-trips (GH#4146).
 func toJSONValue(s string) json.RawMessage {
-	// Check for null
-	if s == "null" {
-		return json.RawMessage("null")
-	}
-	// Check for booleans
-	if s == "true" || s == "false" {
-		return json.RawMessage(s)
-	}
-	// Check for numbers (integer or float)
-	if _, err := fmt.Sscanf(s, "%f", new(float64)); err == nil {
-		// Verify it round-trips cleanly (not NaN, Inf, etc.)
-		if json.Valid([]byte(s)) {
-			return json.RawMessage(s)
-		}
-	}
-	// Default to JSON string
 	b, _ := json.Marshal(s)
 	return json.RawMessage(b)
 }
