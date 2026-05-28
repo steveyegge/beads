@@ -227,8 +227,14 @@ jobs:
           source scripts/ci/lib/timing.sh
 
           ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
-          ci_time "linux integration coverage go test" -- env BEADS_TEST_SKIP=dolt gotestsum --junitfile artifacts/linux-integration-coverage-junit.xml --format testdox -- -v -race -tags=integration,gms_pure_go -coverprofile=artifacts/coverage.out -timeout=30m ./...
-          ci_time "coverage summary" -- go tool cover -func=artifacts/coverage.out
+          status=0
+          ci_time "linux integration coverage go test" -- env BEADS_TEST_SKIP=dolt gotestsum --junitfile artifacts/linux-integration-coverage-junit.xml --format testdox -- -v -race -tags=integration,gms_pure_go -coverprofile=artifacts/coverage.out -timeout=30m ./... || status=$?
+          if [[ -f artifacts/coverage.out ]]; then
+            ci_time "coverage summary" -- go tool cover -func=artifacts/coverage.out || status=$?
+          else
+            echo "coverage.out was not generated; skipping coverage summary"
+          fi
+          exit "$status"
 
       - name: Upload measurement artifacts
         if: always()
@@ -265,6 +271,7 @@ jobs:
 
       - name: Measure commands
         env:
+          GH_TOKEN: ${{ github.token }}
           SMOKE_VERSION: ${{ inputs.smoke_version }}
         run: |
           set -euo pipefail
@@ -273,11 +280,14 @@ jobs:
 
           ci_time "build candidate binary" -- go build -o /tmp/bd-candidate ./cmd/bd
           export CANDIDATE_BIN=/tmp/bd-candidate
-          if [[ -n "$SMOKE_VERSION" ]]; then
-            ci_time "upgrade smoke ${SMOKE_VERSION}" -- ./scripts/upgrade-smoke-test.sh "$SMOKE_VERSION"
-          else
-            ci_time "upgrade smoke previous release" -- ./scripts/upgrade-smoke-test.sh
+          if [[ -z "$SMOKE_VERSION" ]]; then
+            SMOKE_VERSION="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName')"
           fi
+          if [[ -z "$SMOKE_VERSION" ]]; then
+            echo "Could not resolve a previous release tag for cross-version smoke"
+            exit 1
+          fi
+          ci_time "upgrade smoke ${SMOKE_VERSION}" -- ./scripts/upgrade-smoke-test.sh "$SMOKE_VERSION"
 
   nix:
     name: Measure nix build
@@ -327,11 +337,13 @@ jobs:
           export PATH="/tmp/beads-measure-bin:$PATH"
           cd integrations/beads-mcp
           ci_time "mcp uv sync" -- uv sync --all-groups
-          ci_time "mcp ruff check" -- uv run ruff check src/beads_mcp tests
-          ci_time "mcp mypy" -- uv run mypy src/beads_mcp
-          ci_time "mcp pytest" -- uv run pytest --durations=50
+          status=0
+          ci_time "mcp ruff check" -- uv run ruff check src/beads_mcp tests || status=$?
+          ci_time "mcp mypy" -- uv run mypy src/beads_mcp || status=$?
+          ci_time "mcp pytest" -- uv run pytest --durations=50 || status=$?
           rm -rf dist
-          ci_time "mcp build" -- uv build
+          ci_time "mcp build" -- uv build || status=$?
+          exit "$status"
 
       - name: Upload measurement artifacts
         if: always()
@@ -371,8 +383,10 @@ jobs:
           ci_time "build bd for npm package" -- go build -o npm-package/bin/bd ./cmd/bd
           cd npm-package
           ci_time "npm package install" -- npm install
-          ci_time "npm package test:all" -- npm run test:all
-          ci_time "npm package pack dry-run" -- bash -c 'npm pack --dry-run | tee ../artifacts/npm-pack-dry-run.txt'
+          status=0
+          ci_time "npm package test:all" -- npm run test:all || status=$?
+          ci_time "npm package pack dry-run" -- bash -c 'npm pack --dry-run | tee ../artifacts/npm-pack-dry-run.txt' || status=$?
+          exit "$status"
 
       - name: Upload measurement artifacts
         if: always()
