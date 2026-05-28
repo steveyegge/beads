@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -24,9 +25,13 @@ type fakeFallbackStore struct {
 	storage.DoltStorage // nil — panics on any non-overridden method
 	statsTotalIssues    int
 	statsNil            bool
+	getStatistics       func(context.Context) (*types.Statistics, error)
 }
 
-func (f *fakeFallbackStore) GetStatistics(_ context.Context) (*types.Statistics, error) {
+func (f *fakeFallbackStore) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	if f.getStatistics != nil {
+		return f.getStatistics(ctx)
+	}
 	if f.statsNil {
 		return nil, nil
 	}
@@ -87,6 +92,63 @@ func TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenNonEmpty(t *testing.T) {
 
 	if got := count.Load(); got != 0 {
 		t.Fatalf("regression: fallback importer was invoked %d time(s) on a non-empty store; expected 0 (top-level emptiness guard missing or broken)", got)
+	}
+}
+
+// TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenConcurrentWriterWinsRace
+// models the #3948 hazard where a separate Dolt writer commits data while a bd
+// process with stale issues.jsonl is deciding whether auto-import should run.
+//
+// The fallback path is the important branch here: embedded stores have an
+// additional in-transaction guard, but fallbackImporter is an UPSERT path that
+// can re-impose stale JSONL over live rows if the top-level guard is removed.
+func TestMaybeAutoImportJSONL_FallbackImporter_SkipsWhenConcurrentWriterWinsRace(t *testing.T) {
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONL(t, dir)
+	count := swapFallbackImporter(t, errors.New("test importer should not run"))
+
+	statsCalled := make(chan struct{})
+	writerCommitted := make(chan struct{})
+
+	store := &fakeFallbackStore{
+		getStatistics: func(ctx context.Context) (*types.Statistics, error) {
+			close(statsCalled)
+			select {
+			case <-writerCommitted:
+				return &types.Statistics{TotalIssues: 1}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		maybeAutoImportJSONL(ctx, store, dir)
+	}()
+
+	select {
+	case <-statsCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto-import did not check store statistics before considering fallback import")
+	}
+
+	// Simulate a concurrent Dolt write becoming visible before auto-import's
+	// emptiness decision returns.
+	close(writerCommitted)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto-import did not return after statistics reported a non-empty store")
+	}
+
+	if got := count.Load(); got != 0 {
+		t.Fatalf("regression: fallback importer was invoked %d time(s) after a concurrent writer populated the store; expected 0", got)
 	}
 }
 
