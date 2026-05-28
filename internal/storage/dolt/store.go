@@ -1132,13 +1132,6 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// replaces the former branch-per-worker approach (BD_BRANCH).
 	store.branch = "main"
 
-	// GH#2315: Sync CLI remotes into SQL server on store open.
-	// After a server restart, dolt_remotes is empty (not persisted across sessions).
-	// CLI remotes survive in .dolt/config. Re-register them so DOLT_PUSH/DOLT_PULL work.
-	if !cfg.ReadOnly {
-		store.syncCLIRemotesToSQL(ctx)
-	}
-
 	// Register observable pool gauges for diagnosing shared-server degradation (GH#3140).
 	// These report sql.DB.Stats() on each OTel scrape — no-op when telemetry is off.
 	store.registerPoolGauges()
@@ -1911,25 +1904,13 @@ func (s *DoltStore) buildBatchCommitMessage(ctx context.Context, actor string) s
 // network I/O to external git hosts. Returns false when the remote exists only on
 // an externally-managed server's filesystem and not in the local dbPath.
 func (s *DoltStore) isGitProtocolRemote(ctx context.Context, remote string) bool {
-	// Check SQL remotes first
 	remotes, err := s.ListRemotes(ctx)
-	if err == nil {
-		for _, r := range remotes {
-			if r.Name == remote {
-				if !doltutil.IsGitProtocolURL(r.URL) {
-					return false
-				}
-				// Verify remote exists in CLI directory before routing to CLI push/pull.
-				// When the dolt sql-server is externally managed, remotes may exist only
-				// on the server's filesystem, not in the local dbPath.
-				return s.CLIDir() != "" && doltutil.FindCLIRemote(s.CLIDir(), remote) != ""
-			}
-		}
+	if err != nil {
+		return false
 	}
-	// Fall back to CLI remotes (covers drift where remote exists only in filesystem)
-	if s.CLIDir() != "" {
-		if url := doltutil.FindCLIRemote(s.CLIDir(), remote); url != "" {
-			return doltutil.IsGitProtocolURL(url)
+	for _, r := range remotes {
+		if r.Name == remote {
+			return doltutil.IsGitProtocolURL(r.URL) && s.CLIDir() != ""
 		}
 	}
 	return false
@@ -2122,7 +2103,7 @@ func (s *DoltStore) pushToRemote(ctx context.Context, remote string, force bool)
 	// etc.) are set and we're in server mode, route through CLI so the dolt
 	// subprocess inherits the current env. The SQL server may not have these
 	// vars if it was started in a different context (GH#6).
-	if s.shouldUseCLIForCloudAuth(remote) {
+	if s.shouldUseCLIForCloudAuth(ctx, remote) {
 		return s.doltCLIPush(ctx, remote, force, creds)
 	}
 	// If the same remote exists in the local Dolt directory, prefer CLI push.
@@ -2225,7 +2206,7 @@ func (s *DoltStore) pullFromRemote(ctx context.Context, remote string) (retErr e
 		return nil
 	}
 	// Cloud auth CLI routing (GH#6).
-	if s.shouldUseCLIForCloudAuth(remote) {
+	if s.shouldUseCLIForCloudAuth(ctx, remote) {
 		return s.doltCLIPull(ctx, remote, creds)
 	}
 	if s.remoteUser != "" && remote == s.remote {

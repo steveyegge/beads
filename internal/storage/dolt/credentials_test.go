@@ -741,53 +741,6 @@ func TestCredentialCLIRoutingSharedServerUsesSharedDoltRoot(t *testing.T) {
 	}
 }
 
-func TestMatchingLocalRemoteCLIRouting(t *testing.T) {
-	tests := []struct {
-		name    string
-		remotes []storage.RemoteInfo
-		cliURL  string
-		remote  string
-		want    bool
-	}{
-		{
-			name:    "matching remote and url",
-			remotes: []storage.RemoteInfo{{Name: "origin", URL: "https://doltremoteapi.dolthub.com/org/repo"}},
-			cliURL:  "https://doltremoteapi.dolthub.com/org/repo",
-			remote:  "origin",
-			want:    true,
-		},
-		{
-			name:    "different url",
-			remotes: []storage.RemoteInfo{{Name: "origin", URL: "https://server.example/repo"}},
-			cliURL:  "https://local.example/repo",
-			remote:  "origin",
-			want:    false,
-		},
-		{
-			name:    "different remote",
-			remotes: []storage.RemoteInfo{{Name: "backup", URL: "https://doltremoteapi.dolthub.com/org/repo"}},
-			cliURL:  "https://doltremoteapi.dolthub.com/org/repo",
-			remote:  "origin",
-			want:    false,
-		},
-		{
-			name:    "missing cli remote",
-			remotes: []storage.RemoteInfo{{Name: "origin", URL: "https://doltremoteapi.dolthub.com/org/repo"}},
-			remote:  "origin",
-			want:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := shouldUseCLIForMatchingLocalRemote(tt.remotes, tt.cliURL, tt.remote)
-			if got != tt.want {
-				t.Fatalf("shouldUseCLIForMatchingLocalRemote() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCloudAuthCLIRoutingSharedServerUsesSharedDoltRoot(t *testing.T) {
 	testutil.RequireDoltBinary(t)
 
@@ -822,7 +775,7 @@ func TestCloudAuthCLIRoutingSharedServerUsesSharedDoltRoot(t *testing.T) {
 		remote:     "origin",
 	}
 
-	if !store.shouldUseCLIForCloudAuth(store.remote) {
+	if !store.shouldUseCLIForCloudAuth(context.Background(), store.remote) {
 		t.Fatalf("expected shared-server cloud-auth routing to resolve CLI remote via %q, got CLIDir %q", cliDir, store.CLIDir())
 	}
 }
@@ -902,7 +855,7 @@ func TestCloudAuthCLIRouting(t *testing.T) {
 			if tt.envKey != "" {
 				t.Setenv(tt.envKey, tt.envValue)
 			}
-			got := store.shouldUseCLIForCloudAuth(store.remote)
+			got := store.shouldUseCLIForCloudAuth(context.Background(), store.remote)
 			if got != tt.wantCLI {
 				t.Errorf("shouldUseCLIForCloudAuth() = %v, want %v", got, tt.wantCLI)
 			}
@@ -916,14 +869,14 @@ func TestCloudAuthCLIRoutingStructural(t *testing.T) {
 	t.Run("embedded mode", func(t *testing.T) {
 		store := setupCredentialTestStoreWithURL(t, "", "", false, true, "origin", "az://account.blob.core.windows.net/container")
 		t.Setenv("AZURE_STORAGE_ACCOUNT", "myaccount")
-		if store.shouldUseCLIForCloudAuth(store.remote) {
+		if store.shouldUseCLIForCloudAuth(context.Background(), store.remote) {
 			t.Error("expected false in embedded mode")
 		}
 	})
 	t.Run("no CLI remote", func(t *testing.T) {
 		store := setupCredentialTestStoreWithURL(t, "", "", true, false, "origin", "az://account.blob.core.windows.net/container")
 		t.Setenv("AZURE_STORAGE_ACCOUNT", "myaccount")
-		if store.shouldUseCLIForCloudAuth(store.remote) {
+		if store.shouldUseCLIForCloudAuth(context.Background(), store.remote) {
 			t.Error("expected false when CLI remote not configured")
 		}
 	})
@@ -968,12 +921,12 @@ func TestPerRemoteCloudAuthHybrid(t *testing.T) {
 	t.Setenv("AZURE_STORAGE_ACCOUNT", "myaccount")
 
 	// Azure remote should get CLI routing (AZURE_STORAGE_ env matches az:// scheme)
-	if !store.shouldUseCLIForCloudAuth("backup") {
+	if !store.shouldUseCLIForCloudAuth(context.Background(), "backup") {
 		t.Error("expected CLI routing for az:// remote when AZURE_STORAGE_ACCOUNT is set")
 	}
 
 	// DoltHub remote should NOT get CLI routing (AZURE_STORAGE_ does not match dolthub:// scheme)
-	if store.shouldUseCLIForCloudAuth("primary") {
+	if store.shouldUseCLIForCloudAuth(context.Background(), "primary") {
 		t.Error("expected SQL routing for dolthub:// remote when AZURE_STORAGE_ACCOUNT is set — per-remote resolution should prevent misrouting")
 	}
 }

@@ -3,9 +3,7 @@ package dolt
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -134,83 +132,6 @@ func (s *DoltStore) Fetch(ctx context.Context, peer string) error {
 // ListRemotes returns configured remote names and URLs.
 func (s *DoltStore) ListRemotes(ctx context.Context) ([]storage.RemoteInfo, error) {
 	return versioncontrolops.ListRemotes(ctx, s.db)
-}
-
-// syncCLIRemotesToSQL re-registers CLI-level remotes into the SQL server.
-// After a server restart, dolt_remotes (in-memory) is empty while CLI remotes
-// (persisted in .dolt/config) survive. This is best-effort: errors are silently
-// ignored because a missing remote will surface a clear error at push/pull time.
-//
-// GH#2118: Also checks the server root directory (dbPath) for remotes that were
-// added there instead of the database subdirectory (CLIDir). Users commonly run
-// `dolt remote add` in .beads/dolt/ (server root) rather than .beads/dolt/<db>/
-// (database dir). When found, these remotes are propagated to the database CLI
-// directory so that CLI push/pull can find them.
-//
-// See GH#2315.
-func (s *DoltStore) syncCLIRemotesToSQL(ctx context.Context) {
-	dir := s.CLIDir()
-	if dir == "" {
-		return
-	}
-	cliRemotes, err := doltutil.ListCLIRemotes(dir)
-	if err != nil {
-		cliRemotes = nil
-	}
-
-	// GH#2118: If the database directory has no remotes (or doesn't exist),
-	// check the server root directory. Users often run `dolt remote add` in
-	// .beads/dolt/ (server root) instead of .beads/dolt/<database>/.
-	if len(cliRemotes) == 0 {
-		cliRemotes = s.migrateServerRootRemotes(dir)
-	}
-
-	if len(cliRemotes) == 0 {
-		return
-	}
-	sqlRemotes, err := s.ListRemotes(ctx)
-	if err != nil {
-		return
-	}
-	sqlMap := doltutil.ToRemoteNameMap(sqlRemotes)
-	for _, r := range cliRemotes {
-		if _, exists := sqlMap[r.Name]; !exists {
-			_ = s.AddRemote(ctx, r.Name, r.URL)
-		}
-	}
-}
-
-// migrateServerRootRemotes checks the dolt server root directory (dbPath) for
-// remotes that should be propagated to the database CLI directory (CLIDir).
-// This handles GH#2118: users run `dolt remote add` in .beads/dolt/ (server root)
-// instead of .beads/dolt/<database>/ (where CLI push/pull actually runs).
-//
-// Returns the combined CLI remotes after migration, or nil if nothing to migrate.
-func (s *DoltStore) migrateServerRootRemotes(cliDir string) []storage.RemoteInfo {
-	rootDir := s.dbPath
-	if rootDir == "" || rootDir == cliDir {
-		return nil
-	}
-	// Server root must have .dolt/ (from dolt init)
-	if _, err := os.Stat(filepath.Join(rootDir, ".dolt")); err != nil {
-		return nil
-	}
-	rootRemotes, err := doltutil.ListCLIRemotes(rootDir)
-	if err != nil || len(rootRemotes) == 0 {
-		return nil
-	}
-	// Database dir must have .dolt/ to accept CLI remotes
-	if _, err := os.Stat(filepath.Join(cliDir, ".dolt")); err != nil {
-		return nil
-	}
-	// Propagate server-root remotes to the database directory
-	for _, r := range rootRemotes {
-		if existing := doltutil.FindCLIRemote(cliDir, r.Name); existing == "" {
-			_ = doltutil.AddCLIRemote(cliDir, r.Name, r.URL)
-		}
-	}
-	combined, _ := doltutil.ListCLIRemotes(cliDir)
-	return combined
 }
 
 // RemoveRemote removes a configured remote.
@@ -440,19 +361,12 @@ func (s *DoltStore) filteredPushToPeer(ctx context.Context, peer string, exclude
 // Returns false when the remote exists only on an externally-managed server's filesystem.
 func (s *DoltStore) isPeerGitProtocolRemote(ctx context.Context, peer string) bool {
 	remotes, err := s.ListRemotes(ctx)
-	if err == nil {
-		for _, r := range remotes {
-			if r.Name == peer {
-				if !doltutil.IsGitProtocolURL(r.URL) {
-					return false
-				}
-				return s.CLIDir() != "" && doltutil.FindCLIRemote(s.CLIDir(), peer) != ""
-			}
-		}
+	if err != nil {
+		return false
 	}
-	if s.CLIDir() != "" {
-		if url := doltutil.FindCLIRemote(s.CLIDir(), peer); url != "" {
-			return doltutil.IsGitProtocolURL(url)
+	for _, r := range remotes {
+		if r.Name == peer {
+			return doltutil.IsGitProtocolURL(r.URL) && s.CLIDir() != ""
 		}
 	}
 	return false

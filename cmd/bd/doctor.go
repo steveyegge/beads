@@ -557,11 +557,6 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 7f: Remote consistency (SQL vs CLI)
-	remoteCheck := convertWithCategory(doctor.CheckRemoteConsistency(path), doctor.CategoryData)
-	result.Checks = append(result.Checks, remoteCheck)
-	// Don't fail overall for remote discrepancies, just warn
-
 	// Dolt health checks (connection, schema, issue count, status).
 	for _, dc := range doctor.RunDoltHealthChecks(path) {
 		result.Checks = append(result.Checks, convertDoctorCheck(dc))

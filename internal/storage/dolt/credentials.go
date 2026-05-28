@@ -17,7 +17,6 @@ import (
 	"sync"
 
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // Credential storage and encryption for federation peers.
@@ -597,18 +596,26 @@ type FederationPeer = storage.FederationPeer
 //  2. Server is in server mode (not embedded)
 //  3. Local CLI directory is available
 //  4. The peer remote is configured in the local CLI directory
-func (s *DoltStore) shouldUseCLIForPeerCredentials(_ context.Context, peer string, creds *remoteCredentials) bool {
+func (s *DoltStore) shouldUseCLIForPeerCredentials(ctx context.Context, peer string, creds *remoteCredentials) bool {
 	if creds.empty() {
 		return false // no credentials to pass
 	}
 	if !s.serverMode {
 		return false // embedded mode: withEnvCredentials works in-process
 	}
-	cliDir := s.CLIDir()
-	if cliDir == "" {
+	if s.CLIDir() == "" {
 		return false // no local directory for CLI operations
 	}
-	return doltutil.FindCLIRemote(cliDir, peer) != ""
+	remotes, err := s.ListRemotes(ctx)
+	if err != nil {
+		return false
+	}
+	for _, r := range remotes {
+		if r.Name == peer {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldUseCLIForCredentials returns true when CLI subprocess routing should
@@ -623,29 +630,22 @@ func (s *DoltStore) shouldUseCLIForPeerCredentials(_ context.Context, peer strin
 //  2. Server is in server mode (not embedded)
 //  3. Local CLI directory is available
 //  4. The remote is configured in the local CLI directory
-func (s *DoltStore) shouldUseCLIForCredentials(_ context.Context, remote string, creds *remoteCredentials) bool {
+func (s *DoltStore) shouldUseCLIForCredentials(ctx context.Context, remote string, creds *remoteCredentials) bool {
 	if creds.empty() {
 		return false // no credentials to pass
 	}
 	if !s.serverMode {
 		return false // embedded mode: withEnvCredentials works in-process
 	}
-	cliDir := s.CLIDir()
-	if cliDir == "" {
+	if s.CLIDir() == "" {
 		return false // no local directory for CLI operations
 	}
-	// Only route to CLI if the remote is configured locally.
-	// Shared server / external server modes may have CLIDir pointing
-	// to wrong directory — FindCLIRemote returns "" in those cases.
-	return doltutil.FindCLIRemote(cliDir, remote) != ""
-}
-
-func shouldUseCLIForMatchingLocalRemote(sqlRemotes []storage.RemoteInfo, cliURL, remote string) bool {
-	if cliURL == "" {
+	remotes, err := s.ListRemotes(ctx)
+	if err != nil {
 		return false
 	}
-	for _, r := range sqlRemotes {
-		if r.Name == remote && r.URL == cliURL {
+	for _, r := range remotes {
+		if r.Name == remote {
 			return true
 		}
 	}
@@ -660,19 +660,19 @@ func (s *DoltStore) shouldUseCLIForLocalRemote(ctx context.Context, remote strin
 	if !s.serverMode {
 		return false
 	}
-	cliDir := s.CLIDir()
-	if cliDir == "" {
-		return false
-	}
-	cliURL := doltutil.FindCLIRemote(cliDir, remote)
-	if cliURL == "" {
+	if s.CLIDir() == "" {
 		return false
 	}
 	sqlRemotes, err := s.ListRemotes(ctx)
 	if err != nil {
 		return false
 	}
-	return shouldUseCLIForMatchingLocalRemote(sqlRemotes, cliURL, remote)
+	for _, r := range sqlRemotes {
+		if r.Name == remote {
+			return true
+		}
+	}
+	return false
 }
 
 // cloudAuthSchemeMap maps remote URL scheme prefixes to the environment
@@ -700,15 +700,13 @@ func isS3RemoteURL(url string) bool {
 
 func (s *DoltStore) isS3Remote(ctx context.Context, remote string) bool {
 	remotes, err := s.ListRemotes(ctx)
-	if err == nil {
-		for _, r := range remotes {
-			if r.Name == remote {
-				return isS3RemoteURL(r.URL)
-			}
-		}
+	if err != nil {
+		return false
 	}
-	if cliDir := s.CLIDir(); cliDir != "" {
-		return isS3RemoteURL(doltutil.FindCLIRemote(cliDir, remote))
+	for _, r := range remotes {
+		if r.Name == remote {
+			return isS3RemoteURL(r.URL)
+		}
 	}
 	return false
 }
@@ -743,15 +741,24 @@ func envPrefixesForRemoteURL(url string) []string {
 // changed) after the server started, the SQL path silently fails to
 // authenticate. Routing through a CLI subprocess (dolt push/pull) ensures
 // the child process inherits the current environment (GH#6).
-func (s *DoltStore) shouldUseCLIForCloudAuth(remote string) bool {
+func (s *DoltStore) shouldUseCLIForCloudAuth(ctx context.Context, remote string) bool {
 	if !s.serverMode {
 		return false // embedded mode: env vars are in-process
 	}
-	cliDir := s.CLIDir()
-	if cliDir == "" {
+	if s.CLIDir() == "" {
 		return false
 	}
-	cliURL := doltutil.FindCLIRemote(cliDir, remote)
+	remotes, err := s.ListRemotes(ctx)
+	if err != nil {
+		return false
+	}
+	var cliURL string
+	for _, r := range remotes {
+		if r.Name == remote {
+			cliURL = r.URL
+			break
+		}
+	}
 	if cliURL == "" {
 		return false
 	}

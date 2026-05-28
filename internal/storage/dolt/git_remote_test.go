@@ -1300,8 +1300,7 @@ func TestCredentialCLIRoutingE2E(t *testing.T) {
 		t.Fatal("dolt sql-server did not become ready within timeout")
 	}
 
-	// 4. Client CLI directory: separate dolt init WITH the file:// remote
-	// This is the CLI dir that shouldUseCLIForCredentials checks via FindCLIRemote.
+	// 4. Client CLI directory: separate dolt init WITH the file:// remote.
 	clientDataDir := filepath.Join(baseDir, "client-data")
 	clientTestdbDir := filepath.Join(clientDataDir, "testdb")
 	if err := os.MkdirAll(clientTestdbDir, 0o755); err != nil {
