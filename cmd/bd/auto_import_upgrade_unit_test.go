@@ -190,8 +190,8 @@ func TestMaybeAutoImportJSONL_FailedImportStampPreventsRepeatedImport(t *testing
 	count := swapFallbackImporter(t, errors.New("test importer failed"))
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 
 	if got := count.Load(); got != 1 {
 		t.Fatalf("fallback importer invoked %d time(s), want 1 for unchanged JSONL after failed attempt stamp", got)
@@ -210,8 +210,8 @@ func TestMaybeAutoImportJSONL_SuccessStampPreventsRepeatedImport(t *testing.T) {
 	t.Cleanup(func() { fallbackImporter = orig })
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 
 	if got := count.Load(); got != 1 {
 		t.Fatalf("fallback importer invoked %d time(s), want 1 for unchanged JSONL after success stamp", got)
@@ -230,11 +230,11 @@ func TestMaybeAutoImportJSONL_ChangedJSONLBypassesSuccessStamp(t *testing.T) {
 	t.Cleanup(func() { fallbackImporter = orig })
 
 	store := &fakeFallbackStore{statsTotalIssues: 0}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 	if err := os.WriteFile(filepath.Join(dir, "issues.jsonl"), []byte(`{"_type":"issue","id":"unit-2","title":"changed","status":"open","priority":2,"issue_type":"task"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	maybeAutoImportJSONL(context.Background(), store, dir, false)
+	maybeAutoImportJSONL(context.Background(), store, dir)
 
 	if got := count.Load(); got != 2 {
 		t.Fatalf("fallback importer invoked %d time(s), want 2 after JSONL changed", got)
