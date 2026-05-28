@@ -298,6 +298,7 @@ These flags apply to all commands:
       --global                    Use the global shared-server database (beads_global)
       --ignore-schema-skew        Proceed despite forward schema drift (some queries may fail)
       --json                      Output in JSON format
+      --no-color                  Disable color output (also: NO_COLOR=1 or CLICOLOR=0)
       --profile                   Generate CPU profile for performance analysis
   -q, --quiet                     Suppress non-essential output (errors only)
       --readonly                  Read-only mode: block write operations (for worker sandboxes)
