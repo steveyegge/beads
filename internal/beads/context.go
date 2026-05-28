@@ -233,7 +233,8 @@ func getRepoRootFromPath(path string) (string, error) {
 // We explicitly set GIT_DIR and GIT_WORK_TREE to ensure git operates on
 // the correct repository (the one containing .beads/).
 func (rc *RepoContext) GitCmd(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	gitArgs := append([]string{"-c", "core.hooksPath="}, args...)
+	cmd := exec.CommandContext(ctx, "git", gitArgs...)
 	cmd.Dir = rc.RepoRoot
 
 	// GH#2538: Ensure git uses the target repository, not the worktree we may be running from.
@@ -243,7 +244,6 @@ func (rc *RepoContext) GitCmd(ctx context.Context, args ...string) *exec.Cmd {
 	// Security: Disable git hooks and templates to prevent code execution
 	// in potentially malicious repositories (SEC-001, SEC-002)
 	cmd.Env = append(os.Environ(),
-		"GIT_HOOKS_PATH=",            // Disable hooks
 		"GIT_TEMPLATE_DIR=",          // Disable templates
 		"GIT_DIR="+gitDir,            // Ensure git uses the correct .git directory
 		"GIT_WORK_TREE="+rc.RepoRoot, // Ensure git uses the correct work tree
