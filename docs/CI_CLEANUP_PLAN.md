@@ -201,6 +201,9 @@ Selectable measurement suites:
   package sharding exposed `cmd/bd` as the tail. It keeps six package shards for
   everything except `cmd/bd`, then runs `cmd/bd` across eight top-level test
   name shards.
+- `linux-integration-hybrid-16-sharded`: follow-up measurement for the same
+  hybrid shape, but with `cmd/bd` split across sixteen top-level test name
+  shards.
 - `linux-integration-coverage`: same integration shape with coverage generation
   and a coverage summary, but no threshold.
 - `cross-version-smoke`: one previous-release smoke sample, optionally pinned
@@ -380,6 +383,60 @@ still the `cmd/bd` shard. The next optimization should split `cmd/bd` by
 top-level test names, then keep package sharding for the remaining packages.
 The `linux-integration-hybrid-sharded` measurement suite implements that next
 shape.
+
+First hybrid run: 26596629423, commit
+`7bfe2dc55cf257a179f121b33ed7f327a3e20dac`.
+
+| Shard group | Shard | List time | Go test time | Job wall clock | Result |
+|---|---:|---:|---:|---:|---|
+| Packages | 1/6 | 15s | 43s | 89s | Pass |
+| Packages | 2/6 | 13s | 177s | 219s | Pass |
+| Packages | 3/6 | 15s | 156s | 199s | Pass |
+| Packages | 4/6 | 14s | 173s | 218s | Pass |
+| Packages | 5/6 | 13s | 37s | 81s | Pass |
+| Packages | 6/6 | 13s | 73s | 115s | Pass |
+| `cmd/bd` | 1/8 | 186s | 352s | 567s | Pass |
+| `cmd/bd` | 2/8 | 185s | 356s | 570s | Pass |
+| `cmd/bd` | 3/8 | 183s | 356s | 570s | Pass |
+| `cmd/bd` | 4/8 | 184s | 378s | 596s | Pass |
+| `cmd/bd` | 5/8 | 188s | 375s | 592s | Pass |
+| `cmd/bd` | 6/8 | 184s | 363s | 576s | Pass |
+| `cmd/bd` | 7/8 | 149s | 299s | 479s | Pass |
+| `cmd/bd` | 8/8 | 174s | 339s | 539s | Pass |
+
+This proved the hybrid split is structurally valid, but it also exposed a
+measurement-specific inefficiency: `go test -list` was spending 149-188s per
+`cmd/bd` shard just to discover test names. The workflow now uses the
+build-tag-aware `scripts/ci/go-list-test-names` AST helper instead. Local
+validation confirmed the helper exactly matched `go test -list '^Test'` for
+`./cmd/bd` under `integration,gms_pure_go` and excludes `TestMain`.
+
+Follow-up hybrid run with AST-based test discovery: 26597526345, commit
+`4721974f3fa97889b6d34012c533b6a5c44bc012`.
+
+| Shard group | Shard | List time | Go test time | Job wall clock | Result |
+|---|---:|---:|---:|---:|---|
+| Packages | 1/6 | 12s | 42s | 88s | Pass |
+| Packages | 2/6 | 12s | 178s | 217s | Pass |
+| Packages | 3/6 | 15s | 175s | 220s | Pass |
+| Packages | 4/6 | 16s | 167s | 216s | Pass |
+| Packages | 5/6 | 14s | 37s | 80s | Pass |
+| Packages | 6/6 | 12s | 76s | 122s | Pass |
+| `cmd/bd` | 1/8 | 16s | 486s | 536s | Pass |
+| `cmd/bd` | 2/8 | 16s | 465s | 507s | Pass |
+| `cmd/bd` | 3/8 | 15s | 474s | 518s | Pass |
+| `cmd/bd` | 4/8 | 15s | 501s | 545s | Pass |
+| `cmd/bd` | 5/8 | 16s | 488s | 531s | Pass |
+| `cmd/bd` | 6/8 | 16s | 500s | 545s | Pass |
+| `cmd/bd` | 7/8 | 18s | 548s | 597s | Pass |
+| `cmd/bd` | 8/8 | 17s | 483s | 534s | Pass |
+
+AST discovery removed the explicit list-time tax, but overall wall-clock did
+not materially improve because `go test -list` had also warmed package
+compilation. The next measurement should keep the package split and compare a
+sixteen-way `cmd/bd` split. If the sixteen-way tail remains close to ten
+minutes, the next optimization should be duration-weighted assignment or a
+prebuilt shared test binary rather than more count-based shards.
 
 ## Package Gates
 
