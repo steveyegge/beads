@@ -109,6 +109,35 @@ func TestMigrationSQLTouchesTableStatementForms(t *testing.T) {
 	}
 }
 
+func TestCheckNoDuplicateVersionsPanicsWithBothFilenames(t *testing.T) {
+	files := []migrationFile{
+		{version: 7, name: "0007_create_metadata.up.sql"},
+		{version: 12, name: "0012_create_routes.up.sql"},
+		{version: 7, name: "0007_create_duplicate.up.sql"},
+	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic on duplicate version, got none")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected string panic, got %T: %v", r, r)
+		}
+		for _, want := range []string{
+			"duplicate migration version 7",
+			"0007_create_metadata.up.sql",
+			"0007_create_duplicate.up.sql",
+			"renumber one before commit",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("panic message %q missing expected substring %q", msg, want)
+			}
+		}
+	}()
+	checkNoDuplicateVersions(files)
+}
+
 func TestDirtyTableSignatureRejectsUnsafeTableName(t *testing.T) {
 	_, err := dirtyTableSignature(context.Background(), nil, "issues'); SELECT 1; --")
 	if err == nil {
