@@ -18,6 +18,7 @@ on:
           - macos-candidates
           - linux-integration
           - linux-integration-sharded
+          - linux-integration-hybrid-sharded
           - linux-integration-coverage
           - cross-version-smoke
           - nix

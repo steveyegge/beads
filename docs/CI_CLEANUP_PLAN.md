@@ -197,6 +197,10 @@ Selectable measurement suites:
 - `linux-integration-sharded`: same Linux integration command split across six
   stable Go package shards. Each shard uploads the package list and JUnit
   output so wall-clock tails can drive the promotion shard count.
+- `linux-integration-hybrid-sharded`: the measured next iteration after
+  package sharding exposed `cmd/bd` as the tail. It keeps six package shards for
+  everything except `cmd/bd`, then runs `cmd/bd` across eight top-level test
+  name shards.
 - `linux-integration-coverage`: same integration shape with coverage generation
   and a coverage summary, but no threshold.
 - `cross-version-smoke`: one previous-release smoke sample, optionally pinned
@@ -374,6 +378,8 @@ commit `bc78a25a8c3773012c476ecd9adb275770e75f05`.
 Package sharding is useful but not enough by itself: the full wall-clock tail is
 still the `cmd/bd` shard. The next optimization should split `cmd/bd` by
 top-level test names, then keep package sharding for the remaining packages.
+The `linux-integration-hybrid-sharded` measurement suite implements that next
+shape.
 
 ## Package Gates
 

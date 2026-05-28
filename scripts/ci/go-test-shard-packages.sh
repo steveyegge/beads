@@ -5,7 +5,8 @@
 #   go-test-shard-packages.sh <shard_number> <total_shards> [go list patterns...]
 #
 # Environment:
-#   GO_TEST_SHARD_TAGS  build tags for go list, default: BEADS_BUILD_TAGS
+#   GO_TEST_SHARD_TAGS           build tags for go list, default: BEADS_BUILD_TAGS
+#   GO_TEST_SHARD_EXCLUDE_REGEX  optional regex for package paths to exclude
 
 set -euo pipefail
 
@@ -37,7 +38,18 @@ fi
 SHARD_INDEX=$((SHARD_NUMBER - 1))
 GO_TEST_SHARD_TAGS="${GO_TEST_SHARD_TAGS:-$BEADS_BUILD_TAGS}"
 
-mapfile -t ALL_PACKAGES < <(go list -tags="$GO_TEST_SHARD_TAGS" "$@" | sort -u)
+GO_TEST_SHARD_EXCLUDE_REGEX="${GO_TEST_SHARD_EXCLUDE_REGEX:-}"
+
+mapfile -t ALL_PACKAGES < <(
+    go list -tags="$GO_TEST_SHARD_TAGS" "$@" \
+        | while IFS= read -r pkg; do
+            if [[ -n "$GO_TEST_SHARD_EXCLUDE_REGEX" && "$pkg" =~ $GO_TEST_SHARD_EXCLUDE_REGEX ]]; then
+                continue
+            fi
+            printf '%s\n' "$pkg"
+        done \
+        | sort -u
+)
 
 if ((${#ALL_PACKAGES[@]} == 0)); then
     echo "No Go packages matched: $*" >&2
