@@ -350,11 +350,13 @@ For every tier, capture enough artifacts to debug failures without rerunning:
 
 1. Turn this audit into a shorter `docs/CI.md` policy once maintainers agree on
    the tier names.
-2. Add `make test-pr-core` that exactly reproduces the current Linux PR test
-   command, including `-race`, `-short`, and `-skip '^TestEmbedded'`.
-3. Add a no-CGO all-package compile/test gate or explicitly document why the
+2. Collect manual measurements from `.github/workflows/ci-measurements.yml`
+   before promoting additional suites or changing main-branch breadth.
+3. Promote the additive PR wrapper jobs after repeated measurements confirm
+   they preserve the current required PR behavior.
+4. Add a no-CGO all-package compile/test gate or explicitly document why the
    focused cmd/bd subset is enough.
-4. Add path-gated MCP, npm package, and website checks before touching the main
+5. Add path-gated MCP, npm package, and website checks before touching the main
    Go matrix.
-5. Update `docs/TESTING.md` after the wrapper commands exist so local guidance
-   points at the same contract CI runs.
+6. Keep `docs/TESTING.md` aligned with the wrapper commands as direct workflow
+   commands are replaced.

@@ -261,7 +261,7 @@ jobs:
 
       - name: Install gotestsum
         if: matrix.coverage
-        run: go install gotest.tools/gotestsum@latest
+        run: go install gotest.tools/gotestsum@v1.13.0
 
       - name: Build
         run: go build -v -tags gms_pure_go ./cmd/bd

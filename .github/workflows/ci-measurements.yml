@@ -1,0 +1,403 @@
+name: CI Measurements
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Suite to measure"
+        required: true
+        type: choice
+        default: pr-linux
+        options:
+          - pr-linux
+          - macos-short
+          - macos-candidates
+          - linux-integration
+          - linux-integration-coverage
+          - cross-version-smoke
+          - nix
+          - mcp-package
+          - npm-package
+          - website
+      smoke_version:
+        description: "Optional previous release for cross-version-smoke"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.suite }}
+  cancel-in-progress: false
+
+jobs:
+  pr-linux:
+    name: Measure PR Linux commands
+    if: ${{ inputs.suite == 'pr-linux' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          source scripts/ci/lib/timing.sh
+          source ./.buildflags
+
+          ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
+          ci_time "install golangci-lint" -- go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
+          ci_time "pr-policy wrapper" -- make ci-pr-policy
+          ci_time "pr-core gotestsum" -- gotestsum --junitfile artifacts/pr-core-junit.xml --format testdox -- -race -short -skip '^TestEmbedded' ./...
+          ci_time "pr-lint wrapper" -- make ci-pr-lint
+
+      - name: Upload measurement artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-measure-pr-linux
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  macos-short:
+    name: Measure macOS short Go tests
+    if: ${{ inputs.suite == 'macos-short' }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          source scripts/ci/lib/timing.sh
+          source ./.buildflags
+
+          ci_time "macos short go test" -- go test -v -race -short -skip '^TestEmbedded' ./...
+
+  macos-candidates:
+    name: Measure macOS no-short candidates
+    if: ${{ inputs.suite == 'macos-candidates' }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          source scripts/ci/lib/timing.sh
+
+          ci_time "macos no-short go test" -- go test -tags=gms_pure_go -v -race -timeout=30m -skip '^TestEmbedded' ./...
+          ci_time "macos integration go test" -- go test -tags=integration,gms_pure_go -v -race -timeout=30m -skip '^TestEmbedded' ./...
+
+  linux-integration:
+    name: Measure Linux integration tests
+    if: ${{ inputs.suite == 'linux-integration' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          source scripts/ci/lib/timing.sh
+
+          ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
+          ci_time "linux integration go test" -- env BEADS_TEST_SKIP=dolt gotestsum --junitfile artifacts/linux-integration-junit.xml --format testdox -- -v -race -tags=integration,gms_pure_go -timeout=30m ./...
+
+      - name: Upload measurement artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-measure-linux-integration
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  linux-integration-coverage:
+    name: Measure Linux integration coverage
+    if: ${{ inputs.suite == 'linux-integration-coverage' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install Dolt
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Configure Git and Dolt identity
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+          dolt config --global --add user.name "CI Bot"
+          dolt config --global --add user.email "ci@beads.test"
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          source scripts/ci/lib/timing.sh
+
+          ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
+          ci_time "linux integration coverage go test" -- env BEADS_TEST_SKIP=dolt gotestsum --junitfile artifacts/linux-integration-coverage-junit.xml --format testdox -- -v -race -tags=integration,gms_pure_go -coverprofile=artifacts/coverage.out -timeout=30m ./...
+          ci_time "coverage summary" -- go tool cover -func=artifacts/coverage.out
+
+      - name: Upload measurement artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-measure-linux-integration-coverage
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  cross-version-smoke:
+    name: Measure cross-version smoke
+    if: ${{ inputs.suite == 'cross-version-smoke' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+
+      - name: Cache previous release binaries
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.cache/beads-regression
+          key: smoke-binaries-measure-${{ runner.os }}
+
+      - name: Measure commands
+        env:
+          SMOKE_VERSION: ${{ inputs.smoke_version }}
+        run: |
+          set -euo pipefail
+          source scripts/ci/lib/timing.sh
+          source ./.buildflags
+
+          ci_time "build candidate binary" -- go build -o /tmp/bd-candidate ./cmd/bd
+          export CANDIDATE_BIN=/tmp/bd-candidate
+          if [[ -n "$SMOKE_VERSION" ]]; then
+            ci_time "upgrade smoke ${SMOKE_VERSION}" -- ./scripts/upgrade-smoke-test.sh "$SMOKE_VERSION"
+          else
+            ci_time "upgrade smoke previous release" -- ./scripts/upgrade-smoke-test.sh
+          fi
+
+  nix:
+    name: Measure nix build
+    if: ${{ inputs.suite == 'nix' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@f4c468f2287f0f14a113841b41f2dc8957119519 # v3
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          source scripts/ci/lib/timing.sh
+
+          ci_time "nix build .#default" -- nix build .#default --print-build-logs
+
+  mcp-package:
+    name: Measure MCP package checks
+    if: ${{ inputs.suite == 'mcp-package' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts /tmp/beads-measure-bin
+          source scripts/ci/lib/timing.sh
+          source ./.buildflags
+
+          ci_time "install uv" -- pip install uv==0.11.16
+          ci_time "build bd for MCP package" -- go build -o /tmp/beads-measure-bin/bd ./cmd/bd
+          export PATH="/tmp/beads-measure-bin:$PATH"
+          cd integrations/beads-mcp
+          ci_time "mcp uv sync" -- uv sync --all-groups
+          ci_time "mcp ruff check" -- uv run ruff check src/beads_mcp tests
+          ci_time "mcp mypy" -- uv run mypy src/beads_mcp
+          ci_time "mcp pytest" -- uv run pytest --durations=50
+          rm -rf dist
+          ci_time "mcp build" -- uv build
+
+      - name: Upload measurement artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-measure-mcp-package
+          path: integrations/beads-mcp/dist/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  npm-package:
+    name: Measure npm package checks
+    if: ${{ inputs.suite == 'npm-package' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24'
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          source scripts/ci/lib/timing.sh
+          source ./.buildflags
+          trap 'rm -f npm-package/bin/bd' EXIT
+
+          ci_time "build bd for npm package" -- go build -o npm-package/bin/bd ./cmd/bd
+          cd npm-package
+          ci_time "npm package install" -- npm install
+          ci_time "npm package test:all" -- npm run test:all
+          ci_time "npm package pack dry-run" -- bash -c 'npm pack --dry-run | tee ../artifacts/npm-pack-dry-run.txt'
+
+      - name: Upload measurement artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-measure-npm-package
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  website:
+    name: Measure website checks
+    if: ${{ inputs.suite == 'website' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: website/package-lock.json
+
+      - name: Measure commands
+        run: |
+          set -euo pipefail
+          source scripts/ci/lib/timing.sh
+
+          ci_time "website npm ci" -- npm --prefix website ci
+          ci_time "website typecheck" -- npm --prefix website run typecheck
+          ci_time "generate llms-full" -- ./scripts/generate-llms-full.sh
+          ci_time "website build" -- npm --prefix website run build
+
+      - name: Upload measurement artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-measure-website
+          path: website/build/
+          retention-days: 7
+          if-no-files-found: ignore

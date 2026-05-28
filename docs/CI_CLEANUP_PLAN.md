@@ -160,6 +160,11 @@ be fixed forward or reverted promptly.
 
 Add a manual-dispatch workflow before changing tier breadth.
 
+Initial implementation lives in `.github/workflows/ci-measurements.yml` on
+branch `ci/bd-am3.1-wrapper-commands`. It runs only from `workflow_dispatch` and
+measures one selected suite per dispatch so maintainers can control macOS,
+package, and integration cost.
+
 Measurement requirements:
 
 - One sample per suite is enough initially.
@@ -173,6 +178,22 @@ Measurement requirements:
   touching nearby workflow code.
 - Use `gotestsum` for Linux Go measurement outputs. Install it one-off in the
   workflow rather than making wrappers depend on it.
+
+Selectable measurement suites:
+
+- `pr-linux`: PR policy, core, and lint command timings on Linux with JUnit for
+  the core Go test command.
+- `macos-short`: current macOS short Go test shape.
+- `macos-candidates`: macOS no-short and integration-tag candidates.
+- `linux-integration`: current nightly-style integration run with
+  `BEADS_TEST_SKIP=dolt`.
+- `linux-integration-coverage`: same integration shape with coverage generation
+  and a coverage summary, but no threshold.
+- `cross-version-smoke`: one previous-release smoke sample, optionally pinned
+  by workflow input.
+- `nix`: full `nix build .#default`.
+- `mcp-package`, `npm-package`, and `website`: package and documentation probes
+  for measurement. These are not promoted gates yet.
 
 Measure at least:
 
@@ -308,6 +329,9 @@ checks pass.
    Additive PR timing jobs exist on branch `ci/bd-am3.1-wrapper-commands`; the
    existing direct jobs remain in place until the wrapper jobs are promoted.
 3. Add the manual measurement workflow and pinned `gotestsum`.
+   Initial workflow exists on branch `ci/bd-am3.1-wrapper-commands`; the legacy
+   Linux coverage install has been pinned from `gotestsum@latest` to
+   `gotestsum@v1.13.0`.
 4. Add package wrappers and risk/measurement usage for MCP, npm, and website.
 5. Perform the mandatory `testing.Short()` audit and cleanup.
 6. Promote measured suites to `main` or scheduled jobs based on wall-clock data.
