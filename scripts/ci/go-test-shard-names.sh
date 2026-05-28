@@ -36,8 +36,7 @@ GO_TEST_SHARD_TAGS="${GO_TEST_SHARD_TAGS:-$BEADS_BUILD_TAGS}"
 GO_TEST_SHARD_EXCLUDE_TEST_REGEX="${GO_TEST_SHARD_EXCLUDE_TEST_REGEX:-}"
 
 mapfile -t ALL_TESTS < <(
-    go test -tags="$GO_TEST_SHARD_TAGS" -list '^Test' "$PACKAGE" \
-        | sed -n 's/^\(Test[A-Za-z0-9_]*\)$/\1/p' \
+    GO_TEST_SHARD_TAGS="$GO_TEST_SHARD_TAGS" go run -tags=ci_tools ./scripts/ci/go-list-test-names "$PACKAGE" \
         | while IFS= read -r test_name; do
             if [[ -n "$GO_TEST_SHARD_EXCLUDE_TEST_REGEX" && "$test_name" =~ $GO_TEST_SHARD_EXCLUDE_TEST_REGEX ]]; then
                 continue
