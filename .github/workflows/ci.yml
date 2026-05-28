@@ -291,6 +291,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: build-artifacts
     strategy:
       fail-fast: false
       matrix:
@@ -329,11 +330,29 @@ jobs:
         if: matrix.coverage
         run: go install gotest.tools/gotestsum@v1.13.0
 
+      - name: Download build artifacts
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-build-artifacts
+          path: ci-build-artifacts
+
+      - name: Verify build artifacts
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euo pipefail
+          cd ci-build-artifacts
+          sha256sum -c SHA256SUMS
+          chmod +x bd-linux-gms-pure
+
       - name: Build
+        if: matrix.os != 'ubuntu-latest'
         run: go build -v -tags gms_pure_go ./cmd/bd
 
       - name: Test (with coverage + JUnit XML)
         if: matrix.coverage
+        env:
+          BEADS_TEST_BD_BINARY: ${{ github.workspace }}/ci-build-artifacts/bd-linux-gms-pure
         run: |
           gotestsum \
             --junitfile junit.xml \

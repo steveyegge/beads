@@ -120,8 +120,9 @@ Initial implementation on branch `ci/bd-am3.1-wrapper-commands` adds the
 `Build Artifacts` CI job. It runs `make ci-pr-policy`, `make ci-pr-lint`, builds
 `bd-linux-gms-pure`, writes `SHA256SUMS` and `build-manifest.txt`, then uploads
 the run-scoped `ci-build-artifacts` artifact. The first consumers are
-`PR Core (wrapper timing)` and `Test (storage domain + uow)`, both of which
-verify `SHA256SUMS` and pass the binary through `BEADS_TEST_BD_BINARY`.
+`PR Core (wrapper timing)`, `Test (ubuntu-latest)`, and
+`Test (storage domain + uow)`, all of which verify `SHA256SUMS`; the Linux test
+consumers pass the binary through `BEADS_TEST_BD_BINARY` for subprocess tests.
 
 ### `pr-core`
 
@@ -688,7 +689,8 @@ checks pass.
 3. Introduce the Linux `build` stage and route PR/merge queue consumers through
    its reusable `bd` artifact. Keep behavior equivalent while measuring the
    artifact handoff overhead. Initial job and first consumers exist on branch
-   `ci/bd-am3.1-wrapper-commands`.
+   `ci/bd-am3.1-wrapper-commands`; current consumers are PR Core, Linux short
+   coverage tests, and storage domain+uow.
 4. Add the manual measurement workflow and pinned `gotestsum`.
    Initial workflow exists on branch `ci/bd-am3.1-wrapper-commands`; the legacy
    Linux coverage install has been pinned from `gotestsum@latest` to
