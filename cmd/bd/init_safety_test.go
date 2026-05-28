@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/config"
 )
 
 func TestCheckRemoteSafety_GuardMatrix(t *testing.T) {
@@ -293,6 +295,44 @@ func TestLocalOnlyInitSkipsConfigureButPersistsExplicitRemote(t *testing.T) {
 	if !strings.Contains(string(data), `sync.remote: "git+ssh://git@example.com/org/project.git"`) &&
 		!strings.Contains(string(data), "sync.remote: git+ssh://git@example.com/org/project.git") {
 		t.Fatalf("sync.remote was not persisted under local-only config:\n%s", data)
+	}
+}
+
+// TestIsDoltLocalOnly covers the config-reading helper that
+// TestLocalOnlyInitSkipsConfigureButPersistsExplicitRemote bypasses by
+// passing localOnly directly. dolt.local-only maps to BD_DOLT_LOCAL_ONLY
+// through the config env-key replacer (".","-" → "_").
+func TestIsDoltLocalOnly(t *testing.T) {
+	// Cannot be parallel: mutates the global env + config singleton.
+	tests := []struct {
+		name   string
+		envVal string
+		setEnv bool
+		want   bool
+	}{
+		{name: "default off when unset", setEnv: false, want: false},
+		{name: "explicit true", envVal: "true", setEnv: true, want: true},
+		{name: "explicit false", envVal: "false", setEnv: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setEnv {
+				t.Setenv("BD_DOLT_LOCAL_ONLY", tt.envVal)
+			} else {
+				os.Unsetenv("BD_DOLT_LOCAL_ONLY")
+				t.Cleanup(func() { os.Unsetenv("BD_DOLT_LOCAL_ONLY") })
+			}
+
+			config.ResetForTesting()
+			t.Cleanup(func() { config.ResetForTesting() })
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize: %v", err)
+			}
+
+			if got := isDoltLocalOnly(); got != tt.want {
+				t.Errorf("isDoltLocalOnly() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
