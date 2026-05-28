@@ -204,6 +204,9 @@ Selectable measurement suites:
 - `linux-integration-hybrid-16-sharded`: follow-up measurement for the same
   hybrid shape, but with `cmd/bd` split across sixteen top-level test name
   shards.
+- `linux-integration-hybrid-prebuilt-sharded`: follow-up measurement that
+  prebuilds one `bd` subprocess binary, then runs the hybrid shape with six
+  package shards and eight `cmd/bd` test-name shards.
 - `linux-integration-coverage`: same integration shape with coverage generation
   and a coverage summary, but no threshold.
 - `cross-version-smoke`: one previous-release smoke sample, optionally pinned
@@ -437,6 +440,46 @@ compilation. The next measurement should keep the package split and compare a
 sixteen-way `cmd/bd` split. If the sixteen-way tail remains close to ten
 minutes, the next optimization should be duration-weighted assignment or a
 prebuilt shared test binary rather than more count-based shards.
+
+Sixteen-way hybrid run: 26598339170, commit
+`784e8a8d52eabd95d2816c46d41d11ca8e18ecf9`.
+
+| Shard group | Shard | List time | Go test time | Job wall clock | Result |
+|---|---:|---:|---:|---:|---|
+| Packages | 1/6 | 13s | 41s | 86s | Pass |
+| Packages | 2/6 | 13s | 175s | 221s | Pass |
+| Packages | 3/6 | 11s | 183s | 221s | Pass |
+| Packages | 4/6 | 11s | 168s | 207s | Pass |
+| Packages | 5/6 | 15s | 38s | 81s | Pass |
+| Packages | 6/6 | 12s | 64s | 108s | Pass |
+| `cmd/bd` | 1/16 | 18s | 334s | 383s | Pass |
+| `cmd/bd` | 2/16 | 14s | 473s | 517s | Pass |
+| `cmd/bd` | 3/16 | 17s | 480s | 530s | Pass |
+| `cmd/bd` | 4/16 | 14s | 503s | 546s | Pass |
+| `cmd/bd` | 5/16 | 15s | 508s | 553s | Pass |
+| `cmd/bd` | 6/16 | 15s | 480s | 524s | Pass |
+| `cmd/bd` | 7/16 | 15s | 485s | 533s | Pass |
+| `cmd/bd` | 8/16 | 18s | 476s | 522s | Pass |
+| `cmd/bd` | 9/16 | 17s | 467s | 517s | Pass |
+| `cmd/bd` | 10/16 | 17s | 380s | 428s | Pass |
+| `cmd/bd` | 11/16 | 14s | 482s | 529s | Pass |
+| `cmd/bd` | 12/16 | 18s | 497s | 547s | Pass |
+| `cmd/bd` | 13/16 | 19s | 472s | 521s | Pass |
+| `cmd/bd` | 14/16 | 16s | 481s | 528s | Pass |
+| `cmd/bd` | 15/16 | 16s | 479s | 530s | Pass |
+| `cmd/bd` | 16/16 | 19s | 474s | 523s | Pass |
+
+The sixteen-way split reduced the runner-time `cmd/bd` tail only from 597s to
+553s, while the overall workflow took about 14m22s because the wider matrix
+queued. This is not enough improvement to justify more count-based sharding for
+`main`.
+
+JUnit artifacts showed the cause: many binary-subprocess tests were spending
+about 140-144s in the first test that called a `go build` helper for that
+shard. The subprocess test helpers now honor `BEADS_TEST_BD_BINARY` before
+falling back to per-process builds. The next measurement is
+`linux-integration-hybrid-prebuilt-sharded`, which prebuilds one `bd` binary
+and reuses it across eight `cmd/bd` shards.
 
 ## Package Gates
 

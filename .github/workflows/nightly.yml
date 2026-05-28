@@ -20,6 +20,7 @@ on:
           - linux-integration-sharded
           - linux-integration-hybrid-sharded
           - linux-integration-hybrid-16-sharded
+          - linux-integration-hybrid-prebuilt-sharded
           - linux-integration-coverage
           - cross-version-smoke
           - nix
