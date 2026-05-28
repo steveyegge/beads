@@ -215,13 +215,16 @@ func TestGenerateHookSection_Timeout(t *testing.T) {
 	if !strings.Contains(section, "perl -e 'alarm shift; exec @ARGV'") {
 		t.Error("section missing perl alarm fallback for stock macOS")
 	}
+	if !strings.Contains(section, "_bd_used_perl=1") {
+		t.Error("section missing perl branch marker")
+	}
 
 	// Timeout exit code (124) must be handled gracefully — continue, don't block git
 	if !strings.Contains(section, "_bd_exit -eq 124") {
 		t.Error("section missing timeout exit code handling")
 	}
-	if !strings.Contains(section, "_bd_exit -eq 142") {
-		t.Error("section missing SIGALRM timeout exit code handling")
+	if !strings.Contains(section, "[ $_bd_used_perl -eq 1 ] && [ $_bd_exit -eq 142 ]") {
+		t.Error("section missing perl-scoped SIGALRM timeout exit code handling")
 	}
 	if !strings.Contains(section, "timed out") {
 		t.Error("section missing timeout warning message")

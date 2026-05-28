@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.codex-plugin/hooks/`, preventing Claude from loading Codex-only hooks from
   the shared plugin root while keeping Codex setup pointed at `bd codex-hook`.
   ([#3924](https://github.com/gastownhall/beads/issues/3924))
+- **Hook and prime wait bounds** - generated git hooks now fall back from
+  `timeout` to `gtimeout` to Perl `alarm`, and `bd prime` memory loading is
+  bounded by `BEADS_PRIME_TIMEOUT` (default 10s). Non-positive
+  `BEADS_PRIME_TIMEOUT` values fall back to the default instead of silently
+  disabling the safety bound. Internal beads-repo git operations also run with
+  hooks suppressed via `core.hooksPath=` so automated `.beads/` commits and
+  pushes cannot recurse through user hook managers. `GitCmdCWD()` remains for
+  user-working-repo status/ref operations and does not perform beads commits.
+  ([#4172](https://github.com/gastownhall/beads/pull/4172))
 - **JSONL auto-export shrink guard** - when opt-in `export.auto` is enabled,
   auto-export now refuses to overwrite an existing `.beads/issues.jsonl` that
   contains records outside the auto-export scope (memories, infrastructure

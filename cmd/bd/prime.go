@@ -43,10 +43,16 @@ func primeStoreTimeout() time.Duration {
 		return primeStoreTimeoutDefault
 	}
 	if d, err := time.ParseDuration(raw); err == nil {
-		return d
+		if d > 0 {
+			return d
+		}
+		return primeStoreTimeoutDefault
 	}
 	if d, err := time.ParseDuration(raw + "s"); err == nil {
-		return d
+		if d > 0 {
+			return d
+		}
+		return primeStoreTimeoutDefault
 	}
 	return primeStoreTimeoutDefault
 }

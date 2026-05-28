@@ -232,6 +232,17 @@ func TestFormatMemoriesForPrimeTimesOutOpeningStore(t *testing.T) {
 	}
 }
 
+func TestPrimeStoreTimeoutNonPositiveUsesDefault(t *testing.T) {
+	for _, value := range []string{"0", "0s", "-5s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv(primeStoreTimeoutEnv, value)
+			if got := primeStoreTimeout(); got != primeStoreTimeoutDefault {
+				t.Fatalf("primeStoreTimeout() = %s, want default %s", got, primeStoreTimeoutDefault)
+			}
+		})
+	}
+}
+
 func TestPrimeContextUsesWorkspaceLanguage(t *testing.T) {
 	defer stubIsEphemeralBranch(false)()
 	defer stubPrimeHasGitRemote(true)()

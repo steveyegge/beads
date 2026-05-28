@@ -67,6 +67,7 @@ func generateHookSection(hookName string) string {
 		"if command -v bd >/dev/null 2>&1; then\n" +
 		"  export BD_GIT_HOOK=1\n" +
 		"  _bd_timeout=${BEADS_HOOK_TIMEOUT:-" + fmt.Sprintf("%d", hookTimeoutSeconds) + "}\n" +
+		"  _bd_used_perl=0\n" +
 		"  if command -v timeout >/dev/null 2>&1; then\n" +
 		"    timeout \"$_bd_timeout\" bd hooks run " + hookName + " \"$@\"\n" +
 		"    _bd_exit=$?\n" +
@@ -74,6 +75,7 @@ func generateHookSection(hookName string) string {
 		"    gtimeout \"$_bd_timeout\" bd hooks run " + hookName + " \"$@\"\n" +
 		"    _bd_exit=$?\n" +
 		"  elif command -v perl >/dev/null 2>&1; then\n" +
+		"    _bd_used_perl=1\n" +
 		"    perl -e 'alarm shift; exec @ARGV' \"$_bd_timeout\" bd hooks run " + hookName + " \"$@\"\n" +
 		"    _bd_exit=$?\n" +
 		"  else\n" +
@@ -81,7 +83,7 @@ func generateHookSection(hookName string) string {
 		"    bd hooks run " + hookName + " \"$@\"\n" +
 		"    _bd_exit=$?\n" +
 		"  fi\n" +
-		"  if [ $_bd_exit -eq 124 ] || [ $_bd_exit -eq 142 ]; then\n" +
+		"  if [ $_bd_exit -eq 124 ] || { [ $_bd_used_perl -eq 1 ] && [ $_bd_exit -eq 142 ]; }; then\n" +
 		"    echo >&2 \"beads: hook '" + hookName + "' timed out after ${_bd_timeout}s — continuing without beads\"\n" +
 		"    _bd_exit=0\n" +
 		"  fi\n" +
