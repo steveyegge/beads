@@ -305,9 +305,12 @@ jobs:
           ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
 
           package_manifest="artifacts/linux-integration-hybrid-packages-${SHARD}-of-${TOTAL_SHARDS}.txt"
-          ci_time "list integration package shard ${SHARD}/${TOTAL_SHARDS}" -- \
-            bash -c 'GO_TEST_SHARD_TAGS=integration,gms_pure_go GO_TEST_SHARD_EXCLUDE_REGEX="^github.com/steveyegge/beads/cmd/bd$" scripts/ci/go-test-shard-packages.sh "$1" "$2" > "$3"' \
-              bash "$SHARD" "$TOTAL_SHARDS" "$package_manifest"
+          write_package_manifest() {
+            GO_TEST_SHARD_TAGS=integration,gms_pure_go \
+              GO_TEST_SHARD_EXCLUDE_REGEX="^github.com/steveyegge/beads/cmd/bd$" \
+              scripts/ci/go-test-shard-packages.sh "$SHARD" "$TOTAL_SHARDS" > "$package_manifest"
+          }
+          ci_time "list integration package shard ${SHARD}/${TOTAL_SHARDS}" -- write_package_manifest
           cat "$package_manifest"
           mapfile -t packages < "$package_manifest"
 
@@ -370,9 +373,11 @@ jobs:
           ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
 
           test_manifest="artifacts/linux-integration-cmd-bd-tests-${SHARD}-of-${TOTAL_SHARDS}.txt"
-          ci_time "list cmd/bd test shard ${SHARD}/${TOTAL_SHARDS}" -- \
-            bash -c 'GO_TEST_SHARD_TAGS=integration,gms_pure_go scripts/ci/go-test-shard-names.sh "$1" "$2" ./cmd/bd > "$3"' \
-              bash "$SHARD" "$TOTAL_SHARDS" "$test_manifest"
+          write_test_manifest() {
+            GO_TEST_SHARD_TAGS=integration,gms_pure_go \
+              scripts/ci/go-test-shard-names.sh "$SHARD" "$TOTAL_SHARDS" ./cmd/bd > "$test_manifest"
+          }
+          ci_time "list cmd/bd test shard ${SHARD}/${TOTAL_SHARDS}" -- write_test_manifest
           cat "$test_manifest"
           mapfile -t tests < "$test_manifest"
 
@@ -436,9 +441,11 @@ jobs:
           ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
 
           test_manifest="artifacts/linux-integration-cmd-bd-tests-${SHARD}-of-${TOTAL_SHARDS}.txt"
-          ci_time "list cmd/bd test shard ${SHARD}/${TOTAL_SHARDS}" -- \
-            bash -c 'GO_TEST_SHARD_TAGS=integration,gms_pure_go scripts/ci/go-test-shard-names.sh "$1" "$2" ./cmd/bd > "$3"' \
-              bash "$SHARD" "$TOTAL_SHARDS" "$test_manifest"
+          write_test_manifest() {
+            GO_TEST_SHARD_TAGS=integration,gms_pure_go \
+              scripts/ci/go-test-shard-names.sh "$SHARD" "$TOTAL_SHARDS" ./cmd/bd > "$test_manifest"
+          }
+          ci_time "list cmd/bd test shard ${SHARD}/${TOTAL_SHARDS}" -- write_test_manifest
           cat "$test_manifest"
           mapfile -t tests < "$test_manifest"
 
@@ -541,9 +548,11 @@ jobs:
           ci_time "install gotestsum" -- go install gotest.tools/gotestsum@v1.13.0
 
           test_manifest="artifacts/linux-integration-cmd-bd-tests-${SHARD}-of-${TOTAL_SHARDS}.txt"
-          ci_time "list cmd/bd test shard ${SHARD}/${TOTAL_SHARDS}" -- \
-            bash -c 'GO_TEST_SHARD_TAGS=integration,gms_pure_go scripts/ci/go-test-shard-names.sh "$1" "$2" ./cmd/bd > "$3"' \
-              bash "$SHARD" "$TOTAL_SHARDS" "$test_manifest"
+          write_test_manifest() {
+            GO_TEST_SHARD_TAGS=integration,gms_pure_go \
+              scripts/ci/go-test-shard-names.sh "$SHARD" "$TOTAL_SHARDS" ./cmd/bd > "$test_manifest"
+          }
+          ci_time "list cmd/bd test shard ${SHARD}/${TOTAL_SHARDS}" -- write_test_manifest
           cat "$test_manifest"
           mapfile -t tests < "$test_manifest"
 
