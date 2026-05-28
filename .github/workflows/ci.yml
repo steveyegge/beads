@@ -290,6 +290,7 @@ jobs:
   # Cross-platform test matrix (Linux/macOS only - Windows uses smoke tests)
   test:
     name: Test (${{ matrix.os }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     needs: build-artifacts
     strategy:
@@ -763,6 +764,7 @@ jobs:
   # CGO is still required for gozstd (bundled C source) and the embedded dolt engine.
   test-windows:
     name: Test (Windows - smoke)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6

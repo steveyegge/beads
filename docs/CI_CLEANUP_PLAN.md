@@ -123,6 +123,9 @@ the run-scoped `ci-build-artifacts` artifact. The first consumers are
 `PR Core (wrapper timing)`, `Test (ubuntu-latest)`, and
 `Test (storage domain + uow)`, all of which verify `SHA256SUMS`; the Linux test
 consumers pass the binary through `BEADS_TEST_BD_BINARY` for subprocess tests.
+The legacy cross-platform `Test` matrix and Windows smoke job are gated to
+push-to-main only, so PR and merge queue events do not run macOS, Windows, or
+coverage collection.
 
 ### `pr-core`
 
