@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,26 @@ def bd_executable():
     return bd_path
 
 
+@pytest.fixture(scope="session")
+def bd_init_isolation_flags_supported(bd_executable):
+    """Skip integration tests when bd lacks the init flags these tests require."""
+    result = subprocess.run(
+        [bd_executable, "init", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    help_text = f"{result.stdout}\n{result.stderr}"
+    required_flags = ("--non-interactive", "--skip-agents", "--skip-hooks")
+    missing_flags = [flag for flag in required_flags if flag not in help_text]
+    if missing_flags:
+        pytest.skip(
+            "bd init does not support required test isolation flags: "
+            + ", ".join(missing_flags)
+            + ". Install a current bd from this repository before running integration tests."
+        )
+
+
 @pytest.fixture
 def temp_workspace(tmp_path: Path) -> Path:
     """Create a per-test workspace isolated with its own BEADS_DIR."""
@@ -41,9 +62,10 @@ def temp_workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def bd_client(bd_executable, temp_workspace):
+async def bd_client(bd_executable, temp_workspace, monkeypatch, bd_init_isolation_flags_supported):
     """Create BdClient with a temporary Dolt workspace - fully hermetic."""
     beads_dir = temp_workspace / ".beads"
+    monkeypatch.delenv("BEADS_DB", raising=False)
     client = BdClient(bd_path=bd_executable, beads_dir=str(beads_dir), working_dir=str(temp_workspace))
 
     env = os.environ.copy()
@@ -410,7 +432,9 @@ async def test_dependency_types(bd_client):
 
 
 @pytest.mark.asyncio
-async def test_init_creates_beads_directory(bd_executable, tmp_path, monkeypatch):
+async def test_init_creates_beads_directory(
+    bd_executable, tmp_path, monkeypatch, bd_init_isolation_flags_supported
+):
     """Test that init creates .beads directory in current working directory.
 
     This is a critical test for the bug where init was using --db flag
@@ -430,8 +454,12 @@ async def test_init_creates_beads_directory(bd_executable, tmp_path, monkeypatch
     assert not beads_dir.exists()
 
     # Create client WITHOUT beads_db set and WITH working_dir set to temp_dir
-    client = BdClient(bd_path=bd_executable, beads_db=None, working_dir=str(temp_path))
-    monkeypatch.setenv("BEADS_DIR", str(beads_dir))
+    client = BdClient(
+        bd_path=bd_executable,
+        beads_dir=str(beads_dir),
+        beads_db=None,
+        working_dir=str(temp_path),
+    )
 
     # Initialize with custom prefix (no need to chdir!)
     params = InitParams(prefix="test")

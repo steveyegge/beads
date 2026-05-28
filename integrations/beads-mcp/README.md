@@ -255,6 +255,11 @@ uv run pytest
 uv run python -m build
 ```
 
+Integration tests require a current `bd` binary from this repository. In
+particular, `bd init --help` must include `--non-interactive`, `--skip-agents`,
+and `--skip-hooks`; older installed versions are skipped with a clear pytest
+message.
+
 Run MCP inspector:
 ```bash
 # inside beads-mcp dir

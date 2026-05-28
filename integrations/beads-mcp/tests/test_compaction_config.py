@@ -56,32 +56,6 @@ print(f"preview={server.PREVIEW_COUNT}")
         assert "threshold=20" in result.stdout
         assert "preview=5" in result.stdout
 
-    def test_custom_compaction_threshold_via_env(self):
-        """Test custom COMPACTION_THRESHOLD via environment variable."""
-        env = _python_env()
-        env["BEADS_MCP_COMPACTION_THRESHOLD"] = "50"
-        env["BEADS_MCP_PREVIEW_COUNT"] = "10"
-
-        code = """
-import os
-os.environ['BEADS_MCP_COMPACTION_THRESHOLD'] = '50'
-os.environ['BEADS_MCP_PREVIEW_COUNT'] = '10'
-
-from beads_mcp import server
-print(f"threshold={server.COMPACTION_THRESHOLD}")
-print(f"preview={server.PREVIEW_COUNT}")
-"""
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            env=env,
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_ROOT,
-        )
-
-        assert "threshold=50" in result.stdout or "threshold=20" in result.stdout  # May be cached
-        # Due to module caching, we test the function directly instead
-
     def test_get_compaction_settings_with_defaults(self):
         """Test _get_compaction_settings() returns defaults when no env vars set."""
         # Save original env vars
