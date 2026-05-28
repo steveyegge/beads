@@ -6,10 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
@@ -756,11 +759,12 @@ func TestFetchIssuesWithoutPullJQLOmitsExtraFilter(t *testing.T) {
 }
 
 func TestInitLoadsCustomStatusMapFromAllConfig(t *testing.T) {
+	// jira.api_token is yaml-only (secret), so set it via env var.
+	t.Setenv("JIRA_API_TOKEN", "token123")
 	store := &configStore{
 		data: map[string]string{
 			"jira.url":                    "https://example.atlassian.net",
 			"jira.project":                "PROJ",
-			"jira.api_token":              "token123",
 			"jira.status_map.open":        "Backlog",
 			"jira.status_map.in_progress": "Active Sprint",
 			"jira.status_map.review":      "Code Review", // custom non-standard beads status
@@ -793,11 +797,12 @@ func TestInitLoadsCustomStatusMapFromAllConfig(t *testing.T) {
 }
 
 func TestInitLoadsCustomTypeMapFromAllConfig(t *testing.T) {
+	// jira.api_token is yaml-only (secret), so set it via env var.
+	t.Setenv("JIRA_API_TOKEN", "token123")
 	store := &configStore{
 		data: map[string]string{
 			"jira.url":              "https://example.atlassian.net",
 			"jira.project":          "PROJ",
-			"jira.api_token":        "token123",
 			"jira.type_map.story":   "User Story",
 			"jira.type_map.feature": "Feature",
 		},
@@ -842,11 +847,12 @@ func TestInitLoadsCustomTypeMapFromAllConfig(t *testing.T) {
 }
 
 func TestInitLoadsCustomPriorityMapFromAllConfig(t *testing.T) {
+	// jira.api_token is yaml-only (secret), so set it via env var.
+	t.Setenv("JIRA_API_TOKEN", "token123")
 	store := &configStore{
 		data: map[string]string{
 			"jira.url":            "https://example.atlassian.net",
 			"jira.project":        "PROJ",
-			"jira.api_token":      "token123",
 			"jira.priority_map.0": "Critical",
 			"jira.priority_map.2": "Normal",
 		},
@@ -942,5 +948,78 @@ func TestPriorityMapCaseInsensitiveMatch(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("PriorityToBeads(%q) = %d, want %d", tt.name, got, tt.want)
 		}
+	}
+}
+
+// TestGetConfig_YamlOnlyKeyBypassesStore verifies that yaml-only keys
+// (e.g. jira.api_token) bypass the Dolt store entirely. A nil store proves
+// the store is never dereferenced; before the fix this would panic.
+func TestGetConfig_YamlOnlyKeyBypassesStore(t *testing.T) {
+	ctx := context.Background()
+	tr := &Tracker{store: nil}
+
+	t.Run("falls back to env var", func(t *testing.T) {
+		t.Setenv("JIRA_API_TOKEN", "env-token-value")
+		got, err := tr.getConfig(ctx, "jira.api_token", "JIRA_API_TOKEN")
+		if err != nil {
+			t.Fatalf("getConfig returned error: %v", err)
+		}
+		if got != "env-token-value" {
+			t.Errorf("getConfig(jira.api_token) = %q, want %q", got, "env-token-value")
+		}
+	})
+
+	t.Run("returns empty when no value is set", func(t *testing.T) {
+		t.Setenv("JIRA_API_TOKEN", "")
+		got, err := tr.getConfig(ctx, "jira.api_token", "JIRA_API_TOKEN")
+		if err != nil {
+			t.Fatalf("getConfig returned error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("getConfig(jira.api_token) = %q, want empty", got)
+		}
+	})
+}
+
+// TestGetConfig_YamlOnlyKeyReadsFromYaml verifies that jira.api_token is
+// read from .beads/config.yaml when set there, without depending on the
+// JIRA_API_TOKEN env var.
+func TestGetConfig_YamlOnlyKeyReadsFromYaml(t *testing.T) {
+	const wantToken = "yaml-config-token-value"
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	yamlBody := "jira.api_token: \"" + wantToken + "\"\n"
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(yamlBody), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	t.Setenv("JIRA_API_TOKEN", "")
+	t.Setenv("BEADS_DIR", "")
+	t.Setenv("BEADS_TEST_IGNORE_REPO_CONFIG", "1")
+	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Chdir(tmpDir)
+
+	config.ResetForTesting()
+	t.Cleanup(config.ResetForTesting)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+
+	if got := config.GetString("jira.api_token"); got != wantToken {
+		t.Fatalf("config.GetString(jira.api_token) = %q, want %q (yaml not loaded?)", got, wantToken)
+	}
+
+	tr := &Tracker{store: nil}
+	got, err := tr.getConfig(context.Background(), "jira.api_token", "JIRA_API_TOKEN")
+	if err != nil {
+		t.Fatalf("getConfig returned error: %v", err)
+	}
+	if got != wantToken {
+		t.Errorf("getConfig(jira.api_token) = %q, want %q (yaml value)", got, wantToken)
 	}
 }
