@@ -6,7 +6,7 @@ import "fmt"
 // This content is written to all file-based recipes.
 const Template = `# Beads Issue Tracking
 
-This project uses [Beads (bd)](https://github.com/steveyegge/beads) for issue tracking.
+This project uses [Beads (bd)](https://github.com/gastownhall/beads) for issue tracking.
 
 ## Core Rules
 

@@ -243,6 +243,12 @@ var isEphemeralBranch = func() bool {
 	return cmd.Run() != nil
 }
 
+// primeNoPushConfigured reports whether the "no-push" config flag is set
+// (stubbable for tests).
+var primeNoPushConfigured = func() bool {
+	return config.GetBool("no-push")
+}
+
 // primeHasGitRemote detects if any git remote is configured (stubbable for tests)
 var primeHasGitRemote = func() bool {
 	rc, err := internalbeads.GetRepoContext()
@@ -404,7 +410,7 @@ func maybePullStaleLinearData(beadsDir string) {
 // outputMCPContext outputs minimal context for MCP users
 func outputMCPContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
-	noPush := config.GetBool("no-push")
+	noPush := primeNoPushConfigured()
 	localOnly := !primeHasGitRemote()
 
 	var closeProtocol string
@@ -420,8 +426,8 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 		closeProtocol = "Before saying \"done\": bd close <completed-ids>; run checks; report git status and proposed handoff (push disabled)"
 		profileRule = "Profile model: conservative by default; push only with explicit user/orchestrator authority"
 	} else {
-		closeProtocol = "Before saying \"done\": bd close <completed-ids>; run checks; follow active profile: conservative reports handoff, team-maintainer may commit/sync/push when explicitly enabled"
-		profileRule = "Profile model: conservative/minimal do not commit or push without approval; team-maintainer is opt-in and still subordinate to user/orchestrator instructions"
+		closeProtocol = "Before saying \"done\": bd close <completed-ids>; run checks. Then follow the active profile — conservative reports handoff; team-maintainer may commit/sync/push when explicitly enabled."
+		profileRule = "Default: do not commit, push, or run dolt remote sync without explicit authority. Team-maintainer behavior is opt-in and still subordinate to user/orchestrator instructions."
 	}
 
 	redirectNotice := getRedirectNotice(false)
@@ -456,7 +462,7 @@ Start: Check ` + "`ready`" + ` tool for available work.
 // outputCLIContext outputs full CLI reference for non-MCP users
 func outputCLIContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
-	noPush := config.GetBool("no-push")
+	noPush := primeNoPushConfigured()
 	localOnly := !primeHasGitRemote()
 
 	var closeProtocol string
@@ -541,7 +547,7 @@ git status                  # Check changed files
 # git push
 ` + "```"
 		gitWorkflowRule = "Git workflow: conservative by default; commit/push only with explicit user/orchestrator or team-maintainer authority"
-		profileRule = "Profile model: conservative/minimal do not commit or push without approval; team-maintainer is opt-in and still subordinate to user/orchestrator instructions"
+		profileRule = "Default: do not commit, push, or run dolt remote sync without explicit authority. Team-maintainer behavior is opt-in and still subordinate to user/orchestrator instructions."
 	}
 
 	redirectNotice := getRedirectNotice(true)
