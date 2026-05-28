@@ -518,21 +518,6 @@ func isDuration(s string) bool {
 	return isNumeric(s[:len(s)-1])
 }
 
-func needsQuoting(s string) bool {
-	// Quote if contains special YAML characters
-	special := []string{":", "#", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "'", "\"", "%", "@", "`"}
-	for _, c := range special {
-		if strings.Contains(s, c) {
-			return true
-		}
-	}
-	// Quote if starts/ends with whitespace
-	if strings.TrimSpace(s) != s {
-		return true
-	}
-	return false
-}
-
 // validateYamlConfigValue validates a configuration value before setting.
 // Returns an error if the value is invalid for the given key.
 func validateYamlConfigValue(key, value string) error {
