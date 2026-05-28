@@ -155,7 +155,7 @@ jobs:
       - name: Check for duplicate migration version numbers
         run: |
           dup=$(
-            find internal/storage/schema/migrations -name '*.up.sql' -printf '%f\n' \
+            find internal/storage/schema/migrations -maxdepth 1 -name '*.up.sql' -printf '%f\n' \
               | sed 's/^\([0-9]*\)_.*/\1/' \
               | sort | uniq -d
           )
