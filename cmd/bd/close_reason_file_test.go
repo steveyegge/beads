@@ -219,6 +219,60 @@ func TestCloseResolveReasons_SharedReasonForMultipleIDs(t *testing.T) {
 	}
 }
 
+func TestCloseResolveReasons_EmptyReasonFallsBackToDefault(t *testing.T) {
+	cmd := newCloseLikeCmd()
+	cmd.SetArgs([]string{"issue-a", "--reason", ""})
+
+	var gotReasons, gotArgs []string
+	cmd.Run = func(cmd *cobra.Command, args []string) {
+		var err error
+		gotReasons, gotArgs, err = resolveCloseReasons(cmd, args)
+		if err != nil {
+			t.Fatalf("resolveCloseReasons: %v", err)
+		}
+	}
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if !slices.Equal(gotArgs, []string{"issue-a"}) {
+		t.Fatalf("args = %v, want [issue-a]", gotArgs)
+	}
+	if !slices.Equal(gotReasons, []string{"Closed"}) {
+		t.Fatalf("reasons = %v, want default reason", gotReasons)
+	}
+}
+
+func TestCloseResolveReasons_EmptyReasonDoesNotConflictWithReasonFile(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "reason.md")
+	if err := os.WriteFile(path, []byte("from file"), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	cmd := newCloseLikeCmd()
+	cmd.SetArgs([]string{"issue-a", "--reason", "", "--reason-file", path})
+
+	var gotReasons, gotArgs []string
+	cmd.Run = func(cmd *cobra.Command, args []string) {
+		var err error
+		gotReasons, gotArgs, err = resolveCloseReasons(cmd, args)
+		if err != nil {
+			t.Fatalf("resolveCloseReasons: %v", err)
+		}
+	}
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if !slices.Equal(gotArgs, []string{"issue-a"}) {
+		t.Fatalf("args = %v, want [issue-a]", gotArgs)
+	}
+	if !slices.Equal(gotReasons, []string{"from file"}) {
+		t.Fatalf("reasons = %v, want file reason", gotReasons)
+	}
+}
+
 func TestCloseResolveReasons_RejectsMismatchedPerIDReasons(t *testing.T) {
 	cmd := newCloseLikeCmd()
 	cmd.SetArgs([]string{"issue-a", "--reason", "reason A", "issue-b", "--reason", "reason B", "issue-c"})

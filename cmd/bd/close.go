@@ -27,7 +27,9 @@ If no issue ID is provided, closes the last touched issue (from most recent
 create, update, show, or close operation).
 
 When closing multiple issues, provide one --reason for all IDs or repeat
---reason once per ID in the same order.`,
+--reason once per ID. Reasons map positionally: the first --reason applies
+to the first ID, the second --reason to the second ID, regardless of where
+the flags appear in the command line.`,
 	Args: cobra.MinimumNArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("close")
@@ -369,7 +371,7 @@ func resolveCloseReasons(cmd *cobra.Command, args []string) ([]string, []string,
 func collectCloseReasonFlags(cmd *cobra.Command) ([]string, error) {
 	if flag := cmd.Flags().Lookup("reason"); flag != nil {
 		if v, ok := flag.Value.(interface{ Values() []string }); ok {
-			if reasons := v.Values(); len(reasons) > 0 {
+			if reasons := nonEmptyCloseReasons(v.Values()); len(reasons) > 0 {
 				return reasons, nil
 			}
 		}
@@ -385,6 +387,16 @@ func collectCloseReasonFlags(cmd *cobra.Command) ([]string, error) {
 		}
 	}
 	return nil, nil
+}
+
+func nonEmptyCloseReasons(reasons []string) []string {
+	out := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		if reason != "" {
+			out = append(out, reason)
+		}
+	}
+	return out
 }
 
 func reasonForCloseIndex(reasons []string, i int) string {
