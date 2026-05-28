@@ -40,6 +40,8 @@ type ImportResult struct {
 	PrefixMismatch      bool
 	ExpectedPrefix      string
 	MismatchPrefixes    map[string]int
+	ImportedIDs         []string
+	StaleSkippedIDs     []string
 	SkippedDependencies []string
 }
 
@@ -50,9 +52,18 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return &ImportResult{Skipped: len(issues)}, nil
 	}
 
+	filtered, staleSkippedIDs, err := filterStaleImportIssues(ctx, store, issues)
+	if err != nil {
+		return nil, err
+	}
+	issues = filtered
+	if len(issues) == 0 {
+		return &ImportResult{Skipped: len(staleSkippedIDs), StaleSkippedIDs: staleSkippedIDs}, nil
+	}
+
 	var skippedDependencies []string
 	skippedDependencySet := make(map[string]struct{})
-	err := store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
+	err = store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
 		OrphanHandling:                 storage.OrphanAllow,
 		SkipPrefixValidation:           opts.SkipPrefixValidation,
 		SkipDependencyValidationErrors: true,
@@ -69,7 +80,64 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return nil, err
 	}
 
-	return &ImportResult{Created: len(issues), SkippedDependencies: skippedDependencies}, nil
+	importedIDs := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		importedIDs = append(importedIDs, issue.ID)
+	}
+	return &ImportResult{
+		Created:             len(issues),
+		Skipped:             len(staleSkippedIDs),
+		ImportedIDs:         importedIDs,
+		StaleSkippedIDs:     staleSkippedIDs,
+		SkippedDependencies: skippedDependencies,
+	}, nil
+}
+
+func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]*types.Issue, []string, error) {
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return issues, nil, nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return nil, nil, fmt.Errorf("check existing issues before import: %w", err)
+	}
+	localUpdatedAt := make(map[string]time.Time, len(localIssues))
+	for _, issue := range localIssues {
+		if issue != nil && issue.ID != "" && !issue.UpdatedAt.IsZero() {
+			localUpdatedAt[issue.ID] = issue.UpdatedAt
+		}
+	}
+	if len(localUpdatedAt) == 0 {
+		return issues, nil, nil
+	}
+
+	filtered := make([]*types.Issue, 0, len(issues))
+	skippedIDs := make([]string, 0)
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.UpdatedAt.IsZero() {
+			filtered = append(filtered, issue)
+			continue
+		}
+		if local, ok := localUpdatedAt[issue.ID]; ok && issue.UpdatedAt.UTC().Before(local.UTC()) {
+			skippedIDs = append(skippedIDs, issue.ID)
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+	return filtered, skippedIDs, nil
 }
 
 // importLocalResult holds counts from a local JSONL import.
@@ -204,11 +272,11 @@ func importFromLocalJSONLFull(ctx context.Context, store storage.DoltStorage, lo
 		opts := ImportOptions{
 			SkipPrefixValidation: true,
 		}
-		_, err = importIssuesCore(ctx, "", store, issues, opts)
+		importResult, err := importIssuesCore(ctx, "", store, issues, opts)
 		if err != nil {
 			return nil, err
 		}
-		result.Issues = len(issues)
+		result.Issues = importResult.Created
 	}
 
 	return result, nil
