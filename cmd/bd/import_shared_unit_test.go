@@ -32,12 +32,12 @@ func TestFilterStaleImportIssuesSkipsOlderIncomingRecords(t *testing.T) {
 		{ID: "bd-newer", UpdatedAt: base.Add(time.Hour)},
 	}}
 
-	filtered, skipped, err := filterStaleImportIssues(context.Background(), store, incoming)
+	filtered, skippedIDs, err := filterStaleImportIssues(context.Background(), store, incoming)
 	if err != nil {
 		t.Fatalf("filterStaleImportIssues: %v", err)
 	}
-	if skipped != 1 {
-		t.Fatalf("skipped = %d, want 1", skipped)
+	if len(skippedIDs) != 1 || skippedIDs[0] != "bd-stale" {
+		t.Fatalf("skippedIDs = %#v, want [bd-stale]", skippedIDs)
 	}
 
 	got := make(map[string]bool, len(filtered))
@@ -51,5 +51,31 @@ func TestFilterStaleImportIssuesSkipsOlderIncomingRecords(t *testing.T) {
 	}
 	if got["bd-stale"] {
 		t.Fatalf("stale issue was not filtered: %#v", got)
+	}
+}
+
+func TestImportIssuesCoreReportsStaleSkippedIDs(t *testing.T) {
+	base := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	store := &fakeImportIssueLookupStore{issues: []*types.Issue{
+		{ID: "bd-stale", UpdatedAt: base.Add(time.Hour)},
+	}}
+
+	result, err := importIssuesCore(context.Background(), "", store, []*types.Issue{
+		{ID: "bd-stale", Title: "stale snapshot", UpdatedAt: base},
+	}, ImportOptions{})
+	if err != nil {
+		t.Fatalf("importIssuesCore: %v", err)
+	}
+	if result.Created != 0 {
+		t.Fatalf("Created = %d, want 0", result.Created)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.ImportedIDs) != 0 {
+		t.Fatalf("ImportedIDs = %#v, want empty", result.ImportedIDs)
+	}
+	if len(result.StaleSkippedIDs) != 1 || result.StaleSkippedIDs[0] != "bd-stale" {
+		t.Fatalf("StaleSkippedIDs = %#v, want [bd-stale]", result.StaleSkippedIDs)
 	}
 }

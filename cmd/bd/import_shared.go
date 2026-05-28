@@ -41,6 +41,7 @@ type ImportResult struct {
 	ExpectedPrefix      string
 	MismatchPrefixes    map[string]int
 	ImportedIDs         []string
+	StaleSkippedIDs     []string
 	SkippedDependencies []string
 }
 
@@ -51,13 +52,13 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return &ImportResult{Skipped: len(issues)}, nil
 	}
 
-	filtered, staleSkipped, err := filterStaleImportIssues(ctx, store, issues)
+	filtered, staleSkippedIDs, err := filterStaleImportIssues(ctx, store, issues)
 	if err != nil {
 		return nil, err
 	}
 	issues = filtered
 	if len(issues) == 0 {
-		return &ImportResult{Skipped: staleSkipped}, nil
+		return &ImportResult{Skipped: len(staleSkippedIDs), StaleSkippedIDs: staleSkippedIDs}, nil
 	}
 
 	var skippedDependencies []string
@@ -83,10 +84,16 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	for _, issue := range issues {
 		importedIDs = append(importedIDs, issue.ID)
 	}
-	return &ImportResult{Created: len(issues), Skipped: staleSkipped, ImportedIDs: importedIDs, SkippedDependencies: skippedDependencies}, nil
+	return &ImportResult{
+		Created:             len(issues),
+		Skipped:             len(staleSkippedIDs),
+		ImportedIDs:         importedIDs,
+		StaleSkippedIDs:     staleSkippedIDs,
+		SkippedDependencies: skippedDependencies,
+	}, nil
 }
 
-func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]*types.Issue, int, error) {
+func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]*types.Issue, []string, error) {
 	ids := make([]string, 0, len(issues))
 	seen := make(map[string]struct{}, len(issues))
 	for _, issue := range issues {
@@ -100,12 +107,12 @@ func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, iss
 		ids = append(ids, issue.ID)
 	}
 	if len(ids) == 0 {
-		return issues, 0, nil
+		return issues, nil, nil
 	}
 
 	localIssues, err := store.GetIssuesByIDs(ctx, ids)
 	if err != nil {
-		return nil, 0, fmt.Errorf("check existing issues before import: %w", err)
+		return nil, nil, fmt.Errorf("check existing issues before import: %w", err)
 	}
 	localUpdatedAt := make(map[string]time.Time, len(localIssues))
 	for _, issue := range localIssues {
@@ -114,23 +121,23 @@ func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, iss
 		}
 	}
 	if len(localUpdatedAt) == 0 {
-		return issues, 0, nil
+		return issues, nil, nil
 	}
 
 	filtered := make([]*types.Issue, 0, len(issues))
-	skipped := 0
+	skippedIDs := make([]string, 0)
 	for _, issue := range issues {
 		if issue == nil || issue.ID == "" || issue.UpdatedAt.IsZero() {
 			filtered = append(filtered, issue)
 			continue
 		}
 		if local, ok := localUpdatedAt[issue.ID]; ok && issue.UpdatedAt.UTC().Before(local.UTC()) {
-			skipped++
+			skippedIDs = append(skippedIDs, issue.ID)
 			continue
 		}
 		filtered = append(filtered, issue)
 	}
-	return filtered, skipped, nil
+	return filtered, skippedIDs, nil
 }
 
 // importLocalResult holds counts from a local JSONL import.

@@ -2428,7 +2428,7 @@ EXAMPLES:
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
-  bd import --json                 # Structured output with created IDs
+  bd import --json                 # Structured output with created and skipped IDs
 
 ```
 bd import [file|-] [flags]

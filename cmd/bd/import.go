@@ -65,7 +65,7 @@ EXAMPLES:
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
-  bd import --json                 # Structured output with created IDs`,
+  bd import --json                 # Structured output with created and skipped IDs`,
 	GroupID: "sync",
 	RunE:    runImport,
 }
@@ -142,6 +142,7 @@ type importResultJSON struct {
 	DedupHits           int      `json:"dedup_skipped,omitempty"`
 	Memories            int      `json:"memories,omitempty"`
 	IDs                 []string `json:"ids,omitempty"`
+	StaleSkippedIDs     []string `json:"stale_skipped_ids,omitempty"`
 	SkippedDependencies []string `json:"skipped_dependencies,omitempty"`
 	DryRun              bool     `json:"dry_run,omitempty"`
 }
@@ -250,6 +251,7 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.Skipped += importResult.Skipped
 		result.SkippedDependencies = append(result.SkippedDependencies, importResult.SkippedDependencies...)
 		result.IDs = append(result.IDs, importResult.ImportedIDs...)
+		result.StaleSkippedIDs = append(result.StaleSkippedIDs, importResult.StaleSkippedIDs...)
 	}
 
 	if result.Created > 0 || result.Memories > 0 {
