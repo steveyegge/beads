@@ -416,3 +416,79 @@ type SlotClearArgs struct {
 type SlotClearReply struct {
 	RPCError *RPCError
 }
+
+type SearchIssuesWithCountsArgs struct {
+	Query  string
+	Filter types.IssueFilter
+}
+
+type SearchIssuesWithCountsReply struct {
+	Issues   []*types.IssueWithCounts
+	RPCError *RPCError
+}
+
+type GetReadyWorkWithCountsArgs struct {
+	Filter types.WorkFilter
+}
+
+type GetReadyWorkWithCountsReply struct {
+	Issues   []*types.IssueWithCounts
+	RPCError *RPCError
+}
+
+type CountIssuesArgs struct {
+	Query  string
+	Filter types.IssueFilter
+}
+
+type CountIssuesReply struct {
+	Count    int64
+	RPCError *RPCError
+}
+
+type CountIssuesByGroupArgs struct {
+	Filter  types.IssueFilter
+	GroupBy string
+}
+
+type CountIssuesByGroupReply struct {
+	Counts   map[string]int
+	RPCError *RPCError
+}
+
+type CountDependentsArgs struct {
+	IssueID string
+}
+
+type CountDependentsReply struct {
+	Count    int64
+	RPCError *RPCError
+}
+
+type CountDependenciesArgs struct {
+	IssueID string
+}
+
+type CountDependenciesReply struct {
+	Count    int64
+	RPCError *RPCError
+}
+
+type CountIssueCommentsArgs struct {
+	IssueID string
+}
+
+type CountIssueCommentsReply struct {
+	Count    int64
+	RPCError *RPCError
+}
+
+type CountEventsArgs struct {
+	IssueID string
+	Limit   int
+}
+
+type CountEventsReply struct {
+	Count    int64
+	RPCError *RPCError
+}
