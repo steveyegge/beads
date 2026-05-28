@@ -240,3 +240,95 @@ func TestMaybeAutoImportJSONL_ChangedJSONLBypassesSuccessStamp(t *testing.T) {
 		t.Fatalf("fallback importer invoked %d time(s), want 2 after JSONL changed", got)
 	}
 }
+
+// captureOptsStore is a storage.DoltStorage that records the
+// BatchCreateOptions handed to CreateIssuesWithFullOptions. Every other
+// method panics (embedded nil interface); the import plumbing under test
+// only touches CreateIssuesWithFullOptions, GetConfig and SetConfig.
+type captureOptsStore struct {
+	storage.DoltStorage // nil — panics on any non-overridden method
+	prefix              string
+	gotOpts             storage.BatchCreateOptions
+}
+
+func (c *captureOptsStore) CreateIssuesWithFullOptions(_ context.Context, _ []*types.Issue, _ string, opts storage.BatchCreateOptions) error {
+	c.gotOpts = opts
+	return nil
+}
+
+func (c *captureOptsStore) GetConfig(_ context.Context, _ string) (string, error) {
+	return c.prefix, nil
+}
+
+func (c *captureOptsStore) SetConfig(_ context.Context, _, _ string) error {
+	return nil
+}
+
+// GetIssuesByIDs reports no existing rows so importIssuesCore's stale-import
+// filter (filterStaleImportIssues) is a no-op and the import proceeds to
+// CreateIssuesWithFullOptions, where the options under test are recorded.
+func (c *captureOptsStore) GetIssuesByIDs(_ context.Context, _ []string) ([]*types.Issue, error) {
+	return nil, nil
+}
+
+// TestImportIssuesCoreThreadsConflictSkip verifies the GH#3955 plumbing:
+// ImportOptions.ConflictSkip maps onto storage.BatchCreateOptions.ConflictSkip,
+// and the default (explicit `bd import`) path keeps UPSERT semantics.
+func TestImportIssuesCoreThreadsConflictSkip(t *testing.T) {
+	issues := []*types.Issue{{ID: "unit-1", Title: "t", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}}
+
+	t.Run("ConflictSkip true threads through", func(t *testing.T) {
+		s := &captureOptsStore{}
+		if _, err := importIssuesCore(context.Background(), "", s, issues, ImportOptions{SkipPrefixValidation: true, ConflictSkip: true}); err != nil {
+			t.Fatalf("importIssuesCore: %v", err)
+		}
+		if !s.gotOpts.ConflictSkip {
+			t.Fatalf("ConflictSkip not threaded into BatchCreateOptions: got %+v", s.gotOpts)
+		}
+		if !s.gotOpts.SkipPrefixValidation {
+			t.Errorf("SkipPrefixValidation should still thread through: got %+v", s.gotOpts)
+		}
+	})
+
+	t.Run("default keeps UPSERT", func(t *testing.T) {
+		s := &captureOptsStore{}
+		if _, err := importIssuesCore(context.Background(), "", s, issues, ImportOptions{SkipPrefixValidation: true}); err != nil {
+			t.Fatalf("importIssuesCore: %v", err)
+		}
+		if s.gotOpts.ConflictSkip {
+			t.Fatalf("explicit-import path must keep UPSERT (ConflictSkip=false); got true")
+		}
+	})
+}
+
+// TestAutoImportFallbackSeamUsesConflictSkip verifies which importer each
+// caller is wired to: the auto-import server-mode fallback
+// (importFromLocalJSONLConflictSkip, the fallbackImporter seam) requests
+// conflict-skip, while importFromLocalJSONLFull — used by `bd bootstrap`
+// and `bd init --from-jsonl` — keeps UPSERT. This is the scope boundary
+// for GH#3955.
+func TestAutoImportFallbackSeamUsesConflictSkip(t *testing.T) {
+	dir := t.TempDir()
+	writeAutoImportFixtureJSONL(t, dir)
+	jsonlPath := filepath.Join(dir, "issues.jsonl")
+
+	t.Run("auto-import fallback uses conflict-skip", func(t *testing.T) {
+		s := &captureOptsStore{prefix: "unit"}
+		if _, err := importFromLocalJSONLConflictSkip(context.Background(), s, jsonlPath); err != nil {
+			t.Fatalf("importFromLocalJSONLConflictSkip: %v", err)
+		}
+		if !s.gotOpts.ConflictSkip {
+			t.Fatalf("auto-import fallback must set ConflictSkip=true; got %+v", s.gotOpts)
+		}
+	})
+
+	t.Run("explicit recovery path keeps UPSERT", func(t *testing.T) {
+		s := &captureOptsStore{prefix: "unit"}
+		if _, err := importFromLocalJSONLFull(context.Background(), s, jsonlPath); err != nil {
+			t.Fatalf("importFromLocalJSONLFull: %v", err)
+		}
+		if s.gotOpts.ConflictSkip {
+			t.Fatalf("bd bootstrap / init --from-jsonl must keep UPSERT (ConflictSkip=false); got true")
+		}
+	})
+}

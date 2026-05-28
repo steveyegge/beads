@@ -19,11 +19,18 @@ type jsonlImporter interface {
 }
 
 // fallbackImporter is the function maybeAutoImportJSONL invokes for stores
-// that do not implement jsonlImporter. It exists as a package-level variable
-// so tests can substitute a counter and verify the top-level emptiness guard
-// prevents the fallback path from running on a non-empty database. Production
-// builds always use importFromLocalJSONLFull.
-var fallbackImporter = importFromLocalJSONLFull
+// that do not implement jsonlImporter (server-mode dolt). It exists as a
+// package-level variable so tests can substitute a counter and verify the
+// top-level emptiness guard prevents the fallback path from running on a
+// non-empty database.
+//
+// Production builds use importFromLocalJSONLConflictSkip (GH#3955): this is
+// upgrade-recovery into an empty DB, so insert-if-new and UPSERT are
+// equivalent on the legitimate path — but if the emptiness guard above ever
+// regresses again (cf. PR #3630), conflict-skip makes the fallback a
+// harmless no-op instead of clobbering live rows. Explicit `bd import`,
+// `bd bootstrap`, and `bd init --from-jsonl` are unaffected and keep UPSERT.
+var fallbackImporter = importFromLocalJSONLConflictSkip
 
 type autoImportStamp struct {
 	Size        int64 `json:"size"`
@@ -61,13 +68,16 @@ func writeAutoImportStamp(beadsDir string, info os.FileInfo) {
 // .beads/dolt/) to 1.0+ (which uses .beads/embeddeddolt/) don't appear to
 // lose their issues.  See GH#2994.
 //
-// The top-level emptiness guard (GetStatistics) protects both the embedded
-// fast-path and the fallback path. The embedded jsonlImporter has its own
-// in-transaction emptiness check as a concurrency-safe second line of defense;
-// the fallback path's importFromLocalJSONLFull uses INSERT … ON DUPLICATE KEY
-// UPDATE semantics under the hood, so without this guard a stale issues.jsonl
-// would be re-imposed on top of live Dolt rows on every command, clobbering
-// recent partial-update writes.
+// The top-level emptiness guard (GetStatistics) is the primary
+// protection for BOTH the embedded fast-path and the server-mode
+// fallback. Defense in depth backs each path up: the embedded
+// jsonlImporter has its own in-transaction emptiness check (and is
+// also insert-if-new, GH#3955), and the fallback path imports via
+// importFromLocalJSONLConflictSkip, which is insert-if-new rather than
+// UPSERT. So if this guard ever regresses again (cf. PR #3630), a stale
+// issues.jsonl can no longer be re-imposed on top of live Dolt rows —
+// the worst case degrades to a harmless no-op instead of clobbering
+// recent writes.
 //
 // The function is best-effort: failures are logged as warnings but do not
 // prevent the store from being used.

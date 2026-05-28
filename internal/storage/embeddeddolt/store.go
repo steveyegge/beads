@@ -424,6 +424,12 @@ func (s *EmbeddedDoltStore) ImportJSONLData(
 		if err := issueops.CreateIssuesInTx(ctx, tx, issues, actor, storage.BatchCreateOptions{
 			OrphanHandling:       storage.OrphanAllow,
 			SkipPrefixValidation: true,
+			// Defense-in-depth (GH#3955): the embedded fast-path is the primary
+			// auto-import route for 1.0+ users and is gated by the in-transaction
+			// emptiness check above. Make it insert-if-new too so a regression in
+			// that check cannot clobber live rows — matching the server-mode
+			// fallback's conflict-skip behavior.
+			ConflictSkip: true,
 		}); err != nil {
 			return err
 		}
