@@ -1078,7 +1078,7 @@ var rootCmd = &cobra.Command{
 		// Skip auto-import when the user is explicitly running "bd import" —
 		// the import command handles JSONL files itself and auto-importing
 		// first would interfere (double-import / upsert confusion).
-		if shouldRunAutoImportJSONL(cmd, store, useReadOnly, globalFlag, doltCfg.ServerMode) {
+		if shouldRunAutoImportJSONL(cmd, store, useReadOnly, globalFlag, doltCfg.ServerMode, beadsDir) {
 			maybeAutoImportJSONL(rootCtx, store, beadsDir)
 		}
 
@@ -1233,8 +1233,11 @@ func shouldRunPostCommandAutoExport(cmd *cobra.Command) bool {
 	return !isReadOnlyCommand(cmd.Name())
 }
 
-func shouldRunAutoImportJSONL(cmd *cobra.Command, s storage.DoltStorage, useReadOnly, globalFlag, serverMode bool) bool {
+func shouldRunAutoImportJSONL(cmd *cobra.Command, s storage.DoltStorage, useReadOnly, globalFlag, serverMode bool, beadsDir string) bool {
 	if cmd == nil || s == nil || useReadOnly || globalFlag || serverMode {
+		return false
+	}
+	if beadsDir != "" && doltserver.ResolveServerMode(beadsDir) == doltserver.ServerModeExternal {
 		return false
 	}
 	return cmd.Name() != "import"

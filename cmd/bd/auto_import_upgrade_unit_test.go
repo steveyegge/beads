@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -114,11 +115,31 @@ func TestShouldRunAutoImportJSONL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldRunAutoImportJSONL(tt.cmd, tt.store, tt.useReadOnly, tt.globalFlag, tt.serverMode)
+			got := shouldRunAutoImportJSONL(tt.cmd, tt.store, tt.useReadOnly, tt.globalFlag, tt.serverMode, "")
 			if got != tt.want {
 				t.Fatalf("shouldRunAutoImportJSONL() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShouldRunAutoImportJSONL_SkipsResolvedExternalServer(t *testing.T) {
+	store := &fakeFallbackStore{}
+	writeCmd := &cobra.Command{Use: "update"}
+	beadsDir := t.TempDir()
+
+	metaCfg := &configfile.Config{
+		DoltMode:       configfile.DoltModeServer,
+		DoltServerHost: "10.10.10.27",
+		DoltServerUser: "beads",
+		DoltDatabase:   "HomeLab",
+	}
+	if err := metaCfg.Save(beadsDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := shouldRunAutoImportJSONL(writeCmd, store, false, false, false, beadsDir); got {
+		t.Fatal("shouldRunAutoImportJSONL() = true for resolved external server mode, want false")
 	}
 }
 
