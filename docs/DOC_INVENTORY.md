@@ -2,6 +2,8 @@
 
 Reviewed: 2026-05-08
 
+CI cleanup entry added: 2026-05-28
+
 Scope: every Markdown file under `docs/`, including `adr/`, `design/`,
 `design/otel/`, and the staged-for-removal bin.
 
@@ -17,7 +19,7 @@ freshness source.
 | Architecture | `ARCHITECTURE.md`, `INTERNALS.md`, `DOLT.md`, `adr/`, `design/` | Durable structure, package boundaries, storage model, and invariants live here. |
 | Behaviour/reference | `CLI_REFERENCE.md`, `CONFIG.md`, `SETUP.md`, `JSON_SCHEMA.md`, `RECOVERY.md`, `ERROR_HANDLING.md`, `TROUBLESHOOTING.md` | CLI/config/runtime contracts live here and need generation or freshness review. |
 | User-facing workflow | `INSTALLING.md`, `QUICKSTART.md`, `FAQ.md`, `SYNC_SETUP.md`, integration guides, `WORKTREES.md`, `UNINSTALLING.md` | Task-oriented user docs live here; avoid duplicating implementation tables unless linked to reference docs. |
-| Maintainer/operator | root `RELEASING.md`, `RELEASE-STABILITY-GATE.md`, `LINTING.md`, `SECURITY-DEPENDENCY-EXCEPTIONS.md`, `PERFORMANCE_TESTING.md`, `CI_TEST_SURFACE_AUDIT.md` | Maintainer process docs stay active only when tied to current scripts/checks. |
+| Maintainer/operator | root `RELEASING.md`, `RELEASE-STABILITY-GATE.md`, `LINTING.md`, `SECURITY-DEPENDENCY-EXCEPTIONS.md`, `PERFORMANCE_TESTING.md`, `CI_TEST_SURFACE_AUDIT.md`, `CI_CLEANUP_PLAN.md` | Maintainer process docs stay active only when tied to current scripts/checks. |
 | Historical/staged | `staged-for-removal/` | Resolved audits, stale duplicates, and unsupported snapshots are preserved here until deleted or rescued. |
 
 ## Reference Freshness
@@ -33,6 +35,7 @@ freshness source.
 | `RECOVERY.md` | `Last reviewed:` marker tied to `cmd/bd/init*.go` safety code and tests. |
 | `ERROR_HANDLING.md` | `Last reviewed:` marker tied to current command error exits and JSON error helpers. |
 | `LINTING.md` | `Last reviewed:` marker tied to `.golangci.yml` and current lint output. |
+| `CI_CLEANUP_PLAN.md` | `Last reviewed:` marker tied to CI audit, workflow files, package manifests, and maintainer decision review. |
 | `design/otel/otel-data-model.md` | `Last reviewed:` marker tied to telemetry, Dolt storage, hooks, and AI call sites. |
 
 Follow-up automation should replace marker-only checks with generated or
@@ -54,6 +57,7 @@ Follow-up automation should replace marker-only checks with generated or
 | `CLAUDE_INTEGRATION.md` | Keep | Design/user guide for Claude setup; paired with `SETUP.md`. |
 | `CLAUDE.md` | Revise | Kept as architecture orientation only; command/workflow duplication was reduced in favour of root `AGENTS.md` and `AGENT_INSTRUCTIONS.md`. |
 | `CLI_REFERENCE.md` | Keep/generated | Generated command reference from live help output. |
+| `CI_CLEANUP_PLAN.md` | Keep with freshness | Accepted CI tier decisions, package gate policy, measurement plan, and implementation order. |
 | `CI_TEST_SURFACE_AUDIT.md` | Keep with freshness | Snapshot of local validation commands, GitHub Actions coverage, gaps, and CI cleanup roadmap. |
 | `plugins/beads/skills/beads/resources/CLI_REFERENCE.md` | Keep pointer | Plugin skill resource intentionally points at live CLI sources to avoid duplicate generated command snapshots. |
 | `CODEX_INTEGRATION.md` | Keep | User-facing Codex integration guide. |

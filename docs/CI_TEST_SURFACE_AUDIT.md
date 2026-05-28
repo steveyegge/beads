@@ -10,6 +10,9 @@ This is an audit snapshot, not the final CI policy. Use it to reason from first
 principles about what the repository can validate, what CI currently validates,
 and what should be cleaned up next.
 
+Accepted cleanup decisions and implementation order are tracked in
+[`CI_CLEANUP_PLAN.md`](CI_CLEANUP_PLAN.md).
+
 ## Executive Summary
 
 The repository has a large Go test surface and several non-Go package surfaces,

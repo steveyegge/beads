@@ -3,8 +3,10 @@
 ## Overview
 
 The beads project uses Go tests plus repository wrapper scripts. Prefer the
-wrapper scripts for local validation because they apply the same skip and
-timeout policy as CI.
+wrapper scripts for local validation because they apply the repository's normal
+local build flags, skip policy, and timeout policy. The current GitHub Actions
+PR contract still runs direct `go test` commands; the CI cleanup plan will move
+that contract behind dedicated `scripts/ci/*` wrappers.
 
 ## Test Performance
 
@@ -125,7 +127,8 @@ When running tests during development:
 1. **Use the test script:** Always use `./scripts/test.sh` instead of `go test` directly
    - Automatically skips known broken tests
    - Uses appropriate timeouts
-   - Consistent with CI/CD
+   - Matches local default validation; use future `scripts/ci/*` wrappers when
+     reproducing exact CI jobs
    - Only if intentionally exercising the ICU regex path, use `./scripts/test-icu-path.sh` (or deprecated `make test-full-cgo`)
 
 2. **Target specific tests when possible:**
@@ -184,18 +187,20 @@ internal/*/       - Various internal package tests
 
 ## Continuous Integration
 
-The test script is designed to work seamlessly with CI/CD:
+The current CI workflow does not call `scripts/test.sh` for the main PR Go test
+matrix. Until CI wrapper migration is complete, reproduce exact CI behavior from
+the command documented in the failing workflow or in the CI cleanup plan.
 
-```yaml
-# Example GitHub Actions
-- name: Run tests
-  run: make test
-```
+Use `scripts/test.sh` for local default validation and targeted development
+runs.
 
 For the current CI/test-surface inventory and cleanup roadmap, see
 [CI_TEST_SURFACE_AUDIT.md](CI_TEST_SURFACE_AUDIT.md). That audit documents
 where local commands and GitHub Actions currently diverge before the CI cleanup
 work starts changing workflow behavior.
+
+For accepted CI tier decisions and the implementation order, see
+[CI_CLEANUP_PLAN.md](CI_CLEANUP_PLAN.md).
 
 ## Debugging Test Failures
 
