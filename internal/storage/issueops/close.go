@@ -56,7 +56,20 @@ func closeIssueInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, s
 		return nil, fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return nil, fmt.Errorf("issue not found: %s", id)
+		var status string
+		qerr := tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT status FROM %s WHERE id = ?`, issueTable), id,
+		).Scan(&status)
+		if qerr == sql.ErrNoRows {
+			return nil, fmt.Errorf("issue not found: %s", id)
+		}
+		if qerr != nil {
+			return nil, fmt.Errorf("failed to check issue existence: %w", qerr)
+		}
+		if types.Status(status) == types.StatusClosed {
+			return &CloseResult{IsWisp: isWisp}, nil
+		}
+		return nil, fmt.Errorf("failed to close issue: %s", id)
 	}
 
 	if recordEvent {
