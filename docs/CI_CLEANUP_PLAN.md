@@ -240,6 +240,25 @@ Same-run job-level observations:
 - Embedded Dolt had a slow-shard tail: storage 355s, cmd 19/20 403s, cmd 7/20
   387s, and cmd 4/20 334s. Sharding decisions should use repeated samples.
 
+Second sample: branch-dispatched `pr-linux` measurement via `Nightly Full
+Tests`, workflow run 26551186971, commit
+`f4918fdaf97d659b568068ad2c1cfee88c8f118d`.
+
+| Command | Duration | Notes |
+|---|---:|---|
+| `install gotestsum` | 10s | Pinned `gotestsum@v1.13.0`. |
+| `install golangci-lint` | 41s | Pinned `golangci-lint@v2.9.0`. |
+| `pr-policy wrapper` | 46s | Long pole was docs-check binary build at 32s. |
+| `pr-core gotestsum` | 461s | Uploaded `pr-core-junit.xml` artifact. |
+| `pr-lint wrapper` | 17s | Excludes lint tool install because install is measured separately. |
+
+The full job wall clock was 607s. An earlier branch-dispatched run,
+26550681849, failed visibly in `pr-core gotestsum` after 566s with
+`TestInitRepairsPermissiveBeadsDir` hitting a `TempDir RemoveAll` cleanup error
+for a non-empty `.git` directory. The workflow now continues independent
+commands after a failure and exits nonzero at the end, so later samples still
+collect lint timing when core flakes.
+
 ## Package Gates
 
 Package checks should be reusable from PR risk jobs, measurement jobs, `main`,
