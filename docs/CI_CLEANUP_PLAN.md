@@ -259,6 +259,83 @@ for a non-empty `.git` directory. The workflow now continues independent
 commands after a failure and exits nonzero at the end, so later samples still
 collect lint timing when core flakes.
 
+### Branch Measurement Batch
+
+The first broad batch was dispatched from branch
+`ci/bd-am3.1-wrapper-commands`, commit
+`35135f235e49051bb777bcbb31d95291766eb190`, through `Nightly Full Tests` while
+the reusable measurement workflow was still branch-local.
+
+| Suite | Run | Job wall clock | Result | Command timings |
+|---|---:|---:|---|---|
+| `website` | 26552244751 | 72s | Pass | `npm ci` 9s; typecheck 1s; `llms-full` 1s; build 45s. |
+| `nix` | 26552243745 | 209s | Pass | `nix build .#default` 197s. |
+| `macos-short` | 26552238862 | 392s | Pass | macOS short Go test 316s. |
+| `macos-candidates` | 26552239802 | 774s | Fail | no-short Go test 370s; integration-tag Go test 341s. |
+| `linux-integration` | 26552240869 | 664s | Fail | install `gotestsum` 10s; integration Go test 632s. |
+| `linux-integration-coverage` | 26552241818 | 818s | Fail | install `gotestsum` 13s; integration coverage Go test 790s; manual coverage summary from artifact was 37.9%. |
+| `cross-version-smoke` | 26552242789 | 163s | Fail | candidate binary build 150s; previous-release smoke failed before running because no release tag was resolved. |
+| `npm-package` | 26552245608 | 201s | Fail | package binary build 161s; install 0s; `npm run test:all` 23s. |
+| `mcp-package` | 26552246442 | 173s | Fail | install `uv` 8s; package binary build 150s; `uv sync` 2s; Ruff failed before later checks ran. |
+
+Failure modes from this batch:
+
+- `macos-candidates`: no-short passed, but integration-tag tests failed in
+  `internal/beads` on symlink deduplication, in `internal/doltserver` with
+  repeated `fatal: empty ident name not allowed`, and in `internal/storage/dolt`
+  on missing `depends_on_external`.
+- `linux-integration` and `linux-integration-coverage`: both reported
+  `cmd/bd TestAutoMigrateOnVersionBump_NoDatabase` through gotestsum and failed
+  three `internal/storage/dolt` routing tests because `depends_on_external` was
+  missing from the queried schema.
+- `cross-version-smoke`: the workflow did not pass an explicit release tag and
+  the script could not infer one. The measurement workflow now resolves the
+  latest GitHub release tag when the input is empty.
+- `npm-package`: the Claude Code for Web simulation failed because the expected
+  JSONL file was not created. The measurement workflow now continues to the
+  package dry-run after `test:all` failures.
+- `mcp-package`: Ruff found 130 errors. The measurement workflow now continues
+  through mypy, pytest, and build after independent package check failures.
+
+Initial tiering read:
+
+- `website` and `nix` are cheap enough to be good PR-risk or main candidates,
+  pending path-gating policy.
+- `macos-short` is feasible for `main` but still too expensive for default PRs.
+- Linux integration and coverage are close to 11-14 minutes per unsharded job
+  and currently fail, so measure sharding and fix failures before promotion.
+- Package gates need cleanup before they can protect releases or risk paths.
+
+Follow-up robustness reruns used commit
+`d6b1314d8a7ab2c85656cfa440ca2c4cd8620087`, after the measurement workflow was
+updated to continue independent package commands and resolve the default smoke
+release tag:
+
+| Suite | Run | Job wall clock | Result | Added signal |
+|---|---:|---:|---|---|
+| `cross-version-smoke` | 26552895263 | 171s | Pass | Auto-resolved `v1.0.4`; candidate build 149s; upgrade smoke 7s. |
+| `npm-package` | 26552895239 | 212s | Fail | Binary build 154s; install 2s; `test:all` still failed after 23s; pack dry-run succeeded in 13s with 7 files, 79.9 MB package size, and 189.5 MB unpacked size. |
+| `mcp-package` | 26552895273 | 264s | Fail | Install `uv` 2s; binary build 156s; `uv sync` 2s; Ruff failed with 130 errors; mypy failed with 4 errors in 2 files after 13s; pytest failed after 72s with 5 failed, 190 passed, 5 skipped, and 15 errors; build still succeeded. |
+| `linux-integration-coverage` | 26552895222 | 856s | Fail | Install `gotestsum` 13s; coverage Go test failed after 821s with the same four failures as the first sample; coverage summary still ran and reported 37.9%. |
+
+Roadmap updates from the measurement evidence:
+
+- Keep the wrapper timing jobs additive until branch protection can switch to
+  `pr-core`, `pr-policy`, and `pr-lint` by name.
+- Promote `cross-version-smoke` to use explicit or auto-resolved release tags;
+  the candidate build dominates its runtime, while the smoke scenarios are
+  cheap once the binary exists.
+- Treat `website` and `nix` as good first PR-risk candidates because they are
+  relatively cheap and already green in the measurement workflow.
+- Do not promote `npm-package` or `mcp-package` as blocking gates until the
+  measured package failures are fixed. They are still release-critical checks,
+  so cleanup should happen before release workflow hardening.
+- Do not promote Linux integration coverage yet. It is currently red and near
+  the upper end of the 25-minute total main-branch budget before sharding.
+- Use the collected per-command timings to shard around the long poles: Go
+  package tests, candidate binary builds for package/smoke jobs, and macOS
+  integration-tag tests.
+
 ## Package Gates
 
 Package checks should be reusable from PR risk jobs, measurement jobs, `main`,
