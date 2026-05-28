@@ -347,6 +347,22 @@ Action taken from this evidence:
   keep unsharded coverage as a background measurement until coverage merge and
   shard-count policy are explicit.
 
+First sharded run: 26569078396, commit
+`ca22fe505a55594cae67124190540c3c9ee2a5f6`.
+
+| Shard | Go test time | Result | Read |
+|---:|---:|---|---|
+| 1/6 | 542s | Pass | Tail shard; contains `cmd/bd` and `internal/doltserver`. |
+| 2/6 | 179s | Pass | Contains `internal/storage/dolt`; no longer the tail under package sharding. |
+| 3/6 | 174s | Fail | `internal/beads` duplicate `TestMain`; fixed after this run by moving integration setup behind the existing package `TestMain`. |
+| 4/6 | 174s | Pass | Package shard is in the same range as shards 2/3. |
+| 5/6 | 36s | Pass | Lightweight shard. |
+| 6/6 | 77s | Pass | Lightweight shard. |
+
+Package sharding is useful but not enough by itself: the full wall-clock tail is
+still the `cmd/bd` shard. The next optimization should split `cmd/bd` by
+top-level test names, then keep package sharding for the remaining packages.
+
 ## Package Gates
 
 Package checks should be reusable from PR risk jobs, measurement jobs, `main`,

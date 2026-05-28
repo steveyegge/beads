@@ -32,7 +32,15 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	_ = os.Setenv("GIT_CONFIG_GLOBAL", gitConfig)
 
+	integrationCleanup, err := setupIntegrationTestMain(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to set up integration tests: %v\n", err)
+		os.RemoveAll(root)
+		os.Exit(1)
+	}
+
 	code := m.Run()
+	integrationCleanup()
 	_ = os.RemoveAll(root)
 	os.Exit(code)
 }
