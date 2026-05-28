@@ -553,13 +553,35 @@ Prebuilt-binary hybrid run: 26599616086, commit
 | `cmd/bd` | 7/8 | 16s | 344s | 394s | Pass |
 | `cmd/bd` | 8/8 | 14s | 337s | 383s | Pass |
 
-This is the best measured Linux integration shape so far. It keeps the
-moderate eight-way `cmd/bd` shard count, avoids the sixteen-way queue pressure,
-and completed the full workflow in about 9m34s. Treat it as the current
-candidate for every-`main` Linux no-short integration, subject to one more
-repeat sample before promotion. Further optimization should target precompiling
-the `cmd/bd` test binary itself or reducing the remaining slow test bodies, not
-adding more count-based shards.
+Repeat prebuilt-binary hybrid run: 26604010187, commit
+`c0ca395d6f332d1ee6b22f5257c56aec296bd648`.
+
+| Shard group | Shard | List/build time | Go test time | Job wall clock | Result |
+|---|---:|---:|---:|---:|---|
+| Prebuild | `bd` | 156s | n/a | 180s | Pass |
+| Packages | 1/6 | 12s | 41s | 79s | Pass |
+| Packages | 2/6 | 12s | 184s | 230s | Pass |
+| Packages | 3/6 | 12s | 179s | 218s | Pass |
+| Packages | 4/6 | 12s | 172s | 216s | Pass |
+| Packages | 5/6 | 13s | 36s | 80s | Pass |
+| Packages | 6/6 | 12s | 73s | 112s | Pass |
+| `cmd/bd` | 1/8 | 16s | 345s | 400s | Pass |
+| `cmd/bd` | 2/8 | 15s | 329s | 373s | Pass |
+| `cmd/bd` | 3/8 | 19s | 259s | 308s | Pass |
+| `cmd/bd` | 4/8 | 17s | 337s | 391s | Pass |
+| `cmd/bd` | 5/8 | 15s | 340s | 394s | Pass |
+| `cmd/bd` | 6/8 | 16s | 331s | 383s | Pass |
+| `cmd/bd` | 7/8 | 16s | 326s | 372s | Pass |
+| `cmd/bd` | 8/8 | 16s | 356s | 410s | Pass |
+
+The repeat run passed and remained below the target: about 11m38s from dispatch
+creation to completion, and about 10m41s from first job start to completion.
+The `cmd/bd` tail was 410s, compared to 394s in the first prebuilt sample.
+Promote this prebuilt eight-way hybrid as the every-`main` Linux no-short
+integration shape once the build-artifact stage is wired into the main
+workflow. Further optimization should target precompiling the `cmd/bd` test
+binary itself or reducing the remaining slow test bodies, not adding more
+count-based shards.
 
 ## Package Gates
 
