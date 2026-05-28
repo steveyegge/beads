@@ -481,6 +481,35 @@ falling back to per-process builds. The next measurement is
 `linux-integration-hybrid-prebuilt-sharded`, which prebuilds one `bd` binary
 and reuses it across eight `cmd/bd` shards.
 
+Prebuilt-binary hybrid run: 26599616086, commit
+`4d186ad8024f4ab2d1315ff3d4c51da19429f42c`.
+
+| Shard group | Shard | List/build time | Go test time | Job wall clock | Result |
+|---|---:|---:|---:|---:|---|
+| Prebuild | `bd` | 152s | n/a | 172s | Pass |
+| Packages | 1/6 | 11s | 42s | 82s | Pass |
+| Packages | 2/6 | 13s | 172s | 213s | Pass |
+| Packages | 3/6 | 12s | 174s | 214s | Pass |
+| Packages | 4/6 | 13s | 176s | 223s | Pass |
+| Packages | 5/6 | 11s | 36s | 75s | Pass |
+| Packages | 6/6 | 12s | 77s | 121s | Pass |
+| `cmd/bd` | 1/8 | 15s | 333s | 380s | Pass |
+| `cmd/bd` | 2/8 | 15s | 330s | 376s | Pass |
+| `cmd/bd` | 3/8 | 18s | 331s | 380s | Pass |
+| `cmd/bd` | 4/8 | 16s | 331s | 378s | Pass |
+| `cmd/bd` | 5/8 | 16s | 330s | 386s | Pass |
+| `cmd/bd` | 6/8 | 18s | 341s | 392s | Pass |
+| `cmd/bd` | 7/8 | 16s | 344s | 394s | Pass |
+| `cmd/bd` | 8/8 | 14s | 337s | 383s | Pass |
+
+This is the best measured Linux integration shape so far. It keeps the
+moderate eight-way `cmd/bd` shard count, avoids the sixteen-way queue pressure,
+and completed the full workflow in about 9m34s. Treat it as the current
+candidate for every-`main` Linux no-short integration, subject to one more
+repeat sample before promotion. Further optimization should target precompiling
+the `cmd/bd` test binary itself or reducing the remaining slow test bodies, not
+adding more count-based shards.
+
 ## Package Gates
 
 Package checks should be reusable from PR risk jobs, measurement jobs, `main`,
