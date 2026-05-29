@@ -61,8 +61,8 @@ func TestBuildCreateIssueFromInput_PopulatesAllFields(t *testing.T) {
 	if got.Priority != 1 {
 		t.Errorf("Priority = %d", got.Priority)
 	}
-	if got.Status != types.StatusOpen {
-		t.Errorf("Status = %q, want %q", got.Status, types.StatusOpen)
+	if got.Status != types.StatusDeferred {
+		t.Errorf("Status = %q, want %q", got.Status, types.StatusDeferred)
 	}
 	if got.ExternalRef == nil || *got.ExternalRef != "gh-9" {
 		t.Errorf("ExternalRef = %v, want pointer to gh-9", got.ExternalRef)

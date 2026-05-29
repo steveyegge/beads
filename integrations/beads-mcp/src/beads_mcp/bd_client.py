@@ -786,34 +786,37 @@ class BdCliClient(BdClientBase):
         Returns:
             Dict with detected test issues and deleted count if clean=True
         """
-        args = ["detect-pollution"]
+        args = ["doctor", "--check=pollution"]
         if clean:
             args.extend(["--clean", "--yes"])
 
         data = await self._run_command(*args)
         if not isinstance(data, dict):
-            raise BdCommandError("Invalid response for detect-pollution")
+            raise BdCommandError("Invalid response for doctor --check=pollution")
         return data
 
     async def validate(self, checks: str | None = None, fix_all: bool = False) -> dict[str, Any]:
-        """Run database validation checks.
+        """Run database validation checks via bd doctor --check=validate.
 
         Args:
-            checks: Comma-separated list of checks (orphans,duplicates,pollution,conflicts)
+            checks: Accepted for backward compatibility but no longer applied.
+                bd doctor --check=validate runs the full data-integrity suite
+                (duplicates, orphaned issues, conflicts) and has no flag for
+                selecting a subset. Use detect_pollution() for the pollution check.
             fix_all: If True, auto-fix all fixable issues
 
         Returns:
             Dict with validation results for each check
         """
-        args = ["validate"]
-        if checks:
-            args.extend(["--checks", checks])
+        del checks  # subset selection is unsupported by bd doctor (see docstring)
+        args = ["doctor", "--check=validate"]
         if fix_all:
-            args.append("--fix-all")
+            args.append("--fix")
+            args.append("--yes")
 
         data = await self._run_command(*args)
         if not isinstance(data, dict):
-            raise BdCommandError("Invalid response for validate")
+            raise BdCommandError("Invalid response for doctor --check=validate")
         return data
 
     async def init(self, params: InitParams | None = None) -> str:

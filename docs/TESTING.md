@@ -194,6 +194,18 @@ the command documented in the failing workflow or in the CI cleanup plan.
 Use `scripts/test.sh` for local default validation and targeted development
 runs.
 
+### Coverage Signal Policy
+
+PR confidence is based on behavior checks, not raw coverage percentage.
+
+- Treat Codecov percentages as informational trend data.
+- Prefer focused tests for risky paths (storage, sync/git, migrations, state
+  transitions, and corruption/integrity handling) over broad line-coverage
+  churn.
+- Add or extend at least one targeted regression test when fixing risky logic.
+- Do not block a change solely on overall coverage movement when behavioral
+  checks are strong.
+
 For the current CI/test-surface inventory and cleanup roadmap, see
 [CI_TEST_SURFACE_AUDIT.md](CI_TEST_SURFACE_AUDIT.md). That audit documents
 where local commands and GitHub Actions currently diverge before the CI cleanup

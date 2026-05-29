@@ -105,6 +105,8 @@ BEADS_INSTALL_RESIGN_MACOS=1 curl -fsSL https://raw.githubusercontent.com/gastow
 - **Nocgo (simplest, default in this doc):** `CGO_ENABLED=0 go install ...`. Works on any machine with a Go toolchain, no C compiler needed. Produces a **server-mode-only** binary — you must run an external `dolt sql-server` and use `bd init --server`. See [DOLT.md](DOLT.md) for server-mode setup.
 - **Cgo (embedded-capable):** `CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install ...`. Requires a C compiler (gcc/clang on Unix, MinGW on Windows). Produces a binary with the default embedded-Dolt backend — `bd init` Just Works.
 
+Use the `github.com/steveyegge/beads` path for `go install`. The repository now lives under `gastownhall/beads`, but released Go modules still declare `github.com/steveyegge/beads` for compatibility.
+
 If you don't have a preference, `brew install beads` / `install.sh` give you the embedded-capable build with no fuss.
 
 ## Platform-Specific Installation

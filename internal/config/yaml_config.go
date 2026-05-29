@@ -78,6 +78,9 @@ var YamlOnlyKeys = map[string]bool{
 	"linear.api_key":             true,
 	"linear.oauth_client_id":     true,
 	"linear.oauth_client_secret": true,
+	"jira.api_token":             true,
+	"gitlab.token":               true,
+	"ado.pat":                    true,
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml

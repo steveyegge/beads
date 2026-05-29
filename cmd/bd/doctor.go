@@ -421,6 +421,13 @@ func runDiagnostics(path string) doctorResult {
 		})
 	}
 
+	// Check 1c: Managed-city handoff port conflict (GH#3926)
+	managedHandoffCheck := convertDoctorCheck(doctor.CheckManagedHandoffPort(path))
+	result.Checks = append(result.Checks, managedHandoffCheck)
+	if managedHandoffCheck.Status == statusWarning || managedHandoffCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
 	// bd-jgxi: Auto-migrate database version before checking it.
 	// Since doctor skips PersistentPreRun DB init (it's in noDbCommands),
 	// trackBdVersion() and autoMigrateOnVersionBump() haven't run yet.

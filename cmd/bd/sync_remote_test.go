@@ -1,6 +1,15 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	internalbeads "github.com/steveyegge/beads/internal/beads"
+	internalgit "github.com/steveyegge/beads/internal/git"
+)
 
 func TestNormalizeRemoteURL(t *testing.T) {
 	tests := []struct {
@@ -37,4 +46,69 @@ func TestNormalizeRemoteURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCommitBeadsConfigSkipsGitHooks(t *testing.T) {
+	repo := t.TempDir()
+	runGitForCommitConfigTest(t, repo, "init")
+	runGitForCommitConfigTest(t, repo, "config", "user.email", "test@example.com")
+	runGitForCommitConfigTest(t, repo, "config", "user.name", "Test User")
+
+	beadsDir := filepath.Join(repo, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("sync:\n  remote: git+https://example.com/repo.git\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	hooksDir := filepath.Join(repo, ".git", "hooks")
+	hookMarker := filepath.Join(repo, "hook-ran")
+	hook := "#!/bin/sh\n" +
+		"echo hook-ran > " + shellQuoteForTest(hookMarker) + "\n" +
+		"exit 42\n"
+	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte(hook), 0o755); err != nil {
+		t.Fatalf("write pre-commit hook: %v", err)
+	}
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	internalbeads.ResetCaches()
+	internalgit.ResetCaches()
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+		internalbeads.ResetCaches()
+		internalgit.ResetCaches()
+	})
+
+	commitBeadsConfig("bd: update sync.remote")
+
+	if _, err := os.Stat(hookMarker); !os.IsNotExist(err) {
+		t.Fatalf("pre-commit hook ran during internal config commit")
+	}
+	out := runGitForCommitConfigTest(t, repo, "log", "-1", "--format=%s")
+	if got := strings.TrimSpace(out); got != "bd: update sync.remote" {
+		t.Fatalf("commit subject = %q, want %q", got, "bd: update sync.remote")
+	}
+}
+
+func runGitForCommitConfigTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+func shellQuoteForTest(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

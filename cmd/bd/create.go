@@ -773,6 +773,11 @@ func buildCreateIssue(params createIssueParams) *types.Issue {
 		externalRefPtr = &params.ExternalRef
 	}
 
+	status := types.StatusOpen
+	if params.DeferUntil != nil && params.DeferUntil.After(time.Now()) {
+		status = types.StatusDeferred
+	}
+
 	return &types.Issue{
 		ID:                 params.ID,
 		Title:              params.Title,
@@ -781,7 +786,7 @@ func buildCreateIssue(params createIssueParams) *types.Issue {
 		AcceptanceCriteria: params.AcceptanceCriteria,
 		Notes:              params.Notes,
 		SpecID:             params.SpecID,
-		Status:             types.StatusOpen,
+		Status:             status,
 		Priority:           params.Priority,
 		IssueType:          params.IssueType,
 		Assignee:           params.Assignee,

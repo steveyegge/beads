@@ -296,6 +296,7 @@ These flags apply to all commands:
   -C, --directory string          Change to this directory before running the command (like git -C)
       --dolt-auto-commit string   Dolt auto-commit policy (off|on|batch). 'on': commit after each write. 'batch': defer commits to bd dolt commit; uncommitted changes persist in the working set until then. SIGTERM/SIGHUP flush pending batch commits. Default: off. Override via config key dolt.auto-commit
       --global                    Use the global shared-server database (beads_global)
+      --ignore-schema-skew        Proceed despite forward schema drift (some queries may fail)
       --json                      Output in JSON format
       --profile                   Generate CPU profile for performance analysis
   -q, --quiet                     Suppress non-essential output (errors only)
@@ -345,6 +346,11 @@ Close one or more issues.
 
 If no issue ID is provided, closes the last touched issue (from most recent
 create, update, show, or close operation).
+
+When closing multiple issues, provide one --reason for all IDs or repeat
+--reason once per ID. Reasons map positionally: the first --reason applies
+to the first ID, the second --reason to the second ID, regardless of where
+the flags appear in the command line.
 
 ```
 bd close [id...] [flags]
@@ -2428,7 +2434,7 @@ EXAMPLES:
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
-  bd import --json                 # Structured output with created IDs
+  bd import --json                 # Structured output with created and skipped IDs
 
 ```
 bd import [file|-] [flags]
@@ -2637,6 +2643,7 @@ Examples:
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
   bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
+  bd config set dolt.local-only true                   # Skip wiring a Dolt sync remote during bd init
   bd config get export.auto
   bd config list
   bd config unset jira.url
