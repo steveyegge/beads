@@ -202,6 +202,14 @@ make ci-pr-policy
 make ci-pr-lint
 ```
 
+Use the package gate wrappers when touching package or docs surfaces:
+
+```bash
+make ci-package-mcp
+make ci-package-npm
+make ci-website
+```
+
 ### Coverage Signal Policy
 
 PR confidence is based on behavior checks, not raw coverage percentage.

@@ -708,22 +708,10 @@ jobs:
       - name: Measure commands
         run: |
           set -euo pipefail
-          mkdir -p artifacts /tmp/beads-measure-bin
           source scripts/ci/lib/timing.sh
-          source ./.buildflags
 
           ci_time "install uv" -- pip install uv==0.11.16
-          ci_time "build bd for MCP package" -- go build -o /tmp/beads-measure-bin/bd ./cmd/bd
-          export PATH="/tmp/beads-measure-bin:$PATH"
-          cd integrations/beads-mcp
-          ci_time "mcp uv sync" -- uv sync --all-groups
-          status=0
-          ci_time "mcp ruff check" -- uv run ruff check src/beads_mcp tests || status=$?
-          ci_time "mcp mypy" -- uv run mypy src/beads_mcp || status=$?
-          ci_time "mcp pytest" -- uv run pytest --durations=50 || status=$?
-          rm -rf dist
-          ci_time "mcp build" -- uv build || status=$?
-          exit "$status"
+          ci_time "mcp package gate" -- make ci-package-mcp
 
       - name: Upload measurement artifacts
         if: always()
@@ -755,18 +743,8 @@ jobs:
       - name: Measure commands
         run: |
           set -euo pipefail
-          mkdir -p artifacts
           source scripts/ci/lib/timing.sh
-          source ./.buildflags
-          trap 'rm -f npm-package/bin/bd' EXIT
-
-          ci_time "build bd for npm package" -- go build -o npm-package/bin/bd ./cmd/bd
-          cd npm-package
-          ci_time "npm package install" -- npm install
-          status=0
-          ci_time "npm package test:all" -- npm run test:all || status=$?
-          ci_time "npm package pack dry-run" -- bash -c 'npm pack --dry-run | tee ../artifacts/npm-pack-dry-run.txt' || status=$?
-          exit "$status"
+          ci_time "npm package gate" -- make ci-package-npm
 
       - name: Upload measurement artifacts
         if: always()
@@ -797,10 +775,7 @@ jobs:
           set -euo pipefail
           source scripts/ci/lib/timing.sh
 
-          ci_time "website npm ci" -- npm --prefix website ci
-          ci_time "website typecheck" -- npm --prefix website run typecheck
-          ci_time "generate llms-full" -- ./scripts/generate-llms-full.sh
-          ci_time "website build" -- npm --prefix website run build
+          ci_time "website package gate" -- make ci-website
 
       - name: Upload measurement artifacts
         if: always()

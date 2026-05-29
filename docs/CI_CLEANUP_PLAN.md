@@ -600,6 +600,15 @@ reducing the remaining slow test bodies, not adding more count-based shards.
 Package checks should be reusable from PR risk jobs, measurement jobs, `main`,
 and release workflows.
 
+Initial package gate implementation on branch `ci/bd-am3.1-wrapper-commands`
+adds `scripts/ci/package-mcp.sh`, `scripts/ci/package-npm.sh`, and
+`scripts/ci/website.sh`, with Make aliases `ci-package-mcp`,
+`ci-package-npm`, and `ci-website`. CI uses `scripts/ci/detect-package-gates.sh`
+to run these jobs only when package, website, release, workflow, or wrapper
+paths are relevant; otherwise each package gate reports success as not
+applicable. MCP and npm gates consume the `Build Artifacts` `bd-linux-gms-pure`
+binary through `BEADS_TEST_BD_BINARY`.
+
 ### MCP Python Package
 
 Build a candidate `bd` once and put it on `PATH`. Test only the `bd` binary
@@ -635,6 +644,11 @@ npm pack --dry-run
 
 The existing integration test already exercises a real `npm pack`; keep both
 that real pack and the explicit dry-run file-list check.
+
+The npm wrapper forces `CI=1` by default so `npm install` and package
+installation tests do not download the latest published release in `postinstall`.
+That keeps the gate focused on the candidate binary copied into
+`npm-package/bin/bd`.
 
 ### Website
 
@@ -700,6 +714,8 @@ checks pass.
    Linux coverage install has been pinned from `gotestsum@latest` to
    `gotestsum@v1.13.0`.
 5. Add package wrappers and risk/measurement usage for MCP, npm, and website.
+   Initial wrappers, measurement reuse, website deploy reuse, and path-gated CI
+   package jobs exist on branch `ci/bd-am3.1-wrapper-commands`.
 6. Perform the mandatory `testing.Short()` audit and cleanup.
 7. Promote measured suites to `main` or scheduled jobs based on wall-clock data.
    The measured prebuilt Linux no-short integration hybrid is promoted to
