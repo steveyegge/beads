@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
 
       - name: Verify tag matches version.go
         run: |
@@ -40,7 +42,7 @@ jobs:
           echo "OK: tag and version.go agree on $code_version"
 
       - name: Check version + docs consistency
-        run: ./scripts/check-versions.sh
+        run: BEADS_REQUIRE_RELEASE_DOCS=1 ./scripts/check-versions.sh
 
   goreleaser:
     # Guard: only run goreleaser in the canonical repository (not in forks)
