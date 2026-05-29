@@ -3,34 +3,59 @@ package schema
 // cliCompatibleMigrationSQL returns migration SQL suitable for `dolt sql -q`
 // against a fresh test database. The Dolt CLI accepts PREPARE/EXECUTE DDL but
 // does not apply some prepared ALTER TABLE statements in this path, so the
-// fresh-schema bundle uses direct DDL for migrations that create columns later
-// statements depend on. Runtime migrations still use the source files.
+// fresh-schema bundle uses direct DDL for prepared DDL that can change the
+// committed schema shape. The bundle's contract is to reproduce the runtime
+// committed schema for a fresh database; runtime migrations still use the source
+// files and remain the source of truth for upgrades of existing databases.
 func cliCompatibleMigrationSQL(name, sqlText string) string {
 	switch name {
+	case "0008_create_child_counters.up.sql":
+		// Fresh bundle bakes the final FK shape that runtime reaches after
+		// 0039 drops the original FK and ignored migration 0002 re-adds it.
+		return cliMigration0008CreateChildCounters
 	case "0023_add_no_history_column.up.sql":
 		return cliMigration0023AddNoHistoryColumn
 	case "0027_add_started_at.up.sql":
 		return cliMigration0027AddStartedAt
+	case "0032_drop_schema_migrations_applied_at.up.sql":
+		return cliMigration0032DropSchemaMigrationsAppliedAt
 	case "0033_add_wisp_type_column.up.sql":
+		// No-op on fresh schema: wisp_type is already in squashed base 0001.
 		return "SELECT 1;"
 	case "0034_add_spec_id_column.up.sql":
+		// No-op on fresh schema: spec_id and idx_issues_spec_id are in 0001.
+		return "SELECT 1;"
+	case "0039_drop_child_counters_fk.up.sql":
+		// No-op here because 0008 already emits the final ignored-0002 FK.
 		return "SELECT 1;"
 	case "0041_split_dependencies_target.up.sql":
 		return cliMigration0041SplitDependenciesTarget
 	case "0043_drop_dependencies_generated_column.up.sql":
 		return cliMigration0043DropDependenciesGeneratedColumn
 	case "0046_add_is_blocked.up.sql":
+		// Fresh databases contain no issue graph, so only the schema delta is
+		// needed; the source migration's recursive backfill is dead work here.
 		return cliMigration0046AddIsBlocked
+	case "0049_longtext_large_content_columns.up.sql":
+		return cliMigration0049LongtextLargeContentColumns
 	default:
 		return sqlText
 	}
 }
+
+const cliMigration0008CreateChildCounters = `CREATE TABLE IF NOT EXISTS child_counters (
+    parent_id VARCHAR(255) PRIMARY KEY,
+    last_child INT NOT NULL DEFAULT 0,
+    CONSTRAINT fk_counter_parent FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE ON UPDATE CASCADE
+);`
 
 const cliMigration0023AddNoHistoryColumn = `ALTER TABLE issues ADD COLUMN no_history TINYINT(1) DEFAULT 0;
 ALTER TABLE wisps ADD COLUMN no_history TINYINT(1) DEFAULT 0;`
 
 const cliMigration0027AddStartedAt = `ALTER TABLE issues ADD COLUMN started_at DATETIME;
 ALTER TABLE wisps ADD COLUMN started_at DATETIME;`
+
+const cliMigration0032DropSchemaMigrationsAppliedAt = `ALTER TABLE schema_migrations DROP COLUMN applied_at;`
 
 const cliMigration0041SplitDependenciesTarget = `DELETE FROM dolt_nonlocal_tables;
 CALL DOLT_COMMIT('-Am', 'disable nonlocal tables for fk migrations');
@@ -82,31 +107,10 @@ ALTER TABLE dependencies ADD CONSTRAINT fk_dep_issue_target FOREIGN KEY (depends
 SET FOREIGN_KEY_CHECKS = 1;`
 
 const cliMigration0046AddIsBlocked = `ALTER TABLE issues ADD COLUMN is_blocked TINYINT(1) NOT NULL DEFAULT 0;
-CREATE INDEX idx_issues_is_blocked ON issues(is_blocked, status);
+CREATE INDEX idx_issues_is_blocked ON issues(is_blocked, status);`
 
-UPDATE issues SET is_blocked = 0;
-
-WITH RECURSIVE
-  directly_blocked(id) AS (
-    SELECT DISTINCT i.id
-    FROM issues i
-    JOIN dependencies d ON d.issue_id = i.id
-    JOIN issues t ON t.id = d.depends_on_issue_id
-    WHERE i.status NOT IN ('closed', 'pinned')
-      AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
-      AND t.status NOT IN ('closed', 'pinned')
-  ),
-  recursively_blocked(id) AS (
-    SELECT id FROM directly_blocked
-    UNION
-    SELECT d.issue_id
-    FROM dependencies d
-    JOIN recursively_blocked rb ON rb.id = d.depends_on_issue_id
-    JOIN issues i ON i.id = d.issue_id
-    WHERE i.status NOT IN ('closed', 'pinned')
-      AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
-  )
-UPDATE issues
-JOIN recursively_blocked rb ON rb.id = issues.id
-SET is_blocked = 1
-WHERE issues.status NOT IN ('closed', 'pinned');`
+const cliMigration0049LongtextLargeContentColumns = `ALTER TABLE issues MODIFY COLUMN description LONGTEXT NOT NULL, MODIFY COLUMN design LONGTEXT NOT NULL, MODIFY COLUMN acceptance_criteria LONGTEXT NOT NULL, MODIFY COLUMN notes LONGTEXT NOT NULL;
+ALTER TABLE issues MODIFY COLUMN close_reason LONGTEXT DEFAULT '';
+ALTER TABLE wisps MODIFY COLUMN description LONGTEXT NOT NULL DEFAULT '', MODIFY COLUMN design LONGTEXT NOT NULL DEFAULT '', MODIFY COLUMN acceptance_criteria LONGTEXT NOT NULL DEFAULT '', MODIFY COLUMN notes LONGTEXT NOT NULL DEFAULT '';
+ALTER TABLE wisps MODIFY COLUMN close_reason LONGTEXT DEFAULT '';
+ALTER TABLE comments MODIFY COLUMN text LONGTEXT NOT NULL;`
