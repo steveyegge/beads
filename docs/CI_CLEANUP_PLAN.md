@@ -619,7 +619,7 @@ Wrapper command sequence:
 ```bash
 go build -tags gms_pure_go -o /tmp/bd-mcp-test ./cmd/bd
 cd integrations/beads-mcp
-uv sync --all-groups
+uv sync --all-groups --locked
 uv run ruff check src/beads_mcp tests
 uv run mypy src/beads_mcp
 uv run pytest --durations=50
@@ -709,6 +709,14 @@ checks pass.
 - Keep privileged automation isolated and audited. Do not broaden normal
   validation to `pull_request_target`.
 
+Initial release hardening on branch `ci/bd-am3.1-wrapper-commands` adds
+release-only MCP, npm, and website package gate jobs to `.github/workflows/release.yml`.
+GoReleaser now waits for all three gates before publishing GitHub release
+assets. PyPI publishing downloads the validated `beads-mcp` `dist/*` artifact
+from the MCP gate instead of rebuilding it in the publish job. npm publishing
+waits for the npm package gate and both Linux/Windows and macOS GitHub release
+artifacts, so `postinstall` URLs are populated before the package is published.
+
 ## Implementation Order
 
 1. Add `scripts/ci/*` wrappers and `scripts/ci/lib/timing.sh`; add Make aliases.
@@ -735,6 +743,8 @@ checks pass.
    The measured prebuilt Linux no-short integration hybrid is promoted to
    every-`main` CI on branch `ci/bd-am3.1-wrapper-commands`.
 8. Harden release workflows to reuse package wrappers before publishing.
+   Initial release-only package gates and publish-job dependencies exist on
+   branch `ci/bd-am3.1-wrapper-commands`.
 9. Split workflows by tier/domain once wrappers are stable:
    `pr.yml`, `pr-risk.yml`, `main.yml`, `release.yml`, and `nightly.yml`.
 

@@ -37,7 +37,7 @@ prepare_bd_binary() {
 
 mcp_uv_sync() {
     cd "$MCP_DIR"
-    uv sync --all-groups
+    uv sync --all-groups --locked
 }
 
 mcp_ruff() {

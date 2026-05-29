@@ -41,7 +41,7 @@ boundaries.
 Package gate wrappers validate publishable/package-adjacent surfaces:
 
 - `make ci-package-mcp` builds or consumes a `bd` binary, puts it on `PATH` as
-  `bd`, then runs the MCP package `uv sync`, Ruff, mypy, pytest, and build
+  `bd`, then runs locked MCP package `uv sync`, Ruff, mypy, pytest, and build
   checks.
 - `make ci-package-npm` builds or consumes the native binary expected by
   `npm-package/bin/bd`, runs the npm package test suite, and checks
