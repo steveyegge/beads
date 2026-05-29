@@ -161,27 +161,8 @@ func runExport(cmd *cobra.Command, args []string) error {
 		issue.Comments = commentsMap[issue.ID]
 	}
 
-	// Sort issues for deterministic JSONL output (GH#4127).
-	// SearchIssues has ORDER BY but wisp-merge can break that ordering.
-	sort.SliceStable(issues, func(i, j int) bool {
-		if issues[i].Priority != issues[j].Priority {
-			return issues[i].Priority < issues[j].Priority
-		}
-		if !issues[i].CreatedAt.Equal(issues[j].CreatedAt) {
-			return issues[i].CreatedAt.After(issues[j].CreatedAt)
-		}
-		return issues[i].ID < issues[j].ID
-	})
-
-	// Sort sub-objects within each issue for stable nested ordering.
-	for _, issue := range issues {
-		sort.Slice(issue.Dependencies, func(a, b int) bool {
-			if issue.Dependencies[a].DependsOnID != issue.Dependencies[b].DependsOnID {
-				return issue.Dependencies[a].DependsOnID < issue.Dependencies[b].DependsOnID
-			}
-			return issue.Dependencies[a].Type < issue.Dependencies[b].Type
-		})
-	}
+	// Sort for deterministic JSONL output (GH#4127).
+	sortIssuesForExport(issues)
 
 	// Write JSONL: one JSON object per line
 	count := 0
@@ -295,6 +276,30 @@ func sanitizeZeroTime(issue *types.Issue) {
 	}
 	if issue.UpdatedAt.IsZero() {
 		issue.UpdatedAt = epoch
+	}
+}
+
+// sortIssuesForExport orders issues and their dependencies deterministically
+// so JSONL export output is byte-stable across runs (GH#4127). SearchIssues
+// applies SQL ORDER BY, but wisp-merge can append rows without re-sorting, and
+// the dependency query lacks a within-issue tiebreaker.
+func sortIssuesForExport(issues []*types.Issue) {
+	sort.SliceStable(issues, func(i, j int) bool {
+		if issues[i].Priority != issues[j].Priority {
+			return issues[i].Priority < issues[j].Priority
+		}
+		if !issues[i].CreatedAt.Equal(issues[j].CreatedAt) {
+			return issues[i].CreatedAt.After(issues[j].CreatedAt)
+		}
+		return issues[i].ID < issues[j].ID
+	})
+	for _, issue := range issues {
+		sort.Slice(issue.Dependencies, func(a, b int) bool {
+			if issue.Dependencies[a].DependsOnID != issue.Dependencies[b].DependsOnID {
+				return issue.Dependencies[a].DependsOnID < issue.Dependencies[b].DependsOnID
+			}
+			return issue.Dependencies[a].Type < issue.Dependencies[b].Type
+		})
 	}
 }
 
