@@ -276,6 +276,7 @@ bd dolt start
 
 ## See Also
 
+- [SYNC_CONCEPTS.md](SYNC_CONCEPTS.md) — The conceptual model behind this setup (why Dolt is the source of truth, what JSONL is for)
 - [QUICKSTART.md](QUICKSTART.md) — Getting started with beads
 - [DOLT.md](DOLT.md) — Dolt backend details, server modes, federation
 - [DOLT.md](DOLT.md) — Remote types, sync modes, advanced usage
