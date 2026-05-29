@@ -48,16 +48,16 @@ func (r *beadsDirFSRepositoryImpl) ResolveBeadsDirPath(ctx context.Context) doma
 }
 
 func (r *beadsDirFSRepositoryImpl) BeadsDirIsLocal(ctx context.Context) bool {
-	workDirAbs, err := filepath.Abs(r.workDir)
+	workDir := filepath.Clean(utils.CanonicalizePath(r.workDir))
+	beadsDir := filepath.Clean(utils.CanonicalizePath(r.beadsDir))
+	if beadsDir == workDir {
+		return true
+	}
+	rel, err := filepath.Rel(workDir, beadsDir)
 	if err != nil {
 		return false
 	}
-	beadsDirAbs, err := filepath.Abs(r.beadsDir)
-	if err != nil {
-		return false
-	}
-	return strings.HasPrefix(beadsDirAbs, filepath.Clean(workDirAbs)+string(filepath.Separator)) ||
-		filepath.Clean(beadsDirAbs) == filepath.Clean(workDirAbs)
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (r *beadsDirFSRepositoryImpl) CreateBeadsDir(ctx context.Context) error {
