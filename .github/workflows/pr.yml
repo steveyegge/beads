@@ -493,3 +493,74 @@ jobs:
         with:
           version: latest
           args: --timeout=5m --build-tags=gms_pure_go
+
+  ci-gate:
+    name: CI Gate / Required
+    runs-on: ubuntu-latest
+    needs:
+      - build-artifacts
+      - check-build-tags
+      - check-cmd-bd-puregeo-tests
+      - check-version-consistency
+      - check-no-duplicate-migrations
+      - check-doc-flags
+      - check-no-beads-changes
+      - detect-package-gates
+      - package-mcp
+      - package-npm
+      - package-website
+      - pr-policy-wrapper
+      - pr-core-wrapper
+      - pr-lint-wrapper
+      - test-domain-uow
+      - fmt-check
+      - lint
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Evaluate CI gate
+        env:
+          CI_GATE_NAME: PR baseline gate
+          CI_GATE_REQUIRED: >-
+            BUILD_ARTIFACTS
+            CHECK_BUILD_TAGS
+            CHECK_CMD_BD_PUREGEO_TESTS
+            CHECK_VERSION_CONSISTENCY
+            CHECK_NO_DUPLICATE_MIGRATIONS
+            CHECK_DOC_FLAGS
+            CHECK_NO_BEADS_CHANGES
+            DETECT_PACKAGE_GATES
+            PACKAGE_MCP
+            PACKAGE_NPM
+            PACKAGE_WEBSITE
+            PR_POLICY_WRAPPER
+            PR_CORE_WRAPPER
+            PR_LINT_WRAPPER
+            TEST_DOMAIN_UOW
+            FMT_CHECK
+            LINT
+          BUILD_ARTIFACTS: ${{ needs.build-artifacts.result }}
+          CHECK_BUILD_TAGS: ${{ needs.check-build-tags.result }}
+          CHECK_CMD_BD_PUREGEO_TESTS: ${{ needs.check-cmd-bd-puregeo-tests.result }}
+          CHECK_VERSION_CONSISTENCY: ${{ needs.check-version-consistency.result }}
+          CHECK_NO_DUPLICATE_MIGRATIONS: ${{ needs.check-no-duplicate-migrations.result }}
+          CHECK_DOC_FLAGS: ${{ needs.check-doc-flags.result }}
+          CHECK_NO_BEADS_CHANGES: ${{ needs.check-no-beads-changes.result }}
+          DETECT_PACKAGE_GATES: ${{ needs.detect-package-gates.result }}
+          PACKAGE_MCP: ${{ needs.package-mcp.result }}
+          PACKAGE_NPM: ${{ needs.package-npm.result }}
+          PACKAGE_WEBSITE: ${{ needs.package-website.result }}
+          PR_POLICY_WRAPPER: ${{ needs.pr-policy-wrapper.result }}
+          PR_CORE_WRAPPER: ${{ needs.pr-core-wrapper.result }}
+          PR_LINT_WRAPPER: ${{ needs.pr-lint-wrapper.result }}
+          TEST_DOMAIN_UOW: ${{ needs.test-domain-uow.result }}
+          FMT_CHECK: ${{ needs.fmt-check.result }}
+          LINT: ${{ needs.lint.result }}
+        run: |
+          skipped_ok=""
+          if [[ "$GITHUB_EVENT_NAME" == "merge_group" ]]; then
+            skipped_ok="CHECK_NO_BEADS_CHANGES"
+          fi
+          export CI_GATE_SKIPPED_OK="$skipped_ok"
+          bash .github/scripts/ci-gate.sh

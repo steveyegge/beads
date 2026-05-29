@@ -155,9 +155,11 @@ The former monolithic `ci.yml` has been split by tier/domain:
 
 - `pr.yml`: pull request and merge queue baseline. It owns the Linux build
   artifact stage, PR policy/core/lint wrappers, compatibility policy/lint jobs,
-  package gates that consume the Linux artifact, and storage domain/uow tests.
+  package gates that consume the Linux artifact, storage domain/uow tests, and
+  the aggregate check `PR / CI Gate / Required`.
 - `pr-risk.yml`: pull request and merge queue risk jobs. It owns embedded Dolt
-  risk detection, embedded build/storage/cmd shards, and the Nix flake smoke.
+  risk detection, embedded build/storage/cmd shards, the Nix flake smoke, and
+  the aggregate check `PR Risk / CI Gate / Required`.
 - `main.yml`: push-to-`main` branch health. It reruns the baseline wrappers,
   package gates, Linux/macOS short coverage, Windows smoke, embedded Dolt, Nix,
   storage domain/uow, and promoted Linux no-short integration shards.
@@ -178,6 +180,8 @@ Key jobs preserved by display name:
 - `Test (storage domain + uow)`.
 - `Build (Embedded Dolt)`, `Test (Embedded Dolt Storage)`, and
   `Test (Embedded Dolt Cmd N/20)`.
+- Aggregate required-check candidates: `PR / CI Gate / Required` and
+  `PR Risk / CI Gate / Required`.
 - Main-only platform and integration jobs: `Test (ubuntu-latest)`,
   `Test (macos-latest)`, `Test (Windows - smoke)`,
   `Main Linux integration packages (N/6)`, and

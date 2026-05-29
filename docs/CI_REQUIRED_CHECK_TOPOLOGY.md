@@ -1,8 +1,8 @@
 # Required Check Topology
 
-Status: design proposal. Do not change branch protection until the workflow
-changes below have landed and the new check has appeared on at least one recent
-commit.
+Status: initial aggregate gate jobs implemented on branch
+`ci/bd-am3.1-wrapper-commands`. Do not change branch protection until the new
+checks have appeared and passed on at least one recent commit.
 
 ## Problem
 
@@ -33,10 +33,12 @@ Current PR-related workflow names:
 - `.github/workflows/pr.yml`: `PR`
   Runs on `pull_request` and `merge_group`. Contains the baseline PR jobs,
   Linux build artifact stage, policy/lint compatibility jobs, package gates
-  that consume the Linux artifact, and focused storage domain/uow coverage.
+  that consume the Linux artifact, focused storage domain/uow coverage, and
+  the baseline aggregate gate `PR / CI Gate / Required`.
 - `.github/workflows/pr-risk.yml`: `PR Risk`
   Runs on `pull_request` and `merge_group`. Contains embedded Dolt risk
-  detection, embedded build/test shards, and the Nix flake smoke check.
+  detection, embedded build/test shards, the Nix flake smoke check, and the
+  risk aggregate gate `PR Risk / CI Gate / Required`.
 - `.github/workflows/main.yml`: `Main`
   Runs on pushes to `main`. Contains the main branch health checks, package
   gates, platform smoke/short coverage, embedded Dolt coverage, and promoted
@@ -62,13 +64,13 @@ protection on the default branch. It does not currently require status checks.
 
 ## Required Check Contract
 
-After rollout, branch protection or the default-branch ruleset should require
-stable aggregate GitHub Actions checks from unfiltered workflows. The original
-single-check proposal assumed all PR jobs lived in one workflow; after the
-workflow split, a single in-workflow aggregate can only cover jobs in that same
-workflow. A follow-up should either add one aggregate per required workflow or
-introduce an external status aggregator if maintainers still want exactly one
-required check.
+After the aggregate checks are verified on the branch, branch protection or the
+default-branch ruleset should require stable aggregate GitHub Actions checks
+from unfiltered workflows. The original single-check proposal assumed all PR
+jobs lived in one workflow; after the workflow split, a single in-workflow
+aggregate can only cover jobs in that same workflow. The implemented first
+rollout uses one aggregate per required workflow. An external status aggregator
+would only be needed if maintainers still want exactly one required check.
 
 - Baseline aggregate candidate: `PR / CI Gate / Required`
 - Risk aggregate candidate: `PR Risk / CI Gate / Required`
@@ -99,7 +101,7 @@ Do not require these existing check names directly:
 - `nix build .#default`
 
 Those checks should remain visible for diagnosis, but branch protection should
-point at aggregate gates after the follow-up gate jobs land.
+point at aggregate gates after the gate jobs are verified.
 
 ## Workflow Topology
 
@@ -121,8 +123,7 @@ Do not add `paths`, `paths-ignore`, or narrower branch filters to `pr.yml` or
 
 ### 2. Add Aggregate Gate Jobs
 
-Add one final baseline gate job to `.github/workflows/pr.yml` after branch
-protection is ready to move to aggregates:
+`.github/workflows/pr.yml` now has one final baseline gate job:
 
 <!-- markdownlint-disable MD013 -->
 
@@ -150,8 +151,29 @@ protection is ready to move to aggregates:
       - lint
     if: ${{ always() }}
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
       - name: Evaluate CI gate
         env:
+          CI_GATE_NAME: PR baseline gate
+          CI_GATE_REQUIRED: >-
+            BUILD_ARTIFACTS
+            CHECK_BUILD_TAGS
+            CHECK_CMD_BD_PUREGEO_TESTS
+            CHECK_VERSION_CONSISTENCY
+            CHECK_NO_DUPLICATE_MIGRATIONS
+            CHECK_DOC_FLAGS
+            CHECK_NO_BEADS_CHANGES
+            DETECT_PACKAGE_GATES
+            PACKAGE_MCP
+            PACKAGE_NPM
+            PACKAGE_WEBSITE
+            PR_POLICY_WRAPPER
+            PR_CORE_WRAPPER
+            PR_LINT_WRAPPER
+            TEST_DOMAIN_UOW
+            FMT_CHECK
+            LINT
           BUILD_ARTIFACTS: ${{ needs.build-artifacts.result }}
           CHECK_BUILD_TAGS: ${{ needs.check-build-tags.result }}
           CHECK_CMD_BD_PUREGEO_TESTS: ${{ needs.check-cmd-bd-puregeo-tests.result }}
@@ -169,19 +191,23 @@ protection is ready to move to aggregates:
           TEST_DOMAIN_UOW: ${{ needs.test-domain-uow.result }}
           FMT_CHECK: ${{ needs.fmt-check.result }}
           LINT: ${{ needs.lint.result }}
-        run: bash .github/scripts/ci-gate.sh
+        run: |
+          skipped_ok=""
+          if [[ "$GITHUB_EVENT_NAME" == "merge_group" ]]; then
+            skipped_ok="CHECK_NO_BEADS_CHANGES"
+          fi
+          export CI_GATE_SKIPPED_OK="$skipped_ok"
+          bash .github/scripts/ci-gate.sh
 ```
 
 <!-- markdownlint-enable MD013 -->
 
-Add a companion aggregate in `.github/workflows/pr-risk.yml` for
-`detect-ci-tier`, `build-embedded`, `test-embedded-storage`,
-`test-embedded-cmd`, and `test-nix`, or use an external aggregator if these
-must collapse into one required check.
+`.github/workflows/pr-risk.yml` has a companion aggregate for `detect-ci-tier`,
+`build-embedded`, `test-embedded-storage`, `test-embedded-cmd`, and `test-nix`.
 
-Add `.github/scripts/ci-gate.sh` as a small shell evaluator. It should fail on
-any `failure` or `cancelled` result. It should accept `skipped` only for jobs
-that are intentionally absent for that event or risk tier:
+`.github/scripts/ci-gate.sh` is a small shell evaluator. It fails on any
+`failure` or `cancelled` result. It accepts `skipped` only for jobs that are
+intentionally absent for that event or risk tier:
 
 - `CHECK_NO_BEADS_CHANGES=skipped` is acceptable on `merge_group` because the
   job is PR-only.
@@ -300,7 +326,8 @@ Policy for `merge_group`:
 ## Rollout Steps
 
 1. Add `.github/scripts/ci-gate.sh` and aggregate gate jobs to the required PR
-   workflows.
+   workflows. Initial implementation exists on branch
+   `ci/bd-am3.1-wrapper-commands`.
 2. Open a PR and verify the new aggregate check names appear exactly as
    expected from GitHub Actions.
 3. Verify the gate succeeds on a docs-only PR where embedded jobs are skipped.

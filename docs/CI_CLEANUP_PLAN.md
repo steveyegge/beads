@@ -752,10 +752,15 @@ artifacts, so `postinstall` URLs are populated before the package is published.
    `.github/workflows/pr.yml`, `.github/workflows/pr-risk.yml`, and
    `.github/workflows/main.yml`. Job display names are intentionally preserved
    where practical so branch-protection migration can be handled separately.
+10. Add stable aggregate required-check candidates after the split.
+    Initial aggregate jobs exist on branch `ci/bd-am3.1-wrapper-commands` as
+    `PR / CI Gate / Required` and `PR Risk / CI Gate / Required`, backed by
+    `.github/scripts/ci-gate.sh`.
 
 ## Deferred Decisions
 
-- Exact branch-protection required-check names after workflow split.
+- Exact branch-protection rollout timing after the aggregate check names appear
+  and pass on a live PR/merge queue run.
 - Whether no-CGO should become a full all-package gate or remain focused.
 - Coverage thresholds for promoted main suites.
 - Final sharding strategy for macOS, integration, and embedded jobs.

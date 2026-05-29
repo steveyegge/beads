@@ -204,3 +204,39 @@ jobs:
             exit 1
           fi
           echo "Help text first line is correct"
+
+  ci-gate:
+    name: CI Gate / Required
+    runs-on: ubuntu-latest
+    needs:
+      - detect-ci-tier
+      - build-embedded
+      - test-embedded-storage
+      - test-embedded-cmd
+      - test-nix
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Evaluate CI gate
+        env:
+          CI_GATE_NAME: PR risk gate
+          CI_GATE_REQUIRED: >-
+            DETECT_CI_TIER
+            BUILD_EMBEDDED
+            TEST_EMBEDDED_STORAGE
+            TEST_EMBEDDED_CMD
+            TEST_NIX
+          FULL_EMBEDDED: ${{ needs.detect-ci-tier.outputs.full_embedded }}
+          DETECT_CI_TIER: ${{ needs.detect-ci-tier.result }}
+          BUILD_EMBEDDED: ${{ needs.build-embedded.result }}
+          TEST_EMBEDDED_STORAGE: ${{ needs.test-embedded-storage.result }}
+          TEST_EMBEDDED_CMD: ${{ needs.test-embedded-cmd.result }}
+          TEST_NIX: ${{ needs.test-nix.result }}
+        run: |
+          skipped_ok=""
+          if [[ "$FULL_EMBEDDED" != "true" ]]; then
+            skipped_ok="BUILD_EMBEDDED TEST_EMBEDDED_STORAGE TEST_EMBEDDED_CMD"
+          fi
+          export CI_GATE_SKIPPED_OK="$skipped_ok"
+          bash .github/scripts/ci-gate.sh
