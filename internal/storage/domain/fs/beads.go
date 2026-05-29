@@ -40,10 +40,7 @@ func resolveBeadsDir(workDir string) (string, bool) {
 	if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
 		return utils.CanonicalizePath(envBeadsDir), true
 	}
-	if dir := beads.GetWorktreeFallbackBeadsDir(); dir != "" {
-		return dir, false
-	}
-	return beads.FollowRedirect(filepath.Join(workDir, ".beads")), false
+	return beads.ResolveBeadsDirForRepo(workDir), false
 }
 
 func (r *beadsDirFSRepositoryImpl) ResolveBeadsDirPath(ctx context.Context) domain.BeadsDirResolution {
