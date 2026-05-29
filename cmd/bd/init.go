@@ -465,6 +465,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		if len(prefix) > 0 && !((prefix[0] >= 'a' && prefix[0] <= 'z') || (prefix[0] >= 'A' && prefix[0] <= 'Z') || prefix[0] == '_') {
 			prefix = "bd_" + prefix
 		}
+		remoteDivergenceConfirmed := false
 
 		// Cross-boundary safety (bd-q83 / ADR 0002): check remote state
 		// BEFORE any filesystem side-effects so a refusal exits cleanly.
@@ -478,9 +479,12 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			if earlyRemoteSource == initSyncRemoteExplicit {
 				// An explicit --remote is intent to bootstrap or wire that URL,
 				// but it is not proof that the remote already contains Dolt
-				// history. Let the clone attempt below distinguish populated
-				// remotes from empty remotes so --reinit-local can still fall
-				// back to a fresh local init against a new remote.
+				// history. --from-jsonl is the exception: it selects a local
+				// source and skips cloning, so we must probe now rather than
+				// silently wiring a populated remote to orphan local history.
+				if fromJSONL {
+					earlyRemoteHasDoltData = gitRemoteHasDoltDataRef(earlySyncURL)
+				}
 			} else if earlyRemoteSource == initSyncRemoteConfigured {
 				earlyRemoteHasDoltData = true // sync.remote configured = user intends bootstrap
 			} else if earlyRemoteSource == initSyncRemoteNone && !stealth && isGitRepo() && !isBareGitRepo() {
@@ -493,15 +497,25 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				earlyDecision := CheckRemoteSafety(RemoteSafetyInput{
 					Force:             force,
 					ReinitLocal:       reinitLocal,
+					FromJSONL:         fromJSONL,
 					DiscardRemote:     discardRemote,
 					DestroyToken:      destroyToken,
 					ExpectedToken:     FormatDestroyToken(prefix),
 					RemoteHasDoltData: earlyRemoteHasDoltData,
 					IsInteractive:     term.IsTerminal(int(os.Stdin.Fd())),
 				})
-				if earlyDecision.Action == ActionRefuseDivergence || earlyDecision.Action == ActionRequireDestroyToken {
-					fmt.Fprintf(os.Stderr, "\n%s\n\n", earlyDecision.UserMessage)
-					os.Exit(earlyDecision.ExitCode)
+				if handleRemoteSafetyDecision(earlyDecision, prefix, earlySyncURL, destroyToken, func() bool {
+					switch earlyRemoteSource {
+					case initSyncRemoteExplicit:
+						return gitRemoteHasDoltDataRef(earlySyncURL)
+					case initSyncRemoteConfigured:
+						return earlyRemoteHasDoltData
+					default:
+						return gitOriginHasDoltDataRef()
+					}
+				}, earlyRemoteHasDoltData, &remoteDivergenceConfirmed) {
+					// The early guard refuses and confirms only; bootstrap
+					// selection happens later after beadsDir/dbName are known.
 				}
 			}
 		}
@@ -755,13 +769,42 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		remoteHasDoltData := false
 
 		if syncURL != "" {
-			// sync.remote was explicitly configured. Treat as bootstrap-
-			// from-remote intent; CheckRemoteSafety still enforces that
-			// --force/--reinit-local can't silently fight that intent.
+			// sync.remote was explicitly configured. Treat it as bootstrap-
+			// from-remote intent unless --from-jsonl selected a local JSONL
+			// source. CheckRemoteSafety still enforces that local-source
+			// flags can't silently fight a configured remote.
 			// Trust the URL format as-is: normalizeRemoteURL would convert
 			// http:// to git+http:// and break Dolt remotesapi endpoints
 			// configured explicitly by the user (GH#3339).
-			syncFromRemote = true
+			if syncRemoteSource == initSyncRemoteExplicit && !fromJSONL {
+				syncFromRemote = true
+			} else if syncRemoteSource == initSyncRemoteConfigured {
+				remoteHasDoltData = true
+			} else if syncRemoteSource == initSyncRemoteExplicit {
+				remoteHasDoltData = gitRemoteHasDoltDataRef(syncURL)
+			}
+			if !syncFromRemote {
+				decision := CheckRemoteSafety(RemoteSafetyInput{
+					Force:             force,
+					ReinitLocal:       reinitLocal,
+					FromJSONL:         fromJSONL,
+					DiscardRemote:     discardRemote,
+					DestroyToken:      destroyToken,
+					ExpectedToken:     FormatDestroyToken(prefix),
+					RemoteHasDoltData: remoteHasDoltData,
+					IsInteractive:     term.IsTerminal(int(os.Stdin.Fd())),
+				})
+				if handleRemoteSafetyDecision(decision, prefix, syncURL, destroyToken, func() bool {
+					if syncRemoteSource == initSyncRemoteExplicit {
+						return gitRemoteHasDoltDataRef(syncURL)
+					}
+					return remoteHasDoltData
+				}, remoteHasDoltData, &remoteDivergenceConfirmed) {
+					syncFromRemote = true
+				} else {
+					syncFromRemote = false
+				}
+			}
 		} else if syncRemoteSource == initSyncRemoteNone && !stealth && isGitRepo() && !isBareGitRepo() {
 			if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
 				syncURL = normalizeRemoteURL(originURL)
@@ -771,6 +814,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				decision := CheckRemoteSafety(RemoteSafetyInput{
 					Force:             force,
 					ReinitLocal:       reinitLocal,
+					FromJSONL:         fromJSONL,
 					DiscardRemote:     discardRemote,
 					DestroyToken:      destroyToken,
 					ExpectedToken:     FormatDestroyToken(prefix),
@@ -778,40 +822,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					IsInteractive:     term.IsTerminal(int(os.Stdin.Fd())),
 				})
 
-				switch decision.Action {
-				case ActionRefuseDivergence, ActionRequireDestroyToken:
-					fmt.Fprintf(os.Stderr, "\n%s\n\n", decision.UserMessage)
-					os.Exit(decision.ExitCode)
-				case ActionBootstrap:
+				if handleRemoteSafetyDecision(decision, prefix, syncURL, destroyToken, gitOriginHasDoltDataRef, remoteHasDoltData, &remoteDivergenceConfirmed) {
 					syncFromRemote = true
-				case ActionProceedWithDivergence:
-					// Interactive destroy-token prompt (non-interactive
-					// path already validated by CheckRemoteSafety).
-					if decision.Reason == "authorized-divergence" && term.IsTerminal(int(os.Stdin.Fd())) && destroyToken == "" {
-						expected := FormatDestroyToken(prefix)
-						fmt.Fprintf(os.Stderr, "\n%s You are about to discard the remote's Dolt history.\n\n", ui.RenderWarn("WARNING:"))
-						fmt.Fprintf(os.Stderr, "  Remote: %s\n", syncURL)
-						fmt.Fprintf(os.Stderr, "  Type %q to confirm: ", expected)
-						scanner := bufio.NewScanner(os.Stdin)
-						scanner.Scan()
-						if strings.TrimSpace(scanner.Text()) != expected {
-							fmt.Fprintf(os.Stderr, "\nAborted. See 'bd help init-safety' for details.\n")
-							os.Exit(ExitDestroyTokenMissing)
-						}
-					}
-					// Race-safety: re-verify the remote state hasn't
-					// changed between our earlier gitOriginHasDoltDataRef and
-					// the user's confirmation. If another agent pushed
-					// during the prompt window, fail rather than silently
-					// overwriting their fresh work.
-					if gitOriginHasDoltDataRef() != remoteHasDoltData {
-						fmt.Fprintf(os.Stderr, "\nAborted: remote state changed during confirmation. Re-run to re-verify intent.\n")
-						os.Exit(ExitRemoteDivergenceRefused)
-					}
-					// Proceed without bootstrap; remote will be overwritten on next push.
-					// syncFromRemote stays false.
-				case ActionNoRemoteData:
-					// Fresh remote, no-op for bootstrap decision.
 				}
 			}
 		}
@@ -1641,7 +1653,7 @@ func init() {
 	initCmd.Flags().Bool("force", false, "Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').")
 	initCmd.Flags().Bool("reinit-local", false, "Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.")
 	initCmd.Flags().Bool("discard-remote", false, "Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.")
-	initCmd.Flags().Bool("from-jsonl", false, "Import issues from configured import.path instead of git history")
+	initCmd.Flags().Bool("from-jsonl", false, "Import issues from configured import.path; refuses remote history unless --discard-remote authorizes replacement")
 	initCmd.Flags().String("destroy-token", "", "Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')")
 	initCmd.Flags().String("agents-template", "", "Path to custom AGENTS.md template (overrides embedded default)")
 	initCmd.Flags().String("agents-profile", "", "AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)")
@@ -2130,6 +2142,35 @@ func shouldConfigureInitDoltRemote(syncURL string, syncFromRemote, syncURLFromCo
 
 func isDoltLocalOnly() bool {
 	return config.GetBool("dolt.local-only")
+}
+
+func handleRemoteSafetyDecision(decision RemoteSafetyDecision, prefix, syncURL, destroyToken string, remoteHasDoltData func() bool, observedRemoteHasDoltData bool, confirmed *bool) bool {
+	switch decision.Action {
+	case ActionRefuseDivergence, ActionRequireDestroyToken:
+		fmt.Fprintf(os.Stderr, "\n%s\n\n", decision.UserMessage)
+		os.Exit(decision.ExitCode)
+	case ActionBootstrap:
+		return true
+	case ActionProceedWithDivergence:
+		if decision.Reason == "authorized-divergence" && term.IsTerminal(int(os.Stdin.Fd())) && destroyToken == "" && !*confirmed {
+			expected := FormatDestroyToken(prefix)
+			fmt.Fprintf(os.Stderr, "\n%s You are about to discard the remote's Dolt history.\n\n", ui.RenderWarn("WARNING:"))
+			fmt.Fprintf(os.Stderr, "  Remote: %s\n", syncURL)
+			fmt.Fprintf(os.Stderr, "  Type %q to confirm: ", expected)
+			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Scan()
+			if strings.TrimSpace(scanner.Text()) != expected {
+				fmt.Fprintf(os.Stderr, "\nAborted. See 'bd help init-safety' for details.\n")
+				os.Exit(ExitDestroyTokenMissing)
+			}
+			*confirmed = true
+		}
+		if remoteHasDoltData != nil && remoteHasDoltData() != observedRemoteHasDoltData {
+			fmt.Fprintf(os.Stderr, "\nAborted: remote state changed during confirmation. Re-run to re-verify intent.\n")
+			os.Exit(ExitRemoteDivergenceRefused)
+		}
+	}
+	return false
 }
 
 func configureInitDoltRemote(ctx context.Context, store storage.DoltStorage, syncURL string, quiet bool) {

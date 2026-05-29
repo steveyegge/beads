@@ -1024,6 +1024,61 @@ func TestEmbeddedInit(t *testing.T) {
 		}
 	})
 
+	t.Run("from_jsonl_with_remote_data_requires_discard_and_skips_clone", func(t *testing.T) {
+		bareDir := filepath.Join(t.TempDir(), "remote.git")
+		runGitForBootstrapTest(t, "", "init", "--bare", bareDir)
+
+		sourceDir := t.TempDir()
+		runGitForBootstrapTest(t, sourceDir, "init", "-b", "main")
+		runGitForBootstrapTest(t, sourceDir, "config", "user.email", "test@test.com")
+		runGitForBootstrapTest(t, sourceDir, "config", "user.name", "Test User")
+		runGitForBootstrapTest(t, sourceDir, "commit", "--allow-empty", "-m", "init")
+		runGitForBootstrapTest(t, sourceDir, "remote", "add", "origin", bareDir)
+		runGitForBootstrapTest(t, sourceDir, "push", "origin", "main")
+		runGitForBootstrapTest(t, sourceDir, "push", "origin", "HEAD:refs/dolt/data")
+
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+		runGitForBootstrapTest(t, dir, "remote", "add", "origin", bareDir)
+
+		beadsDir := filepath.Join(dir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		issue := types.Issue{
+			ID:        "jlremote-abc123",
+			Title:     "JSONL authoritative",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		line, _ := json.Marshal(issue)
+		if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), append(line, '\n'), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := exec.Command(bd, "init", "--prefix", "jlremote", "--from-jsonl", "--discard-remote", "--destroy-token=DESTROY-jlremote", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("--from-jsonl with authorized remote discard should import without cloning: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+
+		showCmd := exec.Command(bd, "show", "jlremote-abc123", "--json")
+		showCmd.Dir = dir
+		showCmd.Env = bdEnv(dir)
+		out, err := showCmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("imported issue not found: %v\n%s", err, out)
+		}
+		if !strings.Contains(string(out), "JSONL authoritative") {
+			t.Fatalf("imported issue title missing from show output:\n%s", out)
+		}
+	})
+
 	t.Run("from_jsonl_uses_import_path", func(t *testing.T) {
 		dir := t.TempDir()
 		initGitRepoAt(t, dir)
