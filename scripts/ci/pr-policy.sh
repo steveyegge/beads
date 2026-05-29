@@ -79,4 +79,5 @@ ci_time "check version consistency" -- ./scripts/check-versions.sh
 ci_time "build bd for docs checks" -- build_docs_binary
 ci_time "check doc flags" -- ./scripts/check-doc-flags.sh "$tmpdir/bd"
 ci_time "check doc freshness" -- ./scripts/check-doc-freshness.sh
+ci_time "check testing.Short boundaries" -- ./scripts/check-testing-short.sh
 ci_time "check no .beads/issues.jsonl changes" -- check_no_beads_jsonl_changes

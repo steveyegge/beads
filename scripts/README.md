@@ -33,6 +33,11 @@ The broad Go wrappers also cap package and test parallelism to `4` by default
 (`GO_TEST_PKG_PARALLEL` and `GO_TEST_PARALLEL`). This avoids turning high-core
 shared hosts into a different test topology than GitHub Actions.
 
+`make ci-pr-policy` includes `scripts/check-testing-short.sh`, which enforces
+that `testing.Short()` is only used for runtime, stress, or large-fixture skips.
+Use build tags, environment checks, or named wrappers for integration/e2e/API
+boundaries.
+
 Package gate wrappers validate publishable/package-adjacent surfaces:
 
 - `make ci-package-mcp` builds or consumes a `bd` binary, puts it on `PATH` as

@@ -684,6 +684,18 @@ Plan:
    explicit build tags, environment checks, or named wrappers.
 4. Update `docs/TESTING.md` after wrapper commands exist.
 
+Initial cleanup on branch `ci/bd-am3.1-wrapper-commands` leaves
+`testing.Short()` only in approved timeout, stress, and large-fixture tests:
+`internal/hooks/hooks_test.go`, `internal/testutil/fixtures/fixtures_test.go`,
+and `internal/storage/dolt/concurrent_test.go`.
+
+The same change removes integration/e2e/API/Docker boundary skips from tagged
+or environment-gated suites, promotes ADO/Linear round-trip and Dolt autostart
+tests from `cgo`-only to `cgo && integration`, and renames the remaining
+admin embedded tests to `TestEmbedded*` so the embedded shard runner owns them
+explicitly. `scripts/check-testing-short.sh` now enforces the allowlist through
+`make check-testing-short` and `make ci-pr-policy`.
+
 ## Release Policy
 
 Release/tag workflows must independently re-run release-critical checks even
@@ -717,6 +729,8 @@ checks pass.
    Initial wrappers, measurement reuse, website deploy reuse, and path-gated CI
    package jobs exist on branch `ci/bd-am3.1-wrapper-commands`.
 6. Perform the mandatory `testing.Short()` audit and cleanup.
+   Initial cleanup and policy enforcement exist on branch
+   `ci/bd-am3.1-wrapper-commands`.
 7. Promote measured suites to `main` or scheduled jobs based on wall-clock data.
    The measured prebuilt Linux no-short integration hybrid is promoted to
    every-`main` CI on branch `ci/bd-am3.1-wrapper-commands`.

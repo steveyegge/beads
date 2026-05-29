@@ -83,6 +83,24 @@ BEADS_TEST_SKIP=dolt ./scripts/test.sh
 BEADS_TEST_SKIP=dolt,slow ./scripts/test.sh
 ```
 
+### Short Mode and Test Boundaries
+
+`testing.Short()` is reserved for true runtime, stress, and large-fixture skips.
+It must not be used as an implicit integration, e2e, API, Docker, or external
+dependency boundary.
+
+Use these mechanisms instead:
+
+- `//go:build integration` or `//go:build e2e` for named suites.
+- Environment readiness checks such as `BEADS_TEST_SKIP=dolt`,
+  `BEADS_TEST_EMBEDDED_DOLT=1`, or required API-key checks.
+- Named wrappers such as `make ci-pr-core`, the main integration shards, and the
+  package gate wrappers.
+
+Run `make check-testing-short` to verify that new `testing.Short()` usage stays
+within the approved runtime/stress/large-fixture allowlist. The PR policy wrapper
+runs the same check.
+
 #### Enabling Dolt tests
 
 ```bash

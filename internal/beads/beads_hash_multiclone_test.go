@@ -43,9 +43,6 @@ func hasDoltTestPort() bool {
 
 func requireHashIDIntegration(t *testing.T) string {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("slow git e2e test")
-	}
 	if !hasDoltTestPort() {
 		t.Skip("skipping: Dolt test container not available")
 	}
