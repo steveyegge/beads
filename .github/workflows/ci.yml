@@ -131,7 +131,11 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Build bd
-        run: CGO_ENABLED=0 go build -tags gms_pure_go -o bd ./cmd/bd/
+        # Build with CGO so generated docs include the full `bd federation`
+        # subcommand tree. A CGO_ENABLED=0 build emits the "requires CGO" stub
+        # (cmd/bd/federation_nocgo.go), which drifts from the committed CGO
+        # docs and fails the freshness check. See gastownhall/beads#4203.
+        run: go build -tags gms_pure_go -o bd ./cmd/bd/
 
       - name: Validate docs against CLI
         run: |
