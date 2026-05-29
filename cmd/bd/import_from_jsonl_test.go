@@ -91,6 +91,38 @@ func TestImportFromLocalJSONL(t *testing.T) {
 		}
 	})
 
+	t.Run("skips beads-jsonl metadata header line", func(t *testing.T) {
+		// Canonical beads-jsonl exports prepend a schema/provenance
+		// header record (no _type, no issue fields). Without the
+		// header-skip guard it falls through to the issue path and
+		// aborts the whole import with
+		// "validation failed for issue : title is required",
+		// stranding every command on an empty auto-imported DB.
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "dolt")
+		store := newTestStore(t, dbPath)
+
+		jsonlContent := `{"_dolt_branch":"main","_dolt_commit":"abc123","_project_id":"p1","_schema":"beads-jsonl/1","_sort":"stable-v1"}
+{"id":"test-hdr1","title":"After header","type":"bug","status":"open","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}
+`
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0644); err != nil {
+			t.Fatalf("Failed to write JSONL file: %v", err)
+		}
+
+		ctx := context.Background()
+		count, err := importFromLocalJSONL(ctx, store, jsonlPath)
+		if err != nil {
+			t.Fatalf("importFromLocalJSONL failed on header line: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("Expected 1 issue imported (header skipped), got %d", count)
+		}
+		if _, err := store.GetIssue(ctx, "test-hdr1"); err != nil {
+			t.Fatalf("issue after header was not imported: %v", err)
+		}
+	})
+
 	t.Run("invalid JSON returns error", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "dolt")

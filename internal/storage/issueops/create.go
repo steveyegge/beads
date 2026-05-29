@@ -111,7 +111,7 @@ func CreateIssueInTxWithResult(ctx context.Context, tx *sql.Tx, bc *BatchContext
 		return result, nil
 	}
 
-	isNew, err := InsertIssueIfNew(ctx, tx, issueTable, issue)
+	isNew, err := InsertIssueIfNew(ctx, tx, issueTable, issue, bc.Opts.ConflictSkip)
 	if err != nil {
 		return result, err
 	}
@@ -495,13 +495,24 @@ func CheckOrphan(ctx context.Context, tx *sql.Tx, issue *types.Issue, issueTable
 
 // InsertIssueIfNew inserts the issue and returns whether it was genuinely new.
 //
+// When conflictSkip is true and an issue with the same ID already exists, the
+// row is left untouched (no UPSERT) and isNew is false. This is the
+// auto-import upgrade-recovery guarantee (GH#3955): even if the emptiness
+// guard in maybeAutoImportJSONL regresses, a stale issues.jsonl can never
+// overwrite live rows — worst case is a no-op. With conflictSkip false the
+// behavior is unchanged: InsertIssueIntoTable runs its INSERT … ON DUPLICATE
+// KEY UPDATE, so explicit `bd import` keeps UPSERT semantics.
+//
 //nolint:gosec // G201: table is a hardcoded constant
-func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue *types.Issue) (isNew bool, err error) {
+func InsertIssueIfNew(ctx context.Context, tx *sql.Tx, issueTable string, issue *types.Issue, conflictSkip bool) (isNew bool, err error) {
 	var existingCount int
 	if issue.ID != "" {
 		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE id = ?`, issueTable), issue.ID).Scan(&existingCount); err != nil {
 			return false, fmt.Errorf("failed to check issue existence for %s: %w", issue.ID, err)
 		}
+	}
+	if conflictSkip && existingCount > 0 {
+		return false, nil // issue already exists — skip, never overwrite
 	}
 	if err := InsertIssueIntoTable(ctx, tx, issueTable, issue); err != nil {
 		return false, fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)

@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/config"
 )
 
 func TestCheckRemoteSafety_GuardMatrix(t *testing.T) {
@@ -208,6 +210,127 @@ func TestShouldWireInitRemote(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("shouldWireInitRemote(%q, %v, %v, %v) = %v, want %v",
 					tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, tt.syncURLFromGit, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldConfigureInitDoltRemoteHonorsLocalOnly(t *testing.T) {
+	tests := []struct {
+		name              string
+		syncURL           string
+		syncFromRemote    bool
+		syncURLFromConfig bool
+		syncURLFromGit    bool
+		localOnly         bool
+		wantConfigure     bool
+		wantWire          bool
+	}{
+		{
+			name:           "git origin configures by default",
+			syncURL:        "git+https://github.com/org/project.git",
+			syncURLFromGit: true,
+			wantConfigure:  true,
+			wantWire:       true,
+		},
+		{
+			name:           "local only suppresses init remote wiring without changing predicate",
+			syncURL:        "git+https://github.com/org/project.git",
+			syncURLFromGit: true,
+			localOnly:      true,
+			wantConfigure:  false,
+			wantWire:       true,
+		},
+		{
+			name:          "no url remains false",
+			localOnly:     true,
+			wantConfigure: false,
+			wantWire:      false,
+		},
+		{
+			name:              "explicit sync remote configures when local only is false",
+			syncURL:           "https://dolt.example.invalid/repo",
+			syncURLFromConfig: true,
+			wantConfigure:     true,
+			wantWire:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotConfigure := shouldConfigureInitDoltRemote(tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, tt.syncURLFromGit, tt.localOnly)
+			if gotConfigure != tt.wantConfigure {
+				t.Errorf("shouldConfigureInitDoltRemote(..., localOnly=%v) = %v, want %v", tt.localOnly, gotConfigure, tt.wantConfigure)
+			}
+			gotWire := shouldWireInitRemote(tt.syncURL, tt.syncFromRemote, tt.syncURLFromConfig, tt.syncURLFromGit)
+			if gotWire != tt.wantWire {
+				t.Errorf("shouldWireInitRemote(...) = %v, want %v", gotWire, tt.wantWire)
+			}
+		})
+	}
+}
+
+func TestLocalOnlyInitSkipsConfigureButPersistsExplicitRemote(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+		t.Fatalf("mkdir beads dir: %v", err)
+	}
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("dolt.local-only: true\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	remote := "git+ssh://git@example.com/org/project.git"
+	if shouldConfigureInitDoltRemote(remote, false, true, false, true) {
+		t.Fatal("local-only init should not configure a Dolt remote")
+	}
+
+	if err := persistInitSyncRemote(beadsDir, remote, remote, false, true, false); err != nil {
+		t.Fatalf("persistInitSyncRemote failed: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), `sync.remote: "git+ssh://git@example.com/org/project.git"`) &&
+		!strings.Contains(string(data), "sync.remote: git+ssh://git@example.com/org/project.git") {
+		t.Fatalf("sync.remote was not persisted under local-only config:\n%s", data)
+	}
+}
+
+// TestIsDoltLocalOnly covers the config-reading helper that
+// TestLocalOnlyInitSkipsConfigureButPersistsExplicitRemote bypasses by
+// passing localOnly directly. dolt.local-only maps to BD_DOLT_LOCAL_ONLY
+// through the config env-key replacer (".","-" → "_").
+func TestIsDoltLocalOnly(t *testing.T) {
+	// Cannot be parallel: mutates the global env + config singleton.
+	tests := []struct {
+		name   string
+		envVal string
+		setEnv bool
+		want   bool
+	}{
+		{name: "default off when unset", setEnv: false, want: false},
+		{name: "explicit true", envVal: "true", setEnv: true, want: true},
+		{name: "explicit false", envVal: "false", setEnv: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setEnv {
+				t.Setenv("BD_DOLT_LOCAL_ONLY", tt.envVal)
+			} else {
+				os.Unsetenv("BD_DOLT_LOCAL_ONLY")
+				t.Cleanup(func() { os.Unsetenv("BD_DOLT_LOCAL_ONLY") })
+			}
+
+			config.ResetForTesting()
+			t.Cleanup(func() { config.ResetForTesting() })
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize: %v", err)
+			}
+
+			if got := isDoltLocalOnly(); got != tt.want {
+				t.Errorf("isDoltLocalOnly() = %v, want %v", got, tt.want)
 			}
 		})
 	}

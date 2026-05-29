@@ -16,7 +16,7 @@ The `bd setup` command uses a **recipe-based architecture** to configure beads i
 
 `bd prime` is the **single source of truth** for operational workflow commands. The beads section in each tool's instruction file provides a pointer to `bd prime` for hook-enabled agents (Claude, Gemini) or the full command reference for AGENTS-first agents (Factory, Mux). Codex uses a Beads skill, generated `AGENTS.md` guidance, and native Codex hooks.
 
-### Profiles
+### Template Profiles
 
 Each integration uses one of two **profiles** that control how much content is written to tool instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or `.github/copilot-instructions.md`):
 
@@ -28,6 +28,18 @@ Each integration uses one of two **profiles** that control how much content is w
 Hook-enabled agents (Claude, Copilot CLI, Gemini) use the `minimal` profile because `bd prime` injects full context at session start. AGENTS-first agents use the `full` profile because their instruction file remains the primary integration surface. Skill-aware agents use `.agents/skills/beads/SKILL.md`, with project `AGENTS.md` or global `$CODEX_HOME/AGENTS.md`/`~/.codex/AGENTS.md` telling Codex when to use the skill.
 
 **Profile precedence:** If a file already has a `full` profile section and a `minimal` profile tool installs to the same file (e.g., via symlinks), the `full` profile is preserved to avoid information loss.
+
+### Policy Profiles
+
+Template profiles control how much text gets installed. Policy profiles control what an agent is authorized to do at handoff:
+
+| Policy | Default Scope | Commit/Push Guidance |
+|--------|---------------|----------------------|
+| `conservative` | Standalone projects, unknown projects, and one-off assistance | Use `bd` for task tracking, then report changed files, validation, and proposed commands. Do not commit, push, or run Dolt remote sync without explicit user or orchestrator approval. |
+| `minimal` | Hook-first integrations where `bd prime` carries the detailed workflow | Same git authority as conservative; the installed file stays short and points to `bd prime`. |
+| `team-maintainer` | Repositories that explicitly delegate session close to agents | Agents may close beads, run quality gates, commit, run `bd dolt push`, and `git push` only when repository/user/orchestrator instructions grant that authority. Current "do not commit" or "do not push" instructions override the profile. |
+
+The generated Beads block and `bd prime` default to conservative git authority. Projects that want team-maintainer behavior should say so in their own top-level instructions; Beads does not infer that authority merely because a remote exists.
 
 ### Built-in Recipes
 
@@ -143,7 +155,7 @@ Factory Droid and other AGENTS.md-compatible tools automatically read `AGENTS.md
 The beads section teaches AI agents:
 - To use `bd ready` for finding work
 - To use `bd create` for tracking new issues
-- To use `bd dolt push` at session end
+- To treat commit, push, and Dolt remote sync as policy-controlled handoff actions
 - The complete workflow pattern and best practices
 
 ### Updating Existing AGENTS.md
@@ -411,7 +423,7 @@ bd setup cursor --remove
 Cursor reads `.cursor/rules/*.mdc` files and includes them in the AI's context. The beads rules file teaches the AI:
 - To use `bd ready` for finding work
 - To use `bd create` for tracking new issues
-- To use `bd dolt push` at session end
+- To treat commit, push, and Dolt remote sync as policy-controlled handoff actions
 - The basic workflow pattern
 
 ## Aider

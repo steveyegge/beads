@@ -42,6 +42,18 @@ func (s *DoltStore) CountIssues(ctx context.Context, query string, filter types.
 	return n, err
 }
 
+// CountIssuesByGroup returns per-group issue counts. groupBy is one of:
+// status, priority, type, assignee, label.
+func (s *DoltStore) CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error) {
+	var result map[string]int
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.CountIssuesByGroupInTx(ctx, tx, filter, groupBy)
+		return err
+	})
+	return result, err
+}
+
 // CountDependents returns the number of issues that depend on issueID.
 // Counts both dependency tables so the total matches GetDependentsWithMetadata:
 // a dependent may be a permanent issue (edge in `dependencies`) or a wisp
