@@ -118,7 +118,7 @@ This installs:
 1. SessionStart hook runs `bd prime` automatically
 2. `bd prime` injects ~1-2k tokens of workflow context
 3. You use `bd` CLI commands directly
-4. Git hooks auto-sync the database
+4. Git hooks refresh exports and legacy fallbacks; Dolt remotes handle sync
 
 **Verify installation:**
 ```bash
@@ -271,7 +271,7 @@ See [MCP Server](/integrations/mcp-server) for detailed configuration.
 
 ## Git Hooks
 
-Ensure git hooks are installed for auto-sync:
+Ensure git hooks are installed for export refresh and legacy fallback behavior:
 
 ```bash
 bd hooks install
@@ -350,6 +350,8 @@ Use Homebrew, npm, or the install script if you do not specifically need `go ins
 - **Embedded-capable:** `CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest`
 
 ICU headers are not required. The embedded-capable command uses `gms_pure_go` so go-mysql-server uses Go's stdlib regexp instead of ICU.
+
+Use the `github.com/steveyegge/beads` path for `go install`. The repository now lives under `gastownhall/beads`, but released Go modules still declare `github.com/steveyegge/beads` for compatibility.
 
 ## Platform-Specific Installation
 
@@ -464,12 +466,12 @@ bd setup mux      # Mux - creates/updates AGENTS.md
 ```
 
 **How it works:**
-- `bd init` creates or updates `AGENTS.md` by default unless you use `--skip-agents` or `--stealth`
+- `bd init` creates or updates `AGENTS.md` and installs project Claude/Codex integrations by default unless you use `--skip-agents` or `--stealth`
 - Editor hooks/rules inject `bd prime` automatically on session start
 - Codex 0.129.0+ uses native `/hooks` for startup and compaction-aware context refresh
 - `bd prime` provides ~1-2k tokens of workflow context
 - You use `bd` CLI commands directly
-- Git hooks (installed by `bd init`) auto-sync the database
+- Git hooks (installed by `bd init`) refresh exports and legacy fallbacks; `bd dolt push/pull` syncs the database
 - `bd onboard` prints the small manual snippet for unsupported agents or custom instruction files
 
 **Why this is recommended:**
@@ -830,11 +832,12 @@ bd stats
 
 ## Team sync
 
-Share issues with your team using Dolt remotes. Dolt stores data under `refs/dolt/data` on the same Git remote, separate from standard Git refs.
+Share issues with your team using Dolt remotes. Dolt stores data under `refs/dolt/data` on the same Git remote, separate from standard Git refs. In repos with `origin`, `bd init` configures that Dolt remote automatically.
 
 ```bash
-# Add a remote (GitHub example — also supports DoltHub, S3, GCS, local paths)
-bd dolt remote add origin git+ssh://git@github.com/org/repo.git
+# Verify the remote, or add one if the repo had no origin during init
+bd dolt remote list
+bd dolt remote add origin git+ssh://git@github.com/org/repo.git  # if needed
 
 # Push your issues
 bd dolt push
@@ -843,7 +846,7 @@ bd dolt push
 bd dolt pull
 ```
 
-When a teammate clones the repo, `bd bootstrap` auto-detects the existing database on `refs/dolt/data` and clones it — no manual remote setup needed.
+When a teammate clones the repo, `bd bootstrap` auto-detects the existing database on `refs/dolt/data`, clones it, and wires `origin` for future `bd dolt push` / `bd dolt pull`.
 
 See [`bd dolt`](/cli-reference/dolt) for CLI details. For remote configuration and federation, see the repository docs [DOLT.md](https://github.com/gastownhall/beads/blob/main/docs/DOLT.md) and [FEDERATION-SETUP.md](https://github.com/gastownhall/beads/blob/main/FEDERATION-SETUP.md).
 
@@ -1038,7 +1041,7 @@ bd info  # Shows warnings if hooks are outdated
 bd dolt stop && bd dolt start
 ```
 
-**Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss new auto-sync features or bug fixes.
+**Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss export refresh, legacy fallback, or safety fixes.
 
 ## Database Migrations
 
@@ -1062,7 +1065,7 @@ bd migrate --cleanup --yes
 
 If you're upgrading from a much older version of bd, your project may use a different storage backend. bd has gone through several storage eras:
 
-| Era | Versions | Storage |
+| Era | Versions | Storage | 
 |---|---|---|
 | SQLite | v0.30–v0.50 | `.beads/beads.db` |
 | Dolt server | v0.50–v0.58 | `.beads/dolt/` (external server) |
@@ -1071,11 +1074,30 @@ If you're upgrading from a much older version of bd, your project may use a diff
 
 ### From v0.63.3+ (current era)
 
-No special steps needed. Just upgrade the binary and run:
+Upgrade the binary and run:
 
 ```bash
 bd migrate
 ```
+
+If the project was initialized before `bd init` automatically wired git origin
+as the Dolt remote, verify the remote after upgrading:
+
+```bash
+bd dolt remote list
+```
+
+When the list is empty, fix it on the machine whose local database is
+authoritative:
+
+```bash
+bd export -o .beads/issues.pre-remote.jsonl   # optional issue audit export
+bd dolt remote add origin git+ssh://git@github.com/org/repo.git
+bd dolt push
+```
+
+Commit the resulting `.beads/config.yaml` change so other clones can run
+`bd bootstrap` or `bd dolt pull`.
 
 ### From v0.59–v0.63.2 (old embedded)
 
@@ -5405,83 +5427,6 @@ bd info [flags]
 
 </document>
 
-<document path="docs/cli-reference/init-safety.md">
-
-
-<!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc init-safety`
-
-## bd init-safety
-
-bd init flag safety contract.
-
-Every bd init invocation resolves project_id from exactly one explicitly
-named source (local reinit, remote adoption, or a fresh mint). When the
-source is ambiguous, bd init refuses.
-
-FLAG SURFACE
-
-  bd init                       Mint a new identity. Bootstraps from
-                                origin if it has refs/dolt/data.
-
-  bd init --reinit-local        Re-initialize local .beads/ over existing
-                                local data. Does NOT authorize discarding
-                                remote history. If origin has Dolt data
-                                this will refuse — pair with
-                                --discard-remote to override.
-
-  bd init --reinit-local \      Discard the remote's Dolt history and
-      --discard-remote          replace it with the local reinit. First
-                                bd dolt push after this will be a
-                                history-replacing force-push.
-
-  bd init --force               Deprecated alias for --reinit-local.
-                                Kept working for ≥2 releases.
-
-ADOPTING A REMOTE
-
-  If you want to use the remote's existing history, use:
-
-      bd bootstrap
-
-  bd init will automatically suggest this when a remote is detected.
-
-DESTROY-TOKEN (non-interactive only)
-
-  When running with no TTY (CI, agents, piped input), --discard-remote
-  requires an explicit --destroy-token value. The token format is:
-
-      DESTROY-&lt;issue-prefix&gt;
-
-  For example, if your issue prefix is "bd", the token is "DESTROY-bd":
-
-      bd init --reinit-local --discard-remote --destroy-token=DESTROY-bd
-
-  In interactive (TTY) mode you confirm via a typed prompt instead. The
-  token is not echoed by bd's runtime error messages — this is a
-  deliberate guard against pattern-matched one-liners (see
-  docs/adr/0002-init-safety-invariants.md).
-
-EXIT CODES
-
-  10    refused: remote has Dolt history and you passed --force/--reinit-local
-        without --discard-remote
-  11    refused: existing local data and you declined the destroy confirm
-  12    refused: --discard-remote passed without a valid --destroy-token
-        (non-interactive mode)
-
-RECOVERY
-
-  If you hit a refusal, see docs/RECOVERY.md for step-by-step recovery
-  playbooks for each exit code.
-
-
-```
-bd init-safety
-```
-
-</document>
-
 <document path="docs/cli-reference/init.md">
 
 
@@ -5572,6 +5517,83 @@ bd init [flags]
       --skip-hooks                                     Skip git hooks installation
       --stealth                                        Enable stealth mode: global gitattributes and gitignore, no local repo tracking
       --team                                           Run team workflow setup wizard
+```
+
+</document>
+
+<document path="docs/cli-reference/init-safety.md">
+
+
+<!-- AUTO-GENERATED: do not edit manually -->
+Generated from `bd help --doc init-safety`
+
+## bd init-safety
+
+bd init flag safety contract.
+
+Every bd init invocation resolves project_id from exactly one explicitly
+named source (local reinit, remote adoption, or a fresh mint). When the
+source is ambiguous, bd init refuses.
+
+FLAG SURFACE
+
+  bd init                       Mint a new identity. Bootstraps from
+                                origin if it has refs/dolt/data.
+
+  bd init --reinit-local        Re-initialize local .beads/ over existing
+                                local data. Does NOT authorize discarding
+                                remote history. If origin has Dolt data
+                                this will refuse — pair with
+                                --discard-remote to override.
+
+  bd init --reinit-local \      Discard the remote's Dolt history and
+      --discard-remote          replace it with the local reinit. First
+                                bd dolt push after this will be a
+                                history-replacing force-push.
+
+  bd init --force               Deprecated alias for --reinit-local.
+                                Kept working for ≥2 releases.
+
+ADOPTING A REMOTE
+
+  If you want to use the remote's existing history, use:
+
+      bd bootstrap
+
+  bd init will automatically suggest this when a remote is detected.
+
+DESTROY-TOKEN (non-interactive only)
+
+  When running with no TTY (CI, agents, piped input), --discard-remote
+  requires an explicit --destroy-token value. The token format is:
+
+      DESTROY-&lt;issue-prefix&gt;
+
+  For example, if your issue prefix is "bd", the token is "DESTROY-bd":
+
+      bd init --reinit-local --discard-remote --destroy-token=DESTROY-bd
+
+  In interactive (TTY) mode you confirm via a typed prompt instead. The
+  token is not echoed by bd's runtime error messages — this is a
+  deliberate guard against pattern-matched one-liners (see
+  docs/adr/0002-init-safety-invariants.md).
+
+EXIT CODES
+
+  10    refused: remote has Dolt history and you passed --force/--reinit-local
+        without --discard-remote
+  11    refused: existing local data and you declined the destroy confirm
+  12    refused: --discard-remote passed without a valid --destroy-token
+        (non-interactive mode)
+
+RECOVERY
+
+  If you hit a refusal, see docs/RECOVERY.md for step-by-step recovery
+  playbooks for each exit code.
+
+
+```
+bd init-safety
 ```
 
 </document>
@@ -7818,6 +7840,34 @@ bd remember "<insight>" [flags]
 
 </document>
 
+<document path="docs/cli-reference/rename.md">
+
+
+<!-- AUTO-GENERATED: do not edit manually -->
+Generated from `bd help --doc rename`
+
+## bd rename
+
+Rename an issue from one ID to another.
+
+This updates:
+- The issue's primary ID
+- All references in other issues (descriptions, titles, notes, etc.)
+- Dependencies pointing to/from this issue
+- Labels, comments, and events
+
+Examples:
+  bd rename bd-w382l bd-dolt     # Rename to memorable ID
+  bd rename gt-abc123 gt-auth    # Use descriptive ID
+
+Note: The new ID must use a valid prefix for this database.
+
+```
+bd rename <old-id> <new-id>
+```
+
+</document>
+
 <document path="docs/cli-reference/rename-prefix.md">
 
 
@@ -7863,34 +7913,6 @@ bd rename-prefix <new-prefix> [flags]
 ```
       --dry-run   Preview changes without applying them
       --repair    Repair database with multiple prefixes by consolidating them
-```
-
-</document>
-
-<document path="docs/cli-reference/rename.md">
-
-
-<!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc rename`
-
-## bd rename
-
-Rename an issue from one ID to another.
-
-This updates:
-- The issue's primary ID
-- All references in other issues (descriptions, titles, notes, etc.)
-- Dependencies pointing to/from this issue
-- Labels, comments, and events
-
-Examples:
-  bd rename bd-w382l bd-dolt     # Rename to memorable ID
-  bd rename gt-abc123 gt-auth    # Use descriptive ID
-
-Note: The new ID must use a valid prefix for this database.
-
-```
-bd rename <old-id> <new-id>
 ```
 
 </document>
@@ -8442,6 +8464,40 @@ bd state list <issue-id>
 
 </document>
 
+<document path="docs/cli-reference/statuses.md">
+
+
+<!-- AUTO-GENERATED: do not edit manually -->
+Generated from `bd help --doc statuses`
+
+## bd statuses
+
+List all valid issue statuses and their categories.
+
+Built-in statuses (open, in_progress, blocked, etc.) are always valid.
+Additional statuses can be configured via status.custom:
+
+  bd config set status.custom "in_review:active,qa_testing:wip,on_hold:frozen"
+
+Categories control behavior:
+  active  — appears in 'bd ready' and default 'bd list'
+  wip     — excluded from 'bd ready', visible in default 'bd list'
+  done    — excluded from 'bd ready' and default 'bd list'
+  frozen  — excluded from 'bd ready' and default 'bd list'
+
+Statuses without a category (legacy format) are valid but excluded from 'bd ready'.
+
+Examples:
+  bd statuses            # List all statuses with icons and categories
+  bd statuses --json     # Output as JSON
+
+
+```
+bd statuses
+```
+
+</document>
+
 <document path="docs/cli-reference/status.md">
 
 
@@ -8484,40 +8540,6 @@ bd status [flags]
       --all           Show all issues (default behavior)
       --assigned      Show issues assigned to current user
       --no-activity   Skip git activity tracking (faster)
-```
-
-</document>
-
-<document path="docs/cli-reference/statuses.md">
-
-
-<!-- AUTO-GENERATED: do not edit manually -->
-Generated from `bd help --doc statuses`
-
-## bd statuses
-
-List all valid issue statuses and their categories.
-
-Built-in statuses (open, in_progress, blocked, etc.) are always valid.
-Additional statuses can be configured via status.custom:
-
-  bd config set status.custom "in_review:active,qa_testing:wip,on_hold:frozen"
-
-Categories control behavior:
-  active  — appears in 'bd ready' and default 'bd list'
-  wip     — excluded from 'bd ready', visible in default 'bd list'
-  done    — excluded from 'bd ready' and default 'bd list'
-  frozen  — excluded from 'bd ready' and default 'bd list'
-
-Statuses without a category (legacy format) are valid but excluded from 'bd ready'.
-
-Examples:
-  bd statuses            # List all statuses with icons and categories
-  bd statuses --json     # Output as JSON
-
-
-```
-bd statuses
 ```
 
 </document>
@@ -10740,7 +10762,7 @@ Codex 0.129.0+ supports `/hooks`, compact lifecycle hooks, and hook-provided dev
 
 `PreCompact` alone does not inject context because Codex ignores plain stdout from compact hooks. The post-compact marker plus first-prompt refresh is the reliable recovery path.
 
-The Beads Codex plugin declares `"hooks": "./hooks/hooks.json"`. Without the plugin, `bd setup codex` installs the same hook config in `.codex/hooks.json` and enables `[features].hooks = true`.
+The Beads Codex plugin stores hooks at `plugins/beads/.codex-plugin/hooks/hooks.json` and declares them as `"hooks": "./hooks/hooks.json"`. Without the plugin, `bd setup codex` installs the same hook config in `.codex/hooks.json` and enables `[features].hooks = true`.
 
 </document>
 
@@ -10983,7 +11005,7 @@ bd init --quiet
 
 ### What about git hooks?
 
-Git hooks are optional. They auto-sync issues but you can skip them during `bd init` and manually run `bd dolt push` / `bd dolt pull` instead.
+Git hooks are optional. They refresh exports and legacy fallback checks, while issue sync uses `bd dolt push` / `bd dolt pull`.
 
 ## See Also
 
@@ -12102,11 +12124,11 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `backup.interval` | — | `BD_BACKUP_INTERVAL` | `15m` | Minimum time between auto-backups |
 | `backup.git-push` | — | — | `false` | Auto-push backup repo |
 | `backup.git-repo` | — | `BD_BACKUP_GIT_REPO` | (none) | Backup git repo URL |
-| `export.auto` | — | — | `true` | Refresh `.beads/issues.jsonl` after every write |
+| `export.auto` | — | — | `false` | Refresh `.beads/issues.jsonl` export after every write; not cross-machine sync |
 | `export.path` | — | — | `issues.jsonl` | Output filename relative to `.beads/` |
 | `import.path` | — | — | `issues.jsonl` | Input filename relative to `.beads/` for implied JSONL imports; use relative paths for portability |
 | `export.interval` | — | — | `60s` | Minimum time between auto-exports |
-| `export.git-add` | — | — | `true` | Run `git add` on the export file |
+| `export.git-add` | — | — | `false` | Run `git add` on the export file |
 | `routing.mode` | — | — | (none) | Multi-repo routing: `auto`, `maintainer`, `contributor`, `explicit` |
 | `routing.default` | — | — | `.` | Default routing target |
 | `routing.maintainer` | — | — | `.` | Maintainer-routed path |
@@ -12118,9 +12140,30 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `sync.require_confirmation_on_mass_delete` | — | — | `false` | Prompt before pushing >50% issue deletions |
 | `directory.labels` | — | — | `{}` | Map directory patterns → labels for monorepos |
 | `external_projects` | — | — | `{}` | Map project names → paths for cross-project deps |
-| `output.title-length` | — | — | `255` | Title display in feedback (`0` hides) |
+| `output.title-length` | — | — | `255` | Title display in feedback (`0` hides); see routing note below |
 | `ai.model` | — | `BD_AI_MODEL` | `claude-haiku-4-5-20251001` | Default AI model |
-| `agents.file` | — | — | `AGENTS.md` | Agents instruction filename |
+| `agents.file` | — | — | `AGENTS.md` | Agents instruction filename; see routing note below |
+
+:::important JSONL export is opt-in
+
+`export.auto` and `export.git-add` are disabled unless configured explicitly.
+`.beads/issues.jsonl` is an optional export for viewers, interchange, and
+issue-level migration. It is not the canonical source of truth, not
+cross-machine sync, and not a full database backup.
+
+Workflows that depend on a fresh, git-staged JSONL file should opt in:
+
+```bash
+bd config set export.auto true
+bd config set export.git-add true
+```
+
+Use `bd dolt push` / `bd dolt pull` for sync and `bd backup` for restorable
+database backups.
+
+:::
+
+Routing note: `output.title-length` and `agents.file` are functionally tool-level settings, but `bd config set` writes them to the Dolt database. They are typically read from `config.yaml` when set there directly.
 
 `bd config show` is the source of truth for what's currently effective on your machine, including provenance.
 
@@ -12205,12 +12248,12 @@ backup:
   enabled: true
   interval: 15m
 
-# Auto-export issues.jsonl after writes (default settings shown for clarity)
+# Optional auto-export of issues.jsonl after writes for viewers/interchange
 export:
-  auto: true
+  auto: false
   path: issues.jsonl
   interval: 60s
-  git-add: true
+  git-add: false
 
 # Optional Dolt federation
 federation:
@@ -12472,7 +12515,7 @@ bd doctor --fix
 
 ## Protected Branches
 
-Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed.
+Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed. On new projects with a git `origin`, `bd init` configures that origin as the Dolt remote automatically.
 
 ## Git Worktrees
 
