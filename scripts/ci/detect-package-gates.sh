@@ -75,17 +75,17 @@ esac
 while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     case "$path" in
-        integrations/beads-mcp/*|scripts/ci/package-mcp.sh|scripts/ci/detect-package-gates.sh|.github/workflows/ci.yml|.github/workflows/ci-measurements.yml|.github/workflows/release.yml|Makefile)
+        integrations/beads-mcp/*|scripts/ci/package-mcp.sh|scripts/ci/detect-package-gates.sh|.github/workflows/pr.yml|.github/workflows/main.yml|.github/workflows/pr-risk.yml|.github/workflows/ci-measurements.yml|.github/workflows/release.yml|Makefile)
             mcp_package=true
             ;;
     esac
     case "$path" in
-        npm-package/*|scripts/ci/package-npm.sh|scripts/ci/detect-package-gates.sh|.github/workflows/ci.yml|.github/workflows/ci-measurements.yml|.github/workflows/release.yml|Makefile)
+        npm-package/*|scripts/ci/package-npm.sh|scripts/ci/detect-package-gates.sh|.github/workflows/pr.yml|.github/workflows/main.yml|.github/workflows/pr-risk.yml|.github/workflows/ci-measurements.yml|.github/workflows/release.yml|Makefile)
             npm_package=true
             ;;
     esac
     case "$path" in
-        website/*|scripts/generate-llms-full.sh|scripts/ci/website.sh|scripts/ci/detect-package-gates.sh|.github/workflows/ci.yml|.github/workflows/ci-measurements.yml|.github/workflows/deploy-docs.yml|Makefile)
+        website/*|scripts/generate-llms-full.sh|scripts/ci/website.sh|scripts/ci/detect-package-gates.sh|.github/workflows/pr.yml|.github/workflows/main.yml|.github/workflows/pr-risk.yml|.github/workflows/ci-measurements.yml|.github/workflows/deploy-docs.yml|Makefile)
             website=true
             ;;
     esac

@@ -1,6 +1,6 @@
 # CI Cleanup Plan
 
-Last reviewed: 2026-05-28
+Last reviewed: 2026-05-29
 
 Freshness source: `docs/CI_TEST_SURFACE_AUDIT.md`, `.github/workflows/*.yml`,
 `.buildflags`, `.golangci.yml`, package test manifests, and maintainer decision
@@ -589,7 +589,7 @@ The repeat run passed and remained below the target: about 11m38s from dispatch
 creation to completion, and about 10m41s from first job start to completion.
 The `cmd/bd` tail was 410s, compared to 394s in the first prebuilt sample.
 This prebuilt eight-way hybrid is now the first promoted every-`main` Linux
-no-short integration shape in `.github/workflows/ci.yml`: six package shards
+no-short integration shape in `.github/workflows/main.yml`: six package shards
 exclude `cmd/bd`, eight `cmd/bd` shards split by top-level test name, and all
 shards consume the `ci-build-artifacts` `bd-linux-gms-pure` binary. Further
 optimization should target precompiling the `cmd/bd` test binary itself or
@@ -747,6 +747,11 @@ artifacts, so `postinstall` URLs are populated before the package is published.
    branch `ci/bd-am3.1-wrapper-commands`.
 9. Split workflows by tier/domain once wrappers are stable:
    `pr.yml`, `pr-risk.yml`, `main.yml`, `release.yml`, and `nightly.yml`.
+   Initial split exists on branch `ci/bd-am3.1-wrapper-commands`: the old
+   monolithic `.github/workflows/ci.yml` has been replaced by
+   `.github/workflows/pr.yml`, `.github/workflows/pr-risk.yml`, and
+   `.github/workflows/main.yml`. Job display names are intentionally preserved
+   where practical so branch-protection migration can be handled separately.
 
 ## Deferred Decisions
 

@@ -1,11 +1,8 @@
-name: CI
+name: Main
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -188,32 +185,6 @@ jobs:
         run: |
           ./scripts/check-doc-flags.sh ./bd
           ./scripts/check-doc-freshness.sh
-
-  # Fast check to catch accidental .beads/issues.jsonl changes from contributors
-  check-no-beads-changes:
-    name: Check for .beads changes
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          fetch-depth: 0
-
-      - name: Check for .beads/issues.jsonl changes
-        run: |
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^\.beads/issues\.jsonl$"; then
-            echo "This PR includes changes to .beads/issues.jsonl"
-            echo ""
-            echo "This file is the project's issue database and should not be modified in PRs."
-            echo ""
-            echo "To fix, run:"
-            echo "  git checkout origin/main -- .beads/issues.jsonl"
-            echo "  git commit --amend"
-            echo "  git push --force"
-            echo ""
-            exit 1
-          fi
-          echo "No .beads/issues.jsonl changes detected"
 
   detect-package-gates:
     name: Detect package gates
