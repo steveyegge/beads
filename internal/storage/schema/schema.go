@@ -226,7 +226,7 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration dirty table diffs: %w", err)
 	}
-	applied, err := mainSource.migrate(ctx, db)
+	applied, mainColumnAdded, err := mainSource.migrate(ctx, db)
 	if err != nil {
 		return applied, err
 	}
@@ -248,7 +248,7 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, fmt.Errorf("pending ignored schema migrations alter pre-existing dirty tables: %s", strings.Join(touchedIgnoredDirtyTables, ", "))
 	}
 
-	appliedIgnored, err := ignoredSource.migrate(ctx, db)
+	appliedIgnored, ignoredColumnAdded, err := ignoredSource.migrate(ctx, db)
 	if err != nil {
 		return applied, fmt.Errorf("ignored migrations: %w", err)
 	}
@@ -256,7 +256,7 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, fmt.Errorf("unstaging ignored migration tables: %w", err)
 	}
 
-	if applied == 0 && !backfilled && appliedIgnored == 0 {
+	if applied == 0 && !backfilled && appliedIgnored == 0 && !mainColumnAdded && !ignoredColumnAdded {
 		return applied, nil
 	}
 	changedDirtyTables, err := changedDirtyTableSignatures(ctx, db, dirtyBeforeSignatures)
@@ -285,6 +285,25 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 
 func migrationWorkNeeded(ctx context.Context, db DBConn) (bool, error) {
 	if !mainSource.atLatest(ctx, db) || !ignoredSource.atLatest(ctx, db) {
+		return true, nil
+	}
+	// A database already at the latest numbered migration still needs work if it
+	// predates the content_hash column (gastownhall/beads#4259 reporter fix No.2).
+	// Without this, MigrateUp short-circuits before migrate() runs the idempotent
+	// ALTER, so the recording/detection surface is never installed on exactly the
+	// already-upgraded databases the fix is meant to protect.
+	hasMainHash, err := mainSource.hasContentHashColumn(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	if !hasMainHash {
+		return true, nil
+	}
+	hasIgnoredHash, err := ignoredSource.hasContentHashColumn(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	if !hasIgnoredHash {
 		return true, nil
 	}
 	return needsBackfilledCustomStatusesCustomTypes(ctx, db)
@@ -605,28 +624,41 @@ func (m migrationSource) bootstrapSQL() string {
 )`, m.cursorTable)
 }
 
+// hasContentHashColumn reports whether the cursor table already carries the
+// content_hash column. It probes INFORMATION_SCHEMA, so a not-yet-created table
+// simply reports false.
+func (m migrationSource) hasContentHashColumn(ctx context.Context, db DBConn) (bool, error) {
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'content_hash'`,
+		m.cursorTable).Scan(&count); err != nil {
+		return false, fmt.Errorf("checking %s.content_hash: %w", m.cursorTable, err)
+	}
+	return count > 0, nil
+}
+
 // ensureContentHashColumn adds the content_hash column to an existing cursor
 // table that predates it (gastownhall/beads#4259 reporter fix No.2: record a
 // per-migration content hash so two clones at the same MAX(version) but with
 // divergent migration content are detectable). Fresh tables already have it via
 // bootstrapSQL; this idempotently upgrades older databases without a numbered
 // migration. Already-applied rows keep a NULL hash — their migration content is
-// not re-read.
-func (m migrationSource) ensureContentHashColumn(ctx context.Context, db DBConn) error {
-	var count int
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'content_hash'`,
-		m.cursorTable).Scan(&count); err != nil {
-		return fmt.Errorf("checking %s.content_hash: %w", m.cursorTable, err)
+// not re-read. It reports whether it actually added the column, so MigrateUp can
+// treat that ALTER as committable schema work even when no numbered migration or
+// backfill ran.
+func (m migrationSource) ensureContentHashColumn(ctx context.Context, db DBConn) (bool, error) {
+	has, err := m.hasContentHashColumn(ctx, db)
+	if err != nil {
+		return false, err
 	}
-	if count > 0 {
-		return nil
+	if has {
+		return false, nil
 	}
 	//nolint:gosec // G201: m.cursorTable is a hardcoded constant.
 	if _, err := db.ExecContext(ctx, "ALTER TABLE "+m.cursorTable+" ADD COLUMN content_hash CHAR(64)"); err != nil {
-		return fmt.Errorf("adding %s.content_hash: %w", m.cursorTable, err)
+		return false, fmt.Errorf("adding %s.content_hash: %w", m.cursorTable, err)
 	}
-	return nil
+	return true, nil
 }
 
 func checkNoDuplicateVersions(files []migrationFile) {
@@ -759,22 +791,26 @@ func migrationSQLTouchesTable(sqlText, table string) bool {
 	return false
 }
 
-func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
+// migrate brings the source up to its latest version and returns the number of
+// numbered migrations applied plus whether it added the content_hash column to a
+// pre-existing cursor table. The column signal lets MigrateUp stage and commit
+// that ALTER as schema work even when no numbered migration was applied.
+func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, bool, error) {
 	if _, err := db.ExecContext(ctx, m.bootstrapSQL()); err != nil {
-		return 0, fmt.Errorf("creating %s: %w", m.cursorTable, err)
+		return 0, false, fmt.Errorf("creating %s: %w", m.cursorTable, err)
 	}
-	if err := m.ensureContentHashColumn(ctx, db); err != nil {
-		return 0, err
+	columnAdded, err := m.ensureContentHashColumn(ctx, db)
+	if err != nil {
+		return 0, false, err
 	}
 
 	var current int
-	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
-	if err != nil && err != sql.ErrNoRows {
-		return 0, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
+	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current); err != nil && err != sql.ErrNoRows {
+		return 0, columnAdded, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
 	}
 
 	if current >= m.latest() {
-		return 0, nil
+		return 0, columnAdded, nil
 	}
 
 	count := 0
@@ -784,17 +820,17 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
 		}
 		data, err := m.files.ReadFile(m.dir + "/" + mf.name)
 		if err != nil {
-			return count, fmt.Errorf("reading migration %s: %w", mf.name, err)
+			return count, columnAdded, fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
-			return count, fmt.Errorf("migration %s: %w", mf.name, err)
+			return count, columnAdded, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
 		sum := sha256.Sum256(data)
 		contentHash := hex.EncodeToString(sum[:])
 		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+m.cursorTable+" (version, content_hash) VALUES (?, ?)", mf.version, contentHash); err != nil {
-			return count, fmt.Errorf("recording %s in %s: %w", mf.name, m.cursorTable, err)
+			return count, columnAdded, fmt.Errorf("recording %s in %s: %w", mf.name, m.cursorTable, err)
 		}
 		count++
 	}
-	return count, nil
+	return count, columnAdded, nil
 }
