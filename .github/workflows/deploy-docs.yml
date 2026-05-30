@@ -34,16 +34,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: website/package-lock.json
 
-      - name: Install dependencies
-        working-directory: website
-        run: npm ci
-
-      - name: Generate llms-full.txt
-        run: ./scripts/generate-llms-full.sh
-
-      - name: Build website
-        working-directory: website
-        run: npm run build
+      - name: Run website package gate
+        run: make ci-website
 
       - name: Prepare link check (map baseUrl /beads/ to build output)
         run: |
