@@ -122,3 +122,94 @@ func TestCheckRemoteMigrateGate(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckRemoteMigrateGateWithRemoteCheck covers the on-disk fallback used by
+// server mode: a freshly (auto-)started dolt server reports an empty dolt_remotes
+// table even when a remote is configured, so the gate must fall back to a probe of
+// the persisted CLI remotes before allowing migration (gastownhall/beads#4268).
+func TestCheckRemoteMigrateGateWithRemoteCheck(t *testing.T) {
+	t.Run("no SQL remote but fallback reports a remote is blocked", func(t *testing.T) {
+		t.Setenv(AllowRemoteMigrateEnv, "0")
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		expectGateCurrentVersion(mock, 1) // CurrentVersion
+		expectGateCurrentVersion(mock, 1) // PendingVersions -> pending exists
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dolt_remotes`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+		err := CheckRemoteMigrateGateWithRemoteCheck(context.Background(), db, func() bool { return true })
+		var gateErr *RemoteMigrateGateError
+		if !errors.As(err, &gateErr) {
+			t.Fatalf("expected *RemoteMigrateGateError when the disk fallback reports a remote, got %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("no SQL remote and fallback reports none is allowed", func(t *testing.T) {
+		t.Setenv(AllowRemoteMigrateEnv, "0")
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		expectGateCurrentVersion(mock, 1)
+		expectGateCurrentVersion(mock, 1)
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dolt_remotes`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+		if err := CheckRemoteMigrateGateWithRemoteCheck(context.Background(), db, func() bool { return false }); err != nil {
+			t.Fatalf("no remote anywhere should be allowed, got %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("SQL remote present short-circuits the fallback", func(t *testing.T) {
+		t.Setenv(AllowRemoteMigrateEnv, "0")
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		expectGateCurrentVersion(mock, 1)
+		expectGateCurrentVersion(mock, 1)
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dolt_remotes`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+		called := false
+		err := CheckRemoteMigrateGateWithRemoteCheck(context.Background(), db, func() bool {
+			called = true
+			return false
+		})
+		if !IsRemoteMigrateGateError(err) {
+			t.Fatalf("expected gate error when dolt_remotes already shows a remote, got %v", err)
+		}
+		if called {
+			t.Error("fallback must not run when dolt_remotes already reports a remote")
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("fallback not consulted when there are no pending migrations", func(t *testing.T) {
+		t.Setenv(AllowRemoteMigrateEnv, "0")
+		latest := LatestVersion()
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		expectGateCurrentVersion(mock, latest) // CurrentVersion
+		expectGateCurrentVersion(mock, latest) // PendingVersions -> none
+
+		called := false
+		err := CheckRemoteMigrateGateWithRemoteCheck(context.Background(), db, func() bool {
+			called = true
+			return true
+		})
+		if err != nil {
+			t.Fatalf("at-latest DB should be allowed, got %v", err)
+		}
+		if called {
+			t.Error("fallback (a subprocess probe) must not run when there are no pending migrations")
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+}

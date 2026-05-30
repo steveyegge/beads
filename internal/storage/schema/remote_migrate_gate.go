@@ -75,8 +75,32 @@ func IsRemoteMigrateGateError(err error) bool {
 // a remote configured — unless the designated-migrator escape hatch is set. It
 // returns nil (allow) for a fresh database, an already-current database, or one
 // with no remote. Call it before MigrateUp/MigrateUpWithLock on every read/write
-// store open (both server and embedded mode).
+// store open. Embedded mode uses this form: its dolt_remotes table already
+// reflects remotes persisted in .dolt/config on a fresh open.
 func CheckRemoteMigrateGate(ctx context.Context, db DBConn) error {
+	return checkRemoteMigrateGate(ctx, db, nil)
+}
+
+// CheckRemoteMigrateGateWithRemoteCheck is CheckRemoteMigrateGate plus an on-disk
+// fallback remote probe. When the dolt_remotes SQL table reports no remote,
+// extraHasRemote is consulted and a true result still trips the gate.
+//
+// Server mode needs this: a freshly (auto-)started dolt sql-server starts with an
+// empty dolt_remotes table and only re-registers CLI remotes from .dolt/config
+// later, during the post-open sync (GH#2315). Because this gate runs before that
+// sync, the SQL-only check would see no remote on the first write open after an
+// upgrade and silently migrate the shared database in place — exactly the
+// cross-clone fork #4259 is meant to prevent. extraHasRemote (a probe of the
+// persisted CLI remotes) closes that window.
+//
+// extraHasRemote is only invoked when the database has a pending migration AND the
+// SQL table shows no remote, so the (subprocess-backed) filesystem probe stays off
+// the common open path. A nil extraHasRemote disables the fallback.
+func CheckRemoteMigrateGateWithRemoteCheck(ctx context.Context, db DBConn, extraHasRemote func() bool) error {
+	return checkRemoteMigrateGate(ctx, db, extraHasRemote)
+}
+
+func checkRemoteMigrateGate(ctx context.Context, db DBConn, extraHasRemote func() bool) error {
 	if os.Getenv(AllowRemoteMigrateEnv) == "1" {
 		fmt.Fprintf(os.Stderr,
 			"Warning: applying schema migrations to a remote-backed database (%s=1); only one clone should migrate, then `bd dolt push`\n",
@@ -105,6 +129,12 @@ func CheckRemoteMigrateGate(ctx context.Context, db DBConn) error {
 	hasRemote, err := anyDoltRemoteConfigured(ctx, db)
 	if err != nil {
 		return fmt.Errorf("remote-migrate gate: read remotes: %w", err)
+	}
+	// dolt_remotes can read empty even when a remote is configured: a freshly
+	// (auto-)started server has not yet synced CLI remotes from .dolt/config
+	// (GH#2315). Consult the caller's on-disk probe before allowing migration.
+	if !hasRemote && extraHasRemote != nil {
+		hasRemote = extraHasRemote()
 	}
 	if !hasRemote {
 		return nil // no remote — no cross-clone fork risk
