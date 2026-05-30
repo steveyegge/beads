@@ -180,7 +180,9 @@ func AllMigrationsSQL() string {
 			continue
 		}
 		b.WriteString(cliCompatibleMigrationSQL(f.name, string(data)))
-		fmt.Fprintf(&b, "\nINSERT IGNORE INTO %s (version) VALUES (%d);\n", mainSource.cursorTable, f.version)
+		sum := sha256.Sum256(data)
+		fmt.Fprintf(&b, "\nINSERT IGNORE INTO %s (version, content_hash) VALUES (%d, '%s');\n",
+			mainSource.cursorTable, f.version, hex.EncodeToString(sum[:]))
 	}
 	return b.String()
 }
@@ -598,8 +600,33 @@ type migrationFile struct {
 func (m migrationSource) bootstrapSQL() string {
 	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 	version INT PRIMARY KEY,
-	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	content_hash CHAR(64)
 )`, m.cursorTable)
+}
+
+// ensureContentHashColumn adds the content_hash column to an existing cursor
+// table that predates it (gastownhall/beads#4259 reporter fix No.2: record a
+// per-migration content hash so two clones at the same MAX(version) but with
+// divergent migration content are detectable). Fresh tables already have it via
+// bootstrapSQL; this idempotently upgrades older databases without a numbered
+// migration. Already-applied rows keep a NULL hash — their migration content is
+// not re-read.
+func (m migrationSource) ensureContentHashColumn(ctx context.Context, db DBConn) error {
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'content_hash'`,
+		m.cursorTable).Scan(&count); err != nil {
+		return fmt.Errorf("checking %s.content_hash: %w", m.cursorTable, err)
+	}
+	if count > 0 {
+		return nil
+	}
+	//nolint:gosec // G201: m.cursorTable is a hardcoded constant.
+	if _, err := db.ExecContext(ctx, "ALTER TABLE "+m.cursorTable+" ADD COLUMN content_hash CHAR(64)"); err != nil {
+		return fmt.Errorf("adding %s.content_hash: %w", m.cursorTable, err)
+	}
+	return nil
 }
 
 func checkNoDuplicateVersions(files []migrationFile) {
@@ -736,6 +763,9 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
 	if _, err := db.ExecContext(ctx, m.bootstrapSQL()); err != nil {
 		return 0, fmt.Errorf("creating %s: %w", m.cursorTable, err)
 	}
+	if err := m.ensureContentHashColumn(ctx, db); err != nil {
+		return 0, err
+	}
 
 	var current int
 	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
@@ -759,7 +789,9 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
 			return count, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
-		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+m.cursorTable+" (version) VALUES (?)", mf.version); err != nil {
+		sum := sha256.Sum256(data)
+		contentHash := hex.EncodeToString(sum[:])
+		if _, err := db.ExecContext(ctx, "INSERT IGNORE INTO "+m.cursorTable+" (version, content_hash) VALUES (?, ?)", mf.version, contentHash); err != nil {
 			return count, fmt.Errorf("recording %s in %s: %w", mf.name, m.cursorTable, err)
 		}
 		count++
