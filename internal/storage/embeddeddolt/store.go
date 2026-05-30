@@ -196,6 +196,14 @@ func (s *EmbeddedDoltStore) initSchema(ctx context.Context) error {
 		}
 	}
 
+	// #4259: refuse to silently apply pending migrations to a remote-backed,
+	// already-initialized database — independently migrating each clone forks the
+	// schema. Embedded mode (the mode the original report was filed against) syncs
+	// via Dolt remotes too, so it needs the same gate as server mode.
+	if err := schema.CheckRemoteMigrateGate(ctx, conn); err != nil {
+		return err
+	}
+
 	// Embedded mode relies on the dolthub/driver's local file/concurrency
 	// controls; schema.MigrateUpWithLock requires a sql-server session lock.
 	if _, err := schema.MigrateUp(ctx, conn); err != nil {

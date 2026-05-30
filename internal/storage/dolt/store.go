@@ -1522,6 +1522,12 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 		return err
 	}
 	defer migDB.Close()
+	// #4259: refuse to silently apply pending migrations to a remote-backed,
+	// already-initialized database — that is how two clones fork the schema.
+	// Checked before the (retried) migration so it fails fast and is not retried.
+	if err := schema.CheckRemoteMigrateGate(ctx, migDB); err != nil {
+		return err
+	}
 	_, err = initSchemaOnDBWithRetry(ctx, migDB)
 	return err
 }

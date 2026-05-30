@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
+	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"golang.org/x/term"
 )
@@ -643,6 +645,14 @@ func executeSyncAction(ctx context.Context, plan BootstrapPlan, cfg *configfile.
 	// Both embedded and server mode handle this in their store init paths.
 	warmupStore, err := newDoltStoreFromConfig(ctx, plan.BeadsDir)
 	if err != nil {
+		// #4259: if the cloned remote is behind this binary, the remote-migrate
+		// gate holds migration for an explicit operator decision. Bootstrap is
+		// otherwise complete; the gate (with its instructions) surfaces on the
+		// next command, so don't emit the unrelated wisp-table warning here.
+		var gateErr *schema.RemoteMigrateGateError
+		if errors.As(err, &gateErr) {
+			return nil
+		}
 		// Non-fatal: wisp tables will be created on the next command that
 		// opens the store. Warn so the user knows to retry if they hit
 		// "table not found: wisp_*" errors.
