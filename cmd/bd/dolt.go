@@ -1299,7 +1299,13 @@ func init() {
 }
 
 func selectedDoltBeadsDir() string {
-	beadsDir := beads.FindBeadsDir()
+	beadsDir := ""
+	if os.Getenv("BEADS_DIR") != "" {
+		beadsDir = beads.FindBeadsDir()
+	}
+	if beadsDir == "" {
+		beadsDir = selectedNoDBBeadsDir(nil)
+	}
 	if beadsDir == "" {
 		return ""
 	}
