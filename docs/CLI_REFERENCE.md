@@ -100,10 +100,12 @@ Reference for bd Latest. Generated from `bd help --all`.
   - [bd backup restore](#bd-backup-restore) — Restore database from a Dolt backup
   - [bd backup status](#bd-backup-status) — Show last backup status
   - [bd backup sync](#bd-backup-sync) — Push database to configured Dolt backup
-- [bd branch](#bd-branch) — List or create branches
+- [bd branch](#bd-branch) — List, create, or delete branches
+- [bd checkout](#bd-checkout) — Switch to a different branch
 - [bd export](#bd-export) — Export issues to JSONL format
 - [bd federation](#bd-federation) — Manage peer-to-peer federation (requires CGO)
 - [bd import](#bd-import) — Import issues from a JSONL file or stdin into the database
+- [bd merge](#bd-merge) — Merge a branch into the current branch
 - [bd restore](#bd-restore) — Restore full history of a compacted issue from Dolt history
 - [bd vc](#bd-vc) — Version control operations
   - [bd vc commit](#bd-vc-commit) — Create a commit with all staged changes
@@ -2317,17 +2319,40 @@ bd backup sync
 
 ### bd branch
 
-List all branches or create a new branch.
+List all branches, create a new branch, or delete an existing branch.
 
 This command requires the Dolt storage backend. Without arguments,
 it lists all branches. With an argument, it creates a new branch.
+With -d, it deletes the named branch.
 
 Examples:
   bd branch                    # List all branches
   bd branch feature-xyz        # Create a new branch named feature-xyz
+  bd branch -d feature-xyz     # Delete branch feature-xyz
 
 ```
-bd branch [name]
+bd branch [name] [flags]
+```
+
+**Flags:**
+
+```
+  -d, --delete   Delete the named branch
+```
+
+### bd checkout
+
+Switch the Dolt database to a different branch.
+
+This command requires the Dolt storage backend. The target branch
+must already exist (create one with 'bd branch &lt;name&gt;').
+
+Examples:
+  bd checkout main             # Switch to the main branch
+  bd checkout feature-xyz      # Switch to feature-xyz branch
+
+```
+bd checkout <branch>
 ```
 
 ### bd export
@@ -2446,6 +2471,28 @@ bd import [file|-] [flags]
       --dedup          Skip lines whose title matches an existing open issue
       --dry-run        Show what would be imported without importing
   -i, --input string   Read JSONL from a specific file
+```
+
+### bd merge
+
+Merge the specified branch into the current branch.
+
+If there are merge conflicts, they will be reported. You can resolve
+conflicts automatically with --strategy ours|theirs.
+
+Examples:
+  bd merge feature-xyz                    # Merge feature-xyz into current branch
+  bd merge feature-xyz --strategy ours    # Merge, preferring our changes on conflict
+  bd merge feature-xyz --strategy theirs  # Merge, preferring their changes on conflict
+
+```
+bd merge <branch> [flags]
+```
+
+**Flags:**
+
+```
+      --strategy string   Conflict resolution strategy: 'ours' or 'theirs'
 ```
 
 ### bd restore
