@@ -1361,6 +1361,18 @@ func exportJSONLForCommit() {
 		return
 	}
 
+	// If the export file is staged for deletion (user ran `git rm`), do not
+	// re-export or re-stage it. GIT_INDEX_FILE is set during an actual commit,
+	// so git-diff-index reads the pending index — where the deletion lives.
+	// Without this guard, git add fullPath would convert the staged deletion
+	// back to a modification and the file would never be removed from the repo.
+	checkCmd := exec.Command("git", "diff", "--cached", "--diff-filter=D", "--name-only", "--", filepath.Base(fullPath))
+	checkCmd.Dir = filepath.Dir(fullPath)
+	if out, _ := checkCmd.Output(); len(out) > 0 {
+		debug.Logf("pre-commit: %s staged for deletion — skipping export\n", exportPath)
+		return
+	}
+
 	debug.Logf("pre-commit: exporting JSONL to %s\n", fullPath)
 	warnJSONLWithoutDoltRemote("pre-commit auto-export")
 
