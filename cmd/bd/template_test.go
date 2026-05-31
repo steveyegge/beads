@@ -435,6 +435,50 @@ func TestTemplateSuite(t *testing.T) {
 		}
 	})
 
+	t.Run("Clone_PersistsInMemoryLabels", func(t *testing.T) {
+		// The fresh-cook pour path (cmd/bd/cook.go:463) calls collectSteps
+		// with labelHandler=nil, which leaves labels on issue.Labels rather
+		// than persisting them via a separate channel. cloneSubgraph must
+		// pick those labels up and call AddLabel for each, otherwise labels
+		// generated at cook time (e.g. the gate:<await> label from waits_for)
+		// silently vanish on pour. Regression test for #3784.
+		epic := &types.Issue{
+			ID:        "proto-clone-labels",
+			Title:     "Proto with labels",
+			IssueType: types.TypeEpic,
+			Status:    types.StatusOpen,
+			Priority:  2,
+			Labels:    []string{"gate:all-children", "custom-label"},
+		}
+		subgraph := &TemplateSubgraph{
+			Root:     epic,
+			Issues:   []*types.Issue{epic},
+			IssueMap: map[string]*types.Issue{epic.ID: epic},
+		}
+
+		opts := CloneOptions{Actor: "test-user"}
+		result, err := cloneSubgraph(ctx, s, subgraph, opts)
+		if err != nil {
+			t.Fatalf("cloneSubgraph failed: %v", err)
+		}
+
+		gotLabels, err := s.GetLabels(ctx, result.NewEpicID)
+		if err != nil {
+			t.Fatalf("GetLabels failed: %v", err)
+		}
+
+		want := map[string]bool{"gate:all-children": true, "custom-label": true}
+		got := make(map[string]bool, len(gotLabels))
+		for _, l := range gotLabels {
+			got[l] = true
+		}
+		for label := range want {
+			if !got[label] {
+				t.Errorf("cloned issue %s missing label %q (got: %v)", result.NewEpicID, label, gotLabels)
+			}
+		}
+	})
+
 	t.Run("Clone_AssigneeOverrideRootOnly", func(t *testing.T) {
 		epic := h.createIssue("Root Epic", "", types.TypeEpic, 1)
 		child := h.createIssue("Child Task", "", types.TypeTask, 2)
