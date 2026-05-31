@@ -147,6 +147,74 @@ func TestWithRemoteOperationEnvUnsetsS3ChecksumEnv(t *testing.T) {
 	}
 }
 
+// TestWithRemoteOperationEnvDisablesGitHooks is the focused regression test for
+// GH#4272: the in-process SQL push/pull/fetch path must disable user git hooks
+// on the bd process (so the embedded engine's git children skip them), and must
+// restore the prior GIT_CONFIG_PARAMETERS afterwards. This covers the
+// no-credentials / no-checksum case that the original bug took.
+func TestWithRemoteOperationEnvDisablesGitHooks(t *testing.T) {
+	// Known empty baseline that t.Setenv restores after the test.
+	t.Setenv(gitConfigParametersEnv, "")
+
+	err := withRemoteOperationEnv(nil, false, func() error {
+		if got := os.Getenv(gitConfigParametersEnv); got != noGitHooksConfigParam {
+			t.Errorf("inside withRemoteOperationEnv: %s = %q, want %q", gitConfigParametersEnv, got, noGitHooksConfigParam)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withRemoteOperationEnv returned error: %v", err)
+	}
+	if got := os.Getenv(gitConfigParametersEnv); got != "" {
+		t.Errorf("after withRemoteOperationEnv: %s = %q, want restored empty value", gitConfigParametersEnv, got)
+	}
+}
+
+// TestWithRemoteOperationEnvPreservesExistingGitConfigParameters verifies a
+// user's pre-existing GIT_CONFIG_PARAMETERS is preserved: the hooks override is
+// appended (git applies entries in order, so ours wins) and the original value
+// is restored afterwards.
+func TestWithRemoteOperationEnvPreservesExistingGitConfigParameters(t *testing.T) {
+	const existing = "'user.email=ci@example.com'"
+	t.Setenv(gitConfigParametersEnv, existing)
+
+	err := withRemoteOperationEnv(nil, false, func() error {
+		want := existing + " " + noGitHooksConfigParam
+		if got := os.Getenv(gitConfigParametersEnv); got != want {
+			t.Errorf("inside withRemoteOperationEnv: %s = %q, want %q", gitConfigParametersEnv, got, want)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withRemoteOperationEnv returned error: %v", err)
+	}
+	if got := os.Getenv(gitConfigParametersEnv); got != existing {
+		t.Errorf("after withRemoteOperationEnv: %s = %q, want restored %q", gitConfigParametersEnv, got, existing)
+	}
+}
+
+// TestWithRemoteOperationEnvDisablesGitHooksWithCredentials verifies the hooks
+// override and credential env vars coexist on the SQL path.
+func TestWithRemoteOperationEnvDisablesGitHooksWithCredentials(t *testing.T) {
+	t.Setenv(gitConfigParametersEnv, "")
+
+	err := withRemoteOperationEnv(&remoteCredentials{username: "user", password: "pass"}, false, func() error {
+		if got := os.Getenv(gitConfigParametersEnv); got != noGitHooksConfigParam {
+			t.Errorf("%s = %q, want %q", gitConfigParametersEnv, got, noGitHooksConfigParam)
+		}
+		if got := os.Getenv("DOLT_REMOTE_USER"); got != "user" {
+			t.Errorf("DOLT_REMOTE_USER = %q, want user", got)
+		}
+		if got := os.Getenv("DOLT_REMOTE_PASSWORD"); got != "pass" {
+			t.Errorf("DOLT_REMOTE_PASSWORD = %q, want pass", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withRemoteOperationEnv returned error: %v", err)
+	}
+}
+
 func TestIsS3RemoteURL(t *testing.T) {
 	tests := []struct {
 		name string

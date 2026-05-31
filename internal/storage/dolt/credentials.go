@@ -527,14 +527,56 @@ func setS3ChecksumEnv() func() {
 	}
 }
 
-func withRemoteOperationEnv(creds *remoteCredentials, s3Checksum bool, fn func() error) error {
-	if creds.empty() && !s3Checksum {
-		return fn()
+// gitConfigParametersEnv is git's environment variable for injecting one-off
+// config values into every git invocation in the process subtree.
+const gitConfigParametersEnv = "GIT_CONFIG_PARAMETERS"
+
+// noGitHooksConfigParam is the GIT_CONFIG_PARAMETERS entry that disables
+// client-side git hooks (it points core.hooksPath at /dev/null) — the same
+// value applyNoGitHooksToCmd sets on the CLI subprocess.
+const noGitHooksConfigParam = "'core.hooksPath=/dev/null'"
+
+// setNoGitHooksEnv disables client-side git hooks on the bd PROCESS environment
+// for the duration of an in-process remote op. In embedded mode the Dolt SQL
+// engine runs inside the bd process, and the git child it spawns for the
+// `refs/dolt/data` transfer against the cache-mirror inherits bd's environment.
+// Without this, a templated pre-push hook in the cache-mirror fires and crashes
+// the push with "fatal: this operation must be run in a work tree" (GH#4272).
+//
+// This is the in-process counterpart of applyNoGitHooksToCmd, which only covers
+// the CLI shell-out push fallback. (Server mode is handled separately in
+// internal/doltserver, where the spawned server inherits the override at
+// startup.) Returns a cleanup that restores the previous value; the caller must
+// hold federationEnvMutex. A pre-existing GIT_CONFIG_PARAMETERS is preserved by
+// appending — git applies entries in order, so the hooks override wins.
+func setNoGitHooksEnv() func() {
+	prev, hadPrev := os.LookupEnv(gitConfigParametersEnv)
+	val := noGitHooksConfigParam
+	if prev != "" {
+		val = prev + " " + noGitHooksConfigParam
 	}
+	_ = os.Setenv(gitConfigParametersEnv, val) // Best effort: Setenv failure is extremely rare in practice
+	return func() {
+		if hadPrev {
+			_ = os.Setenv(gitConfigParametersEnv, prev) // Best effort cleanup
+		} else {
+			_ = os.Unsetenv(gitConfigParametersEnv) // Best effort cleanup
+		}
+	}
+}
+
+func withRemoteOperationEnv(creds *remoteCredentials, s3Checksum bool, fn func() error) error {
 	federationEnvMutex.Lock()
 	defer federationEnvMutex.Unlock()
 
-	var cleanups []func()
+	// Disable user git hooks for every SQL-path remote op. In embedded mode the
+	// Dolt engine runs in-process and shells out to git for the refs/dolt/data
+	// transfer against the cache-mirror, where templated pre-push hooks crash
+	// with "must be run in a work tree" (GH#3724 / GH#4272). Applied
+	// unconditionally because the bug bites the no-credentials git+ssh / file
+	// remote case that previously took this helper's lock-free fast path and set
+	// no env at all.
+	cleanups := []func(){setNoGitHooksEnv()}
 	if !creds.empty() {
 		cleanups = append(cleanups, setFederationCredentials(creds.username, creds.password))
 	}
