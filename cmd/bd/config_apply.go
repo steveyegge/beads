@@ -37,7 +37,7 @@ var configApplyCmd = &cobra.Command{
 Runs drift detection and then fixes any mismatches it finds:
 
   - hooks     Reinstall git hooks if missing or outdated
-  - remote    Add/update Dolt origin remote to match federation.remote
+  - remote    Add/update Dolt origin remote to match sync.remote/federation.remote
   - server    Start Dolt server if dolt.shared-server is enabled
 
 This command is idempotent — safe to run multiple times. Use --dry-run
@@ -138,7 +138,7 @@ func applyHooks(drifted bool, dryRun bool) ApplyResult {
 	}
 }
 
-// applyRemote ensures the Dolt origin remote matches federation.remote config.
+// applyRemote ensures the Dolt origin remote matches declared sync remote config.
 func applyRemote(drifted bool, dryRun bool) ApplyResult {
 	if !drifted {
 		return ApplyResult{
@@ -159,13 +159,13 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 		}
 	}
 
-	federationRemote := config.GetString("federation.remote")
-	if federationRemote == "" {
+	remoteKey, declaredRemote := resolveDeclaredDoltRemote()
+	if declaredRemote == "" {
 		return ApplyResult{
 			Check:   "remote",
 			Action:  "configure",
 			Status:  applyStatusSkipped,
-			Message: "federation.remote is not set in config",
+			Message: "sync.remote is not set in config",
 		}
 	}
 
@@ -178,20 +178,20 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 				Check:   "remote",
 				Action:  "add_remote",
 				Status:  applyStatusDryRun,
-				Message: fmt.Sprintf("Would add Dolt origin remote: %s", federationRemote),
+				Message: fmt.Sprintf("Would add Dolt origin remote from %s: %s", remoteKey, declaredRemote),
 			}
 		}
 		return ApplyResult{
 			Check:   "remote",
 			Action:  "update_remote",
 			Status:  applyStatusDryRun,
-			Message: fmt.Sprintf("Would update Dolt origin remote from %s to %s", currentURL, federationRemote),
+			Message: fmt.Sprintf("Would update Dolt origin remote from %s to %s", currentURL, declaredRemote),
 		}
 	}
 
 	if currentURL == "" {
 		// No origin exists — add it
-		if err := doltutil.AddCLIRemote(doltDir, "origin", federationRemote); err != nil {
+		if err := doltutil.AddCLIRemote(doltDir, "origin", declaredRemote); err != nil {
 			return ApplyResult{
 				Check:   "remote",
 				Action:  "add_remote",
@@ -204,7 +204,7 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 			Check:   "remote",
 			Action:  "add_remote",
 			Status:  applyStatusApplied,
-			Message: fmt.Sprintf("Added Dolt origin remote: %s", federationRemote),
+			Message: fmt.Sprintf("Added Dolt origin remote from %s: %s", remoteKey, declaredRemote),
 		}
 	}
 
@@ -221,7 +221,7 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 		}
 	}
 
-	if err := doltutil.AddCLIRemote(doltDir, "origin", federationRemote); err != nil {
+	if err := doltutil.AddCLIRemote(doltDir, "origin", declaredRemote); err != nil {
 		// Try to restore the old remote on failure
 		_ = doltutil.AddCLIRemote(doltDir, "origin", oldURL)
 		return ApplyResult{
@@ -237,7 +237,7 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 		Check:   "remote",
 		Action:  "update_remote",
 		Status:  applyStatusApplied,
-		Message: fmt.Sprintf("Updated Dolt origin remote from %s to %s", oldURL, federationRemote),
+		Message: fmt.Sprintf("Updated Dolt origin remote from %s to %s", oldURL, declaredRemote),
 	}
 }
 

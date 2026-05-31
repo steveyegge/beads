@@ -42,7 +42,7 @@ with my config?" — no mutations are performed.
 
 Checks:
   - hooks     Git hooks installed and up-to-date
-  - remote    Dolt remote matches federation.remote config
+  - remote    Dolt remote matches sync.remote/federation.remote config
   - server    Server state matches dolt.shared-server config
 
 Exit codes:
@@ -139,9 +139,9 @@ func checkHooksDrift() []DriftItem {
 	return items
 }
 
-// checkRemoteDrift compares federation.remote config against actual Dolt remotes.
+// checkRemoteDrift compares declared sync remote config against actual Dolt remotes.
 func checkRemoteDrift() []DriftItem {
-	federationRemote := config.GetString("federation.remote")
+	remoteKey, declaredRemote := resolveDeclaredDoltRemote()
 
 	// Find the dolt data directory for CLI remote listing
 	beadsDir := beads.FindBeadsDir()
@@ -150,6 +150,14 @@ func checkRemoteDrift() []DriftItem {
 			Check:   "remote",
 			Status:  driftStatusSkipped,
 			Message: "No active beads workspace found",
+		}}
+	}
+
+	if config.GetBool("dolt.local-only") {
+		return []DriftItem{{
+			Check:   "remote",
+			Status:  driftStatusInfo,
+			Message: "Dolt remote check skipped because dolt.local-only is true",
 		}}
 	}
 
@@ -173,39 +181,39 @@ func checkRemoteDrift() []DriftItem {
 		}
 	}
 
-	// Case 1: federation.remote set, no origin remote
-	if federationRemote != "" && originURL == "" {
+	// Case 1: sync remote set, no origin remote
+	if declaredRemote != "" && originURL == "" {
 		return []DriftItem{{
 			Check:    "remote",
 			Status:   driftStatusDrift,
-			Message:  "federation.remote is configured but no Dolt 'origin' remote exists",
-			Expected: federationRemote,
+			Message:  fmt.Sprintf("%s is configured but no Dolt 'origin' remote exists", remoteKey),
+			Expected: declaredRemote,
 			Actual:   "(no origin remote)",
 		}}
 	}
 
-	// Case 2: federation.remote set, origin exists but doesn't match
-	if federationRemote != "" && originURL != "" && originURL != federationRemote {
+	// Case 2: sync remote set, origin exists but doesn't match
+	if declaredRemote != "" && originURL != "" && originURL != declaredRemote {
 		return []DriftItem{{
 			Check:    "remote",
 			Status:   driftStatusDrift,
-			Message:  "Dolt origin remote URL does not match federation.remote",
-			Expected: federationRemote,
+			Message:  fmt.Sprintf("Dolt origin remote URL does not match %s", remoteKey),
+			Expected: declaredRemote,
 			Actual:   originURL,
 		}}
 	}
 
-	// Case 3: federation.remote set and matches origin
-	if federationRemote != "" && originURL == federationRemote {
+	// Case 3: sync remote set and matches origin
+	if declaredRemote != "" && originURL == declaredRemote {
 		return []DriftItem{{
 			Check:   "remote",
 			Status:  driftStatusOK,
-			Message: "Dolt origin remote matches federation.remote",
+			Message: fmt.Sprintf("Dolt origin remote matches %s", remoteKey),
 		}}
 	}
 
-	// Case 4: federation.remote not set but remotes exist
-	if federationRemote == "" && len(cliRemotes) > 0 {
+	// Case 4: sync remote not set but remotes exist
+	if declaredRemote == "" && len(cliRemotes) > 0 {
 		names := make([]string, len(cliRemotes))
 		for i, r := range cliRemotes {
 			names[i] = r.Name
@@ -213,7 +221,7 @@ func checkRemoteDrift() []DriftItem {
 		return []DriftItem{{
 			Check:   "remote",
 			Status:  driftStatusInfo,
-			Message: fmt.Sprintf("Dolt remotes configured (%s) but federation.remote is not set", strings.Join(names, ", ")),
+			Message: fmt.Sprintf("Dolt remotes configured (%s) but sync.remote is not set", strings.Join(names, ", ")),
 		}}
 	}
 
@@ -221,7 +229,7 @@ func checkRemoteDrift() []DriftItem {
 	return []DriftItem{{
 		Check:   "remote",
 		Status:  driftStatusInfo,
-		Message: "No federation.remote configured and no Dolt remotes found",
+		Message: "No sync.remote configured and no Dolt remotes found",
 	}}
 }
 

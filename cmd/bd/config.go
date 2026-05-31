@@ -498,7 +498,7 @@ var configValidateCmd = &cobra.Command{
 
 Checks:
   - federation.sovereignty is valid (T1, T2, T3, T4, or empty)
-  - federation.remote is set for Dolt sync
+  - sync.remote or federation.remote is set for Dolt sync, unless dolt.local-only is true
   - Remote URL format is valid (dolthub://, gs://, s3://, az://, file://)
   - routing.mode is valid (auto, maintainer, contributor, explicit)
 
@@ -570,36 +570,54 @@ func validateSyncConfig(repoPath string) []string {
 
 	// Get config from yaml
 	federationSov := v.GetString("federation.sovereignty")
-	federationRemote := v.GetString("federation.remote")
+	localOnly := v.GetBool("dolt.local-only")
+	remoteEntries := declaredRemoteEntriesFromViper(v)
 
 	// Validate federation.sovereignty
 	if federationSov != "" && !config.IsValidSovereignty(federationSov) {
 		issues = append(issues, fmt.Sprintf("federation.sovereignty: %q is invalid (valid values: %s, or empty for no restriction)", federationSov, strings.Join(config.ValidSovereigntyTiers(), ", ")))
 	}
 
-	// Validate federation.remote is set (required for Dolt sync)
-	if federationRemote == "" {
-		issues = append(issues, "federation.remote: required for Dolt sync")
+	// Validate a remote is set when this project expects Dolt sync. Local-only
+	// repos intentionally have no remote; they still use embedded Dolt locally.
+	if len(remoteEntries) == 0 && !localOnly {
+		issues = append(issues, "sync.remote: required for Dolt sync (or set dolt.local-only: true)")
 	}
 
 	// Strict security validation of remote URL
-	if federationRemote != "" {
-		if err := remotecache.ValidateRemoteURL(federationRemote); err != nil {
-			issues = append(issues, fmt.Sprintf("federation.remote: %s", err))
+	for _, entry := range remoteEntries {
+		if err := remotecache.ValidateRemoteURL(entry.value); err != nil {
+			issues = append(issues, fmt.Sprintf("%s: %s", entry.key, err))
 		}
 	}
 
 	// Validate against allowed-remote-patterns if configured
-	if federationRemote != "" {
+	for _, entry := range remoteEntries {
 		patterns := v.GetStringSlice("federation.allowed-remote-patterns")
 		if len(patterns) > 0 {
-			if err := remotecache.ValidateRemoteURLWithPatterns(federationRemote, patterns); err != nil {
-				issues = append(issues, fmt.Sprintf("federation.remote: %s", err))
+			if err := remotecache.ValidateRemoteURLWithPatterns(entry.value, patterns); err != nil {
+				issues = append(issues, fmt.Sprintf("%s: %s", entry.key, err))
 			}
 		}
 	}
 
 	return issues
+}
+
+type configRemoteEntry struct {
+	key   string
+	value string
+}
+
+func declaredRemoteEntriesFromViper(v *viper.Viper) []configRemoteEntry {
+	keys := []string{"sync.remote", "sync.git-remote", "federation.remote"}
+	entries := make([]configRemoteEntry, 0, len(keys))
+	for _, key := range keys {
+		if value := strings.TrimSpace(v.GetString(key)); value != "" {
+			entries = append(entries, configRemoteEntry{key: key, value: value})
+		}
+	}
+	return entries
 }
 
 // isValidRemoteURL validates remote URL formats for sync configuration.

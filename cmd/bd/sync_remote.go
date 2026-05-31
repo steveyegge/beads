@@ -33,6 +33,22 @@ func resolveSyncRemoteFromDir(beadsDir string) string {
 	return config.GetStringFromDir(beadsDir, "sync.git-remote")
 }
 
+// resolveDeclaredDoltRemote returns the project-declared remote URL used by
+// config reconciliation commands. sync.remote is the current key; federation.remote
+// is retained here because config drift/apply historically used it.
+func resolveDeclaredDoltRemote() (key, url string) {
+	if v := config.GetString("sync.remote"); v != "" {
+		return "sync.remote", v
+	}
+	if v := config.GetString("sync.git-remote"); v != "" {
+		return "sync.git-remote", v
+	}
+	if v := config.GetString("federation.remote"); v != "" {
+		return "federation.remote", v
+	}
+	return "", ""
+}
+
 // commitBeadsConfig stages .beads/config.yaml and commits it.
 // Silently no-ops if the file is clean or the commit fails (e.g. hooks,
 // nothing to commit). Used by bd dolt remote add/remove to keep the

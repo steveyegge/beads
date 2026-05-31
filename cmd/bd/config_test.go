@@ -329,9 +329,24 @@ func TestValidateSyncConfig(t *testing.T) {
 		}
 
 		issues := validateSyncConfig(tmpDir)
-		// After JSONL removal, Dolt sync requires federation.remote
+		// By default, Dolt sync requires sync.remote unless local-only is explicit.
 		if len(issues) != 1 {
-			t.Errorf("Expected 1 issue (missing federation.remote) for empty config, got: %v", issues)
+			t.Errorf("Expected 1 issue (missing sync.remote) for empty config, got: %v", issues)
+		}
+	})
+
+	t.Run("local-only config without remote", func(t *testing.T) {
+		configContent := `prefix: test
+dolt:
+  local-only: true
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+
+		issues := validateSyncConfig(tmpDir)
+		if len(issues) != 0 {
+			t.Errorf("Expected no issues for local-only config without remote, got: %v", issues)
 		}
 	})
 
@@ -369,13 +384,13 @@ sync:
 		issues := validateSyncConfig(tmpDir)
 		found := false
 		for _, issue := range issues {
-			if strings.Contains(issue, "federation.remote") && strings.Contains(issue, "required") {
+			if strings.Contains(issue, "sync.remote") && strings.Contains(issue, "required") {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected issue about federation.remote being required, got: %v", issues)
+			t.Errorf("Expected issue about sync.remote being required, got: %v", issues)
 		}
 	})
 
@@ -418,6 +433,21 @@ federation:
 		issues := validateSyncConfig(tmpDir)
 		if len(issues) != 0 {
 			t.Errorf("Expected no issues for valid config, got: %v", issues)
+		}
+	})
+
+	t.Run("valid sync.remote config", func(t *testing.T) {
+		configContent := `prefix: test
+sync:
+  remote: "https://github.com/user/beads-data.git"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config.yaml: %v", err)
+		}
+
+		issues := validateSyncConfig(tmpDir)
+		if len(issues) != 0 {
+			t.Errorf("Expected no issues for valid sync.remote config, got: %v", issues)
 		}
 	})
 

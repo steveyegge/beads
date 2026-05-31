@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 )
 
@@ -55,6 +56,36 @@ func TestCheckRemoteDriftNoBeadsDir(t *testing.T) {
 	}
 	if items[0].Status != driftStatusSkipped {
 		t.Errorf("expected status %q, got %q", driftStatusSkipped, items[0].Status)
+	}
+}
+
+// TestCheckRemoteDriftLocalOnlySkipsDoltCLI verifies local-only repos do not
+// require the external dolt binary just to report drift state.
+func TestCheckRemoteDriftLocalOnlySkipsDoltCLI(t *testing.T) {
+	dir := t.TempDir()
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt:\n  local-only: true\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	chdirForDriftTest(t, dir)
+	t.Setenv("BEADS_DIR", beadsDir)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+	t.Cleanup(func() { _ = config.Initialize() })
+
+	items := checkRemoteDrift()
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Status != driftStatusInfo {
+		t.Errorf("expected status %q, got %q (%s)", driftStatusInfo, items[0].Status, items[0].Message)
+	}
+	if items[0].Check != "remote" {
+		t.Errorf("expected check %q, got %q", "remote", items[0].Check)
 	}
 }
 
