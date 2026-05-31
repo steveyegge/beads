@@ -264,6 +264,33 @@ func TestCLI_List(t *testing.T) {
 	}
 }
 
+func TestCLI_ListReadyDeferredFlagIncludesDeferredIssue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow CLI test in short mode")
+	}
+	// Note: Not using t.Parallel() because inProcessMutex serializes execution anyway
+	tmpDir := setupCLITestDB(t)
+	runBDInProcess(t, tmpDir, "create", "Deferred ready candidate", "--type", "task", "--defer", "+7d")
+
+	withoutDeferred := runBDInProcess(t, tmpDir, "list", "--ready", "--json")
+	var hidden []map[string]interface{}
+	if err := json.Unmarshal([]byte(withoutDeferred), &hidden); err != nil {
+		t.Fatalf("Failed to parse ready JSON without --deferred: %v", err)
+	}
+	if len(hidden) != 0 {
+		t.Fatalf("expected deferred issue to be hidden from ready list by default, got %d issues", len(hidden))
+	}
+
+	withDeferred := runBDInProcess(t, tmpDir, "list", "--ready", "--deferred", "--json")
+	var shown []map[string]interface{}
+	if err := json.Unmarshal([]byte(withDeferred), &shown); err != nil {
+		t.Fatalf("Failed to parse ready JSON with --deferred: %v", err)
+	}
+	if len(shown) != 1 || shown[0]["title"] != "Deferred ready candidate" {
+		t.Fatalf("expected deferred issue to appear with --ready --deferred, got %#v", shown)
+	}
+}
+
 func TestCLI_Update(t *testing.T) {
 	// Note: Not using t.Parallel() because inProcessMutex serializes execution anyway
 	tmpDir := setupCLITestDB(t)
