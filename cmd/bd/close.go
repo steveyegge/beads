@@ -203,6 +203,14 @@ the flags appear in the command line.`,
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not advance to next step: %v\n", err)
 			} else if result != nil {
+				// Mirror --claim-next: when AdvanceToNextStep auto-claims the
+				// next step, update .beads/last-touched so subsequent default-
+				// target commands (e.g. bare `bd update`, `bd close`) target
+				// it. Without this, last-touched stays pointed at the just-
+				// closed step. See gastownhall/beads#3769.
+				if result.AutoAdvanced && result.NextStep != nil {
+					SetLastTouchedID(result.NextStep.ID)
+				}
 				if jsonOutput {
 					// Include continue result in JSON output
 					outputJSON(map[string]interface{}{
