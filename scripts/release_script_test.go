@@ -167,9 +167,15 @@ func runReleaseDryRunWithEnv(t *testing.T, repo, bin string, extraEnv ...string)
 
 func writeFakeBD(t *testing.T, bin, repo string) {
 	t.Helper()
-	source := filepath.Join(repo, ".beads", "formulas", "beads-release.formula.toml")
+	// Let bash itself canonicalize the formula path. release.sh derives
+	// FORMULA_PATH from `pwd`, which on Windows under Git Bash/MSYS produces
+	// mount-aware forms like /c/Users/... or /tmp/... . Embedding the Go
+	// path with %q would yield C:\\Users\\... and never match. Using
+	// filepath.ToSlash gives bash a path it can `cd` into, then `pwd`
+	// resolves it to whatever form release.sh will compare against.
+	formulaDir := filepath.ToSlash(filepath.Join(repo, ".beads", "formulas"))
 	body := fmt.Sprintf(`#!/bin/sh
-SOURCE=%q
+SOURCE="$(cd %q && pwd)/beads-release.formula.toml"
 if [ "$1 $2 $3 $4" = "formula show beads-release --json" ]; then
   printf '%%s\n' "{\"source\":\"$SOURCE\"}"
   exit 0
@@ -181,7 +187,7 @@ if [ "$1 $2 $3" = "formula show beads-release" ]; then
 fi
 echo "unexpected fake bd invocation: $*" >&2
 exit 64
-`, source)
+`, formulaDir)
 	writeExecutable(t, filepath.Join(bin, "bd"), body)
 }
 
