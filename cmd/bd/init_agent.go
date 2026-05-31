@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/templates/agents"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // addAgentsInstructions creates or updates the agents file with embedded template content.
@@ -35,6 +36,13 @@ func addAgentsInstructions(agentFile string, verbose bool, templatePath string, 
 // If the file already has a full profile and a minimal profile is requested, the full
 // profile is preserved to avoid information loss.
 func updateAgentFile(filename string, verbose bool, templatePath string, profile agents.Profile, opts agents.RenderOpts) error {
+	// Resolve symlinks so we read/write the target file, not the symlink itself (GH#3722)
+	resolved, resolveErr := utils.ResolveForWrite(filename)
+	if resolveErr != nil {
+		return fmt.Errorf("failed to resolve path %s: %w", filename, resolveErr)
+	}
+	filename = resolved
+
 	// Check if file exists
 	//nolint:gosec // G304: filename validated by config.ValidateAgentsFile or defaulted to AGENTS.md
 	content, err := os.ReadFile(filename)
