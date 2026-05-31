@@ -27,6 +27,8 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
+	"github.com/steveyegge/beads/internal/remotecache"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/schema"
@@ -891,7 +893,18 @@ var rootCmd = &cobra.Command{
 					return
 				}
 
-				if cmd.Name() != "import" && cmd.Name() != "setup" {
+				// GH#3686: `create --repo` targets a different repo; resolve
+				// that repo's .beads/ so PreRun doesn't exit early.
+				if cmd.Name() == "create" && cmd.Flags().Changed("repo") {
+					repoVal, _ := cmd.Flags().GetString("repo")
+					if repoVal != "" && !remotecache.IsRemoteURL(repoVal) {
+						targetDir := routing.ExpandPath(repoVal)
+						targetBeadsDB := filepath.Join(targetDir, ".beads", beads.CanonicalDatabaseName)
+						dbPath = utils.CanonicalizePath(targetBeadsDB)
+					}
+				}
+
+				if cmd.Name() != "import" && cmd.Name() != "setup" && dbPath == "" {
 					// No database found - provide context-aware error message
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
 					fmt.Fprintf(os.Stderr, "Hint: %s\n", diagHint())
