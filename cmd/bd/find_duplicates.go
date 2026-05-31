@@ -36,13 +36,13 @@ with different wording.
 
 Approaches:
   mechanical  Token-based text similarity (default, no API key needed)
-  ai          LLM-based semantic comparison (requires ANTHROPIC_API_KEY or ai.api_key)
+  ai          LLM-based semantic comparison (requires ANTHROPIC_API_KEY, MINIMAX_API_KEY, or ai.api_key)
 
 The mechanical approach tokenizes titles and descriptions, then computes
 Jaccard similarity between all issue pairs. It's fast and free but may
 miss semantically similar issues with very different wording.
 
-The AI approach sends candidate pairs to Claude for semantic comparison.
+The AI approach sends candidate pairs to an Anthropic-compatible model for semantic comparison.
 It first uses mechanical pre-filtering to reduce the number of API calls,
 then asks the LLM to judge whether the remaining pairs are true duplicates.
 
@@ -93,8 +93,8 @@ func runFindDuplicates(cmd *cobra.Command, _ []string) {
 
 	// AI method requires API key
 	if method == "ai" {
-		if os.Getenv("ANTHROPIC_API_KEY") == "" && config.GetString("ai.api_key") == "" {
-			FatalError("--method ai requires ANTHROPIC_API_KEY environment variable or ai.api_key in config")
+		if apiKey, _ := config.ResolveAIAPIKey(""); apiKey == "" {
+			FatalError("--method ai requires ANTHROPIC_API_KEY, MINIMAX_API_KEY, or ai.api_key in config")
 		}
 	}
 
@@ -362,11 +362,12 @@ func findAIDuplicates(ctx context.Context, issues []*types.Issue, threshold floa
 
 	fmt.Fprintf(os.Stderr, "Analyzing %d candidate pairs with AI...\n", len(candidates))
 
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		apiKey = config.GetString("ai.api_key")
+	apiKey, keySource := config.ResolveAIAPIKey("")
+	clientOptions := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if baseURL := config.DefaultAIBaseURL(keySource); baseURL != "" {
+		clientOptions = append(clientOptions, option.WithBaseURL(baseURL))
 	}
-	client := anthropic.NewClient(option.WithAPIKey(apiKey))
+	client := anthropic.NewClient(clientOptions...)
 
 	var pairs []duplicatePair
 
