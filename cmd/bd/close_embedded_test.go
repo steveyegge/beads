@@ -272,10 +272,32 @@ func TestEmbeddedClose(t *testing.T) {
 		child := bdCreate(t, bd, dir, "Epic child force", "--type", "task")
 		bdDepAdd(t, bd, dir, child.ID, epic.ID, "--type", "parent-child")
 
-		bdClose(t, bd, dir, epic.ID, "--force")
+		cmd := exec.Command(bd, "close", epic.ID, "--force")
+		cmd.Dir = dir
+		cmd.Env = bdEnv(dir)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bd close --force failed: %v\n%s", err, out)
+		}
 		got := bdShow(t, bd, dir, epic.ID)
 		if got.Status != types.StatusClosed {
 			t.Errorf("expected epic closed with --force, got %s", got.Status)
+		}
+		if !strings.Contains(string(out), "warning:") || !strings.Contains(string(out), "open child") {
+			t.Errorf("expected warning about open children on --force, got: %s", out)
+		}
+		_ = child
+	})
+
+	t.Run("close_non_epic_parent_open_children_refuses", func(t *testing.T) {
+		parent := bdCreate(t, bd, dir, "Task parent guard", "--type", "task")
+		child := bdCreate(t, bd, dir, "Task child guard", "--type", "task")
+		bdDepAdd(t, bd, dir, child.ID, parent.ID, "--type", "parent-child")
+
+		bdCloseFail(t, bd, dir, parent.ID)
+		got := bdShow(t, bd, dir, parent.ID)
+		if got.Status == types.StatusClosed {
+			t.Error("expected non-epic parent with open children to remain open without --force")
 		}
 		_ = child
 	})

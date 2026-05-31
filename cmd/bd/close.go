@@ -108,12 +108,18 @@ the flags appear in the command line.`,
 				continue
 			}
 
-			// Epic close guard: prevent closing epics with open children (mw-local-4so.5.2)
-			if !force && issue != nil && issue.IssueType == types.TypeEpic {
-				openChildren := countEpicOpenChildren(ctx, activeStore, id)
+			// Open-children close guard: prevent closing any issue with open
+			// parent-child dependents (GH#3681). With --force the close proceeds
+			// but a warning is emitted so orphaned children are never silent.
+			if issue != nil {
+				openChildren := countOpenChildren(ctx, activeStore, id)
 				if openChildren > 0 {
-					fmt.Fprintf(os.Stderr, "cannot close epic %s: %d open child issue(s); close children first or use --force to override\n", id, openChildren)
-					continue
+					if force {
+						fmt.Fprintf(os.Stderr, "warning: closing %s with %d open child issue(s) still active\n", id, openChildren)
+					} else {
+						fmt.Fprintf(os.Stderr, "cannot close %s: %d open child issue(s); close children first or use --force to override\n", id, openChildren)
+						continue
+					}
 				}
 			}
 
@@ -643,12 +649,13 @@ func resolveCloseTargets(ctx context.Context, localStore storage.DoltStorage, id
 	return results, cleanup, nil
 }
 
-// countEpicOpenChildren returns the number of open (non-closed) children for an epic.
+// countOpenChildren returns the number of open (non-closed) parent-child
+// dependents for any issue (epics, tasks, etc.).
 // Uses GetDependentsWithMetadata to find parent-child relationships.
-// Takes an explicit store so callers can route to the store actually holding the epic
-// (relevant for contributor auto-routing where the epic lives in the planning repo).
-func countEpicOpenChildren(ctx context.Context, s storage.DoltStorage, epicID string) int {
-	dependents, err := s.GetDependentsWithMetadata(ctx, epicID)
+// Takes an explicit store so callers can route to the store actually holding the issue
+// (relevant for contributor auto-routing where the issue lives in the planning repo).
+func countOpenChildren(ctx context.Context, s storage.DoltStorage, issueID string) int {
+	dependents, err := s.GetDependentsWithMetadata(ctx, issueID)
 	if err != nil {
 		return 0
 	}
