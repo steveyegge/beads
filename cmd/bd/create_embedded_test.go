@@ -90,9 +90,6 @@ func writeGraphCreatePlan(t *testing.T, dir string) string {
 		"nodes": [
 			{"key": "root", "title": "Graph root", "type": "task"},
 			{"key": "child", "title": "Graph child", "type": "task", "parent_key": "root"}
-		],
-		"edges": [
-			{"from_key": "child", "to_key": "root", "type": "blocks"}
 		]
 	}`
 	planFile := filepath.Join(dir, "graph-plan.json")
