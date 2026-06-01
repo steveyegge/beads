@@ -10,8 +10,9 @@ import (
 
 // StatusOutput represents the complete status output
 type StatusOutput struct {
-	Summary        *types.Statistics      `json:"summary"`
-	RecentActivity *RecentActivitySummary `json:"recent_activity,omitempty"`
+	Summary             *types.Statistics      `json:"summary"`
+	BlockedCountSkipped bool                   `json:"blocked_count_skipped,omitempty"`
+	RecentActivity      *RecentActivitySummary `json:"recent_activity,omitempty"`
 }
 
 // RecentActivitySummary represents activity from git history
@@ -44,10 +45,13 @@ Use cases:
   - Onboarding for new contributors
   - Integration with shell prompts or CI/CD
   - Daily standup reference
+  - Fast CI status checks that don't need blocked-count accuracy
 
 Examples:
   bd status                    # Show summary with activity
   bd status --no-activity      # Skip git activity (faster)
+  bd status --no-blocked       # Skip slow blocked-count scan (faster)
+  bd stats --no-blocked --json # JSON output without blocked count
   bd status --json             # JSON format output
   bd status --assigned         # Show issues assigned to current user
   bd stats                     # Alias for bd status`,
@@ -55,6 +59,7 @@ Examples:
 		showAll, _ := cmd.Flags().GetBool("all")
 		showAssigned, _ := cmd.Flags().GetBool("assigned")
 		noActivity, _ := cmd.Flags().GetBool("no-activity")
+		noBlocked, _ := cmd.Flags().GetBool("no-blocked")
 		jsonFormat, _ := cmd.Flags().GetBool("json")
 
 		// Override global jsonOutput if --json flag is set
@@ -68,8 +73,11 @@ Examples:
 
 		ctx := rootCtx
 
-		// Direct mode
-		stats, err = store.GetStatistics(ctx)
+		if noBlocked {
+			stats, err = store.GetStatisticsNoBlocked(ctx)
+		} else {
+			stats, err = store.GetStatistics(ctx)
+		}
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
@@ -89,8 +97,9 @@ Examples:
 		}
 
 		output := &StatusOutput{
-			Summary:        stats,
-			RecentActivity: recentActivity,
+			Summary:             stats,
+			BlockedCountSkipped: stats.BlockedIssues == nil,
+			RecentActivity:      recentActivity,
 		}
 
 		// JSON output
@@ -105,9 +114,23 @@ Examples:
 		fmt.Printf("  Total Issues:           %d\n", stats.TotalIssues)
 		fmt.Printf("  Open:                   %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.OpenIssues)))
 		fmt.Printf("  In Progress:            %s\n", ui.RenderWarn(fmt.Sprintf("%d", stats.InProgressIssues)))
-		fmt.Printf("  Blocked:                %s\n", ui.RenderFail(fmt.Sprintf("%d", stats.BlockedIssues)))
+		if noBlocked {
+			fmt.Printf("  Blocked:                %s\n", ui.MutedStyle.Render("(skipped)"))
+		} else if stats.BlockedIssues != nil && *stats.BlockedIssues > 0 {
+			fmt.Printf("  Blocked:                %s\n", ui.RenderFail(fmt.Sprintf("%d", *stats.BlockedIssues)))
+		} else {
+			blocked := 0
+			if stats.BlockedIssues != nil {
+				blocked = *stats.BlockedIssues
+			}
+			fmt.Printf("  Blocked:                %d\n", blocked)
+		}
 		fmt.Printf("  Closed:                 %d\n", stats.ClosedIssues)
-		fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
+		if noBlocked {
+			fmt.Printf("  Ready to Work:          %s\n", ui.MutedStyle.Render("(skipped)"))
+		} else {
+			fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
+		}
 
 		// Extended statistics (only show if non-zero)
 		hasExtended := stats.PinnedIssues > 0 ||
@@ -175,6 +198,7 @@ func getAssignedStatistics(assignee string) *types.Statistics {
 	}
 
 	// Count by status
+	blockedCount := 0
 	for _, issue := range issues {
 		switch issue.Status {
 		case types.StatusOpen:
@@ -182,13 +206,14 @@ func getAssignedStatistics(assignee string) *types.Statistics {
 		case types.StatusInProgress:
 			stats.InProgressIssues++
 		case types.StatusBlocked:
-			stats.BlockedIssues++
+			blockedCount++
 		case types.StatusDeferred:
 			stats.DeferredIssues++
 		case types.StatusClosed:
 			stats.ClosedIssues++
 		}
 	}
+	stats.BlockedIssues = &blockedCount
 
 	// Get ready work count for this assignee
 	readyFilter := types.WorkFilter{
@@ -205,7 +230,8 @@ func getAssignedStatistics(assignee string) *types.Statistics {
 func init() {
 	statusCmd.Flags().Bool("all", false, "Show all issues (default behavior)")
 	statusCmd.Flags().Bool("assigned", false, "Show issues assigned to current user")
-	statusCmd.Flags().Bool("no-activity", false, "Skip git activity tracking (faster)")
+	statusCmd.Flags().Bool("no-activity", false, "Skip git activity summary (faster)")
+	statusCmd.Flags().Bool("no-blocked", false, "Skip blocked-count computation (faster on large rigs)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(statusCmd)
 }

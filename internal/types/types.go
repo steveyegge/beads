@@ -1183,7 +1183,7 @@ type Statistics struct {
 	OpenIssues              int     `json:"open_issues"`
 	InProgressIssues        int     `json:"in_progress_issues"`
 	ClosedIssues            int     `json:"closed_issues"`
-	BlockedIssues           int     `json:"blocked_issues"`
+	BlockedIssues           *int    `json:"blocked_issues"`  // nil when --no-blocked skips computation
 	DeferredIssues          int     `json:"deferred_issues"` // Issues on ice
 	ReadyIssues             int     `json:"ready_issues"`
 	PinnedIssues            int     `json:"pinned_issues"` // Persistent issues
