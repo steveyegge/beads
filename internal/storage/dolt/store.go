@@ -41,6 +41,7 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 	"github.com/steveyegge/beads/internal/types"
@@ -1769,6 +1770,27 @@ func (s *DoltStore) doltAddAndCommit(ctx context.Context, tables []string, commi
 			return fmt.Errorf("dolt add %s: %w", table, err)
 		}
 	}
+
+	// Skip the commit when nothing was actually staged. A caller can reach here
+	// after an idempotent no-op write (e.g. re-adding an existing dependency via
+	// INSERT IGNORE, or removing a non-existent one), in which case the DOLT_ADDs
+	// above stage nothing and DOLT_COMMIT('-m') fails with a server-side "nothing
+	// to commit" warning that floods the Dolt log at reconcile cadence.
+	//
+	// Unlike StageAndCommit's fast-path (a global HasPendingChanges check),
+	// doltAddAndCommit stages only a FIXED table list. Other tables may be dirty
+	// concurrently, so the guard must test the STAGED set, not the whole working
+	// set — otherwise we would still fire an empty `-m` commit whenever an
+	// unrelated table is dirty. issueops.HasStagedChanges checks exactly what
+	// '-m' will commit.
+	staged, err := issueops.HasStagedChanges(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("check staged changes before commit: %w", err)
+	}
+	if !staged {
+		return nil
+	}
+
 	if _, err := conn.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
 		commitMsg, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
 		return fmt.Errorf("dolt commit: %w", err)
