@@ -477,7 +477,9 @@ create, update, show, or close operation).`,
 		}
 
 		if firstUpdatedID != "" {
-			commandDidWrite.Store(true)
+			if err := commitPendingIfEmbedded(ctx, store, actor); err != nil {
+				FatalErrorRespectJSON("failed to commit: %v", err)
+			}
 		}
 
 		// Set last touched after all updates complete

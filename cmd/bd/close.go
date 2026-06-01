@@ -257,28 +257,13 @@ the flags appear in the command line.`,
 		}
 
 		if closedCount > 0 {
-			hasRoutedMutation := false
 			for s := range mutatedStores {
-				if s != nil && s != store {
-					hasRoutedMutation = true
-					break
+				if s == nil {
+					continue
 				}
-			}
-			if hasRoutedMutation {
-				for s := range mutatedStores {
-					if s == nil {
-						continue
-					}
-					if err := maybeAutoCommitStore(ctx, s, doltAutoCommitParams{
-						Command:  cmd.Name(),
-						IssueIDs: resolvedIDs,
-					}); err != nil {
-						FatalErrorRespectJSON("dolt auto-commit failed: %v", err)
-					}
+				if err := commitPendingIfEmbedded(ctx, s, actor); err != nil {
+					FatalErrorRespectJSON("failed to commit: %v", err)
 				}
-				commandDidExplicitDoltCommit = true
-			} else {
-				commandDidWrite.Store(true)
 			}
 		}
 
