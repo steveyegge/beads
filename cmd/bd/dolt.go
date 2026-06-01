@@ -254,6 +254,16 @@ uncommitted changes in its working set).
 Use --remote to push to a specific named remote instead of the default.
 The remote must already exist (see 'bd dolt remote add').`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if isDoltLocalOnly() {
+			if jsonOutput {
+				outputJSONRaw(map[string]string{"status": "disabled", "reason": "dolt.local-only=true"})
+				return
+			}
+			fmt.Println("Remote sync is disabled for this project (dolt.local-only=true).")
+			fmt.Println("Your issues are stored locally in .beads/.")
+			fmt.Println("To re-enable remote sync: bd config unset dolt.local-only")
+			return
+		}
 		ctx := context.Background()
 		st := getStore()
 		if st == nil {
@@ -323,6 +333,16 @@ variables for authentication.
 Use --remote to pull from a specific named remote instead of the default.
 The remote must already exist (see 'bd dolt remote add').`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if isDoltLocalOnly() {
+			if jsonOutput {
+				outputJSONRaw(map[string]string{"status": "disabled", "reason": "dolt.local-only=true"})
+				return
+			}
+			fmt.Println("Remote sync is disabled for this project (dolt.local-only=true).")
+			fmt.Println("Nothing to pull.")
+			fmt.Println("To re-enable remote sync: bd config unset dolt.local-only")
+			return
+		}
 		ctx := context.Background()
 		st := getStore()
 		if st == nil {
@@ -558,6 +578,9 @@ func renderLocalDoltStatus(state *doltserver.State, serverDir string) {
 		fmt.Println("  Debug: on (loglevel=debug, --prof cpu)")
 		fmt.Printf("  Profile dir: %s\n", doltserver.DebugProfileDir(serverDir))
 	}
+	if isDoltLocalOnly() {
+		fmt.Println("  Remote sync: disabled (dolt.local-only=true)")
+	}
 }
 
 // shouldUseExternalDoltStatus reports whether bd dolt status should treat
@@ -708,6 +731,9 @@ func showEmbeddedDoltStatus(beadsDir string) {
 	fmt.Printf("  Data: %s\n", dataDir)
 	if !dataDirExists {
 		fmt.Printf("  %s\n", ui.RenderWarn("Data directory does not exist — run 'bd init' to create it"))
+	}
+	if isDoltLocalOnly() {
+		fmt.Println("  Remote sync: disabled (dolt.local-only=true)")
 	}
 }
 
@@ -943,6 +969,11 @@ var doltRemoteAddCmd = &cobra.Command{
 	Short: "Add a Dolt remote (both SQL server and CLI)",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		if isDoltLocalOnly() {
+			fmt.Fprintln(os.Stderr, "Error: cannot add Dolt remote: remote sync is disabled (dolt.local-only=true).")
+			fmt.Fprintln(os.Stderr, "To re-enable remote sync: bd config unset dolt.local-only")
+			os.Exit(1)
+		}
 		ctx := context.Background()
 		st := getStore()
 		if st == nil {
