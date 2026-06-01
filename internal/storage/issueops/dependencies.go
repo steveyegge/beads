@@ -281,15 +281,21 @@ func markDirectBlockingDependencySourceInTx(ctx context.Context, tx *sql.Tx, sou
 		return nil
 	}
 
+	// MySQL 8.0+ rejects UPDATE <T> ... WHERE EXISTS (SELECT FROM <T> ...)
+	// even with distinct aliases (Error 1093: can't specify target table
+	// for update in FROM clause). Wrapping the inner SELECT in a derived
+	// table makes MySQL treat it as an independent rowset, satisfying the
+	// restriction. Dolt accepts both forms.
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %s s SET s.is_blocked = 1
 		WHERE s.id = ?
 		  AND s.is_blocked = 0
 		  AND s.status <> 'closed' AND s.status <> 'pinned'
 		  AND EXISTS (
-		    SELECT 1 FROM %s t
-		    WHERE t.id = ?
-		      AND t.status <> 'closed' AND t.status <> 'pinned'
+		    SELECT 1 FROM (
+		      SELECT id, status FROM %s WHERE id = ?
+		    ) AS t
+		    WHERE t.status <> 'closed' AND t.status <> 'pinned'
 		  )
 	`, sourceTable, targetTable), source, target)
 	return err
