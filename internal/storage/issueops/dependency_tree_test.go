@@ -109,17 +109,23 @@ func expectIssue(mock sqlmock.Sqlmock, id, title string) {
 }
 
 func expectDependencies(mock sqlmock.Sqlmock, issueID string, deps []dependencyRow) {
-	rows := sqlmock.NewRows([]string{"depends_on_id", "type"})
-	for _, dep := range deps {
-		rows.AddRow(dep.id, dep.depType)
+	// GetDependenciesWithMetadataInTx now scans all six split dep tables. We
+	// return the supplied deps from the first table (issue_issue_dependencies)
+	// and empty result sets from the remaining five.
+	tables := AllDepTables()
+	for i, table := range tables {
+		col := DepTargetColumnForTable(table)
+		query := "SELECT " + col + " AS depends_on_id, type FROM " + table + " WHERE source_id = ?"
+		rows := sqlmock.NewRows([]string{"depends_on_id", "type"})
+		if i == 0 {
+			for _, dep := range deps {
+				rows.AddRow(dep.id, dep.depType)
+			}
+		}
+		mock.ExpectQuery(regexp.QuoteMeta(query)).
+			WithArgs(issueID).
+			WillReturnRows(rows)
 	}
-	// Legacy SQL shape; will be rewritten in task 20 to match per-table typed-column projection.
-	mock.ExpectQuery(regexp.QuoteMeta("FROM dependencies WHERE issue_id = ?")).
-		WithArgs(issueID).
-		WillReturnRows(rows)
-	mock.ExpectQuery(regexp.QuoteMeta("FROM wisp_dependencies WHERE issue_id = ?")).
-		WithArgs(issueID).
-		WillReturnRows(sqlmock.NewRows([]string{"depends_on_id", "type"}))
 }
 
 func expectIssueBatch(mock sqlmock.Sqlmock, ids []string) {

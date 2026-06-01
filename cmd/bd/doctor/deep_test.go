@@ -70,7 +70,7 @@ func TestCheckParentConsistency_OrphanedDeps(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := db.ExecContext(ctx,
-		"INSERT INTO dependencies (issue_id, depends_on_issue_id, type, created_at, created_by) VALUES (?, ?, ?, NOW(), ?)",
+		"INSERT INTO issue_issue_dependencies (source_id, depends_on_issue_id, type, created_at, created_by) VALUES (?, ?, ?, NOW(), ?)",
 		"bd-1", "bd-missing", "parent-child", "test")
 	if err != nil {
 		t.Fatal(err)

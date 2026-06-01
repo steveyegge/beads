@@ -94,7 +94,7 @@ func TestDemoteToWispRollsBackWhenAuxiliaryCopyFails(t *testing.T) {
 		issueID   string
 	}{
 		{"labels", "wisp_labels", "copy labels for demoted issue", "mixed-demote-labels-fail"},
-		{"dependencies", "wisp_dependencies", "copy dependencies for demoted issue", "mixed-demote-dependencies-fail"},
+		{"dependencies", "wisp_issue_dependencies", "copy issue_issue_dependencies for demoted issue", "mixed-demote-dependencies-fail"},
 		{"events", "wisp_events", "copy events for demoted issue", "mixed-demote-events-fail"},
 		{"comments", "wisp_comments", "copy comments for demoted issue", "mixed-demote-comments-fail"},
 	}
@@ -204,53 +204,12 @@ func TestPromoteFromEphemeralPreservesInboundDependencies(t *testing.T) {
 	assertDependencyTargetColumns(t, store, "dependencies", "mixed-promote-src", "mixed-promote-target", true)
 }
 
-func TestPromoteFromEphemeralRejectsCrossTypedTargetCollision(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx, cancel := testContext(t)
-	defer cancel()
-
-	createPerm(t, ctx, store, "mixed-promote-collision-source")
-	createWisp(t, ctx, store, "mixed-promote-collision-target")
-	if err := store.AddDependency(ctx, &types.Dependency{
-		IssueID:     "mixed-promote-collision-source",
-		DependsOnID: "mixed-promote-collision-target",
-		Type:        types.DepBlocks,
-	}, "tester"); err != nil {
-		t.Fatalf("AddDependency before promote: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_external, type, created_at, created_by, metadata)
-		VALUES (?, ?, ?, NOW(), ?, ?)
-	`, "mixed-promote-collision-source", "mixed-promote-collision-target", types.DepRelated, "tester", "{}"); err != nil {
-		t.Fatalf("seed external collision: %v", err)
-	}
-
-	err := store.PromoteFromEphemeral(ctx, "mixed-promote-collision-target", "tester")
-	if err == nil || !strings.Contains(err.Error(), "collides with existing dependency target") {
-		t.Fatalf("PromoteFromEphemeral error = %v, want collision", err)
-	}
-
-	assertRowCountForIssue(t, store, "wisps", "mixed-promote-collision-target", 1)
-	assertRowCountForIssue(t, store, "issues", "mixed-promote-collision-target", 0)
-	var wispTargetRows, externalTargetRows int
-	if err := store.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dependencies
-		WHERE issue_id = ? AND depends_on_wisp_id = ?
-	`, "mixed-promote-collision-source", "mixed-promote-collision-target").Scan(&wispTargetRows); err != nil {
-		t.Fatalf("count wisp target rows after failed promote: %v", err)
-	}
-	if err := store.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM dependencies
-		WHERE issue_id = ? AND depends_on_external = ?
-	`, "mixed-promote-collision-source", "mixed-promote-collision-target").Scan(&externalTargetRows); err != nil {
-		t.Fatalf("count external target rows after failed promote: %v", err)
-	}
-	if wispTargetRows != 1 || externalTargetRows != 1 {
-		t.Fatalf("dependency rows after failed promote: wisp=%d external=%d, want 1 each", wispTargetRows, externalTargetRows)
-	}
-}
+// TestPromoteFromEphemeralRejectsCrossTypedTargetCollision was removed: under
+// the split-dependency schema each (source_id, depends_on_<k>_id) pair lives
+// in its own typed table, so the cross-typed-column collision the test
+// previously asserted is no longer a meaningful normalization invariant
+// (checkRenameTargetCollision is now a no-op; row uniqueness is enforced by
+// the composite PK on each split table).
 
 func TestPromoteFromEphemeralRemovesCopiedOutboundWispDependencies(t *testing.T) {
 	store, cleanup := setupTestStore(t)
@@ -341,7 +300,7 @@ func TestPromoteFromEphemeralRollsBackWhenAuxiliaryCopyFails(t *testing.T) {
 		wispID    string
 	}{
 		{"labels", "labels", "copy labels for promoted wisp", "mixed-promote-labels-fail"},
-		{"dependencies", "dependencies", "copy dependencies for promoted wisp", "mixed-promote-dependencies-fail"},
+		{"dependencies", "issue_issue_dependencies", "copy wisp_issue_dependencies for promoted wisp", "mixed-promote-dependencies-fail"},
 		{"events", "events", "copy events for promoted wisp", "mixed-promote-events-fail"},
 		{"comments", "comments", "copy comments for promoted wisp", "mixed-promote-comments-fail"},
 	}
@@ -807,32 +766,33 @@ func assertDependencyTargetColumns(t *testing.T, store *DoltStore, table, source
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	var computedTarget, issueTarget, wispTarget sql.NullString
-	if err := store.db.QueryRowContext(ctx, `
-		SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external), depends_on_issue_id, depends_on_wisp_id
-		FROM `+table+`
-		WHERE issue_id = ?
-	`, sourceID).Scan(&computedTarget, &issueTarget, &wispTarget); err != nil {
-		t.Fatalf("query dependency target columns: %v", err)
+	var splitTable, targetCol string
+	switch table {
+	case "dependencies":
+		if wantIssueTarget {
+			splitTable, targetCol = "issue_issue_dependencies", "depends_on_issue_id"
+		} else {
+			splitTable, targetCol = "issue_wisp_dependencies", "depends_on_wisp_id"
+		}
+	case "wisp_dependencies":
+		if wantIssueTarget {
+			splitTable, targetCol = "wisp_issue_dependencies", "depends_on_issue_id"
+		} else {
+			splitTable, targetCol = "wisp_wisp_dependencies", "depends_on_wisp_id"
+		}
+	default:
+		t.Fatalf("assertDependencyTargetColumns: unknown legacy table %q", table)
 	}
 
-	if !computedTarget.Valid || computedTarget.String != targetID {
-		t.Fatalf("computed dependency target = %+v, want %q", computedTarget, targetID)
+	var got sql.NullString
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT `+targetCol+` FROM `+splitTable+` WHERE source_id = ?`,
+		sourceID,
+	).Scan(&got); err != nil {
+		t.Fatalf("query dependency target columns from %s: %v", splitTable, err)
 	}
-	if wantIssueTarget {
-		if !issueTarget.Valid || issueTarget.String != targetID {
-			t.Fatalf("depends_on_issue_id = %+v, want %q", issueTarget, targetID)
-		}
-		if wispTarget.Valid {
-			t.Fatalf("depends_on_wisp_id = %+v, want NULL", wispTarget)
-		}
-		return
-	}
-	if issueTarget.Valid {
-		t.Fatalf("depends_on_issue_id = %+v, want NULL", issueTarget)
-	}
-	if !wispTarget.Valid || wispTarget.String != targetID {
-		t.Fatalf("depends_on_wisp_id = %+v, want %q", wispTarget, targetID)
+	if !got.Valid || got.String != targetID {
+		t.Fatalf("%s.%s = %+v, want %q", splitTable, targetCol, got, targetID)
 	}
 }
 

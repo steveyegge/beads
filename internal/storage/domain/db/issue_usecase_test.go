@@ -244,8 +244,8 @@ func (s *testSuite) mixedDepTargetClassification() {
 		"regular target must use depends_on_issue_id, got %+v", byTarget[regular.Issue.ID])
 	s.Equal("depends_on_wisp_id", byTarget[wisp.Issue.ID].targetColumn(),
 		"wisp target must use depends_on_wisp_id, got %+v", byTarget[wisp.Issue.ID])
-	s.Equal("depends_on_external", byTarget["external:GH-42"].targetColumn(),
-		"external: target must use depends_on_external, got %+v", byTarget["external:GH-42"])
+	s.Equal("depends_on_external_id", byTarget["external:GH-42"].targetColumn(),
+		"external: target must use depends_on_external_id, got %+v", byTarget["external:GH-42"])
 }
 
 type depRow struct {
@@ -264,27 +264,73 @@ func (r depRow) targetColumn() string {
 	case r.depsOnWisp.Valid:
 		return "depends_on_wisp_id"
 	case r.depsOnExtern.Valid:
-		return "depends_on_external"
+		return "depends_on_external_id"
 	default:
 		return ""
 	}
 }
 
-func (s *testSuite) loadDepRows(table, prefixLike string) []depRow {
-	rows, err := s.Runner().QueryContext(s.Ctx(),
-		//nolint:gosec // G201: table is one of two hardcoded constants for tests
-		"SELECT issue_id, COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id, type, depends_on_issue_id, depends_on_wisp_id, depends_on_external FROM "+table+" WHERE issue_id LIKE ? OR depends_on_issue_id LIKE ? OR depends_on_wisp_id LIKE ? OR depends_on_external LIKE ? ORDER BY issue_id, depends_on_id, type",
-		prefixLike, prefixLike, prefixLike, prefixLike,
-	)
-	s.Require().NoError(err)
-	defer rows.Close()
-	var out []depRow
-	for rows.Next() {
-		var r depRow
-		s.Require().NoError(rows.Scan(&r.issueID, &r.dependsOnID, &r.depType, &r.depsOnIssue, &r.depsOnWisp, &r.depsOnExtern))
-		out = append(out, r)
+func (s *testSuite) loadDepRows(legacyTable, prefixLike string) []depRow {
+	// legacyTable is one of "dependencies" or "wisp_dependencies"; the new
+	// schema splits each into three target-typed tables. Query all three for
+	// the matching source class and synthesize the legacy depRow shape so
+	// callers can compare on issueID/dependsOnID/depType/targetColumn.
+	var tables []struct {
+		name      string
+		targetCol string
+		field     int // 0=issue,1=wisp,2=external
 	}
-	s.Require().NoError(rows.Err())
+	switch legacyTable {
+	case "dependencies":
+		tables = []struct {
+			name      string
+			targetCol string
+			field     int
+		}{
+			{"issue_issue_dependencies", "depends_on_issue_id", 0},
+			{"issue_wisp_dependencies", "depends_on_wisp_id", 1},
+			{"issue_external_dependencies", "depends_on_external_id", 2},
+		}
+	case "wisp_dependencies":
+		tables = []struct {
+			name      string
+			targetCol string
+			field     int
+		}{
+			{"wisp_issue_dependencies", "depends_on_issue_id", 0},
+			{"wisp_wisp_dependencies", "depends_on_wisp_id", 1},
+			{"wisp_external_dependencies", "depends_on_external_id", 2},
+		}
+	default:
+		s.Require().Failf("loadDepRows", "unknown legacy table %q", legacyTable)
+	}
+
+	var out []depRow
+	for _, tbl := range tables {
+		//nolint:gosec // G201: tbl.name and tbl.targetCol are fixed constants
+		rows, err := s.Runner().QueryContext(s.Ctx(),
+			"SELECT source_id, "+tbl.targetCol+" AS depends_on_id, type FROM "+tbl.name+" WHERE source_id LIKE ? OR "+tbl.targetCol+" LIKE ? ORDER BY source_id, depends_on_id, type",
+			prefixLike, prefixLike,
+		)
+		s.Require().NoError(err)
+		for rows.Next() {
+			var r depRow
+			var target string
+			s.Require().NoError(rows.Scan(&r.issueID, &target, &r.depType))
+			r.dependsOnID = target
+			switch tbl.field {
+			case 0:
+				r.depsOnIssue = sql.NullString{String: target, Valid: true}
+			case 1:
+				r.depsOnWisp = sql.NullString{String: target, Valid: true}
+			case 2:
+				r.depsOnExtern = sql.NullString{String: target, Valid: true}
+			}
+			out = append(out, r)
+		}
+		s.Require().NoError(rows.Err())
+		_ = rows.Close()
+	}
 	return out
 }
 

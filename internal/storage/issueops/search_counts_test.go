@@ -14,10 +14,29 @@ func TestSearchIssuesWithCountsAppliesLimitToEachSourceQuery(t *testing.T) {
 	_, mock, tx := beginMockTx(t)
 	mock.ExpectQuery(`SELECT 1 FROM wisp_dependencies LIMIT 1`).
 		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	// runSearchQueryInTx now probes existence of each dep table for the issues
+	// source (six tables: all dep tables for reverse-blocker scan +
+	// three source tables for per-source UNIONs).
+	for _, table := range AllDepTables() {
+		mock.ExpectQuery(`SELECT 1 FROM ` + table + ` LIMIT 1`).
+			WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	}
+	for _, table := range SourceDepTables(false) {
+		mock.ExpectQuery(`SELECT 1 FROM ` + table + ` LIMIT 1`).
+			WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	}
 	mock.ExpectQuery(`(?s)FROM issues i.*ORDER BY i\.priority ASC, i\.created_at DESC, i\.id ASC\s+LIMIT 3`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery(`SELECT 1 FROM wisps LIMIT 1`).
 		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	for _, table := range AllDepTables() {
+		mock.ExpectQuery(`SELECT 1 FROM ` + table + ` LIMIT 1`).
+			WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	}
+	for _, table := range SourceDepTables(true) {
+		mock.ExpectQuery(`SELECT 1 FROM ` + table + ` LIMIT 1`).
+			WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	}
 	mock.ExpectQuery(`(?s)FROM wisps i.*ORDER BY i\.priority ASC, i\.created_at DESC, i\.id ASC\s+LIMIT 3`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 

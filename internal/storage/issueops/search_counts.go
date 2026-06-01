@@ -105,23 +105,42 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 	} else {
 		reverseBlockerTables = SourceDepTables(false)
 	}
+	// Filter out dep tables that reference a missing wisps schema (FK targets
+	// are dropped together with wisps in older deployments / tests that
+	// exercise the missing-wisp-tables tolerance path).
+	reverseBlockerTables, err := filterExistingDepTablesInTx(ctx, tx, reverseBlockerTables)
+	if err != nil {
+		return nil, err
+	}
 	reverseBlockerParts := make([]string, 0, len(reverseBlockerTables))
 	for _, t := range reverseBlockerTables {
 		col := DepTargetColumnForTable(t)
 		reverseBlockerParts = append(reverseBlockerParts, fmt.Sprintf(`SELECT %s AS dep_id FROM %s WHERE type = 'blocks'`, col, t))
 	}
+	if len(reverseBlockerParts) == 0 {
+		reverseBlockerParts = append(reverseBlockerParts, `SELECT NULL AS dep_id WHERE 1 = 0`)
+	}
 	reverseBlockerSelect := strings.Join(reverseBlockerParts, " UNION ALL ")
 
 	// Per-source subqueries (dep counts, parent_id, deps JSON) UNION across
 	// the three source-routed dep tables for this filter's source class.
-	depCountParts := make([]string, 0, len(tables.DepTables))
-	parentParts := make([]string, 0, len(tables.DepTables))
-	depJSONParts := make([]string, 0, len(tables.DepTables))
-	for _, t := range tables.DepTables {
+	depTablesForSource, err := filterExistingDepTablesInTx(ctx, tx, tables.DepTables)
+	if err != nil {
+		return nil, err
+	}
+	depCountParts := make([]string, 0, len(depTablesForSource))
+	parentParts := make([]string, 0, len(depTablesForSource))
+	depJSONParts := make([]string, 0, len(depTablesForSource))
+	for _, t := range depTablesForSource {
 		col := DepTargetColumnForTable(t)
 		depCountParts = append(depCountParts, fmt.Sprintf(`SELECT source_id FROM %s WHERE type = 'blocks'`, t))
 		parentParts = append(parentParts, fmt.Sprintf(`SELECT source_id, %s AS parent_id FROM %s WHERE type = 'parent-child'`, col, t))
 		depJSONParts = append(depJSONParts, fmt.Sprintf(`SELECT source_id, %s AS dep_json FROM %s`, readyWorkDepJSONObject(col), t))
+	}
+	if len(depCountParts) == 0 {
+		depCountParts = append(depCountParts, `SELECT NULL AS source_id WHERE 1 = 0`)
+		parentParts = append(parentParts, `SELECT NULL AS source_id, NULL AS parent_id WHERE 1 = 0`)
+		depJSONParts = append(depJSONParts, `SELECT NULL AS source_id, NULL AS dep_json WHERE 1 = 0`)
 	}
 	depCountUnion := strings.Join(depCountParts, " UNION ALL ")
 	parentUnion := strings.Join(parentParts, " UNION ALL ")
@@ -216,6 +235,23 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("search count %s: rows: %w", tables.Main, err)
+	}
+	return out, nil
+}
+
+// filterExistingDepTablesInTx returns the subset of the supplied split dep
+// tables that actually exist. Tables whose FKs reference a missing parent
+// (e.g., the wisps table dropped in a tolerance test) are skipped.
+func filterExistingDepTablesInTx(ctx context.Context, tx *sql.Tx, depTables []string) ([]string, error) {
+	out := make([]string, 0, len(depTables))
+	for _, t := range depTables {
+		exists, err := optionalTableExistsInTx(ctx, tx, t)
+		if err != nil {
+			return nil, fmt.Errorf("probe %s: %w", t, err)
+		}
+		if exists {
+			out = append(out, t)
+		}
 	}
 	return out, nil
 }

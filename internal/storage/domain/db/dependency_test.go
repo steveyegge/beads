@@ -323,11 +323,11 @@ func (s *testSuite) depWispInsertRouting() {
 
 	var wispCount, permCount int
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
-		"SELECT COUNT(*) FROM wisp_dependencies WHERE issue_id = ?", "bd-dep-wisp-src").Scan(&wispCount))
+		"SELECT COUNT(*) FROM wisp_issue_dependencies WHERE source_id = ?", "bd-dep-wisp-src").Scan(&wispCount))
 	s.Equal(1, wispCount)
 	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
-		"SELECT COUNT(*) FROM dependencies WHERE issue_id = ?", "bd-dep-wisp-src").Scan(&permCount))
-	s.Equal(0, permCount, "wisp-routed insert must not write to dependencies")
+		"SELECT COUNT(*) FROM issue_issue_dependencies WHERE source_id = ?", "bd-dep-wisp-src").Scan(&permCount))
+	s.Equal(0, permCount, "wisp-routed insert must not write to issue-source dep tables")
 }
 
 func (s *testSuite) depWispListRouting() {
