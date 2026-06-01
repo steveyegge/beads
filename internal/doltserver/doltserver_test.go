@@ -1480,6 +1480,72 @@ func TestResolveServerMode_ExplicitPort(t *testing.T) {
 	}
 }
 
+func TestResolveServerMode_ServerConnectionMetadata(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "")
+	config.ResetForTesting()
+
+	dir := t.TempDir()
+	metaCfg := &configfile.Config{
+		DoltMode:       configfile.DoltModeServer,
+		DoltServerHost: "10.10.10.27",
+		DoltServerUser: "beads",
+		DoltDatabase:   "HomeLab",
+	}
+	if err := metaCfg.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	mode := ResolveServerMode(dir)
+	if mode != ServerModeExternal {
+		t.Errorf("expected ServerModeExternal with explicit server connection metadata, got %v", mode)
+	}
+}
+
+func TestResolveServerMode_PortFile(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "")
+	config.ResetForTesting()
+
+	dir := t.TempDir()
+	metaCfg := &configfile.Config{
+		DoltMode:     configfile.DoltModeServer,
+		DoltDatabase: "HomeLab",
+	}
+	if err := metaCfg.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePortFile(dir, 3306); err != nil {
+		t.Fatal(err)
+	}
+
+	mode := ResolveServerMode(dir)
+	if mode != ServerModeExternal {
+		t.Errorf("expected ServerModeExternal with runtime port file, got %v", mode)
+	}
+}
+
+func TestResolveServerMode_LocalhostServerModeRemainsOwned(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	t.Setenv("BEADS_DOLT_SERVER_MODE", "")
+	config.ResetForTesting()
+
+	dir := t.TempDir()
+	metaCfg := &configfile.Config{
+		DoltMode:       configfile.DoltModeServer,
+		DoltServerHost: "127.0.0.1",
+		DoltServerUser: "root",
+		DoltDatabase:   "beads",
+	}
+	if err := metaCfg.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	mode := ResolveServerMode(dir)
+	if mode != ServerModeOwned {
+		t.Errorf("expected ServerModeOwned for localhost server mode without port file, got %v", mode)
+	}
+}
 func TestResolveServerMode_ServerModeEnv(t *testing.T) {
 	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
 	t.Setenv("BEADS_DOLT_SERVER_MODE", "1")
