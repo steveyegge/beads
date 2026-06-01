@@ -57,10 +57,10 @@ func TestListParseTimeFlag(t *testing.T) {
 }
 
 func TestListPinIndicator(t *testing.T) {
-	if pinIndicator(&types.Issue{Pinned: true}) == "" {
+	if pinIndicator(true) == "" {
 		t.Fatalf("expected pin indicator")
 	}
-	if pinIndicator(&types.Issue{Pinned: false}) != "" {
+	if pinIndicator(false) != "" {
 		t.Fatalf("expected empty pin indicator")
 	}
 }

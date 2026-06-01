@@ -20,9 +20,12 @@ func parseTimeFlag(s string) (time.Time, error) {
 	return timeparsing.ParseRelativeTime(s, time.Now())
 }
 
-// pinIndicator returns a pushpin emoji prefix for pinned issues
-func pinIndicator(issue *types.Issue) string {
-	if issue.Pinned {
+// pinIndicator returns a pushpin emoji prefix when pinned is true.
+// Used by both wide-path renderers (formatIssueLong, formatPrettyIssue) and
+// the narrow-path compact renderer; they pass issue.Pinned or summary.Pinned
+// directly so a single helper covers both shapes.
+func pinIndicator(pinned bool) string {
+	if pinned {
 		return "📌 "
 	}
 	return ""
@@ -87,13 +90,13 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 	status := string(issue.Status)
 	if status == "closed" {
 		line := fmt.Sprintf("%s%s [P%d] [%s] %s\n  %s",
-			pinIndicator(issue), issue.ID, issue.Priority,
+			pinIndicator(issue.Pinned), issue.ID, issue.Priority,
 			issue.IssueType, status, issue.Title)
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
 		buf.WriteString(fmt.Sprintf("%s%s [%s] [%s] %s\n",
-			pinIndicator(issue),
+			pinIndicator(issue.Pinned),
 			ui.RenderID(issue.ID),
 			ui.RenderPriority(issue.Priority),
 			ui.RenderType(string(issue.IssueType)),
@@ -122,17 +125,6 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, 
 		}
 	}
 	buf.WriteString("\n")
-}
-
-// formatAgentIssue formats a single issue in ultra-compact agent mode format
-// Output: "ID: Title" with optional dependency info "(parent: X, blocked by: Y, blocks: Z)"
-func formatAgentIssue(buf *strings.Builder, issue *types.Issue, blockedBy, blocks []string, parent string) {
-	depInfo := formatDependencyInfo(blockedBy, blocks, parent)
-	if depInfo != "" {
-		buf.WriteString(fmt.Sprintf("%s: %s %s\n", issue.ID, issue.Title, depInfo))
-	} else {
-		buf.WriteString(fmt.Sprintf("%s: %s\n", issue.ID, issue.Title))
-	}
 }
 
 // formatDependencyInfo formats dependency info for list output.
@@ -225,47 +217,58 @@ func getClosedBlockerIDs(ctx context.Context, s storage.DoltStorage, allDeps map
 	return closedIDs
 }
 
-// formatIssueCompact formats a single issue in compact format to a buffer
-// Uses status icons for better scanability - consistent with bd graph
+// formatAgentIssue formats a single issue in ultra-compact agent mode format.
+// Output: "ID: Title" with optional dependency info "(parent: X, blocked by: Y, blocks: Z)".
+func formatAgentIssue(buf *strings.Builder, sum *types.IssueSummary, blockedBy, blocks []string, parent string) {
+	depInfo := formatDependencyInfo(blockedBy, blocks, parent)
+	if depInfo != "" {
+		buf.WriteString(fmt.Sprintf("%s: %s %s\n", sum.ID, sum.Title, depInfo))
+	} else {
+		buf.WriteString(fmt.Sprintf("%s: %s\n", sum.ID, sum.Title))
+	}
+}
+
+// formatIssueCompact formats a single issue in compact format to a buffer.
+// Uses status icons for better scanability - consistent with bd graph.
 // Format: [icon] [pin] ID [Priority] [Type] @assignee [labels] - Title (parent: X, blocked by: Y, blocks: Z)
-func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string, blockedBy, blocks []string, parent string) {
+//
+// Operates on the narrow IssueSummary projection — wide callers (bd list
+// --long, --pretty, JSON output) use formatIssueLong / pretty / JSON paths
+// instead of this one.
+func formatIssueCompact(buf *strings.Builder, sum *types.IssueSummary, labels []string, blockedBy, blocks []string, parent string) {
 	labelsStr := ""
 	if len(labels) > 0 {
 		labelsStr = fmt.Sprintf(" %v", labels)
 	}
 	assigneeStr := ""
-	if issue.Assignee != "" {
-		assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
+	if sum.Assignee != "" {
+		assigneeStr = fmt.Sprintf(" @%s", sum.Assignee)
 	}
 
-	// Format dependency info
 	depInfo := formatDependencyInfo(blockedBy, blocks, parent)
 	if depInfo != "" {
 		depInfo = " " + depInfo
 	}
 
-	// Get styled status icon — override to blocked when issue has open blockers (GH#2858)
-	statusIcon := renderStatusIcon(issue.Status)
-	if len(blockedBy) > 0 && issue.Status == types.StatusOpen {
+	statusIcon := renderStatusIcon(sum.Status)
+	if len(blockedBy) > 0 && sum.Status == types.StatusOpen {
 		statusIcon = renderStatusIcon(types.StatusBlocked)
 	}
 
-	if issue.Status == types.StatusClosed {
-		// Closed issues: entire line muted (fades visually)
+	if sum.Status == types.StatusClosed {
 		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s%s",
-			statusIcon, pinIndicator(issue), issue.ID, issue.Priority,
-			issue.IssueType, assigneeStr, labelsStr, issue.Title, depInfo)
+			statusIcon, pinIndicator(sum.Pinned), sum.ID, sum.Priority,
+			sum.IssueType, assigneeStr, labelsStr, sum.Title, depInfo)
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
-		// Active issues: status icon + semantic colors for priority/type
 		buf.WriteString(fmt.Sprintf("%s %s%s [%s] [%s]%s%s - %s%s\n",
 			statusIcon,
-			pinIndicator(issue),
-			ui.RenderID(issue.ID),
-			ui.RenderPriority(issue.Priority),
-			ui.RenderType(string(issue.IssueType)),
-			assigneeStr, labelsStr, issue.Title, depInfo))
+			pinIndicator(sum.Pinned),
+			ui.RenderID(sum.ID),
+			ui.RenderPriority(sum.Priority),
+			ui.RenderType(string(sum.IssueType)),
+			assigneeStr, labelsStr, sum.Title, depInfo))
 	}
 }
 

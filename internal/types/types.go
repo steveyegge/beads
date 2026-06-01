@@ -112,6 +112,28 @@ type Issue struct {
 	Payload   string `json:"payload,omitempty"`    // Event-specific JSON data
 }
 
+// IssueSummary is a read-only narrow projection of Issue for list-shaped
+// rendering paths that don't dereference TEXT/JSON columns. Populated by
+// storage.SearchIssueSummaries, which SELECTs only the columns listed here.
+// Shape ratified by be-nu4.3.1 addendum: Pinned IS included, Metadata is NOT
+// — adding Metadata would re-introduce the JSON parse cost D3 exists to
+// eliminate.
+//
+// IssueSummary is read-only. No write methods accept it.
+type IssueSummary struct {
+	ID        string
+	Title     string
+	Status    Status
+	Priority  int
+	IssueType IssueType
+	Assignee  string
+	Pinned    bool
+	Labels    []string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	ClosedAt  *time.Time
+}
+
 // ComputeContentHash creates a deterministic hash of the issue's content.
 // Uses all substantive fields (excluding ID, timestamps, and compaction metadata)
 // to ensure that identical content produces identical hashes across all clones.
@@ -1286,6 +1308,14 @@ type IssueFilter struct {
 	// Performance escape hatches
 	SkipWisps  bool // Q2: skip wisps table merge entirely (for callers that never return ephemeral results)
 	NoIDShrink bool // Q3: force Pattern A (full 47-col scan) even when Limit > 0
+
+	// Sort selection (currently honored by SearchIssueSummaries; SearchIssues
+	// keeps its hardcoded order and is sorted Go-side by callers that need it).
+	// Field names match the --sort flag in `bd list`: priority, created, updated,
+	// closed, status, id, title, type, assignee. Empty defaults to the priority/
+	// created_at/id ordering used historically.
+	SortBy      string
+	SortReverse bool
 }
 
 // SortPolicy determines how ready work is ordered
