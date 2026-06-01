@@ -264,6 +264,24 @@ func (t *doltTransaction) GetIssue(ctx context.Context, id string) (*types.Issue
 	return scanIssueTxFromTable(ctx, t.txFor(table), table, id)
 }
 
+// SearchIssueIDs returns matching IDs only. For now this delegates to
+// SearchIssues; the transaction path's hot caller (read-your-writes inside
+// a tx) is not the partial-ID-resolution case that motivates the
+// narrow-projection optimization, so a correctness-only implementation
+// suffices here. The store-level DoltStore.SearchIssueIDs takes the fast
+// path via issueops.SearchIssueIDsInTx.
+func (t *doltTransaction) SearchIssueIDs(ctx context.Context, query string, filter types.IssueFilter) ([]string, error) {
+	issues, err := t.SearchIssues(ctx, query, filter)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(issues))
+	for i, issue := range issues {
+		ids[i] = issue.ID
+	}
+	return ids, nil
+}
+
 // SearchIssues searches for issues within the transaction.
 // Supports the same filter fields as DoltStore.SearchIssues (bd-v6v8).
 func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
