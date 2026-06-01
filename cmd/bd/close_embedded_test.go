@@ -255,6 +255,66 @@ func TestEmbeddedClose(t *testing.T) {
 		}
 	})
 
+	// be-035: silent-data-loss bug. Without an authority check, actor A could
+	// close a bead claimed by actor B and bd would print "✓ Closed" with no
+	// indication the actor mismatched. The fix refuses the close (non-zero
+	// exit, stderr message) unless --force is set.
+	t.Run("close_assignee_mismatch_refuses_without_force", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Mismatch guard", "--type", "task")
+		// Bob claims the bead.
+		bdUpdate(t, bd, dir, issue.ID, "--actor", "bob", "--claim")
+
+		// Alice tries to close it — must fail loudly, not silently succeed.
+		out := bdCloseFail(t, bd, dir, issue.ID, "--actor", "alice")
+		if !strings.Contains(out, "assignee is") {
+			t.Errorf("expected stderr to mention assignee mismatch, got: %s", out)
+		}
+		if !strings.Contains(out, "bob") || !strings.Contains(out, "alice") {
+			t.Errorf("expected stderr to name both assignee and actor, got: %s", out)
+		}
+
+		// Bead must remain open.
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Status == types.StatusClosed {
+			t.Error("expected bead to remain open after refused close")
+		}
+	})
+
+	t.Run("close_assignee_mismatch_with_force", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Mismatch force", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--actor", "bob", "--claim")
+
+		// --force overrides the authority check.
+		bdClose(t, bd, dir, issue.ID, "--actor", "alice", "--force")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Status != types.StatusClosed {
+			t.Errorf("expected closed with --force despite mismatch, got %s", got.Status)
+		}
+	})
+
+	t.Run("close_same_actor_succeeds", func(t *testing.T) {
+		issue := bdCreate(t, bd, dir, "Same actor", "--type", "task")
+		bdUpdate(t, bd, dir, issue.ID, "--actor", "alice", "--claim")
+
+		// Same actor — no authority issue.
+		bdClose(t, bd, dir, issue.ID, "--actor", "alice")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Status != types.StatusClosed {
+			t.Errorf("expected closed when actor matches assignee, got %s", got.Status)
+		}
+	})
+
+	t.Run("close_unassigned_bead_succeeds", func(t *testing.T) {
+		// Lots of bd's normal flow involves closing unclaimed beads;
+		// the authority check must not break this.
+		issue := bdCreate(t, bd, dir, "Unassigned", "--type", "task")
+		bdClose(t, bd, dir, issue.ID, "--actor", "carol")
+		got := bdShow(t, bd, dir, issue.ID)
+		if got.Status != types.StatusClosed {
+			t.Errorf("expected unassigned bead to close, got %s", got.Status)
+		}
+	})
+
 	t.Run("close_epic_open_children_refuses", func(t *testing.T) {
 		epic := bdCreate(t, bd, dir, "Epic guard", "--type", "epic")
 		child := bdCreate(t, bd, dir, "Epic child", "--type", "task")
