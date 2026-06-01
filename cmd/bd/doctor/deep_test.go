@@ -274,6 +274,49 @@ func TestCheckMailThreadIntegrity_ValidThreads(t *testing.T) {
 	}
 }
 
+// TestCheckOrphanedChildren verifies detection of child issues with missing parents.
+func TestCheckOrphanedChildren(t *testing.T) {
+	t.Run("no_orphans", func(t *testing.T) {
+		store := newTestDoltStore(t, "oc")
+		ctx := context.Background()
+		issue := &types.Issue{
+			ID:        "oc-1",
+			Title:     "Parent",
+			Status:    types.StatusOpen,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+		}
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatal(err)
+		}
+		db := store.UnderlyingDB()
+		check := checkOrphanedChildren(db)
+		if check.Status != StatusOK {
+			t.Errorf("Status = %q, want %q: %s", check.Status, StatusOK, check.Message)
+		}
+	})
+
+	t.Run("one_orphan", func(t *testing.T) {
+		store := newTestDoltStore(t, "oc2")
+		db := store.UnderlyingDB()
+		// Insert a child with dotted ID whose parent does not exist via raw SQL.
+		_, err := db.Exec(
+			"INSERT INTO issues (id, title, status, issue_type, created_at) VALUES (?, ?, ?, ?, NOW())",
+			"oc2.1", "Orphan Child", "open", "task",
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check := checkOrphanedChildren(db)
+		if check.Status != StatusWarning {
+			t.Errorf("Status = %q, want %q: %s", check.Status, StatusWarning, check.Message)
+		}
+		if strings.Contains(check.Message, "+") {
+			t.Errorf("Message should NOT contain '+' for a single orphan: %s", check.Message)
+		}
+	})
+}
+
 // TestDeepValidationResultJSON verifies JSON serialization
 func TestDeepValidationResultJSON(t *testing.T) {
 	result := DeepValidationResult{
