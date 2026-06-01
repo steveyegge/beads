@@ -404,32 +404,42 @@ func (r *dependencySQLRepositoryImpl) loadStatusByID(ctx context.Context, idSet 
 		ids = append(ids, id)
 	}
 	placeholders, args := buildInPlaceholders(ids)
+	sourceByID := make(map[string]string, len(idSet))
 	for _, table := range []string{"issues", "wisps"} {
 		//nolint:gosec // G201: table is a hardcoded constant
 		q := fmt.Sprintf("SELECT id, status FROM %s WHERE id IN (%s)", table, placeholders)
-		rows, err := r.runner.QueryContext(ctx, q, args...)
-		if err != nil {
-			if dberrors.IsTableNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("status from %s: %w", table, err)
-		}
-		func() {
-			defer rows.Close()
-			for rows.Next() {
-				var id string
-				var status types.Status
-				if err := rows.Scan(&id, &status); err != nil {
-					return
-				}
-				statusByID[id] = status
-			}
-		}()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("status rows from %s: %w", table, err)
+		if err := r.scanStatusRows(ctx, q, args, table, statusByID, sourceByID); err != nil {
+			return nil, err
 		}
 	}
 	return statusByID, nil
+}
+
+func (r *dependencySQLRepositoryImpl) scanStatusRows(ctx context.Context, q string, args []any, table string, statusByID map[string]types.Status, sourceByID map[string]string) error {
+	rows, err := r.runner.QueryContext(ctx, q, args...)
+	if err != nil {
+		if dberrors.IsTableNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("status from %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var status types.Status
+		if err := rows.Scan(&id, &status); err != nil {
+			return fmt.Errorf("status from %s: scan: %w", table, err)
+		}
+		if existing, dup := sourceByID[id]; dup {
+			return fmt.Errorf("status id %q exists in both %s and %s", id, existing, table)
+		}
+		sourceByID[id] = table
+		statusByID[id] = status
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("status rows from %s: %w", table, err)
+	}
+	return nil
 }
 
 func (r *dependencySQLRepositoryImpl) queryDeps(ctx context.Context, q string, args []any, into map[string][]*types.Dependency, keyByIssueID bool) error {
