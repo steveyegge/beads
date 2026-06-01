@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -18,8 +19,24 @@ import (
 	"sync"
 
 	"github.com/steveyegge/beads/internal/storage/dberrors"
+	"golang.org/x/term"
 )
 
+// stderr is the writer for migration progress messages. Defaults to os.Stderr
+// when stderr is a terminal so humans see progress, and to io.Discard otherwise
+// so the lines don't pollute machine-parsed output (tests, CI, piped callers).
+// Overridable in tests.
+var stderr io.Writer = defaultStderr()
+
+func defaultStderr() io.Writer {
+	if term.IsTerminal(int(os.Stderr.Fd())) {
+		return os.Stderr
+	}
+	return io.Discard
+}
+
+// DBConn is the minimal interface satisfied by *sql.DB, *sql.Tx, and *sql.Conn.
+// It provides query and exec methods needed by the migration runner.
 type DBConn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -747,15 +764,23 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn) (int, error) {
 		return 0, nil
 	}
 
+	return runMigrations(ctx, db, m, current)
+}
+
+// runMigrations applies all migration files in m with version > minVersion. It is
+// package-private so tests can call it directly without needing a live cursor table.
+func runMigrations(ctx context.Context, db DBConn, m migrationSource, minVersion int) (int, error) {
 	count := 0
 	for _, mf := range m.list() {
-		if mf.version <= current {
+		if mf.version <= minVersion {
 			continue
 		}
 		data, err := m.files.ReadFile(m.dir + "/" + mf.name)
 		if err != nil {
 			return count, fmt.Errorf("reading migration %s: %w", mf.name, err)
 		}
+
+		fmt.Fprintf(stderr, "migrating schema: %s\n", mf.name)
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
 			return count, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
