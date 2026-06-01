@@ -1009,6 +1009,20 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "warning: no beads configuration found in %s; using default database name %q\n", beadsDir, configfile.DefaultDoltDatabase)
 			doltCfg.Database = configfile.DefaultDoltDatabase
 		}
+		// Honor shared-server mode even when no project config was found
+		// (cfg == nil) or the parse failed. The override inside the
+		// cfg != nil branch above is skipped in those cases, so without this
+		// an exported BEADS_DOLT_SHARED_SERVER is silently ignored and bd
+		// falls through to embeddeddolt.Open, creating a phantom embedded DB
+		// that subsequent writes fragment into (GH#3817). This is idempotent:
+		// when the override above already ran, ServerMode is already true.
+		if !doltCfg.ServerMode && !doltCfg.ProxiedServer && doltserver.IsSharedServerMode() {
+			doltCfg.ServerMode = true
+			serverMode = doltCfg.ServerMode
+			if cmdCtx != nil {
+				cmdCtx.ServerMode = doltCfg.ServerMode
+			}
+		}
 		// If config parse failed (cfgErr != nil), still default the database
 		// name so the store-open error is about the real problem (the parse
 		// failure warning already printed) rather than a confusing "database
