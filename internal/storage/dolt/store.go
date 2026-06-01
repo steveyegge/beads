@@ -2210,23 +2210,19 @@ func (s *DoltStore) pullFromRemote(ctx context.Context, remote string) (retErr e
 	// but still need CLI to avoid SQL connection timeout.
 	// Credentials are passed directly to the subprocess via cmd.Env.
 	if s.isGitProtocolRemote(ctx, remote) {
-		if err := s.doltCLIPull(ctx, remote, creds); err != nil {
-			return err
-		}
-		return nil
+		// CLI pull leaves any conflicts in the working set; run the auto-resolver on a
+		// fresh connection (#4259) so the git remote topology gets the same audit-only
+		// dependency / metadata auto-resolution as the SQL DOLT_PULL path.
+		return s.finishCLIPull(ctx, s.doltCLIPull(ctx, remote, creds))
 	}
-	// Credential CLI routing: mirrors git-protocol path.
-	// Skips pullWithAutoResolve (consistent with git-protocol Pull — CLI manages its
-	// own connections and conflict handling).
+	// Credential CLI routing: mirrors git-protocol path, including post-pull
+	// auto-resolution on a fresh connection.
 	if s.shouldUseCLIForCredentials(ctx, remote, creds) {
-		if err := s.doltCLIPull(ctx, remote, creds); err != nil {
-			return err
-		}
-		return nil
+		return s.finishCLIPull(ctx, s.doltCLIPull(ctx, remote, creds))
 	}
 	// Cloud auth CLI routing (GH#6).
 	if s.shouldUseCLIForCloudAuth(remote) {
-		return s.doltCLIPull(ctx, remote, creds)
+		return s.finishCLIPull(ctx, s.doltCLIPull(ctx, remote, creds))
 	}
 	if s.remoteUser != "" && remote == s.remote {
 		return withRemoteOperationEnv(creds, s.isS3Remote(ctx, remote), func() error {
@@ -2255,18 +2251,29 @@ func (s *DoltStore) pullFromRemote(ctx context.Context, remote string) (retErr e
 //
 // This method handles both by checking for conflicts after the pull call
 // (whether it errored or not) and auto-resolving metadata-only conflicts.
-func (s *DoltStore) pullWithAutoResolve(ctx context.Context, query string, args ...any) error {
+// openLongTimeoutConn opens a dedicated single-connection *sql.DB to this store's
+// database with a long read timeout, for merge/pull/conflict operations that can run
+// longer than the default connection timeout. The caller must Close the returned DB.
+func (s *DoltStore) openLongTimeoutConn() (*sql.DB, error) {
 	cfg, err := mysql.ParseDSN(s.connStr)
 	if err != nil {
-		return fmt.Errorf("failed to parse DSN for long-timeout connection: %w", err)
+		return nil, fmt.Errorf("failed to parse DSN for long-timeout connection: %w", err)
 	}
 	cfg.ReadTimeout = 5 * time.Minute
 	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
-		return fmt.Errorf("failed to open long-timeout connection: %w", err)
+		return nil, fmt.Errorf("failed to open long-timeout connection: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
+func (s *DoltStore) pullWithAutoResolve(ctx context.Context, query string, args ...any) error {
+	db, err := s.openLongTimeoutConn()
+	if err != nil {
+		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -2299,7 +2306,7 @@ func (s *DoltStore) pullWithAutoResolve(ctx context.Context, query string, args 
 
 	// Check for merge conflicts regardless of whether DOLT_PULL errored.
 	// Some Dolt versions error on conflicts, others leave them in the working set.
-	resolved, resolveErr := s.tryAutoResolveMetadataConflicts(ctx, tx)
+	resolved, resolveErr := s.tryAutoResolveMergeConflicts(ctx, tx)
 	if resolveErr != nil {
 		_ = tx.Rollback()
 		if pullErr != nil {
@@ -2317,10 +2324,88 @@ func (s *DoltStore) pullWithAutoResolve(ctx context.Context, query string, args 
 	return tx.Commit()
 }
 
-// tryAutoResolveMetadataConflicts checks if all merge conflicts are on the metadata
-// table and resolves them with "theirs" strategy. Returns (true, nil) if all conflicts
-// were resolved, (false, nil) if non-metadata conflicts exist, or (false, err) on error.
-func (s *DoltStore) tryAutoResolveMetadataConflicts(ctx context.Context, tx *sql.Tx) (bool, error) {
+// finishCLIPull runs the merge-conflict auto-resolver after a CLI-based pull
+// (git-protocol, credentialed, or cloud-auth remotes). CLI `dolt pull` writes any
+// merge conflicts into the shared working set but, unlike the SQL DOLT_PULL path,
+// returns without a transaction we can inspect — so these remotes historically
+// skipped the resolver entirely. With deterministic dependency ids (#4259) a
+// same-edge conflict that differs only in audit columns is safe to auto-resolve, and
+// the git remote topology in #4259 is exactly this CLI path; route it through the
+// same resolver as the SQL path. pullErr is what doltCLIPull returned: a pull that
+// fails *because* of conflicts is recoverable once they resolve, so we inspect the
+// working set regardless and only surface pullErr when nothing was resolved.
+func (s *DoltStore) finishCLIPull(ctx context.Context, pullErr error) error {
+	if s.readOnly {
+		// A read-only store cannot resolve or commit; surface the pull result as-is.
+		return pullErr
+	}
+	resolved, resolveErr := s.autoResolveConflictsAfterCLIPull(ctx)
+	if resolveErr != nil {
+		if pullErr != nil {
+			return pullErr
+		}
+		return resolveErr
+	}
+	if pullErr != nil && !resolved {
+		// Pull failed for a non-conflict reason, or conflicts are not auto-resolvable;
+		// leave them in the working set for the operator.
+		return pullErr
+	}
+	return nil
+}
+
+// autoResolveConflictsAfterCLIPull inspects the working set and auto-resolves the
+// conflict classes that are safe without operator input (#4259 audit-only dependency
+// edges, GH#2466 metadata). It runs on the store connection (s.db) on purpose: that
+// connection is on the same branch the CLI `dolt pull` merged into, whereas a fresh
+// connection would default to the base branch and never see the conflicts. The pull's
+// network transfer already completed in the subprocess, so no long-timeout connection
+// is needed for the local resolve. Returns (true, nil) only if all conflicts were
+// resolved and committed; (false, nil) when there is nothing to resolve or a conflict
+// needs the operator, leaving the working set untouched for manual resolution.
+func (s *DoltStore) autoResolveConflictsAfterCLIPull(ctx context.Context) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	// Allow committing while conflicts exist so we can inspect and resolve them.
+	if _, err := tx.ExecContext(ctx, "SET @@dolt_allow_commit_conflicts = 1"); err != nil {
+		_ = tx.Rollback()
+		return false, fmt.Errorf("failed to set dolt_allow_commit_conflicts: %w", err)
+	}
+	resolved, err := s.tryAutoResolveMergeConflicts(ctx, tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	if !resolved {
+		_ = tx.Rollback()
+		return false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit resolved conflicts: %w", err)
+	}
+	return true, nil
+}
+
+// tryAutoResolveMergeConflicts auto-resolves merge conflicts that are safe to
+// resolve without operator input, and returns (true, nil) only if ALL conflicts
+// were resolved. It handles two classes:
+//
+//   - metadata: machine-local rows (e.g. dolt_auto_push_*) that routinely diverge
+//     across clones (GH#2466). Resolved with "theirs".
+//   - dependencies: with deterministic ids (#4259) the same logical edge has the
+//     same primary key on every clone, so a same-PK conflict is the SAME edge.
+//     When the two sides differ only in audit columns (created_at, created_by,
+//     metadata, thread_id) — same edge, same type, present on both sides — the
+//     conflict is resolved with "theirs" (the remote's values win, which is
+//     convergent across clones pulling from the same remote). A conflict where the
+//     dependency type differs, or one side deleted the edge, is a real semantic
+//     conflict and is left for the operator.
+//
+// Any conflict on another table, or an unresolvable dependencies conflict, returns
+// (false, nil) so the caller fails the pull and the operator resolves it.
+func (s *DoltStore) tryAutoResolveMergeConflicts(ctx context.Context, tx *sql.Tx) (bool, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT `table`, num_conflicts FROM dolt_conflicts")
 	if err != nil {
 		return false, fmt.Errorf("failed to query conflicts: %w", err)
@@ -2348,27 +2433,124 @@ func (s *DoltStore) tryAutoResolveMetadataConflicts(ctx context.Context, tx *sql
 		return false, nil // No conflicts to resolve — error was something else
 	}
 
-	// Only auto-resolve if ALL conflicts are on the metadata table.
+	// Decide which conflicted tables are safe to auto-resolve. If any conflict is
+	// not safely resolvable, resolve nothing and let the pull fail.
+	var resolvable []string
 	for _, c := range conflicts {
-		if c.table != "metadata" {
+		switch c.table {
+		case "metadata":
+			resolvable = append(resolvable, "metadata")
+		case "dependencies":
+			auditOnly, err := s.dependencyConflictsAreAuditOnly(ctx, tx)
+			if err != nil {
+				return false, err
+			}
+			if !auditOnly {
+				return false, nil
+			}
+			resolvable = append(resolvable, "dependencies")
+		default:
 			return false, nil
 		}
 	}
 
-	// Resolve metadata conflicts with "theirs" — remote values win.
-	if _, err := tx.ExecContext(ctx, "CALL DOLT_CONFLICTS_RESOLVE('--theirs', 'metadata')"); err != nil {
-		return false, fmt.Errorf("failed to resolve metadata conflicts: %w", err)
+	// Resolve each safe table with "theirs" and stage only that table (GH#2455).
+	// table is from the fixed allowlist above, never user input.
+	for _, table := range resolvable {
+		//nolint:gosec // G201: table is one of the hardcoded constants above.
+		if _, err := tx.ExecContext(ctx, "CALL DOLT_CONFLICTS_RESOLVE('--theirs', '"+table+"')"); err != nil {
+			return false, fmt.Errorf("failed to resolve %s conflicts: %w", table, err)
+		}
+		//nolint:gosec // G201: table is one of the hardcoded constants above.
+		if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD('"+table+"')"); err != nil {
+			return false, fmt.Errorf("failed to stage %s: %w", table, err)
+		}
 	}
-
-	// GH#2455: Stage only metadata (the table we resolved), not all dirty tables.
-	if _, err := tx.ExecContext(ctx, "CALL DOLT_ADD('metadata')"); err != nil {
-		return false, fmt.Errorf("failed to stage metadata: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'auto-resolve metadata merge conflicts (GH#2466)')"); err != nil {
+	if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'auto-resolve merge conflicts (GH#2466, #4259)')"); err != nil {
 		return false, fmt.Errorf("failed to commit resolved conflicts: %w", err)
 	}
 
 	return true, nil
+}
+
+// dependencyConflictsAreAuditOnly reports whether every conflicted row in the
+// dependencies table is the SAME logical edge on both sides that differs only in
+// audit columns (created_at/created_by/metadata/thread_id) — the only class safe to
+// auto-resolve with --theirs.
+//
+// It does NOT trust the primary key as proof of a shared edge. With deterministic
+// ids the same edge has the same id on every clone, but an issue rename can leave a
+// row's surrogate id stale (depid.New(oldID, target)) while issue_id/target have
+// already moved (#4259 finding 2), so two genuinely different edges could collide on
+// one id. We therefore verify the natural identity — issue_id and the resolved
+// target — matches on both sides, and that the type matches, before declaring the
+// conflict audit-only. It returns false if any conflicted row differs in identity or
+// type, or was deleted on one side (an add/delete conflict).
+func (s *DoltStore) dependencyConflictsAreAuditOnly(ctx context.Context, tx *sql.Tx) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT our_id, their_id,
+		       our_issue_id, their_issue_id,
+		       our_depends_on_issue_id, their_depends_on_issue_id,
+		       our_depends_on_wisp_id, their_depends_on_wisp_id,
+		       our_depends_on_external, their_depends_on_external,
+		       our_type, their_type
+		FROM dolt_conflicts_dependencies`)
+	if err != nil {
+		return false, fmt.Errorf("query dependency conflicts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			ourID, theirID             sql.NullString
+			ourIssue, theirIssue       sql.NullString
+			ourDepIssue, theirDepIssue sql.NullString
+			ourDepWisp, theirDepWisp   sql.NullString
+			ourDepExt, theirDepExt     sql.NullString
+			ourType, theirType         sql.NullString
+		)
+		if err := rows.Scan(&ourID, &theirID, &ourIssue, &theirIssue,
+			&ourDepIssue, &theirDepIssue, &ourDepWisp, &theirDepWisp,
+			&ourDepExt, &theirDepExt, &ourType, &theirType); err != nil {
+			return false, fmt.Errorf("scan dependency conflict: %w", err)
+		}
+		// One side deleted the edge (add/delete conflict): leave for the operator.
+		if !ourID.Valid || !theirID.Valid {
+			return false, nil
+		}
+		// Same edge requires the same source issue. A differing issue_id means the
+		// shared id is stale on one side (e.g. a rename), not a shared edge.
+		if ourIssue.Valid != theirIssue.Valid || ourIssue.String != theirIssue.String {
+			return false, nil
+		}
+		// ...and the same resolved target.
+		ourTarget, ourOK := resolveConflictDepTarget(ourDepIssue, ourDepWisp, ourDepExt)
+		theirTarget, theirOK := resolveConflictDepTarget(theirDepIssue, theirDepWisp, theirDepExt)
+		if ourOK != theirOK || ourTarget != theirTarget {
+			return false, nil
+		}
+		// A differing type is the only remaining way this is a real semantic conflict.
+		if ourType.Valid != theirType.Valid || ourType.String != theirType.String {
+			return false, nil
+		}
+	}
+	return true, rows.Err()
+}
+
+// resolveConflictDepTarget returns the single non-null dependency target from a
+// conflict row's three typed target columns, following the same precedence as
+// COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external).
+func resolveConflictDepTarget(issueTarget, wispTarget, external sql.NullString) (string, bool) {
+	switch {
+	case issueTarget.Valid:
+		return issueTarget.String, true
+	case wispTarget.Valid:
+		return wispTarget.String, true
+	case external.Valid:
+		return external.String, true
+	default:
+		return "", false
+	}
 }
 
 // Branch creates a new branch
