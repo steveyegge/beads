@@ -46,7 +46,7 @@ func depSelectColumns(targetCol string) string {
 	return "source_id, " + targetCol + " AS depends_on_id, type, created_at, created_by, metadata, thread_id"
 }
 
-func (r *dependencySQLRepositoryImpl) pickDepTable(ctx context.Context, useWisps bool, dependsOnID string) (string, string, error) {
+func pickDepTable(ctx context.Context, runner Runner, useWisps bool, dependsOnID string) (string, string, error) {
 	if strings.HasPrefix(dependsOnID, "external:") {
 		if useWisps {
 			return "wisp_external_dependencies", "depends_on_external_id", nil
@@ -54,7 +54,7 @@ func (r *dependencySQLRepositoryImpl) pickDepTable(ctx context.Context, useWisps
 		return "issue_external_dependencies", "depends_on_external_id", nil
 	}
 	var probe int
-	err := r.runner.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", dependsOnID).Scan(&probe)
+	err := runner.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", dependsOnID).Scan(&probe)
 	switch {
 	case err == nil:
 		if useWisps {
@@ -69,6 +69,10 @@ func (r *dependencySQLRepositoryImpl) pickDepTable(ctx context.Context, useWisps
 	default:
 		return "", "", fmt.Errorf("classify dep target %s: %w", dependsOnID, err)
 	}
+}
+
+func (r *dependencySQLRepositoryImpl) pickDepTable(ctx context.Context, useWisps bool, dependsOnID string) (string, string, error) {
+	return pickDepTable(ctx, r.runner, useWisps, dependsOnID)
 }
 
 func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dependency, actor string, opts domain.DepInsertOpts) error {
@@ -281,19 +285,23 @@ func (r *dependencySQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issu
 }
 
 func (r *dependencySQLRepositoryImpl) GetAll(ctx context.Context, opts domain.DepListOpts) (map[string][]*types.Dependency, error) {
-	table := pickDepTable(opts.UseWispsTable)
 	typeWhere, typeArgs := buildTypeFilter(opts.Types)
 	whereClause := ""
 	if typeWhere != "" {
 		whereClause = " WHERE" + strings.TrimPrefix(typeWhere, " AND")
 	}
 
-	//nolint:gosec // G201: table and depSelectColumns are hardcoded constants
-	q := fmt.Sprintf("SELECT %s FROM %s%s ORDER BY issue_id", depSelectColumns, table, whereClause)
-
 	result := make(map[string][]*types.Dependency)
-	if err := r.queryDeps(ctx, q, typeArgs, result, true); err != nil {
-		return nil, fmt.Errorf("db: DependencySQLRepository.GetAll: %w", err)
+	for _, table := range sourceDepTables(opts.UseWispsTable) {
+		col := depTargetColumnForTable(table)
+		//nolint:gosec // G201: table and col are hardcoded constants from sourceDepTables.
+		q := fmt.Sprintf("SELECT %s FROM %s%s ORDER BY source_id", depSelectColumns(col), table, whereClause)
+		if err := r.queryDeps(ctx, q, typeArgs, result, true); err != nil {
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("db: DependencySQLRepository.GetAll %s: %w", table, err)
+		}
 	}
 	return result, nil
 }
@@ -308,27 +316,38 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 		return info, nil
 	}
 
-	table := pickDepTable(opts.UseWispsTable)
 	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
 
-	//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
-	outQ := fmt.Sprintf(
-		"SELECT issue_id, %s AS depends_on_id, type FROM %s WHERE issue_id IN (%s) AND type IN ('blocks', 'parent-child')",
-		depTargetExpr, table, idPlaceholders,
-	)
-	outRows, err := r.scanBlockingRows(ctx, outQ, idArgs)
-	if err != nil {
-		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: outbound: %w", err)
-	}
+	var outRows, inRows []blockingRow
+	for _, table := range sourceDepTables(opts.UseWispsTable) {
+		col := depTargetColumnForTable(table)
+		//nolint:gosec // G201: table and col are hardcoded constants from sourceDepTables.
+		outQ := fmt.Sprintf(
+			"SELECT source_id, %s AS depends_on_id, type FROM %s WHERE source_id IN (%s) AND type IN ('blocks', 'parent-child')",
+			col, table, idPlaceholders,
+		)
+		rows, err := r.scanBlockingRows(ctx, outQ, idArgs)
+		if err != nil {
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: outbound %s: %w", table, err)
+		}
+		outRows = append(outRows, rows...)
 
-	//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
-	inQ := fmt.Sprintf(
-		"SELECT issue_id, %s AS depends_on_id, type FROM %s WHERE %s IN (%s) AND type = 'blocks'",
-		depTargetExpr, table, depTargetExpr, idPlaceholders,
-	)
-	inRows, err := r.scanBlockingRows(ctx, inQ, idArgs)
-	if err != nil {
-		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: inbound: %w", err)
+		//nolint:gosec // G201: table and col are hardcoded constants from sourceDepTables.
+		inQ := fmt.Sprintf(
+			"SELECT source_id, %s AS depends_on_id, type FROM %s WHERE %s IN (%s) AND type = 'blocks'",
+			col, table, col, idPlaceholders,
+		)
+		rows, err = r.scanBlockingRows(ctx, inQ, idArgs)
+		if err != nil {
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: inbound %s: %w", table, err)
+		}
+		inRows = append(inRows, rows...)
 	}
 
 	statusIDs := make(map[string]struct{})
