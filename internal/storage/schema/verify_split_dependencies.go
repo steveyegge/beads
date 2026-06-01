@@ -36,9 +36,11 @@ func verifySplitDependencyMigration(ctx context.Context, db DBConn) error {
 		}
 
 		var legacyCount, newCount int64
+		//nolint:gosec // G201: legacyTable and legacyFilter are fixed constants from the checks slice; no user input.
 		if err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", c.legacyTable, c.legacyFilter)).Scan(&legacyCount); err != nil {
 			return fmt.Errorf("counting legacy %s rows: %w", c.legacyTable, err)
 		}
+		//nolint:gosec // G201: newTable is a fixed constant from the checks slice; no user input.
 		if err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", c.newTable)).Scan(&newCount); err != nil {
 			return fmt.Errorf("counting %s rows: %w", c.newTable, err)
 		}
