@@ -109,7 +109,6 @@ func (t *embeddedTransaction) AddDependency(ctx context.Context, dep *types.Depe
 func (t *embeddedTransaction) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, addOpts storage.DependencyAddOptions) error {
 	sourceIsWisp := issueops.IsActiveWispInTx(ctx, t.tx, dep.IssueID)
 	isCrossPrefix := types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID)
-	// Classify the target so we can mark the exact split table dirty.
 	kind := issueops.ClassifyDepTarget(ctx, t.tx, dep, isCrossPrefix)
 	if err := issueops.AddDependencyInTx(ctx, t.tx, dep, actor, issueops.AddDependencyOpts{
 		IsCrossPrefix:  isCrossPrefix,
@@ -124,8 +123,6 @@ func (t *embeddedTransaction) AddDependencyWithOptions(ctx context.Context, dep 
 
 func (t *embeddedTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	sourceIsWisp := issueops.IsActiveWispInTx(ctx, t.tx, issueID)
-	// RemoveDependencyInTx probes all three source-matching tables; mark them
-	// all dirty since we don't know which one held the row.
 	for _, table := range issueops.SourceDepTables(sourceIsWisp) {
 		t.dirty.MarkDirty(table)
 	}

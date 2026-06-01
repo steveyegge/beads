@@ -10,11 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// Each split dep table has exactly one typed target column, so counts read
-// that column directly. The pure-Go GMS analyzer caveats that motivated the
-// legacy COALESCE-based target expression no longer apply because the column
-// is projected as a real (non-generated) column.
-
 // CountIssues returns the number of issues matching query and filter.
 // Filter.Limit and Filter.Offset are ignored; all other fields apply.
 func (s *DoltStore) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
@@ -48,10 +43,6 @@ func (s *DoltStore) CountIssuesByGroup(ctx context.Context, filter types.IssueFi
 }
 
 // CountDependents returns the number of issues that depend on issueID.
-// Counts edges across all six split dep tables so the total matches
-// GetDependentsWithMetadata: a dependent may be a permanent issue (edge in
-// one of the issue_*_dependencies tables) or a wisp (edge in one of the
-// wisp_*_dependencies tables, routed by source class).
 func (s *DoltStore) CountDependents(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -128,8 +119,6 @@ func (s *DoltStore) CountEvents(ctx context.Context, issueID string, limit int) 
 func (s *DoltStore) CountDependentsByStatus(ctx context.Context, issueID string, status types.Status) (int64, error) {
 	var n int64
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		// Issue-source tables join to issues; wisp-source tables join to wisps.
-		// Each dep table has a single typed target column.
 		pairs := []struct{ depTable, issueTable string }{
 			{"issue_issue_dependencies", "issues"},
 			{"issue_wisp_dependencies", "issues"},

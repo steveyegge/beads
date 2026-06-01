@@ -46,11 +46,6 @@ type doltDependentsIter struct {
 // matches GetDependentsWithMetadata. See the package doc for why the join
 // target per edge table is unambiguous.
 func (s *DoltStore) IterDependentsWithMetadata(ctx context.Context, issueID string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
-	// Union across issue-source and wisp-source dep tables, joining each to
-	// its home issue table. Only issue-target tables can have a dependent
-	// pointing at issueID via depends_on_issue_id; the wisp/external target
-	// tables cannot have issueID as a target by class. We scan both target
-	// kinds (issue/wisp) so a dependent that was promoted/demoted still shows.
 	type joinSpec struct {
 		issueTable, alias, depTable string
 	}

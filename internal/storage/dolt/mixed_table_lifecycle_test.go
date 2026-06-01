@@ -204,13 +204,6 @@ func TestPromoteFromEphemeralPreservesInboundDependencies(t *testing.T) {
 	assertDependencyTargetColumns(t, store, "dependencies", "mixed-promote-src", "mixed-promote-target", true)
 }
 
-// TestPromoteFromEphemeralRejectsCrossTypedTargetCollision was removed: under
-// the split-dependency schema each (source_id, depends_on_<k>_id) pair lives
-// in its own typed table, so the cross-typed-column collision the test
-// previously asserted is no longer a meaningful normalization invariant
-// (checkRenameTargetCollision is now a no-op; row uniqueness is enforced by
-// the composite PK on each split table).
-
 func TestPromoteFromEphemeralRemovesCopiedOutboundWispDependencies(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

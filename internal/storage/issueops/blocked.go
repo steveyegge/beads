@@ -15,14 +15,6 @@ type blockingDepRecord struct {
 	metadata                      sql.NullString
 }
 
-// optionalBlockedTable reports whether a table is part of the optional/nonlocal
-// wisp schema (registered in dolt_ignore via the `wisp_%` glob in migration
-// 0019 and dolt_nonlocal_tables in 0040). Callers use this to swallow
-// "table doesn't exist" errors on older deployments that haven't applied the
-// wisp schema yet. The prefix check covers `wisps`, `wisp_labels`,
-// `wisp_events`, `wisp_comments`, `wisp_dependencies` (legacy) and the three
-// new split tables `wisp_issue_dependencies`, `wisp_wisp_dependencies`,
-// `wisp_external_dependencies`.
 func optionalBlockedTable(table string) bool {
 	return table == "wisps" || strings.HasPrefix(table, "wisp_")
 }

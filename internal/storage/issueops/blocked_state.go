@@ -9,24 +9,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// depTableSourceIsWisp reports whether the given split dep table holds edges
-// whose source is a wisp. The six tables are named `<src>_<tgt>_dependencies`
-// where src is "issue" or "wisp", so the prefix is authoritative.
 func depTableSourceIsWisp(table string) bool {
 	return strings.HasPrefix(table, "wisp_")
 }
 
-// waitsForGateBlockedSQL returns the gate-check fragment for a waits-for edge
-// whose target is identified by targetCol on the outer dep table (alias `d`).
-// Two callers per source class: one with depends_on_issue_id (target is an
-// issue), one with depends_on_wisp_id (target is a wisp). External waits-for
-// targets have no parent-child child set, so this helper is never called for
-// them (the caller emits no waits-for EXISTS for the external table).
-//
-// The fragment is correlated to the outer `d` row via its typed target column;
-// each split table holds exactly one such column, so no IS NOT NULL guard is
-// needed (unlike the legacy single-table version that disjuncted over all
-// three columns).
 func waitsForGateBlockedSQL(targetCol string) string {
 	var issueChildTable, wispChildTable string
 	if targetCol == "depends_on_wisp_id" {
@@ -498,7 +484,6 @@ func loadBlockingDependersForIDsInTx(
 	if len(ids) == 0 {
 		return nil
 	}
-	// Two tables per targetCol: one issue-sourced, one wisp-sourced.
 	var kind DepTargetKind
 	switch targetCol {
 	case "depends_on_wisp_id":
@@ -703,9 +688,6 @@ func loadWaitersWhoseSpawnerIsParentOfInTx(
 	issueSeed *[]string, issueSeen map[string]bool,
 	wispSeed *[]string, wispSeen map[string]bool,
 ) error {
-	// Find parent IDs of the child by scanning the two source-matching dep
-	// tables whose target is non-external (parent-child to external has no
-	// meaning). Each table carries one typed target column.
 	issueTargetTable := "issue_issue_dependencies"
 	wispTargetTable := "issue_wisp_dependencies"
 	if childIsWisp {
@@ -781,7 +763,6 @@ func loadWaitersOnSpawnerIDsByColInTx(
 	if len(spawnerIDs) == 0 {
 		return nil
 	}
-	// Two tables per targetCol: one issue-sourced, one wisp-sourced.
 	var kind DepTargetKind
 	switch targetCol {
 	case "depends_on_wisp_id":

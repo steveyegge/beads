@@ -46,7 +46,6 @@ func depSelectColumns(targetCol string) string {
 	return "source_id, " + targetCol + " AS depends_on_id, type, created_at, created_by, metadata, thread_id"
 }
 
-// pickDepTable selects the split dep table for an insert given source class and target id.
 func (r *dependencySQLRepositoryImpl) pickDepTable(ctx context.Context, useWisps bool, dependsOnID string) (string, string, error) {
 	if strings.HasPrefix(dependsOnID, "external:") {
 		if useWisps {

@@ -47,8 +47,6 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor 
 		return fmt.Errorf("delete copied wisp labels for promoted wisp %s: %w", id, err)
 	}
 
-	// Move outbound dep edges from the three wisp-source tables to the
-	// corresponding issue-source tables, one per target kind.
 	for _, pair := range []struct {
 		src, dst, targetCol string
 	}{

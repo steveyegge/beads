@@ -97,17 +97,12 @@ func runFilterSearchQueryInTx(ctx context.Context, tx *sql.Tx, query string, fil
 
 //nolint:gosec // G201: SQL fragments are caller-built from hardcoded shapes
 func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, whereSQL, orderBySQL, limitSQL string, args []interface{}, includeWispReverseDeps bool, skipLabels bool) ([]*types.IssueWithCounts, error) {
-	// Reverse-blocker scan must consider every dep table when wisp source
-	// edges are included; otherwise only issue-source tables.
 	var reverseBlockerTables []string
 	if includeWispReverseDeps {
 		reverseBlockerTables = AllDepTables()
 	} else {
 		reverseBlockerTables = SourceDepTables(false)
 	}
-	// Filter out dep tables that reference a missing wisps schema (FK targets
-	// are dropped together with wisps in older deployments / tests that
-	// exercise the missing-wisp-tables tolerance path).
 	reverseBlockerTables, err := filterExistingDepTablesInTx(ctx, tx, reverseBlockerTables)
 	if err != nil {
 		return nil, err
@@ -121,9 +116,6 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 		reverseBlockerParts = append(reverseBlockerParts, `SELECT NULL AS dep_id WHERE 1 = 0`)
 	}
 	reverseBlockerSelect := strings.Join(reverseBlockerParts, " UNION ALL ")
-
-	// Per-source subqueries (dep counts, parent_id, deps JSON) UNION across
-	// the three source-routed dep tables for this filter's source class.
 	depTablesForSource, err := filterExistingDepTablesInTx(ctx, tx, tables.DepTables)
 	if err != nil {
 		return nil, err
@@ -239,9 +231,6 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 	return out, nil
 }
 
-// filterExistingDepTablesInTx returns the subset of the supplied split dep
-// tables that actually exist. Tables whose FKs reference a missing parent
-// (e.g., the wisps table dropped in a tolerance test) are skipped.
 func filterExistingDepTablesInTx(ctx context.Context, tx *sql.Tx, depTables []string) ([]string, error) {
 	out := make([]string, 0, len(depTables))
 	for _, t := range depTables {

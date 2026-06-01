@@ -676,9 +676,6 @@ func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string
 	type pairing struct {
 		depTable, issueTable, targetCol string
 	}
-	// Only issue-target and wisp-target dep tables can have a JOIN to a parent
-	// row (external targets have no parent row to JOIN to). Pair each with the
-	// matching parent table.
 	pairings := []pairing{
 		{"issue_issue_dependencies", "issues", "depends_on_issue_id"},
 		{"issue_wisp_dependencies", "wisps", "depends_on_wisp_id"},

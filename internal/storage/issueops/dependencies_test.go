@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// TestReplaceDependencyTargetNormalizesTargetColumns was removed when the
-// split-dependency schema landed. Each split dep table has exactly one typed
-// target column, so "stale extra target column" cannot exist; the legacy
-// normalize-on-rewrite behavior the test exercised is impossible under the
-// new schema.
-
 func TestCycleDetectionTablesUseBothTablesByDefault(t *testing.T) {
 	got := cycleDetectionTables()
 	want := AllDepTables()

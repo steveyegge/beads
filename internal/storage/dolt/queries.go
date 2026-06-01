@@ -120,11 +120,6 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 		MoleculeID: moleculeID,
 	}
 
-	// Route to correct issue table based on whether molecule is a wisp (bd-w2w).
-	// Parent-child edges with a wisp target live in the *_wisp_dependencies
-	// tables; with an issue target, in *_issue_dependencies. Both source-class
-	// rows must be considered (a wisp can be a child of an issue molecule or
-	// vice versa through promotion/demotion).
 	issueTable := "issues"
 	targetKind := issueops.DepTargetIssue
 	if s.isActiveWisp(ctx, moleculeID) {
@@ -140,9 +135,6 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 		stats.MoleculeTitle = title.String
 	}
 
-	// Step 1: Get child issue IDs from dependencies tables. Scan both source
-	// classes (issue-source and wisp-source) so wisp children of an issue
-	// molecule or vice versa appear.
 	parentCol := issueops.DepTargetColumn(targetKind)
 	depTables := issueops.TargetDepTables(targetKind)
 	unionParts := make([]string, 0, len(depTables))

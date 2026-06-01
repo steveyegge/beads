@@ -256,15 +256,11 @@ func GetBlockingInfoForIssuesInTx(ctx context.Context, tx *sql.Tx, issueIDs []st
 		return
 	}
 
-	// Partition into wisp and perm IDs for routing. Use the batched
-	// partitioner so we don't take a round-trip per ID on remote backends
-	// (GH#3414).
 	wispIDs, permIDs, partErr := PartitionWispIDsInTx(ctx, tx, issueIDs)
 	if partErr != nil {
 		return nil, nil, nil, partErr
 	}
 
-	// Process wisp IDs against wisp-source dep tables.
 	if len(wispIDs) > 0 {
 		for _, depTable := range SourceDepTables(true) {
 			if err := queryBlockedByInfo(ctx, tx, wispIDs, depTable, blockedByMap, parentMap); err != nil {
@@ -282,8 +278,6 @@ func GetBlockingInfoForIssuesInTx(ctx context.Context, tx *sql.Tx, issueIDs []st
 		}
 	}
 
-	// "Blocks" is target-oriented, so scan all dep tables regardless of
-	// the target issue's storage class.
 	if err := queryBlocksInfo(ctx, tx, issueIDs, AllDepTables(), blocksMap); err != nil {
 		return nil, nil, nil, err
 	}
@@ -321,7 +315,6 @@ func queryBlockedByInfo(
 		}
 		inClause := strings.Join(placeholders, ",")
 
-		// Query: "blocked by" — deps where source_id is in our set.
 		col := DepTargetColumnForTable(depTable)
 		//nolint:gosec // G201: depTable and col are caller-controlled constants.
 		blockedByQuery := fmt.Sprintf(`
@@ -372,7 +365,6 @@ func queryBlockedByInfo(
 	return nil
 }
 
-// queryBlocksInfo queries inbound blocking info across dependency tables.
 func queryBlocksInfo(
 	ctx context.Context, tx *sql.Tx,
 	issueIDs []string,
@@ -399,7 +391,6 @@ func queryBlocksInfo(
 		}
 
 		for _, depTable := range depTables {
-			// Query: "blocks" — deps where the typed target is in our set.
 			col := DepTargetColumnForTable(depTable)
 			//nolint:gosec // G201: depTable and col are caller-controlled constants.
 			blocksQuery := fmt.Sprintf(`

@@ -229,8 +229,6 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			return fmt.Errorf("delete copied labels for demoted issue %s: %w", id, err)
 		}
 
-		// Move outbound dep edges from the three issue-source tables to the
-		// corresponding wisp-source tables, one per target kind.
 		for _, pair := range []struct {
 			src, dst, targetCol string
 		}{
@@ -317,7 +315,6 @@ func (s *DoltStore) doltAddAndCommitInTx(ctx context.Context, tx *sql.Tx, tables
 	return nil
 }
 
-// getAllWispDependencyRecords returns all wisp dependency records, keyed by source_id.
 // Used by DetectCycles to include wisp dependencies in cross-table cycle detection. (bd-xe27)
 func (s *DoltStore) getAllWispDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
 	rows, err := s.queryContext(ctx, wispDepUnionQuery("", true))
@@ -337,8 +334,6 @@ func (s *DoltStore) getAllWispDependencyRecords(ctx context.Context) (map[string
 	return result, rows.Err()
 }
 
-// getWispDependencyRecords returns raw dependency records for a wisp from the
-// three wisp-source split dep tables.
 func (s *DoltStore) getWispDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
 	rows, err := s.queryContext(ctx, wispDepUnionQuery("WHERE source_id = ?", false), issueID, issueID, issueID)
 	if err != nil {
@@ -349,11 +344,6 @@ func (s *DoltStore) getWispDependencyRecords(ctx context.Context, issueID string
 	return scanDependencyRows(rows)
 }
 
-// wispDepUnionQuery builds a UNION ALL over the three wisp-source dep tables
-// projecting (source_id AS issue_id, depends_on_<k>_id AS depends_on_id,
-// type, created_at, created_by, metadata, thread_id). The wherePerArm clause
-// (if non-empty) is appended verbatim to each arm; pass three matching args
-// per arm. If sorted is true, an `ORDER BY issue_id` is appended.
 func wispDepUnionQuery(wherePerArm string, sorted bool) string {
 	parts := make([]string, 0, 3)
 	for _, t := range issueops.SourceDepTables(true) {

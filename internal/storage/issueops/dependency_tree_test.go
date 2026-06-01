@@ -109,9 +109,6 @@ func expectIssue(mock sqlmock.Sqlmock, id, title string) {
 }
 
 func expectDependencies(mock sqlmock.Sqlmock, issueID string, deps []dependencyRow) {
-	// GetDependenciesWithMetadataInTx now scans all six split dep tables. We
-	// return the supplied deps from the first table (issue_issue_dependencies)
-	// and empty result sets from the remaining five.
 	tables := AllDepTables()
 	for i, table := range tables {
 		col := DepTargetColumnForTable(table)

@@ -745,10 +745,6 @@ func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID stri
 
 func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	sourceIsWisp := t.isActiveWisp(ctx, issueID)
-	// RemoveDependencyInTx probes the three source-matching tables internally
-	// to find the row regardless of target kind. Pick the right tx by source
-	// class (all three source-matching tables share a class) and mark all
-	// three dirty since we don't know which one held the row.
 	pickTable := issueops.SourceDepTables(sourceIsWisp)[0]
 	if err := issueops.RemoveDependencyInTx(ctx, t.txFor(pickTable), issueID, dependsOnID); err != nil {
 		return wrapExecError("remove dependency in tx", err)

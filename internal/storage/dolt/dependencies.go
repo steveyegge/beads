@@ -84,9 +84,6 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sql commit: %w", err)
 	}
-	// GH#2455: Use explicit DOLT_ADD to avoid sweeping up stale config changes.
-	// Remove probes all three issue-source tables internally; stage them all
-	// since we don't know which one held the row.
 	if err := s.doltAddAndCommit(ctx, issueops.SourceDepTables(false), "dependency: remove "+issueID+" -> "+dependsOnID); err != nil {
 		return err
 	}
@@ -121,7 +118,6 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 		return s.getWispDependenciesWithMetadata(ctx, issueID)
 	}
 
-	// Query across all issue-source dep tables since target class can vary.
 	unionParts := make([]string, 0, 3)
 	for _, t := range issueops.SourceDepTables(false) {
 		col := issueops.DepTargetColumnForTable(t)

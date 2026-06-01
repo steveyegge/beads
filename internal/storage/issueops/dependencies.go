@@ -34,24 +34,10 @@ func ClassifyDepTarget(ctx context.Context, tx *sql.Tx, dep *types.Dependency, i
 // routing (e.g., DoltStore with its pre-tx wisp cache) can set fields
 // explicitly to skip the redundant DB check.
 type AddDependencyOpts struct {
-	// SourceTable is the table to validate the source issue exists in
-	// ("issues" or "wisps"). Auto-detected via wisp routing if empty. The
-	// write-side dep table is derived from this plus the resolved target kind
-	// via DepTableFor.
-	SourceTable string
-	// TargetTable is the table to validate the target issue exists in
-	// ("issues" or "wisps"). Auto-detected via wisp routing if empty. Ignored
-	// when target validation is skipped (external or cross-prefix).
-	TargetTable string
-	// DepTables are the tables to scan for cycle detection. Defaults to all
-	// six split dep tables; cycles can hop across endpoint classes via
-	// parent-child or blocks edges through intermediate nodes.
-	DepTables []string
-	// IsCrossPrefix is true when source and target have different prefixes,
-	// meaning the target lives in another rig's database.
-	IsCrossPrefix bool
-	// SkipCycleCheck skips the recursive pre-insert cycle check for callers
-	// that intentionally trade validation cost for bulk graph wiring speed.
+	SourceTable    string
+	TargetTable    string
+	DepTables      []string
+	IsCrossPrefix  bool
 	SkipCycleCheck bool
 	TargetKind     *DepTargetKind
 }
@@ -152,16 +138,12 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	writeTable := DepTableFor(sourceIsWisp, kind)
 	targetCol := DepTargetColumn(kind)
 
-	// Check for existing dependency between the same pair. Each split dep
-	// table has exactly one typed target column, so a (source_id, target_id)
-	// lookup uniquely identifies the edge — no COALESCE needed.
 	var existingType string
 	//nolint:gosec // G201: writeTable from DepTableFor; targetCol from DepTargetColumn
 	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT type FROM %s WHERE source_id = ? AND %s = ?`, writeTable, targetCol),
 		dep.IssueID, dep.DependsOnID).Scan(&existingType)
 	if err == nil {
 		if existingType == string(dep.Type) {
-			// Same type — idempotent; update metadata.
 			//nolint:gosec // G201: writeTable from DepTableFor; targetCol from DepTargetColumn
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET metadata = ? WHERE source_id = ? AND %s = ?`, writeTable, targetCol),
 				metadata, dep.IssueID, dep.DependsOnID); err != nil {
@@ -288,11 +270,6 @@ func CheckDependencyCycleInTx(ctx context.Context, tx *sql.Tx, dep *types.Depend
 	return nil
 }
 
-// cycleReachabilityQuery uses UNION distinct recursion so cyclic and diamond
-// graphs terminate by unique reachable node instead of enumerating paths. The
-// recursive step UNIONs across the supplied split dep tables, each projecting
-// its typed target column as `depends_on_id` so the CTE can treat edges
-// uniformly regardless of endpoint class.
 func cycleReachabilityQuery(depTables []string) string {
 	if len(depTables) == 1 {
 		col := DepTargetColumnForTable(depTables[0])
@@ -548,37 +525,9 @@ func retargetInboundCrossTableInTx(ctx context.Context, tx *sql.Tx, srcTable, ds
 	return nil
 }
 
-// UpdateIssueIDInDependencyTargetsInTx is called after the issues PK is updated
-// from oldID to newID. FK ON UPDATE CASCADE has already propagated
-// depends_on_issue_id from oldID to newID across the *_issue_dependencies
-// tables, so no rewrite is needed.
-func UpdateIssueIDInDependencyTargetsInTx(ctx context.Context, tx *sql.Tx, _, newID string) error {
-	for _, table := range TargetDepTables(DepTargetIssue) {
-		if err := checkRenameTargetCollision(ctx, tx, table, "depends_on_issue_id", newID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkRenameTargetCollision(_ context.Context, _ *sql.Tx, _, _, _ string) error {
-	// Under the split-dependency schema each table has exactly one typed
-	// target column, so the legacy multi-column collision check is no longer
-	// meaningful; row uniqueness is enforced by the composite primary key.
-	return nil
-}
-
-// RemoveDependencyInTx removes a dependency between two issues within an
-// existing transaction. Automatically routes by source class (issue vs wisp)
-// and probes all three target-typed tables for the edge — the target class
-// at insert time may differ from current class (e.g., the target was
-// promoted from issue to wisp after the edge was created), so we cannot
-// assume which table holds the row from `dependsOnID` alone.
 func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID string) error {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
 
-	// Find which of the three source-matching tables actually holds the edge,
-	// and capture its type so we can dispatch the right affected-set helper.
 	tables := SourceDepTables(isWisp)
 	probe := []struct {
 		table     string
@@ -754,7 +703,6 @@ func GetDependenciesWithMetadataInTx(ctx context.Context, tx *sql.Tx, issueID st
 		depID, depType string
 	}
 
-	// Query all split dep tables to find all dependencies.
 	var deps []depMeta
 	for _, depTable := range AllDepTables() {
 		col := DepTargetColumnForTable(depTable)
@@ -821,7 +769,6 @@ func GetDependentsWithMetadataInTx(ctx context.Context, tx *sql.Tx, issueID stri
 		depID, depType string
 	}
 
-	// Query all split dep tables to find all dependents.
 	var deps []depMeta
 	for _, depTable := range AllDepTables() {
 		col := DepTargetColumnForTable(depTable)

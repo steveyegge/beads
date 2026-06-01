@@ -580,11 +580,6 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	return wrapTransactionError("commit add wisp dependency", tx.Commit())
 }
 
-// wispCycleReachabilityQuery uses UNION distinct recursion so cyclic and
-// diamond graphs terminate by unique reachable node instead of enumerating
-// paths. Same structure as issueops.cycleReachabilityQuery but filters only
-// 'blocks' (not 'conditional-blocks') because this DoltStore call site
-// pre-dates conditional-blocks support and intentionally narrower checks.
 func wispCycleReachabilityQuery(depTables []string) string {
 	if len(depTables) == 1 {
 		col := issueops.DepTargetColumnForTable(depTables[0])

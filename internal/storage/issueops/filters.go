@@ -10,10 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// FilterTables configures table names for BuildIssueFilterClauses,
-// allowing the same filter logic to target both issues and wisps tables.
-// DepTables holds the three split dependency tables whose source class
-// matches Main (issue-source vs wisp-source).
 type FilterTables struct {
 	Main      string   // "issues" or "wisps"
 	Labels    string   // "labels" or "wisp_labels"

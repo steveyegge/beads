@@ -35,9 +35,6 @@ func TestGetAllDependencyRecordsInTxReadsPermanentAndWispDependencies(t *testing
 
 	_, mock, tx := beginMockTx(t)
 	now := time.Now()
-	// AllDepTables order: issue_issue, issue_wisp, issue_external,
-	// wisp_issue, wisp_wisp, wisp_external. Return a perm row from the first
-	// (issue-source) table and a wisp row from the fourth (wisp-source) table.
 	for i, table := range AllDepTables() {
 		rows := dependencyRows()
 		switch i {

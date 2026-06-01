@@ -271,10 +271,6 @@ func (r depRow) targetColumn() string {
 }
 
 func (s *testSuite) loadDepRows(legacyTable, prefixLike string) []depRow {
-	// legacyTable is one of "dependencies" or "wisp_dependencies"; the new
-	// schema splits each into three target-typed tables. Query all three for
-	// the matching source class and synthesize the legacy depRow shape so
-	// callers can compare on issueID/dependsOnID/depType/targetColumn.
 	var tables []struct {
 		name      string
 		targetCol string

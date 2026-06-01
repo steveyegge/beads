@@ -7,20 +7,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// TestPR4107WispIsBlockedMigrationBackfillsBlockedWisps,
-// TestPR4107IssueIsBlockedMigrationMatchesRuntimeMixedGraphSemantics,
-// TestPR4107WispMigrationBackfillsMixedParentChildPropagation, and
-// TestPR4107WispMigrationBackfillsWaitsForSemantics were removed: these tests
-// exercised the recompute-is_blocked migrations (0047 and ignored/0007) by
-// seeding edges through AddDependency and re-running the migrations against
-// the resulting state. AddDependency now writes exclusively to the split
-// *_*_dependencies tables, but those migrations read from the legacy
-// `dependencies` and `wisp_dependencies` tables. The historical migrations
-// remain useful for upgrading databases that still have legacy-shaped data,
-// but verifying their backfill against the new write path is no longer
-// meaningful — runtime IsBlocked is exercised by the
-// TestPR4107Runtime* tests in this file instead.
-
 func TestPR4107RuntimeIsBlockedMaintainsMixedIssueWispGraph(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -403,17 +389,6 @@ func TestPR4107SearchIssuesWithCountsEphemeralFalseIncludesNoHistoryOnly(t *test
 		t.Fatalf("true ephemeral wisp leaked into ephemeral=false results: %v", issueWithCountsIDs(results))
 	}
 }
-
-// TestPR4107Migration0047ExecutesLegacyWispDependencySplit was removed: the
-// test verified that migration 0047 transformed a legacy single-column
-// wisp_dependencies shape into the per-target-typed columns
-// (depends_on_issue_id / depends_on_wisp_id / depends_on_external). That
-// migration step has been superseded by migration 0050 and ignored/0009,
-// which split wisp_dependencies into three target-typed tables
-// (wisp_issue_dependencies, wisp_wisp_dependencies,
-// wisp_external_dependencies). The legacy-shape compatibility scaffolding
-// that 0047 manipulated is no longer the canonical storage, so verifying it
-// at runtime no longer reflects the production schema.
 
 func createNoHistoryWisp(t *testing.T, ctx context.Context, store *DoltStore, id string) {
 	t.Helper()

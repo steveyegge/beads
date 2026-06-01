@@ -158,9 +158,6 @@ func CheckDependencyCyclesWithStore(ss *SharedStore) DoctorCheck {
 func checkDependencyCyclesWithStore(store *dolt.DoltStore) DoctorCheck {
 	db := store.UnderlyingDB()
 
-	// Query for cycles using simplified SQL (CONCAT for Dolt/MySQL compatibility).
-	// Edges come from the six split dep tables UNIONed into a single virtual edges
-	// relation that the recursive CTE then walks.
 	//nolint:gosec // G201: edges subquery is built from doctorDependencyUnionSQL (no user input)
 	query := `
 		WITH RECURSIVE paths AS (

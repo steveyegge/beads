@@ -12,9 +12,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// Each split dep table has exactly one typed target column under the new
-// schema; count queries read that column directly.
-
 func (s *EmbeddedDoltStore) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
 	var n int64
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
@@ -45,9 +42,6 @@ func (s *EmbeddedDoltStore) CountIssuesByGroup(ctx context.Context, filter types
 	return result, err
 }
 
-// CountDependents counts edges across all six split dep tables so the total
-// matches GetDependentsWithMetadata. Counted in separate top-level queries
-// per table and summed in Go.
 func (s *EmbeddedDoltStore) CountDependents(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
