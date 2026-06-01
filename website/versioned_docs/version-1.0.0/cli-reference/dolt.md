@@ -61,9 +61,10 @@ bd dolt
 Identify and drop leftover test and agent databases that accumulate
 on the shared Dolt server from interrupted test runs and terminated agents.
 
-Stale database prefixes: testdb_*, doctest_*, doctortest_*, beads_pt*, beads_vr*, beads_t*
+Stale database prefixes: testdb_*, doctest_*, doctortest_*, beads_pt*, beads_vr*, beads_t*, benchdb_*
 
 These waste server memory and can degrade performance under concurrent load.
+After dropping, runs CALL DOLT_PURGE_DROPPED_DATABASES() to actually reclaim disk.
 Use --dry-run to see what would be dropped without actually dropping.
 
 ```
