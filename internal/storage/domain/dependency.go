@@ -39,17 +39,30 @@ type DepListFilter struct {
 	Direction DepDirection
 }
 
+type BlockingInfo struct {
+	BlockedBy map[string][]string
+	Blocks    map[string][]string
+	Parent    map[string]string
+}
+
 type DependencySQLRepository interface {
 	Insert(ctx context.Context, dep *types.Dependency, actor string, opts DepInsertOpts) error
 	HasCycle(ctx context.Context, issueID, dependsOnID string) (bool, error)
 	ListByIssueIDs(ctx context.Context, issueIDs []string, opts DepListOpts) (DepBulkResult, error)
 	CountsByIssueIDs(ctx context.Context, issueIDs []string, opts DepCountsOpts) (map[string]*types.DependencyCounts, error)
+
+	GetAll(ctx context.Context, opts DepListOpts) (map[string][]*types.Dependency, error)
+	GetAllAcrossIssuesAndWisps(ctx context.Context, opts DepListOpts) (map[string][]*types.Dependency, error)
+	GetBlockingInfo(ctx context.Context, issueIDs []string, opts DepListOpts) (BlockingInfo, error)
+	GetBlockingInfoAcrossIssuesAndWisps(ctx context.Context, issueIDs []string) (BlockingInfo, error)
 }
 
 type DependencyUseCase interface {
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
 	ListByIssueIDs(ctx context.Context, issueIDs []string, filter DepListFilter) (DepBulkResult, error)
 	CountsByIssueIDs(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error)
+	GetAll(ctx context.Context) (map[string][]*types.Dependency, error)
+	GetBlockingInfo(ctx context.Context, issueIDs []string) (BlockingInfo, error)
 
 	AddWispDependency(ctx context.Context, dep *types.Dependency, actor string) error
 	ListByWispIDs(ctx context.Context, wispIDs []string, filter DepListFilter) (DepBulkResult, error)
@@ -139,6 +152,29 @@ func (u *dependencyUseCaseImpl) counts(ctx context.Context, ids []string, useWis
 	out, err := u.depRepo.CountsByIssueIDs(ctx, ids, DepCountsOpts{UseWispsTable: useWisp})
 	if err != nil {
 		return nil, fmt.Errorf("dep counts: %w", err)
+	}
+	return out, nil
+}
+
+func (u *dependencyUseCaseImpl) GetAll(ctx context.Context) (map[string][]*types.Dependency, error) {
+	out, err := u.depRepo.GetAllAcrossIssuesAndWisps(ctx, DepListOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("GetAll: %w", err)
+	}
+	return out, nil
+}
+
+func (u *dependencyUseCaseImpl) GetBlockingInfo(ctx context.Context, issueIDs []string) (BlockingInfo, error) {
+	if len(issueIDs) == 0 {
+		return BlockingInfo{
+			BlockedBy: map[string][]string{},
+			Blocks:    map[string][]string{},
+			Parent:    map[string]string{},
+		}, nil
+	}
+	out, err := u.depRepo.GetBlockingInfoAcrossIssuesAndWisps(ctx, issueIDs)
+	if err != nil {
+		return BlockingInfo{}, fmt.Errorf("GetBlockingInfo: %w", err)
 	}
 	return out, nil
 }
