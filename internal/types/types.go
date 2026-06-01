@@ -1286,6 +1286,21 @@ type IssueFilter struct {
 	// Performance escape hatches
 	SkipWisps  bool // Q2: skip wisps table merge entirely (for callers that never return ephemeral results)
 	NoIDShrink bool // Q3: force Pattern A (full 47-col scan) even when Limit > 0
+
+	// MaxRows is a defensive cap on the number of rows a search may return.
+	// 0 (the default) disables the cap. When >0, the storage layer issues
+	// LIMIT MaxRows+1 (to detect overage) and returns *issueops.ErrTooManyRows
+	// if the scan yielded more than MaxRows rows. MaxRows is independent of
+	// Limit: Limit=0 still means "unlimited" at the contract level; MaxRows is
+	// a safety knob layered on top. When both are set, the effective SQL LIMIT
+	// is min(Limit, MaxRows+1). Library users may set MaxRows directly; the
+	// CLI layer resolves it from --max-rows / BEADS_MAX_ROWS.
+	MaxRows int
+
+	// MaxRowsSource attributes which knob set MaxRows, used in error messages.
+	// Expected values: "--max-rows", "BEADS_MAX_ROWS", or "" (library users
+	// who set MaxRows directly without source attribution).
+	MaxRowsSource string
 }
 
 // SortPolicy determines how ready work is ordered
@@ -1360,6 +1375,15 @@ type WorkFilter struct {
 	// Metadata field filtering (GH#1406)
 	MetadataFields map[string]string // Top-level key=value equality; AND semantics (all must match)
 	HasMetadataKey string            // Existence check: issue has this top-level key set (non-null)
+
+	// MaxRows enforces a hard upper bound on the row count returned. Mirrors
+	// IssueFilter.MaxRows so bd ready honors --max-rows / BEADS_MAX_ROWS
+	// symmetrically with bd list. 0 (the default) disables the cap.
+	MaxRows int
+
+	// MaxRowsSource attributes which knob set MaxRows. Expected values:
+	// "--max-rows", "BEADS_MAX_ROWS", or "" (library users with no source).
+	MaxRowsSource string
 }
 
 // StaleFilter is used to filter stale issue queries
