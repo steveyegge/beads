@@ -23,24 +23,16 @@ type IssueSQLRepository interface {
 	Insert(ctx context.Context, issue *types.Issue, actor string, opts InsertIssueOpts) error
 	InsertBatch(ctx context.Context, issues []*types.Issue, actor string, opts InsertIssueOpts) error
 	Update(ctx context.Context, id string, updates map[string]any, actor string, opts IssueTableOpts) error
-
 	Get(ctx context.Context, id string, opts IssueTableOpts) (*types.Issue, error)
 	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
-
 	Search(ctx context.Context, filter types.IssueFilter, opts IssueTableOpts) ([]*types.Issue, error)
-
-	// Exists returns true if an issue with id exists in the routed table.
 	Exists(ctx context.Context, id string, opts IssueTableOpts) (bool, error)
-
-	// CountForPrefix returns the number of top-level issues sharing the prefix
-	// in the routed table. Child IDs (containing '.' in the suffix) are
-	// excluded so adaptive sizing reflects only top-level density.
 	CountForPrefix(ctx context.Context, prefix string, opts IssueTableOpts) (int, error)
-
-	// NextCounterID atomically increments and returns the next counter value
-	// for the prefix in counter mode. Seeds from the max existing numeric
-	// suffix when the counter row is missing. Counter mode is `issues`-only.
 	NextCounterID(ctx context.Context, prefix string) (int, error)
+	SearchAcrossIssuesAndWisps(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
+	SearchAcrossIssuesAndWispsWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error)
+	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
+	GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error)
 }
 
 type CreateIssueParams struct {
@@ -126,6 +118,16 @@ type IssueUseCase interface {
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
 	GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error)
 	ListIssues(ctx context.Context, filter types.IssueFilter, proj ListProjection) (ListResult, error)
+
+	// SearchIssues mirrors storage.DoltStorage.SearchIssues: returns fully
+	// hydrated issues (with labels) matching filter, merging the issues and
+	// wisps tables unless filter.SkipWisps is set. Used by `bd list` in
+	// proxied-server mode.
+	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
+	SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error)
+	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
+	GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error)
+
 	CreateIssue(ctx context.Context, params CreateIssueParams, actor string) (CreateIssueResult, error)
 	CreateIssues(ctx context.Context, params []CreateIssueParams, actor string) (CreateIssuesResult, error)
 	UpdateIssue(ctx context.Context, id string, updates map[string]any, actor string) error
@@ -353,6 +355,38 @@ func (u *issueUseCaseImpl) list(ctx context.Context, filter types.IssueFilter, p
 		})
 	}
 
+	return out, nil
+}
+
+func (u *issueUseCaseImpl) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	out, err := u.issueRepo.SearchAcrossIssuesAndWisps(ctx, query, filter)
+	if err != nil {
+		return nil, fmt.Errorf("SearchIssues: %w", err)
+	}
+	return out, nil
+}
+
+func (u *issueUseCaseImpl) SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
+	out, err := u.issueRepo.SearchAcrossIssuesAndWispsWithCounts(ctx, query, filter)
+	if err != nil {
+		return nil, fmt.Errorf("SearchIssuesWithCounts: %w", err)
+	}
+	return out, nil
+}
+
+func (u *issueUseCaseImpl) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
+	out, err := u.issueRepo.GetReadyWork(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("GetReadyWork: %w", err)
+	}
+	return out, nil
+}
+
+func (u *issueUseCaseImpl) GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error) {
+	out, err := u.issueRepo.GetReadyWorkWithCounts(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("GetReadyWorkWithCounts: %w", err)
+	}
 	return out, nil
 }
 

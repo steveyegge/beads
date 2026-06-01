@@ -694,3 +694,19 @@ func normalizeUpdateValue(key string, value any) any {
 	}
 	return value
 }
+
+func (r *issueSQLRepositoryImpl) SearchAcrossIssuesAndWisps(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	return r.searchAcrossIssuesAndWisps(ctx, query, filter)
+}
+
+func (r *issueSQLRepositoryImpl) SearchAcrossIssuesAndWispsWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
+	return r.searchAcrossIssuesAndWispsWithCounts(ctx, query, filter)
+}
+
+func (r *issueSQLRepositoryImpl) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
+	return r.getReadyWork(ctx, filter)
+}
+
+func (r *issueSQLRepositoryImpl) GetReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error) {
+	return r.getReadyWorkWithCounts(ctx, filter)
+}

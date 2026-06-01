@@ -33,6 +33,24 @@ func (s *testSuite) TestDependencySQLRepository() {
 		s.Run("CountsBlockingEdgesOnly", s.depCountsBlocksOnly)
 		s.Run("ZeroCountsPresentInMap", s.depCountsZeroPresent)
 	})
+	s.Run("GetAll", func() {
+		s.Run("KeyedByIssueID", s.depGetAllKeyedByIssueID)
+		s.Run("TypeFilterApplied", s.depGetAllTypeFilter)
+		s.Run("WispTableRouting", s.depGetAllWispRouting)
+	})
+	s.Run("GetAllAcrossIssuesAndWisps", func() {
+		s.Run("UnionsBothTables", s.depGetAllAcrossUnions)
+		s.Run("IgnoresUseWispsTableOpt", s.depGetAllAcrossIgnoresUseWispsOpt)
+	})
+	s.Run("GetBlockingInfo", func() {
+		s.Run("EmptyInputReturnsEmptyMaps", s.depBlockingInfoEmpty)
+		s.Run("PopulatesBlockedByAndBlocks", s.depBlockingInfoBlockedByAndBlocks)
+		s.Run("ParentChildPopulatesParent", s.depBlockingInfoParent)
+		s.Run("ClosedBlockerFiltered", s.depBlockingInfoSkipsClosed)
+	})
+	s.Run("GetBlockingInfoAcrossIssuesAndWisps", func() {
+		s.Run("UnionsBothTables", s.depBlockingInfoAcrossUnions)
+	})
 	s.Run("Wisp", func() {
 		s.Run("InsertRoutesToWispDependencies", s.depWispInsertRouting)
 		s.Run("ListReadsFromWispDependencies", s.depWispListRouting)
@@ -389,6 +407,169 @@ func (s *testSuite) depWispHasCycleCrossTable() {
 	cycle, err := r.HasCycle(s.Ctx(), "bd-dep-cx-b", "bd-dep-cx-a")
 	s.Require().NoError(err)
 	s.False(cycle, "wisp-target edges are intentionally not followed in cycle detection")
+}
+
+func (s *testSuite) depGetAllKeyedByIssueID() {
+	s.seedIssueRow("bd-getall-a")
+	s.seedIssueRow("bd-getall-b")
+	s.seedIssueRow("bd-getall-c")
+	r := s.depRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-getall-a", "bd-getall-b", types.DepBlocks), "tester", domain.DepInsertOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-getall-a", "bd-getall-c", types.DepRelated), "tester", domain.DepInsertOpts{}))
+
+	out, err := r.GetAll(s.Ctx(), domain.DepListOpts{})
+	s.Require().NoError(err)
+	s.Require().Len(out["bd-getall-a"], 2)
+}
+
+func (s *testSuite) depGetAllTypeFilter() {
+	s.seedIssueRow("bd-getall-tf-a")
+	s.seedIssueRow("bd-getall-tf-b")
+	s.seedIssueRow("bd-getall-tf-c")
+	r := s.depRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-getall-tf-a", "bd-getall-tf-b", types.DepBlocks), "tester", domain.DepInsertOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-getall-tf-a", "bd-getall-tf-c", types.DepRelated), "tester", domain.DepInsertOpts{}))
+
+	out, err := r.GetAll(s.Ctx(), domain.DepListOpts{Types: []types.DependencyType{types.DepBlocks}})
+	s.Require().NoError(err)
+	s.Require().Len(out["bd-getall-tf-a"], 1)
+	s.Equal(types.DepBlocks, out["bd-getall-tf-a"][0].Type)
+}
+
+func (s *testSuite) depGetAllWispRouting() {
+	s.seedWispRow("bd-getall-w-src")
+	s.seedIssueRow("bd-getall-w-tgt")
+	r := s.depRepo()
+	s.Require().NoError(r.Insert(s.Ctx(),
+		newDep("bd-getall-w-src", "bd-getall-w-tgt", types.DepBlocks), "tester",
+		domain.DepInsertOpts{UseWispsTable: true}))
+
+	wispOut, err := r.GetAll(s.Ctx(), domain.DepListOpts{UseWispsTable: true})
+	s.Require().NoError(err)
+	s.Require().Len(wispOut["bd-getall-w-src"], 1)
+
+	permOut, err := r.GetAll(s.Ctx(), domain.DepListOpts{})
+	s.Require().NoError(err)
+	s.Empty(permOut["bd-getall-w-src"], "perm-table GetAll must not see wisp_dependencies rows")
+}
+
+func (s *testSuite) depGetAllAcrossUnions() {
+	s.seedIssueRow("bd-getall-x-a")
+	s.seedIssueRow("bd-getall-x-b")
+	s.seedWispRow("bd-getall-x-w")
+	s.seedIssueRow("bd-getall-x-wtgt")
+	r := s.depRepo()
+	s.Require().NoError(r.Insert(s.Ctx(),
+		newDep("bd-getall-x-a", "bd-getall-x-b", types.DepBlocks), "tester",
+		domain.DepInsertOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(),
+		newDep("bd-getall-x-w", "bd-getall-x-wtgt", types.DepBlocks), "tester",
+		domain.DepInsertOpts{UseWispsTable: true}))
+
+	out, err := r.GetAllAcrossIssuesAndWisps(s.Ctx(), domain.DepListOpts{})
+	s.Require().NoError(err)
+	s.Require().Len(out["bd-getall-x-a"], 1, "perm-table row present")
+	s.Require().Len(out["bd-getall-x-w"], 1, "wisp-table row present")
+}
+
+func (s *testSuite) depGetAllAcrossIgnoresUseWispsOpt() {
+	s.seedIssueRow("bd-getall-ig-a")
+	s.seedIssueRow("bd-getall-ig-b")
+	s.seedWispRow("bd-getall-ig-w")
+	s.seedIssueRow("bd-getall-ig-wtgt")
+	r := s.depRepo()
+	s.Require().NoError(r.Insert(s.Ctx(),
+		newDep("bd-getall-ig-a", "bd-getall-ig-b", types.DepBlocks), "tester",
+		domain.DepInsertOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(),
+		newDep("bd-getall-ig-w", "bd-getall-ig-wtgt", types.DepBlocks), "tester",
+		domain.DepInsertOpts{UseWispsTable: true}))
+
+	// UseWispsTable=true should still return rows from BOTH tables.
+	out, err := r.GetAllAcrossIssuesAndWisps(s.Ctx(), domain.DepListOpts{UseWispsTable: true})
+	s.Require().NoError(err)
+	s.Require().Len(out["bd-getall-ig-a"], 1)
+	s.Require().Len(out["bd-getall-ig-w"], 1)
+}
+
+func (s *testSuite) depBlockingInfoEmpty() {
+	info, err := s.depRepo().GetBlockingInfo(s.Ctx(), nil, domain.DepListOpts{})
+	s.Require().NoError(err)
+	s.NotNil(info.BlockedBy)
+	s.NotNil(info.Blocks)
+	s.NotNil(info.Parent)
+	s.Empty(info.BlockedBy)
+	s.Empty(info.Blocks)
+	s.Empty(info.Parent)
+}
+
+func (s *testSuite) depBlockingInfoBlockedByAndBlocks() {
+	s.seedIssueRow("bd-bi-mid")
+	s.seedIssueRow("bd-bi-up")
+	s.seedIssueRow("bd-bi-down")
+	r := s.depRepo()
+	// up blocks mid; mid blocks down.
+	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-bi-mid", "bd-bi-up", types.DepBlocks), "tester", domain.DepInsertOpts{}))
+	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-bi-down", "bd-bi-mid", types.DepBlocks), "tester", domain.DepInsertOpts{}))
+
+	info, err := r.GetBlockingInfo(s.Ctx(), []string{"bd-bi-mid"}, domain.DepListOpts{})
+	s.Require().NoError(err)
+	s.Equal([]string{"bd-bi-up"}, info.BlockedBy["bd-bi-mid"])
+	s.Equal([]string{"bd-bi-down"}, info.Blocks["bd-bi-mid"])
+	s.Empty(info.Parent)
+}
+
+func (s *testSuite) depBlockingInfoParent() {
+	s.seedIssueRow("bd-bi-child")
+	s.seedIssueRow("bd-bi-parent")
+	r := s.depRepo()
+	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-bi-child", "bd-bi-parent", types.DepParentChild), "tester", domain.DepInsertOpts{}))
+
+	info, err := r.GetBlockingInfo(s.Ctx(), []string{"bd-bi-child"}, domain.DepListOpts{})
+	s.Require().NoError(err)
+	s.Equal("bd-bi-parent", info.Parent["bd-bi-child"])
+	s.Empty(info.BlockedBy, "parent-child must not appear in BlockedBy")
+}
+
+func (s *testSuite) depBlockingInfoSkipsClosed() {
+	s.seedIssueRow("bd-bi-cls-mid")
+	s.seedIssueRow("bd-bi-cls-blocker")
+	r := s.depRepo()
+	s.Require().NoError(r.Insert(s.Ctx(),
+		newDep("bd-bi-cls-mid", "bd-bi-cls-blocker", types.DepBlocks), "tester", domain.DepInsertOpts{}))
+
+	// Close the blocker.
+	_, err := s.Runner().ExecContext(s.Ctx(),
+		"UPDATE issues SET status = ? WHERE id = ?", string(types.StatusClosed), "bd-bi-cls-blocker")
+	s.Require().NoError(err)
+
+	info, err := r.GetBlockingInfo(s.Ctx(), []string{"bd-bi-cls-mid"}, domain.DepListOpts{})
+	s.Require().NoError(err)
+	s.Empty(info.BlockedBy["bd-bi-cls-mid"], "closed blockers should be filtered out")
+}
+
+func (s *testSuite) depBlockingInfoAcrossUnions() {
+	// Two blockers for one target: one in dependencies, one in wisp_dependencies.
+	s.seedIssueRow("bd-bi-x-target")
+	s.seedIssueRow("bd-bi-x-permblocker")
+	s.seedWispRow("bd-bi-x-wispblocker")
+	r := s.depRepo()
+	// Perm blocker: target blocks-on permblocker, recorded in dependencies.
+	s.Require().NoError(r.Insert(s.Ctx(),
+		newDep("bd-bi-x-target", "bd-bi-x-permblocker", types.DepBlocks), "tester",
+		domain.DepInsertOpts{}))
+	// Wisp blocker: write directly to wisp_dependencies with issue_id=target,
+	// depends_on_wisp_id=wispblocker. (Our Insert routing always uses issue
+	// targets, so go around it.)
+	_, err := s.Runner().ExecContext(s.Ctx(), `
+		INSERT INTO wisp_dependencies (issue_id, depends_on_wisp_id, type, created_at, created_by, metadata)
+		VALUES (?, ?, 'blocks', NOW(), 'tester', '{}')
+	`, "bd-bi-x-target", "bd-bi-x-wispblocker")
+	s.Require().NoError(err)
+
+	info, err := r.GetBlockingInfoAcrossIssuesAndWisps(s.Ctx(), []string{"bd-bi-x-target"})
+	s.Require().NoError(err)
+	s.ElementsMatch([]string{"bd-bi-x-permblocker", "bd-bi-x-wispblocker"}, info.BlockedBy["bd-bi-x-target"])
 }
 
 func (s *testSuite) depWispDirectBackEdge() {

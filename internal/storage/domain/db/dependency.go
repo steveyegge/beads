@@ -242,6 +242,204 @@ func (r *dependencySQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issu
 	return result, nil
 }
 
+func (r *dependencySQLRepositoryImpl) GetAll(ctx context.Context, opts domain.DepListOpts) (map[string][]*types.Dependency, error) {
+	table := pickDepTable(opts.UseWispsTable)
+	typeWhere, typeArgs := buildTypeFilter(opts.Types)
+	whereClause := ""
+	if typeWhere != "" {
+		whereClause = " WHERE" + strings.TrimPrefix(typeWhere, " AND")
+	}
+
+	//nolint:gosec // G201: table and depSelectColumns are hardcoded constants
+	q := fmt.Sprintf("SELECT %s FROM %s%s ORDER BY issue_id", depSelectColumns, table, whereClause)
+
+	result := make(map[string][]*types.Dependency)
+	if err := r.queryDeps(ctx, q, typeArgs, result, true); err != nil {
+		return nil, fmt.Errorf("db: DependencySQLRepository.GetAll: %w", err)
+	}
+	return result, nil
+}
+
+func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issueIDs []string, opts domain.DepListOpts) (domain.BlockingInfo, error) {
+	info := domain.BlockingInfo{
+		BlockedBy: make(map[string][]string),
+		Blocks:    make(map[string][]string),
+		Parent:    make(map[string]string),
+	}
+	if len(issueIDs) == 0 {
+		return info, nil
+	}
+
+	table := pickDepTable(opts.UseWispsTable)
+	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
+
+	//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
+	outQ := fmt.Sprintf(
+		"SELECT issue_id, %s AS depends_on_id, type FROM %s WHERE issue_id IN (%s) AND type IN ('blocks', 'parent-child')",
+		depTargetExpr, table, idPlaceholders,
+	)
+	outRows, err := r.scanBlockingRows(ctx, outQ, idArgs)
+	if err != nil {
+		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: outbound: %w", err)
+	}
+
+	//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
+	inQ := fmt.Sprintf(
+		"SELECT issue_id, %s AS depends_on_id, type FROM %s WHERE %s IN (%s) AND type = 'blocks'",
+		depTargetExpr, table, depTargetExpr, idPlaceholders,
+	)
+	inRows, err := r.scanBlockingRows(ctx, inQ, idArgs)
+	if err != nil {
+		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: inbound: %w", err)
+	}
+
+	// Status check targets:
+	//   - outbound: the blocker is the depends-on (the thing we depend on).
+	//   - inbound: the issue in our query set is the blocker; row.dependsOnID
+	//     equals one of our queried IDs, row.issueID is whoever depends on us.
+	statusIDs := make(map[string]struct{})
+	for _, row := range outRows {
+		statusIDs[row.dependsOnID] = struct{}{}
+	}
+	for _, row := range inRows {
+		statusIDs[row.dependsOnID] = struct{}{}
+	}
+	statusByID, err := r.loadStatusByID(ctx, statusIDs)
+	if err != nil {
+		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: status lookup: %w", err)
+	}
+
+	for _, row := range outRows {
+		if statusByID[row.dependsOnID] == types.StatusClosed {
+			continue
+		}
+		if row.depType == "parent-child" {
+			info.Parent[row.issueID] = row.dependsOnID
+		} else {
+			info.BlockedBy[row.issueID] = append(info.BlockedBy[row.issueID], row.dependsOnID)
+		}
+	}
+	for _, row := range inRows {
+		// Blocks is keyed by the blocker (which is in our query set =
+		// row.dependsOnID), values are the issues that depend on us
+		// (row.issueID). Skip when the blocker itself is closed — a closed
+		// issue does not actively block anything.
+		if statusByID[row.dependsOnID] == types.StatusClosed {
+			continue
+		}
+		info.Blocks[row.dependsOnID] = append(info.Blocks[row.dependsOnID], row.issueID)
+	}
+
+	return info, nil
+}
+
+func (r *dependencySQLRepositoryImpl) GetAllAcrossIssuesAndWisps(ctx context.Context, opts domain.DepListOpts) (map[string][]*types.Dependency, error) {
+	perm, err := r.GetAll(ctx, domain.DepListOpts{Types: opts.Types, UseWispsTable: false})
+	if err != nil {
+		return nil, err
+	}
+	wisp, err := r.GetAll(ctx, domain.DepListOpts{Types: opts.Types, UseWispsTable: true})
+	if err != nil {
+		if !dberrors.IsTableNotExist(err) {
+			return nil, err
+		}
+		wisp = nil
+	}
+	for k, v := range wisp {
+		perm[k] = append(perm[k], v...)
+	}
+	return perm, nil
+}
+
+func (r *dependencySQLRepositoryImpl) GetBlockingInfoAcrossIssuesAndWisps(ctx context.Context, issueIDs []string) (domain.BlockingInfo, error) {
+	perm, err := r.GetBlockingInfo(ctx, issueIDs, domain.DepListOpts{UseWispsTable: false})
+	if err != nil {
+		return domain.BlockingInfo{}, err
+	}
+	wisp, err := r.GetBlockingInfo(ctx, issueIDs, domain.DepListOpts{UseWispsTable: true})
+	if err != nil {
+		if !dberrors.IsTableNotExist(err) {
+			return domain.BlockingInfo{}, err
+		}
+		wisp = domain.BlockingInfo{
+			BlockedBy: map[string][]string{},
+			Blocks:    map[string][]string{},
+			Parent:    map[string]string{},
+		}
+	}
+	for k, v := range wisp.BlockedBy {
+		perm.BlockedBy[k] = append(perm.BlockedBy[k], v...)
+	}
+	for k, v := range wisp.Blocks {
+		perm.Blocks[k] = append(perm.Blocks[k], v...)
+	}
+	for k, v := range wisp.Parent {
+		if _, ok := perm.Parent[k]; !ok {
+			perm.Parent[k] = v
+		}
+	}
+	return perm, nil
+}
+
+type blockingRow struct {
+	issueID, dependsOnID, depType string
+}
+
+func (r *dependencySQLRepositoryImpl) scanBlockingRows(ctx context.Context, q string, args []any) ([]blockingRow, error) {
+	rows, err := r.runner.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []blockingRow
+	for rows.Next() {
+		var row blockingRow
+		if err := rows.Scan(&row.issueID, &row.dependsOnID, &row.depType); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *dependencySQLRepositoryImpl) loadStatusByID(ctx context.Context, idSet map[string]struct{}) (map[string]types.Status, error) {
+	statusByID := make(map[string]types.Status, len(idSet))
+	if len(idSet) == 0 {
+		return statusByID, nil
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	placeholders, args := buildInPlaceholders(ids)
+	for _, table := range []string{"issues", "wisps"} {
+		//nolint:gosec // G201: table is a hardcoded constant
+		q := fmt.Sprintf("SELECT id, status FROM %s WHERE id IN (%s)", table, placeholders)
+		rows, err := r.runner.QueryContext(ctx, q, args...)
+		if err != nil {
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("status from %s: %w", table, err)
+		}
+		func() {
+			defer rows.Close()
+			for rows.Next() {
+				var id string
+				var status types.Status
+				if err := rows.Scan(&id, &status); err != nil {
+					return
+				}
+				statusByID[id] = status
+			}
+		}()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("status rows from %s: %w", table, err)
+		}
+	}
+	return statusByID, nil
+}
+
 func (r *dependencySQLRepositoryImpl) queryDeps(ctx context.Context, q string, args []any, into map[string][]*types.Dependency, keyByIssueID bool) error {
 	rows, err := r.runner.QueryContext(ctx, q, args...)
 	if err != nil {
