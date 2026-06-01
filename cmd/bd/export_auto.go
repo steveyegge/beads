@@ -380,6 +380,9 @@ func exportToFile(ctx context.Context, path string, includeMemories bool) (issue
 			issue.Comments = commentsMap[issue.ID]
 		}
 
+		// Sort for deterministic output (GH#4127)
+		sortIssuesForExport(issues)
+
 		// Write issues
 		enc := json.NewEncoder(w)
 		for _, issue := range issues {
