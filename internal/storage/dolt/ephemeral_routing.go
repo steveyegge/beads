@@ -295,6 +295,19 @@ func (s *DoltStore) doltAddAndCommitInTx(ctx context.Context, tx *sql.Tx, tables
 			return fmt.Errorf("dolt add %s: %w", table, err)
 		}
 	}
+
+	// Skip the commit when nothing was actually staged so an idempotent
+	// promote/demote no-op does not trip Dolt's server-side "nothing to commit"
+	// warning. Check the STAGED set (not the whole working set) because this
+	// helper stages only a fixed table list; *sql.Tx satisfies issueops.SQLQuerier.
+	staged, err := issueops.HasStagedChanges(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("check staged changes before commit: %w", err)
+	}
+	if !staged {
+		return nil
+	}
+
 	if _, err := tx.ExecContext(ctx, "CALL DOLT_COMMIT('-m', ?, '--author', ?)",
 		commitMsg, s.commitAuthorString()); err != nil && !isDoltNothingToCommit(err) {
 		return fmt.Errorf("dolt commit: %w", err)
