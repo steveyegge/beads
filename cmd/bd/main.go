@@ -962,6 +962,9 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "warning: failed to load beads config from %s: %v\n", beadsDir, cfgErr)
 		}
 		if cfg != nil {
+			if err := checkMetadataBackendError(cfg, beadsDir); err != nil {
+				FatalError("%v", err)
+			}
 			doltCfg.ProxiedServer = cfg.IsDoltProxiedServerMode()
 			proxiedServerMode = doltCfg.ProxiedServer
 			if cmdCtx != nil {
@@ -1244,6 +1247,47 @@ var rootCmd = &cobra.Command{
 			rootCancel()
 		}
 	},
+}
+
+// checkMetadataBackendError returns an error if metadata.json declares a
+// storage backend this binary does not support.
+//
+// Stale binaries (e.g. pre-PG builds) silently enter a multi-GB RSS / 30-60s
+// fallback when given a workspace with backend=postgres, making diagnosis
+// extremely hard (be-y0sm9s / be-bx0tm7). Failing here gives a clear upgrade
+// hint in under 100ms.
+func checkMetadataBackendError(cfg *configfile.Config, beadsDir string) error {
+	if cfg == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(cfg.Backend)
+	if raw == "" || raw == configfile.BackendDolt {
+		return nil
+	}
+	exe, _ := os.Executable()
+	commit := resolveCommitHash()
+	ver := Version
+	if commit != "" {
+		ver += " " + shortCommit(commit)
+	}
+	if Build != "" && Build != "dev" {
+		ver += " (" + Build + ")"
+	}
+	return fmt.Errorf(
+		"unsupported storage backend %q declared in %s\n\n"+
+			"This bd binary does not support the %q backend.\n"+
+			"  binary:  %s\n"+
+			"  version: %s\n\n"+
+			"Upgrade bd to a version that supports %q:\n"+
+			"  curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash\n"+
+			"  brew upgrade beads\n\n"+
+			"To confirm which binary is running: bd --version\n"+
+			"To inspect PATH for stale binaries: which bd",
+		raw, filepath.Join(beadsDir, configfile.ConfigFileName),
+		raw,
+		exe, ver,
+		raw,
+	)
 }
 
 func shouldRunPostCommandAutoExport(cmd *cobra.Command) bool {
