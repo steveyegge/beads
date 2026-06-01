@@ -15,7 +15,7 @@ import (
 func GetLabelsInTx(ctx context.Context, tx *sql.Tx, table, issueID string) ([]string, error) {
 	if table == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
-		_, table, _, _ = WispTableRouting(isWisp)
+		_, table, _ = WispTableRouting(isWisp)
 	}
 	//nolint:gosec // G201: table is from WispTableRouting ("labels" or "wisp_labels")
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT label FROM %s WHERE issue_id = ? ORDER BY label`, table), issueID)
@@ -135,7 +135,7 @@ func getLabelsIntoFromTable(ctx context.Context, tx *sql.Tx, labelTable string, 
 func AddLabelInTx(ctx context.Context, tx *sql.Tx, labelTable, eventTable, issueID, label, actor string) error {
 	if labelTable == "" || eventTable == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
-		_, lt, et, _ := WispTableRouting(isWisp)
+		_, lt, et := WispTableRouting(isWisp)
 		if labelTable == "" {
 			labelTable = lt
 		}
@@ -164,7 +164,7 @@ func AddLabelInTx(ctx context.Context, tx *sql.Tx, labelTable, eventTable, issue
 func RemoveLabelInTx(ctx context.Context, tx *sql.Tx, labelTable, eventTable, issueID, label, actor string) error {
 	if labelTable == "" || eventTable == "" {
 		isWisp := IsActiveWispInTx(ctx, tx, issueID)
-		_, lt, et, _ := WispTableRouting(isWisp)
+		_, lt, et := WispTableRouting(isWisp)
 		if labelTable == "" {
 			labelTable = lt
 		}

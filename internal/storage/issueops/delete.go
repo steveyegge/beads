@@ -44,7 +44,7 @@ func DeleteIssueInTx(ctx context.Context, tx *sql.Tx, id string) error {
 
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func deleteIssueRowInTx(ctx context.Context, tx *sql.Tx, id string, isWisp bool) error {
-	issueTable, _, _, _ := WispTableRouting(isWisp)
+	issueTable, _, _ := WispTableRouting(isWisp)
 	result, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ?", issueTable), id)
 	if err != nil {
 		return fmt.Errorf("delete issue from %s: %w", issueTable, err)

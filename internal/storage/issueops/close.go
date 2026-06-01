@@ -28,7 +28,7 @@ func CloseIssueWithoutEventInTx(ctx context.Context, tx *sql.Tx, id string, reas
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func closeIssueInTx(ctx context.Context, tx *sql.Tx, id string, reason, actor, session string, recordEvent bool) (*CloseResult, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, id)
-	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
+	issueTable, _, eventTable := WispTableRouting(isWisp)
 
 	var affectedIssues, affectedWisps []string
 	var aerr error

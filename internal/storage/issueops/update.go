@@ -139,7 +139,7 @@ func UpdateIssueWithoutEventInTx(ctx context.Context, tx *sql.Tx, id string, upd
 func updateIssueInTx(ctx context.Context, tx *sql.Tx, id string, updates map[string]interface{}, actor string, recordEvent bool) (*UpdateResult, error) {
 	// Route to correct table.
 	isWisp := IsActiveWispInTx(ctx, tx, id)
-	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
+	issueTable, _, eventTable := WispTableRouting(isWisp)
 
 	// Read old issue inside the transaction for consistency.
 	oldIssue, err := GetIssueInTx(ctx, tx, id)

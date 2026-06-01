@@ -30,7 +30,7 @@ type ClaimResult struct {
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func ClaimIssueInTx(ctx context.Context, tx *sql.Tx, id string, actor string) (*ClaimResult, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, id)
-	issueTable, _, eventTable, _ := WispTableRouting(isWisp)
+	issueTable, _, eventTable := WispTableRouting(isWisp)
 
 	// Read old issue inside the transaction for event recording.
 	oldIssue, err := GetIssueInTx(ctx, tx, id)

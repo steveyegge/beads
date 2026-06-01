@@ -376,13 +376,6 @@ func UpdateIssueIDInDependenciesInTx(ctx context.Context, tx *sql.Tx, oldID, new
 }
 
 func replaceDependencyTargetInTx(ctx context.Context, tx *sql.Tx, table, column, oldID, newID string) error {
-	// Dolt does not reliably recompute the stored generated depends_on_id when
-	// only the split target column changes. Reinsert rows so the generated key
-	// is calculated from the new target value.
-	if err := checkRenameTargetCollision(ctx, tx, table, column, newID); err != nil {
-		return err
-	}
-
 	type depRow struct {
 		sourceID  string
 		target    string
@@ -476,9 +469,6 @@ func RetargetInboundDependenciesToIssueInTx(ctx context.Context, tx *sql.Tx, id 
 
 //nolint:gosec // G201: table and column names are fixed constants from TargetDepTables.
 func retargetInboundCrossTableInTx(ctx context.Context, tx *sql.Tx, srcTable, dstTable, srcCol, dstCol, id string) error {
-	if err := checkRenameTargetCollision(ctx, tx, dstTable, dstCol, id); err != nil {
-		return err
-	}
 	type depRow struct {
 		sourceID  string
 		depType   string
@@ -538,7 +528,7 @@ func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID 
 		{tables[2], "depends_on_external_id"},
 	}
 
-	var hitTable, depType string
+	var hitTable, hitCol, depType string
 	for _, p := range probe {
 		//nolint:gosec // G201: table and target column are fixed constants from SourceDepTables
 		err := tx.QueryRowContext(ctx, fmt.Sprintf(
@@ -546,6 +536,7 @@ func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID 
 			issueID, dependsOnID).Scan(&depType)
 		if err == nil {
 			hitTable = p.table
+			hitCol = p.targetCol
 			break
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -556,19 +547,9 @@ func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID 
 		return nil
 	}
 
-	var targetCol string
-	switch hitTable {
-	case probe[0].table:
-		targetCol = probe[0].targetCol
-	case probe[1].table:
-		targetCol = probe[1].targetCol
-	default:
-		targetCol = probe[2].targetCol
-	}
-
-	//nolint:gosec // G201: hitTable and targetCol are fixed constants from SourceDepTables
+	//nolint:gosec // G201: hitTable and hitCol are fixed constants from SourceDepTables
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-		`DELETE FROM %s WHERE source_id = ? AND %s = ?`, hitTable, targetCol),
+		`DELETE FROM %s WHERE source_id = ? AND %s = ?`, hitTable, hitCol),
 		issueID, dependsOnID); err != nil {
 		return fmt.Errorf("remove dependency: %w", err)
 	}

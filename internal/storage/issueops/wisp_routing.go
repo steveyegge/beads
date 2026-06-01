@@ -187,11 +187,11 @@ func PartitionWispIDsInTx(ctx context.Context, tx *sql.Tx, ids []string) (wispID
 	return wispIDs, permIDs, nil
 }
 
-func WispTableRouting(isWisp bool) (issueTable, labelTable, eventTable, depTable string) {
+func WispTableRouting(isWisp bool) (issueTable, labelTable, eventTable string) {
 	if isWisp {
-		return "wisps", "wisp_labels", "wisp_events", "wisp_dependencies"
+		return "wisps", "wisp_labels", "wisp_events"
 	}
-	return "issues", "labels", "events", "dependencies"
+	return "issues", "labels", "events"
 }
 
 func DepTableFor(sourceIsWisp bool, target DepTargetKind) string {

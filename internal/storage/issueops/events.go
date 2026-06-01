@@ -13,7 +13,7 @@ import (
 //
 //nolint:gosec // G201: table is hardcoded via WispTableRouting
 func GetEventsInTx(ctx context.Context, tx *sql.Tx, issueID string, limit int) ([]*types.Event, error) {
-	_, _, eventTable, _ := WispTableRouting(IsActiveWispInTx(ctx, tx, issueID))
+	_, _, eventTable := WispTableRouting(IsActiveWispInTx(ctx, tx, issueID))
 
 	query := fmt.Sprintf(`
 		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
