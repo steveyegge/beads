@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
 // ApplyResult represents the outcome of a single apply action.
@@ -169,8 +170,36 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 		}
 	}
 
-	doltDir := doltserver.ResolveDoltDir(beadsDir)
-	currentURL := doltutil.FindCLIRemote(doltDir, "origin")
+	ctx := context.Background()
+	st, err := dolt.NewFromConfig(ctx, beadsDir)
+	if err != nil {
+		return ApplyResult{
+			Check:   "remote",
+			Action:  "configure",
+			Status:  applyStatusError,
+			Message: "Failed to open Dolt store",
+			Error:   err.Error(),
+		}
+	}
+	defer func() { _ = st.Close() }()
+
+	remotes, err := st.ListRemotes(ctx)
+	if err != nil {
+		return ApplyResult{
+			Check:   "remote",
+			Action:  "configure",
+			Status:  applyStatusError,
+			Message: "Failed to list Dolt remotes",
+			Error:   err.Error(),
+		}
+	}
+	var currentURL string
+	for _, r := range remotes {
+		if r.Name == "origin" {
+			currentURL = r.URL
+			break
+		}
+	}
 
 	if dryRun {
 		if currentURL == "" {
@@ -190,8 +219,7 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 	}
 
 	if currentURL == "" {
-		// No origin exists — add it
-		if err := doltutil.AddCLIRemote(doltDir, "origin", federationRemote); err != nil {
+		if err := st.AddRemote(ctx, "origin", federationRemote); err != nil {
 			return ApplyResult{
 				Check:   "remote",
 				Action:  "add_remote",
@@ -208,10 +236,8 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 		}
 	}
 
-	// Origin exists but wrong URL — remove then re-add
-	// Save old URL in case we need to report it
 	oldURL := currentURL
-	if err := doltutil.RemoveCLIRemote(doltDir, "origin"); err != nil {
+	if err := st.RemoveRemote(ctx, "origin"); err != nil {
 		return ApplyResult{
 			Check:   "remote",
 			Action:  "update_remote",
@@ -221,9 +247,8 @@ func applyRemote(drifted bool, dryRun bool) ApplyResult {
 		}
 	}
 
-	if err := doltutil.AddCLIRemote(doltDir, "origin", federationRemote); err != nil {
-		// Try to restore the old remote on failure
-		_ = doltutil.AddCLIRemote(doltDir, "origin", oldURL)
+	if err := st.AddRemote(ctx, "origin", federationRemote); err != nil {
+		_ = st.AddRemote(ctx, "origin", oldURL)
 		return ApplyResult{
 			Check:   "remote",
 			Action:  "update_remote",
