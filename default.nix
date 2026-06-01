@@ -1,6 +1,5 @@
 {
   lib,
-  self,
   buildGoModule,
   git,
   ...
@@ -9,7 +8,7 @@ buildGoModule {
   pname = "beads";
   version = "1.0.5";
 
-  src = self;
+  src = ./.;
 
   # Point to the main Go package
   subPackages = [ "cmd/bd" ];
