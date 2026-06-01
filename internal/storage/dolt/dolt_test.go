@@ -766,8 +766,8 @@ func TestDoltStoreDependencies(t *testing.T) {
 	ctx, cancel := testContext(t)
 	defer cancel()
 
-	// Create parent and child issues (both tasks — cross-type blocking
-	// is disallowed per GH#1495)
+	// Create parent and child issues (both tasks for a same-type blocks
+	// pair; cross-type blocks edges are now allowed for unrelated issues).
 	parent := &types.Issue{
 		ID:          "test-parent",
 		Title:       "Parent Issue",

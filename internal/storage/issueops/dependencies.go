@@ -92,7 +92,7 @@ type AddDependencyOpts struct {
 // transaction. It handles:
 //   - Wisp routing (auto-detected or caller-provided)
 //   - Source/target existence validation
-//   - Cross-type blocking validation (GH#1495)
+//   - Parent-child shadow rejection for blocks edges (GH#1495)
 //   - Cycle detection via recursive CTE across both dependency tables
 //   - Idempotent same-type updates (metadata only)
 //   - Type conflict detection
@@ -156,22 +156,40 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		}
 	}
 
-	// Cross-type blocking validation (GH#1495): tasks can only block tasks,
-	// epics can only block epics.
+	// Self-dependency check (must run before graph queries that would
+	// otherwise treat source == target as a trivial match).
+	if dep.IssueID == dep.DependsOnID {
+		return fmt.Errorf("cannot add self-dependency: %s cannot depend on itself", dep.IssueID)
+	}
+
+	// Parent-child shadow rejection (GH#1495): a blocks edge between an
+	// issue and one of its parent-child ancestors or descendants creates a
+	// livelock in ready-work computation, because the blocked parent
+	// propagates its blocked state back down to the blocking child, which
+	// the child can never escape. The parent-child hierarchy already
+	// encodes scheduling for these pairs, so the blocks edge is also
+	// redundant. Cross-type blocks edges between unrelated issues are fine.
 	if dep.Type == types.DepBlocks && targetType != "" {
-		sourceIsEpic := sourceType == string(types.TypeEpic)
-		targetIsEpic := targetType == string(types.TypeEpic)
-		if sourceIsEpic != targetIsEpic {
-			if sourceIsEpic {
-				return fmt.Errorf("epics can only block other epics, not tasks")
-			}
-			return fmt.Errorf("tasks can only block other tasks, not epics")
+		var linked int
+		// Four params: seed-src, seed-tgt, target-in-src-tree, source-in-tgt-tree.
+		query := parentChildAncestorQuery(depTables)
+		if err := tx.QueryRowContext(ctx, query, dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID).Scan(&linked); err != nil {
+			return fmt.Errorf("failed to check parent-child relationship: %w", err)
+		}
+		if linked > 0 {
+			return fmt.Errorf("cannot add blocks dependency: %s and %s already share a parent-child relationship; the existing hierarchy encodes their scheduling", dep.IssueID, dep.DependsOnID)
 		}
 	}
 
-	if !opts.SkipCycleCheck {
-		if err := CheckDependencyCycleInTx(ctx, tx, dep, depTables); err != nil {
-			return err
+	// Cycle detection for blocking deps via recursive CTE.
+	if !opts.SkipCycleCheck && (dep.Type == types.DepBlocks || dep.Type == types.DepConditionalBlocks) {
+		var reachable int
+		query := cycleReachabilityQuery(depTables)
+		if err := tx.QueryRowContext(ctx, query, dep.DependsOnID, dep.IssueID).Scan(&reachable); err != nil {
+			return fmt.Errorf("failed to check for dependency cycle: %w", err)
+		}
+		if reachable > 0 {
+			return fmt.Errorf("adding dependency would create a cycle")
 		}
 	}
 
@@ -354,6 +372,40 @@ func cycleReachabilityQuery(depTables []string) string {
 
 func cycleDetectionTables() []string {
 	return []string{"dependencies", "wisp_dependencies"}
+}
+
+// parentChildAncestorQuery returns >0 if one endpoint is a directed
+// parent-child ancestor of the other. Parent-child rows are directed
+// (issue_id = child, parent via DepTargetExpr); we walk edges only in the
+// child→parent direction from each seed. Siblings/cousins that share a
+// common parent but are not ancestors of each other return 0 and are allowed
+// to form blocks edges. Two CTEs (one seeded from source, one from target)
+// share the same edge relation via %[1]s.
+// Parameters: source, target, target, source.
+func parentChildAncestorQuery(depTables []string) string {
+	var unions []string
+	for _, t := range depTables {
+		unions = append(unions,
+			fmt.Sprintf("SELECT issue_id AS child, %s AS parent FROM %s WHERE type = 'parent-child'", DepTargetExpr, t),
+		)
+	}
+	edges := strings.Join(unions, " UNION ")
+	return fmt.Sprintf(`
+		WITH RECURSIVE
+		anc_src(node) AS (
+			SELECT ?
+			UNION
+			SELECT e.parent FROM anc_src r JOIN (%[1]s) e ON e.child = r.node
+		),
+		anc_tgt(node) AS (
+			SELECT ?
+			UNION
+			SELECT e.parent FROM anc_tgt r JOIN (%[1]s) e ON e.child = r.node
+		)
+		SELECT
+			(SELECT COUNT(*) FROM anc_src WHERE node = ?)
+			+ (SELECT COUNT(*) FROM anc_tgt WHERE node = ?)
+	`, edges)
 }
 
 func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {

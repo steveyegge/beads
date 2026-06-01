@@ -128,7 +128,7 @@ func TestAddDependency(t *testing.T) {
 		}
 	})
 
-	t.Run("cross_type_validation", func(t *testing.T) {
+	t.Run("cross_type_unrelated_allowed", func(t *testing.T) {
 		te := newTestEnv(t, "ct")
 		ctx := t.Context()
 
@@ -141,14 +141,40 @@ func TestAddDependency(t *testing.T) {
 			t.Fatalf("CreateIssue task: %v", err)
 		}
 
-		// Task blocking epic should fail.
-		dep := &types.Dependency{IssueID: "ct-task", DependsOnID: "ct-epic", Type: types.DepBlocks}
+		// Task blocking an unrelated epic should succeed; only parent-child
+		// shadow edges are rejected.
+		dep := &types.Dependency{IssueID: "ct-epic", DependsOnID: "ct-task", Type: types.DepBlocks}
+		if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("task blocking unrelated epic should succeed: %v", err)
+		}
+	})
+
+	t.Run("parent_child_shadow_rejected", func(t *testing.T) {
+		te := newTestEnv(t, "sh")
+		ctx := t.Context()
+
+		epic := &types.Issue{ID: "sh-epic", Title: "Epic", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+		task := &types.Issue{ID: "sh-task", Title: "Task", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		if err := te.store.CreateIssue(ctx, epic, "tester"); err != nil {
+			t.Fatalf("CreateIssue epic: %v", err)
+		}
+		if err := te.store.CreateIssue(ctx, task, "tester"); err != nil {
+			t.Fatalf("CreateIssue task: %v", err)
+		}
+
+		// Establish parent-child: task is a child of epic.
+		if err := te.store.AddDependency(ctx, &types.Dependency{IssueID: "sh-task", DependsOnID: "sh-epic", Type: types.DepParentChild}, "tester"); err != nil {
+			t.Fatalf("parent-child setup: %v", err)
+		}
+
+		// Child task blocking its parent epic creates a shadow edge -> reject.
+		dep := &types.Dependency{IssueID: "sh-epic", DependsOnID: "sh-task", Type: types.DepBlocks}
 		err := te.store.AddDependency(ctx, dep, "tester")
 		if err == nil {
-			t.Fatal("expected cross-type error")
+			t.Fatal("expected rejection of parent-child shadow blocks edge")
 		}
-		if !strings.Contains(err.Error(), "epics") {
-			t.Errorf("expected cross-type error message, got: %v", err)
+		if !strings.Contains(err.Error(), "parent-child relationship") {
+			t.Errorf("expected shadow rejection message, got: %v", err)
 		}
 	})
 
@@ -322,7 +348,7 @@ func TestAddDependency(t *testing.T) {
 		}
 	})
 
-	t.Run("epic_blocks_task_fails", func(t *testing.T) {
+	t.Run("epic_blocks_unrelated_task_succeeds", func(t *testing.T) {
 		te := newTestEnv(t, "et")
 		ctx := t.Context()
 
@@ -335,14 +361,42 @@ func TestAddDependency(t *testing.T) {
 			t.Fatalf("CreateIssue task: %v", err)
 		}
 
-		// Epic blocking task should fail (reverse direction of existing cross_type_validation test).
-		dep := &types.Dependency{IssueID: "et-epic", DependsOnID: "et-task", Type: types.DepBlocks}
-		err := te.store.AddDependency(ctx, dep, "tester")
-		if err == nil {
-			t.Fatal("expected cross-type error")
+		// Epic blocking an unrelated task is allowed; only parent-child shadow
+		// blocks edges are rejected.
+		dep := &types.Dependency{IssueID: "et-task", DependsOnID: "et-epic", Type: types.DepBlocks}
+		if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("epic blocking unrelated task should succeed: %v", err)
 		}
-		if !strings.Contains(err.Error(), "epics") {
-			t.Errorf("expected cross-type error message, got: %v", err)
+	})
+
+	// Regression for parentChildLinkedQuery: siblings (two tasks under the same
+	// epic) were incorrectly rejected because the undirected walk saw them as
+	// "connected". The new directed ancestor query allows sibling blocks edges.
+	t.Run("siblings_allowed", func(t *testing.T) {
+		te := newTestEnv(t, "si")
+		ctx := t.Context()
+
+		epic := &types.Issue{ID: "si-epic", Title: "Epic", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic}
+		t1 := &types.Issue{ID: "si-t1", Title: "Task 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		t2 := &types.Issue{ID: "si-t2", Title: "Task 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		for _, issue := range []*types.Issue{epic, t1, t2} {
+			if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+				t.Fatalf("CreateIssue %s: %v", issue.ID, err)
+			}
+		}
+
+		pc1 := &types.Dependency{IssueID: "si-t1", DependsOnID: "si-epic", Type: types.DepParentChild}
+		pc2 := &types.Dependency{IssueID: "si-t2", DependsOnID: "si-epic", Type: types.DepParentChild}
+		if err := te.store.AddDependency(ctx, pc1, "tester"); err != nil {
+			t.Fatalf("AddDependency pc1: %v", err)
+		}
+		if err := te.store.AddDependency(ctx, pc2, "tester"); err != nil {
+			t.Fatalf("AddDependency pc2: %v", err)
+		}
+
+		dep := &types.Dependency{IssueID: "si-t1", DependsOnID: "si-t2", Type: types.DepBlocks}
+		if err := te.store.AddDependency(ctx, dep, "tester"); err != nil {
+			t.Fatalf("sibling blocks edge should be allowed: %v", err)
 		}
 	})
 }
