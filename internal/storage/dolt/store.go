@@ -1522,6 +1522,16 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 		return err
 	}
 	defer migDB.Close()
+	// #4259: refuse to silently apply pending migrations to a remote-backed,
+	// already-initialized database — that is how two clones fork the schema.
+	// Checked before the (retried) migration so it fails fast and is not retried.
+	// Use the on-disk fallback: a freshly (auto-)started server has not yet synced
+	// CLI remotes from .dolt/config into dolt_remotes (that happens after this, in
+	// syncCLIRemotesToSQL), so an SQL-only check would miss the remote on the first
+	// write open after an upgrade (GH#2315).
+	if err := schema.CheckRemoteMigrateGateWithRemoteCheck(ctx, migDB, s.hasPersistedCLIRemote); err != nil {
+		return err
+	}
 	_, err = initSchemaOnDBWithRetry(ctx, migDB)
 	return err
 }

@@ -180,6 +180,32 @@ func (s *DoltStore) syncCLIRemotesToSQL(ctx context.Context) {
 	}
 }
 
+// hasPersistedCLIRemote reports whether a Dolt remote is persisted on disk in
+// .dolt/config — in the database CLI directory (CLIDir) or the dolt server root
+// (Path, per GH#2118). A freshly (auto-)started sql-server starts with an empty
+// dolt_remotes table and only re-registers these during syncCLIRemotesToSQL,
+// which runs after schema migration on store open. The #4259 remote-migrate gate
+// therefore consults this directly so a cold-start open cannot miss the remote and
+// migrate the shared database in place. It mirrors the directories syncCLIRemotesToSQL
+// inspects. Best-effort: a missing dolt binary, a non-dolt directory, or any listing
+// error counts as "no remote found" rather than wedging the open.
+func (s *DoltStore) hasPersistedCLIRemote() bool {
+	cliDir := s.CLIDir()
+	dirs := []string{cliDir}
+	if s.dbPath != "" && s.dbPath != cliDir {
+		dirs = append(dirs, s.dbPath)
+	}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if remotes, err := doltutil.ListCLIRemotes(dir); err == nil && len(remotes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // migrateServerRootRemotes checks the dolt server root directory (dbPath) for
 // remotes that should be propagated to the database CLI directory (CLIDir).
 // This handles GH#2118: users run `dolt remote add` in .beads/dolt/ (server root)

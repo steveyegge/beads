@@ -1083,6 +1083,17 @@ var rootCmd = &cobra.Command{
 				}
 				os.Exit(1)
 			}
+			// #4259: the remote-migrate gate blocks silent in-place migration of a
+			// remote-backed database and tells the operator to migrate-or-adopt.
+			var gateErr *schema.RemoteMigrateGateError
+			if errors.As(err, &gateErr) {
+				if jsonOutput {
+					handleRemoteMigrateGateJSON(gateErr)
+				} else {
+					fmt.Fprint(os.Stderr, gateErr.UserMessage())
+				}
+				os.Exit(1)
+			}
 			FatalError("failed to open database: %v", err)
 		}
 
