@@ -82,16 +82,12 @@ func OrphanedDependencies(path string, verbose bool) error {
 	}
 	var removed int
 	for _, o := range orphans {
-		var err error
-		switch o.depTable {
-		case "dependencies":
-			_, err = tx.Exec("DELETE FROM dependencies WHERE issue_id = ? AND "+fixDependencyTargetExpr+" = ?", o.issueID, o.dependsOnID)
-		case "wisp_dependencies":
-			_, err = tx.Exec("DELETE FROM wisp_dependencies WHERE issue_id = ? AND "+fixDependencyTargetExpr+" = ?", o.issueID, o.dependsOnID)
-		default:
+		stmt, _, ok := fixDeleteByTable(o.depTable)
+		if !ok {
 			fmt.Printf("  Warning: skipped orphaned dependency from unexpected table %s\n", o.depTable)
 			continue
 		}
+		_, err := tx.Exec(stmt, o.issueID, o.dependsOnID)
 		if err != nil {
 			fmt.Printf("  Warning: failed to remove %s→%s: %v\n", o.issueID, o.dependsOnID, err)
 		} else {
@@ -178,16 +174,12 @@ func ChildParentDependencies(path string, verbose bool) error {
 	}
 	var removed int
 	for _, d := range badDeps {
-		var err error
-		switch d.depTable {
-		case "dependencies":
-			_, err = tx.Exec("DELETE FROM dependencies WHERE issue_id = ? AND "+fixDependencyTargetExpr+" = ? AND type = ?", d.issueID, d.dependsOnID, d.depType)
-		case "wisp_dependencies":
-			_, err = tx.Exec("DELETE FROM wisp_dependencies WHERE issue_id = ? AND "+fixDependencyTargetExpr+" = ? AND type = ?", d.issueID, d.dependsOnID, d.depType)
-		default:
+		stmt, _, ok := fixDeleteByTableWithType(d.depTable)
+		if !ok {
 			fmt.Printf("  Warning: skipped child→parent dependency from unexpected table %s\n", d.depTable)
 			continue
 		}
+		_, err := tx.Exec(stmt, d.issueID, d.dependsOnID, d.depType)
 		if err != nil {
 			fmt.Printf("  Warning: failed to remove %s→%s: %v\n", d.issueID, d.dependsOnID, err)
 		} else {

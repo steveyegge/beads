@@ -205,12 +205,37 @@ func openProxiedDB(t *testing.T, p proxiedProject) *sql.DB {
 	return db
 }
 
+func proxiedDepUnionQuery() string {
+	return `
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM issue_issue_dependencies WHERE source_id = ? AND depends_on_issue_id = ?
+			UNION ALL SELECT 1 FROM issue_wisp_dependencies WHERE source_id = ? AND depends_on_wisp_id = ?
+			UNION ALL SELECT 1 FROM issue_external_dependencies WHERE source_id = ? AND depends_on_external_id = ?
+			UNION ALL SELECT 1 FROM wisp_issue_dependencies WHERE source_id = ? AND depends_on_issue_id = ?
+			UNION ALL SELECT 1 FROM wisp_wisp_dependencies WHERE source_id = ? AND depends_on_wisp_id = ?
+			UNION ALL SELECT 1 FROM wisp_external_dependencies WHERE source_id = ? AND depends_on_external_id = ?
+		) u
+	`
+}
+
+func proxiedDepUnionWithTypeQuery() string {
+	return `
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM issue_issue_dependencies WHERE source_id = ? AND depends_on_issue_id = ? AND type = ?
+			UNION ALL SELECT 1 FROM issue_wisp_dependencies WHERE source_id = ? AND depends_on_wisp_id = ? AND type = ?
+			UNION ALL SELECT 1 FROM issue_external_dependencies WHERE source_id = ? AND depends_on_external_id = ? AND type = ?
+			UNION ALL SELECT 1 FROM wisp_issue_dependencies WHERE source_id = ? AND depends_on_issue_id = ? AND type = ?
+			UNION ALL SELECT 1 FROM wisp_wisp_dependencies WHERE source_id = ? AND depends_on_wisp_id = ? AND type = ?
+			UNION ALL SELECT 1 FROM wisp_external_dependencies WHERE source_id = ? AND depends_on_external_id = ? AND type = ?
+		) u
+	`
+}
+
 func assertProxiedDepExists(t *testing.T, db *sql.DB, issueID, dependsOnID string) {
 	t.Helper()
 	var count int
-	err := db.QueryRowContext(context.Background(),
-		"SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?",
-		issueID, dependsOnID).Scan(&count)
+	args := []any{issueID, dependsOnID, issueID, dependsOnID, issueID, dependsOnID, issueID, dependsOnID, issueID, dependsOnID, issueID, dependsOnID}
+	err := db.QueryRowContext(context.Background(), proxiedDepUnionQuery(), args...).Scan(&count)
 	if err != nil {
 		t.Fatalf("query dep %s -> %s: %v", issueID, dependsOnID, err)
 	}
@@ -222,9 +247,15 @@ func assertProxiedDepExists(t *testing.T, db *sql.DB, issueID, dependsOnID strin
 func assertProxiedDepExistsWithType(t *testing.T, db *sql.DB, issueID, dependsOnID, depType string) {
 	t.Helper()
 	var count int
-	err := db.QueryRowContext(context.Background(),
-		"SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ? AND type = ?",
-		issueID, dependsOnID, depType).Scan(&count)
+	args := []any{
+		issueID, dependsOnID, depType,
+		issueID, dependsOnID, depType,
+		issueID, dependsOnID, depType,
+		issueID, dependsOnID, depType,
+		issueID, dependsOnID, depType,
+		issueID, dependsOnID, depType,
+	}
+	err := db.QueryRowContext(context.Background(), proxiedDepUnionWithTypeQuery(), args...).Scan(&count)
 	if err != nil {
 		t.Fatalf("query dep %s -> %s (%s): %v", issueID, dependsOnID, depType, err)
 	}

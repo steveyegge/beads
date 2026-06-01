@@ -162,7 +162,7 @@ func TestChildParentDependencies_NoBadDeps(t *testing.T) {
 	// Verify the good dependency still exists
 	db := store.UnderlyingDB()
 	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM dependencies").Scan(&count); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM issue_issue_dependencies").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -216,7 +216,7 @@ func TestChildParentDependencies_FixesBadDeps(t *testing.T) {
 	// Verify all bad dependencies were removed
 	db := store.UnderlyingDB()
 	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM dependencies").Scan(&count); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM issue_issue_dependencies").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
@@ -282,7 +282,7 @@ func TestChildParentDependencies_PreservesParentChildType(t *testing.T) {
 	db := store.UnderlyingDB()
 
 	var blocksCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM dependencies WHERE type = 'blocks'").Scan(&blocksCount); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM issue_issue_dependencies WHERE type = 'blocks'").Scan(&blocksCount); err != nil {
 		t.Fatal(err)
 	}
 	if blocksCount != 0 {
@@ -290,7 +290,7 @@ func TestChildParentDependencies_PreservesParentChildType(t *testing.T) {
 	}
 
 	var parentChildCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM dependencies WHERE type = 'parent-child'").Scan(&parentChildCount); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM issue_issue_dependencies WHERE type = 'parent-child'").Scan(&parentChildCount); err != nil {
 		t.Fatal(err)
 	}
 	if parentChildCount != 1 {

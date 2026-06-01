@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // DoltPerfMetrics holds performance metrics for Dolt operations
@@ -166,8 +167,15 @@ func runDoltDiagnosticQueries(ctx context.Context, db *sql.DB, metrics *DoltPerf
 		metrics.ClosedIssues = -1
 	}
 
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM dependencies").Scan(&metrics.Dependencies); err != nil {
-		metrics.Dependencies = -1
+	metrics.Dependencies = 0
+	for _, t := range issueops.AllDepTables() {
+		var c int
+		//nolint:gosec // G201: t comes from issueops.AllDepTables (closed set).
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+t).Scan(&c); err != nil {
+			metrics.Dependencies = -1
+			break
+		}
+		metrics.Dependencies += c
 	}
 
 	// Try to get Dolt version
@@ -180,7 +188,7 @@ func runDoltDiagnosticQueries(ctx context.Context, db *sql.DB, metrics *DoltPerf
 		SELECT id FROM issues
 		WHERE status IN ('open', 'in_progress')
 		AND id NOT IN (
-			SELECT issue_id FROM dependencies
+			SELECT source_id FROM issue_issue_dependencies
 			WHERE depends_on_issue_id IN (SELECT id FROM issues WHERE status != 'closed')
 		)
 		LIMIT 100

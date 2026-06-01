@@ -3,6 +3,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -137,7 +138,33 @@ func openStore(t *testing.T, beadsDir, database string) *embeddeddolt.EmbeddedDo
 	return store
 }
 
-// assertDepExists verifies a dependency row exists via raw SQL.
+// splitDepUnionQuery returns a UNION ALL SELECT projecting (type, source_id,
+// depends_on_id) across all six split dep tables. The depends_on_id column is
+// projected from each table's typed target column so callers can filter by a
+// single id regardless of target class. Each arm consumes two ? placeholders
+// (source_id, target_id), so the caller passes 12 args in pairs.
+func splitDepUnionQuery() string {
+	return `
+		SELECT type FROM issue_issue_dependencies WHERE source_id = ? AND depends_on_issue_id = ?
+		UNION ALL SELECT type FROM issue_wisp_dependencies WHERE source_id = ? AND depends_on_wisp_id = ?
+		UNION ALL SELECT type FROM issue_external_dependencies WHERE source_id = ? AND depends_on_external_id = ?
+		UNION ALL SELECT type FROM wisp_issue_dependencies WHERE source_id = ? AND depends_on_issue_id = ?
+		UNION ALL SELECT type FROM wisp_wisp_dependencies WHERE source_id = ? AND depends_on_wisp_id = ?
+		UNION ALL SELECT type FROM wisp_external_dependencies WHERE source_id = ? AND depends_on_external_id = ?
+	`
+}
+
+func splitDepArgs(issueID, dependsOnID string) []any {
+	return []any{
+		issueID, dependsOnID,
+		issueID, dependsOnID,
+		issueID, dependsOnID,
+		issueID, dependsOnID,
+		issueID, dependsOnID,
+		issueID, dependsOnID,
+	}
+}
+
 func assertDepExists(t *testing.T, beadsDir, database, issueID, dependsOnID string) {
 	t.Helper()
 	dataDir := filepath.Join(beadsDir, "embeddeddolt")
@@ -146,15 +173,14 @@ func assertDepExists(t *testing.T, beadsDir, database, issueID, dependsOnID stri
 		t.Fatalf("OpenSQL: %v", err)
 	}
 	defer cleanup()
-	var count int
-	err = db.QueryRowContext(t.Context(),
-		"SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?",
-		issueID, dependsOnID).Scan(&count)
+	var depType string
+	err = db.QueryRowContext(t.Context(), splitDepUnionQuery(), splitDepArgs(issueID, dependsOnID)...).Scan(&depType)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			t.Errorf("expected dependency %s -> %s, not found", issueID, dependsOnID)
+			return
+		}
 		t.Fatalf("query dependencies: %v", err)
-	}
-	if count == 0 {
-		t.Errorf("expected dependency %s -> %s, not found", issueID, dependsOnID)
 	}
 }
 
@@ -168,9 +194,7 @@ func assertDepExistsWithType(t *testing.T, beadsDir, database, issueID, dependsO
 	defer cleanup()
 
 	var depType string
-	err = db.QueryRowContext(t.Context(),
-		"SELECT type FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?",
-		issueID, dependsOnID).Scan(&depType)
+	err = db.QueryRowContext(t.Context(), splitDepUnionQuery(), splitDepArgs(issueID, dependsOnID)...).Scan(&depType)
 	if err != nil {
 		t.Fatalf("query dependencies for %s -> %s: %v", issueID, dependsOnID, err)
 	}
