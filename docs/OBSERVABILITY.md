@@ -57,9 +57,39 @@ Verification query in Grafana (VictoriaMetrics datasource):
 bd_storage_operations_total
 ```
 
+### Confirm storage instrumentation locally
+
+To verify the storage decorator chain is wired up without standing up a
+collector, run `bd` with stdout exporters and look for `bd.storage.*`
+records on stderr:
+
+```bash
+BD_OTEL_STDOUT=true bd list 2>&1 | grep -F bd.storage.operations
+```
+
+Expect at least one line per storage call (`GetReadyWork`, `GetIssue`, …).
+If `bd.storage.*` and `bd.issue.count` are absent but `bd.db.pool_*` is
+present, the storage decorator is not in the chain — check
+`wireStorageDecorators` in `cmd/bd/storage_chain.go`.
+
+Every emitted measurement also carries `bd_prefix=<issue prefix>` (e.g.
+`bd_prefix=hl` for a project whose IDs are `hl-1`, `hl-2`, …). The same
+value lands as a resource attribute too, but per-measurement stamping is
+what makes `bd_prefix` directly queryable from a Prometheus-style backend
+without a join through `target_info`. To see the label, scan the same
+stdout output:
+
+```bash
+BD_OTEL_STDOUT=true bd list 2>&1 | grep -E 'bd[._]prefix'
+```
+
 ---
 
 ## Metrics
+
+> **Per-project label**: every `bd_*` series in this section carries
+> `bd_prefix=<issue prefix>` in addition to the per-metric attributes
+> shown below, so dashboards can filter and split by project directly.
 
 ### Storage (`bd_storage_*`)
 
