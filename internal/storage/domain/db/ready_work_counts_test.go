@@ -42,18 +42,15 @@ func (s *testSuite) readyCountsDepAndRDep() {
 	mid := newTestIssue("bd-rdyc-dr-mid", "mid")
 	s.Require().NoError(r.Insert(s.Ctx(), mid, "tester", domain.InsertIssueOpts{}))
 	a := newTestIssue("bd-rdyc-dr-a", "a")
-	a.Status = types.StatusClosed // closed blockers so mid is not is_blocked
+	a.Status = types.StatusClosed
 	s.Require().NoError(r.Insert(s.Ctx(), a, "tester", domain.InsertIssueOpts{}))
 	b := newTestIssue("bd-rdyc-dr-b", "b")
 	b.Status = types.StatusClosed
 	s.Require().NoError(r.Insert(s.Ctx(), b, "tester", domain.InsertIssueOpts{}))
 	c := newTestIssue("bd-rdyc-dr-c", "c")
 	s.Require().NoError(r.Insert(s.Ctx(), c, "tester", domain.InsertIssueOpts{}))
-
-	// mid blocks-on a, b (both closed) → DependencyCount=2 but mid still ready
 	s.Require().NoError(dep.Insert(s.Ctx(), newDep("bd-rdyc-dr-mid", "bd-rdyc-dr-a", types.DepBlocks), "tester", domain.DepInsertOpts{}))
 	s.Require().NoError(dep.Insert(s.Ctx(), newDep("bd-rdyc-dr-mid", "bd-rdyc-dr-b", types.DepBlocks), "tester", domain.DepInsertOpts{}))
-	// c blocks-on mid → DependentCount=1 for mid
 	s.Require().NoError(dep.Insert(s.Ctx(), newDep("bd-rdyc-dr-c", "bd-rdyc-dr-mid", types.DepBlocks), "tester", domain.DepInsertOpts{}))
 
 	out, err := r.GetReadyWorkWithCounts(s.Ctx(), types.WorkFilter{})
@@ -232,7 +229,7 @@ func (s *testSuite) readyCountsCollision() {
 	const id = "bd-rdyc-coll-1"
 	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue(id, "perm"), "tester", domain.InsertIssueOpts{}))
 	w := newTestIssue(id, "wisp")
-	w.Ephemeral = false // NoHistory wisp — survives default ephemeral filter
+	w.Ephemeral = false
 	s.Require().NoError(r.Insert(s.Ctx(), w, "tester", domain.InsertIssueOpts{UseWispsTable: true}))
 
 	_, err := r.GetReadyWorkWithCounts(s.Ctx(), types.WorkFilter{})

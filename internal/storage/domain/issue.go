@@ -118,11 +118,6 @@ type IssueUseCase interface {
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
 	GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error)
 	ListIssues(ctx context.Context, filter types.IssueFilter, proj ListProjection) (ListResult, error)
-
-	// SearchIssues mirrors storage.DoltStorage.SearchIssues: returns fully
-	// hydrated issues (with labels) matching filter, merging the issues and
-	// wisps tables unless filter.SkipWisps is set. Used by `bd list` in
-	// proxied-server mode.
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
 	SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error)
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)

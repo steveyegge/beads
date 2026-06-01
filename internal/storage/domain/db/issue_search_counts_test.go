@@ -31,11 +31,8 @@ func (s *testSuite) searchCountsDepAndRDep() {
 	s.Require().NoError(r.Insert(s.Ctx(), b, "tester", domain.InsertIssueOpts{}))
 	c := newTestIssue("bd-srxc-dr-c", "c")
 	s.Require().NoError(r.Insert(s.Ctx(), c, "tester", domain.InsertIssueOpts{}))
-
-	// mid blocks-on a, b → DependencyCount=2
 	s.Require().NoError(dep.Insert(s.Ctx(), newDep("bd-srxc-dr-mid", "bd-srxc-dr-a", types.DepBlocks), "tester", domain.DepInsertOpts{}))
 	s.Require().NoError(dep.Insert(s.Ctx(), newDep("bd-srxc-dr-mid", "bd-srxc-dr-b", types.DepBlocks), "tester", domain.DepInsertOpts{}))
-	// c blocks-on mid → DependentCount=1 for mid
 	s.Require().NoError(dep.Insert(s.Ctx(), newDep("bd-srxc-dr-c", "bd-srxc-dr-mid", types.DepBlocks), "tester", domain.DepInsertOpts{}))
 
 	out, err := r.SearchAcrossIssuesAndWispsWithCounts(s.Ctx(), "",
@@ -162,8 +159,6 @@ func (s *testSuite) searchCountsSkipLabels() {
 
 func (s *testSuite) searchCountsSortOrder() {
 	r := s.issueRepo()
-	// Insert with explicit priorities; default-priority issues from newTestIssue
-	// would tie on priority and require created_at-ordering to be deterministic.
 	hi := newTestIssue("bd-srxc-srt-hi", "hi")
 	hi.Priority = 1
 	s.Require().NoError(r.Insert(s.Ctx(), hi, "tester", domain.InsertIssueOpts{}))

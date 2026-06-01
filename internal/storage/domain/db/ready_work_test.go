@@ -245,7 +245,7 @@ func (s *testSuite) readyCollisionError() {
 	const id = "bd-rdy-coll-1"
 	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue(id, "perm"), "tester", domain.InsertIssueOpts{}))
 	w := newTestIssue(id, "wisp")
-	w.Ephemeral = false // NoHistory wisp — survives default filter
+	w.Ephemeral = false
 	s.Require().NoError(r.Insert(s.Ctx(), w, "tester", domain.InsertIssueOpts{UseWispsTable: true}))
 
 	_, err := r.GetReadyWork(s.Ctx(), types.WorkFilter{})

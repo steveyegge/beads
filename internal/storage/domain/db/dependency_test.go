@@ -484,8 +484,6 @@ func (s *testSuite) depGetAllAcrossIgnoresUseWispsOpt() {
 	s.Require().NoError(r.Insert(s.Ctx(),
 		newDep("bd-getall-ig-w", "bd-getall-ig-wtgt", types.DepBlocks), "tester",
 		domain.DepInsertOpts{UseWispsTable: true}))
-
-	// UseWispsTable=true should still return rows from BOTH tables.
 	out, err := r.GetAllAcrossIssuesAndWisps(s.Ctx(), domain.DepListOpts{UseWispsTable: true})
 	s.Require().NoError(err)
 	s.Require().Len(out["bd-getall-ig-a"], 1)
@@ -508,7 +506,6 @@ func (s *testSuite) depBlockingInfoBlockedByAndBlocks() {
 	s.seedIssueRow("bd-bi-up")
 	s.seedIssueRow("bd-bi-down")
 	r := s.depRepo()
-	// up blocks mid; mid blocks down.
 	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-bi-mid", "bd-bi-up", types.DepBlocks), "tester", domain.DepInsertOpts{}))
 	s.Require().NoError(r.Insert(s.Ctx(), newDep("bd-bi-down", "bd-bi-mid", types.DepBlocks), "tester", domain.DepInsertOpts{}))
 
@@ -537,8 +534,6 @@ func (s *testSuite) depBlockingInfoSkipsClosed() {
 	r := s.depRepo()
 	s.Require().NoError(r.Insert(s.Ctx(),
 		newDep("bd-bi-cls-mid", "bd-bi-cls-blocker", types.DepBlocks), "tester", domain.DepInsertOpts{}))
-
-	// Close the blocker.
 	_, err := s.Runner().ExecContext(s.Ctx(),
 		"UPDATE issues SET status = ? WHERE id = ?", string(types.StatusClosed), "bd-bi-cls-blocker")
 	s.Require().NoError(err)
@@ -549,18 +544,13 @@ func (s *testSuite) depBlockingInfoSkipsClosed() {
 }
 
 func (s *testSuite) depBlockingInfoAcrossUnions() {
-	// Two blockers for one target: one in dependencies, one in wisp_dependencies.
 	s.seedIssueRow("bd-bi-x-target")
 	s.seedIssueRow("bd-bi-x-permblocker")
 	s.seedWispRow("bd-bi-x-wispblocker")
 	r := s.depRepo()
-	// Perm blocker: target blocks-on permblocker, recorded in dependencies.
 	s.Require().NoError(r.Insert(s.Ctx(),
 		newDep("bd-bi-x-target", "bd-bi-x-permblocker", types.DepBlocks), "tester",
 		domain.DepInsertOpts{}))
-	// Wisp blocker: write directly to wisp_dependencies with issue_id=target,
-	// depends_on_wisp_id=wispblocker. (Our Insert routing always uses issue
-	// targets, so go around it.)
 	_, err := s.Runner().ExecContext(s.Ctx(), `
 		INSERT INTO wisp_dependencies (issue_id, depends_on_wisp_id, type, created_at, created_by, metadata)
 		VALUES (?, ?, 'blocks', NOW(), 'tester', '{}')
@@ -573,9 +563,6 @@ func (s *testSuite) depBlockingInfoAcrossUnions() {
 }
 
 func (s *testSuite) depWispDirectBackEdge() {
-	// Direct back-edge in wisp_dependencies: source wisp s already blocks
-	// issue t; adding t -> s closes a 2-cycle. The fast path probes both
-	// tables, so this should be caught.
 	s.seedWispRow("bd-dep-wd-s")
 	s.seedIssueRow("bd-dep-wd-t")
 	r := s.depRepo()

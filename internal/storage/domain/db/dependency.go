@@ -293,10 +293,6 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 		return domain.BlockingInfo{}, fmt.Errorf("db: DependencySQLRepository.GetBlockingInfo: inbound: %w", err)
 	}
 
-	// Status check targets:
-	//   - outbound: the blocker is the depends-on (the thing we depend on).
-	//   - inbound: the issue in our query set is the blocker; row.dependsOnID
-	//     equals one of our queried IDs, row.issueID is whoever depends on us.
 	statusIDs := make(map[string]struct{})
 	for _, row := range outRows {
 		statusIDs[row.dependsOnID] = struct{}{}
@@ -320,10 +316,6 @@ func (r *dependencySQLRepositoryImpl) GetBlockingInfo(ctx context.Context, issue
 		}
 	}
 	for _, row := range inRows {
-		// Blocks is keyed by the blocker (which is in our query set =
-		// row.dependsOnID), values are the issues that depend on us
-		// (row.issueID). Skip when the blocker itself is closed — a closed
-		// issue does not actively block anything.
 		if statusByID[row.dependsOnID] == types.StatusClosed {
 			continue
 		}
