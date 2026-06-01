@@ -2,10 +2,12 @@ package dolt
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestPrePushFSCK_EmptyCLIDir verifies that prePushFSCK is a no-op when
@@ -83,6 +85,67 @@ func TestPrePushFSCK_UnopenableDB(t *testing.T) {
 	s := &DoltStore{dbPath: tmp, database: "mydb"}
 	if err := s.prePushFSCK(context.Background()); err != nil {
 		t.Fatalf("expected nil when fsck cannot open db (should warn and proceed), got %v", err)
+	}
+}
+
+func TestPrePushFSCK_TimeoutSkipsIntegrityCheck(t *testing.T) {
+	t.Setenv("BEADS_DOLT_FSCK_TIMEOUT", "1ms")
+	old := prePushFSCKCommandContext
+	prePushFSCKCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestPrePushFSCKHelperProcess", "--")
+		cmd.Env = append(os.Environ(), "BEADS_TEST_FSCK_HELPER=sleep")
+		return cmd
+	}
+	t.Cleanup(func() { prePushFSCKCommandContext = old })
+
+	tmp := t.TempDir()
+	dbDir := filepath.Join(tmp, "mydb")
+	if err := os.MkdirAll(filepath.Join(dbDir, ".dolt", "noms"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	s := &DoltStore{dbPath: tmp, database: "mydb"}
+	if err := s.prePushFSCK(context.Background()); err != nil {
+		t.Fatalf("timeout should skip the integrity check with a warning, got %v", err)
+	}
+}
+
+func TestPrePushFSCK_TimeoutWithCorruptionOutputAborts(t *testing.T) {
+	t.Setenv("BEADS_DOLT_FSCK_TIMEOUT", "250ms")
+	old := prePushFSCKCommandContext
+	prePushFSCKCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestPrePushFSCKHelperProcess", "--")
+		cmd.Env = append(os.Environ(), "BEADS_TEST_FSCK_HELPER=dangling-sleep")
+		return cmd
+	}
+	t.Cleanup(func() { prePushFSCKCommandContext = old })
+
+	tmp := t.TempDir()
+	dbDir := filepath.Join(tmp, "mydb")
+	if err := os.MkdirAll(filepath.Join(dbDir, ".dolt", "noms"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	s := &DoltStore{dbPath: tmp, database: "mydb"}
+	err := s.prePushFSCK(context.Background())
+	if !errors.Is(err, ErrDanglingReference) {
+		t.Fatalf("expected ErrDanglingReference when timeout captured corruption output, got %v", err)
+	}
+}
+
+func TestPrePushFSCKHelperProcess(t *testing.T) {
+	switch os.Getenv("BEADS_TEST_FSCK_HELPER") {
+	case "":
+		return
+	case "sleep":
+		time.Sleep(time.Hour)
+		os.Exit(0)
+	case "dangling-sleep":
+		_, _ = os.Stdout.WriteString("dangling chunk reference: hash abc123 referenced but not present\n")
+		time.Sleep(time.Hour)
+		os.Exit(1)
+	default:
+		os.Exit(2)
 	}
 }
 

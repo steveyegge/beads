@@ -35,6 +35,10 @@ var (
 	// prevent propagating the corruption to the remote. Run bd dolt verify
 	// to diagnose and recover.
 	ErrDanglingReference = errors.New("dangling chunk reference")
+
+	// ErrDoltPushInProgress indicates another local process is already running
+	// a Dolt CLI push for the same database directory.
+	ErrDoltPushInProgress = errors.New("dolt push already in progress")
 )
 
 // isTableNotExistError returns true if the error indicates a MySQL/Dolt
