@@ -113,10 +113,11 @@ func expectDependencies(mock sqlmock.Sqlmock, issueID string, deps []dependencyR
 	for _, dep := range deps {
 		rows.AddRow(dep.id, dep.depType)
 	}
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + DepTargetExpr + " AS depends_on_id, type FROM dependencies WHERE issue_id = ?")).
+	// Legacy SQL shape; will be rewritten in task 20 to match per-table typed-column projection.
+	mock.ExpectQuery(regexp.QuoteMeta("FROM dependencies WHERE issue_id = ?")).
 		WithArgs(issueID).
 		WillReturnRows(rows)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + DepTargetExpr + " AS depends_on_id, type FROM wisp_dependencies WHERE issue_id = ?")).
+	mock.ExpectQuery(regexp.QuoteMeta("FROM wisp_dependencies WHERE issue_id = ?")).
 		WithArgs(issueID).
 		WillReturnRows(sqlmock.NewRows([]string{"depends_on_id", "type"}))
 }

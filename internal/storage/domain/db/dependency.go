@@ -23,32 +23,52 @@ type dependencySQLRepositoryImpl struct {
 
 var _ domain.DependencySQLRepository = (*dependencySQLRepositoryImpl)(nil)
 
-const depTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
-
-const depSelectColumns = "issue_id, " + depTargetExpr + " AS depends_on_id, type, created_at, created_by, metadata, thread_id"
-
-func pickDepTable(useWisps bool) string {
+func sourceDepTables(useWisps bool) []string {
 	if useWisps {
-		return "wisp_dependencies"
+		return []string{"wisp_issue_dependencies", "wisp_wisp_dependencies", "wisp_external_dependencies"}
 	}
-	return "dependencies"
+	return []string{"issue_issue_dependencies", "issue_wisp_dependencies", "issue_external_dependencies"}
 }
 
-func (r *dependencySQLRepositoryImpl) pickDepTargetColumn(ctx context.Context, dependsOnID string) (string, error) {
+func depTargetColumnForTable(table string) string {
+	switch {
+	case strings.HasSuffix(table, "_issue_dependencies"):
+		return "depends_on_issue_id"
+	case strings.HasSuffix(table, "_wisp_dependencies"):
+		return "depends_on_wisp_id"
+	case strings.HasSuffix(table, "_external_dependencies"):
+		return "depends_on_external_id"
+	}
+	return ""
+}
+
+func depSelectColumns(targetCol string) string {
+	return "source_id, " + targetCol + " AS depends_on_id, type, created_at, created_by, metadata, thread_id"
+}
+
+// pickDepTable selects the split dep table for an insert given source class and target id.
+func (r *dependencySQLRepositoryImpl) pickDepTable(ctx context.Context, useWisps bool, dependsOnID string) (string, string, error) {
 	if strings.HasPrefix(dependsOnID, "external:") {
-		return "depends_on_external", nil
+		if useWisps {
+			return "wisp_external_dependencies", "depends_on_external_id", nil
+		}
+		return "issue_external_dependencies", "depends_on_external_id", nil
 	}
 	var probe int
 	err := r.runner.QueryRowContext(ctx, "SELECT 1 FROM wisps WHERE id = ? LIMIT 1", dependsOnID).Scan(&probe)
 	switch {
 	case err == nil:
-		return "depends_on_wisp_id", nil
-	case errors.Is(err, sql.ErrNoRows):
-		return "depends_on_issue_id", nil
-	case dberrors.IsTableNotExist(err):
-		return "depends_on_issue_id", nil
+		if useWisps {
+			return "wisp_wisp_dependencies", "depends_on_wisp_id", nil
+		}
+		return "issue_wisp_dependencies", "depends_on_wisp_id", nil
+	case errors.Is(err, sql.ErrNoRows), dberrors.IsTableNotExist(err):
+		if useWisps {
+			return "wisp_issue_dependencies", "depends_on_issue_id", nil
+		}
+		return "issue_issue_dependencies", "depends_on_issue_id", nil
 	default:
-		return "", fmt.Errorf("classify dep target %s: %w", dependsOnID, err)
+		return "", "", fmt.Errorf("classify dep target %s: %w", dependsOnID, err)
 	}
 }
 
@@ -71,20 +91,23 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		metadata = "{}"
 	}
 
-	table := pickDepTable(opts.UseWispsTable)
+	table, targetCol, err := r.pickDepTable(ctx, opts.UseWispsTable, dep.DependsOnID)
+	if err != nil {
+		return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
+	}
 
 	var existingType string
-	err := r.runner.QueryRowContext(ctx,
-		//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
-		fmt.Sprintf("SELECT type FROM %s WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
+	err = r.runner.QueryRowContext(ctx,
+		//nolint:gosec // G201: table and targetCol are hardcoded constants
+		fmt.Sprintf("SELECT type FROM %s WHERE source_id = ? AND %s = ?", table, targetCol),
 		dep.IssueID, dep.DependsOnID,
 	).Scan(&existingType)
 	switch {
 	case err == nil:
 		if existingType == string(dep.Type) {
-			//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
+			//nolint:gosec // G201: table and targetCol are hardcoded constants
 			if _, err := r.runner.ExecContext(ctx,
-				fmt.Sprintf("UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
+				fmt.Sprintf("UPDATE %s SET metadata = ? WHERE source_id = ? AND %s = ?", table, targetCol),
 				metadata, dep.IssueID, dep.DependsOnID,
 			); err != nil {
 				return fmt.Errorf("db: DependencySQLRepository.Insert: refresh metadata: %w", err)
@@ -98,14 +121,9 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		return fmt.Errorf("db: DependencySQLRepository.Insert: check existing: %w", err)
 	}
 
-	targetCol, err := r.pickDepTargetColumn(ctx, dep.DependsOnID)
-	if err != nil {
-		return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
-	}
-
-	//nolint:gosec // G201: table is one of two hardcoded constants; targetCol is from pickDepTargetColumn
+	//nolint:gosec // G201: table and targetCol are hardcoded constants
 	if _, err := r.runner.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (issue_id, %s, type, created_at, created_by, metadata, thread_id)
+		INSERT INTO %s (source_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, table, targetCol),
 		dep.IssueID, dep.DependsOnID, string(dep.Type),
@@ -122,47 +140,49 @@ func (r *dependencySQLRepositoryImpl) HasCycle(ctx context.Context, issueID, dep
 	}
 
 	var one int
-	err := r.runner.QueryRowContext(ctx, `
-		SELECT 1 FROM dependencies
-		WHERE issue_id = ? AND depends_on_issue_id = ?
-		  AND type IN ('blocks', 'conditional-blocks')
-		LIMIT 1
-	`, dependsOnID, issueID).Scan(&one)
-	switch {
-	case err == nil:
-		return true, nil
-	case !errors.Is(err, sql.ErrNoRows):
-		return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: direct probe (dependencies): %w", err)
-	}
-	err = r.runner.QueryRowContext(ctx, `
-		SELECT 1 FROM wisp_dependencies
-		WHERE issue_id = ? AND depends_on_issue_id = ?
-		  AND type IN ('blocks', 'conditional-blocks')
-		LIMIT 1
-	`, dependsOnID, issueID).Scan(&one)
-	switch {
-	case err == nil:
-		return true, nil
-	case !errors.Is(err, sql.ErrNoRows):
-		return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: direct probe (wisp_dependencies): %w", err)
+	directTables := []string{"issue_issue_dependencies", "wisp_issue_dependencies"}
+	for _, t := range directTables {
+		//nolint:gosec // G201: t is a hardcoded constant
+		err := r.runner.QueryRowContext(ctx, fmt.Sprintf(`
+			SELECT 1 FROM %s
+			WHERE source_id = ? AND depends_on_issue_id = ?
+			  AND type IN ('blocks', 'conditional-blocks')
+			LIMIT 1
+		`, t), dependsOnID, issueID).Scan(&one)
+		switch {
+		case err == nil:
+			return true, nil
+		case !errors.Is(err, sql.ErrNoRows):
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: direct probe (%s): %w", t, err)
+		}
 	}
 
+	allTables := []string{
+		"issue_issue_dependencies",
+		"wisp_issue_dependencies",
+	}
+	unionParts := make([]string, 0, len(allTables))
+	for _, t := range allTables {
+		unionParts = append(unionParts, fmt.Sprintf("SELECT source_id, depends_on_issue_id, type FROM %s", t))
+	}
 	var count int
-	err = r.runner.QueryRowContext(ctx, `
+	//nolint:gosec // G201: union built from hardcoded table list
+	err := r.runner.QueryRowContext(ctx, fmt.Sprintf(`
 		WITH RECURSIVE reachable(node) AS (
 			SELECT ?
 			UNION
 			SELECT d.depends_on_issue_id FROM (
-				SELECT issue_id, depends_on_issue_id, type FROM dependencies
-				UNION ALL
-				SELECT issue_id, depends_on_issue_id, type FROM wisp_dependencies
+				%s
 			) d
-			JOIN reachable r ON d.issue_id = r.node
+			JOIN reachable r ON d.source_id = r.node
 			WHERE d.type IN ('blocks', 'conditional-blocks')
 			  AND d.depends_on_issue_id IS NOT NULL
 		)
 		SELECT COUNT(*) FROM reachable WHERE node = ?
-	`, dependsOnID, issueID).Scan(&count)
+	`, strings.Join(unionParts, " UNION ALL ")), dependsOnID, issueID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("db: DependencySQLRepository.HasCycle: %w", err)
 	}
@@ -180,29 +200,38 @@ func (r *dependencySQLRepositoryImpl) ListByIssueIDs(ctx context.Context, issueI
 
 	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
 	typeWhere, typeArgs := buildTypeFilter(opts.Types)
-	table := pickDepTable(opts.UseWispsTable)
+	depTables := sourceDepTables(opts.UseWispsTable)
 
-	if opts.Direction == domain.DepDirectionBoth || opts.Direction == domain.DepDirectionOut {
-		//nolint:gosec // G201: table and depSelectColumns are hardcoded
-		q := fmt.Sprintf(
-			`SELECT %s FROM %s WHERE issue_id IN (%s)%s ORDER BY issue_id`,
-			depSelectColumns, table, idPlaceholders, typeWhere,
-		)
-		args := combineArgs(idArgs, typeArgs)
-		if err := r.queryDeps(ctx, q, args, result.Outgoing, true); err != nil {
-			return domain.DepBulkResult{}, fmt.Errorf("db: DependencySQLRepository.ListByIssueIDs (out): %w", err)
+	for _, table := range depTables {
+		col := depTargetColumnForTable(table)
+		if opts.Direction == domain.DepDirectionBoth || opts.Direction == domain.DepDirectionOut {
+			//nolint:gosec // G201: table and col are hardcoded
+			q := fmt.Sprintf(
+				`SELECT %s FROM %s WHERE source_id IN (%s)%s ORDER BY source_id`,
+				depSelectColumns(col), table, idPlaceholders, typeWhere,
+			)
+			args := combineArgs(idArgs, typeArgs)
+			if err := r.queryDeps(ctx, q, args, result.Outgoing, true); err != nil {
+				if dberrors.IsTableNotExist(err) {
+					continue
+				}
+				return domain.DepBulkResult{}, fmt.Errorf("db: DependencySQLRepository.ListByIssueIDs (out) %s: %w", table, err)
+			}
 		}
-	}
 
-	if opts.Direction == domain.DepDirectionBoth || opts.Direction == domain.DepDirectionIn {
-		//nolint:gosec // G201: table, depSelectColumns, depTargetExpr are hardcoded
-		q := fmt.Sprintf(
-			`SELECT %s FROM %s WHERE %s IN (%s)%s ORDER BY issue_id`,
-			depSelectColumns, table, depTargetExpr, idPlaceholders, typeWhere,
-		)
-		args := combineArgs(idArgs, typeArgs)
-		if err := r.queryDeps(ctx, q, args, result.Incoming, false); err != nil {
-			return domain.DepBulkResult{}, fmt.Errorf("db: DependencySQLRepository.ListByIssueIDs (in): %w", err)
+		if opts.Direction == domain.DepDirectionBoth || opts.Direction == domain.DepDirectionIn {
+			//nolint:gosec // G201: table and col are hardcoded
+			q := fmt.Sprintf(
+				`SELECT %s FROM %s WHERE %s IN (%s)%s ORDER BY source_id`,
+				depSelectColumns(col), table, col, idPlaceholders, typeWhere,
+			)
+			args := combineArgs(idArgs, typeArgs)
+			if err := r.queryDeps(ctx, q, args, result.Incoming, false); err != nil {
+				if dberrors.IsTableNotExist(err) {
+					continue
+				}
+				return domain.DepBulkResult{}, fmt.Errorf("db: DependencySQLRepository.ListByIssueIDs (in) %s: %w", table, err)
+			}
 		}
 	}
 
@@ -219,24 +248,34 @@ func (r *dependencySQLRepositoryImpl) CountsByIssueIDs(ctx context.Context, issu
 	}
 
 	idPlaceholders, idArgs := buildInPlaceholders(issueIDs)
-	table := pickDepTable(opts.UseWispsTable)
+	depTables := sourceDepTables(opts.UseWispsTable)
 
-	//nolint:gosec // G201: table is one of two hardcoded constants
-	outQ := fmt.Sprintf(
-		`SELECT issue_id, COUNT(*) FROM %s WHERE issue_id IN (%s) AND type = 'blocks' GROUP BY issue_id`,
-		table, idPlaceholders,
-	)
-	if err := scanCounts(ctx, r.runner, outQ, idArgs, result, func(c *types.DependencyCounts, n int) { c.DependencyCount = n }); err != nil {
-		return nil, fmt.Errorf("db: DependencySQLRepository.CountsByIssueIDs (out): %w", err)
-	}
+	for _, table := range depTables {
+		col := depTargetColumnForTable(table)
 
-	//nolint:gosec // G201: table and depTargetExpr are hardcoded
-	inQ := fmt.Sprintf(
-		`SELECT %s AS depends_on_id, COUNT(*) FROM %s WHERE %s IN (%s) AND type = 'blocks' GROUP BY %s`,
-		depTargetExpr, table, depTargetExpr, idPlaceholders, depTargetExpr,
-	)
-	if err := scanCounts(ctx, r.runner, inQ, idArgs, result, func(c *types.DependencyCounts, n int) { c.DependentCount = n }); err != nil {
-		return nil, fmt.Errorf("db: DependencySQLRepository.CountsByIssueIDs (in): %w", err)
+		//nolint:gosec // G201: table is hardcoded
+		outQ := fmt.Sprintf(
+			`SELECT source_id, COUNT(*) FROM %s WHERE source_id IN (%s) AND type = 'blocks' GROUP BY source_id`,
+			table, idPlaceholders,
+		)
+		if err := scanCounts(ctx, r.runner, outQ, idArgs, result, func(c *types.DependencyCounts, n int) { c.DependencyCount += n }); err != nil {
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("db: DependencySQLRepository.CountsByIssueIDs (out) %s: %w", table, err)
+		}
+
+		//nolint:gosec // G201: table and col are hardcoded
+		inQ := fmt.Sprintf(
+			`SELECT %s AS depends_on_id, COUNT(*) FROM %s WHERE %s IN (%s) AND type = 'blocks' GROUP BY %s`,
+			col, table, col, idPlaceholders, col,
+		)
+		if err := scanCounts(ctx, r.runner, inQ, idArgs, result, func(c *types.DependencyCounts, n int) { c.DependentCount += n }); err != nil {
+			if dberrors.IsTableNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("db: DependencySQLRepository.CountsByIssueIDs (in) %s: %w", table, err)
+		}
 	}
 
 	return result, nil

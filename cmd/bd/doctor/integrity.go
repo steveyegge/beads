@@ -158,29 +158,32 @@ func CheckDependencyCyclesWithStore(ss *SharedStore) DoctorCheck {
 func checkDependencyCyclesWithStore(store *dolt.DoltStore) DoctorCheck {
 	db := store.UnderlyingDB()
 
-	// Query for cycles using simplified SQL (CONCAT for Dolt/MySQL compatibility)
+	// Query for cycles using simplified SQL (CONCAT for Dolt/MySQL compatibility).
+	// Edges come from the six split dep tables UNIONed into a single virtual edges
+	// relation that the recursive CTE then walks.
+	//nolint:gosec // G201: edges subquery is built from doctorDependencyUnionSQL (no user input)
 	query := `
 		WITH RECURSIVE paths AS (
 			SELECT
 				issue_id,
-				COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id,
+				depends_on_id,
 				issue_id as start_id,
-				CONCAT(issue_id, '→', COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)) as path,
+				CONCAT(issue_id, '→', depends_on_id) as path,
 				0 as depth
-			FROM dependencies
+			FROM (` + doctorDependencyUnionSQL() + `) e0
 
 			UNION ALL
 
 			SELECT
 				d.issue_id,
-				COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id,
+				d.depends_on_id,
 				p.start_id,
-				CONCAT(p.path, '→', COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external)),
+				CONCAT(p.path, '→', d.depends_on_id),
 				p.depth + 1
-			FROM dependencies d
+			FROM (` + doctorDependencyUnionSQL() + `) d
 			JOIN paths p ON d.issue_id = p.depends_on_id
 			WHERE p.depth < 100
-			  AND p.path NOT LIKE CONCAT('%', COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external), '→%')
+			  AND p.path NOT LIKE CONCAT('%', d.depends_on_id, '→%')
 		)
 		SELECT DISTINCT start_id
 		FROM paths

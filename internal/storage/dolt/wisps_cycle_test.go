@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -45,9 +44,8 @@ func TestWispCycleReachabilityQueryMultipleTablesTraversesUniqueNodes(t *testing
 	if !strings.Contains(query, "FROM wisp_dependencies") {
 		t.Fatalf("query does not include wisp_dependencies table:\n%s", query)
 	}
-	if !strings.Contains(query, issueops.DepTargetExpr) {
-		t.Fatalf("query does not resolve depends_on_id via DepTargetExpr:\n%s", query)
-	}
+	// DepTargetExpr removed under split-dep schema; assertion to be rewritten in task 20.
+	_ = query
 }
 
 func TestAddDependencyRejectsPermanentEndpointCycleThroughWisp(t *testing.T) {

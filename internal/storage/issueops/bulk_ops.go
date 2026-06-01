@@ -303,28 +303,34 @@ func FindWispDependentsRecursiveInTx(ctx context.Context, tx *sql.Tx, ids []stri
 		toProcess = toProcess[end:]
 
 		placeholders, args := buildSQLInClause(batch)
-		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(`SELECT issue_id FROM wisp_dependencies WHERE %s IN (%s)`, DepTargetExpr, placeholders),
-			args...)
-		if err != nil {
-			return discovered, fmt.Errorf("query wisp dependents: %w", err)
-		}
+		for _, depTable := range SourceDepTables(true) {
+			col := DepTargetColumnForTable(depTable)
+			rows, err := tx.QueryContext(ctx,
+				fmt.Sprintf(`SELECT source_id FROM %s WHERE %s IN (%s)`, depTable, col, placeholders),
+				args...)
+			if err != nil {
+				if isTableNotExistError(err) {
+					continue
+				}
+				return discovered, fmt.Errorf("query wisp dependents: %w", err)
+			}
 
-		for rows.Next() {
-			var depID string
-			if err := rows.Scan(&depID); err != nil {
-				_ = rows.Close()
-				return discovered, fmt.Errorf("scan wisp dependent: %w", err)
+			for rows.Next() {
+				var depID string
+				if err := rows.Scan(&depID); err != nil {
+					_ = rows.Close()
+					return discovered, fmt.Errorf("scan wisp dependent: %w", err)
+				}
+				if !seen[depID] {
+					seen[depID] = true
+					discovered[depID] = true
+					toProcess = append(toProcess, depID)
+				}
 			}
-			if !seen[depID] {
-				seen[depID] = true
-				discovered[depID] = true
-				toProcess = append(toProcess, depID)
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return discovered, fmt.Errorf("iterate wisp dependents: %w", err)
 			}
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
-			return discovered, fmt.Errorf("iterate wisp dependents: %w", err)
 		}
 	}
 

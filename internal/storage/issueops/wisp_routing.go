@@ -190,9 +190,113 @@ func PartitionWispIDsInTx(ctx context.Context, tx *sql.Tx, ids []string) (wispID
 // WispTableRouting returns the appropriate issue, label, event, and dependency
 // table names based on whether the ID is an active wisp. Call IsActiveWispInTx
 // first to determine isWisp.
+//
+// Deprecated: the depTable return is meaningless under the split-dependency
+// schema (migration 0050 / ignored 0009) because each (sourceKind, targetKind)
+// pair has its own table. Callers performing dep-table work should use
+// DepTableFor, SourceDepTables, TargetDepTables, or AllDepTables instead. The
+// depTable return is retained only for migration-window compatibility and will
+// be removed once all in-package call sites have been converted.
 func WispTableRouting(isWisp bool) (issueTable, labelTable, eventTable, depTable string) {
 	if isWisp {
 		return "wisps", "wisp_labels", "wisp_events", "wisp_dependencies"
 	}
 	return "issues", "labels", "events", "dependencies"
+}
+
+// DepTableFor returns the dependency table that stores edges from the given
+// source kind (issue vs wisp) to the given target kind. There is exactly one
+// table per (sourceIsWisp, target) pair under the split-dependency schema.
+func DepTableFor(sourceIsWisp bool, target DepTargetKind) string {
+	if sourceIsWisp {
+		switch target {
+		case DepTargetWisp:
+			return "wisp_wisp_dependencies"
+		case DepTargetExternal:
+			return "wisp_external_dependencies"
+		default:
+			return "wisp_issue_dependencies"
+		}
+	}
+	switch target {
+	case DepTargetWisp:
+		return "issue_wisp_dependencies"
+	case DepTargetExternal:
+		return "issue_external_dependencies"
+	default:
+		return "issue_issue_dependencies"
+	}
+}
+
+// SourceDepTables returns the three dep tables whose source side matches the
+// given source kind. Use when scanning all edges out of a known source class
+// (e.g., "find every dep where source_id is an issue"). Order is stable.
+func SourceDepTables(sourceIsWisp bool) []string {
+	if sourceIsWisp {
+		return []string{"wisp_issue_dependencies", "wisp_wisp_dependencies", "wisp_external_dependencies"}
+	}
+	return []string{"issue_issue_dependencies", "issue_wisp_dependencies", "issue_external_dependencies"}
+}
+
+// TargetDepTables returns the two dep tables whose target column matches the
+// given target kind (one issue-source, one wisp-source). Use when scanning
+// "who depends on this ID" given the ID's class. There is no caller for
+// DepTargetExternal in production code paths, but it is included for
+// completeness.
+func TargetDepTables(target DepTargetKind) []string {
+	switch target {
+	case DepTargetWisp:
+		return []string{"issue_wisp_dependencies", "wisp_wisp_dependencies"}
+	case DepTargetExternal:
+		return []string{"issue_external_dependencies", "wisp_external_dependencies"}
+	default:
+		return []string{"issue_issue_dependencies", "wisp_issue_dependencies"}
+	}
+}
+
+// AllDepTables returns all six dep tables in a stable order: issue-source
+// first (issue/wisp/external targets), then wisp-source. Use for operations
+// that must consider every edge regardless of endpoint class (e.g., cycle
+// detection's recursive CTE).
+func AllDepTables() []string {
+	return []string{
+		"issue_issue_dependencies",
+		"issue_wisp_dependencies",
+		"issue_external_dependencies",
+		"wisp_issue_dependencies",
+		"wisp_wisp_dependencies",
+		"wisp_external_dependencies",
+	}
+}
+
+// DepTargetColumn returns the typed target column name for the given target
+// kind under the split-dependency schema. Each new dep table has exactly one
+// target column, so callers that have already routed to a specific table
+// should typically use a literal column name; this helper is for code that
+// parameterizes by target kind (e.g., generic INSERT builders).
+func DepTargetColumn(target DepTargetKind) string {
+	switch target {
+	case DepTargetWisp:
+		return "depends_on_wisp_id"
+	case DepTargetExternal:
+		return "depends_on_external_id"
+	default:
+		return "depends_on_issue_id"
+	}
+}
+
+// DepTargetColumnForTable returns the typed target column on the given split
+// dep table. The six tables are named *_<k>_dependencies where <k> is one of
+// {issue, wisp, external}; the typed target column is depends_on_<k>_id.
+// Returns "" if the table is not a known split dep table.
+func DepTargetColumnForTable(table string) string {
+	switch {
+	case strings.HasSuffix(table, "_issue_dependencies"):
+		return "depends_on_issue_id"
+	case strings.HasSuffix(table, "_wisp_dependencies"):
+		return "depends_on_wisp_id"
+	case strings.HasSuffix(table, "_external_dependencies"):
+		return "depends_on_external_id"
+	}
+	return ""
 }

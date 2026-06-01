@@ -277,10 +277,10 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	}
 
 	// Derive related table names from the main table
-	depTable := "dependencies"
+	depTables := issueops.SourceDepTables(false)
 	labelTable := "labels"
 	if table == "wisps" {
-		depTable = "wisp_dependencies"
+		depTables = issueops.SourceDepTables(true)
 		labelTable = "wisp_labels"
 	}
 
@@ -500,15 +500,27 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 	// Parent filtering
 	if filter.ParentID != nil {
 		parentID := *filter.ParentID
-		//nolint:gosec // G201: depTable is hardcoded to "dependencies" or "wisp_dependencies"
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND %s = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", depTable, issueops.DepTargetExpr, depTable))
-		args = append(args, parentID, parentID)
+		var inClauses, notInClauses []string
+		for _, t := range depTables {
+			col := issueops.DepTargetColumnForTable(t)
+			inClauses = append(inClauses, fmt.Sprintf("SELECT source_id FROM %s WHERE type = 'parent-child' AND %s = ?", t, col))
+			notInClauses = append(notInClauses, fmt.Sprintf("SELECT source_id FROM %s WHERE type = 'parent-child'", t))
+			args = append(args, parentID)
+		}
+		//nolint:gosec // G201: depTables are hardcoded split dep tables
+		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (%s) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (%s)))",
+			strings.Join(inClauses, " UNION "), strings.Join(notInClauses, " UNION ")))
+		args = append(args, parentID)
 	}
 
 	// No-parent filtering
 	if filter.NoParent {
-		//nolint:gosec // G201: depTable is hardcoded to "dependencies" or "wisp_dependencies"
-		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')", depTable))
+		var notInClauses []string
+		for _, t := range depTables {
+			notInClauses = append(notInClauses, fmt.Sprintf("SELECT source_id FROM %s WHERE type = 'parent-child'", t))
+		}
+		//nolint:gosec // G201: depTables are hardcoded split dep tables
+		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (%s)", strings.Join(notInClauses, " UNION ")))
 	}
 
 	// Molecule type filtering
@@ -657,10 +669,9 @@ func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependen
 }
 
 func (t *doltTransaction) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, addOpts storage.DependencyAddOptions) error {
-	table := "dependencies"
+	sourceIsWisp := t.isActiveWisp(ctx, dep.IssueID)
 	sourceTable := "issues"
-	if t.isActiveWisp(ctx, dep.IssueID) {
-		table = "wisp_dependencies"
+	if sourceIsWisp {
 		sourceTable = "wisps"
 	}
 
@@ -677,66 +688,74 @@ func (t *doltTransaction) AddDependencyWithOptions(ctx context.Context, dep *typ
 		}
 	}
 
+	writeTable := issueops.DepTableFor(sourceIsWisp, kind)
 	opts := issueops.AddDependencyOpts{
 		SourceTable:    sourceTable,
 		TargetTable:    targetTable,
-		WriteTable:     table,
 		IsCrossPrefix:  isCrossPrefix,
 		SkipCycleCheck: addOpts.SkipCycleCheck,
 		TargetKind:     &kind,
 	}
-	if err := issueops.AddDependencyInTx(ctx, t.txFor(table), dep, actor, opts); err != nil {
+	if err := issueops.AddDependencyInTx(ctx, t.txFor(writeTable), dep, actor, opts); err != nil {
 		return err
 	}
-	t.dirty.MarkDirty(table)
+	t.dirty.MarkDirty(writeTable)
 	return nil
 }
 
 func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
-	table := "dependencies"
-	if t.isActiveWisp(ctx, issueID) {
-		table = "wisp_dependencies"
-	}
-
-	//nolint:gosec // G201: table is hardcoded
-	rows, err := t.txFor(table).QueryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
-		FROM %s
-		WHERE issue_id = ?
-	`, issueops.DepTargetExpr, table), issueID)
-	if err != nil {
-		return nil, wrapQueryError("get dependency records in tx", err)
-	}
-	defer rows.Close()
+	srcIsWisp := t.isActiveWisp(ctx, issueID)
+	depTables := issueops.SourceDepTables(srcIsWisp)
 
 	var deps []*types.Dependency
-	for rows.Next() {
-		var d types.Dependency
-		var metadata sql.NullString
-		var threadID sql.NullString
-		if err := rows.Scan(&d.IssueID, &d.DependsOnID, &d.Type, &d.CreatedAt, &d.CreatedBy, &metadata, &threadID); err != nil {
-			return nil, wrapScanError("get dependency records in tx", err)
+	for _, depTable := range depTables {
+		col := issueops.DepTargetColumnForTable(depTable)
+		//nolint:gosec // G201: depTable and col are hardcoded
+		rows, err := t.txFor(depTable).QueryContext(ctx, fmt.Sprintf(`
+			SELECT source_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
+			FROM %s
+			WHERE source_id = ?
+		`, col, depTable), issueID)
+		if err != nil {
+			return nil, wrapQueryError("get dependency records in tx", err)
 		}
-		if metadata.Valid {
-			d.Metadata = metadata.String
+		for rows.Next() {
+			var d types.Dependency
+			var metadata sql.NullString
+			var threadID sql.NullString
+			if err := rows.Scan(&d.IssueID, &d.DependsOnID, &d.Type, &d.CreatedAt, &d.CreatedBy, &metadata, &threadID); err != nil {
+				_ = rows.Close()
+				return nil, wrapScanError("get dependency records in tx", err)
+			}
+			if metadata.Valid {
+				d.Metadata = metadata.String
+			}
+			if threadID.Valid {
+				d.ThreadID = threadID.String
+			}
+			deps = append(deps, &d)
 		}
-		if threadID.Valid {
-			d.ThreadID = threadID.String
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, wrapQueryError("get dependency records in tx: rows", err)
 		}
-		deps = append(deps, &d)
 	}
-	return deps, rows.Err()
+	return deps, nil
 }
 
 func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	table := "dependencies"
-	if t.isActiveWisp(ctx, issueID) {
-		table = "wisp_dependencies"
-	}
-	if err := issueops.RemoveDependencyInTx(ctx, t.txFor(table), issueID, dependsOnID); err != nil {
+	sourceIsWisp := t.isActiveWisp(ctx, issueID)
+	// RemoveDependencyInTx probes the three source-matching tables internally
+	// to find the row regardless of target kind. Pick the right tx by source
+	// class (all three source-matching tables share a class) and mark all
+	// three dirty since we don't know which one held the row.
+	pickTable := issueops.SourceDepTables(sourceIsWisp)[0]
+	if err := issueops.RemoveDependencyInTx(ctx, t.txFor(pickTable), issueID, dependsOnID); err != nil {
 		return wrapExecError("remove dependency in tx", err)
 	}
-	t.dirty.MarkDirty(table)
+	for _, table := range issueops.SourceDepTables(sourceIsWisp) {
+		t.dirty.MarkDirty(table)
+	}
 	return nil
 }
 

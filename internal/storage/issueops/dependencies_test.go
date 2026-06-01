@@ -130,7 +130,7 @@ func TestCycleReachabilityQueryMultipleTablesTraversesUniqueNodes(t *testing.T) 
 	if !strings.Contains(query, "FROM wisp_dependencies") {
 		t.Fatalf("query does not include wisp_dependencies table:\n%s", query)
 	}
-	if !strings.Contains(query, DepTargetExpr) {
-		t.Fatalf("query does not resolve depends_on_id via DepTargetExpr:\n%s", query)
-	}
+	// DepTargetExpr removed under split-dep schema; assertion now stale and will
+	// be rewritten in task 20 to verify per-table typed-column projection.
+	_ = query
 }

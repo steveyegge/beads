@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
@@ -45,26 +46,34 @@ type doltDependentsIter struct {
 // matches GetDependentsWithMetadata. See the package doc for why the join
 // target per edge table is unambiguous.
 func (s *DoltStore) IterDependentsWithMetadata(ctx context.Context, issueID string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
-	q := fmt.Sprintf(`
-		SELECT %s, d.type
-		FROM issues i
-		JOIN dependencies d ON d.issue_id = i.id
-		WHERE %s = ?
-		UNION ALL
-		SELECT %s, d.type
-		FROM wisps w
-		JOIN wisp_dependencies d ON d.issue_id = w.id
-		WHERE %s = ?
-		ORDER BY created_at ASC
-	`, prefixedIssueColumns("i"), depTargetExprWithAlias("d"), prefixedIssueColumns("w"), depTargetExprWithAlias("d"))
-	return s.iterIssuesWithDepType(ctx, q, issueID, issueID)
-}
-
-func depTargetExprWithAlias(alias string) string {
-	if alias == "" {
-		return depTargetExpr
+	// Union across issue-source and wisp-source dep tables, joining each to
+	// its home issue table. Only issue-target tables can have a dependent
+	// pointing at issueID via depends_on_issue_id; the wisp/external target
+	// tables cannot have issueID as a target by class. We scan both target
+	// kinds (issue/wisp) so a dependent that was promoted/demoted still shows.
+	type joinSpec struct {
+		issueTable, alias, depTable string
 	}
-	return fmt.Sprintf("COALESCE(%s.depends_on_issue_id, %s.depends_on_wisp_id, %s.depends_on_external)", alias, alias, alias)
+	specs := []joinSpec{
+		{"issues", "i", "issue_issue_dependencies"},
+		{"issues", "i", "issue_wisp_dependencies"},
+		{"wisps", "w", "wisp_issue_dependencies"},
+		{"wisps", "w", "wisp_wisp_dependencies"},
+	}
+	parts := make([]string, 0, len(specs))
+	args := make([]any, 0, len(specs))
+	for _, sp := range specs {
+		col := issueops.DepTargetColumnForTable(sp.depTable)
+		parts = append(parts, fmt.Sprintf(`
+			SELECT %s, d.type
+			FROM %s %s
+			JOIN %s d ON d.source_id = %s.id
+			WHERE d.%s = ?`,
+			prefixedIssueColumns(sp.alias), sp.issueTable, sp.alias, sp.depTable, sp.alias, col))
+		args = append(args, issueID)
+	}
+	q := strings.Join(parts, " UNION ALL ") + " ORDER BY created_at ASC"
+	return s.iterIssuesWithDepType(ctx, q, args...)
 }
 
 // IterDependenciesWithMetadata streams dependencies (issues issueID depends

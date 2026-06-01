@@ -102,9 +102,10 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 			inClause, args := buildSQLInClause(batch)
 
 			externalBySource := make(map[string][]string)
-			for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+			for _, depTable := range AllDepTables() {
+				col := DepTargetColumnForTable(depTable)
 				rows, err := tx.QueryContext(ctx,
-					fmt.Sprintf(`SELECT %s AS depends_on_id, issue_id FROM %s WHERE %s`, DepTargetExpr, depTable, depTargetIn("", inClause)),
+					fmt.Sprintf(`SELECT %s AS depends_on_id, source_id FROM %s WHERE %s IN (%s)`, col, depTable, col, inClause),
 					args...)
 				if err != nil {
 					if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -159,14 +160,20 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 	}
 
 	var depsCount, labelsCount, eventsCount int
-	if depsCount, err = countRowsForIssueIDsInTx(ctx, tx, "dependencies", finalRegularIDs); err != nil {
-		return nil, fmt.Errorf("count dependencies: %w", err)
+	for _, depTable := range SourceDepTables(false) {
+		n, cerr := countRowsForSourceIDsInTx(ctx, tx, depTable, finalRegularIDs)
+		if cerr != nil {
+			return nil, fmt.Errorf("count dependencies from %s: %w", depTable, cerr)
+		}
+		depsCount += n
 	}
-	wispDepsCount, err := countRowsForIssueIDsInTx(ctx, tx, "wisp_dependencies", cascadeWispIDs)
-	if err != nil {
-		return nil, fmt.Errorf("count wisp dependencies: %w", err)
+	for _, depTable := range SourceDepTables(true) {
+		n, cerr := countRowsForSourceIDsInTx(ctx, tx, depTable, cascadeWispIDs)
+		if cerr != nil {
+			return nil, fmt.Errorf("count wisp dependencies from %s: %w", depTable, cerr)
+		}
+		depsCount += n
 	}
-	depsCount += wispDepsCount
 
 	if labelsCount, err = countRowsForIssueIDsInTx(ctx, tx, "labels", finalRegularIDs); err != nil {
 		return nil, fmt.Errorf("count labels: %w", err)
@@ -194,9 +201,10 @@ func DeleteIssuesInTx(ctx context.Context, tx *sql.Tx, ids []string, cascade boo
 		batch := expandedRegularIDs[i:end]
 		batchInClause, batchArgs := buildSQLInClause(batch)
 
-		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+		for _, depTable := range AllDepTables() {
+			col := DepTargetColumnForTable(depTable)
 			rows, err := tx.QueryContext(ctx,
-				fmt.Sprintf(`SELECT issue_id FROM %s WHERE %s`, depTable, depTargetIn("", batchInClause)),
+				fmt.Sprintf(`SELECT source_id FROM %s WHERE %s IN (%s)`, depTable, col, batchInClause),
 				batchArgs...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -294,9 +302,10 @@ func findAllDependentsRecursiveInTx(ctx context.Context, tx *sql.Tx, ids []strin
 		toProcess = toProcess[batchEnd:]
 
 		inClause, args := buildSQLInClause(batch)
-		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+		for _, depTable := range AllDepTables() {
+			col := DepTargetColumnForTable(depTable)
 			rows, err := tx.QueryContext(ctx,
-				fmt.Sprintf(`SELECT issue_id FROM %s WHERE %s`, depTable, depTargetIn("", inClause)),
+				fmt.Sprintf(`SELECT source_id FROM %s WHERE %s IN (%s)`, depTable, col, inClause),
 				args...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -340,9 +349,10 @@ func findExternalDependentsBatchedInTx(ctx context.Context, tx *sql.Tx, ids []st
 		batch := ids[i:end]
 		inClause, args := buildSQLInClause(batch)
 
-		for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+		for _, depTable := range AllDepTables() {
+			col := DepTargetColumnForTable(depTable)
 			rows, err := tx.QueryContext(ctx,
-				fmt.Sprintf(`SELECT issue_id FROM %s WHERE %s`, depTable, depTargetIn("", inClause)),
+				fmt.Sprintf(`SELECT source_id FROM %s WHERE %s IN (%s)`, depTable, col, inClause),
 				args...)
 			if err != nil {
 				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
@@ -372,6 +382,32 @@ func findExternalDependentsBatchedInTx(ctx context.Context, tx *sql.Tx, ids []st
 		result = append(result, id)
 	}
 	return result, nil
+}
+
+//nolint:gosec // G201: table is one of the split dep tables (hardcoded by callers).
+func countRowsForSourceIDsInTx(ctx context.Context, tx *sql.Tx, table string, ids []string) (int, error) {
+	total := 0
+	for i := 0; i < len(ids); i += deleteBatchSize {
+		end := i + deleteBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		inClause, args := buildSQLInClause(ids[i:end])
+		var count int
+		if err := tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE source_id IN (%s)`, table, inClause),
+			args...).Scan(&count); err != nil {
+			if optionalBlockedTable(table) && isTableNotExistError(err) {
+				continue
+			}
+			if isTableNotExistError(err) {
+				continue
+			}
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
 }
 
 //nolint:gosec // G201: table is selected by callers from fixed issue/wisp auxiliary tables.

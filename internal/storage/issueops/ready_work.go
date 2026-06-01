@@ -146,7 +146,11 @@ func buildReadyWorkPredicates(ctx context.Context, tx *sql.Tx, filter types.Work
 		if descErr != nil {
 			return nil, fmt.Errorf("get parent descendants: %w", descErr)
 		}
-		parentClauses := []string{fmt.Sprintf("(id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child'))", tables.Dependencies)}
+		var notInClauses []string
+		for _, t := range tables.DepTables {
+			notInClauses = append(notInClauses, fmt.Sprintf("SELECT source_id FROM %s WHERE type = 'parent-child'", t))
+		}
+		parentClauses := []string{fmt.Sprintf("(id LIKE CONCAT(?, '.%%') AND id NOT IN (%s))", strings.Join(notInClauses, " UNION "))}
 		args = append(args, parentID)
 		for start := 0; start < len(descendantIDs); start += queryBatchSize {
 			end := start + queryBatchSize
@@ -161,8 +165,16 @@ func buildReadyWorkPredicates(ctx context.Context, tx *sql.Tx, filter types.Work
 	}
 
 	if filter.MoleculeID != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND %s = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", tables.Dependencies, DepTargetExpr, tables.Dependencies))
-		args = append(args, filter.MoleculeID, filter.MoleculeID)
+		var inClauses, notInClauses []string
+		for _, t := range tables.DepTables {
+			col := DepTargetColumnForTable(t)
+			inClauses = append(inClauses, fmt.Sprintf("SELECT source_id FROM %s WHERE type = 'parent-child' AND %s = ?", t, col))
+			notInClauses = append(notInClauses, fmt.Sprintf("SELECT source_id FROM %s WHERE type = 'parent-child'", t))
+			args = append(args, filter.MoleculeID)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (%s) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (%s)))",
+			strings.Join(inClauses, " UNION "), strings.Join(notInClauses, " UNION ")))
+		args = append(args, filter.MoleculeID)
 	}
 
 	if filter.HasMetadataKey != "" {
@@ -661,41 +673,44 @@ func getChildrenOfDeferredParentsInTx(ctx context.Context, tx *sql.Tx) ([]string
 	}
 
 	var childIDs []string
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
-		for _, issueTable := range []string{"issues", "wisps"} {
-			targetCol := "depends_on_issue_id"
-			if issueTable == "wisps" {
-				targetCol = "depends_on_wisp_id"
+	type pairing struct {
+		depTable, issueTable, targetCol string
+	}
+	// Only issue-target and wisp-target dep tables can have a JOIN to a parent
+	// row (external targets have no parent row to JOIN to). Pair each with the
+	// matching parent table.
+	pairings := []pairing{
+		{"issue_issue_dependencies", "issues", "depends_on_issue_id"},
+		{"issue_wisp_dependencies", "wisps", "depends_on_wisp_id"},
+		{"wisp_issue_dependencies", "issues", "depends_on_issue_id"},
+		{"wisp_wisp_dependencies", "wisps", "depends_on_wisp_id"},
+	}
+	for _, p := range pairings {
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+			SELECT dep.source_id
+			FROM %s dep
+			JOIN %s parent ON parent.id = dep.%s
+			WHERE dep.type = 'parent-child'
+			  AND parent.defer_until IS NOT NULL
+			  AND parent.defer_until > UTC_TIMESTAMP()
+		`, p.depTable, p.issueTable, p.targetCol))
+		if err != nil {
+			if isTableNotExistError(err) {
+				continue
 			}
-			rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-				SELECT dep.issue_id
-				FROM %s dep
-				JOIN %s parent ON parent.id = dep.%s
-				WHERE dep.type = 'parent-child'
-				  AND parent.defer_until IS NOT NULL
-				  AND parent.defer_until > UTC_TIMESTAMP()
-			`, depTable, issueTable, targetCol))
-			if err != nil {
-				if depTable == "wisp_dependencies" && isTableNotExistError(err) {
-					break
-				}
-				if issueTable == "wisps" && isTableNotExistError(err) {
-					continue
-				}
-				return nil, fmt.Errorf("deferred parents: get deferred children from %s/%s: %w", depTable, issueTable, err)
+			return nil, fmt.Errorf("deferred parents: get deferred children from %s/%s: %w", p.depTable, p.issueTable, err)
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("deferred parents: scan deferred child from %s/%s: %w", p.depTable, p.issueTable, err)
 			}
-			for rows.Next() {
-				var id string
-				if err := rows.Scan(&id); err != nil {
-					_ = rows.Close()
-					return nil, fmt.Errorf("deferred parents: scan deferred child from %s/%s: %w", depTable, issueTable, err)
-				}
-				childIDs = append(childIDs, id)
-			}
-			_ = rows.Close()
-			if err := rows.Err(); err != nil {
-				return nil, fmt.Errorf("deferred parents: child rows from %s/%s: %w", depTable, issueTable, err)
-			}
+			childIDs = append(childIDs, id)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("deferred parents: child rows from %s/%s: %w", p.depTable, p.issueTable, err)
 		}
 	}
 	return childIDs, nil
@@ -707,7 +722,7 @@ func getParentedIDSetInTx(ctx context.Context, tx *sql.Tx, issueIDs []string) (m
 	if len(issueIDs) == 0 {
 		return parented, nil
 	}
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+	for _, depTable := range AllDepTables() {
 		for start := 0; start < len(issueIDs); start += queryBatchSize {
 			end := start + queryBatchSize
 			if end > len(issueIDs) {
@@ -715,12 +730,12 @@ func getParentedIDSetInTx(ctx context.Context, tx *sql.Tx, issueIDs []string) (m
 			}
 			placeholders, args := buildSQLInClause(issueIDs[start:end])
 			query := fmt.Sprintf(`
-				SELECT issue_id FROM %s
-				WHERE type = 'parent-child' AND issue_id IN (%s)
+				SELECT source_id FROM %s
+				WHERE type = 'parent-child' AND source_id IN (%s)
 			`, depTable, placeholders)
 			rows, err := tx.QueryContext(ctx, query, args...)
 			if err != nil {
-				if depTable == "wisp_dependencies" && isTableNotExistError(err) {
+				if isTableNotExistError(err) {
 					break
 				}
 				return nil, fmt.Errorf("get parented IDs from %s: %w", depTable, err)

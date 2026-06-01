@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -96,17 +97,35 @@ func runFilterSearchQueryInTx(ctx context.Context, tx *sql.Tx, query string, fil
 
 //nolint:gosec // G201: SQL fragments are caller-built from hardcoded shapes
 func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, whereSQL, orderBySQL, limitSQL string, args []interface{}, includeWispReverseDeps bool, skipLabels bool) ([]*types.IssueWithCounts, error) {
-	reverseBlockerSelect := `
-				SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS dep_id
-				FROM dependencies WHERE type = 'blocks'
-	`
+	// Reverse-blocker scan must consider every dep table when wisp source
+	// edges are included; otherwise only issue-source tables.
+	var reverseBlockerTables []string
 	if includeWispReverseDeps {
-		reverseBlockerSelect += `
-				UNION ALL
-				SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS dep_id
-				FROM wisp_dependencies WHERE type = 'blocks'
-		`
+		reverseBlockerTables = AllDepTables()
+	} else {
+		reverseBlockerTables = SourceDepTables(false)
 	}
+	reverseBlockerParts := make([]string, 0, len(reverseBlockerTables))
+	for _, t := range reverseBlockerTables {
+		col := DepTargetColumnForTable(t)
+		reverseBlockerParts = append(reverseBlockerParts, fmt.Sprintf(`SELECT %s AS dep_id FROM %s WHERE type = 'blocks'`, col, t))
+	}
+	reverseBlockerSelect := strings.Join(reverseBlockerParts, " UNION ALL ")
+
+	// Per-source subqueries (dep counts, parent_id, deps JSON) UNION across
+	// the three source-routed dep tables for this filter's source class.
+	depCountParts := make([]string, 0, len(tables.DepTables))
+	parentParts := make([]string, 0, len(tables.DepTables))
+	depJSONParts := make([]string, 0, len(tables.DepTables))
+	for _, t := range tables.DepTables {
+		col := DepTargetColumnForTable(t)
+		depCountParts = append(depCountParts, fmt.Sprintf(`SELECT source_id FROM %s WHERE type = 'blocks'`, t))
+		parentParts = append(parentParts, fmt.Sprintf(`SELECT source_id, %s AS parent_id FROM %s WHERE type = 'parent-child'`, col, t))
+		depJSONParts = append(depJSONParts, fmt.Sprintf(`SELECT source_id, %s AS dep_json FROM %s`, readyWorkDepJSONObject(col), t))
+	}
+	depCountUnion := strings.Join(depCountParts, " UNION ALL ")
+	parentUnion := strings.Join(parentParts, " UNION ALL ")
+	depJSONUnion := strings.Join(depJSONParts, " UNION ALL ")
 
 	labelsSelect := "l.labels_json AS labels_json"
 	labelsJoin := fmt.Sprintf(`
@@ -131,11 +150,10 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 		FROM %s i
 		%s
 		LEFT JOIN (
-			SELECT issue_id, COUNT(*) AS cnt
-			FROM %s
-			WHERE type = 'blocks'
-			GROUP BY issue_id
-		) dc ON dc.issue_id = i.id
+			SELECT source_id, COUNT(*) AS cnt
+			FROM (%s) src_deps
+			GROUP BY source_id
+		) dc ON dc.source_id = i.id
 		LEFT JOIN (
 			SELECT dep_id, COUNT(*) AS cnt FROM (
 				%s
@@ -147,17 +165,15 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 			GROUP BY issue_id
 		) cc ON cc.issue_id = i.id
 		LEFT JOIN (
-			SELECT issue_id,
-			       MIN(COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)) AS parent_id
-			FROM %s
-			WHERE type = 'parent-child'
-			GROUP BY issue_id
-		) pc ON pc.issue_id = i.id
+			SELECT source_id, MIN(parent_id) AS parent_id
+			FROM (%s) src_parents
+			GROUP BY source_id
+		) pc ON pc.source_id = i.id
 		LEFT JOIN (
-			SELECT issue_id, JSON_ARRAYAGG(%s) AS deps_json
-			FROM %s
-			GROUP BY issue_id
-		) d ON d.issue_id = i.id
+			SELECT source_id, JSON_ARRAYAGG(dep_json) AS deps_json
+			FROM (%s) src_dep_rows
+			GROUP BY source_id
+		) d ON d.source_id = i.id
 		%s
 		%s
 		%s
@@ -166,12 +182,11 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 		labelsSelect,
 		tables.Main,
 		labelsJoin,
-		tables.Dependencies,
+		depCountUnion,
 		reverseBlockerSelect,
 		tables.Comments,
-		tables.Dependencies,
-		readyWorkDepJSONObject,
-		tables.Dependencies,
+		parentUnion,
+		depJSONUnion,
 		whereSQL,
 		orderBySQL,
 		limitSQL,

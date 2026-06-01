@@ -43,11 +43,12 @@ func GetEpicsEligibleForClosureInTx(ctx context.Context, tx *sql.Tx) ([]*types.E
 	for _, id := range epicIDs {
 		epicSet[id] = true
 	}
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+	for _, depTable := range AllDepTables() {
+		col := DepTargetColumnForTable(depTable)
 		depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT %s AS parent_id, issue_id FROM %s
+			SELECT %s AS parent_id, source_id FROM %s
 			WHERE type = 'parent-child' AND %s IS NOT NULL
-		`, DepTargetExpr, depTable, DepTargetExpr))
+		`, col, depTable, col))
 		if err != nil {
 			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
 				continue // wisp_dependencies may not exist on pre-migration databases

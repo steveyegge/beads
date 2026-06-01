@@ -254,6 +254,10 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 		return applied, fmt.Errorf("unstaging ignored migration tables: %w", err)
 	}
 
+	if err := verifySplitDependencyMigration(ctx, db); err != nil {
+		return applied, err
+	}
+
 	if applied == 0 && !backfilled && appliedIgnored == 0 {
 		return applied, nil
 	}
