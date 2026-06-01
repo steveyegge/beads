@@ -562,6 +562,10 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, remoteCheck)
 	// Don't fail overall for remote discrepancies, just warn
 
+	// Check 7g: Migration content skew vs the cached remote ref (#4259). Advisory.
+	skewCheck := convertWithCategory(doctor.CheckMigrationContentSkew(sharedStore), doctor.CategoryData)
+	result.Checks = append(result.Checks, skewCheck)
+
 	// Dolt health checks (connection, schema, issue count, status).
 	for _, dc := range doctor.RunDoltHealthChecks(path) {
 		result.Checks = append(result.Checks, convertDoctorCheck(dc))

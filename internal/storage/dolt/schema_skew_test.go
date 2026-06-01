@@ -63,14 +63,37 @@ func TestCheckForwardDrift_CurrentVersion_NoError(t *testing.T) {
 
 // TestCheckForwardDrift_EscapeHatch_ReturnsNil verifies that
 // BD_IGNORE_SCHEMA_SKEW=1 suppresses the forward-drift error.
+//
+// Uses a dedicated CREATE/DROP database rather than setupTestStore: this test
+// calls t.Setenv, which Go forbids in a parallel test, and setupTestStore marks
+// the test parallel. (setupTestStore + t.Setenv panics the dolt test binary
+// whenever the test Dolt server is running.)
 func TestCheckForwardDrift_EscapeHatch_ReturnsNil(t *testing.T) {
+	skipIfNoDolt(t)
 	t.Setenv("BD_IGNORE_SCHEMA_SKEW", "1")
-
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
 
 	ctx, cancel := testContext(t)
 	defer cancel()
+
+	tmpDir := t.TempDir()
+	dbName := uniqueTestDBName(t)
+
+	store, err := New(ctx, &Config{
+		Path:            tmpDir,
+		CommitterName:   "test",
+		CommitterEmail:  "test@example.com",
+		Database:        dbName,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("New (create): %v", err)
+	}
+	defer func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*testTimeout)
+		defer dropCancel()
+		_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+		store.Close()
+	}()
 
 	if _, err := store.db.ExecContext(ctx,
 		"INSERT INTO schema_migrations (version) VALUES (?)",

@@ -106,11 +106,12 @@ func expectOnePendingMigration(t *testing.T, mock sqlmock.Sqlmock) {
 	expectDoltStatusRows(mock)
 	mock.ExpectExec("(?s)^CREATE TABLE IF NOT EXISTS schema_migrations").
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	expectContentHashColumnExists(mock)
 	expectScalar(mock, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations", "version", latest-1)
 	mock.ExpectExec("(?s).*").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(regexp.QuoteMeta("INSERT IGNORE INTO schema_migrations (version) VALUES (?)")).
-		WithArgs(latest).
+	mock.ExpectExec(regexp.QuoteMeta("INSERT IGNORE INTO schema_migrations (version, content_hash) VALUES (?, ?)")).
+		WithArgs(latest, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	expectScalar(mock, "SELECT COUNT(*) FROM custom_types", "count", 1)
 	expectScalar(mock, "SELECT COUNT(*) FROM custom_statuses", "count", 1)
@@ -118,6 +119,7 @@ func expectOnePendingMigration(t *testing.T, mock sqlmock.Sqlmock) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("(?s)^CREATE TABLE IF NOT EXISTS ignored_schema_migrations").
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	expectContentHashColumnExists(mock)
 	expectScalar(mock, "SELECT COALESCE(MAX(version), 0) FROM ignored_schema_migrations", "version", latestIgnored)
 	expectDoltStatusRows(mock)
 	expectDoltStatusRows(mock)
@@ -128,6 +130,13 @@ func expectOnePendingMigration(t *testing.T, mock sqlmock.Sqlmock) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta("CALL DOLT_COMMIT('-m', 'schema: apply migrations')")).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+}
+
+// expectContentHashColumnExists mocks the idempotent ensureContentHashColumn
+// probe, reporting that the content_hash column already exists (so no ALTER runs).
+func expectContentHashColumnExists(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM INFORMATION_SCHEMA\.COLUMNS`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 }
 
 func expectScalar(mock sqlmock.Sqlmock, query, column string, value any) {
