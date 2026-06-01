@@ -11,7 +11,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-var permanentIssueAuxTables = []string{"issues", "labels", "dependencies", "events", "comments"}
+var permanentIssueAuxTables = append(
+	[]string{"issues", "labels", "events", "comments"},
+	issueops.SourceDepTables(false)...,
+)
 
 // IsEphemeralID returns true if the ID belongs to an ephemeral issue.
 func IsEphemeralID(id string) bool {
@@ -226,15 +229,25 @@ func (s *DoltStore) DemoteToWisp(ctx context.Context, id string, updates map[str
 			return fmt.Errorf("delete copied labels for demoted issue %s: %w", id, err)
 		}
 
-		if _, err := tx.ExecContext(ctx, `
-		INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id)
-		SELECT issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id
-		FROM dependencies WHERE issue_id = ?
-	`, id); err != nil {
-			return fmt.Errorf("copy dependencies for demoted issue %s: %w", id, err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM dependencies WHERE issue_id = ?`, id); err != nil {
-			return fmt.Errorf("delete copied dependencies for demoted issue %s: %w", id, err)
+		for _, pair := range []struct {
+			src, dst, targetCol string
+		}{
+			{"issue_issue_dependencies", "wisp_issue_dependencies", "depends_on_issue_id"},
+			{"issue_wisp_dependencies", "wisp_wisp_dependencies", "depends_on_wisp_id"},
+			{"issue_external_dependencies", "wisp_external_dependencies", "depends_on_external_id"},
+		} {
+			//nolint:gosec // G201: table and column names are fixed split-dep constants
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+				INSERT IGNORE INTO %s (source_id, %s, type, created_at, created_by, metadata, thread_id)
+				SELECT source_id, %s, type, created_at, created_by, metadata, thread_id
+				FROM %s WHERE source_id = ?
+			`, pair.dst, pair.targetCol, pair.targetCol, pair.src), id); err != nil {
+				return fmt.Errorf("copy %s for demoted issue %s: %w", pair.src, id, err)
+			}
+			//nolint:gosec // G201: table name is a fixed split-dep constant
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE source_id = ?`, pair.src), id); err != nil {
+				return fmt.Errorf("delete copied %s for demoted issue %s: %w", pair.src, id, err)
+			}
 		}
 
 		if _, err := tx.ExecContext(ctx, `
@@ -302,14 +315,9 @@ func (s *DoltStore) doltAddAndCommitInTx(ctx context.Context, tx *sql.Tx, tables
 	return nil
 }
 
-// getAllWispDependencyRecords returns all wisp dependency records, keyed by issue_id.
 // Used by DetectCycles to include wisp dependencies in cross-table cycle detection. (bd-xe27)
 func (s *DoltStore) getAllWispDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
-	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
-		FROM wisp_dependencies
-		ORDER BY issue_id
-	`, issueops.DepTargetExpr))
+	rows, err := s.queryContext(ctx, wispDepUnionQuery("", true))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all wisp dependency records: %w", err)
 	}
@@ -326,17 +334,31 @@ func (s *DoltStore) getAllWispDependencyRecords(ctx context.Context) (map[string
 	return result, rows.Err()
 }
 
-// getWispDependencyRecords returns raw dependency records for a wisp from wisp_dependencies.
 func (s *DoltStore) getWispDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
-	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
-		FROM wisp_dependencies
-		WHERE issue_id = ?
-	`, issueops.DepTargetExpr), issueID)
+	rows, err := s.queryContext(ctx, wispDepUnionQuery("WHERE source_id = ?", false), issueID, issueID, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wisp dependency records: %w", err)
 	}
 	defer rows.Close()
 
 	return scanDependencyRows(rows)
+}
+
+func wispDepUnionQuery(wherePerArm string, sorted bool) string {
+	parts := make([]string, 0, 3)
+	for _, t := range issueops.SourceDepTables(true) {
+		col := issueops.DepTargetColumnForTable(t)
+		arm := fmt.Sprintf(
+			`SELECT source_id AS issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id FROM %s`,
+			col, t)
+		if wherePerArm != "" {
+			arm += " " + wherePerArm
+		}
+		parts = append(parts, arm)
+	}
+	q := strings.Join(parts, " UNION ALL ")
+	if sorted {
+		q += " ORDER BY issue_id"
+	}
+	return q
 }

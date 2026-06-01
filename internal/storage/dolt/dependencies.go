@@ -43,7 +43,6 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		opts := issueops.AddDependencyOpts{
 			SourceTable:   "issues",
 			TargetTable:   targetTable,
-			WriteTable:    "dependencies",
 			IsCrossPrefix: isCrossPrefix,
 			TargetKind:    &kind,
 		}
@@ -52,7 +51,8 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		return err
 	}
 	// GH#2455: Use explicit DOLT_ADD to avoid sweeping up stale config changes.
-	return s.doltAddAndCommit(ctx, []string{"dependencies"}, "dependency: add "+string(dep.Type)+" "+dep.IssueID+" -> "+dep.DependsOnID)
+	writeTable := issueops.DepTableFor(false, kind)
+	return s.doltAddAndCommit(ctx, []string{writeTable}, "dependency: add "+string(dep.Type)+" "+dep.IssueID+" -> "+dep.DependsOnID)
 }
 
 // RemoveDependency removes a dependency between two issues.
@@ -84,8 +84,7 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sql commit: %w", err)
 	}
-	// GH#2455: Use explicit DOLT_ADD to avoid sweeping up stale config changes.
-	if err := s.doltAddAndCommit(ctx, []string{"dependencies"}, "dependency: remove "+issueID+" -> "+dependsOnID); err != nil {
+	if err := s.doltAddAndCommit(ctx, issueops.SourceDepTables(false), "dependency: remove "+issueID+" -> "+dependsOnID); err != nil {
 		return err
 	}
 	return nil
@@ -119,11 +118,14 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 		return s.getWispDependenciesWithMetadata(ctx, issueID)
 	}
 
-	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT %s AS depends_on_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id
-		FROM dependencies d
-		WHERE d.issue_id = ?
-	`, issueops.DepTargetExpr), issueID)
+	unionParts := make([]string, 0, 3)
+	for _, t := range issueops.SourceDepTables(false) {
+		col := issueops.DepTargetColumnForTable(t)
+		unionParts = append(unionParts, fmt.Sprintf(
+			`SELECT %s AS depends_on_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id FROM %s d WHERE d.source_id = ?`,
+			col, t))
+	}
+	rows, err := s.queryContext(ctx, strings.Join(unionParts, " UNION ALL "), issueID, issueID, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies with metadata: %w", err)
 	}
@@ -201,11 +203,16 @@ func (s *DoltStore) GetDependencyRecords(ctx context.Context, issueID string) ([
 		return s.getWispDependencyRecords(ctx, issueID)
 	}
 
-	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
-		FROM dependencies
-		WHERE issue_id = ?
-	`, issueops.DepTargetExpr), issueID)
+	unionParts := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	for _, t := range issueops.SourceDepTables(false) {
+		col := issueops.DepTargetColumnForTable(t)
+		unionParts = append(unionParts, fmt.Sprintf(
+			`SELECT source_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id FROM %s WHERE source_id = ?`,
+			col, t))
+		args = append(args, issueID)
+	}
+	rows, err := s.queryContext(ctx, strings.Join(unionParts, " UNION ALL "), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependency records: %w", err)
 	}

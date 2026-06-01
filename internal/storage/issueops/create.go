@@ -625,10 +625,7 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 		if len(issue.Dependencies) == 0 {
 			continue
 		}
-		depTable := "dependencies"
-		if IsWisp(issue) {
-			depTable = "wisp_dependencies"
-		}
+		sourceIsWisp := IsWisp(issue)
 		for _, dep := range issue.Dependencies {
 			// Default IssueID to the owning issue when not pre-set (e.g.,
 			// markdown bulk create where the ID is auto-generated).
@@ -668,12 +665,14 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx *sql.Tx, issue
 			if createdAt.IsZero() {
 				createdAt = time.Now().UTC()
 			}
-			//nolint:gosec // G201: depTable is one of two hardcoded constants; target column from DepTargetKind.Column()
+			depTable := DepTableFor(sourceIsWisp, kind)
+			targetCol := DepTargetColumn(kind)
+			//nolint:gosec // G201: depTable from DepTableFor; targetCol from DepTargetColumn
 			sqlResult, err := tx.ExecContext(ctx, fmt.Sprintf(`
-					INSERT INTO %s (issue_id, %s, type, created_by, created_at)
+					INSERT INTO %s (source_id, %s, type, created_by, created_at)
 					VALUES (?, ?, ?, ?, ?)
 					ON DUPLICATE KEY UPDATE type = type
-				`, depTable, kind.Column()), dep.IssueID, dep.DependsOnID, dep.Type, actor, createdAt)
+				`, depTable, targetCol), dep.IssueID, dep.DependsOnID, dep.Type, actor, createdAt)
 			if err != nil {
 				return result, fmt.Errorf("failed to insert dependency %s -> %s: %w", dep.IssueID, dep.DependsOnID, err)
 			}

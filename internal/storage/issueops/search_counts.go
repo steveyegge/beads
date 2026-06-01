@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -96,17 +97,46 @@ func runFilterSearchQueryInTx(ctx context.Context, tx *sql.Tx, query string, fil
 
 //nolint:gosec // G201: SQL fragments are caller-built from hardcoded shapes
 func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, whereSQL, orderBySQL, limitSQL string, args []interface{}, includeWispReverseDeps bool, skipLabels bool) ([]*types.IssueWithCounts, error) {
-	reverseBlockerSelect := `
-				SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS dep_id
-				FROM dependencies WHERE type = 'blocks'
-	`
+	var reverseBlockerTables []string
 	if includeWispReverseDeps {
-		reverseBlockerSelect += `
-				UNION ALL
-				SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS dep_id
-				FROM wisp_dependencies WHERE type = 'blocks'
-		`
+		reverseBlockerTables = AllDepTables()
+	} else {
+		reverseBlockerTables = SourceDepTables(false)
 	}
+	reverseBlockerTables, err := filterExistingDepTablesInTx(ctx, tx, reverseBlockerTables)
+	if err != nil {
+		return nil, err
+	}
+	reverseBlockerParts := make([]string, 0, len(reverseBlockerTables))
+	for _, t := range reverseBlockerTables {
+		col := DepTargetColumnForTable(t)
+		reverseBlockerParts = append(reverseBlockerParts, fmt.Sprintf(`SELECT %s AS dep_id FROM %s WHERE type = 'blocks'`, col, t))
+	}
+	if len(reverseBlockerParts) == 0 {
+		reverseBlockerParts = append(reverseBlockerParts, `SELECT NULL AS dep_id WHERE 1 = 0`)
+	}
+	reverseBlockerSelect := strings.Join(reverseBlockerParts, " UNION ALL ")
+	depTablesForSource, err := filterExistingDepTablesInTx(ctx, tx, tables.DepTables)
+	if err != nil {
+		return nil, err
+	}
+	depCountParts := make([]string, 0, len(depTablesForSource))
+	parentParts := make([]string, 0, len(depTablesForSource))
+	depJSONParts := make([]string, 0, len(depTablesForSource))
+	for _, t := range depTablesForSource {
+		col := DepTargetColumnForTable(t)
+		depCountParts = append(depCountParts, fmt.Sprintf(`SELECT source_id FROM %s WHERE type = 'blocks'`, t))
+		parentParts = append(parentParts, fmt.Sprintf(`SELECT source_id, %s AS parent_id FROM %s WHERE type = 'parent-child'`, col, t))
+		depJSONParts = append(depJSONParts, fmt.Sprintf(`SELECT source_id, %s AS dep_json FROM %s`, readyWorkDepJSONObject(col), t))
+	}
+	if len(depCountParts) == 0 {
+		depCountParts = append(depCountParts, `SELECT NULL AS source_id WHERE 1 = 0`)
+		parentParts = append(parentParts, `SELECT NULL AS source_id, NULL AS parent_id WHERE 1 = 0`)
+		depJSONParts = append(depJSONParts, `SELECT NULL AS source_id, NULL AS dep_json WHERE 1 = 0`)
+	}
+	depCountUnion := strings.Join(depCountParts, " UNION ALL ")
+	parentUnion := strings.Join(parentParts, " UNION ALL ")
+	depJSONUnion := strings.Join(depJSONParts, " UNION ALL ")
 
 	labelsSelect := "l.labels_json AS labels_json"
 	labelsJoin := fmt.Sprintf(`
@@ -131,11 +161,10 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 		FROM %s i
 		%s
 		LEFT JOIN (
-			SELECT issue_id, COUNT(*) AS cnt
-			FROM %s
-			WHERE type = 'blocks'
-			GROUP BY issue_id
-		) dc ON dc.issue_id = i.id
+			SELECT source_id, COUNT(*) AS cnt
+			FROM (%s) src_deps
+			GROUP BY source_id
+		) dc ON dc.source_id = i.id
 		LEFT JOIN (
 			SELECT dep_id, COUNT(*) AS cnt FROM (
 				%s
@@ -147,17 +176,15 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 			GROUP BY issue_id
 		) cc ON cc.issue_id = i.id
 		LEFT JOIN (
-			SELECT issue_id,
-			       MIN(COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)) AS parent_id
-			FROM %s
-			WHERE type = 'parent-child'
-			GROUP BY issue_id
-		) pc ON pc.issue_id = i.id
+			SELECT source_id, MIN(parent_id) AS parent_id
+			FROM (%s) src_parents
+			GROUP BY source_id
+		) pc ON pc.source_id = i.id
 		LEFT JOIN (
-			SELECT issue_id, JSON_ARRAYAGG(%s) AS deps_json
-			FROM %s
-			GROUP BY issue_id
-		) d ON d.issue_id = i.id
+			SELECT source_id, JSON_ARRAYAGG(dep_json) AS deps_json
+			FROM (%s) src_dep_rows
+			GROUP BY source_id
+		) d ON d.source_id = i.id
 		%s
 		%s
 		%s
@@ -166,12 +193,11 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 		labelsSelect,
 		tables.Main,
 		labelsJoin,
-		tables.Dependencies,
+		depCountUnion,
 		reverseBlockerSelect,
 		tables.Comments,
-		tables.Dependencies,
-		readyWorkDepJSONObject,
-		tables.Dependencies,
+		parentUnion,
+		depJSONUnion,
 		whereSQL,
 		orderBySQL,
 		limitSQL,
@@ -201,6 +227,20 @@ func runSearchQueryInTx(ctx context.Context, tx *sql.Tx, tables FilterTables, wh
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("search count %s: rows: %w", tables.Main, err)
+	}
+	return out, nil
+}
+
+func filterExistingDepTablesInTx(ctx context.Context, tx *sql.Tx, depTables []string) ([]string, error) {
+	out := make([]string, 0, len(depTables))
+	for _, t := range depTables {
+		exists, err := optionalTableExistsInTx(ctx, tx, t)
+		if err != nil {
+			return nil, fmt.Errorf("probe %s: %w", t, err)
+		}
+		if exists {
+			out = append(out, t)
+		}
 	}
 	return out, nil
 }

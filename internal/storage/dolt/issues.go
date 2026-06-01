@@ -345,7 +345,8 @@ func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
 			return err
 		}
 
-		for _, table := range []string{"issues", "dependencies", "labels", "comments", "events", "child_counters", "issue_snapshots", "compaction_snapshots"} {
+		stageTables := append([]string{"issues", "labels", "comments", "events", "child_counters", "issue_snapshots", "compaction_snapshots"}, issueops.SourceDepTables(false)...)
+		for _, table := range stageTables {
 			_, _ = tx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
 		}
 		commitMsg := fmt.Sprintf("bd: delete %s", id)
@@ -422,7 +423,8 @@ func (s *DoltStore) DeleteIssues(ctx context.Context, ids []string, cascade bool
 			return nil
 		}
 
-		for _, table := range []string{"issues", "dependencies", "labels", "comments", "events", "child_counters", "issue_snapshots", "compaction_snapshots"} {
+		stageTables := append([]string{"issues", "labels", "comments", "events", "child_counters", "issue_snapshots", "compaction_snapshots"}, issueops.SourceDepTables(false)...)
+		for _, table := range stageTables {
 			_, _ = tx.ExecContext(ctx, "CALL DOLT_ADD(?)", table)
 		}
 		commitMsg := fmt.Sprintf("bd: delete %d issue(s)", result.DeletedCount)

@@ -17,16 +17,25 @@ import (
 const queryBatchSize = 200
 
 type filterTables struct {
-	Main         string
-	Labels       string
-	Dependencies string
-	Comments     string
+	Main      string
+	Labels    string
+	DepTables []string
+	Comments  string
 }
 
 var (
-	issuesFilterTables = filterTables{Main: "issues", Labels: "labels", Dependencies: "dependencies", Comments: "comments"}
-	wispsFilterTables  = filterTables{Main: "wisps", Labels: "wisp_labels", Dependencies: "wisp_dependencies", Comments: "wisp_comments"}
+	issuesFilterTables = filterTables{Main: "issues", Labels: "labels", DepTables: sourceDepTables(false), Comments: "comments"}
+	wispsFilterTables  = filterTables{Main: "wisps", Labels: "wisp_labels", DepTables: sourceDepTables(true), Comments: "wisp_comments"}
 )
+
+func parentChildUnionSQL(depTables []string) string {
+	parts := make([]string, 0, len(depTables))
+	for _, t := range depTables {
+		col := depTargetColumnForTable(t)
+		parts = append(parts, fmt.Sprintf("SELECT source_id, %s AS depends_on_id, type FROM %s", col, t))
+	}
+	return "(" + strings.Join(parts, " UNION ALL ") + ")"
+}
 
 func (r *issueSQLRepositoryImpl) searchAcrossIssuesAndWisps(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
 	if filter.Ephemeral != nil && *filter.Ephemeral {
@@ -239,7 +248,7 @@ func (r *issueSQLRepositoryImpl) hydrateIssues(ctx context.Context, issues []*ty
 	}
 
 	if includeDeps {
-		depMap, err := r.getDependencyRecordsFromTable(ctx, tables.Dependencies, ids)
+		depMap, err := r.getDependencyRecordsFromTables(ctx, tables.DepTables, ids)
 		if err != nil {
 			return fmt.Errorf("hydrate dependencies: %w", err)
 		}
@@ -290,9 +299,20 @@ func (r *issueSQLRepositoryImpl) getLabelsFromTable(ctx context.Context, labelTa
 	return result, nil
 }
 
-//nolint:gosec // G201: depTable is "dependencies" or "wisp_dependencies" (hardcoded by callers).
-func (r *issueSQLRepositoryImpl) getDependencyRecordsFromTable(ctx context.Context, depTable string, ids []string) (map[string][]*types.Dependency, error) {
+//nolint:gosec // G201: depTables come from filterTables (closed set of split-dep table names).
+func (r *issueSQLRepositoryImpl) getDependencyRecordsFromTables(ctx context.Context, depTables []string, ids []string) (map[string][]*types.Dependency, error) {
 	result := make(map[string][]*types.Dependency)
+	if len(ids) == 0 || len(depTables) == 0 {
+		return result, nil
+	}
+	unionParts := make([]string, 0, len(depTables))
+	for _, t := range depTables {
+		col := depTargetColumnForTable(t)
+		unionParts = append(unionParts, fmt.Sprintf(
+			"SELECT source_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id FROM %s",
+			col, t))
+	}
+	unionSQL := "(" + strings.Join(unionParts, " UNION ALL ") + ")"
 	for start := 0; start < len(ids); start += queryBatchSize {
 		end := start + queryBatchSize
 		if end > len(ids) {
@@ -306,11 +326,11 @@ func (r *issueSQLRepositoryImpl) getDependencyRecordsFromTable(ctx context.Conte
 			args[i] = id
 		}
 		rows, err := r.runner.QueryContext(ctx, fmt.Sprintf(
-			`SELECT issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id
-			 FROM %s WHERE issue_id IN (%s) ORDER BY issue_id`,
-			depTargetExpr, depTable, strings.Join(placeholders, ",")), args...)
+			`SELECT source_id AS issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+			 FROM %s u WHERE source_id IN (%s) ORDER BY source_id`,
+			unionSQL, strings.Join(placeholders, ",")), args...)
 		if err != nil {
-			return nil, fmt.Errorf("get dep records from %s: %w", depTable, err)
+			return nil, fmt.Errorf("get dep records: %w", err)
 		}
 		for rows.Next() {
 			dep, scanErr := scanDepRow(rows)
@@ -522,11 +542,17 @@ func buildIssueFilterClauses(query string, filter types.IssueFilter, tables filt
 
 	if filter.ParentID != nil {
 		parentID := *filter.ParentID
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND %s = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", tables.Dependencies, depTargetExpr, tables.Dependencies))
+		pcUnion := parentChildUnionSQL(tables.DepTables)
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"(id IN (SELECT source_id FROM %s u WHERE type = 'parent-child' AND depends_on_id = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT source_id FROM %s u WHERE type = 'parent-child')))",
+			pcUnion, pcUnion))
 		args = append(args, parentID, parentID)
 	}
 	if filter.NoParent {
-		whereClauses = append(whereClauses, fmt.Sprintf("id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')", tables.Dependencies))
+		pcUnion := parentChildUnionSQL(tables.DepTables)
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"id NOT IN (SELECT source_id FROM %s u WHERE type = 'parent-child')",
+			pcUnion))
 	}
 
 	if filter.MolType != nil {

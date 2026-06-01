@@ -7,14 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/steveyegge/beads/internal/storage/issueops"
 )
-
-func TestDoctorDependencyTargetExprMatchesCanonical(t *testing.T) {
-	if doctorDependencyTargetExpr != issueops.DepTargetExpr {
-		t.Fatalf("doctorDependencyTargetExpr = %q, want %q", doctorDependencyTargetExpr, issueops.DepTargetExpr)
-	}
-}
 
 func TestCheckMailThreadIntegrityRequiresBothDependencyThreadColumns(t *testing.T) {
 	db, mock, err := sqlmock.New()

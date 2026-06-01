@@ -535,21 +535,22 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	}
 
 	kind := issueops.ClassifyDepTarget(ctx, tx, dep, isCrossPrefix)
-	targetCol := kind.Column()
+	writeTable := issueops.DepTableFor(true, kind)
+	targetCol := issueops.DepTargetColumn(kind)
 
 	// Check for existing dependency to prevent silent type overwrites.
 	var existingType string
-	//nolint:gosec // G201: targetCol from DepTargetKind.Column()
+	//nolint:gosec // G201: writeTable and targetCol from issueops routing helpers.
 	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT type FROM wisp_dependencies WHERE issue_id = ? AND %s = ?
-	`, targetCol), dep.IssueID, dep.DependsOnID).Scan(&existingType)
+		SELECT type FROM %s WHERE source_id = ? AND %s = ?
+	`, writeTable, targetCol), dep.IssueID, dep.DependsOnID).Scan(&existingType)
 	if err == nil {
 		if existingType == string(dep.Type) {
 			// Same type — idempotent; update metadata in case it changed
-			//nolint:gosec // G201: targetCol from DepTargetKind.Column()
+			//nolint:gosec // G201: writeTable and targetCol from issueops routing helpers.
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-				UPDATE wisp_dependencies SET metadata = ? WHERE issue_id = ? AND %s = ?
-			`, targetCol), metadata, dep.IssueID, dep.DependsOnID); err != nil {
+				UPDATE %s SET metadata = ? WHERE source_id = ? AND %s = ?
+			`, writeTable, targetCol), metadata, dep.IssueID, dep.DependsOnID); err != nil {
 				return fmt.Errorf("failed to update wisp dependency metadata: %w", err)
 			}
 			return wrapTransactionError("commit add wisp dependency", tx.Commit())
@@ -560,11 +561,11 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("failed to check existing wisp dependency: %w", err)
 	}
 
-	//nolint:gosec // G201: targetCol from DepTargetKind.Column()
+	//nolint:gosec // G201: writeTable and targetCol from issueops routing helpers.
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO wisp_dependencies (issue_id, %s, type, created_at, created_by, metadata, thread_id)
+		INSERT INTO %s (source_id, %s, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?, ?)
-	`, targetCol), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
+	`, writeTable, targetCol), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return fmt.Errorf("failed to add wisp dependency: %w", err)
 	}
 
@@ -579,25 +580,28 @@ func (s *DoltStore) addWispDependency(ctx context.Context, dep *types.Dependency
 	return wrapTransactionError("commit add wisp dependency", tx.Commit())
 }
 
-// wispCycleReachabilityQuery uses UNION distinct recursion so cyclic and
-// diamond graphs terminate by unique reachable node instead of enumerating paths.
 func wispCycleReachabilityQuery(depTables []string) string {
 	if len(depTables) == 1 {
+		col := issueops.DepTargetColumnForTable(depTables[0])
 		return fmt.Sprintf(`
 			WITH RECURSIVE reachable(node) AS (
 				SELECT ?
 				UNION
-				SELECT %s
+				SELECT d.%s
 				FROM reachable r
-				JOIN %s d ON d.issue_id = r.node AND d.type = 'blocks'
+				JOIN %s d ON d.source_id = r.node AND d.type = 'blocks'
 			)
 			SELECT COUNT(*) FROM reachable WHERE node = ?
-		`, issueops.DepTargetExpr, depTables[0])
+		`, col, depTables[0])
 	}
 
 	var unions []string
 	for _, t := range depTables {
-		unions = append(unions, fmt.Sprintf("SELECT issue_id, %s AS depends_on_id FROM %s WHERE type = 'blocks'", issueops.DepTargetExpr, t))
+		col := issueops.DepTargetColumnForTable(t)
+		if col == "" {
+			continue
+		}
+		unions = append(unions, fmt.Sprintf("SELECT source_id, %s AS depends_on_id FROM %s WHERE type = 'blocks'", col, t))
 	}
 	unionQuery := strings.Join(unions, " UNION ")
 	return fmt.Sprintf(`
@@ -606,21 +610,26 @@ func wispCycleReachabilityQuery(depTables []string) string {
 			UNION
 			SELECT d.depends_on_id
 			FROM reachable r
-			JOIN (%s) d ON d.issue_id = r.node
+			JOIN (%s) d ON d.source_id = r.node
 		)
 		SELECT COUNT(*) FROM reachable WHERE node = ?
 	`, unionQuery)
 }
 
 func wispCycleDetectionTables() []string {
-	return []string{"dependencies", "wisp_dependencies"}
+	return issueops.AllDepTables()
 }
 
 // getWispDependencies retrieves issues that a wisp depends on.
 func (s *DoltStore) getWispDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT %s AS depends_on_id FROM wisp_dependencies WHERE issue_id = ?
-	`, issueops.DepTargetExpr), issueID)
+	parts := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	for _, t := range issueops.SourceDepTables(true) {
+		col := issueops.DepTargetColumnForTable(t)
+		parts = append(parts, fmt.Sprintf(`SELECT %s AS depends_on_id FROM %s WHERE source_id = ?`, col, t))
+		args = append(args, issueID)
+	}
+	rows, err := s.queryContext(ctx, strings.Join(parts, " UNION ALL "), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wisp dependencies: %w", err)
 	}
@@ -648,9 +657,13 @@ func (s *DoltStore) getWispDependencies(ctx context.Context, issueID string) ([]
 
 // getWispDependents retrieves issues that depend on a wisp.
 func (s *DoltStore) getWispDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id FROM wisp_dependencies WHERE %s = ?
-	`, issueops.DepTargetExpr), issueID)
+	parts := make([]string, 0, 2)
+	args := make([]any, 0, 2)
+	for _, t := range issueops.TargetDepTables(issueops.DepTargetWisp) {
+		parts = append(parts, fmt.Sprintf(`SELECT source_id FROM %s WHERE depends_on_wisp_id = ?`, t))
+		args = append(args, issueID)
+	}
+	rows, err := s.queryContext(ctx, strings.Join(parts, " UNION ALL "), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wisp dependents: %w", err)
 	}
@@ -678,9 +691,14 @@ func (s *DoltStore) getWispDependents(ctx context.Context, issueID string) ([]*t
 
 // getWispDependenciesWithMetadata returns wisp dependencies with metadata.
 func (s *DoltStore) getWispDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
-	rows, err := s.queryContext(ctx, fmt.Sprintf(`
-		SELECT %s AS depends_on_id, type FROM wisp_dependencies WHERE issue_id = ?
-	`, issueops.DepTargetExpr), issueID)
+	parts := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	for _, t := range issueops.SourceDepTables(true) {
+		col := issueops.DepTargetColumnForTable(t)
+		parts = append(parts, fmt.Sprintf(`SELECT %s AS depends_on_id, type FROM %s WHERE source_id = ?`, col, t))
+		args = append(args, issueID)
+	}
+	rows, err := s.queryContext(ctx, strings.Join(parts, " UNION ALL "), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wisp dependencies with metadata: %w", err)
 	}

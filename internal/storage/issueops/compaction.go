@@ -103,7 +103,10 @@ func GetTier1CandidatesInTx(ctx context.Context, tx *sql.Tx) ([]*types.Compactio
 	rows, err := tx.QueryContext(ctx, `
 		SELECT i.id, i.closed_at,
 			CHAR_LENGTH(i.description) + CHAR_LENGTH(i.design) + CHAR_LENGTH(i.notes) + CHAR_LENGTH(i.acceptance_criteria) AS original_size,
-			COALESCE((SELECT COUNT(*) FROM dependencies d WHERE d.depends_on_issue_id = i.id AND d.type = 'blocks'), 0) AS dependent_count
+			COALESCE((SELECT COUNT(*) FROM (
+				SELECT 1 FROM issue_issue_dependencies WHERE depends_on_issue_id = i.id AND type = 'blocks'
+				UNION ALL SELECT 1 FROM wisp_issue_dependencies WHERE depends_on_issue_id = i.id AND type = 'blocks'
+			) u), 0) AS dependent_count
 		FROM issues i
 		WHERE i.status = ?
 			AND i.closed_at IS NOT NULL
@@ -124,7 +127,10 @@ func GetTier2CandidatesInTx(ctx context.Context, tx *sql.Tx) ([]*types.Compactio
 	rows, err := tx.QueryContext(ctx, `
 		SELECT i.id, i.closed_at,
 			CHAR_LENGTH(i.description) + CHAR_LENGTH(i.design) + CHAR_LENGTH(i.notes) + CHAR_LENGTH(i.acceptance_criteria) AS original_size,
-			COALESCE((SELECT COUNT(*) FROM dependencies d WHERE d.depends_on_issue_id = i.id AND d.type = 'blocks'), 0) AS dependent_count
+			COALESCE((SELECT COUNT(*) FROM (
+				SELECT 1 FROM issue_issue_dependencies WHERE depends_on_issue_id = i.id AND type = 'blocks'
+				UNION ALL SELECT 1 FROM wisp_issue_dependencies WHERE depends_on_issue_id = i.id AND type = 'blocks'
+			) u), 0) AS dependent_count
 		FROM issues i
 		WHERE i.status = ?
 			AND i.closed_at IS NOT NULL
@@ -157,15 +163,16 @@ func scanCompactionCandidates(rows *sql.Rows) ([]*types.CompactionCandidate, err
 //nolint:gosec // G201: table names are hardcoded via WispTableRouting
 func GetMoleculeLastActivityInTx(ctx context.Context, tx *sql.Tx, moleculeID string) (*types.MoleculeLastActivity, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, moleculeID)
-	issueTable, _, _, depTable := WispTableRouting(isWisp)
-	parentCol := "depends_on_issue_id"
+	issueTable, _, _ := WispTableRouting(isWisp)
+	targetKind := DepTargetIssue
 	if isWisp {
-		parentCol = "depends_on_wisp_id"
+		targetKind = DepTargetWisp
 	}
+	depTable := DepTableFor(isWisp, targetKind)
+	parentCol := DepTargetColumn(targetKind)
 
-	// Get child IDs
 	depRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT issue_id FROM %s
+		SELECT source_id FROM %s
 		WHERE %s = ? AND type = 'parent-child'
 	`, depTable, parentCol), moleculeID)
 	if err != nil {

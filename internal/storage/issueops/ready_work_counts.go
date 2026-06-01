@@ -110,15 +110,17 @@ var readyWorkIssueColumns = func() string {
 	return strings.Join(parts, ", ")
 }()
 
-const readyWorkDepJSONObject = `JSON_OBJECT(
-	'issue_id', issue_id,
-	'depends_on_id', COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external),
+func readyWorkDepJSONObject(targetCol string) string {
+	return fmt.Sprintf(`JSON_OBJECT(
+	'issue_id', source_id,
+	'depends_on_id', %s,
 	'type', type,
-	'created_at', DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'),
+	'created_at', DATE_FORMAT(created_at, '%%Y-%%m-%%dT%%H:%%i:%%sZ'),
 	'created_by', created_by,
 	'metadata', CAST(metadata AS CHAR),
 	'thread_id', thread_id
-)`
+)`, targetCol)
+}
 
 func scanReadyWorkRowWithCounts(rows *sql.Rows) (*types.IssueWithCounts, error) {
 	var labelsJSON, depsJSON sql.NullString

@@ -109,16 +109,20 @@ func expectIssue(mock sqlmock.Sqlmock, id, title string) {
 }
 
 func expectDependencies(mock sqlmock.Sqlmock, issueID string, deps []dependencyRow) {
-	rows := sqlmock.NewRows([]string{"depends_on_id", "type"})
-	for _, dep := range deps {
-		rows.AddRow(dep.id, dep.depType)
+	tables := AllDepTables()
+	for i, table := range tables {
+		col := DepTargetColumnForTable(table)
+		query := "SELECT " + col + " AS depends_on_id, type FROM " + table + " WHERE source_id = ?"
+		rows := sqlmock.NewRows([]string{"depends_on_id", "type"})
+		if i == 0 {
+			for _, dep := range deps {
+				rows.AddRow(dep.id, dep.depType)
+			}
+		}
+		mock.ExpectQuery(regexp.QuoteMeta(query)).
+			WithArgs(issueID).
+			WillReturnRows(rows)
 	}
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + DepTargetExpr + " AS depends_on_id, type FROM dependencies WHERE issue_id = ?")).
-		WithArgs(issueID).
-		WillReturnRows(rows)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + DepTargetExpr + " AS depends_on_id, type FROM wisp_dependencies WHERE issue_id = ?")).
-		WithArgs(issueID).
-		WillReturnRows(sqlmock.NewRows([]string{"depends_on_id", "type"}))
 }
 
 func expectIssueBatch(mock sqlmock.Sqlmock, ids []string) {

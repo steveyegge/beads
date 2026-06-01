@@ -12,16 +12,19 @@ import (
 
 func TestWispCycleDetectionTablesUseBothTables(t *testing.T) {
 	got := wispCycleDetectionTables()
-	want := []string{"dependencies", "wisp_dependencies"}
+	want := issueops.AllDepTables()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 
 func TestWispCycleReachabilityQuerySingleTableJoinsDirectly(t *testing.T) {
-	query := wispCycleReachabilityQuery([]string{"wisp_dependencies"})
-	if !strings.Contains(query, "JOIN wisp_dependencies d ON d.issue_id = r.node") {
-		t.Fatalf("query does not join wisp_dependencies directly:\n%s", query)
+	query := wispCycleReachabilityQuery([]string{"wisp_issue_dependencies"})
+	if !strings.Contains(query, "JOIN wisp_issue_dependencies d ON d.source_id = r.node") {
+		t.Fatalf("query does not join wisp_issue_dependencies directly:\n%s", query)
+	}
+	if !strings.Contains(query, "SELECT d.depends_on_issue_id") {
+		t.Fatalf("single-table wisp cycle query should project the typed target column:\n%s", query)
 	}
 	if strings.Contains(query, "JOIN (SELECT") {
 		t.Fatalf("single-table wisp cycle query should not materialize a derived dependency table:\n%s", query)
@@ -35,18 +38,18 @@ func TestWispCycleReachabilityQuerySingleTableJoinsDirectly(t *testing.T) {
 }
 
 func TestWispCycleReachabilityQueryMultipleTablesTraversesUniqueNodes(t *testing.T) {
-	query := wispCycleReachabilityQuery([]string{"dependencies", "wisp_dependencies"})
+	query := wispCycleReachabilityQuery(issueops.AllDepTables())
 	if strings.Contains(query, "UNION ALL") || strings.Contains(query, "depth") {
 		t.Fatalf("multi-table wisp cycle query should traverse unique nodes, not enumerate paths:\n%s", query)
 	}
-	if !strings.Contains(query, "FROM dependencies") {
-		t.Fatalf("query does not include dependencies table:\n%s", query)
-	}
-	if !strings.Contains(query, "FROM wisp_dependencies") {
-		t.Fatalf("query does not include wisp_dependencies table:\n%s", query)
-	}
-	if !strings.Contains(query, issueops.DepTargetExpr) {
-		t.Fatalf("query does not resolve depends_on_id via DepTargetExpr:\n%s", query)
+	for _, table := range issueops.AllDepTables() {
+		if !strings.Contains(query, "FROM "+table) {
+			t.Fatalf("query does not include %s table:\n%s", table, query)
+		}
+		col := issueops.DepTargetColumnForTable(table)
+		if !strings.Contains(query, col+" AS depends_on_id FROM "+table) {
+			t.Fatalf("query does not project typed column %s from %s:\n%s", col, table, query)
+		}
 	}
 }
 

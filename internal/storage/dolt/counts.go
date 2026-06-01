@@ -10,18 +10,6 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// depTargetExpr resolves a dependency row's target id from the split physical
-// columns instead of the STORED generated `depends_on_id` column. Both
-// `dependencies` and `wisp_dependencies` define depends_on_id as
-// GENERATED ALWAYS AS (COALESCE(depends_on_issue_id, depends_on_wisp_id,
-// depends_on_external)). Count queries must filter on the base columns: inside
-// a count(*) (which projects no real columns) the pure-Go GMS analyzer can
-// prune the base columns the generated column derives from and then fail with
-// "column depends_on_id could not be found in any table in scope". The slice
-// path projects real columns, so it can use depends_on_id directly. This
-// matches issueops.DepTargetExpr on main.
-const depTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
-
 // CountIssues returns the number of issues matching query and filter.
 // Filter.Limit and Filter.Offset are ignored; all other fields apply.
 func (s *DoltStore) CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error) {
@@ -55,26 +43,19 @@ func (s *DoltStore) CountIssuesByGroup(ctx context.Context, filter types.IssueFi
 }
 
 // CountDependents returns the number of issues that depend on issueID.
-// Counts both dependency tables so the total matches GetDependentsWithMetadata:
-// a dependent may be a permanent issue (edge in `dependencies`) or a wisp
-// (edge in `wisp_dependencies`, routed there by WispTableRouting on the source).
-//
-// Both tables' targets are resolved via depTargetExpr (the split physical
-// columns) rather than the STORED generated depends_on_id, which a count(*)
-// can fail to resolve under the pure-Go GMS analyzer.
 func (s *DoltStore) CountDependents(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var perm, wisp int64
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM dependencies WHERE `+depTargetExpr+` = ?`, issueID).Scan(&perm); err != nil {
-			return err
+		for _, t := range issueops.AllDepTables() {
+			col := issueops.DepTargetColumnForTable(t)
+			var c int64
+			//nolint:gosec // G201: t and col are hardcoded constants from issueops routing helpers.
+			if err := tx.QueryRowContext(ctx,
+				fmt.Sprintf(`SELECT count(*) FROM %s WHERE %s = ?`, t, col), issueID).Scan(&c); err != nil {
+				return err
+			}
+			n += c
 		}
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM wisp_dependencies WHERE `+depTargetExpr+` = ?`, issueID).Scan(&wisp); err != nil {
-			return err
-		}
-		n = perm + wisp
 		return nil
 	})
 	return n, err
@@ -88,16 +69,15 @@ func (s *DoltStore) CountDependents(ctx context.Context, issueID string) (int64,
 func (s *DoltStore) CountDependencies(ctx context.Context, issueID string) (int64, error) {
 	var n int64
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var perm, wisp int64
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM dependencies WHERE issue_id = ?`, issueID).Scan(&perm); err != nil {
-			return err
+		for _, t := range issueops.AllDepTables() {
+			var c int64
+			//nolint:gosec // G201: t is a hardcoded constant from issueops routing helpers.
+			if err := tx.QueryRowContext(ctx,
+				fmt.Sprintf(`SELECT count(*) FROM %s WHERE source_id = ?`, t), issueID).Scan(&c); err != nil {
+				return err
+			}
+			n += c
 		}
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM wisp_dependencies WHERE issue_id = ?`, issueID).Scan(&wisp); err != nil {
-			return err
-		}
-		n = perm + wisp
 		return nil
 	})
 	return n, err
@@ -139,22 +119,25 @@ func (s *DoltStore) CountEvents(ctx context.Context, issueID string, limit int) 
 func (s *DoltStore) CountDependentsByStatus(ctx context.Context, issueID string, status types.Status) (int64, error) {
 	var n int64
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		var perm, wisp int64
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM dependencies d
-			 JOIN issues i ON i.id = d.issue_id
-			 WHERE COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) = ? AND i.status = ?`,
-			issueID, string(status)).Scan(&perm); err != nil {
-			return err
+		pairs := []struct{ depTable, issueTable string }{
+			{"issue_issue_dependencies", "issues"},
+			{"issue_wisp_dependencies", "issues"},
+			{"issue_external_dependencies", "issues"},
+			{"wisp_issue_dependencies", "wisps"},
+			{"wisp_wisp_dependencies", "wisps"},
+			{"wisp_external_dependencies", "wisps"},
 		}
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM wisp_dependencies d
-			 JOIN wisps w ON w.id = d.issue_id
-			 WHERE COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) = ? AND w.status = ?`,
-			issueID, string(status)).Scan(&wisp); err != nil {
-			return err
+		for _, p := range pairs {
+			col := issueops.DepTargetColumnForTable(p.depTable)
+			var c int64
+			//nolint:gosec // G201: p.depTable, p.issueTable, col are hardcoded constants.
+			if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+				`SELECT count(*) FROM %s d JOIN %s s ON s.id = d.source_id WHERE d.%s = ? AND s.status = ?`,
+				p.depTable, p.issueTable, col), issueID, string(status)).Scan(&c); err != nil {
+				return err
+			}
+			n += c
 		}
-		n = perm + wisp
 		return nil
 	})
 	return n, err

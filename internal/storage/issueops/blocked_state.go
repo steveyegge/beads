@@ -4,24 +4,36 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/types"
 )
 
-const waitsForGateBlockedSQL = `
+func depTableSourceIsWisp(table string) bool {
+	return strings.HasPrefix(table, "wisp_")
+}
+
+func waitsForGateBlockedSQL(targetCol string) string {
+	var issueChildTable, wispChildTable string
+	if targetCol == "depends_on_wisp_id" {
+		issueChildTable = "issue_wisp_dependencies"
+		wispChildTable = "wisp_wisp_dependencies"
+	} else {
+		issueChildTable = "issue_issue_dependencies"
+		wispChildTable = "wisp_issue_dependencies"
+	}
+	return fmt.Sprintf(`
 		(
 		  EXISTS (
-		    SELECT 1 FROM dependencies cd JOIN issues child ON child.id = cd.issue_id
+		    SELECT 1 FROM %s cd JOIN issues child ON child.id = cd.source_id
 		    WHERE cd.type = 'parent-child'
-		      AND ((d.depends_on_issue_id IS NOT NULL AND cd.depends_on_issue_id = d.depends_on_issue_id)
-		        OR (d.depends_on_wisp_id IS NOT NULL AND cd.depends_on_wisp_id = d.depends_on_wisp_id))
+		      AND cd.%s = d.%s
 		      AND child.status <> 'closed' AND child.status <> 'pinned'
 		  )
 		  OR EXISTS (
-		    SELECT 1 FROM wisp_dependencies cd JOIN wisps child ON child.id = cd.issue_id
+		    SELECT 1 FROM %s cd JOIN wisps child ON child.id = cd.source_id
 		    WHERE cd.type = 'parent-child'
-		      AND ((d.depends_on_issue_id IS NOT NULL AND cd.depends_on_issue_id = d.depends_on_issue_id)
-		        OR (d.depends_on_wisp_id IS NOT NULL AND cd.depends_on_wisp_id = d.depends_on_wisp_id))
+		      AND cd.%s = d.%s
 		      AND child.status <> 'closed' AND child.status <> 'pinned'
 		  )
 		)
@@ -29,22 +41,26 @@ const waitsForGateBlockedSQL = `
 		  JSON_UNQUOTE(JSON_EXTRACT(d.metadata, '$.gate')) = 'any-children'
 		  AND (
 		    EXISTS (
-		      SELECT 1 FROM dependencies cd JOIN issues child ON child.id = cd.issue_id
+		      SELECT 1 FROM %s cd JOIN issues child ON child.id = cd.source_id
 		      WHERE cd.type = 'parent-child'
-		        AND ((d.depends_on_issue_id IS NOT NULL AND cd.depends_on_issue_id = d.depends_on_issue_id)
-		          OR (d.depends_on_wisp_id IS NOT NULL AND cd.depends_on_wisp_id = d.depends_on_wisp_id))
+		        AND cd.%s = d.%s
 		        AND child.status = 'closed'
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM wisp_dependencies cd JOIN wisps child ON child.id = cd.issue_id
+		      SELECT 1 FROM %s cd JOIN wisps child ON child.id = cd.source_id
 		      WHERE cd.type = 'parent-child'
-		        AND ((d.depends_on_issue_id IS NOT NULL AND cd.depends_on_issue_id = d.depends_on_issue_id)
-		          OR (d.depends_on_wisp_id IS NOT NULL AND cd.depends_on_wisp_id = d.depends_on_wisp_id))
+		        AND cd.%s = d.%s
 		        AND child.status = 'closed'
 		    )
 		  )
 		)
-`
+`,
+		issueChildTable, targetCol, targetCol,
+		wispChildTable, targetCol, targetCol,
+		issueChildTable, targetCol, targetCol,
+		wispChildTable, targetCol, targetCol,
+	)
+}
 
 func RecomputeIsBlockedInTx(ctx context.Context, tx *sql.Tx, issueIDs, wispIDs []string) error {
 	if len(issueIDs) == 0 && len(wispIDs) == 0 {
@@ -128,40 +144,45 @@ func markBlockedTemplateForIssues() string {
 		  AND i.status <> 'closed' AND i.status <> 'pinned'
 		  AND (
 		    EXISTS (
-		      SELECT 1 FROM dependencies d
+		      SELECT 1 FROM issue_issue_dependencies d
 		      JOIN issues t ON t.id = d.depends_on_issue_id
-		      WHERE d.issue_id = i.id
+		      WHERE d.source_id = i.id
 		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		        AND t.status <> 'closed' AND t.status <> 'pinned'
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM dependencies d
+		      SELECT 1 FROM issue_wisp_dependencies d
 		      JOIN wisps t ON t.id = d.depends_on_wisp_id
-		      WHERE d.issue_id = i.id
+		      WHERE d.source_id = i.id
 		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		        AND t.status <> 'closed' AND t.status <> 'pinned'
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM dependencies d
+		      SELECT 1 FROM issue_issue_dependencies d
 		      JOIN issues p ON p.id = d.depends_on_issue_id
-		      WHERE d.issue_id = i.id
+		      WHERE d.source_id = i.id
 		        AND d.type = 'parent-child'
 		        AND p.is_blocked = 1
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM dependencies d
+		      SELECT 1 FROM issue_wisp_dependencies d
 		      JOIN wisps p ON p.id = d.depends_on_wisp_id
-		      WHERE d.issue_id = i.id
+		      WHERE d.source_id = i.id
 		        AND d.type = 'parent-child'
 		        AND p.is_blocked = 1
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM dependencies d
-		      WHERE d.issue_id = i.id AND d.type = 'waits-for'
+		      SELECT 1 FROM issue_issue_dependencies d
+		      WHERE d.source_id = i.id AND d.type = 'waits-for'
+		        AND (%s)
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM issue_wisp_dependencies d
+		      WHERE d.source_id = i.id AND d.type = 'waits-for'
 		        AND (%s)
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, waitsForGateBlockedSQL("depends_on_issue_id"), waitsForGateBlockedSQL("depends_on_wisp_id"))
 }
 
 func unmarkBlockedTemplateForIssues() string {
@@ -173,41 +194,46 @@ func unmarkBlockedTemplateForIssues() string {
 		    i.status = 'closed' OR i.status = 'pinned'
 		    OR (
 		      NOT EXISTS (
-		        SELECT 1 FROM dependencies d
+		        SELECT 1 FROM issue_issue_dependencies d
 		        JOIN issues t ON t.id = d.depends_on_issue_id
-		        WHERE d.issue_id = i.id
+		        WHERE d.source_id = i.id
 		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		          AND t.status <> 'closed' AND t.status <> 'pinned'
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM dependencies d
+		        SELECT 1 FROM issue_wisp_dependencies d
 		        JOIN wisps t ON t.id = d.depends_on_wisp_id
-		        WHERE d.issue_id = i.id
+		        WHERE d.source_id = i.id
 		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		          AND t.status <> 'closed' AND t.status <> 'pinned'
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM dependencies d
+		        SELECT 1 FROM issue_issue_dependencies d
 		        JOIN issues p ON p.id = d.depends_on_issue_id
-		        WHERE d.issue_id = i.id
+		        WHERE d.source_id = i.id
 		          AND d.type = 'parent-child'
 		          AND p.is_blocked = 1
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM dependencies d
+		        SELECT 1 FROM issue_wisp_dependencies d
 		        JOIN wisps p ON p.id = d.depends_on_wisp_id
-		        WHERE d.issue_id = i.id
+		        WHERE d.source_id = i.id
 		          AND d.type = 'parent-child'
 		          AND p.is_blocked = 1
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM dependencies d
-		        WHERE d.issue_id = i.id AND d.type = 'waits-for'
+		        SELECT 1 FROM issue_issue_dependencies d
+		        WHERE d.source_id = i.id AND d.type = 'waits-for'
+		          AND (%s)
+		      )
+		      AND NOT EXISTS (
+		        SELECT 1 FROM issue_wisp_dependencies d
+		        WHERE d.source_id = i.id AND d.type = 'waits-for'
 		          AND (%s)
 		      )
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, waitsForGateBlockedSQL("depends_on_issue_id"), waitsForGateBlockedSQL("depends_on_wisp_id"))
 }
 
 //nolint:gosec // G201: SQL templates are constant; only IN-clause placeholders are formatted in.
@@ -234,40 +260,45 @@ func markBlockedTemplateForWisps() string {
 		  AND w.status <> 'closed' AND w.status <> 'pinned'
 		  AND (
 		    EXISTS (
-		      SELECT 1 FROM wisp_dependencies d
+		      SELECT 1 FROM wisp_issue_dependencies d
 		      JOIN issues t ON t.id = d.depends_on_issue_id
-		      WHERE d.issue_id = w.id
+		      WHERE d.source_id = w.id
 		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		        AND t.status <> 'closed' AND t.status <> 'pinned'
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM wisp_dependencies d
+		      SELECT 1 FROM wisp_wisp_dependencies d
 		      JOIN wisps t ON t.id = d.depends_on_wisp_id
-		      WHERE d.issue_id = w.id
+		      WHERE d.source_id = w.id
 		        AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		        AND t.status <> 'closed' AND t.status <> 'pinned'
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM wisp_dependencies d
+		      SELECT 1 FROM wisp_issue_dependencies d
 		      JOIN issues p ON p.id = d.depends_on_issue_id
-		      WHERE d.issue_id = w.id
+		      WHERE d.source_id = w.id
 		        AND d.type = 'parent-child'
 		        AND p.is_blocked = 1
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM wisp_dependencies d
+		      SELECT 1 FROM wisp_wisp_dependencies d
 		      JOIN wisps p ON p.id = d.depends_on_wisp_id
-		      WHERE d.issue_id = w.id
+		      WHERE d.source_id = w.id
 		        AND d.type = 'parent-child'
 		        AND p.is_blocked = 1
 		    )
 		    OR EXISTS (
-		      SELECT 1 FROM wisp_dependencies d
-		      WHERE d.issue_id = w.id AND d.type = 'waits-for'
+		      SELECT 1 FROM wisp_issue_dependencies d
+		      WHERE d.source_id = w.id AND d.type = 'waits-for'
+		        AND (%s)
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM wisp_wisp_dependencies d
+		      WHERE d.source_id = w.id AND d.type = 'waits-for'
 		        AND (%s)
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, waitsForGateBlockedSQL("depends_on_issue_id"), waitsForGateBlockedSQL("depends_on_wisp_id"))
 }
 
 func unmarkBlockedTemplateForWisps() string {
@@ -279,41 +310,46 @@ func unmarkBlockedTemplateForWisps() string {
 		    w.status = 'closed' OR w.status = 'pinned'
 		    OR (
 		      NOT EXISTS (
-		        SELECT 1 FROM wisp_dependencies d
+		        SELECT 1 FROM wisp_issue_dependencies d
 		        JOIN issues t ON t.id = d.depends_on_issue_id
-		        WHERE d.issue_id = w.id
+		        WHERE d.source_id = w.id
 		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		          AND t.status <> 'closed' AND t.status <> 'pinned'
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM wisp_dependencies d
+		        SELECT 1 FROM wisp_wisp_dependencies d
 		        JOIN wisps t ON t.id = d.depends_on_wisp_id
-		        WHERE d.issue_id = w.id
+		        WHERE d.source_id = w.id
 		          AND (d.type = 'blocks' OR d.type = 'conditional-blocks')
 		          AND t.status <> 'closed' AND t.status <> 'pinned'
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM wisp_dependencies d
+		        SELECT 1 FROM wisp_issue_dependencies d
 		        JOIN issues p ON p.id = d.depends_on_issue_id
-		        WHERE d.issue_id = w.id
+		        WHERE d.source_id = w.id
 		          AND d.type = 'parent-child'
 		          AND p.is_blocked = 1
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM wisp_dependencies d
+		        SELECT 1 FROM wisp_wisp_dependencies d
 		        JOIN wisps p ON p.id = d.depends_on_wisp_id
-		        WHERE d.issue_id = w.id
+		        WHERE d.source_id = w.id
 		          AND d.type = 'parent-child'
 		          AND p.is_blocked = 1
 		      )
 		      AND NOT EXISTS (
-		        SELECT 1 FROM wisp_dependencies d
-		        WHERE d.issue_id = w.id AND d.type = 'waits-for'
+		        SELECT 1 FROM wisp_issue_dependencies d
+		        WHERE d.source_id = w.id AND d.type = 'waits-for'
+		          AND (%s)
+		      )
+		      AND NOT EXISTS (
+		        SELECT 1 FROM wisp_wisp_dependencies d
+		        WHERE d.source_id = w.id AND d.type = 'waits-for'
 		          AND (%s)
 		      )
 		    )
 		  )
-	`, waitsForGateBlockedSQL)
+	`, waitsForGateBlockedSQL("depends_on_issue_id"), waitsForGateBlockedSQL("depends_on_wisp_id"))
 }
 
 //nolint:gosec // G201: callers pass constant templates; only IN-clause placeholders are formatted in.
@@ -438,7 +474,7 @@ func loadBlockingDependersInTx(
 	return loadBlockingDependersForIDsInTx(ctx, tx, targetCol, []string{id}, issueSeed, issueSeen, wispSeed, wispSeen)
 }
 
-//nolint:gosec // G201: targetCol is one of two constant column names.
+//nolint:gosec // G201: targetCol is a constant column name; tables are fixed split-dep tables.
 func loadBlockingDependersForIDsInTx(
 	ctx context.Context, tx *sql.Tx,
 	targetCol string, ids []string,
@@ -448,40 +484,51 @@ func loadBlockingDependersForIDsInTx(
 	if len(ids) == 0 {
 		return nil
 	}
-	tables := []struct {
-		table  string
-		seed   *[]string
-		seen   map[string]bool
-		errCtx string
-	}{
-		{"dependencies", issueSeed, issueSeen, "load issue dependers"},
-		{"wisp_dependencies", wispSeed, wispSeen, "load wisp dependers"},
+	var kind DepTargetKind
+	switch targetCol {
+	case "depends_on_wisp_id":
+		kind = DepTargetWisp
+	case "depends_on_external_id":
+		kind = DepTargetExternal
+	default:
+		kind = DepTargetIssue
 	}
 	for _, id := range ids {
-		for _, t := range tables {
+		for _, table := range TargetDepTables(kind) {
+			seed := issueSeed
+			seen := issueSeen
+			errCtx := "load issue dependers"
+			if depTableSourceIsWisp(table) {
+				seed = wispSeed
+				seen = wispSeen
+				errCtx = "load wisp dependers"
+			}
 			query := fmt.Sprintf(`
-				SELECT issue_id FROM %s
+				SELECT source_id FROM %s
 				WHERE %s = ?
 				  AND (type = 'blocks' OR type = 'conditional-blocks')
-			`, t.table, targetCol)
+			`, table, targetCol)
 			rows, err := tx.QueryContext(ctx, query, id)
 			if err != nil {
-				return fmt.Errorf("%s: query: %w", t.errCtx, err)
+				if optionalBlockedTable(table) && isTableNotExistError(err) {
+					continue
+				}
+				return fmt.Errorf("%s: query: %w", errCtx, err)
 			}
 			for rows.Next() {
 				var dependerID string
 				if err := rows.Scan(&dependerID); err != nil {
 					_ = rows.Close()
-					return fmt.Errorf("%s: scan: %w", t.errCtx, err)
+					return fmt.Errorf("%s: scan: %w", errCtx, err)
 				}
-				if !t.seen[dependerID] {
-					t.seen[dependerID] = true
-					*t.seed = append(*t.seed, dependerID)
+				if !seen[dependerID] {
+					seen[dependerID] = true
+					*seed = append(*seed, dependerID)
 				}
 			}
 			_ = rows.Close()
 			if err := rows.Err(); err != nil {
-				return fmt.Errorf("%s: rows: %w", t.errCtx, err)
+				return fmt.Errorf("%s: rows: %w", errCtx, err)
 			}
 		}
 	}
@@ -536,10 +583,10 @@ func AffectedByDeletionInTx(
 		seed                *[]string
 		seen                map[string]bool
 	}{
-		{"dependencies", "depends_on_issue_id", deletedIssues, &issueSeed, issueSeen},
-		{"wisp_dependencies", "depends_on_issue_id", deletedIssues, &wispSeed, wispSeen},
-		{"dependencies", "depends_on_wisp_id", deletedWisps, &issueSeed, issueSeen},
-		{"wisp_dependencies", "depends_on_wisp_id", deletedWisps, &wispSeed, wispSeen},
+		{"issue_issue_dependencies", "depends_on_issue_id", deletedIssues, &issueSeed, issueSeen},
+		{"wisp_issue_dependencies", "depends_on_issue_id", deletedIssues, &wispSeed, wispSeen},
+		{"issue_wisp_dependencies", "depends_on_wisp_id", deletedWisps, &issueSeed, issueSeen},
+		{"wisp_wisp_dependencies", "depends_on_wisp_id", deletedWisps, &wispSeed, wispSeen},
 	} {
 		if err := appendChildrenInTx(ctx, tx, w.depTable, w.parentCol, w.parentIDs, w.seen, w.seed); err != nil {
 			return nil, nil, err
@@ -567,10 +614,10 @@ func expandByParentChildDescendantsInTx(
 			batch := issueQueue[issueHead:end]
 			issueHead = end
 
-			if err := appendChildrenInTx(ctx, tx, "dependencies", "depends_on_issue_id", batch, issueSeen, &issueQueue); err != nil {
+			if err := appendChildrenInTx(ctx, tx, "issue_issue_dependencies", "depends_on_issue_id", batch, issueSeen, &issueQueue); err != nil {
 				return nil, nil, err
 			}
-			if err := appendChildrenInTx(ctx, tx, "wisp_dependencies", "depends_on_issue_id", batch, wispSeen, &wispQueue); err != nil {
+			if err := appendChildrenInTx(ctx, tx, "wisp_issue_dependencies", "depends_on_issue_id", batch, wispSeen, &wispQueue); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -582,10 +629,10 @@ func expandByParentChildDescendantsInTx(
 			batch := wispQueue[wispHead:end]
 			wispHead = end
 
-			if err := appendChildrenInTx(ctx, tx, "dependencies", "depends_on_wisp_id", batch, issueSeen, &issueQueue); err != nil {
+			if err := appendChildrenInTx(ctx, tx, "issue_wisp_dependencies", "depends_on_wisp_id", batch, issueSeen, &issueQueue); err != nil {
 				return nil, nil, err
 			}
-			if err := appendChildrenInTx(ctx, tx, "wisp_dependencies", "depends_on_wisp_id", batch, wispSeen, &wispQueue); err != nil {
+			if err := appendChildrenInTx(ctx, tx, "wisp_wisp_dependencies", "depends_on_wisp_id", batch, wispSeen, &wispQueue); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -604,13 +651,16 @@ func appendChildrenInTx(
 		return nil
 	}
 	query := fmt.Sprintf(`
-		SELECT issue_id FROM %s
+		SELECT source_id FROM %s
 		WHERE type = 'parent-child'
 		  AND %s = ?
 	`, depTable, parentCol)
 	for _, parentID := range parentIDs {
 		rows, err := tx.QueryContext(ctx, query, parentID)
 		if err != nil {
+			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+				continue
+			}
 			return fmt.Errorf("expand children from %s on %s: %w", depTable, parentCol, err)
 		}
 		for rows.Next() {
@@ -638,36 +688,44 @@ func loadWaitersWhoseSpawnerIsParentOfInTx(
 	issueSeed *[]string, issueSeen map[string]bool,
 	wispSeed *[]string, wispSeen map[string]bool,
 ) error {
-	depTable := "dependencies"
+	issueTargetTable := "issue_issue_dependencies"
+	wispTargetTable := "issue_wisp_dependencies"
 	if childIsWisp {
-		depTable = "wisp_dependencies"
+		issueTargetTable = "wisp_issue_dependencies"
+		wispTargetTable = "wisp_wisp_dependencies"
 	}
-	//nolint:gosec // G201: depTable is one of two constant values.
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT depends_on_issue_id, depends_on_wisp_id
-		FROM %s
-		WHERE issue_id = ? AND type = 'parent-child'
-	`, depTable), childID)
-	if err != nil {
-		return fmt.Errorf("waiters on parent of %s: load parents: %w", childID, err)
-	}
+
 	var issueParentIDs, wispParentIDs []string
-	for rows.Next() {
-		var ip, wp sql.NullString
-		if err := rows.Scan(&ip, &wp); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("waiters on parent of %s: scan: %w", childID, err)
+	for _, probe := range []struct {
+		table     string
+		targetCol string
+		out       *[]string
+	}{
+		{issueTargetTable, "depends_on_issue_id", &issueParentIDs},
+		{wispTargetTable, "depends_on_wisp_id", &wispParentIDs},
+	} {
+		//nolint:gosec // G201: probe.table and targetCol are fixed constants.
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+			SELECT %s FROM %s WHERE source_id = ? AND type = 'parent-child'
+		`, probe.targetCol, probe.table), childID)
+		if err != nil {
+			if optionalBlockedTable(probe.table) && isTableNotExistError(err) {
+				continue
+			}
+			return fmt.Errorf("waiters on parent of %s: load parents from %s: %w", childID, probe.table, err)
 		}
-		if ip.Valid {
-			issueParentIDs = append(issueParentIDs, ip.String)
+		for rows.Next() {
+			var parentID string
+			if err := rows.Scan(&parentID); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("waiters on parent of %s: scan: %w", childID, err)
+			}
+			*probe.out = append(*probe.out, parentID)
 		}
-		if wp.Valid {
-			wispParentIDs = append(wispParentIDs, wp.String)
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("waiters on parent of %s: rows: %w", childID, err)
 		}
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("waiters on parent of %s: rows: %w", childID, err)
 	}
 
 	if len(issueParentIDs) > 0 {
@@ -695,7 +753,7 @@ func loadWaitersOnSpawnerIDsInTx(
 	return loadWaitersOnSpawnerIDsByColInTx(ctx, tx, "depends_on_wisp_id", spawnerIDs, issueSeed, issueSeen, wispSeed, wispSeen)
 }
 
-//nolint:gosec // G201: targetCol is one of two constant column names.
+//nolint:gosec // G201: targetCol is a constant column name; tables are fixed split-dep tables.
 func loadWaitersOnSpawnerIDsByColInTx(
 	ctx context.Context, tx *sql.Tx,
 	targetCol string, spawnerIDs []string,
@@ -705,42 +763,50 @@ func loadWaitersOnSpawnerIDsByColInTx(
 	if len(spawnerIDs) == 0 {
 		return nil
 	}
-	tables := []struct {
-		table  string
-		seed   *[]string
-		seen   map[string]bool
-		errCtx string
-	}{
-		{"dependencies", issueSeed, issueSeen, "load issue waiters"},
-		{"wisp_dependencies", wispSeed, wispSeen, "load wisp waiters"},
+	var kind DepTargetKind
+	switch targetCol {
+	case "depends_on_wisp_id":
+		kind = DepTargetWisp
+	case "depends_on_external_id":
+		kind = DepTargetExternal
+	default:
+		kind = DepTargetIssue
 	}
 	for _, spawnerID := range spawnerIDs {
-		for _, t := range tables {
+		for _, table := range TargetDepTables(kind) {
+			seed := issueSeed
+			seen := issueSeen
+			errCtx := "load issue waiters"
+			if depTableSourceIsWisp(table) {
+				seed = wispSeed
+				seen = wispSeen
+				errCtx = "load wisp waiters"
+			}
 			query := fmt.Sprintf(`
-				SELECT issue_id FROM %s
+				SELECT source_id FROM %s
 				WHERE type = 'waits-for' AND %s = ?
-			`, t.table, targetCol)
+			`, table, targetCol)
 			rows, err := tx.QueryContext(ctx, query, spawnerID)
 			if err != nil {
-				if optionalBlockedTable(t.table) && isTableNotExistError(err) {
+				if optionalBlockedTable(table) && isTableNotExistError(err) {
 					continue
 				}
-				return fmt.Errorf("%s: query: %w", t.errCtx, err)
+				return fmt.Errorf("%s: query: %w", errCtx, err)
 			}
 			for rows.Next() {
 				var waiterID string
 				if err := rows.Scan(&waiterID); err != nil {
 					_ = rows.Close()
-					return fmt.Errorf("%s: scan: %w", t.errCtx, err)
+					return fmt.Errorf("%s: scan: %w", errCtx, err)
 				}
-				if !t.seen[waiterID] {
-					t.seen[waiterID] = true
-					*t.seed = append(*t.seed, waiterID)
+				if !seen[waiterID] {
+					seen[waiterID] = true
+					*seed = append(*seed, waiterID)
 				}
 			}
 			_ = rows.Close()
 			if err := rows.Err(); err != nil {
-				return fmt.Errorf("%s: rows: %w", t.errCtx, err)
+				return fmt.Errorf("%s: rows: %w", errCtx, err)
 			}
 		}
 	}

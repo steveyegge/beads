@@ -16,18 +16,19 @@ type blockingDepRecord struct {
 }
 
 func optionalBlockedTable(table string) bool {
-	return table == "wisps" || table == "wisp_dependencies"
+	return table == "wisps" || strings.HasPrefix(table, "wisp_")
 }
 
 func loadBlockingDepsForIssueIDsInTx(ctx context.Context, tx *sql.Tx, depTables []string, issueIDs []string) ([]blockingDepRecord, error) {
 	var deps []blockingDepRecord
 	for _, depTable := range depTables {
-		//nolint:gosec // G201: depTable is a hardcoded constant.
+		col := DepTargetColumnForTable(depTable)
+		//nolint:gosec // G201: depTable and col are hardcoded constants.
 		query := fmt.Sprintf(`
-			SELECT issue_id, %s AS depends_on_id, type, metadata FROM %s
-			WHERE issue_id = ?
+			SELECT source_id, %s AS depends_on_id, type, metadata FROM %s
+			WHERE source_id = ?
 			  AND (type = 'blocks' OR type = 'waits-for' OR type = 'conditional-blocks')
-		`, DepTargetExpr, depTable)
+		`, col, depTable)
 		for _, id := range issueIDs {
 			rows, err := tx.QueryContext(ctx, query, id)
 			if err != nil {
@@ -56,12 +57,13 @@ func loadBlockingDepsForIssueIDsInTx(ctx context.Context, tx *sql.Tx, depTables 
 func loadParentIDsForChildrenInTx(ctx context.Context, tx *sql.Tx, depTables []string, childIDs []string) (map[string]string, error) {
 	childParents := make(map[string]string)
 	for _, depTable := range depTables {
-		//nolint:gosec // G201: depTable is a hardcoded constant.
+		col := DepTargetColumnForTable(depTable)
+		//nolint:gosec // G201: depTable and col are hardcoded constants.
 		query := fmt.Sprintf(`
-			SELECT issue_id, %s AS depends_on_id FROM %s
-			WHERE issue_id = ?
+			SELECT source_id, %s AS depends_on_id FROM %s
+			WHERE source_id = ?
 			  AND type = 'parent-child'
-		`, DepTargetExpr, depTable)
+		`, col, depTable)
 		for _, id := range childIDs {
 			rows, err := tx.QueryContext(ctx, query, id)
 			if err != nil {
@@ -93,11 +95,12 @@ func GetChildrenWithParentsInTx(ctx context.Context, tx *sql.Tx, parentIDs []str
 		return nil, nil
 	}
 	result := make(map[string]string)
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+	for _, depTable := range AllDepTables() {
+		col := DepTargetColumnForTable(depTable)
 		query := fmt.Sprintf(`
-			SELECT issue_id, %s AS depends_on_id FROM %s
+			SELECT source_id, %s AS depends_on_id FROM %s
 			WHERE type = 'parent-child' AND %s = ?
-		`, DepTargetExpr, depTable, DepTargetExpr)
+		`, col, depTable, col)
 		for _, parentID := range parentIDs {
 			rows, err := tx.QueryContext(ctx, query, parentID)
 			if err != nil {
@@ -129,11 +132,12 @@ func GetChildrenOfIssuesInTx(ctx context.Context, tx *sql.Tx, parentIDs []string
 		return nil, nil
 	}
 	var children []string
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+	for _, depTable := range AllDepTables() {
+		col := DepTargetColumnForTable(depTable)
 		query := fmt.Sprintf(`
-			SELECT issue_id FROM %s
+			SELECT source_id FROM %s
 			WHERE type = 'parent-child' AND %s = ?
-		`, depTable, DepTargetExpr)
+		`, depTable, col)
 		for _, parentID := range parentIDs {
 			rows, err := tx.QueryContext(ctx, query, parentID)
 			if err != nil {
@@ -165,32 +169,38 @@ func GetDescendantIDsInTx(ctx context.Context, tx *sql.Tx, rootID string, maxDep
 	}
 
 	queryDescendants := func(includeWisps bool) ([]string, bool, error) {
-		edgeQuery := fmt.Sprintf(`
-			SELECT issue_id, %s FROM dependencies WHERE type = 'parent-child'
-		`, DepTargetExpr)
+		var depTables []string
 		if includeWisps {
-			edgeQuery += fmt.Sprintf(`
-			UNION ALL
-			SELECT issue_id, %s FROM wisp_dependencies WHERE type = 'parent-child'
-		`, DepTargetExpr)
+			depTables = AllDepTables()
+		} else {
+			depTables = SourceDepTables(false)
 		}
+		unions := make([]string, 0, len(depTables))
+		for _, t := range depTables {
+			col := DepTargetColumnForTable(t)
+			if col == "" {
+				continue
+			}
+			unions = append(unions, fmt.Sprintf("SELECT source_id, %s FROM %s WHERE type = 'parent-child'", col, t))
+		}
+		edgeQuery := strings.Join(unions, " UNION ALL ")
 
-		//nolint:gosec // G201: edgeQuery is built from hardcoded SQL plus DepTargetExpr (no user input)
+		//nolint:gosec // G201: edgeQuery is built from hardcoded SQL fragments (no user input)
 		query := fmt.Sprintf(`
 			WITH RECURSIVE
-			parent_edges(issue_id, depends_on_id) AS (
+			parent_edges(source_id, depends_on_id) AS (
 				%s
 			),
 			descendants(id, depth, path) AS (
-				SELECT issue_id, 1, CONCAT(',', ?, ',', issue_id, ',')
+				SELECT source_id, 1, CONCAT(',', ?, ',', source_id, ',')
 				FROM parent_edges
 				WHERE depends_on_id = ?
 				UNION ALL
-				SELECT e.issue_id, d.depth + 1, CONCAT(d.path, e.issue_id, ',')
+				SELECT e.source_id, d.depth + 1, CONCAT(d.path, e.source_id, ',')
 				FROM parent_edges e
 				JOIN descendants d ON e.depends_on_id = d.id
 				WHERE (? <= 0 OR d.depth < ?)
-				  AND LOCATE(CONCAT(',', e.issue_id, ','), d.path) = 0
+				  AND LOCATE(CONCAT(',', e.source_id, ','), d.path) = 0
 			)
 			SELECT id, depth FROM descendants WHERE id <> ?
 		`, edgeQuery)
@@ -273,7 +283,7 @@ func GetBlockedIssuesInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 	}
 
 	blockerMap := make(map[string][]string)
-	blockingDeps, err := loadBlockingDepsForIssueIDsInTx(ctx, tx, []string{"dependencies", "wisp_dependencies"}, blockedIDList)
+	blockingDeps, err := loadBlockingDepsForIssueIDsInTx(ctx, tx, AllDepTables(), blockedIDList)
 	if err != nil {
 		return nil, fmt.Errorf("get blocking deps: %w", err)
 	}
@@ -306,7 +316,7 @@ func GetBlockedIssuesInTx(ctx context.Context, tx *sql.Tx, filter types.WorkFilt
 		}
 	}
 	if len(inheritedIDs) > 0 {
-		parentMap, err := loadParentIDsForChildrenInTx(ctx, tx, []string{"dependencies", "wisp_dependencies"}, inheritedIDs)
+		parentMap, err := loadParentIDsForChildrenInTx(ctx, tx, AllDepTables(), inheritedIDs)
 		if err == nil {
 			for childID, parentID := range parentMap {
 				if _, alreadyHas := blockerMap[childID]; !alreadyHas {

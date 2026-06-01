@@ -254,12 +254,21 @@ func hydrateIssues(ctx context.Context, tx *sql.Tx, issues []*types.Issue, table
 	}
 
 	if includeDeps {
-		depMap, err := GetDependencyRecordsForIssuesFromTableInTx(ctx, tx, tables.Dependencies, ids)
-		if err != nil {
-			return fmt.Errorf("hydrate dependencies: %w", err)
+		merged := make(map[string][]*types.Dependency)
+		for _, depTable := range tables.DepTables {
+			depMap, err := GetDependencyRecordsForIssuesFromTableInTx(ctx, tx, depTable, ids)
+			if err != nil {
+				if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+					continue
+				}
+				return fmt.Errorf("hydrate dependencies from %s: %w", depTable, err)
+			}
+			for id, deps := range depMap {
+				merged[id] = append(merged[id], deps...)
+			}
 		}
 		for _, issue := range issues {
-			if deps, ok := depMap[issue.ID]; ok {
+			if deps, ok := merged[issue.ID]; ok {
 				issue.Dependencies = deps
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // DeepValidationResult holds all deep validation check results
@@ -82,11 +83,13 @@ func RunDeepValidation(path string) DeepValidationResult {
 	defer conn.Close()
 
 	// Get counts for progress reporting
-	_ = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&result.TotalIssues)             // Best effort: zero counts are safe defaults for diagnostic display
-	_ = db.QueryRow("SELECT COUNT(*) FROM dependencies").Scan(&result.TotalDependencies) // Best effort: zero counts are safe defaults for diagnostic display
-	var wispDependencyCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM wisp_dependencies").Scan(&wispDependencyCount); err == nil {
-		result.TotalDependencies += wispDependencyCount
+	_ = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&result.TotalIssues) // Best effort: zero counts are safe defaults for diagnostic display
+	for _, t := range issueops.AllDepTables() {
+		var c int
+		//nolint:gosec // G201: t comes from issueops.AllDepTables (closed set).
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + t).Scan(&c); err == nil {
+			result.TotalDependencies += c
+		}
 	}
 
 	// Run all deep checks

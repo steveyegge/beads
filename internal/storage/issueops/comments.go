@@ -119,7 +119,7 @@ func AddIssueCommentInTx(ctx context.Context, tx *sql.Tx, issueID, author, text 
 //nolint:gosec // G201: table names come from hardcoded constants
 func ImportIssueCommentInTx(ctx context.Context, tx *sql.Tx, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
-	issueTable, _, _, _ := WispTableRouting(isWisp)
+	issueTable, _, _ := WispTableRouting(isWisp)
 	commentTable := "comments"
 	if isWisp {
 		commentTable = "wisp_comments"
@@ -159,7 +159,7 @@ func ImportIssueCommentInTx(ctx context.Context, tx *sql.Tx, issueID, author, te
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func AddCommentEventInTx(ctx context.Context, tx *sql.Tx, issueID, actor, comment string) error {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
-	_, _, eventTable, _ := WispTableRouting(isWisp)
+	_, _, eventTable := WispTableRouting(isWisp)
 
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (issue_id, event_type, actor, comment)

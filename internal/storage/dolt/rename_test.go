@@ -2,10 +2,9 @@ package dolt
 
 import (
 	"context"
-	"database/sql"
+	"fmt"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -60,37 +59,34 @@ func TestUpdateIssueIDUpdatesWispDependencyTargets(t *testing.T) {
 		t.Fatalf("UpdateIssueID failed: %v", err)
 	}
 
-	// Verify wisp_dependencies typed target columns were updated
 	var depCount int
 	err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM wisp_dependencies WHERE COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?`, newID).Scan(&depCount)
+		`SELECT COUNT(*) FROM wisp_issue_dependencies WHERE depends_on_issue_id = ?`, newID).Scan(&depCount)
 	if err != nil {
-		t.Fatalf("failed to query wisp_dependencies target: %v", err)
+		t.Fatalf("failed to query wisp_issue_dependencies target: %v", err)
 	}
 	if depCount != 1 {
-		t.Errorf("expected 1 wisp_dependencies row targeting %q, got %d", newID, depCount)
+		t.Errorf("expected 1 wisp_issue_dependencies row targeting %q, got %d", newID, depCount)
 	}
 
-	// Verify wisp_dependencies.issue_id still points at the source wisp.
 	err = store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM wisp_dependencies WHERE issue_id = ?`, wisp.ID).Scan(&depCount)
+		`SELECT COUNT(*) FROM wisp_issue_dependencies WHERE source_id = ?`, wisp.ID).Scan(&depCount)
 	if err != nil {
-		t.Fatalf("failed to query wisp_dependencies issue_id: %v", err)
+		t.Fatalf("failed to query wisp_issue_dependencies source_id: %v", err)
 	}
 	if depCount != 1 {
-		t.Errorf("expected 1 wisp_dependencies row with issue_id=%q, got %d", wisp.ID, depCount)
+		t.Errorf("expected 1 wisp_issue_dependencies row with source_id=%q, got %d", wisp.ID, depCount)
 	}
 
-	// Verify old ID is gone from wisp_dependencies
 	var oldCount int
 	err = store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM wisp_dependencies WHERE issue_id = ? OR COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?`,
+		`SELECT COUNT(*) FROM wisp_issue_dependencies WHERE source_id = ? OR depends_on_issue_id = ?`,
 		"test-old1", "test-old1").Scan(&oldCount)
 	if err != nil {
-		t.Fatalf("failed to query old wisp_dependencies: %v", err)
+		t.Fatalf("failed to query old wisp_issue_dependencies: %v", err)
 	}
 	if oldCount != 0 {
-		t.Errorf("expected 0 wisp_dependencies rows with old ID, got %d", oldCount)
+		t.Errorf("expected 0 wisp_issue_dependencies rows with old ID, got %d", oldCount)
 	}
 }
 
@@ -162,7 +158,7 @@ func TestUpdateIssueIDUpdatesPersistentDependencyTargets(t *testing.T) {
 
 	var oldCount int
 	if err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?`,
+		`SELECT COUNT(*) FROM issue_issue_dependencies WHERE source_id = ? AND depends_on_issue_id = ?`,
 		source.ID, target.ID).Scan(&oldCount); err != nil {
 		t.Fatalf("failed to count old dependency target: %v", err)
 	}
@@ -172,7 +168,7 @@ func TestUpdateIssueIDUpdatesPersistentDependencyTargets(t *testing.T) {
 
 	var rowCount int
 	if err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM dependencies WHERE issue_id = ?`,
+		`SELECT COUNT(*) FROM issue_issue_dependencies WHERE source_id = ?`,
 		source.ID).Scan(&rowCount); err != nil {
 		t.Fatalf("failed to count dependency rows: %v", err)
 	}
@@ -254,131 +250,6 @@ func TestUpdateIssueIDUpdatesWispTargetDependencyRows(t *testing.T) {
 	}
 }
 
-func TestUpdateIssueIDDependencyTargetsIgnoreNonIssueTargets(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	source := &types.Issue{ID: "test-ignore-source", Title: "Source issue", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-	wispTarget := &types.Issue{ID: "test-ignore-wisp", Title: "Wisp target", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Ephemeral: true}
-	newIssueTarget := &types.Issue{ID: "test-ignore-new", Title: "New issue target", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-	for _, issue := range []*types.Issue{source, wispTarget, newIssueTarget} {
-		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
-			t.Fatalf("failed to create issue %q: %v", issue.ID, err)
-		}
-	}
-
-	if _, err := store.db.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_wisp_id, type, created_at, created_by, metadata)
-		VALUES (?, ?, ?, NOW(), ?, ?)
-	`, source.ID, wispTarget.ID, types.DepRelated, "test", "{}"); err != nil {
-		t.Fatalf("failed to seed wisp-target dependency: %v", err)
-	}
-
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatalf("begin tx: %v", err)
-	}
-	if err := issueops.UpdateIssueIDInDependencyTargetsInTx(ctx, tx, wispTarget.ID, newIssueTarget.ID); err != nil {
-		_ = tx.Rollback()
-		t.Fatalf("UpdateIssueIDInDependencyTargetsInTx failed: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit tx: %v", err)
-	}
-
-	var dependsOnIssueID sql.NullString
-	var dependsOnWispID string
-	if err := store.db.QueryRowContext(ctx, `
-		SELECT depends_on_issue_id, depends_on_wisp_id
-		FROM dependencies
-		WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?
-	`, source.ID, wispTarget.ID).Scan(&dependsOnIssueID, &dependsOnWispID); err != nil {
-		t.Fatalf("failed to read dependency target columns: %v", err)
-	}
-	if dependsOnIssueID.Valid {
-		t.Fatalf("depends_on_issue_id = %q, want NULL", dependsOnIssueID.String)
-	}
-	if dependsOnWispID != wispTarget.ID {
-		t.Fatalf("depends_on_wisp_id = %q, want %q", dependsOnWispID, wispTarget.ID)
-	}
-}
-
-func TestUpdateIssueIDDependencyTargetCollisionFails(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	source := &types.Issue{ID: "test-collision-source", Title: "Source issue", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-	target := &types.Issue{ID: "test-collision-old", Title: "Target issue", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-	for _, issue := range []*types.Issue{source, target} {
-		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
-			t.Fatalf("failed to create issue %q: %v", issue.ID, err)
-		}
-	}
-
-	if err := store.AddDependency(ctx, &types.Dependency{
-		IssueID:     source.ID,
-		DependsOnID: target.ID,
-		Type:        types.DepRelated,
-		Metadata:    `{"target":"issue"}`,
-	}, "test"); err != nil {
-		t.Fatalf("failed to add issue-target dependency: %v", err)
-	}
-
-	newID := "other-collision-new"
-	if err := store.AddDependency(ctx, &types.Dependency{
-		IssueID:     source.ID,
-		DependsOnID: newID,
-		Type:        types.DepRelated,
-		Metadata:    `{"target":"external"}`,
-	}, "test"); err != nil {
-		t.Fatalf("failed to add external dependency: %v", err)
-	}
-
-	if err := store.UpdateIssueID(ctx, target.ID, newID, target, "test"); err == nil {
-		t.Fatal("UpdateIssueID succeeded despite a colliding dependency target")
-	}
-
-	var issueCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, target.ID).Scan(&issueCount); err != nil {
-		t.Fatalf("failed to count old issue ID after failed rename: %v", err)
-	}
-	if issueCount != 1 {
-		t.Fatalf("expected failed rename to keep old issue ID, got %d row(s)", issueCount)
-	}
-
-	var depCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dependencies WHERE issue_id = ?`, source.ID).Scan(&depCount); err != nil {
-		t.Fatalf("failed to count dependencies after failed rename: %v", err)
-	}
-	if depCount != 2 {
-		t.Fatalf("expected failed rename to preserve both dependency rows, got %d", depCount)
-	}
-
-	var oldTargetCount int
-	if err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND depends_on_issue_id = ?`,
-		source.ID, target.ID).Scan(&oldTargetCount); err != nil {
-		t.Fatalf("failed to count old issue-target dependency: %v", err)
-	}
-	if oldTargetCount != 1 {
-		t.Fatalf("expected old issue-target dependency to remain, got %d", oldTargetCount)
-	}
-
-	var externalTargetCount int
-	if err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM dependencies WHERE issue_id = ? AND depends_on_external = ?`,
-		source.ID, newID).Scan(&externalTargetCount); err != nil {
-		t.Fatalf("failed to count external dependency: %v", err)
-	}
-	if externalTargetCount != 1 {
-		t.Fatalf("expected external dependency to remain, got %d", externalTargetCount)
-	}
-}
-
 type dependencyTargetRow struct {
 	dependsOnIssueID string
 	dependsOnID      string
@@ -394,9 +265,9 @@ func readDependencyTargetRow(t *testing.T, ctx context.Context, store *DoltStore
 
 	var row dependencyTargetRow
 	if err := store.db.QueryRowContext(ctx, `
-		SELECT depends_on_issue_id, COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id, type, metadata, thread_id, created_by, CAST(created_at AS CHAR)
-		FROM dependencies
-		WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?
+		SELECT depends_on_issue_id, depends_on_issue_id AS depends_on_id, type, metadata, thread_id, created_by, CAST(created_at AS CHAR)
+		FROM issue_issue_dependencies
+		WHERE source_id = ? AND depends_on_issue_id = ?
 	`, issueID, targetID).Scan(
 		&row.dependsOnIssueID,
 		&row.dependsOnID,
@@ -412,46 +283,40 @@ func readDependencyTargetRow(t *testing.T, ctx context.Context, store *DoltStore
 }
 
 type wispTargetDependencyRow struct {
-	dependsOnIssueID sql.NullString
-	dependsOnWispID  string
-	dependsOnID      string
-	metadata         string
-	threadID         string
+	dependsOnWispID string
+	dependsOnID     string
+	metadata        string
+	threadID        string
 }
 
 func readWispTargetDependencyRow(t *testing.T, ctx context.Context, store *DoltStore, table, issueID, targetID string) wispTargetDependencyRow {
 	t.Helper()
 
-	var query string
+	var depTable string
 	switch table {
 	case "dependencies":
-		query = `
-		SELECT depends_on_issue_id, depends_on_wisp_id, COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id, metadata, thread_id
-		FROM dependencies
-		WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?
-	`
+		depTable = "issue_wisp_dependencies"
 	case "wisp_dependencies":
-		query = `
-			SELECT depends_on_issue_id, depends_on_wisp_id, COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id, metadata, thread_id
-			FROM wisp_dependencies
-			WHERE issue_id = ? AND COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?
-		`
+		depTable = "wisp_wisp_dependencies"
 	default:
 		t.Fatalf("unknown dependency table %q", table)
 	}
 
+	//nolint:gosec // G201: depTable comes from a switch over test-supplied constants.
+	query := fmt.Sprintf(`
+		SELECT depends_on_wisp_id, depends_on_wisp_id AS depends_on_id, metadata, thread_id
+		FROM %s
+		WHERE source_id = ? AND depends_on_wisp_id = ?
+	`, depTable)
+
 	var row wispTargetDependencyRow
 	if err := store.db.QueryRowContext(ctx, query, issueID, targetID).Scan(
-		&row.dependsOnIssueID,
 		&row.dependsOnWispID,
 		&row.dependsOnID,
 		&row.metadata,
 		&row.threadID,
 	); err != nil {
 		t.Fatalf("failed to read dependency %s -> %s from %s: %v", issueID, targetID, table, err)
-	}
-	if row.dependsOnIssueID.Valid {
-		t.Fatalf("%s.depends_on_issue_id = %q, want NULL", table, row.dependsOnIssueID.String)
 	}
 	if row.dependsOnID != targetID {
 		t.Fatalf("%s.depends_on_id = %q, want %q", table, row.dependsOnID, targetID)
@@ -462,15 +327,17 @@ func readWispTargetDependencyRow(t *testing.T, ctx context.Context, store *DoltS
 func countOldWispTargetRows(t *testing.T, ctx context.Context, store *DoltStore, table, targetID string) int {
 	t.Helper()
 
-	var query string
+	var depTable string
 	switch table {
 	case "dependencies":
-		query = `SELECT COUNT(*) FROM dependencies WHERE COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?`
+		depTable = "issue_wisp_dependencies"
 	case "wisp_dependencies":
-		query = `SELECT COUNT(*) FROM wisp_dependencies WHERE COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) = ?`
+		depTable = "wisp_wisp_dependencies"
 	default:
 		t.Fatalf("unknown dependency table %q", table)
 	}
+	//nolint:gosec // G201: depTable comes from a switch over test-supplied constants.
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE depends_on_wisp_id = ?`, depTable)
 	var count int
 	if err := store.db.QueryRowContext(ctx, query, targetID).Scan(&count); err != nil {
 		t.Fatalf("failed to count old target rows in %s: %v", table, err)

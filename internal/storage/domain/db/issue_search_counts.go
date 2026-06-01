@@ -16,7 +16,7 @@ import (
 func (r *issueSQLRepositoryImpl) searchAcrossIssuesAndWispsWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
 	limit := filter.Limit
 
-	wispDepsExist, err := r.optionalTableExists(ctx, "wisp_dependencies")
+	wispDepsExist, err := r.optionalTableExists(ctx, "wisp_issue_dependencies")
 	if err != nil {
 		return nil, fmt.Errorf("search issues with counts: wisp dependency probe: %w", err)
 	}
@@ -101,17 +101,9 @@ func (r *issueSQLRepositoryImpl) runFilterSearchQuery(ctx context.Context, query
 
 //nolint:gosec // G201: SQL fragments are built from hardcoded table names and parameterized filters.
 func (r *issueSQLRepositoryImpl) runSearchQuery(ctx context.Context, tables filterTables, whereSQL, orderBySQL, limitSQL string, args []any, includeWispReverseDeps bool, skipLabels bool) ([]*types.IssueWithCounts, error) {
-	reverseBlockerSelect := `
-			SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS dep_id
-			FROM dependencies WHERE type = 'blocks'
-	`
-	if includeWispReverseDeps {
-		reverseBlockerSelect += `
-			UNION ALL
-			SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS dep_id
-			FROM wisp_dependencies WHERE type = 'blocks'
-		`
-	}
+	reverseBlockerSelect := reverseBlockerUnionSQL(includeWispReverseDeps)
+
+	depUnion := depUnionForJSON(tables.DepTables)
 
 	labelsSelect := "l.labels_json AS labels_json"
 	labelsJoin := fmt.Sprintf(`
@@ -137,7 +129,7 @@ func (r *issueSQLRepositoryImpl) runSearchQuery(ctx context.Context, tables filt
 		%s
 		LEFT JOIN (
 			SELECT issue_id, COUNT(*) AS cnt
-			FROM %s
+			FROM %s u
 			WHERE type = 'blocks'
 			GROUP BY issue_id
 		) dc ON dc.issue_id = i.id
@@ -152,15 +144,14 @@ func (r *issueSQLRepositoryImpl) runSearchQuery(ctx context.Context, tables filt
 			GROUP BY issue_id
 		) cc ON cc.issue_id = i.id
 		LEFT JOIN (
-			SELECT issue_id,
-			       MIN(COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)) AS parent_id
-			FROM %s
+			SELECT issue_id, MIN(depends_on_id) AS parent_id
+			FROM %s u
 			WHERE type = 'parent-child'
 			GROUP BY issue_id
 		) pc ON pc.issue_id = i.id
 		LEFT JOIN (
 			SELECT issue_id, JSON_ARRAYAGG(%s) AS deps_json
-			FROM %s
+			FROM %s u
 			GROUP BY issue_id
 		) d ON d.issue_id = i.id
 		%s
@@ -171,12 +162,12 @@ func (r *issueSQLRepositoryImpl) runSearchQuery(ctx context.Context, tables filt
 		labelsSelect,
 		tables.Main,
 		labelsJoin,
-		tables.Dependencies,
+		depUnion,
 		reverseBlockerSelect,
 		tables.Comments,
-		tables.Dependencies,
+		depUnion,
 		readyWorkDepJSONObject,
-		tables.Dependencies,
+		depUnion,
 		whereSQL,
 		orderBySQL,
 		limitSQL,
@@ -238,13 +229,53 @@ var readyWorkIssueColumns = func() string {
 
 const readyWorkDepJSONObject = `JSON_OBJECT(
 	'issue_id', issue_id,
-	'depends_on_id', COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external),
+	'depends_on_id', depends_on_id,
 	'type', type,
 	'created_at', DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'),
 	'created_by', created_by,
 	'metadata', CAST(metadata AS CHAR),
 	'thread_id', thread_id
 )`
+
+// depUnionForJSON returns a UNION ALL subquery over the given split dep tables
+// projecting (issue_id, depends_on_id, type, created_at, created_by, metadata,
+// thread_id) where issue_id is source_id and depends_on_id is the table's
+// typed target column. Wrap the result as `(<query>) u` in the caller's FROM.
+func depUnionForJSON(depTables []string) string {
+	parts := make([]string, 0, len(depTables))
+	for _, t := range depTables {
+		col := depTargetColumnForTable(t)
+		parts = append(parts, fmt.Sprintf(
+			"SELECT source_id AS issue_id, %s AS depends_on_id, type, created_at, created_by, metadata, thread_id FROM %s",
+			col, t))
+	}
+	return "(" + strings.Join(parts, " UNION ALL ") + ")"
+}
+
+// reverseBlockerUnionSQL returns a UNION ALL subquery projecting `dep_id`
+// (the target column) across the issue-target and wisp-target split dep
+// tables filtered by type='blocks'. Wisp-source tables are included only when
+// includeWisps is true. External-target tables are excluded because external
+// IDs never match a local issue/wisp id in the outer LEFT JOIN.
+func reverseBlockerUnionSQL(includeWisps bool) string {
+	pairs := []struct{ table, col string }{
+		{"issue_issue_dependencies", "depends_on_issue_id"},
+		{"issue_wisp_dependencies", "depends_on_wisp_id"},
+	}
+	if includeWisps {
+		pairs = append(pairs,
+			struct{ table, col string }{"wisp_issue_dependencies", "depends_on_issue_id"},
+			struct{ table, col string }{"wisp_wisp_dependencies", "depends_on_wisp_id"},
+		)
+	}
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, fmt.Sprintf(
+			"SELECT %s AS dep_id FROM %s WHERE type = 'blocks'",
+			p.col, p.table))
+	}
+	return strings.Join(parts, " UNION ALL ")
+}
 
 func scanReadyWorkRowWithCounts(rows *sql.Rows) (*types.IssueWithCounts, error) {
 	var labelsJSON, depsJSON sql.NullString

@@ -1,22 +1,29 @@
 package doctor
 
-// Keep in sync with issueops.DepTargetExpr.
-const doctorDependencyTargetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/steveyegge/beads/internal/storage/issueops"
+)
 
 func doctorDependencyUnionSQL() string {
-	return `
-		SELECT 'dependencies' AS dep_table, issue_id, ` + doctorDependencyTargetExpr + ` AS depends_on_id, type
-		FROM dependencies
-		UNION ALL
-		SELECT 'wisp_dependencies' AS dep_table, issue_id, ` + doctorDependencyTargetExpr + ` AS depends_on_id, type
-		FROM wisp_dependencies`
+	return doctorDepUnion(false)
 }
 
 func doctorDependencyUnionWithThreadSQL() string {
-	return `
-		SELECT 'dependencies' AS dep_table, issue_id, ` + doctorDependencyTargetExpr + ` AS depends_on_id, type, thread_id
-		FROM dependencies
-		UNION ALL
-		SELECT 'wisp_dependencies' AS dep_table, issue_id, ` + doctorDependencyTargetExpr + ` AS depends_on_id, type, thread_id
-		FROM wisp_dependencies`
+	return doctorDepUnion(true)
+}
+
+func doctorDepUnion(withThread bool) string {
+	cols := "'%s' AS dep_table, source_id AS issue_id, %s AS depends_on_id, type"
+	if withThread {
+		cols += ", thread_id"
+	}
+	parts := make([]string, 0, 6)
+	for _, t := range issueops.AllDepTables() {
+		col := issueops.DepTargetColumnForTable(t)
+		parts = append(parts, fmt.Sprintf("SELECT "+cols+" FROM %s", t, col, t))
+	}
+	return "\n\t\t\t" + strings.Join(parts, "\n\t\t\tUNION ALL\n\t\t\t")
 }

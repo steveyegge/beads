@@ -187,12 +187,82 @@ func PartitionWispIDsInTx(ctx context.Context, tx *sql.Tx, ids []string) (wispID
 	return wispIDs, permIDs, nil
 }
 
-// WispTableRouting returns the appropriate issue, label, event, and dependency
-// table names based on whether the ID is an active wisp. Call IsActiveWispInTx
-// first to determine isWisp.
-func WispTableRouting(isWisp bool) (issueTable, labelTable, eventTable, depTable string) {
+func WispTableRouting(isWisp bool) (issueTable, labelTable, eventTable string) {
 	if isWisp {
-		return "wisps", "wisp_labels", "wisp_events", "wisp_dependencies"
+		return "wisps", "wisp_labels", "wisp_events"
 	}
-	return "issues", "labels", "events", "dependencies"
+	return "issues", "labels", "events"
+}
+
+func DepTableFor(sourceIsWisp bool, target DepTargetKind) string {
+	if sourceIsWisp {
+		switch target {
+		case DepTargetWisp:
+			return "wisp_wisp_dependencies"
+		case DepTargetExternal:
+			return "wisp_external_dependencies"
+		default:
+			return "wisp_issue_dependencies"
+		}
+	}
+	switch target {
+	case DepTargetWisp:
+		return "issue_wisp_dependencies"
+	case DepTargetExternal:
+		return "issue_external_dependencies"
+	default:
+		return "issue_issue_dependencies"
+	}
+}
+
+func SourceDepTables(sourceIsWisp bool) []string {
+	if sourceIsWisp {
+		return []string{"wisp_issue_dependencies", "wisp_wisp_dependencies", "wisp_external_dependencies"}
+	}
+	return []string{"issue_issue_dependencies", "issue_wisp_dependencies", "issue_external_dependencies"}
+}
+
+func TargetDepTables(target DepTargetKind) []string {
+	switch target {
+	case DepTargetWisp:
+		return []string{"issue_wisp_dependencies", "wisp_wisp_dependencies"}
+	case DepTargetExternal:
+		return []string{"issue_external_dependencies", "wisp_external_dependencies"}
+	default:
+		return []string{"issue_issue_dependencies", "wisp_issue_dependencies"}
+	}
+}
+
+func AllDepTables() []string {
+	return []string{
+		"issue_issue_dependencies",
+		"issue_wisp_dependencies",
+		"issue_external_dependencies",
+		"wisp_issue_dependencies",
+		"wisp_wisp_dependencies",
+		"wisp_external_dependencies",
+	}
+}
+
+func DepTargetColumn(target DepTargetKind) string {
+	switch target {
+	case DepTargetWisp:
+		return "depends_on_wisp_id"
+	case DepTargetExternal:
+		return "depends_on_external_id"
+	default:
+		return "depends_on_issue_id"
+	}
+}
+
+func DepTargetColumnForTable(table string) string {
+	switch {
+	case strings.HasSuffix(table, "_issue_dependencies"):
+		return "depends_on_issue_id"
+	case strings.HasSuffix(table, "_wisp_dependencies"):
+		return "depends_on_wisp_id"
+	case strings.HasSuffix(table, "_external_dependencies"):
+		return "depends_on_external_id"
+	}
+	return ""
 }

@@ -168,7 +168,8 @@ func (r *issueSQLRepositoryImpl) buildReadyWorkPredicates(ctx context.Context, f
 		if descErr != nil {
 			return nil, fmt.Errorf("get parent descendants: %w", descErr)
 		}
-		parentClauses := []string{fmt.Sprintf("(id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child'))", tables.Dependencies)}
+		pcUnion := parentChildUnionSQL(tables.DepTables)
+		parentClauses := []string{fmt.Sprintf("(id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT source_id FROM %s u WHERE type = 'parent-child'))", pcUnion)}
 		args = append(args, parentID)
 		for start := 0; start < len(descendantIDs); start += queryBatchSize {
 			end := start + queryBatchSize
@@ -183,7 +184,10 @@ func (r *issueSQLRepositoryImpl) buildReadyWorkPredicates(ctx context.Context, f
 	}
 
 	if filter.MoleculeID != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(id IN (SELECT issue_id FROM %s WHERE type = 'parent-child' AND %s = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT issue_id FROM %s WHERE type = 'parent-child')))", tables.Dependencies, depTargetExpr, tables.Dependencies))
+		pcUnion := parentChildUnionSQL(tables.DepTables)
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"(id IN (SELECT source_id FROM %s u WHERE type = 'parent-child' AND depends_on_id = ?) OR (id LIKE CONCAT(?, '.%%') AND id NOT IN (SELECT source_id FROM %s u WHERE type = 'parent-child')))",
+			pcUnion, pcUnion))
 		args = append(args, filter.MoleculeID, filter.MoleculeID)
 	}
 
@@ -278,7 +282,7 @@ func (r *issueSQLRepositoryImpl) getReadyWork(ctx context.Context, filter types.
 }
 
 func (r *issueSQLRepositoryImpl) getReadyWorkWithCounts(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, error) {
-	wispDepsExist, err := r.optionalTableExists(ctx, "wisp_dependencies")
+	wispDepsExist, err := r.optionalTableExists(ctx, "wisp_issue_dependencies")
 	if err != nil {
 		return nil, fmt.Errorf("get ready work with counts: wisp dependency probe: %w", err)
 	}
@@ -731,54 +735,60 @@ func (r *issueSQLRepositoryImpl) getChildrenOfDeferredParents(ctx context.Contex
 		return nil, nil
 	}
 
+	// Each split dep table has exactly one typed target column, so the pair
+	// (depTable, issueTable) is determined by the table's suffix:
+	//   *_issue_dependencies → joins `issues` via depends_on_issue_id
+	//   *_wisp_dependencies  → joins `wisps`  via depends_on_wisp_id
+	// External-target tables are skipped: external parents cannot defer.
+	type deferredParentPair struct{ depTable, issueTable, targetCol string }
+	pairs := []deferredParentPair{
+		{"issue_issue_dependencies", "issues", "depends_on_issue_id"},
+		{"wisp_issue_dependencies", "issues", "depends_on_issue_id"},
+		{"issue_wisp_dependencies", "wisps", "depends_on_wisp_id"},
+		{"wisp_wisp_dependencies", "wisps", "depends_on_wisp_id"},
+	}
+
 	var childIDs []string
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
-		for _, issueTable := range []string{"issues", "wisps"} {
-			targetCol := "depends_on_issue_id"
-			if issueTable == "wisps" {
-				targetCol = "depends_on_wisp_id"
+	for _, p := range pairs {
+		//nolint:gosec // G201: depTable, issueTable, targetCol are fixed constants.
+		rows, err := r.runner.QueryContext(ctx, fmt.Sprintf(`
+			SELECT dep.source_id
+			FROM %s dep
+			JOIN %s parent ON parent.id = dep.%s
+			WHERE dep.type = 'parent-child'
+			  AND parent.defer_until IS NOT NULL
+			  AND parent.defer_until > UTC_TIMESTAMP()
+		`, p.depTable, p.issueTable, p.targetCol))
+		if err != nil {
+			if dberrors.IsTableNotExist(err) && (strings.HasPrefix(p.depTable, "wisp_") || p.issueTable == "wisps") {
+				continue
 			}
-			rows, err := r.runner.QueryContext(ctx, fmt.Sprintf(`
-				SELECT dep.issue_id
-				FROM %s dep
-				JOIN %s parent ON parent.id = dep.%s
-				WHERE dep.type = 'parent-child'
-				  AND parent.defer_until IS NOT NULL
-				  AND parent.defer_until > UTC_TIMESTAMP()
-			`, depTable, issueTable, targetCol))
-			if err != nil {
-				if depTable == "wisp_dependencies" && dberrors.IsTableNotExist(err) {
-					break
-				}
-				if issueTable == "wisps" && dberrors.IsTableNotExist(err) {
-					continue
-				}
-				return nil, fmt.Errorf("deferred parents: get deferred children from %s/%s: %w", depTable, issueTable, err)
+			return nil, fmt.Errorf("deferred parents: get deferred children from %s/%s: %w", p.depTable, p.issueTable, err)
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("deferred parents: scan deferred child from %s/%s: %w", p.depTable, p.issueTable, err)
 			}
-			for rows.Next() {
-				var id string
-				if err := rows.Scan(&id); err != nil {
-					_ = rows.Close()
-					return nil, fmt.Errorf("deferred parents: scan deferred child from %s/%s: %w", depTable, issueTable, err)
-				}
-				childIDs = append(childIDs, id)
-			}
-			_ = rows.Close()
-			if err := rows.Err(); err != nil {
-				return nil, fmt.Errorf("deferred parents: child rows from %s/%s: %w", depTable, issueTable, err)
-			}
+			childIDs = append(childIDs, id)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("deferred parents: child rows from %s/%s: %w", p.depTable, p.issueTable, err)
 		}
 	}
 	return childIDs, nil
 }
 
-//nolint:gosec // G201: depTable is hardcoded.
+//nolint:gosec // G201: depTable comes from a fixed set of split-dep table names.
 func (r *issueSQLRepositoryImpl) getParentedIDSet(ctx context.Context, issueIDs []string) (map[string]struct{}, error) {
 	parented := make(map[string]struct{})
 	if len(issueIDs) == 0 {
 		return parented, nil
 	}
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+	depTables := append(sourceDepTables(false), sourceDepTables(true)...)
+	for _, depTable := range depTables {
 		for start := 0; start < len(issueIDs); start += queryBatchSize {
 			end := start + queryBatchSize
 			if end > len(issueIDs) {
@@ -786,12 +796,12 @@ func (r *issueSQLRepositoryImpl) getParentedIDSet(ctx context.Context, issueIDs 
 			}
 			placeholders, args := buildInPlaceholders(issueIDs[start:end])
 			query := fmt.Sprintf(`
-				SELECT issue_id FROM %s
-				WHERE type = 'parent-child' AND issue_id IN (%s)
+				SELECT source_id FROM %s
+				WHERE type = 'parent-child' AND source_id IN (%s)
 			`, depTable, placeholders)
 			rows, err := r.runner.QueryContext(ctx, query, args...)
 			if err != nil {
-				if depTable == "wisp_dependencies" && dberrors.IsTableNotExist(err) {
+				if strings.HasPrefix(depTable, "wisp_") && dberrors.IsTableNotExist(err) {
 					break
 				}
 				return nil, fmt.Errorf("get parented IDs from %s: %w", depTable, err)
@@ -819,17 +829,24 @@ func (r *issueSQLRepositoryImpl) getDescendantIDs(ctx context.Context, rootID st
 	}
 
 	queryDescendants := func(includeWisps bool) ([]string, bool, error) {
-		edgeQuery := fmt.Sprintf(`
-			SELECT issue_id, %s FROM dependencies WHERE type = 'parent-child'
-		`, depTargetExpr)
+		// Parent-child edges live in the {issue,wisp}_{issue,wisp}_dependencies
+		// tables; external-target tables cannot participate in descent because
+		// no local row's id matches an external target. When includeWisps is
+		// false, restrict to issue-source tables only.
+		depTables := []string{"issue_issue_dependencies", "issue_wisp_dependencies"}
 		if includeWisps {
-			edgeQuery += fmt.Sprintf(`
-			UNION ALL
-			SELECT issue_id, %s FROM wisp_dependencies WHERE type = 'parent-child'
-		`, depTargetExpr)
+			depTables = append(depTables, "wisp_issue_dependencies", "wisp_wisp_dependencies")
 		}
+		edgeParts := make([]string, 0, len(depTables))
+		for _, t := range depTables {
+			col := depTargetColumnForTable(t)
+			edgeParts = append(edgeParts, fmt.Sprintf(
+				"SELECT source_id AS issue_id, %s AS depends_on_id FROM %s WHERE type = 'parent-child'",
+				col, t))
+		}
+		edgeQuery := strings.Join(edgeParts, " UNION ALL ")
 
-		//nolint:gosec // G201: edgeQuery is built from hardcoded SQL plus depTargetExpr (no user input)
+		//nolint:gosec // G201: edgeQuery is built from a closed set of split-dep tables.
 		query := fmt.Sprintf(`
 			WITH RECURSIVE
 			parent_edges(issue_id, depends_on_id) AS (

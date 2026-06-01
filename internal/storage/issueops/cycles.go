@@ -17,12 +17,16 @@ func DetectCyclesInTx(ctx context.Context, tx *sql.Tx) ([][]*types.Issue, error)
 	// Build adjacency list from both dependency tables.
 	graph := make(map[string][]string)
 
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+	for _, depTable := range AllDepTables() {
+		col := DepTargetColumnForTable(depTable)
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-			SELECT issue_id, %s AS depends_on_id, type
+			SELECT source_id, %s AS depends_on_id, type
 			FROM %s
-		`, DepTargetExpr, depTable))
+		`, col, depTable))
 		if err != nil {
+			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+				continue
+			}
 			return nil, fmt.Errorf("detect cycles: query %s: %w", depTable, err)
 		}
 		for rows.Next() {

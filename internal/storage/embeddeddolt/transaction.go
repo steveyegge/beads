@@ -85,7 +85,9 @@ func (t *embeddedTransaction) CloseIssue(ctx context.Context, id string, reason 
 
 func (t *embeddedTransaction) DeleteIssue(ctx context.Context, id string) error {
 	t.dirty.MarkDirty("issues")
-	t.dirty.MarkDirty("dependencies")
+	for _, table := range issueops.AllDepTables() {
+		t.dirty.MarkDirty(table)
+	}
 	t.dirty.MarkDirty("labels")
 	t.dirty.MarkDirty("comments")
 	t.dirty.MarkDirty("events")
@@ -105,19 +107,25 @@ func (t *embeddedTransaction) AddDependency(ctx context.Context, dep *types.Depe
 }
 
 func (t *embeddedTransaction) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, addOpts storage.DependencyAddOptions) error {
-	_, _, _, depTable := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, dep.IssueID))
+	sourceIsWisp := issueops.IsActiveWispInTx(ctx, t.tx, dep.IssueID)
+	isCrossPrefix := types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID)
+	kind := issueops.ClassifyDepTarget(ctx, t.tx, dep, isCrossPrefix)
 	if err := issueops.AddDependencyInTx(ctx, t.tx, dep, actor, issueops.AddDependencyOpts{
-		IsCrossPrefix:  types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
+		IsCrossPrefix:  isCrossPrefix,
 		SkipCycleCheck: addOpts.SkipCycleCheck,
+		TargetKind:     &kind,
 	}); err != nil {
 		return err
 	}
-	t.dirty.MarkDirty(depTable)
+	t.dirty.MarkDirty(issueops.DepTableFor(sourceIsWisp, kind))
 	return nil
 }
 
 func (t *embeddedTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	t.dirty.MarkDirty("dependencies")
+	sourceIsWisp := issueops.IsActiveWispInTx(ctx, t.tx, issueID)
+	for _, table := range issueops.SourceDepTables(sourceIsWisp) {
+		t.dirty.MarkDirty(table)
+	}
 	return issueops.RemoveDependencyInTx(ctx, t.tx, issueID, dependsOnID)
 }
 
