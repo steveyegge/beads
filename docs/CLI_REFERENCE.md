@@ -931,7 +931,7 @@ bd list [flags]
       --skip-labels                  Skip label hydration. The labels field in output will be empty regardless of actual labels. Use only when the caller does not depend on label data. Cannot combine with --label, --label-any, --label-pattern, --label-regex, --exclude-label, or --no-labels.
       --sort string                  Sort by field: priority, created, updated, closed, status, id, title, type, assignee
       --spec string                  Filter by spec_id prefix
-  -s, --status string                Filter by stored status (open, in_progress, blocked, deferred, closed). Comma-separated for multiple: --status open,in_progress
+  -s, --status string                Filter by stored status (open, in_progress, blocked, deferred, closed). Comma-separated for multiple: --status open,in_progress. Note: repeating -s/--status silently overwrites the previous value — always use the comma-separated form for multi-status filters.
       --title string                 Filter by title text (case-insensitive substring match)
       --title-contains string        Filter by title substring (case-insensitive)
       --tree                         Hierarchical tree format (default: true; use --flat to disable) (default true)
