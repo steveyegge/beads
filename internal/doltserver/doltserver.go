@@ -684,6 +684,65 @@ const doltServerLogLevel = "warning"
 // Debug mode also raises --loglevel from the default warning to debug;
 // the connection-log spam concern that motivated the warning floor is
 // the price of opting into debug.
+// gitConfigParametersEnv is git's environment variable for injecting one-off
+// config values into every git invocation in the process subtree.
+const gitConfigParametersEnv = "GIT_CONFIG_PARAMETERS"
+
+// noGitHooksConfigParam is the GIT_CONFIG_PARAMETERS entry that disables
+// client-side git hooks (it points core.hooksPath at /dev/null). This mirrors
+// applyNoGitHooksToCmd in internal/storage/dolt, which can't be imported here
+// (that package imports this one).
+const noGitHooksConfigParam = "'core.hooksPath=/dev/null'"
+
+// serverEnv builds the environment for the spawned dolt sql-server. It starts
+// from the current process environment (so the server inherits PATH, HOME,
+// credentials, cloud auth, etc.) and disables client-side git hooks.
+//
+// bd runs every CALL DOLT_PUSH/PULL/FETCH inside this server process, which
+// shells out to git for the `refs/dolt/data` transfer against the embedded
+// cache-mirror (`.dolt/git-remote-cache/<hash>/repo.git/`). That mirror is a
+// bare-style repo with no work tree, but `git init` still copies the user's
+// `init.templateDir` hooks into its `hooks/` dir; a templated `pre-push` hook
+// that runs `git diff` / `git status` then crashes the push with "fatal: this
+// operation must be run in a work tree" (GH#4272).
+//
+// PR #3740 (GH#3724) only covered the CLI shell-out push fallback
+// (applyNoGitHooksToCmd). The primary push path runs CALL DOLT_PUSH inside this
+// server, so the override has to be in the server's environment at startup; the
+// server then inherits it once and every git child it spawns skips hooks. Same
+// intent as the commit-side `--no-verify` fix (GH#3340 / GH#3598).
+func serverEnv() []string {
+	return withGitHooksDisabled(os.Environ())
+}
+
+// withGitHooksDisabled returns env with GIT_CONFIG_PARAMETERS set so git skips
+// client-side hooks. Any pre-existing GIT_CONFIG_PARAMETERS value is preserved
+// and the hooks override appended after it (rather than added as a second,
+// ambiguous entry for the same key); git applies parameters left to right, so
+// the override still wins.
+func withGitHooksDisabled(env []string) []string {
+	const prefix = gitConfigParametersEnv + "="
+	out := make([]string, 0, len(env)+1)
+	merged := false
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			existing := strings.TrimPrefix(e, prefix)
+			if existing == "" {
+				out = append(out, prefix+noGitHooksConfigParam)
+			} else {
+				out = append(out, prefix+existing+" "+noGitHooksConfigParam)
+			}
+			merged = true
+			continue
+		}
+		out = append(out, e)
+	}
+	if !merged {
+		out = append(out, prefix+noGitHooksConfigParam)
+	}
+	return out
+}
+
 func buildDoltServerArgs(host string, port int, debug bool, profDir string) []string {
 	var args []string
 	if debug {

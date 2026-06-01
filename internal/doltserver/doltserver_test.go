@@ -1961,3 +1961,89 @@ func TestEnsureGlobalDatabase_ServerNotReachable(t *testing.T) {
 		t.Error("expected error when server is not reachable")
 	}
 }
+
+// envValue returns the value of the last entry for key in env, or "" if absent.
+// Mirrors the "last wins" semantics that exec applies for duplicate keys.
+func envValue(env []string, key string) (string, bool) {
+	prefix := key + "="
+	val, found := "", false
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			val, found = strings.TrimPrefix(e, prefix), true
+		}
+	}
+	return val, found
+}
+
+func countEnvKeys(env []string, key string) int {
+	prefix := key + "="
+	n := 0
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestServerEnvDisablesGitHooks is the regression test for GH#4272: the
+// auto-started dolt sql-server must run with git client-side hooks disabled, so
+// CALL DOLT_PUSH's internal git push of refs/dolt/data against the cache-mirror
+// doesn't fire templated pre-push hooks.
+func TestServerEnvDisablesGitHooks(t *testing.T) {
+	t.Setenv(gitConfigParametersEnv, "")
+
+	env := serverEnv()
+
+	got, ok := envValue(env, gitConfigParametersEnv)
+	if !ok {
+		t.Fatalf("%s not set in server env", gitConfigParametersEnv)
+	}
+	if !strings.Contains(got, noGitHooksConfigParam) {
+		t.Errorf("%s = %q, want to contain %q", gitConfigParametersEnv, got, noGitHooksConfigParam)
+	}
+	// Exactly one entry for the key — duplicates are ambiguous for git.
+	if n := countEnvKeys(env, gitConfigParametersEnv); n != 1 {
+		t.Errorf("found %d %s entries, want exactly 1", n, gitConfigParametersEnv)
+	}
+}
+
+func TestWithGitHooksDisabled(t *testing.T) {
+	const key = gitConfigParametersEnv
+	tests := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{
+			name: "absent — added",
+			in:   []string{"PATH=/bin", "TZ=UTC"},
+			want: noGitHooksConfigParam,
+		},
+		{
+			name: "empty — replaced",
+			in:   []string{key + "="},
+			want: noGitHooksConfigParam,
+		},
+		{
+			name: "existing — preserved and appended after (so ours wins)",
+			in:   []string{key + "='user.email=ci@example.com'"},
+			want: "'user.email=ci@example.com' " + noGitHooksConfigParam,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := withGitHooksDisabled(tt.in)
+			got, ok := envValue(out, key)
+			if !ok {
+				t.Fatalf("%s not present after withGitHooksDisabled", key)
+			}
+			if got != tt.want {
+				t.Errorf("%s = %q, want %q", key, got, tt.want)
+			}
+			if n := countEnvKeys(out, key); n != 1 {
+				t.Errorf("found %d %s entries, want exactly 1", n, key)
+			}
+		})
+	}
+}
