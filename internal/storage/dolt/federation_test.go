@@ -519,6 +519,94 @@ func TestSyncCLIRemotesToSQL(t *testing.T) {
 	_ = store.RemoveRemote(ctx, remoteName)
 }
 
+func TestNewLocalOnlySkipsCLIRemoteSync(t *testing.T) {
+	skipIfNoDolt(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	baseDir := t.TempDir()
+	beadsDir := filepath.Join(baseDir, ".beads")
+	doltDir := filepath.Join(beadsDir, "dolt")
+	dbName := uniqueTestDBName(t)
+
+	store, err := New(ctx, &Config{
+		Path:            doltDir,
+		BeadsDir:        beadsDir,
+		Database:        dbName,
+		CreateIfMissing: true,
+		MaxOpenConns:    1,
+	})
+	if err != nil {
+		t.Fatalf("open initial store: %v", err)
+	}
+
+	remoteName := "origin"
+	remoteURL := "file:///tmp/test-local-only-origin"
+	cliDir := store.CLIDir()
+	if cliDir == "" {
+		t.Fatal("CLIDir is empty")
+	}
+	if err := os.MkdirAll(cliDir, 0755); err != nil {
+		t.Fatalf("create CLI dir: %v", err)
+	}
+	initCmd := exec.Command("dolt", "init", "--name", "test", "--email", "test@test.com")
+	initCmd.Dir = cliDir
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		if !strings.Contains(string(out), "already") {
+			t.Fatalf("dolt init failed: %s: %v", out, err)
+		}
+	}
+	if err := doltutil.AddCLIRemote(cliDir, remoteName, remoteURL); err != nil {
+		t.Fatalf("add CLI remote: %v", err)
+	}
+	if err := store.RemoveRemote(ctx, remoteName); err != nil {
+		t.Fatalf("remove SQL remote: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close initial store: %v", err)
+	}
+
+	localOnlyStore, err := New(ctx, &Config{
+		Path:         doltDir,
+		BeadsDir:     beadsDir,
+		Database:     dbName,
+		LocalOnly:    true,
+		MaxOpenConns: 1,
+	})
+	if err != nil {
+		t.Fatalf("open local-only store: %v", err)
+	}
+	has, err := localOnlyStore.HasRemote(ctx, remoteName)
+	if err != nil {
+		t.Fatalf("local-only HasRemote: %v", err)
+	}
+	if has {
+		t.Fatal("local-only store open re-registered CLI remote into SQL")
+	}
+	if err := localOnlyStore.Close(); err != nil {
+		t.Fatalf("close local-only store: %v", err)
+	}
+
+	syncingStore, err := New(ctx, &Config{
+		Path:         doltDir,
+		BeadsDir:     beadsDir,
+		Database:     dbName,
+		MaxOpenConns: 1,
+	})
+	if err != nil {
+		t.Fatalf("open default store: %v", err)
+	}
+	defer syncingStore.Close()
+	has, err = syncingStore.HasRemote(ctx, remoteName)
+	if err != nil {
+		t.Fatalf("default HasRemote: %v", err)
+	}
+	if !has {
+		t.Fatal("default store open did not re-register CLI remote into SQL")
+	}
+}
+
 // TestMigrateServerRootRemotes verifies GH#2118: remotes added in the dolt
 // server root directory (.beads/dolt/) are propagated to the database
 // subdirectory (.beads/dolt/<database>/) during syncCLIRemotesToSQL.
