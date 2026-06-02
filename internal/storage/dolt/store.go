@@ -705,6 +705,10 @@ func (s *DoltStore) BackupRemove(ctx context.Context, name string) error {
 // BackupDatabase registers dir as a file:// Dolt backup remote and syncs
 // the full database to it, preserving complete commit history.
 func (s *DoltStore) BackupDatabase(ctx context.Context, dir string) error {
+	if s.isRemoteServer() {
+		return fmt.Errorf("filesystem backup is not supported for remote dolt servers (host=%s); use JSONL export (bd export -o /path/to/backup.jsonl) or a cloud backup URL instead", s.serverHost)
+	}
+
 	info, err := os.Stat(dir)
 	if err != nil {
 		return fmt.Errorf("backup destination does not exist: %w", err)
@@ -742,6 +746,10 @@ func (s *DoltStore) BackupDatabase(ctx context.Context, dir string) error {
 // RestoreDatabase restores the database from a Dolt backup at dir.
 // When force is true, an existing database is overwritten.
 func (s *DoltStore) RestoreDatabase(ctx context.Context, dir string, force bool) error {
+	if s.isRemoteServer() {
+		return fmt.Errorf("filesystem restore is not supported for remote dolt servers (host=%s); use JSONL import (bd init --from-jsonl) instead", s.serverHost)
+	}
+
 	info, err := os.Stat(dir)
 	if err != nil {
 		return fmt.Errorf("backup source does not exist: %w", err)
@@ -990,7 +998,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		if canAutoStart {
 			port, startedByUs, startErr := doltserver.EnsureRunningDetailed(resolvedBeadsDir)
 			if startErr != nil {
-				return nil, fmt.Errorf("Dolt server unreachable at %s and auto-start failed: %w\n\n"+
+				return nil, fmt.Errorf("cannot connect to dolt server at %s (auto-start failed): %w\n\n"+
 					"To start manually: bd dolt start\n"+
 					"To disable auto-start: set dolt.auto-start: false in .beads/config.yaml",
 					addr, startErr)
@@ -1023,7 +1031,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 				if breaker != nil {
 					breaker.RecordFailure()
 				}
-				return nil, fmt.Errorf("Dolt server auto-started but still unreachable at %s: %w\n\n"+
+				return nil, fmt.Errorf("cannot connect to dolt server at %s (auto-started but still unreachable): %w\n\n"+
 					"Check logs: %s", addr, dialErr, doltserver.LogPath(resolvedBeadsDir))
 			}
 		} else {
@@ -1043,7 +1051,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			} else {
 				hint = "The Dolt server may not be running. Try:\n  bd dolt start"
 			}
-			return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\n%s",
+			return nil, fmt.Errorf("cannot connect to dolt server at %s: %w\n\n%s",
 				addr, dialErr, hint)
 		}
 	}
@@ -1407,7 +1415,7 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 				_ = db.Close()
 				// Check for connection refused - server likely not running
 				if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
-					return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
+					return nil, "", fmt.Errorf("cannot connect to dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
 						cfg.ServerHost, cfg.ServerPort, err)
 				}
 				return nil, "", fmt.Errorf("failed to create database: %w", err)
@@ -2101,7 +2109,10 @@ func (s *DoltStore) pushToRemote(ctx context.Context, remote string, force bool)
 			attribute.String("dolt.branch", s.branch),
 		)...),
 	)
-	defer func() { endSpan(span, retErr) }()
+	defer func() {
+		endSpan(span, retErr)
+		retErr = wrapRemoteNotFoundError(retErr, "push")
+	}()
 	creds := s.credentialsForRemote(remote)
 	// Git-protocol remotes: use CLI to avoid MySQL connection timeout during transfer.
 	// Must check before remoteUser — Hosted Dolt SSH remotes have remoteUser set
@@ -2189,7 +2200,10 @@ func (s *DoltStore) pullFromRemote(ctx context.Context, remote string) (retErr e
 			attribute.String("dolt.branch", s.branch),
 		)...),
 	)
-	defer func() { endSpan(span, retErr) }()
+	defer func() {
+		endSpan(span, retErr)
+		retErr = wrapRemoteNotFoundError(retErr, "pull")
+	}()
 
 	// GH#2474: Auto-commit pending changes before pull to prevent
 	// "cannot merge with uncommitted changes" errors. Store initialization
