@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -22,6 +24,82 @@ type DBConn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// SchemaSkewError is returned when the DB schema version is ahead of the
+// binary's known version (forward drift). Stale binary queries may fail with
+// cryptic SQL errors like "column X could not be found in any table in scope".
+type SchemaSkewError struct {
+	DBVersion     int
+	BinaryVersion int
+}
+
+func (e *SchemaSkewError) Error() string {
+	delta := e.DBVersion - e.BinaryVersion
+	unit := "migrations"
+	if delta == 1 {
+		unit = "migration"
+	}
+	return fmt.Sprintf("schema version mismatch: database is at v%d, binary knows up to v%d (%d %s ahead)",
+		e.DBVersion, e.BinaryVersion, delta, unit)
+}
+
+// UserMessage returns the full multi-line error block for terminal output.
+func (e *SchemaSkewError) UserMessage() string {
+	return e.Error() + "\n" +
+		"\n" +
+		"  Your bd binary is stale. Queries for dropped or renamed columns will fail\n" +
+		"  with cryptic SQL errors (e.g. \"column X could not be found in any table in scope\").\n" +
+		"\n" +
+		"  Rebuild from main:\n" +
+		"    CGO_ENABLED=0 go build -tags gms_pure_go ./cmd/bd\n" +
+		"\n" +
+		"  Or install the latest release:\n" +
+		"    CGO_ENABLED=0 go install -tags gms_pure_go github.com/steveyegge/beads/cmd/bd@latest\n" +
+		"\n" +
+		"  To proceed despite the risk (some read commands may still work):\n" +
+		"    BD_IGNORE_SCHEMA_SKEW=1 bd <command>\n" +
+		"    bd --ignore-schema-skew <command>\n"
+}
+
+// EscapeHint returns the escape-hatch string for JSON error output.
+func (e *SchemaSkewError) EscapeHint() string {
+	return "BD_IGNORE_SCHEMA_SKEW=1 bd <command>  or  bd --ignore-schema-skew <command>"
+}
+
+// IsSchemaSkewError reports whether err (or any error it wraps) is a
+// *SchemaSkewError.
+func IsSchemaSkewError(err error) bool {
+	var e *SchemaSkewError
+	return errors.As(err, &e)
+}
+
+// checkSchemaSkew queries the DB's current schema version and returns a
+// *SchemaSkewError if the DB is ahead of the binary. Returns nil for a fresh
+// DB (version=0) or when BD_IGNORE_SCHEMA_SKEW=1 (prints a warning instead).
+func checkSchemaSkew(ctx context.Context, db DBConn) error {
+	var currentVersion int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+	).Scan(&currentVersion); err != nil {
+		return fmt.Errorf("schema skew check: %w", err)
+	}
+	if currentVersion == 0 || currentVersion <= LatestVersion() {
+		return nil
+	}
+	if os.Getenv("BD_IGNORE_SCHEMA_SKEW") == "1" {
+		fmt.Fprintf(os.Stderr,
+			"Warning: schema skew ignored — database (v%d) is ahead of binary (v%d); some queries may fail\n",
+			currentVersion, LatestVersion())
+		return nil
+	}
+	return &SchemaSkewError{DBVersion: currentVersion, BinaryVersion: LatestVersion()}
+}
+
+// CheckForwardDrift checks for forward schema drift on an existing *sql.DB
+// connection. Used by the read-only store path where MigrateUp is skipped.
+func CheckForwardDrift(ctx context.Context, db *sql.DB) error {
+	return checkSchemaSkew(ctx, db)
 }
 
 type dirtyTableState struct {
@@ -76,6 +154,22 @@ func LatestIgnoredVersion() int {
 	return latestIgnoredVer
 }
 
+func CurrentVersion(ctx context.Context, db DBConn) (int, error) {
+	return mainSource.currentVersion(ctx, db)
+}
+
+func CurrentIgnoredVersion(ctx context.Context, db DBConn) (int, error) {
+	return ignoredSource.currentVersion(ctx, db)
+}
+
+func PendingVersions(ctx context.Context, db DBConn) ([]int, error) {
+	return mainSource.pendingVersions(ctx, db)
+}
+
+func PendingIgnoredVersions(ctx context.Context, db DBConn) ([]int, error) {
+	return ignoredSource.pendingVersions(ctx, db)
+}
+
 func AllMigrationsSQL() string {
 	var b strings.Builder
 	b.WriteString(mainSource.bootstrapSQL())
@@ -85,8 +179,8 @@ func AllMigrationsSQL() string {
 		if err != nil {
 			continue
 		}
-		b.Write(data)
-		b.WriteByte('\n')
+		b.WriteString(cliCompatibleMigrationSQL(f.name, string(data)))
+		fmt.Fprintf(&b, "\nINSERT IGNORE INTO %s (version) VALUES (%d);\n", mainSource.cursorTable, f.version)
 	}
 	return b.String()
 }
@@ -112,14 +206,9 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration status: %w", err)
 	}
-	// Schema migration needs a clean staged set so the migration commit
-	// contains only schema-owned tables. Pre-existing staged tables are reset
-	// here and left dirty but unstaged; dirtyTableSignatures below preserves
-	// their data state and rejects unexpected content changes.
 	if err := unstagePreExistingTables(ctx, db, dirtyBeforeAll); err != nil {
 		return 0, fmt.Errorf("unstaging pre-migration tables: %w", err)
 	}
-
 	dirtyBefore, err := committableDirtyTables(ctx, db)
 	if err != nil {
 		return 0, fmt.Errorf("reading pre-migration status: %w", err)
@@ -513,6 +602,19 @@ func (m migrationSource) bootstrapSQL() string {
 )`, m.cursorTable)
 }
 
+func checkNoDuplicateVersions(files []migrationFile) {
+	seen := make(map[int]string, len(files))
+	for _, m := range files {
+		if prior, ok := seen[m.version]; ok {
+			panic(fmt.Sprintf(
+				"schema: duplicate migration version %d: %q and %q — renumber one before commit",
+				m.version, prior, m.name,
+			))
+		}
+		seen[m.version] = m.name
+	}
+}
+
 func (m migrationSource) list() []migrationFile {
 	entries, err := fs.ReadDir(m.files, m.dir)
 	if err != nil {
@@ -529,6 +631,7 @@ func (m migrationSource) list() []migrationFile {
 		}
 		files = append(files, migrationFile{version: v, name: e.Name()})
 	}
+	checkNoDuplicateVersions(files)
 	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
 	return files
 }
@@ -559,6 +662,21 @@ func (m migrationSource) currentVersion(ctx context.Context, db DBConn) (int, er
 		return 0, nil
 	}
 	return 0, fmt.Errorf("reading %s version: %w", m.cursorTable, err)
+}
+
+func (m migrationSource) pendingVersions(ctx context.Context, db DBConn) ([]int, error) {
+	current, err := m.currentVersion(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	files := m.list()
+	pending := make([]int, 0, len(files))
+	for _, mf := range files {
+		if mf.version > current {
+			pending = append(pending, mf.version)
+		}
+	}
+	return pending, nil
 }
 
 func (m migrationSource) pendingMigrationDirtyTables(ctx context.Context, db DBConn, dirtyBefore map[string]dirtyTableState) ([]string, error) {

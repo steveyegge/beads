@@ -88,6 +88,9 @@ type Storage interface {
 
 	// CountIssues returns the number of issues matching query and filter.
 	CountIssues(ctx context.Context, query string, filter types.IssueFilter) (int64, error)
+	// CountIssuesByGroup returns per-group counts. groupBy is one of:
+	// status, priority, type, assignee, label.
+	CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error)
 	// CountDependents returns the number of issues that depend on issueID.
 	CountDependents(ctx context.Context, issueID string) (int64, error)
 	// CountDependencies returns the number of issues that issueID depends on.
@@ -233,6 +236,10 @@ type GarbageCollector interface {
 // Callers should type-assert to this interface for history compaction.
 type Flattener interface {
 	Flatten(ctx context.Context) error
+}
+
+type SchemaMigrator interface {
+	ApplySchemaMigrations(ctx context.Context) (applied int, err error)
 }
 
 // Compactor squashes old Dolt commits while preserving recent ones.

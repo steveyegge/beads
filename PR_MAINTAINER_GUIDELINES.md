@@ -19,10 +19,11 @@ core, metadata, integration, plugin, orchestration layer, or external tool.
 External contributor PRs have priority. Before implementing related work, opening a competing PR, or closing a PR, check whether an existing contributor PR already addresses the same area.
 
 - Review contributor work first. Read the PR description, changed files, linked issues, tests, CI status, and latest discussion.
-- Build on the contributor branch when practical instead of rewriting the same work in parallel.
+- Build on the contributor branch by default. If the PR branch allows maintainer edits, push maintainer fix commits directly to that branch instead of opening a replacement PR.
 - Preserve contributor tests unless they are actually wrong.
-- Preserve attribution with original commits when possible, or with `Co-authored-by:` and PR references when transforming the work locally.
+- Preserve attribution with original commits when possible. Maintainer commits on a contributor branch should keep the contributor's original commits intact; transformed local commits must use `Co-authored-by:` and PR references.
 - Never close, supersede, or replace a contributor PR silently. Explain what was preserved, what changed, and why.
+- Open a replacement PR only when in-place maintainer edits are not possible or would create a larger risk, such as when the contributor branch is not writable, the branch history is unusable, or the accepted change must be substantially reimplemented. Document that reason in both PR threads.
 - If a rewrite is unavoidable, credit the contributor's design, tests, bug report, or use case in the replacement commit or PR.
 
 ## Triage Groups
@@ -44,9 +45,10 @@ Use these recommendations after review:
 - **Easy win**: The PR turns out to fit easy-win criteria after all.
 - **Merge**: Recommend merge. The PR is well-tested, broadly useful, well-documented, and ready as-is.
 - **Merge-fix**: Merge the PR as-is, then push a follow-up fix to `main`. Use when the remaining issues are safe to repair afterward.
-- **Fix-merge**: Pull the PR locally, make substantial fixes, then push with contributor attribution. Use when the PR is busted but valuable.
+- **Fix-merge**: Pull the PR locally, make substantial fixes on the contributor branch, then push the branch so the original PR can merge. Use when the PR is busted but valuable and maintainer edits are possible.
 - **Cherry-pick**: Keep only selected items from a PR with multiple features or fixes. Commit the useful parts locally with attribution, then close the PR with an explanation.
 - **Split-merge**: Split a multi-concern PR into separate commits, then push all accepted parts with attribution to the original contributor.
+- **Replacement PR**: Carry useful work into a new maintainer PR only after confirming the original branch cannot reasonably be fixed in place. Preserve attribution with original commits where possible, otherwise use `Co-authored-by:` trailers and PR references, and explain the reason replacement was necessary.
 - **Redesign/reimplement**: Reject the submitted design but solve the underlying problem another way. Close the PR with thanks and an explanation.
 - **Retire**: Close an obsolete PR with thanks because it was superseded or already fixed elsewhere.
 - **Reject**: Close politely when the feature does not pay its weight in tech debt, is too niche for core, or the design does not meet project standards.
@@ -58,6 +60,7 @@ Other outcomes are possible, including rerouting a PR to the right project or ba
 
 - Prefer landing or transforming useful work over asking the contributor to do more rounds.
 - Preserve contributor attribution when absorbing, fixing, cherry-picking, splitting, or reimplementing PR value.
+- Before opening a competing or replacement PR, attempt the contributor-branch path first: fetch the PR, test it, make maintainer fix commits on that branch when permitted, and push back to the same PR.
 - Be explicit when closing a PR: thank the contributor, state the outcome, and explain what was accepted, rejected, superseded, or implemented differently.
 - Treat request-changes as exceptional because it can strand contributor work.
 - Consider the entire PR thread. Valuable clarifying info are often in the comments.

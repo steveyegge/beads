@@ -65,7 +65,7 @@ EXAMPLES:
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
-  bd import --json                 # Structured output with created IDs`,
+  bd import --json                 # Structured output with created and skipped IDs`,
 	GroupID: "sync",
 	RunE:    runImport,
 }
@@ -142,6 +142,7 @@ type importResultJSON struct {
 	DedupHits           int      `json:"dedup_skipped,omitempty"`
 	Memories            int      `json:"memories,omitempty"`
 	IDs                 []string `json:"ids,omitempty"`
+	StaleSkippedIDs     []string `json:"stale_skipped_ids,omitempty"`
 	SkippedDependencies []string `json:"skipped_dependencies,omitempty"`
 	DryRun              bool     `json:"dry_run,omitempty"`
 }
@@ -249,19 +250,19 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 		result.Created = importResult.Created
 		result.Skipped += importResult.Skipped
 		result.SkippedDependencies = append(result.SkippedDependencies, importResult.SkippedDependencies...)
-		for _, issue := range issues {
-			result.IDs = append(result.IDs, issue.ID)
-		}
+		result.IDs = append(result.IDs, importResult.ImportedIDs...)
+		result.StaleSkippedIDs = append(result.StaleSkippedIDs, importResult.StaleSkippedIDs...)
 	}
 
-	// Commit
-	commitMsg := fmt.Sprintf("bd import: %d issues", result.Created)
-	if result.Memories > 0 {
-		commitMsg += fmt.Sprintf(", %d memories", result.Memories)
-	}
-	commitMsg += fmt.Sprintf(" from %s", filepath.Base(source))
-	if err := store.Commit(ctx, commitMsg); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	if result.Created > 0 || result.Memories > 0 {
+		commitMsg := fmt.Sprintf("bd import: %d issues", result.Created)
+		if result.Memories > 0 {
+			commitMsg += fmt.Sprintf(", %d memories", result.Memories)
+		}
+		commitMsg += fmt.Sprintf(" from %s", filepath.Base(source))
+		if err := store.Commit(ctx, commitMsg); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
 	}
 
 	if jsonOutput {
@@ -276,6 +277,9 @@ func runImportFromReader(ctx context.Context, r io.Reader, source string) error 
 	fmt.Fprintf(os.Stderr, " from %s", source)
 	if dedupHits > 0 {
 		fmt.Fprintf(os.Stderr, " (%d duplicates skipped)", dedupHits)
+	}
+	if staleSkipped := result.Skipped - dedupHits; staleSkipped > 0 {
+		fmt.Fprintf(os.Stderr, " (%d stale skipped)", staleSkipped)
 	}
 	fmt.Fprintln(os.Stderr)
 	for _, skipped := range result.SkippedDependencies {

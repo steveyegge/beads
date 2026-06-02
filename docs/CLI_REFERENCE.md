@@ -175,6 +175,7 @@ Reference for bd Latest. Generated from `bd help --all`.
 - [bd migrate](#bd-migrate) — Database migration commands
   - [bd migrate hooks](#bd-migrate-hooks) — Plan or apply git hook migration to marker-managed format
   - [bd migrate issues](#bd-migrate-issues) — Move issues between repositories
+  - [bd migrate schema](#bd-migrate-schema) — Apply pending schema migrations (idempotent)
   - [bd migrate sync](#bd-migrate-sync) — Set up sync.branch workflow for multi-clone setups
 - [bd ping](#bd-ping) — Check database connectivity
 - [bd preflight](#bd-preflight) — Show PR readiness checklist
@@ -296,6 +297,7 @@ These flags apply to all commands:
   -C, --directory string          Change to this directory before running the command (like git -C)
       --dolt-auto-commit string   Dolt auto-commit policy (off|on|batch). 'on': commit after each write. 'batch': defer commits to bd dolt commit; uncommitted changes persist in the working set until then. SIGTERM/SIGHUP flush pending batch commits. Default: off. Override via config key dolt.auto-commit
       --global                    Use the global shared-server database (beads_global)
+      --ignore-schema-skew        Proceed despite forward schema drift (some queries may fail)
       --json                      Output in JSON format
       --profile                   Generate CPU profile for performance analysis
   -q, --quiet                     Suppress non-essential output (errors only)
@@ -345,6 +347,11 @@ Close one or more issues.
 
 If no issue ID is provided, closes the last touched issue (from most recent
 create, update, show, or close operation).
+
+When closing multiple issues, provide one --reason for all IDs or repeat
+--reason once per ID. Reasons map positionally: the first --reason applies
+to the first ID, the second --reason to the second ID, regardless of where
+the flags appear in the command line.
 
 ```
 bd close [id...] [flags]
@@ -922,6 +929,7 @@ bd list [flags]
       --priority-min string          Filter by minimum priority (inclusive, 0-4 or P0-P4)
       --ready                        Show only ready issues (no active blockers, same semantics as bd ready)
   -r, --reverse                      Reverse sort order
+      --skip-labels                  Skip label hydration. The labels field in output will be empty regardless of actual labels. Use only when the caller does not depend on label data. Cannot combine with --label, --label-any, --label-pattern, --label-regex, --exclude-label, or --no-labels.
       --sort string                  Sort by field: priority, created, updated, closed, status, id, title, type, assignee
       --spec string                  Filter by spec_id prefix
   -s, --status string                Filter by stored status (open, in_progress, blocked, deferred, closed). Comma-separated for multiple: --status open,in_progress
@@ -2429,7 +2437,7 @@ EXAMPLES:
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
-  bd import --json                 # Structured output with created IDs
+  bd import --json                 # Structured output with created and skipped IDs
 
 ```
 bd import [file|-] [flags]
@@ -2638,6 +2646,7 @@ Examples:
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
   bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
+  bd config set dolt.local-only true                   # Skip wiring a Dolt sync remote during bd init
   bd config get export.auto
   bd config list
   bd config unset jira.url
@@ -3382,39 +3391,47 @@ bd init [flags]
 **Flags:**
 
 ```
-      --agents-file string                Custom filename for agent instructions (default: AGENTS.md)
-      --agents-profile string             AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
-      --agents-template string            Path to custom AGENTS.md template (overrides embedded default)
-      --backend string                    Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
-      --contributor                       Run OSS contributor setup wizard
-      --database string                   Use existing server database name (overrides prefix-based naming)
-      --debug                             Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
-      --destroy-token string              Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
-      --discard-remote                    Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
-      --external                          Server is externally managed (skip server startup); use with --shared-server or --server
-      --force                             Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
-      --from-jsonl                        Import issues from configured import.path instead of git history
-      --non-interactive                   Skip all interactive prompts (auto-detected in CI or non-TTY environments)
-  -p, --prefix string                     Issue prefix (default: current directory name)
-      --proxied-server                    [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
-      --proxied-server-config string      [EXPERIMENTAL] Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.
-      --proxied-server-log-path string    [EXPERIMENTAL] Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.
-      --proxied-server-root-path string   [EXPERIMENTAL] Directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it.
-  -q, --quiet                             Suppress output (quiet mode)
-      --reinit-local                      Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
-      --remote string                     Dolt remote URL to clone from and persist as sync.remote
-      --role string                       Set beads role without prompting: "maintainer" or "contributor"
-      --server                            Use external dolt sql-server instead of embedded engine
-      --server-host string                Dolt server host (default: 127.0.0.1)
-      --server-port int                   Dolt server port (default: 3307)
-      --server-socket string              Unix domain socket path (overrides host/port)
-      --server-user string                Dolt server MySQL user (default: root)
-      --setup-exclude                     Configure .git/info/exclude to keep beads files local (for forks)
-      --shared-server                     Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
-      --skip-agents                       Skip AGENTS.md and Claude settings generation
-      --skip-hooks                        Skip git hooks installation
-      --stealth                           Enable stealth mode: global gitattributes and gitignore, no local repo tracking
-      --team                              Run team workflow setup wizard
+      --agents-file string                             Custom filename for agent instructions (default: AGENTS.md)
+      --agents-profile string                          AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
+      --agents-template string                         Path to custom AGENTS.md template (overrides embedded default)
+      --backend string                                 Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
+      --contributor                                    Run OSS contributor setup wizard
+      --database string                                Use existing server database name (overrides prefix-based naming)
+      --debug                                          Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
+      --destroy-token string                           Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
+      --discard-remote                                 Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
+      --external                                       Server is externally managed (skip server startup); use with --shared-server or --server
+      --force                                          Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
+      --from-jsonl                                     Import issues from configured import.path instead of git history
+      --non-interactive                                Skip all interactive prompts (auto-detected in CI or non-TTY environments)
+  -p, --prefix string                                  Issue prefix (default: current directory name)
+      --proxied-server                                 [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
+      --proxied-server-config-path string              [EXPERIMENTAL] Absolute path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one. Relative paths are rejected.
+      --proxied-server-external-host string            [EXPERIMENTAL] Hostname or IP of an externally-managed dolt sql-server the proxy should front (proxied-server mode only). Mutually exclusive with --proxied-server-external-socket-path.
+      --proxied-server-external-keep-alive duration    [EXPERIMENTAL] TCP keepalive period for the proxy→external connection. Zero uses the package default (30s).
+      --proxied-server-external-port int               [EXPERIMENTAL] TCP port of the externally-managed dolt sql-server (proxied-server mode only). Required when --proxied-server-external-host is set.
+      --proxied-server-external-socket-path string     [EXPERIMENTAL] Absolute unix socket path of the externally-managed dolt sql-server (proxied-server mode only). Mutually exclusive with --proxied-server-external-host. Relative paths are rejected.
+      --proxied-server-external-tls                    [EXPERIMENTAL] Require TLS when connecting to the externally-managed dolt sql-server (proxied-server mode only).
+      --proxied-server-external-tls-cert-path string   [EXPERIMENTAL] Absolute path to a client TLS certificate (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-key-path. Relative paths are rejected.
+      --proxied-server-external-tls-key-path string    [EXPERIMENTAL] Absolute path to the client TLS private key (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-cert-path. Relative paths are rejected.
+      --proxied-server-external-user string            [EXPERIMENTAL] MySQL user for the externally-managed dolt sql-server (proxied-server mode only). Defaults to "root" when empty. Password is read at runtime from $BEADS_PROXIED_SERVER_EXTERNAL_PASSWORD and is never persisted to disk.
+      --proxied-server-log-path string                 [EXPERIMENTAL] Absolute path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log. Relative paths are rejected.
+      --proxied-server-root-path string                [EXPERIMENTAL] Absolute directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it. Relative paths are rejected.
+  -q, --quiet                                          Suppress output (quiet mode)
+      --reinit-local                                   Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
+      --remote string                                  Dolt remote URL to clone from and persist as sync.remote
+      --role string                                    Set beads role without prompting: "maintainer" or "contributor"
+      --server                                         Use external dolt sql-server instead of embedded engine
+      --server-host string                             Dolt server host (default: 127.0.0.1)
+      --server-port int                                Dolt server port (default: 3307)
+      --server-socket string                           Unix domain socket path (overrides host/port)
+      --server-user string                             Dolt server MySQL user (default: root)
+      --setup-exclude                                  Configure .git/info/exclude to keep beads files local (for forks)
+      --shared-server                                  Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
+      --skip-agents                                    Skip AGENTS.md and Claude/Codex setup generation
+      --skip-hooks                                     Skip git hooks installation
+      --stealth                                        Enable stealth mode: global gitattributes and gitignore, no local repo tracking
+      --team                                           Run team workflow setup wizard
 ```
 
 ### bd kv
@@ -3541,7 +3558,7 @@ by default. This approach:
   • bd prime provides dynamic, always-current workflow details
   • Hooks auto-inject bd prime at session start
 
-For agents that don't support hooks (Codex, Factory, etc.), use
+For agents or environments that do not auto-inject hook output, use
 'bd init --agents-profile=full' to embed the complete command reference.
 
 ```
@@ -3635,8 +3652,8 @@ include cursor, claude, copilot, gemini, aider, factory, codex, mux, opencode, j
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
-  bd setup codex           # Install Codex skill + AGENTS.md guidance
-  bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
+  bd setup codex           # Install Codex skill + AGENTS.md guidance + native hooks
+  bd setup codex --global  # Install global Codex skill + guidance + native hooks
   bd setup copilot         # Install Copilot CLI plugin + repository instructions
   bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
   bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
@@ -3999,6 +4016,7 @@ Without subcommand, checks and updates database metadata to current version.
 Subcommands:
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
+  schema      Apply pending schema migrations (idempotent)
   sync        Set up sync.branch workflow for multi-clone setups
 
 
@@ -4085,6 +4103,28 @@ bd migrate issues [flags]
       --type string        Filter by issue type (bug/feature/task/epic/chore/decision)
       --within-from-only   Only include dependencies from source repo (default true)
       --yes                Skip confirmation prompt
+```
+
+#### bd migrate schema
+
+Apply pending schema migrations idempotently.
+
+Schema migrations also run automatically on store open, so this subcommand
+is typically a no-op. It exists to make migration explicit and observable
+in CI, release gates, and recovery scenarios.
+
+Example:
+  bd migrate schema
+  bd migrate schema --json
+
+```
+bd migrate schema [flags]
+```
+
+**Flags:**
+
+```
+      --json   Output in JSON format
 ```
 
 #### bd migrate sync

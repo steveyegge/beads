@@ -99,7 +99,11 @@ Examples:
 			info.ServerPort = dsCfg.Port
 		}
 		if cfg.IsDoltProxiedServerMode() {
-			info.ProxiedDir = resolveProxiedServerRootPath(rc.BeadsDir, cfg)
+			p, err := resolveProxiedServerRootPath(rc.BeadsDir)
+			if err != nil {
+				FatalError("resolve proxied server root: %v", err)
+			}
+			info.ProxiedDir = p
 		}
 
 		if dataDir := cfg.GetDoltDataDir(); dataDir != "" {

@@ -25,6 +25,11 @@ type ImportOptions struct {
 	DeletionIDs                []string
 	SkipPrefixValidation       bool
 	ProtectLocalExportIDs      map[string]time.Time
+	// ConflictSkip makes the import insert-if-new instead of UPSERT: an
+	// issue whose ID already exists is left untouched. Set only by the
+	// auto-import upgrade-recovery fallback (GH#3955); explicit `bd import`
+	// leaves this false and keeps UPSERT semantics.
+	ConflictSkip bool
 }
 
 // ImportResult describes what an import operation did.
@@ -40,6 +45,8 @@ type ImportResult struct {
 	PrefixMismatch      bool
 	ExpectedPrefix      string
 	MismatchPrefixes    map[string]int
+	ImportedIDs         []string
+	StaleSkippedIDs     []string
 	SkippedDependencies []string
 }
 
@@ -50,11 +57,21 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return &ImportResult{Skipped: len(issues)}, nil
 	}
 
+	filtered, staleSkippedIDs, err := filterStaleImportIssues(ctx, store, issues)
+	if err != nil {
+		return nil, err
+	}
+	issues = filtered
+	if len(issues) == 0 {
+		return &ImportResult{Skipped: len(staleSkippedIDs), StaleSkippedIDs: staleSkippedIDs}, nil
+	}
+
 	var skippedDependencies []string
 	skippedDependencySet := make(map[string]struct{})
-	err := store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
+	err = store.CreateIssuesWithFullOptions(ctx, issues, getActorWithGit(), storage.BatchCreateOptions{
 		OrphanHandling:                 storage.OrphanAllow,
 		SkipPrefixValidation:           opts.SkipPrefixValidation,
+		ConflictSkip:                   opts.ConflictSkip,
 		SkipDependencyValidationErrors: true,
 		OnSkippedDependency: func(issueID, dependsOnID, reason string) {
 			skipped := fmt.Sprintf("%s -> %s: %s", issueID, dependsOnID, reason)
@@ -69,7 +86,64 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return nil, err
 	}
 
-	return &ImportResult{Created: len(issues), SkippedDependencies: skippedDependencies}, nil
+	importedIDs := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		importedIDs = append(importedIDs, issue.ID)
+	}
+	return &ImportResult{
+		Created:             len(issues),
+		Skipped:             len(staleSkippedIDs),
+		ImportedIDs:         importedIDs,
+		StaleSkippedIDs:     staleSkippedIDs,
+		SkippedDependencies: skippedDependencies,
+	}, nil
+}
+
+func filterStaleImportIssues(ctx context.Context, store storage.DoltStorage, issues []*types.Issue) ([]*types.Issue, []string, error) {
+	ids := make([]string, 0, len(issues))
+	seen := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) == 0 {
+		return issues, nil, nil
+	}
+
+	localIssues, err := store.GetIssuesByIDs(ctx, ids)
+	if err != nil {
+		return nil, nil, fmt.Errorf("check existing issues before import: %w", err)
+	}
+	localUpdatedAt := make(map[string]time.Time, len(localIssues))
+	for _, issue := range localIssues {
+		if issue != nil && issue.ID != "" && !issue.UpdatedAt.IsZero() {
+			localUpdatedAt[issue.ID] = issue.UpdatedAt
+		}
+	}
+	if len(localUpdatedAt) == 0 {
+		return issues, nil, nil
+	}
+
+	filtered := make([]*types.Issue, 0, len(issues))
+	skippedIDs := make([]string, 0)
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" || issue.UpdatedAt.IsZero() {
+			filtered = append(filtered, issue)
+			continue
+		}
+		if local, ok := localUpdatedAt[issue.ID]; ok && issue.UpdatedAt.UTC().Before(local.UTC()) {
+			skippedIDs = append(skippedIDs, issue.ID)
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+	return filtered, skippedIDs, nil
 }
 
 // importLocalResult holds counts from a local JSONL import.
@@ -123,6 +197,20 @@ func parseJSONLFile(path string) ([]*types.Issue, map[string]string, error) {
 			return nil, nil, fmt.Errorf("failed to parse JSONL line: %w", err)
 		}
 
+		// Skip the optional beads-jsonl metadata/header record.
+		// Canonical exports produced by the stable-ordering /
+		// git-merge convention prepend a schema+provenance line, e.g.
+		// {"_schema":"beads-jsonl/1","_dolt_branch":"main",
+		// "_dolt_commit":"...","_sort":"stable-v1"}. It carries no
+		// _type and no issue fields; without this guard it falls
+		// through to the issue path, unmarshals into an empty Issue,
+		// and aborts the whole import with "validation failed for
+		// issue : title is required". Identified by the _schema
+		// sentinel, which real issue/memory records never carry.
+		if _, isHeader := peek["_schema"]; isHeader {
+			continue
+		}
+
 		// Check if this is a memory record
 		if rawType, ok := peek["_type"]; ok {
 			var typeStr string
@@ -169,10 +257,28 @@ func parseJSONLFile(path string) ([]*types.Issue, map[string]string, error) {
 	return issues, configEntries, nil
 }
 
-// importFromLocalJSONLFull imports issues and memories from a local JSONL file.
-// It detects memory records (lines with "_type":"memory") and imports them
-// via SetConfig, while routing regular issue records through the normal path.
+// importFromLocalJSONLFull imports issues and memories from a local JSONL file
+// using UPSERT semantics (an existing issue row is overwritten). Used by the
+// explicit recovery paths: `bd bootstrap` and `bd init --from-jsonl`.
 func importFromLocalJSONLFull(ctx context.Context, store storage.DoltStorage, localPath string) (*importLocalResult, error) {
+	return importFromLocalJSONLWithOpts(ctx, store, localPath, false)
+}
+
+// importFromLocalJSONLConflictSkip is the auto-import upgrade-recovery
+// fallback (GH#3955; the fallbackImporter seam in auto_import_upgrade.go).
+// It is identical to importFromLocalJSONLFull except that an issue whose ID
+// already exists is left untouched instead of being overwritten, so a
+// regressed emptiness guard can never clobber live rows — worst case is a
+// no-op.
+func importFromLocalJSONLConflictSkip(ctx context.Context, store storage.DoltStorage, localPath string) (*importLocalResult, error) {
+	return importFromLocalJSONLWithOpts(ctx, store, localPath, true)
+}
+
+// importFromLocalJSONLWithOpts is the shared implementation. It detects
+// memory records (lines with "_type":"memory") and imports them via
+// SetConfig, while routing regular issue records through the normal path.
+// conflictSkip selects insert-if-new (true) vs UPSERT (false) for issue rows.
+func importFromLocalJSONLWithOpts(ctx context.Context, store storage.DoltStorage, localPath string, conflictSkip bool) (*importLocalResult, error) {
 	issues, configEntries, err := parseJSONLFile(localPath)
 	if err != nil {
 		return nil, err
@@ -203,12 +309,13 @@ func importFromLocalJSONLFull(ctx context.Context, store storage.DoltStorage, lo
 
 		opts := ImportOptions{
 			SkipPrefixValidation: true,
+			ConflictSkip:         conflictSkip,
 		}
-		_, err = importIssuesCore(ctx, "", store, issues, opts)
+		importResult, err := importIssuesCore(ctx, "", store, issues, opts)
 		if err != nil {
 			return nil, err
 		}
-		result.Issues = len(issues)
+		result.Issues = importResult.Created
 	}
 
 	return result, nil

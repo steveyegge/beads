@@ -1,7 +1,7 @@
 # Beads Documentation (Complete)
 
 > This file contains the complete beads documentation for LLM consumption.
-> Generated automatically from the documentation source files (version: 1.0.4).
+> Generated automatically from the documentation source files (version: latest released).
 > For the web version, visit: https://gastownhall.github.io/beads/
 
 ---
@@ -118,7 +118,7 @@ This installs:
 1. SessionStart hook runs `bd prime` automatically
 2. `bd prime` injects ~1-2k tokens of workflow context
 3. You use `bd` CLI commands directly
-4. Git hooks auto-sync the database
+4. Git hooks refresh exports and legacy fallbacks; Dolt remotes handle sync
 
 **Verify installation:**
 ```bash
@@ -271,7 +271,7 @@ See [MCP Server](/integrations/mcp-server) for detailed configuration.
 
 ## Git Hooks
 
-Ensure git hooks are installed for auto-sync:
+Ensure git hooks are installed for export refresh and legacy fallback behavior:
 
 ```bash
 bd hooks install
@@ -350,6 +350,8 @@ Use Homebrew, npm, or the install script if you do not specifically need `go ins
 - **Embedded-capable:** `CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest`
 
 ICU headers are not required. The embedded-capable command uses `gms_pure_go` so go-mysql-server uses Go's stdlib regexp instead of ICU.
+
+Use the `github.com/steveyegge/beads` path for `go install`. The repository now lives under `gastownhall/beads`, but released Go modules still declare `github.com/steveyegge/beads` for compatibility.
 
 ## Platform-Specific Installation
 
@@ -464,12 +466,12 @@ bd setup mux      # Mux - creates/updates AGENTS.md
 ```
 
 **How it works:**
-- `bd init` creates or updates `AGENTS.md` by default unless you use `--skip-agents` or `--stealth`
+- `bd init` creates or updates `AGENTS.md` and installs project Claude/Codex integrations by default unless you use `--skip-agents` or `--stealth`
 - Editor hooks/rules inject `bd prime` automatically on session start
 - Codex 0.129.0+ uses native `/hooks` for startup and compaction-aware context refresh
 - `bd prime` provides ~1-2k tokens of workflow context
 - You use `bd` CLI commands directly
-- Git hooks (installed by `bd init`) auto-sync the database
+- Git hooks (installed by `bd init`) refresh exports and legacy fallbacks; `bd dolt push/pull` syncs the database
 - `bd onboard` prints the small manual snippet for unsupported agents or custom instruction files
 
 **Why this is recommended:**
@@ -830,11 +832,12 @@ bd stats
 
 ## Team sync
 
-Share issues with your team using Dolt remotes. Dolt stores data under `refs/dolt/data` on the same Git remote, separate from standard Git refs.
+Share issues with your team using Dolt remotes. Dolt stores data under `refs/dolt/data` on the same Git remote, separate from standard Git refs. In repos with `origin`, `bd init` configures that Dolt remote automatically.
 
 ```bash
-# Add a remote (GitHub example — also supports DoltHub, S3, GCS, local paths)
-bd dolt remote add origin git+ssh://git@github.com/org/repo.git
+# Verify the remote, or add one if the repo had no origin during init
+bd dolt remote list
+bd dolt remote add origin git+ssh://git@github.com/org/repo.git  # if needed
 
 # Push your issues
 bd dolt push
@@ -843,7 +846,7 @@ bd dolt push
 bd dolt pull
 ```
 
-When a teammate clones the repo, `bd bootstrap` auto-detects the existing database on `refs/dolt/data` and clones it — no manual remote setup needed.
+When a teammate clones the repo, `bd bootstrap` auto-detects the existing database on `refs/dolt/data`, clones it, and wires `origin` for future `bd dolt push` / `bd dolt pull`.
 
 See [`bd dolt`](/cli-reference/dolt) for CLI details. For remote configuration and federation, see the repository docs [DOLT.md](https://github.com/gastownhall/beads/blob/main/docs/DOLT.md) and [FEDERATION-SETUP.md](https://github.com/gastownhall/beads/blob/main/FEDERATION-SETUP.md).
 
@@ -1038,7 +1041,7 @@ bd info  # Shows warnings if hooks are outdated
 bd dolt stop && bd dolt start
 ```
 
-**Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss new auto-sync features or bug fixes.
+**Why update hooks?** Git hooks are versioned with bd. Outdated hooks may miss export refresh, legacy fallback, or safety fixes.
 
 ## Database Migrations
 
@@ -1062,7 +1065,7 @@ bd migrate --cleanup --yes
 
 If you're upgrading from a much older version of bd, your project may use a different storage backend. bd has gone through several storage eras:
 
-| Era | Versions | Storage |
+| Era | Versions | Storage | 
 |---|---|---|
 | SQLite | v0.30–v0.50 | `.beads/beads.db` |
 | Dolt server | v0.50–v0.58 | `.beads/dolt/` (external server) |
@@ -1071,11 +1074,30 @@ If you're upgrading from a much older version of bd, your project may use a diff
 
 ### From v0.63.3+ (current era)
 
-No special steps needed. Just upgrade the binary and run:
+Upgrade the binary and run:
 
 ```bash
 bd migrate
 ```
+
+If the project was initialized before `bd init` automatically wired git origin
+as the Dolt remote, verify the remote after upgrading:
+
+```bash
+bd dolt remote list
+```
+
+When the list is empty, fix it on the machine whose local database is
+authoritative:
+
+```bash
+bd export -o .beads/issues.pre-remote.jsonl   # optional issue audit export
+bd dolt remote add origin git+ssh://git@github.com/org/repo.git
+bd dolt push
+```
+
+Commit the resulting `.beads/config.yaml` change so other clones can run
+`bd bootstrap` or `bd dolt pull`.
 
 ### From v0.59–v0.63.2 (old embedded)
 
@@ -1779,7 +1801,7 @@ For these use cases, consider GitHub Issues, Linear, or Jira.
 # CLI Reference
 
 <!-- AUTO-GENERATED: do not edit manually -->
-Reference for bd v1.0.4. Generated from `bd help --list` and `bd help --doc <command>`.
+Reference for bd Latest. Generated from `bd help --list` and `bd help --doc <command>`.
 
 This reference covers all 106 live top-level `bd` commands. Regenerate it with:
 
@@ -2569,6 +2591,11 @@ Close one or more issues.
 If no issue ID is provided, closes the last touched issue (from most recent
 create, update, show, or close operation).
 
+When closing multiple issues, provide one --reason for all IDs or repeat
+--reason once per ID. Reasons map positionally: the first --reason applies
+to the first ID, the second --reason to the second ID, regardless of where
+the flags appear in the command line.
+
 ```
 bd close [id...] [flags]
 ```
@@ -2879,6 +2906,7 @@ Configuration is stored per-project in the beads database and is version-control
 
 Common namespaces:
   - export.*          Auto-export settings (stored in config.yaml)
+  - import.*          JSONL import settings (stored in config.yaml)
   - jira.*            Jira integration settings
   - linear.*          Linear integration settings
   - github.*          GitHub integration settings
@@ -2887,15 +2915,25 @@ Common namespaces:
   - doctor.suppress.* Suppress specific bd doctor warnings (GH#1095)
 
 Auto-Export (config.yaml):
-  Writes .beads/issues.jsonl after every write command (throttled).
-  Enabled by default. Useful for viewers (bv) and interchange; not a backup.
+  Optional JSONL export to .beads/issues.jsonl after write commands (throttled).
+  Useful for viewers (bv), interchange, and issue-level migration; not a backup.
   It is not cross-machine sync; use bd dolt push/pull with a Dolt remote.
+  Disabled by default. Enable only for integrations that need fresh JSONL.
+  Auto-staging is separate and disabled by default.
 
   Keys:
-    export.auto       Enable/disable auto-export (default: true)
+    export.auto       Enable/disable auto-export (default: false)
     export.path       Output filename relative to .beads/ (default: issues.jsonl)
     export.interval   Minimum time between exports (default: 60s)
-    export.git-add    Auto-stage the export file (default: true)
+    export.git-add    Auto-stage the export file (default: false)
+
+Auto-Import (config.yaml):
+  Reads .beads/issues.jsonl by default when a JSONL import path is implied.
+  Use a relative filename/path so the import stays within the project .beads/
+  directory and remains portable across machines.
+
+  Keys:
+    import.path       Input filename relative to .beads/ (default: issues.jsonl)
 
 Custom Status States:
   You can define custom status states for multi-step pipelines using the
@@ -2916,13 +2954,16 @@ Suppressing Doctor Warnings:
   To unsuppress: bd config unset doctor.suppress.&lt;slug&gt;
 
 Examples:
-  bd config set export.auto false                      # Disable auto-export
+  bd config set export.auto true                       # Enable auto-export for viewer integrations
   bd config set export.path "beads.jsonl"              # Custom export filename
+  bd config set import.path "beads.jsonl"              # Custom import filename
+  bd config set export.git-add true                    # Also stage the export file
   bd config set jira.url "https://company.atlassian.net"
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
   bd config set doctor.suppress.pending-migrations true
   bd config set dolt.debug true                        # Enable Dolt sql-server debug mode (loglevel=debug, --prof cpu)
+  bd config set dolt.local-only true                   # Skip wiring a Dolt sync remote during bd init
   bd config get export.auto
   bd config list
   bd config unset jira.url
@@ -5287,8 +5328,8 @@ Generated from `bd help --doc import`
 
 Import issues from a JSONL file (newline-delimited JSON) into the database.
 
-If no file is specified, imports from .beads/issues.jsonl (the git-tracked
-export). Use "-" to read from stdin. This is the incremental counterpart to
+If no file is specified, imports from the configured import.path under .beads/
+(default: issues.jsonl). Use "-" to read from stdin. This is the incremental counterpart to
 'bd export': new issues are created and existing issues are updated (upsert
 semantics).
 
@@ -5324,14 +5365,14 @@ when present in the JSONL and otherwise filled in by the importer. The
 legacy "wisp" boolean is accepted as an alias for "ephemeral".
 
 EXAMPLES:
-  bd import                        # Import from .beads/issues.jsonl
+  bd import                        # Import from configured import.path
   bd import backup.jsonl           # Import from a specific file
   bd import -i backup.jsonl        # Legacy alias for a specific file
   bd import -                      # Read JSONL from stdin
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
-  bd import --json                 # Structured output with created IDs
+  bd import --json                 # Structured output with created and skipped IDs
 
 ```
 bd import [file|-] [flags]
@@ -5491,17 +5532,17 @@ Pass --server to use an external dolt sql-server instead. In server mode,
 set connection details with --server-host, --server-port, and --server-user.
 Password should be set via BEADS_DOLT_PASSWORD environment variable.
 
-Auto-export is enabled by default. After every write command, bd exports
-issues to .beads/issues.jsonl (throttled to once per 60s). This keeps
-viewers (bv) and interchange up to date without extra steps.
+Auto-export is optional. When enabled, bd exports issues to
+.beads/issues.jsonl after write commands (throttled to once per 60s). This is
+for viewers (bv), interchange, and issue-level migration; not backup.
 Cross-machine sync and backups use Dolt remotes/backups, not JSONL import/export.
-To disable: bd config set export.auto false
+To enable: bd config set export.auto true
 
 Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
   Skips all interactive prompts, using sensible defaults:
   • Role defaults to "maintainer" (override with --role)
   • Fork exclude auto-configured when fork detected
-  • Auto-export left at default (enabled)
+  • Auto-export left at default (disabled)
   • --contributor and --team flags are rejected (wizards require interaction)
   Also auto-detected when stdin is not a terminal or CI=true is set.
 
@@ -5512,39 +5553,47 @@ bd init [flags]
 **Flags:**
 
 ```
-      --agents-file string                Custom filename for agent instructions (default: AGENTS.md)
-      --agents-profile string             AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
-      --agents-template string            Path to custom AGENTS.md template (overrides embedded default)
-      --backend string                    Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
-      --contributor                       Run OSS contributor setup wizard
-      --database string                   Use existing server database name (overrides prefix-based naming)
-      --debug                             Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
-      --destroy-token string              Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
-      --discard-remote                    Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
-      --external                          Server is externally managed (skip server startup); use with --shared-server or --server
-      --force                             Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
-      --from-jsonl                        Import issues from .beads/issues.jsonl instead of git history
-      --non-interactive                   Skip all interactive prompts (auto-detected in CI or non-TTY environments)
-  -p, --prefix string                     Issue prefix (default: current directory name)
-      --proxied-server                    [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
-      --proxied-server-config string      [EXPERIMENTAL] Path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one.
-      --proxied-server-log-path string    [EXPERIMENTAL] Path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log.
-      --proxied-server-root-path string   [EXPERIMENTAL] Directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it.
-  -q, --quiet                             Suppress output (quiet mode)
-      --reinit-local                      Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
-      --remote string                     Dolt remote URL to clone from and persist as sync.remote
-      --role string                       Set beads role without prompting: "maintainer" or "contributor"
-      --server                            Use external dolt sql-server instead of embedded engine
-      --server-host string                Dolt server host (default: 127.0.0.1)
-      --server-port int                   Dolt server port (default: 3307)
-      --server-socket string              Unix domain socket path (overrides host/port)
-      --server-user string                Dolt server MySQL user (default: root)
-      --setup-exclude                     Configure .git/info/exclude to keep beads files local (for forks)
-      --shared-server                     Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
-      --skip-agents                       Skip AGENTS.md and Claude settings generation
-      --skip-hooks                        Skip git hooks installation
-      --stealth                           Enable stealth mode: global gitattributes and gitignore, no local repo tracking
-      --team                              Run team workflow setup wizard
+      --agents-file string                             Custom filename for agent instructions (default: AGENTS.md)
+      --agents-profile string                          AGENTS.md profile: 'minimal' (default, pointer to bd prime) or 'full' (complete command reference)
+      --agents-template string                         Path to custom AGENTS.md template (overrides embedded default)
+      --backend string                                 Storage backend (default: dolt). --backend=sqlite prints deprecation notice.
+      --contributor                                    Run OSS contributor setup wizard
+      --database string                                Use existing server database name (overrides prefix-based naming)
+      --debug                                          Run the managed Dolt sql-server with --loglevel=debug and CPU profiling (--prof cpu). Persisted to config.yaml as dolt.debug. No effect on externally-managed servers.
+      --destroy-token string                           Explicit confirmation token for destructive re-init in non-interactive mode (format: 'DESTROY-<prefix>')
+      --discard-remote                                 Authorize discarding the configured remote's Dolt history when re-initializing. Requires --destroy-token in non-interactive mode; see 'bd help init-safety'.
+      --external                                       Server is externally managed (skip server startup); use with --shared-server or --server
+      --force                                          Deprecated alias for --reinit-local. Bypasses only the LOCAL data-safety guard; does NOT authorize remote divergence (see 'bd help init-safety').
+      --from-jsonl                                     Import issues from configured import.path instead of git history
+      --non-interactive                                Skip all interactive prompts (auto-detected in CI or non-TTY environments)
+  -p, --prefix string                                  Issue prefix (default: current directory name)
+      --proxied-server                                 [EXPERIMENTAL] Use a per-workspace proxied dolt sql-server (proxy + child dolt) rooted at .beads/proxieddb
+      --proxied-server-config-path string              [EXPERIMENTAL] Absolute path to an existing dolt sql-server YAML config (proxied-server mode only). When set, bd uses this file instead of auto-generating one. Relative paths are rejected.
+      --proxied-server-external-host string            [EXPERIMENTAL] Hostname or IP of an externally-managed dolt sql-server the proxy should front (proxied-server mode only). Mutually exclusive with --proxied-server-external-socket-path.
+      --proxied-server-external-keep-alive duration    [EXPERIMENTAL] TCP keepalive period for the proxy→external connection. Zero uses the package default (30s).
+      --proxied-server-external-port int               [EXPERIMENTAL] TCP port of the externally-managed dolt sql-server (proxied-server mode only). Required when --proxied-server-external-host is set.
+      --proxied-server-external-socket-path string     [EXPERIMENTAL] Absolute unix socket path of the externally-managed dolt sql-server (proxied-server mode only). Mutually exclusive with --proxied-server-external-host. Relative paths are rejected.
+      --proxied-server-external-tls                    [EXPERIMENTAL] Require TLS when connecting to the externally-managed dolt sql-server (proxied-server mode only).
+      --proxied-server-external-tls-cert-path string   [EXPERIMENTAL] Absolute path to a client TLS certificate (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-key-path. Relative paths are rejected.
+      --proxied-server-external-tls-key-path string    [EXPERIMENTAL] Absolute path to the client TLS private key (for mTLS to the externally-managed dolt sql-server). Must be paired with --proxied-server-external-tls-cert-path. Relative paths are rejected.
+      --proxied-server-external-user string            [EXPERIMENTAL] MySQL user for the externally-managed dolt sql-server (proxied-server mode only). Defaults to "root" when empty. Password is read at runtime from $BEADS_PROXIED_SERVER_EXTERNAL_PASSWORD and is never persisted to disk.
+      --proxied-server-log-path string                 [EXPERIMENTAL] Absolute path to the proxied dolt sql-server log file (proxied-server mode only). Default: <beadsDir>/proxieddb/server.log. Relative paths are rejected.
+      --proxied-server-root-path string                [EXPERIMENTAL] Absolute directory holding the proxied dolt sql-server's lockfiles, pidfiles, and child .dolt repository (proxied-server mode only). Default: <beadsDir>/proxieddb. May not exist yet — bd will create it. Relative paths are rejected.
+  -q, --quiet                                          Suppress output (quiet mode)
+      --reinit-local                                   Re-initialize local .beads/ over existing local data. Does NOT authorize remote divergence; see --discard-remote.
+      --remote string                                  Dolt remote URL to clone from and persist as sync.remote
+      --role string                                    Set beads role without prompting: "maintainer" or "contributor"
+      --server                                         Use external dolt sql-server instead of embedded engine
+      --server-host string                             Dolt server host (default: 127.0.0.1)
+      --server-port int                                Dolt server port (default: 3307)
+      --server-socket string                           Unix domain socket path (overrides host/port)
+      --server-user string                             Dolt server MySQL user (default: root)
+      --setup-exclude                                  Configure .git/info/exclude to keep beads files local (for forks)
+      --shared-server                                  Enable shared Dolt server mode (all projects share one server at ~/.beads/shared-server/)
+      --skip-agents                                    Skip AGENTS.md and Claude/Codex setup generation
+      --skip-hooks                                     Skip git hooks installation
+      --stealth                                        Enable stealth mode: global gitattributes and gitignore, no local repo tracking
+      --team                                           Run team workflow setup wizard
 ```
 
 </document>
@@ -6149,6 +6198,7 @@ bd list [flags]
       --priority-min string          Filter by minimum priority (inclusive, 0-4 or P0-P4)
       --ready                        Show only ready issues (no active blockers, same semantics as bd ready)
   -r, --reverse                      Reverse sort order
+      --skip-labels                  Skip label hydration. The labels field in output will be empty regardless of actual labels. Use only when the caller does not depend on label data. Cannot combine with --label, --label-any, --label-pattern, --label-regex, --exclude-label, or --no-labels.
       --sort string                  Sort by field: priority, created, updated, closed, status, id, title, type, assignee
       --spec string                  Filter by spec_id prefix
   -s, --status string                Filter by stored status (open, in_progress, blocked, deferred, closed). Comma-separated for multiple: --status open,in_progress
@@ -6333,6 +6383,7 @@ Without subcommand, checks and updates database metadata to current version.
 Subcommands:
   hooks       Plan git hook migration to marker-managed format
   issues      Move issues between repositories
+  schema      Apply pending schema migrations (idempotent)
   sync        Set up sync.branch workflow for multi-clone setups
 
 
@@ -6419,6 +6470,28 @@ bd migrate issues [flags]
       --type string        Filter by issue type (bug/feature/task/epic/chore/decision)
       --within-from-only   Only include dependencies from source repo (default true)
       --yes                Skip confirmation prompt
+```
+
+### bd migrate schema
+
+Apply pending schema migrations idempotently.
+
+Schema migrations also run automatically on store open, so this subcommand
+is typically a no-op. It exists to make migration explicit and observable
+in CI, release gates, and recovery scenarios.
+
+Example:
+  bd migrate schema
+  bd migrate schema --json
+
+```
+bd migrate schema [flags]
+```
+
+**Flags:**
+
+```
+      --json   Output in JSON format
 ```
 
 ### bd migrate sync
@@ -7219,7 +7292,7 @@ by default. This approach:
   • bd prime provides dynamic, always-current workflow details
   • Hooks auto-inject bd prime at session start
 
-For agents that don't support hooks (Codex, Factory, etc.), use
+For agents or environments that do not auto-inject hook output, use
 'bd init --agents-profile=full' to embed the complete command reference.
 
 ```
@@ -8174,8 +8247,8 @@ include cursor, claude, copilot, gemini, aider, factory, codex, mux, opencode, j
 
 Examples:
   bd setup cursor          # Install Cursor IDE integration
-  bd setup codex           # Install Codex skill + AGENTS.md guidance
-  bd setup codex --global  # Install global Codex skill + global AGENTS.md guidance
+  bd setup codex           # Install Codex skill + AGENTS.md guidance + native hooks
+  bd setup codex --global  # Install global Codex skill + guidance + native hooks
   bd setup copilot         # Install Copilot CLI plugin + repository instructions
   bd setup mux --project   # Install Mux workspace layer (.mux/AGENTS.md)
   bd setup mux --global    # Install Mux global layer (~/.mux/AGENTS.md)
@@ -8266,16 +8339,18 @@ bd show [id...] [--id=<id>...] [--current] [flags]
 **Flags:**
 
 ```
-      --as-of string     Show issue as it existed at a specific commit hash or branch (requires Dolt)
-      --children         Show only the children of this issue
-      --current          Show the currently active issue (in-progress, hooked, or last touched)
-      --id stringArray   Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)
-      --local-time       Show timestamps in local time instead of UTC
-      --long             Show all available fields (extended metadata, agent identity, gate fields, etc.)
-      --refs             Show issues that reference this issue (reverse lookup)
-      --short            Show compact one-line output per issue
-      --thread           Show full conversation thread (for messages)
-  -w, --watch            Watch for changes and auto-refresh display
+      --as-of string         Show issue as it existed at a specific commit hash or branch (requires Dolt)
+      --children             Show only the children of this issue
+      --current              Show the currently active issue (in-progress, hooked, or last touched)
+      --id stringArray       Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)
+      --include-comments     Stream full comment bodies in JSON output (--json only; may be slow on issues with many comments)
+      --include-dependents   Stream full dependent issues in JSON output (--json only; may be slow on hub beads)
+      --local-time           Show timestamps in local time instead of UTC
+      --long                 Show all available fields (extended metadata, agent identity, gate fields, etc.)
+      --refs                 Show issues that reference this issue (reverse lookup)
+      --short                Show compact one-line output per issue
+      --thread               Show full conversation thread (for messages)
+  -w, --watch                Watch for changes and auto-refresh display
 ```
 
 </document>
@@ -10687,7 +10762,7 @@ Codex 0.129.0+ supports `/hooks`, compact lifecycle hooks, and hook-provided dev
 
 `PreCompact` alone does not inject context because Codex ignores plain stdout from compact hooks. The post-compact marker plus first-prompt refresh is the reliable recovery path.
 
-The Beads Codex plugin declares `"hooks": "./hooks/hooks.json"`. Without the plugin, `bd setup codex` installs the same hook config in `.codex/hooks.json` and enables `[features].hooks = true`.
+The Beads Codex plugin stores hooks at `plugins/beads/.codex-plugin/hooks/hooks.json` and declares them as `"hooks": "./hooks/hooks.json"`. Without the plugin, `bd setup codex` installs the same hook config in `.codex/hooks.json` and enables `[features].hooks = true`.
 
 </document>
 
@@ -10930,7 +11005,7 @@ bd init --quiet
 
 ### What about git hooks?
 
-Git hooks are optional. They auto-sync issues but you can skip them during `bd init` and manually run `bd dolt push` / `bd dolt pull` instead.
+Git hooks are optional. They refresh exports and legacy fallback checks, while issue sync uses `bd dolt push` / `bd dolt pull`.
 
 ## See Also
 
@@ -12049,10 +12124,11 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `backup.interval` | — | `BD_BACKUP_INTERVAL` | `15m` | Minimum time between auto-backups |
 | `backup.git-push` | — | — | `false` | Auto-push backup repo |
 | `backup.git-repo` | — | `BD_BACKUP_GIT_REPO` | (none) | Backup git repo URL |
-| `export.auto` | — | — | `true` | Refresh `.beads/issues.jsonl` after every write |
+| `export.auto` | — | — | `false` | Refresh `.beads/issues.jsonl` export after every write; not cross-machine sync |
 | `export.path` | — | — | `issues.jsonl` | Output filename relative to `.beads/` |
+| `import.path` | — | — | `issues.jsonl` | Input filename relative to `.beads/` for implied JSONL imports; use relative paths for portability |
 | `export.interval` | — | — | `60s` | Minimum time between auto-exports |
-| `export.git-add` | — | — | `true` | Run `git add` on the export file |
+| `export.git-add` | — | — | `false` | Run `git add` on the export file |
 | `routing.mode` | — | — | (none) | Multi-repo routing: `auto`, `maintainer`, `contributor`, `explicit` |
 | `routing.default` | — | — | `.` | Default routing target |
 | `routing.maintainer` | — | — | `.` | Maintainer-routed path |
@@ -12064,9 +12140,30 @@ Secrets in this list are refused on git-tracked `config.yaml` files unless you p
 | `sync.require_confirmation_on_mass_delete` | — | — | `false` | Prompt before pushing >50% issue deletions |
 | `directory.labels` | — | — | `{}` | Map directory patterns → labels for monorepos |
 | `external_projects` | — | — | `{}` | Map project names → paths for cross-project deps |
-| `output.title-length` | — | — | `255` | Title display in feedback (`0` hides) |
+| `output.title-length` | — | — | `255` | Title display in feedback (`0` hides); see routing note below |
 | `ai.model` | — | `BD_AI_MODEL` | `claude-haiku-4-5-20251001` | Default AI model |
-| `agents.file` | — | — | `AGENTS.md` | Agents instruction filename |
+| `agents.file` | — | — | `AGENTS.md` | Agents instruction filename; see routing note below |
+
+:::important JSONL export is opt-in
+
+`export.auto` and `export.git-add` are disabled unless configured explicitly.
+`.beads/issues.jsonl` is an optional export for viewers, interchange, and
+issue-level migration. It is not the canonical source of truth, not
+cross-machine sync, and not a full database backup.
+
+Workflows that depend on a fresh, git-staged JSONL file should opt in:
+
+```bash
+bd config set export.auto true
+bd config set export.git-add true
+```
+
+Use `bd dolt push` / `bd dolt pull` for sync and `bd backup` for restorable
+database backups.
+
+:::
+
+Routing note: `output.title-length` and `agents.file` are functionally tool-level settings, but `bd config set` writes them to the Dolt database. They are typically read from `config.yaml` when set there directly.
 
 `bd config show` is the source of truth for what's currently effective on your machine, including provenance.
 
@@ -12151,12 +12248,12 @@ backup:
   enabled: true
   interval: 15m
 
-# Auto-export issues.jsonl after writes (default settings shown for clarity)
+# Optional auto-export of issues.jsonl after writes for viewers/interchange
 export:
-  auto: true
+  auto: false
   path: issues.jsonl
   interval: 60s
-  git-add: true
+  git-add: false
 
 # Optional Dolt federation
 federation:
@@ -12418,7 +12515,7 @@ bd doctor --fix
 
 ## Protected Branches
 
-Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed.
+Dolt stores data under `refs/dolt/data`, separate from Git refs. This means beads data doesn't conflict with protected Git branches — no special branch flag is needed. On new projects with a git `origin`, `bd init` configures that origin as the Dolt remote automatically.
 
 ## Git Worktrees
 

@@ -33,7 +33,7 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx *sql.Tx, id string, actor 
 	if err := PrepareIssueForInsert(issue, bc.CustomStatuses, bc.CustomTypes); err != nil {
 		return fmt.Errorf("promote wisp to issues: %w", err)
 	}
-	if _, err := InsertIssueIfNew(ctx, tx, "issues", issue); err != nil {
+	if _, err := InsertIssueIfNew(ctx, tx, "issues", issue, false); err != nil {
 		return fmt.Errorf("promote wisp to issues: %w", err)
 	}
 

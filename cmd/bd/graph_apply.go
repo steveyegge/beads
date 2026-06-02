@@ -210,12 +210,10 @@ func unknownKeys(have map[string]json.RawMessage, known map[string]struct{}) []s
 
 // warnUnknownGraphFields prints a single warning line per location in the
 // plan with one or more unknown fields, plus a per-field hint when one is
-// available. Output goes to w (typically os.Stderr). Returns the set of
-// distinct unknown field names that were warned about, primarily for tests.
-// (GH#3367)
-func warnUnknownGraphFields(w io.Writer, unknown map[string][]string) []string {
+// available. Output goes to w (typically os.Stderr). (GH#3367)
+func warnUnknownGraphFields(w io.Writer, unknown map[string][]string) {
 	if len(unknown) == 0 {
-		return nil
+		return
 	}
 
 	locations := make([]string, 0, len(unknown))
@@ -244,8 +242,15 @@ func warnUnknownGraphFields(w io.Writer, unknown map[string][]string) []string {
 			fmt.Fprintf(w, "  hint: %q is not part of the schema; %s\n", f, hint)
 		}
 	}
+}
 
-	return hintFields
+func loadEmbeddedCustomTypes() []string {
+	if store != nil {
+		if ct, err := store.GetCustomTypes(rootCtx); err == nil && len(ct) > 0 {
+			return ct
+		}
+	}
+	return config.GetCustomTypesFromYAML()
 }
 
 // createIssuesFromGraph handles `bd create --graph <plan-file>`.
@@ -268,7 +273,7 @@ func createIssuesFromGraph(planFile string, dryRun bool, opts GraphApplyOptions)
 		FatalError("parsing graph plan: %v", err)
 	}
 
-	if err := validateGraphApplyPlan(&plan); err != nil {
+	if err := validateGraphApplyPlan(&plan, loadEmbeddedCustomTypes()); err != nil {
 		FatalError("invalid graph plan: %v", err)
 	}
 
@@ -354,20 +359,9 @@ func emitGraphApplyDryRun(plan *GraphApplyPlan) {
 	}
 }
 
-// validateGraphApplyPlan checks the plan for structural errors before any writes.
-func validateGraphApplyPlan(plan *GraphApplyPlan) error {
+func validateGraphApplyPlan(plan *GraphApplyPlan, customTypes []string) error {
 	if len(plan.Nodes) == 0 {
 		return fmt.Errorf("plan has no nodes")
-	}
-
-	// Load custom types so user-configured types (spec, session, etc.) are accepted.
-	var customTypes []string
-	if store != nil {
-		ct, _ := store.GetCustomTypes(rootCtx)
-		customTypes = ct
-	}
-	if len(customTypes) == 0 {
-		customTypes = config.GetCustomTypesFromYAML()
 	}
 
 	seenKeys := make(map[string]bool, len(plan.Nodes))

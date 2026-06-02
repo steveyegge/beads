@@ -149,6 +149,7 @@ var _ storage.PendingCommitter = (*DoltStore)(nil)
 var _ storage.GarbageCollector = (*DoltStore)(nil)
 var _ storage.Flattener = (*DoltStore)(nil)
 var _ storage.Compactor = (*DoltStore)(nil)
+var _ storage.SchemaMigrator = (*DoltStore)(nil)
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
@@ -1095,7 +1096,12 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		autoStartedServerDir: autoStartedDir,
 	}
 
-	if !cfg.ReadOnly {
+	if cfg.ReadOnly {
+		if err := schema.CheckForwardDrift(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	} else {
 		if err := store.initSchema(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
@@ -1114,7 +1120,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
-	if isLocalHost(cfg.ServerHost) {
+	if isLocalHost(cfg.ServerHost) && shouldPersistResolvedPortFile() {
 		beadsDir := cfg.BeadsDir
 		if beadsDir == "" && cfg.Path != "" {
 			beadsDir = filepath.Dir(cfg.Path)
@@ -1138,6 +1144,10 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	store.registerPoolGauges()
 
 	return store, nil
+}
+
+func shouldPersistResolvedPortFile() bool {
+	return os.Getenv("BEADS_DOLT_SERVER_PORT") == "" && os.Getenv("BEADS_DOLT_PORT") == ""
 }
 
 // verifyProjectIdentity checks that the database belongs to the expected project.
@@ -1455,27 +1465,27 @@ func databaseExistsOnServer(ctx context.Context, db *sql.DB, name string) (bool,
 
 // initSchemaOnDB applies pending schema migrations. schema.MigrateUp tracks
 // applied versions in schema_migrations and backfills legacy config-driven
-// tables.
-func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
+// tables. Returns the number of migrations applied.
+func initSchemaOnDB(ctx context.Context, db *sql.DB) (int, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("schema: pin connection: %w", err)
+		return 0, fmt.Errorf("schema: pin connection: %w", err)
 	}
 	defer conn.Close()
 
 	var dbName string
 	if err := conn.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&dbName); err != nil {
-		return fmt.Errorf("schema: read database name: %w", err)
+		return 0, fmt.Errorf("schema: read database name: %w", err)
 	}
 
-	if _, err := schema.MigrateUpWithLock(ctx, conn, dbName); err != nil {
-		return fmt.Errorf("schema migration: %w", err)
+	applied, err := schema.MigrateUpWithLock(ctx, conn, dbName)
+	if err != nil {
+		return applied, fmt.Errorf("schema migration: %w", err)
 	}
-
-	return nil
+	return applied, nil
 }
 
-func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) error {
+func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) (int, error) {
 	// Schema initialization for server mode is idempotent. Retry transient
 	// Dolt startup/catalog races and contended migration-lock attempts so
 	// concurrent bd processes converge instead of failing one unlucky waiter.
@@ -1484,8 +1494,10 @@ func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) error {
 	// Must exceed schema.MigrateUpWithLock's 5s GET_LOCK wait so a contended
 	// schema migration can time out once and still retry.
 	schemaBO.MaxElapsedTime = serverRetryMaxElapsed
-	return backoff.Retry(func() error {
-		schemaErr := initSchemaOnDB(ctx, db)
+	var applied int
+	err := backoff.Retry(func() error {
+		var schemaErr error
+		applied, schemaErr = initSchemaOnDB(ctx, db)
 		if schemaErr != nil && isRetryableError(schemaErr) {
 			return schemaErr
 		}
@@ -1494,10 +1506,55 @@ func initSchemaOnDBWithRetry(ctx context.Context, db *sql.DB) error {
 		}
 		return nil
 	}, backoff.WithContext(schemaBO, ctx))
+	return applied, err
 }
 
 func (s *DoltStore) initSchema(ctx context.Context) error {
-	return initSchemaOnDBWithRetry(ctx, s.db)
+	// Schema migrations can run arbitrarily long (e.g. full-table recomputes
+	// such as the is_blocked backfill in migration 0047). The main connection
+	// pool sets a 10s ReadTimeout (see buildServerDSN); a slow migration over
+	// that pool aborts mid-flight with "i/o timeout" and leaves tables dirty,
+	// which then blocks every subsequent migration attempt. Run the migration
+	// pass over a dedicated connection with no read/write timeout. Cancellation
+	// is governed by the caller's context, not a fixed deadline.
+	migDB, err := s.openMigrationDB()
+	if err != nil {
+		return err
+	}
+	defer migDB.Close()
+	_, err = initSchemaOnDBWithRetry(ctx, migDB)
+	return err
+}
+
+// ApplySchemaMigrations runs idempotent schema migrations under the
+// per-database advisory lock, with retry for transient lock contention.
+// Implements storage.SchemaMigrator.
+func (s *DoltStore) ApplySchemaMigrations(ctx context.Context) (int, error) {
+	migDB, err := s.openMigrationDB()
+	if err != nil {
+		return 0, err
+	}
+	defer migDB.Close()
+	return initSchemaOnDBWithRetry(ctx, migDB)
+}
+
+// openMigrationDB opens a one-off connection pool for schema migrations with no
+// read/write timeout. Migrations may run far longer than the default 10s pool
+// timeout, and timing out part-way leaves the database in a dirty, half-migrated
+// state. The single connection is closed by the caller once migration completes.
+func (s *DoltStore) openMigrationDB() (*sql.DB, error) {
+	cfg, err := mysql.ParseDSN(s.connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse DSN for migration connection: %w", err)
+	}
+	cfg.ReadTimeout = 0
+	cfg.WriteTimeout = 0
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return nil, fmt.Errorf("failed to open migration connection: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
 }
 
 // IsClosed returns true if the store has been closed.

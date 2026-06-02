@@ -21,7 +21,7 @@ func GetReadyWorkWithCountsInTx(ctx context.Context, tx *sql.Tx, filter types.Wo
 	if err != nil {
 		return nil, err
 	}
-	out, err := runSearchQueryInTx(ctx, tx, IssuesFilterTables, issuePreds.whereSQL, issuePreds.orderBySQL, issuePreds.limitSQL, issuePreds.args, wispDepsExist)
+	out, err := runSearchQueryInTx(ctx, tx, IssuesFilterTables, issuePreds.whereSQL, issuePreds.orderBySQL, issuePreds.limitSQL, issuePreds.args, wispDepsExist, false)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func GetReadyWorkWithCountsInTx(ctx context.Context, tx *sql.Tx, filter types.Wo
 	if err != nil {
 		return nil, err
 	}
-	wisps, err := runSearchQueryInTx(ctx, tx, WispsFilterTables, wispPreds.whereSQL, wispPreds.orderBySQL, wispPreds.limitSQL, wispPreds.args, true)
+	wisps, err := runSearchQueryInTx(ctx, tx, WispsFilterTables, wispPreds.whereSQL, wispPreds.orderBySQL, wispPreds.limitSQL, wispPreds.args, true, false)
 	if err != nil {
 		if isTableNotExistError(err) {
 			return out, nil

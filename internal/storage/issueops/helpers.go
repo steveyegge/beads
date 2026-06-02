@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -501,7 +502,11 @@ func ReadConfigPrefix(ctx context.Context, tx *sql.Tx) (string, error) {
 	var configPrefix string
 	err := tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
-		return "", fmt.Errorf("%w: issue_prefix config is missing (run 'bd init --prefix <prefix>' for a new project, or 'bd bootstrap' to clone an existing remote)", storage.ErrNotInitialized)
+		yamlPrefix := strings.TrimSpace(config.GetString("issue-prefix"))
+		underscoreYamlPrefix := strings.TrimSpace(config.GetString("issue_prefix"))
+		debug.Logf("Debug: missing config.issue_prefix in database (err=%v, db value=%q, yaml issue-prefix=%q, yaml issue_prefix=%q)\n",
+			err, configPrefix, yamlPrefix, underscoreYamlPrefix)
+		return "", fmt.Errorf("%w: issue_prefix config is missing (run 'bd init --prefix <prefix>' for a new project, or 'bd bootstrap' to clone an existing remote; if using config.yaml, use key 'issue-prefix', not 'issue_prefix')", storage.ErrNotInitialized)
 	} else if err != nil {
 		return "", fmt.Errorf("failed to get config: %w", err)
 	}

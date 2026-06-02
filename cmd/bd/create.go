@@ -33,6 +33,11 @@ var createCmd = &cobra.Command{
 	Args:    cobra.MinimumNArgs(0), // Changed to allow no args when using -f
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("create")
+		if usesProxiedServer() {
+			in := gatherCreateInput(cmd, args)
+			runCreateProxiedServer(cmd, rootCtx, in)
+			return
+		}
 		file, _ := cmd.Flags().GetString("file")
 		graphFile, _ := cmd.Flags().GetString("graph")
 
@@ -768,6 +773,11 @@ func buildCreateIssue(params createIssueParams) *types.Issue {
 		externalRefPtr = &params.ExternalRef
 	}
 
+	status := types.StatusOpen
+	if params.DeferUntil != nil && params.DeferUntil.After(time.Now()) {
+		status = types.StatusDeferred
+	}
+
 	return &types.Issue{
 		ID:                 params.ID,
 		Title:              params.Title,
@@ -776,7 +786,7 @@ func buildCreateIssue(params createIssueParams) *types.Issue {
 		AcceptanceCriteria: params.AcceptanceCriteria,
 		Notes:              params.Notes,
 		SpecID:             params.SpecID,
-		Status:             types.StatusOpen,
+		Status:             status,
 		Priority:           params.Priority,
 		IssueType:          params.IssueType,
 		Assignee:           params.Assignee,

@@ -105,6 +105,8 @@ BEADS_INSTALL_RESIGN_MACOS=1 curl -fsSL https://raw.githubusercontent.com/gastow
 - **Nocgo (simplest, default in this doc):** `CGO_ENABLED=0 go install ...`. Works on any machine with a Go toolchain, no C compiler needed. Produces a **server-mode-only** binary — you must run an external `dolt sql-server` and use `bd init --server`. See [DOLT.md](DOLT.md) for server-mode setup.
 - **Cgo (embedded-capable):** `CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install ...`. Requires a C compiler (gcc/clang on Unix, MinGW on Windows). Produces a binary with the default embedded-Dolt backend — `bd init` Just Works.
 
+Use the `github.com/steveyegge/beads` path for `go install`. The repository now lives under `gastownhall/beads`, but released Go modules still declare `github.com/steveyegge/beads` for compatibility.
+
 If you don't have a preference, `brew install beads` / `install.sh` give you the embedded-capable build with no fuss.
 
 ## Platform-Specific Installation
@@ -287,7 +289,7 @@ bd setup mux      # Mux - creates/updates AGENTS.md
 ```
 
 **How it works:**
-- `bd init` creates or updates `AGENTS.md` by default unless you use `--skip-agents` or `--stealth`
+- `bd init` creates or updates `AGENTS.md` and installs project Claude/Codex integrations by default unless you use `--skip-agents` or `--stealth`
 - Editor hooks/rules inject `bd prime` automatically on session start
 - Codex 0.129.0+ uses native `/hooks`: SessionStart injects `bd prime`, compact hooks mark context stale, and the next prompt after compaction refreshes Beads context once
 - `bd prime` provides ~1-2k tokens of workflow context
@@ -517,7 +519,7 @@ See the "Claude Code Plugin" section above for alternative installation methods 
 After installation:
 
 1. **Initialize a project**: `cd your-project && bd init`
-2. **Configure your agent**: `bd init` creates/updates `AGENTS.md` by default; run `bd setup --list` for richer integrations or `bd onboard` for a manual fallback snippet
+2. **Configure your agent**: `bd init` creates/updates `AGENTS.md` and installs project Claude/Codex integrations by default; run `bd setup --list` for richer integrations or `bd onboard` for a manual fallback snippet
 3. **Learn the basics**: See [QUICKSTART.md](QUICKSTART.md) for a tutorial
 4. **Explore examples**: Check out the [examples/](../examples/) directory
 
