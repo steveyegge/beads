@@ -10,6 +10,7 @@ internal/hooks/hooks_test.go::TestRunSync_KillsDescendants
 internal/testutil/fixtures/fixtures_test.go::TestXLargeDolt
 internal/testutil/fixtures/fixtures_test.go::TestLargeFromJSONL
 internal/storage/dolt/concurrent_test.go::TestHighContentionStress
+cmd/bd/prune_bench_test.go::TestPruneLargeFixture
 EOF
 )
 
