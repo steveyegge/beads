@@ -168,6 +168,15 @@ func cliCompatibleMigrationSQL(name, sqlText string) string {
 		// substitute ALTERs wisps directly, the same as 0067's, so it
 		// belongs on cliSubstituteAssumesWispTables too.
 		return cliMigration0070AddParticipationGeneration
+	case "0070_add_removed_restriction.up.sql":
+		// Direct DDL for the same reason as 0067/0068: the source migration's
+		// PREPARE guard (an INFORMATION_SCHEMA probe) is what makes the raw
+		// .up.sql idempotent when replayed onto an already-migrated store,
+		// and the 2.2.x CLI no-ops a prepared ADD COLUMN. issue_versions is
+		// always present here -- 0067 runs earlier in the same fresh-bundle
+		// series -- and never carries removed_restriction yet, so the column
+		// always needs adding on a fresh bundle.
+		return cliMigration0070AddRemovedRestriction
 	default:
 		return sqlText
 	}
@@ -305,6 +314,11 @@ ALTER TABLE issue_versions MODIFY COLUMN durable_state LONGBLOB;`
 // twin exists for this table.
 const cliMigration0069WidenIssueVersionsDatetimePrecision = `ALTER TABLE issue_versions MODIFY COLUMN change_at DATETIME(6) NOT NULL;
 ALTER TABLE issue_versions MODIFY COLUMN removed_at DATETIME(6);`
+// cliMigration0070AddRemovedRestriction is 0070 with its one guarded PREPARE
+// block replaced by the direct ALTER it would run on a fresh database.
+// issue_versions is created earlier in the same series by 0067 and never
+// carries removed_restriction yet, so the column always needs adding here.
+const cliMigration0070AddRemovedRestriction = `ALTER TABLE issue_versions ADD COLUMN removed_restriction VARCHAR(30);`
 
 // cliMigration0070AddParticipationGeneration is 0070 with its two guarded
 // PREPARE blocks replaced by the direct ALTERs they would run on a fresh

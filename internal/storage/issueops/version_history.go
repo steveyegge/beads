@@ -358,7 +358,10 @@ func refuseUnrepresentableIntegers(marshaled []byte) error {
 // to preserve, so that entry point stamps the column rather than checking
 // it.
 func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) error {
-	return recordVersionInTx(ctx, tx, issueID, actor, false)
+	if !versionedHistoryEnabled(tx) {
+		return nil
+	}
+	return recordVersionAtInTx(ctx, tx, issueID, actor, time.Now().UTC(), mintUpdate)
 }
 
 // RecordVersionForCreateInTx is RecordVersionInTx's create-shaped sibling
@@ -379,48 +382,99 @@ func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) erro
 // a wisp is never versioned (FR-8). That covers an ordinary wisp create and
 // an unflagged wisps-table row (import's "wisp_plane" marker) alike.
 func RecordVersionForCreateInTx(ctx context.Context, tx DBTX, issueID, actor string) error {
-	return recordVersionInTx(ctx, tx, issueID, actor, true)
-}
-
-func recordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string, isCreate bool) error {
 	if !versionedHistoryEnabled(tx) {
 		return nil
 	}
+	return recordVersionAtInTx(ctx, tx, issueID, actor, time.Now().UTC(), mintCreate)
+}
 
+// RecordVersionAtInTx is RecordVersionInTx's test-support twin: it mints a
+// version row at a caller-chosen change_at instead of time.Now(), and --
+// deliberately -- does not gate on versionedHistoryEnabled at all, since its
+// whole purpose is controlled-timestamp minting for conformance fixtures
+// (R7.1's AsOfReadFixture.MintAt, backend/conformance/versioned_read_contract.go)
+// regardless of a store's activation state. Production code never calls
+// this; only per-leg as-of-read fixtures do, so their bare issue-create step
+// can stay history-off (no unwanted real-time row) while still minting the
+// exact versions a test needs at the instants it needs them.
+//
+// It bypasses design §16.2b's write fence exactly as it bypasses the gate:
+// it ignores participation_generation and never stamps it, so it mints for
+// a legacy row and a participating row alike and leaves the column as it
+// found it. The fence and the stamp belong to the production entry points
+// above, never to a fixture's controlled-timestamp mint. The plane rule is
+// not the fence, and it does apply: a row the wisps table holds, or one
+// flagged Ephemeral or NoHistory, mints nothing here either.
+func RecordVersionAtInTx(ctx context.Context, tx DBTX, issueID, actor string, at time.Time) error {
+	return recordVersionAtInTx(ctx, tx, issueID, actor, at, mintUnfenced)
+}
+
+// versionMintKind says how recordVersionAtInTx treats design §16.2b's write
+// fence, the one thing RecordVersionInTx, RecordVersionForCreateInTx and
+// RecordVersionAtInTx do not share.
+type versionMintKind int
+
+const (
+	// mintUpdate is an update-shaped mutation (RecordVersionInTx): the fence
+	// applies, and a record whose participation_generation is NULL mints nothing.
+	mintUpdate versionMintKind = iota
+	// mintCreate is a create-shaped mutation (RecordVersionForCreateInTx): a
+	// brand-new row has no legacy state to preserve, so the fence does not
+	// apply and the mint stamps participation_generation instead.
+	mintCreate
+	// mintUnfenced is RecordVersionAtInTx's test-support mint: no fence and no
+	// stamp, exactly as it behaved before the fence existed. Like the other
+	// two, it mints nothing for a row that is not on the issues plane.
+	mintUnfenced
+)
+
+// recordVersionAtInTx is RecordVersionInTx, RecordVersionForCreateInTx and
+// RecordVersionAtInTx's shared body, taking at where the callers differ:
+// time.Now().UTC() for the production gate-checked paths, a caller-chosen
+// instant for test minting; and kind, which says whether design §16.2b's
+// write fence applies (mintUpdate), the mint stamps participation_generation
+// (mintCreate) or neither (mintUnfenced). The no-op rules documented on
+// RecordVersionInTx above (wisps) apply here too, since this is that
+// function's entire mechanism minus the gate.
+func recordVersionAtInTx(ctx context.Context, tx DBTX, issueID, actor string, at time.Time, kind versionMintKind) error {
 	issue, err := GetIssueInTx(ctx, tx, issueID)
 	if err != nil {
 		return fmt.Errorf("versioned history: snapshot %s: %w", issueID, err)
 	}
 	// A flagged row (Ephemeral || NoHistory) is never versioned, so an
-	// update-shaped call has nothing to do. A create-shaped one may still
-	// have to declare participation; see the IsWisp branch below.
-	if IsWisp(issue) && !isCreate {
+	// update-shaped call, or the test-support mint, has nothing to do. A
+	// create-shaped one may still have to declare participation; see the
+	// IsWisp branch below.
+	if IsWisp(issue) && kind != mintCreate {
 		return nil
 	}
 
-	// design §16.2b write fence. Read straight off the row rather than
-	// through types.Issue: participation_generation is dual-write
-	// bookkeeping, not part of the issue's own content model, so it stays
-	// out of the durable_state snapshot canonicalDurableState marshals
-	// below. isCreate skips the check entirely (a brand-new row has no
-	// legacy state to preserve, and this same function stamps the column
-	// itself further down); an update-shaped call against a NULL (legacy)
-	// value returns here, before either half of this seam's write runs.
-	// BD_IGNORE_SCHEMA_SKEW (internal/storage/schema/schema.go) has no
-	// bearing on this check: it downgrades CheckForwardDrift's
-	// migration-cursor refusal, a different plane than this column's real
-	// per-row data.
-	//
 	// THE TABLE THAT HOLDS THE ROW decides its plane, not its flags. IsWisp
 	// reads Ephemeral || NoHistory, and a wisps-table row can carry neither:
 	// bd mol squash clears a wisp root's flag in place, and import's
 	// "wisp_plane" marker routes an unflagged row to wisps. Such a row passes
 	// IsWisp, but there is no issues row for it, so this read finds nothing.
 	// No issues row means nothing to version (FR-8), for an update- or a
-	// create-shaped call alike: mint nothing and let the mutation proceed,
-	// rather than abort it on sql.ErrNoRows. GetIssueInTx resolved the
-	// snapshot above, so the row exists; ErrNoRows here can only mean it is
-	// in the wisps table.
+	// create-shaped call alike, and for the test-support mint too, since this
+	// is the plane rule and not the fence: mint nothing and let the mutation
+	// proceed, rather than abort it on sql.ErrNoRows. GetIssueInTx resolved
+	// the snapshot above, so the row exists; ErrNoRows here can only mean it
+	// is in the wisps table.
+	//
+	// The same read is design §16.2b's write fence. participation_generation
+	// is read straight off the row rather than through types.Issue: it is
+	// dual-write bookkeeping, not part of the issue's own content model, so it
+	// stays out of the durable_state snapshot canonicalDurableState marshals
+	// below. Only an update-shaped call (mintUpdate) acts on its value: a
+	// brand-new row (mintCreate) has no legacy state to preserve, and this
+	// same function stamps the column itself further down; the test-support
+	// mint (mintUnfenced) ignores it. An update-shaped call against a NULL
+	// (legacy) value returns here, before either half of this seam's write
+	// runs.
+	// BD_IGNORE_SCHEMA_SKEW (internal/storage/schema/schema.go) has no
+	// bearing on this check: it downgrades CheckForwardDrift's
+	// migration-cursor refusal, a different plane than this column's real
+	// per-row data.
 	var participationGeneration sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
 		"SELECT participation_generation FROM issues WHERE id = ?", issueID,
@@ -455,7 +509,7 @@ func recordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string, isCr
 		}
 		return nil
 	}
-	if !isCreate && !participationGeneration.Valid {
+	if kind == mintUpdate && !participationGeneration.Valid {
 		return nil
 	}
 
@@ -507,12 +561,12 @@ func recordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string, isCr
 		`INSERT INTO issue_versions
 			(issue_id, revision, epoch, durable_state, change_actor, change_agent, change_message, change_at, attribution_status)
 		VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-		issueID, newRevision, epoch, durableState, actor, time.Now().UTC(), attributionStatusForActor(actor),
+		issueID, newRevision, epoch, durableState, actor, at, attributionStatusForActor(actor),
 	); err != nil {
 		return fmt.Errorf("versioned history: insert version row for %s: %w", issueID, err)
 	}
 
-	if isCreate {
+	if kind == mintCreate {
 		// Stamps participation_generation in the same statement that advances
 		// current_revision — design §16.2b's "positive declaration sourced
 		// from store_epoch.epoch," minted here from the epoch already read
