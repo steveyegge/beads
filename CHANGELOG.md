@@ -795,6 +795,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route; the direct and embedded routes are unchanged
   ([#5861](https://github.com/gastownhall/beads/issues/5861) item 1).
 
+- **`bd recall`, `bd forget` and `GET /v0/beads/memories/{key}` now treat an
+  empty-valued memory as present**
+  ([#5964](https://github.com/gastownhall/beads/pull/5964), fixes
+  [#5963](https://github.com/gastownhall/beads/issues/5963)). Presence used to
+  be derived from the stored value's truthiness, so a memory written out of
+  band with an empty string was invisible on all three doors even though its
+  row existed: `bd recall` printed "No memory with key" and exited 1, `bd
+  forget` refused to delete it, and the HTTP door answered 404, while `GET
+  /v0/beads/memories` already enumerated the same row. Presence is now derived
+  from row existence everywhere, across direct Dolt, embedded Dolt and the
+  proxied backend: an empty-valued memory is found, recalls as an empty
+  string, and is deleted on the first forget. Only a key nothing ever stored
+  is a miss.
+
 - **`bd doctor` no longer flags a `.local_version` that starts with `v`.** The
   canonical spelling of a Go module version — and the string a build stamped
   from a Go pseudo-version reports and writes into `.local_version` itself —
