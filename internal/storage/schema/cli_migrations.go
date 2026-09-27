@@ -314,6 +314,7 @@ ALTER TABLE issue_versions MODIFY COLUMN durable_state LONGBLOB;`
 // twin exists for this table.
 const cliMigration0069WidenIssueVersionsDatetimePrecision = `ALTER TABLE issue_versions MODIFY COLUMN change_at DATETIME(6) NOT NULL;
 ALTER TABLE issue_versions MODIFY COLUMN removed_at DATETIME(6);`
+
 // cliMigration0070AddRemovedRestriction is 0070 with its one guarded PREPARE
 // block replaced by the direct ALTER it would run on a fresh database.
 // issue_versions is created earlier in the same series by 0067 and never
