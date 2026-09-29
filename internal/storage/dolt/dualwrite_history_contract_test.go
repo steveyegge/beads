@@ -313,10 +313,15 @@ func TestDualWriteVersionRowsRideTheMutationsDoltCommit(t *testing.T) {
 // sweptTables and nothing else, leaving those version rows in the working set
 // while issuing its own DOLT_COMMIT.
 //
-// The delete path is also the only one of the three where the store_epoch
-// assertion is load-bearing without arranging for it: history is turned on AFTER
-// the fixture rows exist, so the delete's own transaction takes the first mint in
-// this store and seeds the epoch singleton inside it.
+// History is turned on BEFORE the fixture rows exist, so the neighbor is created
+// as a participating record. A neighbor created with history off would be a
+// legacy record (participation_generation NULL), and design §16.2b's write fence
+// skips every update-shaped mint on a legacy record: the rewrite would mint
+// nothing, and there would be no version row for this test to find. The same
+// fence means a delete can no longer take a store's first mint — the only record
+// its rewrite can version is one whose own create already seeded store_epoch —
+// so store_epoch in the dolt_status loop below guards the delete plane's staged
+// table list rather than a row this transaction writes.
 func TestDualWriteDeleteNeighborRewriteRidesTheDeletesDoltCommit(t *testing.T) {
 	store, storeCleanup := setupTestStore(t)
 	defer storeCleanup()
@@ -326,6 +331,8 @@ func TestDualWriteDeleteNeighborRewriteRidesTheDeletesDoltCommit(t *testing.T) {
 	if !ok {
 		t.Fatalf("%T does not implement storage.VersionedHistoryConfigurer", store)
 	}
+	configurer.SetVersionedHistoryEnabled(true)
+	defer configurer.SetVersionedHistoryEnabled(false)
 
 	const target, neighbor = "dwdel-target", "dwdel-neighbor"
 	fixtures := []*types.Issue{
@@ -347,9 +354,6 @@ func TestDualWriteDeleteNeighborRewriteRidesTheDeletesDoltCommit(t *testing.T) {
 	}, "linker"); err != nil {
 		t.Fatalf("add dep: %v", err)
 	}
-
-	configurer.SetVersionedHistoryEnabled(true)
-	defer configurer.SetVersionedHistoryEnabled(false)
 
 	neighborVersions := func() int {
 		t.Helper()
