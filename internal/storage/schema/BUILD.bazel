@@ -118,6 +118,7 @@ go_library(
         "migrations/ignored/0026_dep_rekey_dedup_marker.up.sql",
         "migrations/ignored/0027_add_wisps_current_revision.up.sql",
         "migrations/0069_widen_issue_versions_datetime_precision.up.sql",
+        "migrations/ignored/0028_add_wisps_participation_generation.up.sql",
     ],
     importpath = "github.com/steveyegge/beads/internal/storage/schema",
     visibility = ["//:__subpackages__"],
