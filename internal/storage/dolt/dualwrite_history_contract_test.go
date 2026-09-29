@@ -351,6 +351,19 @@ func TestDualWriteDeleteNeighborRewriteRidesTheDeletesDoltCommit(t *testing.T) {
 	configurer.SetVersionedHistoryEnabled(true)
 	defer configurer.SetVersionedHistoryEnabled(false)
 
+	neighborVersions := func() int {
+		t.Helper()
+		var versions int
+		if err := store.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM issue_versions WHERE issue_id = ?`, neighbor).Scan(&versions); err != nil {
+			t.Fatalf("count issue_versions for %s: %v", neighbor, err)
+		}
+		return versions
+	}
+	// The neighbor's create and its dependency add have already minted rows of
+	// their own; only what the delete adds on top of them is this test's concern.
+	versionsBefore := neighborVersions()
+
 	deleter, err := store.Deleter()
 	if err != nil {
 		t.Fatalf("Deleter(): %v", err)
@@ -365,13 +378,17 @@ func TestDualWriteDeleteNeighborRewriteRidesTheDeletesDoltCommit(t *testing.T) {
 		t.Fatalf("ReferencesUpdated = %d, want 1 — the citation rewrite did not run, so this case is not exercising the minting delete path it exists for", result.ReferencesUpdated)
 	}
 
-	var versions int
-	if err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM issue_versions WHERE issue_id = ?`, neighbor).Scan(&versions); err != nil {
-		t.Fatalf("count issue_versions for %s: %v", neighbor, err)
+	if minted := neighborVersions() - versionsBefore; minted != 1 {
+		t.Fatalf("the delete minted %d issue_versions rows for the rewritten neighbor %s, want 1 — the delete's own transaction is not scoped for minting", minted, neighbor)
 	}
-	if versions != 1 {
-		t.Fatalf("issue_versions rows for the rewritten neighbor %s = %d, want 1 — the delete's own transaction is not scoped for minting", neighbor, versions)
+	var latestActor string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COALESCE(change_actor, '') FROM issue_versions WHERE issue_id = ? ORDER BY revision DESC LIMIT 1`,
+		neighbor).Scan(&latestActor); err != nil {
+		t.Fatalf("read the newest issue_versions row for %s: %v", neighbor, err)
+	}
+	if latestActor != "deleter" {
+		t.Fatalf("the newest issue_versions row for %s is attributed to %q, want %q — it is not the delete's citation rewrite", neighbor, latestActor, "deleter")
 	}
 
 	for _, table := range []string{"issue_versions", "store_epoch", "issues"} {
