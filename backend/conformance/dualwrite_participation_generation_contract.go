@@ -47,8 +47,9 @@ import (
 //     TestDualWriteStampsTheCurrentStoreEpochOnEachVersionRow.
 //   - wisps.participation_generation. FR-8 (carried by dualwrite_history_contract.go's
 //     exclusion list) applies here too: this fixture's Mutate front door is
-//     CreateIssue against the issues table, so there is no wisp-routed id to
-//     check, and no phase reads or writes the wisps column regardless.
+//     CreateIssue against the issues table, the wisp-arrival cases read only
+//     the issues row a wisp becomes, and no phase reads or writes the wisps
+//     column regardless.
 type ParticipationGenerationFixture struct {
 	// IssuePrefix namespaces the id each case mints, the same discipline
 	// DualWriteFixture uses and for the same reason.
@@ -64,6 +65,20 @@ type ParticipationGenerationFixture struct {
 	// already-existing issue — a different value than Mutate gave it, so a
 	// vacuous no-op skip can never be mistaken for the fence.
 	MutateExisting func(ctx context.Context, id string) error
+	// CreateWisp creates a new wisp-plane (ephemeral) issue with the given
+	// id: the starting point for the two ways a record reaches the issues
+	// plane without being created there. A wisp is never versioned (FR-8)
+	// and never carries a participation declaration, in either flag state.
+	CreateWisp func(ctx context.Context, id string) error
+	// PromoteWisp promotes the wisp id onto the issues plane
+	// (PromoteFromEphemeral, or the unit-of-work leg's PromoteWisp).
+	PromoteWisp func(ctx context.Context, id string) error
+	// MovePersistent moves the wisp id onto the issues plane through a
+	// persistence-mode update (bd update --persistent). It is its own
+	// closure rather than a second spelling of PromoteWisp because it mints at
+	// a different site on every leg: the guarded update's one end-of-update
+	// mint on dolt and embeddeddolt, MoveIssuePersistenceInTx's own on uow.
+	MovePersistent func(ctx context.Context, id string) error
 	// CurrentRevision reads issues.current_revision for id.
 	CurrentRevision func(ctx context.Context, id string) (int64, error)
 	// VersionRowCount reads how many issue_versions rows exist for id.
@@ -220,6 +235,82 @@ func RunParticipationGenerationProceedsForPromotedRecord(t *testing.T, ctx conte
 		t.Errorf("version row count for %s went from %d to %d across an update-shaped mutation on an "+
 			"already-promoted record, want exactly +1: the fence must skip only a legacy (NULL) record, "+
 			"not every update (design §16.2b)", id, beforeCount, afterCount)
+	}
+}
+
+// RunParticipationGenerationWispPromotionBeginsHistory pins that promoting a
+// wisp onto the issues plane is CREATE-shaped in design §16.2b's sense. (This
+// is wisp promotion, PromoteFromEphemeral: not R2.3's promotion of a legacy
+// record, which is what ProceedsForPromotedRecord's name refers to.) The
+// issues row a promotion inserts is brand new on that plane, and the wisp
+// behind it was never versioned and never declared participation (FR-8), so
+// there is no legacy state to preserve: with the flag on, the promotion stamps
+// participation_generation and mints the record's first version, as a create
+// there would. Treated as UPDATE-shaped, the fence finds the new row NULL and
+// skips, and because nothing stamps the column afterwards every later update
+// skips too, so a record created with the flag on is never versioned at all.
+func RunParticipationGenerationWispPromotionBeginsHistory(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	runWispArrivalBeginsHistory(t, ctx, fixture, "promote", fixture.PromoteWisp)
+}
+
+// RunParticipationGenerationWispPersistenceMoveBeginsHistory is
+// RunParticipationGenerationWispPromotionBeginsHistory for the other way a
+// wisp reaches the issues plane, a persistence-mode update (bd update
+// --persistent). It needs its own case because it reaches a different mint
+// site than promotion on every leg (see MovePersistent).
+func RunParticipationGenerationWispPersistenceMoveBeginsHistory(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	runWispArrivalBeginsHistory(t, ctx, fixture, "move-persistent", fixture.MovePersistent)
+}
+
+// runWispArrivalBeginsHistory is the body the two wisp-arrival cases share:
+// with the flag on, a wisp that arrives on the issues plane through arrive
+// carries a stamped participation_generation and exactly one version row,
+// and the next update-shaped mutation mints normally.
+func runWispArrivalBeginsHistory(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture, how string, arrive func(context.Context, string) error) {
+	t.Helper()
+	if err := fixture.SetFlag(ctx, true); err != nil {
+		t.Fatalf("enabling versioned history: %v", err)
+	}
+	id := fixture.IssuePrefix + "-" + how
+	if err := fixture.CreateWisp(ctx, id); err != nil {
+		t.Fatalf("creating wisp %s: %v", id, err)
+	}
+	if err := arrive(ctx, id); err != nil {
+		t.Fatalf("moving wisp %s onto the issues plane (%s): %v", id, how, err)
+	}
+
+	gen, err := fixture.ParticipationGeneration(ctx, id)
+	if err != nil {
+		t.Fatalf("reading participation_generation for %s: %v", id, err)
+	}
+	if gen == nil {
+		t.Errorf("participation_generation for %s is NULL after the wisp reached the issues plane (%s) with "+
+			"the flag on, want a stamped value: the issues row is new, so the arrival is create-shaped "+
+			"(design §16.2b), and a NULL here leaves the record fenced as legacy for good", id, how)
+	}
+	arrivedCount, err := fixture.VersionRowCount(ctx, id)
+	if err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	}
+	if arrivedCount != 1 {
+		t.Errorf("version row count for %s = %d after the wisp reached the issues plane (%s) with the flag "+
+			"on, want 1: a wisp is never versioned (FR-8), so the arrival mints the record's first version",
+			id, arrivedCount, how)
+	}
+
+	if err := fixture.MutateExisting(ctx, id); err != nil {
+		t.Fatalf("mutating existing %s: %v", id, err)
+	}
+	afterCount, err := fixture.VersionRowCount(ctx, id)
+	if err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	}
+	if afterCount != arrivedCount+1 {
+		t.Errorf("version row count for %s went from %d to %d across an update-shaped mutation after the "+
+			"wisp reached the issues plane (%s), want exactly +1: a record that arrived with the flag on is "+
+			"not legacy, so the fence must let its updates mint", id, arrivedCount, afterCount, how)
 	}
 }
 

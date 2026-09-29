@@ -36,14 +36,20 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("FenceIgnoresSchemaSkewHatch", func(t *testing.T) {
 		conformance.RunParticipationGenerationFenceIgnoresSchemaSkewHatch(t, ctx, fixture)
 	})
+	t.Run("WispPromotionBeginsHistory", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispPromotionBeginsHistory(t, ctx, fixture)
+	})
+	t.Run("WispPersistenceMoveBeginsHistory", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispPersistenceMoveBeginsHistory(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFixtureKitIsWired is this leg's half of the
 // explicit per-leg guardrail design §8.5 calls for in place of AST
 // auto-discovery — see the dolt leg's TestParticipationGenerationFixtureKitIsWired
 // for why the guardrail is needed even though TestEveryLegWiresEveryRoleContract's
-// scan already enumerates and confirms wiring for all five
-// RunParticipationGenerationXxx entrypoints.
+// scan already enumerates and confirms wiring for every
+// RunParticipationGenerationXxx entrypoint.
 func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	ctx := context.Background()
 	fixture := newUOWParticipationGenerationFixture(t, ctx, "pgk")
@@ -56,6 +62,15 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.MutateExisting == nil {
 		t.Error("ParticipationGenerationFixture.MutateExisting is nil")
+	}
+	if fixture.CreateWisp == nil {
+		t.Error("ParticipationGenerationFixture.CreateWisp is nil")
+	}
+	if fixture.PromoteWisp == nil {
+		t.Error("ParticipationGenerationFixture.PromoteWisp is nil")
+	}
+	if fixture.MovePersistent == nil {
+		t.Error("ParticipationGenerationFixture.MovePersistent is nil")
 	}
 	if fixture.CurrentRevision == nil {
 		t.Error("ParticipationGenerationFixture.CurrentRevision is nil")
@@ -106,6 +121,25 @@ func newUOWParticipationGenerationFixture(t *testing.T, ctx context.Context, pre
 			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
 				return "update " + id, uw.IssueUseCase().UpdateIssue(ctx, id,
 					map[string]any{"title": "updated-" + id}, "actor")
+			})
+		},
+		CreateWisp: func(ctx context.Context, id string) error {
+			return kit.CreateWisp(ctx, &types.Issue{
+				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen, Ephemeral: true,
+			}, "actor")
+		},
+		PromoteWisp: func(ctx context.Context, id string) error {
+			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+				return "promote " + id, uw.IssueUseCase().PromoteWisp(ctx, id, "actor")
+			})
+		},
+		MovePersistent: func(ctx context.Context, id string) error {
+			// ApplyUpdate's persistence step, which runs MovePersistence and
+			// so MoveIssuePersistenceInTx's own mint, not a guarded update's.
+			persistent := types.PersistenceModePersistent
+			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+				_, err := uw.IssueUseCase().ApplyUpdate(ctx, id, domain.UpdateSpec{Persistence: &persistent}, "actor")
+				return "move persistent " + id, err
 			})
 		},
 		CurrentRevision: func(ctx context.Context, id string) (int64, error) {

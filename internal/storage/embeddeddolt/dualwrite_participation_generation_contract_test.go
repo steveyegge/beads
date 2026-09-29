@@ -5,11 +5,14 @@ package embeddeddolt_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/types"
+	publicops "github.com/steveyegge/beads/issueops"
 )
 
 // TestParticipationGenerationFence runs the design §16.2(b) write-fence
@@ -40,14 +43,20 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("FenceIgnoresSchemaSkewHatch", func(t *testing.T) {
 		conformance.RunParticipationGenerationFenceIgnoresSchemaSkewHatch(t, ctx, fixture)
 	})
+	t.Run("WispPromotionBeginsHistory", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispPromotionBeginsHistory(t, ctx, fixture)
+	})
+	t.Run("WispPersistenceMoveBeginsHistory", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispPersistenceMoveBeginsHistory(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFixtureKitIsWired is this leg's half of the
 // explicit per-leg guardrail design §8.5 calls for in place of AST
 // auto-discovery — see the dolt leg's TestParticipationGenerationFixtureKitIsWired
 // for why the guardrail is needed even though TestEveryLegWiresEveryRoleContract's
-// scan already enumerates and confirms wiring for all five
-// RunParticipationGenerationXxx entrypoints.
+// scan already enumerates and confirms wiring for every
+// RunParticipationGenerationXxx entrypoint.
 func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 	te := newTestEnv(t, "pgk")
@@ -61,6 +70,15 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.MutateExisting == nil {
 		t.Error("ParticipationGenerationFixture.MutateExisting is nil")
+	}
+	if fixture.CreateWisp == nil {
+		t.Error("ParticipationGenerationFixture.CreateWisp is nil")
+	}
+	if fixture.PromoteWisp == nil {
+		t.Error("ParticipationGenerationFixture.PromoteWisp is nil")
+	}
+	if fixture.MovePersistent == nil {
+		t.Error("ParticipationGenerationFixture.MovePersistent is nil")
 	}
 	if fixture.CurrentRevision == nil {
 		t.Error("ParticipationGenerationFixture.CurrentRevision is nil")
@@ -100,6 +118,30 @@ func newEmbeddedParticipationGenerationFixture(t *testing.T, te *testEnv, prefix
 			// same title: DiscardNoopIssueUpdates would discard the latter
 			// before it ever reached the fence this contract is testing.
 			return store.UpdateIssue(ctx, id, map[string]any{"title": "updated-" + id}, "actor")
+		},
+		CreateWisp: func(ctx context.Context, id string) error {
+			return store.CreateIssue(ctx, &types.Issue{
+				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen, Ephemeral: true,
+			}, "actor")
+		},
+		PromoteWisp: func(ctx context.Context, id string) error {
+			return store.PromoteFromEphemeral(ctx, id, "actor")
+		},
+		MovePersistent: func(ctx context.Context, id string) error {
+			// The guarded update bd update --persistent runs, so the move
+			// takes the update's one end-of-update mint rather than
+			// MoveIssuePersistenceInTx's own.
+			ops, err := embeddeddolt.NewIssueOperations(store)
+			if err != nil {
+				return err
+			}
+			result, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "actor", IssueID: id, Patch: publicops.IssuePatch{
+				Persistence: publicops.Field[publicops.PersistenceMode]{Set: true, Value: publicops.PersistenceModePersistent},
+			}})
+			if err == nil && !result.Changed {
+				err = fmt.Errorf("persistence move of %s reported no change", id)
+			}
+			return err
 		},
 		CurrentRevision: func(ctx context.Context, id string) (int64, error) {
 			var revision int64
