@@ -160,6 +160,20 @@ func TestMachineLocalRegistryIsCoveredByTheRoutingScan(t *testing.T) {
 
 // repoRootForRoutingScan walks up from the test's working directory to the
 // module root, so the scan covers every package rather than just cmd/bd.
+// repoRootForRoutingScan walks up to the module root so the scan covers every
+// package rather than just cmd/bd.
+//
+// Under Bazel the source tree is not there to walk: the test runs in a sandbox
+// containing only its declared inputs, so there is no go.mod above the working
+// directory and the scan has nothing to read. That is NOT the same as a clean
+// scan, so it must not report one -- a guard that silently finds zero call
+// sites is the exact failure this test exists to prevent, one level up.
+//
+// It therefore SKIPS under Bazel, loudly and by name, and keeps failing hard
+// everywhere else. The `go test` lane is the authority for this guard. Giving
+// Bazel a real answer would mean declaring every .go file in the module as
+// data on this one target, which is a heavier dependency than the guard is
+// worth; if that changes, delete the skip rather than widening it.
 func repoRootForRoutingScan(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -172,6 +186,11 @@ func repoRootForRoutingScan(t *testing.T) string {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
+			if os.Getenv("TEST_SRCDIR") != "" || os.Getenv("RUNFILES_DIR") != "" {
+				t.Skipf("no module root under a Bazel sandbox (searched up from %s): "+
+					"this scan needs the real source tree, so the `go test` lane is "+
+					"where it is enforced -- it is NOT covered by this Bazel target", dir)
+			}
 			t.Fatalf("no go.mod above %s; cannot root the scan", dir)
 		}
 		dir = parent
