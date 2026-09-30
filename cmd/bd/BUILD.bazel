@@ -1350,6 +1350,7 @@ go_test(
         "//internal/storage/issueops",
         "//internal/storage/journalscan",
         "//internal/storage/kvkeys",
+        "//internal/storage/memoryops",
         "//internal/storage/schema",
         "//internal/storage/uow",
         "//internal/storage/versioncontrolops",
