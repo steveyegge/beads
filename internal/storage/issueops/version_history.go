@@ -246,7 +246,10 @@ func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) erro
 // row's first mint, whenever versioned history is enabled. A create with the
 // flag off never reaches the stamp (this whole seam no-ops while the flag is
 // off, same as RecordVersionInTx), leaving the column NULL — indistinguishable
-// from a true legacy row (FR-7).
+// from a true legacy row (FR-7). A wisp arriving on the issues plane, by
+// promotion or a persistence move out of the wisps table, mints through here
+// too: its issues row is just as new, and a wisp never declares
+// participation (FR-8).
 func RecordVersionForCreateInTx(ctx context.Context, tx DBTX, issueID, actor string) error {
 	return recordVersionInTx(ctx, tx, issueID, actor, true)
 }
