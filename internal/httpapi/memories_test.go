@@ -453,6 +453,32 @@ func TestForgetMemoryOfAnAbsentKeyIs404AndRemovesNothing(t *testing.T) {
 	}
 }
 
+// TestForgetMemoryOfAnEmptyValuedKeyIs200 is the DELETE half of bd-5963's fix,
+// pinned at the door as TestGetMemoryAnswersAnEmptyValueWith200 pins the read:
+// a row stored as the empty string is Found, so it was removed, and the answer
+// is a 200 carrying the empty value it held. A door that keyed its 404 on
+// Value == "" would tell a client "there was nothing to remove" about a row it
+// had just deleted, and the role's conformance contract could not see it.
+func TestForgetMemoryOfAnEmptyValuedKeyIs200(t *testing.T) {
+	memories := &roleMemories{forgotten: memoryops.ForgetResult{
+		Key: "stored-empty", Value: "", Found: true,
+	}}
+	ts := newTestServer(t, rolesConfig(Config{Memories: memories}))
+
+	resp := ts.forget(t, memoriesPath+"/stored-empty")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, readAll(t, resp))
+	}
+
+	body := decodeBody(t, resp)
+	if got := body["key"]; got != "stored-empty" {
+		t.Errorf("key = %v, want %q", got, "stored-empty")
+	}
+	if got := body["value"]; got != "" {
+		t.Errorf("value = %v, want \"\"", got)
+	}
+}
+
 // TestForgetMemoryRefusesAKeyItCannotAddress: the door refuses the same keys
 // the read refuses, and the role is never reached — which on a DESTRUCTIVE
 // operation is the half that matters. A stored key carrying a control

@@ -448,14 +448,19 @@ func RunMemoriesEmptyRowIsPresentUntilForgotten(t *testing.T, ctx context.Contex
 	assertMemoriesRawAbsent(t, ctx, fixture, "kv.memory."+emptied)
 	assertMemoriesNeighborsSurvived(t, ctx, fixture, neighbors)
 
-	if fixture.CountHistory != nil {
-		afterSecond, err := fixture.CountHistory(ctx)
-		if err != nil {
-			t.Fatalf("CountHistory after second Forget: %v", err)
-		}
-		if afterSecond != afterFirst {
-			t.Fatalf("history entries went %d -> %d across the second Forget, want no write", afterFirst, afterSecond)
-		}
+	// The no-write half of the retry is the only leg that needs history, which
+	// is why it comes last: a backend that cannot observe history has run every
+	// other leg by here, and SKIPS this one with that reason, as the
+	// MemoriesFixture.CountHistory doc promises, rather than passing quietly.
+	if fixture.CountHistory == nil {
+		t.Skip("this backend cannot observe history, so the no-write half of the retry is unobservable here")
+	}
+	afterSecond, err := fixture.CountHistory(ctx)
+	if err != nil {
+		t.Fatalf("CountHistory after second Forget: %v", err)
+	}
+	if afterSecond != afterFirst {
+		t.Fatalf("history entries went %d -> %d across the second Forget, want no write", afterFirst, afterSecond)
 	}
 }
 
