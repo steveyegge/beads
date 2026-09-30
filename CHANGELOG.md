@@ -1752,6 +1752,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documented in `docs/reference/configuration.md`, including that it replicates
   on `bd dolt push`/`pull` and is single-writer only.
 
+- **Versioned history refuses a number outside the I-JSON exact-integer range
+  however it is spelled, and turning it on checks the store first.** The
+  admission gate on a version's metadata looked only at literals that denote an
+  integer value, so `9007199254740993.5` (nearest double 2^53+2) was admitted
+  and then rounded to an integer the gate itself refuses. It now classifies each
+  literal by the binary64 nearest to it, so every spelling of a magnitude past
+  2^53-1, fractions and exponent forms included, is refused alike, and a literal
+  that overflows binary64 is refused as an out-of-range number instead of
+  failing as an invalid literal. The classification is linear in the length of
+  the literal, so an exponent such as `1e1000000` no longer builds a
+  million-digit integer inside the writer's transaction. Ordinary fractions such
+  as `0.1` are still admitted, and nothing the store could already hold is
+  admitted or refused differently. The refusal now reads "number is outside the
+  I-JSON exact-integer range (magnitude above 2^53-1)"; `ErrIntegerNotRepresentable`
+  keeps its name. With history on, a write that introduces such a number already
+  fails atomically, but a row that already holds one, written while history was
+  off, would fail every later write to it. So
+  `bd config set versioned-history.enabled true` now checks every issue the store
+  would version and refuses, writing nothing, while any holds a number outside
+  the range or duplicate keys in its metadata. It prints the count, the ids and
+  the fix (one `bd update <id> --metadata ...` per issue, made while history is
+  off); there is no override, and turning history off never runs the check.
+  Turning it on through `BD_VERSIONED_HISTORY_ENABLED` or `config.yaml` does not
+  pass through the command, so those planes rely on the refusal at write time.
+
 - **`bd -C dir prime` now describes the target workspace instead of the launch
   directory** ([#5509](https://github.com/gastownhall/beads/issues/5509)). `-C`
   resolves `BEADS_DIR` but never changes directory, so prime's cwd-relative

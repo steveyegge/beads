@@ -8,7 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
+	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -83,6 +84,24 @@ import (
 // the fence read can select it beside participation_generation, so the seed
 // costs no extra round-trip. Tracked as gastownhall/beads#6379 alongside
 // item 4.
+
+// THE MINT'S REFUSAL IS AN INTEGRITY BACKSTOP, NOT AN ADMISSION POLICY.
+// canonicalDurableState refuses what it cannot record faithfully -- a number
+// outside the I-JSON exact-integer range, duplicate keys -- and it does so inside
+// the mutating transaction, so with history on a write that introduces such a
+// value fails atomically and commits nothing: refusing at the mint IS refusing the
+// write, for every store-mediated write. That is what keeps a version's content
+// token meaning what it says. It is not a rule about what metadata a store may
+// hold, which stays open while history is off, and that is the case to plan for:
+// a row written while history was off (or by a path that does not mint, such as
+// bd sql or an import) that already holds such a value would fail every later
+// write to it once history is on. `bd config set versioned-history.enabled true`
+// therefore checks the store first, with the very function the mint runs
+// (CheckMetadataVersionable), and refuses, writing nothing, while any issue the
+// mint would version holds a value it would refuse. Turning history on through the
+// environment or config.yaml does not pass through that command; for those planes
+// this refusal is the control, and finding the rows ahead of time is a bd doctor
+// check (gastownhall/beads#6379 item 3).
 
 var versionedHistoryTransactions sync.Map // map[DBTX]bool; entries live for one transaction
 
@@ -182,11 +201,12 @@ func attributionStatusForActor(actor string) string {
 // (1.0 is 1, 1e300 is 1e+300), only the escapes RFC 8785 requires -- so the
 // same issue state always yields the same bytes, whatever encoding/json's
 // formatting happens to be. Numbers are canonicalized as IEEE-754 doubles
-// (RFC 8785 section 3.2.2.3), so an integer past 2^53 is rounded here, once,
-// by the writer, before anything hashes it: the stored bytes and the hashed
-// bytes are the same bytes. types.Issue carries no such magnitudes (its
-// integers are ordinals and priorities), but the rule is stated so nobody
-// expects int64 fidelity from the token.
+// (RFC 8785 section 3.2.2.3), so canonicalization alone would round a number
+// past 2^53 here, once, by the writer, before anything hashes it; the admission
+// gate (refuseUnrepresentableIntegers) refuses such a number instead, so the
+// stored bytes and the hashed bytes are the same bytes and nothing is rounded
+// silently. types.Issue carries no such magnitudes (its integers are ordinals
+// and priorities); the reachable path is Metadata.
 //
 // Two properties worth stating because a hand-rolled canonicalizer would get
 // them wrong. First, jcs.Transform normalizes away encoding/json's HTML
@@ -218,7 +238,7 @@ func canonicalDurableState(issue any) ([]byte, error) {
 // IT MUST EXIST SEPARATELY because refuseUnrepresentableIntegers and RFC 8785
 // disagree on purpose, not by oversight: RFC 8785 section 3.2.2.3 canonicalizes
 // ANY number as a double, whatever its magnitude, while the admission gate
-// refuses an integer-valued literal past 2^53-1 outright (see
+// refuses any number whose nearest double is past 2^53-1 outright (see
 // refuseUnrepresentableIntegers's doc comment on why that rule has no
 // notation carve-out). One of the RFC 8785 vectors this store pins conformance
 // against, testdata/jcs/input/values.json, both ships from the spec's own
@@ -241,25 +261,29 @@ func jcsCanonicalize(marshaled []byte) ([]byte, error) {
 	return canonical, nil
 }
 
-// ErrIntegerNotRepresentable reports a JSON integer literal that binary64
-// cannot hold exactly, which RFC 8785 would silently round.
-var ErrIntegerNotRepresentable = errors.New("integer literal is not exactly representable as an IEEE 754 binary64 value")
+// ErrIntegerNotRepresentable is the refusal for a JSON number outside the I-JSON
+// exact-integer range: one whose nearest binary64 has magnitude above 2^53-1, or
+// that overflows binary64.
+//
+// The name is historical. It began as the refusal for an integer literal binary64
+// cannot hold exactly, and it now also covers a literal spelled as a fraction whose
+// nearest double lies at or beyond 2^53, which RFC 8785 would round to an integer
+// just the same. It is kept rather than renamed so that nothing matching it with
+// errors.Is has to change.
+var ErrIntegerNotRepresentable = errors.New("number is outside the I-JSON exact-integer range (magnitude above 2^53-1)")
 
-// maxExactJSONInteger is 2^53-1, the largest integer binary64 represents
-// exactly. RFC 7493 (I-JSON) section 2.2 bounds interoperable integers here,
-// and BDP's admission law (gastownhall/bdp#21) makes a literal past it
-// invalid rather than merely lossy.
+// maxExactJSONInteger is 2^53-1, the largest magnitude in the I-JSON
+// interoperable integer range (RFC 7493 section 2.2), and BDP's admission law
+// (gastownhall/bdp#21) makes a literal past it invalid rather than merely lossy.
+// binary64 does represent 2^53 exactly, but 2^53 and 2^53+1 round to the same
+// double, so from 2^53 up a literal can no longer be told from its neighbor.
 const maxExactJSONInteger = 1<<53 - 1
 
-// maxExactJSONIntegerBig is maxExactJSONInteger as a *big.Int, so
-// refuseUnrepresentableIntegers can compare exact integer values without
-// ever routing through float64.
-var maxExactJSONIntegerBig = big.NewInt(maxExactJSONInteger)
-
-// refuseUnrepresentableIntegers rejects marshaled if any JSON number literal
-// in it denotes an integer VALUE whose magnitude exceeds what binary64 holds
-// exactly, regardless of which of JSON's number forms -- bare integer,
-// decimal, or exponential -- spells that value.
+// refuseUnrepresentableIntegers rejects marshaled if any JSON number literal in
+// it is outside the I-JSON exact-integer range: the binary64 nearest to the
+// literal has magnitude above 2^53-1, or the literal overflows binary64. Which of
+// JSON's number forms spells the value -- bare integer, decimal or exponential --
+// does not matter.
 //
 // WHY REFUSE RATHER THAN ROUND. jcs.Transform canonicalizes numbers as
 // IEEE-754 doubles (RFC 8785 section 3.2.2.3), so 9007199254740993 becomes
@@ -274,30 +298,40 @@ var maxExactJSONIntegerBig = big.NewInt(maxExactJSONInteger)
 // refuse values outside this contract before it serves them as BDP
 // Resources" (gastownhall/bdp#20 section 5.1).
 //
-// VALUE, NOT FORM. Each number literal is parsed exactly with big.Rat (never
-// float64 -- float64 rounding is the exact thing being guarded against), and
-// the check is whether the VALUE is a mathematical integer (big.Rat.IsInt),
-// not whether the literal's spelling contains '.', 'e', or 'E'.
-// 9007199254740993, 9007199254740993.0, and 9.007199254740993e15 all denote
-// the same integer value and must all be refused alike; a check keyed on
-// spelling instead of value would let the last two through.
+// THE NEAREST DOUBLE, NOT THE LITERAL'S SPELLING. Each literal is classified
+// with strconv.ParseFloat, which returns the correctly rounded binary64 in time
+// linear in the length of the literal, and that is exactly the value RFC 8785
+// canonicalizes the literal to. So "the nearest double is past the range" and
+// "canonicalization would move this literal past the range" are one question,
+// and the gate is closed under its own canonicalization: whatever it admits
+// canonicalizes to a form it also admits. A rule keyed to integer VALUES was
+// not: 9007199254740991.5 is not an integer, so it was admitted, yet it rounds
+// to 2^53 and its canonical bytes were then refused. Here 9007199254740993,
+// 9007199254740993.0 and 9.007199254740993e15 are refused alike, and so is
+// 9007199254740993.5, whose nearest double is 2^53+2. An overflow
+// (strconv.ErrRange) is a refusal, not a syntax error; a magnitude too small for
+// binary64 rounds to zero and is admitted.
 //
-// SCOPE, deliberately narrow to integers. A non-integer VALUE such as 0.1 is
-// not exactly representable either, but ES6's shortest-round-trip formatting
-// is a bijection on doubles: it always returns to the same double, so two
-// non-integer literals collide only if they already denote the same double
-// before this gate ever runs -- not the failure this gate exists to close.
-// The asymmetry is deliberate on its own terms too, not just a side effect of
-// the bijection: a non-integer literal already carries an expectation of
-// binary64 approximation -- 0.1 was never a promise of exact decimal storage
-// -- so canonicalizing it to the nearest double honors that expectation,
-// while an integer literal carries the opposite one, exactness, and silently
-// changing its VALUE rather than merely its formatting would corrupt an
-// identity the caller had every reason to believe was preserved. BDP's
-// admission rule (gastownhall/bdp#21 item 2) is itself stated only for
-// integers. types.Issue's own integer fields are ordinals and priorities and
-// cannot reach this bound -- the reachable path is Metadata, a
-// json.RawMessage passed through verbatim.
+// NOTHING IS BUILT PER EXPONENT. ParseFloat never constructs the number, so a
+// literal such as 1e1000000 is an overflow refused in the time it takes to read
+// it, not a million-digit integer built first and then compared. The gate runs
+// inside the writer's transaction, so a classifier whose cost grew with an
+// exponent would be a way to hold that transaction open with a few
+// exponent-heavy metadata values.
+//
+// SCOPE. Ordinary fractions are admitted: 0.1 is canonicalized to its nearest
+// double, which is how the store holds it. Whether two literals that share a
+// nearest double can be told apart inside the store is a property of the store,
+// not of this gate, and it is the one thing a Dolt upgrade could change: the
+// store-level tests on each leg assert that no two literals the store reads back
+// as different numbers are both admitted with one canonical form, and log what
+// each Dolt does to a number, rather than assuming it. An integer past 2^53 is
+// refused whatever the store does to it: a store may keep it exactly, where RFC
+// 8785 would round it, and a store that already rounds it hands the gate an
+// integer-valued double, which the rule refuses just the same. A JSON null is a
+// token, not a number: only json.Number tokens are classified. types.Issue's own
+// integer fields are ordinals and priorities and cannot reach this bound -- the
+// reachable path is Metadata, a json.RawMessage passed through verbatim.
 func refuseUnrepresentableIntegers(marshaled []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(marshaled))
 	dec.UseNumber()
@@ -314,18 +348,37 @@ func refuseUnrepresentableIntegers(marshaled []byte) error {
 			continue
 		}
 		lit := num.String()
-		rat, ok := new(big.Rat).SetString(lit)
-		if !ok {
-			return fmt.Errorf("scan for unrepresentable integers: invalid JSON number literal %q", lit)
+		f, err := strconv.ParseFloat(lit, 64)
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
+			return fmt.Errorf("scan for unrepresentable integers: invalid JSON number literal %q: %w", lit, err)
 		}
-		if !rat.IsInt() {
-			continue // not an integer value; see SCOPE above
-		}
-		abs := new(big.Int).Abs(rat.Num())
-		if abs.Cmp(maxExactJSONIntegerBig) > 0 {
+		if math.IsInf(f, 0) || math.Abs(f) > maxExactJSONInteger {
 			return fmt.Errorf("%w: %s", ErrIntegerNotRepresentable, lit)
 		}
 	}
+}
+
+// CheckMetadataVersionable reports whether an issue's metadata could be minted
+// into a version's durable_state. It is exactly the two steps
+// canonicalDurableState runs -- the admission gate, then RFC 8785
+// canonicalization -- applied to the metadata alone, so it refuses a number
+// outside the I-JSON exact-integer range (ErrIntegerNotRepresentable) and it
+// also refuses duplicate keys, which RFC 8785 cannot canonicalize. Empty
+// metadata is nothing to check.
+//
+// It exists so that the check made when versioned history is switched on and
+// the check the mint makes cannot disagree: FindUnversionableMetadata runs this
+// over every issue the mint would version, and a store that passes it cannot
+// then refuse the first write to a row it cleared.
+func CheckMetadataVersionable(metadata json.RawMessage) error {
+	if len(metadata) == 0 {
+		return nil
+	}
+	if err := refuseUnrepresentableIntegers(metadata); err != nil {
+		return err
+	}
+	_, err := jcsCanonicalize(metadata)
+	return err
 }
 
 // RecordVersionInTx mints one issue_versions row for issueID and advances
