@@ -9,8 +9,8 @@ import (
 	"github.com/steveyegge/beads/internal/testutil"
 )
 
-// R7.1 as-of read (gastownhall/beads#5898 revision 9, gastownhall/beads#6136,
-// this slice: be-x5jqd.5) adds one nullable column: issue_versions gains
+// R7.1 as-of read (gastownhall/beads#5898 revision 9, gastownhall/beads#6136)
+// adds one nullable column: issue_versions gains
 // removed_restriction VARCHAR(30). issue_versions already carries removed_at
 // and removed_reason (migration 0067), virgin and unused until this slice;
 // AsOfReadInTx (internal/storage/issueops/asof_read.go) reads all three as
@@ -31,7 +31,7 @@ const migration0070Down = "0070_add_removed_restriction.down.sql"
 func TestLatestVersionIncludesMigration0070(t *testing.T) {
 	const want = 70
 	if got := LatestVersion(); got != want {
-		t.Fatalf("LatestVersion() = %d, want %d (issue_versions.removed_restriction migration slot claimed by be-x5jqd.5)", got, want)
+		t.Fatalf("LatestVersion() = %d, want %d (the migration slot claimed for issue_versions.removed_restriction)", got, want)
 	}
 }
 

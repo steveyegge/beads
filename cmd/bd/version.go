@@ -32,7 +32,7 @@ var versionCmd = &cobra.Command{
 	// Accept args only so the "did you mean bd versions" guard below can see
 	// them. `bd version` names bd's own build; `bd versions <id>` lists a
 	// bead's recorded versions. One character apart, unrelated meanings --
-	// without this a mistyped `bd version be-x5jqd` silently prints the build
+	// without this a mistyped `bd version bd-123` silently prints the build
 	// and looks like the bead simply has no versions.
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {

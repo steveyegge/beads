@@ -90,7 +90,7 @@ func TestCanonicalDurableStateStillAcceptsOrdinaryDecimals(t *testing.T) {
 // is subject to the same collision defect this gate
 // exists to close -- binary64 spacing near 10^300 is roughly 2^248, so a wide
 // range of distinct large integers near 10^300 collapse onto that one
-// double, same failure mode as the 2^53 boundary, larger window. The mayor's
+// double, same failure mode as the 2^53 boundary, larger window. The
 // spec for this predicate is "value not form, any spelling, no exceptions"
 // (see version_history.go's refuseUnrepresentableIntegers doc comment),
 // applied literally that refuses 1e300 -- but two pre-gate tests assumed it
@@ -98,7 +98,7 @@ func TestCanonicalDurableStateStillAcceptsOrdinaryDecimals(t *testing.T) {
 // (see version_history_durable_state_test.go's "huge" fixture, moved off
 // 1E300 for the same reason).
 //
-// RESOLVED (mayor, gm-wisp-3f2w8, be-wdlod): REFUSE 1e300. The rule applies
+// RESOLVED: REFUSE 1e300. The rule applies
 // literally, with no notation carve-out -- admitting a spelling this large
 // while refusing 9007199254740993 would be indefensible, since the collision
 // window near 10^300 (binary64 spacing ~2^248) is vastly larger than the one

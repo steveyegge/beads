@@ -30,8 +30,8 @@ import (
 // EVERY HOOK ON THE FIXTURE BELOW IS INDEPENDENTLY NILABLE — see the
 // package-level note in expected_revision_contract.go. Every case
 // nil-checks every hook it uses and SKIPS BY NAME when one is missing. No
-// backend implements as-of reads yet — be-x5jqd.5 is the implementation
-// child this suite is written ahead of.
+// backend implements as-of reads yet — the implementation is
+// the child this suite is written ahead of.
 //
 // EXPLICIT NON-GOAL: MEMORY-PLANE CONSUMER POLICY IS NOT PART OF THIS
 // PRIMITIVE. R7.1's own text is explicit that a closed-before-T boundary,

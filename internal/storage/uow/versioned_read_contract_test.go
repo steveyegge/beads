@@ -21,7 +21,7 @@ import (
 )
 
 // asOfReadHarness is this leg's Design D dispatch table (gastownhall/beads#5898
-// revision 9, gastownhall/beads#6136, be-x5jqd.5): the conformance suite
+// revision 9, gastownhall/beads#6136): the conformance suite
 // invents storeID values to select among N genuinely isolated stores, and
 // isolating them is entirely this harness's job -- AsOfReadInTx itself is
 // storeID-oblivious (see the package doc on

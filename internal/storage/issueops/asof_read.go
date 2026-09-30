@@ -12,7 +12,7 @@ import (
 )
 
 // This file implements R7.1 as-of read (gastownhall/beads#5898 revision 9,
-// gastownhall/beads#6136, this slice: be-x5jqd.5 / backend/conformance/
+// gastownhall/beads#6136; conformance suite: backend/conformance/
 // versioned_read_contract.go): given an instant T or a version address, it
 // returns one issue's durable state as of that point -- the latest version
 // accepted at or before T, with everything later excluded -- marking the

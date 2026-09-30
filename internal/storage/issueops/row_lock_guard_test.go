@@ -145,7 +145,7 @@ var funcNameExemptions = map[string]string{
 	// three public entry points: RecordVersionInTx (update-shaped),
 	// RecordVersionForCreateInTx (create-shaped, design §16.2b's write fence,
 	// be-h89oq) and the R7.1 test-support twin RecordVersionAtInTx
-	// (gastownhall/beads#5898 rev 9, gastownhall/beads#6136, be-x5jqd.5).
+	// (gastownhall/beads#5898 rev 9, gastownhall/beads#6136).
 	// The three UPDATE issues statements this guard would otherwise flag live
 	// here, not in any public wrapper, so the exemption is keyed to this name.
 	// The two production entry points' callers run it immediately after the

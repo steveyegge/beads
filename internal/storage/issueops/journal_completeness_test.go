@@ -216,7 +216,7 @@ var beadDMLExemptions = map[string]string{
 	"RecordVersionForCreateInTx": "advances the denormalized current_revision pointer and stamps participation_generation to match a snapshot just inserted into issue_versions (not a bead table); called from the same create entry points that already journal the mutation via RecordEventInTx, so this is bookkeeping for an already-journaled mutation, not a second one",
 
 	// RecordVersionAtInTx (R7.1 as-of read, gastownhall/beads#5898 rev 9,
-	// gastownhall/beads#6136, be-x5jqd.5) is RecordVersionInTx's test-support
+	// gastownhall/beads#6136) is RecordVersionInTx's test-support
 	// twin: it shares RecordVersionInTx's body (recordVersionAtInTx) but skips
 	// the versionedHistoryEnabled gate and takes an explicit historical
 	// timestamp, so an as-of-read conformance fixture can mint a version row

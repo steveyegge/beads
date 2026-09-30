@@ -1,5 +1,5 @@
 -- Migration 0070: R7.1 as-of read (gastownhall/beads#5898 revision 9,
--- gastownhall/beads#6136), this slice: be-x5jqd.5 / backend/conformance/
+-- gastownhall/beads#6136); conformance suite: backend/conformance/
 -- versioned_read_contract.go.
 --
 -- issue_versions already carries removed_at DATETIME and removed_reason
