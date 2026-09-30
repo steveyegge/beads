@@ -2,6 +2,7 @@ package dolt
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
@@ -403,6 +404,84 @@ func TestDualWriteDeleteNeighborRewriteRidesTheDeletesDoltCommit(t *testing.T) {
 		}
 		if dirty != 0 {
 			t.Errorf("dolt_status still reports %s dirty after the delete committed — the neighbor's version rows are outside the delete's own Dolt commit: unreplicated, and waiting to be swept into whatever unrelated commit stages next", table)
+		}
+	}
+}
+
+// TestDualWriteDeleteSkipsALegacyNeighborsRewrite is the other half of the case
+// above: a neighbor created while history was OFF is a legacy record
+// (participation_generation NULL), so design §16.2b's write fence skips the
+// delete's citation rewrite for it. The rewrite still runs and the delete still
+// commits cleanly; it just mints nothing. Without this, a change that let the
+// delete mint for a legacy neighbor would go unnoticed now that the test above
+// creates its neighbor with history on.
+func TestDualWriteDeleteSkipsALegacyNeighborsRewrite(t *testing.T) {
+	store, storeCleanup := setupTestStore(t)
+	defer storeCleanup()
+	ctx, cancel := testContext(t)
+	defer cancel()
+	configurer, ok := any(store).(storage.VersionedHistoryConfigurer)
+	if !ok {
+		t.Fatalf("%T does not implement storage.VersionedHistoryConfigurer", store)
+	}
+	defer configurer.SetVersionedHistoryEnabled(false)
+
+	const target, neighbor = "dwdel-legacy-target", "dwdel-legacy-neighbor"
+	for _, issue := range []*types.Issue{
+		{ID: target, Title: "doomed", IssueType: types.TypeTask, Status: types.StatusOpen},
+		{ID: neighbor, Title: "survivor", Description: "blocked by " + target,
+			IssueType: types.TypeTask, Status: types.StatusOpen},
+	} {
+		if err := store.CreateIssue(ctx, issue, "creator"); err != nil {
+			t.Fatalf("create %s: %v", issue.ID, err)
+		}
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID: neighbor, DependsOnID: target, Type: types.DepBlocks,
+	}, "linker"); err != nil {
+		t.Fatalf("add dep: %v", err)
+	}
+	// Only now, after the neighbor already exists as a legacy record.
+	configurer.SetVersionedHistoryEnabled(true)
+
+	deleter, err := store.Deleter()
+	if err != nil {
+		t.Fatalf("Deleter(): %v", err)
+	}
+	result, err := deleter.Delete(ctx, publicops.DeleteRequest{
+		IDs: []string{target}, Force: true, Actor: "deleter",
+	})
+	if err != nil {
+		t.Fatalf("delete %s: %v", target, err)
+	}
+	if result.ReferencesUpdated != 1 {
+		t.Fatalf("ReferencesUpdated = %d, want 1 — the citation rewrite did not run, so this case is not exercising the path it exists for", result.ReferencesUpdated)
+	}
+
+	var versions int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM issue_versions WHERE issue_id = ?`, neighbor).Scan(&versions); err != nil {
+		t.Fatalf("count issue_versions for %s: %v", neighbor, err)
+	}
+	if versions != 0 {
+		t.Errorf("the delete minted %d issue_versions rows for the legacy neighbor %s, want 0: the rewrite is an update-shaped write to a record that has not declared participation (design §16.2b)", versions, neighbor)
+	}
+	var generation sql.NullInt64
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT participation_generation FROM issues WHERE id = ?`, neighbor).Scan(&generation); err != nil {
+		t.Fatalf("read participation_generation for %s: %v", neighbor, err)
+	}
+	if generation.Valid {
+		t.Errorf("participation_generation for the legacy neighbor %s = %d after the delete, want NULL: an ordinary write must not promote a legacy record (R2.3)", neighbor, generation.Int64)
+	}
+	for _, table := range []string{"issue_versions", "store_epoch", "issues"} {
+		var dirty int
+		if err := store.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM dolt_status WHERE table_name = ?`, table).Scan(&dirty); err != nil {
+			t.Fatalf("read dolt_status for %s: %v", table, err)
+		}
+		if dirty != 0 {
+			t.Errorf("dolt_status still reports %s dirty after the delete committed", table)
 		}
 	}
 }
