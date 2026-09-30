@@ -45,7 +45,8 @@ func versionedHistoryEnabled(ctx context.Context, st storage.DoltStorage) bool {
 const versionedHistoryRefusalListLimit = 20
 
 // checkVersionedHistoryCanBeEnabled is the check `bd config set
-// versioned-history.enabled true` makes before it writes the setting, and it
+// versioned-history.enabled true` and `bd config set-many
+// versioned-history.enabled=true` make before they write the setting, and it
 // makes it for that value alone: any other key, and every value that does not
 // turn recording on (`false` included), passes without reading a row.
 //
@@ -65,7 +66,12 @@ const versionedHistoryRefusalListLimit = 20
 // larger than a page must not be checked on a page. A read that fails refuses the
 // switch too, because a check that could not run has not passed.
 //
-// The environment and config.yaml planes do not pass through `bd config set`, so
+// On the direct route it reads through the store the command has already opened:
+// `config set` opens it through openWorkspaceConfig before it asks, and the
+// command's pre-run has opened it for a `config set-many` that names a database
+// key, before the batch is validated. The proxied route reads through its provider.
+//
+// The environment and config.yaml planes do not pass through these commands, so
 // they are not checked here; for those, recording's own refusal at write time is
 // the control.
 func checkVersionedHistoryCanBeEnabled(ctx context.Context, key, value string) error {

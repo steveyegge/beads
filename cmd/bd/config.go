@@ -1228,6 +1228,14 @@ Examples:
 					return HandleError("%v", err)
 				}
 			}
+			// The pre-enable check `bd config set` makes: turning versioned history
+			// on refuses while any issue holds metadata a version could not record.
+			// This verb writes the same setting through a loop of its own, so it
+			// makes the check itself, here and before any pair is written: a refusal
+			// stores nothing from the batch.
+			if err := checkVersionedHistoryCanBeEnabled(rootCtx, p.key, p.value); err != nil {
+				return HandleError("%v", err)
+			}
 		}
 
 		var yamlPairs, gitPairs, dbPairs []kvPair
