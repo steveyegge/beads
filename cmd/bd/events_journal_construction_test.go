@@ -235,6 +235,9 @@ func exemptionFor(key string) (exemption, reason string, ok bool) {
 type constructionSite struct {
 	constructors []string
 	activates    bool
+	// activatesVersionedHistory is the same question for the versioned-history
+	// guard, which reuses this scan (see versioned_history_construction_test.go).
+	activatesVersionedHistory bool
 }
 
 // scanStoreConstructionSites parses each scanned package and returns one entry
@@ -364,9 +367,15 @@ func inspectConstructionSite(node ast.Node, imports map[string]string) *construc
 			if qualifiedActivationCalls[path][fun.Sel.Name] {
 				site.activates = true
 			}
+			if qualifiedVersionedHistoryActivationCalls[path][fun.Sel.Name] {
+				site.activatesVersionedHistory = true
+			}
 		case *ast.Ident:
 			if activationCalls[fun.Name] {
 				site.activates = true
+			}
+			if versionedHistoryActivationCalls[fun.Name] {
+				site.activatesVersionedHistory = true
 			}
 		}
 		return true

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/issueops"
@@ -131,34 +132,51 @@ func TestVersionedHistoryStoreSettingAnswersFalseForAStoreThatCannotAnswer(t *te
 	}
 }
 
-// TestWireStorageDecoratorsSurvivesAStoreThatCannotAnswer is the regression
-// test for the CI failure itself, at the layer that failed.
+// TestWireStorageDecoratorsLeavesActivationToTheFactories pins the other half of
+// moving activation to where a store is constructed.
 //
-// wireStorageDecorators reads the switch off the store on EVERY bd
-// invocation, so a store whose settings plane cannot be read takes down the
-// process at wiring time -- before any command has run, and regardless of
-// whether the command had anything to do with versioned history. As a panic
-// rather than an error it also takes every other test in the binary with it,
-// which is why one unguarded read showed up in CI as a whole red test step.
+// wireStorageDecorators used to be the one place the switch was read and applied,
+// and it runs on the ONE store a command opens for its own workspace. Every store
+// a routed update, a routed close or `bd create --repo` opens for ANOTHER
+// workspace is built by newDoltStoreFromConfig and never passed through here, so
+// it recorded nothing while the command reported success. Activation now happens
+// in the factories, for every store they hand back; if wiring ALSO read the row it
+// would read it twice per open, and would read as the place that activates -- the
+// misreading that produced the defect.
 //
-// This is the RECOVER's test: the store here IS a configurer, so the guard
-// lets it through to the read, and only the recover keeps the panic from
-// escaping. Remove the recover in versionedHistoryStoreSetting and this test
-// panics.
-func TestWireStorageDecoratorsSurvivesAStoreThatCannotAnswer(t *testing.T) {
-	clearTelemetryEnv(t)
-	// Env-plane on would short-circuit before the store read and make this
-	// test vacuous; the call count below is the backstop that proves it did not.
-	t.Setenv("BD_VERSIONED_HISTORY_ENABLED", "")
+// The count is the assertion that matters, not "it survived": the store here would
+// answer true, and would be switched on, if wiring still consulted it.
+func TestWireStorageDecoratorsLeavesActivationToTheFactories(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		env  string
+	}{
+		{"the store's row says on", ""},
+		{"the environment says on", "1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearTelemetryEnv(t)
+			t.Setenv("BD_VERSIONED_HISTORY_ENABLED", tt.env)
+			// config.GetBool answers false until viper is initialised, so without
+			// this the env subtest would pass whatever wiring did with the env.
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize(): %v", err)
+			}
+			t.Cleanup(func() { _ = config.Initialize() })
 
-	raw := &configProbeStore{panicMsg: "WorkspaceConfig on a store with no settings plane"}
-	chain := wireStorageDecorators(raw, hooks.NewRunner("/nonexistent"), false)
+			raw := &configProbeStore{cfg: &settingsPlane{value: "true"}}
+			chain := wireStorageDecorators(raw, hooks.NewRunner("/nonexistent"), false)
 
-	if chain == nil {
-		t.Fatal("wireStorageDecorators returned nil for a non-nil store")
-	}
-	if raw.calls != 1 {
-		t.Fatalf("raw store's WorkspaceConfig called %d times, want 1; this test is not exercising the store read it claims to", raw.calls)
+			if chain == nil {
+				t.Fatal("wireStorageDecorators returned nil for a non-nil store")
+			}
+			if raw.calls != 0 {
+				t.Errorf("wireStorageDecorators read the store's settings plane %d time(s), want 0: activation belongs to the factory that constructed the store", raw.calls)
+			}
+			if raw.enabled {
+				t.Error("wireStorageDecorators switched versioned history on; only the factory that constructs a store may, at construction")
+			}
+		})
 	}
 }
 
