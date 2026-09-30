@@ -904,6 +904,13 @@ func testRenameLabel(t *testing.T, f Factory) {
 	if renamed != 0 || merged != 0 || ids != nil {
 		t.Errorf("RenameLabel(same name) = (%d, %d, %v), want (0, 0, nil)", renamed, merged, ids)
 	}
+	// ...and refused before any write: both carriers still hold exactly [new].
+	for _, id := range []string{"rl-1", "rl-2"} {
+		labels, _ = s.GetLabels(ctx(), id)
+		if len(labels) != 1 || labels[0] != "new" {
+			t.Errorf("%s labels after same-name refusal = %v, want [new]", id, labels)
+		}
+	}
 
 	// A label no issue carries renames to nothing and is not an error.
 	renamed, merged, ids, err = s.RenameLabel(ctx(), "absent", "also-absent", "a")

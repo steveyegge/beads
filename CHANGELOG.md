@@ -2373,7 +2373,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compile. The portable conformance suite (`backend/conformance.RunAll`)
   exercises it alongside `AddLabel`/`RemoveLabel`, proving the merge and
   same-name-refusal semantics the same way it proves the rest of the label
-  contract.
+  contract. The refusal sentinel is exported as `backend.ErrRenameLabelSameName`,
+  so an external backend can return the exact value the suite asserts.
 
 - **`bd label rename <old> <new>` fixes a label everywhere it appears, in one
   command instead of a per-issue add-then-remove loop**
