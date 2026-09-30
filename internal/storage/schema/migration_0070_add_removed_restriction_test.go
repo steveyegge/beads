@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/testutil"
 )
 
@@ -98,6 +99,36 @@ func TestMigration0070AddsRemovedRestriction(t *testing.T) {
 	// the precedent.
 	if !strings.Contains(strings.ToUpper(downSQL), "PREPARE STMT FROM @SQL") {
 		t.Error("0070 down migration must guard its DROP COLUMN the way the up migration guards its ADD COLUMN, so a partially-applied or already-rolled-back workspace rolls back safely")
+	}
+}
+
+// TestMigration0070HeaderSpellsTheVocabularyTheCodeStores pins the header's
+// vocabulary to the constants that store, read and label the column (finding 6
+// of the #6661 review). The header is the one place a writer learns which
+// strings to store, and a writer follows it literally: it said gone-retention,
+// the code compares gone_retention, so a row written from the header was not
+// recognised and rendered without a label. Deriving the expected spellings
+// from the constants keeps the two from drifting apart again.
+//
+// Pure Go, like TestMigration0070AddsRemovedRestriction: it reads the frozen
+// bytes and needs no `dolt` binary.
+func TestMigration0070HeaderSpellsTheVocabularyTheCodeStores(t *testing.T) {
+	upSQL, err := MigrationSQL(migration0070Up)
+	if err != nil {
+		t.Fatalf("MigrationSQL(%s) error = %v, want the migration file to exist", migration0070Up, err)
+	}
+	for _, stored := range []issueops.AsOfRestriction{
+		issueops.AsOfRestrictionGoneRetention,
+		issueops.AsOfRestrictionGoneErasure,
+		issueops.AsOfRestrictionGoneReorganization,
+		issueops.AsOfRestrictionUnknown,
+	} {
+		if !strings.Contains(upSQL, string(stored)) {
+			t.Errorf("0070 header never spells the stored value %q", stored)
+		}
+		if hyphenated := strings.ReplaceAll(string(stored), "_", "-"); hyphenated != string(stored) && strings.Contains(upSQL, hyphenated) {
+			t.Errorf("0070 header spells %q as %q; the code stores and compares the underscore spelling, so a writer following the header stores a value that renders unlabeled", stored, hyphenated)
+		}
 	}
 }
 
