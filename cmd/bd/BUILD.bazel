@@ -1295,6 +1295,7 @@ go_test(
         "version_tracking_test.go",
         "versioned_history_construction_test.go",
         "versioned_history_e2e_test.go",
+        "versioned_history_serve_e2e_test.go",
         "versioned_history_switch_test.go",
         "where_cgo_test.go",
         "where_embedded_test.go",
