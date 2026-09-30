@@ -1734,6 +1734,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-seeds it on the next command. A pre-1.0 witness, or a `.beads/dolt` that
   holds anything, is still refused.
 
+- **`versioned-history.enabled` now records for every store a write opens, and
+  each store reads its own setting.** The switch was applied where the root
+  pre-run wraps the command's own store, so a prefix-routed `bd update` or
+  `bd close`, `bd create --repo`, and the direct-mode open each built a store
+  for the target workspace that was never activated: with the setting on they
+  minted no `issue_versions` row while the command reported success. Activation
+  now happens where a store or unit-of-work provider is constructed, on the raw
+  store, and reads that store's own `config` row, so a write routed into rig B
+  follows rig B's setting and never the launching workspace's.
+  `BD_VERSIONED_HISTORY_ENABLED=1` (or a `versioned-history.enabled` value in
+  `config.yaml`) still applies to every store the process opens, and can only
+  turn recording on: `BD_VERSIONED_HISTORY_ENABLED=0` does not switch off a store
+  whose row says `true`. Proxied-server providers read the same row when they
+  are constructed. A row read that errors (as opposed to an absent row) still
+  resolves to off but is now reported under `BD_DEBUG`. The setting is
+  documented in `docs/reference/configuration.md`, including that it replicates
+  on `bd dolt push`/`pull` and is single-writer only.
+
 - **`bd -C dir prime` now describes the target workspace instead of the launch
   directory** ([#5509](https://github.com/gastownhall/beads/issues/5509)). `-C`
   resolves `BEADS_DIR` but never changes directory, so prime's cwd-relative

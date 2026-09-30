@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/config"
@@ -25,6 +23,13 @@ import (
 // storage spans measure pure DB time without hook-firing overhead. The policy
 // sits directly beneath hooks so serve's one hook-layer peel retains it.
 //
+// Versioned-history activation is NOT applied here. It used to be, and this runs
+// on the one store a command opens for its own workspace, so every store a
+// routed write opens for another workspace missed it. It now happens in the
+// factories that construct a store, on the raw store before anything can wrap it
+// (see versioned_history.go) -- which is also why the decorators above, none of
+// which forwards SetVersionedHistoryEnabled, cannot get in its way.
+//
 // Extracted from main.go's PersistentPreRunE so the chain composition is
 // unit-testable — the bug this PR fixes was a missing WrapStorage call,
 // and the regression class deserves test coverage.
@@ -32,7 +37,6 @@ func wireStorageDecorators(store storage.DoltStorage, hookRunner *hooks.Runner, 
 	if store == nil {
 		return nil
 	}
-	applyVersionedHistoryConfig(store, versionedHistoryEnabledForWiring(store))
 	store = telemetry.WrapStorage(store)
 	store = wireExternalDependencyPolicy(store)
 	if hookRunner != nil && !hooksDisabled {
@@ -112,35 +116,4 @@ func wireExternalDependencyUOWProvider(provider uow.UnitOfWorkProvider) uow.Unit
 			return newReadOnlyStoreFromConfig(ctx, filepath.Join(projectRoot, ".beads"))
 		},
 	)
-}
-
-// applyVersionedHistoryConfig turns dual-write issue-version history on for
-// this store instance when versioned-history.enabled is set (env:
-// BD_VERSIONED_HISTORY_ENABLED).
-//
-// It MUST run on the raw store, before wireStorageDecorators wraps anything.
-// The capability is a type assertion, and none of the decorators above
-// (telemetry.WrapStorage, externaldeps, HookFiringStore) forwards
-// SetVersionedHistoryEnabled -- so calling this after a wrap would assert
-// against the wrapper, fail silently, and leave history off while the config
-// said it was on. That is the "wrong answer, not an empty one" failure this
-// feature exists to avoid, so the ordering is pinned by
-// TestVersionedHistoryConfigAppliesToTheRawStore.
-//
-// A store that does not implement the capability is not an error: proxied and
-// no-db backends legitimately do not. But it is not silently ignored either --
-// asking for history and not getting it is exactly the case a user must be
-// told about, so it warns.
-func applyVersionedHistoryConfig(store storage.DoltStorage, enabled bool) {
-	if !enabled {
-		return
-	}
-	configurer, ok := store.(storage.VersionedHistoryConfigurer)
-	if !ok {
-		fmt.Fprintf(os.Stderr,
-			"warning: versioned-history.enabled is set, but this storage backend (%T) does not support version history; it stays off\n",
-			store)
-		return
-	}
-	configurer.SetVersionedHistoryEnabled(true)
 }

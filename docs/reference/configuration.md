@@ -292,7 +292,7 @@ export BEADS_ACTOR="my-github-handle"
 
 ## Project-Level Settings (Database)
 
-These are written to the Dolt database by `bd config set` and have no env var override. Common namespaces:
+These are written to the Dolt database by `bd config set` and have no env var override, with one exception: `versioned-history.enabled` also honors `BD_VERSIONED_HISTORY_ENABLED` (see [Versioned Issue History](#versioned-issue-history)). Common namespaces:
 
 | Namespace | Purpose |
 |---|---|
@@ -312,6 +312,7 @@ These are written to the Dolt database by `bd config set` and have no env var ov
 | `min_hash_length`, `max_hash_length` | Adaptive ID bounds (defaults `3` and `8`) |
 | `max_collision_prob` | Hash ID collision tolerance (default `0.25`) |
 | `claim.pools` | Comma-separated pool aliases: placeholder assignees that any actor can take with `bd update <id> --claim` (see [below](#claim-pools)). Unset by default, which turns pool claiming off |
+| `versioned-history.enabled` | `true` records a version row for every issue write to this store; off by default. Unlike the rest of this table it also honors an environment variable, which can only turn it on (see [below](#versioned-issue-history)) |
 | `doctor.suppress.*` | Suppress specific `bd doctor` warnings by check slug (warnings only; errors always show) |
 
 Issue prefix (`issue_prefix`) is **not** settable via `bd config set` — use `bd init --prefix`, `bd bootstrap`, or `bd rename-prefix`.
@@ -401,6 +402,22 @@ Claiming reads this key from the database only. A `claim.pools` value in `config
 - **Reassigning.** `bd assign` and `bd update <id> --assignee` can move an `in_progress` issue that a pool alias holds without `--force`.
 - **`bd ready --claim`** takes only unassigned issues, so it skips pool-assigned ones even though `bd ready` lists them. Claim those by ID.
 - **Lease expiry.** If the claimer's lease expires, `bd reclaim` sets the issue back to `open` with no assignee. It does not return the issue to the pool alias, so a dispatcher that wants it back in the pool has to reassign it.
+
+### Versioned Issue History
+
+While `versioned-history.enabled` is on, every write to an issue also stores a snapshot of it as a row of `issue_versions`, in the same transaction, and `bd versions <id>` lists them. It is off by default, and it does not backfill: versions are recorded from the moment it is turned on.
+
+```bash
+bd config set versioned-history.enabled true    # turn it on
+bd config set versioned-history.enabled false   # turn it off
+```
+
+- **The switch belongs to the store.** It is a row of the database `config` table, so `bd config set` writes it there and not to `config.yaml`. Every store answers for itself: a write routed into another workspace (a prefix-routed `bd update` or `bd close`, or `bd create --repo`) reads the *target* store's row, never the row of the workspace you launched `bd` from.
+- **It replicates.** The config table travels with `bd dolt push` and `bd dolt pull`, so enabling it on one clone turns it on for every clone that pulls.
+- **Single writer only.** Keep one writer at a time per store, and never two disconnected clones recording. Two writers that each mint the same revision for an issue collide on merge, and the pull fails (`VersionedHistoryConfigurer` in `internal/storage/storage.go`, and [#6379](https://github.com/gastownhall/beads/issues/6379) item 4). Because the setting replicates, turning it on is a decision for the whole store, not for one clone.
+- **The environment can turn it on, never off.** `BD_VERSIONED_HISTORY_ENABLED=1`, or a hand-written `enabled: true` under `versioned-history:` in `config.yaml`, applies to every store the process opens, routed targets included. The environment and the row are OR'd, not ranked, so `BD_VERSIONED_HISTORY_ENABLED=0` does not turn off a store whose row says `true`. Turn it off where it was turned on: `bd config set versioned-history.enabled false`.
+- **Server-backed modes read the same row.** Proxied-server mode, and `bd serve` against a server-mode workspace, write through a unit-of-work provider rather than a store. The provider reads the row from its own database when it is constructed, through a short read-only transaction that is rolled back, so `bd config set versioned-history.enabled true` covers those modes too. It does not fall back to the environment alone.
+- **The value is read when a store is opened.** A long-lived process such as `bd serve` keeps the value it read at start until it is restarted, so after changing the setting, restart it.
 
 ## Sync and Federation
 
@@ -498,6 +515,7 @@ Selected commonly-used variables:
 | `BD_DOLT_AUTO_COMMIT` | Override `dolt.auto-commit` (`on`/`off`) |
 | `BD_DOLT_AUTO_PUSH`, `BD_DOLT_AUTO_PUSH_INTERVAL`, `BD_DOLT_AUTO_PUSH_TIMEOUT` | Override auto-push settings |
 | `BD_BACKUP_ENABLED`, `BD_BACKUP_INTERVAL`, `BD_BACKUP_GIT_REPO` | Override backup settings |
+| `BD_VERSIONED_HISTORY_ENABLED` | Turn on `versioned-history.enabled` for every store the process opens. `1` turns recording on; `0` does not turn it off for a store whose row says `true` (see [Versioned Issue History](#versioned-issue-history)) |
 | `BD_AGENT_PROFILE` | Override `agent.profile` |
 | `BD_AI_MODEL` | Override AI model |
 | `BD_FEDERATION_REMOTE`, `BD_FEDERATION_SOVEREIGNTY` | Override federation settings |
