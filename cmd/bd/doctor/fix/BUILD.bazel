@@ -84,6 +84,9 @@ go_test(
         "validation_test.go",
         "versioned_history_activation_test.go",
     ],
+    # versioned_history_activation_test.go parses store.go from its working
+    # directory, and a Bazel test only sees its declared runfiles.
+    data = ["store.go"],
     embed = [":fix"],
     deps = [
         "//internal/configfile",
