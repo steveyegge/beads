@@ -162,16 +162,34 @@ func TestNumberAdmissionClassifiesByMagnitudeWhateverTheExponent(t *testing.T) {
 }
 
 // The gate allocates nothing proportional to an exponent. Measured as an
-// allocation count and never as wall time: the count is deterministic, so a
-// loaded machine cannot flake it, and it is what distinguishes a classifier
-// that builds a million-digit integer from one that does not.
+// allocation count and never as wall time, so a loaded machine cannot flake it,
+// and it is what distinguishes a classifier that builds a million-digit integer
+// from one that does not.
+//
+// The count is exact only without the race detector. Under it sync.Pool drops
+// one Put in four at random (sync/pool.go), and the refusal builds its error with
+// fmt.Errorf, whose printer comes from a pool, so a call now and then allocates a
+// printer the pool would have supplied: a literal that costs 22 allocations reads
+// 23, or 24, on a run where a printer was dropped, and comparing two
+// independently averaged samples with a strict > is a coin flip. That noise only
+// ever ADDS allocations, so the fewest allocations over many single-call samples
+// is the count without it, and it is the same on every run. The comparison stays
+// strict, with no margin to tune, and it loses no sensitivity: a classifier that
+// builds per-exponent state does so on every call, so it raises the fewest too.
 func TestNumberAdmissionAllocationsDoNotGrowWithTheExponent(t *testing.T) {
-	small := []byte(`{"n":1e400}`)
-	baseline := testing.AllocsPerRun(20, func() { _ = refuseUnrepresentableIntegers(small) })
-	for _, lit := range []string{"1e1000000", "1e100000000", "-1e1000000"} {
+	// The chance that every one of these samples is noisy is under one in 10^19.
+	const samples = 32
+	fewest := func(lit string) float64 {
 		doc := []byte(`{"n":` + lit + `}`)
-		got := testing.AllocsPerRun(20, func() { _ = refuseUnrepresentableIntegers(doc) })
-		if got > baseline {
+		least := math.Inf(1)
+		for range samples {
+			least = math.Min(least, testing.AllocsPerRun(1, func() { _ = refuseUnrepresentableIntegers(doc) }))
+		}
+		return least
+	}
+	baseline := fewest("1e400")
+	for _, lit := range []string{"1e1000000", "1e100000000", "-1e1000000"} {
+		if got := fewest(lit); got > baseline {
 			t.Errorf("%s allocates %v times per call against %v for 1e400: allocation grows with the exponent", lit, got, baseline)
 		}
 	}
