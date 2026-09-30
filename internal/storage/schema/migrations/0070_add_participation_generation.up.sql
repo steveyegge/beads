@@ -22,6 +22,12 @@
 -- on both planes, so a plain ADD COLUMN with no DEFAULT is exactly what's
 -- wanted.
 --
+-- This migration must run before versioned history is turned on. The fence
+-- reads this column on every flag-on mint of an issues-plane row, and on a
+-- store without it that read fails, so the mutation fails with it rather
+-- than skipping. With the flag off (the default) the seam returns before
+-- the read, so a store below this migration writes exactly as before.
+--
 -- Guarded the same way 0067/0068's ADD COLUMNs are (INFORMATION_SCHEMA probe
 -- + PREPARE, since Dolt 2.2.3's ADD COLUMN has no MariaDB-only IF NOT
 -- EXISTS), making a raw-SQL replay of this file a clean no-op on an
