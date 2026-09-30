@@ -78,8 +78,10 @@ const ConfigKey = "versioned-history.enabled"
 // command, because a store-config read is not worth breaking every bd invocation
 // over.
 //
-// Enabled is what `bd versions` calls, where the read is the point and no
-// capability gate precedes it. Activation uses EnabledForStore.
+// Nothing in production calls Enabled today. `bd versions` reports StoreSetting
+// alone, because it only reads: the process-wide planes cannot make a store
+// record, so they cannot speak for it. Activation uses EnabledForStore. Enabled
+// stays, with its tests, as the ungated form of the combined rule.
 func Enabled(ctx context.Context, st storage.DoltStorage) bool {
 	if config.GetBool(ConfigKey) {
 		// Already on via env or yaml; skip the store read entirely. This is also
@@ -116,10 +118,11 @@ func Enabled(ctx context.Context, st storage.DoltStorage) bool {
 // part of DoltStorage, so a store that embeds a nil DoltStorage does not promote it
 // and does not satisfy that interface. (bee-ghosttrack, #6661 third review.)
 //
-// The recover stays anyway, because the guard does not cover every caller: Enabled
-// is also called by `bd versions`, where the read is the point and no capability
-// gate precedes it, and because a store that DOES implement the capability can
-// still have a half-built settings plane. Guard first, recover as the backstop.
+// The recover stays anyway, because the guard does not cover every caller: `bd
+// versions` calls StoreSetting directly, where the read is the point and no
+// capability gate precedes it, and because a store that DOES implement the
+// capability can still have a half-built settings plane. Guard first, recover as
+// the backstop.
 //
 // A typed nil needs no separate guard for the same reason it needs no reflection:
 // if its WorkspaceConfig panics, the recover answers false; if it returns (nil, nil)

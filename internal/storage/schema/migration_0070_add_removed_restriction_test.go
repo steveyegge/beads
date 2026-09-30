@@ -16,7 +16,7 @@ import (
 // AsOfReadInTx (internal/storage/issueops/asof_read.go) reads all three as
 // the durable "this version row was removed" marker. removed_restriction
 // carries the categorical restriction removed_at's presence alone cannot:
-// gone-retention / gone-erasure / gone-reorganization / unknown, never
+// gone_retention / gone_erasure / gone_reorganization / unknown, never
 // live -- live is the absence of a value, not a stored one.
 
 const migration0070Up = "0070_add_removed_restriction.up.sql"

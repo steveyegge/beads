@@ -448,10 +448,15 @@ func recordVersionAtInTx(ctx context.Context, tx DBTX, issueID, actor string, at
 	// (resolveAsOfRevisionInTx, asof_read.go) for any T between the true
 	// instant and the rounded-up one. Flooring first left nothing to round.
 	//
-	// 0069 widened change_at and removed_at to DATETIME(6), which removes the
-	// rounding entirely and makes the floor actively harmful: it threw away
-	// the microseconds the widening exists to keep. Two versions minted in the
-	// same second collapsed onto one stored value and became indistinguishable
+	// 0069 widened change_at and removed_at to DATETIME(6). That moves the
+	// rounding below the microsecond rather than removing it: GMS still rounds
+	// DATETIME(6) input to the microsecond (.1234567 is stored as .123457).
+	// The remainder is harmless to that lookup (resolveAsOfRevisionInTx),
+	// because the instant it compares against is rounded the same way, so a
+	// stored value still compares equal to the instant it was minted at. What the widening does
+	// make is the floor actively harmful: it threw away the microseconds the
+	// widening exists to keep. Two versions minted in the same second
+	// collapsed onto one stored value and became indistinguishable
 	// by change_at -- which defeats --at, the only PORTABLE selector the read
 	// surface offers while revision stays a local ordinal and no durable
 	// version address has shipped. Measured before this change on a store

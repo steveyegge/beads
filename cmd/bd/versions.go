@@ -29,14 +29,18 @@ var (
 
 // versionsOutcome is what runVersions resolved, kept apart from the rendering
 // so the four ways of having nothing to show stay four different answers.
+//
+// It is also the --json payload: one object for every answer that is not an
+// error, so a script parses one shape whether or not anything was recorded.
+// Versions is never nil on a success, so an empty list is [] and never null.
 type versionsOutcome struct {
-	Versions []storage.IssueVersion
+	Versions []storage.IssueVersion `json:"versions"`
 	// Recording reports whether the store is recording versions RIGHT NOW.
 	// It is independent of whether Versions is empty: a store that recorded
 	// for a month and was then switched off still has versions, and saying
 	// otherwise would be a claim about the store made from a fact about this
 	// invocation's config.
-	Recording bool
+	Recording bool `json:"recording"`
 }
 
 var versionsCmd = &cobra.Command{
@@ -50,13 +54,13 @@ Recording is off by default. Turn it on with:
   bd config set versioned-history.enabled true
 
 That writes the setting into the store, so every client of that store agrees
-about whether a write is recorded. For a single run without changing the
-store:
+about whether a write is recorded, and it is the setting this command reports.
+BD_VERSIONED_HISTORY_ENABLED=1 (or a value in config.yaml) also turns recording
+on for the writes a process makes, but it says nothing about the store, and
+this command only reads, so it does not consult them.
 
-  BD_VERSIONED_HISTORY_ENABLED=1 bd versions <id>
-
-Either source turning it on is enough; neither can switch the other off. The
-consequence worth knowing: once the store setting says on,
+Either source turning it on is enough for a writer; neither can switch the
+other off. The consequence worth knowing: once the store setting says on,
 BD_VERSIONED_HISTORY_ENABLED=0 will not turn recording off for one run. Turn
 it off where it was turned on:
 
@@ -107,9 +111,8 @@ Examples:
 			return HandleErrorRespectJSON(
 				"versioned history is not being recorded on this store, and nothing was recorded earlier.\n"+
 					"Turn it on with:  bd config set %s true\n"+
-					"or for one run:   BD_VERSIONED_HISTORY_ENABLED=1 bd versions %s\n"+
 					"Recording starts from that point on; it does not backfill.",
-				versionedHistorySettingKey, issueID)
+				versionedHistorySettingKey)
 		case errors.Is(err, errVersionsUnsupported):
 			return HandleErrorRespectJSON(
 				"this storage backend cannot serve version history (proxied, no-db and non-Dolt backends cannot).\n" +
@@ -119,7 +122,7 @@ Examples:
 		}
 
 		if jsonOutput {
-			return outputJSON(outcome.Versions)
+			return outputJSON(outcome)
 		}
 		printVersions(issueID, outcome)
 		return nil
@@ -165,7 +168,9 @@ func runVersions(ctx context.Context, backend any, issueID string, recording, re
 	if !recording {
 		return versionsOutcome{}, errVersionedHistoryOff
 	}
-	return versionsOutcome{Recording: true}, nil
+	// An empty non-nil list: this is also the --json payload, where nil would
+	// print null.
+	return versionsOutcome{Versions: []storage.IssueVersion{}, Recording: true}, nil
 }
 
 // versionListerFor finds the VersionLister behind whatever cmd/bd is holding.

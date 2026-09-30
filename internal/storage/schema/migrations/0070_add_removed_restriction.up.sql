@@ -10,8 +10,8 @@
 -- substitute a neighboring/surviving/current version).
 --
 -- removed_restriction VARCHAR(30) is the one column this migration adds: the
--- categorical restriction (gone-retention / gone-erasure /
--- gone-reorganization / unknown) that removed_at's presence alone cannot
+-- categorical restriction (gone_retention / gone_erasure /
+-- gone_reorganization / unknown) that removed_at's presence alone cannot
 -- carry. Nullable and NULL for every existing row -- Live is the absence of
 -- a value, never a stored one -- and populated only alongside removed_at,
 -- never independently. 30 chars comfortably fits the longest local

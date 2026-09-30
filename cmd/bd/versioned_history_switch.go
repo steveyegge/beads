@@ -19,9 +19,17 @@ import (
 // that reads it.
 const versionedHistorySettingKey = versionedhistory.ConfigKey
 
-// versionedHistoryEnabled reports whether version recording is on for this store,
-// reading BOTH planes bd stores configuration in. It is what `bd versions` calls,
-// where the read is the point and no capability gate precedes it.
+// versionedHistoryEnabled reports whether THIS STORE is recording versions: its
+// own settings row, and nothing else. It is what `bd versions` calls, where the
+// read is the point and no capability gate precedes it.
+//
+// It deliberately does not fold in the environment or config.yaml the way the
+// rule for writers does. Those are process-wide and can only turn recording on
+// for the writes this process makes; `bd versions` only reads, so they cannot
+// make the store record anything. Letting them answer here made a store that
+// never recorded read as one that was, and "No versions recorded yet" is the
+// empty answer this command's three outcomes exist to prevent. What other
+// clients of the store will do is what the store's row says.
 func versionedHistoryEnabled(ctx context.Context, st storage.DoltStorage) bool {
-	return versionedhistory.Enabled(ctx, st)
+	return versionedhistory.StoreSetting(ctx, st)
 }
