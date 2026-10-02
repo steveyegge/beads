@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"math/rand"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -191,6 +192,50 @@ func TestNumberAdmissionAllocationsDoNotGrowWithTheExponent(t *testing.T) {
 	for _, lit := range []string{"1e1000000", "1e100000000", "-1e1000000"} {
 		if got := fewest(lit); got > baseline {
 			t.Errorf("%s allocates %v times per call against %v for 1e400: allocation grows with the exponent", lit, got, baseline)
+		}
+	}
+}
+
+// TestNumberAdmissionBytesDoNotGrowWithTheExponent is the count bound's twin, and finding 6
+// of the #6661 review. The count bound passes a classifier that builds the number it is
+// asked about: one big-integer allocation is one allocation whether it holds 400 bits or a
+// hundred million. What grows with the exponent is then the size of the allocation, so this
+// bounds bytes: the fewest bytes one call allocates for a literal with a huge exponent is
+// no more than for a small one, plus a margin and a few bytes for each byte of literal (a
+// refusal names the literal in its message).
+//
+// The fewest over many single-call samples, as in the count bound and for the same reason:
+// whatever else allocates while a sample runs only ever ADDS bytes, so the minimum is the
+// cost of the call itself. TotalAlloc is read before and after each call, with GOMAXPROCS
+// pinned to one for the measurement as testing.AllocsPerRun does, so a background
+// goroutine does not add to a sample.
+func TestNumberAdmissionBytesDoNotGrowWithTheExponent(t *testing.T) {
+	const (
+		samples      = 32
+		smallLiteral = "1e400"
+		// What the bound allows beyond the small literal's bytes: a margin, and a few
+		// bytes for each byte a longer literal adds to the refusal's message.
+		slackBytes = 1024
+		perLitByte = 16
+	)
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	fewest := func(lit string) uint64 {
+		doc := []byte(`{"n":` + lit + `}`)
+		least := uint64(math.MaxUint64)
+		var before, after runtime.MemStats
+		for range samples {
+			runtime.ReadMemStats(&before)
+			_ = refuseUnrepresentableIntegers(doc)
+			runtime.ReadMemStats(&after)
+			least = min(least, after.TotalAlloc-before.TotalAlloc)
+		}
+		return least
+	}
+	baseline := fewest(smallLiteral)
+	for _, lit := range []string{"1e1000000", "1e100000000", "-1e1000000"} {
+		limit := baseline + slackBytes + perLitByte*uint64(max(len(lit)-len(smallLiteral), 0))
+		if got := fewest(lit); got > limit {
+			t.Errorf("%s allocates %d bytes per call against %d for %s (limit %d): bytes grow with the exponent", lit, got, baseline, smallLiteral, limit)
 		}
 	}
 }

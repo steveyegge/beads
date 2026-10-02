@@ -89,13 +89,15 @@ var qualifiedActivationCalls = map[string]map[string]bool{
 
 // scannedPackages are the directories searched for construction sites: every
 // package that builds a store or provider for the bd binary, plus the standalone
-// embedded-Dolt utility so it is accounted for rather than merely unnoticed.
-// Each maps to the prefix its sites are keyed under.
+// embedded-Dolt utility and the Go SDK's own opens (the repository root), so they
+// are accounted for rather than merely unnoticed. Each maps to the prefix its
+// sites are keyed under.
 var scannedPackages = map[string]string{
 	".":          "",
 	"doctor":     "doctor/",
 	"doctor/fix": "doctor/fix/",
 	"../../internal/storage/embeddeddolt/cmd": "embeddeddolt-cmd/",
+	"../..": "sdk/",
 }
 
 // constructionExemptions are construction sites that legitimately do NOT

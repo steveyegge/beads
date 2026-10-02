@@ -332,7 +332,7 @@ func TestEmbeddedVersionedHistorySwitchRefusesAnUnrecordableGateTimeout(t *testi
 			t.Errorf("the refusal names %s (%s), which the mint would record:\n%s", name, id, out)
 		}
 	}
-	for _, want := range []string{"2 issues", `"timeout"`, "I-JSON", "bd delete"} {
+	for _, want := range []string{"2 issues", `"timeout"`, "I-JSON", "bd delete <id> --force", "only previews", "unblocks anything it was blocking"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the refusal does not contain %q, so it does not say what is wrong or how to fix it:\n%s", want, out)
 		}
@@ -347,7 +347,7 @@ func TestEmbeddedVersionedHistorySwitchRefusesAnUnrecordableGateTimeout(t *testi
 	// Add the other kind of offender. The refusal now has two fields to fix and offers a remedy for each.
 	holdsNumber := bdCreateSilent(t, bd, dir, "holds a nanosecond timestamp", "--metadata", `{"ts":1727000000000000000}`)
 	out, _ = bdRunFailCode(t, bd, dir, "config", "set", "versioned-history.enabled", "true")
-	for _, want := range []string{"3 issues", `"timeout"`, `"metadata"`, "bd delete", "--unset-metadata"} {
+	for _, want := range []string{"3 issues", `"timeout"`, `"metadata"`, "bd delete <id> --force", "only previews", "unblocks anything it was blocking", "--unset-metadata"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the refusal over a gate and a metadata number does not contain %q:\n%s", want, out)
 		}

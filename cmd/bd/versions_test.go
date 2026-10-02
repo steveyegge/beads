@@ -238,6 +238,20 @@ func TestRestrictionLabelsAreDistinct(t *testing.T) {
 	}
 }
 
+// TestRestrictionLabelAnswersAnythingOutsideTheVocabularyAsUnknown is finding 3 of the
+// #6661 review, on the label's side. The as-of read answers a stored restriction outside
+// the four-value vocabulary as unknown, and so is "live", which is never stored; the
+// label printed such a string raw, so a listing could show "quarantined" for a version
+// the as-of read calls unknown. It renders as unknown does.
+func TestRestrictionLabelAnswersAnythingOutsideTheVocabularyAsUnknown(t *testing.T) {
+	want := restrictionLabel("unknown")
+	for _, r := range []string{"", "live", "gone-retention", "quarantined"} {
+		if got := restrictionLabel(r); got != want {
+			t.Errorf("restrictionLabel(%q) = %q, want %q (what unknown renders as): a value outside the vocabulary is not an answer", r, got, want)
+		}
+	}
+}
+
 // TestVersionsJSONDoesNotCollideWithIssueRevision pins that the versions
 // payload does not emit a "revision" key.
 //

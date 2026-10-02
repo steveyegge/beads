@@ -76,7 +76,7 @@ func TestProxiedServerVersionedHistorySwitchRefusesAnUnrecordableGateTimeout(t *
 			t.Errorf("the refusal names %s (%s), which the mint would record:\n%s", name, id, out)
 		}
 	}
-	for _, want := range []string{"2 issues", `"timeout"`, `"metadata"`, "I-JSON", "bd delete", "bd sql", "--unset-metadata"} {
+	for _, want := range []string{"2 issues", `"timeout"`, `"metadata"`, "I-JSON", "bd delete <id> --force", "only previews", "unblocks anything it was blocking", "bd sql", "--unset-metadata"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the refusal does not contain %q, so it does not say what is wrong or how to fix it:\n%s", want, out)
 		}
