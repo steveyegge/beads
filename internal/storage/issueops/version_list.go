@@ -21,6 +21,11 @@ import (
 // truthful "nothing retained here", and it is the CALLER's job to distinguish
 // it from "the feature is off" and from "no such issue", which it cannot do
 // from this result alone.
+//
+// A removed version's RemovedRestriction is one of the as-of read's four values:
+// whatever else the column holds, a NULL or empty one included, is reported as
+// unknown, exactly as AsOfReadInTx reports it. A version that was not removed
+// carries none.
 func ListVersionsInTx(ctx context.Context, tx DBTX, issueID string) ([]storage.IssueVersion, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
@@ -59,6 +64,9 @@ func ListVersionsInTx(ctx context.Context, tx DBTX, issueID string) ([]storage.I
 		if removedAt.Valid {
 			t := removedAt.Time
 			v.RemovedAt = &t
+			v.RemovedRestriction = string(NormalizeRemovedRestriction(v.RemovedRestriction))
+		} else {
+			v.RemovedRestriction = ""
 		}
 		out = append(out, v)
 	}

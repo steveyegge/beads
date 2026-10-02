@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -253,18 +254,20 @@ func printVersions(issueID string, outcome versionsOutcome) {
 // restrictionLabel renders #5898's removal vocabulary. "unknown" is NOT
 // "gone": it means this store has no lineage knowledge, which the conformance
 // suite pins separately (a never-synced store answers Unknown, not Gone).
+//
+// A string outside the vocabulary renders as unknown, because that is what the
+// as-of read answers for it: the label never prints a stored value the read
+// would not give.
 func restrictionLabel(r string) string {
-	switch r {
-	case "gone_retention":
+	switch issueops.NormalizeRemovedRestriction(r) {
+	case issueops.AsOfRestrictionGoneRetention:
 		return "outside the retention window"
-	case "gone_erasure":
+	case issueops.AsOfRestrictionGoneErasure:
 		return "erased"
-	case "gone_reorganization":
+	case issueops.AsOfRestrictionGoneReorganization:
 		return "voided by an epoch change"
-	case "unknown", "":
-		return "no lineage knowledge in this store"
 	default:
-		return r
+		return "no lineage knowledge in this store"
 	}
 }
 

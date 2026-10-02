@@ -158,7 +158,7 @@ func unversionableIssueRefusal(found []storageissueops.UnversionableIssue) strin
 	}
 	if inTimeout {
 		b.WriteString("A gate timeout is held as nanoseconds, and 9007199254740991 (about 104.25 days) is the most a version can record. bd update cannot change a gate's timeout. While history is off, remove the gate or set its timeout within that limit:\n")
-		b.WriteString("  bd delete <id>                                                     remove the gate (add --force if other issues depend on it)\n")
+		b.WriteString("  bd delete <id> --force                                             remove the gate; without --force bd only previews, and removing the gate also unblocks anything it was blocking\n")
 		b.WriteString("  bd sql \"UPDATE issues SET timeout_ns = <nanoseconds> WHERE id = '<id>'\"   set the timeout; bd sql needs a server-backed store, not an embedded one\n")
 	}
 	b.WriteString("There is no override. This check runs once, now: if a writer that does not record (an older bd, bd sql, a pull from a clone that had history off) later adds such a row, the first write to it fails with the same refusal, and the same fix applies.")

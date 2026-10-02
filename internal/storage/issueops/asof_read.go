@@ -73,6 +73,28 @@ const (
 	AsOfRestrictionUnknown            AsOfRestriction = "unknown"
 )
 
+// NormalizeRemovedRestriction is the one place a stored removed_restriction
+// becomes an answer. The column is a free VARCHAR written by whatever produced
+// the row, so only the values this file's vocabulary names are handed back.
+// NULL, "", "live" (never persisted: Live is the absence of removed_at) and
+// any other string say nothing about why the row was removed, and are reported
+// as unknown rather than passed on as if they were an answer.
+//
+// Everything that says why a removed version is gone goes through it -- the
+// as-of read, the version listing and the label bd versions prints -- so they
+// cannot answer differently for the same row. It does not decide whether the
+// row was removed; that is removed_at, which a caller reads first.
+func NormalizeRemovedRestriction(stored string) AsOfRestriction {
+	restriction := AsOfRestriction(stored)
+	switch restriction {
+	case AsOfRestrictionGoneRetention, AsOfRestrictionGoneErasure,
+		AsOfRestrictionGoneReorganization, AsOfRestrictionUnknown:
+		return restriction
+	default:
+		return AsOfRestrictionUnknown
+	}
+}
+
 // AsOfSelector selects a point in an issue's version history to read: either
 // a literal instant (At) or a previously-served version address (Address) --
 // exactly one populated, mirroring the duality
@@ -223,22 +245,9 @@ func AsOfReadInTx(ctx context.Context, tx DBTX, storeID, issueID string, selecto
 	}
 
 	if removedAt.Valid {
-		// removed_restriction is a free VARCHAR written by whatever produced the
-		// row, so only the values this file's vocabulary names are handed back.
-		// NULL, "", "live" (never persisted: Live is the absence of removed_at)
-		// and any other string say nothing about why the row was removed, and
-		// are reported as unknown rather than passed on as if they were an
-		// answer.
-		restriction := AsOfRestriction(removedRestriction.String)
-		switch restriction {
-		case AsOfRestrictionGoneRetention, AsOfRestrictionGoneErasure,
-			AsOfRestrictionGoneReorganization, AsOfRestrictionUnknown:
-		default:
-			restriction = AsOfRestrictionUnknown
-		}
 		return AsOfReadResult{
 			Refused:     true,
-			Restriction: restriction,
+			Restriction: NormalizeRemovedRestriction(removedRestriction.String),
 			Reason:      removedReason.String,
 		}, nil
 	}
