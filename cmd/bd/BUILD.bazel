@@ -1298,6 +1298,7 @@ go_test(
         "versioned_history_e2e_test.go",
         "versioned_history_serve_e2e_test.go",
         "versioned_history_switch_scan_embedded_test.go",
+        "versioned_history_switch_scan_proxied_integration_test.go",
         "versioned_history_switch_test.go",
         "versions_switch_embedded_test.go",
         "versions_test.go",
