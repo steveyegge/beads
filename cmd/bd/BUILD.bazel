@@ -1331,6 +1331,7 @@ go_test(
         ":go_srcs",
         ":preflight_go_fixture",
         "//:bd_test_files",
+        "//:go_srcs",
         "//cmd/bd/doctor:go_srcs",
         "//cmd/bd/doctor/fix:go_srcs",
         "//internal/storage/embeddeddolt/cmd:go_srcs",
