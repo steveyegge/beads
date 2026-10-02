@@ -281,7 +281,7 @@ var configSetCmd = &cobra.Command{
 			return HandleError("%v", err)
 		}
 		// Per-key validation that needs the store rather than the key alone: turning
-		// versioned history on refuses, writing nothing, while any issue holds metadata a
+		// versioned history on refuses, writing nothing, while any issue holds a value a
 		// version could not record. The store is open here, on whichever route this is.
 		if err := checkVersionedHistoryCanBeEnabled(rootCtx, key, value); err != nil {
 			return HandleError("%v", err)
@@ -1229,7 +1229,7 @@ Examples:
 				}
 			}
 			// The pre-enable check `bd config set` makes: turning versioned history
-			// on refuses while any issue holds metadata a version could not record.
+			// on refuses while any issue holds a value a version could not record.
 			// This verb writes the same setting through a loop of its own, so it
 			// makes the check itself, here and before any pair is written: a refusal
 			// stores nothing from the batch.

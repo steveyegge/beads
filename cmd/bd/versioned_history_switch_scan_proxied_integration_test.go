@@ -10,7 +10,7 @@ import (
 
 // THE NAME IS LOAD-BEARING: .github/scripts/proxied-test-shard.sh finds the tests the proxied-server
 // lane runs by the name prefix (TestProxiedServer, TestServerMode) across cmd/bd/*_test.go, and that
-// lane is the only one that sets BEADS_TEST_PROXIED_SERVER=1. A test that dropped the prefix would
+// lane is the only one that enables the proxied-server tests. A test that dropped the prefix would
 // skip everywhere else and never run.
 
 // proxiedWriteRefusedWithHistoryOn is writeRefusedWithHistoryOn on the proxied route: it asks

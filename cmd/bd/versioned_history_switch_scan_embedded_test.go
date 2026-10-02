@@ -301,7 +301,7 @@ func writeRefusedWithHistoryOn(t *testing.T, bd, dir, id string) bool {
 //   - once the remedies are applied, the switch turns on.
 func TestEmbeddedVersionedHistorySwitchRefusesAnUnrecordableGateTimeout(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
-		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+		t.Skip("embedded dolt integration tests are not enabled")
 	}
 	// The environment can only turn recording on and would make a passing run prove nothing
 	// about the store's own setting, so clear it. No t.Parallel: t.Setenv is incompatible.

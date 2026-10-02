@@ -1770,12 +1770,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails atomically, but a row that already holds one, written while history was
   off, would fail every later write to it. So
   `bd config set versioned-history.enabled true` now checks every issue the store
-  would version and refuses, writing nothing, while any holds a number outside
-  the range or duplicate keys in its metadata. It prints the count, the ids and
-  the fix (one `bd update <id> --metadata ...` per issue, made while history is
-  off); there is no override, and turning history off never runs the check.
+  would version, the whole issue and not only its metadata, and refuses, writing
+  nothing, while any holds a number outside the range, in its metadata or in a
+  gate's timeout (held as nanoseconds, so the limit is about 104.25 days), or
+  duplicate keys in its metadata. It prints the count, the ids, the field and
+  the fix. For metadata that is one `bd update <id> --metadata ...` (or
+  `--unset-metadata`) per issue, which works with history on or off. `bd update`
+  cannot change a gate's timeout, so for that it is removing the gate, or
+  setting its `timeout_ns` column with `bd sql` (server-backed stores only),
+  while history is off. There is no override, and turning history off never runs
+  the check. The check runs once: a writer that does not record (an older bd,
+  `bd sql`, a pull from a clone that had history off) can still add such a row
+  afterwards, and the first write to it then fails with the same refusal.
   Turning it on through `BD_VERSIONED_HISTORY_ENABLED` or `config.yaml` does not
   pass through the command, so those planes rely on the refusal at write time.
+  Dolt's JSON column collapses duplicate keys when it stores a document, so on a
+  Dolt store neither the check nor a write can see one; that refusal is a
+  defense for another backend that keeps them.
 
 - **`bd -C dir prime` now describes the target workspace instead of the launch
   directory** ([#5509](https://github.com/gastownhall/beads/issues/5509)). `-C`
