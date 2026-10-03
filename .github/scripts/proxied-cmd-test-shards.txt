@@ -69,6 +69,7 @@
 34 6 TestProxiedServerServeReadsTheJournalItJustWrote
 34 6 TestProxiedServerSwarm
 34 6 TestProxiedServerUpdate2B
+34 6 TestProxiedServerVersionedHistorySwitchRefusesAnUnrecordableGateTimeout
 34 6 TestProxiedServerWispList
 
 34 7 TestProxiedServerCloseConcurrent
