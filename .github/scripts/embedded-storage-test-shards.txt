@@ -205,6 +205,7 @@
 40 7 TestEmbeddedIssueOperationsUpdateMetadataReplaceClearsAndValidates
 40 7 TestEmbeddedLenientOpenWarning_DataBehind
 40 7 TestEmbeddedRelationsLeavesTheCallersRequestAlone
+40 7 TestLoseVersionLeavesTheEpochTablesCommitted
 40 7 TestMergeAndSettleWithStrategy_ResolvesDeclinedConflict
 
 40 8 TestDeleterContract
@@ -217,6 +218,7 @@
 40 8 TestGetIssueCommentsPageEmbedded
 40 8 TestListWisps
 
+40 9 TestBumpEpochCarryingNeitherCarriesNorServesARowFromAFutureEpoch
 40 9 TestEmbeddedDependencyEditorRefusesCrossPlaneCycle
 40 9 TestEmbeddedDependencyEditorSameTypeReAddIsIdempotent
 40 9 TestEmbeddedDependencyEditorSnapshotsTheRequest
@@ -237,6 +239,7 @@
 40 10 TestRunInTransactionPostCommitStageFailureIsIndeterminate
 40 10 TestWithPeerAuth_WarnsWhenStoredPeerSuppressesAmbientPasswordAmbient
 
+40 11 TestABumpUnderOneStoreIDMovesTheEpochSeenThroughEveryStoreID
 40 11 TestEmbeddedBatchCreateFirstVersionCarriesCreationTimeEdges
 40 11 TestEmbeddedClaimerRefusalMessagesCarryTheirFragments
 40 11 TestEmbeddedGuardedUpdateMintsOnceAfterItsPatches
@@ -338,6 +341,7 @@
 40 19 TestRemoteVerbsPresentStoredPeerCredentials
 40 19 TestRenameLabelMintsOneVersionPerTouchedBead
 
+40 20 TestBumpEpochCarryingCarriesOnlyTheLineageHoldingTheNewestRow
 40 20 TestCreateIssue
 40 20 TestEmbeddedCheckedWrappersRouteTheirPreconditions
 40 20 TestEmbeddedIssueOperationsCreateRoutesInfraTypesToWisps
@@ -349,6 +353,7 @@
 40 20 TestHeartbeatRejectsWispEmbedded
 40 20 TestIgnoredCursorHealNeverResurrectsRolledBackVersions
 
+40 21 TestBumpEpochCarryingCarriesTheLiveRowsOfEveryStoreInTheDatabase
 40 21 TestCreateRejectsCrossTableIDCollision
 40 21 TestEmbeddedBatchCloserItemsAnswerToTheCloseGuards
 40 21 TestEmbeddedDependencyEditorAcceptsATypeOutsideTheConstants
@@ -435,6 +440,7 @@
 40 27 TestRemoteGitDataRefOnEngine
 40 27 TestSweeperContract
 
+40 28 TestBumpEpochCarryingDoesNotCarryALostLineage
 40 28 TestEmbeddedBatchCloserForceBypassesOnlyClosePolicy
 40 28 TestEmbeddedBatchCloserSettlesTheDependersOfWhatItClosed
 40 28 TestEmbeddedClaimerClaimsAnUnassignedOpenIssueAndAnswersTheBareRow
@@ -472,6 +478,7 @@
 40 30 TestLegacyTrackedIgnoredCursorUnwedgesPull
 40 30 TestUpdateMergeOps_DoltEngine_TwoIssues
 
+40 31 TestBumpEpochCarryingWritesOneCarryRowPerLiveIDNamingTheLineageRoot
 40 31 TestDualWriteContract
 40 31 TestEmbeddedDependencyEditorAcceptsAForeignRepoTarget
 40 31 TestEmbeddedDependencyEditorMaintainsBlockedStateAcrossPlanes
@@ -484,6 +491,7 @@
 40 31 TestReadyCounterContract
 40 31 TestWithPeerAuth_KeyMismatchFailsClosed
 
+40 32 TestCurrentAddressForNeverReseedsAnAbsentStoreEpochRow
 40 32 TestEmbeddedClaimerGrantsALiveLeaseOnTheRowItWonAndLeavesARefusedOneAlone
 40 32 TestEmbeddedDependencyEditorRefusesAMissingLocalTarget
 40 32 TestEmbeddedDirtyTablesGate_BlocksReopenThenWorkingSetReconcileRecovers
@@ -504,11 +512,13 @@
 40 33 TestEmbeddedRelationsResolvesTheAnchorIDExactly
 40 33 TestEmbeddedSyncCommitsConfigBeforeMerge
 40 33 TestEventsAutoPruneThrottleSkipsTheSecondPass
+40 33 TestFirstMintLeavesTheEpochTablesCommitted
 40 33 TestGetDependentRecordsEmbedded
 40 33 TestPruneEventsBatchDeletesTheLowestSeqsOnly
 40 33 TestTreeWalkerContract
 
 40 34 TestAddLabel
+40 34 TestBumpEpochCarryingLeavesTheEpochTablesCommitted
 40 34 TestDecryptPassword_KeyMismatchNamesTheLocalKey
 40 34 TestEmbeddedBlockedRecheckRecordsUnblockingWrites
 40 34 TestEmbeddedDependencyEditorAttributesItsEventsToTheActor
@@ -532,6 +542,7 @@
 40 35 TestReadyWorkWithMissingDeferredParentTables
 40 35 TestReclaimExpiredLeaseSurvivesRestartEmbedded
 
+40 36 TestBumpEpochCarryingFailsAndRollsBackWhenARowAlreadyExistsAtTheNewEpoch
 40 36 TestCommenterContract
 40 36 TestConcurrentOpenReturnsCached
 40 36 TestEmbeddedBatchCloserAllRefusedBatchRecordsNoHistory
