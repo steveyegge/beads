@@ -186,6 +186,7 @@
 40 5 TestEmbeddedClaimerRefusesIncompleteRequestsAndAnAbsentIDWithoutTouchingState
 40 5 TestEmbeddedIssueOperationsCloseAndReopenAWisp
 40 5 TestEmbeddedReaderListKeysetPositionResumesTheCreatedDescIDAscOrder
+40 5 TestRecordVersionKeepsSubSecondChangeAt
 40 5 TestWithPeerAuth
 
 40 6 TestCreateBatchFastPathsMatchPerRowApplyWaitsFor_Embedded
@@ -195,6 +196,7 @@
 40 6 TestEmbeddedRelationsAnswersAWispTargetInTheOutDirection
 40 6 TestPromoteStillWorksWithCollisionGuard
 40 6 TestSearchWithMissingWispPlaneTables
+40 6 TestVersionedHistoryKeepsNumbersTheStoreDistinguishesApart
 
 40 7 TestConcurrencyMultiProcess
 40 7 TestEmbeddedBatchCloserRecordsOneHistoryEntryForWhatLanded
@@ -369,6 +371,7 @@
 40 22 TestLeaseLifecycleEmbedded
 40 22 TestPolicyBlockingAnnotatorForeignOpensAreSublinear
 
+40 23 TestAsOfReadContract
 40 23 TestEmbeddedBatchCloserBackendFailureReturnsNoOutcomes
 40 23 TestEmbeddedBatchCloserClaimNextHydratesWhenSomethingClosed
 40 23 TestEmbeddedDependencyEditorAcceptsBlockingAcrossIssueTypes
