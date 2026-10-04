@@ -146,10 +146,13 @@
 
 100 61 TestEmbeddedUpdateRoutedStoreCommitsTargetHead
 
+100 62 TestEmbeddedBootstrapKeepsUnprovenSiblingDatabase
 100 62 TestEmbeddedReadyBlockersAndLabels
 
+100 63 TestEmbeddedBootstrapHydratesEmptyPrimeSkeleton
 100 63 TestEmbeddedDepAndLinkBatchAutoCommitDoesNotAdvanceHead
 
+100 64 TestEmbeddedBootstrapHealthyWorkspaceSkipsRemoteProbe
 100 64 TestEmbeddedGateWaiterCheckLifecycle
 
 100 65 TestEmbeddedIfRevisionPreflightGoneIsPreconditionFailedOnEveryVerb
@@ -214,6 +217,7 @@
 100 70 TestEmbeddedPurgeConcurrent
 100 70 TestEmbeddedRoutedMutatingSiblingAssignTagDepTag
 
+100 71 TestEmbeddedDBIsEmpty
 100 71 TestEmbeddedInitRoleRoutingExplicitDefault
 100 71 TestEmbeddedPrimeChangeDirRedirectNoticeFollowsTarget
 
