@@ -1102,12 +1102,24 @@ func annotateRenumbered(ctx context.Context, db DBConn, records []storage.Rebase
 		if existing != "" {
 			updated = existing + "\n\n" + b.text
 		}
+		// Three columns, each deliberate.
+		//
 		// updated_at is assigned explicitly because issues.updated_at is
 		// DATETIME ... ON UPDATE CURRENT_TIMESTAMP: the codebase's standing rule
 		// (issueops/blocked_state.go, automerge.go) is to set it rather than let
 		// the implicit clause fire, so the written value is the one intended.
+		//
+		// row_lock is REMINTED because this write changes the row's CONTENT. The
+		// freshRowLock invariant (issueops/lease.go) is that such a write must
+		// leave a token no pre-write ExpectedVersion/RowVersion CAS can still
+		// match, or a stale CAS wins against content it never read — automerge.go
+		// reminds a settled merge row for exactly that reason. The rename
+		// primitive's exemption does not carry over here: a rename changes the
+		// PRIMARY KEY, so a stale CAS against the old id matches no row at all,
+		// whereas this keeps the id and rewrites the notes under it.
 		if _, err := tx.ExecContext(ctx,
-			"UPDATE issues SET notes = ?, updated_at = ? WHERE id = ?", updated, now, b.id); err != nil {
+			"UPDATE issues SET notes = ?, updated_at = ?, row_lock = ? WHERE id = ?",
+			updated, now, issueops.FreshRowLock(), b.id); err != nil {
 			return 0, fmt.Errorf("append breadcrumb to %s: %w", b.id, err)
 		}
 		written++
