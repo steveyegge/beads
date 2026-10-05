@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"github.com/steveyegge/beads/internal/storage"
 )
 
 // Mirrors the sqlmock convention in fastforward_test.go: exercise the guard
@@ -19,7 +21,7 @@ func TestRebaseChildCollisionsRejectsInvalidRef(t *testing.T) {
 	defer db.Close()
 
 	// No query expectations: an invalid ref must be rejected before any SQL runs.
-	_, err = RebaseChildCollisions(context.Background(), db, "bad ref; drop table issues", false)
+	_, err = RebaseChildCollisions(context.Background(), db, "bad ref; drop table issues", storage.RebaseOptions{})
 	if err == nil {
 		t.Fatal("expected error for invalid remote ref, got nil")
 	}

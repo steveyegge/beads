@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dberrors"
@@ -63,23 +64,28 @@ type rebaseCollision struct {
 
 // RebaseChildCollisions reconciles hierarchical child-ID collisions between the
 // local branch (HEAD) and remoteRef, which must already be fetched and present
-// locally. localDominates selects which side keeps its ids: false
+// locally. opts.LocalDominates selects which side keeps its ids: false
 // (remote-dominates, the default) renumbers the LOCAL colliding children; true
 // renumbers the REMOTE's on a scratch branch. On success the merge is committed
 // and a report of every renumber is returned. When there are no collisions the
 // report's Renumbered is empty and no merge is performed (the caller should
 // fall back to a plain pull).
 //
+// opts.DryRun returns the same report WITHOUT mutating anything: no backup tag,
+// no renumber, no merge. report.Renumbered then holds the renumbers a real run
+// would perform, computed by planRenumbers — the same function the real run uses
+// to choose them — so the two cannot drift apart.
+//
 // db must be a single session (a pinned *sql.Conn, or a *sql.DB whose pool
 // holds one connection): the merge session flags and the branch checkouts must
 // be visible across every statement.
-func RebaseChildCollisions(ctx context.Context, db DBConn, remoteRef string, localDominates bool) (report *storage.RebaseReport, retErr error) {
+func RebaseChildCollisions(ctx context.Context, db DBConn, remoteRef string, opts storage.RebaseOptions) (report *storage.RebaseReport, retErr error) {
 	if err := issueops.ValidateRef(remoteRef); err != nil {
 		return nil, fmt.Errorf("invalid remote ref: %w", err)
 	}
 
 	direction := "remote-dominates"
-	if localDominates {
+	if opts.LocalDominates {
 		direction = "local-dominates"
 	}
 	report = &storage.RebaseReport{Direction: direction, CountersSet: map[string]int{}}
@@ -89,6 +95,15 @@ func RebaseChildCollisions(ctx context.Context, db DBConn, remoteRef string, loc
 	// (a valid ref for the subsequent AS OF).
 	base, err := scalarString(ctx, db, fmt.Sprintf("SELECT DOLT_MERGE_BASE('HEAD', '%s')", remoteRef))
 	if err != nil {
+		// A dry run does not fetch (see RebaseOptions.DryRun), so an unresolvable
+		// remote ref here is the ordinary "nobody has fetched yet" case rather
+		// than a fault, and the remedy is one command. Saying so beats leaving
+		// the operator with a bare ref-resolution error.
+		if opts.DryRun {
+			return nil, fmt.Errorf("compute merge base with %s: %w\n"+
+				"--dry-run reads the last fetched state and does not fetch. "+
+				"Run 'bd dolt fetch' first (a 'bd dolt pull' also fetches, even when its merge then aborts)", remoteRef, err)
+		}
 		return nil, fmt.Errorf("compute merge base with %s: %w", remoteRef, err)
 	}
 	if err := issueops.ValidateRef(base); err != nil {
@@ -99,6 +114,34 @@ func RebaseChildCollisions(ctx context.Context, db DBConn, remoteRef string, loc
 	if err != nil {
 		return nil, err
 	}
+
+	// Top-level PK collisions are DETECTED but never repaired. They run BEFORE the
+	// no-child-collisions return below on purpose: a clone whose only collision is
+	// top-level has nothing for this mechanic to renumber, so without this pass the
+	// command would say "nothing to rebase (use 'bd dolt pull')" about a pull that
+	// is itself about to abort. Naming the id is the whole value.
+	topLevel, err := detectTopLevelCollisions(ctx, db, remoteRef, base)
+	if err != nil {
+		return nil, err
+	}
+	report.TopLevelCollisions = topLevel
+
+	if opts.DryRun {
+		report.DryRun = true
+		if len(collisions) == 0 {
+			return report, nil
+		}
+		plan, counters, perr := planRenumbers(ctx, db, collisions, []string{remoteRef, base})
+		if perr != nil {
+			return nil, perr
+		}
+		report.Renumbered = plan
+		for k, v := range counters {
+			report.CountersSet[k] = v
+		}
+		return report, nil
+	}
+
 	if len(collisions) == 0 {
 		return report, nil // nothing to rebase; caller falls back to pull
 	}
@@ -184,7 +227,7 @@ func RebaseChildCollisions(ctx context.Context, db DBConn, remoteRef string, loc
 	// contested id and the remote's row takes the new id — the inverse of what the
 	// merge just left. The swap runs on the local branch, so the wisp_* tables the
 	// rename primitive needs are present.
-	if localDominates {
+	if opts.LocalDominates {
 		if err := swapRenumberedSubtrees(ctx, db, renum); err != nil {
 			return report, err
 		}
@@ -192,6 +235,23 @@ func RebaseChildCollisions(ctx context.Context, db DBConn, remoteRef string, loc
 			fmt.Sprintf("rebase: keep %d local child id(s), renumber the remote's (local-dominates) [#4796]", len(renum))); err != nil {
 			return report, fmt.Errorf("commit local-dominates swap: %w", err)
 		}
+	}
+
+	// Breadcrumbs LAST, and deliberately non-fatal. Both of the two ids a renumber
+	// affects now exist (the merge brought the winning side's row to the contested
+	// id, and the local-dominates swap above has already flipped them), so this is
+	// the first point at which both can be annotated; running it after the merge
+	// also keeps the notes column out of the merge entirely, where a both-changed
+	// notes cell is the classic unresolvable conflict.
+	//
+	// A failure here must not reach the restore defer above: the merge is committed
+	// and the sync is unblocked, and throwing that away to avoid a missing
+	// annotation would be a strictly worse outcome than the missing annotation.
+	// Record it on the report and let the caller say so.
+	if n, aerr := annotateRenumbered(ctx, db, renum, direction); aerr != nil {
+		report.BreadcrumbWarning = aerr.Error()
+	} else {
+		report.Breadcrumbs = n
 	}
 	return report, nil
 }
@@ -335,6 +395,65 @@ func dropIdenticalAddAdds(ctx context.Context, db DBConn, remoteRef string, ids 
 	return kept, nil
 }
 
+// detectTopLevelCollisions returns TOP-LEVEL (non-hierarchical) ids that exist
+// on both HEAD and remoteRef but not at the merge base — two clones that
+// independently minted the same id for different issues. Identical add/adds are
+// excluded by the same content_hash guard detectCollisions uses: one issue
+// landing on both sides is not a collision at any level.
+//
+// DETECTION ONLY, by design, and the asymmetry is structural rather than a
+// shortcut. A child id is SEQUENTIAL — parent.1 is followed by parent.2 — so two
+// clones working under the same parent collide as a matter of course, and a
+// renumber has an obvious correct answer: the next free number under that
+// parent. A top-level id is RANDOM (#594's adaptive-length retry picks one that
+// is free in the LOCAL database), so a collision is a birthday-problem tail
+// event, and there is no "next" id to move it to — repairing one means minting a
+// fresh random id, which is a different operation with a different blast radius
+// (every inbound reference to a root bead, not to one child).
+//
+// What detection buys is diagnosis. A top-level add/add is not silently lost:
+// mergeIssuesConflictRow declines any conflict with no base row, so the merge
+// refuses and the operator is told conflicts "require operator resolution"
+// without being told WHICH id or why. Naming the id turns that into an
+// actionable report — and `bd rename <old> <new>` on the non-dominant clone,
+// run before its next pull, is the manual repair.
+func detectTopLevelCollisions(ctx context.Context, db DBConn, remoteRef, base string) ([]string, error) {
+	//nolint:gosec // G201: remoteRef and base are validated by ValidateRef; AS OF requires literals.
+	q := fmt.Sprintf(`
+		SELECT h.id, COALESCE(h.content_hash, '') FROM issues h
+		WHERE h.id NOT LIKE '%%.%%'
+		  AND h.id IN (SELECT id FROM issues AS OF '%s')
+		  AND h.id NOT IN (SELECT id FROM issues AS OF '%s')`, remoteRef, base)
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("detect top-level id collisions: %w", err)
+	}
+	var ids []string
+	localHash := map[string]string{}
+	for rows.Next() {
+		var id, hash string
+		if err := rows.Scan(&id, &hash); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan top-level collision id: %w", err)
+		}
+		ids = append(ids, id)
+		localHash[id] = hash
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ids, err = dropIdenticalAddAdds(ctx, db, remoteRef, ids, localHash)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
 // hasCollidingAncestor reports whether any strict ancestor of id is itself in
 // the colliding set (so id will be carried by that ancestor's subtree rewrite).
 func hasCollidingAncestor(id string, set map[string]bool) bool {
@@ -346,13 +465,17 @@ func hasCollidingAncestor(id string, set map[string]bool) bool {
 	return false
 }
 
-// renumberCollisions renumbers each collision's subtree on the currently
-// checked-out branch to a free child number under its parent, chosen above the
-// max child number seen on the current branch and every ref in otherRefs (so
-// the new id collides with neither side). It returns the renumber records and
-// the final high-water last_child per affected parent, and bumps child_counters
-// accordingly.
-func renumberCollisions(ctx context.Context, db DBConn, collisions []rebaseCollision, otherRefs []string) ([]storage.RebaseRenumber, map[string]int, error) {
+// planRenumbers chooses a free child number under each collision's parent,
+// above the max child number seen on the current branch and every ref in
+// otherRefs, so the new id collides with neither side. It returns the planned
+// renumber records and the resulting high-water last_child per affected parent.
+//
+// It is READ-ONLY, and that is the point: --dry-run and the real run both go
+// through here, so the plan a dry run prints is the plan the real run executes
+// rather than a reimplementation of it that can drift. (The two can still differ
+// in substance if the database changes between the two invocations — a dry run
+// is a snapshot, not a reservation.)
+func planRenumbers(ctx context.Context, db DBConn, collisions []rebaseCollision, otherRefs []string) ([]storage.RebaseRenumber, map[string]int, error) {
 	// Seed each affected parent's running counter with the current high-water
 	// child number across the current branch and every otherRef.
 	next := map[string]int{}
@@ -376,6 +499,32 @@ func renumberCollisions(ctx context.Context, db DBConn, collisions []rebaseColli
 		next[c.parent] = m
 	}
 
+	records := make([]storage.RebaseRenumber, 0, len(collisions))
+	for _, c := range collisions {
+		next[c.parent]++
+		records = append(records, storage.RebaseRenumber{
+			OldID:  c.id,
+			NewID:  fmt.Sprintf("%s.%d", c.parent, next[c.parent]),
+			Parent: c.parent,
+		})
+	}
+	counters := make(map[string]int, len(next))
+	for parent, n := range next {
+		counters[parent] = n
+	}
+	return records, counters, nil
+}
+
+// renumberCollisions applies the plan from planRenumbers on the currently
+// checked-out branch: it rewrites each collision's subtree to the planned free
+// id and bumps child_counters to the resulting high-water mark. It returns the
+// renumber records and the final last_child per affected parent.
+func renumberCollisions(ctx context.Context, db DBConn, collisions []rebaseCollision, otherRefs []string) ([]storage.RebaseRenumber, map[string]int, error) {
+	records, counters, err := planRenumbers(ctx, db, collisions, otherRefs)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// The renumber is pure DML, so run it in one transaction that reuses the
 	// canonical issue-rename primitive (issueops.UpdateIssueIDInTx) and rolls
 	// back cleanly on any error. The primitive rewrites issues.id AND rekeys the
@@ -392,26 +541,20 @@ func renumberCollisions(ctx context.Context, db DBConn, collisions []rebaseColli
 	}
 	defer func() { _ = tx.Rollback() }() // no-op once committed
 
-	var records []storage.RebaseRenumber
-	for _, c := range collisions {
-		next[c.parent]++
-		newRoot := fmt.Sprintf("%s.%d", c.parent, next[c.parent])
-		if err := renameSubtreeInTx(ctx, tx, c.id, newRoot); err != nil {
+	for _, r := range records {
+		if err := renameSubtreeInTx(ctx, tx, r.OldID, r.NewID); err != nil {
 			return nil, nil, err
 		}
-		records = append(records, storage.RebaseRenumber{OldID: c.id, NewID: newRoot, Parent: c.parent})
 	}
 
 	// Bump each affected parent's counter to its new high-water mark.
-	counters := map[string]int{}
-	for parent, n := range next {
+	for parent, n := range counters {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO child_counters (parent_id, last_child) VALUES (?, ?)
 			ON DUPLICATE KEY UPDATE last_child = GREATEST(last_child, VALUES(last_child))`,
 			parent, n); err != nil {
 			return nil, nil, fmt.Errorf("bump child_counters for %s: %w", parent, err)
 		}
-		counters[parent] = n
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, nil, fmt.Errorf("commit renumber transaction: %w", err)
@@ -859,6 +1002,130 @@ func resolveChildCountersToHighWater(ctx context.Context, db DBConn, report *sto
 		return fmt.Errorf("stage resolved child_counters: %w", err)
 	}
 	return nil
+}
+
+// breadcrumbMarker prefixes every note this mechanic appends, so the trail is
+// greppable (`bd list --search "[bd dolt rebase #4796]"`) and so a re-run can
+// recognise its own earlier breadcrumb instead of stacking a duplicate.
+const breadcrumbMarker = "[bd dolt rebase #4796]"
+
+// movedBreadcrumb is the note left ON THE RENUMBERED BEAD: it moved, and the id
+// it used to answer to now names something else.
+func movedBreadcrumb(oldID, newID, direction string) string {
+	return fmt.Sprintf("%s Renumbered: this bead was %s and is now %s (%s). "+
+		"Two clones had each minted %s for a DIFFERENT bead, so one had to move. "+
+		"%s now names the other one. Text references to %s elsewhere were NOT rewritten "+
+		"and may have meant this bead — check which is correct.",
+		breadcrumbMarker, oldID, newID, direction, oldID, oldID, oldID)
+}
+
+// keptBreadcrumb is the note left ON THE BEAD THAT KEPT THE CONTESTED ID. It is
+// the half that is easy to forget and the one that actually matters to a reader
+// following a stale reference: they arrive HERE, at a bead that looks entirely
+// ordinary, with no indication that the reference might have meant the other one.
+func keptBreadcrumb(oldID, newID, direction string) string {
+	return fmt.Sprintf("%s Id contested: a different bead on another clone also held %s "+
+		"and was renumbered to %s (%s). This bead kept %s. Text references to %s elsewhere "+
+		"were NOT rewritten and may have meant %s rather than this bead — check which is correct.",
+		breadcrumbMarker, oldID, newID, direction, oldID, oldID, newID)
+}
+
+// annotateRenumbered appends a breadcrumb note to BOTH ids each renumber
+// affects — the bead that moved and the bead that kept the contested id — and
+// commits them. It returns how many notes were written.
+//
+// Why a note in the data rather than a line in the command's output: the output
+// is read once, by whoever ran the reconcile, and then lost. The ambiguity it
+// describes is discovered weeks later by someone following a reference in a
+// third bead's prose, who never saw the reconcile at all. The breadcrumb has to
+// be where that reader lands.
+//
+// It deliberately does NOT try to resolve the ambiguity by rewriting the
+// references. In a collision repair the two sides' text genuinely meant
+// different beads, so there is no edit that is right for all of them — see
+// gastownhall/beads#7040, which documents the same class in `bd rename` and
+// reaches the same conclusion ("reporting what wasn't rewritten may beat
+// rewriting everything").
+//
+// Only the `issues` table is annotated. A collision root exists at remoteRef by
+// construction, so it is durable; a session-local wisp can only ever be a
+// DESCENDANT carried along by the subtree rewrite, and a note on a row that is
+// never committed would not survive to be read.
+func annotateRenumbered(ctx context.Context, db DBConn, records []storage.RebaseRenumber, direction string) (int, error) {
+	if len(records) == 0 {
+		return 0, nil
+	}
+	type breadcrumb struct {
+		id, text string
+	}
+	var want []breadcrumb
+	for _, r := range records {
+		want = append(want,
+			breadcrumb{id: r.NewID, text: movedBreadcrumb(r.OldID, r.NewID, direction)},
+			breadcrumb{id: r.OldID, text: keptBreadcrumb(r.OldID, r.NewID, direction)},
+		)
+	}
+
+	tb, ok := db.(txBeginner)
+	if !ok {
+		return 0, fmt.Errorf("rebase breadcrumbs need a *sql.DB or *sql.Conn, got %T", db)
+	}
+	tx, err := tb.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin breadcrumb transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+
+	// The note is composed in Go rather than by a SQL CONCAT so the append rule
+	// (blank separator only when there are existing notes) and the
+	// already-present check are one readable thing, and so the statement needs
+	// nothing beyond a plain UPDATE.
+	written := 0
+	now := time.Now().UTC()
+	for _, b := range want {
+		var notes sql.NullString
+		switch err := tx.QueryRowContext(ctx, "SELECT notes FROM issues WHERE id = ?", b.id).Scan(&notes); {
+		case errors.Is(err, sql.ErrNoRows):
+			// Both ids are expected to exist here, so this is not a normal state —
+			// but a reconcile that has already merged must not be failed over a
+			// missing annotation target. Skip it; the count the caller reports will
+			// come up short, which is the honest signal.
+			continue
+		case err != nil:
+			return 0, fmt.Errorf("read notes of %s for breadcrumb: %w", b.id, err)
+		}
+		existing := notes.String
+		if strings.Contains(existing, b.text) {
+			continue // idempotent: this exact breadcrumb is already there
+		}
+		updated := b.text
+		if existing != "" {
+			updated = existing + "\n\n" + b.text
+		}
+		// updated_at is assigned explicitly because issues.updated_at is
+		// DATETIME ... ON UPDATE CURRENT_TIMESTAMP: the codebase's standing rule
+		// (issueops/blocked_state.go, automerge.go) is to set it rather than let
+		// the implicit clause fire, so the written value is the one intended.
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE issues SET notes = ?, updated_at = ? WHERE id = ?", updated, now, b.id); err != nil {
+			return 0, fmt.Errorf("append breadcrumb to %s: %w", b.id, err)
+		}
+		written++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit breadcrumb transaction: %w", err)
+	}
+	if written == 0 {
+		return 0, nil
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?)",
+		fmt.Sprintf("rebase: note the renumber on %d affected bead(s) (%s) [#4796]", written, direction)); err != nil {
+		if strings.Contains(err.Error(), "nothing to commit") {
+			return written, nil
+		}
+		return 0, fmt.Errorf("commit breadcrumb notes: %w", err)
+	}
+	return written, nil
 }
 
 // scalarString runs a query expected to return a single string column.

@@ -4666,7 +4666,22 @@ func (s *DoltStore) PullRemote(ctx context.Context, remote string) error {
 // the normal transport (CLI for git-protocol remotes), then drives the renumber
 // and merge on a single-session long-timeout connection, mirroring
 // pullWithAutoResolve's connection contract.
-func (s *DoltStore) RebaseRemote(ctx context.Context, remote string, localDominates bool) (*storage.RebaseReport, error) {
+func (s *DoltStore) RebaseRemote(ctx context.Context, remote string, opts storage.RebaseOptions) (*storage.RebaseReport, error) {
+	trackingRef := remote + "/" + s.branch
+
+	// A dry run writes nothing — no auto-commit, no fetch, no merge — so it is
+	// allowed on a read-only store and must be, since cmd/bd opens one for any
+	// command carrying --dry-run. See EmbeddedDoltStore.RebaseRemote for why
+	// each skipped step is a write the operator did not ask for.
+	if opts.DryRun {
+		db, err := s.openLongTimeoutConn()
+		if err != nil {
+			return nil, err
+		}
+		defer db.Close()
+		return versioncontrolops.RebaseChildCollisions(ctx, db, trackingRef, opts)
+	}
+
 	if s.readOnly {
 		return nil, fmt.Errorf("cannot rebase: store is read-only")
 	}
@@ -4687,8 +4702,7 @@ func (s *DoltStore) RebaseRemote(ctx context.Context, remote string, localDomina
 	}
 	defer db.Close()
 
-	trackingRef := remote + "/" + s.branch
-	report, rerr := versioncontrolops.RebaseChildCollisions(ctx, db, trackingRef, localDominates)
+	report, rerr := versioncontrolops.RebaseChildCollisions(ctx, db, trackingRef, opts)
 	if rerr != nil {
 		return report, rerr
 	}

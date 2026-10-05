@@ -4,9 +4,15 @@ package embeddeddolt_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/depid"
+	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 )
 
@@ -225,7 +231,7 @@ func TestEmbeddedRebaseRemoteDominates(t *testing.T) {
 
 	peer := seedRebaseCollision(t, ctx, conn, p)
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("rebase (remote-dominates): %v", err)
 	}
@@ -291,7 +297,7 @@ func TestEmbeddedRebaseRemoteDominatesWispSubtree(t *testing.T) {
 	// to .74. The wisp must follow: .71.1 -> .74.1.
 	insertRebaseWisp(t, ctx, conn, p+".71.1", "WispChild")
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("rebase (remote-dominates, wisp subtree): %v", err)
 	}
@@ -315,7 +321,7 @@ func TestEmbeddedRebaseRemoteDominatesWispSubtree(t *testing.T) {
 	// is a weak invariant by construction — after the first merge, DOLT_MERGE_BASE
 	// ('HEAD', peer) is peer's own head, so HEAD∩peer∖base is empty and no collision
 	// can be detected — but it still pins that a re-run neither errors nor mutates.
-	report2, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report2, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("second rebase (convergence): %v", err)
 	}
@@ -333,7 +339,7 @@ func TestEmbeddedRebaseLocalDominates(t *testing.T) {
 
 	peer := seedRebaseCollision(t, ctx, conn, p)
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, true)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{LocalDominates: true})
 	if err != nil {
 		t.Fatalf("rebase (local-dominates): %v", err)
 	}
@@ -406,7 +412,7 @@ func TestEmbeddedRebaseRemoteDominatesHighWaterSlots(t *testing.T) {
 	// high-water under P is 74 (counter 73, wisp 74), above the live issues max 72.
 	insertRebaseWisp(t, ctx, conn, p+".74", "WispSibling")
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("rebase (remote-dominates, high-water slots): %v", err)
 	}
@@ -538,7 +544,7 @@ func TestEmbeddedRebaseRemoteDominatesOrphanedCounterConflict(t *testing.T) {
 
 	// Without the orphan-skip guard this returns an FK error and hard-resets to the
 	// backup tag; with it, the rebase completes.
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("rebase (remote-dominates, orphaned counter conflict): %v", err)
 	}
@@ -602,7 +608,7 @@ func TestEmbeddedRebaseRemoteDominatesDurableSubtreeCounter(t *testing.T) {
 		t.Fatalf("commit grandchild: %v", err)
 	}
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("rebase (remote-dominates, durable subtree counter): %v", err)
 	}
@@ -721,7 +727,7 @@ func TestEmbeddedRebaseIdenticalAddAddIsNotRenumbered(t *testing.T) {
 
 	peer := seedIdenticalAddAdd(t, ctx, conn, p)
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("rebase (identical add/add): %v", err)
 	}
@@ -795,7 +801,7 @@ func TestEmbeddedRebaseCollidingChildUnderIdenticalParent(t *testing.T) {
 		t.Fatalf("checkout main: %v", err)
 	}
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err != nil {
 		t.Fatalf("rebase (colliding child under identical parent): %v", err)
 	}
@@ -846,7 +852,7 @@ func TestEmbeddedRebaseLocalDominatesSwapTempVacancy(t *testing.T) {
 		t.Fatalf("commit bystander: %v", err)
 	}
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, true)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{LocalDominates: true})
 	if err != nil {
 		t.Fatalf("rebase (local-dominates, occupied scratch prefix): %v", err)
 	}
@@ -926,7 +932,7 @@ func TestEmbeddedRebaseRestoredFlagOnFailure(t *testing.T) {
 		t.Fatalf("commit local config: %v", err)
 	}
 
-	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, false)
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
 	if err == nil {
 		t.Fatal("expected the rebase to fail on an unresolvable config conflict")
 	}
@@ -949,5 +955,329 @@ func TestEmbeddedRebaseRestoredFlagOnFailure(t *testing.T) {
 	}
 	if got := lastChildOf(t, ctx, conn, p); got != 73 {
 		t.Errorf("child_counters last_child = %d, want the pre-rebase 73", got)
+	}
+}
+
+func notesOf(t *testing.T, ctx context.Context, db versioncontrolops.DBConn, id string) string {
+	t.Helper()
+	var notes sql.NullString
+	if err := db.QueryRowContext(ctx, "SELECT notes FROM issues WHERE id = ?", id).Scan(&notes); err != nil {
+		t.Fatalf("read notes of %s: %v", id, err)
+	}
+	return notes.String
+}
+
+func headHash(t *testing.T, ctx context.Context, db versioncontrolops.DBConn) string {
+	t.Helper()
+	var h string
+	if err := db.QueryRowContext(ctx, "SELECT HASHOF('HEAD')").Scan(&h); err != nil {
+		t.Fatalf("read HEAD hash: %v", err)
+	}
+	return h
+}
+
+func preRebaseTagCount(t *testing.T, ctx context.Context, db versioncontrolops.DBConn) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM dolt_tags WHERE tag_name LIKE 'bd-pre-rebase-%'").Scan(&n); err != nil {
+		t.Fatalf("count pre-rebase tags: %v", err)
+	}
+	return n
+}
+
+// TestEmbeddedRebaseDryRunChangesNothingAndPredictsTheRealRun pins both halves of
+// the --dry-run contract, because each is useless without the other.
+//
+// It changes NOTHING: not the ids, not the counter, not HEAD, and no backup tag —
+// a preview that commits pending work or tags the branch is not a preview, and
+// the auto-commit is exactly the behaviour bee-ghosttrack asked about on #4844.
+//
+// And its plan is the plan: the renumbers it reports are the ones the real run
+// then performs, id for id. That holds by construction (both go through
+// planRenumbers) and is pinned here so a later change cannot quietly fork the
+// two code paths and leave the preview lying.
+func TestEmbeddedRebaseDryRunChangesNothingAndPredictsTheRealRun(t *testing.T) {
+	te := newTestEnv(t, "rbdry")
+	ctx := t.Context()
+	conn := openSettleConn(t, ctx, te)
+	p := "rbp-dry"
+
+	peer := seedRebaseCollision(t, ctx, conn, p)
+	beforeHead := headHash(t, ctx, conn)
+
+	dry, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("rebase --dry-run: %v", err)
+	}
+	if !dry.DryRun {
+		t.Error("report.DryRun is false on a dry run — a caller cannot tell the plan from the deed")
+	}
+	if dry.BackupTag != "" {
+		t.Errorf("report.BackupTag = %q on a dry run, want empty: nothing was tagged", dry.BackupTag)
+	}
+	if len(dry.Renumbered) != 2 {
+		t.Fatalf("dry run planned %d renumbers, want 2", len(dry.Renumbered))
+	}
+
+	// Nothing moved.
+	if got := titleOf(t, ctx, conn, p+".71"); got != "Local71" {
+		t.Errorf("%s.71 = %q after a dry run, want the untouched \"Local71\"", p, got)
+	}
+	if got := titleOf(t, ctx, conn, p+".72"); got != "Local72" {
+		t.Errorf("%s.72 = %q after a dry run, want the untouched \"Local72\"", p, got)
+	}
+	if n := issueCount(t, ctx, conn, p+".74"); n != 0 {
+		t.Errorf("%s.74 exists after a dry run — the renumber was applied", p)
+	}
+	if got := lastChildOf(t, ctx, conn, p); got != 73 {
+		t.Errorf("child_counters last_child = %d after a dry run, want the untouched 73", got)
+	}
+	if got := headHash(t, ctx, conn); got != beforeHead {
+		t.Errorf("HEAD moved during a dry run (%s -> %s) — something was committed", beforeHead, got)
+	}
+	if n := preRebaseTagCount(t, ctx, conn); n != 0 {
+		t.Errorf("%d bd-pre-rebase tag(s) exist after a dry run, want 0", n)
+	}
+	assertRebaseSettled(t, ctx, conn)
+
+	// The plan is the deed.
+	applied, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
+	if err != nil {
+		t.Fatalf("rebase after dry run: %v", err)
+	}
+	if len(applied.Renumbered) != len(dry.Renumbered) {
+		t.Fatalf("real run renumbered %d, dry run planned %d", len(applied.Renumbered), len(dry.Renumbered))
+	}
+	for i := range applied.Renumbered {
+		if applied.Renumbered[i] != dry.Renumbered[i] {
+			t.Errorf("renumber %d: dry run planned %+v, real run did %+v", i, dry.Renumbered[i], applied.Renumbered[i])
+		}
+	}
+	if applied.CountersSet[p] != dry.CountersSet[p] {
+		t.Errorf("counter for %s: dry run planned %d, real run set %d", p, dry.CountersSet[p], applied.CountersSet[p])
+	}
+}
+
+// TestEmbeddedRebaseLeavesBreadcrumbsOnBothIDs pins the answer to
+// seanmartinsmith's #7040 point on #4844: a renumber does not rewrite text
+// references in other beads, so after the reconcile a stale reference to the old
+// id names the OTHER clone's bead, and nothing flags it.
+//
+// The note goes on BOTH ids, and the second one is the one that matters. A reader
+// following a stale reference arrives at the bead that KEPT the contested id — a
+// bead that looks completely ordinary and has no reason to mention a renumber
+// that happened to someone else. Annotating only the bead that moved leaves that
+// reader with nothing.
+//
+// Both directions are covered because the local-dominates swap flips which bead
+// ends up at which id after the merge, so a breadcrumb written on the wrong side
+// of the swap would be silently backwards.
+func TestEmbeddedRebaseLeavesBreadcrumbsOnBothIDs(t *testing.T) {
+	cases := []struct {
+		name           string
+		env, parent    string
+		localDominates bool
+		// movedTitle is the bead that ends up at the NEW id, keptTitle the one
+		// that ends up at the contested OLD id.
+		movedTitle, keptTitle string
+	}{
+		{"remote-dominates", "rbcrumbr", "rbp-crumb-r", false, "Local71", "Tom"},
+		{"local-dominates", "rbcrumbl", "rbp-crumb-l", true, "Tom", "Local71"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			te := newTestEnv(t, tc.env)
+			ctx := t.Context()
+			conn := openSettleConn(t, ctx, te)
+			p := tc.parent
+
+			peer := seedRebaseCollision(t, ctx, conn, p)
+			report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer,
+				storage.RebaseOptions{LocalDominates: tc.localDominates})
+			if err != nil {
+				t.Fatalf("rebase: %v", err)
+			}
+			if report.BreadcrumbWarning != "" {
+				t.Fatalf("breadcrumbs failed: %s", report.BreadcrumbWarning)
+			}
+			// Two renumbers, two ids each.
+			if report.Breadcrumbs != 4 {
+				t.Errorf("report.Breadcrumbs = %d, want 4 (2 renumbers x old+new)", report.Breadcrumbs)
+			}
+
+			// Setup check: the two beads are where this case expects them, so a
+			// failure below is about the breadcrumb and not about the swap.
+			if got := titleOf(t, ctx, conn, p+".74"); got != tc.movedTitle {
+				t.Fatalf("%s.74 = %q, want %q", p, got, tc.movedTitle)
+			}
+			if got := titleOf(t, ctx, conn, p+".71"); got != tc.keptTitle {
+				t.Fatalf("%s.71 = %q, want %q", p, got, tc.keptTitle)
+			}
+
+			moved := notesOf(t, ctx, conn, p+".74")
+			for _, want := range []string{
+				"[bd dolt rebase #4796]",
+				"this bead was " + p + ".71 and is now " + p + ".74",
+				"NOT rewritten",
+			} {
+				if !strings.Contains(moved, want) {
+					t.Errorf("notes on the renumbered %s.74 do not mention %q:\n%s", p, want, moved)
+				}
+			}
+
+			kept := notesOf(t, ctx, conn, p+".71")
+			for _, want := range []string{
+				"[bd dolt rebase #4796]",
+				"also held " + p + ".71",
+				"renumbered to " + p + ".74",
+			} {
+				if !strings.Contains(kept, want) {
+					t.Errorf("notes on %s.71, which KEPT the contested id, do not mention %q:\n%s", p, want, kept)
+				}
+			}
+
+			// A bead no renumber touched is left alone: the breadcrumb is targeted,
+			// not a blanket annotation of everything the merge brought in.
+			if got := notesOf(t, ctx, conn, p+".70"); got != "" {
+				t.Errorf("notes on the uninvolved %s.70 = %q, want empty", p, got)
+			}
+
+			// The notes were COMMITTED, not merely left in the working set: an
+			// annotation that never reaches history never reaches the other clone.
+			assertRebaseSettled(t, ctx, conn)
+		})
+	}
+}
+
+// seedTopLevelCollision builds a divergence whose ONLY collision is at the top
+// level: both clones minted the same 5-character root id for different work
+// (pcresswell's report on #4796 — a day apart, neither having synced). It also
+// seeds a top-level id both sides added with IDENTICAL content, which is one
+// bead that reached both clones and must NOT be reported as a collision.
+func seedTopLevelCollision(t *testing.T, ctx context.Context, db versioncontrolops.DBConn, contested, shared string) (peerBranch string) {
+	t.Helper()
+	insertRebaseIssue(t, ctx, db, "rbp-tl-anchor", "Anchor")
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'seed base')"); err != nil {
+		t.Fatalf("commit base: %v", err)
+	}
+	peerBranch = "tlpeer_" + contested
+	if _, err := db.ExecContext(ctx, "CALL DOLT_BRANCH(?, 'HEAD')", peerBranch); err != nil {
+		t.Fatalf("create peer branch: %v", err)
+	}
+
+	insertRebaseIssueWithHash(t, ctx, db, contested, "Local root", "hash-local-root")
+	insertRebaseIssueWithHash(t, ctx, db, shared, "Shared root", "hash-shared-root")
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'clone A mints a root id')"); err != nil {
+		t.Fatalf("commit clone A: %v", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", peerBranch); err != nil {
+		t.Fatalf("checkout peer: %v", err)
+	}
+	insertRebaseIssueWithHash(t, ctx, db, contested, "Remote root", "hash-remote-root")
+	insertRebaseIssueWithHash(t, ctx, db, shared, "Shared root", "hash-shared-root")
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'clone B mints the same root id')"); err != nil {
+		t.Fatalf("commit clone B: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT('main')"); err != nil {
+		t.Fatalf("checkout main: %v", err)
+	}
+	return peerBranch
+}
+
+// TestEmbeddedRebaseReportsTopLevelCollisionWithoutRepairing covers the scope
+// question pcresswell raised on #4796: a top-level id minted independently on two
+// unsynced clones.
+//
+// This mechanic does not repair it, and the case here is the one where that
+// matters most — a divergence with NO child collision at all. Detection runs
+// before the "nothing to rebase" return precisely so that path cannot send the
+// operator to 'bd dolt pull', which is the command that is about to abort on this
+// very row. Nothing is mutated and nothing is renumbered: the report names the id
+// and the operator repairs it with 'bd rename'.
+func TestEmbeddedRebaseReportsTopLevelCollisionWithoutRepairing(t *testing.T) {
+	te := newTestEnv(t, "rbtl")
+	ctx := t.Context()
+	conn := openSettleConn(t, ctx, te)
+	contested, shared := "rbp-tlx", "rbp-tls"
+
+	peer := seedTopLevelCollision(t, ctx, conn, contested, shared)
+	beforeHead := headHash(t, ctx, conn)
+
+	report, err := versioncontrolops.RebaseChildCollisions(ctx, conn, peer, storage.RebaseOptions{})
+	if err != nil {
+		t.Fatalf("rebase with only a top-level collision: %v", err)
+	}
+	if len(report.Renumbered) != 0 {
+		t.Errorf("report.Renumbered has %d entries, want 0 — a top-level id must never be renumbered by this mechanic", len(report.Renumbered))
+	}
+	if got := report.TopLevelCollisions; len(got) != 1 || got[0] != contested {
+		t.Errorf("report.TopLevelCollisions = %v, want exactly [%s]", got, contested)
+	}
+	// The identical add/add is one bead on two clones, not a collision: reporting
+	// it would send the operator renaming a bead that needs nothing doing.
+	for _, id := range report.TopLevelCollisions {
+		if id == shared {
+			t.Errorf("%s reported as a top-level collision, but both sides hold identical content", shared)
+		}
+	}
+	// Detection is read-only: no merge, no commit, no tag.
+	if got := headHash(t, ctx, conn); got != beforeHead {
+		t.Errorf("HEAD moved (%s -> %s) — detection mutated the branch", beforeHead, got)
+	}
+	if n := preRebaseTagCount(t, ctx, conn); n != 0 {
+		t.Errorf("%d bd-pre-rebase tag(s) exist, want 0 — nothing should have been tagged", n)
+	}
+	if got := titleOf(t, ctx, conn, contested); got != "Local root" {
+		t.Errorf("%s = %q, want the untouched \"Local root\"", contested, got)
+	}
+	assertRebaseSettled(t, ctx, conn)
+}
+
+// TestEmbeddedRebaseDryRunWorksOnAPreviewOpenedStore pins the store-level half
+// of the --dry-run contract, which the versioncontrolops tests above cannot see.
+//
+// cmd/bd classifies any command carrying a --dry-run flag as a preview
+// (isPreviewCommand, main.go) and hands it a store opened by
+// OpenForPreviewCommand, which refuses every write transaction. So the dry-run
+// path must not reach for a MUTATING connection, and must not fetch — a fetch
+// moves a remote-tracking ref, which is a write.
+//
+// Caught by hand before this test existed: with the dry run still fetching
+// through withMutatingPinnedDBConn, `bd dolt rebase --dry-run` failed outright
+// with "embeddeddolt: store is read-only" on a workspace where the real command
+// worked. The assertion is therefore specifically that the refusal is NOT
+// ErrReadOnly. Reaching the ref-resolution failure instead is the pass
+// condition: this fixture has no remote, and that error carries the guidance an
+// operator needs.
+func TestEmbeddedRebaseDryRunWorksOnAPreviewOpenedStore(t *testing.T) {
+	te := newTestEnv(t, "rbprev")
+	ctx := t.Context()
+
+	preview, err := embeddeddolt.OpenForPreviewCommand(ctx, filepath.Dir(te.dataDir), te.database, "main")
+	if err != nil {
+		t.Fatalf("OpenForPreviewCommand: %v", err)
+	}
+	defer closeEmbeddedDoltStore(t, preview)
+
+	_, err = preview.RebaseRemote(ctx, "origin", storage.RebaseOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected an error: the fixture has no 'origin' remote to read a tracking ref from")
+	}
+	if errors.Is(err, embeddeddolt.ErrReadOnly) {
+		t.Fatalf("dry run was refused as a write on a preview-opened store: %v", err)
+	}
+	// The guidance matters as much as the refusal: a dry run deliberately does
+	// not fetch, so "there is no tracking ref" is the expected first-use state
+	// and the remedy has to be in the message.
+	if !strings.Contains(err.Error(), "bd dolt fetch") {
+		t.Errorf("error does not tell the operator to fetch first: %v", err)
+	}
+
+	// And a real run on the same preview store IS refused — the read-only
+	// guarantee is not weakened for the command as a whole.
+	if _, err := preview.RebaseRemote(ctx, "origin", storage.RebaseOptions{}); !errors.Is(err, embeddeddolt.ErrReadOnly) {
+		t.Errorf("a non-dry-run rebase on a preview-opened store returned %v, want ErrReadOnly", err)
 	}
 }

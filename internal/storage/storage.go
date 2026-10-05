@@ -835,10 +835,10 @@ type RemoteRefPruner interface {
 // child under the same parent while offline both minted the same "parent.N" id,
 // so the pull aborts on an add/add PK collision the settle machinery will not
 // resolve. RebaseRemote fetches remote, renumbers the losing side's colliding
-// children to free ids, then completes the merge. localDominates=false
-// (remote-dominates, the default) renumbers the local children; true renumbers
-// the remote's. The report names every renumber and the backup tag taken before
-// anything was mutated.
+// children to free ids, then completes the merge. RebaseOptions.LocalDominates
+// picks the side that keeps its ids; RebaseOptions.DryRun reports what a real run
+// would do and mutates nothing. The report names every renumber and the backup
+// tag taken before anything was mutated.
 //
 // Callers should type-assert to this interface. It is deliberately NOT on
 // RemoteStore: that interface is aliased as the public beads.RemoteStore, and
@@ -847,7 +847,7 @@ type RemoteRefPruner interface {
 // BackupStore — so it is an optional interface reached through
 // storage.UnwrapStore, and a store that lacks it simply cannot offer the command.
 type ChildCollisionRebaser interface {
-	RebaseRemote(ctx context.Context, remote string, localDominates bool) (*RebaseReport, error)
+	RebaseRemote(ctx context.Context, remote string, opts RebaseOptions) (*RebaseReport, error)
 }
 
 type SchemaMigrator interface {

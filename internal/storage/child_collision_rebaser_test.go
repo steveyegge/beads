@@ -22,13 +22,13 @@ type rebaseCapableStore struct {
 	calls int
 }
 
-func (s *rebaseCapableStore) RebaseRemote(_ context.Context, _ string, localDominates bool) (*RebaseReport, error) {
+func (s *rebaseCapableStore) RebaseRemote(_ context.Context, _ string, opts RebaseOptions) (*RebaseReport, error) {
 	s.calls++
 	direction := "remote-dominates"
-	if localDominates {
+	if opts.LocalDominates {
 		direction = "local-dominates"
 	}
-	return &RebaseReport{Direction: direction, CountersSet: map[string]int{}}, nil
+	return &RebaseReport{Direction: direction, CountersSet: map[string]int{}, DryRun: opts.DryRun}, nil
 }
 
 // plainStore has no rebase capability at all.
@@ -50,7 +50,7 @@ func TestChildCollisionRebaserReachedThroughDecorator(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a decorated rebase-capable store to be reached via UnwrapStore")
 	}
-	report, err := rebaser.RebaseRemote(context.Background(), "origin", true)
+	report, err := rebaser.RebaseRemote(context.Background(), "origin", RebaseOptions{LocalDominates: true})
 	if err != nil {
 		t.Fatalf("RebaseRemote through the unwrapped decorator: %v", err)
 	}
