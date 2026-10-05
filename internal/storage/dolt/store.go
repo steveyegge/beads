@@ -4666,6 +4666,11 @@ func (s *DoltStore) PullRemote(ctx context.Context, remote string) error {
 // the normal transport (CLI for git-protocol remotes), then drives the renumber
 // and merge on a single-session long-timeout connection, mirroring
 // pullWithAutoResolve's connection contract.
+//
+// opts.DryRun takes a shorter path that writes nothing at all — no auto-commit,
+// no fetch, no merge — and so is permitted on a read-only store. See the
+// EmbeddedDoltStore.RebaseRemote doc comment for why each of those is a write
+// the operator did not ask for.
 func (s *DoltStore) RebaseRemote(ctx context.Context, remote string, opts storage.RebaseOptions) (*storage.RebaseReport, error) {
 	trackingRef := remote + "/" + s.branch
 
