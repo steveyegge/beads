@@ -94,6 +94,10 @@ func largeScenarios() []scenario {
 // (issueops.PreparePublicCreateRequest), so apply.json's issues, wisps and
 // events digests were re-recorded with every apply-created row carrying
 // created_by "apply-writer"; nothing else moved.
+// The issue_versions digests of small, depadd, waitsfor, import458 and
+// import458-reject-stale, and depadd's issues_updated_at digest, were
+// re-recorded when the participation-generation fence landed, because the
+// fence does not re-mint rows that predate the stamp.
 const GoldenDirEnv = "CREATEBATCHEQUIV_GOLDEN_DIR"
 
 // Run seeds fresh databases, applies each scenario's batch through the fast
