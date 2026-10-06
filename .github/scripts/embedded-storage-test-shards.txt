@@ -245,7 +245,6 @@
 40 11 TestWithPeerAuth_WarnsWhenStoredPeerSuppressesAmbientPasswordStored
 
 40 12 TestCounterExcludeStatusAcceptsAWorkspaceCustomStatusWithoutIncludeInfra
-40 12 TestReaderListExcludeStatusAcceptsAWorkspaceCustomStatus
 40 12 TestEmbeddedClaimerAcceptsAConfiguredActiveStatusAndRefusesAConfiguredWipOne
 40 12 TestEmbeddedClaimerRefusesAWispIDAsNotFound
 40 12 TestEmbeddedDependencyEditorVersionsOnlyARealAddOrRemove
@@ -254,6 +253,7 @@
 40 12 TestEmbeddedReadyClaimerAnswersTheQuestionReaderReadyLists
 40 12 TestHistoryPresenceContract
 40 12 TestLifecycleUpdateContract
+40 12 TestReaderListExcludeStatusAcceptsAWorkspaceCustomStatus
 
 40 13 TestEmbeddedDepRekeyConvergesRenameChain
 40 13 TestEmbeddedDependencyEditorAppliesParentChildBeforeBlockingEdges
@@ -311,6 +311,7 @@
 40 17 TestStatsReporterContract
 40 17 TestVersionReconcilerContract
 
+40 18 TestCreateBatchParticipationGeneration
 40 18 TestEmbeddedBatchCloserIdempotentRecloseIsAPerItemSuccess
 40 18 TestEmbeddedDependencyEditorMixedBatchWritesBothPlanes
 40 18 TestEmbeddedIssueOperationsUpdateRawMetadataTakesTheFunnelsValueShapes
@@ -330,6 +331,7 @@
 40 19 TestIgnoredCursorHealConvergesFromEveryCrashState
 40 19 TestOpenAfterCloseCreatesNewStore
 40 19 TestOpenReturnsCachedStore
+40 19 TestParticipationGenerationFixtureKitIsWired
 40 19 TestRemoteVerbsPresentStoredPeerCredentials
 40 19 TestRenameLabelMintsOneVersionPerTouchedBead
 
@@ -571,6 +573,7 @@
 40 39 TestEmbeddedMigrateRepairedDependenciesIDColumnCommitsAtomicallyWithVersion53_4690
 40 39 TestEmbeddedReaderListSkipCountsDropsTheCardinalitiesAndNothingElse
 40 39 TestEmbeddedRelationsResolvesAWispAnchor
+40 39 TestParticipationGenerationFence
 40 39 TestPreviewStoreRefusesLocalMetadataWrite
 40 39 TestReclaimRefusesForeignReplicaLease
 40 39 TestWorkspaceConfigContract
