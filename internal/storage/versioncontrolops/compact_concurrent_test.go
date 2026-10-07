@@ -287,3 +287,116 @@ func TestCompactQuietStillSquashes(t *testing.T) {
 	}
 	assertNoTempBranch(t, db)
 }
+
+// The proxied planner reads main's head with MainHead before it reads the
+// log. A write that lands between the two reads is in the plan but not at
+// the planned head, so CompactAtHead refuses and names both heads.
+func TestCompactAtHeadRefusesWriteBetweenHeadAndLogRead(t *testing.T) {
+	db := startCompactTestServer(t)
+	ctx := context.Background()
+
+	planned := mainHead(t, db)
+	lateHead := writeOnMain(t, db, 300)
+	initial, boundary, old := squashAllPlan(t, db)
+	if boundary != lateHead {
+		t.Fatalf("plan boundary = %s, want the late write's commit %s", boundary, lateHead)
+	}
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	err = CompactAtHead(ctx, conn, planned, initial, boundary, old, nil)
+	if !errors.Is(err, ErrMainMoved) {
+		t.Fatalf("CompactAtHead error = %v, want ErrMainMoved", err)
+	}
+	if !strings.Contains(err.Error(), planned) || !strings.Contains(err.Error(), lateHead) {
+		t.Fatalf("refusal does not name both heads: %v", err)
+	}
+	if got := mainHead(t, db); got != lateHead {
+		t.Fatalf("main head = %s, want %s", got, lateHead)
+	}
+	assertRow(t, db, 300, true)
+	assertNoTempBranch(t, db)
+}
+
+// When main has not moved but the plan's newest commit is not main's head
+// (a log whose date order disagrees with its parent order), CompactAtHead
+// refuses with ErrPlanNotAtHead instead of squashing main to an older tree.
+func TestCompactAtHeadRefusesPlanNotEndingAtHead(t *testing.T) {
+	db := startCompactTestServer(t)
+	ctx := context.Background()
+
+	entries, err := Log(ctx, db, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := mainHead(t, db)
+	if entries[0].Hash != head {
+		t.Fatalf("fixture: newest log entry %s is not main's head %s", entries[0].Hash, head)
+	}
+	// A plan whose newest commit is the head's parent, as a misordered log
+	// would produce.
+	initial := entries[len(entries)-1].Hash
+	stale := entries[1].Hash
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	err = CompactAtHead(ctx, conn, head, initial, stale, len(entries)-1, nil)
+	if !errors.Is(err, ErrPlanNotAtHead) {
+		t.Fatalf("CompactAtHead error = %v, want ErrPlanNotAtHead", err)
+	}
+	if !strings.Contains(err.Error(), head) || !strings.Contains(err.Error(), stale) {
+		t.Fatalf("refusal does not name main's head and the plan's newest commit: %v", err)
+	}
+	if got := mainHead(t, db); got != head {
+		t.Fatalf("main head = %s, want it unchanged at %s", got, head)
+	}
+	assertRow(t, db, 4, true)
+	assertNoTempBranch(t, db)
+}
+
+// Control: with the head read before the log and no concurrent write,
+// CompactAtHead squashes every commit after the initial one and keeps the
+// table's value hash.
+func TestCompactAtHeadQuietStillSquashes(t *testing.T) {
+	db := startCompactTestServer(t)
+	ctx := context.Background()
+
+	planned := mainHead(t, db)
+	initial, boundary, old := squashAllPlan(t, db)
+	var hashBefore string
+	if err := db.QueryRowContext(ctx, "SELECT DOLT_HASHOF_TABLE('items')").Scan(&hashBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := CompactAtHead(ctx, conn, planned, initial, boundary, old, nil); err != nil {
+		t.Fatalf("quiet CompactAtHead: %v", err)
+	}
+
+	after, err := Log(ctx, db, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// initial commit + squashed base
+	if len(after) != 2 {
+		t.Fatalf("commits after compact = %d, want 2", len(after))
+	}
+	var hashAfter string
+	if err := db.QueryRowContext(ctx, "SELECT DOLT_HASHOF_TABLE('items')").Scan(&hashAfter); err != nil {
+		t.Fatal(err)
+	}
+	if hashAfter != hashBefore {
+		t.Fatalf("items value hash changed: %s -> %s", hashBefore, hashAfter)
+	}
+	assertNoTempBranch(t, db)
+}
