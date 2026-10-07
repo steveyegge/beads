@@ -28,7 +28,7 @@ func TestOrderCloseCascadeDepths(t *testing.T) {
 			"leaf": 2,
 		},
 	}
-	got := orderCloseCascade([]closeDirectItem{root, leaf}, exp)
+	got := orderCloseCascade([]closeDirectItem{root, leaf}, 2, exp)
 	if len(got) != 2 {
 		t.Fatalf("got %d items, want 2", len(got))
 	}
@@ -47,7 +47,7 @@ func TestOrderCloseCascadeDepths(t *testing.T) {
 		},
 		depths: map[string]int{"root": 0, "mid": 1, "grand": 2},
 	}
-	got2 := orderCloseCascade([]closeDirectItem{root}, exp2)
+	got2 := orderCloseCascade([]closeDirectItem{root}, 1, exp2)
 	if len(got2) != 3 {
 		t.Fatalf("got %d items, want 3", len(got2))
 	}
@@ -57,16 +57,43 @@ func TestOrderCloseCascadeDepths(t *testing.T) {
 			t.Fatalf("order[%d]: got %s, want %s", i, got2[i].id, want)
 		}
 	}
-	// Slots follow discovery order (mid=base+0, grand=base+1) and survive
-	// the sort attached to their item — that pairing is what maps each
-	// cascade item to its outcome slot in the report loop.
+	// Slots follow discovery order from argBase (mid=1, grand=2) and
+	// survive the sort attached to their item — that pairing is what maps
+	// each cascade item to its outcome slot in the report loop.
 	if got2[0].arg != 2 || got2[1].arg != 1 {
 		t.Fatalf("discovered slots: got [%d, %d], want [2, 1]", got2[0].arg, got2[1].arg)
 	}
 
 	// Nil expansion is the no-cascade pass-through.
-	if passthrough := orderCloseCascade([]closeDirectItem{root}, nil); len(passthrough) != 1 || passthrough[0].id != "root" {
+	if passthrough := orderCloseCascade([]closeDirectItem{root}, 1, nil); len(passthrough) != 1 || passthrough[0].id != "root" {
 		t.Fatal("nil expansion must return the typed items untouched")
+	}
+}
+
+// TestCascadeSettleDepthsLongestPath pins the depth settlement the batch
+// order reads: longest root-to-node path over the recorded edges, not any
+// single walk's level counter. The first shape is the review's r2 defect 1 —
+// P → C → G with both P and C typed: C must land at 1 (under P) and G at 2
+// (under C), so G closes before C and C before P regardless of which root's
+// walk found G first. The second is the diamond: X under two parents takes
+// the deeper path.
+func TestCascadeSettleDepthsLongestPath(t *testing.T) {
+	exp := &cascadeExpansion{
+		depths:  map[string]int{"P": 0, "C": 0},
+		parents: map[string][]string{"C": {"P"}, "G": {"C"}},
+	}
+	exp.settleDepths()
+	if exp.depths["P"] != 0 || exp.depths["C"] != 1 || exp.depths["G"] != 2 {
+		t.Fatalf("typed mid depths: got P=%d C=%d G=%d, want 0/1/2", exp.depths["P"], exp.depths["C"], exp.depths["G"])
+	}
+
+	exp2 := &cascadeExpansion{
+		depths:  map[string]int{"D": 0},
+		parents: map[string][]string{"A": {"D"}, "B": {"D"}, "X": {"A", "B"}},
+	}
+	exp2.settleDepths()
+	if exp2.depths["A"] != 1 || exp2.depths["B"] != 1 || exp2.depths["X"] != 2 {
+		t.Fatalf("diamond depths: got A=%d B=%d X=%d, want 1/1/2", exp2.depths["A"], exp2.depths["B"], exp2.depths["X"])
 	}
 }
 
@@ -201,6 +228,74 @@ func TestEmbeddedCloseCascade(t *testing.T) {
 		}
 	})
 
+	t.Run("typed_mid_subtree_both_argument_orders", func(t *testing.T) {
+		// The r2 review's defect 1: a typed id inside another typed id's
+		// subtree must order behind its own children even though its subtree
+		// is discovered from its own root turn. P → C → G with C typed, in
+		// both argument orders: all three close WITHOUT --force, which only
+		// the deepest-first order allows (the guard refuses a parent whose
+		// child is still open in the same transaction).
+		for _, order := range []struct{ first, second string }{{"C", "P"}, {"P", "C"}} {
+			root := bdCreate(t, bd, dir, "Typed mid root "+order.first+order.second, "--type", "epic")
+			mid := bdCreate(t, bd, dir, "Typed mid child")
+			leaf := bdCreate(t, bd, dir, "Typed mid grandchild")
+			bdDepAdd(t, bd, dir, mid.ID, root.ID, "--type", "parent-child")
+			bdDepAdd(t, bd, dir, leaf.ID, mid.ID, "--type", "parent-child")
+
+			args := []string{"--cascade", "--reason", "typed mid"}
+			for _, which := range []string{order.first, order.second} {
+				if which == "C" {
+					args = append(args, mid.ID)
+				} else {
+					args = append(args, root.ID)
+				}
+			}
+			out := bdClose(t, bd, dir, args...)
+			for _, id := range []string{root.ID, mid.ID, leaf.ID} {
+				if got := bdShow(t, bd, dir, id); got.Status != types.StatusClosed {
+					t.Errorf("order %v: %s status: got %q, want closed (without --force the guard passing proves the order)\nstdout:\n%s", order, id, got.Status, out)
+				}
+			}
+		}
+	})
+
+	t.Run("refused_typed_arg_keeps_cascade_slots", func(t *testing.T) {
+		// The r2 review's defect 2: a typed argument refused in preflight
+		// keeps its nil-outcome slot, so discovered items must number after
+		// EVERY typed slot — numbering them from the survivor count collides
+		// a discovered item with the surviving typed one that follows it,
+		// and the batch's last writer wins the shared slot. X pinned; P
+		// force-closed earlier with C stranded open.
+		pinned := bdCreate(t, bd, dir, "Slot pinned", "--type", "epic")
+		bdUpdate(t, bd, dir, pinned.ID, "--status", "pinned")
+		parent := bdCreate(t, bd, dir, "Slot parent", "--type", "epic")
+		child := bdCreate(t, bd, dir, "Slot child")
+		bdDepAdd(t, bd, dir, child.ID, parent.ID, "--type", "parent-child")
+		bdClose(t, bd, dir, parent.ID, "--force", "--reason", "early")
+
+		out := bdCloseFail(t, bd, dir, pinned.ID, parent.ID, "--cascade", "--json", "--reason", "recover")
+		arr := parseIssuesJSON(t, out)
+		counts := make(map[string]int, len(arr))
+		for _, issue := range arr {
+			counts[issue.ID]++
+		}
+		if counts[parent.ID] != 1 {
+			t.Errorf("parent listed %d times in closed array, want exactly 1:\n%s", counts[parent.ID], out)
+		}
+		if counts[child.ID] != 1 {
+			t.Errorf("child listed %d times in closed array, want exactly 1 (slot collision hides it):\n%s", counts[child.ID], out)
+		}
+		if counts[pinned.ID] != 0 {
+			t.Errorf("pinned refusal must not appear in the closed array:\n%s", out)
+		}
+		if !strings.Contains(out, "cannot modify pinned issue "+pinned.ID) {
+			t.Errorf("output missing the pinned refusal:\n%s", out)
+		}
+		if got := bdShow(t, bd, dir, child.ID); got.Status != types.StatusClosed || got.CloseReason != "recover" {
+			t.Errorf("child: got status %q reason %q, want closed/recover", got.Status, got.CloseReason)
+		}
+	})
+
 	t.Run("json_includes_descendants", func(t *testing.T) {
 		epic := bdCreate(t, bd, dir, "JSON epic", "--type", "epic")
 		child := bdCreate(t, bd, dir, "JSON child")
@@ -218,16 +313,19 @@ func TestEmbeddedCloseCascade(t *testing.T) {
 	})
 }
 
-// parseIssuesJSON extracts a JSON array of issues from output that may carry
-// non-JSON lines (tips, warnings) around it.
+// parseIssuesJSON extracts the first JSON array of issues from output that
+// may carry non-JSON lines around it — stderr refusals before it, the
+// partial-failure summary after it. A Decoder reads exactly one top-level
+// value and stops, so trailing objects on the same stream are ignored.
 func parseIssuesJSON(t *testing.T, out string) []*types.Issue {
 	t.Helper()
 	start := strings.Index(out, "[")
 	if start < 0 {
 		t.Fatalf("no JSON array found in output:\n%s", out)
 	}
+	dec := json.NewDecoder(strings.NewReader(out[start:]))
 	var issues []*types.Issue
-	if err := json.Unmarshal([]byte(out[start:]), &issues); err != nil {
+	if err := dec.Decode(&issues); err != nil {
 		t.Fatalf("parsing issues array: %v\n%s", err, out)
 	}
 	return issues

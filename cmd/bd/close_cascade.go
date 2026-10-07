@@ -13,7 +13,8 @@ import (
 // closeCascadeMaxIssues caps how many open descendants one --cascade
 // expansion may discover, the same runaway guard the storage layer's delete
 // cascade carries (issueops.maxRecursiveResults). A well-formed hierarchy
-// cannot reach it; a corrupt one must not close unbounded rows.
+// cannot reach it; a corrupt one must not close unbounded rows, and the
+// batch aborts with an error rather than closing a partial forest silently.
 const closeCascadeMaxIssues = 10000
 
 // cascadeItem is one open descendant a --cascade close closes before the
@@ -47,11 +48,20 @@ type cascadeExpansion struct {
 	// refusals are the discovered descendants that failed the same
 	// close-policy check a typed argument gets.
 	refusals []cascadeRefusal
-	// depths maps every id in the closed set — typed or discovered — to the
-	// deepest ancestor distance the expansion observed. A typed id that is
-	// also a descendant of another typed id gets the larger distance, which
-	// is what orders it before that ancestor.
+	// depths maps every id in the closed set — typed or discovered — to its
+	// longest root-to-node path over the recorded parent edges, settled by
+	// settleDepths after the walks. Longest path is what the batch order
+	// needs: a node must sort behind everything that can reach it, and a
+	// node reachable from two roots at different distances takes the deeper
+	// reading. A typed id that is also a descendant of another typed id
+	// therefore sorts before that ancestor AND after its own children — its
+	// subtree hangs off the edge set, not off any walk's level counter,
+	// which cannot see depth another root contributed.
 	depths map[string]int
+	// parents records child → parent for every edge the walks touched,
+	// including edges into already-claimed and closed nodes: depths settle
+	// from this edge set, not from per-root level counters.
+	parents map[string][]string
 }
 
 // cascadeRootSpec is one surviving typed argument as the expansion sees it:
@@ -87,7 +97,8 @@ type cascadeRootSpec struct {
 // around it, and its open presence is what refuses its ancestors through the
 // engine's guard, which --force overrides. Typed ids are seeded visited —
 // they are already items — so a typed id inside another root's subtree is
-// never discovered twice, only re-depthed.
+// never discovered twice; the edge that reaches it is recorded all the same,
+// and depths settle from the whole edge set once every walk is done.
 //
 // Expansion never writes: the batch below is the only writer, so the guard
 // that actually decides each close still runs inside the close's own
@@ -95,7 +106,10 @@ type cascadeRootSpec struct {
 // ancestor's guard refuse — a safe, visible failure, never a silently
 // orphaned child.
 func expandCloseCascade(ctx context.Context, roots []cascadeRootSpec) (*cascadeExpansion, error) {
-	exp := &cascadeExpansion{depths: make(map[string]int, len(roots))}
+	exp := &cascadeExpansion{
+		depths:  make(map[string]int, len(roots)),
+		parents: make(map[string][]string),
+	}
 	visited := make(map[string]bool, len(roots))
 
 	// node is one queued subtree position: the id to read children from,
@@ -104,7 +118,6 @@ func expandCloseCascade(ctx context.Context, roots []cascadeRootSpec) (*cascadeE
 	type node struct {
 		id     string
 		issue  *types.Issue
-		depth  int
 		reason string
 	}
 
@@ -120,7 +133,7 @@ func expandCloseCascade(ctx context.Context, roots []cascadeRootSpec) (*cascadeE
 	}
 	for _, root := range roots {
 		frontier := []node{{id: root.id, reason: root.reason}}
-		for depth := 1; len(frontier) > 0; depth++ {
+		for len(frontier) > 0 {
 			var next []node
 			for _, current := range frontier {
 				children, err := root.childrenOf(ctx, current.id)
@@ -131,15 +144,12 @@ func expandCloseCascade(ctx context.Context, roots []cascadeRootSpec) (*cascadeE
 					if child == nil {
 						continue
 					}
-					// A diamond, a shared subtree, or a typed root reached
-					// through another root can revisit one id at two depths;
-					// the deeper reading is the one that orders it behind all
-					// of its ancestors, so it wins. This runs before the
-					// visited check exactly so an already-claimed id — a
-					// typed root above all — still re-depths.
-					if depth > exp.depths[child.ID] {
-						exp.depths[child.ID] = depth
-					}
+					// The edge is recorded whether or not the child was
+					// already claimed by an earlier root: a typed id reached
+					// through another root still hangs from this edge, and
+					// its whole subtree orders through it. Depths themselves
+					// settle from the edge set once every walk is done.
+					exp.parents[child.ID] = append(exp.parents[child.ID], current.id)
 					if visited[child.ID] {
 						continue
 					}
@@ -148,7 +158,7 @@ func expandCloseCascade(ctx context.Context, roots []cascadeRootSpec) (*cascadeE
 						// Nothing to close here, but the levels below may
 						// hold the stranded open descendants this flag is
 						// for; keep walking through the closed node.
-						next = append(next, node{id: child.ID, depth: depth, reason: current.reason})
+						next = append(next, node{id: child.ID, reason: current.reason})
 						continue
 					}
 					if len(exp.items)+len(exp.refusals) >= closeCascadeMaxIssues {
@@ -161,17 +171,57 @@ func expandCloseCascade(ctx context.Context, roots []cascadeRootSpec) (*cascadeE
 					exp.items = append(exp.items, cascadeItem{
 						id:     child.ID,
 						reason: current.reason,
-						depth:  depth,
 						store:  root.store,
 						issue:  child,
 					})
-					next = append(next, node{id: child.ID, depth: depth, reason: current.reason})
+					next = append(next, node{id: child.ID, reason: current.reason})
 				}
 			}
 			frontier = next
 		}
 	}
+	exp.settleDepths()
+	for i := range exp.items {
+		exp.items[i].depth = exp.depths[exp.items[i].id]
+	}
 	return exp, nil
+}
+
+// settleDepths rewrites depths as each id's longest root-to-node path over
+// the recorded parent edges: roots sit at 0, everything else one past its
+// deepest parent. Memoized, with a visiting guard for a corrupt edge set —
+// parent-child writes refuse ancestor relationships, so a cycle cannot be
+// reached from a well-formed store.
+func (exp *cascadeExpansion) settleDepths() {
+	memo := make(map[string]int, len(exp.depths)+len(exp.parents))
+	visiting := make(map[string]bool)
+	var depthOf func(id string) int
+	depthOf = func(id string) int {
+		if d, ok := memo[id]; ok {
+			return d
+		}
+		if visiting[id] {
+			return 0
+		}
+		visiting[id] = true
+		d := 0
+		for _, parent := range exp.parents[id] {
+			if pd := depthOf(parent) + 1; pd > d {
+				d = pd
+			}
+		}
+		delete(visiting, id)
+		memo[id] = d
+		return d
+	}
+	for id := range exp.depths {
+		exp.depths[id] = depthOf(id)
+	}
+	for id := range exp.parents {
+		if _, ok := exp.depths[id]; !ok {
+			exp.depths[id] = depthOf(id)
+		}
+	}
 }
 
 // cascadeCount is how many argument-equivalent ids a cascade expansion adds —
@@ -212,9 +262,12 @@ func expandCloseCascadeForResults(ctx context.Context, plan closeDirectPlan, for
 // descendant closes before the ancestors that count it against the engine's
 // open-children guard inside the shared transaction. Typed items keep their
 // argument slots and their typed order among equals; discovered items take
-// the slots after them, in discovery order. The proxied route reorders its
-// own parallel slices with orderCloseCascadePerm.
-func orderCloseCascade(typed []closeDirectItem, exp *cascadeExpansion) []closeDirectItem {
+// the slots after EVERY typed argument — argBase is len(resolvedIDs), not
+// the survivor count, because a typed argument the preflight refused keeps
+// its (nil-outcome) slot and numbering from the survivors would collide a
+// discovered item with the surviving typed one that follows it. The proxied
+// route reorders its own parallel slices with orderCloseCascadePerm.
+func orderCloseCascade(typed []closeDirectItem, argBase int, exp *cascadeExpansion) []closeDirectItem {
 	// Sort whenever a cascade ran, not only when it discovered items: a
 	// typed id that is also another typed id's descendant was deduped into
 	// the typed list and still needs the depth ordering.
@@ -223,10 +276,9 @@ func orderCloseCascade(typed []closeDirectItem, exp *cascadeExpansion) []closeDi
 	}
 	items := make([]closeDirectItem, 0, len(typed)+len(exp.items))
 	items = append(items, typed...)
-	base := len(typed)
 	for i, ci := range exp.items {
 		items = append(items, closeDirectItem{
-			arg:    base + i,
+			arg:    argBase + i,
 			id:     ci.id,
 			reason: ci.reason,
 			store:  ci.store,

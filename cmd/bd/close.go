@@ -46,9 +46,7 @@ work. A root that would refuse its own close (an open blocker, a pin, another
 assignee) stays open with a warning, and the step's close stands. Under
 --json, the step's entry names the closed root (auto_closed_molecule) or the
 refusal (molecule_auto_close_refusal). --continue claims the next ready step
-in the molecule for you; add --no-auto to only show it.`,
-
-the flags appear in the command line.
+in the molecule for you; add --no-auto to only show it.
 
 With --cascade, each issue also closes every open descendant beneath it
 (children via parent-child edges, recursively). Descendants close first, so
@@ -57,7 +55,8 @@ waived: a descendant that cannot close (blocked, pinned, or a gate not yet
 satisfied) stays open — pruned from the cascade — and keeps its ancestors
 open with it through the same guard, unless --force is also given.
 Already-closed descendants are left untouched, and walking through them is
-how stranded open grandchildren under a closed child are recovered.`,	// Refuse a missing ID in argument validation, before root's
+how stranded open grandchildren under a closed child are recovered.`,
+	// Refuse a missing ID in argument validation, before root's
 	// PersistentPreRunE can open the store, migrate, or auto-import
 	// (bd-m00pb); see updateCmd for the full rationale.
 	Args: func(cmd *cobra.Command, args []string) error {
@@ -205,18 +204,12 @@ how stranded open grandchildren under a closed child are recovered.`,	// Refuse 
 		// it, which is why a blocked descendant without --force stops its
 		// ancestors rather than orphaning them.
 		var cascadeExp *cascadeExpansion
-		// typedCount is the pre-expansion survivor count: the argument slots
-		// the cascade items are numbered after. A typed argument the
-		// preflight refused never became an item, so this — not
-		// len(resolvedIDs) — is where the discovered items' outcome slots
-		// begin, and the report loop below must read them there.
-		typedCount := len(plan.items)
 		if cascade {
 			cascadeExp, err = expandCloseCascadeForResults(ctx, plan, force)
 			if err != nil {
 				return HandleErrorRespectJSON("%v", err)
 			}
-			plan.items = orderCloseCascade(plan.items, cascadeExp)
+			plan.items = orderCloseCascade(plan.items, len(resolvedIDs), cascadeExp)
 		}
 		outcomeSlots := len(resolvedIDs) + cascadeExp.cascadeCount()
 		outcomes, claimedNext := closeDirectRun(opsCtx, closeDirectBatches(plan.items), outcomeSlots,
@@ -341,13 +334,13 @@ how stranded open grandchildren under a closed child are recovered.`,	// Refuse 
 				failures = append(failures, closeIDFailure{ID: r.id, Error: r.refusal})
 			}
 			for j, ci := range cascadeExp.items {
-				res := outcomes[typedCount+j]
+				res := outcomes[len(resolvedIDs)+j]
 				if res == nil {
 					continue // never: every item slot gets an outcome
 				}
 				if res.Err != nil {
 					fmt.Fprintln(os.Stderr, closeDirectRefusal(ci.id, res.Err))
-					failures = append(failures, closeIDFailure{ID: ci.id, Error: res.Err.Error()})
+					failures = append(failures, closeIDFailure{ID: ci.id, Error: closeDirectTypedRefusal(res.Err)})
 					continue
 				}
 
@@ -365,9 +358,6 @@ how stranded open grandchildren under a closed child are recovered.`,	// Refuse 
 					// suppress the real-close side effects, keep the
 					// retry-safe ones.
 					alreadyClosed++
-					if molID := autoCloseCompletedMolecule(ctx, activeStore, ci.id, actor, session); molID != "" {
-						mutatedStores[activeStore] = append(mutatedStores[activeStore], molID)
-					}
 				} else {
 					mutatedStores[activeStore] = append(mutatedStores[activeStore], ci.id)
 
@@ -375,10 +365,17 @@ how stranded open grandchildren under a closed child are recovered.`,	// Refuse 
 					if ci.issue != nil {
 						oldStatus = string(ci.issue.Status)
 					}
-					audit.LogFieldChange(ci.id, "status", oldStatus, "closed", actor, ci.reason)
+					audit.LogFieldChange(ci.id, "status", oldStatus, "closed", currentActor(), ci.reason)
 					closedCount++
-					autoCloseCompletedMolecule(ctx, activeStore, ci.id, actor, session)
 				}
+
+				// The molecule root this cascade-closed step completed, closed
+				// by the library in the batch's own transaction — same as the
+				// typed loop's outcome-carried report.
+				if molID := reportMoleculeAutoClose(res.AutoClosedMolecule, res.MoleculeAutoCloseRefusal); molID != "" {
+					mutatedStores[activeStore] = append(mutatedStores[activeStore], molID)
+				}
+				noticeUnservedMoleculeAutoClose(ctx, activeStore, ci.id, unservedRoots)
 
 				closedIssue := res.Issue
 				if closedIssue != nil {
@@ -386,7 +383,7 @@ how stranded open grandchildren under a closed child are recovered.`,	// Refuse 
 				}
 				if jsonOutput {
 					if closedIssue != nil {
-						closedIssues = append(closedIssues, closedIssue)
+						closedIssues = append(closedIssues, newClosedIssueJSON(closedIssue, res.AutoClosedMolecule, res.MoleculeAutoCloseRefusal))
 					}
 				} else {
 					debug.PrintNormal("%s Closed %s: %s\n", ui.RenderPass("✓"), formatFeedbackID(ci.id, issueTitleOrEmpty(ci.issue)), ci.reason)
