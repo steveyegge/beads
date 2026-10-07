@@ -2,6 +2,7 @@ package versioncontrolops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -15,6 +16,14 @@ import (
 //  6. Checkout main, hard-reset to temp branch
 //  7. Delete temp branch
 //
+// The plan (boundaryHash, recentHashes) is read from main's log before
+// Compact runs, so the newest commit it names is the head of main it was
+// built from. Compact refuses before step 1 when main's head is already
+// something else, and checks again just before the hard reset in step 6:
+// a commit that reached main after the plan was read is in no cherry-pick,
+// so resetting main past it would delete a write that had already reported
+// success. On a refusal main is left untouched and the temp branch removed.
+//
 // Callers should run PruneRemoteRefs and then DoltGC afterward to reclaim disk
 // space — remote-tracking refs still anchor the pre-compact chain, and GC
 // alone reclaims nothing while they exist (bd-agctw).
@@ -23,6 +32,16 @@ import (
 // stored procedures rely on session-scoped state (current branch, working set).
 func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string, oldCommits int, recentHashes []string) (retErr error) {
 	branchCreated := false
+
+	// The head of main the plan was built from: the newest commit it replays,
+	// or, when it replays none, the boundary commit itself.
+	plannedHead := boundaryHash
+	if len(recentHashes) > 0 {
+		plannedHead = recentHashes[len(recentHashes)-1]
+	}
+	if err := requireMainAt(ctx, conn, plannedHead, "before building the squashed branch"); err != nil {
+		return err
+	}
 
 	// Best-effort cleanup: if any step fails after creating the temp branch,
 	// try to return to main and delete the temp branch so future compactions
@@ -72,6 +91,9 @@ func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string,
 	if err := execSQL("checkout main", "CALL DOLT_CHECKOUT('main')"); err != nil {
 		return err
 	}
+	if err := requireMainAt(ctx, conn, plannedHead, "before resetting main"); err != nil {
+		return err
+	}
 	if err := execSQL("reset main to compacted", "CALL DOLT_RESET('--hard', 'compact-tmp')"); err != nil {
 		return err
 	}
@@ -79,5 +101,23 @@ func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string,
 		return err
 	}
 
+	return nil
+}
+
+// ErrMainMoved reports that main's head is no longer the commit a compaction
+// plan was built from, so the compaction stopped without changing main.
+var ErrMainMoved = errors.New("main moved during compaction")
+
+// requireMainAt returns ErrMainMoved, in words, unless main's head is want.
+func requireMainAt(ctx context.Context, conn DBConn, want, when string) error {
+	var head string
+	if err := conn.QueryRowContext(ctx, "SELECT DOLT_HASHOF('main')").Scan(&head); err != nil {
+		return fmt.Errorf("compact: reading the head of main %s: %w", when, err)
+	}
+	if head != want {
+		return fmt.Errorf("%w: the plan was built from main at %s, but main is now at %s (checked %s); "+
+			"a commit landed after the log was read, so main was left unchanged; run compact again",
+			ErrMainMoved, want, head, when)
+	}
 	return nil
 }
