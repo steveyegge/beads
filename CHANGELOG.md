@@ -1046,7 +1046,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regression test now locks that in rather than leaving it undocumented.
 
 - **`bd delete` no longer resolves an id it cannot find to a different issue
-  whose id begins with it.** The direct (embedded and server) route resolved
+  whose id begins with it.**
+  ([#7375](https://github.com/gastownhall/beads/pull/7375)). The direct
+  (embedded and server) route resolved
   each id with the abbreviation-tolerant resolver, so an id that was already
   gone (a retried delete, a re-run `--from-file` list, a parent whose child
   survives) resolved by leading-prefix match to whichever surviving issue's id
