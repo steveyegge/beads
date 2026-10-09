@@ -2,8 +2,10 @@ package versioncontrolops
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // Compact squashes old Dolt commits into a single base commit while preserving
@@ -160,6 +162,38 @@ func MainHead(ctx context.Context, conn DBConn) (string, error) {
 		return "", err
 	}
 	return head, nil
+}
+
+// TablesChangedBetween names the tables whose rows or schema differ between
+// the commits from and to, read from DOLT_DIFF_SUMMARY. Called with the head a
+// compaction was planned from and the head it left on main, it answers whether
+// the squash and replay changed any data: an empty answer means they did not.
+// Call it before GC, which may remove the planned head's chain. On success the
+// result is never nil, so a JSON encoder writes [] rather than null.
+func TablesChangedBetween(ctx context.Context, conn DBConn, from, to string) ([]string, error) {
+	rows, err := conn.QueryContext(ctx,
+		"SELECT from_table_name, to_table_name FROM DOLT_DIFF_SUMMARY(?, ?)", from, to)
+	if err != nil {
+		return nil, fmt.Errorf("diff summary %s..%s: %w", from, to, err)
+	}
+	defer rows.Close()
+	changed := []string{}
+	for rows.Next() {
+		var fromName, toName sql.NullString
+		if err := rows.Scan(&fromName, &toName); err != nil {
+			return nil, fmt.Errorf("diff summary %s..%s: %w", from, to, err)
+		}
+		name := toName.String
+		if name == "" {
+			name = fromName.String
+		}
+		changed = append(changed, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("diff summary %s..%s: %w", from, to, err)
+	}
+	sort.Strings(changed)
+	return changed, nil
 }
 
 // requireMainAt returns ErrMainMoved, in words, unless main's head is want.
