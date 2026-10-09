@@ -543,7 +543,11 @@ func closeProxiedContinue(ctx context.Context, uw uow.UnitOfWork, closedID strin
 }
 
 func autoCloseProxiedCompletedMolecule(ctx context.Context, uw uow.UnitOfWork, closedStepID string, actorName, session string, warnings *[]string) *types.Issue {
-	moleculeID := proxiedFindParentMolecule(ctx, uw, closedStepID)
+	moleculeID, err := findParentMolecule(ctx, uowMolReader{uw: uw}, closedStepID)
+	if err != nil {
+		*warnings = append(*warnings, fmt.Sprintf("could not check molecule auto-close for %s: %v", closedStepID, err))
+		return nil
+	}
 	if moleculeID == "" {
 		return nil
 	}
@@ -566,6 +570,7 @@ func autoCloseProxiedCompletedMolecule(ctx context.Context, uw uow.UnitOfWork, c
 
 	progress, err := getMoleculeProgress(ctx, uowMolReader{uw: uw}, moleculeID)
 	if err != nil {
+		*warnings = append(*warnings, fmt.Sprintf("could not check molecule auto-close for %s: %v", moleculeID, err))
 		return nil
 	}
 	if progress.Completed < progress.Total {
@@ -578,8 +583,4 @@ func autoCloseProxiedCompletedMolecule(ctx context.Context, uw uow.UnitOfWork, c
 		return nil
 	}
 	return root
-}
-
-func proxiedFindParentMolecule(ctx context.Context, uw uow.UnitOfWork, issueID string) string {
-	return findParentMolecule(ctx, uowMolReader{uw: uw}, issueID)
 }
