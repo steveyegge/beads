@@ -124,12 +124,14 @@ func TestServedReadyExcludesUnsatisfiedExternalDependencyWithoutServerCapability
 
 // TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage pins,
 // against a real served server, the shape the decorator once misread: an
-// unlimited ready listing over http comes back as the server's default page
-// (the wire omits a zero limit) while its total counts the whole ready set.
-// Text-mode `bd ready` counts through CountReadyWork, which always fetches
+// unlimited ready listing over http used to come back as the server's default
+// page (the wire omitted a zero limit) while its total counted the whole ready
+// set. Text-mode `bd ready` counts through CountReadyWork, which always fetches
 // unlimited, so an externally blocked issue sorted past that page stayed in
 // its count when the decorator took the zero limit for a window holding every
-// row.
+// row. Since unlimited reads walk every page (unlimited_read.go) the listing
+// holds that issue too; the count and the default page must still leave it
+// out.
 func TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage(t *testing.T) {
 	env := newServedEnv(t, "hixp")
 	ctx := t.Context()
@@ -165,19 +167,20 @@ func TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage(t *t
 	if err != nil {
 		t.Fatalf("BuildReadyCountFilter: %v", err)
 	}
-	// The premise this test pins: undecorated, the unlimited listing is the
-	// default page, the blocked issue is not on it, and the total counts it.
+	// The premise this test pins: undecorated, the unlimited listing holds
+	// every ready row (no longer only the server's default page), and the
+	// blocked issue sorts past where the default page ends.
 	rows, total, err := env.subject.GetReadyWorkWithCountsAndTotal(ctx, countFilter)
 	if err != nil {
 		t.Fatalf("undecorated GetReadyWorkWithCountsAndTotal over http: %v", err)
 	}
-	if len(rows) != workapi.DefaultReadyLimit || total != workapi.DefaultReadyLimit+2 {
-		t.Fatalf("undecorated unlimited listing over http = %d rows, total %d; want the %d-row default page, total %d; this test's premise no longer holds",
-			len(rows), total, workapi.DefaultReadyLimit, workapi.DefaultReadyLimit+2)
+	if len(rows) != workapi.DefaultReadyLimit+2 || total != workapi.DefaultReadyLimit+2 {
+		t.Fatalf("undecorated unlimited listing over http = %d rows, total %d; want every ready row, %d and total %d; this test's premise no longer holds",
+			len(rows), total, workapi.DefaultReadyLimit+2, workapi.DefaultReadyLimit+2)
 	}
-	for _, row := range rows {
-		if row != nil && row.Issue != nil && row.ID == blockedID {
-			t.Fatalf("%q is on the default page; this test needs it past the page", blockedID)
+	for i, row := range rows {
+		if row != nil && row.Issue != nil && row.ID == blockedID && i < workapi.DefaultReadyLimit {
+			t.Fatalf("%q is row %d, inside the default page; this test needs it past the page", blockedID, i)
 		}
 	}
 
