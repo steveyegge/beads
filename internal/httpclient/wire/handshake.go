@@ -107,8 +107,8 @@ var opCapability = map[string]string{
 	// with a typed capability error instead of dialing a path the older server
 	// would answer as a claim of an issue called ":reclaim".
 	OpReclaimIssues: "issues.reclaim",
-	// The advance-a-molecule role (moleculestepper.go) dials it when served
-	// and composes the same role over this client's own roles when not.
+	// The advance-a-molecule role (molecule.go) dials it when served and
+	// refuses before dialing when not; it never composes a client-side copy.
 	OpAdvanceMolecule: "issues.advanceMolecule",
 }
 
