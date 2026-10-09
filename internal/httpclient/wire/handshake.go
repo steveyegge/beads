@@ -154,6 +154,15 @@ const CapListSort = "issues.list.sort"
 // parity gate compares this client's whole vocabulary with the server's.
 const CapCountScope = "issues.count.scope"
 
+// CapListSearch is the behavior capability announcing that listIssues honors
+// `q`, `bd search`'s free text (issueops.ListRequest.Query), spelled exactly
+// as httpapi's CapIssuesListSearch. The Reader's List reads it off the
+// handshake snapshot and refuses a request that carries Query LOCALLY, with a
+// typed capability error naming this token, when the server does not
+// advertise it — so a search never dials a server that would answer
+// `unknown_parameter`, and is never widened into the unsearched listing.
+const CapListSearch = "issues.list.search"
+
 // CapBatchApplyLarge is the behavior capability announcing that issues.batchApply
 // accepts a batch larger than the compiled-in floor (100 items), up to the
 // raised ceiling (1000), spelled exactly as httpapi's constant of the same name
@@ -382,7 +391,7 @@ var behaviorCapabilities = []string{
 	CapProjectEnforce, CapBatchApplyLarge, CapListSort, CapCountScope,
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
-	CapCloseAutoCloseMolecule,
+	CapCloseAutoCloseMolecule, CapListSearch,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on
