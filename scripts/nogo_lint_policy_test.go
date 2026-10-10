@@ -733,7 +733,7 @@ func checkNogoRaceOwnerBuildsEverything(t *testing.T, in nogoPolicyInputs, error
 // out instead of the step validating a target gazelle no longer builds that
 // way.
 func TestNogoIntegrationStepCoversItsConfiguration(t *testing.T) {
-	root := sourceRepoRoot(t)
+	root := bazelPolicyRoot(t)
 	workflow := readCIWorkflow(t, bazelWorkflowName)
 	job := workflow.job(t, bazelIntegJobName)
 
@@ -780,6 +780,11 @@ func TestNogoIntegrationStepCoversItsConfiguration(t *testing.T) {
 // file that compiles either way (no integration constraint), or that exists
 // only as a _test.go file, is not included: a _test.go file is not a
 // library's ValidateNogo target either way (f5-spec.md §3's accepted loss).
+//
+// Uses repoFiles (//:repo_go_srcs under Bazel, BUILD.bazel's scripts_test
+// data) rather than its own filepath.WalkDir: under Bazel, root is a
+// runfiles symlink forest holding only what the go_test declares as data,
+// not an arbitrary subtree of the checkout.
 func integrationOnlyLibraryPackages(t *testing.T, root string) []string {
 	t.Helper()
 	without := &build.Context{GOOS: "linux", GOARCH: "amd64", Compiler: "gc"}
@@ -787,41 +792,26 @@ func integrationOnlyLibraryPackages(t *testing.T, root string) []string {
 
 	seen := map[string]bool{}
 	var out []string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, rel := range repoFiles(t, root, 500) {
+		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
+			continue
 		}
-		if d.IsDir() {
-			if n := d.Name(); n == ".git" || strings.HasPrefix(n, "bazel-") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		dir, name := filepath.Split(path)
-		matchesWithout, errW := without.MatchFile(dir, name)
-		matchesWith, errT := with.MatchFile(dir, name)
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		name := filepath.Base(rel)
+		dirPath := filepath.Join(root, filepath.FromSlash(dir)) + string(filepath.Separator)
+		matchesWithout, errW := without.MatchFile(dirPath, name)
+		matchesWith, errT := with.MatchFile(dirPath, name)
 		if errW != nil || errT != nil {
-			return nil // an unparsable file is not this scan's concern
+			continue // an unparsable file is not this scan's concern
 		}
 		if !matchesWith || matchesWithout {
-			return nil
+			continue
 		}
-		rel, relErr := filepath.Rel(root, strings.TrimSuffix(dir, string(filepath.Separator)))
-		if relErr != nil {
-			return relErr
-		}
-		pkg := "//" + filepath.ToSlash(rel)
+		pkg := "//" + dir
 		if !seen[pkg] {
 			seen[pkg] = true
 			out = append(out, pkg)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("scan for integration-tagged library files under %s: %v", root, err)
 	}
 	sort.Strings(out)
 	return out

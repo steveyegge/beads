@@ -65,12 +65,17 @@ go_test(
         "worker_env_autosync_test.go",
     ],  # keep
     data = [
+        "//:repo_go_srcs",
         "//:repo_other_files",
         "//internal/testutil:testdoltcommon.go",
         "@go_sdk//:bin/go",
         "@go_sdk//:files",
     ],
     # The Go SDK is go.mod's toolchain, whatever go the executor has on PATH.
+    # //:repo_go_srcs (every non-test .go file, F5 S2): T4
+    # (TestNogoIntegrationStepCoversItsConfiguration, nogo_lint_policy_test.go)
+    # source-scans every library file for the "integration" build tag, so a
+    # Go-only change can now re-run this target too.
     env = {"BEADS_TEST_GO": "$(rlocationpath @go_sdk//:bin/go)"},
     deps = [
         "//internal/formula",
