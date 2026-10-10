@@ -176,7 +176,14 @@ go_test(
 
 # check-testing-short.sh over every Go file, test and non-test, plus the
 # host-go-under-Bazel policy (both the Go-exec and the shell-script half: see
-# host_tool_exec_policy_test.go and host_tool_shell_policy_test.go).
+# host_tool_exec_policy_test.go and host_tool_shell_policy_test.go). The
+# shell-script half's scope now reaches scripts/ci/pr-lint.sh,
+# scripts/check-versions.sh, scripts/upgrade-smoke-test.sh and the
+# .github/scripts/*-test-shard.sh files, and its scope-coverage guard
+# (TestShellPolicyScopeCoversBazelShellData) walks every tracked BUILD.bazel
+# file looking for .sh references outside the declared scope, so //:
+# repo_other_files (every tracked non-Go, non-Markdown file, which is every
+# BUILD and .bzl file plus these scripts) is data here too.
 go_test(
     name = "go_sources_test",
     srcs = [
@@ -201,6 +208,7 @@ go_test(
         "migration-test/lib/binary.sh",
         "//:repo_go_srcs",
         "//:repo_go_test_srcs",
+        "//:repo_other_files",
         "//scripts/repochecks:run_check.sh",
         "//scripts/repochecks:types_gen_drift_test.sh",
     ],
