@@ -15,14 +15,14 @@ package scripts_test
 // requires reading each candidate script's BUILD.bazel wiring (sh_test
 // srcs/args/data, a go_test's data, or a Go test's exec.Command of a fixed
 // script path) by hand; there is no existing Starlark-aware tool in this repo
-// to do that automatically. TestShellPolicyScopeCoversBazelShellData below is
-// a partial, mechanical backstop for that: it fails if a go_test/sh_test's
-// literal `.sh` data/srcs under scripts/ or .github/scripts/ is missing from
-// shellPolicyScope. It cannot see the common run_check.sh-as-launcher pattern
-// (most scripts/repochecks targets pass the real target script as a `arg`,
-// not as `data`/`srcs`, so run_check.sh itself is the only mechanically
-// discoverable entry for that whole family) -- those still need hand curation
-// and citation below.
+// to do that automatically, and no mechanical backstop here either -- see
+// TestShellPolicyScopeCoversBazelShellData's removal note further down for
+// why a regex-based one was tried and dropped. In particular this scope
+// cannot see the common run_check.sh-as-launcher pattern (most
+// scripts/repochecks targets pass the real target script as an `arg`, not as
+// `data`/`srcs`, so run_check.sh itself is the only mechanically discoverable
+// entry for that whole family) -- those still need hand curation and
+// citation below.
 //
 // shellPolicyScope is that set, as of this writing, with how each entry was
 // confirmed to run under `bazel test`:
@@ -59,6 +59,15 @@ package scripts_test
 //                                    sh_test (tests/upgrade_smoke/defs.bzl); IS
 //                                    Bazel-executed, unlike what an earlier
 //                                    revision of this comment claimed
+//   scripts/test.sh                  reached via //:repo_other_files (the
+//                                    scripts/** glob) as shell_scripts_test's
+//                                    data; test_script_test.go execs it 6
+//                                    times with a fake go/prebuilt-bd driver
+//                                    first on PATH
+//   scripts/conformance.sh           ditto; conformance_script_test.go execs
+//                                    it 4 times with a fake go on PATH
+//   scripts/release.sh               ditto; release_script_test.go execs it
+//                                    with a fake bd first on PATH
 //   .github/scripts/embedded-test-shard.sh         arg of cmd/bd's
 //   .github/scripts/embedded-storage-test-shard.sh  bd_embedded_test/_part2_test,
 //   .github/scripts/proxied-test-shard.sh           embeddeddolt_embedded_test,
@@ -72,13 +81,18 @@ package scripts_test
 // *their* wiring is what puts it in scope transitively through their own
 // scan, not a standalone one for the library file.
 //
-// scripts/test.sh and scripts/conformance.sh are also NOT in scope:
-// scripts/test.sh is exports_files'd only to //test/docsync, which checks
-// that the path it links to resolves, never executing it; scripts/conformance.sh
-// has no BUILD.bazel reference at all. Both run only from a plain developer or
-// CI shell invocation, never inside `bazel test`'s sandbox, so this policy
-// does not apply to them. Widen shellPolicyScope, with the same kind of
-// BUILD.bazel citation as above, if that changes.
+// scripts/test.sh, scripts/conformance.sh and scripts/release.sh ARE in
+// scope: each runs under `bazel test` through the `scripts/**` glob behind
+// //:repo_other_files (shell_scripts_test's data), not through an explicit
+// per-file label -- test_script_test.go execs test.sh 6 times (with a fake
+// `go`/prebuilt-bd driver on PATH), conformance_script_test.go execs
+// conformance.sh 4 times (fake `go` on PATH), and release_script_test.go
+// execs release.sh with a fake `bd` on PATH. An earlier revision of this
+// comment claimed test.sh was only linked-to by //test/docsync and never
+// executed, and that conformance.sh had no BUILD.bazel reference at all and
+// so was out of policy scope entirely; both claims were wrong (gastownhall/
+// beads#7485 review: "test.sh, conformance.sh and release.sh do run under
+// Bazel").
 //
 // Detection is line-based, not a real shell parser: a line is scanned unless
 // it is a `#` comment, inside a `<<'EOF'`/`<<EOF`-style heredoc body, or the
@@ -126,6 +140,9 @@ var shellPolicyScope = []string{
 	"scripts/migration-test/legacy-bridge-test.sh",
 	"scripts/migrate-legacy-to-current.sh",
 	"scripts/upgrade-smoke-test.sh",
+	"scripts/test.sh",
+	"scripts/conformance.sh",
+	"scripts/release.sh",
 	".github/scripts/embedded-test-shard.sh",
 	".github/scripts/embedded-storage-test-shard.sh",
 	".github/scripts/proxied-test-shard.sh",
@@ -211,6 +228,70 @@ var shellExecAllowlist = map[string][]shellAllowlistEntry{
 			why: "scripts/check-versions/pre_push_hook_test.go execs this script directly " +
 				"with fakeGoBuildDir(t) (a stand-in `go` that copies the Bazel-built " +
 				"BEADS_TEST_CHECK_VERSIONS binary instead of compiling from source) first on PATH",
+		},
+	},
+	"scripts/test.sh": {
+		{
+			fn:      "",
+			snippet: `PREBUILT_BD_BIN="$PREBUILT_BD_DIR/bd$(go env GOEXE)"`,
+			why: "test_script_test.go execs test.sh with a fake `go` (and a prebuilt-bd " +
+				"driver copied into place by that fake go's `build` subcommand) first on PATH",
+		},
+		{
+			fn:      "",
+			snippet: `if go build -o "$PREBUILT_BD_BIN" "$REPO_ROOT/cmd/bd"; then`,
+			why:     "same fake-go-first-on-PATH gate as the GOEXE line above",
+		},
+		{
+			// fn is "cleanup_shared_server", not "": these two lines are
+			// top-level script code, textually after that indented,
+			// nested `cleanup_shared_server() { ... }` definition (around
+			// test.sh:191-195). findShellHostToolExecs' end-of-function
+			// detection only recognizes an UNINDENTED closing `}`/`)` (the
+			// column-0 convention every other in-scope script's functions
+			// follow); cleanup_shared_server's own closing brace is
+			// indented, so the scanner never sees this function end and
+			// attributes every later line in the file to it. Keying this
+			// entry by that attribution (rather than fixing the shared
+			// scanner for one nested-function script) keeps this fix
+			// scoped to what review item 1 asked for.
+			fn:      "cleanup_shared_server",
+			snippet: `CMD=(go test -p "$GO_TEST_PKG_PARALLEL" -parallel "$GO_TEST_PARALLEL" -timeout "$TIMEOUT")`,
+			why:     "same fake-go-first-on-PATH gate as the GOEXE line above",
+		},
+		{
+			fn:      "cleanup_shared_server", // see the fn note on the CMD= entry above
+			snippet: `total=$(go tool cover -func="$COVERPROFILE" | awk '/^total:/ {print $NF}')`,
+			why: "same fake-go-first-on-PATH gate; test_script_test.go's fake go's `tool` " +
+				"subcommand (COVERAGE is never requested by the test, so this line only " +
+				"executes under a real invocation, not under the policy's own harness, but " +
+				"the fake go sits first on PATH for the whole script run regardless)",
+		},
+	},
+	"scripts/conformance.sh": {
+		{
+			fn:      "",
+			snippet: `BEADS_TEST_EMBEDDED_DOLT=1 CGO_ENABLED=1 go test -tags "$TAGS" -v \`,
+			why:     "conformance_script_test.go execs conformance.sh with a fake `go` first on PATH",
+		},
+		{
+			fn:      "",
+			snippet: `CGO_ENABLED=1 go test -tags "$TAGS e2e" -timeout 10m ./test/conformance/`,
+			why:     "same fake-go-first-on-PATH gate as Tier 1 above",
+		},
+		{
+			fn:      "",
+			snippet: `go test -tags "$TAGS" -timeout=40m ./internal/httpclient/`,
+			why:     "same fake-go-first-on-PATH gate as Tier 1 above",
+		},
+	},
+	"scripts/release.sh": {
+		{
+			fn:      "",
+			snippet: `BD_CMD=(go run -tags gms_pure_go ./cmd/bd)`,
+			why: "only reached when none of BD, a `bd` on PATH, or $REPO_ROOT/bd resolves the " +
+				"repo formula; release_script_test.go's fixtures always place a fake `bd` that " +
+				"does, on PATH, so this line is never reached by the test's own dataflow",
 		},
 	},
 }
@@ -346,6 +427,46 @@ func insideSpan(spans [][2]int, pos int) bool {
 	return false
 }
 
+// shellDashC matches a `bash -c`/`sh -c`/`zsh -c` invocation up through the
+// opening quote of its command-string argument.
+var shellDashC = regexp.MustCompile(`\b(?:bash|sh|zsh)\b(?:\s+-[A-Za-z]+)*\s+-c\s+`)
+
+// dashCCodeSpans returns the [start,end) span of each quoted command string
+// immediately following a bash/sh/zsh -c on line. Unlike an ordinary quoted
+// string, this one really executes -- `bash -c 'go build -o out ./cmd/bd'`
+// really execs `go build` -- so quotedSpans' default treatment of quoted
+// text as message/pattern prose, not a command, must not apply to it (review:
+// "bash -c 'go build' regressed" -- an earlier revision of this scanner
+// recognized this shape, lost when quotedSpans' quote-aware skip was added).
+func dashCCodeSpans(line string) [][2]int {
+	var spans [][2]int
+	for _, loc := range shellDashC.FindAllStringIndex(line, -1) {
+		i := loc[1]
+		if i >= len(line) {
+			continue
+		}
+		quote := line[i]
+		if quote != '\'' && quote != '"' {
+			continue
+		}
+		j := i + 1
+		for j < len(line) && line[j] != quote {
+			j++
+		}
+		if j < len(line) {
+			spans = append(spans, [2]int{i, j + 1})
+		}
+	}
+	return spans
+}
+
+// quoted reports whether pos lies in a quoted span that is genuinely message
+// text, not a bash/sh/zsh -c command string that happens to be quoted
+// (dashCCodeSpans overrides quotedSpans for exactly that case).
+func quoted(spans, codeSpans [][2]int, pos int) bool {
+	return insideSpan(spans, pos) && !insideSpan(codeSpans, pos)
+}
+
 // findShellHostToolExecs scans src (one shell script's contents) for bare
 // `go <verb>`/`gofmt` lines, skipping comments, heredoc bodies, `command -v`
 // style lookups, and quoted message/pattern text. It reports every hit
@@ -388,9 +509,10 @@ func findShellHostToolExecs(src string) []shellExecHit {
 			// scanned below; only what follows is heredoc body.
 		}
 		spans := quotedSpans(line)
+		codeSpans := dashCCodeSpans(line)
 
 		for _, m := range shellHostToolVerbs.FindAllStringSubmatchIndex(line, -1) {
-			if insideSpan(spans, m[0]) {
+			if quoted(spans, codeSpans, m[0]) {
 				continue
 			}
 			hits = append(hits, shellExecHit{line: lineno, fn: currentFn, snippet: lines[lineno-1], verb: line[m[2]:m[3]]})
@@ -400,7 +522,7 @@ func findShellHostToolExecs(src string) []shellExecHit {
 		}
 		for _, m := range shellGofmtExec.FindAllStringSubmatchIndex(line, -1) {
 			start := strings.Index(line[m[0]:m[1]], "gofmt") + m[0]
-			if insideSpan(spans, start) {
+			if quoted(spans, codeSpans, start) {
 				continue
 			}
 			hits = append(hits, shellExecHit{line: lineno, fn: currentFn, snippet: lines[lineno-1], verb: ""})
@@ -529,12 +651,27 @@ func shellLineGating(src string) map[int]bool {
 	aliases := shellVarAliases(src)
 	var stack []*ifFrame
 	abortSafeFrom := -1 // line after which abort-style safety applies, -1 if none
+	inFunc := false
 	for i, raw := range lines {
 		lineno := i + 1
 		trimmed := strings.TrimSpace(raw)
 		if _, ok := matchFuncStart(trimmed); ok {
 			stack = nil
 			abortSafeFrom = -1
+			inFunc = true
+		} else if inFunc && (raw == "}" || raw == ")") {
+			// An unindented closing brace/paren alone on a line ends the
+			// function (matchFuncStart's own column-0 anchoring assumes
+			// every function body line in this policy's scope is indented,
+			// the same convention findShellHostToolExecs's currentFn
+			// tracking uses). Without this reset, abort-style safety
+			// computed inside one function (e.g. upgrade-smoke-test.sh's
+			// build_candidate) leaked into whatever top-level code follows
+			// the function, long after it closed (review: "the abort/skip
+			// gate state isn't reset at function end").
+			stack = nil
+			abortSafeFrom = -1
+			inFunc = false
 		}
 		switch {
 		case strings.HasPrefix(trimmed, "if ") || trimmed == "if":
@@ -814,6 +951,41 @@ func TestShellHostToolExecPolicyScan(t *testing.T) {
 		}
 	})
 
+	t.Run("abort-style safety does not leak into top-level code after the function ends (mutation check, review: upgrade-smoke-test.sh)", func(t *testing.T) {
+		// The previous test only pinned that a SECOND function doesn't
+		// inherit the gate (matchFuncStart resets state when a new function
+		// starts). This pins the bug the review actually found: top-level
+		// code AFTER a function closes, with no new function definition in
+		// between, must not inherit abort-style safety computed inside that
+		// function either -- the shape scripts/upgrade-smoke-test.sh uses
+		// (a top-level `go build` after build_candidate()).
+		src := "#!/usr/bin/env bash\n" +
+			"build_candidate() {\n" +
+			"    if [ -n \"${CANDIDATE_BIN:-}\" ]; then\n" +
+			"        return\n" +
+			"    fi\n" +
+			"    true\n" +
+			"}\n" +
+			"go build -o out ./cmd/bd\n"
+		if shellLineGating(src)[8] {
+			t.Fatal("line 8 is top-level code after the function closed; must not inherit " +
+				"build_candidate's abort-style safety")
+		}
+	})
+
+	t.Run("bash -c 'go build' is detected (mutation check, review regression)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"bash -c 'go build -o out ./cmd/bd'\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 || hits[0].line != 2 || hits[0].verb != "build" {
+			t.Fatalf("got %+v, want one `build` hit at line 2: bash -c's quoted argument really "+
+				"execs go build, it is not message text", hits)
+		}
+		if shellLineGating(src)[2] {
+			t.Fatal("fixture has no gate; line 2 must not be reported safe")
+		}
+	})
+
 	t.Run("an alias of a Bazel-set var still gates (review point 1, shard-script pattern)", func(t *testing.T) {
 		src := "#!/usr/bin/env bash\n" +
 			"CMD_BINARY=\"${BEADS_TEST_CMD_BINARY:-/tmp/bd-cmd-test}\"\n" +
@@ -911,73 +1083,21 @@ func TestShellPolicyScopeFilesExist(t *testing.T) {
 	}
 }
 
-// bazelShSrcsData matches a literal `.sh` string under scripts/ or
-// .github/scripts/ inside a BUILD.bazel `data = [...]` or `srcs = [...]`
-// list. It is intentionally narrow -- see the package comment -- and does
-// not attempt to parse Starlark generally.
-var bazelShSrcsData = regexp.MustCompile(`"(?://)?:?((?:scripts|\.github/scripts)/[\w./-]+\.sh)"`)
-
-// shellScopeGuardExceptions lists repo-relative .sh paths that a BUILD.bazel
-// data/srcs literal can legitimately reference without being in
-// shellPolicyScope, because they are not actually run as a shell program by
-// the Bazel action that lists them (e.g. test fixture input, or a doc-link
-// check's target file).
-var shellScopeGuardExceptions = map[string]bool{
-	"scripts/repochecks/testdata/assert_tree.sh": true,
-	"scripts/test.sh": true, // //test/docsync link-check target, never exec'd
-}
-
-// TestShellPolicyScopeCoversBazelShellData is a partial, mechanical backstop
-// for shellPolicyScope (review point 3): it fails if some BUILD.bazel's
-// go_test/sh_test data or srcs literally names a scripts/ or
-// .github/scripts/ `.sh` file that is in neither shellPolicyScope nor
-// shellScopeGuardExceptions. It cannot discover the run_check.sh-as-launcher
-// family (the real target script is passed as an `arg`, not `data`/`srcs`
-// there), so it is not a substitute for the hand curation above -- only a
-// guard against a newly-added literal reference going unnoticed.
-func TestShellPolicyScopeCoversBazelShellData(t *testing.T) {
-	root := sourceRepoRoot(t)
-	inScope := map[string]bool{}
-	for _, rel := range shellPolicyScope {
-		inScope[rel] = true
-	}
-	var buildFiles []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			if info.Name() == ".git" || info.Name() == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if info.Name() == "BUILD.bazel" {
-			buildFiles = append(buildFiles, path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", root, err)
-	}
-	if len(buildFiles) < 5 {
-		t.Fatalf("found only %d BUILD.bazel files under %s; walk is probably broken", len(buildFiles), root)
-	}
-	for _, bf := range buildFiles {
-		data, err := os.ReadFile(bf)
-		if err != nil {
-			t.Fatalf("read %s: %v", bf, err)
-		}
-		for _, m := range bazelShSrcsData.FindAllStringSubmatch(string(data), -1) {
-			rel := m[1]
-			if inScope[rel] || shellScopeGuardExceptions[rel] {
-				continue
-			}
-			t.Errorf("%s: references %q as Bazel test data/srcs, but it is in neither "+
-				"shellPolicyScope nor shellScopeGuardExceptions; add it to shellPolicyScope "+
-				"(with a BUILD.bazel citation, see the package comment) or to "+
-				"shellScopeGuardExceptions if it is not actually exec'd as a shell program",
-				bf, rel)
-		}
-	}
-}
+// TestShellPolicyScopeCoversBazelShellData (review point 3's mechanical
+// backstop: a regex walk over every BUILD.bazel looking for a literal `.sh`
+// path under scripts/ or .github/scripts/ in a data/srcs list) was removed
+// (gastownhall/beads#7485 review item 4). Its regex could not parse a
+// `//pkg:file.sh` label, a `.bzl` file, or a glob() -- the three real
+// reference shapes this repo's BUILD files actually use for most scripts in
+// shellPolicyScope above -- so even with //:repo_other_files (every tracked
+// BUILD/.bzl/script file) as data, it would not have caught
+// check-versions.sh, scripts/test.sh, scripts/conformance.sh or
+// scripts/release.sh going missing from shellPolicyScope; a hand reviewer
+// citing each script's BUILD wiring (as the comment above does) is what
+// actually found them. Paying //:repo_other_files' cost on every target that
+// used it (758 extra input files, a measured 91.5%->96% rise in this
+// package's cache-rerun rate across the whole repo) for a check that was
+// already demonstrably incomplete was not worth it; there is no `bazel
+// query`-free static check of Starlark label/glob references this policy can
+// do honestly, so shellPolicyScope's accuracy depends on the hand curation
+// above, same as the run_check.sh-as-launcher family already did.

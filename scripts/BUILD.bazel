@@ -175,22 +175,42 @@ go_test(
 )
 
 # check-testing-short.sh over every Go file, test and non-test, plus the
-# host-go-under-Bazel policy (both the Go-exec and the shell-script half: see
-# host_tool_exec_policy_test.go and host_tool_shell_policy_test.go). The
-# shell-script half's scope now reaches scripts/ci/pr-lint.sh,
-# scripts/check-versions.sh, scripts/upgrade-smoke-test.sh and the
-# .github/scripts/*-test-shard.sh files, and its scope-coverage guard
-# (TestShellPolicyScopeCoversBazelShellData) walks every tracked BUILD.bazel
-# file looking for .sh references outside the declared scope, so //:
-# repo_other_files (every tracked non-Go, non-Markdown file, which is every
-# BUILD and .bzl file plus these scripts) is data here too.
+# Go-exec half of the host-go-under-Bazel policy (host_tool_exec_policy_test.go
+# scans //:repo_go_srcs and //:repo_go_test_srcs for a literal go/gofmt exec).
+# The shell-script half (host_tool_shell_policy_test.go) is its own
+# :shell_host_tool_policy_test below: it reads a fixed, narrow list of shell
+# scripts, not every Go source file, so it would otherwise pay this target's
+# full re-run cost for files it never looks at.
 go_test(
     name = "go_sources_test",
     srcs = [
         "host_tool_exec_policy_test.go",
-        "host_tool_shell_policy_test.go",
         "repo_helpers_test.go",
         "testing_short_tree_test.go",
+    ],
+    data = [
+        "check-testing-short.sh",
+        "//:repo_go_srcs",
+        "//:repo_go_test_srcs",
+    ],
+    deps = ["//internal/testutil/bazeltest"],
+)
+
+# The shell-script half of the host-go-under-Bazel policy
+# (host_tool_shell_policy_test.go: see its package comment for shellPolicyScope
+# and the detection tradeoffs). Split out of go_sources_test (which otherwise
+# re-ran on every Go-source change to serve only this file) with data limited
+# to exactly the shell scripts shellPolicyScope names -- no BUILD.bazel/.bzl
+# walk, and so no //:repo_other_files: TestShellPolicyScopeCoversBazelShellData
+# (dropped; see that test's old doc comment in version control) could not
+# parse a `//pkg:file.sh` label or a glob() either, so paying 758 extra input
+# files and ~4 points of cache-rerun rate across the whole repo for a walk
+# that demonstrably still missed real in-scope scripts was not worth it.
+go_test(
+    name = "shell_host_tool_policy_test",
+    srcs = [
+        "host_tool_shell_policy_test.go",
+        "repo_helpers_test.go",
     ],
     data = [
         "check-build-tags.sh",
@@ -198,17 +218,24 @@ go_test(
         "check-go-install-guidance.sh",
         "check-migration-hygiene.sh",
         "check-testing-short.sh",
+        "check-versions.sh",
         "check-winget-portable-alias.sh",
         "check-workapi-frontend-boundary.sh",
         "ci/fmt-check.sh",
         "ci/gofmt-bin.sh",
+        "ci/pr-lint.sh",
+        "conformance.sh",
         "migrate-legacy-to-current.sh",
         "migration-test/historical-dolt-upgrade-test.sh",
         "migration-test/legacy-bridge-test.sh",
         "migration-test/lib/binary.sh",
-        "//:repo_go_srcs",
-        "//:repo_go_test_srcs",
-        "//:repo_other_files",
+        "release.sh",
+        "test.sh",
+        "upgrade-smoke-test.sh",
+        "//:.github/scripts/embedded-storage-test-shard.sh",
+        "//:.github/scripts/embedded-test-shard.sh",
+        "//:.github/scripts/proxied-test-shard.sh",
+        "//:.github/scripts/server-storage-test-shard.sh",
         "//scripts/repochecks:run_check.sh",
         "//scripts/repochecks:types_gen_drift_test.sh",
     ],

@@ -142,6 +142,15 @@ func newFuncScopes(file *ast.File) *funcScopes {
 		prebuiltVars := prebuiltResultVars(scope)
 		found := false
 		ast.Inspect(scope, func(n ast.Node) bool {
+			// Do not descend into a nested func literal: its gate (or lack
+			// of one) belongs to that closure's own scope, not to pos's
+			// enclosing scope. Without this, a gate inside a sibling
+			// t.Run(...) closure (or any other func literal) would be
+			// treated as covering an exec outside it entirely
+			// (gastownhall/beads#7485 review, "sibling closures").
+			if _, ok := n.(*ast.FuncLit); ok && n != scope {
+				return false
+			}
 			ifStmt, ok := n.(*ast.IfStmt)
 			if !ok {
 				return true
@@ -153,14 +162,21 @@ func newFuncScopes(file *ast.File) *funcScopes {
 			// Abort style: the if's body aborts (never falls through to the
 			// rest of the enclosing scope) exactly when ifStmt.Cond is true.
 			// If Cond is true precisely when running under Bazel, the rest
-			// of the scope -- wherever pos sits in it -- is reachable only
-			// off Bazel: a real gate, independent of whether pos is
+			// of the scope -- wherever pos sits in it, PROVIDED pos is not
+			// itself inside this same Bazel-true branch -- is reachable
+			// only off Bazel: a real gate, independent of whether pos is
 			// textually before or after this if (deliberately permissive,
-			// see the package comment). If Cond is true precisely when NOT
-			// under Bazel (the inverted case), the rest of the scope is
-			// reachable ONLY under Bazel -- the opposite of a gate -- so
-			// this must not set found.
-			if bazelWhenTrue && blockAborts(ifStmt.Body) {
+			// see the package comment). The !within(ifStmt.Body, pos)
+			// guard makes that provision exact: `if bazeltest.IsBazel() {
+			// exec.Command("go", ...); return }` has bazelWhenTrue=true
+			// and an aborting body, but the exec sits INSIDE that same
+			// true-under-Bazel branch, before its own return -- it runs
+			// under Bazel every time, so this must not set found
+			// (gastownhall/beads#7485 review, "M17"). If Cond is true
+			// precisely when NOT under Bazel (the inverted case), the
+			// rest of the scope is reachable ONLY under Bazel -- the
+			// opposite of a gate -- so this must not set found either.
+			if bazelWhenTrue && blockAborts(ifStmt.Body) && !within(ifStmt.Body, pos) {
 				found = true
 			}
 			// Containment style: pos sits inside a branch that only runs
@@ -639,6 +655,54 @@ func build() {
 		hits := findHostToolExecCalls(fset, f, lines)
 		if len(hits) != 1 || !hits[0].gated {
 			t.Fatalf("hits = %+v, want one gated hit", hits)
+		}
+	})
+
+	t.Run("exec inside the Bazel-true branch, before its own abort, is not gated (mutation check, review M17)", func(t *testing.T) {
+		// `if bazeltest.IsBazel() { exec.Command("go", ...); return }` runs
+		// the exec every time Bazel is true -- the opposite of safe. The old
+		// abort-style check only looked at whether ifStmt.Body aborts
+		// anywhere in it, not at whether pos (the exec) sits inside that
+		// same true-under-Bazel body ahead of the abort.
+		fset, f, lines := parse(t, `package p
+
+import "os/exec"
+
+func build() {
+	if bazeltest.IsBazel() {
+		exec.Command("go", "build")
+		return
+	}
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the exec runs every time Bazel is true, "+
+				"before the branch's own return", hits)
+		}
+	})
+
+	t.Run("a gate inside a sibling closure does not cover an exec outside it (mutation check, review sibling-closures)", func(t *testing.T) {
+		// The gate lives inside a t.Run func literal; the exec is a sibling
+		// statement in the outer test function, not reached by descending
+		// into that closure.
+		fset, f, lines := parse(t, `package p
+
+import "os/exec"
+
+func TestX(t *testing.T) {
+	t.Run("sub", func(t *testing.T) {
+		if bazeltest.IsBazel() {
+			return
+		}
+	})
+	exec.Command("go", "build")
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the gate is inside a sibling closure, "+
+				"not the outer function's own scope", hits)
 		}
 	})
 
