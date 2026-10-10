@@ -57,6 +57,7 @@ go_test(
         "host_tools_test.go",
         "makefile_bazel_primary_test.go",
         "migration_corpus_bazel_test.go",
+        "nogo_integration_step_script_test.go",
         "nogo_lint_policy_test.go",
         "pinned_shards_helpers_test.go",
         "pinned_shards_test.go",

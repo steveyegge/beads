@@ -13,9 +13,17 @@ nogo actions, and only the owner's own keys are actually validated.
 
 Scope (S1): the race configuration group only -- bazel-test (owner, race)
 vs. embedded/doltserver/doltserver-proxied/dolt-race (non-owners, which pass
---norun_validations). The integration group (S2) is out of scope until its
-lanes gain the same split; see scripts/nogo_lint_policy_test.go's
-nogoConfigurations table, which this script's RACE_GROUP mirrors.
+--norun_validations); see scripts/nogo_lint_policy_test.go's
+nogoConfigurations table, which this script's RACE_GROUP mirrors. The
+integration group (S2) has since gained its own validating lane -- a narrow
+`bazel build --output_groups=nogo_fix` step over the integration-only
+go_library targets, not a full validating test lane -- checked statically by
+nogo_lint_policy_test.go's checkNogoOnlyStepRow and
+nogo_integration_scan_test.go (independent review of #7486, latent item);
+this script's dynamic aquery/query-based action-key cross-check is still S1
+(RACE_GROUP) only, since S2's owner has no non-owner test lane building the
+same configuration to compare actions against -- there is nothing dynamic
+left to cross-check for S2 the way there is for S1.
 
 Each config's key-affecting flags (the same fingerprint
 scripts/nogo_lint_policy_test.go's nogoKeyFlags parses) are read

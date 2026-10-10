@@ -16,11 +16,42 @@ import (
 	"go/build"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"testing"
 )
+
+// goLibraryNamePattern finds a go_library rule's own "name" attribute,
+// assumed to be the first go_library block in the file (every scanned
+// package here is a single-package Go directory with at most one
+// non-test go_library). Used by integrationOnlyLibraryTargets (independent
+// review of #7486, must-fix 2) to pin the nogo-only step's exact target
+// label, not just its package: a package-only comparison would accept the
+// step retargeted at any other rule in the same package (e.g. the
+// package's :repo_doc_files filegroup), silently validating nothing.
+var goLibraryNamePattern = regexp.MustCompile(`go_library\(\s*\n\s*name = "([^"]+)"`)
+
+// integrationOnlyLibraryTargets pairs each of integrationOnlyLibraryPackages'
+// packages with its go_library target name, read from the package's own
+// BUILD.bazel, returning full Bazel labels ("//dir:name"). A bare package
+// label does not pin which target within it the nogo-only step must build.
+func integrationOnlyLibraryTargets(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	for _, pkg := range integrationOnlyLibraryPackages(t, root) {
+		dir := strings.TrimPrefix(pkg, "//")
+		build := readPolicyFile(t, root, filepath.Join(filepath.FromSlash(dir), "BUILD.bazel"))
+		m := goLibraryNamePattern.FindStringSubmatch(build)
+		if m == nil {
+			t.Fatalf("%s has no go_library rule in its BUILD.bazel; integrationOnlyLibraryPackages found it by source files, but there is no target to pin a label for", pkg)
+		}
+		out = append(out, pkg+":"+m[1])
+	}
+	sort.Strings(out)
+	return out
+}
 
 // T4 TestNogoIntegrationStepCoversItsConfiguration: f5-spec.md §6 T4
 // (Variant A). bazel-integration's nogo-only step's target set must be
@@ -31,6 +62,15 @@ import (
 // silently losing coverage, and a file that stops needing the tag drops
 // out instead of the step validating a target gazelle no longer builds that
 // way.
+//
+// The comparison is by exact label ("//pkg:name"), not package alone, and a
+// "-//" exclusion pattern on the step's command line is rejected outright,
+// as TestNogoRaceOwnerBuildsEverything (T3) already does for the race
+// owner's own target set (independent review of #7486, must-fix 2): a
+// package-only match would accept the step retargeted at a different rule
+// in the same package (e.g. :repo_doc_files), or let a "-//..." pattern
+// silently exclude a target the source scan found, with nothing here
+// noticing either way.
 func TestNogoIntegrationStepCoversItsConfiguration(t *testing.T) {
 	root := bazelPolicyRoot(t)
 	workflow := readCIWorkflow(t, bazelWorkflowName)
@@ -50,24 +90,26 @@ func TestNogoIntegrationStepCoversItsConfiguration(t *testing.T) {
 
 	got := map[string]bool{}
 	for _, a := range nogoArgs {
-		if strings.HasPrefix(a, "//") {
-			pkg, _, _ := strings.Cut(a, ":")
-			got[pkg] = true
+		switch {
+		case strings.HasPrefix(a, "-//"):
+			t.Errorf("%s's nogo-only step excludes a target (%s) with a negative pattern; every target the source scan found must be built, not excluded", bazelIntegJobName, a)
+		case strings.HasPrefix(a, "//"):
+			got[a] = true
 		}
 	}
 
-	want := integrationOnlyLibraryPackages(t, root)
+	want := integrationOnlyLibraryTargets(t, root)
 	if len(want) == 0 {
-		t.Fatal("source scan found no integration-tagged library package; the scan itself is broken")
+		t.Fatal("source scan found no integration-tagged library target; the scan itself is broken")
 	}
-	for _, pkg := range want {
-		if !got[pkg] {
-			t.Errorf("source scan found integration-tagged library package %s with no target in %s's nogo-only step (targets: %v)", pkg, bazelIntegJobName, nogoArgs)
+	for _, target := range want {
+		if !got[target] {
+			t.Errorf("source scan found integration-only go_library target %s with no exact match in %s's nogo-only step (targets: %v)", target, bazelIntegJobName, nogoArgs)
 		}
 	}
-	for pkg := range got {
-		if !slices.Contains(want, pkg) {
-			t.Errorf("%s's nogo-only step targets %s, which the source scan does not classify as an integration-tagged library package (scan found: %v)", bazelIntegJobName, pkg, want)
+	for target := range got {
+		if !slices.Contains(want, target) {
+			t.Errorf("%s's nogo-only step targets %s, which is not one of the exact go_library labels the source scan found (scan found: %v); a retargeted label (even one in the same package) would silently stop validating the real target", bazelIntegJobName, target, want)
 		}
 	}
 }
