@@ -385,6 +385,45 @@ func TestCursorProbeErrorIsNotTreatedAsContradicted(t *testing.T) {
 	}
 }
 
+// The floored-table loop must surface a probe failure the same way, and the
+// test above cannot reach it: its blanket error fails the floor-0 wisps probe
+// and returns there. So each case reads every other sentinel table present and
+// fails exactly one floored table. Reading that error as "absent" would clamp a
+// healthy at-latest cursor to the table's replayFloor and replay the tail on a
+// catalog nobody could read; skipping it would believe the cursor over a table
+// that may be missing.
+func TestFlooredTableProbeErrorIsNotTreatedAsContradicted(t *testing.T) {
+	if len(ignoredSource.sentinelFlooredTables) == 0 {
+		t.Fatal("ignoredSource has no floored sentinel tables; this guard is inert")
+	}
+	boom := errors.New("information_schema unavailable")
+	for _, failing := range ignoredSource.sentinelFlooredTables {
+		t.Run(failing.table, func(t *testing.T) {
+			present := allSentinelTables()
+			orig := sentinelTableExists
+			t.Cleanup(func() { sentinelTableExists = orig })
+			sentinelTableExists = func(_ context.Context, _ DBConn, table string) (bool, error) {
+				if table == failing.table {
+					return false, boom
+				}
+				return present[table], nil
+			}
+			columnProbed := stubSentinelColumns(t, map[string]bool{"leases.granted_node": true}, nil)
+
+			_, limited, err := ignoredSource.cursorRealityFloor(context.Background(), nil)
+			if !errors.Is(err, boom) {
+				t.Errorf("floored-table probe error was swallowed: err = %v", err)
+			}
+			if limited {
+				t.Error("an unreadable floored-table probe reported the cursor as contradicted")
+			}
+			if len(*columnProbed) != 0 {
+				t.Errorf("column sentinels %v were probed after a floored-table probe failed", *columnProbed)
+			}
+		})
+	}
+}
+
 // The main series is deliberately unguarded: its tables are not clone-local,
 // so it cannot reach the contradicted state, and probing would add queries to
 // every store open for nothing. cursorRealityFloor must be a no-op for it —
