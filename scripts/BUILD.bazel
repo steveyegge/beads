@@ -40,6 +40,7 @@ go_test(
         "bazel_fork_mode_test.go",
         "bazel_go_repository_tools_test.go",
         "bazel_hermetic_cc_test.go",
+        "bazel_invocations_test.go",
         "bazel_policy_test.go",
         "bazel_rbe_prewarm_test.go",
         "bazel_rrc_test.go",
@@ -50,6 +51,7 @@ go_test(
         "ci_f7c_advisory_test.go",
         "ci_merge_queue_test.go",
         "ci_workflow_apt_get_timeout_test.go",
+        "ci_workflow_core_test.go",
         "ci_workflow_test.go",
         "embedded_shard_count_test.go",
         "host_tools_test.go",
@@ -65,22 +67,52 @@ go_test(
         "worker_env_autosync_test.go",
     ],  # keep
     data = [
-        "//:repo_go_srcs",
         "//:repo_other_files",
         "//internal/testutil:testdoltcommon.go",
         "@go_sdk//:bin/go",
         "@go_sdk//:files",
     ],
     # The Go SDK is go.mod's toolchain, whatever go the executor has on PATH.
-    # //:repo_go_srcs (every non-test .go file, F5 S2): T4
-    # (TestNogoIntegrationStepCoversItsConfiguration, nogo_lint_policy_test.go)
-    # source-scans every library file for the "integration" build tag, so a
-    # Go-only change can now re-run this target too.
+    # No //:repo_go_srcs here (F5 S2, cost fix, independent review of #7486):
+    # T4 (TestNogoIntegrationStepCoversItsConfiguration) and the
+    # unvalidated_integration_tests.txt exactness check moved to their own
+    # :nogo_integration_scan_test target below, which alone depends on
+    # //:repo_go_srcs and //:repo_go_test_srcs, so a Go-only change no longer
+    # re-runs the rest of this suite too.
     env = {"BEADS_TEST_GO": "$(rlocationpath @go_sdk//:bin/go)"},
     deps = [
         "//internal/formula",
         "//internal/testutil/bazeltest",
         "//scripts/internal/testbash",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+# T4 (TestNogoIntegrationStepCoversItsConfiguration) and T6
+# (TestUnvalidatedIntegrationTestsFileIsExact, independent review of #7486
+# must-fix 6): both source-scan every tracked .go file (test and non-test)
+# for the "integration" build tag, so they alone depend on //:repo_go_srcs
+# and //:repo_go_test_srcs. Carved out of scripts_test (cost fix, same
+# review): with this data in scripts_test, any Go-only change re-ran the
+# whole nogo-policy suite, raising scripts_test's rerun rate from 73% to 91%
+# of main commits. bazel_invocations_test.go and ci_workflow_core_test.go are
+# helper-only files (no Test functions) shared with scripts_test, so neither
+# copy duplicates the other's parsing logic.
+go_test(
+    name = "nogo_integration_scan_test",
+    srcs = [
+        "bazel_invocations_test.go",
+        "ci_workflow_core_test.go",
+        "nogo_integration_scan_test.go",
+        "repo_helpers_test.go",
+    ],  # keep
+    data = [
+        "//:repo_go_srcs",
+        "//:repo_go_test_srcs",
+        "//:repo_other_files",
+    ],
+    deps = [
+        "//internal/testutil/bazeltest",
         "@in_gopkg_yaml_v3//:yaml_v3",
     ],
 )

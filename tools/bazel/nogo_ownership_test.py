@@ -147,6 +147,40 @@ class NogoOwnershipTest(unittest.TestCase):
         acts = [("RunNogo", "k-lib", "//b:lib")]
         self.assertEqual(self.run_main(FakeBazel(lambda e: acts, lambda e: acts), rc), 2)
 
+    def test_non_owner_empty_action_set_is_a_fail_not_a_vacuous_pass(self):
+        # independent review of #7486, should-fix: a non-owner query that
+        # matches nothing (bad universe expression, a renamed mnemonic local
+        # to that lane) must not report full coverage just because the
+        # (then-empty) missing set is vacuously empty too. Mirrors
+        # test_empty_owner_and_non_owner_action_sets_is_a_fail_not_a_vacuous_pass,
+        # but with a non-empty owner side, so only the should-fix's new
+        # non-owner guard (not the pre-existing owner-empty guard) can catch
+        # it.
+        owner = [("RunNogo", "k-lib", "//b:lib")]
+        self.assertEqual(self.run_main(FakeBazel(lambda e: owner, lambda e: [])), 2)
+
+    def test_expand_config_follows_config_ref_on_a_common_line(self):
+        # independent review of #7486, must-fix 5 (mirrors #7482 should-fix
+        # 1's fix to the Go test's expandBazelrcConfig): a --config=Y
+        # reference reached only through a common: line must still be
+        # followed, not silently dropped.
+        rc = RC + "common:embedded --config=ci\n"
+        got = nogo_ownership.expand_config(rc, "embedded", set())
+        self.assertIn("common --config=ci", got)
+        # The reference is actually followed, not just recorded: ci's own
+        # (and, transitively, prcore's) lines -- reached only through this
+        # common: --config=ci link -- show up too.
+        self.assertIn("test --config=prcore", got)
+        self.assertIn("test --@rules_go//go/config:race", got)
+
+    def test_expand_config_follows_config_ref_not_in_first_position(self):
+        # independent review of #7486, must-fix 5: a --config=Y reference
+        # elsewhere on the line (not the line's first option) must still be
+        # followed.
+        rc = RC + "test:embedded --keep_going --config=prcore\n"
+        got = nogo_ownership.expand_config(rc, "embedded", set())
+        self.assertIn("test --test_tag_filters=-embedded,-manual", got)
+
 
 if __name__ == "__main__":
     unittest.main()

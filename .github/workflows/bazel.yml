@@ -1672,6 +1672,7 @@ jobs:
         if: ${{ always() && steps.test.outcome != 'skipped' }}
         timeout-minutes: 10
         run: |
+          set -o pipefail
           start=$(date +%s)
           rc=0
           bazel build --config=integration --@rules_go//go/config:race --keep_going \
