@@ -131,6 +131,14 @@ class NogoOwnershipTest(unittest.TestCase):
             self.assertIn("//cmd/bd:bd_for_tests", expr)
             self.assertNotIn("//a:manual_test", expr)
 
+    def test_empty_owner_and_non_owner_action_sets_is_a_fail_not_a_vacuous_pass(self):
+        # review of #7482, should-fix 4: non_owner_actions.keys() -
+        # owner_actions.keys() is the empty set whether both sides have
+        # findings in common or neither side has any actions at all (a
+        # mnemonic rename, a broken --config, aquery matching nothing) --
+        # the latter must fail loudly, not report full coverage.
+        self.assertEqual(self.run_main(FakeBazel(lambda e: [], lambda e: [])), 2)
+
     def test_fingerprint_parses_whole_tokens(self):
         # race=false is not the race configuration: it must not fingerprint
         # (and so be queried) as the owner's race build.

@@ -1035,13 +1035,22 @@ Required` requires them to have run remotely and passed.
     `doltserver`, `doltserver-proxied`, `dolt-race` (shadow) and the
     package gates pass `--norun_validations`, since they compile a strict
     subset of what `test` already validates on that configuration
-    (`scripts/nogo_lint_policy_test.go`, engdocs/LINTING.md). The
-    integration configuration (`--config=integration`'s
-    `gms_pure_go,integration` tags) is the exception until F5 S2: its nogo
-    still runs in all three of its required lanes, `bazel-integration`,
-    `bazel-server-storage` (`--config=doltserver-integration`) and
-    `bazel-cmd-dolt` (`--config=doltserver-cmd`), none of which passes
-    `--norun_validations` yet. The former
+    (`scripts/nogo_lint_policy_test.go`, engdocs/LINTING.md). Since F5 S2
+    (Variant A) the integration configuration (`--config=integration`'s
+    `gms_pure_go,integration` tags) is no longer a three-lane exception:
+    `bazel-integration` (`--config=integration`), `bazel-server-storage`
+    (`--config=doltserver-integration`) and `bazel-cmd-dolt`
+    (`--config=doltserver-cmd`) all pass `--norun_validations`. Instead
+    `bazel-integration` runs a narrow extra build step, `Nogo: integration
+    library files`, that validates only `//internal/testutil/integration`
+    (the one non-test library package the `integration` build tag selects)
+    under `--config=integration --@rules_go//go/config:race
+    --output_groups=nogo_fix`. This accepts a coverage loss: the 56
+    integration-tagged `_test.go` files listed in
+    `tools/nogo/unvalidated_integration_tests.txt` are no longer analyzed by
+    nogo in any lane (`scripts/nogo_lint_policy_test.go`'s `integ` row of
+    `nogoConfigurations` and `TestNogoIntegrationStepCoversItsConfiguration`
+    pin this; engdocs/LINTING.md). The former
     `scripts-go-checks` (`Go checks (vet)`) and `pr-lint-wrapper`
     (`PR Lint (native|windows|darwin)`) jobs are retired.
   - The repository policy tests (`./scripts/...`, including the D2 guards)

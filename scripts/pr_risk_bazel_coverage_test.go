@@ -1113,6 +1113,9 @@ var bazelDoltServerRCLines = map[string][]string{
 		"test:doltserver-integration --test_arg=-test.parallel=4",
 		"test:doltserver-integration --local_test_jobs=4",
 		"test:doltserver-integration --remote_download_regex=.*/test\\.(log|xml)$",
+		// F5 S2 Variant A: no full lane validates this configuration; its
+		// owner is bazel-integration's nogo-only step.
+		"test:doltserver-integration --norun_validations",
 		"test:doltserver-integration --experimental_remote_cache_eviction_retries=0",
 	},
 }

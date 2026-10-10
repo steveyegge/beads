@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"fmt"
+	"go/build"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -163,6 +164,15 @@ func nogoKeyFlags(line string) []string {
 // nested --config=Y reference within those lines (as .bazelrc's own comments
 // describe, e.g. test:ci --config=prcore). seen prevents infinite recursion
 // on a cycle.
+//
+// A nested reference is recognized wherever a --config= token appears: on a
+// "common:" line (common applies to build and test alike, so common:ci
+// --config=prcore pulls prcore in exactly as test:ci --config=prcore would),
+// and anywhere among a line's options, not only as the first one (a line
+// "build:ci --stripopt=foo --config=prcore" pulls prcore in too). An earlier
+// version matched only a whole line beginning "build --config=" or "test
+// --config=", so a --config= reference on a common: line, or not in first
+// position, silently expanded to nothing (review of #7482, should-fix 1).
 func expandBazelrcConfig(rc, name string, seen map[string]bool) []string {
 	if seen[name] {
 		return nil
@@ -170,15 +180,12 @@ func expandBazelrcConfig(rc, name string, seen map[string]bool) []string {
 	seen[name] = true
 	var out []string
 	for _, l := range bazelRCConfigLines(rc, name) {
-		if v, ok := strings.CutPrefix(l, "build --config="); ok {
-			out = append(out, expandBazelrcConfig(rc, v, seen)...)
-			continue
-		}
-		if v, ok := strings.CutPrefix(l, "test --config="); ok {
-			out = append(out, expandBazelrcConfig(rc, v, seen)...)
-			continue
-		}
 		out = append(out, l)
+		for _, tok := range strings.Fields(l) {
+			if v, ok := strings.CutPrefix(tok, "--config="); ok {
+				out = append(out, expandBazelrcConfig(rc, v, seen)...)
+			}
+		}
 	}
 	return out
 }
@@ -299,32 +306,58 @@ func jobBazelConfigs(workflow ciWorkflow, job ciWorkflowJob) []string {
 	return out
 }
 
+// nogoConfigurationRow is one row of nogoConfigurations: one Bazel
+// configuration (one nogo fingerprint).
+type nogoConfigurationRow struct {
+	name      string
+	configs   []string // .bazelrc --config names sharing this fingerprint, owner first
+	owner     string   // bazel.yml job name required to validate
+	nonOwners []string // bazel.yml job names required to pass --norun_validations
+	// ownerIsNogoOnlyStep: f5-spec.md §2.3/§5 S2 Variant A. True for a row
+	// where no full lane validates the configuration at all -- every config
+	// in the row, owner's own full lane included, passes --norun_validations
+	// -- and the owner job instead runs a narrow `bazel build
+	// --output_groups=nogo_fix` step that rebuilds only the configuration's
+	// non-test library targets. checkNogoConfigurationsHaveOneValidatingLane
+	// branches on this instead of requiring the owner's full lane to
+	// validate, which Variant A's owner deliberately does not do.
+	ownerIsNogoOnlyStep bool
+}
+
 // nogoConfigurations: f5-spec.md §6 T1's table. Each row is one Bazel
 // configuration (one nogo fingerprint): the .bazelrc --config names (or, for
 // the package gates, a pseudo-config checked against their pinned command
 // line) that build it, the bazel.yml job that owns validating it, and the
 // jobs that must pass --norun_validations instead.
 //
-// Only the race group is classified here (F5 S1). The race+integration
-// group (integration, doltserver-integration, doltserver-cmd) and `pure`'s
-// optional D4a are later slices (f5-spec.md §5 S2, S3): every lane in them
-// still validates today, so they are intentionally left out of this table
-// rather than added as a row that TestNogoConfigurationsHaveOneValidatingLane
-// could never satisfy. `pure`, js/wasm and release-cross are unaffected by
-// any slice (single-lane configurations: there is no other lane to
-// deduplicate against), so they are included as trivial one-member rows for
-// completeness and as a guard against a future lane quietly joining them.
-var nogoConfigurations = []struct {
-	name      string
-	configs   []string // .bazelrc --config names sharing this fingerprint, owner first
-	owner     string   // bazel.yml job name required to validate
-	nonOwners []string // bazel.yml job names required to pass --norun_validations
-}{
+// The race group (F5 S1) and the race+integration group (F5 S2 Variant A:
+// integration, doltserver-integration, doltserver-cmd -- same fingerprint,
+// race=true plus tags=gms_pure_go,integration) are both classified here.
+// Under Variant A no full lane validates the integration group at all (every
+// member config passes --norun_validations); its owner is instead the
+// bazel-integration job's narrow nogo-only step over the group's non-test
+// library package, //internal/testutil/integration (ownerIsNogoOnlyStep;
+// f5-spec.md §2.3). `pure`'s optional D4a split is a later slice (f5-spec.md
+// §5 S3): it still validates in every lane today, so it is intentionally
+// left out of this table rather than added as a row that
+// TestNogoConfigurationsHaveOneValidatingLane could never satisfy. `pure`,
+// js/wasm and release-cross are unaffected by any slice (single-lane
+// configurations: there is no other lane to deduplicate against), so they
+// are included as trivial one-member rows for completeness and as a guard
+// against a future lane quietly joining them.
+var nogoConfigurations = []nogoConfigurationRow{
 	{
 		name:      "race",
 		configs:   []string{"ci", "embedded", "doltserver", "doltserver-proxied", "dolt-race"},
 		owner:     bazelJobName,
 		nonOwners: []string{bazelEmbedJobName, bazelDoltJobName, bazelProxiedJobName, bazelDoltRaceJobName},
+	},
+	{
+		name:                "integ",
+		configs:             []string{"integration", "doltserver-integration", "doltserver-cmd"},
+		owner:               bazelIntegJobName,
+		nonOwners:           []string{bazelServerJobName, bazelCmdDoltJobName},
+		ownerIsNogoOnlyStep: true,
 	},
 	{
 		name:    "pure",
@@ -381,6 +414,11 @@ func checkNogoConfigurationsHaveOneValidatingLane(t *testing.T, in nogoPolicyInp
 			}
 		}
 
+		if row.ownerIsNogoOnlyStep {
+			checkNogoOnlyStepRow(t, rc, workflow, row, ownerFP, errorf)
+			continue
+		}
+
 		ownerJob := workflow.job(t, row.owner)
 		if ownerJob.ContinueOnError {
 			errorf("row %q owner %s has continue-on-error; a skipped finding there would never fail anything", row.name, row.owner)
@@ -415,13 +453,28 @@ func checkNogoConfigurationsHaveOneValidatingLane(t *testing.T, in nogoPolicyInp
 				// line rather than through a named --config
 				// (pr_lanes_bazel_coverage_test.go pins the exact string);
 				// confirmed here against their job's steps instead of
-				// .bazelrc.
+				// .bazelrc. The step's single `bazel build` invocation is
+				// parsed into tokens and fingerprinted exactly as a
+				// .bazelrc --config is (nogoFingerprint), rather than
+				// substring-matched against the raw run text: a substring
+				// check would accept --@rules_go//go/config:race=false (it
+				// contains the race=true flag's text as a prefix) and would
+				// never notice an unrelated key-affecting flag, like
+				// --platforms, drifting between this step and the row's
+				// owner (review of #7482, should-fix 3).
 				step := workflow.job(t, job).step(t, "bazel build //cmd/bd:bd_for_tests")
-				if !strings.Contains(step.Run, "--@rules_go//go/config:race") {
-					errorf("row %q non-owner %s's build step does not build the race configuration: %q", row.name, job, step.Run)
+				invocations := bazelInvocations(step.Run, "build")
+				if len(invocations) != 1 {
+					errorf("row %q non-owner %s's build step runs %d `bazel build` commands, want exactly 1", row.name, job, len(invocations))
+					continue
 				}
-				if !strings.Contains(step.Run, "--norun_validations") {
-					errorf("row %q non-owner %s's build step does not pass --norun_validations", row.name, job)
+				args := invocations[0]
+				fp := nogoFingerprint([]string{"build " + strings.Join(args, " ")})
+				if !sameStringSet(fp, ownerFP) {
+					errorf("row %q non-owner %s's build step fingerprint %v != owner %s's %v", row.name, job, fp, row.configs[0], ownerFP)
+				}
+				if !slices.Contains(args, "--norun_validations") {
+					errorf("row %q non-owner %s's build step does not pass --norun_validations (as its own argument)", row.name, job)
 				}
 				continue
 			}
@@ -454,6 +507,102 @@ func checkNogoConfigurationsHaveOneValidatingLane(t *testing.T, in nogoPolicyInp
 	}
 }
 
+// checkNogoOnlyStepRow checks a row (f5-spec.md §2.3, S2 Variant A) whose
+// owner is not a full validating lane but a narrow nogo-only `bazel build`
+// step: every row.configs member -- the nominal owner's own full lane
+// included -- must pass --norun_validations (Variant A: no full lane
+// validates this configuration at all), and the owner job must run exactly
+// one `bazel build --output_groups=nogo_fix` step whose fingerprint matches
+// the row's, unconditionally capable of failing the job, so it stays the
+// configuration's one validating lane and a drifting flag cannot quietly
+// make it validate something else.
+func checkNogoOnlyStepRow(t *testing.T, rc string, workflow ciWorkflow, row nogoConfigurationRow, ownerFP []string, errorf func(string, ...any)) {
+	t.Helper()
+	for _, c := range row.configs {
+		if !bazelrcConfigSkipsValidations(rc, c) {
+			errorf("row %q (nogo-only-step owner): --config=%s does not pass --norun_validations; under Variant A no full lane validates this configuration, only %s's nogo-only step does", row.name, c, row.owner)
+		}
+	}
+
+	ownerJob := workflow.job(t, row.owner)
+	if ownerJob.ContinueOnError {
+		errorf("row %q owner %s has continue-on-error; a failed nogo-only step there would never fail the job", row.name, row.owner)
+	}
+
+	var nogoSteps []ciWorkflowStep
+	for _, st := range ownerJob.Steps {
+		for _, args := range bazelInvocations(st.Run, "build") {
+			if slices.Contains(args, "--output_groups=nogo_fix") {
+				nogoSteps = append(nogoSteps, st)
+			}
+		}
+	}
+	if len(nogoSteps) != 1 {
+		errorf("row %q: owner %s has %d `bazel build --output_groups=nogo_fix` steps, want exactly 1; it is this configuration's only validating lane", row.name, row.owner, len(nogoSteps))
+		return
+	}
+	step := nogoSteps[0]
+
+	if step.ContinueOnError != nil && step.ContinueOnError != false {
+		errorf("row %q: owner %s's nogo-only step %q has continue-on-error; a finding there would never fail the job", row.name, row.owner, step.Name)
+	}
+	if !strings.Contains(step.Run, "--keep_going") {
+		errorf("row %q: owner %s's nogo-only step %q has no --keep_going; one finding would hide another", row.name, row.owner, step.Name)
+	}
+
+	var lines []string
+	for _, args := range bazelInvocations(step.Run, "build") {
+		if !slices.Contains(args, "--output_groups=nogo_fix") {
+			continue
+		}
+		lines = append(lines, "build "+strings.Join(args, " "))
+		// The command line's own --config=X (e.g. --config=integration)
+		// pulls in its .bazelrc flags (build:integration's tags, here) the
+		// same way an owner config's does; expanded recursively so a
+		// nested --config reference is not missed either.
+		for _, a := range args {
+			if v, ok := strings.CutPrefix(a, "--config="); ok {
+				lines = append(lines, expandBazelrcConfig(rc, v, map[string]bool{})...)
+			}
+		}
+	}
+	fp := nogoFingerprint(lines)
+	if !sameStringSet(fp, ownerFP) {
+		errorf("row %q: owner %s's nogo-only step fingerprint %v != --config=%s's %v; it must build the configuration it is meant to validate", row.name, row.owner, fp, row.configs[0], ownerFP)
+	}
+
+	// Every config in the row, including the owner's own (row.configs[0]),
+	// must actually be run by the job listed for it -- the owner job itself
+	// for row.configs[0] -- read from what each job's bazel commands
+	// select, not from table order, exactly as the full-lane case checks
+	// its non-owners.
+	jobFor := func(job string) []string { return jobBazelConfigs(workflow, workflow.job(t, job)) }
+	if !slices.Contains(jobFor(row.owner), row.configs[0]) {
+		errorf("row %q owner %s runs no bazel test/build with --config=%s (its commands select %v)", row.name, row.owner, row.configs[0], jobFor(row.owner))
+	}
+	usedConfigs := map[string]bool{row.configs[0]: true}
+	for _, job := range row.nonOwners {
+		jobConfigs := jobFor(job)
+		var laneConfigs []string
+		for _, c := range jobConfigs {
+			if slices.Contains(row.configs[1:], c) {
+				laneConfigs = append(laneConfigs, c)
+			}
+		}
+		if len(laneConfigs) == 0 {
+			errorf("row %q non-owner %s runs none of the row's non-owner configs %v (its commands select %v)", row.name, job, row.configs[1:], jobConfigs)
+		}
+		for _, c := range laneConfigs {
+			usedConfigs[c] = true
+		}
+	}
+	for _, c := range row.configs {
+		if !usedConfigs[c] {
+			errorf("row %q config --config=%s is run by none of its jobs (owner %s, non-owners %v)", row.name, c, row.owner, row.nonOwners)
+		}
+	}
+}
+
 // T2 TestNogoOwnersAreRequired: each owner job is required by pr.yml's CI
 // Gate (or, for a flag-gated lane, the flag that is pinned true) with no
 // job-level continue-on-error, and its `if:` runs at least everywhere its
@@ -466,8 +615,9 @@ func TestNogoOwnersAreRequired(t *testing.T) {
 	required := strings.Fields(gateEnv["CI_GATE_REQUIRED"])
 
 	ownerGateToken := map[string]string{
-		bazelJobName:     "BAZEL_TEST",
-		bazelPureJobName: "BAZEL_PURE",
+		bazelJobName:      "BAZEL_TEST",
+		bazelPureJobName:  "BAZEL_PURE",
+		bazelIntegJobName: "BAZEL_INTEGRATION",
 	}
 
 	events := []string{"pull_request", "merge_group", "pull_request_target", "push", "schedule", "workflow_dispatch"}
@@ -558,11 +708,123 @@ func checkNogoRaceOwnerBuildsEverything(t *testing.T, in nogoPolicyInputs, error
 		errorf("%s job has continue-on-error; the race owner's job must be able to fail", bazelJobName)
 	}
 
-	for _, l := range expandBazelrcConfig(in.rc, "ci", map[string]bool{}) {
-		if strings.Contains(l, "build_tests_only") || strings.Contains(l, "build_tag_filters") {
-			errorf("test:ci (or a config it includes) narrows the target set: %q; the race owner must build //... whole", l)
+	// Every --config the owner's own command line selects, each expanded
+	// recursively: not only "ci" (test:ci -> test:prcore), but also any
+	// config bazel.yml adds through a shell variable, like BAZEL_SOLE_RUN's
+	// test:sole-run --build_tests_only. An earlier version checked only
+	// "ci" statically and so missed a narrowing flag reachable solely
+	// through such a variable (review of #7482, should-fix 2).
+	for _, c := range jobBazelConfigs(workflow, ownerJob) {
+		for _, l := range expandBazelrcConfig(in.rc, c, map[string]bool{}) {
+			if strings.Contains(l, "build_tests_only") || strings.Contains(l, "build_tag_filters") {
+				errorf("%s's --config=%s (or a config it includes) narrows the target set: %q; the race owner must build //... whole", bazelJobName, c, l)
+			}
 		}
 	}
+}
+
+// T4 TestNogoIntegrationStepCoversItsConfiguration: f5-spec.md §6 T4
+// (Variant A). bazel-integration's nogo-only step's target set must be
+// exactly the integration configuration's non-test library packages, found
+// by a source scan (go/build's own tag matching, diffed with and without
+// the "integration" tag) rather than hardcoded, so a new integration-tagged
+// library file lands in the nogo-only step automatically instead of
+// silently losing coverage, and a file that stops needing the tag drops
+// out instead of the step validating a target gazelle no longer builds that
+// way.
+func TestNogoIntegrationStepCoversItsConfiguration(t *testing.T) {
+	root := sourceRepoRoot(t)
+	workflow := readCIWorkflow(t, bazelWorkflowName)
+	job := workflow.job(t, bazelIntegJobName)
+
+	var nogoArgs []string
+	for _, st := range job.Steps {
+		for _, args := range bazelInvocations(st.Run, "build") {
+			if slices.Contains(args, "--output_groups=nogo_fix") {
+				nogoArgs = args
+			}
+		}
+	}
+	if nogoArgs == nil {
+		t.Fatalf("%s has no `bazel build --output_groups=nogo_fix` step", bazelIntegJobName)
+	}
+
+	got := map[string]bool{}
+	for _, a := range nogoArgs {
+		if strings.HasPrefix(a, "//") {
+			pkg, _, _ := strings.Cut(a, ":")
+			got[pkg] = true
+		}
+	}
+
+	want := integrationOnlyLibraryPackages(t, root)
+	if len(want) == 0 {
+		t.Fatal("source scan found no integration-tagged library package; the scan itself is broken")
+	}
+	for _, pkg := range want {
+		if !got[pkg] {
+			t.Errorf("source scan found integration-tagged library package %s with no target in %s's nogo-only step (targets: %v)", pkg, bazelIntegJobName, nogoArgs)
+		}
+	}
+	for pkg := range got {
+		if !slices.Contains(want, pkg) {
+			t.Errorf("%s's nogo-only step targets %s, which the source scan does not classify as an integration-tagged library package (scan found: %v)", bazelIntegJobName, pkg, want)
+		}
+	}
+}
+
+// integrationOnlyLibraryPackages scans root for non-test .go files that
+// compile only when the "integration" build tag is set (go/build.Context's
+// MatchFile, diffed with and without the tag), and returns their Bazel
+// package labels ("//dir", repo root relative), sorted and deduplicated. A
+// file that compiles either way (no integration constraint), or that exists
+// only as a _test.go file, is not included: a _test.go file is not a
+// library's ValidateNogo target either way (f5-spec.md §3's accepted loss).
+func integrationOnlyLibraryPackages(t *testing.T, root string) []string {
+	t.Helper()
+	without := &build.Context{GOOS: "linux", GOARCH: "amd64", Compiler: "gc"}
+	with := &build.Context{GOOS: "linux", GOARCH: "amd64", Compiler: "gc", BuildTags: []string{"integration", "gms_pure_go"}}
+
+	seen := map[string]bool{}
+	var out []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); n == ".git" || strings.HasPrefix(n, "bazel-") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		dir, name := filepath.Split(path)
+		matchesWithout, errW := without.MatchFile(dir, name)
+		matchesWith, errT := with.MatchFile(dir, name)
+		if errW != nil || errT != nil {
+			return nil // an unparsable file is not this scan's concern
+		}
+		if !matchesWith || matchesWithout {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, strings.TrimSuffix(dir, string(filepath.Separator)))
+		if relErr != nil {
+			return relErr
+		}
+		pkg := "//" + filepath.ToSlash(rel)
+		if !seen[pkg] {
+			seen[pkg] = true
+			out = append(out, pkg)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan for integration-tagged library files under %s: %v", root, err)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // T5 TestNoUnconditionalValidationOff: no common/build/test line without a
@@ -606,6 +868,13 @@ func checkNoUnconditionalValidationOff(in nogoPolicyInputs, errorf func(string, 
 	}
 
 	for _, row := range nogoConfigurations {
+		if row.ownerIsNogoOnlyStep {
+			// Variant A (f5-spec.md §2.3): this row's owner config is
+			// deliberately not the validating lane -- the owner job's
+			// nogo-only step is -- so it is expected (and required
+			// elsewhere, by T1/T6) to pass --norun_validations too.
+			continue
+		}
 		if bazelrcConfigExpansionSkipsValidations(rc, row.configs[0]) {
 			errorf("row %q owner config --config=%s (or a config it includes) passes --norun_validations; it is the row's only validating lane", row.name, row.configs[0])
 		}
@@ -614,34 +883,39 @@ func checkNoUnconditionalValidationOff(in nogoPolicyInputs, errorf func(string, 
 
 // T6 TestRunValidationsOnlyOnAllowlistedLines: the only
 // run_validations/norun_validations lines anywhere in .bazelrc or bazel.yml
-// are exactly the ones T1's race row already requires: one
-// "test:<non-owner config> --norun_validations" line per non-owner in
-// .bazelrc, and the two package-gate jobs' bazel-build steps. Main's
-// TestLintAndVetRunAsNogo used to ban run_validations outright, which caught
-// a configuration outside T1's table (e.g. test:integration,
-// test:doltserver-cmd -- the race+integration group is a later slice,
-// f5-spec.md §5 S2) quietly adding --norun_validations with no owner to
-// notice. T5 does not re-check that case: it only forbids unconfigured
-// lines and a short prefix list. This allowlist restores the ban for every
-// other line without re-banning the four the race row requires.
+// are exactly the ones nogoConfigurations' rows already require: one
+// "test:<config> --norun_validations" line per non-owner config in a
+// full-lane row (race), or per config (owner's own full lane included) in a
+// nogo-only-step row (integ, f5-spec.md §5 S2 Variant A), plus the two
+// package-gate jobs' bazel-build steps. Main's TestLintAndVetRunAsNogo used
+// to ban run_validations outright, which caught a configuration outside
+// T1's table quietly adding --norun_validations with no owner to notice. T5
+// does not re-check that case: it only forbids unconfigured lines and a
+// short prefix list. This allowlist restores the ban for every other line
+// without re-banning the ones the rows require.
 func TestRunValidationsOnlyOnAllowlistedLines(t *testing.T) {
 	checkRunValidationsOnlyOnAllowlistedLines(t, readNogoPolicyInputs(t), t.Errorf)
 }
 
 func checkRunValidationsOnlyOnAllowlistedLines(t *testing.T, in nogoPolicyInputs, errorf func(string, ...any)) {
 	t.Helper()
-	var raceNonOwners []string
+	// Every row classifies its own allowed lines: a full-lane row's
+	// non-owner configs (configs[1:] -- the owner's own full lane must
+	// still validate), or, for a nogo-only-step row (f5-spec.md §5 S2
+	// Variant A), every config in it, owner's own full lane included,
+	// since under Variant A none of them validates.
+	allowed := map[string]bool{}
 	for _, row := range nogoConfigurations {
-		if row.name == "race" {
-			raceNonOwners = row.configs[1:]
+		cfgs := row.configs[1:]
+		if row.ownerIsNogoOnlyStep {
+			cfgs = row.configs
+		}
+		for _, cfg := range cfgs {
+			allowed["test:"+cfg+" --norun_validations"] = true
 		}
 	}
-	if len(raceNonOwners) == 0 {
-		t.Fatal("race row has no non-owner configs to allowlist")
-	}
-	allowed := map[string]bool{}
-	for _, cfg := range raceNonOwners {
-		allowed["test:"+cfg+" --norun_validations"] = true
+	if len(allowed) == 0 {
+		t.Fatal("no row has a config to allowlist")
 	}
 
 	for _, raw := range strings.Split(in.rc, "\n") {
@@ -708,8 +982,11 @@ func TestNogoPolicyRejectsMutations(t *testing.T) {
 		name   string
 		mutate func(rc, wf string) (string, string)
 	}{
-		{"1a integration lane skips validations", addRC("test:integration --norun_validations")},
-		{"1b doltserver-cmd lane skips validations", addRC("test:doltserver-cmd --norun_validations")},
+		// 1a/1b: under F5 S2 Variant A, test:integration and
+		// test:doltserver-cmd already pass --norun_validations (their row's
+		// owner is bazel-integration's nogo-only step, not a full lane), so
+		// adding the line again is a no-op, not a policy violation; see the
+		// s2* mutations below for this row's own negative cases.
 		{"1c unknown new lane skips validations", addRC("test:newlane --norun_validations")},
 		{"1d owner command line skips validations", replace(false, ownerCmd,
 			strings.Replace(ownerCmd, "--config=ci ", "--config=ci --norun_validations ", 1))},
@@ -731,6 +1008,45 @@ func TestNogoPolicyRejectsMutations(t *testing.T) {
 			ownerProfile+"            -//cmd/bd/... \\\n")},
 		{"2 non-owner job runs the owner's config", replace(false,
 			"bazel test //... --config=embedded ${BAZEL_FRESH", "bazel test //... --config=ci ${BAZEL_FRESH")},
+
+		// F5 S2 Variant A (the "integ" row, ownerIsNogoOnlyStep): its owner
+		// is bazel-integration's nogo-only `bazel build
+		// --output_groups=nogo_fix` step, not a full lane.
+		{"s2a nogo-only step removed", replace(false,
+			"--keep_going \\\n            --output_groups=nogo_fix \\\n            -- //internal/testutil/integration:integration \\\n",
+			"--keep_going \\\n            -- //internal/testutil/integration:integration \\\n")},
+		{"s2b nogo-only step drifts onto a different configuration", replace(false,
+			"bazel build --config=integration --@rules_go//go/config:race --keep_going \\\n",
+			"bazel build --config=embedded --@rules_go//go/config:race --keep_going \\\n")},
+		{"s2c nogo-only step has continue-on-error", replace(false,
+			"        id: nogo-integration\n        if: ${{ always() && steps.test.outcome != 'skipped' }}\n        timeout-minutes: 10\n",
+			"        id: nogo-integration\n        if: ${{ always() && steps.test.outcome != 'skipped' }}\n        continue-on-error: true\n        timeout-minutes: 10\n")},
+
+		// Should-fix 1 (review of #7482): expandBazelrcConfig must follow a
+		// --config= reference on a common: line, not only a whole line
+		// beginning "build --config=" / "test --config=". Before the fix,
+		// test:ci's own chain would never reach sf1lane, and this
+		// --norun_validations line would have passed unnoticed.
+		{"should-fix 1: owner inherits validations-off through a common: config", func(rc, wf string) (string, string) {
+			return rc + "\ncommon:ci --config=sf1lane\ntest:sf1lane --norun_validations\n", wf
+		}},
+		// Should-fix 2 (review of #7482): TestNogoRaceOwnerBuildsEverything
+		// must expand every config the owner's command line reaches,
+		// including one selected only through a shell variable
+		// (BAZEL_SOLE_RUN -> --config=sole-run), not only the literal "ci"
+		// it types out. Before the fix, a narrowing flag reachable solely
+		// through sole-run would have passed unnoticed.
+		{"should-fix 2: sole-run (reached only via BAZEL_SOLE_RUN) narrows the target set", addRC("test:sole-run --build_tests_only")},
+		// Should-fix 3 (review of #7482): the package-gate non-owner check
+		// must fingerprint its bazel-build step's full argument list, not
+		// substring-match the raw run text. Before the fix, an added
+		// key-affecting flag (here --platforms, which changes what the
+		// step actually builds) passed unnoticed as long as the race flag
+		// and --norun_validations substrings were still present somewhere
+		// in the line.
+		{"should-fix 3: package gate build step gains an unfingerprinted key flag", replace(false,
+			"bazel build --@rules_go//go/config:race //cmd/bd:bd_for_tests --remote_download_regex='.*/bin/cmd/bd/bd_for_tests/bd$' --norun_validations",
+			"bazel build --@rules_go//go/config:race //cmd/bd:bd_for_tests --remote_download_regex='.*/bin/cmd/bd/bd_for_tests/bd$' --platforms=//tools/bazel:fake_platform --norun_validations")},
 	}
 
 	check := func(rc, wf string) []string {

@@ -234,6 +234,21 @@ test:doltserver-integration --test_env=GO_TEST_WRAP_TESTV=1
 test:doltserver-integration --test_arg=-test.parallel=4
 test:doltserver-integration --local_test_jobs=4
 test:doltserver-integration --remote_download_regex=.*/test\.(log|xml)$
+# F5 S2 Variant A: this configuration (integration, doltserver-integration,
+# doltserver-cmd -- the same fingerprint, race=true plus
+# tags=gms_pure_go,integration) has no full-lane owner. Its nogo runs once,
+# narrowly, in bazel.yml's bazel-integration job: a `bazel build
+# --output_groups=nogo_fix` step over //internal/testutil/integration only
+# (the configuration's non-test library; the 56 integration-tagged _test.go
+# files this loses vet/lint coverage on are listed in
+# tools/nogo/unvalidated_integration_tests.txt, f5-spec.md §3/§5 S2).
+# --norun_validations is a build-request option, not a configuration flag:
+# it changes no action key and discards no analysis; it only skips
+# re-running nogo's validation actions, which bazel-integration's nogo-only
+# step already runs for this configuration's library files.
+# scripts/nogo_lint_policy_test.go's TestNogoConfigurationsHaveOneValidatingLane
+# pins the nogo-only step as this configuration's sole validating lane.
+test:doltserver-integration --norun_validations
 # Since D2 step 2 this lane is the tier's only pre-merge run on same-repo
 # PRs. Results are cached like every lane's (nightly: --config=fresh).
 # No whole-invocation retry on a remote cache eviction ("Lost inputs"):
@@ -271,6 +286,10 @@ test:doltserver-cmd --test_env=BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION=1
 test:doltserver-cmd --test_env=GO_TEST_WRAP_TESTV=1
 test:doltserver-cmd --local_test_jobs=4
 test:doltserver-cmd --remote_download_regex=.*/test\.(log|xml)$
+# F5 S2 Variant A: same configuration as --config=integration /
+# doltserver-integration above; see that block's comment for the owner
+# (bazel-integration's nogo-only step over //internal/testutil/integration).
+test:doltserver-cmd --norun_validations
 
 # Integration lane: the `go test` main.yml's former "Main Linux integration"
 # jobs ran on push (this lane replaced them, and nightly.yml's retired Full
@@ -315,6 +334,13 @@ test:integration --test_env=GO_TEST_WRAP_TESTV=1
 # equivalence.py / check_testcases.py right after each lane's own
 # `bazel test`, before the other lane runs (or give the lanes separate jobs).
 test:integration --remote_download_regex=.*/test\.xml$
+# F5 S2 Variant A: same configuration as --config=doltserver-integration /
+# doltserver-cmd above; see that block's comment for the owner
+# (bazel-integration's nogo-only step over //internal/testutil/integration).
+# The 56 integration-tagged _test.go files this configuration no longer
+# validates in any full lane are the accepted loss, listed in
+# tools/nogo/unvalidated_integration_tests.txt.
+test:integration --norun_validations
 
 # Pure-Go lane: pr.yml's "Check pure-Go and js/wasm boundaries
 # (CGO_ENABLED=0)" job. CGO is off for every Go target (rules_go drops

@@ -266,6 +266,21 @@ def main() -> int:
             "not the build, so it is not checked here."
         )
     owner_actions = run_nogo_actions(args.bazel, owner_fp, "//...")
+    if not owner_actions:
+        # A set-difference check below (non_owner_actions.keys() -
+        # owner_actions.keys()) is vacuously empty when both sides are
+        # empty, which would otherwise report full coverage for an owner
+        # query that silently matched nothing (a mnemonic rename, a broken
+        # --config, aquery returning no actions at all) -- the exact
+        # failure mode this script exists to catch, not pass through
+        # (review of #7482, should-fix 4).
+        print(
+            f"nogo_ownership: FAIL\n  {name}: owner --config={owner} query "
+            "returned zero RunNogo/ValidateNogo actions over //...; cannot "
+            "verify anything covers the non-owners",
+            file=sys.stderr,
+        )
+        return 2
 
     problems = []
     for non_owner in non_owners:

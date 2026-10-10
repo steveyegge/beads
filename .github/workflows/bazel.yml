@@ -1571,7 +1571,10 @@ jobs:
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     if: ${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' }}
-    timeout-minutes: 85
+    # F5 S2 Variant A added the "Nogo: integration library files" step after
+    # `test`; +5 over the previous 85 keeps it headroom without exceeding
+    # TestBazelIntegrationJob's test-step-timeout+15 ceiling (75+15=90).
+    timeout-minutes: 90
     outputs:
       result: ${{ steps.result.outputs.result }}
     steps:
@@ -1651,6 +1654,33 @@ jobs:
       - name: Every target and shard ran tests
         if: ${{ always() && steps.test.outcome != 'skipped' }}
         run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json" --not-go //tools/bazel:dolt_version_test --not-go //scripts/repochecks:all
+
+      # F5 S2 Variant A: the integration/doltserver-integration/doltserver-cmd
+      # configuration (--config=integration plus race) has no full-lane nogo
+      # owner (every lane above passes --norun_validations, .bazelrc). This
+      # narrow build keeps full nogo (vet + golangci-lint) on the
+      # configuration's non-test library package,
+      # //internal/testutil/integration, which every one of those lanes
+      # compiles; the 56 integration-tagged _test.go files this does not
+      # cover are the accepted loss (tools/nogo/unvalidated_integration_tests.txt,
+      # f5-spec.md §3). --keep_going so one finding does not hide another.
+      # scripts/nogo_lint_policy_test.go's
+      # TestNogoConfigurationsHaveOneValidatingLane pins this step as the
+      # configuration's sole validating lane.
+      - name: "Nogo: integration library files"
+        id: nogo-integration
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        timeout-minutes: 10
+        run: |
+          start=$(date +%s)
+          rc=0
+          bazel build --config=integration --@rules_go//go/config:race --keep_going \
+            --output_groups=nogo_fix \
+            -- //internal/testutil/integration:integration \
+            2>&1 | tee "$RUNNER_TEMP/bazel-nogo-integration.log" || rc=$?
+          procs=$(grep -oE 'INFO: [0-9]+ process' "$RUNNER_TEMP/bazel-nogo-integration.log" | tail -1 || true)
+          echo "nogo-integration: exit $rc, $(( $(date +%s) - start ))s wall${procs:+, $procs}" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
       - name: Upload test logs
         if: ${{ failure() && steps.test.outcome != 'skipped' }}
