@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -914,6 +915,21 @@ func TestValidateYamlConfigValue_PrimeMaxMemoryChars(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidateYamlConfigValue_PrimeNoMemories tests validation of prime.no-memories
+func TestValidateYamlConfigValue_PrimeNoMemories(t *testing.T) {
+	for _, value := range []string{"true", "false", "TRUE"} {
+		if err := validateYamlConfigValue("prime.no-memories", value); err != nil {
+			t.Errorf("unexpected error for value %q: %v", value, err)
+		}
+	}
+	for _, value := range []string{"off", "1", ""} {
+		want := fmt.Sprintf("prime.no-memories must be \"true\" or \"false\", got %q", value)
+		if err := validateYamlConfigValue("prime.no-memories", value); err == nil || err.Error() != want {
+			t.Errorf("value %q: expected error %q, got %v", value, want, err)
+		}
 	}
 }
 

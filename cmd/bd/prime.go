@@ -35,6 +35,7 @@ var (
 	primeMaxMemoryChars    int
 	primeMaxMemoriesSet    bool
 	primeMaxMemoryCharsSet bool
+	primeNoMemoriesSet     bool
 )
 
 const (
@@ -124,6 +125,9 @@ Config options:
 	- Use --export to dump the default content for customization.
 	- Use --memories-only for hook contexts that should inject only persistent memories; this returns only the memories section even when a custom PRIME.md is present.
 	- Use --no-memories to omit the persistent memories section (useful when the memories section is large and would dominate a context budget). --memories-only takes precedence if both are set.
+	- Set the prime.no-memories config key to true to omit the section without
+	  a flag on every hook command line. Passing --no-memories, --max-memories
+	  or --max-memory-chars overrides it.
 
 Memory injection caps:
 	Large memory sets can exceed what a session-start hook host will ingest,
@@ -134,7 +138,12 @@ Memory injection caps:
 	memory is always emitted, and a banner ahead of the entries reports how
 	many were elided and how to browse the rest with bd memories.
 	--max-memory-chars caps the total bytes of the injected memory entries;
-	the section header and elision banner are excluded from the budget.`,
+	the section header and elision banner are excluded from the budget.
+
+	With neither cap set by flag, config or environment, prime injects every
+	memory while their entries total at most 3000 bytes. Past that it injects
+	none of them and prints a banner instead, with the count and how to search
+	and read them. Setting either cap, including to 0, replaces this default.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -147,6 +156,7 @@ Memory injection caps:
 
 		primeMaxMemoriesSet = cmd.Flags().Changed("max-memories")
 		primeMaxMemoryCharsSet = cmd.Flags().Changed("max-memory-chars")
+		primeNoMemoriesSet = cmd.Flags().Changed("no-memories")
 
 		emit := func(content string) {
 			if primeHookJSONMode {
@@ -202,7 +212,7 @@ Memory injection caps:
 		// (GH#3941).
 		if !primeExportMode {
 			if content, ok := readCustomPrimeContent(primeWorkspaceDir(), beadsDir); ok {
-				if !primeNoMemories {
+				if !primeMemoriesOff() {
 					if mem := formatMemoriesForPrime(false); mem != "" {
 						content += mem
 					}
@@ -235,7 +245,7 @@ func init() {
 	primeCmd.Flags().BoolVar(&primeStealthMode, "stealth", false, "Stealth mode (no git operations, flush only)")
 	primeCmd.Flags().BoolVar(&primeExportMode, "export", false, "Output default content (ignores PRIME.md override)")
 	primeCmd.Flags().BoolVar(&primeMemoriesOnly, "memories-only", false, "Output only persistent memories for compact hook contexts")
-	primeCmd.Flags().BoolVar(&primeNoMemories, "no-memories", false, "Omit the persistent memories section (ignored when --memories-only is set, which wins)")
+	primeCmd.Flags().BoolVar(&primeNoMemories, "no-memories", false, "Omit the persistent memories section (ignored when --memories-only is set, which wins; falls back to the prime.no-memories config key)")
 	primeCmd.Flags().BoolVar(&primeHookJSONMode, "hook-json", false, "Wrap output in the SessionStart hook JSON envelope (Claude Code, Gemini CLI, Codex)")
 	primeCmd.Flags().IntVar(&primeMaxMemories, "max-memories", 0, "Cap injected persistent memories to N entries (0 = unlimited; falls back to the prime.max-memories config key)")
 	primeCmd.Flags().IntVar(&primeMaxMemoryChars, "max-memory-chars", 0, "Cap the total bytes of injected memory entries, at whole-memory boundaries; section header and banner are not counted (0 = unlimited; falls back to the prime.max-memory-chars config key)")
@@ -611,20 +621,56 @@ func renderPrimeMemoryPlane(memories map[string]string, compact bool) string {
 	if len(memories) == 0 {
 		return ""
 	}
-	maxCount, maxChars := primeMemoryCaps()
+	maxCount, maxChars, configured := primeMemoryCaps()
+	if !configured {
+		if total := primeMemoryEntriesSize(memories, compact); total > primeDefaultMemoryBudget {
+			return renderPrimeMemoryBudgetBanner(len(memories), total, compact)
+		}
+	}
 	return renderPrimeMemories(memories, compact, maxCount, maxChars)
 }
+
+// primeDefaultMemoryBudget bounds the memory entries prime injects when no
+// cap is configured. Claude Code shows SessionStart output past 10,000
+// characters only as a short preview; the default workflow text plus this
+// budget stays under that.
+const primeDefaultMemoryBudget = 3000
 
 // primeConfigInt reads an integer config key (stubbable for tests).
 var primeConfigInt = func(key string) int {
 	return config.GetInt(key)
 }
 
+// primeConfigBool reads a boolean config key (stubbable for tests).
+var primeConfigBool = func(key string) bool {
+	return config.GetBool(key)
+}
+
+// primeConfigIsSet reports whether a config key was set in config.yaml or the
+// environment, so an explicit 0 can be told from an unset key (stubbable for
+// tests).
+var primeConfigIsSet = func(key string) bool {
+	return config.GetValueSource(key) != config.SourceDefault
+}
+
+// primeMemoriesOff reports whether the memories section is omitted. Any memory
+// flag on the command line decides; without one, the prime.no-memories config
+// key does, so a hook line asking for a cap still gets memories.
+func primeMemoriesOff() bool {
+	if primeNoMemoriesSet || primeMaxMemoriesSet || primeMaxMemoryCharsSet {
+		return primeNoMemories
+	}
+	return primeConfigBool("prime.no-memories")
+}
+
 // primeMemoryCaps resolves the memory-injection caps. An explicitly passed
 // flag wins, including an explicit 0 meaning "force unlimited"; otherwise the
-// prime.max-memories / prime.max-memory-chars config keys apply. 0 or unset
-// means uncapped.
-func primeMemoryCaps() (maxCount, maxChars int) {
+// prime.max-memories / prime.max-memory-chars config keys apply. 0 means
+// uncapped. configured is false when neither cap was set by flag, config or
+// environment; the caller then applies primeDefaultMemoryBudget.
+func primeMemoryCaps() (maxCount, maxChars int, configured bool) {
+	configured = primeMaxMemoriesSet || primeMaxMemoryCharsSet ||
+		primeConfigIsSet("prime.max-memories") || primeConfigIsSet("prime.max-memory-chars")
 	maxCount = primeMaxMemories
 	if !primeMaxMemoriesSet && maxCount == 0 {
 		maxCount = primeConfigInt("prime.max-memories")
@@ -639,7 +685,41 @@ func primeMemoryCaps() (maxCount, maxChars int) {
 	if maxChars < 0 {
 		maxChars = 0
 	}
-	return maxCount, maxChars
+	return maxCount, maxChars, configured
+}
+
+// primeMemoryEntry formats one memory as prime injects it.
+func primeMemoryEntry(key, value string, compact bool) string {
+	if compact {
+		v := strings.ReplaceAll(value, "\n", " ")
+		return fmt.Sprintf("- **%s**: %s\n", key, truncate(v, 150))
+	}
+	return fmt.Sprintf("### %s\n%s\n\n", key, value)
+}
+
+// primeMemoryEntriesSize is the total bytes of every memory entry, measured
+// the way --max-memory-chars measures them.
+func primeMemoryEntriesSize(memories map[string]string, compact bool) int {
+	total := 0
+	for k, v := range memories {
+		total += len(primeMemoryEntry(k, v, compact))
+	}
+	return total
+}
+
+// renderPrimeMemoryBudgetBanner replaces the memories section when the entries
+// exceed primeDefaultMemoryBudget and no cap is configured. Injecting the
+// alphabetically first entries would pick memories by key, not relevance, so
+// it shows none and says how to reach them.
+func renderPrimeMemoryBudgetBanner(count, total int, compact bool) string {
+	if compact {
+		return fmt.Sprintf("\n## Memories (%d, not shown)\n- %d bytes, over the %d-byte default budget; search with `bd memories <keyword>`, read one with `bd recall <key>`\n", count, total, primeDefaultMemoryBudget)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\n## Persistent Memories (%d, not shown)\n\n", count))
+	sb.WriteString("Stored via `bd remember`. Update in place with `bd remember --key <key> \"new content\"`. Search with `bd memories <keyword>`. Remove with `bd forget <key>`.\n\n")
+	sb.WriteString(fmt.Sprintf("> These memories total %d bytes, over the %d-byte default budget for session context, so none are shown. Search them with `bd memories <keyword>` and read one in full with `bd recall <key>`. Set prime.max-memory-chars to inject the alphabetically first ones that fit, or to 0 to inject them all.\n\n", total, primeDefaultMemoryBudget))
+	return sb.String()
 }
 
 // renderPrimeMemories formats memories for injection, applying the given
@@ -664,14 +744,7 @@ func renderPrimeMemories(memories map[string]string, compact bool, maxCount, max
 			countCapHit = true
 			break
 		}
-		var entry string
-		if compact {
-			v := strings.ReplaceAll(memories[k], "\n", " ")
-			v = truncate(v, 150)
-			entry = fmt.Sprintf("- **%s**: %s\n", k, v)
-		} else {
-			entry = fmt.Sprintf("### %s\n%s\n\n", k, memories[k])
-		}
+		entry := primeMemoryEntry(k, memories[k], compact)
 		if maxChars > 0 && len(entries) > 0 && used+len(entry) > maxChars {
 			charCapHit = true
 			break
@@ -831,7 +904,7 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 	redirectNotice := getRedirectNotice(false)
 	var memories string
-	if !primeNoMemories {
+	if !primeMemoriesOff() {
 		memories = formatMemoriesForPrime(true)
 	}
 
@@ -1016,7 +1089,7 @@ git status                  # Check changed files
 
 	redirectNotice := getRedirectNotice(true)
 	var memories string
-	if !primeNoMemories {
+	if !primeMemoriesOff() {
 		memories = formatMemoriesForPrime(false)
 	}
 

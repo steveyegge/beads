@@ -119,48 +119,171 @@ func TestRenderPrimeMemoriesBannerNamesOnlyBindingCap(t *testing.T) {
 	}
 }
 
-func TestPrimeMemoryCapsResolution(t *testing.T) {
-	oldMax, oldChars := primeMaxMemories, primeMaxMemoryChars
-	oldMaxSet, oldCharsSet := primeMaxMemoriesSet, primeMaxMemoryCharsSet
-	oldConfigInt := primeConfigInt
+// stubPrimeMemoryConfig clears the memory flags and serves config from the
+// given maps for the duration of the test.
+func stubPrimeMemoryConfig(t *testing.T, ints map[string]int, bools map[string]bool) {
+	t.Helper()
+	oldMax, oldChars, oldNo := primeMaxMemories, primeMaxMemoryChars, primeNoMemories
+	oldMaxSet, oldCharsSet, oldNoSet := primeMaxMemoriesSet, primeMaxMemoryCharsSet, primeNoMemoriesSet
+	oldInt, oldBool, oldIsSet := primeConfigInt, primeConfigBool, primeConfigIsSet
 	t.Cleanup(func() {
-		primeMaxMemories, primeMaxMemoryChars = oldMax, oldChars
-		primeMaxMemoriesSet, primeMaxMemoryCharsSet = oldMaxSet, oldCharsSet
-		primeConfigInt = oldConfigInt
+		primeMaxMemories, primeMaxMemoryChars, primeNoMemories = oldMax, oldChars, oldNo
+		primeMaxMemoriesSet, primeMaxMemoryCharsSet, primeNoMemoriesSet = oldMaxSet, oldCharsSet, oldNoSet
+		primeConfigInt, primeConfigBool, primeConfigIsSet = oldInt, oldBool, oldIsSet
 	})
-	configValues := map[string]int{}
-	primeConfigInt = func(key string) int { return configValues[key] }
+	primeMaxMemories, primeMaxMemoryChars, primeNoMemories = 0, 0, false
+	primeMaxMemoriesSet, primeMaxMemoryCharsSet, primeNoMemoriesSet = false, false, false
+	primeConfigInt = func(key string) int { return ints[key] }
+	primeConfigBool = func(key string) bool { return bools[key] }
+	primeConfigIsSet = func(key string) bool {
+		_, isInt := ints[key]
+		_, isBool := bools[key]
+		return isInt || isBool
+	}
+}
 
-	// No flags, no config: uncapped.
-	primeMaxMemories, primeMaxMemoryChars = 0, 0
-	primeMaxMemoriesSet, primeMaxMemoryCharsSet = false, false
-	if c, ch := primeMemoryCaps(); c != 0 || ch != 0 {
-		t.Fatalf("expected uncapped defaults, got %d/%d", c, ch)
+func TestPrimeMemoryCapsResolution(t *testing.T) {
+	configValues := map[string]int{}
+	stubPrimeMemoryConfig(t, configValues, nil)
+
+	// No flags, no config: uncapped and not configured.
+	if c, ch, configured := primeMemoryCaps(); c != 0 || ch != 0 || configured {
+		t.Fatalf("expected uncapped, unconfigured defaults, got %d/%d/%v", c, ch, configured)
 	}
 
 	// Config keys apply when flags are absent.
 	configValues["prime.max-memories"] = 20
 	configValues["prime.max-memory-chars"] = 25000
-	if c, ch := primeMemoryCaps(); c != 20 || ch != 25000 {
-		t.Fatalf("expected config caps 20/25000, got %d/%d", c, ch)
+	if c, ch, configured := primeMemoryCaps(); c != 20 || ch != 25000 || !configured {
+		t.Fatalf("expected configured caps 20/25000, got %d/%d/%v", c, ch, configured)
 	}
 
 	// An explicit flag wins over config.
 	primeMaxMemories, primeMaxMemoriesSet = 5, true
-	if c, _ := primeMemoryCaps(); c != 5 {
+	if c, _, _ := primeMemoryCaps(); c != 5 {
 		t.Fatalf("flag must beat config, got %d", c)
 	}
 
 	// An explicit 0 flag forces unlimited despite config.
 	primeMaxMemories = 0
-	if c, _ := primeMemoryCaps(); c != 0 {
+	if c, _, _ := primeMemoryCaps(); c != 0 {
 		t.Fatalf("explicit --max-memories 0 must force unlimited, got %d", c)
 	}
 
 	// Negative values clamp to uncapped.
 	primeMaxMemories, primeMaxMemoriesSet = -3, true
 	primeMaxMemoryChars, primeMaxMemoryCharsSet = -1, true
-	if c, ch := primeMemoryCaps(); c != 0 || ch != 0 {
+	if c, ch, _ := primeMemoryCaps(); c != 0 || ch != 0 {
 		t.Fatalf("negative caps must clamp to 0, got %d/%d", c, ch)
+	}
+}
+
+func TestPrimeMemoryCapsConfiguredByExplicitZero(t *testing.T) {
+	stubPrimeMemoryConfig(t, map[string]int{"prime.max-memory-chars": 0}, nil)
+	if c, ch, configured := primeMemoryCaps(); c != 0 || ch != 0 || !configured {
+		t.Fatalf("a config key set to 0 must count as configured and uncapped, got %d/%d/%v", c, ch, configured)
+	}
+}
+
+// bigMemories returns n memories whose entries together exceed the default budget.
+func bigMemories(n int) map[string]string {
+	m := make(map[string]string, n)
+	for i := 0; i < n; i++ {
+		m[fmt.Sprintf("mem-%02d", i)] = strings.Repeat("x", primeDefaultMemoryBudget/n+1)
+	}
+	return m
+}
+
+func TestRenderPrimeMemoryPlaneUnderDefaultBudgetIsUnchanged(t *testing.T) {
+	stubPrimeMemoryConfig(t, nil, nil)
+	memories := testMemories(5)
+	if primeMemoryEntriesSize(memories, false) > primeDefaultMemoryBudget {
+		t.Fatal("fixture must fit the default budget")
+	}
+	for _, compact := range []bool{false, true} {
+		if got, want := renderPrimeMemoryPlane(memories, compact), renderPrimeMemories(memories, compact, 0, 0); got != want {
+			t.Fatalf("compact=%v: a store within the default budget must render as before\ngot:  %q\nwant: %q", compact, got, want)
+		}
+	}
+}
+
+func TestRenderPrimeMemoryPlaneOverDefaultBudgetShowsBannerOnly(t *testing.T) {
+	stubPrimeMemoryConfig(t, nil, nil)
+	memories := bigMemories(4)
+	total := primeMemoryEntriesSize(memories, false)
+	if total <= primeDefaultMemoryBudget {
+		t.Fatalf("fixture must exceed the default budget, got %d bytes", total)
+	}
+
+	out := renderPrimeMemoryPlane(memories, false)
+	if !strings.Contains(out, "## Persistent Memories (4, not shown)\n") {
+		t.Fatalf("expected the not-shown header, got %q", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("These memories total %d bytes, over the %d-byte default budget", total, primeDefaultMemoryBudget)) {
+		t.Fatalf("banner must give the total and the budget, got %q", out)
+	}
+	if !strings.Contains(out, "read one in full with `bd recall <key>`") {
+		t.Fatalf("banner must point at bd recall, got %q", out)
+	}
+	if strings.Contains(out, "### mem-") || strings.Contains(out, "xxxx") {
+		t.Fatalf("no entry may be injected over the default budget, got %q", out)
+	}
+
+	// Compact entries are cut to 150 characters, so it takes more of them.
+	many := bigMemories(30)
+	if primeMemoryEntriesSize(many, true) <= primeDefaultMemoryBudget {
+		t.Fatal("compact fixture must exceed the default budget")
+	}
+	compact := renderPrimeMemoryPlane(many, true)
+	if !strings.Contains(compact, "## Memories (30, not shown)\n") || strings.Contains(compact, "**mem-") {
+		t.Fatalf("compact output must show the banner only, got %q", compact)
+	}
+}
+
+func TestRenderPrimeMemoryPlaneConfiguredCapReplacesDefaultBudget(t *testing.T) {
+	memories := bigMemories(4)
+
+	stubPrimeMemoryConfig(t, map[string]int{"prime.max-memory-chars": 0}, nil)
+	if out := renderPrimeMemoryPlane(memories, false); !strings.Contains(out, "## Persistent Memories (4)\n") || strings.Count(out, "### mem-") != 4 {
+		t.Fatalf("prime.max-memory-chars: 0 must inject every memory, got %q", out)
+	}
+
+	stubPrimeMemoryConfig(t, map[string]int{"prime.max-memories": 2}, nil)
+	if out := renderPrimeMemoryPlane(memories, false); !strings.Contains(out, "showing 2 of 4") {
+		t.Fatalf("a configured count cap must apply instead of the default budget, got %q", out)
+	}
+
+	stubPrimeMemoryConfig(t, nil, nil)
+	primeMaxMemoryChars, primeMaxMemoryCharsSet = 0, true
+	if out := renderPrimeMemoryPlane(memories, false); strings.Count(out, "### mem-") != 4 {
+		t.Fatalf("--max-memory-chars 0 must inject every memory, got %q", out)
+	}
+}
+
+func TestPrimeMemoriesOff(t *testing.T) {
+	stubPrimeMemoryConfig(t, nil, nil)
+	if primeMemoriesOff() {
+		t.Fatal("memories must be on with no flag and no config")
+	}
+
+	primeNoMemories, primeNoMemoriesSet = true, true
+	if !primeMemoriesOff() {
+		t.Fatal("--no-memories must turn memories off")
+	}
+
+	stubPrimeMemoryConfig(t, nil, map[string]bool{"prime.no-memories": true})
+	if !primeMemoriesOff() {
+		t.Fatal("prime.no-memories: true must turn memories off without a flag")
+	}
+
+	primeMaxMemories, primeMaxMemoriesSet = 3, true
+	if primeMemoriesOff() {
+		t.Fatal("--max-memories must override prime.no-memories")
+	}
+
+	primeMaxMemoriesSet = false
+	primeNoMemories, primeNoMemoriesSet = false, true
+	if primeMemoriesOff() {
+		t.Fatal("--no-memories=false must override prime.no-memories")
 	}
 }
