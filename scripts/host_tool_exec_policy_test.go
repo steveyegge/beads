@@ -686,11 +686,16 @@ func build() {
 		// The gate lives inside a t.Run func literal; the exec is a sibling
 		// statement in the outer test function, not reached by descending
 		// into that closure.
+		//
+		// Named siblingClosureFixture, not TestSiblingClosure: see the
+		// "inverted IsBazel skip" fixture below for why a column-0
+		// "func TestXxx(t *testing.T)" inside this raw string would trip
+		// tools/bazel/equivalence.py's line-based scan.
 		fset, f, lines := parse(t, `package p
 
 import "os/exec"
 
-func TestX(t *testing.T) {
+func siblingClosureFixture(t *testing.T) {
 	t.Run("sub", func(t *testing.T) {
 		if bazeltest.IsBazel() {
 			return
