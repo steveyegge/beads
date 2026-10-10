@@ -690,11 +690,17 @@ func build() {
 		// ONLY under Bazel: the exact opposite of a gate. The old scan saw
 		// "IsBazel" mentioned anywhere in the function and called that
 		// gated; this fixture pins that it no longer does.
+		// Named to avoid matching tools/bazel/equivalence.py's
+		// `^func\s+(Test\w*)\s*\(\s*\w+\s+\*testing\.T\s*\)` line scan: that
+		// regex reads this file's raw text (it doesn't compile it), so a
+		// column-0 "func TestXxx(t *testing.T)" inside this fixture string
+		// would be counted as a real top-level test the equivalence check
+		// then expects Bazel to have run.
 		fset, f, lines := parse(t, `package p
 
 import "os/exec"
 
-func TestSomething(t *testing.T) {
+func bazelOnlyFixture(t *testing.T) {
 	if !bazeltest.IsBazel() {
 		t.Skip("bazel only")
 	}
