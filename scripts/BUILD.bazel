@@ -174,17 +174,35 @@ go_test(
     deps = ["//internal/testutil/bazeltest"],
 )
 
-# check-testing-short.sh over every Go file, test and non-test.
+# check-testing-short.sh over every Go file, test and non-test, plus the
+# host-go-under-Bazel policy (both the Go-exec and the shell-script half: see
+# host_tool_exec_policy_test.go and host_tool_shell_policy_test.go).
 go_test(
     name = "go_sources_test",
     srcs = [
+        "host_tool_exec_policy_test.go",
+        "host_tool_shell_policy_test.go",
         "repo_helpers_test.go",
         "testing_short_tree_test.go",
     ],
     data = [
+        "check-build-tags.sh",
+        "check-doc-freshness.sh",
+        "check-go-install-guidance.sh",
+        "check-migration-hygiene.sh",
         "check-testing-short.sh",
+        "check-winget-portable-alias.sh",
+        "check-workapi-frontend-boundary.sh",
+        "ci/fmt-check.sh",
+        "ci/gofmt-bin.sh",
+        "migrate-legacy-to-current.sh",
+        "migration-test/historical-dolt-upgrade-test.sh",
+        "migration-test/legacy-bridge-test.sh",
+        "migration-test/lib/binary.sh",
         "//:repo_go_srcs",
         "//:repo_go_test_srcs",
+        "//scripts/repochecks:run_check.sh",
+        "//scripts/repochecks:types_gen_drift_test.sh",
     ],
     deps = ["//internal/testutil/bazeltest"],
 )

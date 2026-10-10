@@ -16,10 +16,17 @@ go_binary(
 # (compact_gc_target_test.go), entirely env-driven at run time, so one
 # prebuilt copy covers every test case and mode: the test never needs a host
 # Go toolchain under Bazel (bazeltest.RunfileEnv, BEADS_TEST_COMPACT_GC_FIXTURE).
+# pure/race pinned explicitly, like :bd_for_tests: stdlib-only (encoding/json,
+# fmt, os), so it needs neither cgo nor the race detector, and nothing about
+# it depends on either; pinning keeps that true whatever --config the
+# consuming go_test builds under (prcore/embedded/doltserver-*), instead of
+# relying on this tiny fixture happening to inherit a compatible default.
 go_binary(
     name = "compact_gc_fixture",
     testonly = True,
     srcs = ["testdata/compact-gc-fixture.go"],
+    pure = "on",
+    race = "off",
 )
 
 go_library(
