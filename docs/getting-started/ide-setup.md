@@ -296,7 +296,7 @@ This outputs a compact (~1-2k tokens) workflow reference including:
 
 `bd prime` prints memories near the top and starts with a truncation warning. If your host stores the full hook output in a file and only shows a preview, have the agent read the full file before continuing.
 
-When the memory entries total more than 3000 bytes and no cap is configured, `bd prime` prints a banner in their place: how many there are, and how to search them (`bd memories <keyword>`) and read one (`bd recall <key>`). Set `prime.max-memory-chars` or `prime.max-memories` to choose your own cap, or `prime.no-memories: true` to leave memories out entirely.
+When the memories would push the output past 10,000 bytes, the size Claude Code shows whole, and no cap is configured, `bd prime` prints a banner in their place: how many there are, and how to search them (`bd memories <keyword>`) and read one (`bd recall <key>`). Set `prime.max-memory-chars` or `prime.max-memories` to choose your own cap, or `prime.no-memories: true` to leave memories out entirely.
 
 In hook contexts, `bd prime --hook-json` wraps the output in the SessionStart JSON envelope (Claude Code, Gemini CLI, Codex). For memory-only hooks:
 

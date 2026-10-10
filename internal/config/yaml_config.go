@@ -1603,9 +1603,9 @@ func validateYamlConfigValue(key, value string) error {
 			return fmt.Errorf("prime.max-memory-chars must be a non-negative integer (0 = unlimited), got %q", value)
 		}
 	case "prime.no-memories":
-		lower := strings.ToLower(value)
-		if lower != "true" && lower != "false" {
-			return fmt.Errorf("prime.no-memories must be \"true\" or \"false\", got %q", value)
+		// The reader is viper's GetBool, which accepts exactly what ParseBool does.
+		if _, err := strconv.ParseBool(value); err != nil {
+			return fmt.Errorf("prime.no-memories must be true or false, got %q", value)
 		}
 	case "memories.budget-chars":
 		n, err := strconv.Atoi(value)

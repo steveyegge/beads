@@ -185,77 +185,92 @@ func TestPrimeMemoryCapsConfiguredByExplicitZero(t *testing.T) {
 	}
 }
 
-// bigMemories returns n memories whose entries together exceed the default budget.
-func bigMemories(n int) map[string]string {
+// sizedMemories returns n memories whose uncapped full section is about size bytes.
+func sizedMemories(n, size int) map[string]string {
 	m := make(map[string]string, n)
 	for i := 0; i < n; i++ {
-		m[fmt.Sprintf("mem-%02d", i)] = strings.Repeat("x", primeDefaultMemoryBudget/n+1)
+		m[fmt.Sprintf("mem-%02d", i)] = strings.Repeat("x", size/n)
 	}
 	return m
 }
 
-func TestRenderPrimeMemoryPlaneUnderDefaultBudgetIsUnchanged(t *testing.T) {
+func TestRenderPrimeMemoryPlaneWithinRoomIsUnchanged(t *testing.T) {
 	stubPrimeMemoryConfig(t, nil, nil)
 	memories := testMemories(5)
-	if primeMemoryEntriesSize(memories, false) > primeDefaultMemoryBudget {
-		t.Fatal("fixture must fit the default budget")
-	}
 	for _, compact := range []bool{false, true} {
-		if got, want := renderPrimeMemoryPlane(memories, compact), renderPrimeMemories(memories, compact, 0, 0); got != want {
-			t.Fatalf("compact=%v: a store within the default budget must render as before\ngot:  %q\nwant: %q", compact, got, want)
+		want := renderPrimeMemories(memories, compact, 0, 0)
+		if got := renderPrimeMemoryPlane(memories, compact, len(want)); got != want {
+			t.Fatalf("compact=%v: a section that exactly fits must render as before\ngot:  %q\nwant: %q", compact, got, want)
 		}
 	}
 }
 
-func TestRenderPrimeMemoryPlaneOverDefaultBudgetShowsBannerOnly(t *testing.T) {
+func TestRenderPrimeMemoryPlaneOverRoomShowsBannerOnly(t *testing.T) {
 	stubPrimeMemoryConfig(t, nil, nil)
-	memories := bigMemories(4)
-	total := primeMemoryEntriesSize(memories, false)
-	if total <= primeDefaultMemoryBudget {
-		t.Fatalf("fixture must exceed the default budget, got %d bytes", total)
-	}
+	memories := sizedMemories(4, 4000)
+	section := renderPrimeMemories(memories, false, 0, 0)
 
-	out := renderPrimeMemoryPlane(memories, false)
+	out := renderPrimeMemoryPlane(memories, false, len(section)-1)
 	if !strings.Contains(out, "## Persistent Memories (4, not shown)\n") {
 		t.Fatalf("expected the not-shown header, got %q", out)
 	}
-	if !strings.Contains(out, fmt.Sprintf("These memories total %d bytes, over the %d-byte default budget", total, primeDefaultMemoryBudget)) {
-		t.Fatalf("banner must give the total and the budget, got %q", out)
+	if !strings.Contains(out, fmt.Sprintf("These memories take %d bytes; this output has %d left", len(section), len(section)-1)) {
+		t.Fatalf("banner must give the size and the room, got %q", out)
 	}
 	if !strings.Contains(out, "read one in full with `bd recall <key>`") {
 		t.Fatalf("banner must point at bd recall, got %q", out)
 	}
 	if strings.Contains(out, "### mem-") || strings.Contains(out, "xxxx") {
-		t.Fatalf("no entry may be injected over the default budget, got %q", out)
+		t.Fatalf("no entry may be injected past the room, got %q", out)
 	}
 
-	// Compact entries are cut to 150 characters, so it takes more of them.
-	many := bigMemories(30)
-	if primeMemoryEntriesSize(many, true) <= primeDefaultMemoryBudget {
-		t.Fatal("compact fixture must exceed the default budget")
-	}
-	compact := renderPrimeMemoryPlane(many, true)
-	if !strings.Contains(compact, "## Memories (30, not shown)\n") || strings.Contains(compact, "**mem-") {
+	compactSection := renderPrimeMemories(memories, true, 0, 0)
+	compact := renderPrimeMemoryPlane(memories, true, len(compactSection)-1)
+	if !strings.Contains(compact, "## Memories (4, not shown)\n") || strings.Contains(compact, "**mem-") {
 		t.Fatalf("compact output must show the banner only, got %q", compact)
+	}
+
+	if out := renderPrimeMemoryPlane(memories, false, -50); !strings.Contains(out, "this output has 0 left") {
+		t.Fatalf("a negative room must read as none left, got %q", out)
 	}
 }
 
-func TestRenderPrimeMemoryPlaneConfiguredCapReplacesDefaultBudget(t *testing.T) {
-	memories := bigMemories(4)
+// The room depends on what else the output carries: a memories-only hook has
+// nearly the whole limit, the full workflow text leaves much less.
+func TestPrimeMemoryRoomDependsOnTheRestOfTheOutput(t *testing.T) {
+	stubPrimeMemoryConfig(t, nil, nil)
+	workflowText := strings.Repeat("w", 6200)
+
+	large := sizedMemories(8, 8000)
+	if out := renderPrimeMemoryPlane(large, false, primeMemoryRoom(primeTruncationDirective)); strings.Count(out, "### mem-") != 8 {
+		t.Fatalf("an 8 KB store must fit a memories-only output, got %q", out)
+	}
+	if out := renderPrimeMemoryPlane(large, false, primeMemoryRoom(workflowText)); !strings.Contains(out, "not shown") {
+		t.Fatalf("an 8 KB store must not fit next to 6.2 KB of workflow text, got %q", out)
+	}
+
+	medium := sizedMemories(5, 3500)
+	if out := renderPrimeMemoryPlane(medium, false, primeMemoryRoom(workflowText)); strings.Count(out, "### mem-") != 5 {
+		t.Fatalf("a 3.5 KB store must fit next to 6.2 KB of workflow text, got %q", out)
+	}
+}
+
+func TestRenderPrimeMemoryPlaneConfiguredCapIgnoresRoom(t *testing.T) {
+	memories := sizedMemories(4, 4000)
 
 	stubPrimeMemoryConfig(t, map[string]int{"prime.max-memory-chars": 0}, nil)
-	if out := renderPrimeMemoryPlane(memories, false); !strings.Contains(out, "## Persistent Memories (4)\n") || strings.Count(out, "### mem-") != 4 {
+	if out := renderPrimeMemoryPlane(memories, false, 0); !strings.Contains(out, "## Persistent Memories (4)\n") || strings.Count(out, "### mem-") != 4 {
 		t.Fatalf("prime.max-memory-chars: 0 must inject every memory, got %q", out)
 	}
 
 	stubPrimeMemoryConfig(t, map[string]int{"prime.max-memories": 2}, nil)
-	if out := renderPrimeMemoryPlane(memories, false); !strings.Contains(out, "showing 2 of 4") {
-		t.Fatalf("a configured count cap must apply instead of the default budget, got %q", out)
+	if out := renderPrimeMemoryPlane(memories, false, 0); !strings.Contains(out, "showing 2 of 4") {
+		t.Fatalf("a configured count cap must apply instead of the room, got %q", out)
 	}
 
 	stubPrimeMemoryConfig(t, nil, nil)
 	primeMaxMemoryChars, primeMaxMemoryCharsSet = 0, true
-	if out := renderPrimeMemoryPlane(memories, false); strings.Count(out, "### mem-") != 4 {
+	if out := renderPrimeMemoryPlane(memories, false, 0); strings.Count(out, "### mem-") != 4 {
 		t.Fatalf("--max-memory-chars 0 must inject every memory, got %q", out)
 	}
 }

@@ -141,9 +141,10 @@ Memory injection caps:
 	the section header and elision banner are excluded from the budget.
 
 	With neither cap set by flag, config or environment, prime injects every
-	memory while their entries total at most 3000 bytes. Past that it injects
-	none of them and prints a banner instead, with the count and how to search
-	and read them. Setting either cap, including to 0, replaces this default.`,
+	memory while the whole output stays within 10,000 bytes. Past that it
+	injects none of them and prints a banner instead, with the count and how
+	to search and read them. Setting either cap, including to 0, replaces this
+	default.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -213,7 +214,7 @@ Memory injection caps:
 		if !primeExportMode {
 			if content, ok := readCustomPrimeContent(primeWorkspaceDir(), beadsDir); ok {
 				if !primeMemoriesOff() {
-					if mem := formatMemoriesForPrime(false); mem != "" {
+					if mem := formatMemoriesForPrime(false, primeMemoryRoom(content)); mem != "" {
 						content += mem
 					}
 				}
@@ -550,7 +551,7 @@ const primeTruncationDirective = "[bd prime] If this output is truncated by your
 
 func outputMemoriesOnlyContext(w io.Writer) error {
 	_, _ = fmt.Fprint(w, primeTruncationDirective)
-	if mem := formatMemoriesForPrime(false); mem != "" {
+	if mem := formatMemoriesForPrime(false, primeMemoryRoom(primeTruncationDirective)); mem != "" {
 		_, _ = fmt.Fprint(w, mem)
 		return nil
 	}
@@ -565,15 +566,16 @@ func outputMemoriesOnlyContext(w io.Writer) error {
 // an operator can tell "this workspace has no memories" from "this agent woke
 // with no recall because the store is down" (gh#5877). Only two cases stay
 // silent: no workspace at all (nothing to inject), and a healthy store with
-// zero memories (a fresh workspace must not be given noise).
-func formatMemoriesForPrime(compact bool) string {
+// zero memories (a fresh workspace must not be given noise). room is how many
+// bytes the memories section may take in this output (see primeMemoryRoom).
+func formatMemoriesForPrime(compact bool, room int) string {
 	// bd-mm8wf: in a proxied-server workspace the memory read must ride the
 	// proxied plane (UOW provider), never ensureStoreActiveForPrime — the
 	// lazy direct-store open is the same seam class bd-m7zzd closed in
 	// relate.go and human.go, here in a read-only limb. The proxied dual
 	// preserves prime's silent-skip and timeout-banner contracts.
 	if usesProxiedServer() {
-		return formatMemoriesForPrimeProxied(compact)
+		return formatMemoriesForPrimeProxied(compact, room)
 	}
 
 	// Try to initialize store if not already active (prime may run before other commands)
@@ -606,7 +608,7 @@ func formatMemoriesForPrime(compact bool) string {
 	if err != nil {
 		return formatPrimeMemoryUnavailable(compact, err)
 	}
-	return renderPrimeMemoryPlane(result.Memories, compact)
+	return renderPrimeMemoryPlane(result.Memories, compact, room)
 }
 
 // renderPrimeMemoryPlane renders the memory plane for injection — the shared
@@ -617,24 +619,50 @@ func formatMemoriesForPrime(compact bool) string {
 // memoryops.Memories.List's answer now, on both routes, which is what stopped
 // prime from being a fifth front door with its own copy of the kv.memory.
 // prefix rule.
-func renderPrimeMemoryPlane(memories map[string]string, compact bool) string {
+//
+// With no cap configured, a section longer than room is replaced by a banner.
+func renderPrimeMemoryPlane(memories map[string]string, compact bool, room int) string {
 	if len(memories) == 0 {
 		return ""
 	}
 	maxCount, maxChars, configured := primeMemoryCaps()
-	if !configured {
-		if total := primeMemoryEntriesSize(memories, compact); total > primeDefaultMemoryBudget {
-			return renderPrimeMemoryBudgetBanner(len(memories), total, compact)
-		}
+	section := renderPrimeMemories(memories, compact, maxCount, maxChars)
+	if !configured && len(section) > room {
+		return renderPrimeMemoryRoomBanner(len(memories), len(section), room, compact)
 	}
-	return renderPrimeMemories(memories, compact, maxCount, maxChars)
+	return section
 }
 
-// primeDefaultMemoryBudget bounds the memory entries prime injects when no
-// cap is configured. Claude Code shows SessionStart output past 10,000
-// characters only as a short preview; the default workflow text plus this
-// budget stays under that.
-const primeDefaultMemoryBudget = 3000
+// primeHookInlineLimit is the output size prime keeps within when no memory
+// cap is configured. Claude Code shows SessionStart hook output past 10,000
+// characters only as a short preview plus a file path.
+const primeHookInlineLimit = 10000
+
+// primeMemoryRoom is how many bytes a memories section may take in an output
+// whose other text is parts.
+func primeMemoryRoom(parts ...string) int {
+	room := primeHookInlineLimit
+	for _, p := range parts {
+		room -= len(p)
+	}
+	return room
+}
+
+// primeMemoriesBetween renders the memories section a workflow template puts
+// between its head and tail, with its trailing blank line, or "" when there is
+// none. The divergence reminder prime appends after the template counts
+// against the room too.
+func primeMemoriesBetween(head, tail string, compact bool) string {
+	if primeMemoriesOff() {
+		return ""
+	}
+	room := primeMemoryRoom(head, "\n", tail, primeDivergenceReminder(primeWorkspaceDir()))
+	mem := formatMemoriesForPrime(compact, room)
+	if mem == "" {
+		return ""
+	}
+	return mem + "\n"
+}
 
 // primeConfigInt reads an integer config key (stubbable for tests).
 var primeConfigInt = func(key string) int {
@@ -667,7 +695,7 @@ func primeMemoriesOff() bool {
 // flag wins, including an explicit 0 meaning "force unlimited"; otherwise the
 // prime.max-memories / prime.max-memory-chars config keys apply. 0 means
 // uncapped. configured is false when neither cap was set by flag, config or
-// environment; the caller then applies primeDefaultMemoryBudget.
+// environment; the caller then keeps the output within primeHookInlineLimit.
 func primeMemoryCaps() (maxCount, maxChars int, configured bool) {
 	configured = primeMaxMemoriesSet || primeMaxMemoryCharsSet ||
 		primeConfigIsSet("prime.max-memories") || primeConfigIsSet("prime.max-memory-chars")
@@ -688,37 +716,21 @@ func primeMemoryCaps() (maxCount, maxChars int, configured bool) {
 	return maxCount, maxChars, configured
 }
 
-// primeMemoryEntry formats one memory as prime injects it.
-func primeMemoryEntry(key, value string, compact bool) string {
-	if compact {
-		v := strings.ReplaceAll(value, "\n", " ")
-		return fmt.Sprintf("- **%s**: %s\n", key, truncate(v, 150))
+// renderPrimeMemoryRoomBanner replaces a memories section of size bytes that
+// does not fit the room left in this output when no cap is configured.
+// Injecting the alphabetically first entries would pick memories by key, not
+// relevance, so it shows none and says how to reach them.
+func renderPrimeMemoryRoomBanner(count, size, room int, compact bool) string {
+	if room < 0 {
+		room = 0
 	}
-	return fmt.Sprintf("### %s\n%s\n\n", key, value)
-}
-
-// primeMemoryEntriesSize is the total bytes of every memory entry, measured
-// the way --max-memory-chars measures them.
-func primeMemoryEntriesSize(memories map[string]string, compact bool) int {
-	total := 0
-	for k, v := range memories {
-		total += len(primeMemoryEntry(k, v, compact))
-	}
-	return total
-}
-
-// renderPrimeMemoryBudgetBanner replaces the memories section when the entries
-// exceed primeDefaultMemoryBudget and no cap is configured. Injecting the
-// alphabetically first entries would pick memories by key, not relevance, so
-// it shows none and says how to reach them.
-func renderPrimeMemoryBudgetBanner(count, total int, compact bool) string {
 	if compact {
-		return fmt.Sprintf("\n## Memories (%d, not shown)\n- %d bytes, over the %d-byte default budget; search with `bd memories <keyword>`, read one with `bd recall <key>`\n", count, total, primeDefaultMemoryBudget)
+		return fmt.Sprintf("\n## Memories (%d, not shown)\n- %d bytes, more than the %d left in this output; search with `bd memories <keyword>`, read one with `bd recall <key>`\n", count, size, room)
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("\n## Persistent Memories (%d, not shown)\n\n", count))
 	sb.WriteString("Stored via `bd remember`. Update in place with `bd remember --key <key> \"new content\"`. Search with `bd memories <keyword>`. Remove with `bd forget <key>`.\n\n")
-	sb.WriteString(fmt.Sprintf("> These memories total %d bytes, over the %d-byte default budget for session context, so none are shown. Search them with `bd memories <keyword>` and read one in full with `bd recall <key>`. Set prime.max-memory-chars to inject the alphabetically first ones that fit, or to 0 to inject them all.\n\n", total, primeDefaultMemoryBudget))
+	sb.WriteString(fmt.Sprintf("> These memories take %d bytes; this output has %d left before it passes the %d characters hook hosts such as Claude Code show whole, so none are shown. Search them with `bd memories <keyword>` and read one in full with `bd recall <key>`. Set prime.max-memory-chars to inject the alphabetically first ones that fit, or to 0 to inject them all.\n\n", size, room, primeHookInlineLimit))
 	return sb.String()
 }
 
@@ -744,7 +756,14 @@ func renderPrimeMemories(memories map[string]string, compact bool, maxCount, max
 			countCapHit = true
 			break
 		}
-		entry := primeMemoryEntry(k, memories[k], compact)
+		var entry string
+		if compact {
+			v := strings.ReplaceAll(memories[k], "\n", " ")
+			v = truncate(v, 150)
+			entry = fmt.Sprintf("- **%s**: %s\n", k, v)
+		} else {
+			entry = fmt.Sprintf("### %s\n%s\n\n", k, memories[k])
+		}
 		if maxChars > 0 && len(entries) > 0 && used+len(entry) > maxChars {
 			charCapHit = true
 			break
@@ -903,19 +922,11 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 	}
 
 	redirectNotice := getRedirectNotice(false)
-	var memories string
-	if !primeMemoriesOff() {
-		memories = formatMemoriesForPrime(true)
-	}
-
-	context := primeTruncationDirective + `# Beads Issue Tracker Active
+	head := primeTruncationDirective + `# Beads Issue Tracker Active
 
 ` + redirectNotice
-	if memories != "" {
-		context += memories + "\n"
-	}
 
-	context += `# 🚨 SESSION CLOSE PROTOCOL 🚨
+	tail := `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 ` + closeProtocol + `
 
@@ -929,7 +940,7 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 Start: Check ` + "`ready`" + ` tool for available work.
 `
-	_, _ = fmt.Fprint(w, context)
+	_, _ = fmt.Fprint(w, head+primeMemoriesBetween(head, tail, true)+tail)
 
 	return nil
 }
@@ -1088,22 +1099,14 @@ git status                  # Check changed files
 	}
 
 	redirectNotice := getRedirectNotice(true)
-	var memories string
-	if !primeMemoriesOff() {
-		memories = formatMemoriesForPrime(false)
-	}
-
-	context := primeTruncationDirective + `# Beads Workflow Context
+	head := primeTruncationDirective + `# Beads Workflow Context
 
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
 > Hooks auto-call this in Claude Code and Codex when a beads workspace is resolved
 
 ` + redirectNotice
-	if memories != "" {
-		context += memories + "\n"
-	}
 
-	context += `# 🚨 SESSION CLOSE PROTOCOL 🚨
+	tail := `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 **CRITICAL**: Before saying "done" or "complete", you MUST run this checklist:
 
@@ -1198,7 +1201,7 @@ bd create --title="Write tests for X" --description="Why this issue exists and w
 bd dep add beads-yyy beads-xxx  # Tests depend on Feature (Feature blocks tests)
 ` + "```" + `
 `
-	_, _ = fmt.Fprint(w, context)
+	_, _ = fmt.Fprint(w, head+primeMemoriesBetween(head, tail, false)+tail)
 
 	return nil
 }

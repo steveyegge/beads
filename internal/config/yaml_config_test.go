@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -918,17 +919,19 @@ func TestValidateYamlConfigValue_PrimeMaxMemoryChars(t *testing.T) {
 	}
 }
 
-// TestValidateYamlConfigValue_PrimeNoMemories tests validation of prime.no-memories
+// TestValidateYamlConfigValue_PrimeNoMemories checks that the validator accepts
+// exactly the values the reader (viper's GetBool) reads as a boolean.
 func TestValidateYamlConfigValue_PrimeNoMemories(t *testing.T) {
-	for _, value := range []string{"true", "false", "TRUE"} {
-		if err := validateYamlConfigValue("prime.no-memories", value); err != nil {
-			t.Errorf("unexpected error for value %q: %v", value, err)
+	for _, value := range []string{"true", "false", "TRUE", "True", "tRuE", "off", "1", ""} {
+		_, parseErr := strconv.ParseBool(value)
+		err := validateYamlConfigValue("prime.no-memories", value)
+		if (err == nil) != (parseErr == nil) {
+			t.Errorf("value %q: validator error %v, but the reader's parse error is %v", value, err, parseErr)
 		}
-	}
-	for _, value := range []string{"off", "1", ""} {
-		want := fmt.Sprintf("prime.no-memories must be \"true\" or \"false\", got %q", value)
-		if err := validateYamlConfigValue("prime.no-memories", value); err == nil || err.Error() != want {
-			t.Errorf("value %q: expected error %q, got %v", value, want, err)
+		if err != nil {
+			if want := fmt.Sprintf("prime.no-memories must be true or false, got %q", value); err.Error() != want {
+				t.Errorf("value %q: expected error %q, got %q", value, want, err.Error())
+			}
 		}
 	}
 }
