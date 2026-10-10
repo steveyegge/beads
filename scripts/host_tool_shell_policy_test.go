@@ -1,21 +1,31 @@
 package scripts_test
 
-// Policy: no new ungated bare `go` exec in shell scripts under scripts/ that
-// a Bazel test actually runs. This is the shell-script half of
-// host_tool_exec_policy_test.go's Go-exec policy (see that file's package
-// comment for the full rationale shared by both: under `bazel test` PATH is
-// `hermetic_bin:` plus the strict action env, and a host `go` toolchain is
-// not guaranteed to be on it the way the hermetic-first `dolt` is -- see
-// f4-spec.md §9). "dolt" is out of scope here for the same reason it is out
-// of scope there: it is the one tool that PATH ordering already makes safe.
+// Policy: no new ungated bare `go`/`gofmt` exec in shell scripts under
+// scripts/ or .github/scripts/ that a Bazel test actually runs. This is the
+// shell-script half of host_tool_exec_policy_test.go's Go-exec policy (see
+// that file's package comment for the full rationale shared by both: under
+// `bazel test` PATH is `hermetic_bin:` plus the strict action env, and a host
+// `go`/`gofmt` toolchain is not guaranteed to be on it the way the
+// hermetic-first `dolt` is -- see f4-spec.md §9). "dolt" is out of scope here
+// for the same reason it is out of scope there: it is the one tool that PATH
+// ordering already makes safe.
 //
 // Scope: unlike the Go scanner (which can cheaply scan every *_test.go file
 // in the tree), finding every shell script a Bazel test actually executes
 // requires reading each candidate script's BUILD.bazel wiring (sh_test
 // srcs/args/data, a go_test's data, or a Go test's exec.Command of a fixed
 // script path) by hand; there is no existing Starlark-aware tool in this repo
-// to do that automatically. shellPolicyScope below is that set, as of this
-// writing, with how each entry was confirmed to run under `bazel test`:
+// to do that automatically. TestShellPolicyScopeCoversBazelShellData below is
+// a partial, mechanical backstop for that: it fails if a go_test/sh_test's
+// literal `.sh` data/srcs under scripts/ or .github/scripts/ is missing from
+// shellPolicyScope. It cannot see the common run_check.sh-as-launcher pattern
+// (most scripts/repochecks targets pass the real target script as a `arg`,
+// not as `data`/`srcs`, so run_check.sh itself is the only mechanically
+// discoverable entry for that whole family) -- those still need hand curation
+// and citation below.
+//
+// shellPolicyScope is that set, as of this writing, with how each entry was
+// confirmed to run under `bazel test`:
 //
 //   scripts/ci/fmt-check.sh          PROGRAM of //scripts/repochecks:fmt_test
 //                                    (run_check.sh execs it); data of
@@ -23,6 +33,10 @@ package scripts_test
 //   scripts/ci/gofmt-bin.sh          data of prlintmake_test, which execs it
 //                                    directly (gofmtbin_test.go) and fmt-check.sh
 //                                    execs it as its first line
+//   scripts/ci/pr-lint.sh            data of //scripts/prlintmake:prlintmake_test
+//                                    AND //scripts/repochecks (doc_freshness_test's
+//                                    tracked-file tree); prlintmake_test.go execs it
+//                                    directly with gofmt/go shims on PATH
 //   scripts/check-build-tags.sh      PROGRAM of repochecks:build_tags_test
 //   scripts/check-go-install-guidance.sh  PROGRAM of repochecks:go_install_guidance_test
 //   scripts/check-winget-portable-alias.sh  PROGRAM of repochecks:winget_portable_alias_test
@@ -31,6 +45,9 @@ package scripts_test
 //   scripts/check-workapi-frontend-boundary.sh  PROGRAM of repochecks:workapi_frontend_boundary_test
 //   scripts/check-testing-short.sh   exec.Command("bash", ...)'d directly by
 //                                    testing_short_tree_test.go, in this package
+//   scripts/check-versions.sh        exports_files'd to //scripts/check-versions,
+//                                    exec'd directly by pre_push_hook_test.go
+//                                    (its "exit-status contract")
 //   scripts/repochecks/run_check.sh  srcs of every repochecks sh_test above
 //   scripts/repochecks/types_gen_drift_test.sh  srcs of repochecks:types_gen_drift_test
 //   scripts/migration-test/lib/binary.sh  data of //tests/migration's
@@ -38,25 +55,45 @@ package scripts_test
 //   scripts/migration-test/historical-dolt-upgrade-test.sh  ditto
 //   scripts/migration-test/legacy-bridge-test.sh  ditto
 //   scripts/migrate-legacy-to-current.sh  ditto (//scripts:migration_harness)
+//   scripts/upgrade-smoke-test.sh    data of every upgrade_smoke_<release>_test
+//                                    sh_test (tests/upgrade_smoke/defs.bzl); IS
+//                                    Bazel-executed, unlike what an earlier
+//                                    revision of this comment claimed
+//   .github/scripts/embedded-test-shard.sh         arg of cmd/bd's
+//   .github/scripts/embedded-storage-test-shard.sh  bd_embedded_test/_part2_test,
+//   .github/scripts/proxied-test-shard.sh           embeddeddolt_embedded_test,
+//   .github/scripts/server-storage-test-shard.sh    bd_proxied_test and
+//                                    dolt_server_full_test sh_test rules, run via
+//                                    tools/bazel/go_test_manifest_shard.sh
 //
-// Deliberately NOT in scope: scripts/ci/lib/test-env.sh and scripts/ci/pr-lint.sh
-// (its own TEST_SRCDIR gate predates this policy and is good practice, but
-// neither is wired as Bazel test data/srcs/args anywhere today -- `git grep
-// -n` confirms it -- so nothing runs it inside a hermetic sandbox); and
-// scripts/upgrade-smoke-test.sh, which tests/upgrade_smoke/BUILD.bazel
-// exports_files()s for a doc-path check but never sh_test/go_test-execs.
-// Widen shellPolicyScope, with the same kind of BUILD.bazel citation as
-// above, if that changes.
+// Deliberately NOT in scope: scripts/ci/lib/test-env.sh. Its own TEST_SRCDIR
+// gate predates this policy and is good practice, but it is not itself wired
+// as Bazel test data/srcs/args anywhere -- other scripts `source` it, and
+// *their* wiring is what puts it in scope transitively through their own
+// scan, not a standalone one for the library file.
+//
+// scripts/test.sh and scripts/conformance.sh are also NOT in scope:
+// scripts/test.sh is exports_files'd only to //test/docsync, which checks
+// that the path it links to resolves, never executing it; scripts/conformance.sh
+// has no BUILD.bazel reference at all. Both run only from a plain developer or
+// CI shell invocation, never inside `bazel test`'s sandbox, so this policy
+// does not apply to them. Widen shellPolicyScope, with the same kind of
+// BUILD.bazel citation as above, if that changes.
 //
 // Detection is line-based, not a real shell parser: a line is scanned unless
-// it is a `#` comment, inside a `<<'EOF'`/`<<EOF`-style heredoc body, or
-// looks like message/search text (`printf`/`echo`/`git grep`) rather than a
-// command -- the same kind of pragmatic, documented-false-negative tradeoff
+// it is a `#` comment, inside a `<<'EOF'`/`<<EOF`-style heredoc body, or the
+// match falls inside a quoted string that is not itself a `$(...)` command
+// substitution (quotedSpans/commandSubSpans) -- message/pattern text like
+// `warn "...no gofmt on PATH either"` or `git grep -E 'go install ...'`,
+// rather than a command -- the same kind of pragmatic, documented-false-negative tradeoff
 // check-build-tags.sh's own header comment makes for its Go-source scan. A
 // scanned line is flagged if it contains a bare `go` followed by a verb this
-// policy recognizes (env, build, run, ...), unless the whole file mentions
-// TEST_SRCDIR anywhere (same position-agnostic, file-wide gate the Go
-// scanner uses) or the line is in shellExecAllowlist.
+// policy recognizes (env, build, run, ...), or a bare `gofmt` invocation,
+// UNLESS the exec is inside a branch that this policy's per-branch gate
+// tracker proves runs only off-Bazel (see shellBazelSetVars and
+// shellLineGating below -- the shell analogue of
+// host_tool_exec_policy_test.go's condPolarity/gated), or the line is in
+// shellExecAllowlist.
 
 import (
 	"bufio"
@@ -67,11 +104,13 @@ import (
 	"testing"
 )
 
-// shellPolicyScope is the set of scripts/-rooted shell scripts confirmed (see
-// the package comment) to run inside a `bazel test` sandbox.
+// shellPolicyScope is the set of scripts/- and .github/scripts/-rooted shell
+// scripts confirmed (see the package comment) to run inside a `bazel test`
+// sandbox.
 var shellPolicyScope = []string{
 	"scripts/ci/fmt-check.sh",
 	"scripts/ci/gofmt-bin.sh",
+	"scripts/ci/pr-lint.sh",
 	"scripts/check-build-tags.sh",
 	"scripts/check-go-install-guidance.sh",
 	"scripts/check-winget-portable-alias.sh",
@@ -79,60 +118,248 @@ var shellPolicyScope = []string{
 	"scripts/check-doc-freshness.sh",
 	"scripts/check-workapi-frontend-boundary.sh",
 	"scripts/check-testing-short.sh",
+	"scripts/check-versions.sh",
 	"scripts/repochecks/run_check.sh",
 	"scripts/repochecks/types_gen_drift_test.sh",
 	"scripts/migration-test/lib/binary.sh",
 	"scripts/migration-test/historical-dolt-upgrade-test.sh",
 	"scripts/migration-test/legacy-bridge-test.sh",
 	"scripts/migrate-legacy-to-current.sh",
+	"scripts/upgrade-smoke-test.sh",
+	".github/scripts/embedded-test-shard.sh",
+	".github/scripts/embedded-storage-test-shard.sh",
+	".github/scripts/proxied-test-shard.sh",
+	".github/scripts/server-storage-test-shard.sh",
 }
 
-// shellExecAllowlist is file (repo-relative) -> line -> why a bare `go` exec
-// there is safe despite findShellHostToolExecs flagging it: in every case the
-// enclosing shell function returns early with an already-built/located
-// binary a Bazel target's `env` sets (BEADS_TEST_GO-style dataflow gating,
-// not a textual TEST_SRCDIR check), the shell-script analogue of
-// host_tool_exec_policy_test.go's hostToolExecAllowlist.
-var shellExecAllowlist = map[string]map[int]string{
+// shellBazelSetVars are environment variables, other than TEST_SRCDIR, that a
+// Bazel test target always sets to a valid value before a specific script
+// runs -- so a shell `-n "${VAR:-}"`, `${VAR:?...}` or `-x "$VAR"` check on
+// one of them is exactly as reliable an under-Bazel indicator as a
+// TEST_SRCDIR check is, for the script(s) it is scoped to. Each is cited by
+// the BUILD.bazel/.bzl wiring that proves it, the shell analogue of
+// host_tool_exec_policy_test.go's prebuiltResultVars/isPrebuiltVarIdent.
+var shellBazelSetVars = map[string]bool{
+	// tests/migration/defs.bzl sets this from //tests/migration:bd_source_tag
+	// for every historical_upgrade_tests target.
+	"SOURCE_TAG_SQLITE_BIN": true,
+	// tests/migration/defs.bzl sets this from //cmd/bd:bd_for_tests for
+	// historical_upgrade_tests; tests/upgrade_smoke/defs.bzl sets it from the
+	// same target for every upgrade_smoke_<release>_test. Both always set it.
+	"CANDIDATE_BIN": true,
+	// tools/bazel/go_test_manifest_shard.sh's `export "$bin_var=$PWD/$bin"`
+	// always sets exactly one of these three to an absolute path to a
+	// declared `data` test binary before exec'ing the matching shard script
+	// (cmd/bd/BUILD.bazel's bd_embedded_test/_part2_test/bd_proxied_test,
+	// internal/storage/embeddeddolt/BUILD.bazel's embedded storage sh_test,
+	// internal/storage/dolt/BUILD.bazel's server storage sh_test).
+	"BEADS_TEST_CMD_BINARY":           true,
+	"BEADS_TEST_EMBEDDED_TEST_BINARY": true,
+	"BEADS_TEST_SERVER_TEST_BINARY":   true,
+}
+
+// shellAllowlistEntry mirrors host_tool_exec_policy_test.go's
+// hostToolAllowlistEntry: keyed by the enclosing function (empty for
+// top-level script code, outside any `name() { ... }`/`name() ( ... )`) and
+// an exact snippet of the flagged line, not a line number, so the entry
+// tracks the code through refactors instead of silently going stale or
+// silently covering the wrong line (review point 5).
+type shellAllowlistEntry struct {
+	fn      string
+	snippet string
+	why     string
+}
+
+// shellExecAllowlist is file (repo-relative) -> entries for bare `go`/`gofmt`
+// execs that are safe despite findShellHostToolExecs flagging them and
+// shellLineGating not proving it structurally -- in every case here the gate
+// is a generic `command -v`/PATH-shim precondition a Go test arranges before
+// exec'ing the script, not a textual TEST_SRCDIR/shellBazelSetVars check this
+// scanner's line-based gate tracker can see.
+var shellExecAllowlist = map[string][]shellAllowlistEntry{
 	"scripts/ci/gofmt-bin.sh": {
-		100: "only reached when GOFMT is unset; //scripts/repochecks:fmt_test sets it " +
-			"(--env GOFMT=$(rlocationpath @go_sdk//:bin/gofmt)), and gofmtbin_test.go's " +
-			"testGo(t) puts BEADS_TEST_GO's directory first on PATH before calling this script",
-		104: "same gate as line 100",
-		105: "same gate as line 100",
+		{
+			fn:      "",
+			snippet: `if [[ "$(go env GOVERSION 2>/dev/null)" == "go$pinned" ]]; then`,
+			why: "only reached once `command -v go` (above) has already confirmed go is on " +
+				"PATH; //scripts/prlintmake:prlintmake_test's gofmtbin_test.go exercises every " +
+				"branch of this script with a real go on PATH",
+		},
+		{
+			fn:      "",
+			snippet: `    goroot="$(go env GOROOT 2>/dev/null || true)"`,
+			why:     "same `command -v go` gate as the GOVERSION check above",
+		},
+		{
+			fn:      "",
+			snippet: `elif ! goroot="$(GOTOOLCHAIN="go$pinned" go env GOROOT 2>/dev/null)"; then`,
+			why:     "same `command -v go` gate as the GOVERSION check above",
+		},
 	},
-	"scripts/migration-test/lib/binary.sh": {
-		218: "build_verified_v091_source_binary: only reached when SOURCE_TAG_SQLITE_BIN is " +
-			"unset; tests/migration/defs.bzl sets it from //tests/migration:bd_source_tag " +
-			"for every historical_upgrade_tests target",
-		281: "build_candidate: only reached when CANDIDATE_BIN is unset; tests/migration/defs.bzl " +
-			"sets it from //cmd/bd:bd_for_tests",
+	"scripts/ci/pr-lint.sh": {
+		{
+			fn:      "",
+			snippet: `go run -mod=readonly -tags=gms_pure_go ./scripts/pr-lint`,
+			why: "scripts/prlintmake/prlintmake_test.go execs this script directly with a " +
+				"shim directory (containing a fake `go`) placed first on PATH",
+		},
+	},
+	"scripts/check-versions.sh": {
+		{
+			fn:      "",
+			snippet: `if ! go build -tags=gms_pure_go -o "$checker" ./scripts/check-versions; then`,
+			why: "scripts/check-versions/pre_push_hook_test.go execs this script directly " +
+				"with fakeGoBuildDir(t) (a stand-in `go` that copies the Bazel-built " +
+				"BEADS_TEST_CHECK_VERSIONS binary instead of compiling from source) first on PATH",
+		},
 	},
 }
 
 // shellHostToolVerbs are the `go` subcommands this policy treats as a real
-// exec rather than incidental prose (e.g. "go.mod", "go$pinned").
-var shellHostToolVerbs = regexp.MustCompile(`\bgo(?:\s+)(env|build|run|version|vet|mod|install|test|fmt|list|generate|get|work|doc|bug)\b`)
+// exec rather than incidental prose (e.g. "go.mod", "go$pinned"). "tool" is
+// included for `go tool <name>` (review point 2).
+var shellHostToolVerbs = regexp.MustCompile(`\bgo(?:\s+)(env|build|run|version|vet|mod|install|test|fmt|list|generate|get|work|doc|bug|tool)\b`)
+
+// shellGofmtExec matches a bare `gofmt` invoked as its own shell word --
+// bounded by whitespace/`;`/`|`/`&`/`(`/“ ` “/line-start/line-end on both
+// sides -- so it does not false-positive on an identifier or filename that
+// merely contains "gofmt" as a substring, such as "gofmt-bin.sh" or a
+// variable named "$GOFMT_BIN" (review point 2's "misses gofmt" plus the
+// matching false-positive risk a naive `\bgofmt\b` fix would introduce: that
+// pattern alone DOES match inside "gofmt-bin.sh", since `-` is a non-word
+// character and `\b` only requires a word/non-word transition).
+var shellGofmtExec = regexp.MustCompile("(^|[\\s;|&(`])gofmt([\\s;|&)`]|$)")
+
+// shellToolLookup matches a `command -v`/`which`/`type` lookup of go or
+// gofmt, which is not itself an exec of the tool.
+var shellToolLookup = regexp.MustCompile(`\b(command\s+-v|which|type)\s+(go|gofmt)\b`)
 
 // heredocStart matches a `<<` (optionally `<<-`) redirection naming its
-// terminator, with or without quotes: `<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"`.
-var heredocStart = regexp.MustCompile(`<<-?\s*(['"]?)(\w+)['"]?`)
+// terminator, with or without quotes: `<<EOF`, `<<-EOF`, `<<'EOF'`,
+// `<<"EOF"`. The delimiter must start with a letter or underscore, so this
+// does not false-positive on an arithmetic left-shift (`$((1 << 2))`) or a
+// here-string (`<<<`), neither of which names an identifier-shaped
+// terminator starting a new line (review point 2's "stray `<<` ends the
+// scan").
+var heredocStart = regexp.MustCompile(`<<-?\s*(['"]?)([A-Za-z_]\w*)['"]?\s*$`)
 
 type shellExecHit struct {
-	line int
-	verb string
+	line    int
+	fn      string
+	snippet string
+	verb    string // "" for a gofmt hit
+}
+
+// quotedSpans returns the [start,end) byte ranges of line that are inside a
+// single- or double-quoted string MINUS any `$(...)` command-substitution
+// span nested inside one (command substitution executes regardless of the
+// quoting around it, e.g. `warn "not found: $(go env GOROOT)"` really does
+// exec `go env`). This is what tells message/pattern text ("git grep -E 'go
+// install ...'", `warn "...no gofmt on PATH either"`) apart from a real exec:
+// a scanned line's host-tool match is only ever text, not a command, when it
+// falls inside a quoted span and outside every command-substitution span.
+// Earlier revisions of this scanner instead keyed off the line's leading
+// command being printf/echo/git-grep specifically, which both missed
+// identically-shaped text arguments to this repo's own warn()/fallback()
+// helpers (review point 2) and could not tell "foo && go build ..." (a real
+// second command after a separator) from being swallowed by a same-line
+// "contains echo" substring check.
+func quotedSpans(line string) [][2]int {
+	cmdSub := commandSubSpans(line)
+	var spans [][2]int
+	var quote byte
+	start := -1
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if quote == 0 {
+			if c == '\'' || c == '"' {
+				quote = c
+				start = i
+			}
+			continue
+		}
+		if c == '\\' && quote == '"' && i+1 < len(line) {
+			i++
+			continue
+		}
+		if c == quote {
+			addNonSubSpans(&spans, start, i+1, cmdSub)
+			quote = 0
+		}
+	}
+	return spans
+}
+
+// commandSubSpans returns the [start,end) byte ranges of every `$(...)`
+// command-substitution in line (simple, non-nested balanced-paren matching;
+// this repo's shell scripts do not nest one command substitution directly
+// inside another on the lines this policy scans).
+func commandSubSpans(line string) [][2]int {
+	var spans [][2]int
+	for i := 0; i < len(line)-1; i++ {
+		if line[i] != '$' || line[i+1] != '(' {
+			continue
+		}
+		depth := 1
+		j := i + 2
+		for ; j < len(line) && depth > 0; j++ {
+			switch line[j] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+		}
+		spans = append(spans, [2]int{i, j})
+		i = j - 1
+	}
+	return spans
+}
+
+// addNonSubSpans appends the portion(s) of [start,end) that fall outside
+// every span in cmdSub to spans, so a command substitution nested inside a
+// quoted string is not itself treated as quoted text.
+func addNonSubSpans(spans *[][2]int, start, end int, cmdSub [][2]int) {
+	cur := start
+	for _, s := range cmdSub {
+		if s[1] <= cur || s[0] >= end {
+			continue
+		}
+		if s[0] > cur {
+			*spans = append(*spans, [2]int{cur, s[0]})
+		}
+		if s[1] > cur {
+			cur = s[1]
+		}
+	}
+	if cur < end {
+		*spans = append(*spans, [2]int{cur, end})
+	}
+}
+
+func insideSpan(spans [][2]int, pos int) bool {
+	for _, s := range spans {
+		if pos >= s[0] && pos < s[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // findShellHostToolExecs scans src (one shell script's contents) for bare
-// `go <verb>` lines, skipping comments, heredoc bodies, and printf/echo/git
-// grep message or search text. It reports every hit regardless of
-// TEST_SRCDIR or the allowlist -- callers apply those.
+// `go <verb>`/`gofmt` lines, skipping comments, heredoc bodies, `command -v`
+// style lookups, and quoted message/pattern text. It reports every hit
+// regardless of any gate or the allowlist -- callers apply those. Each hit
+// also records its enclosing function name (empty at top level) and an exact
+// snippet of the matched line, for shellExecAllowlist and shellLineGating.
 func findShellHostToolExecs(src string) []shellExecHit {
 	var hits []shellExecHit
+	lines := strings.Split(src, "\n")
 	scanner := bufio.NewScanner(strings.NewReader(src))
 	lineno := 0
 	inHeredoc := false
 	heredocDelim := ""
+	currentFn := ""
 	for scanner.Scan() {
 		lineno++
 		line := scanner.Text()
@@ -146,28 +373,254 @@ func findShellHostToolExecs(src string) []shellExecHit {
 		if strings.HasPrefix(trimmed, "#") {
 			continue
 		}
+		if fn, ok := matchFuncStart(trimmed); ok {
+			currentFn = fn
+		} else if currentFn != "" && (line == "}" || line == ")") {
+			// An unindented closing brace/paren alone on a line ends the
+			// function, mirroring matchFuncStart's own column-0 anchoring:
+			// every function body line in this policy's scope is indented.
+			currentFn = ""
+		}
 		if m := heredocStart.FindStringSubmatch(line); m != nil {
 			inHeredoc = true
 			heredocDelim = m[2]
 			// The redirection line itself (e.g. `cat >&2 <<'EOF'`) is still
 			// scanned below; only what follows is heredoc body.
 		}
-		if strings.Contains(trimmed, "printf") || strings.HasPrefix(trimmed, "echo") ||
-			strings.Contains(trimmed, "echo ") || strings.Contains(trimmed, "git grep") {
+		spans := quotedSpans(line)
+
+		for _, m := range shellHostToolVerbs.FindAllStringSubmatchIndex(line, -1) {
+			if insideSpan(spans, m[0]) {
+				continue
+			}
+			hits = append(hits, shellExecHit{line: lineno, fn: currentFn, snippet: lines[lineno-1], verb: line[m[2]:m[3]]})
+		}
+		if shellToolLookup.MatchString(line) {
 			continue
 		}
-		for _, m := range shellHostToolVerbs.FindAllStringSubmatch(line, -1) {
-			hits = append(hits, shellExecHit{line: lineno, verb: m[1]})
+		for _, m := range shellGofmtExec.FindAllStringSubmatchIndex(line, -1) {
+			start := strings.Index(line[m[0]:m[1]], "gofmt") + m[0]
+			if insideSpan(spans, start) {
+				continue
+			}
+			hits = append(hits, shellExecHit{line: lineno, fn: currentFn, snippet: lines[lineno-1], verb: ""})
 		}
 	}
 	return hits
 }
 
-// shellFileIsGated reports whether src mentions TEST_SRCDIR anywhere, the
-// file-wide, position-agnostic gate scripts/ci/fmt-check.sh and
-// scripts/ci/lib/test-env.sh both use (see #7478).
-func shellFileIsGated(src string) bool {
-	return strings.Contains(src, "TEST_SRCDIR")
+// shellFuncStart matches a shell function definition's opening line, either
+// style this repo uses: `name() {` or `name() (`.
+var shellFuncStart = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*[{(]\s*$`)
+
+func matchFuncStart(trimmed string) (string, bool) {
+	m := shellFuncStart.FindStringSubmatch(trimmed)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// condVarCheck matches a condition fragment testing one of TEST_SRCDIR or a
+// shellBazelSetVars entry: `-n "${VAR:-...}"`, `-z "${VAR:-...}"`,
+// `-x "$VAR"`/`-x "${VAR}"`, or `${VAR:?...}`. It reports the variable name,
+// the operator ("-n", "-z" or "-x"; ":?" is normalized to "-n", since a
+// required-nonempty substitution has the same "true/reached implies set"
+// polarity as an explicit -n check), and whether anything matched.
+var condVarCheckN = regexp.MustCompile(`-n\s+"\$\{?(\w+)(:-[^}]*)?\}?"`)
+var condVarCheckZ = regexp.MustCompile(`-z\s+"\$\{?(\w+)(:-[^}]*)?\}?"`)
+var condVarCheckX = regexp.MustCompile(`-x\s+"\$\{?(\w+)(:-[^}]*)?\}?"`)
+var condVarRequired = regexp.MustCompile(`\$\{(\w+):\?`)
+
+// shellVarAlias matches a simple default-value assignment, `VAR="${OTHER:-...}"`
+// or `VAR="${OTHER}"`, the pattern every shellPolicyScope script in this
+// policy's scope uses to copy a Bazel-set variable (shellBazelSetVars) into a
+// local name before testing it, e.g. .github/scripts/*-test-shard.sh's
+// `CMD_BINARY="${BEADS_TEST_CMD_BINARY:-/tmp/bd-cmd-test}"`.
+var shellVarAlias = regexp.MustCompile(`^(\w+)=\"\$\{(\w+)(:-[^}]*)?\}\"$`)
+
+// shellVarAliases returns a map from a script-local variable name to the
+// Bazel-set variable name (a shellBazelSetVars key) it was assigned from via
+// a `VAR="${BAZEL_VAR:-default}"` default-value assignment, so
+// bazelVarPolarity can recognize a later `-x "$VAR"`/`-n "$VAR"` test as
+// referring, transitively, to the Bazel-set variable.
+func shellVarAliases(src string) map[string]string {
+	aliases := map[string]string{}
+	for _, raw := range strings.Split(src, "\n") {
+		trimmed := strings.TrimSpace(raw)
+		m := shellVarAlias.FindStringSubmatch(trimmed)
+		if m == nil {
+			continue
+		}
+		if shellBazelSetVars[m[2]] {
+			aliases[m[1]] = m[2]
+		}
+	}
+	return aliases
+}
+
+// bazelVarPolarity reports whether cond contains a recognized
+// TEST_SRCDIR/shellBazelSetVars check and, if so, whether the condition being
+// TRUE implies the script is running under Bazel (bazelWhenTrue), mirroring
+// host_tool_exec_policy_test.go's condPolarity. A condition this function
+// does not recognize at all (including anything containing `||`, which this
+// line-based heuristic does not attempt to reason about) reports matched =
+// false, so callers never treat an unrecognized condition as either kind of
+// gate.
+func bazelVarPolarity(cond string, aliases map[string]string) (bazelWhenTrue bool, matched bool) {
+	if strings.Contains(cond, "||") {
+		return false, false
+	}
+	isBazelVar := func(name string) bool {
+		if name == "TEST_SRCDIR" || shellBazelSetVars[name] {
+			return true
+		}
+		return shellBazelSetVars[aliases[name]]
+	}
+	if m := condVarRequired.FindStringSubmatch(cond); m != nil && isBazelVar(m[1]) {
+		return true, true
+	}
+	if m := condVarCheckN.FindStringSubmatch(cond); m != nil && isBazelVar(m[1]) {
+		return true, true
+	}
+	if m := condVarCheckX.FindStringSubmatch(cond); m != nil && isBazelVar(m[1]) {
+		return true, true
+	}
+	if m := condVarCheckZ.FindStringSubmatch(cond); m != nil && isBazelVar(m[1]) {
+		return false, true
+	}
+	return false, false
+}
+
+// ifFrame tracks one open if/elif/else block for shellLineGating's per-branch
+// containment tracking (review point 1): the shell analogue of
+// host_tool_exec_policy_test.go's within()/condPolarity-driven *ast.IfStmt
+// walk, done textually over if/then/elif/else/fi keywords instead of an AST.
+type ifFrame struct {
+	matched           bool // condVarPolarity recognized this frame's own condition
+	bodySafe          bool // lines directly in this frame's active branch never run under Bazel
+	thenBazelWhenTrue bool // the (last-set) condition's polarity: true implies under-Bazel
+	inElse            bool
+	thenHasAbort      bool // an abort statement appeared directly in the then-branch
+}
+
+// shellLineGating replaces shellFileIsGated's whole-file, position-agnostic
+// TEST_SRCDIR check (review point 1's bug: it exempted an entire file on any
+// TEST_SRCDIR mention, anywhere, including in a comment or an unrelated
+// branch). It walks src tracking if/elif/else/fi nesting and shell function
+// boundaries, and returns the set of line numbers it can prove run only when
+// NOT under Bazel -- either because they are lexically inside a branch whose
+// condition's truth implies off-Bazel (containment style), or because they
+// come after an if-block, in the same function, whose condition implies
+// on-Bazel and which unconditionally returns/exits (abort style, the same
+// two styles host_tool_exec_policy_test.go's gated() recognizes for Go).
+//
+// This is deliberately conservative and line-based, not a real shell parser:
+// an unrecognized condition (including any `||`) leaves the surrounding code
+// ungated rather than guessing, and `elif` is treated as if it reset to a
+// fresh `if` rather than ANDing in the negation of earlier branches in the
+// same chain (none of this policy's real call sites use elif alongside a
+// TEST_SRCDIR/shellBazelSetVars condition, so that simplification does not
+// currently cost any precision; a future case that needs it should extend
+// this rather than work around it).
+func shellLineGating(src string) map[int]bool {
+	safe := map[int]bool{}
+	lines := strings.Split(src, "\n")
+	aliases := shellVarAliases(src)
+	var stack []*ifFrame
+	abortSafeFrom := -1 // line after which abort-style safety applies, -1 if none
+	for i, raw := range lines {
+		lineno := i + 1
+		trimmed := strings.TrimSpace(raw)
+		if _, ok := matchFuncStart(trimmed); ok {
+			stack = nil
+			abortSafeFrom = -1
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "if ") || trimmed == "if":
+			cond := extractCond(trimmed, "if")
+			bazelWhenTrue, matched := bazelVarPolarity(cond, aliases)
+			frame := &ifFrame{matched: matched, thenBazelWhenTrue: bazelWhenTrue, bodySafe: matched && !bazelWhenTrue}
+			stack = append(stack, frame)
+		case strings.HasPrefix(trimmed, "elif "):
+			if len(stack) > 0 {
+				cond := extractCond(trimmed, "elif")
+				bazelWhenTrue, matched := bazelVarPolarity(cond, aliases)
+				top := stack[len(stack)-1]
+				top.matched = matched
+				top.thenBazelWhenTrue = bazelWhenTrue
+				top.bodySafe = matched && !bazelWhenTrue
+				top.thenHasAbort = false
+			}
+		case trimmed == "else":
+			if len(stack) > 0 {
+				top := stack[len(stack)-1]
+				top.inElse = true
+				if top.matched {
+					top.bodySafe = top.thenBazelWhenTrue
+				}
+			}
+		case trimmed == "fi":
+			if len(stack) > 0 {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				// Abort-style (review point 1/6): if this if-statement's
+				// then-branch condition implied under-Bazel and the
+				// then-branch unconditionally aborted, later lines in the
+				// same function are reached only when that condition was
+				// false, i.e. only off-Bazel.
+				if top.matched && top.thenBazelWhenTrue && top.thenHasAbort {
+					abortSafeFrom = lineno
+				}
+			}
+		}
+		if isAbortStmt(trimmed) && len(stack) > 0 {
+			top := stack[len(stack)-1]
+			if !top.inElse {
+				top.thenHasAbort = true
+			}
+		}
+		// A line's safety is the OR of every enclosing frame's current
+		// branch being safe, or lying after a same-function abort.
+		lineSafe := abortSafeFrom >= 0 && lineno > abortSafeFrom
+		for _, f := range stack {
+			if f.bodySafe {
+				lineSafe = true
+			}
+		}
+		if lineSafe {
+			safe[lineno] = true
+		}
+	}
+	return safe
+}
+
+var condExtract = regexp.MustCompile(`^(?:if|elif)\s+(.*?)\s*;?\s*then\s*$`)
+
+// extractCond pulls the condition text out of an `if cond; then` or
+// `if cond` line (the `then` may be on the next line, outside this
+// function's view; extractCond returns the whole remainder in that case,
+// which is fine since bazelVarPolarity only looks for substrings).
+func extractCond(trimmed, kw string) string {
+	if m := condExtract.FindStringSubmatch(trimmed); m != nil {
+		return m[1]
+	}
+	return strings.TrimPrefix(trimmed, kw+" ")
+}
+
+var abortStmt = regexp.MustCompile(`^(return|exit|continue|break)\b`)
+
+func isAbortStmt(trimmed string) bool {
+	return abortStmt.MatchString(trimmed)
+}
+
+func shellMatchAllowlist(entries []shellAllowlistEntry, fn, snippet string) bool {
+	for _, e := range entries {
+		if e.fn == fn && strings.TrimSpace(e.snippet) == strings.TrimSpace(snippet) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestShellHostToolExecPolicyScan(t *testing.T) {
@@ -177,8 +630,41 @@ func TestShellHostToolExecPolicyScan(t *testing.T) {
 		if len(hits) != 1 || hits[0].line != 2 || hits[0].verb != "build" {
 			t.Fatalf("got %+v, want one hit at line 2 (build)", hits)
 		}
-		if shellFileIsGated(src) {
-			t.Fatal("fixture has no TEST_SRCDIR mention; must not be gated")
+		if shellLineGating(src)[2] {
+			t.Fatal("fixture has no gate; line 2 must not be reported safe")
+		}
+	})
+
+	t.Run("go tool is reported (review point 2)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\ngo tool nm ./bd\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 || hits[0].verb != "tool" {
+			t.Fatalf("got %+v, want one `tool` hit", hits)
+		}
+	})
+
+	t.Run("bare gofmt exec is reported (review point 2)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\ngofmt -l .\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 {
+			t.Fatalf("got %+v, want one gofmt hit", hits)
+		}
+	})
+
+	t.Run("gofmt as a substring of a filename is not reported", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\nsource scripts/ci/gofmt-bin.sh\nGOFMT_BIN=/tmp/x\n"
+		if hits := findShellHostToolExecs(src); len(hits) != 0 {
+			t.Fatalf("got %+v, want no hits (gofmt-bin.sh/GOFMT_BIN are not a `gofmt` exec)", hits)
+		}
+	})
+
+	t.Run("command -v / which / type lookups are not reported", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"if ! command -v go >/dev/null 2>&1; then exit 1; fi\n" +
+			"which gofmt >/dev/null\n" +
+			"type go >/dev/null\n"
+		if hits := findShellHostToolExecs(src); len(hits) != 0 {
+			t.Fatalf("got %+v, want no hits (tool-presence lookups, not execs)", hits)
 		}
 	})
 
@@ -196,12 +682,47 @@ func TestShellHostToolExecPolicyScan(t *testing.T) {
 		}
 	})
 
-	t.Run("printf and echo message text are not scanned", func(t *testing.T) {
+	t.Run("arithmetic left-shift is not mistaken for a heredoc (review point 2)", func(t *testing.T) {
+		// A bogus heredoc-start match here would swallow the rest of the
+		// script (including the real `go build` below) as heredoc body.
+		src := "#!/usr/bin/env bash\nx=$(( 1 << 2 ))\ngo build -o out ./cmd/bd\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 || hits[0].line != 3 {
+			t.Fatalf("got %+v, want one hit at line 3 (arithmetic shift must not start a heredoc)", hits)
+		}
+	})
+
+	t.Run("a here-string is not mistaken for a heredoc", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\ncat <<< \"go build fake\"\ngo build -o out ./cmd/bd\n"
+		hits := findShellHostToolExecs(src)
+		found3 := false
+		for _, h := range hits {
+			if h.line == 3 {
+				found3 = true
+			}
+		}
+		if !found3 {
+			t.Fatalf("got %+v, want a hit at line 3 (here-string must not start a heredoc)", hits)
+		}
+	})
+
+	t.Run("printf and echo quoted message text are not scanned", func(t *testing.T) {
 		src := "#!/usr/bin/env bash\n" +
 			"printf 'error: unsupported go install module path\\n' >&2\n" +
 			"echo \"run go version to check\"\n"
 		if hits := findShellHostToolExecs(src); len(hits) != 0 {
 			t.Fatalf("got %+v, want no hits (printf/echo text)", hits)
+		}
+	})
+
+	t.Run("a real exec joined onto an echo line by && is still reported (review point 2)", func(t *testing.T) {
+		// A line-wide "contains echo" skip (the previous scanner's bug) would
+		// hide this real second command.
+		src := "#!/usr/bin/env bash\n" +
+			"echo \"building\" && go build -o out ./cmd/bd\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 || hits[0].line != 2 {
+			t.Fatalf("got %+v, want one hit at line 2 (go build after && is a real exec)", hits)
 		}
 	})
 
@@ -222,33 +743,118 @@ func TestShellHostToolExecPolicyScan(t *testing.T) {
 		}
 	})
 
-	t.Run("a TEST_SRCDIR mention anywhere gates the whole file", func(t *testing.T) {
-		src := "#!/usr/bin/env bash\n" +
-			"if [[ -z \"${TEST_SRCDIR:-}\" ]]; then\n" +
-			"  go build -o out ./cmd/bd\n" +
-			"fi\n"
-		if hits := findShellHostToolExecs(src); len(hits) != 1 {
-			t.Fatalf("got %+v, want the scan itself to still find the line", hits)
-		}
-		if !shellFileIsGated(src) {
-			t.Fatal("file mentions TEST_SRCDIR; shellFileIsGated must report true")
-		}
-	})
-
 	t.Run("dolt is never flagged", func(t *testing.T) {
 		src := "#!/usr/bin/env bash\ndolt sql -q 'select 1'\n"
 		if hits := findShellHostToolExecs(src); len(hits) != 0 {
 			t.Fatalf("got %+v, want no hits (dolt is out of scope; see package comment)", hits)
 		}
 	})
+
+	t.Run("TEST_SRCDIR gates only its own branch, not the whole file (review point 1)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"if [[ -z \"${TEST_SRCDIR:-}\" ]]; then\n" +
+			"  go build -o out ./cmd/bd\n" +
+			"fi\n" +
+			"go build -o out2 ./cmd/bd\n"
+		gating := shellLineGating(src)
+		if !gating[3] {
+			t.Fatal("line 3 is inside the off-Bazel-only branch; must be reported safe")
+		}
+		if gating[5] {
+			t.Fatal("line 5 is NOT inside any TEST_SRCDIR branch; a whole-file gate would " +
+				"wrongly report it safe (review point 1's bug)")
+		}
+	})
+
+	t.Run("TEST_SRCDIR-true branch is not safe, its else is", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"if [[ -n \"${TEST_SRCDIR:-}\" ]]; then\n" +
+			"  go build -o out ./cmd/bd\n" +
+			"else\n" +
+			"  go build -o out2 ./cmd/bd\n" +
+			"fi\n"
+		gating := shellLineGating(src)
+		if gating[3] {
+			t.Fatal("line 3 runs only under Bazel; must not be reported safe")
+		}
+		if !gating[5] {
+			t.Fatal("line 5 runs only off-Bazel (the else of a TEST_SRCDIR-set check); must be safe")
+		}
+	})
+
+	t.Run("abort-style: unset-check that returns makes the rest of the function safe", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"build_candidate() {\n" +
+			"    if [ -n \"${CANDIDATE_BIN:-}\" ] && [ -x \"${CANDIDATE_BIN}\" ]; then\n" +
+			"        echo \"$CANDIDATE_BIN\"\n" +
+			"        return\n" +
+			"    fi\n" +
+			"    go build -o \"$candidate\" ./cmd/bd\n" +
+			"}\n"
+		gating := shellLineGating(src)
+		if !gating[7] {
+			t.Fatal("line 7 is reached only when CANDIDATE_BIN is unset, i.e. off-Bazel; must be safe")
+		}
+	})
+
+	t.Run("abort-style safety does not leak into the next function (review point 1)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"build_candidate() {\n" +
+			"    if [ -n \"${CANDIDATE_BIN:-}\" ]; then\n" +
+			"        return\n" +
+			"    fi\n" +
+			"    true\n" +
+			"}\n" +
+			"other_fn() {\n" +
+			"    go build -o out ./cmd/bd\n" +
+			"}\n"
+		if shellLineGating(src)[9] {
+			t.Fatal("line 9 is in a different function; must not inherit the previous " +
+				"function's abort-style safety")
+		}
+	})
+
+	t.Run("an alias of a Bazel-set var still gates (review point 1, shard-script pattern)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"CMD_BINARY=\"${BEADS_TEST_CMD_BINARY:-/tmp/bd-cmd-test}\"\n" +
+			"if [ -x \"$CMD_BINARY\" ]; then\n" +
+			"  exec \"$CMD_BINARY\" -test.v\n" +
+			"else\n" +
+			"  exec go test -tags=gms_pure_go ./cmd/bd/\n" +
+			"fi\n"
+		if !shellLineGating(src)[6] {
+			t.Fatal("line 6 runs only when the Bazel-set BEADS_TEST_CMD_BINARY-derived " +
+				"binary is missing, i.e. off-Bazel; must be safe")
+		}
+	})
+
+	t.Run("an unrecognized condition is not treated as a gate", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"if [ \"$FOO\" = \"1\" ]; then\n" +
+			"  go build -o out ./cmd/bd\n" +
+			"fi\n"
+		if shellLineGating(src)[3] {
+			t.Fatal("an unrelated condition must not be treated as a Bazel gate")
+		}
+	})
+
+	t.Run("a condition with || is not treated as a gate (conservative)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"if [[ -z \"${TEST_SRCDIR:-}\" ]] || [[ -n \"${FORCE_LOCAL:-}\" ]]; then\n" +
+			"  go build -o out ./cmd/bd\n" +
+			"fi\n"
+		if shellLineGating(src)[3] {
+			t.Fatal("a disjunctive condition is not reasoned about; must not be reported safe")
+		}
+	})
 }
 
 // TestNoUngatedBareGoInBazelReachedShellScripts scans shellPolicyScope and
-// fails on an unallowlisted, ungated bare `go` exec. See the package comment
-// for scope and the detection tradeoffs.
+// fails on an unallowlisted, ungated bare `go`/`gofmt` exec. See the package
+// comment for scope and the detection tradeoffs.
 func TestNoUngatedBareGoInBazelReachedShellScripts(t *testing.T) {
 	root := sourceRepoRoot(t)
-	seen := map[string]map[int]bool{}
+	seenAllow := map[string]map[string]bool{} // file -> "fn\x00snippet" -> true
 	for _, rel := range shellPolicyScope {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		data, err := os.ReadFile(path)
@@ -256,29 +862,34 @@ func TestNoUngatedBareGoInBazelReachedShellScripts(t *testing.T) {
 			t.Fatalf("read %s: %v (shellPolicyScope entry no longer exists; update it)", rel, err)
 		}
 		src := string(data)
-		gated := shellFileIsGated(src)
+		gating := shellLineGating(src)
 		for _, hit := range findShellHostToolExecs(src) {
-			if gated {
+			if gating[hit.line] {
 				continue
 			}
-			if why, ok := shellExecAllowlist[rel][hit.line]; ok {
-				if seen[rel] == nil {
-					seen[rel] = map[int]bool{}
+			if shellMatchAllowlist(shellExecAllowlist[rel], hit.fn, hit.snippet) {
+				if seenAllow[rel] == nil {
+					seenAllow[rel] = map[string]bool{}
 				}
-				seen[rel][hit.line] = true
-				_ = why
+				seenAllow[rel][hit.fn+"\x00"+strings.TrimSpace(hit.snippet)] = true
 				continue
 			}
-			t.Errorf("%s:%d: ungated bare `go %s`: under `bazel test` the hermetic-first PATH "+
-				"may lack a host go toolchain, so this can exit 127 on some workers (f4-spec.md "+
-				"§9); gate it on TEST_SRCDIR, resolve go through a Bazel-wired env var, or add a "+
-				"justified shellExecAllowlist entry", rel, hit.line, hit.verb)
+			tool := "go " + hit.verb
+			if hit.verb == "" {
+				tool = "gofmt"
+			}
+			t.Errorf("%s:%d: ungated bare `%s`: under `bazel test` the hermetic-first PATH "+
+				"may lack a host toolchain, so this can exit 127 on some workers (f4-spec.md "+
+				"§9); gate it on TEST_SRCDIR/a shellBazelSetVars entry, resolve it through a "+
+				"Bazel-wired env var, or add a justified shellExecAllowlist entry\n\t%s",
+				rel, hit.line, tool, strings.TrimSpace(hit.snippet))
 		}
 	}
-	for rel, lines := range shellExecAllowlist {
-		for line := range lines {
-			if !seen[rel][line] {
-				t.Errorf("shellExecAllowlist entry %s:%d no longer matches an ungated bare go exec; remove it", rel, line)
+	for rel, entries := range shellExecAllowlist {
+		for _, e := range entries {
+			if !seenAllow[rel][e.fn+"\x00"+strings.TrimSpace(e.snippet)] {
+				t.Errorf("shellExecAllowlist entry %s (fn=%q, snippet=%q) no longer matches "+
+					"an ungated bare exec; remove it", rel, e.fn, e.snippet)
 			}
 		}
 	}
@@ -297,5 +908,76 @@ func TestShellPolicyScopeFilesExist(t *testing.T) {
 	}
 	if len(shellPolicyScope) < 10 {
 		t.Fatalf("shellPolicyScope has only %d entries; did a bulk edit truncate it?", len(shellPolicyScope))
+	}
+}
+
+// bazelShSrcsData matches a literal `.sh` string under scripts/ or
+// .github/scripts/ inside a BUILD.bazel `data = [...]` or `srcs = [...]`
+// list. It is intentionally narrow -- see the package comment -- and does
+// not attempt to parse Starlark generally.
+var bazelShSrcsData = regexp.MustCompile(`"(?://)?:?((?:scripts|\.github/scripts)/[\w./-]+\.sh)"`)
+
+// shellScopeGuardExceptions lists repo-relative .sh paths that a BUILD.bazel
+// data/srcs literal can legitimately reference without being in
+// shellPolicyScope, because they are not actually run as a shell program by
+// the Bazel action that lists them (e.g. test fixture input, or a doc-link
+// check's target file).
+var shellScopeGuardExceptions = map[string]bool{
+	"scripts/repochecks/testdata/assert_tree.sh": true,
+	"scripts/test.sh": true, // //test/docsync link-check target, never exec'd
+}
+
+// TestShellPolicyScopeCoversBazelShellData is a partial, mechanical backstop
+// for shellPolicyScope (review point 3): it fails if some BUILD.bazel's
+// go_test/sh_test data or srcs literally names a scripts/ or
+// .github/scripts/ `.sh` file that is in neither shellPolicyScope nor
+// shellScopeGuardExceptions. It cannot discover the run_check.sh-as-launcher
+// family (the real target script is passed as an `arg`, not `data`/`srcs`
+// there), so it is not a substitute for the hand curation above -- only a
+// guard against a newly-added literal reference going unnoticed.
+func TestShellPolicyScopeCoversBazelShellData(t *testing.T) {
+	root := sourceRepoRoot(t)
+	inScope := map[string]bool{}
+	for _, rel := range shellPolicyScope {
+		inScope[rel] = true
+	}
+	var buildFiles []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if info.Name() == ".git" || info.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Name() == "BUILD.bazel" {
+			buildFiles = append(buildFiles, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	if len(buildFiles) < 5 {
+		t.Fatalf("found only %d BUILD.bazel files under %s; walk is probably broken", len(buildFiles), root)
+	}
+	for _, bf := range buildFiles {
+		data, err := os.ReadFile(bf)
+		if err != nil {
+			t.Fatalf("read %s: %v", bf, err)
+		}
+		for _, m := range bazelShSrcsData.FindAllStringSubmatch(string(data), -1) {
+			rel := m[1]
+			if inScope[rel] || shellScopeGuardExceptions[rel] {
+				continue
+			}
+			t.Errorf("%s: references %q as Bazel test data/srcs, but it is in neither "+
+				"shellPolicyScope nor shellScopeGuardExceptions; add it to shellPolicyScope "+
+				"(with a BUILD.bazel citation, see the package comment) or to "+
+				"shellScopeGuardExceptions if it is not actually exec'd as a shell program",
+				bf, rel)
+		}
 	}
 }
