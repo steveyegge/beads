@@ -217,6 +217,7 @@
 100 71 TestEmbeddedCloseJSONReportsMoleculeAutoClose
 100 71 TestEmbeddedInitRoleRoutingExplicitDefault
 100 71 TestEmbeddedPrimeChangeDirRedirectNoticeFollowsTarget
+100 71 TestEmbeddedSearchRoutesAgree
 
 100 72 TestEmbeddedContributorCreateMultiple
 100 72 TestEmbeddedCreateWithGitRemote
