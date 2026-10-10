@@ -18,7 +18,8 @@ import (
 // TestProxyMaintenanceAllowsTheSharedConsentVerb pins the capability facts the
 // #6575 proxied data-behind guidance is written against: the consent command
 // that guidance prescribes is NOT refused at the proxied front door, while the
-// bare `bd migrate` verb and the `bd dolt pull` remedy are.
+// bare `bd migrate` verb, the `bd dolt pull` remedy and the other refusals the
+// guidance names (`bd dolt push`, `bd conflicts`) are.
 //
 // The capability registry keys on the full command path. It refuses the bare
 // `migrate` verb and `migrate hooks` / `migrate issues` / `migrate sync`, but
@@ -61,6 +62,11 @@ func TestProxyMaintenanceAllowsTheSharedConsentVerb(t *testing.T) {
 	}
 	bareMigrate := find(t, "migrate")
 	doltPull := find(t, "dolt", "pull")
+	doltPush := find(t, "dolt", "push")
+	// `conflicts` itself is a parent group that cobra answers with help before
+	// any gate runs, so the refusal the guidance relies on lives on its leaves;
+	// resolve is the one a diverged pull's conflicts would need.
+	conflictsResolve := find(t, "conflicts", "resolve")
 
 	for _, topology := range []ProxyTopology{
 		ProxyTopologyManagedLocal, ProxyTopologyExternalTCP,
@@ -85,13 +91,19 @@ func TestProxyMaintenanceAllowsTheSharedConsentVerb(t *testing.T) {
 
 			// The counterfactuals, so "only the bare `bd migrate` verb is
 			// refused here" and "the pull cannot be run from here" are claims
-			// and not vacuous ones.
+			// and not vacuous ones. The push and conflicts rows hold the rest
+			// of the refusal list the proxied body recites: `dolt push` is
+			// refused as unimplemented, the class of row that flips to allowed
+			// once a route lands (as `dolt commit`'s did), and the body would
+			// then name a refusal that no longer exists.
 			for _, tc := range []struct {
 				cmd  *cobra.Command
 				code string
 			}{
 				{bareMigrate, "proxy.migrate.unsupported"},
 				{doltPull, "proxy.dolt_pull.unsupported"},
+				{doltPush, "proxy.dolt_push.unsupported"},
+				{conflictsResolve, "proxy.conflicts.unsupported"},
 			} {
 				var refuseErr error
 				refusal := captureStdout(t, func() error {

@@ -250,9 +250,8 @@ func routeAdoptFastForward(ctx context.Context, db DBConn, ref string, adopt *Fa
 // to read and routing stays exactly as it was before this check existed. (The
 // shared unit-of-work provider's injection site wires AheadBehind only; every
 // other callback stays nil there deliberately, so no new auto-write path
-// opens.) With only
-// IsStrictAncestor wired, the fact narrows to the ahead == 0 shape; the
-// diverged shape then reads "not behind", which is the pre-widening
+// opens.) With only IsStrictAncestor wired, the fact narrows to the ahead == 0
+// shape; the diverged shape then reads "not behind", which is the pre-widening
 // behavior rather than a new hazard.
 //
 // Unlike routeAdoptFastForward, a query error is NOT folded into "false":

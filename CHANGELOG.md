@@ -1148,6 +1148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against forcing past the stop names it alongside `BD_ALLOW_REMOTE_MIGRATE=1`
   as the two consent surfaces this topology can still reach. Read-only proxied
   opens print the same pull-first block instead of the shared-consent template.
+  The *Clone behind the remote* docs section the payload links to, and the
+  upgrade and init-safety ordering rules that point at it, now give the same
+  proxied-server answer.
 
   Both existing escape hatches are unchanged: `bd migrate --force` /
   `BD_ALLOW_REMOTE_MIGRATE=1` are still consulted before the smart gate, and
