@@ -108,8 +108,9 @@ test:embedded --experimental_remote_cache_eviction_retries=0
 # lane (`bazel test //... --config=ci`), which is a strict superset of every
 # race-group lane's RunNogo/ValidateNogo keys. --norun_validations is a
 # build-request option, not a configuration flag: it changes no action key
-# (compiles, links and test PASSes are shared with `test` through the
-# action cache) and discards no analysis; it only skips re-running nogo's
+# (compile, link and nogo actions are shared with `test` through the action
+# cache; test results are not, since each lane's test actions carry its own
+# test env and args) and discards no analysis; it only skips re-running nogo's
 # validation actions that the owner lane already runs on this configuration.
 # scripts/nogo_lint_policy_test.go's TestNogoConfigurationsHaveOneValidatingLane
 # pins `test` as this configuration's sole validating lane.
