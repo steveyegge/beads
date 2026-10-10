@@ -140,6 +140,8 @@ func corpusServeConfig(t *testing.T, s storage.DoltStorage) httpapi.Config {
 	must("GraphCounter")
 	cfg.BatchGetter, err = s.BatchGetter()
 	must("BatchGetter")
+	cfg.LeaseReclaimer, err = s.LeaseReclaimer()
+	must("LeaseReclaimer")
 	cfg.Relations, err = s.IssueRelations()
 	must("IssueRelations")
 	cfg.Commenter, err = s.Commenter()
