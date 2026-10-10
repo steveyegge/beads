@@ -3,11 +3,13 @@
 
 The static policy tests (T1-T3, T5-T6) pin .bazelrc/bazel.yml *text*: a
 config's flags, and which lane owns its validations. This script instead
-asks Bazel itself whether the owner's RunNogo action set for a configuration
-really is a superset of every non-owner's RunNogo action set for that same
-configuration -- i.e. the owner genuinely analyzes every first-party file a
-non-owner compiles, so skipping validation on the non-owner loses no lint
-coverage.
+asks Bazel itself whether the owner's nogo action set (RunNogo and
+ValidateNogo) for a configuration really is a superset of every non-owner's
+-- i.e. the owner genuinely runs every nogo action a non-owner would, so
+skipping validation on the non-owner loses no lint coverage. Actions are
+compared by Bazel action key, not by target label: one label compiled in two
+configurations (a transition, or a lane whose flags differ) is two different
+nogo actions, and only the owner's own keys are actually validated.
 
 Scope (S1): the race configuration group only -- bazel-test (owner, race)
 vs. embedded/doltserver/doltserver-proxied/dolt-race (non-owners, which pass
@@ -16,14 +18,17 @@ lanes gain the same split; see scripts/nogo_lint_policy_test.go's
 nogoConfigurations table, which this script's RACE_GROUP mirrors.
 
 Each config's key-affecting flags (the same fingerprint
-scripts/nogo_lint_policy_test.go's nogoKeyFlagPattern extracts) are read
+scripts/nogo_lint_policy_test.go's nogoKeyFlags parses) are read
 straight out of .bazelrc and passed to `aquery`/`query` directly: those are
 "build"-family commands and do not see flags defined under a bare `test:X`
 .bazelrc stanza, so `--config=X` itself cannot be used here.
 
 The owner (`test:ci`) builds //... whole (T3 pins that: no
---build_tests_only, no --build_tag_filters), so its RunNogo set is queried
-directly over //.... Every non-owner here instead passes --build_tests_only
+--build_tests_only, no --build_tag_filters), so its nogo set is queried over
+//... as written: aquery expands a bare //... the way `bazel test //...` does,
+skipping `manual` targets as top-level targets (listing one explicitly, e.g.
+`//... except set(<manual>)`, would make it top-level and analyze it -- for
+//tools/bazel:release_cross that fails outright). Every non-owner here instead passes --build_tests_only
 with a --test_tag_filters=<tag[,tag...]> value, which narrows what `bazel
 test` actually builds to deps(the tagged tests) -- querying RunNogo over
 //... whole for a non-owner would silently compare the *owner's* universe
@@ -35,7 +40,10 @@ of the lane's tags, read as an *exact* tag (not a substring -- "dolt-server"
 is a prefix of both "dolt-server-proxied" and "dolt-server-cmd", so a naive
 substring match over `attr(tags, ...)` would wrongly fold those in; tags are
 read from `--output=xml` instead, which lists each tag as its own exact
-string, to sidestep that).
+string, to sidestep that), minus `manual` targets, plus
+//cmd/bd:bd_for_tests and the package gates' targets (the package gates
+build exactly PACKAGE_GATE_TARGETS in the race configuration with
+--norun_validations, so they are non-owners too).
 
 This is advisory and dynamic (runs real `bazel query`/`aquery`, a few
 minutes locally): it is intentionally not part of the required `//scripts`
@@ -43,8 +51,8 @@ static test suite, which cannot shell out to Bazel from inside a Bazel
 action. Run it with `make nogo-ownership`, locally or on demand in a
 slice's own PR.
 
-Exit status: 0 if every non-owner's RunNogo target set is covered by the
-owner's, 2 otherwise. Prints the offending targets.
+Exit status: 0 if every non-owner's nogo action keys are covered by the
+owner's, 2 otherwise. Prints the offending actions' targets.
 """
 from __future__ import annotations
 
@@ -64,12 +72,33 @@ RACE_GROUP = (
     ["embedded", "doltserver", "doltserver-proxied", "dolt-race"],
 )
 
-# Mirrors scripts/nogo_lint_policy_test.go's nogoKeyFlagPattern.
-KEY_FLAG_RE = re.compile(
-    r"--@rules_go//go/config:(?:race|pure|tags=\S+)"
-    r"|--platforms=\S+"
-    r"|//tools/bazel:release_platforms\S*"
-)
+# What the package gates build (bazel.yml package-mcp/package-npm: `bazel
+# build --@rules_go//go/config:race //cmd/bd:bd_for_tests --norun_validations`).
+# Every non-owner universe includes them; //cmd/bd:bd_for_tests is also the
+# subprocess bd every race-group test lane builds.
+PACKAGE_GATE_TARGETS = ["//cmd/bd:bd_for_tests"]
+
+# The nogo actions rules_go registers per Go compile: RunNogo (the analysis)
+# and ValidateNogo (the validation action --norun_validations skips).
+NOGO_MNEMONICS = ("RunNogo", "ValidateNogo")
+
+# Mirrors scripts/nogo_lint_policy_test.go's nogoKeyFlags: whole tokens,
+# never prefixes (--@rules_go//go/config:race=false is not the race build).
+BOOL_KEY_FLAGS = ("--@rules_go//go/config:race", "--@rules_go//go/config:pure")
+VALUE_KEY_FLAGS = ("--@rules_go//go/config:tags", "--platforms", "--//tools/bazel:release_platforms")
+
+
+def key_flags(line: str) -> list[str]:
+    out = []
+    for tok in line.split():
+        name, has_value, value = tok.partition("=")
+        if name in BOOL_KEY_FLAGS:
+            out.append(f"{name}={value if has_value else 'true'}")
+        elif name.startswith("--no") and "--" + name[len("--no"):] in BOOL_KEY_FLAGS and not has_value:
+            out.append(f"--{name[len('--no'):]}=false")
+        elif name in VALUE_KEY_FLAGS:
+            out.append(tok)
+    return out
 
 CONFIG_LINE_RE = re.compile(r"^(build|test):([A-Za-z0-9_-]+)\s+(.*)$")
 TEST_TAG_FILTERS_RE = re.compile(r"^(?:build|test) --test_tag_filters=(\S+)$")
@@ -107,7 +136,7 @@ def fingerprint(rc_text: str, name: str) -> list[str]:
     lines = expand_config(rc_text, name, set())
     flags = set()
     for line in lines:
-        flags.update(m.group(0) for m in KEY_FLAG_RE.finditer(line))
+        flags.update(key_flags(line))
     return sorted(flags)
 
 
@@ -155,18 +184,26 @@ def tagged_test_targets(bazel: str, tags: list[str]) -> set[str]:
     returns proxied- and cmd-tagged targets -- the exact bug this script
     exists to avoid reintroducing one level up.
     """
-    root = run_query_xml(bazel, "tests(//...)")
     wanted = set(tags)
-    labels = set()
-    for rule in root.findall("rule"):
-        rule_tags = {
+    return {
+        label
+        for label, rule_tags in rule_tags_by_label(bazel, "tests(//...)").items()
+        if rule_tags & wanted and "manual" not in rule_tags
+    }
+
+
+def rule_tags_by_label(bazel: str, query: str) -> dict[str, set[str]]:
+    """Each rule query returns, with its exact tags."""
+    root = run_query_xml(bazel, query)
+    return {
+        rule.get("name"): {
             s.get("value")
             for list_el in rule.findall("list[@name='tags']")
             for s in list_el.findall("string")
         }
-        if rule_tags & wanted:
-            labels.add(rule.get("name"))
-    return labels
+        for rule in root.findall("rule")
+    }
+
 
 
 def lane_universe(bazel: str, targets: set[str] | None) -> str:
@@ -181,24 +218,33 @@ def lane_universe(bazel: str, targets: set[str] | None) -> str:
         return "//..."
     if not targets:
         raise ValueError("lane_universe: empty tagged target set")
-    return "deps(set(" + " ".join(sorted(targets)) + "))"
+    return "deps(set(" + " ".join(sorted(set(targets) | set(PACKAGE_GATE_TARGETS))) + "))"
 
 
-def run_nogo_targets(bazel: str, flags: list[str], universe: str) -> set[str]:
-    """Returns the set of target labels with a RunNogo action under flags."""
-    cmd = [bazel, "--nohome_rc", "aquery", f'mnemonic("RunNogo", {universe})', *flags,
+
+def run_nogo_actions(bazel: str, flags: list[str], universe: str) -> dict[str, str]:
+    """Returns {action key: "label (mnemonic)"} for every first-party nogo
+    action (NOGO_MNEMONICS) in universe under flags.
+
+    Keyed by Bazel's action key, which covers the action's configuration,
+    inputs and command line: the same label built in another configuration
+    is a different key, so a label match alone is not coverage.
+    """
+    pattern = "|".join(NOGO_MNEMONICS)
+    cmd = [bazel, "--nohome_rc", "aquery", f'mnemonic("{pattern}", {universe})', *flags,
            "--output=jsonproto"]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     data = json.loads(out)
     targets_by_id = {t["id"]: t["label"] for t in data.get("targets", [])}
-    labels = set()
+    actions = {}
     for action in data.get("actions", []):
-        if action.get("mnemonic") != "RunNogo":
+        mnemonic = action.get("mnemonic")
+        if mnemonic not in NOGO_MNEMONICS:
             continue
         label = targets_by_id.get(action.get("targetId"))
         if label and not label.startswith("@"):
-            labels.add(label)
-    return labels
+            actions[action["actionKey"]] = f"{label} ({mnemonic})"
+    return actions
 
 
 def main() -> int:
@@ -219,7 +265,7 @@ def main() -> int:
             "(exclusion-only, as today's owner has) only narrows test execution, "
             "not the build, so it is not checked here."
         )
-    owner_targets = run_nogo_targets(args.bazel, owner_fp, "//...")
+    owner_actions = run_nogo_actions(args.bazel, owner_fp, "//...")
 
     problems = []
     for non_owner in non_owners:
@@ -248,12 +294,12 @@ def main() -> int:
                 continue
             non_owner_universe = lane_universe(args.bazel, tagged)
 
-        non_owner_targets = run_nogo_targets(args.bazel, non_owner_fp, non_owner_universe)
-        missing = non_owner_targets - owner_targets
+        non_owner_actions = run_nogo_actions(args.bazel, non_owner_fp, non_owner_universe)
+        missing = sorted(non_owner_actions[k] for k in non_owner_actions.keys() - owner_actions.keys())
         if missing:
             problems.append(
-                f"{name}: --config={non_owner} compiles {len(missing)} target(s) "
-                f"with no RunNogo action under the owner --config={owner}: "
+                f"{name}: --config={non_owner} has {len(missing)} nogo action(s) "
+                f"whose action key the owner --config={owner} never runs: "
                 + ", ".join(sorted(missing)[:10])
                 + (" ..." if len(missing) > 10 else "")
             )
