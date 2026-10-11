@@ -16,6 +16,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/steveyegge/beads/internal/doltversion"
 )
 
 func TestCIWorkflowArtifactOwnership(t *testing.T) {
@@ -1530,6 +1532,27 @@ func TestPinnedDoltCLIMatchesContainerImage(t *testing.T) {
 	if cliVersion != imageVersion || cliVersion != pullVersion || cliVersion != bazelVersion {
 		t.Errorf("dolt pins disagree: CLI %s, DoltDockerImage %s, pull-dolt-image.sh %s, tools/bazel/dolt.bzl %s",
 			cliVersion, imageVersion, pullVersion, bazelVersion)
+	}
+}
+
+// TestPinnedDoltCLIAtLeastRecommendedMin guards doltversion.RecommendedMin
+// against the pinned Dolt CLI version (scripts/ci/install-dolt.sh) drifting
+// below it. RecommendedMin documents itself as aligned with the CLI pins,
+// but nothing enforced that claim: a pin lowered below RecommendedMin would
+// mean every CI run exercises a Dolt CLI the package's own policy already
+// warns is below the matrix-tested floor.
+func TestPinnedDoltCLIAtLeastRecommendedMin(t *testing.T) {
+	root := sourceRepoRoot(t)
+
+	installer, err := os.ReadFile(filepath.Join(root, "scripts", "ci", "install-dolt.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliVersion := captureOne(t, `(?m)^readonly version="([0-9]+\.[0-9]+\.[0-9]+)"$`, string(installer), "scripts/ci/install-dolt.sh")
+
+	pinned := doltversion.MustParse(cliVersion)
+	if !pinned.AtLeast(doltversion.RecommendedMin) {
+		t.Errorf("pinned Dolt CLI %s is below doltversion.RecommendedMin %s", cliVersion, doltversion.RecommendedMin)
 	}
 }
 

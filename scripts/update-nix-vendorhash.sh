@@ -144,7 +144,16 @@ sed_inplace "s|vendorHash = \".*\";|vendorHash = \"$FAKE_HASH\";|" default.nix
 # Step 2: Run nix build and capture the error
 log_info "Building to get actual hash (this will fail intentionally)..."
 BUILD_LOG="/tmp/nix-vendorhash-build-$$.log"
-run_nix build > "$BUILD_LOG" 2>&1 || true
+# This build is expected to fail (the fake hash above is designed to trigger
+# a hash-mismatch error), so capture its real exit status explicitly instead
+# of `|| true`, which would discard it. The exit status (not a "hash
+# mismatch" string grep, which can't tell a build that failed for an
+# unrelated reason from one that actually succeeded) is what step 3 below
+# uses to tell "no update needed" apart from "the build is broken".
+set +e
+run_nix build > "$BUILD_LOG" 2>&1
+BUILD_EXIT=$?
+set -e
 
 # Step 3: Extract the actual hash from the error message
 # Error format: "error: hash mismatch ... got:    sha256-ACTUAL_HASH" (note: multiple spaces)
@@ -166,15 +175,20 @@ if [ -z "$ACTUAL_HASH" ]; then
     mv default.nix.backup default.nix
     log_info "Restored original default.nix"
 
-    # Check if hash is actually the same
-    if grep -q "hash mismatch" "$BUILD_LOG"; then
-        log_error "Hash mismatch detected but couldn't extract hash"
-        log_error "Check the full log: $BUILD_LOG"
-        exit 1
-    else
+    # Tell "the build genuinely succeeded with the fake hash rejected, so
+    # the real hash is already correct" apart from "the build failed for an
+    # unrelated reason and never got far enough to report a hash mismatch"
+    # by the build's own exit status, not by whether "hash mismatch" happens
+    # to appear in the log — a toolchain error or any other failure mode
+    # has no such string and was previously misreported as success.
+    if [ "$BUILD_EXIT" -eq 0 ]; then
         log_success "No hash mismatch - vendorHash is already correct!"
         rm -f "$BUILD_LOG"
         exit 0
+    else
+        log_error "Build failed for a reason other than a hash mismatch (exit $BUILD_EXIT)"
+        log_error "Check the full log: $BUILD_LOG"
+        exit 1
     fi
 fi
 
@@ -189,6 +203,13 @@ rm default.nix.backup
 
 # Step 5: Verify the update by rebuilding
 log_info "Verifying update with a clean build..."
+# Without pipefail, this if-condition's status is tee's (which basically
+# always succeeds), not run_nix build's, so a real build failure here was
+# reported as "Build successful!". Scoped to just this line rather than set
+# globally: the ACTUAL_HASH extraction above relies on `grep -o` legitimately
+# returning non-zero on no match, which pipefail would turn into a script
+# abort under `set -e`.
+set -o pipefail
 if run_nix build 2>&1 | tee /tmp/nix-build-verify.log; then
     log_success "Build successful! vendorHash updated correctly."
     echo ""
