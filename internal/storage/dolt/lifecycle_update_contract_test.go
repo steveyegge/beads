@@ -51,6 +51,18 @@ func TestLifecycleUpdateContract(t *testing.T) {
 	t.Run("ConditionalGuardsGateOrdinaryEdits", func(t *testing.T) {
 		conformance.RunLifecycleUpdateConditionalGuardsGateOrdinaryEdits(t, ctx, fixture)
 	})
+	t.Run("ExpectedVersionSingleWinnerUnderConcurrency", func(t *testing.T) {
+		conformance.RunLifecycleUpdateExpectedVersionSingleWinnerUnderConcurrency(t, ctx, fixture)
+	})
+	t.Run("ExpectedVersionSingleWinnerWithDisjointColumnsUnderConcurrency", func(t *testing.T) {
+		conformance.RunLifecycleUpdateExpectedVersionSingleWinnerWithDisjointColumnsUnderConcurrency(t, ctx, fixture)
+	})
+	t.Run("CloseExpectedVersionSingleWinnerUnderConcurrency", func(t *testing.T) {
+		conformance.RunLifecycleCloseExpectedVersionSingleWinnerUnderConcurrency(t, ctx, fixture)
+	})
+	t.Run("ExpectedVersionSingleWinnerAcrossUpdateAndCloseUnderConcurrency", func(t *testing.T) {
+		conformance.RunLifecycleUpdateExpectedVersionSingleWinnerAcrossUpdateAndCloseUnderConcurrency(t, ctx, fixture)
+	})
 	t.Run("ConditionalGuardAcceptsRespelledAssignee", func(t *testing.T) {
 		conformance.RunLifecycleUpdateConditionalGuardAcceptsRespelledAssignee(t, ctx, fixture)
 	})
@@ -77,6 +89,12 @@ func TestLifecycleUpdateContract(t *testing.T) {
 	})
 	t.Run("ProvenanceLabelsHistory", func(t *testing.T) {
 		conformance.RunLifecycleUpdateProvenanceLabelsHistory(t, ctx, fixture)
+	})
+	t.Run("RefusesATemplate", func(t *testing.T) {
+		conformance.RunLifecycleUpdateRefusesATemplate(t, ctx, fixture)
+	})
+	t.Run("AllowTemplateEditsATemplate", func(t *testing.T) {
+		conformance.RunLifecycleUpdateAllowTemplateEditsATemplate(t, ctx, fixture)
 	})
 }
 

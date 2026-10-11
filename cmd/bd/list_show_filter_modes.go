@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/workapi"
 )
 
@@ -47,6 +49,16 @@ import (
 // getHierarchicalChildren handles the --tree --parent combination logic.
 // baseFilter carries CLI filters (--type, --status, etc.) through the recursive walk.
 func getHierarchicalChildren(ctx context.Context, store storage.DoltStorage, dbPath string, parentID string, baseFilter types.IssueFilter) ([]*types.Issue, error) {
+	// Accept a short/partial parent ID the same way `bd history <id>` does
+	// (GH#4868's mechanism, not applied here before). Not-found IDs fall
+	// through unchanged so the existing "parent issue '%s' not found" path
+	// below still fires with the id the user actually typed.
+	if resolved, err := utils.ResolvePartialID(ctx, store, parentID); err == nil {
+		parentID = resolved
+	} else if errors.Is(err, utils.ErrAmbiguousID) {
+		return nil, err
+	}
+
 	// First verify that the parent issue exists
 	var parentIssue *types.Issue
 	err := withStorage(ctx, store, dbPath, func(s storage.DoltStorage) error {
@@ -54,11 +66,11 @@ func getHierarchicalChildren(ctx context.Context, store storage.DoltStorage, dbP
 		parentIssue, err = s.GetIssue(ctx, parentID)
 		return err
 	})
+	if errors.Is(err, storage.ErrNotFound) || (err == nil && parentIssue == nil) {
+		return nil, fmt.Errorf("parent issue '%s' not found", parentID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("error checking parent issue: %v", err)
-	}
-	if parentIssue == nil {
-		return nil, fmt.Errorf("parent issue '%s' not found", parentID)
 	}
 
 	// Use recursive search to find all descendants using the same logic as --parent filter.
@@ -164,7 +176,9 @@ func displayWatchedIssueList(ctx context.Context, store watchListDependencyStore
 			allDeps = deps
 		}
 	}
-	displayPrettyListWithDepsMode(issues, true, allDeps, "", truncated, readyFiltered, statusSelector, sortBy, reverse)
+	// No gate decoration (the nil gated map): --watch deliberately renders a
+	// gated bead undecorated, on both routes; see runListProxiedWatch.
+	displayPrettyListWithDepsMode(issues, true, allDeps, "", truncated, readyFiltered, statusSelector, sortBy, reverse, nil)
 }
 
 // watchIssues returns an error only for the initial query — a failure there
@@ -246,7 +260,7 @@ func runListProxiedHierarchicalParent(ctx context.Context, uw uow.UnitOfWork, in
 		return err
 	}
 	if len(treeIssues) == 0 {
-		fmt.Printf("Issue '%s' has no children\n", in.ParentID)
+		fmt.Printf("Issue '%s' has no children\n", in.ParentID) //nolint:forbidigo // Pretty/tree output is outside the --format contract.
 		return nil
 	}
 
@@ -256,7 +270,8 @@ func runListProxiedHierarchicalParent(ctx context.Context, uw uow.UnitOfWork, in
 	}
 
 	// Hierarchical --parent walks use an unlimited per-level query; never page-truncated.
-	displayPrettyListWithDepsMode(treeIssues, false, depsByIssueID, in.depsMode, false, in.ReadyFlag, in.Status, in.SortBy, in.Reverse)
+	displayPrettyListWithDepsMode(treeIssues, false, depsByIssueID, in.depsMode, false, in.ReadyFlag, in.Status, in.SortBy, in.Reverse,
+		proxiedGatedIssueIDs(ctx, uw, treeIssues, depsByIssueID))
 	printSkipLabelsFooter(in.SkipLabels)
 	return nil
 }

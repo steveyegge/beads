@@ -37,7 +37,7 @@ func addDependencyEdgesDirect(ctx context.Context, st storage.DoltStorage, edges
 		return err
 	}
 	_, err = editor.AddDependencies(ctx, issueops.AddDependenciesRequest{
-		Actor:                 actor,
+		Actor:                 currentActor(),
 		Edges:                 edges,
 		SkipPerEdgeCycleCheck: skipPerEdgeCycleCheck,
 	})
@@ -213,41 +213,6 @@ func resolveUnresolvedDepTarget(sourceID, dependsOnArg string, resolveErr error)
 	return "", fmt.Errorf("resolving dependency ID %s: %v", dependsOnArg, resolveErr)
 }
 
-// isChildOf returns true if childID is a hierarchical child of parentID.
-// For example, "bd-abc.1" is a child of "bd-abc", and "bd-abc.1.2" is a child of "bd-abc.1".
-func isChildOf(childID, parentID string) bool {
-	_, isAncestor := hierarchicalParentRelation(childID, parentID)
-	return isAncestor
-}
-
-func hierarchicalParentRelation(childID, targetID string) (immediateParent string, isAncestor bool) {
-	// A child ID has the format "parentID.N" or "parentID.N.M" etc.
-	// Use ParseHierarchicalID to get the actual parent
-	_, actualParentID, depth := types.ParseHierarchicalID(childID)
-	if depth == 0 {
-		return "", false // Not a hierarchical ID
-	}
-	// Check if the immediate parent matches
-	if actualParentID == targetID {
-		return actualParentID, true
-	}
-	// Also check if targetID is an ancestor (e.g., "bd-abc" is an ancestor of "bd-abc.1.2")
-	return actualParentID, strings.HasPrefix(childID, targetID+".")
-}
-
-// isDisallowedHierarchicalDependency reports whether an explicit dependency
-// conflicts with hierarchy encoded in a dotted issue ID. The one allowed match
-// is a parent-child edge to the immediate dotted-ID parent; blocking and other
-// edge types to any parent/ancestor, plus parent-child edges to higher ancestors,
-// remain rejected.
-func isDisallowedHierarchicalDependency(fromID, toID string, depType types.DependencyType) bool {
-	immediateParent, isAncestor := hierarchicalParentRelation(fromID, toID)
-	if !isAncestor {
-		return false
-	}
-	return depType != types.DepParentChild || toID != immediateParent
-}
-
 var depCmd = &cobra.Command{
 	Use:     "dep [issue-id]",
 	GroupID: "deps",
@@ -312,10 +277,6 @@ Examples:
 			}
 			defer toCleanup()
 
-			if isDisallowedHierarchicalDependency(fromID, toID, types.DepBlocks) {
-				return HandleErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
-			}
-
 			opsCtx, err := issueOpsContext(ctx)
 			if err != nil {
 				return HandleErrorRespectJSON("%v", err)
@@ -330,7 +291,7 @@ Examples:
 				warnIfCyclesExist(fromStore)
 			}
 
-			if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
+			if err := commitPendingIfEmbedded(ctx, fromStore, currentActor(), doltAutoCommitParams{
 				Command:  "dep add",
 				IssueIDs: []string{fromID, toID},
 			}); err != nil {
@@ -498,9 +459,8 @@ Examples:
 		}
 
 		dt := canonicalDependencyType(types.DependencyType(depType))
-		if isDisallowedHierarchicalDependency(fromID, toID, dt) {
-			return HandleErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
-		}
+		// The dotted-id hierarchy refusal is the role's
+		// (issueops.CheckDottedChildDependency), raised by AddDependencies below.
 
 		if err := validateDependencyType(dt); err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -520,7 +480,7 @@ Examples:
 			warnIfCyclesExist(fromStore)
 		}
 
-		if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
+		if err := commitPendingIfEmbedded(ctx, fromStore, currentActor(), doltAutoCommitParams{
 			Command:  "dep add",
 			IssueIDs: []string{fromID, toID},
 		}); err != nil {
@@ -827,7 +787,9 @@ func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge) ([]bulkDepEd
 			current.DependsOnID = toID
 		}
 
-		if isDisallowedHierarchicalDependency(current.IssueID, current.DependsOnID, current.Type) {
+		// The role refuses this edge too; asking the library rule here only lets
+		// the bulk report name every offending line before anything is written.
+		if issueops.IsDottedChildDependency(current.IssueID, current.DependsOnID, current.Type) {
 			errs = append(errs, fmt.Sprintf("line %d: cannot add dependency: %s is already a child of %s", edge.Line, current.IssueID, current.DependsOnID))
 			resolved = append(resolved, current)
 			continue
@@ -1270,7 +1232,7 @@ var depRemoveCmd = &cobra.Command{
 			return HandleErrorRespectJSON("%v", err)
 		}
 		result, err := editor.RemoveDependency(opsCtx, issueops.RemoveDependencyRequest{
-			Actor:       actor,
+			Actor:       currentActor(),
 			IssueID:     fullFromID,
 			DependsOnID: fullToID,
 		})
@@ -1278,7 +1240,7 @@ var depRemoveCmd = &cobra.Command{
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
+		if err := commitPendingIfEmbedded(ctx, fromStore, currentActor(), doltAutoCommitParams{
 			Command:  "dep remove",
 			IssueIDs: []string{fullFromID, fullToID},
 		}); err != nil {
@@ -1365,7 +1327,9 @@ var depCyclesCmd = &cobra.Command{
 
 		// Both routes, one body: the only difference between them is which
 		// accessor answers, and that is inside openCycleDetector.
-		return runDepCycles()
+		includeTracks, _ := cmd.Flags().GetBool("include-tracks")
+		limit, _ := cmd.Flags().GetInt("limit")
+		return runDepCycles(includeTracks, limit)
 	},
 }
 
@@ -1667,6 +1631,23 @@ func init() {
 
 	depListCmd.Flags().String("direction", "down", "Direction: 'down' (dependencies), 'up' (dependents)")
 	depListCmd.Flags().StringP("type", "t", "", "Filter by dependency type (e.g., tracks, blocks, parent-child)")
+
+	// Widens the report, never narrows it: every cycle the default walk finds is
+	// kept, and cycles that close through tracks edges are added. A loop made
+	// only of tracks edges is still not reported, but that is the only thing
+	// the guard excludes: a tracks loop fuses a component and every scheduling
+	// edge inside it is then reported, so a tracks-dense workspace can print
+	// many cycles here even where the default walk prints none — hence
+	// --limit. See issueops.DetectCyclesRequest.IncludeTracks.
+	depCyclesCmd.Flags().Bool("include-tracks", false, "Also walk 'tracks' edges: reports every cycle the default walk finds plus cycles that close through a tracks edge, never a loop made only of tracks edges (diagnostic for molecule-root deadlocks hidden by tracks-only propagation)")
+	// Caps the RENDERED list only, and on BOTH walks: this does not consult
+	// --include-tracks, so it bounds the default invocation's rendering too.
+	// The widened walk is what makes the cap necessary rather than what scopes
+	// it — bounded by the scheduling-edge count, not by the number of
+	// deadlocks, so a tracks-dense workspace can report more cycles than a
+	// reader can use. The printed total stays the whole report's and --json is
+	// never truncated.
+	depCyclesCmd.Flags().Int("limit", 50, "Maximum cycles to print (0 = no limit); the reported total is always the whole count, and --json is never truncated")
 
 	// Issue ID completions for dep subcommands
 	depAddCmd.ValidArgsFunction = issueIDCompletion

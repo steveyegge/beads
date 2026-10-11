@@ -493,7 +493,7 @@ var proxyPermittedPaths = []string{
 	"comments", "comments add", "comments list",
 	"dep", "dep add", "dep cycles", "dep list", "dep relate", "dep remove", "dep tree", "dep unrelate",
 	"kv clear", "kv get", "kv list", "kv set",
-	"label add", "label list", "label list-all", "label propagate", "label remove",
+	"label add", "label list", "label list-all", "label propagate", "label remove", "label rename",
 
 	// molecules, epics, todos, state
 	"epic close-eligible", "epic status",
@@ -511,7 +511,7 @@ var proxyPermittedPaths = []string{
 
 	// workspace lifecycle and configuration
 	"bootstrap", "config apply", "config drift", "config get", "config list", "config set",
-	"config set-many", "config show", "config unset", "config validate", "context",
+	"config set-many", "config show", "config unset", "config validate", "connect", "context",
 	"init", "init-safety", "onboard", "preflight", "quickstart", "schema", "setup", "where",
 	"version", "worktree create", "worktree info", "worktree list", "worktree remove",
 
