@@ -243,24 +243,25 @@ var shellExecAllowlist = map[string][]shellAllowlistEntry{
 			why:     "same fake-go-first-on-PATH gate as the GOEXE line above",
 		},
 		{
-			// fn is "cleanup_shared_server", not "": these two lines are
-			// top-level script code, textually after that indented,
+			// fn is "" (top level), not "cleanup_shared_server": this line
+			// is top-level script code, textually after that indented,
 			// nested `cleanup_shared_server() { ... }` definition (around
-			// test.sh:191-195). findShellHostToolExecs' end-of-function
-			// detection only recognizes an UNINDENTED closing `}`/`)` (the
-			// column-0 convention every other in-scope script's functions
-			// follow); cleanup_shared_server's own closing brace is
-			// indented, so the scanner never sees this function end and
-			// attributes every later line in the file to it. Keying this
-			// entry by that attribution (rather than fixing the shared
-			// scanner for one nested-function script) keeps this fix
-			// scoped to what review item 1 asked for.
-			fn:      "cleanup_shared_server",
+			// test.sh:191-195) has already closed. An earlier revision of
+			// findShellHostToolExecs's end-of-function detection recognized
+			// only an UNINDENTED closing `}`/`)`, so it never saw
+			// cleanup_shared_server's own indented closing brace and
+			// attributed every later line in the file to that function
+			// (review: "the scanner never closes an indented function
+			// header... two allowlist entries are keyed to the wrong
+			// function"). The scanner now matches a closing brace/paren at
+			// the SAME indentation as the function's opening line, so this
+			// line is correctly attributed to top level.
+			fn:      "",
 			snippet: `CMD=(go test -p "$GO_TEST_PKG_PARALLEL" -parallel "$GO_TEST_PARALLEL" -timeout "$TIMEOUT")`,
 			why:     "same fake-go-first-on-PATH gate as the GOEXE line above",
 		},
 		{
-			fn:      "cleanup_shared_server", // see the fn note on the CMD= entry above
+			fn:      "", // see the fn note on the CMD= entry above
 			snippet: `total=$(go tool cover -func="$COVERPROFILE" | awk '/^total:/ {print $NF}')`,
 			why: "same fake-go-first-on-PATH gate; test_script_test.go's fake go's `tool` " +
 				"subcommand (COVERAGE is never requested by the test, so this line only " +
@@ -314,6 +315,45 @@ var shellGofmtExec = regexp.MustCompile("(^|[\\s;|&(`])gofmt([\\s;|&)`]|$)")
 // shellToolLookup matches a `command -v`/`which`/`type` lookup of go or
 // gofmt, which is not itself an exec of the tool.
 var shellToolLookup = regexp.MustCompile(`\b(command\s+-v|which|type)\s+(go|gofmt)\b`)
+
+// shellCommandVGuard matches a `command -v`/`which`/`type` lookup of go or
+// gofmt immediately followed, on the same line, by `&&` -- the
+// presence-guard idiom `command -v gofmt >/dev/null 2>&1 && gofmt -l .`
+// (review: "a same-line `command -v gofmt && gofmt` is skipped"). This is
+// deliberately narrower than shellToolLookup: it exists only to recognize
+// that idiom's own guarantee (the exec after `&&` runs only once the SAME
+// tool's lookup just before it already succeeded), not to exempt some
+// unrelated second command that merely shares a line with an unrelated
+// lookup. For gofmt specifically this guard is sound under this policy's own
+// premise (package comment: a host gofmt is not guaranteed on the
+// hermetic-first `bazel test` PATH), so `command -v gofmt && gofmt` really
+// is safe by construction, not safe by accident of a blanket same-line skip.
+var shellCommandVGuard = regexp.MustCompile(`\b(?:command\s+-v|which|type)\s+(go|gofmt)\b.*?&&\s*`)
+
+// commandVGuardedExecEnd returns the byte offset immediately after a
+// `command -v TOOL ... &&`-style guard of tool on line, and whether one was
+// found. A hit for that same tool at or after this offset is reached only
+// once the guard already confirmed the tool is on PATH.
+func commandVGuardedExecEnd(line, tool string) (int, bool) {
+	for _, m := range shellCommandVGuard.FindAllStringSubmatchIndex(line, -1) {
+		if line[m[2]:m[3]] == tool {
+			return m[1], true
+		}
+	}
+	return 0, false
+}
+
+// insideAnyIntSpan reports whether pos lies in any of spans, each a
+// [2]int-shaped []int as returned by regexp's FindAllStringIndex /
+// FindAllStringSubmatchIndex.
+func insideAnyIntSpan(spans [][]int, pos int) bool {
+	for _, s := range spans {
+		if pos >= s[0] && pos < s[1] {
+			return true
+		}
+	}
+	return false
+}
 
 // heredocStart matches a `<<` (optionally `<<-`) redirection naming its
 // terminator, with or without quotes: `<<EOF`, `<<-EOF`, `<<'EOF'`,
@@ -481,6 +521,7 @@ func findShellHostToolExecs(src string) []shellExecHit {
 	inHeredoc := false
 	heredocDelim := ""
 	currentFn := ""
+	currentFnIndent := ""
 	for scanner.Scan() {
 		lineno++
 		line := scanner.Text()
@@ -496,11 +537,20 @@ func findShellHostToolExecs(src string) []shellExecHit {
 		}
 		if fn, ok := matchFuncStart(trimmed); ok {
 			currentFn = fn
-		} else if currentFn != "" && (line == "}" || line == ")") {
-			// An unindented closing brace/paren alone on a line ends the
-			// function, mirroring matchFuncStart's own column-0 anchoring:
-			// every function body line in this policy's scope is indented.
+			currentFnIndent = leadingWhitespace(line)
+		} else if currentFn != "" && (trimmed == "}" || trimmed == ")") && leadingWhitespace(line) == currentFnIndent {
+			// A closing brace/paren alone on a line, at the SAME indentation
+			// as the function's own opening line, ends the function. Column
+			// 0 alone (the previous rule) never closes an indented function
+			// header like `    cleanup_shared_server() {` -- the function's
+			// own closing brace is indented to match -- so every later line
+			// in the file was wrongly attributed to that function (review:
+			// "the scanner never closes an indented function header").
+			// Matching the start line's indentation instead of hard-coding
+			// column 0 handles both the common top-level case and a nested,
+			// indented function definition the same way.
 			currentFn = ""
+			currentFnIndent = ""
 		}
 		if m := heredocStart.FindStringSubmatch(line); m != nil {
 			inHeredoc = true
@@ -510,19 +560,38 @@ func findShellHostToolExecs(src string) []shellExecHit {
 		}
 		spans := quotedSpans(line)
 		codeSpans := dashCCodeSpans(line)
+		lookupSpans := shellToolLookup.FindAllStringIndex(line, -1)
 
 		for _, m := range shellHostToolVerbs.FindAllStringSubmatchIndex(line, -1) {
 			if quoted(spans, codeSpans, m[0]) {
 				continue
 			}
+			if end, ok := commandVGuardedExecEnd(line, "go"); ok && m[0] >= end {
+				// A same-line `command -v go ... && go ...`: the exec runs
+				// only once the lookup just before it already confirmed go
+				// is on PATH.
+				continue
+			}
 			hits = append(hits, shellExecHit{line: lineno, fn: currentFn, snippet: lines[lineno-1], verb: line[m[2]:m[3]]})
-		}
-		if shellToolLookup.MatchString(line) {
-			continue
 		}
 		for _, m := range shellGofmtExec.FindAllStringSubmatchIndex(line, -1) {
 			start := strings.Index(line[m[0]:m[1]], "gofmt") + m[0]
 			if quoted(spans, codeSpans, start) {
+				continue
+			}
+			if insideAnyIntSpan(lookupSpans, start) {
+				// This "gofmt" occurrence IS the `command -v`/`which`/`type`
+				// lookup phrase itself, not a separate exec.
+				continue
+			}
+			if end, ok := commandVGuardedExecEnd(line, "gofmt"); ok && start >= end {
+				// A same-line `command -v gofmt ... && gofmt ...` (review:
+				// "a same-line `command -v gofmt && gofmt` is skipped"): now
+				// classified explicitly as the presence-guarded idiom it is,
+				// rather than accidentally skipped along with the rest of
+				// the line by a blanket same-line lookup check (which would
+				// also have hidden an unrelated second exec sharing the
+				// line with an unrelated lookup).
 				continue
 			}
 			hits = append(hits, shellExecHit{line: lineno, fn: currentFn, snippet: lines[lineno-1], verb: ""})
@@ -531,16 +600,29 @@ func findShellHostToolExecs(src string) []shellExecHit {
 	return hits
 }
 
-// shellFuncStart matches a shell function definition's opening line, either
-// style this repo uses: `name() {` or `name() (`.
-var shellFuncStart = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*[{(]\s*$`)
+// leadingWhitespace returns s's leading run of spaces/tabs.
+func leadingWhitespace(s string) string {
+	i := 0
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	return s[:i]
+}
+
+// shellFuncStart matches a shell function definition's opening line, any
+// style this repo uses: `name() {`, `name() (`, `function name {`, or
+// `function name() {`.
+var shellFuncStart = regexp.MustCompile(`^(?:function\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\))?|([A-Za-z_][A-Za-z0-9_]*)\s*\(\))\s*[{(]\s*$`)
 
 func matchFuncStart(trimmed string) (string, bool) {
 	m := shellFuncStart.FindStringSubmatch(trimmed)
 	if m == nil {
 		return "", false
 	}
-	return m[1], true
+	if m[1] != "" {
+		return m[1], true // `function name {` / `function name() {`
+	}
+	return m[2], true // `name() {` / `name() (`
 }
 
 // condVarCheck matches a condition fragment testing one of TEST_SRCDIR or a
@@ -652,6 +734,7 @@ func shellLineGating(src string) map[int]bool {
 	var stack []*ifFrame
 	abortSafeFrom := -1 // line after which abort-style safety applies, -1 if none
 	inFunc := false
+	funcIndent := ""
 	for i, raw := range lines {
 		lineno := i + 1
 		trimmed := strings.TrimSpace(raw)
@@ -659,19 +742,23 @@ func shellLineGating(src string) map[int]bool {
 			stack = nil
 			abortSafeFrom = -1
 			inFunc = true
-		} else if inFunc && (raw == "}" || raw == ")") {
-			// An unindented closing brace/paren alone on a line ends the
-			// function (matchFuncStart's own column-0 anchoring assumes
-			// every function body line in this policy's scope is indented,
-			// the same convention findShellHostToolExecs's currentFn
-			// tracking uses). Without this reset, abort-style safety
+			funcIndent = leadingWhitespace(raw)
+		} else if inFunc && (trimmed == "}" || trimmed == ")") && leadingWhitespace(raw) == funcIndent {
+			// A closing brace/paren alone on a line, at the SAME indentation
+			// as the function's own opening line, ends the function
+			// (findShellHostToolExecs's currentFn tracking uses the same
+			// rule). Column 0 alone (the previous rule) never closed an
+			// indented function header like `    cleanup_shared_server() {`,
+			// so this reset never fired for it and abort-style safety
 			// computed inside one function (e.g. upgrade-smoke-test.sh's
 			// build_candidate) leaked into whatever top-level code follows
 			// the function, long after it closed (review: "the abort/skip
-			// gate state isn't reset at function end").
+			// gate state isn't reset at function end"; "the scanner never
+			// closes an indented function header").
 			stack = nil
 			abortSafeFrom = -1
 			inFunc = false
+			funcIndent = ""
 		}
 		switch {
 		case strings.HasPrefix(trimmed, "if ") || trimmed == "if":
@@ -1017,6 +1104,115 @@ func TestShellHostToolExecPolicyScan(t *testing.T) {
 			"fi\n"
 		if shellLineGating(src)[3] {
 			t.Fatal("a disjunctive condition is not reasoned about; must not be reported safe")
+		}
+	})
+
+	t.Run("an indented function's own indented closing brace ends it (mutation check, review: test.sh cleanup_shared_server)", func(t *testing.T) {
+		// Mirrors scripts/test.sh:191-195's shape: a function defined,
+		// indented, inside other indented code, whose own closing brace is
+		// indented to match. A scanner that only recognizes a column-0 `}`
+		// would never see this function end, and would wrongly attribute
+		// the top-level `go build` below to cleanup_shared_server instead
+		// of to top level.
+		src := "#!/usr/bin/env bash\n" +
+			"if true; then\n" +
+			"    cleanup_shared_server() {\n" +
+			"        rm -rf \"$DIR\"\n" +
+			"    }\n" +
+			"fi\n" +
+			"go build -o out ./cmd/bd\n"
+		hits := findShellHostToolExecs(src)
+		found := false
+		for _, h := range hits {
+			if h.line == 7 {
+				found = true
+				if h.fn != "" {
+					t.Fatalf("line 7 hit fn = %q, want \"\" (top level, past the indented function's "+
+						"own closing brace), got hits %+v", h.fn, hits)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("got %+v, want a hit at line 7", hits)
+		}
+		// shellLineGating's own function-boundary tracking must reset the
+		// same way: abort-style safety computed (if any) inside
+		// cleanup_shared_server must not leak past its indented close.
+		src2 := "#!/usr/bin/env bash\n" +
+			"if true; then\n" +
+			"    cleanup_shared_server() {\n" +
+			"        if [ -n \"${CANDIDATE_BIN:-}\" ]; then\n" +
+			"            return\n" +
+			"        fi\n" +
+			"    }\n" +
+			"fi\n" +
+			"go build -o out ./cmd/bd\n"
+		if shellLineGating(src2)[9] {
+			t.Fatal("line 9 is top-level code after the indented function's indented close; " +
+				"must not inherit its abort-style safety")
+		}
+	})
+
+	t.Run("a `function name {` header is recognized (POSIX/ksh style)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"function cleanup {\n" +
+			"    true\n" +
+			"}\n" +
+			"go build -o out ./cmd/bd\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 || hits[0].line != 5 || hits[0].fn != "" {
+			t.Fatalf("got %+v, want one hit at line 5 attributed to top level", hits)
+		}
+	})
+
+	t.Run("a `function name() {` header is recognized", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"function cleanup() {\n" +
+			"    go build -o out ./cmd/bd\n" +
+			"}\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 || hits[0].fn != "cleanup" {
+			t.Fatalf("got %+v, want one hit attributed to fn \"cleanup\"", hits)
+		}
+	})
+
+	t.Run("same-line `command -v gofmt && gofmt` is classified as the guarded idiom, not flagged (review)", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"command -v gofmt >/dev/null 2>&1 && gofmt -l .\n"
+		if hits := findShellHostToolExecs(src); len(hits) != 0 {
+			t.Fatalf("got %+v, want no hits: command -v gofmt && gofmt is safe by construction "+
+				"(gofmt is not guaranteed on the hermetic bazel-test PATH)", hits)
+		}
+	})
+
+	t.Run("same-line `command -v go && go build` is classified as the guarded idiom", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"command -v go >/dev/null 2>&1 && go build -o out ./cmd/bd\n"
+		if hits := findShellHostToolExecs(src); len(hits) != 0 {
+			t.Fatalf("got %+v, want no hits: guarded by the same-tool command -v check before &&", hits)
+		}
+	})
+
+	t.Run("an unrelated exec sharing a line with an unrelated lookup is still reported (guard is tool- and position-specific)", func(t *testing.T) {
+		// The guard must not degrade back into a blanket same-line skip:
+		// looking up `go` must not excuse an unrelated `gofmt` exec later
+		// on the same line (different tool), and a lookup with no `&&` at
+		// all must not excuse anything.
+		src := "#!/usr/bin/env bash\n" +
+			"command -v go >/dev/null 2>&1 && gofmt -l .\n"
+		hits := findShellHostToolExecs(src)
+		if len(hits) != 1 || hits[0].line != 2 {
+			t.Fatalf("got %+v, want one hit at line 2: the gofmt exec is not guarded by a `go` lookup", hits)
+		}
+	})
+
+	t.Run("a bare command -v gofmt lookup, with no following &&, is still just a lookup", func(t *testing.T) {
+		src := "#!/usr/bin/env bash\n" +
+			"if command -v gofmt >/dev/null 2>&1; then\n" +
+			"  echo found\n" +
+			"fi\n"
+		if hits := findShellHostToolExecs(src); len(hits) != 0 {
+			t.Fatalf("got %+v, want no hits (plain presence lookup, no exec)", hits)
 		}
 	})
 }

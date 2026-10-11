@@ -1722,6 +1722,13 @@ var bazelAdvisoryLanes = map[string]string{
 // lane keeps running on main.
 const bazelIntegIf = "${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' }}"
 
+// bazelServerStorageIf: like bazelIntegIf, bazel-server-storage honors the
+// `integration` input (an explicit "off" skips it too, gastownhall/beads
+// #7486 review), but unlike bazel-integration/bazel-cmd-dolt it is
+// remote-only (wantRemoteOnlyIf), not mode cache -- there is no PR-time
+// warm-cache run of this tier, only remote or nothing.
+const bazelServerStorageIf = "${{ needs.rbe.outputs.enabled == 'true' && inputs.integration != 'off' }}"
+
 // F3: package-mcp and package-npm's if. Unlike every other lane's, it does
 // not read the rbe job's outputs at all - only the caller's package-gates
 // input - so these two never skip because of execution mode, only because a
@@ -1969,6 +1976,13 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 			wantJobRunsOn, wantJobIf, wantJobSetupEnv = bazelPackageRunsOn[name], bazelPackageGatesIf, wantPackageSetupEnv
 		} else if bazelRemoteOnlyJobs[name] {
 			wantJobIf = wantRemoteOnlyIf
+			if name == bazelServerJobName {
+				// Remote-only like bazel-embedded/bazel-proxied, but also
+				// honors the `integration` input like
+				// bazel-integration/bazel-cmd-dolt (gastownhall/beads#7486
+				// review).
+				wantJobIf = bazelServerStorageIf
+			}
 		} else if name == bazelIntegJobName || name == bazelCmdDoltJobName {
 			// The cmd/bd Dolt-server tier runs exactly where the integration
 			// lane does: its build is --config=integration's.
@@ -2849,6 +2863,14 @@ func bazelLaneRunModes(t *testing.T, lane, ifExpr string, with map[string]string
 			return map[string]bool{}
 		}
 		return map[string]bool{"remote": true, "fork-ro": true, "fork-rw": true, "cache": true}
+	case bazelServerStorageIf:
+		// Remote-only (unlike bazelIntegIf, no mode cache run), but also
+		// honors `integration` like bazel-integration/bazel-cmd-dolt
+		// (gastownhall/beads#7486 review).
+		if strings.EqualFold(with["integration"], "off") {
+			return map[string]bool{}
+		}
+		return map[string]bool{"remote": true, "fork-ro": true, "fork-rw": true}
 	case bazelPackageGatesIf:
 		// F3: unlike every other lane, these two never skip because of the
 		// rbe job's decision - only because the caller turned them off

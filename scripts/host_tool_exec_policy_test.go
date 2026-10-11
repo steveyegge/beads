@@ -251,13 +251,28 @@ func condPolarity(cond ast.Expr, prebuiltVars map[string]bool) (bazelWhenTrue bo
 		if e.Op == token.LAND || e.Op == token.LOR {
 			lp, lok := condPolarity(e.X, prebuiltVars)
 			rp, rok := condPolarity(e.Y, prebuiltVars)
-			switch {
-			case lok && rok && lp == rp:
+			// A mixed compound -- one side recognized, the other not -- is
+			// left unmatched rather than guessed at, for EITHER operator
+			// (review: "mixed compounds with one unrecognized side are
+			// taken as a gate", against this function's own doc comment).
+			// An earlier revision returned the recognized side's polarity
+			// in that case, which is unsound in both directions:
+			//   - `IsBazel() && testing.Short()` (lok=true, rok=false)
+			//     taken as bazelWhenTrue=true lets `if IsBazel() &&
+			//     testing.Short() { t.Skip() }` count as containment-style
+			//     gated even though, without -short, the condition is false
+			//     under Bazel and the exec still runs;
+			//   - `os.Getenv("TEST_SRCDIR") == "" || os.Getenv(
+			//     "FORCE_HOST_GO") != ""` (lok=true, rok=false, since the
+			//     FORCE_HOST_GO side names no recognized Bazel signal) taken
+			//     as bazelWhenTrue=false/matched=true lets abort-style
+			//     wrongly fire when FORCE_HOST_GO is unset off-Bazel.
+			// The sound rule is operator-dependent (containment needs
+			// &&-with-unknown to be unmatched; abort needs ||-with-unknown
+			// to be unmatched), so requiring BOTH sides recognized, for
+			// both operators, is what the doc comment already promised.
+			if lok && rok && lp == rp {
 				return lp, true
-			case lok && !rok:
-				return lp, true
-			case rok && !lok:
-				return rp, true
 			}
 		}
 	}
@@ -780,6 +795,137 @@ func bazelOnlyFixture(t *testing.T) {
 		if len(hits) != 1 || hits[0].gated {
 			t.Fatalf("hits = %+v, want one ungated hit: this test runs ONLY under Bazel, "+
 				"so the exec is never off the hermetic PATH", hits)
+		}
+	})
+
+	t.Run("a mixed && compound with one unrecognized side is not a gate (mutation check, review item C)", func(t *testing.T) {
+		// `IsBazel() && testing.Short()` is true under Bazel only when
+		// -short was also passed: an earlier revision of condPolarity
+		// treated the unrecognized `testing.Short()` side as absent and
+		// returned IsBazel()'s own polarity (bazelWhenTrue=true), which
+		// wrongly makes this containment-style-gate the exec below for
+		// every run, including a non-short run under Bazel where the
+		// condition is false and the exec is NOT skipped.
+		fset, f, lines := parse(t, `package p
+
+import "os/exec"
+
+func build(t *testing.T) {
+	if bazeltest.IsBazel() && extraCondition() {
+		t.Skip()
+	}
+	exec.Command("go", "build")
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the compound is mixed-polarity "+
+				"(one side unrecognized), so it must not be treated as a gate", hits)
+		}
+	})
+
+	t.Run("a mixed || compound with one unrecognized side is not a gate (mutation check, review item C)", func(t *testing.T) {
+		// `os.Getenv("TEST_SRCDIR") == "" || os.Getenv("FORCE_HOST_GO") !=
+		// ""` has a recognized left side (true off-Bazel) and an
+		// unrecognized right side. An earlier revision returned the
+		// recognized side's polarity (bazelWhenTrue=false, matched=true),
+		// which wrongly makes this abort-style-gate the exec: with
+		// FORCE_HOST_GO unset, off-Bazel, the condition is already true and
+		// aborts, so the abort-style rule would (wrongly) call the exec
+		// below safe under Bazel too, when in fact FORCE_HOST_GO could be
+		// set under Bazel and reach it there.
+		fset, f, lines := parse(t, `package p
+
+import (
+	"os"
+	"os/exec"
+)
+
+func build() {
+	if os.Getenv("TEST_SRCDIR") == "" || os.Getenv("FORCE_HOST_GO") != "" {
+		return
+	}
+	exec.Command("go", "build")
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the compound is mixed-polarity "+
+				"(one side unrecognized), so it must not be treated as a gate", hits)
+		}
+	})
+
+	t.Run("exec placed before its gate, in sequence (not nested), still counts as gated -- documented limitation, not a bug (review item C)", func(t *testing.T) {
+		// This is NOT the M17 false-safe (an exec inside the SAME
+		// true-under-Bazel branch, ahead of that branch's own abort): here
+		// the exec is a sibling statement, textually before an unrelated
+		// `if` later in the function that aborts under Bazel. The package
+		// comment already documents this scan as deliberately
+		// position-agnostic ("it does not check that the `if` lexically
+		// precedes the call"), and "same-function IsBazel gate, textually
+		// after the exec, still counts" above already pins the single-if
+		// case. This fixture pins the same behavior for an abort-style gate
+		// specifically, as its own named case, since gastownhall/beads#7485
+		// review flagged "an exec placed before its gate" as still open.
+		// Fixing it for real would require control-flow-ordering analysis
+		// this line/AST-position scan does not do; left as a known,
+		// documented limitation (conservative in the safe direction only
+		// when paired with the M17 same-branch check above, which this
+		// fixture does not exercise).
+		fset, f, lines := parse(t, `package p
+
+import "os/exec"
+
+func build() {
+	exec.Command("go", "build")
+	if bazeltest.IsBazel() {
+		return
+	}
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || !hits[0].gated {
+			t.Fatalf("hits = %+v, want one hit reported GATED: pinning the documented "+
+				"position-agnostic limitation (not asserting this is safe)", hits)
+		}
+	})
+
+	t.Run("an exec reached only through a function-value helper is not recognized -- documented limitation, not a bug (review item C)", func(t *testing.T) {
+		// helperIsGatedByAllCallers (via findCallSitesOf) only recognizes a
+		// bare `name(...)` call (an *ast.Ident). A call through a function
+		// VALUE -- a variable or struct field holding the helper, or the
+		// helper passed to another function and invoked indirectly -- is
+		// not a call site findCallSitesOf's walk can name, so
+		// helperIsGatedByAllCallers reports zero call sites for it (not
+		// gated), even when every real invocation happens to be gated.
+		// This under-approximates safety (it would require an allowlist
+		// entry it does not actually need), not over-approximates it, so
+		// it is a usability gap, not a soundness hole; left as a known,
+		// documented limitation rather than implementing points-to
+		// analysis for a same-package helper value.
+		_, helperFile, _ := parse(t, `package p
+
+import "os/exec"
+
+func helper() {
+	exec.Command("go", "build")
+}
+`)
+		_, callerFile, _ := parse(t, `package p
+
+func caller() {
+	if bazeltest.IsBazel() {
+		return
+	}
+	fn := helper
+	fn()
+}
+`)
+		files := map[string]*ast.File{"helper.go": helperFile, "caller.go": callerFile}
+		gated, n := helperIsGatedByAllCallers(files, "helper")
+		if gated || n != 0 {
+			t.Fatalf("helperIsGatedByAllCallers = (%v, %d), want (false, 0): pinning that a "+
+				"function-value call site is invisible to this scan (documented limitation)", gated, n)
 		}
 	})
 
