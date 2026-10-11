@@ -33,17 +33,29 @@ package scripts_test
 //     at literal arguments, so this case never reaches it;
 //   - the enclosing function (or func literal) contains an `if` whose
 //     condition names bazeltest.IsBazel() or tests os.Getenv("TEST_SRCDIR")
-//     against "", AND whose body aborts the function (return/continue/break/
-//     t.Fatal*/t.Skip*/t.FailNow/panic/os.Exit) exactly when that condition
-//     is true-under-Bazel (see condPolarity/blockAborts) — i.e. the
-//     enclosing scope provably never reaches the exec while running under
-//     Bazel. This is deliberately still position-agnostic (it does not
-//     check that the `if` lexically precedes the call), matching the
-//     allowlist's own "the mechanism exists somewhere in this function"
-//     looseness, but it IS polarity-aware: `if !bazeltest.IsBazel() {
-//     t.Skip() }` (which makes the function run ONLY under Bazel) is not a
-//     gate, because the abort fires on the opposite condition
-//     (gastownhall/beads#7485 review point 6);
+//     against "" (or a trusted prebuilt-lookup result, see below), AND whose
+//     body aborts the function (return/continue/break/t.Fatal*/t.Skip*/
+//     t.FailNow/panic/os.Exit) exactly when that condition is
+//     true-under-Bazel (see condPolarity/blockAborts) — i.e. the enclosing
+//     scope provably never reaches the exec while running under Bazel. This
+//     abort-style gate must additionally dominate the exec (the `if`'s own
+//     end position must be <= the exec's position): in straight-line code,
+//     a gate that comes AFTER the exec in source order never runs before
+//     the exec does, so it is not actually a gate (gastownhall/beads#7491
+//     review, "M21"). Containment-style gating — pos lexically inside a
+//     branch that only runs off Bazel — needs no such check: nesting
+//     already guarantees the branch's statements run after its own `if`.
+//     This is polarity-aware: `if !bazeltest.IsBazel() { t.Skip() }` (which
+//     makes the function run ONLY under Bazel) is not a gate, because the
+//     abort fires on the opposite condition (gastownhall/beads#7485 review
+//     point 6);
+//   - its "prebuilt binary path" comes from findPrebuiltBDBinary()/
+//     bazeltest.PrebuiltBD(), checked against "" as above, ONLY when that
+//     call's error result is bound to a named variable (not discarded via
+//     `_`) that is itself checked with an aborting `if err != nil` — an
+//     ignored error breaks the "never empty under Bazel" invariant the
+//     check otherwise relies on (gastownhall/beads#7491 review, "M19"): see
+//     prebuiltResultVars;
 //   - the enclosing function is itself named (not a func literal) and is
 //     called only from sites that are themselves gated by the rule above —
 //     checked by scanning every other in-scope file for bare calls to that
@@ -61,7 +73,11 @@ package scripts_test
 // `exec.Command("go", "version")` with no gate and no allowlist entry, and
 // assert the scan reports it; a second fixture pins the inverted-polarity
 // case (`if !bazeltest.IsBazel() { t.Skip() }`) as still ungated; a third
-// pins that a helper with one ungated caller among several is reported.
+// pins that a helper with one ungated caller among several is reported; a
+// fourth pins that an exec textually before its own abort-style gate is
+// reported (review M21); a fifth pins that a discarded PrebuiltBD()/
+// findPrebuiltBDBinary() error defeats the "never empty under Bazel" check
+// (review M19).
 
 import (
 	"go/ast"
@@ -164,9 +180,7 @@ func newFuncScopes(file *ast.File) *funcScopes {
 			// If Cond is true precisely when running under Bazel, the rest
 			// of the scope -- wherever pos sits in it, PROVIDED pos is not
 			// itself inside this same Bazel-true branch -- is reachable
-			// only off Bazel: a real gate, independent of whether pos is
-			// textually before or after this if (deliberately permissive,
-			// see the package comment). The !within(ifStmt.Body, pos)
+			// only off Bazel: a real gate. The !within(ifStmt.Body, pos)
 			// guard makes that provision exact: `if bazeltest.IsBazel() {
 			// exec.Command("go", ...); return }` has bazelWhenTrue=true
 			// and an aborting body, but the exec sits INSIDE that same
@@ -176,7 +190,20 @@ func newFuncScopes(file *ast.File) *funcScopes {
 			// precisely when NOT under Bazel (the inverted case), the
 			// rest of the scope is reachable ONLY under Bazel -- the
 			// opposite of a gate -- so this must not set found either.
-			if bazelWhenTrue && blockAborts(ifStmt.Body) && !within(ifStmt.Body, pos) {
+			//
+			// ifStmt.End() <= pos requires the gate to dominate the exec:
+			// the if must finish (textually) before pos starts. Straight-
+			// line code executes in source order, so an exec statement
+			// that runs BEFORE this if is not protected by it, no matter
+			// how the if's own body aborts (gastownhall/beads#7491 review,
+			// "M21" -- an exec placed before its gate is not actually
+			// gated). This is deliberately still a lexical-order check, not
+			// full control-flow analysis: a gate that textually precedes
+			// pos anywhere in scope (including across unrelated sibling
+			// statements, or inside a loop that runs before pos) still
+			// counts, matching the "mechanism exists somewhere earlier in
+			// this scope" looseness the rest of this policy uses.
+			if bazelWhenTrue && blockAborts(ifStmt.Body) && !within(ifStmt.Body, pos) && ifStmt.End() <= pos {
 				found = true
 			}
 			// Containment style: pos sits inside a branch that only runs
@@ -290,13 +317,30 @@ func isPrebuiltVarIdent(e ast.Expr, prebuiltVars map[string]bool) bool {
 // prebuiltResultVars scans scope for assignments whose right-hand side is a
 // call to findPrebuiltBDBinary() or (any x.)PrebuiltBD(), returning the set
 // of local names bound to the call's first result -- the "prebuilt binary
-// path, or \"\"" value. A caller that checks `name != ""` and aborts when
-// true is gated: see condPolarity.
+// path, or \"\"" value -- for assignments where the call's error result is
+// actually checked. A caller that checks `name != ""` and aborts when true
+// is gated: see condPolarity.
+//
+// The "never empty under Bazel" invariant documented on condPolarity only
+// holds when err == nil: both findPrebuiltBDBinary and bazeltest.PrebuiltBD
+// can return ("", non-nil) under Bazel too (an unset/misconfigured runfile
+// env var resolves through RunfileEnv, which errors rather than silently
+// returning ""). A caller that discards the error -- `bd, _ :=
+// findPrebuiltBDBinary()` -- loses that invariant: a real lookup failure
+// under Bazel now also lands in the "bd == \"\"" branch, which a caller
+// relying on this scan would otherwise treat as "off Bazel only" and fall
+// through to an ungated host `go build`. Such a discarded-error var must
+// NOT be trusted here, so its "bd == \"\""/"bd != \"\"" checks fall through
+// to condPolarity's unmatched case and the exec they guard is reported
+// ungated (gastownhall/beads#7491 review, "M19"). A var is only trusted when
+// the error is bound to a named identifier AND that identifier is checked
+// (`if err != nil { <aborts> }`) somewhere in the same scope -- matching the
+// fix PR #7491 applied to cmd/bd/scripttest_test.go by hand.
 func prebuiltResultVars(scope ast.Node) map[string]bool {
 	vars := map[string]bool{}
 	ast.Inspect(scope, func(n ast.Node) bool {
 		assign, ok := n.(*ast.AssignStmt)
-		if !ok || len(assign.Rhs) != 1 || len(assign.Lhs) < 1 {
+		if !ok || len(assign.Rhs) != 1 || len(assign.Lhs) != 2 {
 			return true
 		}
 		call, ok := assign.Rhs[0].(*ast.CallExpr)
@@ -313,12 +357,64 @@ func prebuiltResultVars(scope ast.Node) map[string]bool {
 		if !isPrebuiltCall {
 			return true
 		}
-		if id, ok := assign.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
+		id, ok := assign.Lhs[0].(*ast.Ident)
+		if !ok || id.Name == "_" {
+			return true
+		}
+		errID, ok := assign.Lhs[1].(*ast.Ident)
+		if !ok || errID.Name == "_" || errID.Name == "" {
+			// Error discarded (or not a plain identifier): the "never
+			// empty under Bazel" invariant cannot be trusted. See the
+			// func comment ("M19").
+			return true
+		}
+		if errorCheckedAndAborts(scope, errID.Name) {
 			vars[id.Name] = true
 		}
 		return true
 	})
 	return vars
+}
+
+// errorCheckedAndAborts reports whether scope contains an `if errName !=
+// nil { <aborts> }` (in either operand order), where the if's body aborts
+// per blockAborts. It does not descend into a nested func literal, matching
+// newFuncScopes' gated closure's own scoping rule: an error check belongs to
+// the scope it is lexically in, not to an unrelated sibling closure.
+func errorCheckedAndAborts(scope ast.Node, errName string) bool {
+	found := false
+	ast.Inspect(scope, func(n ast.Node) bool {
+		if _, ok := n.(*ast.FuncLit); ok && n != scope {
+			return false
+		}
+		ifStmt, ok := n.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		if isErrNotNilCheck(ifStmt.Cond, errName) && blockAborts(ifStmt.Body) {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// isErrNotNilCheck reports whether cond is `errName != nil` or `nil !=
+// errName`.
+func isErrNotNilCheck(cond ast.Expr, errName string) bool {
+	bin, ok := cond.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.NEQ {
+		return false
+	}
+	isErrIdent := func(e ast.Expr) bool {
+		id, ok := e.(*ast.Ident)
+		return ok && id.Name == errName
+	}
+	isNilIdent := func(e ast.Expr) bool {
+		id, ok := e.(*ast.Ident)
+		return ok && id.Name == "nil"
+	}
+	return (isErrIdent(bin.X) && isNilIdent(bin.Y)) || (isErrIdent(bin.Y) && isNilIdent(bin.X))
 }
 
 func isTestSrcdirGetenv(e ast.Expr) bool {
@@ -652,10 +748,13 @@ func build() {
 		}
 	})
 
-	t.Run("same-function IsBazel gate, textually after the exec, still counts", func(t *testing.T) {
-		// Deliberately permissive (see the package comment): the check is
-		// "does the function contain this mechanism", not control-flow aware
-		// about lexical order.
+	t.Run("same-function IsBazel gate, textually after the exec, does not count (mutation check, review M21)", func(t *testing.T) {
+		// The exec runs, in source order, before the gate's own abort ever
+		// has a chance to fire -- the gate does not dominate the exec, so
+		// it must not be treated as safe (gastownhall/beads#7491 review,
+		// "M21"). An earlier revision was deliberately position-agnostic
+		// here ("does the function contain this mechanism", not
+		// control-flow aware about lexical order); that was the bug.
 		fset, f, lines := parse(t, `package p
 
 import "os/exec"
@@ -668,8 +767,9 @@ func build() {
 }
 `)
 		hits := findHostToolExecCalls(fset, f, lines)
-		if len(hits) != 1 || !hits[0].gated {
-			t.Fatalf("hits = %+v, want one gated hit", hits)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the gate comes after the exec, "+
+				"so it does not dominate it", hits)
 		}
 	})
 
@@ -855,23 +955,18 @@ func build() {
 		}
 	})
 
-	t.Run("exec placed before its gate, in sequence (not nested), still counts as gated -- documented limitation, not a bug (review item C)", func(t *testing.T) {
+	t.Run("exec placed before its gate, in sequence (not nested), is reported ungated (mutation check, review M21)", func(t *testing.T) {
 		// This is NOT the M17 false-safe (an exec inside the SAME
 		// true-under-Bazel branch, ahead of that branch's own abort): here
 		// the exec is a sibling statement, textually before an unrelated
-		// `if` later in the function that aborts under Bazel. The package
-		// comment already documents this scan as deliberately
-		// position-agnostic ("it does not check that the `if` lexically
-		// precedes the call"), and "same-function IsBazel gate, textually
-		// after the exec, still counts" above already pins the single-if
-		// case. This fixture pins the same behavior for an abort-style gate
-		// specifically, as its own named case, since gastownhall/beads#7485
-		// review flagged "an exec placed before its gate" as still open.
-		// Fixing it for real would require control-flow-ordering analysis
-		// this line/AST-position scan does not do; left as a known,
-		// documented limitation (conservative in the safe direction only
-		// when paired with the M17 same-branch check above, which this
-		// fixture does not exercise).
+		// `if` later in the function that aborts under Bazel. A prior
+		// revision treated this as gated -- deliberately position-agnostic,
+		// "it does not check that the `if` lexically precedes the call" --
+		// but that is unsound: in straight-line code the exec runs, every
+		// time, before the later `if` gets a chance to abort anything
+		// (gastownhall/beads#7491 review, "M21" -- "an exec placed before
+		// its gate" is not actually gated). The gate must dominate the
+		// exec: ifStmt.End() <= pos, enforced in the abort-style check.
 		fset, f, lines := parse(t, `package p
 
 import "os/exec"
@@ -884,9 +979,9 @@ func build() {
 }
 `)
 		hits := findHostToolExecCalls(fset, f, lines)
-		if len(hits) != 1 || !hits[0].gated {
-			t.Fatalf("hits = %+v, want one hit reported GATED: pinning the documented "+
-				"position-agnostic limitation (not asserting this is safe)", hits)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the gate comes after the exec, "+
+				"so it does not dominate it", hits)
 		}
 	})
 
@@ -1087,6 +1182,81 @@ func newUngatedCaller() {
 		gated, n := helperIsGatedByAllCallers(files, "helper")
 		if gated || n != 0 {
 			t.Fatalf("helperIsGatedByAllCallers = (%v, %d), want (false, 0)", gated, n)
+		}
+	})
+
+	t.Run("a discarded PrebuiltBD error defeats the gate (mutation check, review M19)", func(t *testing.T) {
+		// `bd, _ := bazeltest.PrebuiltBD()` throws away the error. Under
+		// Bazel, PrebuiltBD can return ("", non-nil) -- not just
+		// (non-empty, nil) -- when the runfile env var is unset or
+		// unusable, so "bd == \"\"" is no longer exclusively an off-Bazel
+		// signal: a real lookup failure under Bazel reaches this branch
+		// too, and the exec below it would then run under Bazel.
+		fset, f, lines := parse(t, `package p
+
+import "os/exec"
+
+func build() {
+	bd, _ := bazeltest.PrebuiltBD()
+	if bd == "" {
+		exec.Command("go", "build")
+	}
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the discarded error "+
+				"defeats the \"never empty under Bazel\" invariant", hits)
+		}
+	})
+
+	t.Run("a PrebuiltBD error bound but never checked also defeats the gate (mutation check, review M19)", func(t *testing.T) {
+		// Naming the error is not enough on its own -- it must actually be
+		// checked (an aborting `if err != nil`) for the "never empty under
+		// Bazel" invariant to hold.
+		fset, f, lines := parse(t, `package p
+
+import "os/exec"
+
+func build() {
+	bd, err := bazeltest.PrebuiltBD()
+	_ = err
+	if bd == "" {
+		exec.Command("go", "build")
+	}
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || hits[0].gated {
+			t.Fatalf("hits = %+v, want one ungated hit: the error is bound but never "+
+				"checked, so the invariant still does not hold", hits)
+		}
+	})
+
+	t.Run("a checked PrebuiltBD error keeps the gate working (regression check, review M19)", func(t *testing.T) {
+		// The fixed shape: the error is bound to a named variable and
+		// checked with an aborting `if err != nil`, matching the real fix
+		// applied to cmd/bd/scripttest_test.go in #7491. This must stay
+		// gated so the M19 fix does not turn every real, correctly-checked
+		// prebuilt-lookup call site into a new scan failure.
+		fset, f, lines := parse(t, `package p
+
+import "os/exec"
+
+func build() {
+	bd, err := bazeltest.PrebuiltBD()
+	if err != nil {
+		panic(err)
+	}
+	if bd == "" {
+		exec.Command("go", "build")
+	}
+}
+`)
+		hits := findHostToolExecCalls(fset, f, lines)
+		if len(hits) != 1 || !hits[0].gated {
+			t.Fatalf("hits = %+v, want one gated hit: the error is checked and aborts, "+
+				"so the invariant holds", hits)
 		}
 	})
 
