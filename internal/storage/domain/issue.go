@@ -66,6 +66,12 @@ type IssueSQLRepository interface {
 	Get(ctx context.Context, id string, opts IssueTableOpts) (*types.Issue, error)
 	AsOf(ctx context.Context, id, ref string) (*types.Issue, error)
 	GetByIDs(ctx context.Context, ids []string, opts IssueTableOpts) ([]*types.Issue, error)
+	// GetMany runs the SHARED batch-read body (issueops.ExecuteGetMany) on this
+	// repository's transaction, which is how the unit-of-work provider reaches
+	// the same function the two store backends wrap. It takes no table option:
+	// the body routes both planes itself, the way CompareAndSetMetadataKey's
+	// does.
+	GetMany(ctx context.Context, request publicops.GetManyRequest) (publicops.GetManyResult, error)
 	Exists(ctx context.Context, id string, opts IssueTableOpts) (bool, error)
 	CountForPrefix(ctx context.Context, prefix string, opts IssueTableOpts) (int, error)
 	NextCounterID(ctx context.Context, prefix string) (int, error)
@@ -111,6 +117,11 @@ type IssueSQLRepository interface {
 	UnclaimIssueIfAssignee(ctx context.Context, id, actor, expectedAssignee string) error
 	HeartbeatIssue(ctx context.Context, id, actor string) error
 	ReclaimExpiredLeases(ctx context.Context, olderThan time.Duration, filter types.ReclaimFilter, actor string) ([]types.ReclaimedLease, error)
+	// Reclaim runs the SHARED sweep body (issueops.ExecuteReclaimInTx) on this
+	// repository's transaction, which is how the unit-of-work provider reaches
+	// the same function the two store backends wrap. It is the publicops-typed
+	// counterpart to ReclaimExpiredLeases above, the way GetMany is to GetByIDs.
+	Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error)
 	WakeExpiredDefers(ctx context.Context) (issues, wisps int, err error)
 }
 
@@ -311,6 +322,9 @@ type UpdateSpec struct {
 type IssueUseCase interface {
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
 	GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error)
+	// GetMany is the shape issueops.BatchGetter publishes; see
+	// IssueSQLRepository.GetMany for why it takes no table option.
+	GetMany(ctx context.Context, request publicops.GetManyRequest) (publicops.GetManyResult, error)
 	FindWispDependentsRecursive(ctx context.Context, ids []string) (map[string]bool, error)
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) (SearchPage, error)
 	SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) (SearchCountsPage, error)
@@ -335,6 +349,10 @@ type IssueUseCase interface {
 	UnclaimIfAssignee(ctx context.Context, id, actor, expectedAssignee string) error
 	Heartbeat(ctx context.Context, id, actor string) error
 	ReclaimExpiredLeases(ctx context.Context, olderThan time.Duration, filter types.ReclaimFilter, actor string) ([]types.ReclaimedLease, error)
+	// Reclaim is the shape issueops.LeaseReclaimer publishes; see
+	// IssueRepository.Reclaim for why it is a separate method from
+	// ReclaimExpiredLeases rather than a replacement for it.
+	Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error)
 	WakeExpiredDefers(ctx context.Context) (issues, wisps int, err error)
 
 	CreateIssue(ctx context.Context, params CreateIssueParams, actor string) (CreateIssueResult, error)
@@ -470,6 +488,14 @@ func (u *issueUseCaseImpl) get(ctx context.Context, id string, useWisp bool) (*t
 
 func (u *issueUseCaseImpl) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
 	return u.getByIDs(ctx, ids, false)
+}
+
+// GetMany passes straight through to the repository with no pre-check and no
+// error wrapping, CountEdges's reason: the request's whole vocabulary is
+// validated inside the shared body (issueops.ExecuteGetMany), and there is no
+// second implementation for a wrapper here to protect.
+func (u *issueUseCaseImpl) GetMany(ctx context.Context, request publicops.GetManyRequest) (publicops.GetManyResult, error) {
+	return u.issueRepo.GetMany(ctx, request)
 }
 
 func (u *issueUseCaseImpl) FindWispDependentsRecursive(ctx context.Context, ids []string) (map[string]bool, error) {
@@ -1960,4 +1986,12 @@ func (u *issueUseCaseImpl) ReclaimExpiredLeases(ctx context.Context, olderThan t
 		return nil, fmt.Errorf("ReclaimExpiredLeases: %w", err)
 	}
 	return out, nil
+}
+
+// Reclaim passes straight through to the repository with no pre-check and no
+// error-wrapping, matching GetMany's reasoning: the request is fully
+// validated inside the shared body (issueops.ExecuteReclaimInTx), and there is
+// no use-case-level concern layered on top of it.
+func (u *issueUseCaseImpl) Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error) {
+	return u.issueRepo.Reclaim(ctx, request)
 }

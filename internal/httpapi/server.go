@@ -279,6 +279,20 @@ type Config struct {
 	// and neither can answer the other's question. Required on the same terms
 	// as every field here.
 	GraphCounter issueops.GraphCounter
+	// BatchGetter is the one-snapshot, many-ids read behind
+	// POST /v0/beads/issues:batchGet. It is a SEPARATE field from Reader for
+	// the reason EdgeReader and GraphCounter are separate from each other:
+	// Reader.Get answers ONE id with *IssueDetails or ErrNotFound, and this
+	// answers MANY ids with a result whose Missing field reports an absent row
+	// rather than refusing the call. Required on the same terms as every field
+	// here.
+	BatchGetter issueops.BatchGetter
+	// LeaseReclaimer is the stale-lease sweep behind
+	// POST /v0/beads/issues:reclaim. It is a SEPARATE field from Releaser for
+	// the reason issueops.LeaseReclaimer's own doc gives: Releaser gives up ONE
+	// claim on its holder's say-so, and this reverts MANY on a clock's.
+	// Required on the same terms as every field here.
+	LeaseReclaimer issueops.LeaseReclaimer
 	// Relations is the single-anchor neighbor read behind
 	// GET /v0/beads/issues/{id}/related. It is a SEPARATE field from EdgeReader
 	// for the reason issueops.EdgeReader's own doc gives at length: that role
@@ -376,6 +390,18 @@ type Config struct {
 	// a server without this flag would answer "you are caught up" to a consumer
 	// polling a workspace that will never emit a record.
 	EventsJournalEnabled bool
+	// ExternalDependencyPolicy reports that every ready, claim, claim-next,
+	// close, blocking-annotation and tree role this server answers from — the
+	// Provider's, or the individual role fields' — was composed through bd's
+	// external-dependency policy (internal/storage/externaldeps). It makes the
+	// handshake advertise CapExternalDependencies, which tells a client to
+	// pass those operations through without applying the policy itself.
+	//
+	// Set it only from the composition actually handed in (cmd/bd's serve
+	// derives it with externaldeps.Applied / externaldeps.AppliedToProvider):
+	// a server that advertises the token without enforcing the policy makes
+	// every client skip it.
+	ExternalDependencyPolicy bool
 	// Workspace is the startup snapshot GET /v0/beads/context answers from.
 	// Only the allowlisted fields are ever serialized — see contextResponse,
 	// which names the whole set and the reasons for the exclusions.
@@ -414,6 +440,8 @@ type Server struct {
 	issueCycles       issueops.CycleDetector
 	issueEdges        issueops.EdgeReader
 	issueEdgeCounter  issueops.GraphCounter
+	issueBatchGetter  issueops.BatchGetter
+	issueReclaimer    issueops.LeaseReclaimer
 	issueRelations    issueops.Relations
 	issueCommenter    issueops.Commenter
 	issueBlocking     issueops.BlockingAnnotator
@@ -625,6 +653,8 @@ func Listen(cfg Config) (*Server, error) {
 		issueCycles:       cfg.CycleDetector,
 		issueEdges:        cfg.EdgeReader,
 		issueEdgeCounter:  cfg.GraphCounter,
+		issueBatchGetter:  cfg.BatchGetter,
+		issueReclaimer:    cfg.LeaseReclaimer,
 		issueRelations:    cfg.Relations,
 		issueCommenter:    cfg.Commenter,
 		issueBlocking:     cfg.BlockingAnnotator,
@@ -653,7 +683,7 @@ func Listen(cfg Config) (*Server, error) {
 
 		log:      log.New(cfg.Stderr, "bd serve: ", log.LstdFlags|log.LUTC),
 		stdout:   cfg.Stdout,
-		ctxBody:  contextResponse(cfg.Workspace, cfg.SchemaVersion, Capabilities()),
+		ctxBody:  contextResponse(cfg.Workspace, cfg.SchemaVersion, advertisedCapabilities(cfg)),
 		hosts:    newHostPolicy(ip, cfg.AllowedHosts),
 		auth:     cfg.Auth,
 		idPrefix: prefix,
@@ -747,12 +777,12 @@ func Listen(cfg Config) (*Server, error) {
 // "all or nothing" would turn an honest condition into a special case inside
 // three functions. It is checked once, on its own, below.
 func sourceRoles(cfg Config) []any {
-	return []any{cfg.Reader, cfg.Claimer, cfg.ReadyClaimer, cfg.Releaser, cfg.Lifecycle, cfg.BatchCloser, cfg.Settings, cfg.Stats, cfg.CycleDetector, cfg.EdgeReader, cfg.GraphCounter, cfg.Relations, cfg.Commenter, cfg.BlockingAnnotator, cfg.TreeWalker, cfg.ReadyCounter, cfg.Counter, cfg.Querier, cfg.Sweeper, cfg.Deleter, cfg.BatchCreator, cfg.DependencyEditor, cfg.BatchApplier, cfg.Memories, cfg.MetadataCAS}
+	return []any{cfg.Reader, cfg.Claimer, cfg.ReadyClaimer, cfg.Releaser, cfg.Lifecycle, cfg.BatchCloser, cfg.Settings, cfg.Stats, cfg.CycleDetector, cfg.EdgeReader, cfg.GraphCounter, cfg.BatchGetter, cfg.LeaseReclaimer, cfg.Relations, cfg.Commenter, cfg.BlockingAnnotator, cfg.TreeWalker, cfg.ReadyCounter, cfg.Counter, cfg.Querier, cfg.Sweeper, cfg.Deleter, cfg.BatchCreator, cfg.DependencyEditor, cfg.BatchApplier, cfg.Memories, cfg.MetadataCAS}
 }
 
 // roleSourceNames spells sourceRoles for the refusal message, in the same
 // order, so a caller reading the error learns the whole set it must pass.
-const roleSourceNames = "Reader, Claimer, ReadyClaimer, Releaser, Lifecycle, BatchCloser, Settings, Stats, CycleDetector, EdgeReader, GraphCounter, Relations, Commenter, BlockingAnnotator, TreeWalker, ReadyCounter, Counter, Querier, Sweeper, Deleter, BatchCreator, DependencyEditor, BatchApplier, Memories and MetadataCAS"
+const roleSourceNames = "Reader, Claimer, ReadyClaimer, Releaser, Lifecycle, BatchCloser, Settings, Stats, CycleDetector, EdgeReader, GraphCounter, BatchGetter, LeaseReclaimer, Relations, Commenter, BlockingAnnotator, TreeWalker, ReadyCounter, Counter, Querier, Sweeper, Deleter, BatchCreator, DependencyEditor, BatchApplier, Memories and MetadataCAS"
 
 func anyRoleSet(cfg Config) bool {
 	return slices.ContainsFunc(sourceRoles(cfg), func(r any) bool { return r != nil })
@@ -1124,6 +1154,34 @@ func (s *Server) graphCounter(r *http.Request) (issueops.GraphCounter, error) {
 	}
 	var src uow.GraphCounterSource = timedProvider{inner: s.provider, rec: requestInfo(r.Context())}
 	return src.GraphCounter()
+}
+
+// batchGetter returns the many-ids read surface for one request, built the
+// same two ways as edgeReader above and held by INTERFACE so
+// uow.BatchGetterSource is load-bearing rather than decorative.
+//
+// It goes out UNWRAPPED, for graphCounter's reason: the role answers with a
+// VALUE whose slices a nil-safe range walks, so no handler dereferences a
+// pointer it returned.
+func (s *Server) batchGetter(r *http.Request) (issueops.BatchGetter, error) {
+	if s.provider == nil {
+		return s.issueBatchGetter, nil
+	}
+	var src uow.BatchGetterSource = timedProvider{inner: s.provider, rec: requestInfo(r.Context())}
+	return src.BatchGetter()
+}
+
+// leaseReclaimer returns the stale-lease sweep surface for one request, on the
+// same terms as every role above and held by INTERFACE so
+// uow.LeaseReclaimerSource is load-bearing rather than decorative. It goes out
+// unwrapped for the sweeper's reason: ReclaimResult is a VALUE whose slice a
+// nil-safe range walks.
+func (s *Server) leaseReclaimer(r *http.Request) (issueops.LeaseReclaimer, error) {
+	if s.provider == nil {
+		return s.issueReclaimer, nil
+	}
+	var src uow.LeaseReclaimerSource = timedProvider{inner: s.provider, rec: requestInfo(r.Context())}
+	return src.LeaseReclaimer()
 }
 
 // relations returns the single-anchor neighbor surface for one request, built

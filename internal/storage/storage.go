@@ -286,6 +286,12 @@ type Storage interface {
 	// EdgeReader (that one answers with the stored ROWS, outbound only). Reads
 	// fire no hooks, as for IssueReader.
 	GraphCounter() (issueops.GraphCounter, error)
+	// BatchGetter returns the guarded batch-read surface for this store: many
+	// issues by id, hydrated, in ONE snapshot. Its own role rather than a mode
+	// of IssueReader because a miss here is a RESULT FIELD (Missing) and not
+	// ErrNotFound — a batch GET is a set read, not a precondition on every
+	// member succeeding. Reads fire no hooks, as for IssueReader.
+	BatchGetter() (issueops.BatchGetter, error)
 	// ReadyCounter returns the guarded ready-count surface for this store: the
 	// size of the ready set, which is the number `bd ready`'s pagination
 	// publishes and which no other role answers. Counter's predicate is a
@@ -372,6 +378,15 @@ type Storage interface {
 	// assignee and status, which is on_update — the same event the journal
 	// already records for it. See hook_releaser.go.
 	Releaser() (issueops.Releaser, error)
+	// LeaseReclaimer returns the lease-sweep surface for this store: revert
+	// every lease that has been held past its deadline back to its
+	// pre-claim state, for a caller that is a clock rather than a human or a
+	// request.
+	//
+	// It is a WRITE role and its hook decorator WRAPS: a reclaim changes
+	// assignee and status per reverted row, which is on_update, the same
+	// event Releaser fires. See hook_lease_reclaimer.go.
+	LeaseReclaimer() (issueops.LeaseReclaimer, error)
 
 	// Issue CRUD
 	CreateIssue(ctx context.Context, issue *types.Issue, actor string) error
@@ -392,6 +407,9 @@ type Storage interface {
 	// when the current assignee differs.
 	UnclaimIssueIfAssignee(ctx context.Context, id string, actor string, expectedAssignee string) error
 	UpdateIssueType(ctx context.Context, id string, issueType string, actor string) error
+	// CloseIssue is the raw close: it applies neither the close guards nor
+	// close policy, except over HTTP, where it closes with force and a template
+	// — the one guard force never bypasses — still refuses.
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	// CloseIssueChecked closes an issue, but refuses with ErrCloseOpenChildren
 	// when it has open parent-child dependents, or ErrCloseBlocked when it has a
@@ -403,9 +421,16 @@ type Storage interface {
 	// (no TOCTOU). When opts.ExpectedVersion is non-nil it adds an orthogonal
 	// optimistic-concurrency precondition: the close proceeds only if the issue's
 	// current RowVersion still equals *opts.ExpectedVersion, else it refuses with
-	// ErrVersionMismatch atomically (Force does NOT bypass this check). Already-
-	// closed is an idempotent success with Unchanged=true; a missing issue returns
-	// ErrNotFound.
+	// ErrVersionMismatch atomically (Force does NOT bypass this check). After
+	// the version check and before the child and blocker policy it applies the
+	// close guards in the same transaction: a template refuses with
+	// *issueops.TemplateReadOnlyError whatever Force says, and unless Force is
+	// set a pinned issue refuses with *issueops.PinnedError and one assigned to
+	// someone other than actor with *issueops.CloseNotAssigneeError. Already-
+	// closed is an idempotent success with Unchanged=true and skips the guards;
+	// a missing issue returns ErrNotFound. CloseIssue above is the raw close and
+	// applies neither the guards nor the policy, except that over HTTP, where
+	// the template guard has no bypass on the wire, a template still refuses.
 	CloseIssueChecked(ctx context.Context, id string, actor string, opts CloseIssueOptions) (CloseIssueResult, error)
 	DeleteIssue(ctx context.Context, id string) error
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
@@ -632,7 +657,7 @@ type Storage interface {
 type CloseIssueOptions struct {
 	Reason  string
 	Session string
-	Force   bool // bypass the is_blocked guard (mirrors `bd close --force`)
+	Force   bool // bypass close policy and the pin and assignee guards, never the template (mirrors `bd close --force`)
 	// ExpectedVersion, when non-nil, gates the close on an optimistic-concurrency
 	// check: the close proceeds only if the issue's current RowVersion (the
 	// row_lock token) equals *ExpectedVersion, otherwise it refuses with
@@ -995,6 +1020,84 @@ type ReadyWorkCounter interface {
 // edge on each ready-work query.
 type ExternalDependencyQueryStore interface {
 	GetExternalBlockingDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error)
+}
+
+// RemoteBackendStore is implemented by a DoltStorage that is a pure network
+// client of a remote bd serve process (a registered backend whose
+// backends.Backend.Remote is true — see internal/storage/backends). It is
+// metadata about the store's transport, not a policy decision. Such a store
+// serves its ROLES natively and only a slice of the legacy DoltStorage
+// method seam, so a decorator that builds role views must compose over the
+// inner store's roles rather than rebuild them from that seam: the
+// external-deps decorator consults it for exactly that (remote_roles.go).
+// It never decides whether a policy runs — the decorator asks
+// ExternalDependencyPolicyProber whether to skip its client-side enforcement.
+type RemoteBackendStore interface {
+	IsRemoteBackendStore() bool
+}
+
+// CallerAttributionLimitedStore is implemented by a DoltStorage whose write
+// transport cannot carry two caller-authored attribution members:
+//
+//   - a history entry's Provenance label (UpdateRequest.Provenance,
+//     ReopenRequest.Provenance), because the serving process labels the
+//     entries it writes itself;
+//   - a patch's ClosedBySession, which only the close operation carries.
+//
+// Its role implementations refuse those members rather than drop them, since a
+// library caller may mean them. A front door that knows its own value is
+// derivable or advisory — `bd reopen`'s fixed "bd: reopen <id>" label, the
+// ambient CLAUDE_SESSION_ID on `bd update -s closed` — omits it for such a
+// store instead of failing the write; cmd/bd/remote_backend.go records
+// which members it omits and why.
+type CallerAttributionLimitedStore interface {
+	CallerAttributionLimited() bool
+}
+
+// Pinger is implemented by a DoltStorage whose cheapest honest liveness check
+// is not an issue query. `bd ping` uses it when present and falls back to a
+// one-row SearchIssues otherwise. A remote store implements it with its
+// authenticated handshake read, which reaches the serving process and checks
+// the credential and the workspace pin without touching an issue table its
+// legacy method seam may not serve at all.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+// ExternalDependencyPolicyProber is implemented by a DoltStorage that can
+// answer whether the remote server it talks to already enforces bd's
+// external-dependency policy itself (design 3.6, "External-dependency server
+// policy": upstream's storage.ServerEnforcedPolicy / PolicyEnforcedByServer).
+// The external-deps decorator consults this — never RemoteBackendStore, which
+// only shapes how it composes its roles — before skipping its own client-side
+// enforcement: a remote store whose
+// server advertises the capability (httpapi's policy.external_dependencies)
+// has already enforced the policy before answering, so a second client-side
+// pass would be redundant. A store that does not implement this interface, or
+// that implements it and reports false — including a remote store whose
+// server is silent on the capability — gets the ordinary client-side
+// enforcement. The policy is never silently skipped merely because the store
+// is remote.
+type ExternalDependencyPolicyProber interface {
+	ServerEnforcesExternalDependencyPolicy(ctx context.Context) (bool, error)
+}
+
+// ExcludeIDsUnsupportedStore is implemented by a DoltStorage whose ready-work
+// reads cannot express types.WorkFilter.ExcludeIDs over their own transport.
+// Today that is exactly httpclient.Store: the v0 wire's listReadyWork and
+// countReadyWork operations publish no id-exclusion parameter, so the http
+// bridge refuses rather than silently widening the result set whenever a
+// filter carries any (design 3.6 / L12, "every field it cannot express
+// refuses").
+//
+// The external-deps decorator consults this before deciding how to apply its
+// OWN additional exclusions (issues blocked by an unsatisfied
+// external:<project>:<capability> dependency): a store that answers true here
+// gets those exclusions applied client-side in Go instead of folded into the
+// filter handed down, so the policy still runs — design 3.6 says it is never
+// silently skipped — without tripping the wire's own refusal.
+type ExcludeIDsUnsupportedStore interface {
+	ExcludeIDsUnsupported() bool
 }
 
 // Transaction provides atomic multi-operation support within a single database transaction.

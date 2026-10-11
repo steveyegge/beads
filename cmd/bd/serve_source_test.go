@@ -100,12 +100,14 @@ func TestServeIssueRolesComeFromBeneathTheHookDecorator(t *testing.T) {
 			batchCloser:  &serveStubBatchCloser{},
 			readyClaimer: &serveStubReadyClaimer{},
 			releaser:     &serveStubReleaser{},
+			reclaimer:    &serveStubLeaseReclaimer{},
 			lifecycle:    &serveStubLifecycle{},
 			dependencies: &serveStubDependencyEditor{},
 			batchApplier: &serveStubBatchApplier{},
 			metadataCAS:  &serveStubMetadataCAS{},
 			counter:      &serveStubCounter{},
 			edgeCounter:  &serveStubGraphCounter{},
+			batchGetter:  &serveStubBatchGetter{},
 			relations:    &serveStubRelations{},
 			commenter:    &serveStubCommenter{},
 			batchCreator: &serveStubBatchCreator{},
@@ -186,6 +188,15 @@ func TestServeIssueRolesComeFromBeneathTheHookDecorator(t *testing.T) {
 		t.Fatal("the store's own accessor no longer returns a hook-firing releaser; this test proves nothing")
 	}
 
+	// And for the lease reclaimer, which fires once per reverted row.
+	reclaimerFromTheStore, err := chained.LeaseReclaimer()
+	if err != nil {
+		t.Fatalf("LeaseReclaimer: %v", err)
+	}
+	if !storage.RoleFiresHooks(reclaimerFromTheStore) {
+		t.Fatal("the store's own accessor no longer returns a hook-firing lease reclaimer; this test proves nothing")
+	}
+
 	// And for the commenter, the SEVENTH — and the one that was OUTSIDE the
 	// RoleFiresHooks switch entirely until the add-comment operation went on the
 	// wire. hook_commenter.go has fired the update hook for every comment it
@@ -252,6 +263,9 @@ func TestServeIssueRolesComeFromBeneathTheHookDecorator(t *testing.T) {
 	}
 	if storage.RoleFiresHooks(roles.releaser) {
 		t.Error("bd serve would run this workspace's hooks on every HTTP release")
+	}
+	if storage.RoleFiresHooks(roles.leaseReclaimer) || roles.leaseReclaimer != issueops.LeaseReclaimer(middle.reclaimer) {
+		t.Errorf("lease reclaimer came from %p, want the layer directly beneath the hooks (%p)", roles.leaseReclaimer, middle.reclaimer)
 	}
 	reader, claimer := roles.reader, roles.claimer
 	// The same predicate httpapi.Listen refuses on, so a regression here is a
@@ -405,12 +419,14 @@ type serveRolesStore struct {
 	batchCloser  *serveStubBatchCloser
 	readyClaimer *serveStubReadyClaimer
 	releaser     *serveStubReleaser
+	reclaimer    *serveStubLeaseReclaimer
 	lifecycle    *serveStubLifecycle
 	dependencies *serveStubDependencyEditor
 	batchApplier *serveStubBatchApplier
 	metadataCAS  *serveStubMetadataCAS
 	counter      *serveStubCounter
 	edgeCounter  *serveStubGraphCounter
+	batchGetter  *serveStubBatchGetter
 	relations    *serveStubRelations
 	commenter    *serveStubCommenter
 	batchCreator *serveStubBatchCreator
@@ -456,6 +472,13 @@ func (s *serveRolesStore) ReadyClaimer() (issueops.ReadyClaimer, error) { return
 // a releaser that runs the workspace's hooks once per claim it frees — which a
 // reaper draining abandoned work does in a tight loop.
 func (s *serveRolesStore) Releaser() (issueops.Releaser, error) { return s.releaser, nil }
+
+// LeaseReclaimer carries an identifiable value for the releaser's reason, and
+// for a sharper form of it: its decorator fires on_update once per reverted
+// row, so an unpeeled reclaimer runs the workspace's hooks N times per sweep.
+func (s *serveRolesStore) LeaseReclaimer() (issueops.LeaseReclaimer, error) {
+	return s.reclaimer, nil
+}
 
 // IssueLifecycle carries an identifiable value for the same reason the reader
 // and the claimer do: it is one of the roles the hook decorator wraps, so a peel
@@ -518,6 +541,10 @@ func (s *serveRolesStore) Counter() (issueops.Counter, error) { return s.counter
 // began binding it; this one was found the same way, by this test panicking the
 // moment the binding landed.
 func (s *serveRolesStore) GraphCounter() (issueops.GraphCounter, error) { return s.edgeCounter, nil }
+
+// BatchGetter is declared for GraphCounter's reason: the many-ids read is also
+// a read, so hook_batch_getter.go recurses and the recursion lands here.
+func (s *serveRolesStore) BatchGetter() (issueops.BatchGetter, error) { return s.batchGetter, nil }
 
 // IssueRelations is the FIRST role added to serveIssueRoles since this type
 // stopped embedding a nil store, and it is worth recording what that changed —
@@ -587,6 +614,14 @@ func (*serveStubGraphCounter) CountEdges(context.Context, issueops.EdgeCountRequ
 	return issueops.EdgeCountResult{}, errors.ErrUnsupported
 }
 
+// serveStubBatchGetter is the many-ids read role's stand-in, ErrUnsupported
+// like every stub here.
+type serveStubBatchGetter struct{}
+
+func (*serveStubBatchGetter) GetMany(context.Context, issueops.GetManyRequest) (issueops.GetManyResult, error) {
+	return issueops.GetManyResult{}, errors.ErrUnsupported
+}
+
 // serveStubCounter is the count role's stand-in. It answers ErrUnsupported like
 // every stub here: this file's subject is which LAYER a role comes from, never
 // what the role answers.
@@ -639,6 +674,12 @@ type serveStubReleaser struct{}
 
 func (*serveStubReleaser) Release(context.Context, issueops.ReleaseRequest) (issueops.ReleaseResult, error) {
 	return issueops.ReleaseResult{}, errors.ErrUnsupported
+}
+
+type serveStubLeaseReclaimer struct{}
+
+func (*serveStubLeaseReclaimer) Reclaim(context.Context, issueops.ReclaimRequest) (issueops.ReclaimResult, error) {
+	return issueops.ReclaimResult{}, errors.ErrUnsupported
 }
 
 type serveStubLifecycle struct{}

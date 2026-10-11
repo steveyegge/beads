@@ -94,7 +94,7 @@ func TestInstrumentedStorageDeclaresEveryRoleAccessor(t *testing.T) {
 }
 
 // roleAccessorStore is a DoltStorage whose only real methods are the
-// twenty-eight role accessors, each answering with a distinguishable sentinel
+// twenty-nine role accessors, each answering with a distinguishable sentinel
 // so a test can tell an instrumented surface from a passed-through one.
 //
 // TWO sentinels rather than one: memoryops.Memories.List and issueops.Reader.List
@@ -131,6 +131,9 @@ func (s *roleAccessorStore) CycleDetector() (issueops.CycleDetector, error) {
 func (s *roleAccessorStore) EdgeReader() (issueops.EdgeReader, error) { return s.surface, s.err }
 func (s *roleAccessorStore) TreeWalker() (issueops.TreeWalker, error) { return s.surface, s.err }
 func (s *roleAccessorStore) GraphCounter() (issueops.GraphCounter, error) {
+	return s.surface, s.err
+}
+func (s *roleAccessorStore) BatchGetter() (issueops.BatchGetter, error) {
 	return s.surface, s.err
 }
 func (s *roleAccessorStore) BlockingAnnotator() (issueops.BlockingAnnotator, error) {
@@ -172,8 +175,11 @@ func (s *roleAccessorStore) BatchApplier() (issueops.BatchApplier, error) {
 func (s *roleAccessorStore) Releaser() (issueops.Releaser, error) {
 	return s.surface, s.err
 }
+func (s *roleAccessorStore) LeaseReclaimer() (issueops.LeaseReclaimer, error) {
+	return s.surface, s.err
+}
 
-// roleAccessorSentinel implements twenty-seven of the twenty-eight roles at
+// roleAccessorSentinel implements twenty-eight of the twenty-nine roles at
 // once — every one but memoryops.Memories, whose List collides with
 // issueops.Reader.List and needs the second sentinel below.
 // Nothing calls its methods; identity is the whole point.
@@ -258,6 +264,9 @@ func (*roleAccessorSentinel) CountReady(context.Context, issueops.ReadyRequest) 
 func (*roleAccessorSentinel) CountEdges(context.Context, issueops.EdgeCountRequest) (issueops.EdgeCountResult, error) {
 	return issueops.EdgeCountResult{}, nil
 }
+func (*roleAccessorSentinel) GetMany(context.Context, issueops.GetManyRequest) (issueops.GetManyResult, error) {
+	return issueops.GetManyResult{}, nil
+}
 
 func (*roleAccessorSentinel) Query(context.Context, issueops.QueryRequest) (issueops.IssuePage, error) {
 	return issueops.IssuePage{}, nil
@@ -299,6 +308,9 @@ func (*roleAccessorSentinel) CompareAndSetKey(context.Context, issueops.CompareA
 }
 func (*roleAccessorSentinel) Release(context.Context, issueops.ReleaseRequest) (issueops.ReleaseResult, error) {
 	return issueops.ReleaseResult{}, nil
+}
+func (*roleAccessorSentinel) Reclaim(context.Context, issueops.ReclaimRequest) (issueops.ReclaimResult, error) {
+	return issueops.ReclaimResult{}, nil
 }
 
 // memoryRoleSentinel is the memory role's sentinel — see
@@ -355,6 +367,7 @@ func TestInstrumentedStorageInstrumentsEveryRoleAccessor(t *testing.T) {
 		{"BlockingAnnotator", func() (any, error) { return wrapped.BlockingAnnotator() }, sentinel},
 		{"TreeWalker", func() (any, error) { return wrapped.TreeWalker() }, sentinel},
 		{"GraphCounter", func() (any, error) { return wrapped.GraphCounter() }, sentinel},
+		{"BatchGetter", func() (any, error) { return wrapped.BatchGetter() }, sentinel},
 		{"Counter", func() (any, error) { return wrapped.Counter() }, sentinel},
 		{"WorkspaceConfig", func() (any, error) { return wrapped.WorkspaceConfig() }, sentinel},
 		{"Memories", func() (any, error) { return wrapped.Memories() }, memorySentinel},
@@ -375,6 +388,7 @@ func TestInstrumentedStorageInstrumentsEveryRoleAccessor(t *testing.T) {
 		{"MetadataCAS", func() (any, error) { return wrapped.MetadataCAS() }, sentinel},
 		{"BatchApplier", func() (any, error) { return wrapped.BatchApplier() }, sentinel},
 		{"Releaser", func() (any, error) { return wrapped.Releaser() }, sentinel},
+		{"LeaseReclaimer", func() (any, error) { return wrapped.LeaseReclaimer() }, sentinel},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			surface, err := test.got()
@@ -440,6 +454,7 @@ func TestInstrumentedStorageRoleAccessorsPropagateInnerErrors(t *testing.T) {
 		{"BlockingAnnotator", func() (any, error) { return wrapped.BlockingAnnotator() }},
 		{"TreeWalker", func() (any, error) { return wrapped.TreeWalker() }},
 		{"GraphCounter", func() (any, error) { return wrapped.GraphCounter() }},
+		{"BatchGetter", func() (any, error) { return wrapped.BatchGetter() }},
 		{"Counter", func() (any, error) { return wrapped.Counter() }},
 		{"WorkspaceConfig", func() (any, error) { return wrapped.WorkspaceConfig() }},
 		{"Memories", func() (any, error) { return wrapped.Memories() }},
@@ -460,6 +475,7 @@ func TestInstrumentedStorageRoleAccessorsPropagateInnerErrors(t *testing.T) {
 		{"MetadataCAS", func() (any, error) { return wrapped.MetadataCAS() }},
 		{"BatchApplier", func() (any, error) { return wrapped.BatchApplier() }},
 		{"Releaser", func() (any, error) { return wrapped.Releaser() }},
+		{"LeaseReclaimer", func() (any, error) { return wrapped.LeaseReclaimer() }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			surface, err := test.got()

@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
 	"github.com/steveyegge/beads/internal/httpapi/spec"
 	"github.com/steveyegge/beads/internal/workapi"
+	"github.com/steveyegge/beads/issueops"
 )
 
 // These tests are the spec drift gates. They are pure — no database, no
@@ -418,6 +419,32 @@ func TestSpecDefaultsMatchSharedConstants(t *testing.T) {
 			t.Errorf("%s: issue_id minItems = %v, want 1", opID, schema["minItems"])
 		}
 	}
+
+	// The id bound on the three request bodies that carry an `ids` list, for
+	// the anchor bound's reason: each is enforced in code — maxDeleteIDs in the
+	// delete handler, issueops.MaxGetManyIDs in the role behind batchGet and
+	// issueops.MaxReclaimIDs in the role behind reclaim — and restated as the
+	// member's maxItems, which is where a generated client learns it. Each body is reached through its operation's own $ref, so a
+	// row cannot go on checking a schema its operation stopped using.
+	for _, tc := range []struct {
+		opID string
+		want int
+	}{
+		{OpBatchGetIssues, issueops.MaxGetManyIDs},
+		{OpDeleteIssues, maxDeleteIDs},
+		{OpReclaimIssues, issueops.MaxReclaimIDs},
+	} {
+		so, ok := ops[tc.opID]
+		if !ok {
+			t.Fatalf("operation %q missing from the spec", tc.opID)
+		}
+		media := mapAt(t, mapAt(t, mapAt(t, so.op, "requestBody"), "content"), "application/json")
+		body := resolveRef(t, doc, mapAt(t, media, "schema"))
+		ids := resolveRef(t, doc, mapAt(t, mapAt(t, body, "properties"), "ids"))
+		if got, ok := ids["maxItems"].(int); !ok || got != tc.want {
+			t.Errorf("%s: ids maxItems = %v, want the enforced bound %d", tc.opID, ids["maxItems"], tc.want)
+		}
+	}
 }
 
 // capabilityToken matches one backticked capability token in the
@@ -462,6 +489,15 @@ func TestSpecCapabilityVocabularyMatchesTheRouteTable(t *testing.T) {
 	served := map[string]bool{}
 	for _, token := range Capabilities() {
 		served[token] = true
+	}
+	// The conditional tokens are documented in the same paragraph. Their
+	// snake_case segment is outside capabilityToken's shape, so each is looked
+	// for verbatim.
+	for _, token := range conditionalCapabilities {
+		served[token] = true
+		if strings.Contains(desc, "`"+token+"`") {
+			documented[token] = true
+		}
 	}
 
 	if missing := diff(served, documented); len(missing) > 0 {
