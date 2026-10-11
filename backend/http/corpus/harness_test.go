@@ -175,6 +175,9 @@ func corpusServeConfig(t *testing.T, s storage.DoltStorage) httpapi.Config {
 	return cfg
 }
 
+// This file is the corpus tier's cgo half; see TestCorpusTierIsLinkedWhenRequired.
+func init() { corpusTierLinked = true }
+
 // skipUnlessEmbeddedDolt is the served tier's gate, as in backend/http.
 func skipUnlessEmbeddedDolt(t *testing.T) {
 	t.Helper()

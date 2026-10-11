@@ -59,7 +59,11 @@ func loadReferenceProfile(t *testing.T) *referenceProfile {
 	}
 	for i := range p.Operations {
 		op := &p.Operations[i]
-		op.pattern = templatePattern(op.Path)
+		pattern, err := templatePattern(op.Path)
+		if err != nil {
+			t.Fatalf("testdata/reference_server.json: operation %s path %q: %v", op.OperationID, op.Path, err)
+		}
+		op.pattern = pattern
 		op.query = setOf(op.Query)
 		op.body = setOf(op.Body)
 	}
@@ -70,7 +74,9 @@ func loadReferenceProfile(t *testing.T) *referenceProfile {
 // path parameter never spans a "/" or a ":" (AIP-136 custom methods hang off
 // the last segment as {id}:verb, and no issue id, config key or memory key
 // carries a raw colon), so /issues/{id} does not swallow /issues/{id}:claim.
-func templatePattern(tmpl string) *regexp.Regexp {
+// A "{" with no "}" is an error: the profile is edited by hand, and without the
+// check the loop would never advance past it.
+func templatePattern(tmpl string) (*regexp.Regexp, error) {
 	var b strings.Builder
 	b.WriteString("^")
 	for {
@@ -80,12 +86,15 @@ func templatePattern(tmpl string) *regexp.Regexp {
 			break
 		}
 		closeAt := strings.IndexByte(tmpl[open:], '}')
+		if closeAt < 0 {
+			return nil, fmt.Errorf("unclosed { in %q", tmpl[open:])
+		}
 		b.WriteString(regexp.QuoteMeta(tmpl[:open]))
 		b.WriteString(`[^/:]+`)
 		tmpl = tmpl[open+closeAt+1:]
 	}
 	b.WriteString("$")
-	return regexp.MustCompile(b.String())
+	return regexp.Compile(b.String())
 }
 
 func setOf(xs []string) map[string]bool {

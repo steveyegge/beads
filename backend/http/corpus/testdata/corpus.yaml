@@ -28,6 +28,7 @@ files:
         {"key": "wf1", "id": "e2e-wf1", "title": "Workflow root", "type": "task", "metadata": {"gc.run_target": "pool-a", "gc.kind": "workflow"}},
         {"key": "a1", "id": "e2e-a1", "title": "Alice bug", "type": "bug", "assignee": "alice"},
         {"key": "ip1", "id": "e2e-ip1", "title": "Worker in progress", "type": "task", "priority": 0, "assignee": "worker", "metadata": {"gc.routed_to": "pool-a"}},
+        {"key": "wr", "id": "e2e-wr", "title": "Worker ready task", "type": "task", "assignee": "worker"},
         {"key": "ipna", "id": "e2e-ipna", "title": "Orphaned in progress", "type": "task", "metadata": {"gc.routed_to": "pool-a"}},
         {"key": "ipnb", "id": "e2e-ipnb", "title": "Orphaned workflow", "type": "task", "metadata": {"gc.run_target": "pool-a", "gc.kind": "workflow"}},
         {"key": "blk", "id": "e2e-blk", "title": "Blocked by r1", "type": "task", "deps": [{"target": "r1"}]},
@@ -45,6 +46,7 @@ files:
         {"key": "mac.2", "id": "e2e-mac.2", "title": "last step", "type": "task", "assignee": "worker", "parent_key": "mac"},
         {"key": "wisp-1", "id": "e2e-wisp-1", "title": "Wisp wisp-1", "type": "task", "ephemeral": true, "metadata": {"gc.routed_to": "pool-a"}, "labels": ["lane:w"]},
         {"key": "wisp-2", "id": "e2e-wisp-2", "title": "Wisp wisp-2", "type": "task", "ephemeral": true, "assignee": "worker", "labels": ["lane:w"]},
+        {"key": "wisp-wr", "id": "e2e-wisp-wr", "title": "Wisp worker ready", "type": "task", "ephemeral": true, "priority": 1, "assignee": "worker"},
         {"key": "wisp-c", "id": "e2e-wisp-c", "title": "Wisp wisp-c", "type": "task", "ephemeral": true},
         {"key": "wisp-p", "id": "e2e-wisp-p", "title": "Wisp wisp-p", "type": "task", "ephemeral": true},
         {"key": "wisp-m", "id": "e2e-wisp-m", "title": "Wisp molecule", "type": "epic", "ephemeral": true},
@@ -168,6 +170,11 @@ shapes:
     compare: text
 
   # ---------------------------------------------------------------- ready
+  # e2e-wr and e2e-wisp-wr are the only open rows assigned to the worker when
+  # these shapes run, so the assignee shapes compare real rows: a client that
+  # sends the wrong assignee or drops --include-ephemeral returns a different
+  # list. The wisp is P1 and the task P2, so --limit=1 picks the wisp on both
+  # sides by priority alone.
   - id: gc-ready-unlimited
     source: gc bdstore.go bdReadyArgs (BdStore.Ready, ready --json --limit 0)
     args: [ready, --json, --limit, "0"]
@@ -395,10 +402,14 @@ shapes:
   - id: gc-sql-ready-projection
     source: gc bdstore_ready_projection.go fetchReadyProjection
     args: [sql, "select id,is_blocked from issues where status <> 'closed' union all select id,is_blocked from wisps where status <> 'closed'", --json]
+    expect_exit: 1
+    expect_stderr: "'bd sql' is not yet supported"
     compare: exit
   - id: gc-sql-release-fallback
     source: gc bdstore.go ReleaseIfCurrent fallback (sql UPDATE)
     args: [sql, --json, "UPDATE issues SET status='open', assignee='' WHERE id='e2e-t-rel' AND status='in_progress' AND assignee='worker'"]
+    expect_exit: 1
+    expect_stderr: "'bd sql' is not yet supported"
     compare: exit
   - id: gc-purge-dry-run
     source: gc bdstore.go Purge (purge --json --dry-run)
@@ -530,6 +541,18 @@ shapes:
     args: [update, --json, e2e-t-ifa, --set-metadata, k=v, --if-status, in_progress, --if-assignee, worker]
     compare: exit
     verify: [[show, --json, e2e-t-ifa]]
+  - id: gc-update-if-assignment-assignee-stale
+    source: gc bdstore_conditional.go UpdateIfAssignment mismatch (exit 13)
+    args: [update, --json, e2e-t-ifa, --set-metadata, probe=a, --if-status, in_progress, --if-assignee, nobody]
+    expect_exit: 13
+    compare: exit
+    verify: [[show, --json, e2e-t-ifa]]
+  - id: gc-update-if-assignment-status-stale
+    source: gc bdstore_conditional.go UpdateIfAssignment mismatch (exit 13)
+    args: [update, --json, e2e-t-ifa, --set-metadata, probe=s, --if-status, open, --if-assignee, worker]
+    expect_exit: 13
+    compare: exit
+    verify: [[show, --json, e2e-t-ifa]]
   - id: gc-update-on-death
     source: gc workquery.go on_death (update --assignee "" --status open --set-metadata)
     args: [update, e2e-t-death, --assignee, "", --status, open, --set-metadata, gc.run_target=pool-a]
@@ -655,7 +678,7 @@ shapes:
     args: [reclaim, --id, e2e-t-rc, --json]
     compare: exit
     verify: [[show, --json, e2e-t-rc]]
-    pending: {slice: "S9+SRV-1", reason: "reclaim hits a stub; the reference server lacks issues.reclaim (B3 #12)"}
+    pending: {slice: "SRV-1", reason: "the reference server does not advertise issues.reclaim (B3 #12), so the client refuses at its capability preflight"}
   - id: mc-promote
     source: mc mol-normalized-issue-pr-v1 (promote --reason)
     args: [promote, e2e-wisp-p, --reason, "keep it"]
@@ -707,4 +730,6 @@ shapes:
   - id: mc-meta-set
     source: mc adopt-pr-review checks (bd meta set <id> k=v)
     args: [meta, set, e2e-r1, review.verdict=done]
+    expect_exit: 1
+    expect_stderr: 'unknown command "meta"'
     compare: exit

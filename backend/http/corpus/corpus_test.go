@@ -71,15 +71,26 @@ type shape struct {
 	PrefixOf []string `yaml:"prefix_of"`
 	// IgnoreFields are extra JSON keys dropped before comparing.
 	IgnoreFields []string `yaml:"ignore_fields"`
-	// ExpectExit is the exit code both sides must produce (default 0).
-	ExpectExit int `yaml:"expect_exit"`
-	// ExpectStderr, when set, must match both sides' stderr.
+	// ExpectExit is the exit code both sides must produce (default 0). An
+	// allowlisted shape must state it: the embedded run is held to it even
+	// though the served run is only held to the allowlisted refusal.
+	ExpectExit *int `yaml:"expect_exit"`
+	// ExpectStderr, when set, must match both sides' stderr (only the
+	// embedded side's on an allowlisted shape).
 	ExpectStderr string `yaml:"expect_stderr"`
 	// Verify are reads run on both sides after the shape and compared as json:
 	// how a write is checked for having done the same thing on both backends.
 	Verify [][]string `yaml:"verify"`
 	// Pending marks a known failure and names the slice that fixes it.
 	Pending *pending `yaml:"pending"`
+}
+
+// wantExit is the exit code the embedded run must produce.
+func (s shape) wantExit() int {
+	if s.ExpectExit == nil {
+		return 0
+	}
+	return *s.ExpectExit
 }
 
 type pending struct {
@@ -90,6 +101,8 @@ type pending struct {
 // allowEntry is testdata/allowlist.yaml: a shape that is EXPECTED to be
 // refused over http, permanently, for a stated reason. The served run must
 // fail and match Refusal; if it ever succeeds the entry is stale and fails.
+// The embedded run is still held to the shape's expect_exit and
+// expect_stderr, and nothing else of the shape is checked.
 type allowEntry struct {
 	ID      string `yaml:"id"`
 	Reason  string `yaml:"reason"`
@@ -97,13 +110,22 @@ type allowEntry struct {
 }
 
 // refusalMarkers are the texts a refusal of an operation over http carries:
-// issueops.ErrUnsupported, encode.RefusedError, the server's loopback-only
-// unlimited-read 400, an unrouted 404, and a strict decoder's unknown member.
-var refusalMarkers = regexp.MustCompile(`(?i)not supported by the|not expressible on the v0 wire|loopback-only|capability "[^"]+" not advertised|no such route on this server|unknown_parameter|unknown query parameter|json: unknown field`)
+// issueops.ErrUnsupported, encode.RefusedError, the client's capability
+// preflight (wire.CapabilityError, which never reaches the proxy), the
+// server's loopback-only unlimited-read 400, an unrouted 404, and a strict
+// decoder's unknown member.
+var refusalMarkers = regexp.MustCompile(`(?i)not supported by the|not expressible on the v0 wire|loopback-only|capability "[^"]+" not advertised|does not advertise capability|no such route on this server|unknown_parameter|unknown query parameter|json: unknown field`)
 
 // volatileKey names JSON members that legitimately differ between two
 // workspaces fed the same commands: timestamps and revision tokens.
 var volatileKey = regexp.MustCompile(`(^|_)at$|^revision$|^row_version$|^expected_revision$|^current_revision$`)
+
+// callerTimeKey names the timestamps a shape's own arguments set (bd create
+// --defer, --due). They are compared as given, neither dropped as volatile
+// nor scrubbed to <ts>, so a client that sends the wrong one fails; a shape
+// must give them as absolute dates, since a relative one resolves against
+// each side's own clock.
+var callerTimeKey = map[string]bool{"defer_until": true, "due_at": true}
 
 var timestampText = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?`)
 
@@ -142,7 +164,9 @@ func loadCorpus(t *testing.T) (*corpusFile, map[string]allowEntry) {
 // TestCorpusFileIsWellFormed runs without the embedded engine: it keeps the
 // data honest (unique ids, a source and a slice for every pending mark, no
 // allowlist entry for a shape that does not exist, no shape both pending and
-// allowlisted).
+// allowlisted, an allowlisted shape states its embedded exit code and
+// carries no check that the allowlist would skip, every expect_stderr and
+// refusal compiles, and the reference profile loads).
 func TestCorpusFileIsWellFormed(t *testing.T) {
 	c, allow := loadCorpus(t)
 	seen := map[string]bool{}
@@ -161,8 +185,16 @@ func TestCorpusFileIsWellFormed(t *testing.T) {
 		if s.Pending != nil && (s.Pending.Slice == "" || strings.TrimSpace(s.Pending.Reason) == "") {
 			t.Errorf("shape %s is pending without a slice and a reason", s.ID)
 		}
-		if _, ok := allow[s.ID]; ok && s.Pending != nil {
-			t.Errorf("shape %s is both pending and allowlisted; pick one", s.ID)
+		if _, ok := allow[s.ID]; ok {
+			if s.Pending != nil {
+				t.Errorf("shape %s is both pending and allowlisted; pick one", s.ID)
+			}
+			if s.ExpectExit == nil {
+				t.Errorf("shape %s is allowlisted without expect_exit; state the exit code the embedded run must produce", s.ID)
+			}
+			if modeOf(s) != "exit" || len(s.Verify) > 0 {
+				t.Errorf("shape %s is allowlisted, so only its exit code and stderr are checked; give it compare: exit and no verify", s.ID)
+			}
 		}
 		switch s.Compare {
 		case "", "json", "ids", "count", "text", "exit":
@@ -172,10 +204,16 @@ func TestCorpusFileIsWellFormed(t *testing.T) {
 		if len(s.PrefixOf) > 0 && s.Compare != "ids" {
 			t.Errorf("shape %s: prefix_of needs compare: ids", s.ID)
 		}
+		if _, err := regexp.Compile(s.ExpectStderr); err != nil {
+			t.Errorf("shape %s: expect_stderr: %v", s.ID, err)
+		}
 	}
-	for id := range allow {
+	for id, entry := range allow {
 		if !seen[id] {
 			t.Errorf("allowlist names %q, which is not a corpus shape", id)
+		}
+		if _, err := regexp.Compile(entry.Refusal); err != nil {
+			t.Errorf("allowlist entry %s: refusal: %v", id, err)
 		}
 	}
 	for _, a := range c.Files {
@@ -183,6 +221,7 @@ func TestCorpusFileIsWellFormed(t *testing.T) {
 			t.Errorf("asset %s needs exactly one of content and bulk", a.Name)
 		}
 	}
+	loadReferenceProfile(t)
 }
 
 // side is one workspace the corpus runs in.
@@ -299,6 +338,11 @@ func runShape(t *testing.T, bin string, s shape, served, local *side, allow map[
 	t.Helper()
 	var fails []string
 	failf := func(format string, a ...any) { fails = append(fails, fmt.Sprintf(format, a...)) }
+	wantStderr, err := regexp.Compile(s.ExpectStderr)
+	if err != nil {
+		failf("CORPUS BUG: expect_stderr %q: %v", s.ExpectStderr, err)
+		return fails
+	}
 
 	for _, args := range s.Setup {
 		for _, sd := range []*side{served, local} {
@@ -317,6 +361,18 @@ func runShape(t *testing.T, bin string, s shape, served, local *side, allow map[
 		t.Logf("reference-profile refusals on the wire: %v", wireRefusals)
 	}
 
+	// The embedded run is the oracle for every shape, an allowlisted one
+	// included: when it no longer does what the shape says, the shape is
+	// wrong or bd changed, whatever the served run did.
+	if lr.code != s.wantExit() {
+		failf("CORPUS BUG: the embedded run exited %d, want %d; the shape itself is wrong or bd changed: %s", lr.code, s.wantExit(), lr)
+		return fails
+	}
+	if s.ExpectStderr != "" && !wantStderr.MatchString(lr.stderr) {
+		failf("CORPUS BUG: embedded stderr does not match %q: %s", s.ExpectStderr, lr.stderr)
+		return fails
+	}
+
 	if entry, ok := allow[s.ID]; ok {
 		re, err := regexp.Compile(entry.Refusal)
 		if err != nil {
@@ -331,10 +387,6 @@ func runShape(t *testing.T, bin string, s shape, served, local *side, allow map[
 		return fails
 	}
 
-	if lr.code != s.ExpectExit {
-		failf("CORPUS BUG: the embedded run exited %d, want %d; the shape itself is wrong or bd changed: %s", lr.code, s.ExpectExit, lr)
-		return fails
-	}
 	if m := refusalMarkers.FindString(sr.stderr + sr.stdout); m != "" {
 		failf("served run carries a refusal (%q): %s", m, sr)
 	} else if len(wireRefusals) > 0 && sr.code != 0 {
@@ -343,14 +395,8 @@ func runShape(t *testing.T, bin string, s shape, served, local *side, allow map[
 	if sr.code != lr.code {
 		failf("exit code: served %d, embedded %d: %s", sr.code, lr.code, sr)
 	}
-	if s.ExpectStderr != "" {
-		re := regexp.MustCompile(s.ExpectStderr)
-		if !re.MatchString(lr.stderr) {
-			failf("CORPUS BUG: embedded stderr does not match %q: %s", s.ExpectStderr, lr.stderr)
-		}
-		if !re.MatchString(sr.stderr) {
-			failf("served stderr does not match %q (embedded does): %s", s.ExpectStderr, sr)
-		}
+	if s.ExpectStderr != "" && !wantStderr.MatchString(sr.stderr) {
+		failf("served stderr does not match %q (embedded does): %s", s.ExpectStderr, sr)
 	}
 	if len(fails) > 0 {
 		return fails
@@ -552,7 +598,14 @@ func normalize(v any, drop map[string]bool, ordered bool) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, val := range x {
-			if drop[k] || volatileKey.MatchString(k) {
+			if drop[k] {
+				continue
+			}
+			if callerTimeKey[k] {
+				out[k] = val
+				continue
+			}
+			if volatileKey.MatchString(k) {
 				continue
 			}
 			out[k] = normalize(val, drop, ordered)

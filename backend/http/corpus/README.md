@@ -29,12 +29,17 @@ embedded workspace.
    `seed` from `testdata/corpus.yaml`: one graph of named rows, plus bulk
    graphs that put more than one server page of ready rows and wisps in the
    store. Both sides use `BEADS_ACTOR=worker` and set `CLAUDE_SESSION_ID`.
-5. Runs each shape as a subtest, on both sides. The served run must:
+5. Runs each shape as a subtest, on both sides. The embedded run must exit
+   with the shape's `expect_exit` and match its `expect_stderr`. If it does
+   not, the shape is wrong or bd changed, and the subtest fails as a corpus
+   bug that no pending mark or allowlist entry hides. The served run must:
    - exit like the embedded run;
    - carry no refusal (`ErrUnsupported`, a v0-wire refusal, the
      loopback-only 400, or a reference-profile 404/400);
    - match the embedded output under the shape's `compare` mode, after
-     timestamps and revision tokens are dropped;
+     timestamps and revision tokens are dropped (but not `defer_until` or
+     `due_at`: a shape sets those itself, as absolute dates, and they must
+     match exactly);
    - for writes, give the same JSON from every `verify` read on both sides
      afterwards.
 
@@ -44,6 +49,11 @@ The run takes about five minutes.
 CGO_ENABLED=1 BEADS_TEST_EMBEDDED_DOLT=1 BEADS_HTTP_TEST_REQUIRED=1 \
   go test -tags gms_pure_go -run 'TestServedCorpus|TestCorpusFile' ./backend/http/corpus/
 ```
+
+In CI, `//backend/http/corpus:corpus_served_test` runs the suite with both
+variables set, in the Embedded Dolt lane (`--config=embedded`; see
+[engdocs/TESTING.md](../../../engdocs/TESTING.md)). `corpus_test` on its own
+sets neither, so it skips `TestServedCorpus`.
 
 Two environment variables change the run:
 - `BEADS_CORPUS_REPORT=<file>` writes a JSON summary with per-shape status
@@ -55,7 +65,7 @@ Two environment variables change the run:
 | File | Holds |
 |---|---|
 | `testdata/corpus.yaml` | assets, the seed, and the shapes |
-| `testdata/allowlist.yaml` | permanent refusals, each with its reason and the refusal text it must match |
+| `testdata/allowlist.yaml` | permanent refusals, each with its reason and the refusal text the served run must match |
 | `testdata/reference_server.json` | the reference server's wire surface |
 
 Each shape in `corpus.yaml` has these fields:
@@ -65,10 +75,14 @@ Each shape in `corpus.yaml` has these fields:
 | `id` | `gc-*` for orchestrator subprocess shapes, `mc-*` for pack/formula/prompt shapes |
 | `source` | where the shape comes from |
 | `args` | the argv; `{file:NAME}` expands to an asset path and `{rev:ID}` to that side's current revision of `ID` |
+| `stdin` | text piped to `bd` on both sides |
+| `setup` | commands run on both sides before the shape; one that fails fails the shape |
 | `compare` | `json` (default), `ids`, `count`, `text` or `exit` |
+| `ordered` | under `json` and `ids`, array order is significant; by default arrays are sorted before comparing |
 | `prefix_of` | for a limited `ids` listing: its unlimited form. Each side's limited rows must be a prefix, in order, of that side's own unlimited listing, both sides return as many rows, and the two unlimited listings hold the same ids. A limit that cuts through a tie set (same priority, `created_at` in the same second) lands on different rows on two workspaces seeded seconds apart, so the limited rows are not compared across sides directly |
 | `verify` | reads run after the shape |
-| `expect_exit`, `expect_stderr` | expected outcome on both sides |
+| `ignore_fields` | JSON keys dropped, at any depth, before a `json` comparison and before `verify` output is compared; for example comment ids, which each workspace mints itself |
+| `expect_exit`, `expect_stderr` | expected outcome on both sides (exit 0 by default). An allowlisted shape must state `expect_exit`; only its embedded run is held to these |
 | `pending` | a known failure |
 
 `pending: {slice, reason}` marks a known failure and names the slice or
