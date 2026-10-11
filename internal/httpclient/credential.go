@@ -38,6 +38,23 @@ const (
 	TokenCommandEnv = "BEADS_HTTP_TOKEN_COMMAND"
 )
 
+// getenv is this package's own reader for the variables that choose or grant
+// a credential: the env rungs of the bearer ladder (TokenEnv, TokenCommandEnv),
+// the CA rung (CAFileEnv) and the plaintext opt-in (AllowInsecureCredentialEnv)
+// all go through it. It is a variable only so a test can prove the
+// explicit-credential door (DialWithCredential, OpenWith with a
+// ProvidedCredential) never calls it; production never reassigns it.
+//
+// It is not every environment read a dial can make. The ladder's
+// credentials-file rung reads BEADS_CREDENTIALS_FILE inside configfile, and
+// the explicit door never builds that rung. The transports this package
+// builds read the proxy variables (HTTP_PROXY, HTTPS_PROXY, NO_PROXY; see
+// baselineTransport and caAwareProxy), and on !unix a configured CA file
+// reads BEADS_ALLOW_INSECURE_CA_FILE_PERMISSIONS (checkCAFilePermissions),
+// directly and on every door. Neither chooses a credential or grants
+// plaintext.
+var getenv = os.Getenv
+
 // BearerProvider is the default credential ladder for the http backend
 // (design D5): BEADS_HTTP_TOKEN, then BEADS_HTTP_TOKEN_COMMAND, then the
 // credentials file's [host:port] section, then no credential at all — which is
@@ -280,7 +297,7 @@ func (s commandTokenSource) Resolve(ctx context.Context) (creds.Credential, bool
 // token that contains "=" can still parse as a pattern naming no real server;
 // that fails safe, since the token then goes nowhere.
 func scopedEnvValue(name, what string, base *url.URL) (string, bool, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
+	raw := strings.TrimSpace(getenv(name))
 	if raw == "" {
 		return "", false, nil
 	}

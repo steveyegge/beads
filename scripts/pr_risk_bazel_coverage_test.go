@@ -333,9 +333,12 @@ func TestBazelRetiredLanesCheckListedTestsRan(t *testing.T) {
 		{bazelEmbedJobName, "embedded", []suite{
 			// bazel-embedded runs its own duration-balanced manifest blocks
 			// (scripts/ci/embedded_{cmd,storage}_test_durations.json), not
-			// PR Risk's frozen 20- and 5-shard blocks (slice F1): neither is
-			// a drop-in retirement of its legacy job's shard count, just its
-			// tests. bazelEmbeddedCmdShardCount/bazelEmbeddedStorageShardCount
+			// PR Risk's 20-shard cmd block, which was frozen and has since
+			// been deleted (those jobs no longer exist; see
+			// engdocs/TESTING.md), or the still-frozen 5-shard storage block
+			// (slice F1): neither is a drop-in retirement of its legacy
+			// job's shard count, just its tests.
+			// bazelEmbeddedCmdShardCount/bazelEmbeddedStorageShardCount
 			// read the real counts from BUILD.bazel, making these suites'
 			// `want` (below) genuine cross-file pins against bazel.yml's own
 			// check_shard_coverage.py arguments, not independently
@@ -347,9 +350,11 @@ func TestBazelRetiredLanesCheckListedTestsRan(t *testing.T) {
 		}, []string{"//internal/storage/embeddeddolt:embeddeddolt_conformance_core_test", "//internal/storage/embeddeddolt:embeddeddolt_conformance_core_slow_test", "//internal/storage/embeddeddolt:embeddeddolt_conformance_audit_test"}},
 		{bazelProxiedJobName, "doltserver-proxied", []suite{
 			// bazel-proxied runs its own duration-balanced manifest block
-			// (scripts/ci/proxied_test_durations.json), not PR Risk's frozen
-			// 15-shard bd-init-cost-proxy block: it is not a drop-in
-			// retirement of test-proxied-cmd's shard count, just its tests.
+			// (scripts/ci/proxied_test_durations.json), not PR Risk's
+			// 15-shard bd-init-cost-proxy block, which was frozen and has
+			// since been deleted (that job no longer exists; see
+			// engdocs/TESTING.md): it was never a drop-in retirement of
+			// test-proxied-cmd's shard count, just its tests.
 			// bazelProxiedShardCount reads the real count from
 			// cmd/bd/BUILD.bazel, making this suite's `want` (below) a
 			// genuine cross-file pin against bazel.yml's own
@@ -902,6 +907,12 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 			[]string{"$(rootpath :http_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
 			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)", "BEADS_TEST_EMBEDDED_DOLT": "1"},
 		},
+		// The served command corpus (backend/http/corpus/README.md), with the
+		// same switches as http_served_test.
+		"//backend/http/corpus:corpus_served_test": {
+			[]string{"$(rootpath :corpus_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
+			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)", "BEADS_TEST_EMBEDDED_DOLT": "1"},
+		},
 		"//cmd/bd:bd_proxied_test": {
 			[]string{"$(rootpath //:.github/scripts/proxied-test-shard.sh)", "BEADS_TEST_CMD_BINARY", "$(rootpath :bd_test)"},
 			map[string]string{
@@ -913,8 +924,9 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 		"//cmd/bd:bd_managed_local_test": {
 			[]string{"$(rootpath :bd_test)", "-test.run=^TestManagedLocalProxied", "-test.timeout=15m"},
 			map[string]string{
-				"BEADS_TEST_BD_BINARY": "$(rlocationpath :bd_for_tests)", "BEADS_TEST_DOLT_SERVER": "local",
-				"BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)", "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
+				"BEADS_TEST_BD_BINARY": "$(rlocationpath :bd_for_tests)", "BEADS_TEST_COMPACT_GC_FIXTURE": "$(rlocationpath :compact_gc_fixture)",
+				"BEADS_TEST_DOLT_SERVER": "local",
+				"BEADS_TEST_GOFMT":       "$(rlocationpath @go_sdk//:bin/gofmt)", "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
 				"BEADS_TEST_PROXIED_LOCAL": "1", "BEADS_TEST_REQUIRE_DOLT_CONTAINER": "1", "BEADS_TEST_SKIP": "dolt",
 			},
 		},
@@ -1092,6 +1104,8 @@ var bazelDoltServerRCLines = map[string][]string{
 		"test:doltserver-proxied --local_test_jobs=4",
 		"test:doltserver-proxied --remote_download_regex=.*/test\\.(log|xml)$",
 		"test:doltserver-proxied --experimental_remote_cache_eviction_retries=0",
+		// F5 S1: the race configuration's nogo is owned by the test lane.
+		"test:doltserver-proxied --norun_validations",
 	},
 	"doltserver-integration": {
 		"build:doltserver-integration --@rules_go//go/config:tags=gms_pure_go,integration",
@@ -1105,6 +1119,9 @@ var bazelDoltServerRCLines = map[string][]string{
 		"test:doltserver-integration --test_arg=-test.parallel=4",
 		"test:doltserver-integration --local_test_jobs=4",
 		"test:doltserver-integration --remote_download_regex=.*/test\\.(log|xml)$",
+		// F5 S2 Variant A: no full lane validates this configuration; its
+		// owner is bazel-integration's nogo-only step.
+		"test:doltserver-integration --norun_validations",
 		"test:doltserver-integration --experimental_remote_cache_eviction_retries=0",
 	},
 }
