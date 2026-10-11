@@ -20,7 +20,9 @@ func TestLeaseLifecycleEmbedded(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 
 	te := newTestEnv(t, "lease")
-	ctx := t.Context()
+	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
+	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
+	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
 
 	issue := &types.Issue{
 		ID:        "lease-1",
@@ -86,7 +88,9 @@ func TestLeaseLifecycleEmbedded(t *testing.T) {
 func TestReclaimExpiredLeaseSurvivesRestartEmbedded(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 
-	ctx := t.Context()
+	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
+	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
+	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 	const prefix = "lease_restart"
 
@@ -196,7 +200,9 @@ func TestHeartbeatMatchesActorAcrossSpellingEmbedded(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 
 	te := newTestEnv(t, "lease_spelling")
-	ctx := t.Context()
+	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
+	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
+	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
 
 	issue := &types.Issue{
 		ID:        "lease-spelling-1",
@@ -240,7 +246,9 @@ func TestHeartbeatRejectsWispEmbedded(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 
 	te := newTestEnv(t, "lease_wisp")
-	ctx := t.Context()
+	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
+	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
+	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
 
 	wisp := &types.Issue{
 		ID:        "lease-wisp-1",

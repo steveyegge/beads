@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // TestReadyClaimerContract runs the whole ReadyClaimer contract against ONE
@@ -23,7 +24,9 @@ import (
 // store backends get isolation for free and their wirings are one function per
 // case; this one buys it with sequencing.
 func TestReadyClaimerContract(t *testing.T) {
-	ctx := context.Background()
+	// Lease machinery ON (this fork defaults heartbeat.enabled off,
+	// gastownhall/beads#5681): these contracts pin the ENABLED semantics.
+	ctx := issueops.WithHeartbeatEnabled(context.Background(), true)
 	fixture := newUOWReadyClaimerFixture(t, ctx, "rc")
 
 	for _, test := range []struct {

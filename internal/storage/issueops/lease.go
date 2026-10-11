@@ -42,6 +42,31 @@ func leaseTTL(ctx context.Context) time.Duration {
 	return DefaultLeaseTTL
 }
 
+// heartbeatEnabledContextKey overrides the heartbeat.enabled configuration
+// for a single call chain. Set by tests that exercise lease semantics and by
+// embedders that manage their own liveness protocol; unset in normal use.
+type heartbeatEnabledContextKey struct{}
+
+// WithHeartbeatEnabled returns a context whose lease machinery obeys enabled
+// instead of the heartbeat.enabled configuration default. This fork ships
+// with the feature OFF (gastownhall/beads#5681), so lease tests opt back in
+// through this override rather than mutating global config.
+func WithHeartbeatEnabled(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, heartbeatEnabledContextKey{}, enabled)
+}
+
+// HeartbeatEnabled reports whether lease heartbeat behavior is active for the
+// current call: the context override (WithHeartbeatEnabled) if present, else
+// the heartbeat.enabled configuration, which defaults to false in this fork
+// (gastownhall/beads#5681). While disabled no lease is ever armed on claim,
+// heartbeat is a successful no-op, and reclaim reverts nothing.
+func HeartbeatEnabled(ctx context.Context) bool {
+	if enabled, ok := ctx.Value(heartbeatEnabledContextKey{}).(bool); ok {
+		return enabled
+	}
+	return config.HeartbeatEnabled()
+}
+
 // freshRowLock returns a random non-zero int64 for the row_lock cell.
 //
 // row_lock is the keystone of dead-worker recovery on Dolt. Dolt has no real
@@ -300,6 +325,16 @@ func RestoreLeaseOnImportInTx(ctx context.Context, tx DBTX, issue *types.Issue, 
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func HeartbeatIssueInTx(ctx context.Context, tx DBTX, id, actor string) error {
+	// heartbeat.enabled=false (this fork's default, gastownhall/beads#5681):
+	// the feature is off, so a heartbeat is a successful no-op. Claims armed
+	// no lease (see ClaimIssueInTx), so there is nothing to refresh — nil
+	// keeps an unconditional worker heartbeat loop succeeding instead of
+	// failing every cadence with ErrNotClaimable. This branch must stay
+	// BEFORE the rows==0 disambiguation below: that fallback MINTS a lease
+	// through UpsertLeaseInTx, which is exactly what "disabled" forbids.
+	if !HeartbeatEnabled(ctx) {
+		return nil
+	}
 	now := time.Now().UTC()
 	// granted_node is backfilled, never overwritten: a lease row whose
 	// provenance is unknown (granted before ignored migration 0016, or before
@@ -679,6 +714,15 @@ func reclaimReplicaSQL(filter types.ReclaimFilter, localNode string) (string, []
 // label removed mid-reclaim cannot smuggle an out-of-scope issue into the
 // revert.
 func ReclaimExpiredLeasesInTx(ctx context.Context, tx DBTX, cutoff time.Time, filter types.ReclaimFilter, actor string) ([]types.ReclaimedLease, error) {
+	// heartbeat.enabled=false (this fork's default, gastownhall/beads#5681):
+	// no lease is ever armed, so there is nothing stale to reap. Return the
+	// empty result rather than erroring so `bd reclaim` on a supervisor timer
+	// exits 0 with "No stale leases to reclaim". A deployment that flips the
+	// flag off mid-flight leaves any previously armed lease un-reaped BY
+	// DESIGN; bd unclaim --force is the manual escape hatch for those rows.
+	if !HeartbeatEnabled(ctx) {
+		return nil, nil
+	}
 	// Snapshot the stale set first so we can report exactly which issues we
 	// reverted and record per-issue recovery events. The DELETE below repeats
 	// the expiry predicate, so an issue that a concurrent heartbeat rescued

@@ -25,6 +25,14 @@ import (
 // row, re-reading each row over the wire to hand the script.
 func newServedLeaseReclaimerFixture(t *testing.T, prefix string) conformance.LeaseReclaimerFixture {
 	t.Helper()
+	// Every case in this file seeds its stale lease by CLAIMING, and a claim
+	// arms a lease only when the machinery is on (gastownhall/beads#5681 ships
+	// it off). The reclaim then sweeps a leases table that is empty for the
+	// wrong reason and reports nothing to revert, which reads as a no-op
+	// reclaim rather than as a missing lease. Arm it for the whole contract,
+	// before newServedEnv so the LIFO cleanup order keeps the server up until
+	// the config goes back out from under it: see armHeartbeatConfig.
+	armHeartbeatConfig(t)
 	env := newServedEnv(t, prefix)
 	reclaimer, err := env.subject.LeaseReclaimer()
 	if err != nil {

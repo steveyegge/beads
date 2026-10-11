@@ -50,19 +50,17 @@ func requireSocat(t *testing.T) {
 }
 
 func bdProxiedEnv(dir string) []string {
-	var env []string
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "BEADS_") {
-			continue
-		}
-		env = append(env, e)
-	}
+	env := bdBaseEnv()
 	return append(env,
 		"HOME="+dir,
 		"BEADS_DOLT_PROXIED_SERVER=1",
 		"BEADS_NO_DAEMON=1",
 		"BD_DISABLE_METRICS=1",
 		"BD_DISABLE_EVENT_FLUSH=1",
+		// Arm the lease-heartbeat machinery this fork defaults OFF
+		// (gastownhall/beads#5681); these integration tests pin the ENABLED
+		// semantics (claim arms a lease, heartbeat refreshes, reclaim reverts).
+		"BD_HEARTBEAT_ENABLED=1",
 	)
 }
 

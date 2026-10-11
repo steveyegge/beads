@@ -263,6 +263,12 @@ func Initialize() error {
 	// own deletion itself. Env: BD_EVENTS_JOURNAL_AUTO_PRUNE.
 	v.SetDefault("events-journal-auto-prune", true)
 	v.SetDefault("audit.enabled", false)
+	// Lease-heartbeat machinery (bd claim's armed lease, bd heartbeat, bd
+	// reclaim). OFF by default in this fork (gastownhall/beads#5681): claims
+	// record assignee/status only, and the commands above become no-ops. Set
+	// heartbeat.enabled true (yaml or BD_HEARTBEAT_ENABLED=1) to restore the
+	// upstream dead-worker-recovery behavior exactly.
+	v.SetDefault("heartbeat.enabled", false)
 	v.SetDefault("no-db", false)
 	v.SetDefault("no-hooks", false)
 	v.SetDefault("db", "")
@@ -1115,6 +1121,16 @@ func GetIdentity(flagValue string) string {
 // than fail closed.
 func NodeID() string {
 	return strings.TrimSpace(GetString("node_id"))
+}
+
+// HeartbeatEnabled reports whether the claim-lease heartbeat feature is
+// active: claims arm a lease, `bd heartbeat` refreshes it, and `bd reclaim`
+// reverts issues whose lease went stale. Default false in this fork
+// (gastownhall/beads#5681); set heartbeat.enabled true in config.yaml or
+// BD_HEARTBEAT_ENABLED=1 to opt back in. Per-call overrides live in
+// issueops.WithHeartbeatEnabled, which wins over this global.
+func HeartbeatEnabled() bool {
+	return GetBool("heartbeat.enabled")
 }
 
 // FederationConfig holds the federation (Dolt remote) configuration.

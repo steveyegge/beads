@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/steveyegge/beads/internal/metrics"
+	storeops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -15,6 +16,12 @@ var heartbeatCmd = &cobra.Command{
 	GroupID: "issues",
 	Short:   "Refresh the lease on an issue you hold in_progress",
 	Long: `Refresh the lease on an issue you currently hold in_progress.
+
+This fork ships with the lease machinery OFF (heartbeat.enabled=false): claims
+carry no lease, and this command is a successful no-op that keeps worker
+heartbeat loops from breaking. Set heartbeat.enabled true in .beads/config.yaml
+(or BD_HEARTBEAT_ENABLED=1) to restore lease semantics; the description below
+then applies in full.
 
 A claim carries a lease that expires after a TTL. A worker keeps its claim alive
 by heartbeating faster than the TTL; once it stops (because it died), the lease
@@ -47,6 +54,16 @@ Examples:
 
 		ctx := rootCtx
 		id := args[0]
+
+		// Fork default (heartbeat.enabled=false, gastownhall/beads#5681):
+		// heartbeat is an exit-0 no-op. The gate sits BEFORE the proxied
+		// dispatch so classic and proxied routes alike short-circuit without
+		// opening a store or contacting a server; the storage layer
+		// (issueops.HeartbeatIssueInTx) independently refuses to arm or
+		// refresh a lease, so a server with the feature off no-ops too.
+		if !storeops.HeartbeatEnabled(ctx) {
+			return renderHeartbeatDisabled(id)
+		}
 
 		if usesProxiedServer() {
 			return runHeartbeatProxiedServer(ctx, id)
@@ -83,6 +100,22 @@ Examples:
 
 		return renderHeartbeatSuccess(result.ResolvedID, result.Issue.Title)
 	},
+}
+
+// renderHeartbeatDisabled is bd heartbeat with heartbeat.enabled=false (this
+// fork's default, gastownhall/beads#5681): exit 0, and the SAME --json shape
+// as renderHeartbeatSuccess so a worker loop that heartbeats on a timer keeps
+// parsing its output. Only the human line differs, and it says why.
+func renderHeartbeatDisabled(id string) error {
+	if jsonOutput {
+		return outputJSON(map[string]string{
+			"id":     id,
+			"status": "heartbeat",
+			"owner":  currentActor(),
+		})
+	}
+	fmt.Printf("%s Heartbeat %s skipped (heartbeat.enabled=false)\n", ui.RenderSkipIcon(), formatFeedbackID(id, ""))
+	return nil
 }
 
 // renderHeartbeatSuccess prints the success shape both storage routes share —

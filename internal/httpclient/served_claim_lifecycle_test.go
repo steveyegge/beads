@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -19,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/httpclient/encode"
 	"github.com/steveyegge/beads/internal/httpclient/wire"
 	"github.com/steveyegge/beads/internal/storage"
@@ -77,6 +79,47 @@ func newServedClaimerFixture(t *testing.T, prefix string) conformance.ClaimerFix
 	}
 }
 
+// armHeartbeatConfig turns the claim-lease machinery on for the in-process
+// server this tier boots, and it has to do so through CONFIG rather than the
+// way every other lease opt-in in this fork does.
+//
+// Elsewhere the opt-in is issueops.WithHeartbeatEnabled on a context the test
+// owns, which reaches ClaimIssueInTx directly. Nothing like that crosses an
+// HTTP boundary: the lease is armed inside the SERVER's transaction, from the
+// server's context, so the enablement has to be a property of the server and
+// not of the client calling it.
+//
+// The server would read it from config.HeartbeatEnabled() — but that answers
+// from a package-global viper that ONLY cmd/bd's config.Initialize() ever
+// populates. This test binary never calls it, so v is nil and GetBool returns
+// false for EVERY key whatever BD_HEARTBEAT_ENABLED holds; setting the env var
+// here is a no-op, which is exactly what it looked like when it failed. That
+// is not a quirk of this fork either: a served deployment run as a library
+// (internal/doltserver, any embedder) is in precisely the same position.
+//
+// So config is initialized here, fenced the way internal/config's own tests
+// fence it (config_test.go): HOME and XDG_CONFIG_HOME point at an empty temp
+// dir so a developer's ~/.config/bd/config.yaml cannot leak into a
+// conformance tier, BEADS_DIR points at another, and
+// BEADS_TEST_IGNORE_REPO_CONFIG keeps this checkout's own .beads/config.yaml
+// out. ResetForTesting puts the nil viper back, so every other case in this
+// package still runs on the untouched zero-value config the tier was written
+// against. Registered before newServedEnv's cleanup, so LIFO shuts the server
+// down before the config goes back out from under it.
+func armHeartbeatConfig(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("BEADS_DIR", t.TempDir())
+	t.Setenv("BEADS_TEST_IGNORE_REPO_CONFIG", "1")
+	t.Setenv("BD_HEARTBEAT_ENABLED", "1")
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("initialize the fenced config these served lease cases need: %v", err)
+	}
+	t.Cleanup(config.ResetForTesting)
+}
+
 func TestServedClaimerClaimsAnUnassignedOpenIssueAndAnswersTheBareRow(t *testing.T) {
 	conformance.RunClaimerClaimsAnUnassignedOpenIssueAndAnswersTheBareRow(t, t.Context(), newServedClaimerFixture(t, "hcl1"))
 }
@@ -118,6 +161,7 @@ func TestServedClaimerRefusesIncompleteRequestsAndAnAbsentIDWithoutTouchingState
 // A port that answered the row and skipped the grant would ship work no
 // heartbeat can extend and no expiry sweep can take back.
 func TestServedClaimerGrantsALiveLeaseOnTheRowItWonAndLeavesARefusedOneAlone(t *testing.T) {
+	armHeartbeatConfig(t)
 	conformance.RunClaimerGrantsALiveLeaseOnTheRowItWonAndLeavesARefusedOneAlone(t, t.Context(), newServedClaimerFixture(t, "hcl9"))
 }
 
@@ -131,6 +175,9 @@ func TestServedClaimerReclaimsAcrossSpellingWithoutWriting(t *testing.T) {
 }
 
 func TestServedClaimerStampsStartedAtOnceAcrossTheTwoWritesItChoosesBetween(t *testing.T) {
+	// Machinery ON for the same reason as
+	// TestServedClaimerGrantsALiveLeaseOnTheRowItWonAndLeavesARefusedOneAlone.
+	armHeartbeatConfig(t)
 	conformance.RunClaimerStampsStartedAtOnceAcrossTheTwoWritesItChoosesBetween(t, t.Context(), newServedClaimerFixture(t, "hclb"))
 }
 

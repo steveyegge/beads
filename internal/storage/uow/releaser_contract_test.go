@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // TestReleaserContract runs the Releaser contract against the unit-of-work
@@ -24,7 +25,9 @@ import (
 // copy-on-write branch, so dolt_log and the issues table are database-global and
 // the history deltas are only meaningful while the subtests run sequentially.
 func TestReleaserContract(t *testing.T) {
-	ctx := context.Background()
+	// Lease machinery ON (this fork defaults heartbeat.enabled off,
+	// gastownhall/beads#5681): these contracts pin the ENABLED semantics.
+	ctx := issueops.WithHeartbeatEnabled(context.Background(), true)
 	fixture := newUOWReleaserFixture(t, ctx, "rel")
 
 	t.Run("ReleasesItsOwnClaim", func(t *testing.T) {

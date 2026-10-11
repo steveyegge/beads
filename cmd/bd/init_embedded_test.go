@@ -107,7 +107,9 @@ func buildEmbeddedBD(t *testing.T) string {
 	return embeddedBD
 }
 
-func bdEnv(dir string) []string {
+// bdBaseEnv returns the process environment scrubbed of inherited BEADS_*
+// vars, so each spawned bd sees only the vars the test sets explicitly.
+func bdBaseEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, "BEADS_") {
@@ -115,12 +117,24 @@ func bdEnv(dir string) []string {
 		}
 		env = append(env, e)
 	}
+	return env
+}
+
+func bdEnv(dir string) []string {
+	env := bdBaseEnv()
 	return append(env,
 		"HOME="+dir,
 		"BEADS_DOLT_AUTO_START=0",
 		"BEADS_NO_DAEMON=1",
 		"BD_DISABLE_METRICS=1",
 		"BD_DISABLE_EVENT_FLUSH=1",
+		// Arm the lease-heartbeat machinery this fork defaults OFF
+		// (gastownhall/beads#5681). These integration tests pin the ENABLED
+		// semantics — a claim arms a lease, `bd heartbeat` refreshes it, and
+		// `bd reclaim` reverts a stale one — so every spawned bd must see the
+		// feature on. The fork default is pinned by the disabled-mode unit
+		// tests, which do NOT route through bdEnv.
+		"BD_HEARTBEAT_ENABLED=1",
 	)
 }
 

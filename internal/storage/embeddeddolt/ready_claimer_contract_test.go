@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 func TestEmbeddedReadyClaimerRejectsLimitOffsetBriefAndEmptyActor(t *testing.T) {
@@ -40,7 +41,10 @@ func TestEmbeddedReadyClaimerLeavesEphemeralRowsOutOfTheDefaultReadySet(t *testi
 
 func TestEmbeddedReadyClaimerLeasesADurableWinButNotAnEphemeralOne(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
-	ctx := t.Context()
+	// Lease machinery ON (this fork defaults heartbeat.enabled off,
+	// gastownhall/beads#5681): the case asserts the lease a durable win
+	// armed, so it pins the ENABLED semantics.
+	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
 	conformance.RunReadyClaimerLeasesADurableWinButNotAnEphemeralOne(t, ctx, newEmbeddedReadyClaimerFixture(t, "rclease"))
 }
 

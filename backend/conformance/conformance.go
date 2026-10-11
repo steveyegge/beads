@@ -90,6 +90,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
+	storeops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -289,7 +290,13 @@ func RunDeferredReads(t *testing.T, factory Factory) {
 
 // --- helpers ---
 
-func ctx() context.Context { return context.Background() }
+// ctx is the suite's context. It opts the lease-heartbeat machinery back ON:
+// this fork defaults heartbeat.enabled off (gastownhall/beads#5681), but the
+// contract suite pins the ENABLED semantics — claims arm leases, heartbeats
+// refresh, reclaim reverts — which must keep working when a deployment opts
+// in. The fork default itself is pinned by TestHeartbeatDisabled* in
+// internal/storage/issueops, which use a bare context.Background().
+func ctx() context.Context { return storeops.WithHeartbeatEnabled(context.Background(), true) }
 
 func seedStore(t *testing.T, s storage.DoltStorage) {
 	t.Helper()
