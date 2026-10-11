@@ -1,0 +1,151 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+go_library(
+    name = "http",
+    srcs = [
+        "attach.go",
+        "credential.go",
+        "errors.go",
+        "http.go",
+        "target.go",
+    ],
+    importpath = "github.com/steveyegge/beads/backend/http",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//backend",
+        "//internal/configfile",
+        "//internal/gitignore",
+        "//internal/httpapi/apigen",
+        "//internal/httpclient",
+        "//internal/httpclient/wire",
+        "//internal/storage/backends",
+    ],
+)
+
+go_test(
+    name = "http_test",
+    # The served e2e cases run ~4-5 min on the farm under
+    # BEADS_TEST_EMBEDDED_DOLT=1, past the medium 300s action limit.
+    size = "large",
+    timeout = "long",
+    srcs = [
+        "attach_test.go",
+        "e2e_cli_test.go",
+        "e2e_remote_roles_test.go",
+        "open_test.go",
+        "per_open_credential_test.go",
+        "register_test.go",
+    ],
+    # The e2e files exec the real bd (bazeltest.PrebuiltBD); they run under
+    # BEADS_TEST_EMBEDDED_DOLT=1 and skip otherwise.
+    data = ["//cmd/bd:bd_for_tests"],
+    env = {"BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)"},
+    deps = [
+        ":http",
+        "//backend",
+        "//internal/configfile",
+        "//internal/httpapi",
+        "//internal/httpclient",
+        "//internal/storage",
+        "//internal/storage/backends",
+        "//internal/storage/domain",
+        "//internal/storage/embeddeddolt",
+        "//internal/testutil/bazeltest",
+    ],
+)
+
+# http_test again, with the e2e tier on: BEADS_TEST_EMBEDDED_DOLT=1 starts the
+# in-process server over embedded Dolt and BEADS_HTTP_TEST_REQUIRED=1 turns a
+# skip of that tier into a failure. http_test alone skips the TestE2E_* cases
+# in every lane, because no lane sets those variables for it. It repeats
+# http_test's `env` (go_test_variant.sh).
+#
+# Tags:
+#   embedded: the embedded-Dolt tier; excluded from --config=prcore/ci,
+#     selected by --config=embedded.
+sh_test(
+    name = "http_served_test",
+    size = "large",
+    # -test.timeout=19m fires (with a goroutine dump) before Bazel's 1200s
+    # action limit (eternal under --config=embedded).
+    timeout = "eternal",
+    srcs = ["//tools/bazel:go_test_variant.sh"],
+    args = [
+        "$(rootpath :http_test)",
+        "-test.v",
+        "-test.count=1",
+        "-test.timeout=19m",
+    ],
+    data = [
+        ":http_test",
+        "//cmd/bd:bd_for_tests",
+    ],
+    env = {
+        "BEADS_HTTP_TEST_REQUIRED": "1",
+        "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)",
+        "BEADS_TEST_EMBEDDED_DOLT": "1",
+    },
+    tags = ["embedded"],
+)
+
+# --- begin repo_files (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
+
+filegroup(
+    name = "repo_doc_files",
+    srcs = glob(
+        [
+            "**/*.md",
+            "**/*.mdx",
+        ],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_srcs",
+    srcs = glob(
+        ["**/*.go"],
+        allow_empty = True,
+        exclude = [
+            "**/*_test.go",
+            "**/node_modules/**",
+        ],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_test_srcs",
+    srcs = glob(
+        ["**/*_test.go"],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_other_files",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "**/*.db",
+            "**/*.exe",
+            "**/*.go",
+            "**/*.md",
+            "**/*.mdx",
+            "**/*.out",
+            "**/*.prof",
+            "**/*.pyc",
+            "**/*.test",
+            "**/__pycache__/**",
+            "**/node_modules/**",
+        ],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+# --- end repo_files ---
