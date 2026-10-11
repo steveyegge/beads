@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,6 +166,10 @@ var createCmd = &cobra.Command{
 		if err != nil {
 			return HandleError("%v", err)
 		}
+		// No --priority asks the role for its default (CreateRequest.
+		// DefaultPriority). The flag's displayed default is that same library
+		// constant, so the dry-run preview below still shows what will land.
+		priorityDefault := !cmd.Flags().Changed("priority")
 
 		issueType, _ := cmd.Flags().GetString("type")
 		assignee, _ := cmd.Flags().GetString("assignee")
@@ -299,12 +304,6 @@ var createCmd = &cobra.Command{
 			// Explicit --repo flag overrides auto-routing
 			repoPath = repoOverride
 		} else {
-			// Auto-routing based on user role
-			userRole, err := routing.DetectUserRole(".")
-			if err != nil {
-				debug.Logf("Warning: failed to detect user role: %v\n", err)
-			}
-
 			// Build routing config with backward compatibility for legacy contributor.* keys.
 			// Prefer config.yaml values, but fall back to DB config values set by bd init --contributor.
 			routingMode := getRoutingConfigValue(rootCtx, store, "routing.mode")
@@ -328,6 +327,9 @@ var createCmd = &cobra.Command{
 				ExplicitOverride: repoOverride,
 			}
 
+			// Auto-routing based on user role, detected only once the resolved
+			// config shows routing will read it.
+			userRole := detectUserRoleForRouting(routingConfig)
 			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
 		}
 
@@ -521,7 +523,6 @@ var createCmd = &cobra.Command{
 			Ephemeral:          wisp,
 			NoHistory:          noHistory,
 			StorageClass:       storageClass,
-			CreatedBy:          getActorWithGit(),
 			Owner:              getOwner(),
 			Labels:             labels,
 			MolType:            molType,
@@ -570,14 +571,18 @@ var createCmd = &cobra.Command{
 		// Label inheritance stays CLI-side (mergeCreateLabels above) because the
 		// dry-run preview needs it too; asking the facade to inherit as well
 		// would append the parent's labels a second time.
+		if priorityDefault {
+			issue.Priority = 0
+		}
 		result, err := ops.Create(opsCtx, issueops.CreateRequest{
-			Actor:         actor,
-			Issue:         issue,
-			ParentID:      parentID,
-			Dependencies:  createDependencyRequests(depSpecs),
-			WaitsFor:      waitsForRequest(waitsForSpec),
-			ForceIDPrefix: forceCreate,
-			IDPrefix:      createIDPrefixOverride(),
+			Actor:           currentActor(),
+			Issue:           issue,
+			ParentID:        parentID,
+			Dependencies:    createDependencyRequests(depSpecs),
+			WaitsFor:        waitsForRequest(waitsForSpec),
+			ForceIDPrefix:   forceCreate,
+			IDPrefix:        createIDPrefixOverride(),
+			DefaultPriority: priorityDefault,
 		})
 		if err != nil {
 			// RULING R1: an occupied --id is a refusal, not a silent full-row
@@ -613,7 +618,7 @@ var createCmd = &cobra.Command{
 		}
 
 		if repoPath != "." && targetStore != nil {
-			if err := commitPendingIfEmbedded(ctx, targetStore, actor, doltAutoCommitParams{
+			if err := commitPendingIfEmbedded(ctx, targetStore, currentActor(), doltAutoCommitParams{
 				Command:  "create",
 				IssueIDs: []string{created.ID},
 			}); err != nil {
@@ -913,7 +918,7 @@ func init() {
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
 	createCmd.Flags().Bool("silent", false, "Output only the issue ID (for scripting)")
 	createCmd.Flags().Bool("dry-run", false, "Preview what would be created without actually creating")
-	registerPriorityFlag(createCmd, "2")
+	registerPriorityFlag(createCmd, strconv.Itoa(issueops.DefaultCreatePriority))
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|decision|spike|story|milestone); custom types require types.custom config; aliases: enhancement/feat→feature, dec/adr→decision")
 	createCmd.Flags().StringP("status", "s", "", "Initial status")
 	registerCommonIssueFlags(createCmd)

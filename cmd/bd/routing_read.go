@@ -31,12 +31,30 @@ func resolveRoutingConfigValue(key string, dbValues map[string]string) string {
 	return strings.TrimSpace(dbValues[key])
 }
 
+// routingSettingsStore is the store whose settings document may supply the
+// routing.* and contributor.* keys, or nil when none may.
+//
+// A remote backend's settings are one document shared by every client of the
+// server, and the routing targets are LOCAL filesystem paths, which such a
+// document cannot name for every machine reading it. Contributor routing for a
+// remote workspace is therefore configured locally (config.yaml / env) only:
+// `bd create`'s routing decision and the lookup fallback a missing id takes
+// read the same local-only answer, and neither pays a settings round trip to
+// learn it (S6b).
+func routingSettingsStore(store storage.DoltStorage) storage.DoltStorage {
+	if store == nil || storeIsRemoteBackend(store) {
+		return nil
+	}
+	return store
+}
+
 func getRoutingConfigValue(ctx context.Context, store storage.DoltStorage, key string) string {
 	if src := config.GetValueSource(key); src != config.SourceDefault {
 		if value := strings.TrimSpace(config.GetString(key)); value != "" {
 			return value
 		}
 	}
+	store = routingSettingsStore(store)
 	if store == nil {
 		return ""
 	}
@@ -49,13 +67,9 @@ func getRoutingConfigValue(ctx context.Context, store storage.DoltStorage, key s
 }
 
 func determineAutoRoutedRepoPath(ctx context.Context, store storage.DoltStorage) (string, routing.RoutingRule) {
-	userRole, err := routing.DetectUserRole(".")
-	if err != nil {
-		debug.Logf("Warning: failed to detect user role: %v\n", err)
-	}
-
 	var dbValues map[string]string
-	if store != nil {
+	// Local-only for a remote backend: see routingSettingsStore.
+	if store = routingSettingsStore(store); store != nil {
 		all, allErr := store.GetAllConfig(ctx)
 		if allErr != nil {
 			debug.Logf("DEBUG: failed to read config from store: %v\n", allErr)
@@ -89,6 +103,7 @@ func determineAutoRoutedRepoPath(ctx context.Context, store storage.DoltStorage)
 		ExplicitOverride: "",
 	}
 
+	userRole := detectUserRoleForRouting(routingConfig)
 	return routing.DetermineTargetRepoWithRule(routingConfig, userRole, ".")
 }
 

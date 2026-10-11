@@ -8,6 +8,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/issueops"
 )
 
 var linkCmd = &cobra.Command{
@@ -63,8 +64,10 @@ Examples:
 		defer toCleanup()
 
 		dt := types.DependencyType(depType)
-		if isDisallowedHierarchicalDependency(fromID, toID, dt) {
-			return HandleErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
+		// bd link writes through the store's own dependency verb rather than
+		// the DependencyEditor role, so it asks the role's rule directly.
+		if err := issueops.CheckDottedChildDependency(fromID, toID, dt); err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
 		if !dt.IsValid() {
@@ -77,13 +80,13 @@ Examples:
 			Type:        dt,
 		}
 
-		if err := fromStore.AddDependencyWithOptions(ctx, dep, actor, storage.DependencyAddOptions{EmitEvent: true}); err != nil {
+		if err := fromStore.AddDependencyWithOptions(ctx, dep, currentActor(), storage.DependencyAddOptions{EmitEvent: true}); err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
 
 		warnIfCyclesExist(fromStore)
 
-		if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
+		if err := commitPendingIfEmbedded(ctx, fromStore, currentActor(), doltAutoCommitParams{
 			Command:  "link",
 			IssueIDs: []string{fromID, toID},
 		}); err != nil {
