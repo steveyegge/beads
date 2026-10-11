@@ -145,6 +145,10 @@ pointless).`,
 		// was given without an explicit --status, to flip status=deferred back
 		// to open (matches the help text's "show in bd ready immediately").
 		var clearDeferStatus bool
+		// explicitSession: --session was typed (rather than inherited from
+		// CLAUDE_SESSION_ID), so omitting it on a store that cannot carry it
+		// is said out loud (remote_backend.go).
+		var explicitSession bool
 
 		if cmd.Flags().Changed("status") {
 			status, _ := cmd.Flags().GetString("status")
@@ -167,6 +171,7 @@ pointless).`,
 			// If status is being set to closed, include session if provided
 			if status == "closed" {
 				session, _ := cmd.Flags().GetString("session")
+				explicitSession = session != ""
 				if session == "" {
 					session = os.Getenv("CLAUDE_SESSION_ID")
 				}
@@ -438,6 +443,7 @@ pointless).`,
 
 		updatedIssues := []*types.Issue{}
 		var firstUpdatedID string // Track first successful update for last-touched
+		var warnedSessionOmitted bool
 		var failures []updateIDFailure
 		recordFailure := func(id, reason string) {
 			failures = append(failures, updateIDFailure{ID: id, Error: reason})
@@ -478,6 +484,13 @@ pointless).`,
 				if result != nil {
 					result.Close()
 				}
+				// A concurrent `bd delete` that commits before this
+				// resolution is the same lost race as one that commits
+				// inside the guarded write below. requireSingleIfRevisionID
+				// guarantees this is the only id, so nothing is pending.
+				if reported, ok := reportIfRevisionTargetGone("updating", id, err, ifRevision); ok {
+					return reported
+				}
 				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
 				recordFailure(id, fmt.Sprintf("resolving issue: %v", err))
 				continue
@@ -493,12 +506,9 @@ pointless).`,
 			issue := result.Issue
 			issueStore := result.Store
 
-			if err := validateIssueUpdatable(id, issue); err != nil {
-				fmt.Fprintf(os.Stderr, "%s\n", err)
-				recordFailure(id, err.Error())
-				closeIfUnmutated(result)
-				continue
-			}
+			// The template guard is the role's (issueops.Lifecycle.Update),
+			// enforced inside the mutation on every route; its refusal is
+			// printed below as the line this command always printed.
 
 			// bd-98s5c: an unguarded assignee update must not silently
 			// overwrite another actor's live claim. Skipped under
@@ -511,7 +521,7 @@ pointless).`,
 			// the actor's own fresh claim. A policy refusal, so it exits 1,
 			// not 13.
 			if newAssignee, ok := updates["assignee"].(string); ok && ifAssignee == nil && !claimFlag && !ifRevisionAlreadyStale(issue, ifRevision) {
-				if err := validateIssueReassignable(id, issue, actor, newAssignee,
+				if err := validateIssueReassignable(id, issue, currentActor(), newAssignee,
 					storeClaimPoolAliases(ctx, issueStore), forceFlag); err != nil {
 					fmt.Fprintf(os.Stderr, "%s\n", err)
 					recordFailure(id, err.Error())
@@ -530,6 +540,19 @@ pointless).`,
 			// earlier transaction) silently erased concurrent writers' keys —
 			// both processes exited 0, one process's committed write vanished.
 			patch := basePatch
+			// S6d: a store whose wire cannot carry closed_by_session still
+			// closes; the session is attribution only (remote_backend.go).
+			if patch.ClosedBySession.Set && !storeCarriesCallerAttribution(issueStore) {
+				patch.ClosedBySession = issueops.Field[string]{}
+				if !warnedSessionOmitted {
+					warnedSessionOmitted = true
+					if explicitSession {
+						fmt.Fprintf(os.Stderr, "%s --session is not recorded: this backend's update cannot carry closed_by_session (bd close --session records it)\n", ui.RenderWarn("!"))
+					} else {
+						fmt.Fprintf(os.Stderr, "%s CLAUDE_SESSION_ID is not recorded as closed_by_session: this backend's update cannot carry it (bd close records it)\n", ui.RenderWarn("!"))
+					}
+				}
+			}
 			// GH#3233: --defer="" restores ready visibility only if the issue
 			// was actually deferred. Other statuses (blocked, in_progress, …)
 			// shouldn't be clobbered just because defer_until was stale.
@@ -552,7 +575,7 @@ pointless).`,
 			// through: `--force -s closed` is now a legitimate way to ask for
 			// the close-policy half alone.
 			updateResult, updateErr := runCommandUpdateMutation(opsCtx, ops, commandUpdateMutation{
-				actor:            actor,
+				actor:            currentActor(),
 				issueID:          result.ResolvedID,
 				patch:            patch,
 				claim:            claimFlag,
@@ -577,7 +600,10 @@ pointless).`,
 					}
 				}
 				failureText := fmt.Sprintf("updating issue: %v", updateErr)
-				if errors.Is(updateErr, issueops.ErrNotesOverwrite) {
+				if refusal, ok := templateReadOnlyRefusal(id, updateErr); ok {
+					failureText = refusal.Error()
+					fmt.Fprintf(os.Stderr, "%s\n", refusal)
+				} else if errors.Is(updateErr, issueops.ErrNotesOverwrite) {
 					// The contract's AuthorizeNotesOverwrite fence refused
 					// inside the mutation transaction. Print the advice, not
 					// the raw sentinel.
@@ -602,13 +628,13 @@ pointless).`,
 			}
 			// Audit log key field changes (survives Dolt GC flatten)
 			if patch.Status.Set {
-				audit.LogFieldChange(result.ResolvedID, "status", string(issue.Status), string(patch.Status.Value), actor, "")
+				audit.LogFieldChange(result.ResolvedID, "status", string(issue.Status), string(patch.Status.Value), currentActor(), "")
 			}
 			if patch.Assignee.Set {
-				audit.LogFieldChange(result.ResolvedID, "assignee", issue.Assignee, patch.Assignee.Value, actor, "")
+				audit.LogFieldChange(result.ResolvedID, "assignee", issue.Assignee, patch.Assignee.Value, currentActor(), "")
 			}
 			if patch.Priority.Set {
-				audit.LogFieldChange(result.ResolvedID, "priority", fmt.Sprintf("%d", issue.Priority), fmt.Sprintf("%d", patch.Priority.Value), actor, "")
+				audit.LogFieldChange(result.ResolvedID, "priority", fmt.Sprintf("%d", issue.Priority), fmt.Sprintf("%d", patch.Priority.Value), currentActor(), "")
 			}
 
 			// The operation's own post-state snapshot replaces the re-read.
@@ -642,7 +668,7 @@ pointless).`,
 				if s == nil {
 					continue
 				}
-				if err := commitPendingIfEmbedded(ctx, s, actor, doltAutoCommitParams{
+				if err := commitPendingIfEmbedded(ctx, s, currentActor(), doltAutoCommitParams{
 					Command:  "update",
 					IssueIDs: ids,
 				}); err != nil {
@@ -1116,4 +1142,17 @@ func init() {
 	updateCmd.Flags().StringArray("unset-metadata", nil, "Remove metadata key (repeatable, e.g., --unset-metadata team)")
 	updateCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(updateCmd)
+}
+
+// templateReadOnlyRefusal reports whether err is the update role's template
+// refusal (issueops.Lifecycle.Update, any route) and, when it is, returns it
+// spelled against id — the argument as the caller typed it, which is what this
+// CLI's template sentence has always named. It is found with errors.Is because
+// the refusal may arrive wrapped by the unit of work or inside the served
+// problem envelope.
+func templateReadOnlyRefusal(id string, err error) (error, bool) {
+	if !errors.Is(err, issueops.ErrTemplateReadOnly) {
+		return nil, false
+	}
+	return &issueops.TemplateReadOnlyError{IssueID: id}, true
 }

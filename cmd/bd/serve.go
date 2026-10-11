@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/backends"
 	"github.com/steveyegge/beads/internal/storage/contextinfo"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/storage/externaldeps"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/issueops"
 	"github.com/steveyegge/beads/memoryops"
@@ -318,6 +319,7 @@ func runServe() error {
 			EdgeReader:        roles.edges,
 			GraphCounter:      roles.edgeCounter,
 			BatchGetter:       roles.batchGetter,
+			LeaseReclaimer:    roles.leaseReclaimer,
 			Relations:         roles.relations,
 			Commenter:         roles.commenter,
 			BlockingAnnotator: roles.blocking,
@@ -342,9 +344,13 @@ func runServe() error {
 			// extraction, this flag and the maintenance ticker cannot disagree
 			// about whether this workspace journals.
 			EventsJournalEnabled: journalEnabled,
-			Workspace:            info,
-			SchemaVersion:        JSONSchemaVersion,
-			Mode:                 serveResolvedMode(info, db),
+			// The roles above come from the storage chain, which interposes
+			// the external-dependency policy (wireStorageDecorators); the
+			// handshake advertises it only if that layer is really there.
+			ExternalDependencyPolicy: externaldeps.Applied(store),
+			Workspace:                info,
+			SchemaVersion:            JSONSchemaVersion,
+			Mode:                     serveResolvedMode(info, db),
 		})
 	}
 
@@ -418,10 +424,11 @@ func runServe() error {
 		// is still the workspace's answer and still has to be handed in — the
 		// provider knows how to READ the journal, not whether this workspace has
 		// one.
-		EventsJournalEnabled: eventsjournal.EnabledFor(info.BeadsDir),
-		Workspace:            info,
-		SchemaVersion:        JSONSchemaVersion,
-		Mode:                 serveResolvedMode(info, db),
+		EventsJournalEnabled:     eventsjournal.EnabledFor(info.BeadsDir),
+		ExternalDependencyPolicy: externaldeps.AppliedToProvider(provider),
+		Workspace:                info,
+		SchemaVersion:            JSONSchemaVersion,
+		Mode:                     serveResolvedMode(info, db),
 	})
 }
 
@@ -674,6 +681,7 @@ type serveRoleSource interface {
 	EdgeReader() (issueops.EdgeReader, error)
 	GraphCounter() (issueops.GraphCounter, error)
 	BatchGetter() (issueops.BatchGetter, error)
+	LeaseReclaimer() (issueops.LeaseReclaimer, error)
 	IssueRelations() (issueops.Relations, error)
 	Commenter() (issueops.Commenter, error)
 	BlockingAnnotator() (issueops.BlockingAnnotator, error)
@@ -741,6 +749,7 @@ func serveIssueRoles(src serveRoleSource, journalEnabled bool) (serveRoles, erro
 		{"edge reader", func() (err error) { roles.edges, err = src.EdgeReader(); return }},
 		{"graph counter", func() (err error) { roles.edgeCounter, err = src.GraphCounter(); return }},
 		{"batch getter", func() (err error) { roles.batchGetter, err = src.BatchGetter(); return }},
+		{"lease reclaimer", func() (err error) { roles.leaseReclaimer, err = src.LeaseReclaimer(); return }},
 		{"issue relations", func() (err error) { roles.relations, err = src.IssueRelations(); return }},
 		{"commenter", func() (err error) { roles.commenter, err = src.Commenter(); return }},
 		{"blocking annotator", func() (err error) { roles.blocking, err = src.BlockingAnnotator(); return }},
@@ -853,17 +862,22 @@ type serveRoles struct {
 	// getter WITHOUT wrapping it — a read fires no completion hooks — so it is
 	// taken off the peeled store with the rest for uniformity rather than out
 	// of necessity.
-	batchGetter  issueops.BatchGetter
-	relations    issueops.Relations
-	commenter    issueops.Commenter
-	blocking     issueops.BlockingAnnotator
-	tree         issueops.TreeWalker
-	readyCounter issueops.ReadyCounter
-	counter      issueops.Counter
-	querier      issueops.Querier
-	sweeper      issueops.Sweeper
-	deleter      issueops.Deleter
-	batchCreator issueops.BatchCreator
+	batchGetter issueops.BatchGetter
+	// leaseReclaimer is the stale-lease sweep behind
+	// POST /v0/beads/issues:reclaim. Its hook decorator WRAPS (a reclaim is an
+	// update per reverted row), which is why it comes off the peeled store with
+	// the releaser: bd serve runs no hooks.
+	leaseReclaimer issueops.LeaseReclaimer
+	relations      issueops.Relations
+	commenter      issueops.Commenter
+	blocking       issueops.BlockingAnnotator
+	tree           issueops.TreeWalker
+	readyCounter   issueops.ReadyCounter
+	counter        issueops.Counter
+	querier        issueops.Querier
+	sweeper        issueops.Sweeper
+	deleter        issueops.Deleter
+	batchCreator   issueops.BatchCreator
 	// dependencyEditor is the second role here whose accessor recurses through
 	// the hook decorator, so taking it off the peeled store is not optional:
 	// HookFiringStore.DependencyEditor fires the workspace's update hook per
