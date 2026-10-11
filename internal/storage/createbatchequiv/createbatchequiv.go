@@ -89,7 +89,11 @@ func largeScenarios() []scenario {
 // recorded from the code BEFORE the batch-create fast paths existed
 // (ebe3b6bcb), so the check holds the current code — fast and per-row
 // bodies alike, including changes the fast-path switch does not gate — to
-// what that code stored.
+// what that code stored. One deliberate behavior change since: the create
+// role defaults an empty created_by to the request's actor
+// (issueops.PreparePublicCreateRequest), so apply.json's issues, wisps and
+// events digests were re-recorded with every apply-created row carrying
+// created_by "apply-writer"; nothing else moved.
 const GoldenDirEnv = "CREATEBATCHEQUIV_GOLDEN_DIR"
 
 // Run seeds fresh databases, applies each scenario's batch through the fast
@@ -98,6 +102,38 @@ const GoldenDirEnv = "CREATEBATCHEQUIV_GOLDEN_DIR"
 func Run(t *testing.T, open Open) {
 	t.Helper()
 	runScenarios(t, open, scenarios())
+}
+
+// ScenarioNames returns the names of Run's scenarios, in Run's order.
+func ScenarioNames() []string {
+	var names []string
+	for _, sc := range scenarios() {
+		names = append(names, sc.name)
+	}
+	return names
+}
+
+// RunNamed is Run for only the named scenarios (in Run's order), for a
+// backend that spreads Run's scenarios over several top-level tests; it fails
+// on a name Run does not have. Such a backend must cover ScenarioNames()
+// exactly once between its tests.
+func RunNamed(t *testing.T, open Open, names ...string) {
+	t.Helper()
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	var list []scenario
+	for _, sc := range scenarios() {
+		if want[sc.name] {
+			list = append(list, sc)
+			delete(want, sc.name)
+		}
+	}
+	for n := range want {
+		t.Fatalf("createbatchequiv: no scenario %q (have %v)", n, ScenarioNames())
+	}
+	runScenarios(t, open, list)
 }
 
 // RunLarge is Run for the 458-issue scenarios. A backend runs it from its own

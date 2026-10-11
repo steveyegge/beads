@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/issueops"
 )
 
 // stepTypeToIssueType converts a formula step type string to a types.IssueType.
@@ -454,7 +455,7 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 		Title:       rootTitle,
 		Description: rootDesc,
 		Status:      types.StatusOpen,
-		Priority:    2,
+		Priority:    issueops.DefaultCreatePriority,
 		IssueType:   types.TypeMolecule,
 		IsTemplate:  true,
 		CreatedAt:   time.Now(),
@@ -512,7 +513,7 @@ func createGateIssue(step *formula.Step, parentID string) *types.Issue {
 		Title:       title,
 		Description: fmt.Sprintf("Async gate for step %s", step.ID),
 		Status:      types.StatusOpen,
-		Priority:    2,
+		Priority:    issueops.DefaultCreatePriority,
 		IssueType:   "gate",
 		AwaitType:   step.Gate.Type,
 		AwaitID:     awaitID,
@@ -568,7 +569,7 @@ func processStepToIssue(step *formula.Step, parentID string) *types.Issue {
 	}
 
 	// Determine priority
-	priority := 2
+	priority := issueops.DefaultCreatePriority
 	if step.Priority != nil {
 		priority = *step.Priority
 	}
@@ -969,7 +970,7 @@ func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula,
 		Title:       rootTitle,
 		Description: rootDesc,
 		Status:      types.StatusOpen,
-		Priority:    2,
+		Priority:    issueops.DefaultCreatePriority,
 		IssueType:   types.TypeMolecule,
 		IsTemplate:  true,
 		CreatedAt:   time.Now(),

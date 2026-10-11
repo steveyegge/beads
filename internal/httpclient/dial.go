@@ -72,6 +72,28 @@ type DialOptions struct {
 	// an external HTTPClient always goes through one of the two constructors
 	// above, or the normal env-aware resolution.
 	caOverride *resolvedCA
+
+	// AllowInsecureCredential opts THIS dial into sending a credential over
+	// plain http to a non-loopback target (MED-4, S6 review); see
+	// guardInsecureCredential for every grant DialWith honors. connect.go sets
+	// this from --allow-plaintext so its own Handshake probe honors the same
+	// opt-in the CLI flag already granted, before the sidecar recording it
+	// (Target.AllowInsecureCredential) exists. Every other caller leaves it
+	// false: a later dial takes the grant from Target.AllowInsecureCredential,
+	// and an ambient-ladder dial also from the process-wide
+	// BEADS_HTTP_ALLOW_INSECURE=1 escape hatch, which the explicit-credential
+	// door (DialWithCredential) never reads.
+	AllowInsecureCredential bool
+
+	// explicitCredential is set by DialWithCredential alone: the caller
+	// handed this dial its own credential, so DialWith must consult no
+	// process environment for it — not BEADS_HTTP_ALLOW_INSECURE (the
+	// plaintext grant then comes only from AllowInsecureCredential above or
+	// Target.AllowInsecureCredential), and, because DialWithCredential also
+	// pins CA resolution through DialOptionsForTarget, not CAFileEnv either.
+	// Unexported so the only way to set it is the door that also refuses a
+	// nil credential.
+	explicitCredential bool
 }
 
 // Conn is the store's view of one wire client.
@@ -193,6 +215,17 @@ func DialWith(target Target, creds CredentialProvider, opts DialOptions) (*Conn,
 		// refuse.
 	}
 
+	// target.AllowInsecureCredential (bee-ghosttrack CHANGES_REQUESTED on
+	// #7288, should-fix 2) is `bd connect --allow-plaintext`'s grant,
+	// persisted to the sidecar and scoped to the target it names: it is
+	// loaded back from there on every ordinary command's dial, not only
+	// connect's own Handshake probe, so a workspace that connected with the
+	// flag does not also need BEADS_HTTP_ALLOW_INSECURE=1 set for every
+	// later `bd` invocation. opts.AllowInsecureCredential stays OR'd in
+	// alongside it: connect.go sets that field for its own probe from the
+	// SAME flag before the sidecar carrying it even exists yet.
+	creds = guardInsecureCredential(target, creds, opts.AllowInsecureCredential || target.AllowInsecureCredential, !opts.explicitCredential)
+
 	client, err := wire.New(target.BaseURL, creds, wire.Options{
 		HTTPClient:      opts.HTTPClient,
 		UserAgent:       opts.UserAgent,
@@ -202,6 +235,40 @@ func DialWith(target Target, creds CredentialProvider, opts DialOptions) (*Conn,
 		return nil, err
 	}
 	return &Conn{Client: client}, nil
+}
+
+// DialWithCredential is the explicit-credential door: creds is the ONLY
+// credential this dial ever authorizes with, and the dial reads nothing from
+// the process environment or the credentials file to decide anything about
+// it.
+//
+// It exists for an embedder that opens several projects in one process — on
+// one server or many, each with a credential of its own (gc's per-city and
+// per-rig credentials). The ambient ladder Dial binds (NewBearerProvider) is
+// keyed by host[:port] and read from process-global state, so two projects
+// behind the same host would be handed the same token, and a token exported
+// for one would be offered to the other. Here, instead:
+//
+//   - no bearer ladder is built: BEADS_HTTP_TOKEN, BEADS_HTTP_TOKEN_COMMAND and
+//     the credentials file ([host:port], BEADS_CREDENTIALS_FILE) are never read;
+//   - CA trust is pinned to target.CAFile alone (DialOptionsForTarget), so
+//     BEADS_HTTP_CA_FILE is never read;
+//   - the plaintext-to-non-loopback grant comes only from
+//     opts.AllowInsecureCredential or target.AllowInsecureCredential, never
+//     from BEADS_HTTP_ALLOW_INSECURE.
+//
+// creds is held by the returned Conn and nowhere else: whatever it resolves
+// or caches is scoped to that one Conn (one store, or one handshake), never
+// to a host in a process-wide table. A nil creds is ErrCredentialRequired —
+// "explicit" with nothing in it would otherwise read as an unauthenticated
+// open the caller never asked for.
+func DialWithCredential(target Target, creds CredentialProvider, opts DialOptions) (*Conn, error) {
+	if creds == nil {
+		return nil, fmt.Errorf("httpclient: the explicit-credential dial was handed a nil credential: %w", ErrCredentialRequired)
+	}
+	opts = DialOptionsForTarget(target, opts)
+	opts.explicitCredential = true
+	return DialWith(target, creds, opts)
 }
 
 // dialTransport builds the transport DialWith uses when the caller left
@@ -263,6 +330,19 @@ func RegisterDefaultDialer(opts DialOptions) {
 // the server's own database and repo root.
 func Handshake(ctx context.Context, target Target, opts DialOptions) (*apigen.ContextResponse, error) {
 	conn, err := Dial(target, opts)
+	if err != nil {
+		return nil, err
+	}
+	return conn.ServerContext(ctx)
+}
+
+// HandshakeWithCredential is Handshake through DialWithCredential: the probe
+// authorizes with creds alone and reads no ambient credential, CA or plaintext
+// grant from the process environment. It is what an embedder verifying one
+// tenant's server calls, so the probe can never succeed on a credential the
+// tenant's store would not be using.
+func HandshakeWithCredential(ctx context.Context, target Target, creds CredentialProvider, opts DialOptions) (*apigen.ContextResponse, error) {
+	conn, err := DialWithCredential(target, creds, opts)
 	if err != nil {
 		return nil, err
 	}

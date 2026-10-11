@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
 	"github.com/steveyegge/beads/internal/httpclient/encode"
 	"github.com/steveyegge/beads/internal/httpclient/wire"
+	"github.com/steveyegge/beads/internal/storage"
 	storageops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/issueops"
@@ -40,8 +41,8 @@ var _ issueops.Lifecycle = (*httpLifecycle)(nil)
 // dropping: IDPrefix where it would act on an explicit, unforced id, which the
 // server publishes no member for on purpose (W-CreateRequest.IDPrefix), and
 // every member of the issue outside the wire's twenty (W-CreateRequest.Issue)
-// — save a CreatedBy that names the actor, which the server stamps from the
-// actor itself. A create that reported success having silently dropped the
+// — save a CreatedBy that names the actor, which the server's create role
+// defaults to on its own (issueops.PreparePublicCreateRequest). A create that reported success having silently dropped the
 // storage class, the molecule type or the creation time is a row the caller
 // believes they wrote and did not.
 //
@@ -61,6 +62,9 @@ func (l *httpLifecycle) Create(ctx context.Context, req issueops.CreateRequest) 
 	}
 	body, err := createBody(req)
 	if err != nil {
+		return issueops.CreateResult{}, err
+	}
+	if err := l.store.pinCreateDefaultPriority(ctx, &body.Priority); err != nil {
 		return issueops.CreateResult{}, err
 	}
 
@@ -112,11 +116,11 @@ func createBody(req issueops.CreateRequest) (apigen.CreateIssueRequest, error) {
 	}
 
 	issue := req.Issue
-	// Priority is sent ALWAYS, for batchCreateIssues' reason: 0 is P0 and a real
-	// request, so an absent member — which the server reads as the workspace
-	// default — would silently reprioritize every critical issue a plan creates.
-	priority := issue.Priority
-	body := apigen.CreateIssueRequest{Actor: req.Actor, Title: issue.Title, Priority: &priority}
+	priority, err := wirePriority(issue.Priority, req.DefaultPriority)
+	if err != nil {
+		return apigen.CreateIssueRequest{}, err
+	}
+	body := apigen.CreateIssueRequest{Actor: req.Actor, Title: issue.Title, Priority: priority}
 
 	setItemString(&body.Id, issue.ID)
 	setItemString(&body.Description, issue.Description)
@@ -439,6 +443,10 @@ func (l *httpLifecycle) applyTemplateGuardForServer(ctx context.Context, req iss
 		return req, nil
 	}
 	before, err := l.store.GetIssue(ctx, req.IssueID)
+	if errors.Is(err, storage.ErrNotFound) {
+		// GetIssue answers a miss with ErrNotFound, like the local stores.
+		return req, nil
+	}
 	if err != nil {
 		return req, err
 	}
@@ -960,4 +968,65 @@ func (s *Store) CloseIssue(ctx context.Context, id, reason, actor, session strin
 	}
 	_, err = w.CloseIssue(ctx, id, closeBody(actor, reason, session, true))
 	return err
+}
+
+// wirePriority projects a create's priority onto the wire's optional member.
+//
+// It is sent WHENEVER THE CALLER NAMED ONE, zero included: 0 is P0 and a real
+// request, so an absent member would silently reprioritize critical work. It
+// is absent only when the request asks for the default (DefaultPriority), and
+// then the server's role applies the default — the one place it lives — rather
+// than this client spelling the number, PROVIDED the server says it does:
+// pinCreateDefaultPriority fills the member in for one that does not. The
+// pointer addresses a local copy, never the caller's field.
+func wirePriority(priority int, useDefault bool) (*int, error) {
+	if err := storageops.ValidateCreatePriority(priority, useDefault); err != nil {
+		return nil, err
+	}
+	if useDefault {
+		return nil, nil
+	}
+	return &priority, nil
+}
+
+// pinCreateDefaultPriority decides, before the dial and from the cached
+// handshake, whether the absent priorities among the given wire members may
+// stay absent. A server advertising wire.CapIssuesCreateDefaultPriority stores
+// the create default for an absent member; an older one reads absent as 0 and
+// would store P0 (critical) for every create that asked for the default. So
+// against an older server each absent member is set to
+// issueops.DefaultCreatePriority explicitly. A request naming every priority
+// costs no handshake.
+//
+// The decision assumes the create reaches the build that answered the
+// handshake. The handshake is fetched once per Store and cached for its life
+// (one command, in cmd/bd), so a create that lands on an older build — a
+// server rolled back under a live Store, or mixed builds behind one URL —
+// still goes out with the member absent, and that server stores P0 with no
+// error on either side. A capability that gates a member an older server
+// refuses is loud on a stale handshake (the `has_spawner` that
+// refuseUnservedDepAddLineage gates draws a 400); this one gates the ABSENCE
+// of a member every server already reads, so nothing refuses it.
+func (s *Store) pinCreateDefaultPriority(ctx context.Context, priorities ...**int) error {
+	var absent []**int
+	for _, p := range priorities {
+		if *p == nil {
+			absent = append(absent, p)
+		}
+	}
+	if len(absent) == 0 {
+		return nil
+	}
+	snap, err := s.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if snap != nil && slices.Contains(snap.Capabilities, wire.CapIssuesCreateDefaultPriority) {
+		return nil
+	}
+	for _, p := range absent {
+		priority := issueops.DefaultCreatePriority
+		*p = &priority
+	}
+	return nil
 }

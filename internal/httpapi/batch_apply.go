@@ -213,14 +213,7 @@ func (s *Server) applyBatchRequest(w http.ResponseWriter, r *http.Request) (issu
 	if res != nil {
 		return refuse(res)
 	}
-	// created_by is stamped from the actor on every create item, createIssue's
-	// rule (create.go): the item publishes no created_by and the role copies the
-	// issue's rather than stamping one.
-	for _, item := range items {
-		if item.Create != nil {
-			item.Create.Issue.CreatedBy = actor
-		}
-	}
+	// No created_by stamp: the role defaults each create item's to the actor.
 	return issueops.ApplyBatchRequest{
 		Actor:                 actor,
 		Items:                 items,
@@ -434,7 +427,9 @@ func applyCreateItem(prefix string, encoded json.RawMessage, raw map[string]json
 		issue.NoHistory = *wire.NoHistory
 	}
 
-	item := &issueops.CreateItem{Key: derefString(wire.Key), Issue: issue}
+	// An absent `priority` is the role's default (CreateItem.DefaultPriority),
+	// never a 0 — which is P0 — made up here.
+	item := &issueops.CreateItem{Key: derefString(wire.Key), Issue: issue, DefaultPriority: wire.Priority == nil}
 	refs, res := applyMetadataRefs(prefix, raw)
 	if res != nil {
 		return nil, res

@@ -202,18 +202,9 @@ func (s *Server) createIssueRequest(w http.ResponseWriter, r *http.Request) (iss
 		Sender:             derefString(wire.Sender),
 		Ephemeral:          derefBool(wire.Ephemeral),
 		NoHistory:          derefBool(wire.NoHistory),
-		// CreatedBy is stamped from the caller-asserted actor, matching the
-		// local front door's semantics (cmd/bd/create.go sets issue.CreatedBy
-		// from getActorWithGit() before calling the same role): the role
-		// itself never stamps it, copying whatever the caller already put on
-		// types.Issue (internal/storage/issueops/public_create.go's
-		// publicCreateIssue). The wire's `actor` member is the caller-asserted
-		// identity this request carries — provenance for the audit trail, not
-		// authenticated identity, exactly as this file's own doc comment
-		// states above — so it is the one value this server has to make that
-		// stamp from. batch_create.go and batch_apply.go make the same
-		// stamp, so no create shape stores an empty created_by.
-		CreatedBy: actor,
+		// No CreatedBy: the wire publishes none, and the role defaults it to
+		// the request's actor (issueops.PreparePublicCreateRequest), the same
+		// rule every front door and library caller gets.
 	}
 	if wire.Priority != nil {
 		issue.Priority = *wire.Priority
@@ -233,6 +224,10 @@ func (s *Server) createIssueRequest(w http.ResponseWriter, r *http.Request) (iss
 		ParentID:                derefString(wire.ParentId),
 		InheritLabelsFromParent: derefBool(wire.InheritLabelsFromParent),
 		ForceIDPrefix:           derefBool(wire.ForceIdPrefix),
+		// An absent `priority` is the role's default, never a 0 this handler
+		// would have to make up: 0 is P0, and the document says absent means
+		// the default (CreateRequest.DefaultPriority).
+		DefaultPriority: wire.Priority == nil,
 	}
 	// IDPrefix stays ZERO, and its absence is a decision rather than an
 	// omission. It exists because a workspace's own config.yaml prefix wins over

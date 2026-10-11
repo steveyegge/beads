@@ -18,9 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
+	"github.com/steveyegge/beads/internal/httpclient/wire"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -72,6 +74,56 @@ type Store struct {
 // behind them are removed rather than stubbed, since inventing the OSS
 // interfaces here would assert a maintenance contract no OSS caller checks.
 var _ storage.DoltStorage = (*Store)(nil)
+
+// IsRemoteBackendStore satisfies storage.RemoteBackendStore. The
+// external-dependency policy decorator reads it to compose its role views over
+// this store's own roles (its legacy method seam is mostly stubs); it decides
+// whether to stand down through ServerEnforcesExternalDependencyPolicy below,
+// never through this marker.
+func (s *Store) IsRemoteBackendStore() bool { return true }
+
+var _ storage.RemoteBackendStore = (*Store)(nil)
+
+// ServerEnforcesExternalDependencyPolicy satisfies
+// storage.ExternalDependencyPolicyProber (design 3.6): it answers whether the
+// server this store dials already enforces bd's external-dependency policy
+// itself, by checking the handshake for wire.CapExternalDependencies.
+//
+// It propagates a handshake error rather than swallowing it to false, the
+// same asymmetry servesBatchClose documents: this probe gates whether the
+// external-deps DECORATOR runs its own enforcement at all, so an unresolved
+// "does the server already enforce this" has to fail the caller, not silently
+// resolve to "no, so enforce here" (which happens to be safe for THIS probe's
+// specific true/false meaning but would still hide a transport failure behind
+// a policy decision) or to "yes, so skip" (which would be the actual bug this
+// interface exists to prevent — the policy must never be silently skipped).
+func (s *Store) ServerEnforcesExternalDependencyPolicy(ctx context.Context) (bool, error) {
+	snap, err := s.snapshot(ctx)
+	if err != nil {
+		return false, err
+	}
+	if snap == nil {
+		return false, nil
+	}
+	return slices.Contains(snap.Capabilities, wire.CapExternalDependencies), nil
+}
+
+var _ storage.ExternalDependencyPolicyProber = (*Store)(nil)
+
+// ExcludeIDsUnsupported satisfies storage.ExcludeIDsUnsupportedStore: the v0
+// wire's listReadyWork and countReadyWork operations publish no id-exclusion
+// parameter, so encode.ReadyBridgeParams / ReadyBridgeCountParams refuse any
+// types.WorkFilter carrying ExcludeIDs outright (D8/D9, L12) rather than
+// silently widening the result. Reporting true here — unconditionally, since
+// the gap is in the wire shape, not in any per-call state — lets the
+// external-deps decorator fall back to filtering its OWN additional
+// exclusions (unsatisfied external:<project>:<capability> blockers) client
+// side instead of folding them into the filter it hands this store, so design
+// 3.6's policy still runs against a server that does not advertise
+// wire.CapExternalDependencies rather than tripping this store's refusal.
+func (s *Store) ExcludeIDsUnsupported() bool { return true }
+
+var _ storage.ExcludeIDsUnsupportedStore = (*Store)(nil)
 
 // New builds the store around an already-resolved target and transport.
 //

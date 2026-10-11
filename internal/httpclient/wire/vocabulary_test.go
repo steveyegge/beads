@@ -141,6 +141,9 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if CapProjectEnforce != httpapi.CapProjectEnforce {
 		t.Errorf("CapProjectEnforce = %q, server says %q", CapProjectEnforce, httpapi.CapProjectEnforce)
 	}
+	if CapExternalDependencies != httpapi.CapExternalDependencies {
+		t.Errorf("CapExternalDependencies = %q, server says %q", CapExternalDependencies, httpapi.CapExternalDependencies)
+	}
 	if CapListSort != httpapi.CapIssuesListSort {
 		t.Errorf("CapListSort = %q, server says %q", CapListSort, httpapi.CapIssuesListSort)
 	}
@@ -196,11 +199,11 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if !slices.Equal(behaviorCapabilities, []string{
 		httpapi.CapProjectEnforce, httpapi.CapBatchApplyLarge, httpapi.CapIssuesListSort, httpapi.CapIssuesCountScope,
 		httpapi.CapIssuesSweepWispsPlane, httpapi.CapIssuesSweepLiveDependents, httpapi.CapIssuesSweepLimit,
-		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate,
+		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
 	}) {
 		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
 			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit and "+
-			"issues.batchApply.depAddLineage and issues.update.allowTemplate tokens", behaviorCapabilities)
+			"issues.batchApply.depAddLineage and issues.update.allowTemplate and issues.create.defaultPriority tokens", behaviorCapabilities)
 	}
 }
 

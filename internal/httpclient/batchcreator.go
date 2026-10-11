@@ -46,8 +46,8 @@ const maxBatchCreateItems = 100
 //     an Owner from git config (W-BatchCreateItem.Issue), so it still refuses
 //     over this wire.
 //   - CreatedBy: apigen.BatchCreateItem has no member for it either, but the
-//     batch server stamps every item's created_by from the request's actor
-//     (internal/httpapi/batch_create.go), as single create does. A CreatedBy
+//     server's create role defaults every item's created_by to the request's
+//     actor (issueops.PreparePublicCreateRequest), as single create does. A CreatedBy
 //     naming the actor is therefore carried BY the actor
 //     (actorStampedCreateMember below), and any other value is refused rather
 //     than silently replaced by the stamp.
@@ -92,10 +92,10 @@ var roleIgnoredCreateIssueMembers = map[string]string{
 // server writes from the request's actor rather than reads from the body, and
 // already holds the value that stamp will write.
 //
-// CreatedBy is the one such member: every create shape stamps created_by from
-// the actor (internal/httpapi's create.go, batch_create.go and batch_apply.go).
-// It is neither carried nor role-ignored — a local create stores whatever the
-// issue names — so it is carried BY THE ACTOR: a CreatedBy that names the actor,
+// CreatedBy is the one such member: every create shape's role defaults an empty
+// created_by to the actor (issueops.PreparePublicCreateRequest), on the server
+// as locally. It is neither carried nor role-ignored — a local create keeps
+// whatever explicit value the issue names — so it is carried BY THE ACTOR: a CreatedBy that names the actor,
 // which is what `bd create`, `bd create --file` and the graph apply send,
 // arrives as written, and any other value would be silently replaced by the
 // stamp and is refused.
@@ -163,6 +163,13 @@ func (b *httpBatchCreator) CreateBatch(ctx context.Context, req issueops.CreateB
 		}
 		items = append(items, wireItem)
 	}
+	priorities := make([]**int, len(items))
+	for i := range items {
+		priorities[i] = &items[i].Priority
+	}
+	if err := b.store.pinCreateDefaultPriority(ctx, priorities...); err != nil {
+		return issueops.CreateBatchResult{}, err
+	}
 
 	res, err := b.wire.BatchCreateIssues(ctx, apigen.BatchCreateRequest{Actor: req.Actor, Items: items})
 	if err != nil {
@@ -202,12 +209,13 @@ func batchCreateItem(index int, item issueops.BatchCreateItem, actor string) (ap
 		return apigen.BatchCreateItem{}, err
 	}
 
-	// Priority is sent ALWAYS, unlike the five optional strings: 0 is P0 and a
-	// real request, so an absent member — which the server reads as "the
-	// workspace default" — would silently reprioritize every critical issue in a
-	// plan. The pointer addresses a local copy, never the caller's field.
-	priority := item.Issue.Priority
-	wireItem := apigen.BatchCreateItem{Title: item.Issue.Title, Priority: &priority}
+	// Priority is sent whenever the item names one, unlike the five optional
+	// strings (see wirePriority).
+	priority, err := wirePriority(item.Issue.Priority, item.DefaultPriority)
+	if err != nil {
+		return apigen.BatchCreateItem{}, err
+	}
+	wireItem := apigen.BatchCreateItem{Title: item.Issue.Title, Priority: priority}
 	setItemString(&wireItem.Description, item.Issue.Description)
 	setItemString(&wireItem.Design, item.Issue.Design)
 	setItemString(&wireItem.AcceptanceCriteria, item.Issue.AcceptanceCriteria)

@@ -196,6 +196,12 @@ func TestBatchApplyContract(t *testing.T) {
 	t.Run("CloseItemsAnswerToTheCloseGuards", func(t *testing.T) {
 		conformance.RunBatchApplyCloseItemsAnswerToTheCloseGuards(t, ctx, fixture)
 	})
+	t.Run("RefusesADottedChildGatedOnItsOwnParent", func(t *testing.T) {
+		conformance.RunBatchApplyRefusesADottedChildGatedOnItsOwnParent(t, ctx, fixture)
+	})
+	t.Run("AppliesTheDefaultPriority", func(t *testing.T) {
+		conformance.RunBatchApplyAppliesTheDefaultPriority(t, ctx, fixture)
+	})
 }
 
 // newEmbeddedBatchApplyFixture composes the frozen role kit with this backend's

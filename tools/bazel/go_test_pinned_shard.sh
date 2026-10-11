@@ -43,7 +43,10 @@ if [[ "$total" -le 1 ]]; then
 fi
 index="${TEST_SHARD_INDEX:?TEST_TOTAL_SHARDS is set but TEST_SHARD_INDEX is not}"
 
-declare -A shard_of=()
+# No associative array (bash >= 4): macOS runs this under /bin/bash 3.2
+# (scripts/pinned_shards_test.go on the main workflow's macOS job), so the
+# "pinned twice" check is a membership test on the "|"-joined names, which
+# the name pattern above keeps free of "|".
 declare -a pinned_by_shard=()
 pinned_shards=0
 all=""
@@ -57,11 +60,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 		echo "$manifest:$lineno: want \"<pinned shard> <TestName>\", got: $line" >&2
 		exit 1
 	fi
-	if [[ -n "${shard_of[$name]:-}" ]]; then
+	if [[ "|$all|" == *"|$name|"* ]]; then
 		echo "$manifest:$lineno: $name is pinned twice" >&2
 		exit 1
 	fi
-	shard_of[$name]="$shard"
 	pinned_by_shard[shard]="${pinned_by_shard[shard]:+${pinned_by_shard[shard]}|}$name"
 	all="${all:+$all|}$name"
 	((shard > pinned_shards)) && pinned_shards="$shard"

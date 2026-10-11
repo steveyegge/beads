@@ -171,6 +171,12 @@ func RunBatchApplyAppliesEveryItemInDeclarationOrder(t *testing.T, ctx context.C
 	if got := batchApplyColumn(t, ctx, fixture, "status", blocked); got == string(types.StatusClosed) {
 		t.Errorf("%s was closed by a request that only asked to close %s", blocked, blocker)
 	}
+	// Neither create item names a creator, so each defaults to the request's actor.
+	for _, id := range []string{blocked, blocker} {
+		if got := batchApplyColumn(t, ctx, fixture, "created_by", id); got != "apply-writer" {
+			t.Errorf("%s created_by = %q, want the request's actor %q", id, got, "apply-writer")
+		}
+	}
 }
 
 // RunBatchApplyBindsEachNamedKeyToItsMintedID pins ApplyBatchResult.Keys: it is
@@ -2656,4 +2662,126 @@ func RunBatchApplyCloseItemsAnswerToTheCloseGuards(t *testing.T, ctx context.Con
 			t.Errorf("%s status under the item's Force = %q, want %q", id, got, types.StatusClosed)
 		}
 	}
+}
+
+// RunBatchApplyRefusesADottedChildGatedOnItsOwnParent pins the dotted-id
+// hierarchy rule (publicops.CheckDottedChildDependency) on a dep_add item: an
+// edge from a dotted-id child to its own ancestor is refused with an
+// *ItemError naming the edge, and the whole request rolls back. The rule is
+// applied to the RESOLVED ids, so a key bound to a dotted child this request
+// creates — the `bd create --graph` shape — is refused like a stored id.
+//
+// POSITIVE HALF: the parent-child edge to the immediate dotted parent lands.
+//
+// WITH THE HIERARCHY STORED: once that edge exists (the shape `bd create
+// --parent` leaves), a blocking edge on the same pair is still this validation
+// refusal, not the hierarchy conflict the stored edge would raise (which does
+// not match ErrValidation) — the rule reads only the resolved ids, so it
+// answers first — and the stored edge survives.
+func RunBatchApplyRefusesADottedChildGatedOnItsOwnParent(t *testing.T, ctx context.Context, fixture BatchApplyFixture) {
+	t.Helper()
+	parent := fixture.IssuePrefix + "-dotted"
+	child := parent + ".1"
+	minted := parent + ".2"
+	batchApplySeedIssue(t, ctx, fixture, parent, types.StatusOpen)
+	batchApplySeedIssue(t, ctx, fixture, child, types.StatusOpen)
+
+	for _, refused := range []struct {
+		name  string
+		items []publicops.ApplyItem
+		index int
+	}{
+		{"a stored child blocking on its parent", []publicops.ApplyItem{
+			batchApplyDepAdd(publicops.Ref{ID: child}, publicops.Ref{ID: parent}, publicops.DepBlocks, ""),
+		}, 0},
+		{"a child this request creates blocking on its parent", []publicops.ApplyItem{
+			batchApplyCreate("child", batchApplyIssue(minted, "the new child")),
+			batchApplyDepAdd(publicops.Ref{Key: "child"}, publicops.Ref{ID: parent}, publicops.DepBlocks, ""),
+		}, 1},
+	} {
+		_, err := fixture.BatchApplier.ApplyBatch(ctx, publicops.ApplyBatchRequest{
+			Actor:         "apply-writer",
+			ForceIDPrefix: true,
+			Items:         refused.items,
+		})
+		if !errors.Is(err, publicops.ErrValidation) {
+			t.Errorf("%s: error = %v, want ErrValidation", refused.name, err)
+			continue
+		}
+		var itemErr *publicops.ItemError
+		if !errors.As(err, &itemErr) {
+			t.Errorf("%s: error = %v, want an *ItemError naming the edge item", refused.name, err)
+			continue
+		}
+		if itemErr.Index != refused.index || itemErr.Kind != publicops.ItemDepAdd {
+			t.Errorf("%s: ItemError = %#v, want Index %d and Kind %q", refused.name, itemErr, refused.index, publicops.ItemDepAdd)
+		}
+	}
+	assertBatchApplyEdgeCount(t, ctx, fixture, child, parent, 0)
+	assertBatchApplyRowCount(t, ctx, fixture, "issues", minted, 0)
+
+	batchApplyMust(t, ctx, fixture, publicops.ApplyBatchRequest{
+		Actor: "apply-writer",
+		Items: []publicops.ApplyItem{
+			batchApplyDepAdd(publicops.Ref{ID: child}, publicops.Ref{ID: parent}, publicops.DepParentChild, ""),
+		},
+	})
+	assertBatchApplyEdgeCount(t, ctx, fixture, child, parent, 1)
+
+	_, err := fixture.BatchApplier.ApplyBatch(ctx, publicops.ApplyBatchRequest{
+		Actor: "apply-writer",
+		Items: []publicops.ApplyItem{
+			batchApplyDepAdd(publicops.Ref{ID: child}, publicops.Ref{ID: parent}, publicops.DepBlocks, ""),
+		},
+	})
+	var itemErr *publicops.ItemError
+	if !errors.Is(err, publicops.ErrValidation) || !errors.As(err, &itemErr) {
+		t.Errorf("blocks on a parent whose parent-child edge is stored: error = %v, want an *ItemError matching ErrValidation", err)
+	}
+	assertBatchApplyEdgeCount(t, ctx, fixture, child, parent, 1)
+}
+
+// RunBatchApplyAppliesTheDefaultPriority pins CreateItem.DefaultPriority: a
+// create item that asks for the default stores publicops.DefaultCreatePriority,
+// and one naming priority 0 stores P0. `bd create --graph` sends a node without
+// a priority this way, and so does an HTTP batch apply create item without one.
+// A create item asking for the default while naming a priority is
+// ErrValidation and writes nothing, as it is for Lifecycle.Create.
+func RunBatchApplyAppliesTheDefaultPriority(t *testing.T, ctx context.Context, fixture BatchApplyFixture) {
+	t.Helper()
+	unset := batchApplyMintedIssue("defaulted")
+	unset.Priority = 0
+	zero := batchApplyMintedIssue("critical")
+	zero.Priority = 0
+	result := batchApplyMust(t, ctx, fixture, publicops.ApplyBatchRequest{
+		Actor: "apply-writer",
+		Items: []publicops.ApplyItem{
+			{Kind: publicops.ItemCreate, Create: &publicops.CreateItem{Key: "d", Issue: unset, DefaultPriority: true}},
+			{Kind: publicops.ItemCreate, Create: &publicops.CreateItem{Key: "z", Issue: zero}},
+		},
+	})
+	for key, want := range map[string]int{"d": publicops.DefaultCreatePriority, "z": 0} {
+		id := result.Keys[key]
+		if id == "" {
+			t.Fatalf("key %q bound no id: %v", key, result.Keys)
+		}
+		if got := batchApplyCount(t, ctx, fixture, "SELECT priority FROM issues WHERE id = ?", []any{id}); got != want {
+			t.Errorf("stored priority of %s (%s) = %d, want %d", key, id, got, want)
+		}
+	}
+
+	conflict := fixture.IssuePrefix + "-prio-conflict"
+	clash := batchApplyIssue(conflict, conflict)
+	clash.Priority = 3
+	_, err := fixture.BatchApplier.ApplyBatch(ctx, publicops.ApplyBatchRequest{
+		Actor:         "apply-writer",
+		ForceIDPrefix: true,
+		Items: []publicops.ApplyItem{
+			{Kind: publicops.ItemCreate, Create: &publicops.CreateItem{Key: "c", Issue: clash, DefaultPriority: true}},
+		},
+	})
+	if !errors.Is(err, publicops.ErrValidation) {
+		t.Fatalf("DefaultPriority with priority 3: err = %v, want ErrValidation", err)
+	}
+	assertBatchApplyRowCount(t, ctx, fixture, "issues", conflict, 0)
 }

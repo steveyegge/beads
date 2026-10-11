@@ -221,6 +221,15 @@ const CapBatchApplyDepAddLineage = "issues.batchApply.depAddLineage"
 // (bd-jkp9v3).
 const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 
+// CapIssuesCreateDefaultPriority is the behavior capability announcing that
+// the server stores the create default priority for an ABSENT `priority`
+// member on issues.create, issues.batchCreate and issues.batchApply create
+// items, spelled exactly as httpapi's constant of the same name. The create
+// roles read it from the cached handshake before the dial: a server without it
+// reads an absent priority as P0, so against it the client sends
+// issueops.DefaultCreatePriority explicitly (pinCreateDefaultPriority).
+const CapIssuesCreateDefaultPriority = "issues.create.defaultPriority"
+
 // CapExternalDependencies is the CONDITIONAL behavior capability announcing
 // that the ready, claim and close operations of this server apply bd's
 // external-dependency policy themselves, spelled exactly as httpapi's constant
@@ -228,21 +237,19 @@ const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 //
 // It is not in behaviorCapabilities because it is not a property of the build:
 // httpapi advertises it only when the serving process composed its roles
-// through the policy layer, so httpapi.Capabilities() — the build-level list
-// the parity gate compares against — never contains it.
+// through the policy layer (httpapi.Config.ExternalDependencyPolicy, which
+// `bd serve` sets from its actual composition), so httpapi.Capabilities() —
+// the build-level list the parity gate compares against — never contains it.
 //
-// UNCONSUMED since S3 reconciliation (2026-10): THIS token is unread by this
-// client, not because OSS lacks external-dependency policy enforcement — the
-// externaldeps decorator (internal/storage/externaldeps) exists in OSS and is
-// wired unconditionally into the local storage chain (cmd/bd/storage_chain.go),
-// so a local backend already applies the policy itself. What this http
-// client specifically lacks is a client-side COMPOSITION of that same
-// decorator around a storage.ExternalDependencyQueryStore-backed remote
-// store, because a remote server advertising this capability applies the
-// policy on its own side before answering — there is nothing left for the
-// client to decorate. The token stays declared, because the server-side
-// capability and its wire spelling are real and S10 schedules the client half
-// that reads it.
+// The externaldeps decorator (internal/storage/externaldeps) wraps the http
+// store the same as any local backend (cmd/bd/storage_chain.go), and consults
+// storage.ExternalDependencyPolicyProber — which httpclient.Store implements
+// by checking for this token in the handshake. Against a server that
+// advertises it, every policy-bearing role is the http store's own, passed
+// through untouched (claim-next stays the server's atomic operation). Only a
+// server that does NOT advertise it — an older bd serve, or another server —
+// gets client-side enforcement: the policy is never silently skipped merely
+// because the store is remote.
 const CapExternalDependencies = "policy.external_dependencies"
 
 // ClientWireRevision is the wire shape this client was built to speak and
@@ -361,7 +368,7 @@ func (e *WireRevisionSkewError) Unwrap() error { return ErrWireRevisionSkew }
 var behaviorCapabilities = []string{
 	CapProjectEnforce, CapBatchApplyLarge, CapListSort, CapCountScope,
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
-	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate,
+	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

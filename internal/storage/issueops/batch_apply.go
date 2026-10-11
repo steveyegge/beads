@@ -238,9 +238,10 @@ func (r *applyBatchRun) applyItem(ctx context.Context, tx *sql.Tx, index int) er
 // cap. Revisit it with a measurement, not with a copy of ExecuteCreateBatch.
 func (r *applyBatchRun) applyCreate(ctx context.Context, tx *sql.Tx, index int, item *publicops.CreateItem) error {
 	created, tables, err := ExecuteCreate(ctx, tx, publicops.CreateRequest{
-		Actor:         r.plan.Actor,
-		Issue:         item.Issue,
-		ForceIDPrefix: r.plan.ForceIDPrefix,
+		Actor:           r.plan.Actor,
+		Issue:           item.Issue,
+		ForceIDPrefix:   r.plan.ForceIDPrefix,
+		DefaultPriority: item.DefaultPriority,
 	})
 	if err != nil {
 		return &publicops.ItemError{Index: index, Kind: publicops.ItemCreate, Key: item.Key, Err: err}
@@ -351,6 +352,12 @@ func (r *applyBatchRun) applyDepAdd(ctx context.Context, tx *sql.Tx, index int, 
 		// Two different refs can still name one row — a key and the id it was
 		// bound to. The planner catches only the syntactically identical pair.
 		return itemErr(fmt.Errorf("%w: %s", publicops.ErrSelfDependency, source))
+	}
+	// The dotted-id hierarchy rule DependencyEditor applies, on the RESOLVED
+	// ids: a key can name a row whose minted id is a dotted child, so the planner
+	// cannot decide this before the creates ran.
+	if err := publicops.CheckDottedChildDependency(source, target, item.Type); err != nil {
+		return itemErr(err)
 	}
 	// THE CROSS-PLANE REFUSAL IS ABOUT ROWS THIS REQUEST CREATED, and only
 	// those. The two planes hold their edges in different tables, so an edge

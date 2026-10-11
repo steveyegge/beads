@@ -144,10 +144,11 @@ func TestApplyBatchForwardsEveryLevelOfTheDocumentedBody(t *testing.T) {
 	if create.Issue.Priority != 1 {
 		t.Errorf("create.priority = %d, want 1", create.Issue.Priority)
 	}
-	// created_by is stamped from the trimmed actor, createIssue's rule: the
-	// role copies the issue's and never stamps one itself.
-	if create.Issue.CreatedBy != "alice" {
-		t.Errorf("create.created_by = %q, want the actor %q", create.Issue.CreatedBy, "alice")
+	// created_by is not the handler's to stamp: the item reaches the role
+	// without one, and the role defaults it to the request's actor
+	// (backend/conformance's batch-apply contract pins that half).
+	if create.Issue.CreatedBy != "" {
+		t.Errorf("create.created_by = %q, want it left to the role", create.Issue.CreatedBy)
 	}
 	if create.Issue.EstimatedMinutes == nil || *create.Issue.EstimatedMinutes != 30 {
 		t.Errorf("create.estimated_minutes = %v, want 30", create.Issue.EstimatedMinutes)
@@ -888,6 +889,19 @@ func TestApplyBatchMapsTheRolesTypedRefusalsOntoTheDocumentedCodes(t *testing.T)
 			err:        itemErr(0, issueops.ItemUpdate, "", "bd-9", storage.ErrNotFound),
 			wantStatus: http.StatusNotFound,
 			wantCode:   "not_found",
+		},
+		{
+			// The dotted-id hierarchy rule is request validation (it unwraps to
+			// ErrValidation), never the hierarchy CONFLICT's dependency_cycle:
+			// it is decided from the two resolved ids, ahead of every check that
+			// reads the stored graph, so even a child whose parent-child edge IS
+			// stored gets this 400, with no hierarchy members to describe.
+			name: "a dotted child gated on its own parent",
+			err: itemErr(0, issueops.ItemDepAdd, "", "bd-1.1",
+				&issueops.DottedChildDependencyError{IssueID: "bd-1.1", DependsOnID: "bd-1", Type: issueops.DepBlocks}),
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_argument",
+			wantParam:  "items",
 		},
 		{
 			name:       "the workspace's own validation",

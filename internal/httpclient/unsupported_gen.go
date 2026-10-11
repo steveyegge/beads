@@ -227,11 +227,6 @@ func (unsupportedDoltStorage) ForcePush(_ context.Context) (err error) {
 	return
 }
 
-func (unsupportedDoltStorage) GetAllDependencyRecords(_ context.Context) (_ map[string][]*types.Dependency, err error) {
-	err = errUnsupported("GetAllDependencyRecords")
-	return
-}
-
 func (unsupportedDoltStorage) GetAllEventsSince(_ context.Context, _ time.Time) (_ []*types.Event, err error) {
 	err = errUnsupported("GetAllEventsSince")
 	return
@@ -642,11 +637,6 @@ func (unsupportedDoltStorage) RunInTransaction(_ context.Context, _ string, _ fu
 	return
 }
 
-func (unsupportedDoltStorage) SearchIssueIDs(_ context.Context, _ string, _ types.IssueFilter) (_ []string, err error) {
-	err = errUnsupported("SearchIssueIDs")
-	return
-}
-
 func (unsupportedDoltStorage) SearchIssueSummaries(_ context.Context, _ string, _ types.IssueFilter) (_ []*types.IssueSummary, err error) {
 	err = errUnsupported("SearchIssueSummaries")
 	return
@@ -742,4 +732,4 @@ func (unsupportedDoltStorage) VersionReconciler() (_ issueops.VersionReconciler,
 	return
 }
 
-// NOTE: partial shell (145 of 200 methods generated; 55 left to this package's hand-written set).
+// NOTE: partial shell (143 of 200 methods generated; 57 left to this package's hand-written set).

@@ -218,9 +218,10 @@ func (r *uowApplyRun) applyCreate(ctx context.Context, index int, item *publicop
 		return err
 	}
 	prepared, err := storageissueops.PreparePublicCreateRequest(publicops.CreateRequest{
-		Actor:         r.plan.Actor,
-		Issue:         item.Issue,
-		ForceIDPrefix: r.plan.ForceIDPrefix,
+		Actor:           r.plan.Actor,
+		Issue:           item.Issue,
+		ForceIDPrefix:   r.plan.ForceIDPrefix,
+		DefaultPriority: item.DefaultPriority,
 	}, storageissueops.PublicCreateContext{
 		IssuePrefix:     createContext.IssuePrefix,
 		AllowedPrefixes: createContext.AllowedPrefixes,
@@ -460,6 +461,9 @@ func (r *uowApplyRun) applyDepAdd(ctx context.Context, index int, item *publicop
 	}
 	if source == target {
 		return itemErr(fmt.Errorf("%w: %s", publicops.ErrSelfDependency, source))
+	}
+	if err := publicops.CheckDottedChildDependency(source, target, item.Type); err != nil {
+		return itemErr(err)
 	}
 	sourceWisp, sourceMine := r.planes[source]
 	targetWisp, targetMine := r.planes[target]
