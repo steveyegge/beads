@@ -53,7 +53,7 @@ proxied-server mode use. Embedded mode is unaffected either way: it links the
 Dolt engine into `bd` at the version in `go.mod`, currently the commit tagged
 v2.3.5 upstream, no matter which `dolt` CLI is on your PATH. **The two must
 move together** — a database written by one engine version and read by an
-older CLI (or vice versa) can fail with `table has unknown fields`, even
+older CLI can fail with `table has unknown fields`, even
 though both are "Dolt"; see the compatibility note in beads#6811.
 
 Dolt 2.3.0 (released 2026-08-13) regressed `CALL DOLT_RESET('--hard')`. A few
