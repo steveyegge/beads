@@ -17,25 +17,25 @@ func setupTestRepo(t *testing.T) (repoPath string, cleanup func()) {
 	if err := os.MkdirAll(repoPath, 0750); err != nil {
 		t.Fatalf("Failed to create test repo directory: %v", err)
 	}
-	cmd := exec.Command("git", "init")
+	cmd := gitCommand("init")
 	cmd.Dir = repoPath
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to init git repo: %v\nOutput: %s", err, string(output))
 	}
-	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd = gitCommand("config", "user.email", "test@example.com")
 	cmd.Dir = repoPath
 	_ = cmd.Run()
-	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd = gitCommand("config", "user.name", "Test User")
 	cmd.Dir = repoPath
 	_ = cmd.Run()
 	beadsDir := filepath.Join(repoPath, ".beads")
 	_ = os.MkdirAll(beadsDir, 0750)
 	_ = os.WriteFile(filepath.Join(beadsDir, "test.jsonl"), []byte("test data\n"), 0644)
 	_ = os.WriteFile(filepath.Join(repoPath, "other.txt"), []byte("other data\n"), 0644)
-	cmd = exec.Command("git", "add", ".")
+	cmd = gitCommand("add", ".")
 	cmd.Dir = repoPath
 	_ = cmd.Run()
-	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd = gitCommand("commit", "-m", "Initial commit")
 	cmd.Dir = repoPath
 	_, _ = cmd.CombinedOutput()
 	cleanup = func() {}
@@ -68,6 +68,7 @@ func TestPinNoRepositoryUnderForTestingSurvivesResetCaches(t *testing.T) {
 			t.Fatalf("restore working directory: %v", err)
 		}
 		pinnedRootForTesting = ""
+		pinnedRootRawForTesting = ""
 		ResetCaches()
 	})
 
@@ -100,6 +101,67 @@ func TestPinNoRepositoryUnderForTestingSurvivesResetCaches(t *testing.T) {
 	ResetCaches()
 	if got := GetRepoRoot(); got != "" {
 		t.Fatalf("GetRepoRoot() = %q after ResetCaches back under the pinned root, want \"\" (the pin must survive ResetCaches)", got)
+	}
+}
+
+// TestPinNoRepositoryUnderForTestingMatchesThroughSymlinks reproduces, on any
+// platform with symlinks, the macOS failure of the pin: there t.TempDir() is
+// /var/folders/... while getcwd(2) reports /private/var/folders/... (/var is
+// a symlink), so pinning the unresolved path and comparing it to os.Getwd()
+// never matched. Pinning through a symlink must still fence the real
+// directory, and pinning the real directory must still fence a working
+// directory reported through the symlink.
+func TestPinNoRepositoryUnderForTestingMatchesThroughSymlinks(t *testing.T) {
+	realRepo, _ := setupTestRepo(t)
+	realRepo, err := filepath.EvalSymlinks(realRepo)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "linked-repo")
+	if err := os.Symlink(realRepo, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	subdir := filepath.Join(realRepo, "sub")
+	if err := os.MkdirAll(subdir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(origWD); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+		pinnedRootForTesting = ""
+		pinnedRootRawForTesting = ""
+		ResetCaches()
+	})
+
+	for _, tc := range []struct{ name, pin, wd string }{
+		{"pin via symlink, cwd real", link, realRepo},
+		{"pin via symlink, cwd real subdir", link, subdir},
+		{"pin real, cwd via symlink", realRepo, filepath.Join(link, "sub")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Chdir(tc.wd); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+			PinNoRepositoryUnderForTesting(tc.pin)
+			if !underPinnedRootForTesting(tc.wd) {
+				t.Errorf("underPinnedRootForTesting(%q) = false with pin %q (stored %q), want true", tc.wd, tc.pin, pinnedRootForTesting)
+			}
+			if got := GetRepoRoot(); got != "" {
+				t.Errorf("GetRepoRoot() = %q under pinned root %q, want \"\"", got, tc.pin)
+			}
+		})
+	}
+
+	// A sibling that merely shares the string prefix is not under the pin.
+	PinNoRepositoryUnderForTesting(realRepo)
+	if underPinnedRootForTesting(realRepo + "-sibling") {
+		t.Errorf("underPinnedRootForTesting(%q) = true, want false (prefix-only sibling)", realRepo+"-sibling")
 	}
 }
 
@@ -158,7 +220,7 @@ func TestGetGitHooksDirTildeExpansion(t *testing.T) {
 
 			ResetCaches()
 
-			cmd := exec.Command("git", "config", "core.hooksPath", tt.hooksPath)
+			cmd := gitCommand("config", "core.hooksPath", tt.hooksPath)
 			cmd.Dir = subRepoPath
 			if err := cmd.Run(); err != nil {
 				t.Skipf("git config rejected core.hooksPath %q: %v", tt.hooksPath, err)
@@ -217,7 +279,7 @@ func TestResolveHooksContext(t *testing.T) {
 	cleanEnv := os.Environ()
 	git := func(dir string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := gitCommand(args...)
 		cmd.Dir, cmd.Env = dir, cleanEnv
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -437,4 +499,15 @@ func TestResolveHooksContext(t *testing.T) {
 		}
 		check(t, link, cleanEnv, selected, filepath.Join(canonical(selected), ".git", "hooks"))
 	})
+}
+
+// noAutoMaintenance keeps a fixture's git commit from spawning the detached
+// "git maintenance run --auto" child whose worktree-prune races the fixture's
+// next "git worktree add" (gastownhall/beads#7314, #7349). Flags ride the
+// command line, never env config: the routing-key scrub drops env config.
+var noAutoMaintenance = []string{"-c", "maintenance.auto=false", "-c", "gc.auto=0"}
+
+// gitCommand builds a git command for a fixture with noAutoMaintenance applied.
+func gitCommand(args ...string) *exec.Cmd {
+	return exec.Command("git", append(append([]string{}, noAutoMaintenance...), args...)...)
 }
