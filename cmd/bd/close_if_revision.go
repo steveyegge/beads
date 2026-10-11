@@ -29,6 +29,11 @@ import (
 func runCloseDirectIfRevision(ctx context.Context, id, reason string, force bool, session string, expectedVersion int64) error {
 	result, err := resolveAndGetIssueForMutation(ctx, store, id)
 	if err != nil {
+		// A concurrent `bd delete` that commits before this resolution is
+		// the same lost race as one that commits inside ops.Close below.
+		if reported, ok := reportIfRevisionTargetGone("closing", id, err, &expectedVersion); ok {
+			return reported
+		}
 		fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
 		return &exitError{Code: 1}
 	}
@@ -50,7 +55,7 @@ func runCloseDirectIfRevision(ctx context.Context, id, reason string, force bool
 
 	preCloseStatus := string(result.Issue.Status)
 	closeResult, closeErr := ops.Close(opsCtx, issueops.CloseRequest{
-		Actor:           actor,
+		Actor:           currentActor(),
 		IssueID:         result.ResolvedID,
 		Reason:          reason,
 		Session:         session,
@@ -79,11 +84,11 @@ func runCloseDirectIfRevision(ctx context.Context, id, reason string, force bool
 	// entirely (mc-zndi7.75) and would otherwise leave a molecule's root
 	// stranded open forever.
 	mutatedIDs := []string{result.ResolvedID}
-	if molID := autoCloseCompletedMolecule(ctx, result.Store, result.ResolvedID, actor, session); molID != "" {
+	if molID := autoCloseCompletedMolecule(ctx, result.Store, result.ResolvedID, currentActor(), session); molID != "" {
 		mutatedIDs = append(mutatedIDs, molID)
 	}
 
-	if err := commitPendingIfEmbedded(ctx, result.Store, actor, doltAutoCommitParams{
+	if err := commitPendingIfEmbedded(ctx, result.Store, currentActor(), doltAutoCommitParams{
 		Command:  "close",
 		IssueIDs: mutatedIDs,
 	}); err != nil {
@@ -116,7 +121,7 @@ func runCloseProxiedIfRevision(ctx context.Context, id, reason string, force boo
 	}
 
 	closeResult, closeErr := ops.Close(ctx, issueops.CloseRequest{
-		Actor:           actor,
+		Actor:           currentActor(),
 		IssueID:         id,
 		Reason:          reason,
 		Session:         session,
@@ -165,7 +170,7 @@ func runCloseIfRevisionProxiedPostClose(ctx context.Context, id, session string)
 	}
 	autoClosedMol, err := uow.RunTxResult(ctx, uowProvider, func(ctx context.Context, uw uow.UnitOfWork) (*types.Issue, string, error) {
 		var warnings []string
-		mol := autoCloseProxiedCompletedMolecule(ctx, uw, id, actor, session, &warnings)
+		mol := autoCloseProxiedCompletedMolecule(ctx, uw, id, currentActor(), session, &warnings)
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
@@ -209,7 +214,7 @@ func reportClosedIfRevisionResult(id, reason, preCloseStatus string, closeResult
 		closedIssue.Dependencies = nil
 	}
 	if closeResult.Changed {
-		audit.LogFieldChange(id, "status", preCloseStatus, "closed", actor, reason)
+		audit.LogFieldChange(id, "status", preCloseStatus, "closed", currentActor(), reason)
 	}
 	if jsonOutput {
 		if closedIssue != nil {
