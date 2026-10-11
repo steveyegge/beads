@@ -193,7 +193,7 @@ func claimIssueInTx(ctx context.Context, tx DBTX, id string, actor string, mintV
 				// This copy deliberately omits the parseable " by <assignee>"
 				// tail, so ParseClaimConflict recovers the holder from the
 				// typed field rather than the prose (bd-at6rc).
-				refusal = fmt.Errorf("%w: already assigned to %q — coordinate with the holder; if their claim is abandoned (crashed agent), lease expiry will surface it for bd reclaim", storage.ErrAlreadyClaimed, assignee)
+				refusal = storage.ClaimHolderSteeringRefusal(assignee, HeartbeatEnabled(ctx))
 			default:
 				refusal = fmt.Errorf("%w%s%s", storage.ErrAlreadyClaimed, storage.ClaimedByFragment, assignee)
 			}

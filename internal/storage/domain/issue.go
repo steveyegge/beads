@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dberrors"
@@ -689,7 +690,12 @@ func (u *issueUseCaseImpl) claim(ctx context.Context, id, actor string, useWisp 
 			// it only recovers claims whose lease has already expired. The
 			// parseable " by <assignee>" tail is deliberately absent, so the
 			// holder is recovered from the typed field instead.
-			refusal = fmt.Errorf("%w: already assigned to %q — coordinate with the holder; if their claim is abandoned (crashed agent), lease expiry will surface it for bd reclaim", storage.ErrAlreadyClaimed, row.CurrentAssignee)
+			// This stack resolves the gate from CONFIGURATION, not a ctx
+			// override: issueops (which owns the per-call override key) imports
+			// this package, so the key is unreachable here - and a proxied
+			// server resolves the flag from config anyway. The prose itself is
+			// the shared composer's, so it cannot drift from the issueops twin.
+			refusal = storage.ClaimHolderSteeringRefusal(row.CurrentAssignee, config.HeartbeatEnabled())
 		default:
 			refusal = fmt.Errorf("%w%s%s", storage.ErrAlreadyClaimed, storage.ClaimedByFragment, row.CurrentAssignee)
 		}
