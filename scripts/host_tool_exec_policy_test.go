@@ -900,9 +900,12 @@ func build() {
 		// gated), even when every real invocation happens to be gated.
 		// This under-approximates safety (it would require an allowlist
 		// entry it does not actually need), not over-approximates it, so
-		// it is a usability gap, not a soundness hole; left as a known,
-		// documented limitation rather than implementing points-to
-		// analysis for a same-package helper value.
+		// it is a usability gap, not a soundness hole IN ISOLATION -- but
+		// see the next fixture (review M22): mixed with even one call site
+		// findCallSitesOf DOES see and that one happens to be gated, the
+		// invisible function-value call site's ungated-ness is silently
+		// lost, and the combined result flips to "gated". That combined
+		// case is a soundness hole, not merely a usability gap.
 		_, helperFile, _ := parse(t, `package p
 
 import "os/exec"
@@ -926,6 +929,51 @@ func caller() {
 		if gated || n != 0 {
 			t.Fatalf("helperIsGatedByAllCallers = (%v, %d), want (false, 0): pinning that a "+
 				"function-value call site is invisible to this scan (documented limitation)", gated, n)
+		}
+	})
+
+	t.Run("a helper with one gated direct call and one ungated function-value call is wrongly reported gated (review M22, pinned false-safe)", func(t *testing.T) {
+		// This is the soundness hole the previous fixture's doc comment
+		// understated as "not a soundness hole": findCallSitesOf only ever
+		// sees callerDirect's bare `helper()` call (gated=true). It cannot
+		// see callerIndirect's `fn := helper; fn()` call at all, so that
+		// call site -- reached with NO gate -- never lowers the combined
+		// verdict. helperIsGatedByAllCallers returns gated=true from a
+		// single visible, gated call site, even though helper's exec also
+		// runs, unconditionally, through callerIndirect. A caller of this
+		// helper that relies on helperIsGatedByAllCallers("helper") to
+		// decide the exec needs no allowlist entry is told it is safe when
+		// it is not. Pinned as a known, documented limitation (fixing it
+		// for real needs points-to analysis for a same-package helper
+		// value), not asserted to be correct.
+		_, helperFile, _ := parse(t, `package p
+
+import "os/exec"
+
+func helper() {
+	exec.Command("go", "build")
+}
+`)
+		_, callerFile, _ := parse(t, `package p
+
+func callerDirect() {
+	if bazeltest.IsBazel() {
+		return
+	}
+	helper()
+}
+
+func callerIndirect() {
+	fn := helper
+	fn()
+}
+`)
+		files := map[string]*ast.File{"helper.go": helperFile, "caller.go": callerFile}
+		gated, n := helperIsGatedByAllCallers(files, "helper")
+		if !gated || n != 1 {
+			t.Fatalf("helperIsGatedByAllCallers = (%v, %d), want (true, 1): pinning the false-safe "+
+				"(review M22) -- callerIndirect's ungated function-value call site is invisible, "+
+				"so the one visible, gated call site wins even though the exec is not always gated", gated, n)
 		}
 	})
 
