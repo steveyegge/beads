@@ -193,6 +193,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Embedded mode now runs Dolt 2.4.1 (`dolthub/driver` v2.4.1), so a
+  database `bd init` creates can no longer be opened by Dolt older than
+  2.4.** Dolt 2.4 stores a descending index column as descending, where
+  earlier releases silently stored it ascending, and migration 0010
+  declares `compaction_snapshots`' `idx_comp_snap_issue` with
+  `created_at DESC`. Dolt older than 2.4 answers `table has unknown fields`
+  for a database holding such a table: writes to any table and
+  `information_schema` queries fail, so an earlier `bd` release, or a `bd`
+  built against an older driver, cannot open the workspace. This applies to
+  every database created in embedded mode from this release on, and to any
+  database whose schema a `dolt sql-server` 2.4 or newer created, whatever
+  the `bd` version. A database created earlier keeps its ascending index
+  and stays readable and writable by older and newer Dolt alike, even after
+  this release writes to it. Every `bd` that touches a new database must be
+  this release or later, and every `dolt` CLI or `dolt sql-server` 2.4.1 or
+  later. Managed proxied-server mode now recommends dolt 2.4.1 or newer and
+  warns below it; it is still a warning, not a refusal. Dolt 2.4 also
+  reports a stricter default `sql_mode`, adding `NO_ZERO_IN_DATE`,
+  `NO_ZERO_DATE` and `ERROR_FOR_DIVISION_BY_ZERO`, in embedded mode and on
+  Dolt 2.4 servers.
 - **`created_by` defaults to the actor in the library, for every create
   shape and every backend.** `PreparePublicCreateRequest`, which
   `Lifecycle.Create`, `BatchCreator` items and batch-apply create items all
