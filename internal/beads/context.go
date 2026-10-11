@@ -314,13 +314,23 @@ func isExternalBeadsDir(beadsDir string) (bool, error) {
 
 // getGitCommonDirForPath returns the shared git directory for a path.
 // For worktrees, this returns the shared git directory (common to all worktrees).
+//
+// Every startup that builds a RepoContext asks this about the beads
+// directory, so the answer comes from git.CommonDirInProcess when it can,
+// with `git -C path rev-parse --git-common-dir` as the fallback.
 func getGitCommonDirForPath(path string) (string, error) {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--git-common-dir")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get git common dir for %s: %w", path, err)
+	result, isRepo, ok := git.CommonDirInProcess(path)
+	switch {
+	case ok && !isRepo:
+		return "", fmt.Errorf("failed to get git common dir for %s: not a git repository", path)
+	case !ok:
+		cmd := exec.Command("git", "-C", path, "rev-parse", "--git-common-dir")
+		output, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("failed to get git common dir for %s: %w", path, err)
+		}
+		result = strings.TrimSpace(string(output))
 	}
-	result := strings.TrimSpace(string(output))
 
 	if !filepath.IsAbs(result) {
 		absPath, err := filepath.Abs(path)
@@ -346,6 +356,22 @@ func repoRootForBeadsDir(beadsDir string) string {
 		return repoRoot
 	}
 	return filepath.Dir(beadsDir)
+}
+
+// RepoRootFor returns the git repository root containing dir, or "" when dir is
+// not inside a git repository (or when dir is empty). An empty result therefore
+// answers two questions at once: callers that need a path-scoped repo root get
+// it, and callers that only need to know whether a path is a repository at all
+// can test for "".
+func RepoRootFor(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	repoRoot, err := getRepoRootFromPath(dir)
+	if err != nil {
+		return ""
+	}
+	return repoRoot
 }
 
 // getRepoRootFromPath returns the git repository root for a given path.

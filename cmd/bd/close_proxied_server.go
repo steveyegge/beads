@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	storeissueops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -91,6 +92,27 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 
 	in := gatherCloseProxiedInput(cmd)
 
+	// A8 (beads#4682): a single-id compare-and-swap close bypasses the batch
+	// below entirely -- see close_if_revision.go for why BatchCloseItem
+	// cannot carry this guard.
+	ifRevision, err := parseIfRevisionFlag(cmd)
+	if err != nil {
+		return err
+	}
+	if err := requireSingleIfRevisionID(ifRevision, args); err != nil {
+		return err
+	}
+	if ifRevision != nil {
+		// The bypass below never looks at these three post-close flags, so
+		// honoring them would mean silently dropping what the caller asked
+		// for. Refuse instead of guessing, the same way --continue and
+		// --suggest-next already refuse a multi-id batch below.
+		if in.continueOn || in.suggestNext || in.claimNext {
+			return HandleErrorRespectJSON("--if-revision does not support --continue, --suggest-next, or --claim-next")
+		}
+		return runCloseProxiedIfRevision(ctx, args[0], reasonForCloseIndex(reasons, 0), in.force, in.session, *ifRevision)
+	}
+
 	if in.continueOn && len(args) > 1 {
 		return HandleErrorRespectJSON("--continue only works when closing a single issue")
 	}
@@ -119,7 +141,7 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 			return HandleErrorRespectJSON("%v", cerr)
 		}
 		result, err = closer.CloseBatch(ctx, issueops.CloseBatchRequest{
-			Actor:     actor,
+			Actor:     currentActor(),
 			Items:     pre.items,
 			Session:   in.session,
 			Force:     in.force,
@@ -145,7 +167,7 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 
 	for i, o := range outcomes {
 		if o.closed {
-			audit.LogFieldChange(o.id, "status", o.auditOld, "closed", actor, o.auditReason)
+			audit.LogFieldChange(o.id, "status", o.auditOld, "closed", currentActor(), o.auditReason)
 		}
 		if !in.jsonOut {
 			fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), formatFeedbackID(o.after.ID, o.after.Title), closeReasons[i])
@@ -273,13 +295,12 @@ func closeProxiedCheckOne(ctx context.Context, uw uow.UnitOfWork, id string, in 
 		return fmt.Sprintf("Error resolving %s: %v", id, err), nil
 	}
 
-	// Mirrors the ordering in closeDirectCheckOne (ga-ktn9pe.4.8): a row already at
-	// literal StatusClosed has no state change for close validation to guard, so
-	// the re-close skips it and reaches the engine as the idempotent no-op it has
-	// always been. Both close paths must agree here — diverging is the defect
-	// class #5217 closed.
+	// The close guards' own rule, ahead of gate satisfaction and under the same
+	// already-closed skip as closeDirectCheckOne (ga-ktn9pe.4.8); both close
+	// paths must agree here (#5217). The role re-applies it inside the close
+	// transaction, which stays the authority.
 	if current.Status != types.StatusClosed {
-		if err := validateIssueClosable(id, current, actor, in.force); err != nil {
+		if err := storeissueops.CheckClosable(id, current, currentActor(), in.force); err != nil {
 			return err.Error(), nil
 		}
 	}
@@ -293,7 +314,7 @@ func closeProxiedCheckOne(ctx context.Context, uw uow.UnitOfWork, id string, in 
 	// unprefixed, so both routes now spell one refusal one way.
 
 	if !in.force {
-		if err := checkGateSatisfaction(current); err != nil {
+		if err := checkGateSatisfaction(current, nil); err != nil {
 			return fmt.Sprintf("cannot close %s: %s", id, err), nil
 		}
 	}
@@ -398,6 +419,9 @@ func closeProxiedFailures(pre *closeProxiedPreflight, args []string) []closeIDFa
 // not noise, it is the only thing that says where an unexpected failure came
 // from, and there is no engine sentence to converge on.
 func closeProxiedTypedRefusal(err error) string {
+	if guard, ok := closeGuardRefusal(err); ok {
+		return guard
+	}
 	for _, sentinel := range []error{storage.ErrCloseBlocked, storage.ErrCloseOpenChildren} {
 		if !errors.Is(err, sentinel) {
 			continue
@@ -424,6 +448,9 @@ func closeProxiedTypedRefusal(err error) string {
 // reading the message, which is the point of the outcome carrying a typed
 // error at all.
 func closeProxiedRefusal(id string, err error) string {
+	if guard, ok := closeGuardRefusal(err); ok {
+		return guard
+	}
 	switch {
 	case errors.Is(err, storage.ErrCloseBlocked):
 		return fmt.Sprintf("%v (use --force to override)", err)
@@ -462,7 +489,7 @@ func closeProxiedRunPostClose(ctx context.Context, args []string, in closeProxie
 		var wrote []string
 
 		for _, o := range outcomes {
-			mol := autoCloseProxiedCompletedMolecule(ctx, uw, o.id, actor, in.session, &out.warnings)
+			mol := autoCloseProxiedCompletedMolecule(ctx, uw, o.id, currentActor(), in.session, &out.warnings)
 			if mol != nil {
 				out.autoClosedMol = mol
 				wrote = append(wrote, "auto-close "+mol.ID)
@@ -508,7 +535,7 @@ func closeProxiedSuggestNext(ctx context.Context, uw uow.UnitOfWork, closedID st
 }
 
 func closeProxiedContinue(ctx context.Context, uw uow.UnitOfWork, closedID string, autoClaim bool) (*ContinueResult, string) {
-	result, err := AdvanceToNextStep(ctx, newUOWMolWriter(uw), closedID, autoClaim, actor)
+	result, err := AdvanceToNextStep(ctx, newUOWMolWriter(uw), closedID, autoClaim, currentActor())
 	if err != nil {
 		return nil, fmt.Sprintf("could not advance to next step: %v", err)
 	}
