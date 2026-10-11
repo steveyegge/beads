@@ -41,7 +41,7 @@ Each lane, as bazel.yml runs it (add your `--config=fork-cache` or
 | Integration (`bazel-integration`) | `bazel test //... --config=integration` | The `integration`-tagged build. Runs with the read-only cache too. |
 | Dolt server (`bazel-doltserver`) | `bazel test //... --config=doltserver` | Starts its own `dolt sql-server` from the pinned binary; no docker. |
 | cmd/bd Dolt server (`bazel-cmd-dolt`) | `bazel test //cmd/bd:bd_dolt_server_test --config=doltserver-cmd` | 32 shards of the integration-tagged cmd/bd suite (the slowest tests pinned to 16 of them). |
-| Embedded Dolt (`bazel-embedded`) | `bazel test //... --config=embedded` | Remote execution only in CI; locally it is slow. |
+| Embedded Dolt (`bazel-embedded`) | `bazel test //... --config=embedded` | Remote execution only in CI; locally it is slow. Also runs the served http tiers with `BEADS_HTTP_TEST_REQUIRED=1`: `//backend/http:http_served_test`, `//internal/httpclient:httpclient_served_test` and the command corpus `//backend/http/corpus:corpus_served_test`. |
 | Proxied server (`bazel-proxied`) | `bazel test //... --config=doltserver-proxied` | Remote execution only: 34 shards, each with a Dolt server. |
 | Server-Dolt storage (`bazel-server-storage`) | `bazel test //... --config=doltserver-integration` | Remote execution only. |
 | Docs | `make check-docs` | `//test/docsync:docsync_test` and `//scripts/repochecks:doc_freshness_test` in the test lane's configuration, then `scripts/check-doc-flags.sh` against the pinned release. |
