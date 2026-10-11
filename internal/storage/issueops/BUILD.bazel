@@ -6,6 +6,7 @@ go_library(
         "aggregate.go",
         "as_of.go",
         "batch_apply.go",
+        "batchget.go",
         "batching.go",
         "blocked.go",
         "blocked_consistency.go",
@@ -21,6 +22,7 @@ go_library(
         "claim_next.go",
         "close.go",
         "close_batch.go",
+        "close_guard.go",
         "commenter.go",
         "comments.go",
         "commit_pending.go",
@@ -30,6 +32,9 @@ go_library(
         "count.go",
         "create.go",
         "create_batch.go",
+        "create_batch_cache.go",
+        "create_dep_batch.go",
+        "create_fastpath_testhook.go",
         "create_only_guard.go",
         "cycle_report.go",
         "cycles.go",
@@ -62,6 +67,7 @@ go_library(
         "journal_prune.go",
         "labels.go",
         "lease.go",
+        "lease_reclaimer.go",
         "metadata.go",
         "metadata_cas.go",
         "molecule.go",
@@ -125,14 +131,18 @@ go_test(
         "aggregate_authorize_transfer_test.go",
         "as_of_test.go",
         "batch_apply_test.go",
+        "batchget_test.go",
         "batching_test.go",
         "blocked_consistency_test.go",
         "blocked_recheck_test.go",
         "blocked_state_result_test.go",
         "blocked_state_template_test.go",
+        "close_guard_test.go",
         "close_test.go",
         "config_helpers_test.go",
+        "config_prefix_test.go",
         "counts_missing_table_test.go",
+        "create_batch_cache_test.go",
         "create_only_errors_test.go",
         "create_only_guard_test.go",
         "create_test.go",
@@ -157,6 +167,7 @@ go_test(
         "journal_truncation_test.go",
         "journal_vocabulary_test.go",
         "label_rename_merged_count_test.go",
+        "lease_reclaimer_test.go",
         "lease_replica_test.go",
         "metadata_test.go",
         "prepare_timestamps_utc_test.go",
@@ -200,6 +211,7 @@ go_test(
         "//internal/storage/depid",
         "//internal/storage/domain",
         "//internal/storage/journalscan",
+        "//internal/storage/rowid",
         "//internal/storage/sqlbuild",
         "//internal/types",
         "//internal/validation",
@@ -222,3 +234,64 @@ filegroup(
 )
 
 # --- end go_srcs ---
+
+# --- begin repo_files (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
+
+filegroup(
+    name = "repo_doc_files",
+    srcs = glob(
+        [
+            "**/*.md",
+            "**/*.mdx",
+        ],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_srcs",
+    srcs = glob(
+        ["**/*.go"],
+        allow_empty = True,
+        exclude = [
+            "**/*_test.go",
+            "**/node_modules/**",
+        ],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_test_srcs",
+    srcs = glob(
+        ["**/*_test.go"],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_other_files",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "**/*.db",
+            "**/*.exe",
+            "**/*.go",
+            "**/*.md",
+            "**/*.mdx",
+            "**/*.out",
+            "**/*.prof",
+            "**/*.pyc",
+            "**/*.test",
+            "**/__pycache__/**",
+            "**/node_modules/**",
+        ],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+# --- end repo_files ---
