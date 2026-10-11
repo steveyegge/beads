@@ -125,26 +125,15 @@ Force: Delete and orphan dependents
 		// one place a convenience is not.
 		routedResult, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
+			// mc-zndi7.81: this pre-flight existence check runs before
+			// deleter.Delete() and the per-id lock fence #7244 added, so a
+			// same-token --if-revision racer that loses the fence sees the
+			// row disappear right here instead of inside the guarded write
+			// below — see reportIfRevisionTargetGone.
+			if reported, ok := reportIfRevisionTargetGone("deleting", issueID, err, ifRevision); ok {
+				return reported
+			}
 			if isNotFoundErr(err) {
-				// mc-zndi7.81: this pre-flight existence check runs before
-				// deleter.Delete() and the per-id lock fence #7244 added, so a
-				// same-token --if-revision racer that loses the fence sees the
-				// row disappear right here instead of inside the guarded
-				// write below. That is the same outcome classifyIfRevisionFailure
-				// already gives storage.ErrNotFound (mc-zndi7.73's comment on
-				// that case anticipated exactly this gap): the exact revision
-				// the caller named is gone, so report precondition_failed/
-				// ExitGuardMismatch like every other loser, not an unclassified
-				// exit 1. Passing the literal sentinel rather than err itself
-				// because classifyIfRevisionFailure matches via errors.Is, and
-				// this package's own isNotFoundErr also accepts
-				// ResolvePartialID's unwrapped "no issue found matching" text,
-				// which errors.Is would not recognize.
-				if ifRevision != nil {
-					if reported, ok := reportIfRevisionFailure("deleting", issueID, storage.ErrNotFound, ifRevision); ok {
-						return reported
-					}
-				}
 				return HandleError("issue %s not found", issueID)
 			}
 			return HandleError("%v", err)
@@ -364,7 +353,15 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 		defer func() { _ = routedStore.Close() }()
 	}
 	if len(notFound) > 0 {
-		return fmt.Errorf("issues not found: %s", strings.Join(notFound, ", "))
+		// The role's own existence probe reports a missing id with this same
+		// error, and its text is the flat list every caller has always
+		// printed. What it adds is the storage.ErrNotFound sentinel, which
+		// lets the guarded `bd delete --cascade` caller's
+		// reportIfRevisionFailure report a target that a concurrent `bd
+		// delete` removed before this resolution as the same lost race as one
+		// removed inside deleter.Delete below: precondition_failed, not exit 1
+		// (see reportIfRevisionTargetGone).
+		return &issueops.NotFoundError{IDs: notFound}
 	}
 	batchStore := store
 	if routedStore != nil {

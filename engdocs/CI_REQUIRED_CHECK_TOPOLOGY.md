@@ -620,6 +620,120 @@ job's `if:` or rotating the key, in either of two ways:
   step's own kill switch, checked before any network call. Deleting the
   variable does not disable pre-warming; it restores the default of 1.
 
+## dolt-race Shadow (Not Required)
+
+`bazel.yml`'s `bazel-dolt-race` job (check name `Bazel / dolt-race`) is an
+advisory shadow, not a required check. It runs
+`bazel test //... --config=dolt-race`, the union of `--config=doltserver` and
+`--config=doltserver-proxied` with one tag filter for both tiers, beside the
+`bazel-doltserver` and `bazel-proxied` lanes. Its purpose is to measure one
+client per group of lanes against the two lanes it would replace (end time,
+runner minutes, test counts and results) before any cutover. Each member
+target's test action key is unchanged, so the shadow shares cached results
+with the member lanes.
+
+- It runs in mode `remote` on `pull_request` and `merge_group` events only.
+  It never runs in a fork mode (`fork-ro`, `fork-rw`), in mode `cache` or
+  `local`, on `bazel-farm.yml`'s call, on push, nightly or dispatch.
+- It cannot fail the gate. It has job-level `continue-on-error`, so its
+  failure cannot fail the call's aggregate result (`BAZEL`). It has no
+  `workflow_call` output, no `bazel.yml` job `needs` it, and `pr.yml`,
+  `ci-gate.sh` and `bazel-gate.sh` never name it.
+- The gate still waits for it. `CI Gate` needs `pr.yml`'s `bazel` call, and
+  a reusable-workflow call completes only when all of its jobs have finished
+  (success, failure or timeout), `continue-on-error` ones included. A slow
+  shadow therefore delays `CI Gate` and the merge queue, up to its
+  timeout. `continue-on-error` does not cover a job GitHub cancels at its
+  own `timeout-minutes`, so every step has its own timeout and the job's
+  (65 minutes) stays at least 5 minutes above their sum and 10 above the
+  test step's (policy-tested). A hung step then fails the job, which
+  `continue-on-error` covers, before GitHub would cancel it.
+- Its ci-analytics `LANE` is `dolt-race`.
+- Policy: `scripts/bazel_dolt_race_shadow_test.go`. Removing the job, its
+  `.bazelrc` config and its line in `.github/scripts/rrc-lane-commands.txt`
+  is the rollback; nothing reads them.
+
+## Remote Repo Contents Cache
+
+A cold lane client re-runs its repository rules (gazelle's `go_deps`, the Go
+SDK, the LLVM slice) before its first action. Bazel 9's remote repo contents
+cache serves those extracted trees from rbe-west's `oss` action cache instead
+(ported from gascity's `bazel.yml`; design: gascity
+`engdocs/design/bazel-remote-repo-contents-cache.md`). The repository variable
+`RBE_REPO_CONTENTS_CACHE` rolls it out, in mode `remote` only:
+
+| value | effect |
+|---|---|
+| unset / `off` | nothing (default) |
+| `seed` | each push to main runs `bazel.yml`'s `rrc-seed` job: every lane's command in `.github/scripts/rrc-lane-commands.txt` with `--nobuild`, uploading repository trees with a 30-minute `rbe-rrc-writer-beads` certificate that rbe-west's mint signs only for that job (GitHub OIDC; `.github/scripts/rrc-writer-credential.sh`). rbe-west's `rrc-gate` admits only repo-contents entries from it |
+| `canary` | `seed`, and the `test` lane reads the cache |
+| `on` | `seed`, and every lane but the release cross-compile and the package gates reads it |
+
+Readers append `startup --experimental_remote_repo_contents_cache` and
+`common --loading_phase_threads=64` to `.bazelrc.local` before setting up
+Bazel; both are key neutral, and the lanes keep
+`--noremote_upload_local_results`. While the variable is not `off`,
+nightly.yml's call also runs `rrc-verify`: a cold fetch of every lane,
+compared with the cached entries by `tools/bazel/rrc_verify.py`; a mismatch
+fails the job and opens an `rrc-verify` issue, which lists the containment
+steps below.
+
+Mode `cache` lanes (fork PRs while rbe-fork is closed, `rbe=cache`
+dispatches) see no repository variables. The jobs with a reader step above
+pass `BAZEL_RRC_READ: 'true'` to setup-bazel, and only those: their configs
+are the ones `rrc-lane-commands.txt` seeds (`bazel-release-cross` builds for
+other platforms and does not opt in). In mode `cache` they read the same
+entries through rbe-cache's anonymous AC and CAS reads: `write-bazelrc.sh`
+adds the same two lines to its rc whenever
+`.github/actions/setup-bazel/cache-rrc-probe.sh` gets a GetCapabilities
+answer from rbe-cache, then NOT_FOUND for a GetActionResult key no action
+has and for a ByteStream Read of a blob the CAS does not hold. The reader
+lanes that run in mode `cache` use a pinned `ubuntu-24.04` runner there,
+not `ubuntu-latest`. Each job's step summary records whether it reads, and
+rbe-cache's TCP connect time (DNS lookup excluded). rbe-cache refuses every
+write, and fork-cache uploads nothing.
+
+An unreachable cache with the startup flag set costs every repository a
+failed lookup, so a cache that is closed or down when the probe runs gets
+no lines and a notice instead, and the lane fetches as before. That holds
+at probe time only. After loading, Bazel fetches a cached repository's
+files lazily from rbe-cache (:8443). If the cache goes away mid-run
+(rbe-cache-gate closes, the runner's IP is banned, or the breaker opens),
+the command fails, and Bazel does not re-fetch the repository (bazel#30218,
+gascity design R4).
+
+To stop mode `cache` lanes reading:
+
+1. Commit `fork_rrc_read=off` in both probe scripts: beads'
+   `.github/actions/setup-bazel/cache-rrc-probe.sh` and gascity's
+   `tools/rbe/cache-rrc-probe.sh`. This is the preferred way: lanes that
+   already read finish, and later runs fetch for themselves. beads has no
+   fresh-merge, so an open fork PR keeps its old switch until it is pushed
+   again.
+2. For immediate server-side containment, an operator runs
+   `rbe-cache-gate close` on core. That stops all fork-cache, cache hits
+   included, and fails the lanes that are reading at that moment.
+3. The mode `remote` lanes read the same entries: rbe-cache serves the same
+   `oss` action cache. On an `rrc-verify` mismatch, set
+   `RBE_REPO_CONTENTS_CACHE` to `seed`. That stops every mode `remote`
+   reader, while `rrc-seed` and `rrc-verify` keep running. Set it to `off`
+   only to stop seeding too; that also stops `rrc-verify`. If the run only
+   says it could not check the cache, leave the variable as it is.
+
+Known limit (gascity design R4): rbe-cache's anonymous CAS is a size
+partition whose upper store, for blobs of 512 MiB or more, is a noop. A
+cached repository with a file that large is a hit whose download always
+fails. rrc-gate does not refuse such entries today.
+
+`rrc-seed` asks for `id-token: write` and `rrc-verify` for `issues: write`, so
+every caller of `bazel.yml` (pr.yml, nightly.yml, bazel-farm.yml) grants both:
+GitHub checks a called workflow's job permissions when the run starts, even
+for jobs that skip. Neither job runs on a pull_request, merge_group or
+pull_request_target event, and every other `bazel.yml` job keeps
+`contents: read`. Rollback for the mode `remote` readers: set the variable to
+`off` (or `seed`, to keep the cache warm without readers). It does not reach
+mode `cache`; use the steps above.
+
 ## Required Check Contract
 
 After the aggregate checks are verified on the branch, branch protection or the
@@ -911,10 +1025,32 @@ Required` requires them to have run remotely and passed.
     the job it replaces.
   - `go test`'s own vet checks (cmd/go's `defaultVetFlags`, policy-tested
     equal to the toolchain's) and the golangci-lint linters `.golangci.yml`
-    enables run as nogo (`//tools/nogo`) beside every compile of every Bazel
-    lane: natively in `bazel test //... --config=ci`, and for every release
-    platform in the `bazel-release-cross` lane
-    (engdocs/LINTING.md). The former
+    enables run as nogo (`//tools/nogo`): natively in `bazel test //...
+    --config=ci`, and for every release platform in the
+    `bazel-release-cross` lane (engdocs/LINTING.md). Since F5 S1 each
+    configuration in `scripts/nogo_lint_policy_test.go`'s
+    `nogoConfigurations` table (race, pure, js/wasm) validates in exactly
+    one required lane, not beside every compile of every lane: the race
+    configuration's nogo is owned by `test` above, and `embedded`,
+    `doltserver`, `doltserver-proxied`, `dolt-race` (shadow) and the
+    package gates pass `--norun_validations`, since they compile a strict
+    subset of what `test` already validates on that configuration
+    (`scripts/nogo_lint_policy_test.go`, engdocs/LINTING.md). Since F5 S2
+    (Variant A) the integration configuration (`--config=integration`'s
+    `gms_pure_go,integration` tags) is no longer a three-lane exception:
+    `bazel-integration` (`--config=integration`), `bazel-server-storage`
+    (`--config=doltserver-integration`) and `bazel-cmd-dolt`
+    (`--config=doltserver-cmd`) all pass `--norun_validations`. Instead
+    `bazel-integration` runs a narrow extra build step, `Nogo: integration
+    library files`, that validates only `//internal/testutil/integration`
+    (the one non-test library package the `integration` build tag selects)
+    under `--config=integration --@rules_go//go/config:race
+    --output_groups=nogo_fix`. This accepts a coverage loss: the 56
+    integration-tagged `_test.go` files listed in
+    `tools/nogo/unvalidated_integration_tests.txt` are no longer analyzed by
+    nogo in any lane (`scripts/nogo_lint_policy_test.go`'s `integ` row of
+    `nogoConfigurations` and `TestNogoIntegrationStepCoversItsConfiguration`
+    pin this; engdocs/LINTING.md). The former
     `scripts-go-checks` (`Go checks (vet)`) and `pr-lint-wrapper`
     (`PR Lint (native|windows|darwin)`) jobs are retired.
   - The repository policy tests (`./scripts/...`, including the D2 guards)
@@ -1040,11 +1176,12 @@ Required` requires them to have run remotely and passed.
     - every Bazel shard of `//cmd/bd:bd_embedded_test` and
       `//cmd/bd:bd_embedded_part2_test` (50 each: shards 1-50 and 51-100 of
       the manifest's 100-shard block, which their ranges must tile exactly
-      once; the manifest's frozen 20-shard block was the retired
-      `test-embedded-cmd` jobs' split, F1), `//internal/storage/embeddeddolt:embeddeddolt_embedded_test` (40;
+      once; the manifest's frozen 20-shard block, once the retired
+      `test-embedded-cmd` jobs' split, has been deleted, F1),
+      `//internal/storage/embeddeddolt:embeddeddolt_embedded_test` (40;
       the frozen 5-shard block was `test-embedded-storage`'s, F1),
-      `//cmd/bd:bd_proxied_test` (34; the frozen 15-shard block was
-      `test-proxied-cmd`'s, F2) and
+      `//cmd/bd:bd_proxied_test` (34; the manifest's frozen 15-shard block,
+      once `test-proxied-cmd`'s split, has been deleted, F2) and
       `//internal/storage/dolt:dolt_server_full_test` (16) to have run
       exactly the tests its shard script lists (list-only mode, minus
       `TestMain`, which `grep '^func Test'` lists but which is never a

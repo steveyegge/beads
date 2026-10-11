@@ -22,6 +22,9 @@ var ciAnalyticsLaneJobs = map[string]string{
 	"bazel-proxied":        "proxied-server",
 	"bazel-server-storage": "server-storage",
 	"bazel-cmd-dolt":       "cmd-dolt",
+	// The advisory dolt-server + proxied union shadow (item 5 Phase 1): its
+	// own lane value, so the A/B queries can pair it with its members.
+	"bazel-dolt-race": "dolt-race",
 }
 
 // ciAnalyticsExcludedJobs are bazel.yml jobs that deliberately do not run
@@ -34,6 +37,8 @@ var ciAnalyticsExcludedJobs = map[string]string{
 	"package-mcp":         "F3 package gate; runs pytest, not a bazel invocation with a BEP to extract",
 	"package-npm":         "F3 package gate; runs npm, not a bazel invocation with a BEP to extract",
 	"bazel-release-cross": "one bazel-release-cross-compile.sh run with no BEP/exec-log/profile capture, as when it was a bazel-pure step",
+	"rrc-seed":            "the remote repo contents cache writer: --nobuild analysis on push to main, no test lane to summarize",
+	"rrc-verify":          "the remote repo contents cache's nightly check: --nobuild cold fetches, no test lane to summarize",
 }
 
 // ciAnalyticsRunTemplateRE finds a GitHub Actions expression (${{ ... }})

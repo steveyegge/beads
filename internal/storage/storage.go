@@ -1022,6 +1022,84 @@ type ExternalDependencyQueryStore interface {
 	GetExternalBlockingDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error)
 }
 
+// RemoteBackendStore is implemented by a DoltStorage that is a pure network
+// client of a remote bd serve process (a registered backend whose
+// backends.Backend.Remote is true — see internal/storage/backends). It is
+// metadata about the store's transport, not a policy decision. Such a store
+// serves its ROLES natively and only a slice of the legacy DoltStorage
+// method seam, so a decorator that builds role views must compose over the
+// inner store's roles rather than rebuild them from that seam: the
+// external-deps decorator consults it for exactly that (remote_roles.go).
+// It never decides whether a policy runs — the decorator asks
+// ExternalDependencyPolicyProber whether to skip its client-side enforcement.
+type RemoteBackendStore interface {
+	IsRemoteBackendStore() bool
+}
+
+// CallerAttributionLimitedStore is implemented by a DoltStorage whose write
+// transport cannot carry two caller-authored attribution members:
+//
+//   - a history entry's Provenance label (UpdateRequest.Provenance,
+//     ReopenRequest.Provenance), because the serving process labels the
+//     entries it writes itself;
+//   - a patch's ClosedBySession, which only the close operation carries.
+//
+// Its role implementations refuse those members rather than drop them, since a
+// library caller may mean them. A front door that knows its own value is
+// derivable or advisory — `bd reopen`'s fixed "bd: reopen <id>" label, the
+// ambient CLAUDE_SESSION_ID on `bd update -s closed` — omits it for such a
+// store instead of failing the write; cmd/bd/remote_backend.go records
+// which members it omits and why.
+type CallerAttributionLimitedStore interface {
+	CallerAttributionLimited() bool
+}
+
+// Pinger is implemented by a DoltStorage whose cheapest honest liveness check
+// is not an issue query. `bd ping` uses it when present and falls back to a
+// one-row SearchIssues otherwise. A remote store implements it with its
+// authenticated handshake read, which reaches the serving process and checks
+// the credential and the workspace pin without touching an issue table its
+// legacy method seam may not serve at all.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+// ExternalDependencyPolicyProber is implemented by a DoltStorage that can
+// answer whether the remote server it talks to already enforces bd's
+// external-dependency policy itself (design 3.6, "External-dependency server
+// policy": upstream's storage.ServerEnforcedPolicy / PolicyEnforcedByServer).
+// The external-deps decorator consults this — never RemoteBackendStore, which
+// only shapes how it composes its roles — before skipping its own client-side
+// enforcement: a remote store whose
+// server advertises the capability (httpapi's policy.external_dependencies)
+// has already enforced the policy before answering, so a second client-side
+// pass would be redundant. A store that does not implement this interface, or
+// that implements it and reports false — including a remote store whose
+// server is silent on the capability — gets the ordinary client-side
+// enforcement. The policy is never silently skipped merely because the store
+// is remote.
+type ExternalDependencyPolicyProber interface {
+	ServerEnforcesExternalDependencyPolicy(ctx context.Context) (bool, error)
+}
+
+// ExcludeIDsUnsupportedStore is implemented by a DoltStorage whose ready-work
+// reads cannot express types.WorkFilter.ExcludeIDs over their own transport.
+// Today that is exactly httpclient.Store: the v0 wire's listReadyWork and
+// countReadyWork operations publish no id-exclusion parameter, so the http
+// bridge refuses rather than silently widening the result set whenever a
+// filter carries any (design 3.6 / L12, "every field it cannot express
+// refuses").
+//
+// The external-deps decorator consults this before deciding how to apply its
+// OWN additional exclusions (issues blocked by an unsatisfied
+// external:<project>:<capability> dependency): a store that answers true here
+// gets those exclusions applied client-side in Go instead of folded into the
+// filter handed down, so the policy still runs — design 3.6 says it is never
+// silently skipped — without tripping the wire's own refusal.
+type ExcludeIDsUnsupportedStore interface {
+	ExcludeIDsUnsupported() bool
+}
+
 // Transaction provides atomic multi-operation support within a single database transaction.
 //
 // The Transaction interface exposes a subset of storage methods that execute within

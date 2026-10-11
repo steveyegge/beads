@@ -320,9 +320,10 @@ func designRows() []Row {
 			PinnedBy: pinnedByS3Conformance,
 		},
 		{
-			ID: "L8", Kind: KindRefuse, Flag: "--deps",
-			What:     "`bd list --deps` refuses, and the pretty/--format dependency-decoration arms render undecorated",
-			Why:      "GetAllDependencyRecords has no wire mapping in v1; listDependencies is an anchored read. --tree is NOT in this row: it defaults true and is `bd list`'s default text rendering",
+			ID: "L8", Kind: KindDegrade, Flag: "--deps",
+			What: "`bd list --deps` and the policy decorator's compatibility fallback for its whole-workspace blocking state (design 3.6) both work, but by a client-side chunked scan rather than a single wire call",
+			Why: "GetAllDependencyRecords has no 1:1 wire mapping in v1 — listDependencies is anchored at <=100 ids per call (L12's maxEdgeCountAnchors) — so the client enumerates every issue id (fetchIssuePages) and issues it in chunks, grouping the results itself; this is slower and heavier than a local store's single query, not absent. --tree is NOT in this row: it defaults true and is `bd list`'s default text rendering. " +
+				"The decorator takes that scan for its whole-workspace answers: ready work and its counts, the ready claim, and the single-issue close guard. Its per-issue roles (blocking annotation, the dependency tree, claim, and a batch close without a next claim) build on the client's served roles instead and read only the edges of the issues they name, through the served EdgeReader in chunks under the same cap (internal/storage/externaldeps/remote_roles.go)",
 			SpecRow:  "D9 L8, D4",
 			PinnedBy: pinnedByS3Conformance,
 		},
@@ -368,12 +369,13 @@ func designRows() []Row {
 		},
 		{
 			ID: "L14", Kind: KindDegrade,
-			What: "against a server that does NOT advertise issues.claimNext, the composed ReadyClaimer leaves three residues: the ready-at-fetch/claim-at-dial window, a false empty under contention after the bounded refetch, and a claimed row whose CARDINALITIES are as of the listing rather than of the claiming transaction",
+			What: "against a server that does NOT advertise issues.claimNext, or on the CLI's chain while any issue in the workspace, closed ones included, holds an unsatisfied external ref, a composed ReadyClaimer leaves three residues: the ready-at-fetch/claim-at-dial window, a false empty under contention after the bounded refetch, and a claimed row whose CARDINALITIES are as of the listing rather than of the claiming transaction",
 			Why: "claimIssue validates claimability, not readiness, so a listing plus a claim is not the local role's one transaction and cannot be made into one. " +
 				"THE ROW IS NARROWER THAN IT WAS. Upstream published POST /v0/beads/issues:claimNext (#5510) and client wave ga-jpywb dials it, so on any server that advertises the token NONE of these three residues exists: selection, the compare-and-set and the hydration share the server's own transaction, an empty front is a 200 with `claimed` absent rather than a lost-races error, and the counts describe the state the claim produced. The whole ReadyClaimer contract tier runs against that leg with nothing parked, which is the measurement that says the residues were the COMPOSITION's rather than the wire's. " +
 				"WHAT KEEPS THE ROW ALIVE is the DOWN-LEVEL leg, which survives on purpose: `bd ready --claim` worked against pre-#5510 servers before this port, and refusing it now would be a regression dressed as progress. It is the posture BatchCloser takes toward issues.batchClose, and it is why this row describes shipped behavior rather than history. " +
 				"The third residue is stated in its IMPLEMENTED form, which is not the one the design anticipated: the design expected a follow-up getIssue to hydrate the counts, and therefore a read that could fail AFTER the claim was durable. The composition takes the counts from the ready page it already fetched instead, so that failure mode does not exist — a claim changes no dependency, dependent or comment count, and what is left is staleness bounded by the same fetch-to-dial window residue (a) already owns. " +
-				"Retirement is no longer an upstream ask but a fleet fact: the row goes when no server this client may meet is older than #5510",
+				"A SECOND COMPOSED LEG exists on any server. On the CLI's chain the external-dependency decorator (design 3.6) hands the claim to this role only while no issue in the workspace holds an unsatisfied external ref, because claimNext has no parameter to exclude what that policy refuses. Otherwise it claims down its own filtered ready page through the served Claimer, so all three residues return, the second as a lost-races error (internal/storage/externaldeps/remote_roles.go). A closed holder counts, as it does in every backend's blocking state: it can never be a candidate, so the composed claim picks what the served one would, and leaving it out would cost a status read per holder. A server that advertises wire.CapExternalDependencies enforces the policy itself and never reaches that leg. `bd close --claim-next` takes no composed leg: the decorator refuses it rather than claim after the close commits (F-close). " +
+				"Retirement of the down-level leg is no longer an upstream ask but a fleet fact: it goes when no server this client may meet is older than #5510. The decorator's leg goes with an exclusion parameter on claimNext, or once every server enforces the policy itself",
 			SpecRow:  "D9 L14, D8 row 4",
 			PinnedBy: pinnedByS3Conformance,
 		},
@@ -750,7 +752,7 @@ func writeSideRows() []Row {
 			Why: "apigen.BatchCreateItem carries title, description, design, acceptance_criteria, priority, issue_type, assignee and labels and nothing else, while the role accepts far more of a types.Issue: an explicit id, the wisp flags, metadata, the storage class, every timestamp, the gate/molecule/event fields. " +
 				"ONE row rather than one per member because the reason is one reason — the wire's item vocabulary — and forty rows repeating it would say nothing a reader does not learn here. Exhaustiveness is held by REFLECTION instead: the client's carried and role-ignored tables are checked against types.Issue field by field, so a member added upstream is refused the day it lands rather than dropped until someone notices. " +
 				"The members the role ITSELF ignores on a create (ContentHash, RowVersion, lease, compaction, routing overrides, hydration flags) are not in this population and are not refused: a local create drops them too. " +
-				"Nor is a CreatedBy that names the request's actor: the server stamps every item's created_by from the actor (W-CreateRequest.Issue), so that value arrives as written and only a CreatedBy naming someone else refuses",
+				"Nor is a CreatedBy that names the request's actor: the server's create role defaults every item's created_by to the actor (W-CreateRequest.Issue), so that value arrives as written and only a CreatedBy naming someone else refuses",
 			SpecRow:  "D8 row 14 refuse-not-drop",
 			PinnedBy: batchCreatePin,
 		},
@@ -785,7 +787,7 @@ func writeSideRows() []Row {
 			Why: "createIssue publishes the whole create VOCABULARY — id, title, description, design, acceptance_criteria, notes, status, issue_type, priority, assignee, owner, estimated_minutes, external_ref, due_at, defer_until, sender, metadata, labels, ephemeral, no_history — and deliberately not the rest of a types.Issue: the creation time (created_at), because a caller-supplied creation time makes the row disagree with the journal entry that records it and re-dating history is what an import is for; and spec_id, await_*, mol_type, wisp_type, work_type, storage_class, source_*, pinned, is_template and the event quartet, which this surface publishes on no operation, read or write. " +
 				"ONE row rather than one per member for W-BatchCreateItem.Issue's reason — the reason is one reason — and exhaustiveness is held by the same REFLECTION over types.Issue, sharing the role-ignored table with the batch so the two operations cannot disagree about what the ROLE drops. " +
 				"Issue.Comments and Issue.Dependencies are not in this population: the role itself refuses them, so a local create fails too and this is validation rather than divergence. " +
-				"created_by is published on no create shape either, but every one of them STAMPS it from the request's actor (internal/httpapi's create.go, batch_create.go and batch_apply.go) — the local front doors' own rule, since the role copies the member rather than stamping it. So a CreatedBy that names the actor, which is what every CLI create sends, arrives as written, and only one naming someone else refuses: the stamp would silently replace it. A server that predates the stamp stores an empty created_by for that one member",
+				"created_by is published on no create shape either, but the create role behind every one of them defaults an empty created_by to the request's actor (issueops.PreparePublicCreateRequest), the same rule a local create gets. So an empty CreatedBy and one that names the actor both arrive as the actor, and only one naming someone else refuses: the default would silently replace it. A server older than either stamp (handler or role) stores an empty created_by for that one member",
 			SpecRow:  "D8 row 16 refuse-not-drop",
 			PinnedBy: createPin,
 		},
@@ -821,7 +823,7 @@ func writeSideRows() []Row {
 			Why: "ApplyCreateItem publishes exactly createIssue's create vocabulary — id, title, description, design, acceptance_criteria, notes, status, issue_type, priority, assignee, owner, estimated_minutes, external_ref, due_at, defer_until, sender, metadata, labels, ephemeral, no_history — and deliberately not the rest of a types.Issue, for the reasons W-CreateRequest.Issue gives in full. " +
 				"It is a row of its OWN rather than a citation of that one because the operations are different: a caller auditing why their PLAN refuses must not be sent to a row about a single create, and the two can diverge the day either vocabulary moves. The partition itself is SHARED — one carried table, one role-ignored table, held against types.Issue by the same reflection — so they cannot disagree about what the wire carries or about what the role drops. " +
 				"Issue.Comments and Issue.Dependencies are not in this population and are refused as validation on both sides: edges in this role are ITEMS, so a create item has nowhere to put one at all. " +
-				"Nor is a CreatedBy that names the request's actor: the server stamps every create item's created_by from the actor (W-CreateRequest.Issue), so that value arrives as written and only a CreatedBy naming someone else refuses",
+				"Nor is a CreatedBy that names the request's actor: the server's create role defaults every create item's created_by to the actor (W-CreateRequest.Issue), so that value arrives as written and only a CreatedBy naming someone else refuses",
 			SpecRow:  "D8 refuse-not-drop",
 			PinnedBy: applyPin,
 		},
@@ -1079,7 +1081,7 @@ func commandRows() []Row {
 		row("F-show-refs", "show", "--refs", "`bd show --refs` refuses",
 			"showIssueRefs's --json marshals the full GetDependentsWithMetadata rows, but the wire answers the same collectDependents shallow projection, so created_at/assignee/description come back zeroed and the JSON differs from a local workspace. The text render consumes only the shallow fields, but the flag cannot be split from its --json mode, so the whole flag refuses rather than serve a divergent JSON silently"),
 		row("F-show-children", "show", "--children", "`bd show --children` refuses",
-			"showIssueChildren's --json marshals the full GetDependentsWithMetadata rows, the same collectDependents shallow projection as --refs, so created_at/assignee/description come back zeroed over http; `bd children` refuses as a whole command for the same reason"),
+			"showIssueChildren's --json marshals the full GetDependentsWithMetadata rows, the same collectDependents shallow projection as --refs, so created_at/assignee/description come back zeroed over http. `bd children` is NOT this flag: it is a `bd list --parent` listing, served through the reader role (S6c)"),
 		row("F-mol-ready", "mol ready", "", "`bd mol ready` refuses",
 			"it is the same runMolReadyGatedCore body as `bd ready --gated`"),
 		row("F-blocked", "blocked", "", "`bd blocked` refuses",
@@ -1102,9 +1104,10 @@ func commandRows() []Row {
 			"the OSS classifier would happily serve it from the opened store, and a bd serve re-serving a remote bd serve is a proxy chain nobody designed: run serve where the database is"),
 		{
 			ID: "F-close", Kind: KindRefuse, Command: "close", Capability: "issues.batchClose",
-			What: "`bd close` is SERVED whole — single id, several ids and --claim-next — over issues:batchClose; it refuses only against a DOWN-LEVEL server that does not advertise issues.batchClose",
-			Why: "the CLI's close front door routes every id, single-id included, through BatchCloser.CloseBatch, and Lifecycle.Close has zero CLI callers at tip. The wire now carries issues:batchClose, so the whole CloseBatchRequest — multi-item and the atomic ClaimNext included — is one wire call and one server-side transaction; nothing is composed or refused where the capability is present. " +
-				"Against a server too old to advertise issues.batchClose, servesBatchClose() reads the handshake snapshot and routes around the batch dial entirely, so no Preflight runs and no wire.ErrCapabilityAbsent is raised: the down-level leg's refuseUnservedCloseShape raises the STORE's own *ErrHTTPUnsupported (batchcloser.go), and cmd/bd's renderEscapedHTTPRefusal turns it into the capability-absent taxonomy (case 2) by scanning the served command's own capability list for the first token the server does not advertise — issues.batchClose, which is the token it then names to upgrade to. The single-item, no-ClaimNext shape still composes onto closeIssue in that down-level leg (see L18); the shapes that cannot compose refuse there. The item cap is L-close-cap",
+			What: "`bd close` is SERVED whole — single id and several ids — over issues:batchClose; it refuses against a DOWN-LEVEL server that does not advertise issues.batchClose, and --claim-next refuses against every server, before anything closes",
+			Why: "the CLI's close front door routes every id, single-id included, through BatchCloser.CloseBatch, and Lifecycle.Close has zero CLI callers at tip. The wire now carries issues:batchClose, so a CloseBatchRequest of any size is one wire call and one server-side transaction; nothing is composed or refused where the capability is present. " +
+				"THE NEXT CLAIM IS THE EXCEPTION. batchCloseIssues has no member to carry it, so the client refuses a ClaimNext on both legs, after the claim's own validation and before the dial (W-CloseBatchRequest.ClaimNext). Closing and then claiming would split the role's one transaction in two, and a claim that failed after the closes committed could not report them, because the role answers with an error or with outcomes, never both. On the CLI's chain the external-dependency decorator (design 3.6) refuses first unless the server advertises wire.CapExternalDependencies, and its refusal says nothing closed and names the commands that do the same work: close without --claim-next, then `bd ready --claim` (internal/storage/externaldeps/remote_roles.go). " +
+				"Against a server too old to advertise issues.batchClose, servesBatchClose() reads the handshake snapshot and routes around the batch dial entirely, so no Preflight runs and no wire.ErrCapabilityAbsent is raised: the down-level leg's refuseUnservedCloseShape raises the STORE's own *ErrHTTPUnsupported (batchcloser.go), which names the refused shape and the server, and cmd/bd prints it against each id the batch carried. The single-item, no-ClaimNext shape still composes onto closeIssue in that down-level leg (see L18); the shapes that cannot compose refuse there. The item cap is L-close-cap",
 			SpecRow: "D8 row 17 (resolved, Wire), D9 L18, D9 L-close-cap",
 			// The command is served; the down-level refusal is the capability gate's,
 			// exercised against a server without issues.batchClose.
@@ -1112,8 +1115,9 @@ func commandRows() []Row {
 		},
 		{
 			ID: "F-partial-id", Kind: KindRefuse,
-			What:     "partial-id resolution refuses with its own taxonomy text",
-			Why:      "SearchIssueIDs has no wire operation, and the client cannot tell a partial id from a full id that does not exist — so the refusal text covers both outcomes rather than falling through to a raw search error",
+			What: "partial-id resolution refuses with its own taxonomy text",
+			Why: "SearchIssueIDs has no wire operation, and the client cannot tell a partial id from a full id that does not exist — so the refusal text covers both outcomes rather than falling through to a raw search error, and it unwraps to ErrNotFound. " +
+				"The store also reports utils.ExactIDLookupStore, so the CLI's routed lookups (show, update, close, reopen, ...) stop at the exact getIssue and answer a plain not-found after that one round trip, never reaching the search (S6b)",
 			SpecRow:  "D11",
 			PinnedBy: pinnedByS3Conformance,
 		},

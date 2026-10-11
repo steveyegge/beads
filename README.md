@@ -175,6 +175,89 @@ are unaffected.
 the guard with a warning on stderr. Use this only if you know the forward
 migrations are additive and safe for your specific workload.
 
+## 🔌 HTTP Backend (experimental)
+
+A workspace can also talk to a remote `bd serve` over HTTP instead of opening
+a local Dolt database — useful for a thin client against a shared server, or
+for embedding beads in another program as a library.
+
+```bash
+# Point this workspace at a server (verifies the server first; writes nothing on failure)
+bd connect https://bd.example.com --expect-project-id my-project
+
+# The everyday commands work the same way: create, show, list, update, close,
+# dependencies (including `bd dep tree`), comments, ready/count queries, and
+# batch apply all round-trip over the wire with the same semantics as a local
+# database. So does `bd ready --claim`, except against an older server or while
+# any issue holds an unsatisfied external ref: then it lists and claims in two
+# steps rather than one transaction (ledger row L14, linked below).
+bd create "Fix auth bug" -p 1 -t bug
+bd ready --json
+bd close bd-a1b2 "Fixed"
+
+# Loopback needs no TLS
+bd connect http://127.0.0.1:8080
+
+# Forget the server and restore this workspace's previous backend selection
+bd connect --clear
+```
+
+HTTP mode is not a byte-for-byte mirror of local mode, though: some
+operations are knowingly refused (the wire has no way to express them) or
+degrade to a different-but-not-misreadable behavior (for example, a few
+unbounded listing shapes lose single-query snapshot isolation and instead
+walk the server page by page). Every one of these is a deliberate, tested
+row, never a silent gap — see
+[`engdocs/design/http-divergence-ledger.md`](engdocs/design/http-divergence-ledger.md)
+for the full, generated list of what differs and why before depending on an
+HTTP-backed workspace for a workflow you haven't checked against it. One
+refusal to know up front: `bd close --claim-next` closes nothing over HTTP,
+because the wire's batch close cannot carry the claim. Close without it, then
+run `bd ready --claim`.
+
+[Cross-repo dependencies](docs/core-concepts/dependencies.md#cross-repo-dependencies)
+keep their policy over HTTP. The client resolves each `external:` reference
+against its own `external_projects` configuration. `bd dep tree` shows the
+reference as a leaf, and while it is unsatisfied the issue stays out of
+`bd ready` and `bd ready --claim`, and `bd close` refuses it without
+`--force`. A server that advertises enforcing that policy itself is trusted
+to do so instead.
+
+Three CLI-level differences are worth knowing up front:
+
+- IDs resolve exactly: an abbreviated id is not expanded (the wire has no
+  substring search), and a missing id is reported as not found after one
+  lookup.
+- `bd update -s closed` does not record `closed_by_session` (from `--session`
+  or `CLAUDE_SESSION_ID`), because the wire's update cannot carry it; the
+  close itself happens as usual. `bd close` does record the session. `bd
+  reopen`'s history entry carries the server's own label.
+- Contributor auto-routing (`routing.*` settings) is read from local
+  `config.yaml` / environment only, never from the server's settings: its
+  targets are local paths.
+
+`bd connect` writes two things on success: `.beads/metadata.json` gets
+`"backend": "http"`, and a per-user, never-git-tracked sidecar
+(`.beads/http_target.json`) records the server URL and pinned project id. It
+never writes a credential to disk. A bearer credential, if the server
+requires one, comes from `BEADS_HTTP_TOKEN=host[:port]=<token>`, then
+`BEADS_HTTP_TOKEN_COMMAND=host[:port]=<command>` (a helper that prints a
+token), then the credentials file, then no credential at all. Both variables
+must name the server they are for (a pattern without a port matches that
+host on any port); a bare value is refused, because it would be sent to
+whatever server the workspace's `http_target.json` names. Connecting to a
+non-loopback server over plain `http://` is refused by default (a bearer
+credential would cross the network unencrypted) — pass `--allow-plaintext` to
+override, or use `https://`. Switching a workspace that already selects a
+different backend needs `--force`.
+
+An embedding program that links beads as a library rather than running
+`cmd/bd` registers this backend itself through the public
+[`backend/http`](backend/http) package (`bdhttp.Register`), and can open a
+workspace with a credential scoped to one caller via
+`beads.OpenBestAvailableWith` — see that package's doc comment for the
+multi-tenant case. This surface is EXPERIMENTAL: pin an exact beads version.
+
 ## 🌐 Community Tools
 
 See [docs/community-tools.md](docs/community-tools.md) for a curated list of community-built UIs, extensions, and integrations—including terminal interfaces, web UIs, editor extensions, and native apps.

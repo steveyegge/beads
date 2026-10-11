@@ -250,7 +250,6 @@ var legitimatelyUnsupported = map[string]string{
 	// refuse on these, which is why they are named in D7's refused class.
 	"DetectCycles":                  "raw read: role CycleDetector serves this shape",
 	"FindWispDependentsRecursive":   "raw read: no recursive-dependents operation",
-	"GetAllDependencyRecords":       "raw read: listDependencies is anchored (L8, `bd list --deps`)",
 	"GetBlockedIssues":              "raw read: no blocked-set operation (`bd blocked`)",
 	"GetBlockingInfoForIssues":      "raw read: role BlockingAnnotator serves this shape",
 	"GetDependencies":               "raw read: role EdgeReader serves this shape",
@@ -282,7 +281,6 @@ var legitimatelyUnsupported = map[string]string{
 	"GetNextChildID":             "raw read: id allocation is a server-side act",
 	"GetStaleIssues":             "raw read: no staleness operation",
 	"GetStatisticsNoBlocked":     "raw read: getStats has no blocked-suppression variant",
-	"SearchIssueIDs":             "raw read: no partial-id search operation (D11)",
 	"SearchIssueSummaries":       "raw read: no summary-projection search operation; SearchIssues (role: Searcher) hydrates full issues, and the wire publishes no narrower searchIssues projection for list-shaped rendering to drop onto",
 	"SearchIssuesWithCounts":     "raw read: no counts-bearing search operation",
 
