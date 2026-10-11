@@ -1006,7 +1006,7 @@ func resolveChildCountersToHighWater(ctx context.Context, db DBConn, report *sto
 
 // breadcrumbMarker prefixes every note this mechanic appends, so the trail is
 // greppable (`bd list --search "[bd dolt rebase #4796]"`) and so a re-run can
-// recognise its own earlier breadcrumb instead of stacking a duplicate.
+// recognize its own earlier breadcrumb instead of stacking a duplicate.
 const breadcrumbMarker = "[bd dolt rebase #4796]"
 
 // movedBreadcrumb is the note left ON THE RENUMBERED BEAD: it moved, and the id

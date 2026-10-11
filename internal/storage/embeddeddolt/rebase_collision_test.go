@@ -21,7 +21,7 @@ import (
 // same "parent.N" ids, so on sync the issues table has an add/add PK collision
 // AND the child_counters row both-changed — neither of which the pull settle
 // auto-resolves, so the pull aborts. RebaseChildCollisions renumbers the losing
-// side and completes the merge. The two-clone divergence is modelled with a peer
+// side and completes the merge. The two-clone divergence is modeled with a peer
 // branch (matching seedEmbeddedFKCascadeDivergence); the merge ref is a local
 // branch, exercising the identical merge/settle code a real pull runs after
 // DOLT_FETCH. This is the 2026-07-14 pa-vubk.71/.72/.73 collision, reproduced.
@@ -586,7 +586,7 @@ func TestEmbeddedRebaseRemoteDominatesOrphanedCounterConflict(t *testing.T) {
 // .74 could re-mint a slot a peer holds — the #4796 hazard one level down. The
 // rename routes through UpdateIssueIDInTx (a plain UPDATE of issues.id); the counter
 // follows because fk_counter_parent cascades the id change. This asserts that
-// behaviour holds rather than leaving the durable subtree-parent path uncovered
+// behavior holds rather than leaving the durable subtree-parent path uncovered
 // (the pre-existing wisp-subtree test only moves a wisp grandchild, never a counter).
 func TestEmbeddedRebaseRemoteDominatesDurableSubtreeCounter(t *testing.T) {
 	te := newTestEnv(t, "rbsub")
@@ -991,7 +991,7 @@ func preRebaseTagCount(t *testing.T, ctx context.Context, db versioncontrolops.D
 //
 // It changes NOTHING: not the ids, not the counter, not HEAD, and no backup tag —
 // a preview that commits pending work or tags the branch is not a preview, and
-// the auto-commit is exactly the behaviour bee-ghosttrack asked about on #4844.
+// the auto-commit is exactly the behavior bee-ghosttrack asked about on #4844.
 //
 // And its plan is the plan: the renumbers it reports are the ones the real run
 // then performs, id for id. That holds by construction (both go through
