@@ -54,13 +54,13 @@ Dolt engine into `bd` at the version in `go.mod`, currently the commit tagged
 v2.3.5 upstream, no matter which `dolt` CLI is on your PATH. **The two must
 move together, and the floor is measured: a database the 2.3.5 engine has
 written needs a `dolt` CLI of 2.3.3 or newer.** Below that floor — 2.2.0,
-2.3.1 and 2.3.2 were each measured — reading `information_schema.tables`, any
-`CREATE TABLE`/`INSERT` and any `UPDATE` fail with `table has unknown fields`,
-while a bare `SELECT count(*)` still answers, so the breakage is partial and
-easy to mistake for a healthy database. The mechanism is dolthub/dolt#11746
-(descending-index storage), which shipped in the v2.3.3 release; pinning the
-CLI at 2.3.5 keeps CI above the floor. Measured by @bee-ghosttrack on
-beads#6811.
+2.3.1 and 2.3.2 were each measured — reading `information_schema.tables` and any
+`CREATE TABLE`/`INSERT` fail with `table has unknown fields`, an `UPDATE` fails
+with a spurious foreign-key error, while a bare `SELECT count(*)` still answers,
+so the breakage is partial and easy to mistake for a healthy database. The
+mechanism is dolthub/dolt#11746 (descending-index storage), which shipped in the
+v2.3.3 release; pinning the CLI at 2.3.5 keeps CI above the floor. Measured by
+@bee-ghosttrack on beads#6811.
 
 Dolt 2.3.0 (released 2026-08-13) regressed `CALL DOLT_RESET('--hard')`. A few
 percent of freshly created databases come up with that procedure unusable —
