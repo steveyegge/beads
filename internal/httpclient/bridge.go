@@ -127,6 +127,7 @@ func (s *Store) readyBridgePage(ctx context.Context, op string, filter types.Wor
 	if err != nil {
 		return nil, false, err
 	}
+	readCap = tightenUnlimitedPage(params, readCap, filter.MaxRows)
 	var body apigen.ReadyPage
 	if err := s.dispatch(ctx, wire.Request{
 		Op:     wire.OpListReadyWork,

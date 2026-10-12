@@ -19,23 +19,29 @@ import (
 // document's recovery is client-side: ask for an explicit limit, and page. So
 // this client NEVER puts `limit=0` on the wire, whatever the server's bind
 // mode — one spelling for every server is what keeps a loopback-tested caller
-// from meeting the refusal for the first time in production. dispatch holds
-// the line (refuseUnlimitedOnWire), so a new read path that forgets is a loud
-// client error rather than a silent difference between a laptop and a fleet.
+// from meeting the refusal for the first time in production. Store.dispatch
+// holds the line (refuseUnlimitedOnWire), so a new read path that forgets is a
+// loud client error rather than a silent difference between a laptop and a
+// fleet. The tripwire guards Store.dispatch only: a caller of the wire.Client
+// itself is outside it and must send a positive limit on its own, as the
+// down-level claimer's listReadyWork page does (readyClaimPage).
 //
 // What replaces `limit=0` depends on what paging the operation publishes:
 //
 //   - listIssues publishes a keyset cursor, so an unlimited `bd list` is the
-//     cursor walk in list_walk.go, at walkPageSize rows a request.
+//     cursor walk in list_walk.go, at walkPageSize rows a request. No response
+//     is larger than a page, so the walk is NOT capped here: as on every local
+//     backend, its only bound is the caller's --max-rows / BEADS_MAX_ROWS.
 //   - listReadyWork and queryIssues publish NO cursor and no offset (their
 //     pages are has_more-only by design: a ready set and a predicate query are
 //     assembled outside the database's keyset order). There is nothing to walk,
 //     so an unlimited read is ONE request bounded at the cap plus one: the
 //     overage row is what proves the cap fired.
 //
-// THE CAP. Every unlimited read is bounded on the client at
-// UnlimitedReadCapEnv rows (DefaultUnlimitedReadCap when unset). Past it the
-// read is REFUSED with *UnlimitedReadCapError — never truncated. A truncated
+// THE CAP. Every unlimited ready or query read is bounded on the client at
+// UnlimitedReadCapEnv rows (DefaultUnlimitedReadCap when unset), because its
+// whole answer is one response the server buffers. Past it the read is
+// REFUSED with *UnlimitedReadCapError — never truncated. A truncated
 // "unlimited" answer is the defect this file exists to remove (the server's
 // 100-row ready default used to cap gc's routed-pool queues silently), so the
 // only two answers are "every row" and "a typed refusal naming the cap".
@@ -54,8 +60,9 @@ import (
 //     (whose consumers act on the whole set at once) is NOT emulated through a
 //     list walk.
 
-// UnlimitedReadCapEnv bounds how many rows one unlimited read over HTTP may
-// return before it is refused. A positive integer; unset means
+// UnlimitedReadCapEnv bounds how many rows one unlimited ready or query read
+// over HTTP may return before it is refused (an unlimited list is a paged
+// walk and is not capped). A positive integer; unset means
 // DefaultUnlimitedReadCap. A malformed value is an error on every unlimited
 // read rather than a silent fall back to the default, so a typo cannot quietly
 // re-impose a bound the operator meant to raise.
@@ -73,10 +80,11 @@ const maxUnlimitedReadCap = 1_000_000
 // under errors.Is.
 var ErrUnlimitedReadCap = errors.New("unlimited read exceeds the http client cap")
 
-// UnlimitedReadCapError refuses an unlimited read whose answer is larger than
-// the client cap, or whose server would not hand back the whole answer.
+// UnlimitedReadCapError refuses an unlimited ready or query read whose answer
+// is larger than the client cap, or whose server would not hand back the
+// whole answer.
 type UnlimitedReadCapError struct {
-	// Op is the wire operation (listReadyWork, queryIssues, listIssues).
+	// Op is the wire operation (listReadyWork or queryIssues).
 	Op string
 	// Cap is the bound in force.
 	Cap int
@@ -93,11 +101,11 @@ type UnlimitedReadCapError struct {
 func (e *UnlimitedReadCapError) Error() string {
 	if e.ServerTruncated {
 		return fmt.Sprintf("unlimited %s over http: the server returned %d rows with more remaining, "+
-			"below the requested bound of %d; refusing a truncated answer (pass an explicit --limit)",
+			"below the requested bound of %d; refusing a truncated answer (narrow the query)",
 			e.Op, e.Found, e.Cap+1)
 	}
 	return fmt.Sprintf("unlimited %s over http: more than %d rows match (%s=%d); "+
-		"refine the query, pass an explicit --limit, or raise %s",
+		"narrow the query or raise %s",
 		e.Op, e.Cap, UnlimitedReadCapEnv, e.Cap, UnlimitedReadCapEnv)
 }
 
@@ -134,6 +142,20 @@ func boundUnlimitedPage(params url.Values, unlimited bool) (int, error) {
 	}
 	params.Set("limit", strconv.Itoa(readCap+1))
 	return readCap, nil
+}
+
+// tightenUnlimitedPage lets a caller's MaxRows size an unlimited read's
+// request when it is the tighter bound, returning the bound now in force.
+// Past MaxRows the answer is refused either way, so sending cap+1 would make
+// the server buffer up to the cap's rows only for the caller to throw them
+// away. The caller's own MaxRows check must run before checkUnlimitedPage, so
+// an answer over it keeps its *ErrTooManyRows attribution.
+func tightenUnlimitedPage(params url.Values, readCap, maxRows int) int {
+	if readCap == 0 || maxRows <= 0 || maxRows >= readCap {
+		return readCap
+	}
+	params.Set("limit", strconv.Itoa(maxRows+1))
+	return maxRows
 }
 
 // checkUnlimitedPage applies the cap to the one page a cursorless unlimited

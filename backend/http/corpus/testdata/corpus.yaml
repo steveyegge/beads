@@ -284,7 +284,7 @@ shapes:
   - id: mc-list-id
     source: mc skills/pr-review (list --all --id --json --limit)
     args: [list, --all, --id, "e2e-r1,e2e-a1", --json, --limit, "0"]
-    pending: {slice: "S6c+S15+S15b", reason: "list stub (B3 #1); --limit 0 (B3 #3); --id refused by the list encoder (B3 #11)"}
+    pending: {slice: "S6c+S15b", reason: "list stub (B3 #1); --id refused by the list encoder (B3 #11)"}
   - id: mc-list-assignee-status
     source: mc review summaries (list --assignee --json --limit --status)
     args: [list, --assignee, alice, --json, --limit, "10", --status, open]
