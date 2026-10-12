@@ -125,8 +125,10 @@ const bazelDoltRaceJobTimeoutMargin = 5
 const bazelDoltRaceMergeQueueTimeout = 60
 
 // bazelDoltRaceTestStepTimeout: the union's `bazel test` step timeout. Its
-// shards run about 55-95 s on rbe-west, each capped at 1200 s.
-const bazelDoltRaceTestStepTimeout = 20
+// shards run about 55-95 s on rbe-west, each capped at 1200 s; the step allows
+// about 3 minutes past that cap so Bazel writes TIMEOUT logs before GitHub
+// kills the step.
+const bazelDoltRaceTestStepTimeout = 23
 
 // The union's members, and the tag filter each owns.
 var bazelDoltRaceMembers = []struct{ config, tag string }{
@@ -334,7 +336,7 @@ func TestBazelDoltRaceIsGated(t *testing.T) {
 	}
 }
 
-// TestBazelDoltRaceJobTimeouts: the union's test step has a 20-minute
+// TestBazelDoltRaceJobTimeouts: the union's test step has a 23-minute
 // timeout, every step has one, and the job's exceeds their sum by
 // bazelDoltRaceJobTimeoutMargin minutes (a hang fails a named step) while
 // staying under the merge queue's check timeout (a hung required job would

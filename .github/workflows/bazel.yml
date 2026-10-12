@@ -2071,7 +2071,7 @@ jobs:
     if: ${{ needs.rbe.outputs.mode == 'remote' }}
     # At least every step's timeout-minutes plus 5, and below the merge
     # queue's 60-minute check timeout (TestBazelDoltRaceJobTimeouts).
-    timeout-minutes: 55
+    timeout-minutes: 56
     outputs:
       result: ${{ steps.result.outputs.result }}
     steps:
@@ -2125,10 +2125,12 @@ jobs:
       # under the remote-exec config's 64 jobs. No --config=sole-run: its one
       # line (no retry on a remote cache eviction) is already in the union.
       # Shards are expected around 55-95s on rbe-west (see bazel-proxied's
-      # test step), the proxied tier's 1200s cap included.
+      # test step), the proxied tier's 1200s cap included. The step timeout is
+      # >= proxied test_timeout 1200 s + about 3 min so Bazel writes TIMEOUT
+      # logs before GitHub kills the step.
       - name: bazel test //... --config=dolt-race
         id: test
-        timeout-minutes: 20
+        timeout-minutes: 23
         run: |
           set -o pipefail
           start=$(date +%s)
