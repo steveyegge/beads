@@ -2070,7 +2070,9 @@ jobs:
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     if: ${{ needs.rbe.outputs.mode == 'remote' }}
     # At least every step's timeout-minutes plus 5, and below the merge
-    # queue's 60-minute check timeout (TestBazelDoltRaceJobTimeouts).
+    # queue's 60-minute check timeout so this job alone cannot exhaust it
+    # (TestBazelDoltRaceJobTimeouts). Not a whole-run bound: the rbe job runs
+    # first and sibling lanes have longer timeouts.
     timeout-minutes: 56
     outputs:
       result: ${{ steps.result.outputs.result }}
