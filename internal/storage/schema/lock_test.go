@@ -258,7 +258,7 @@ func TestMigrateUpSeedsIgnorePatternsWhenNoWorkNeeded(t *testing.T) {
 	// MigrateUp must commit the heal itself, scoped and labeled.
 	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_ADD('dolt_ignore')")).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}))
-	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_COMMIT('-m', 'schema: seed dolt_ignore patterns')")).
+	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_COMMIT('-m', 'schema: seed dolt_ignore patterns', '--skip-empty')")).
 		WillReturnRows(sqlmock.NewRows([]string{"hash"}))
 
 	applied, err := MigrateUp(context.Background(), db)
@@ -386,7 +386,7 @@ func expectOnePendingMigration(t *testing.T, mock sqlmock.Sqlmock) {
 	// seed must not ride the per-step pass commits).
 	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_ADD('dolt_ignore')")).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}))
-	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_COMMIT('-m', 'schema: seed dolt_ignore patterns')")).
+	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_COMMIT('-m', 'schema: seed dolt_ignore patterns', '--skip-empty')")).
 		WillReturnRows(sqlmock.NewRows([]string{"hash"}))
 	expectDoltStatusRows(mock)
 	// MigrateUp captures the pre-pass main cursor for the aux re-key watershed
@@ -706,10 +706,109 @@ func TestMigrateUpWithLockFreshBootstrapHealResetsAndRetries(t *testing.T) {
 	}
 }
 
+// TestMigrateUpWithLockFreshBootstrapHealRetriesAbortedReset covers the reset
+// the server aborts rather than refuses. The capability is consumed before the
+// first attempt and cannot be re-armed, so treating that abort as final would
+// strand the interrupted bootstrap on DirtyTablesError for good; the heal has
+// to finish on a later attempt of the same authorized reset.
+func TestMigrateUpWithLockFreshBootstrapHealRetriesAbortedReset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("pin mock connection: %v", err)
+	}
+	defer conn.Close()
+
+	lockName := MigrationLockName("testdb")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT GET_LOCK(?, ?)")).
+		WithArgs(lockName, migrationLockAcquireTimeoutSeconds).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(1))
+	expectDirtyGuardRefusal(t, mock)
+	expectFreshBootstrapIdentityMatch(mock)
+	// The abort Dolt actually produces: a server-side Error 1105 raised about a
+	// millisecond in, on a session that is fine before and after it.
+	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_RESET('--hard')")).
+		WillReturnError(errors.New("Error 1105 (HY000): context canceled"))
+	mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_RESET('--hard')")).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}))
+	expectOnePendingMigration(t, mock)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT RELEASE_LOCK(?)")).
+		WithArgs(lockName).
+		WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+
+	capability := testFreshBootstrapHealCapability()
+	applied, err := MigrateUpWithLock(ctx, conn, "testdb",
+		WithFreshBootstrapHeal(capability, testBootstrapEndpoint))
+	if err != nil {
+		t.Fatalf("MigrateUpWithLock() error = %v, want the retried reset to heal", err)
+	}
+	if applied != 1 {
+		t.Fatalf("MigrateUpWithLock() applied = %d, want 1", applied)
+	}
+	if !capability.consumed.Load() {
+		t.Fatal("heal ran without consuming the capability")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// TestMigrateUpWithLockFreshBootstrapHealResetFailureStaysFatal pins the other
+// half: retrying is bounded, and a reset the server keeps refusing still fails
+// the migration with both the original refusal and the reset error. sqlmock's
+// ordered expectations fail the test on a fourth attempt.
+func TestMigrateUpWithLockFreshBootstrapHealResetFailureStaysFatal(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("pin mock connection: %v", err)
+	}
+	defer conn.Close()
+
+	lockName := MigrationLockName("testdb")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT GET_LOCK(?, ?)")).
+		WithArgs(lockName, migrationLockAcquireTimeoutSeconds).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(1))
+	expectDirtyGuardRefusal(t, mock)
+	expectFreshBootstrapIdentityMatch(mock)
+	for range freshBootstrapResetAttempts {
+		mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_RESET('--hard')")).
+			WillReturnError(errors.New("reset refused"))
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT RELEASE_LOCK(?)")).
+		WithArgs(lockName).
+		WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+
+	_, err = MigrateUpWithLock(ctx, conn, "testdb",
+		WithFreshBootstrapHeal(testFreshBootstrapHealCapability(), testBootstrapEndpoint))
+	var dirtyErr *DirtyTablesError
+	if !errors.As(err, &dirtyErr) {
+		t.Fatalf("MigrateUpWithLock() error = %v, want the original *DirtyTablesError joined in", err)
+	}
+	if !strings.Contains(err.Error(), "reset refused") {
+		t.Fatalf("MigrateUpWithLock() error = %v, want the reset failure reported", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 // expectIgnoredSentinelProbes mocks the INFORMATION_SCHEMA lookups
 // currentVersion issues to confirm a non-zero ignored cursor against the
 // schema it claims (gh 5033). They fire only for a non-zero cursor, in
-// ignoredSource's table then column sentinel order.
+// ignoredSource's table then floored-table then column sentinel order.
 func expectIgnoredSentinelProbes(mock sqlmock.Sqlmock, present bool) {
 	count := 0
 	if present {
@@ -720,6 +819,10 @@ func expectIgnoredSentinelProbes(mock sqlmock.Sqlmock, present bool) {
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(count))
 	}
 	if present {
+		for range ignoredSource.sentinelFlooredTables {
+			mock.ExpectQuery(regexp.QuoteMeta("FROM INFORMATION_SCHEMA.TABLES")).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		}
 		for range ignoredSource.sentinelColumns {
 			mock.ExpectQuery(regexp.QuoteMeta("FROM INFORMATION_SCHEMA.COLUMNS")).
 				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -908,6 +1011,124 @@ func TestMigrateUpWithLockFreshBootstrapHealCapabilityIsOneShot(t *testing.T) {
 	}
 	if err != dirtyErr {
 		t.Fatalf("second MigrateUpWithLock() wrapped or replaced DirtyTablesError: %T %v", err, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// expectMigrateConsentReads mocks checkMigrateConsent's reads when no consent
+// is held: the main cursor once for the fresh-database exemption, and again
+// for the pending count.
+func expectMigrateConsentReads(mock sqlmock.Sqlmock, cursor int) {
+	for range 2 {
+		expectCursorProbe(mock, "schema_migrations", true)
+		expectScalar(mock, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations", "version", cursor)
+	}
+}
+
+// TestMigrateUpWithLockFreshBootstrapHealIsMigrateConsent pins that heal
+// authority is consent for MigrateUp's own gate, not just for the caller's
+// migration gate. A retried server bootstrap finds the non-zero cursor its
+// first pass left behind, and server-mode `bd init` records no local consent,
+// so a version-only consent check would refuse the init the database it just
+// created. Both migration passes are covered; sqlmock's ordered expectations
+// fail either case on a consent read.
+func TestMigrateUpWithLockFreshBootstrapHealIsMigrateConsent(t *testing.T) {
+	cases := map[string]func(t *testing.T, mock sqlmock.Sqlmock){
+		"partially migrated": func(t *testing.T, mock sqlmock.Sqlmock) {
+			expectOnePendingMigration(t, mock)
+		},
+		"partially migrated with dirty debris": func(t *testing.T, mock sqlmock.Sqlmock) {
+			expectDirtyGuardRefusal(t, mock)
+			expectFreshBootstrapIdentityMatch(mock)
+			mock.ExpectQuery(regexp.QuoteMeta("CALL DOLT_RESET('--hard')")).
+				WillReturnRows(sqlmock.NewRows([]string{"status"}))
+			expectOnePendingMigration(t, mock)
+		},
+	}
+	for name, expectPasses := range cases {
+		t.Run(name, func(t *testing.T) {
+			failOnSwallowedAdvisory(t)
+			resetConsentState(t)
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("create sql mock: %v", err)
+			}
+			defer db.Close()
+
+			ctx := context.Background()
+			conn, err := db.Conn(ctx)
+			if err != nil {
+				t.Fatalf("pin mock connection: %v", err)
+			}
+			defer conn.Close()
+
+			lockName := MigrationLockName("testdb")
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT GET_LOCK(?, ?)")).
+				WithArgs(lockName, migrationLockAcquireTimeoutSeconds).
+				WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(1))
+			expectPasses(t, mock)
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT RELEASE_LOCK(?)")).
+				WithArgs(lockName).
+				WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+
+			applied, err := MigrateUpWithLock(ctx, conn, "testdb",
+				WithFreshBootstrapHeal(testFreshBootstrapHealCapability(), testBootstrapEndpoint))
+			if err != nil {
+				t.Fatalf("MigrateUpWithLock() error = %v", err)
+			}
+			if applied != 1 {
+				t.Fatalf("MigrateUpWithLock() applied = %d, want 1", applied)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
+	}
+}
+
+// TestMigrateUpWithLockRefusesUnconsentedMigration is the control for the
+// test above: the same behind database, opened without heal authority or
+// consent, is refused under the lock before any write, and the lock is still
+// released.
+func TestMigrateUpWithLockRefusesUnconsentedMigration(t *testing.T) {
+	failOnSwallowedAdvisory(t)
+	resetConsentState(t)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("pin mock connection: %v", err)
+	}
+	defer conn.Close()
+
+	lockName := MigrationLockName("testdb")
+	expectConvergedFastPathMiss(mock, "testdb")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT GET_LOCK(?, ?)")).
+		WithArgs(lockName, migrationLockAcquireTimeoutSeconds).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(1))
+	expectMigrateConsentReads(mock, LatestVersion()-1)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT RELEASE_LOCK(?)")).
+		WithArgs(lockName).
+		WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(1))
+
+	applied, err := MigrateUpWithLock(ctx, conn, "testdb", WithDatabaseSelector(testDatabaseSelector))
+	if applied != 0 {
+		t.Fatalf("MigrateUpWithLock() applied = %d, want 0", applied)
+	}
+	var consentErr *MigrateConsentError
+	if !errors.As(err, &consentErr) {
+		t.Fatalf("MigrateUpWithLock() error = %v, want *MigrateConsentError", err)
+	}
+	if consentErr.CurrentVersion != LatestVersion()-1 || consentErr.Pending != 1 {
+		t.Fatalf("refusal = v%d with %d pending, want v%d with 1 pending",
+			consentErr.CurrentVersion, consentErr.Pending, LatestVersion()-1)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

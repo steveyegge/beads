@@ -27,6 +27,9 @@ func runPourProxiedServer(ctx context.Context, in pourInput) error {
 	if uowProvider == nil {
 		return HandleError("proxied-server UOW provider not initialized")
 	}
+	// Explicit commit point, like the `transact` in cloneSubgraph the direct
+	// route reaches through spawnMolecule (GH#4995).
+	ctx = explicitCommitPointContext(ctx)
 
 	vars, err := parseVarFlags(in.varFlags)
 	if err != nil {
@@ -41,9 +44,10 @@ func runPourProxiedServer(ctx context.Context, in pourInput) error {
 		if sg.Phase == "vapor" {
 			warnPourVaporFormula(in.protoArg, in.varFlags)
 		}
-	} else if errors.Is(err, formula.ErrVarValidation) {
-		// in.protoArg IS a formula; the --var values it was given fail
-		// enum/pattern/required-empty constraints. Report that directly
+	} else if errors.Is(err, formula.ErrVarValidation) || errors.Is(err, formula.ErrValidation) {
+		// in.protoArg IS a formula; either the formula itself does not
+		// validate, or the --var values it was given fail enum/pattern/
+		// required-empty constraints. Report that directly
 		// instead of falling through to the proto-ID lookup below, which
 		// would otherwise mask this as "not found as formula or proto ID".
 		return HandleError("%v", err)
@@ -120,7 +124,7 @@ func runPourProxiedServer(ctx context.Context, in pourInput) error {
 		spawnResult, err := cloneSubgraphInto(ctx, w, subgraph, CloneOptions{
 			Vars:     vars,
 			Assignee: in.assignee,
-			Actor:    actor,
+			Actor:    currentActor(),
 			Prefix:   types.IDPrefixMol,
 		})
 		if err != nil {
@@ -134,7 +138,7 @@ func runPourProxiedServer(ctx context.Context, in pourInput) error {
 				return pourProxiedResult{}, "", fmt.Errorf("loading spawned mol: %w", err)
 			}
 			for _, attach := range attachments {
-				bondResult, err := bondProtoMolAttachInto(ctx, w, attach.subgraph, attach.issue, spawnedMol, in.attachType, vars, "", actor, false, true)
+				bondResult, err := bondProtoMolAttachInto(ctx, w, attach.subgraph, attach.issue, spawnedMol, in.attachType, vars, "", currentActor(), false, true)
 				if err != nil {
 					return pourProxiedResult{}, "", fmt.Errorf("attaching %s: %w", attach.id, err)
 				}
@@ -274,7 +278,7 @@ func runMolProgressProxiedServer(ctx context.Context, args []string) error {
 		}
 		moleculeID = resolved
 	} else {
-		moleculeIDs := findInProgressMoleculeIDs(ctx, r, actor)
+		moleculeIDs := findInProgressMoleculeIDs(ctx, r, currentActor())
 		if len(moleculeIDs) == 0 {
 			if jsonOutput {
 				return outputJSON([]interface{}{})
@@ -372,6 +376,9 @@ func runMolBondProxiedServer(ctx context.Context, in molBondInput) error {
 	if uowProvider == nil {
 		return HandleErrorRespectJSON("proxied-server UOW provider not initialized")
 	}
+	// Explicit commit point, like `transact` in bondProtoMol/bondMolecules on
+	// the direct route (GH#4995).
+	ctx = explicitCommitPointContext(ctx)
 
 	if in.dryRun {
 		uw, err := proxiedOpenReadUOW(ctx)
@@ -419,13 +426,13 @@ func runMolBondProxiedServer(ctx context.Context, in molBondInput) error {
 		var result *BondResult
 		switch {
 		case aIsProto && bIsProto:
-			result, err = bondProtoProtoInto(ctx, w, issueA, issueB, in.bondType, in.customTitle, actor)
+			result, err = bondProtoProtoInto(ctx, w, issueA, issueB, in.bondType, in.customTitle, currentActor())
 		case aIsProto && !bIsProto:
-			result, err = bondProtoMolAttachInto(ctx, w, subgraphA, issueA, issueB, in.bondType, in.vars, in.childRef, actor, in.ephemeral, in.pour)
+			result, err = bondProtoMolAttachInto(ctx, w, subgraphA, issueA, issueB, in.bondType, in.vars, in.childRef, currentActor(), in.ephemeral, in.pour)
 		case !aIsProto && bIsProto:
-			result, err = bondProtoMolAttachInto(ctx, w, subgraphB, issueB, issueA, in.bondType, in.vars, in.childRef, actor, in.ephemeral, in.pour)
+			result, err = bondProtoMolAttachInto(ctx, w, subgraphB, issueB, issueA, in.bondType, in.vars, in.childRef, currentActor(), in.ephemeral, in.pour)
 		default:
-			result, err = bondMolMolInto(ctx, w, issueA, issueB, in.bondType, actor)
+			result, err = bondMolMolInto(ctx, w, issueA, issueB, in.bondType, currentActor())
 		}
 		if err != nil {
 			return bondTxResult{}, "", fmt.Errorf("bonding: %w", err)
@@ -446,6 +453,9 @@ func runMolSquashProxiedServer(ctx context.Context, in molSquashInput) error {
 	if uowProvider == nil {
 		return HandleErrorRespectJSON("proxied-server UOW provider not initialized")
 	}
+	// Explicit commit point, like `transact` in runMolSquash on the direct
+	// route (GH#4995).
+	ctx = explicitCommitPointContext(ctx)
 
 	if in.dryRun {
 		uw, err := proxiedOpenReadUOW(ctx)
@@ -491,7 +501,7 @@ func runMolSquashProxiedServer(ctx context.Context, in molSquashInput) error {
 			return &SquashResult{MoleculeID: moleculeID, SquashedCount: 0}, "", nil
 		}
 
-		result, err := squashMoleculeInto(ctx, w, subgraph.Root, wispChildren, in.keepChildren, in.summary, actor)
+		result, err := squashMoleculeInto(ctx, w, subgraph.Root, wispChildren, in.keepChildren, in.summary, currentActor())
 		if err != nil {
 			return nil, "", fmt.Errorf("squashing molecule: %w", err)
 		}
@@ -516,6 +526,15 @@ func runMolBurnProxiedServer(ctx context.Context, args []string, dryRun, force b
 	if uowProvider == nil {
 		return HandleErrorRespectJSON("proxied-server UOW provider not initialized")
 	}
+	// Only the wisp half is an explicit commit point, so the exemption is
+	// applied per commit site below rather than to this ctx (GH#4995).
+	// runMolBurn splits on the direct route: wisps go through burnWisps ->
+	// `transact`, which mints the commit whatever dolt.auto-commit says, while
+	// persistent molecules go through deleteBatch -> issueOpsContext, the
+	// policy-honoring class — dolt's deleter returns before DOLT_COMMIT when
+	// that context defers. Exempting the whole command would mint one commit
+	// per persistent molecule under batch/off, on a destructive verb, where the
+	// identical direct-route command defers them all to `bd dolt commit`.
 
 	uw, err := proxiedOpenReadUOW(ctx)
 	if err != nil {
@@ -617,8 +636,9 @@ func runMolBurnProxiedServer(ctx context.Context, args []string, dryRun, force b
 	}
 
 	if len(wispIDs) > 0 {
-		result, err := uow.RunTxResult(ctx, uowProvider, func(ctx context.Context, uw uow.UnitOfWork) (*BurnResult, string, error) {
-			r, err := burnWispsInto(ctx, newUOWMolWriter(uw), wispIDs, actor)
+		// The wisp half's direct twin is burnWisps -> `transact`.
+		result, err := uow.RunTxResult(explicitCommitPointContext(ctx), uowProvider, func(ctx context.Context, uw uow.UnitOfWork) (*BurnResult, string, error) {
+			r, err := burnWispsInto(ctx, newUOWMolWriter(uw), wispIDs, currentActor())
 			if err != nil {
 				return nil, "", err
 			}
@@ -635,6 +655,10 @@ func runMolBurnProxiedServer(ctx context.Context, args []string, dryRun, force b
 	}
 
 	for _, id := range persistentIDs {
+		// No exemption: the persistent half's direct twin is deleteBatch ->
+		// issueOpsContext, so this stays on the inherited policy context and
+		// the message is blanked under batch/off, exactly as the direct route
+		// leaves these deletions in the working set for `bd dolt commit`.
 		result, err := uow.RunTxResult(ctx, uowProvider, func(ctx context.Context, uw uow.UnitOfWork) (BurnResult, string, error) {
 			subgraph, err := loadTemplateSubgraph(ctx, newUOWMolWriter(uw), id)
 			if err != nil {
@@ -648,7 +672,7 @@ func runMolBurnProxiedServer(ctx context.Context, args []string, dryRun, force b
 				IDs:                  issueIDs,
 				Cascade:              true,
 				UpdateTextReferences: true,
-			}, actor)
+			}, currentActor())
 			if err != nil {
 				return BurnResult{}, "", fmt.Errorf("burning %s: %w", id, err)
 			}

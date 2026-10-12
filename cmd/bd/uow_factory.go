@@ -210,7 +210,21 @@ func openProxiedServerUOWProvider(ctx context.Context, beadsDir, databaseOverrid
 	if err != nil {
 		return nil, err
 	}
-	return newSQLServerUOWProvider(ctx, beadsDir, topology, opts...)
+	// This is the one entry point that is proxied-server mode by definition;
+	// the funnel below is shared with `bd serve`'s SERVER-mode provider, which
+	// must not be told it is proxied. The distinction reaches exactly one
+	// thing: a migration-gate refusal whose remedy is `bd dolt pull` has to
+	// say where that pull can be run, because proxied mode refuses it at the
+	// front door (proxy.dolt_pull.unsupported) and server mode does not.
+	return newSQLServerUOWProvider(ctx, beadsDir, topology, proxiedProviderOptions(opts)...)
+}
+
+// proxiedProviderOptions is opts plus uow.WithProxiedServerMode(), built on a
+// fresh slice so the caller's backing array is never written even when it has
+// spare capacity. Extracted (rather than inlined at the call site) so the
+// wiring has something to unit test; see TestProxiedProviderOptions.
+func proxiedProviderOptions(opts []uow.ProviderOption) []uow.ProviderOption {
+	return append(append([]uow.ProviderOption{}, opts...), uow.WithProxiedServerMode())
 }
 
 // newSQLServerUOWProvider is the single funnel every unit-of-work provider bd
@@ -422,12 +436,13 @@ func resolveServerModeUOWTopologyWithTransportResolver(ctx context.Context, bead
 		//
 		// The 30s default cannot work here. The only client this proxy will
 		// ever have is bd serve, whose pool releases its last connection after
-		// ConnMaxIdleTime (5m) of no requests; a finite-idle proxy then sees
-		// zero clients and exits, taking with it the OS-assigned port the
-		// provider's DSN pinned at construction. Nothing re-resolves that
-		// endpoint — GetCreateDatabaseProxyServerEndpoint runs once, above — so
-		// serve would go on answering /healthz with no database left to answer
-		// anything else from, unrecoverable without a restart.
+		// ConnMaxIdleTime (20s, servePoolLimits) of no requests; a finite-idle
+		// proxy then sees zero clients and exits, taking with it the
+		// OS-assigned port the provider's DSN pinned at construction. Nothing
+		// re-resolves that endpoint — GetCreateDatabaseProxyServerEndpoint runs
+		// once, above — so serve would go on answering /healthz with no
+		// database left to answer anything else from, unrecoverable without a
+		// restart.
 		//
 		// The tradeoff is a child that outlives serve, and it is deliberate: a
 		// never-idle proxy is already a supported configuration

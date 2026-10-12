@@ -28,14 +28,6 @@ func TestWispGCProtectsActiveWisps(t *testing.T) {
 	// category. "reviewing" is wip (protected); "triaging" is active, which
 	// behaves like plain open and stays reclaimable — that pair also guards
 	// against the predicate degenerating into "protect everything".
-	//
-	// Ordering matters: every wisp expected to be RECLAIMED is created and
-	// last-touched first, before the protected ones. The age predicate is
-	// now.Sub(updated_at) > threshold against a timestamp written by the
-	// database, so the most recently touched bead can briefly appear
-	// not-yet-stale if the DB clock runs ahead of the test process. Protected
-	// wisps are excluded regardless of age, so only the reclaimable
-	// assertions are sensitive to this.
 	bdCommand(t, bd, dir, "config", "set", "status.custom", "reviewing:wip,triaging:active")
 
 	// Genuinely abandoned: an idle open ephemeral wisp. Must be reclaimed.
@@ -66,10 +58,12 @@ func TestWispGCProtectsActiveWisps(t *testing.T) {
 	customWIP := bdCreate(t, bd, dir, "custom wip step", "--ephemeral").ID
 	bdCommand(t, bd, dir, "update", customWIP, "--status", "reviewing")
 
-	// Every wisp above was created well over 1ms ago by the time gc runs, so a
-	// 1ms threshold makes them all "stale" by updated_at. Only the genuinely
-	// abandoned ones should be reclaimed.
-	out := bdCommand(t, bd, dir, "mol", "wisp", "gc", "--age", "1ms", "--dry-run", "--json")
+	// --age 0s makes every wisp above old enough to reclaim. Any positive --age
+	// can leave the most recently touched one reading as too young, because
+	// updated_at is stored at whole-second precision and Dolt rounds the write
+	// up to half a second into the future (#7236). Protection is checked
+	// before age, so only the genuinely abandoned ones should be reclaimed.
+	out := bdCommand(t, bd, dir, "mol", "wisp", "gc", "--age", "0s", "--dry-run", "--json")
 
 	var res struct {
 		CleanedIDs []string `json:"cleaned_ids"`

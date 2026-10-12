@@ -40,6 +40,17 @@ func wireStorageDecorators(store storage.DoltStorage, hookRunner *hooks.Runner, 
 
 // wireExternalDependencyPolicy applies only the read/guard policy. Routed
 // stores must use this without inheriting the caller's hooks or telemetry.
+//
+// It ALWAYS wraps, including a registered Remote backend (design 3.6): a
+// remote server that enforces this policy itself answers the decorator's
+// storage.ExternalDependencyPolicyProber probe (implemented by
+// httpclient.Store, keyed on the handshake's wire.CapExternalDependencies
+// token) with true, so the decorator's own loadBlockingState is a cheap no-op
+// for that server — but a server that does NOT advertise the capability must
+// still get client-side enforcement, which requires wrapping it in the first
+// place. Skipping the wrap here for every remote backend (the pre-S6-fix
+// behavior) silently dropped the policy entirely against such a server; the
+// capability-aware skip now lives inside the decorator, not at wrap time.
 func wireExternalDependencyPolicy(store storage.DoltStorage) storage.DoltStorage {
 	if store == nil {
 		return nil
@@ -73,6 +84,18 @@ func waitForCommandHooks() {
 		return
 	}
 	hookRunner.Wait(hookRunner.Timeout())
+}
+
+// wireProxiedUOWProvider composes the proxied-server provider chain:
+//
+//	caller → externaldeps policy → notifying provider → raw provider
+//
+// It is the unit-of-work twin of wireStorageDecorators, extracted from main.go
+// for the same reason: the composition is only unit-testable as a function.
+// The notifying layer is present only when sinks carry a hook runner;
+// uow.NewNotifyingProvider returns the provider unwrapped otherwise.
+func wireProxiedUOWProvider(provider uow.UnitOfWorkProvider, sinks uow.Sinks) uow.UnitOfWorkProvider {
+	return wireExternalDependencyUOWProvider(uow.NewNotifyingProvider(provider, sinks))
 }
 
 func wireExternalDependencyUOWProvider(provider uow.UnitOfWorkProvider) uow.UnitOfWorkProvider {

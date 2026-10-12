@@ -210,9 +210,10 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 	if err == nil {
 		subgraph = sg
 		protoID = sg.Root.ID
-	} else if errors.Is(err, formula.ErrVarValidation) {
-		// args[0] IS a formula; the --var values it was given fail
-		// enum/pattern/required-empty constraints. Report that directly
+	} else if errors.Is(err, formula.ErrVarValidation) || errors.Is(err, formula.ErrValidation) {
+		// args[0] IS a formula; either the formula itself does not
+		// validate, or the --var values it was given fail enum/pattern/
+		// required-empty constraints. Report that directly
 		// instead of falling through to the legacy proto-ID lookup below,
 		// which would otherwise mask this as "not found as formula or proto".
 		return HandleError("%v", err)
@@ -269,7 +270,7 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 	vars = applyVariableDefaults(vars, subgraph)
 
 	if err := checkRequiredVars(subgraph, vars); err != nil {
-		return HandleErrorWithHint(err.Error(), fmt.Sprintf("Provide them with: --var %s=<value>", firstMissingVar(subgraph, vars)))
+		return handleVarErrorWithHint(err, firstMissingVar(subgraph, vars))
 	}
 
 	if dryRun {
@@ -279,7 +280,7 @@ func runWispCreateCore(cmd *cobra.Command, args []string) error {
 
 	result, err := spawnMoleculeWithOptions(ctx, store, subgraph, CloneOptions{
 		Vars:      vars,
-		Actor:     actor,
+		Actor:     currentActor(),
 		Ephemeral: true,
 		Prefix:    types.IDPrefixWisp,
 		RootOnly:  rootOnly,
@@ -301,7 +302,7 @@ func checkRequiredVars(subgraph *TemplateSubgraph, vars map[string]string) error
 	if len(missingVars) > 0 {
 		return fmt.Errorf("missing required variables: %s", strings.Join(missingVars, ", "))
 	}
-	return nil
+	return checkUnknownVars(subgraph, nil, vars)
 }
 
 func firstMissingVar(subgraph *TemplateSubgraph, vars map[string]string) string {
@@ -815,11 +816,35 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 	// protection is only enforced in the pre-filter; cascade bypasses it).
 	// Without cascade the list is deleted exactly as filtered and live
 	// dependents are orphaned (edges dropped, is_blocked recomputed).
-	if err := deleteBatch(nil, ids, true, false, false, jsonOutput, false, "wisp gc"); err != nil {
+	if err := deleteBatch(nil, ids, true, false, false, jsonOutput, false, nil, "wisp gc"); err != nil {
 		return HandleError("%v", err)
 	}
 	return nil
 }
+
+// wispIsAbandoned reports whether a wisp counts as abandoned for GC
+// purposes: it has not been updated within ageThreshold of now.
+//
+// ageThreshold <= 0 (--age 0s and below) always reports true, bypassing
+// the clock comparison entirely — this matches the GC's own documented
+// contract ("hasn't been updated in --age duration"): nothing has been
+// updated in the last zero seconds. It also matters for a reason the
+// comparison alone does not handle: Dolt's DATETIME(0) column rounds
+// fractional seconds half-up on write rather than truncating (#7236), so
+// a wisp created in the second half of a wall-clock second can read back
+// with updatedAt up to 0.5s in the future. now.Sub(updatedAt) is then
+// negative, failing a strict > comparison for a wisp that is, by
+// definition, not yet one second old — exactly what --age 0s's "every
+// wisp qualifies" contract exists to avoid depending on in the first
+// place.
+func wispIsAbandoned(now, updatedAt time.Time, ageThreshold time.Duration) bool {
+	return ageThreshold <= 0 || now.Sub(updatedAt) > ageThreshold
+}
+
+// wispGCNow is the clock seam for findAbandonedWisps' age check, swappable in
+// tests. Both gc routes read it, so a test that swaps it must not call
+// t.Parallel().
+var wispGCNow = time.Now
 
 func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThreshold time.Duration, excludeTypes []types.IssueType) ([]*types.Issue, error) {
 	ephemeralFlag := true
@@ -847,7 +872,7 @@ func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThre
 		return nil, err
 	}
 
-	now := time.Now()
+	now := wispGCNow()
 	var abandoned []*types.Issue
 	for _, issue := range issues {
 		if r.IsInfraTypeCtx(ctx, issue.IssueType) {
@@ -859,7 +884,7 @@ func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThre
 		if isProtectedWisp(issue, blockedSet, protectedStatuses) {
 			continue
 		}
-		if now.Sub(issue.UpdatedAt) > ageThreshold {
+		if wispIsAbandoned(now, issue.UpdatedAt, ageThreshold) {
 			abandoned = append(abandoned, issue)
 		}
 	}
@@ -878,6 +903,9 @@ func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThre
 		for id := range childIDs {
 			childIDSlice = append(childIDSlice, id)
 		}
+		// TODO(batchgetter): unbounded id list; see issueops.BatchGetter's doc
+		// and the importIssueLookup TODO in import_shared.go for why this is
+		// not yet routed through the role.
 		childIssues, fetchErr := r.GetIssuesByIDs(ctx, childIDSlice)
 		if fetchErr == nil {
 			abandonedSet := make(map[string]bool, len(abandoned))
@@ -985,7 +1013,7 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 	// Without cascade, closed wisps are deleted and live dependents are
 	// orphaned (edges dropped, is_blocked recomputed) — the same semantics as
 	// a plain `bd delete`.
-	if err := deleteBatch(nil, ids, force, dryRun, false, jsonOutput, false, "wisp gc --closed"); err != nil {
+	if err := deleteBatch(nil, ids, force, dryRun, false, jsonOutput, false, nil, "wisp gc --closed"); err != nil {
 		return HandleError("%v", err)
 	}
 
@@ -997,12 +1025,12 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 
 func init() {
 	// Wisp command flags (for direct create: bd mol wisp <proto>)
-	wispCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
+	wispCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value); a name the proto cannot consume is an error")
 	wispCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	wispCmd.Flags().Bool("root-only", false, "Create only the root issue (no child step issues)")
 
 	// Wisp create command flags (kept for backwards compat: bd mol wisp create <proto>)
-	wispCreateCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
+	wispCreateCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value); a name the proto cannot consume is an error")
 	wispCreateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	wispCreateCmd.Flags().Bool("root-only", false, "Create only the root issue (no child step issues)")
 
