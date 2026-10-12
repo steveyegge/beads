@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -78,7 +79,7 @@ func TestIfRevisionEnvelopeGascityContract(t *testing.T) {
 		t.Run("stale_revision_carries_integer_expected_and_current", func(t *testing.T) {
 			var reported error
 			out := captureStderr(t, func() {
-				reported, _ = reportIfRevisionFailure("updating", "bd-1", &issueops.VersionMismatchError{Expected: 5, Current: 7})
+				reported, _ = reportIfRevisionFailure("updating", "bd-1", &issueops.VersionMismatchError{Expected: 5, Current: 7}, nil)
 			})
 			ee, ok := reported.(*exitError)
 			if !ok || ee.Code != ExitGuardMismatch {
@@ -122,7 +123,7 @@ func TestIfRevisionEnvelopeGascityContract(t *testing.T) {
 		t.Run("stale_assignee_or_status_carries_no_revision_fields", func(t *testing.T) {
 			var reported error
 			out := captureStderr(t, func() {
-				reported, _ = reportIfRevisionFailure("updating", "bd-2", storage.ErrAssigneeMismatch)
+				reported, _ = reportIfRevisionFailure("updating", "bd-2", storage.ErrAssigneeMismatch, nil)
 			})
 			ee, ok := reported.(*exitError)
 			if !ok || ee.Code != ExitGuardMismatch {
@@ -142,7 +143,7 @@ func TestIfRevisionEnvelopeGascityContract(t *testing.T) {
 
 		t.Run("schema_version_is_present_and_an_integer", func(t *testing.T) {
 			out := captureStderr(t, func() {
-				_, _ = reportIfRevisionFailure("updating", "bd-3", &issueops.VersionMismatchError{Expected: 1, Current: 2})
+				_, _ = reportIfRevisionFailure("updating", "bd-3", &issueops.VersionMismatchError{Expected: 1, Current: 2}, nil)
 			})
 			var whole map[string]interface{}
 			if err := json.Unmarshal([]byte(lastJSONLine(t, out)), &whole); err != nil {
@@ -172,7 +173,7 @@ func TestIfRevisionUnsupportedBackendCode(t *testing.T) {
 	var reported error
 	var ok bool
 	out := captureStderr(t, func() {
-		reported, ok = reportIfRevisionFailure("deleting", "bd-9", &issueops.ErrUnsupported{Op: "Delete.ExpectedVersion", Backend: "stub"})
+		reported, ok = reportIfRevisionFailure("deleting", "bd-9", &issueops.ErrUnsupported{Op: "Delete.ExpectedVersion", Backend: "stub"}, nil)
 	})
 	if !ok {
 		t.Fatalf("reportIfRevisionFailure did not recognize issueops.ErrUnsupported as a guard outcome")
@@ -195,7 +196,7 @@ func TestIfRevisionUnsupportedBackendCode(t *testing.T) {
 	// classifyIfRevisionFailure is reportIfRevisionFailure's own classifier;
 	// pinned directly too so a future refactor that bypasses the report
 	// function still has this assertion on the mapping itself.
-	code, _, expected, current, classified := classifyIfRevisionFailure(&issueops.ErrUnsupported{Op: "x", Backend: "y"})
+	code, _, expected, current, classified := classifyIfRevisionFailure(&issueops.ErrUnsupported{Op: "x", Backend: "y"}, nil)
 	if !classified || code != ifRevisionCodeUnsupported {
 		t.Errorf("classifyIfRevisionFailure(ErrUnsupported) = %q, %v, want %q, true", code, classified, ifRevisionCodeUnsupported)
 	}
@@ -209,15 +210,136 @@ func TestIfRevisionUnsupportedBackendCode(t *testing.T) {
 // own (unrelated) failure handling must run unchanged, and nothing here may
 // claim the error as its own.
 func TestClassifyIfRevisionFailureUnrelatedError(t *testing.T) {
-	if _, _, _, _, ok := classifyIfRevisionFailure(nil); ok {
+	if _, _, _, _, ok := classifyIfRevisionFailure(nil, nil); ok {
 		t.Errorf("classifyIfRevisionFailure(nil) ok = true, want false")
 	}
-	if _, _, _, _, ok := classifyIfRevisionFailure(errUnrelatedForIfRevisionTest); ok {
+	if _, _, _, _, ok := classifyIfRevisionFailure(errUnrelatedForIfRevisionTest, nil); ok {
 		t.Errorf("classifyIfRevisionFailure(unrelated error) ok = true, want false")
 	}
-	if reported, ok := reportIfRevisionFailure("updating", "bd-4", errUnrelatedForIfRevisionTest); ok || reported != nil {
+	if reported, ok := reportIfRevisionFailure("updating", "bd-4", errUnrelatedForIfRevisionTest, nil); ok || reported != nil {
 		t.Errorf("reportIfRevisionFailure(unrelated error) = %v, %v, want nil, false", reported, ok)
 	}
 }
 
 var errUnrelatedForIfRevisionTest = errors.New("boom: unrelated failure")
+
+// TestClassifyIfRevisionFailureBareVersionMismatchSentinel pins mc-zndi7.78:
+// an HTTP-backed store (bd-enterprise, after the gascity sync) that returns
+// the bare storage.ErrVersionMismatch sentinel -- not the typed
+// *issueops.VersionMismatchError -- must still classify as
+// "precondition_failed" / ExitGuardMismatch, falling back to the caller's own
+// ifRevision for expected_revision (since the sentinel itself carries none)
+// and omitting current_revision (genuinely unknown).
+func TestClassifyIfRevisionFailureBareVersionMismatchSentinel(t *testing.T) {
+	ifRevision := int64(42)
+	code, _, expected, current, ok := classifyIfRevisionFailure(storage.ErrVersionMismatch, &ifRevision)
+	if !ok || code != ifRevisionCodePreconditionFailed {
+		t.Fatalf("classifyIfRevisionFailure(bare ErrVersionMismatch) = %q, %v, want %q, true", code, ok, ifRevisionCodePreconditionFailed)
+	}
+	if expected == nil || *expected != ifRevision {
+		t.Errorf("expected_revision = %v, want &%d (the caller's --if-revision value)", expected, ifRevision)
+	}
+	if current != nil {
+		t.Errorf("current_revision = %v, want nil (unknown to the bare sentinel)", current)
+	}
+
+	reported, ok := reportIfRevisionFailure("updating", "bd-5", storage.ErrVersionMismatch, &ifRevision)
+	if !ok {
+		t.Fatalf("reportIfRevisionFailure did not recognize the bare ErrVersionMismatch sentinel as a guard outcome")
+	}
+	ee, isExitErr := reported.(*exitError)
+	if !isExitErr || ee.Code != ExitGuardMismatch {
+		t.Fatalf("reported error = %#v, want *exitError{Code: %d}", reported, ExitGuardMismatch)
+	}
+}
+
+// TestClassifyIfRevisionFailureNotFoundSentinel pins mc-zndi7.81: a pre-flight
+// existence check that fails with the bare storage.ErrNotFound sentinel --
+// e.g. cmd/bd/delete.go's resolveAndGetIssueForMutation call, which runs
+// before deleter.Delete() and the per-id lock fence #7244 added, so a
+// same-token --if-revision racer that loses that fence can find the row
+// already gone right there -- must classify exactly like a mid-guard version
+// mismatch: "precondition_failed" / ExitGuardMismatch, falling back to the
+// caller's own --if-revision value for expected_revision and omitting
+// current_revision (the row is gone; there is nothing left to report).
+// Without this, that pre-flight path surfaces an unclassified, uncoded exit 1
+// instead of joining every other --if-revision loser at exit 13.
+func TestClassifyIfRevisionFailureNotFoundSentinel(t *testing.T) {
+	ifRevision := int64(7)
+	code, _, expected, current, ok := classifyIfRevisionFailure(storage.ErrNotFound, &ifRevision)
+	if !ok || code != ifRevisionCodePreconditionFailed {
+		t.Fatalf("classifyIfRevisionFailure(ErrNotFound) = %q, %v, want %q, true", code, ok, ifRevisionCodePreconditionFailed)
+	}
+	if expected == nil || *expected != ifRevision {
+		t.Errorf("expected_revision = %v, want &%d (the caller's --if-revision value)", expected, ifRevision)
+	}
+	if current != nil {
+		t.Errorf("current_revision = %v, want nil (the row is gone; nothing to report)", current)
+	}
+
+	reported, ok := reportIfRevisionFailure("deleting", "bd-6", storage.ErrNotFound, &ifRevision)
+	if !ok {
+		t.Fatalf("reportIfRevisionFailure did not recognize storage.ErrNotFound as a guard outcome")
+	}
+	ee, isExitErr := reported.(*exitError)
+	if !isExitErr || ee.Code != ExitGuardMismatch {
+		t.Fatalf("reported error = %#v, want *exitError{Code: %d}", reported, ExitGuardMismatch)
+	}
+}
+
+// TestReportIfRevisionTargetGone pins ga-vnycm2.10's pre-flight mapping: a
+// verb's resolution failing with not-found (the storage sentinel, or
+// ResolvePartialID's unwrapped "no issue found matching" text) reports as
+// precondition_failed / ExitGuardMismatch only under an active --if-revision
+// guard; with no guard, or for any other resolution failure, it is not a
+// guard outcome and the caller's own handling applies.
+func TestReportIfRevisionTargetGone(t *testing.T) {
+	ifRevision := int64(3)
+	for _, tc := range []struct {
+		name       string
+		err        error
+		ifRevision *int64
+		wantOK     bool
+	}{
+		{"sentinel_guarded", fmt.Errorf("resolving: %w", storage.ErrNotFound), &ifRevision, true},
+		{"partial_id_text_guarded", errors.New(`no issue found matching "bd-x"`), &ifRevision, true},
+		{"sentinel_unguarded", storage.ErrNotFound, nil, false},
+		{"other_error_guarded", errors.New("connection refused"), &ifRevision, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reported, ok := reportIfRevisionTargetGone("closing", "bd-x", tc.err, tc.ifRevision)
+			if ok != tc.wantOK {
+				t.Fatalf("reportIfRevisionTargetGone ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !ok {
+				if reported != nil {
+					t.Errorf("reported = %v, want nil when not a guard outcome", reported)
+				}
+				return
+			}
+			ee, isExitErr := reported.(*exitError)
+			if !isExitErr || ee.Code != ExitGuardMismatch {
+				t.Fatalf("reported error = %#v, want *exitError{Code: %d}", reported, ExitGuardMismatch)
+			}
+		})
+	}
+}
+
+// TestClassifyIfRevisionFailureTypedBeforeSentinel pins ordering: a typed
+// *issueops.VersionMismatchError (which also satisfies errors.Is against the
+// same ErrVersionMismatch sentinel via Unwrap) must still report its OWN
+// Expected/Current, not fall into the bare-sentinel branch and report the
+// caller's ifRevision/nil instead.
+func TestClassifyIfRevisionFailureTypedBeforeSentinel(t *testing.T) {
+	ifRevision := int64(999)
+	code, _, expected, current, ok := classifyIfRevisionFailure(&issueops.VersionMismatchError{Expected: 5, Current: 7}, &ifRevision)
+	if !ok || code != ifRevisionCodePreconditionFailed {
+		t.Fatalf("classifyIfRevisionFailure(typed) = %q, %v, want %q, true", code, ok, ifRevisionCodePreconditionFailed)
+	}
+	if expected == nil || *expected != 5 {
+		t.Errorf("expected_revision = %v, want &5 (the typed error's own Expected, not ifRevision)", expected)
+	}
+	if current == nil || *current != 7 {
+		t.Errorf("current_revision = %v, want &7 (the typed error's own Current)", current)
+	}
+}
