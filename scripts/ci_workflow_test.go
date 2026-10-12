@@ -1881,14 +1881,8 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 		// bazel.yml's own run - and thus pr.yml's ci-gate - red for a job
 		// nothing requires.
 		_, flagGated := bazelFlagGatedLanes[name]
-		// So is each shadow lane (bazelShadowLanes): it reports into no
-		// gate, so its failure must not fail the call (BAZEL) either.
-		_, shadow := bazelShadowLanes[name]
-		if job.ContinueOnError && name != bazelRBEPrewarmJobName && !flagGated && !shadow {
+		if job.ContinueOnError && name != bazelRBEPrewarmJobName && !flagGated {
 			t.Errorf("%s continue-on-error hides failures from pr.yml's ci-gate", name)
-		}
-		if shadow && !job.ContinueOnError {
-			t.Errorf("%s is a shadow lane (%s) but lacks job-level continue-on-error", name, bazelShadowLanes[name])
 		}
 		// A flag-gated lane is advisory until its flag says otherwise, and
 		// an advisory job's failure must not fail the call (BAZEL).
@@ -1994,10 +1988,18 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 			// below only fires for a setup-bazel step).
 			wantJobRunsOn, wantJobIf = bazelPrewarmRunsOn, bazelRBEPrewarmIf
 		} else if name == bazelDoltRaceJobName {
-			// Mode remote, on pull_request and merge_group events only
-			// (bazel_dolt_race_shadow_test.go); the lanes' runner and
-			// setup-bazel env otherwise.
+			// Mode remote only, in place of its members
+			// (bazel_dolt_race_test.go); the lanes' runner and setup-bazel
+			// env otherwise.
 			wantJobIf = bazelDoltRaceJobIf
+		}
+		// The union's members: their own rule, minus mode remote
+		// (TestBazelDoltRaceArmsExactlyOnePerMode).
+		switch name {
+		case bazelDoltJobName:
+			wantJobIf = bazelDoltMemberIf
+		case bazelProxiedJobName:
+			wantJobIf = bazelProxiedMemberIf
 		}
 		if job.RunsOn != wantJobRunsOn {
 			t.Errorf("%s runs-on = %q, want %q", name, job.RunsOn, wantJobRunsOn)
@@ -2543,21 +2545,15 @@ func TestBazelLaneIsGated(t *testing.T) {
 		if name == bazelRBEJobName || isBazelRRCJob(name) {
 			continue // the rrc jobs never run in a PR call (bazel_rrc_test.go)
 		}
-		if _, shadow := bazelShadowLanes[name]; shadow {
-			// A shadow lane reports into nothing: no job outputs, so no
-			// workflow_call output and no gate id
-			// (TestBazelDoltRaceShadowIsAdvisory).
-			if len(job.Outputs) != 0 {
-				t.Errorf("shadow lane %s outputs = %v, want none", name, job.Outputs)
-			}
-			continue
-		}
 		_, gated := bazelLaneGateIDs[name]
 		_, advisory := bazelAdvisoryLanes[name]
 		_, flagGated := bazelFlagGatedLanes[name]
-		if n := btoi(gated) + btoi(advisory) + btoi(flagGated); n != 1 {
-			t.Errorf("%s job %s: gated=%v advisory=%v flag-gated=%v; add it to exactly one of bazelLaneGateIDs (with a CI_GATE_REQUIRED id in pr.yml), bazelFlagGatedLanes (with its pr.yml flag) or bazelAdvisoryLanes (with the reason)",
-				bazelWorkflowName, name, gated, advisory, flagGated)
+		// A union lane reports through its gated members' ids and outputs
+		// (bazel_dolt_race_test.go).
+		_, union := bazelUnionLanes[name]
+		if n := btoi(gated) + btoi(advisory) + btoi(flagGated) + btoi(union); n != 1 {
+			t.Errorf("%s job %s: gated=%v advisory=%v flag-gated=%v union=%v; add it to exactly one of bazelLaneGateIDs (with a CI_GATE_REQUIRED id in pr.yml), bazelFlagGatedLanes (with its pr.yml flag), bazelUnionLanes (with the gated members it runs in place of) or bazelAdvisoryLanes (with the reason)",
+				bazelWorkflowName, name, gated, advisory, flagGated, union)
 		}
 		// Each lane reports its job.status from an always() last step.
 		if !reflect.DeepEqual(job.Outputs, map[string]string{"result": "${{ steps.result.outputs.result }}"}) {
@@ -2568,7 +2564,19 @@ func TestBazelLaneIsGated(t *testing.T) {
 			last.Run != `echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"` {
 			t.Errorf("%s last step = %+v; want the always() job.status recorder", name, last)
 		}
-		wantCallOutputs[name] = "${{ jobs." + name + ".outputs.result }}"
+		if !union {
+			wantCallOutputs[name] = bazelLaneCallOutput(name)
+		}
+	}
+	for union, members := range bazelUnionLanes {
+		if _, ok := workflow.Jobs[union]; !ok {
+			t.Errorf("bazelUnionLanes lists %s, which %s does not have", union, bazelWorkflowName)
+		}
+		for _, m := range members {
+			if _, gated := bazelLaneGateIDs[m]; !gated {
+				t.Errorf("union lane %s member %s is not a gated lane", union, m)
+			}
+		}
 	}
 	for name := range bazelLaneGateIDs {
 		if _, ok := workflow.Jobs[name]; !ok {
@@ -2858,6 +2866,12 @@ func bazelLaneRunModes(t *testing.T, lane, ifExpr string, with map[string]string
 		return map[string]bool{"remote": true, "fork-ro": true, "fork-rw": true, "cache": true, "local": true}
 	case "${{ needs.rbe.outputs.enabled == 'true' }}":
 		return map[string]bool{"remote": true, "fork-ro": true, "fork-rw": true}
+	case bazelDoltMemberIf:
+		// The dolt-server tier's own job, where bazel-dolt-race does not run
+		// (TestBazelDoltRaceArmsExactlyOnePerMode).
+		return map[string]bool{"fork-ro": true, "fork-rw": true, "cache": true, "local": true}
+	case bazelProxiedMemberIf:
+		return map[string]bool{"fork-ro": true, "fork-rw": true}
 	case bazelIntegIf:
 		if strings.EqualFold(with["integration"], "off") {
 			return map[string]bool{}
@@ -2884,14 +2898,8 @@ func bazelLaneRunModes(t *testing.T, lane, ifExpr string, with map[string]string
 		// on the job: B1 removed fork-rw). Unlike the historical advisory
 		// lanes, this one legitimately runs in pr.yml's own call (see
 		// bazelAdvisoryLanes' name-specific exception in
-		// TestBazelGateSimulation below).
-		return map[string]bool{"remote": true}
-	case bazelDoltRaceJobIf:
-		// Mode remote, and only on pull_request and merge_group events:
-		// within pr.yml's call (the only PR-time caller these simulations
-		// model) that is mode remote. bazel-farm.yml's pull_request_target
-		// call, push, nightly and dispatch never run it
-		// (TestBazelDoltRaceShadowRunsOnlyInRemotePRCalls).
+		// TestBazelGateSimulation below). bazel-dolt-race's if
+		// (bazelDoltRaceJobIf) is the same expression: mode remote.
 		return map[string]bool{"remote": true}
 	case bazelRRCSeedJobIf, bazelRRCVerifyJobIf:
 		// The remote repo contents cache's writer (push to main) and
@@ -2909,7 +2917,7 @@ type bazelGateScenario struct {
 	event         string
 	mode, enabled string            // the call's rbe-mode / rbe-enabled outputs
 	call          string            // needs.bazel.result
-	outputs       map[string]string // the lanes' outputs ("" = not reported)
+	outputs       map[string]string // the jobs' result outputs ("" = not reported)
 	// Non-Bazel needs' results that differ from success.
 	results map[string]string
 	// pr.yml's top-level flags the run script reads (the workflow env is
@@ -2977,7 +2985,9 @@ func runPRGateStep(t *testing.T, step ciWorkflowStep, sc bazelGateScenario) (boo
 		case m[3] == "rbe-enabled":
 			got = sc.enabled
 		default:
-			got = sc.outputs[m[3]]
+			// The call's output as GitHub evaluates it over the jobs'
+			// results (a union lane's members read its result first).
+			got = bazelCallOutputValue(t, m[3], sc.outputs)
 		}
 		if got == "" && m[4] != "" {
 			got = "skipped"
@@ -3021,8 +3031,10 @@ func TestBazelGateSimulation(t *testing.T) {
 		if _, advisory := bazelAdvisoryLanes[name]; advisory && name != bazelRBEPrewarmJobName && len(lanes[name]) != 0 {
 			t.Errorf("advisory lane %s runs in pr.yml's call in modes %v; turn it off there (%s)", name, lanes[name], bazelAdvisoryLanes[name])
 		}
-		if _, gated := bazelLaneGateIDs[name]; gated && !lanes[name]["remote"] {
-			t.Errorf("gated lane %s does not run in pr.yml's call even in remote mode", name)
+	}
+	for lane := range bazelLaneGateIDs {
+		if bazelLaneReporter(lanes, lane, "remote") == "" {
+			t.Errorf("gated lane %s does not run (nor does its union lane) in pr.yml's call even in remote mode", lane)
 		}
 	}
 	enabledFor := bazelModeEnabled
@@ -3054,9 +3066,14 @@ func TestBazelGateSimulation(t *testing.T) {
 			}
 			if modes[mode] {
 				anyRuns = true
-			} else if id, gated := bazelLaneGateIDs[lane]; gated {
-				wantSkips = append(wantSkips, id)
-			} else if g, flagGated := bazelFlagGatedLanes[lane]; flagGated {
+			}
+			if id, gated := bazelLaneGateIDs[lane]; gated {
+				// Skipped by design only when neither the lane nor its
+				// union lane runs in this mode.
+				if bazelLaneReporter(lanes, lane, mode) == "" {
+					wantSkips = append(wantSkips, id)
+				}
+			} else if g, flagGated := bazelFlagGatedLanes[lane]; !modes[mode] && flagGated {
 				// Listed even while advisory, so flipping the flag is the
 				// only change that makes it required.
 				wantSkips = append(wantSkips, g.id)
@@ -3144,6 +3161,9 @@ func TestBazelGateSimulation(t *testing.T) {
 				}
 				continue
 			}
+			if _, union := bazelUnionLanes[lane]; union {
+				continue // through its members' ids, below
+			}
 			id, gated := bazelLaneGateIDs[lane]
 			if !gated {
 				// Advisory: not in the call, so it cannot report, and
@@ -3153,18 +3173,31 @@ func TestBazelGateSimulation(t *testing.T) {
 				}
 				continue
 			}
+			// The job whose result the lane's id reads in this mode: the
+			// lane itself, or its union lane (bazel-dolt-race in mode
+			// remote, for bazel-doltserver and bazel-proxied).
+			reporter := bazelLaneReporter(lanes, lane, mode)
 			if !modes[mode] {
-				// Skipped by design (baseline); if it ran anyway and failed,
-				// the gate still sees it.
-				sc(lane+" ran and failed", "failure", with(lane, "failure"), false, id)
+				// Not its own job in this mode (skipped by design, or its
+				// union reports); if it ran anyway and failed, the gate still
+				// sees it: through its id, or, where the union's result
+				// comes first in the output, through the aggregate.
+				out := with(lane, "failure")
+				mention := id
+				if bazelCallOutputValue(t, lane, out) != "failure" {
+					mention = bazelAggregateGateID
+				}
+				sc(lane+" ran and failed", "failure", out, false, mention)
+			}
+			if reporter == "" {
 				continue
 			}
 			for _, call := range []string{"success", "failure"} {
-				sc(lane+" alone skipped, aggregate "+call, call, with(lane, ""), false, id)
-				sc(lane+" failed, aggregate "+call, call, with(lane, "failure"), false, id)
-				sc(lane+" cancelled, aggregate "+call, call, with(lane, "cancelled"), false, id)
+				sc(reporter+" (for "+lane+") alone skipped, aggregate "+call, call, with(reporter, ""), false, id)
+				sc(reporter+" (for "+lane+") failed, aggregate "+call, call, with(reporter, "failure"), false, id)
+				sc(reporter+" (for "+lane+") cancelled, aggregate "+call, call, with(reporter, "cancelled"), false, id)
 			}
-			sc(lane+" cancelled, aggregate cancelled", "cancelled", with(lane, "cancelled"), false, id)
+			sc(reporter+" (for "+lane+") cancelled, aggregate cancelled", "cancelled", with(reporter, "cancelled"), false, id)
 		}
 	}
 
@@ -4590,11 +4623,8 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 			// (bazelCIAnalyticsStepNames): reporting only, never a `needs`
 			// of anything and never read back by this workflow or its
 			// callers.
-			// And each shadow lane's (bazelShadowLanes): it reports into no
-			// gate, so its failure must not fail the call either.
 			_, flagGated := bazelFlagGatedLanes[strings.TrimSuffix(strings.TrimPrefix(path, ".jobs."), ".continue-on-error")]
-			_, shadow := bazelShadowLanes[strings.TrimSuffix(strings.TrimPrefix(path, ".jobs."), ".continue-on-error")]
-			if path != bazelRBEPrewarmContinueOnErrorPath && !flagGated && !shadow && !ciAnalyticsPaths[path] {
+			if path != bazelRBEPrewarmContinueOnErrorPath && !flagGated && !ciAnalyticsPaths[path] {
 				t.Errorf("%s: %s hides failures from pr.yml's ci-gate", bazelWorkflowName, path)
 			}
 		}

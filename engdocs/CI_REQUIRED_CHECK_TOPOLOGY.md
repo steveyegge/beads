@@ -54,7 +54,10 @@ Current PR-related workflow names:
   repo variable is unset) and exports it as the `rbe-mode` / `rbe-enabled`
   outputs (`rbe-enabled` is `true` in `remote`, `fork-ro` and `fork-rw`);
   every lane exports its
-  `job.status` as an output named after the job. `pr.yml`'s gate requires the
+  `job.status` as an output named after the job (in mode `remote`, the
+  `bazel-doltserver` and `bazel-proxied` outputs carry the `bazel-dolt-race`
+  union job's status instead; see [dolt-race Union Lane](#dolt-race-union-lane)).
+  `pr.yml`'s gate requires the
   call's result (`BAZEL`) and `BAZEL_TEST`, `BAZEL_PURE`,
   `BAZEL_RELEASE_CROSS`, `BAZEL_EMBEDDED`, `BAZEL_INTEGRATION`,
   `BAZEL_DOLTSERVER`, `BAZEL_PROXIED` and `BAZEL_SERVER_STORAGE`. These lanes are the only CI run of the Linux Go
@@ -620,38 +623,41 @@ job's `if:` or rotating the key, in either of two ways:
   step's own kill switch, checked before any network call. Deleting the
   variable does not disable pre-warming; it restores the default of 1.
 
-## dolt-race Shadow (Not Required)
+## dolt-race Union Lane
 
-`bazel.yml`'s `bazel-dolt-race` job (check name `Bazel / dolt-race`) is an
-advisory shadow, not a required check. It runs
-`bazel test //... --config=dolt-race`, the union of `--config=doltserver` and
-`--config=doltserver-proxied` with one tag filter for both tiers, beside the
-`bazel-doltserver` and `bazel-proxied` lanes. Its purpose is to measure one
-client per group of lanes against the two lanes it would replace (end time,
-runner minutes, test counts and results) before any cutover. Each member
-target's test action key is unchanged, so the shadow shares cached results
-with the member lanes.
+In mode `remote`, `bazel.yml`'s `bazel-dolt-race` job (check name
+`Bazel / dolt-race`) runs the dolt-server and proxied-server tiers in one
+`bazel test //... --config=dolt-race`, in place of the `bazel-doltserver`
+(`dolt-server lane`) and `bazel-proxied` (`proxied-server tier`) jobs.
+`--config=dolt-race` is exactly the union of `--config=doltserver` and
+`--config=doltserver-proxied`, with one tag filter for both tiers, so every
+member target's test action is unchanged (`bazel aquery`: the 27 + 35 = 62
+`TestRunner` actions are byte-identical under the member configs and the
+union). One client waits on rbe-west for both tiers at once, so the job ends
+with the slower tier and the other tier's runner is saved.
 
-- It runs in mode `remote` on `pull_request` and `merge_group` events only.
-  It never runs in a fork mode (`fork-ro`, `fork-rw`), in mode `cache` or
-  `local`, on `bazel-farm.yml`'s call, on push, nightly or dispatch.
-- It cannot fail the gate. It has job-level `continue-on-error`, so its
-  failure cannot fail the call's aggregate result (`BAZEL`). It has no
-  `workflow_call` output, no `bazel.yml` job `needs` it, and `pr.yml`,
-  `ci-gate.sh` and `bazel-gate.sh` never name it.
-- The gate still waits for it. `CI Gate` needs `pr.yml`'s `bazel` call, and
-  a reusable-workflow call completes only when all of its jobs have finished
-  (success, failure or timeout), `continue-on-error` ones included. A slow
-  shadow therefore delays `CI Gate` and the merge queue, up to its
-  timeout. `continue-on-error` does not cover a job GitHub cancels at its
-  own `timeout-minutes`, so every step has its own timeout and the job's
-  (65 minutes) stays at least 5 minutes above their sum and 10 above the
-  test step's (policy-tested). A hung step then fails the job, which
-  `continue-on-error` covers, before GitHub would cancel it.
+- Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
+  dispatch and `bazel-farm.yml`'s authorized call). In the fork modes
+  (`fork-ro`, `fork-rw`), `cache` and `local`, `bazel-doltserver` and
+  `bazel-proxied` run as before: there a single client does both tiers' work
+  without in-flight deduplication, so a union would cost the sum of the
+  tiers rather than the max, on the run's critical path.
+- Exactly one arm runs in any mode. The union's `job.status` is both the
+  `bazel-doltserver` and the `bazel-proxied` `workflow_call` output (each
+  reads the union's result first, then its member's), so `pr.yml`'s gate
+  ids (`BAZEL_DOLTSERVER`, `BAZEL_PROXIED`), `ci-gate.sh` and
+  `bazel-gate.sh` are unchanged: a failed or cancelled union reds both ids,
+  a union that reported nothing reads as `skipped`, which mode `remote`
+  never allows, and the per-mode skips are the members' as before.
+- `check_testcases.py` and `check_shard_coverage.py` run once over the
+  union's BEP (the proxied tier's `--suite`; the dolt-server tier has no
+  shard-coverage check). The `bazel test` step has a 20-minute timeout,
+  every step has one, and the job's (55 minutes) is at least their sum plus
+  5 and below the merge queue's 60-minute check timeout.
 - Its ci-analytics `LANE` is `dolt-race`.
-- Policy: `scripts/bazel_dolt_race_shadow_test.go`. Removing the job, its
-  `.bazelrc` config and its line in `.github/scripts/rrc-lane-commands.txt`
-  is the rollback; nothing reads them.
+- Policy: `scripts/bazel_dolt_race_test.go`. Rollback is a revert of the
+  cutover PR: the gate ids never changed and the action keys are equal both
+  ways, so cached results carry back.
 
 ## Remote Repo Contents Cache
 
@@ -1032,7 +1038,7 @@ Required` requires them to have run remotely and passed.
     `nogoConfigurations` table (race, pure, js/wasm) validates in exactly
     one required lane, not beside every compile of every lane: the race
     configuration's nogo is owned by `test` above, and `embedded`,
-    `doltserver`, `doltserver-proxied`, `dolt-race` (shadow) and the
+    `doltserver`, `doltserver-proxied`, `dolt-race` and the
     package gates pass `--norun_validations`, since they compile a strict
     subset of what `test` already validates on that configuration
     (`scripts/nogo_lint_policy_test.go`, engdocs/LINTING.md). Since F5 S2
