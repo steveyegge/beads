@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -214,6 +215,14 @@ func TestWorkerEnvAutosyncWorkflowNeverInterpolatesExpressionsInRun(t *testing.T
 // than writing anything when gascity's platforms/BUILD.bazel carries no
 // pin to copy.
 func TestWorkerEnvSyncCopyAgainstFixture(t *testing.T) {
+	// worker-env-sync-copy runs only in worker-env-autosync.yml, on
+	// ubuntu-latest. It edits the pin with GNU `sed -i -E`; BSD sed (macOS)
+	// takes -E as -i's backup suffix, so the {64} interval is read as a
+	// basic regex and never matches, and the pin is left stale. Its owner
+	// keeps it Linux-only rather than porting it.
+	if runtime.GOOS != "linux" {
+		t.Skipf("worker-env-sync-copy is Linux-CI-only (worker-env-autosync.yml) and uses GNU sed -i -E; GOOS=%s", runtime.GOOS)
+	}
 	f := newRBEWorkerEnvFixture(t)
 	stalePin := rbeTestPin(rbeTestStaleManifest)
 	beads := f.beads(t, rbeTestStaleManifest, stalePin)

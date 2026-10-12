@@ -124,12 +124,15 @@ func TestServedReadyExcludesUnsatisfiedExternalDependencyWithoutServerCapability
 
 // TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage pins,
 // against a real served server, the shape the decorator once misread: an
-// unlimited ready listing over http comes back as the server's default page
-// (the wire omits a zero limit) while its total counts the whole ready set.
-// Text-mode `bd ready` counts through CountReadyWork, which always fetches
-// unlimited, so an externally blocked issue sorted past that page stayed in
-// its count when the decorator took the zero limit for a window holding every
-// row.
+// unlimited ready listing over http used to come back as the server's default
+// page (the wire omitted a zero limit) while its total counted the whole ready
+// set. Text-mode `bd ready` counted through CountReadyWork's unlimited fetch,
+// so an externally blocked issue sorted past that page stayed in its count when
+// the decorator took the zero limit for a window holding every row. An
+// unlimited ready read now returns every row (one request bounded at the client
+// cap, unlimited_read.go), and CountReadyWork asks for one row and lets the
+// server count the rest; the count and the default page must still leave that
+// issue out.
 func TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage(t *testing.T) {
 	env := newServedEnv(t, "hixp")
 	ctx := t.Context()
@@ -165,19 +168,20 @@ func TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage(t *t
 	if err != nil {
 		t.Fatalf("BuildReadyCountFilter: %v", err)
 	}
-	// The premise this test pins: undecorated, the unlimited listing is the
-	// default page, the blocked issue is not on it, and the total counts it.
+	// The premise this test pins: undecorated, the unlimited listing holds
+	// every ready row (no longer only the server's default page), and the
+	// blocked issue sorts past where the default page ends.
 	rows, total, err := env.subject.GetReadyWorkWithCountsAndTotal(ctx, countFilter)
 	if err != nil {
 		t.Fatalf("undecorated GetReadyWorkWithCountsAndTotal over http: %v", err)
 	}
-	if len(rows) != workapi.DefaultReadyLimit || total != workapi.DefaultReadyLimit+2 {
-		t.Fatalf("undecorated unlimited listing over http = %d rows, total %d; want the %d-row default page, total %d; this test's premise no longer holds",
-			len(rows), total, workapi.DefaultReadyLimit, workapi.DefaultReadyLimit+2)
+	if len(rows) != workapi.DefaultReadyLimit+2 || total != workapi.DefaultReadyLimit+2 {
+		t.Fatalf("undecorated unlimited listing over http = %d rows, total %d; want every ready row, %d and total %d; this test's premise no longer holds",
+			len(rows), total, workapi.DefaultReadyLimit+2, workapi.DefaultReadyLimit+2)
 	}
-	for _, row := range rows {
-		if row != nil && row.Issue != nil && row.ID == blockedID {
-			t.Fatalf("%q is on the default page; this test needs it past the page", blockedID)
+	for i, row := range rows {
+		if row != nil && row.Issue != nil && row.ID == blockedID && i < workapi.DefaultReadyLimit {
+			t.Fatalf("%q is row %d, inside the default page; this test needs it past the page", blockedID, i)
 		}
 	}
 
@@ -443,7 +447,8 @@ func TestServedReadyTotalIgnoresAnExternallyBlockedIssueOutsideTheFilter(t *test
 // fetches a window wider than the limit to make room for the rows it drops,
 // and the http bridge caps the rows it fetched, so the cap counted rows the
 // caller was never handed. A SQL store caps the page it delivers, and so must
-// this path.
+// this path. An unlimited read keeps the cap on its request, grown by the rows
+// the decorator may drop, and refuses in the caller's name past it.
 func TestServedReadyMaxRowsCountsTheRowsKept(t *testing.T) {
 	env := newServedEnv(t, "hixm")
 	ctx := t.Context()
@@ -478,8 +483,12 @@ func TestServedReadyMaxRowsCountsTheRowsKept(t *testing.T) {
 		{name: "cap equals the limit", limit: 2, maxRows: 2, want: free[:2]},
 		// The window holds all four rows, three of them kept.
 		{name: "cap below the limit", limit: 5, maxRows: 3, want: free},
-		// The server's default page, again all four.
+		// The request is sized by the cap grown by the blocked row: all four
+		// rows, three of them kept.
 		{name: "unlimited", limit: 0, maxRows: 3, want: free},
+		// The four rows outnumber the cap grown by the blocked row, so at
+		// least three would be kept, and the caller's cap of two fires.
+		{name: "unlimited, kept rows exceed the cap", limit: 0, maxRows: 2},
 		// The three rows kept exceed the caller's cap, which still fires.
 		{name: "kept rows exceed the cap", limit: 5, maxRows: 2},
 	} {

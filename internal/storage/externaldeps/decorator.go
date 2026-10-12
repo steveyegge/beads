@@ -2,6 +2,7 @@ package externaldeps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -226,7 +227,7 @@ func (s *Store) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*t
 	queryFilter, blockedIDs := s.readyExclusion(filter, state.refsByIssue)
 	issues, err := s.inner.GetReadyWork(ctx, queryFilter)
 	if err != nil {
-		return nil, err
+		return nil, innerCapError(err, filter, blockedIDs)
 	}
 	kept := dropBlockedIssues(issues, blockedIDs, filter.Limit)
 	if err := capKeptRows(len(kept), filter, blockedIDs); err != nil {
@@ -251,7 +252,7 @@ func (s *Store) readyWorkWithCounts(ctx context.Context, filter types.WorkFilter
 	queryFilter, blockedIDs := s.readyExclusion(filter, state.refsByIssue)
 	rows, err := s.inner.GetReadyWorkWithCounts(ctx, queryFilter)
 	if err != nil {
-		return nil, err
+		return nil, innerCapError(err, filter, blockedIDs)
 	}
 	kept, _ := dropBlockedIssuesWithCounts(rows, blockedIDs, filter.Limit)
 	if err := capKeptRows(len(kept), filter, blockedIDs); err != nil {
@@ -291,13 +292,21 @@ func (s *Store) GetReadyWorkWithCountsAndTotal(ctx context.Context, filter types
 // decorator has to drop. Whichever path is taken, the policy itself is never
 // skipped — only where the exclusion happens differs.
 //
-// The client-side path also takes the MaxRows cap off the inner query. That
-// store caps the rows it fetched, which the bump lets outnumber Limit, so
+// The client-side path also takes the MaxRows cap off a limited inner query.
+// That store caps the rows it fetched, which the bump lets outnumber Limit, so
 // `--limit N --max-rows N` failed with exit 2 as soon as more than N issues
 // were ready, refusing a page that could never exceed N. The caller enforces
 // the cap on the rows it keeps instead (capKeptRows), after the Limit trim,
 // which is where issueops enforces it on the rows a SQL store delivers
 // (finishReadyWorkWithCounts).
+//
+// An unlimited inner query keeps its cap, bumped the same way to MaxRows plus
+// len(blockedIDs). Past that many rows, more than MaxRows of them are kept
+// whichever rows the drop takes, so the bump refuses nothing the caller's cap
+// would admit, and a store that sizes an unlimited request by MaxRows (the
+// http bridge, under its client read cap) asks for that bound and one row
+// more rather than the whole ready set. Its refusal reaches the caller as the
+// caller's own (innerCapError).
 func (s *Store) readyExclusion(filter types.WorkFilter, refsByIssue map[string][]string) (queryFilter types.WorkFilter, blockedIDs map[string]bool) {
 	if len(refsByIssue) == 0 {
 		return filter, nil
@@ -310,22 +319,42 @@ func (s *Store) readyExclusion(filter types.WorkFilter, refsByIssue map[string][
 		blockedIDs[issueID] = true
 	}
 	queryFilter = filter
-	if queryFilter.Limit > 0 {
+	switch {
+	case filter.Limit > 0:
 		queryFilter.Limit += len(blockedIDs)
+		queryFilter.MaxRows = 0
+		queryFilter.MaxRowsSource = ""
+	case filter.MaxRows > 0:
+		queryFilter.MaxRows += len(blockedIDs)
 	}
-	queryFilter.MaxRows = 0
-	queryFilter.MaxRowsSource = ""
 	return queryFilter, blockedIDs
 }
 
-// capKeptRows enforces the MaxRows cap readyExclusion took off the inner
-// query, on the kept rows the caller is handed. With nothing to drop
-// client-side the inner query kept the cap and has already enforced it.
+// capKeptRows enforces the caller's MaxRows cap on the kept rows it is
+// handed: readyExclusion took that cap off the inner query, or bumped it by
+// the rows the caller drops. With nothing to drop client-side the inner query
+// kept the cap and has already enforced it.
 func capKeptRows(kept int, filter types.WorkFilter, blockedIDs map[string]bool) error {
 	if len(blockedIDs) == 0 {
 		return nil
 	}
 	return issueops.EnforceMaxRowsCap(kept, filter.MaxRows, filter.MaxRowsSource)
+}
+
+// innerCapError hands the caller its own cap's refusal when the inner query
+// refused the MaxRows readyExclusion bumped: Found rows, more than MaxRows
+// plus len(blockedIDs), of which at least Found-len(blockedIDs), more than
+// MaxRows, would have been kept. Any other error is returned as it is.
+func innerCapError(err error, filter types.WorkFilter, blockedIDs map[string]bool) error {
+	var tooMany *issueops.ErrTooManyRows
+	if len(blockedIDs) == 0 || filter.Limit > 0 || filter.MaxRows <= 0 || !errors.As(err, &tooMany) {
+		return err
+	}
+	return &issueops.ErrTooManyRows{
+		Found:  tooMany.Found - len(blockedIDs),
+		Cap:    filter.MaxRows,
+		Source: filter.MaxRowsSource,
+	}
 }
 
 // dropBlockedIssues is readyExclusion's client-side half: it drops the rows
@@ -391,7 +420,7 @@ func (s *Store) readyWorkWithCountsAndTotal(ctx context.Context, filter types.Wo
 	queryFilter, blockedIDs := s.readyExclusion(filter, state.refsByIssue)
 	rows, total, err := s.inner.GetReadyWorkWithCountsAndTotal(ctx, queryFilter)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, innerCapError(err, filter, blockedIDs)
 	}
 	kept, blockedSeen := dropBlockedIssuesWithCounts(rows, blockedIDs, filter.Limit)
 	if len(blockedIDs) == 0 {
@@ -407,14 +436,14 @@ func (s *Store) readyWorkWithCountsAndTotal(ctx context.Context, filter types.Wo
 		// entire ready set, so every blocked row the window contains is every
 		// blocked row the ready set contains: the subtraction is exact. This
 		// is judged from the rows that came back, not from the Limit asked
-		// for: a zero Limit means every row to a SQL store, but the http wire
-		// omits it and the server answers with its default page
-		// (workapi.DefaultReadyLimit), so an unlimited fetch can come back
-		// truncated too.
+		// for, so it holds however a store reads a zero Limit: every row to a
+		// SQL store, and over http one request bounded at the client cap plus
+		// one, refused rather than truncated past it (an older http client
+		// sent no limit at all and got the server's default page back).
 		adjustedTotal = total - blockedSeen
 	} else {
 		// The ready set is bigger than the window that came back (the bumped
-		// window, or the server's default page for an unlimited fetch), so
+		// window: the caller's page, or CountReadyWork's one-row page), so
 		// the window cannot say how many of its unseen rows are blocked. Nor
 		// can refsByIssue: it names every workspace issue with an unsatisfied
 		// external blocker, closed ones and ones the filter excludes included,
@@ -471,8 +500,16 @@ func (s *Store) CountReadyWork(ctx context.Context, filter types.WorkFilter) (in
 	}
 	// s.inner has no indexed counter (httpclient.Store among others): reuse
 	// the counts-and-total path above, which already copes with a store whose
-	// transport cannot express ExcludeIDs at all, nor this zero Limit.
-	_, total, err := s.readyWorkWithCountsAndTotal(ctx, filter, state)
+	// transport cannot express ExcludeIDs at all. It asks for a ONE-ROW Lite
+	// page, never every row: the total is the inner store's own count of the
+	// whole ready set (over http, the server's countReadyWork beside that
+	// page), and refetchedReadyTotal sizes the externally blocked case. A zero
+	// Limit would download the whole ready set to report one number — over
+	// http, up to BEADS_HTTP_UNLIMITED_READ_CAP full rows, refused past it.
+	page := filter
+	page.Limit = 1
+	page.Lite = true
+	_, total, err := s.readyWorkWithCountsAndTotal(ctx, page, state)
 	return total, err
 }
 
