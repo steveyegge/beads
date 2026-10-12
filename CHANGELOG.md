@@ -457,6 +457,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negative duration and fails, even though `--age 0s`'s own contract is
   that every wisp qualifies. `ageThreshold <= 0` now bypasses the clock
   comparison entirely (#7236).
+- **`bd find-duplicates --method ai` and `bd admin compact --auto` accept a
+  reply that opens with a thinking block.** Both read only the first content
+  block and gave up unless it was text; they now use the first text block
+  (#7515).
+
 - **PRs based on `hotfix/**` branches now run full CI, not just
   cross-version historical smokes and triage labeling.** `pr.yml`,
   `pr-risk.yml`, `conformance.yml`, `cross-version-smoke.yml` and
