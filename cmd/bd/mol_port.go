@@ -12,7 +12,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/workapi"
-	"github.com/steveyegge/beads/issueops"
 )
 
 // TODO(batchgetter): GetIssuesByIDs below reads an unbounded id list;
@@ -38,7 +37,6 @@ type molReader interface {
 	GetConfig(ctx context.Context, key string) (string, error)
 	IsInfraTypeCtx(ctx context.Context, t types.IssueType) bool
 	GetCustomStatusesDetailed(ctx context.Context) ([]types.CustomStatus, error)
-	GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error)
 	GetMoleculeLastActivity(ctx context.Context, moleculeID string) (*types.MoleculeLastActivity, error)
 	FindWispDependentsRecursive(ctx context.Context, ids []string) (map[string]bool, error)
 }
@@ -244,24 +242,6 @@ func (r uowMolReader) IsInfraTypeCtx(ctx context.Context, t types.IssueType) boo
 
 func (r uowMolReader) GetCustomStatusesDetailed(ctx context.Context) ([]types.CustomStatus, error) {
 	return r.uw.ConfigUseCase().GetCustomStatuses(ctx)
-}
-
-func (r uowMolReader) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
-	root, err := r.GetIssue(ctx, moleculeID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get molecule: %w", err)
-	}
-	title := ""
-	if root != nil {
-		title = root.Title
-	}
-
-	dependents, err := r.GetDependentsWithMetadata(ctx, moleculeID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get molecule children: %w", err)
-	}
-	stats := issueops.MoleculeProgressOf(&types.Issue{ID: moleculeID, Title: title}, dependents)
-	return stats, nil
 }
 
 func (r uowMolReader) GetMoleculeLastActivity(ctx context.Context, moleculeID string) (*types.MoleculeLastActivity, error) {

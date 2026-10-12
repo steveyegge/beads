@@ -407,15 +407,34 @@ type CloseRequest struct {
 	//
 	// IT IS OPT-IN because an orchestrator may run its own molecule
 	// lifecycle (gc closes molecule roots itself); the zero value never
-	// touches a root. A root close the close policy refuses (a live blocker
-	// on the root) leaves the root open and is reported on
-	// CloseResult.MoleculeAutoCloseRefusal; it never fails the step close.
+	// touches a root. A root close its close policy refuses (a live blocker
+	// on the root, open children) or a close guard refuses (a template root, a
+	// pinned root, a root assigned to someone other than Actor — the root
+	// close is unforced, so each guard holds as it does for a direct close)
+	// leaves the root open and is reported on
+	// CloseResult.MoleculeAutoCloseRefusal (IsMoleculeAutoCloseRefusal); it
+	// never fails the step close.
 	//
 	// ANY OTHER FAILURE OF THE ROOT CLOSE FAILS THE STEP'S CLOSE. A storage
-	// error, or a lost race on the root's revision, is returned and rolls the
-	// step's close back with it, so a retry re-runs both. (The CLI used to
-	// close the root after the step's close had committed and only warned when
-	// that failed, leaving a complete molecule's root open.)
+	// error is returned and rolls the step's close back with it, so a retry
+	// re-runs both. (The CLI used to close the root after the step's close had
+	// committed and only warned when that failed, leaving a complete
+	// molecule's root open.) A write to the root that races this close is not
+	// such a failure: the two conflict at commit, and the backend's retry
+	// decides the root again (MoleculeRootClose).
+	//
+	// Two closes that finish a molecule's last steps concurrently do not
+	// strand its root: each close that decides a root first rewrites one
+	// coordination cell for it, so their transactions conflict at commit and
+	// the one that retries reads the other's close and closes the root.
+	//
+	// THE CELL SERIALIZES SIBLING CLOSES. Every close under an open
+	// auto-closing root rewrites it, whether or not that close completes the
+	// molecule, so any two concurrent closes of steps under the same root
+	// conflict and one of them retries. Under heavy fan-out a close can spend
+	// its whole retry budget conflicting and then fails with the
+	// serialization error. Closes under different roots contend only when
+	// their roots hash to the same cell.
 	AutoCloseMolecule bool
 }
 
@@ -484,7 +503,9 @@ type CloseResult struct {
 	// labels. Nil when nothing was auto-closed.
 	AutoClosedMolecule *Issue
 	// MoleculeAutoCloseRefusal says why a completed molecule's root stayed
-	// open: the root's own close policy refused it. Empty otherwise.
+	// open: its close policy or a close guard refused it
+	// (IsMoleculeAutoCloseRefusal), in that refusal's own message, the same on
+	// every backend. Empty otherwise.
 	MoleculeAutoCloseRefusal string
 }
 

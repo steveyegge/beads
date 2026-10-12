@@ -68,7 +68,7 @@ func runMolProgress(ctx context.Context, s storage.DoltStorage, resolve func(con
 	if len(args) == 1 {
 		resolved, err := resolve(ctx, args[0])
 		if err != nil {
-			return HandleErrorRespectJSON("molecule '%s' not found", args[0])
+			return moleculeNotResolved(args[0], err)
 		}
 		moleculeID = resolved
 	} else {

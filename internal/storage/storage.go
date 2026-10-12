@@ -1132,19 +1132,20 @@ type MoleculeAdvanceProber interface {
 // ServesMoleculeAdvance reports whether s's MoleculeStepper can run
 // (MoleculeAdvanceProber, looked up through every decorator). A store that
 // does not implement the prober runs the advance itself and is answered true.
-// A probe that fails is answered true too: the advance dials the same
-// handshake and reports its failure.
+// A probe that fails returns its error.
 //
 // `bd close --continue` asks BEFORE it closes: the advance is a second
 // operation after the close commits, so refusing it only then would leave
-// the step closed and the next step unclaimed.
-func ServesMoleculeAdvance(ctx context.Context, s DoltStorage) bool {
+// the step closed and the next step unclaimed. That is also why a failed
+// probe is not answered true, as ServesMoleculeAutoClose answers it: the
+// close would commit and only the advance, dialing the same handshake, would
+// fail — the half-done state the question exists to avoid.
+func ServesMoleculeAdvance(ctx context.Context, s DoltStorage) (bool, error) {
 	prober, ok := UnwrapStore(s).(MoleculeAdvanceProber)
 	if !ok {
-		return true
+		return true, nil
 	}
-	served, err := prober.ServesMoleculeAdvance(ctx)
-	return err != nil || served
+	return prober.ServesMoleculeAdvance(ctx)
 }
 
 // ExcludeIDsUnsupportedStore is implemented by a DoltStorage whose ready-work

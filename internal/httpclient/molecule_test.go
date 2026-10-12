@@ -158,16 +158,23 @@ func TestServesMoleculeAutoCloseFollowsTheHandshake(t *testing.T) {
 
 // `bd close --continue` asks storage.ServesMoleculeAdvance before it closes,
 // so a server silent on issues.advanceMolecule is refused up front instead of
-// after the step's close has committed.
+// after the step's close has committed. A handshake that fails is that error,
+// not a yes: answering true would close the step and then fail the advance,
+// the half-done state the probe exists to prevent.
 func TestServesMoleculeAdvanceFollowsTheHandshake(t *testing.T) {
 	ctx := t.Context()
 	token, _ := wire.CapabilityFor(wire.OpAdvanceMolecule)
 	silent := New(testTarget(t), &stubWire{}, &apigen.ContextResponse{BdVersion: "1.2.3", Capabilities: []string{"issues.close"}})
-	if storage.ServesMoleculeAdvance(ctx, silent) {
-		t.Error("ServesMoleculeAdvance = true against a server silent on the token")
+	if served, err := storage.ServesMoleculeAdvance(ctx, silent); served || err != nil {
+		t.Errorf("ServesMoleculeAdvance = (%v, %v) against a server silent on the token, want (false, nil)", served, err)
 	}
-	served := New(testTarget(t), &stubWire{}, &apigen.ContextResponse{BdVersion: "1.2.3", Capabilities: []string{"issues.close", token}})
-	if !storage.ServesMoleculeAdvance(ctx, served) {
-		t.Error("ServesMoleculeAdvance = false against a server advertising the token")
+	advertised := New(testTarget(t), &stubWire{}, &apigen.ContextResponse{BdVersion: "1.2.3", Capabilities: []string{"issues.close", token}})
+	if served, err := storage.ServesMoleculeAdvance(ctx, advertised); !served || err != nil {
+		t.Errorf("ServesMoleculeAdvance = (%v, %v) against a server advertising the token, want (true, nil)", served, err)
+	}
+	boom := errors.New("handshake failed")
+	failed := New(testTarget(t), handshakeWire{stubWire: &stubWire{}, err: boom}, nil)
+	if served, err := storage.ServesMoleculeAdvance(ctx, failed); served || !errors.Is(err, boom) {
+		t.Errorf("ServesMoleculeAdvance = (%v, %v) when the handshake fails, want (false, the handshake's error)", served, err)
 	}
 }

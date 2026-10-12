@@ -650,7 +650,7 @@ func runReadyExplain(_ *cobra.Command) error {
 func runMoleculeReady(ctx context.Context, s storage.DoltStorage, resolve func(context.Context, string) (string, error), molIDArg string) error {
 	moleculeID, err := resolve(ctx, molIDArg)
 	if err != nil {
-		return HandleErrorRespectJSON("molecule '%s' not found", molIDArg)
+		return moleculeNotResolved(molIDArg, err)
 	}
 	roles, err := currentMoleculeRoles(s)
 	if err != nil {

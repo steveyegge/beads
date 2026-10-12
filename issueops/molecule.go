@@ -136,7 +136,21 @@ const maxMoleculeDepth = 50
 // molecule" for a read that never happened is how a molecule root gets
 // stranded open.
 func MoleculeRoots(ctx context.Context, r MoleculeReader, ids []string) (map[string]string, error) {
-	out := map[string]string{}
+	rows, err := moleculeRootRows(ctx, r, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for start, root := range rows {
+		out[start] = root.ID
+	}
+	return out, nil
+}
+
+// moleculeRootRows is MoleculeRoots answering each id's molecule root ROW, as
+// the walk read it.
+func moleculeRootRows(ctx context.Context, r MoleculeReader, ids []string) (map[string]*Issue, error) {
+	out := map[string]*Issue{}
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -173,8 +187,8 @@ func MoleculeRoots(ctx context.Context, r MoleculeReader, ids []string) (map[str
 		return nil, fmt.Errorf("loading molecule roots: %w", err)
 	}
 	for start, top := range topOf {
-		if IsMoleculeRoot(tops[top]) {
-			out[start] = top
+		if root := tops[top]; IsMoleculeRoot(root) {
+			out[start] = root
 		}
 	}
 	return out, nil
@@ -712,48 +726,137 @@ func MoleculeProgressOf(root *Issue, children []*RelatedIssue) *MoleculeProgress
 // to no molecule, when the root is already closed or does not auto-close, or
 // when a step is still open. It writes nothing; the caller closes the root,
 // guarded on the RowVersion of the root it answers.
+//
+// It is AutoClosingMoleculeRoots then MoleculeStepsClosed, so a step under an
+// ordinary epic, or under a root already closed, never reads the steps.
 func CompletedMolecule(ctx context.Context, r MoleculeReader, stepID string) (*Issue, error) {
-	rootID, err := MoleculeRoot(ctx, r, stepID)
-	if err != nil || rootID == "" {
-		return nil, err
-	}
-	g, err := LoadMolecule(ctx, r, rootID)
-	if errors.Is(err, ErrNotFound) {
-		return nil, nil
-	}
+	roots, err := AutoClosingMoleculeRoots(ctx, r, []string{stepID})
 	if err != nil {
 		return nil, err
 	}
-	if g.Root.Status == types.StatusClosed || !AutoClosesWhenComplete(g.Root) {
+	root := roots[stepID]
+	if root == nil {
 		return nil, nil
 	}
-	for _, issue := range g.Issues[1:] {
-		if issue.Status != types.StatusClosed {
-			return nil, nil
+	complete, err := MoleculeStepsClosed(ctx, r, root.ID)
+	if err != nil || !complete {
+		return nil, err
+	}
+	return root, nil
+}
+
+// AutoClosingMoleculeRoots answers, for each id whose molecule root is open
+// and closes itself when complete (AutoClosesWhenComplete), that root's row:
+// the roots a close of ids could complete. It is the parent walk and the root
+// rows MoleculeRoots reads, and nothing more — it never reads a molecule's
+// steps — so a caller deciding several closes reads each root once and walks
+// only the molecules that could auto-close.
+func AutoClosingMoleculeRoots(ctx context.Context, r MoleculeReader, ids []string) (map[string]*Issue, error) {
+	rows, err := moleculeRootRows(ctx, r, ids)
+	if err != nil {
+		return nil, err
+	}
+	for id, root := range rows {
+		if root.Status == types.StatusClosed || !AutoClosesWhenComplete(root) {
+			delete(rows, id)
 		}
 	}
-	return g.Root, nil
+	return rows, nil
+}
+
+// MoleculeStepsClosed reports whether every parent-child descendant of rootID
+// is closed — the steps LoadMolecule would load. It reads one level of steps
+// at a time and answers false at the first step that is not closed, so an
+// incomplete molecule costs the reads up to its first open step, not a load of
+// the whole tree. A root with no steps answers true; a parent-child cycle
+// terminates.
+func MoleculeStepsClosed(ctx context.Context, r MoleculeReader, rootID string) (bool, error) {
+	if !r.usable() {
+		return false, fmt.Errorf("%w: molecule reads need a reader", ErrValidation)
+	}
+	seen := map[string]bool{rootID: true}
+	pending := []string{rootID}
+	for len(pending) > 0 {
+		parentID := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		children, err := r.Related(ctx, RelatedRequest{
+			ID:        parentID,
+			Direction: RelationIn,
+			Types:     []types.DependencyType{types.DepParentChild},
+		})
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("reading the steps of %s: %w", parentID, err)
+		}
+		for _, child := range children {
+			if child == nil || child.DependencyType != types.DepParentChild || seen[child.ID] {
+				continue
+			}
+			if child.Status != types.StatusClosed {
+				return false, nil
+			}
+			seen[child.ID] = true
+			pending = append(pending, child.ID)
+		}
+	}
+	return true, nil
 }
 
 // MoleculeAutoCloseReason is the close reason a molecule root's auto-close
 // records.
 const MoleculeAutoCloseReason = "all steps complete"
 
-// IsMoleculeAutoCloseRefusal reports whether err is a close-policy refusal of
-// a completed molecule's root — the outcomes that leave the root open without
-// failing the step close that completed it.
+// IsMoleculeAutoCloseRefusal reports whether err is a refusal of a completed
+// molecule's root close — an outcome that leaves the root open without failing
+// the step close that completed it: the close policy (a live blocker,
+// ErrCloseBlocked; open children, *CloseOpenChildrenError) or a close guard (a
+// template root, *TemplateReadOnlyError; a pinned root, *PinnedError; a root
+// assigned to someone else, *CloseNotAssigneeError). The root close is
+// unforced (MoleculeRootClose), so every guard holds for it exactly as it does
+// for a direct close of the root. A guard only reads, before the close writes
+// anything, and a policy refusal rolls back to the close's savepoint, so a
+// refusal leaves the step close's transaction as it found it.
+//
+// ErrVersionMismatch on the root is NOT a refusal: should a backend's check
+// ever see a revision its read did not, it fails the step's close
+// (CloseRequest.AutoCloseMolecule). A write to the root that races the close
+// does not produce it (MoleculeRootClose).
 func IsMoleculeAutoCloseRefusal(err error) bool {
-	var openChildren *CloseOpenChildrenError
-	return errors.Is(err, ErrCloseBlocked) || errors.As(err, &openChildren) || errors.Is(err, ErrVersionMismatch)
+	var (
+		openChildren *CloseOpenChildrenError
+		template     *TemplateReadOnlyError
+		pinned       *PinnedError
+		notAssignee  *CloseNotAssigneeError
+	)
+	return errors.Is(err, ErrCloseBlocked) ||
+		errors.As(err, &openChildren) ||
+		errors.As(err, &template) ||
+		errors.As(err, &pinned) ||
+		errors.As(err, &notAssignee)
 }
 
-// MoleculeRootClose is the ONE close request a molecule auto-close sends for
-// the root CompletedMolecule answered: unforced, recording
+// MoleculeRootClose is the ONE close request a molecule auto-close sends for a
+// root it found complete (AutoClosingMoleculeRoots, then MoleculeStepsClosed,
+// read in the transaction that closes it): unforced, recording
 // MoleculeAutoCloseReason and the step close's session, and guarded on the
-// root revision CompletedMolecule read, so a step reopened (or the root
-// edited) in between refuses rather than being closed over. Every backend's
+// RowVersion of root as that read answered it. Every backend's
 // in-transaction auto-close (CloseRequest.AutoCloseMolecule) builds its root
 // close from it.
+//
+// The guard covers the root row's lifecycle state and nothing else (the
+// version family's rule: it guards a row's lifecycle state, not its graph).
+// Every backend reads the root and checks its revision in one transaction
+// snapshot, so a status, assignee or started_at write that another
+// transaction commits to the root after the read does not trip the guard. It
+// conflicts with the root close at commit instead, and the backend's retry
+// re-reads the root and decides again (a root another actor now holds is a
+// refusal, and the step's close stands); only a close still conflicting when
+// its retry budget runs out fails, with the serialization error. The guard
+// does not cover the steps: reopening a step writes no root row, so a reopen
+// that races the auto-close is not detected, and the root can close over the
+// reopened step.
 func MoleculeRootClose(root *Issue, actor, session string) CloseRequest {
 	version := root.RowVersion
 	return CloseRequest{

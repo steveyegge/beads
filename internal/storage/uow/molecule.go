@@ -3,6 +3,7 @@ package uow
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
@@ -37,24 +38,72 @@ func (r uowMoleculeReader) ReadEdges(ctx context.Context, request publicops.Edge
 }
 
 // CloseCompletedMoleculeInUOW is CloseRequest.AutoCloseMolecule's body for
-// this backend, the twin of storageissueops.CloseCompletedMoleculeInTx: when
-// closing stepID completed an auto-closing molecule (issueops.CompletedMolecule
-// read in uw), it closes the root in uw — unforced, guarded on the root
-// revision read in the same unit of work, recording
-// issueops.MoleculeAutoCloseReason and session.
-//
-// A close-policy refusal of the root is answered as the Refusal and leaves the
-// root untouched; the caller's own close stands. Any other failure is
-// returned and fails the caller's unit of work.
+// this backend: CloseCompletedMoleculesInUOW for one step.
 func CloseCompletedMoleculeInUOW(ctx context.Context, uw UnitOfWork, stepID, actor, session string) (storageissueops.MoleculeAutoClose, error) {
-	root, err := publicops.CompletedMolecule(ctx, MoleculeReaderInUOW(uw), stepID)
-	if err != nil || root == nil {
+	autos, err := CloseCompletedMoleculesInUOW(ctx, uw, []string{stepID}, actor, session)
+	if err != nil {
+		return storageissueops.MoleculeAutoClose{}, err
+	}
+	return autos[0], nil
+}
+
+// CloseCompletedMoleculesInUOW is CloseBatchRequest.AutoCloseMolecule's body
+// for this backend, the twin of storageissueops.CloseCompletedMoleculesInTx:
+// for every auto-closing molecule root a close of stepIDs could have completed
+// (issueops.AutoClosingMoleculeRoots read in uw), it rewrites the root's
+// coordination cell (storageissueops.MoleculeCoordinationKey, so two units of
+// work deciding the same root conflict at commit and the retry reads the
+// other's close; the cost, serialized sibling closes, is
+// storageissueops.TouchMoleculeCoordinationInTx's), and when every step under
+// the root is now closed (issueops.MoleculeStepsClosed) it closes the root in
+// uw — unforced, guarded on the root revision read in the same unit of work,
+// recording issueops.MoleculeAutoCloseReason and session.
+//
+// It answers one MoleculeAutoClose per step id, in order: each root is decided
+// once and reported on the first step under it. A refusal of the root
+// (issueops.IsMoleculeAutoCloseRefusal) is answered as the Refusal and leaves
+// the root untouched; the caller's own closes stand. Any other failure is
+// returned and fails the caller's unit of work.
+func CloseCompletedMoleculesInUOW(ctx context.Context, uw UnitOfWork, stepIDs []string, actor, session string) ([]storageissueops.MoleculeAutoClose, error) {
+	reader := MoleculeReaderInUOW(uw)
+	roots, err := publicops.AutoClosingMoleculeRoots(ctx, reader, stepIDs)
+	if err != nil {
+		return nil, err
+	}
+	autos := make([]storageissueops.MoleculeAutoClose, len(stepIDs))
+	decided := make(map[string]bool, len(roots))
+	for i, stepID := range stepIDs {
+		root := roots[stepID]
+		if root == nil || decided[root.ID] {
+			continue
+		}
+		decided[root.ID] = true
+		auto, err := closeCompletedMoleculeRootInUOW(ctx, uw, reader, root, actor, session)
+		if err != nil {
+			return nil, err
+		}
+		autos[i] = auto
+	}
+	return autos, nil
+}
+
+func closeCompletedMoleculeRootInUOW(ctx context.Context, uw UnitOfWork, reader publicops.MoleculeReader, root *publicops.Issue, actor, session string) (storageissueops.MoleculeAutoClose, error) {
+	// storageissueops.TouchMoleculeCoordinationInTx, through this unit of work.
+	touch := strconv.FormatInt(storageissueops.FreshRowLock(), 10)
+	if err := uw.ConfigUseCase().SetLocalMetadata(ctx, storageissueops.MoleculeCoordinationKey(root.ID), touch); err != nil {
+		return storageissueops.MoleculeAutoClose{}, fmt.Errorf("touch molecule coordination for %s: %w", root.ID, err)
+	}
+	complete, err := publicops.MoleculeStepsClosed(ctx, reader, root.ID)
+	if err != nil || !complete {
 		return storageissueops.MoleculeAutoClose{}, err
 	}
 	req := publicops.MoleculeRootClose(root, actor, session)
+	// A probe, not a write: an UpdateSpec with no Fields applies nothing. It
+	// only checks the root's revision against req.ExpectedVersion, the guard
+	// the close below does not take itself.
 	if _, err := uw.IssueUseCase().ApplyUpdate(ctx, req.IssueID, domain.UpdateSpec{ExpectedVersion: req.ExpectedVersion}, req.Actor); err != nil {
 		if publicops.IsMoleculeAutoCloseRefusal(err) {
-			return storageissueops.MoleculeAutoClose{Refusal: err.Error()}, nil
+			return storageissueops.RefusedMoleculeAutoClose(err), nil
 		}
 		return storageissueops.MoleculeAutoClose{}, fmt.Errorf("auto-closing molecule %s: %w", root.ID, err)
 	}
@@ -66,7 +115,7 @@ func CloseCompletedMoleculeInUOW(ctx context.Context, uw UnitOfWork, stepID, act
 		closed, err = uw.IssueUseCase().CloseIssueChecked(ctx, req.IssueID, params, req.Actor, req.Force)
 	}
 	if publicops.IsMoleculeAutoCloseRefusal(err) {
-		return storageissueops.MoleculeAutoClose{Refusal: err.Error()}, nil
+		return storageissueops.RefusedMoleculeAutoClose(err), nil
 	}
 	if err != nil {
 		return storageissueops.MoleculeAutoClose{}, fmt.Errorf("auto-closing molecule %s: %w", root.ID, err)

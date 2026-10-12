@@ -22,6 +22,10 @@ var molShowCmd = &cobra.Command{
 	Short: "Show molecule details",
 	Long: `Show molecule structure and details.
 
+A molecule's steps are the issues linked to its root by parent-child
+dependencies (bd create --parent, bd mol pour); an id that merely looks
+hierarchical, like bd-xyz.4, does not make an issue a step.
+
 The --parallel flag highlights parallelizable steps:
   - Steps with no blocking dependencies can run in parallel
   - Shows which steps are ready to start now

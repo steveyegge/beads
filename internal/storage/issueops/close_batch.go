@@ -177,17 +177,21 @@ func ExecuteCloseBatchWithPolicy(ctx context.Context, tx *sql.Tx, request public
 	}
 
 	if request.AutoCloseMolecule {
-		for i := range result.Outcomes {
-			outcome := &result.Outcomes[i]
-			if outcome.Err != nil {
-				continue
+		closedAt := make([]int, 0, len(result.Outcomes))
+		stepIDs := make([]string, 0, len(result.Outcomes))
+		for i, outcome := range result.Outcomes {
+			if outcome.Err == nil {
+				closedAt = append(closedAt, i)
+				stepIDs = append(stepIDs, outcome.IssueID)
 			}
-			auto, autoTables, err := CloseCompletedMoleculeInTx(ctx, tx, outcome.IssueID, request.Actor, request.Session)
-			if err != nil {
-				return publicops.CloseBatchResult{}, nil, err
-			}
-			tables.Merge(autoTables)
-			outcome.AutoClosedMolecule, outcome.MoleculeAutoCloseRefusal = auto.Root, auto.Refusal
+		}
+		autos, autoTables, err := CloseCompletedMoleculesInTx(ctx, tx, stepIDs, request.Actor, request.Session)
+		if err != nil {
+			return publicops.CloseBatchResult{}, nil, err
+		}
+		tables.Merge(autoTables)
+		for j, i := range closedAt {
+			result.Outcomes[i].AutoClosedMolecule, result.Outcomes[i].MoleculeAutoCloseRefusal = autos[j].Root, autos[j].Refusal
 		}
 	}
 

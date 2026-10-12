@@ -9,7 +9,6 @@ import (
 	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/issueops"
 )
@@ -85,9 +84,7 @@ func runCloseDirectIfRevision(ctx context.Context, id, reason string, force bool
 	if molID := reportMoleculeAutoClose(closeResult.AutoClosedMolecule, closeResult.MoleculeAutoCloseRefusal); molID != "" {
 		mutatedIDs = append(mutatedIDs, molID)
 	}
-	if closeResult.Changed {
-		noticeUnservedMoleculeAutoClose(ctx, result.Store, result.ResolvedID)
-	}
+	noticeUnservedMoleculeAutoClose(ctx, result.Store, result.ResolvedID, nil)
 
 	if err := commitPendingIfEmbedded(ctx, result.Store, currentActor(), doltAutoCommitParams{
 		Command:  "close",
@@ -185,7 +182,7 @@ func reportClosedIfRevisionResult(id, reason, preCloseStatus string, closeResult
 	}
 	if jsonOutput {
 		if closedIssue != nil {
-			_ = outputJSON([]*types.Issue{closedIssue})
+			_ = outputJSON([]closedIssueJSON{newClosedIssueJSON(closedIssue, closeResult.AutoClosedMolecule, closeResult.MoleculeAutoCloseRefusal)})
 		}
 		return
 	}

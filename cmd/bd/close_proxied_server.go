@@ -213,9 +213,9 @@ func runCloseProxiedServer(cmd *cobra.Command, ctx context.Context, args []strin
 	}
 
 	if in.jsonOut && len(outcomes) > 0 {
-		closedIssues := make([]*types.Issue, len(outcomes))
+		closedIssues := make([]closedIssueJSON, len(outcomes))
 		for i, o := range outcomes {
-			closedIssues[i] = o.after
+			closedIssues[i] = newClosedIssueJSON(o.after, o.autoClosedMol, o.autoCloseRefusal)
 		}
 		switch {
 		case len(post.unblocked) > 0:

@@ -162,7 +162,7 @@ func runPourProxiedServer(ctx context.Context, in pourInput) error {
 func runMolShowProxiedServer(ctx context.Context, arg string) error {
 	moleculeID, err := proxiedResolvePartialID(ctx, arg)
 	if err != nil {
-		return HandleErrorRespectJSON("molecule '%s' not found", arg)
+		return moleculeNotResolved(arg, err)
 	}
 
 	roles, err := proxiedMoleculeRoles()
@@ -181,17 +181,34 @@ func runMolProgressProxiedServer(ctx context.Context, args []string) error {
 }
 
 // proxiedResolvePartialID resolves a partial id inside a read unit of work of
-// its own.
+// its own. A unit of work that cannot be opened is reported as itself
+// (proxiedOpenReadUOW) and answered as a reportedResolveError, so the caller
+// does not report a connection failure as a molecule that was not found.
 func proxiedResolvePartialID(ctx context.Context, arg string) (string, error) {
-	if uowProvider == nil {
-		return "", errors.New("proxied-server UOW provider not initialized")
-	}
-	uw, err := uowProvider.NewUOW(ctx)
+	uw, err := proxiedOpenReadUOW(ctx)
 	if err != nil {
-		return "", err
+		return "", reportedResolveError{err: err}
 	}
 	defer uw.Close(ctx)
 	return utils.ResolvePartialID(ctx, uowMolReader{uw: uw}, arg)
+}
+
+// reportedResolveError is an id resolution that failed before it could look
+// the id up, and whose failure was already reported.
+type reportedResolveError struct{ err error }
+
+func (e reportedResolveError) Error() string { return e.err.Error() }
+func (e reportedResolveError) Unwrap() error { return e.err }
+
+// moleculeNotResolved reports a molecule id argument that did not resolve:
+// "not found" when the lookup ran, and the failure as already reported when
+// the lookup never ran (reportedResolveError).
+func moleculeNotResolved(arg string, err error) error {
+	var reported reportedResolveError
+	if errors.As(err, &reported) {
+		return reported.err
+	}
+	return HandleErrorRespectJSON("molecule '%s' not found", arg)
 }
 
 func runMolLastActivityProxiedServer(ctx context.Context, arg string) error {

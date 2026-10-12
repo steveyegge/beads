@@ -72,8 +72,9 @@ type CloseBatchRequest struct {
 	// AutoCloseMolecule is CloseRequest.AutoCloseMolecule for every item
 	// that closed or was already closed. It runs after all the closes and
 	// before ClaimNext, inside the same transaction, so a batch that closes
-	// several steps of one molecule closes its root once, reported on the
-	// outcome of the item whose close completed it. An auto-closed root is a
+	// several steps of one molecule decides its root once, after every close:
+	// the root it closed, or its refusal, is reported on the outcome of the
+	// first item under that root whose Err is nil. An auto-closed root is a
 	// landing: it is named in the batch's history entry. It does not earn
 	// ClaimNext's claim on its own.
 	AutoCloseMolecule bool

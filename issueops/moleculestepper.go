@@ -93,10 +93,12 @@ func MoleculeStepperRolesOf(src moleculeStepperSource) (MoleculeStepperRoles, er
 	return MoleculeStepperRoles{Reader: reader, Claimer: claimer, Lifecycle: lifecycle}, nil
 }
 
-// NewMoleculeStepper is THE MoleculeStepper implementation. Every backend's
-// accessor answers it composed over that backend's own roles, and an http
-// client whose server does not serve the operation answers it composed over
-// the client's roles, so every route advances a molecule by one rule.
+// NewMoleculeStepper is THE MoleculeStepper implementation. Every store
+// backend's accessor answers it composed over that backend's own roles. The
+// http client's accessor dials the server's issues.advanceMolecule instead,
+// where the server's library runs this stepper, and refuses before dialing a
+// server that does not advertise the operation; it never composes a copy over
+// the client's roles. So every route advances a molecule by one rule.
 func NewMoleculeStepper(roles MoleculeStepperRoles) MoleculeStepper {
 	return moleculeStepper{roles: roles}
 }

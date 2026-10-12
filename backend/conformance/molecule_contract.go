@@ -240,8 +240,8 @@ func RunMoleculeBatchCloseAutoClosesTheRootOnce(t *testing.T, ctx context.Contex
 }
 
 // RunMoleculeRefusedRootKeepsTheStepClose pins the refusal clause: a root its
-// own close policy refuses (a live blocker) stays open and is reported, and
-// the step close it followed stands.
+// own close policy refuses (a live blocker) stays open and is reported in the
+// policy's own sentence, and the step close it followed stands.
 func RunMoleculeRefusedRootKeepsTheStepClose(t *testing.T, ctx context.Context, fixture MoleculeFixture) {
 	t.Helper()
 	s := moleculeSeed{t, ctx, fixture}
@@ -254,14 +254,104 @@ func RunMoleculeRefusedRootKeepsTheStepClose(t *testing.T, ctx context.Context, 
 	if res.AutoClosedMolecule != nil {
 		t.Errorf("a blocked root auto-closed: %s", res.AutoClosedMolecule.ID)
 	}
-	if res.MoleculeAutoCloseRefusal == "" {
-		t.Error("MoleculeAutoCloseRefusal is empty; a refused root must be reported")
+	if want := publicops.NewCloseBlockedError(root, []string{blocker}).Error(); res.MoleculeAutoCloseRefusal != want {
+		t.Errorf("MoleculeAutoCloseRefusal = %q, want the policy's own sentence %q", res.MoleculeAutoCloseRefusal, want)
 	}
 	if status, _ := s.row(last); status != string(types.StatusClosed) {
 		t.Errorf("step %s status = %s, want closed (the refusal must not undo it)", last, status)
 	}
 	if status, _ := s.row(root); status != string(types.StatusOpen) {
 		t.Errorf("blocked root %s status = %s, want open", root, status)
+	}
+}
+
+// RunMoleculeGuardedRootKeepsTheStepClose pins the guard clause: the root close
+// is unforced, so a root a direct close would refuse — assigned to someone
+// other than Actor, pinned, or a template — stays open and is reported in the
+// guard's own sentence, on a single close and on a batch, and the step's close
+// (and a batch's other items) stand.
+func RunMoleculeGuardedRootKeepsTheStepClose(t *testing.T, ctx context.Context, fixture MoleculeFixture) {
+	t.Helper()
+	s := moleculeSeed{t, ctx, fixture}
+	for _, guard := range []struct {
+		name  string
+		apply func(*types.Issue)
+		// refusal is the guard's own error for root, whose sentence
+		// MoleculeAutoCloseRefusal reports.
+		refusal func(root string) error
+	}{
+		{"assigned", func(root *types.Issue) { root.Assignee = "someone-else" }, func(root string) error {
+			return &publicops.CloseNotAssigneeError{IssueID: root, Assignee: "someone-else", Actor: moleculeActor}
+		}},
+		{"pinned", func(root *types.Issue) { root.Pinned = true }, func(root string) error {
+			return &publicops.PinnedError{IssueID: root}
+		}},
+		{"template", func(root *types.Issue) { root.IsTemplate = true }, func(root string) error {
+			return &publicops.TemplateReadOnlyError{IssueID: root}
+		}},
+	} {
+		for _, batch := range []bool{false, true} {
+			name := guard.name
+			if batch {
+				name += "-batch"
+			}
+			root := fixture.IssuePrefix + "-guarded-" + name
+			last := root + ".2"
+			rootIssue := &types.Issue{ID: root, Title: "molecule " + root, IssueType: types.TypeMolecule, Status: types.StatusOpen, Priority: 2}
+			guard.apply(rootIssue)
+			if err := fixture.CreateIssue(ctx, rootIssue, moleculeActor); err != nil {
+				t.Fatalf("%s: seed %s: %v", name, root, err)
+			}
+			s.issue(root+".1", types.TypeTask, types.StatusClosed, false)
+			s.issue(last, types.TypeTask, types.StatusOpen, false)
+			s.edge(root+".1", root, types.DepParentChild)
+			s.edge(last, root, types.DepParentChild)
+
+			var (
+				autoClosed *publicops.Issue
+				refusal    string
+				closed     = []string{last}
+			)
+			if batch {
+				other := root + "-other"
+				s.issue(other, types.TypeTask, types.StatusOpen, false)
+				closed = append(closed, other)
+				res, err := fixture.BatchCloser.CloseBatch(ctx, publicops.CloseBatchRequest{
+					Actor:             moleculeActor,
+					Items:             []publicops.BatchCloseItem{{IssueID: last, Reason: "done"}, {IssueID: other, Reason: "done"}},
+					AutoCloseMolecule: true,
+				})
+				if err != nil {
+					t.Fatalf("%s: CloseBatch: %v", name, err)
+				}
+				for _, outcome := range res.Outcomes {
+					if outcome.Err != nil {
+						t.Fatalf("%s: outcome %s: %v", name, outcome.IssueID, outcome.Err)
+					}
+					if outcome.IssueID == last {
+						autoClosed, refusal = outcome.AutoClosedMolecule, outcome.MoleculeAutoCloseRefusal
+					}
+				}
+			} else {
+				res := s.closeStep(last, true)
+				autoClosed, refusal = res.AutoClosedMolecule, res.MoleculeAutoCloseRefusal
+			}
+
+			if autoClosed != nil {
+				t.Errorf("%s: a guarded root auto-closed: %s", name, autoClosed.ID)
+			}
+			if want := guard.refusal(root).Error(); refusal != want {
+				t.Errorf("%s: MoleculeAutoCloseRefusal = %q, want the guard's own sentence %q", name, refusal, want)
+			}
+			for _, id := range closed {
+				if status, _ := s.row(id); status != string(types.StatusClosed) {
+					t.Errorf("%s: %s status = %s, want closed (the refusal must not undo it)", name, id, status)
+				}
+			}
+			if status, _ := s.row(root); status != string(types.StatusOpen) {
+				t.Errorf("%s: guarded root %s status = %s, want open", name, root, status)
+			}
+		}
 	}
 }
 

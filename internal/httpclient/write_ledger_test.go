@@ -192,9 +192,12 @@ func writeShapes() []writeShape {
 				// (#5506) and the client wave sends it (ga-jbuyf), so it left
 				// the pending set for this one.
 				"ExpectedVersion": member("expected_version"),
-				// Sent where issues.close.autoCloseMolecule is advertised;
-				// against an older server the client runs the library's
-				// role-composed auto-close after the close instead (S16).
+				// Sent where issues.close.autoCloseMolecule is advertised.
+				// Against a server that does not advertise it, a close that
+				// asks for it is refused before dialing (the typed
+				// storage.ErrUnsupported naming the token), and bd close
+				// sends the close without it and prints the unserved
+				// notice instead (S16).
 				"AutoCloseMolecule": member("auto_close_molecule"),
 			},
 		},

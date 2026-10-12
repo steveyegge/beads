@@ -256,7 +256,10 @@ func TestE2E_MoleculeCloseAgainstAnOlderServer(t *testing.T) {
 
 	mustBD("connect", "http://"+addr, "--expect-project-id", e2eProjectID, "--json")
 	root := firstJSONField(t, mustBD("create", "Old-server molecule", "-t", "molecule", "--json").stdout, "id")
-	step := firstJSONField(t, mustBD("create", "Only step", "--parent", root, "--json").stdout, "id")
+	step := firstJSONField(t, mustBD("create", "First step", "--parent", root, "--json").stdout, "id")
+	last := firstJSONField(t, mustBD("create", "Last step", "--parent", root, "--json").stdout, "id")
+	epic := firstJSONField(t, mustBD("create", "Ordinary epic", "-t", "epic", "--json").stdout, "id")
+	child := firstJSONField(t, mustBD("create", "Only epic child", "--parent", epic, "--json").stdout, "id")
 
 	cont := bd("close", step, "--continue", "--json")
 	if cont.code == 0 {
@@ -269,14 +272,34 @@ func TestE2E_MoleculeCloseAgainstAnOlderServer(t *testing.T) {
 		t.Fatalf("close --continue refused but %s is closed: the refusal came after the close", step)
 	}
 
-	closed := mustBD("close", step, "--json")
-	if !strings.Contains(closed.stderr, "belongs to molecule "+root) || !strings.Contains(closed.stderr, "issues.close.autoCloseMolecule") {
-		t.Errorf("close of %s against a server without the auto-close gave no notice naming %s: stderr=%s", step, root, closed.stderr)
+	// The notice is owed only where the close left an auto-closing molecule
+	// complete with its root open: not for a step whose molecule still has an
+	// open step, and not under an ordinary epic, which never auto-closes.
+	for _, id := range []string{step, child} {
+		if r := mustBD("close", id, "--json"); strings.Contains(r.stderr, "issues.close.autoCloseMolecule") {
+			t.Errorf("close of %s completed no auto-closing molecule but printed the unserved auto-close notice: stderr=%s", id, r.stderr)
+		}
 	}
-	if got := status(step); got != "closed" {
-		t.Errorf("%s status = %q, want closed", step, got)
+	// The close that completes the molecule names its root, and so does an
+	// idempotent re-close while the root stays open.
+	for _, attempt := range []string{"close", "re-close"} {
+		r := mustBD("close", last, "--json")
+		if !strings.Contains(r.stderr, "completed molecule "+root) || !strings.Contains(r.stderr, "issues.close.autoCloseMolecule") {
+			t.Errorf("%s of %s against a server without the auto-close gave no notice naming %s: stderr=%s", attempt, last, root, r.stderr)
+		}
+	}
+	for _, id := range []string{step, last, child} {
+		if got := status(id); got != "closed" {
+			t.Errorf("%s status = %q, want closed", id, got)
+		}
 	}
 	if got := status(root); got == "closed" {
 		t.Errorf("molecule %s closed although the server was not asked to auto-close it", root)
+	}
+
+	// The root the notice names closes by hand; then nothing is owed.
+	mustBD("close", root, "--json")
+	if r := mustBD("close", last, "--json"); strings.Contains(r.stderr, "issues.close.autoCloseMolecule") {
+		t.Errorf("re-close of %s under the closed %s printed the unserved auto-close notice: stderr=%s", last, root, r.stderr)
 	}
 }

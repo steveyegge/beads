@@ -24,6 +24,8 @@ type fakeMolecules struct {
 	edgeErr    error
 	listErr    error
 	relatedErr error
+	// related records every Related read, by id, in order.
+	related []string
 	// claimErrs answers a claim of the keyed id with that error.
 	claimErrs map[string]error
 	claimed   []string
@@ -60,6 +62,7 @@ func (f *fakeMolecules) GetMany(_ context.Context, req issueops.GetManyRequest) 
 }
 
 func (f *fakeMolecules) Related(_ context.Context, req issueops.RelatedRequest) ([]*issueops.RelatedIssue, error) {
+	f.related = append(f.related, req.ID)
 	if f.relatedErr != nil {
 		return nil, f.relatedErr
 	}
@@ -335,6 +338,113 @@ func TestCompletedMoleculeAnswersOnlyAnOpenCompleteAutoClosingRoot(t *testing.T)
 	f.add("orphan", types.TypeTask, types.StatusClosed)
 	if root, err := issueops.CompletedMolecule(ctx, f.reader(), "orphan"); err != nil || root != nil {
 		t.Errorf("CompletedMolecule(orphan) = %v, %v, want nil, nil", root, err)
+	}
+}
+
+// A close under a root that cannot auto-close — an ordinary epic, a root
+// already closed — reads no steps at all, and an eligible root's steps are read
+// only up to the first open one.
+func TestCompletedMoleculeReadsOnlyTheStepsItMust(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name     string
+		rootType types.IssueType
+		status   types.Status
+	}{
+		{"ordinary epic", types.TypeEpic, types.StatusOpen},
+		{"closed molecule root", types.TypeMolecule, types.StatusClosed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeMolecules()
+			f.add("r", tc.rootType, tc.status)
+			for _, id := range []string{"r.1", "r.2"} {
+				f.add(id, types.TypeTask, types.StatusClosed)
+				f.edge(id, "r", types.DepParentChild)
+			}
+			root, err := issueops.CompletedMolecule(ctx, f.reader(), "r.1")
+			if err != nil || root != nil {
+				t.Fatalf("CompletedMolecule = %v, %v, want nil, nil", root, err)
+			}
+			if len(f.related) != 0 {
+				t.Errorf("steps read %v, want none: this root never auto-closes", f.related)
+			}
+		})
+	}
+
+	// r.1 is open; r.2 and r.3 are closed and have steps of their own. The
+	// walk answers at r.1 without reading below r.2 or r.3.
+	f := newFakeMolecules()
+	f.add("r", types.TypeMolecule, types.StatusOpen)
+	f.add("r.1", types.TypeTask, types.StatusOpen)
+	f.edge("r.1", "r", types.DepParentChild)
+	for _, id := range []string{"r.2", "r.3"} {
+		f.add(id, types.TypeTask, types.StatusClosed)
+		f.edge(id, "r", types.DepParentChild)
+		f.add(id+".1", types.TypeTask, types.StatusClosed)
+		f.edge(id+".1", id, types.DepParentChild)
+	}
+	root, err := issueops.CompletedMolecule(ctx, f.reader(), "r.2")
+	if err != nil || root != nil {
+		t.Fatalf("CompletedMolecule = %v, %v, want nil, nil (r.1 is open)", root, err)
+	}
+	if !slices.Equal(f.related, []string{"r"}) {
+		t.Errorf("steps read %v, want only r's: r.1 is open, so nothing below r is read", f.related)
+	}
+}
+
+// MoleculeStepsClosed covers every descendant, not just the direct steps, and a
+// parent-child cycle terminates.
+func TestMoleculeStepsClosedCoversEveryDescendant(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeMolecules()
+	f.add("r", types.TypeMolecule, types.StatusOpen)
+	f.add("r.1", types.TypeTask, types.StatusClosed)
+	f.edge("r.1", "r", types.DepParentChild)
+	f.add("r.1.1", types.TypeTask, types.StatusOpen)
+	f.edge("r.1.1", "r.1", types.DepParentChild)
+	if closed, err := issueops.MoleculeStepsClosed(ctx, f.reader(), "r"); err != nil || closed {
+		t.Errorf("MoleculeStepsClosed with r.1.1 open = %v, %v, want false", closed, err)
+	}
+
+	f.issues["r.1.1"].Status = types.StatusClosed
+	f.edge("r", "r.1.1", types.DepParentChild) // a cycle back to the root
+	f.related = nil
+	if closed, err := issueops.MoleculeStepsClosed(ctx, f.reader(), "r"); err != nil || !closed {
+		t.Errorf("MoleculeStepsClosed with every step closed = %v, %v, want true", closed, err)
+	}
+	if len(f.related) != 3 {
+		t.Errorf("steps read %v, want r, r.1 and r.1.1 once each", f.related)
+	}
+
+	f.relatedErr = errors.New("refused")
+	if _, err := issueops.MoleculeStepsClosed(ctx, f.reader(), "r"); !errors.Is(err, f.relatedErr) {
+		t.Errorf("MoleculeStepsClosed with a refused read = %v, want the refusal", err)
+	}
+}
+
+// The root close's refusals that leave the step's close standing are the close
+// policy and the close guards; a lost race on the root's revision is not one.
+func TestIsMoleculeAutoCloseRefusalIsPolicyAndGuardsNeverAVersionRace(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"live blocker", &issueops.BlockedError{IssueID: "r", Blockers: []issueops.Blocker{{ID: "b"}}, Err: issueops.ErrCloseBlocked}, true},
+		{"open children", &issueops.CloseOpenChildrenError{IssueID: "r", OpenChildren: 1}, true},
+		{"template root", &issueops.TemplateReadOnlyError{IssueID: "r"}, true},
+		{"pinned root", &issueops.PinnedError{IssueID: "r"}, true},
+		{"root assigned to someone else", &issueops.CloseNotAssigneeError{IssueID: "r", Assignee: "bob", Actor: "alice"}, true},
+		{"wrapped guard", fmt.Errorf("close r: %w", &issueops.CloseNotAssigneeError{IssueID: "r", Assignee: "bob", Actor: "alice"}), true},
+		{"lost race on the root revision", issueops.ErrVersionMismatch, false},
+		{"typed lost race", &issueops.VersionMismatchError{Expected: 1, Current: 2}, false},
+		{"wrapped lost race", fmt.Errorf("close r: %w", &issueops.VersionMismatchError{Expected: 1, Current: 2}), false},
+		{"storage failure", errors.New("connection reset"), false},
+		{"no error", nil, false},
+	} {
+		if got := issueops.IsMoleculeAutoCloseRefusal(tc.err); got != tc.want {
+			t.Errorf("%s: IsMoleculeAutoCloseRefusal(%v) = %v, want %v", tc.name, tc.err, got, tc.want)
+		}
 	}
 }
 

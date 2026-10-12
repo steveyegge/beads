@@ -74,16 +74,20 @@ func (o *batchCloser) CloseBatch(ctx context.Context, request publicops.CloseBat
 		}
 
 		if request.AutoCloseMolecule {
-			for i := range result.Outcomes {
-				outcome := &result.Outcomes[i]
-				if outcome.Err != nil {
-					continue
+			closedAt := make([]int, 0, len(result.Outcomes))
+			stepIDs := make([]string, 0, len(result.Outcomes))
+			for i, outcome := range result.Outcomes {
+				if outcome.Err == nil {
+					closedAt = append(closedAt, i)
+					stepIDs = append(stepIDs, outcome.IssueID)
 				}
-				auto, err := CloseCompletedMoleculeInUOW(ctx, uw, outcome.IssueID, request.Actor, request.Session)
-				if err != nil {
-					return publicops.CloseBatchResult{}, "", err
-				}
-				outcome.AutoClosedMolecule, outcome.MoleculeAutoCloseRefusal = auto.Root, auto.Refusal
+			}
+			autos, err := CloseCompletedMoleculesInUOW(ctx, uw, stepIDs, request.Actor, request.Session)
+			if err != nil {
+				return publicops.CloseBatchResult{}, "", err
+			}
+			for j, i := range closedAt {
+				result.Outcomes[i].AutoClosedMolecule, result.Outcomes[i].MoleculeAutoCloseRefusal = autos[j].Root, autos[j].Refusal
 			}
 		}
 

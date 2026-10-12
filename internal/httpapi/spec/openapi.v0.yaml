@@ -11225,11 +11225,15 @@ components:
           description: >-
             Behind the `issues.close.autoCloseMolecule` behavior token: an
             older server answers `unknown_parameter` for this name.
+
+
+            Close each item's molecule root when the batch completed it:
             `CloseIssueRequest.auto_close_molecule` for every item that closed
             or was already closed, run after all the closes inside the same
-            transaction, so a batch that closes several steps of one molecule
-            closes its root once — reported on the outcome of the item whose
-            close completed it.
+            transaction. A batch that closes several steps of one molecule
+            decides its root once, and the root it closed, or its refusal, is
+            reported on the outcome of the first successful item under that
+            root.
 
     BatchCloseItem:
       type: object
@@ -11532,8 +11536,12 @@ components:
 
 
             OPT-IN, because an orchestrator may run its own molecule
-            lifecycle. A root that close policy refuses stays open, is named
-            in `molecule_auto_close_refusal`, and never fails this close.
+            lifecycle. A root that its close policy refuses (a live blocker)
+            or a close guard refuses (a template, a pinned root, a root
+            assigned to another actor) stays open, is named in
+            `molecule_auto_close_refusal`, and never fails this close. Any
+            other failure of the root close, such as a storage error, fails
+            this close with it.
     CloseIssueResponse:
       type: object
       required: [issue, already_closed, open_children, revision]
@@ -11585,8 +11593,9 @@ components:
           description: >-
             With `issues.close.autoCloseMolecule` and `auto_close_molecule`:
             why the molecule root this close completed stayed open — the
-            root's own close policy refused it (a live blocker on the root).
-            Prose; absent when nothing was refused. `auto_closed_molecule`,
+            root's own close policy refused it (a live blocker on the root),
+            or a close guard did (a template, a pinned root, a root assigned
+            to another actor). Prose; absent when nothing was refused. `auto_closed_molecule`,
             beside it, is the root the close also closed, absent when none
             was.
     ReopenIssueRequest:

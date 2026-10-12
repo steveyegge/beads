@@ -114,7 +114,7 @@ func runMolCurrent(ctx context.Context, s storage.DoltStorage, resolve func(cont
 	if len(args) == 1 {
 		moleculeID, err := resolve(ctx, args[0])
 		if err != nil {
-			return HandleErrorRespectJSON("molecule '%s' not found", args[0])
+			return moleculeNotResolved(args[0], err)
 		}
 
 		if !explicitSteps && !jsonOutput {

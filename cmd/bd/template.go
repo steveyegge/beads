@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
+	publicops "github.com/steveyegge/beads/issueops"
 )
 
 // configReader is the minimal slice of storage.Storage that config-reading
@@ -27,8 +28,10 @@ type configReader interface {
 	GetConfig(ctx context.Context, key string) (string, error)
 }
 
-// BeadsTemplateLabel is the label used to identify Beads-based templates
-const BeadsTemplateLabel = "template"
+// BeadsTemplateLabel is the label used to identify Beads-based templates. It
+// is the label molecule membership and auto-close read
+// (issueops.MoleculeTemplateLabel), so the two cannot drift apart.
+const BeadsTemplateLabel = publicops.MoleculeTemplateLabel
 
 // variablePattern matches {{variable}} placeholders
 var variablePattern = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)

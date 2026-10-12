@@ -37,7 +37,16 @@ the fallback anywhere, or =0 to disable it entirely.
 When closing multiple issues, provide one --reason for all IDs or repeat
 --reason once per ID. Reasons map positionally: the first --reason applies
 to the first ID, the second --reason to the second ID, regardless of where
-the flags appear in the command line.`,
+the flags appear in the command line.
+
+Closing a molecule's last open step also closes the molecule's root, with
+the reason "all steps complete", when the root is a poured molecule, a wisp,
+or an epic labeled "template"; any other epic stays open as close-eligible
+work. A root that would refuse its own close (an open blocker, a pin, another
+assignee) stays open with a warning, and the step's close stands. Under
+--json, the step's entry names the closed root (auto_closed_molecule) or the
+refusal (molecule_auto_close_refusal). --continue claims the next ready step
+in the molecule for you; add --no-auto to only show it.`,
 	// Refuse a missing ID in argument validation, before root's
 	// PersistentPreRunE can open the store, migrate, or auto-import
 	// (bd-m00pb); see updateCmd for the full rationale.
@@ -154,12 +163,18 @@ the flags appear in the command line.`,
 		}
 
 		// --continue is a second operation after the close commits. Against a
-		// server that cannot run it (no issues.advanceMolecule), refuse BEFORE
-		// closing: refusing only at the advance would leave the step closed
-		// and the next step unclaimed, the half-done state --continue exists
-		// to avoid.
-		if continueFlag && !storage.ServesMoleculeAdvance(ctx, postCloseStore) {
-			return HandleErrorRespectJSON("--continue needs the server's issues.advanceMolecule operation, which this server does not advertise; nothing was closed (close without --continue, then claim the next step with bd update --claim)")
+		// server that cannot run it (no issues.advanceMolecule), or whose
+		// handshake cannot be read, refuse BEFORE closing: refusing only at the
+		// advance would leave the step closed and the next step unclaimed, the
+		// half-done state --continue exists to avoid.
+		if continueFlag {
+			served, err := storage.ServesMoleculeAdvance(ctx, postCloseStore)
+			if err != nil {
+				return HandleErrorRespectJSON("--continue could not read whether the server serves issues.advanceMolecule: %v; nothing was closed", err)
+			}
+			if !served {
+				return HandleErrorRespectJSON("--continue needs the server's issues.advanceMolecule operation, which this server does not advertise; nothing was closed (close without --continue, then claim the next step with bd update --claim)")
+			}
 		}
 
 		// THE BATCH. The CLI's own close policy runs first and read-only, then
@@ -174,11 +189,14 @@ the flags appear in the command line.`,
 			session, force, postCloseStore, closeClaimNextRequest(claimNext, continueFlag))
 
 		// Report and follow up on every argument, in the order it was typed.
-		closedIssues := []*types.Issue{}
+		closedIssues := []closedIssueJSON{}
 		closedCount := 0
 		alreadyClosed := 0
 		var failures []closeIDFailure
 		firstSettledID := ""
+		// The roots noticeUnservedMoleculeAutoClose already named, so a batch
+		// that closes several steps of one molecule names it once.
+		unservedRoots := map[string]bool{}
 
 		for i, id := range resolvedIDs {
 			res := outcomes[i]
@@ -247,9 +265,7 @@ the flags appear in the command line.`,
 			if molID := reportMoleculeAutoClose(res.AutoClosedMolecule, res.MoleculeAutoCloseRefusal); molID != "" {
 				mutatedStores[activeStore] = append(mutatedStores[activeStore], molID)
 			}
-			if res.Changed {
-				noticeUnservedMoleculeAutoClose(ctx, activeStore, id)
-			}
+			noticeUnservedMoleculeAutoClose(ctx, activeStore, id, unservedRoots)
 
 			// First id this command settled as closed — a real close or an
 			// already-closed no-op both "touch" it. Drives the retry-safe last-touched
@@ -270,7 +286,7 @@ the flags appear in the command line.`,
 
 			if jsonOutput {
 				if closedIssue != nil {
-					closedIssues = append(closedIssues, closedIssue)
+					closedIssues = append(closedIssues, newClosedIssueJSON(closedIssue, res.AutoClosedMolecule, res.MoleculeAutoCloseRefusal))
 				}
 			} else {
 				debug.PrintNormal("%s Closed %s: %s\n", ui.RenderPass("✓"), formatFeedbackID(id, issueTitleOrEmpty(issue)), reason)
@@ -762,31 +778,62 @@ func reportMoleculeAutoClose(root *types.Issue, refusal string) string {
 	return root.ID
 }
 
-// noticeUnservedMoleculeAutoClose names, on stderr, the molecule a close could
-// not ask to auto-close. Against a server that does not advertise
-// issues.close.autoCloseMolecule (an older bd serve, or one whose orchestrator
-// owns the molecule lifecycle) the close goes out without the request
-// (storage.ServesMoleculeAutoClose), so a step that belongs to a molecule must
-// say so: the root's auto-close is that server's to run, never silently
-// skipped. A store that serves the auto-close prints nothing.
-func noticeUnservedMoleculeAutoClose(ctx context.Context, s storage.DoltStorage, stepID string) {
+// closedIssueJSON is one entry of `bd close --json`'s list of closed issues:
+// the closed issue's own members, and beside them what its close did to the
+// molecule it completed (issueops.CloseResult.AutoClosedMolecule and
+// MoleculeAutoCloseRefusal, under the HTTP API's BatchCloseOutcome names).
+// Beside, not around: every entry still decodes as the issue it always was,
+// and both members are absent unless the close completed a molecule. A batch
+// reports each root once, on the first entry under it.
+type closedIssueJSON struct {
+	*types.Issue
+	AutoClosedMolecule       *types.Issue `json:"auto_closed_molecule,omitempty"`
+	MoleculeAutoCloseRefusal string       `json:"molecule_auto_close_refusal,omitempty"`
+}
+
+// newClosedIssueJSON is closed's entry. The auto-closed root drops its
+// dependency records, as the closed issue does: `bd close` never prints them.
+func newClosedIssueJSON(closed, autoClosedMolecule *types.Issue, refusal string) closedIssueJSON {
+	if autoClosedMolecule != nil {
+		autoClosedMolecule.Dependencies = nil
+	}
+	return closedIssueJSON{Issue: closed, AutoClosedMolecule: autoClosedMolecule, MoleculeAutoCloseRefusal: refusal}
+}
+
+// noticeUnservedMoleculeAutoClose names, on stderr, the molecule a close left
+// complete but could not ask to auto-close. Against a server that does not
+// advertise issues.close.autoCloseMolecule (an older bd serve, or one whose
+// orchestrator owns the molecule lifecycle) the close goes out without the
+// request (storage.ServesMoleculeAutoClose), so a close after which
+// issueops.CompletedMolecule answers a root must say so: the root's auto-close
+// is that server's to run, never silently skipped. A step under an ordinary
+// epic, under a molecule with a step still open, or under a root already
+// closed prints nothing. An already-closed step whose molecule is complete
+// with its root open names the root again, as the served route replays its
+// auto-close. noted, when not nil, holds the roots this command already
+// named, so a batch names each once. A store that serves the auto-close prints
+// nothing.
+func noticeUnservedMoleculeAutoClose(ctx context.Context, s storage.DoltStorage, stepID string, noted map[string]bool) {
 	if s == nil || storage.ServesMoleculeAutoClose(ctx, s) {
 		return
 	}
 	const token = "issues.close.autoCloseMolecule"
 	reader, err := issueops.NewMoleculeReader(s)
-	var root string
+	var root *types.Issue
 	if err == nil {
-		root, err = issueops.MoleculeRoot(ctx, reader, stepID)
+		root, err = issueops.CompletedMolecule(ctx, reader, stepID)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "note: %s was closed without its molecule auto-close (the server does not advertise %s), and its molecule could not be read: %v\n", stepID, token, err)
 		return
 	}
-	if root == "" || root == stepID {
+	if root == nil || noted[root.ID] {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "note: %s belongs to molecule %s, which this close did not auto-close: the server does not advertise %s, so the molecule's auto-close is the server's to run (bd close %s closes it once every step is closed)\n", stepID, root, token, root)
+	if noted != nil {
+		noted[root.ID] = true
+	}
+	fmt.Fprintf(os.Stderr, "note: closing %s completed molecule %s, which this close did not auto-close: the server does not advertise %s, so the molecule's auto-close is the server's to run (bd close %s closes it)\n", stepID, root.ID, token, root.ID)
 }
 
 // advanceMoleculeDirect runs `bd close --continue` on the direct route through

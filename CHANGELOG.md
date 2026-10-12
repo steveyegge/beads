@@ -222,6 +222,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not advertise a token the HTTP client refuses a library close that
   sets `AutoCloseMolecule`, or an advance, before dialing, with a typed
   capability error; it never runs a client-side copy of either rule.
+- `bd close --json` reports the molecule auto-close. The entry of a close
+  that completed a molecule carries the root it closed as
+  `auto_closed_molecule`, or why the root stayed open as
+  `molecule_auto_close_refusal`, on every route; before, that refusal
+  reached only stderr. Both members are absent from every other entry, so
+  each entry still decodes as the closed issue, and the output stays an
+  array (under `closed` with `--suggest-next`, `--continue` or
+  `--claim-next`).
 
 ### Changed
 
@@ -263,11 +271,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it fails the close.** `bd close` of a molecule's last step closes the
   root in the same transaction (opt-in `AutoCloseMolecule`, so an
   orchestrator that runs its own molecule lifecycle is not doubled), and it
-  replays on an idempotent re-close. A root the close policy refuses stays
-  open and is reported, as before; any other failure of the root close (a
-  storage error, a lost race on the root's revision) now fails the step's
-  close with it, where the CLI used to close the root afterwards and only
-  warn.
+  replays on an idempotent re-close. The root close is unforced, so a root
+  a direct close would refuse stays open and is reported while the step's
+  close stands: one its close policy refuses (such as a live blocker), and
+  now also one a close guard refuses (a template, a pinned root, a root
+  another actor holds). Any other failure of the root close (such as a
+  storage error) now fails the step's close with it, where the CLI used to
+  close the root afterwards and only warn.
+  Two closes that finish a molecule's last steps at the same time no
+  longer leave its root open: one of them retries and closes it. The cost
+  is that concurrent closes of steps under one open auto-closing root now
+  serialize, whether or not either finishes the molecule: each conflict is
+  retried, and a close still conflicting when its retry budget runs out
+  fails with the serialization error. A batch close reports each root once,
+  on the first item under it that closed.
 - **`bd close --continue` claims the next step for real.** The advance is
   the `MoleculeStepper` role on every route: the assignee is set and a step
   another agent holds is skipped, never taken (the direct and http routes
@@ -280,8 +297,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   did not do.** If the server does not advertise
   `issues.close.autoCloseMolecule` (an older `bd serve`, or one whose
   orchestrator owns the molecule lifecycle), the close goes out without the
-  auto-close request and a notice on stderr names the molecule the closed
-  step belongs to. If it does not advertise `issues.advanceMolecule`, `bd
+  auto-close request. When that leaves a molecule with every step closed and
+  its root open, a notice on stderr names the root, once per root in a batch
+  and again on a re-close; a step under an ordinary epic or an unfinished
+  molecule prints nothing. If it does not advertise
+  `issues.advanceMolecule`, or the handshake that would say so fails, `bd
   close --continue` refuses before closing anything, so the step is never
   left closed with the next step unclaimed.
 - Every `bd` invocation used to start two git subprocesses before doing any
@@ -374,9 +394,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds the same typed errors. `bd close` prints the same lines and exits
   as before, and `bd close --if-revision`, which skipped the guards, now
   applies them too. Two paths stay outside the guards. The raw storage
-  `CloseIssue`, which the molecule auto-close, a `close` line of `bd batch`
-  and the other closes `cmd/bd` makes outside `bd close` use, runs neither the
-  guards nor close policy on dolt, embedded or proxied; over HTTP it now sends
+  `CloseIssue`, which a `close` line of `bd batch` and the other closes
+  `cmd/bd` makes outside `bd close` use, runs neither the guards nor close
+  policy on dolt, embedded or proxied; over HTTP it now sends
   `force`, so there it also stops applying close policy, and only a template
   refuses. A status update into the done category (`bd update -s closed`, a
   `PATCH` whose `status` is done, an `update` item of `issues:batchApply`)

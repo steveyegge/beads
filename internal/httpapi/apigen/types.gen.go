@@ -791,7 +791,9 @@ type BatchCloseRequest struct {
 	// Actor Who is closing. `ClaimRequest.actor`'s rules exactly, and the value is recorded against every item.
 	Actor string `json:"actor"`
 
-	// AutoCloseMolecule Behind the `issues.close.autoCloseMolecule` behavior token: an older server answers `unknown_parameter` for this name. `CloseIssueRequest.auto_close_molecule` for every item that closed or was already closed, run after all the closes inside the same transaction, so a batch that closes several steps of one molecule closes its root once — reported on the outcome of the item whose close completed it.
+	// AutoCloseMolecule Behind the `issues.close.autoCloseMolecule` behavior token: an older server answers `unknown_parameter` for this name.
+	//
+	// Close each item's molecule root when the batch completed it: `CloseIssueRequest.auto_close_molecule` for every item that closed or was already closed, run after all the closes inside the same transaction. A batch that closes several steps of one molecule decides its root once, and the root it closed, or its refusal, is reported on the outcome of the first successful item under that root.
 	AutoCloseMolecule *bool `json:"auto_close_molecule,omitempty"`
 
 	// Force Bypass close policy — the open-children refusal and the live-blocker refusal — and the pin and the assignee guard for EVERY item, and nothing else. It never bypasses the template guard or validation, and it never bypasses existence: an id that names nothing refuses whether or not this is set. It is request-wide because the flag that spells it is.
@@ -954,7 +956,7 @@ type CloseIssueRequest struct {
 	//
 	// Close the issue's molecule root IN THE SAME TRANSACTION when this close completed it: the root is an auto-closing molecule root (a `molecule`-typed or ephemeral root, or a template-labeled epic), it is open, and every step under it is now closed. The root close is unforced, guarded on the root revision read inside that transaction, and records `all steps complete` and this request's `session`. It runs for an idempotent re-close too, so replaying the close of a molecule's last step heals a root left open.
 	//
-	// OPT-IN, because an orchestrator may run its own molecule lifecycle. A root that close policy refuses stays open, is named in `molecule_auto_close_refusal`, and never fails this close.
+	// OPT-IN, because an orchestrator may run its own molecule lifecycle. A root that its close policy refuses (a live blocker) or a close guard refuses (a template, a pinned root, a root assigned to another actor) stays open, is named in `molecule_auto_close_refusal`, and never fails this close. Any other failure of the root close, such as a storage error, fails this close with it.
 	AutoCloseMolecule *bool `json:"auto_close_molecule,omitempty"`
 
 	// ExpectedVersion Requires the row's revision to equal this value BEFORE the close. A miss refuses the whole request with `409 precondition_failed` and writes nothing — `UpdateIssueRequest.expected_version`'s contract, on the operation that closes one row.
@@ -989,7 +991,7 @@ type CloseIssueResponse struct {
 	// Issue A tracked work item. Property semantics documented here apply to every schema that repeats them below.
 	Issue Issue `json:"issue"`
 
-	// MoleculeAutoCloseRefusal With `issues.close.autoCloseMolecule` and `auto_close_molecule`: why the molecule root this close completed stayed open — the root's own close policy refused it (a live blocker on the root). Prose; absent when nothing was refused. `auto_closed_molecule`, beside it, is the root the close also closed, absent when none was.
+	// MoleculeAutoCloseRefusal With `issues.close.autoCloseMolecule` and `auto_close_molecule`: why the molecule root this close completed stayed open — the root's own close policy refused it (a live blocker on the root), or a close guard did (a template, a pinned root, a root assigned to another actor). Prose; absent when nothing was refused. `auto_closed_molecule`, beside it, is the root the close also closed, absent when none was.
 	MoleculeAutoCloseRefusal *string `json:"molecule_auto_close_refusal,omitempty"`
 
 	// OpenChildren How many open children the close observed. Reported by a FORCED close — including an idempotent re-close — because a caller that bypassed the guard is exactly the caller that wants the number. An unforced close that got this far had none, so it reports 0.
