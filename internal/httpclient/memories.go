@@ -66,9 +66,10 @@ func (m *httpMemories) Recall(ctx context.Context, req memoryops.RecallRequest) 
 	if err != nil {
 		return memoryops.RecallResult{}, err
 	}
-	// Found is Value != "": the role conflates a stored empty string with an
-	// absent memory, and so does the wire, which 404s the same row.
-	return memoryops.RecallResult{Key: req.Key, Value: res.Value, Found: res.Value != ""}, nil
+	// Found is about the ROW, not the value: the wire spells a miss as the 404
+	// handled above, and a row stored as the empty string as a 200 with an
+	// empty value. Reading Found off Value would hide that row again.
+	return memoryops.RecallResult{Key: req.Key, Value: res.Value, Found: true}, nil
 }
 
 // Forget removes one memory and reports the value it removed.

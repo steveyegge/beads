@@ -558,10 +558,10 @@ func (c *Client) RememberMemory(ctx context.Context, body apigen.RememberRequest
 	return &out, nil
 }
 
-// RecallMemory reads one memory. A miss — including a row stored as the empty
-// string — is a 404, which the problem mapper turns into issueops.ErrNotFound;
-// the memory role converts that to its own Found-false result, because
-// memoryops has deliberately no ErrNotFound.
+// RecallMemory reads one memory. A miss is a 404, which the problem mapper
+// turns into issueops.ErrNotFound; the memory role converts that to its own
+// Found-false result, because memoryops has deliberately no ErrNotFound. A row
+// stored as the empty string is not a miss: it is a 200 with an empty value.
 func (c *Client) RecallMemory(ctx context.Context, key string) (*apigen.Memory, error) {
 	path, err := MemoryPath(key)
 	if err != nil {
