@@ -185,6 +185,10 @@ if [ -z "$ACTUAL_HASH" ]; then
         log_success "No hash mismatch - vendorHash is already correct!"
         rm -f "$BUILD_LOG"
         exit 0
+    elif grep -q "hash mismatch" "$BUILD_LOG"; then
+        log_error "Build reported a hash mismatch (exit $BUILD_EXIT) but the got: line didn't match the extraction regex — Nix's output format may have changed"
+        log_error "Check the full log: $BUILD_LOG"
+        exit 1
     else
         log_error "Build failed for a reason other than a hash mismatch (exit $BUILD_EXIT)"
         log_error "Check the full log: $BUILD_LOG"
@@ -205,12 +209,13 @@ rm default.nix.backup
 log_info "Verifying update with a clean build..."
 # Without pipefail, this if-condition's status is tee's (which basically
 # always succeeds), not run_nix build's, so a real build failure here was
-# reported as "Build successful!". Scoped to just this line rather than set
-# globally: the ACTUAL_HASH extraction above relies on `grep -o` legitimately
-# returning non-zero on no match, which pipefail would turn into a script
-# abort under `set -e`.
+# reported as "Build successful!". Scoped to just this if (turned back off
+# right after) rather than set for the rest of the script: the ACTUAL_HASH
+# extraction above relies on `grep -o` legitimately returning non-zero on no
+# match, which pipefail would turn into a script abort under `set -e`.
 set -o pipefail
 if run_nix build 2>&1 | tee /tmp/nix-build-verify.log; then
+    set +o pipefail
     log_success "Build successful! vendorHash updated correctly."
     echo ""
     log_info "Summary:"
@@ -222,6 +227,7 @@ if run_nix build 2>&1 | tee /tmp/nix-build-verify.log; then
     # Clean up build logs
     rm -f "$BUILD_LOG" /tmp/nix-build-verify.log
 else
+    set +o pipefail
     log_error "Build failed after updating hash"
     log_error "See /tmp/nix-build-verify.log for details"
     log_error "Initial build log: $BUILD_LOG"

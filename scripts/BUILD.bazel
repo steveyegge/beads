@@ -82,6 +82,7 @@ go_test(
     # re-runs the rest of this suite too.
     env = {"BEADS_TEST_GO": "$(rlocationpath @go_sdk//:bin/go)"},
     deps = [
+        "//internal/doltversion",
         "//internal/formula",
         "//internal/testutil/bazeltest",
         "//scripts/internal/testbash",
