@@ -192,6 +192,13 @@ func writeShapes() []writeShape {
 				// (#5506) and the client wave sends it (ga-jbuyf), so it left
 				// the pending set for this one.
 				"ExpectedVersion": member("expected_version"),
+				// Sent where issues.close.autoCloseMolecule is advertised.
+				// Against a server that does not advertise it, a close that
+				// asks for it is refused before dialing (the typed
+				// storage.ErrUnsupported naming the token), and bd close
+				// sends the close without it and prints the unserved
+				// notice instead (S16).
+				"AutoCloseMolecule": member("auto_close_molecule"),
 			},
 		},
 		{
@@ -456,10 +463,11 @@ func writeShapes() []writeShape {
 			source: reflect.TypeOf(issueops.CloseBatchRequest{}),
 			body:   reflect.TypeOf(apigen.BatchCloseRequest{}),
 			carried: map[string]carriage{
-				"Actor":   member("actor"),
-				"Items":   member("items"),
-				"Session": member("session"),
-				"Force":   member("force"),
+				"Actor":             member("actor"),
+				"Items":             member("items"),
+				"Session":           member("session"),
+				"Force":             member("force"),
+				"AutoCloseMolecule": member("auto_close_molecule"),
 			},
 		},
 		{

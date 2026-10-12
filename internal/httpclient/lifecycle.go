@@ -464,6 +464,15 @@ func (l *httpLifecycle) Close(ctx context.Context, req issueops.CloseRequest) (i
 
 	body := closeBody(req.Actor, req.Reason, req.Session, req.Force)
 	body.ExpectedVersion = revisionGuard(req.ExpectedVersion)
+	// AutoCloseMolecule rides the member only where the server advertises it;
+	// elsewhere the close is refused before it is dialed (molecule.go).
+	if err := l.store.requireAutoCloseMolecule(ctx, "IssueLifecycle.Close", req.AutoCloseMolecule); err != nil {
+		return issueops.CloseResult{}, err
+	}
+	if req.AutoCloseMolecule {
+		autoClose := true
+		body.AutoCloseMolecule = &autoClose
+	}
 	res, err := l.wire.CloseIssue(ctx, req.IssueID, body)
 	if err != nil {
 		return issueops.CloseResult{}, err
@@ -474,11 +483,16 @@ func (l *httpLifecycle) Close(ctx context.Context, req issueops.CloseRequest) (i
 	if issue.RowVersion, err = parseRevision("closeIssue", res.Revision); err != nil {
 		return issueops.CloseResult{}, err
 	}
-	return issueops.CloseResult{
-		Issue:        &issue,
-		Changed:      !res.AlreadyClosed,
-		OpenChildren: res.OpenChildren,
-	}, nil
+	result := issueops.CloseResult{
+		Issue:              &issue,
+		Changed:            !res.AlreadyClosed,
+		OpenChildren:       res.OpenChildren,
+		AutoClosedMolecule: res.AutoClosedMolecule,
+	}
+	if res.MoleculeAutoCloseRefusal != nil {
+		result.MoleculeAutoCloseRefusal = *res.MoleculeAutoCloseRefusal
+	}
+	return result, nil
 }
 
 // Reopen dials POST issues/{id}:reopen.

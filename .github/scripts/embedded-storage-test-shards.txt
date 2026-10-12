@@ -282,6 +282,7 @@
 40 15 TestEmbeddedRelationsFiltersByAnOpenTypeVocabulary
 40 15 TestGetIssue
 40 15 TestLegacyTrackedIgnoredCursorHealsOnOpen
+40 15 TestMoleculeContract
 40 15 TestReadyWorkPageTotalFilterMatrix
 
 40 16 TestDescendantWalkReachesEveryTargetKindAndStopsOnCycles

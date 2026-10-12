@@ -24,6 +24,9 @@ go_library(
         "issueops.go",
         "leasereclaimer.go",
         "metadatacas.go",
+        "molecule.go",
+        "molecule_active.go",
+        "moleculestepper.go",
         "querier.go",
         "reader.go",
         "reader_ready_scope.go",
@@ -51,10 +54,13 @@ go_test(
     srcs = [
         "claimer_external_test.go",
         "issueops_external_test.go",
+        "molecule_internal_test.go",
+        "molecule_test.go",
     ],
+    embed = [":issueops"],
     deps = [
-        ":issueops",
         "//:beads",
+        "//internal/types",
     ],
 )
 

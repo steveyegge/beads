@@ -204,6 +204,16 @@ const CapExternalDependencies = "policy.external_dependencies"
 // lists them; advertisedCapabilities adds each one whose condition holds.
 var conditionalCapabilities = []string{CapExternalDependencies}
 
+// CapIssuesCloseAutoCloseMolecule is the behavior capability that advertises
+// CloseIssueRequest.auto_close_molecule and BatchCloseRequest.auto_close_molecule
+// with their paired response members (auto_closed_molecule,
+// molecule_auto_close_refusal): close a completed molecule's root in the same
+// transaction as the step close (issueops.CloseRequest.AutoCloseMolecule). An
+// older server answers the request member with `400
+// invalid_argument`/`unknown_parameter`; the client checks this token before
+// sending it.
+const CapIssuesCloseAutoCloseMolecule = "issues.close.autoCloseMolecule"
+
 // customMethodTarget splits the custom method off the segment the router
 // matched, and reports the row that claims it.
 //
@@ -760,6 +770,16 @@ var routeTable = []route{
 		handler:      (*Server).handleReopen,
 	},
 	{
+		op:           OpAdvanceMolecule,
+		method:       http.MethodPost,
+		pattern:      customMethodPattern,
+		specPath:     "/v0/beads/issues/{id}:advanceMolecule",
+		customMethod: ":advanceMolecule",
+		capability:   "issues.advanceMolecule",
+		implemented:  true,
+		handler:      (*Server).handleAdvanceMolecule,
+	},
+	{
 		op:     OpBatchCloseIssues,
 		method: http.MethodPost,
 		// A collection-level custom method, spelled the way issues:batchCreate
@@ -966,6 +986,7 @@ var behaviorCapabilities = []string{
 	CapProjectEnforce, CapBatchApplyLarge, CapIssuesListSort, CapIssuesCountScope,
 	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
+	CapIssuesCloseAutoCloseMolecule,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:
