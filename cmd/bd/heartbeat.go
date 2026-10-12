@@ -17,12 +17,6 @@ var heartbeatCmd = &cobra.Command{
 	Short:   "Refresh the lease on an issue you hold in_progress",
 	Long: `Refresh the lease on an issue you currently hold in_progress.
 
-This fork ships with the lease machinery OFF (heartbeat.enabled=false): claims
-carry no lease, and this command is a successful no-op that keeps worker
-heartbeat loops from breaking. Set heartbeat.enabled true in .beads/config.yaml
-(or BD_HEARTBEAT_ENABLED=1) to restore lease semantics; the description below
-then applies in full.
-
 A claim carries a lease that expires after a TTL. A worker keeps its claim alive
 by heartbeating faster than the TTL; once it stops (because it died), the lease
 goes stale and 'bd reclaim' reverts the issue to ready so another worker can pick
@@ -35,6 +29,13 @@ Leases live in an ephemeral, node-local table: heartbeats write no Dolt commit
 and no history, so any cadence comfortably below the TTL is fine. Leases are
 only enforceable on the node that granted them; cross-machine claim visibility
 rides the issue's status and assignee, which do commit.
+
+The lease machinery is gated by heartbeat.enabled (on by default, and turned off
+with heartbeat.enabled false in .beads/config.yaml or BD_HEARTBEAT_ENABLED=0).
+With it off, a claim records assignee/status only and carries no lease: this
+command still resolves the issue and checks that you hold the claim, then
+reports the refresh as skipped, so an unconditional worker heartbeat loop keeps
+exiting 0.
 
 Examples:
   bd heartbeat bd-123
@@ -55,16 +56,15 @@ Examples:
 		ctx := rootCtx
 		id := args[0]
 
-		// Fork default (heartbeat.enabled=false, gastownhall/beads#5681):
-		// heartbeat is an exit-0 no-op. The gate sits BEFORE the proxied
-		// dispatch so classic and proxied routes alike short-circuit without
-		// opening a store or contacting a server; the storage layer
-		// (issueops.HeartbeatIssueInTx) independently refuses to arm or
-		// refresh a lease, so a server with the feature off no-ops too.
-		if !storeops.HeartbeatEnabled(ctx) {
-			return renderHeartbeatDisabled(id)
-		}
-
+		// The gate deliberately does NOT short-circuit here. On the proxied
+		// route the lease is armed and refreshed inside the SERVER's
+		// transaction, where HeartbeatIssueInTx resolves heartbeat.enabled
+		// from the server's own configuration; returning early on this
+		// process's copy of the flag is how a client that disagrees with the
+		// server stops refreshing a lease the server armed, after which the
+		// server's bd reclaim reverts a live worker's claim out from under it
+		// (gastownhall/beads#7506). Let the storage layer decide; the flag
+		// below only picks the wording of the success line.
 		if usesProxiedServer() {
 			return runHeartbeatProxiedServer(ctx, id)
 		}
@@ -98,13 +98,20 @@ Examples:
 
 		SetLastTouchedID(result.ResolvedID)
 
+		// Reached only after the storage layer resolved the issue and
+		// confirmed the caller holds the claim, so "skipped" means "nothing
+		// to refresh", never "did not look".
+		if !storeops.HeartbeatEnabled(ctx) {
+			return renderHeartbeatDisabled(result.ResolvedID)
+		}
+
 		return renderHeartbeatSuccess(result.ResolvedID, result.Issue.Title)
 	},
 }
 
-// renderHeartbeatDisabled is bd heartbeat with heartbeat.enabled=false (this
-// fork's default, gastownhall/beads#5681): exit 0, and the SAME --json shape
-// as renderHeartbeatSuccess so a worker loop that heartbeats on a timer keeps
+// renderHeartbeatDisabled is bd heartbeat with heartbeat.enabled=false
+// (gastownhall/beads#7506): exit 0, and the SAME --json shape as
+// renderHeartbeatSuccess so a worker loop that heartbeats on a timer keeps
 // parsing its output. Only the human line differs, and it says why.
 func renderHeartbeatDisabled(id string) error {
 	if jsonOutput {

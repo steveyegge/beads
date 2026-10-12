@@ -721,10 +721,7 @@ func (s *testSuite) issueClaimStampsLease() {
 	r := s.issueRepo()
 	s.Require().NoError(r.Insert(s.Ctx(), newTestIssue("bd-claim-lease", "x"), "tester", domain.InsertIssueOpts{}))
 
-	// Opt the lease machinery ON (this fork defaults it off,
-	// gastownhall/beads#5681): this test pins the ENABLED contract — a
-	// proxied-path claim must arm a lease row reclaim can see.
-	ctx := issueops.WithHeartbeatEnabled(issueops.WithLeaseTTL(s.Ctx(), 30*time.Second), true)
+	ctx := issueops.WithLeaseTTL(s.Ctx(), 30*time.Second)
 	res, err := r.Claim(ctx, "bd-claim-lease", "alice", domain.IssueTableOpts{})
 	s.Require().NoError(err)
 	s.Require().True(res.Updated)

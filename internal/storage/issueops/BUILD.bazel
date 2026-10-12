@@ -159,6 +159,7 @@ go_test(
         "execution_test.go",
         "filters_test.go",
         "get_issue_test.go",
+        "heartbeat_disabled_test.go",
         "helpers_test.go",
         "identity_parity_test.go",
         "journal_autoprune_test.go",

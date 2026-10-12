@@ -48,18 +48,20 @@ func leaseTTL(ctx context.Context) time.Duration {
 type heartbeatEnabledContextKey struct{}
 
 // WithHeartbeatEnabled returns a context whose lease machinery obeys enabled
-// instead of the heartbeat.enabled configuration default. This fork ships
-// with the feature OFF (gastownhall/beads#5681), so lease tests opt back in
-// through this override rather than mutating global config.
+// instead of the heartbeat.enabled configuration default. Tests that pin the
+// disabled path use it to turn the machinery off without mutating global
+// config; embedders that run their own liveness protocol use it the other
+// way. It wins over the configuration for the whole call chain.
 func WithHeartbeatEnabled(ctx context.Context, enabled bool) context.Context {
 	return context.WithValue(ctx, heartbeatEnabledContextKey{}, enabled)
 }
 
 // HeartbeatEnabled reports whether lease heartbeat behavior is active for the
 // current call: the context override (WithHeartbeatEnabled) if present, else
-// the heartbeat.enabled configuration, which defaults to false in this fork
-// (gastownhall/beads#5681). While disabled no lease is ever armed on claim,
-// heartbeat is a successful no-op, and reclaim reverts nothing.
+// the heartbeat.enabled configuration, which is on by default
+// (gastownhall/beads#7506). While disabled no lease is ever armed on claim, a
+// heartbeat keeps its holder validation but refreshes nothing, and reclaim
+// reverts nothing.
 func HeartbeatEnabled(ctx context.Context) bool {
 	if enabled, ok := ctx.Value(heartbeatEnabledContextKey{}).(bool); ok {
 		return enabled
@@ -325,83 +327,86 @@ func RestoreLeaseOnImportInTx(ctx context.Context, tx DBTX, issue *types.Issue, 
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func HeartbeatIssueInTx(ctx context.Context, tx DBTX, id, actor string) error {
-	// heartbeat.enabled=false (this fork's default, gastownhall/beads#5681):
-	// the feature is off, so a heartbeat is a successful no-op. Claims armed
-	// no lease (see ClaimIssueInTx), so there is nothing to refresh — nil
-	// keeps an unconditional worker heartbeat loop succeeding instead of
-	// failing every cadence with ErrNotClaimable. This branch must stay
-	// BEFORE the rows==0 disambiguation below: that fallback MINTS a lease
-	// through UpsertLeaseInTx, which is exactly what "disabled" forbids.
-	if !HeartbeatEnabled(ctx) {
-		return nil
-	}
+	// heartbeat.enabled=false (gastownhall/beads#7506): skip the lease write,
+	// because a disabled deployment arms no lease on claim (see
+	// ClaimIssueInTx) so there is nothing here to refresh. The rows==0
+	// disambiguation below still runs, and that is deliberate: it is what
+	// tells a caller the issue is gone or no longer theirs, so the verb keeps
+	// its error contract whether or not the machinery is on. What it must NOT
+	// do down there is mint a lease through UpsertLeaseInTx — that is the one
+	// write "disabled" forbids.
+	enabled := HeartbeatEnabled(ctx)
 	now := time.Now().UTC()
-	// granted_node is backfilled, never overwritten: a lease row whose
-	// provenance is unknown (granted before ignored migration 0016, or before
-	// this replica was named) is being kept alive through THIS node's store,
-	// which is the node that can enforce it. A row that already names a
-	// replica keeps it — a heartbeat proves the holder is alive, not that the
-	// lease moved. NodeID is "" unless an operator configured it, so on an
-	// unnamed deployment this backfill writes '' over '' and changes nothing:
-	// the fail-open default cannot be silently converted to fail-closed.
-	//
-	// THE TRAP THIS INVARIANT COSTS (wy-sp2l4 F4), reviewed and KEPT. A
-	// heartbeat that affects 1 row is proof the holder is alive on THIS store,
-	// yet a row positively naming another node keeps that name forever, so the
-	// replica guard in ReclaimExpiredLeasesInTx declines it and only
-	// `bd reclaim --any-replica` can ever recover it. Two states reach that:
-	//
-	//   (a) a replica RENAMED (node_id mini -> mini2) keeps heartbeating its
-	//       own leases, which now read foreign forever;
-	//   (b) a foreign lease materialized by RestoreLeaseOnImportInTx whose
-	//       holder name also exists locally is kept alive here but stays
-	//       labeled with the remote node.
-	//
-	// Re-homing on heartbeat would clear both — and the branch below already
-	// says "heartbeat => this node grants it" (a heartbeat that matches no
-	// lease row calls UpsertLeaseInTx, which stamps the local node). It is NOT
-	// done on THIS path because the two are not the same claim: UpsertLeaseInTx
-	// is MINTING a lease row through this store, while this UPDATE is refreshing
-	// one whose provenance is already recorded. Re-homing here would mean a
-	// heartbeat arriving at this store — including one whose only path here is
-	// the JSONL import that materialized case (b) — silently reassigns
-	// enforcement of a lease another replica granted, which is precisely the
-	// robbery the guard exists to prevent (a remote view is stale by up to one
-	// sync interval). Keeping it makes the failure mode LOUD and recoverable
-	// (reportForeignSkips summarizes it every run; --any-replica reverts it)
-	// rather than silent. The escape hatches are documented in
-	// `bd reclaim --help` and docs/multi-agent/federation.md; the fix for (a)
-	// is to reap on the old name, or `bd reclaim --any-replica --id <id>` /
-	// `bd unclaim --force <id>` for a single stranded unit once that replica is
-	// gone for good.
-	//
-	// SCOPE, precisely: the no-re-home invariant holds on THIS fast path only.
-	// The disambiguation fallback below re-homes, by design and unavoidably —
-	// when `holder = ?` misses because the lease row spells the same identity
-	// differently (ga-v2k49/ga-wzl83), it re-arms through UpsertLeaseInTx, whose
-	// ON DUPLICATE KEY UPDATE stamps the LOCAL node over whatever was there.
-	// So "a heartbeat never re-homes a foreign lease" is false for a
-	// spelling-mismatched holder, and RestoreLeaseOnImportInTx can relabel in
-	// the other direction (it takes granted_node from the snapshot when the
-	// local row is expired). Neither is changed here: both are pre-existing
-	// paths with their own rationale, and the point of this note is that the
-	// invariant is a property of the common path, not of the lease row.
-	result, err := tx.ExecContext(ctx, `
+	var rows int64
+	if enabled {
+		// granted_node is backfilled, never overwritten: a lease row whose
+		// provenance is unknown (granted before ignored migration 0016, or before
+		// this replica was named) is being kept alive through THIS node's store,
+		// which is the node that can enforce it. A row that already names a
+		// replica keeps it — a heartbeat proves the holder is alive, not that the
+		// lease moved. NodeID is "" unless an operator configured it, so on an
+		// unnamed deployment this backfill writes '' over '' and changes nothing:
+		// the fail-open default cannot be silently converted to fail-closed.
+		//
+		// THE TRAP THIS INVARIANT COSTS (wy-sp2l4 F4), reviewed and KEPT. A
+		// heartbeat that affects 1 row is proof the holder is alive on THIS store,
+		// yet a row positively naming another node keeps that name forever, so the
+		// replica guard in ReclaimExpiredLeasesInTx declines it and only
+		// `bd reclaim --any-replica` can ever recover it. Two states reach that:
+		//
+		//   (a) a replica RENAMED (node_id mini -> mini2) keeps heartbeating its
+		//       own leases, which now read foreign forever;
+		//   (b) a foreign lease materialized by RestoreLeaseOnImportInTx whose
+		//       holder name also exists locally is kept alive here but stays
+		//       labeled with the remote node.
+		//
+		// Re-homing on heartbeat would clear both — and the branch below already
+		// says "heartbeat => this node grants it" (a heartbeat that matches no
+		// lease row calls UpsertLeaseInTx, which stamps the local node). It is NOT
+		// done on THIS path because the two are not the same claim: UpsertLeaseInTx
+		// is MINTING a lease row through this store, while this UPDATE is refreshing
+		// one whose provenance is already recorded. Re-homing here would mean a
+		// heartbeat arriving at this store — including one whose only path here is
+		// the JSONL import that materialized case (b) — silently reassigns
+		// enforcement of a lease another replica granted, which is precisely the
+		// robbery the guard exists to prevent (a remote view is stale by up to one
+		// sync interval). Keeping it makes the failure mode LOUD and recoverable
+		// (reportForeignSkips summarizes it every run; --any-replica reverts it)
+		// rather than silent. The escape hatches are documented in
+		// `bd reclaim --help` and docs/multi-agent/federation.md; the fix for (a)
+		// is to reap on the old name, or `bd reclaim --any-replica --id <id>` /
+		// `bd unclaim --force <id>` for a single stranded unit once that replica
+		// is gone for good.
+		//
+		// SCOPE, precisely: the no-re-home invariant holds on THIS fast path only.
+		// The disambiguation fallback below re-homes, by design and unavoidably —
+		// when `holder = ?` misses because the lease row spells the same identity
+		// differently (ga-v2k49/ga-wzl83), it re-arms through UpsertLeaseInTx, whose
+		// ON DUPLICATE KEY UPDATE stamps the LOCAL node over whatever was there.
+		// So "a heartbeat never re-homes a foreign lease" is false for a
+		// spelling-mismatched holder, and RestoreLeaseOnImportInTx can relabel in
+		// the other direction (it takes granted_node from the snapshot when the
+		// local row is expired). Neither is changed here: both are pre-existing
+		// paths with their own rationale, and the point of this note is that the
+		// invariant is a property of the common path, not of the lease row.
+		result, err := tx.ExecContext(ctx, `
 		UPDATE leases SET lease_expires_at = ?, heartbeat_at = ?,
 			granted_node = IF(COALESCE(granted_node, '') = '', ?, granted_node)
 		WHERE issue_id = ? AND holder = ?
 	`, now.Add(leaseTTL(ctx)), now, NodeID(ctx), id, actor)
-	if err != nil {
-		return fmt.Errorf("failed to heartbeat issue: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to heartbeat issue: %w", err)
+		}
+		rows, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
 	}
 	if rows == 0 {
-		// No lease row. Disambiguate from the issue row: gone
-		// (closed/reopened/reclaimed), not-found, owned by someone else, or a
-		// wisp (never leased).
+		// No lease row refreshed: the UPDATE matched none, or the heartbeat
+		// machinery is off (heartbeat.enabled=false, gastownhall/beads#7506).
+		// Disambiguate from the issue row: gone (closed/reopened/reclaimed),
+		// not-found, owned by someone else, or a wisp (never leased).
 		isWisp := IsActiveWispInTx(ctx, tx, id)
 		issueTable, _, _, _ := WispTableRouting(isWisp)
 		var assignee, status string
@@ -423,6 +428,14 @@ func HeartbeatIssueInTx(ctx context.Context, tx DBTX, id, actor string) error {
 		// mismatch, never on the byte-identical common case.
 		if assignee != "" && !actorMatches(assignee, actor) {
 			return fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, assignee)
+		}
+		if !enabled {
+			// The feature is off and the caller HOLDS the claim — that is
+			// the whole of a disabled heartbeat: nothing to refresh, and
+			// deliberately nothing minted. nil keeps an unconditional
+			// worker heartbeat loop succeeding; a caller that is gone or
+			// no longer the holder already failed just above.
+			return nil
 		}
 		if !isWisp && actorMatches(assignee, actor) && status == string(types.StatusInProgress) {
 			// The caller genuinely holds the claim but has no lease row — e.g.
@@ -714,12 +727,13 @@ func reclaimReplicaSQL(filter types.ReclaimFilter, localNode string) (string, []
 // label removed mid-reclaim cannot smuggle an out-of-scope issue into the
 // revert.
 func ReclaimExpiredLeasesInTx(ctx context.Context, tx DBTX, cutoff time.Time, filter types.ReclaimFilter, actor string) ([]types.ReclaimedLease, error) {
-	// heartbeat.enabled=false (this fork's default, gastownhall/beads#5681):
-	// no lease is ever armed, so there is nothing stale to reap. Return the
-	// empty result rather than erroring so `bd reclaim` on a supervisor timer
-	// exits 0 with "No stale leases to reclaim". A deployment that flips the
-	// flag off mid-flight leaves any previously armed lease un-reaped BY
-	// DESIGN; bd unclaim --force is the manual escape hatch for those rows.
+
+	// heartbeat.enabled=false (gastownhall/beads#7506): no lease is armed, so
+	// there is nothing stale to reap. Return the empty result rather than
+	// erroring so `bd reclaim` on a supervisor timer exits 0 with "No stale
+	// leases to reclaim". A deployment that flips the flag off mid-flight
+	// leaves any previously armed lease un-reaped BY DESIGN; bd unclaim
+	// --force is the manual escape hatch for those rows.
 	if !HeartbeatEnabled(ctx) {
 		return nil, nil
 	}

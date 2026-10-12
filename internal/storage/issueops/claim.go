@@ -210,8 +210,8 @@ func claimIssueInTx(ctx context.Context, tx DBTX, id string, actor string, mintV
 	// stops heartbeating and bd reclaim later reverts the issue. Lease rows
 	// live in the ephemeral leases table (no Dolt commit, node-local). Wisps
 	// are never leased (they are ephemeral, not reclaimable work).
-	// Skipped entirely while heartbeat.enabled is false (this fork's default,
-	// gastownhall/beads#5681): the claim is still durable assignee/status, it
+	// Skipped entirely while heartbeat.enabled is false
+	// (gastownhall/beads#7506): the claim is still durable assignee/status, it
 	// just carries no lease to heartbeat or reap.
 	if !isWisp && HeartbeatEnabled(ctx) {
 		if err := UpsertLeaseInTx(ctx, tx, id, actor, now, leaseTTL(ctx)); err != nil {

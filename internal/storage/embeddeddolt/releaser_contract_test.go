@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
-	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // TestReleaserContract runs the Releaser contract against the embedded store,
@@ -24,9 +23,7 @@ import (
 func TestReleaserContract(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 	te := newTestEnv(t, "rel")
-	// Lease machinery ON (this fork defaults heartbeat.enabled off,
-	// gastownhall/beads#5681): these contracts pin the ENABLED semantics.
-	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
+	ctx := t.Context()
 	fixture := newEmbeddedReleaserFixture(t, te, "rel")
 
 	t.Run("ReleasesItsOwnClaim", func(t *testing.T) {

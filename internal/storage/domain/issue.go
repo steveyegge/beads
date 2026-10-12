@@ -690,11 +690,17 @@ func (u *issueUseCaseImpl) claim(ctx context.Context, id, actor string, useWisp 
 			// it only recovers claims whose lease has already expired. The
 			// parseable " by <assignee>" tail is deliberately absent, so the
 			// holder is recovered from the typed field instead.
-			// This stack resolves the gate from CONFIGURATION, not a ctx
-			// override: issueops (which owns the per-call override key) imports
-			// this package, so the key is unreachable here - and a proxied
-			// server resolves the flag from config anyway. The prose itself is
-			// the shared composer's, so it cannot drift from the issueops twin.
+			// The prose is the shared composer's, so it cannot drift from the
+			// issueops twin; the GATE cannot be shared the same way. This
+			// stack resolves it from CONFIGURATION and does not honor the
+			// per-call override issueops.WithHeartbeatEnabled installs:
+			// issueops owns that context key and imports this package, so the
+			// key cannot be read from here. A caller that overrides the gate
+			// would therefore be told the configuration's prose while the
+			// issueops route armed or refused a lease under the override.
+			// That asymmetry is recorded rather than hidden: the override
+			// exists for tests and embedders, which claim through issueops,
+			// and with the machinery on by default the two agree.
 			refusal = storage.ClaimHolderSteeringRefusal(row.CurrentAssignee, config.HeartbeatEnabled())
 		default:
 			refusal = fmt.Errorf("%w%s%s", storage.ErrAlreadyClaimed, storage.ClaimedByFragment, row.CurrentAssignee)

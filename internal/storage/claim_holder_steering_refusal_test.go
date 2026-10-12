@@ -31,14 +31,14 @@ func TestClaimHolderSteeringRefusalVariants(t *testing.T) {
 
 	// Only the enabled variant may promise lease-based recovery: its claim
 	// really does carry a lease that bd reclaim can expire. Byte-for-byte
-	// with the copy that shipped before the fork's gate existed.
+	// with the copy this composer replaced, before the gate existed.
 	if !strings.Contains(enabled.Error(), "lease expiry will surface it for bd reclaim") {
 		t.Errorf("enabled variant = %q, want the lease-expiry recovery sentence", enabled)
 	}
 
-	// The disabled variant (this fork's default, gastownhall/beads#5681) must
-	// not promise recovery that cannot happen: no lease is armed, so nothing
-	// expires and bd reclaim reverts nothing.
+	// The disabled variant (heartbeat.enabled=false, gastownhall/beads#7506)
+	// must not promise recovery that cannot happen: no lease is armed, so
+	// nothing expires and bd reclaim reverts nothing.
 	if !strings.Contains(disabled.Error(), "heartbeat.enabled=false") {
 		t.Errorf("disabled variant = %q, want the flag named", disabled)
 	}

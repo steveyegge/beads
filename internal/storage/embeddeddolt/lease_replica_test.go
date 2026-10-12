@@ -28,9 +28,7 @@ func TestReclaimRefusesForeignReplicaLease(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 
 	te := newTestEnv(t, "leasereplica")
-	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
-	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
-	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
+	ctx := t.Context()
 
 	issue := &types.Issue{
 		ID:        "leasereplica-1",
@@ -144,9 +142,7 @@ func TestReclaimAnyReplicaOverride(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 
 	te := newTestEnv(t, "leaseoverride")
-	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
-	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
-	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
+	ctx := t.Context()
 
 	issue := &types.Issue{
 		ID:        "leaseoverride-1",
@@ -190,9 +186,7 @@ func TestUnknownProvenanceLeaseStaysReclaimable(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 
 	te := newTestEnv(t, "leaselegacy")
-	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
-	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
-	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
+	ctx := t.Context()
 
 	for _, id := range []string{"leaselegacy-1", "leaselegacy-2"} {
 		issue := &types.Issue{
@@ -271,9 +265,7 @@ func TestForeignSkipDetailIsBounded(t *testing.T) {
 	const seeded = 25
 
 	te := newTestEnv(t, "leasedetail")
-	// Opt the lease machinery ON: this fork defaults heartbeat.enabled
-	// off (gastownhall/beads#5681); these tests pin the ENABLED contract.
-	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
+	ctx := t.Context()
 
 	// One granting replica, so the summary stays a single named group and the
 	// interesting variance is entirely in the per-issue expansion. IDs are

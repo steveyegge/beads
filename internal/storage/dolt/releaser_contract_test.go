@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
-	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // TestReleaserContract runs the Releaser contract against the server-backed
@@ -69,11 +68,6 @@ func newDoltReleaserFixture(t *testing.T, prefix string) (conformance.ReleaserFi
 	t.Helper()
 	store, storeCleanup := setupTestStore(t)
 	ctx, cancel := testContext(t)
-	// Lease machinery ON (this fork defaults heartbeat.enabled off,
-	// gastownhall/beads#5681): the contracts this fixture serves claim an
-	// issue and then observe the lease that claim armed, so they pin the
-	// ENABLED semantics.
-	ctx = issueops.WithHeartbeatEnabled(ctx, true)
 	stop := func() {
 		cancel()
 		storeCleanup()

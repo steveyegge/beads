@@ -14,7 +14,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/doltutil"
-	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/testutil"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -80,13 +79,7 @@ func releaseAllTestSlots() {
 // testContext returns a context with timeout for test operations
 func testContext(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()
-	// Opt the lease-heartbeat machinery ON: this fork defaults
-	// heartbeat.enabled off (gastownhall/beads#5681), and this package's
-	// tests pin the ENABLED semantics (leases armed on claim, refreshed by
-	// heartbeat, reverted by reclaim). The fork default is pinned separately
-	// by TestClaimSkipsLeaseWhenHeartbeatDisabled below.
-	base := issueops.WithHeartbeatEnabled(context.Background(), true)
-	return context.WithTimeout(base, testTimeout)
+	return context.WithTimeout(context.Background(), testTimeout)
 }
 
 // openStoreWithOwnBudget opens a store under its own testTimeout budget and

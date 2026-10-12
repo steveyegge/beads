@@ -101,7 +101,6 @@ func TestServedReadyClaimerLeavesEphemeralRowsOutOfTheDefaultReadySet(t *testing
 // inside the claiming transaction. What actually blocked it was the ephemeral
 // half, and that was the composition's limit rather than the wire's.
 func TestServedReadyClaimerLeasesADurableWinButNotAnEphemeralOne(t *testing.T) {
-	armHeartbeatConfig(t)
 	conformance.RunReadyClaimerLeasesADurableWinButNotAnEphemeralOne(t, t.Context(), newServedReadyClaimerFixture(t, "hrc6"))
 }
 

@@ -298,10 +298,7 @@ func TestExecuteClaimStagesTheRowAndEventItWrote(t *testing.T) {
 		WithArgs(id).
 		WillReturnRows(sqlmock.NewRows([]string{"label"}))
 
-	// Opt the lease machinery back on (this fork defaults it off,
-	// gastownhall/beads#5681): this test pins the ENABLED-path contract —
-	// a winning CAS grants a lease — so it must say so explicitly.
-	result, tables, err := ExecuteClaim(WithHeartbeatEnabled(context.Background(), true), tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
+	result, tables, err := ExecuteClaim(context.Background(), tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
 	if err != nil {
 		t.Fatalf("ExecuteClaim: %v", err)
 	}

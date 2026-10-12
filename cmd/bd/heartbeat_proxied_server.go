@@ -6,15 +6,18 @@ import (
 	"fmt"
 
 	"github.com/steveyegge/beads/internal/storage"
+	storeops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/workapi"
 )
 
 // heartbeatProxiedOutcome carries what the render layer needs out of the
-// transaction: the fully-resolved ID and the title for the feedback line.
+// transaction: the fully-resolved ID, the title for the feedback line, and
+// whether the lease machinery was on for the call that just ran.
 type heartbeatProxiedOutcome struct {
-	id    string
-	title string
+	id      string
+	title   string
+	enabled bool
 }
 
 // runHeartbeatProxiedServer routes bd heartbeat through the proxied-server
@@ -44,12 +47,20 @@ func runHeartbeatProxiedServer(ctx context.Context, id string) error {
 		if herr := uw.IssueUseCase().Heartbeat(ctx, issue.ID, currentActor()); herr != nil {
 			return heartbeatProxiedOutcome{}, fmt.Errorf("heartbeat %s: %w", issue.ID, herr)
 		}
-		return heartbeatProxiedOutcome{id: issue.ID, title: issue.Title}, nil
+		// Resolved from the same context the heartbeat above just used, so
+		// the human line cannot report "lease refreshed" when the storage
+		// layer no-oped on heartbeat.enabled=false. Only the wording rides
+		// on this: the exit code — the worker contract — is the storage
+		// layer's answer either way.
+		return heartbeatProxiedOutcome{id: issue.ID, title: issue.Title, enabled: storeops.HeartbeatEnabled(ctx)}, nil
 	})
 	if err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
 
 	SetLastTouchedID(res.id)
+	if !res.enabled {
+		return renderHeartbeatDisabled(res.id)
+	}
 	return renderHeartbeatSuccess(res.id, res.title)
 }

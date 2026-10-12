@@ -106,8 +106,8 @@ const (
 //
 //   - heartbeat enabled: the claim carries a lease, so an abandoned holder's
 //     claim goes stale and bd reclaim reverts it;
-//   - heartbeat disabled (this fork's default, gastownhall/beads#5681): no
-//     lease is armed, so promising lease expiry would be a lie - the copy
+//   - heartbeat disabled (heartbeat.enabled=false, gastownhall/beads#7506):
+//     no lease is armed, so promising lease expiry would be a lie - the copy
 //     names the flag and says the claim is never recovered automatically.
 func ClaimHolderSteeringRefusal(assignee string, heartbeatEnabled bool) error {
 	if heartbeatEnabled {

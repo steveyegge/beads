@@ -10,7 +10,6 @@ import (
 	"github.com/steveyegge/beads/backend/conformance"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
-	"github.com/steveyegge/beads/internal/storage/issueops"
 )
 
 // TestLeaseReclaimerContract runs the LeaseReclaimer contract against the
@@ -20,10 +19,7 @@ import (
 func TestLeaseReclaimerContract(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 	te := newTestEnv(t, "lrc")
-	// Lease machinery ON (this fork defaults heartbeat.enabled off,
-	// gastownhall/beads#5681): every case below claims an issue and then sweeps
-	// the lease that claim armed, so it pins the ENABLED semantics.
-	ctx := issueops.WithHeartbeatEnabled(t.Context(), true)
+	ctx := t.Context()
 	fixture := newEmbeddedLeaseReclaimerFixture(t, te, "lrc")
 
 	t.Run("RevertsAStaleLease", func(t *testing.T) {

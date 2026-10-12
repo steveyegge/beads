@@ -2,6 +2,7 @@ package issueops
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"regexp"
 	"strings"
@@ -10,22 +11,34 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlbuild"
 	"github.com/steveyegge/beads/internal/types"
 	publicops "github.com/steveyegge/beads/issueops"
 )
 
-// This file pins the FORK-DEFAULT behavior of the lease-heartbeat machinery,
-// which is OFF by default (gastownhall/beads#5681). Every test here runs with
-// a bare context.Background() and no BD_HEARTBEAT_ENABLED, so it exercises the
-// disabled path exactly as a default deployment sees it:
+// This file pins the DISABLED path of the lease-heartbeat machinery
+// (heartbeat.enabled=false, gastownhall/beads#7506), which a deployment
+// reaches through config.yaml or BD_HEARTBEAT_ENABLED=0. The machinery is ON
+// by default, so every case here says what it tests with an explicit
+// WithHeartbeatEnabled(ctx, false) instead of inheriting anything — and in
+// doing so each one also pins that the per-call override beats an ENABLED
+// configuration. The disabled path must:
 //
 //   - claim still records assignee/status but arms NO lease,
-//   - `bd heartbeat` is a successful no-op (workers' timer loops keep exiting 0),
-//   - `bd reclaim` reverts nothing.
+//   - `bd heartbeat` keep its error contract — a missing issue, or one the
+//     caller does not hold, still fails — and otherwise be a successful
+//     no-op, so a worker's timer loop keeps exiting 0,
+//   - `bd reclaim` revert nothing.
 //
-// The ENABLED-path contracts live in public_claim_test.go, lease_reclaimer_test.go,
-// and the backend/conformance suite, all of which opt back in explicitly.
+// The ENABLED-path contracts live in public_claim_test.go,
+// lease_reclaimer_test.go and the backend/conformance suite, all of which run
+// on the default.
+
+// disabledCtx is heartbeat.enabled=false for one call chain.
+func disabledCtx() context.Context {
+	return WithHeartbeatEnabled(context.Background(), false)
+}
 
 // TestHeartbeatDisabledClaimArmsNoLease: with the feature off, a winning claim
 // CAS must NOT touch the ephemeral leases table. The mock expects the issues
@@ -47,7 +60,7 @@ func TestHeartbeatDisabledClaimArmsNoLease(t *testing.T) {
 		WithArgs(id).
 		WillReturnRows(sqlmock.NewRows([]string{"label"}))
 
-	result, tables, err := ExecuteClaim(context.Background(), tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
+	result, tables, err := ExecuteClaim(disabledCtx(), tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
 	if err != nil {
 		t.Fatalf("ExecuteClaim: %v", err)
 	}
@@ -62,18 +75,78 @@ func TestHeartbeatDisabledClaimArmsNoLease(t *testing.T) {
 	}
 }
 
-// TestHeartbeatDisabledHeartbeatIsSuccessfulNoOp: with the feature off,
-// HeartbeatIssueInTx must return nil WITHOUT issuing any SQL. This is the
-// exit-0 contract workers' heartbeat timer loops depend on. The mock expects
-// nothing, so any query fails the test.
-func TestHeartbeatDisabledHeartbeatIsSuccessfulNoOp(t *testing.T) {
+// expectDisabledHeartbeatLook mocks the two reads a disabled heartbeat still
+// makes: the wisp routing probe and the issue row the holder check reads.
+func expectDisabledHeartbeatLook(mock sqlmock.Sqlmock, id, assignee string, status types.Status) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps WHERE id = ? LIMIT 1")).
+		WithArgs(id).
+		WillReturnError(sql.ErrNoRows)
+	rows := sqlmock.NewRows([]string{"assignee", "status"})
+	if assignee != "" {
+		rows.AddRow(assignee, string(status))
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(assignee, ''), status FROM issues WHERE id = ?")).
+		WithArgs(id).
+		WillReturnRows(rows)
+}
+
+// TestHeartbeatDisabledHolderHeartbeatIsSuccessfulNoOp: with the feature off,
+// the HOLDER's heartbeat returns nil. It still reads the issue row — that is
+// what makes the answer mean "nothing to refresh" rather than "did not look" —
+// and it issues no lease write at all. This is the exit-0 contract workers'
+// heartbeat timer loops depend on.
+func TestHeartbeatDisabledHolderHeartbeatIsSuccessfulNoOp(t *testing.T) {
 	_, mock, tx := beginMockTx(t)
 
-	if err := HeartbeatIssueInTx(context.Background(), tx, "bd-1", claimActor); err != nil {
-		t.Fatalf("a disabled heartbeat must succeed as a no-op, got: %v", err)
+	const id = "bd-1"
+	expectDisabledHeartbeatLook(mock, id, claimActor, types.StatusInProgress)
+
+	if err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor); err != nil {
+		t.Fatalf("a disabled heartbeat by the holder must succeed as a no-op, got: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("a disabled heartbeat issued SQL: %v", err)
+		t.Fatalf("a disabled heartbeat did not run the reads it owes its caller: %v", err)
+	}
+}
+
+// TestHeartbeatDisabledRefusesANonexistentIssue: turning the machinery off
+// does not turn off the verb's error contract. An id that resolves to nothing
+// still fails, so a worker that heartbeats a deleted or never-created issue
+// stops instead of looping on success forever.
+func TestHeartbeatDisabledRefusesANonexistentIssue(t *testing.T) {
+	_, mock, tx := beginMockTx(t)
+
+	const id = "bd-ghost"
+	expectDisabledHeartbeatLook(mock, id, "", types.StatusOpen)
+
+	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
+	if !errors.Is(err, storage.ErrNotClaimable) {
+		t.Fatalf("err = %v, want ErrNotClaimable for an id that resolves to nothing", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// TestHeartbeatDisabledRefusesANonHolder: likewise a heartbeat from anyone
+// other than the holder still names the holder and fails, so the losing
+// worker's loop stops. Without this the disabled path would report success to
+// a process that does not hold the claim.
+func TestHeartbeatDisabledRefusesANonHolder(t *testing.T) {
+	_, mock, tx := beginMockTx(t)
+
+	const id = "bd-1"
+	expectDisabledHeartbeatLook(mock, id, "bob", types.StatusInProgress)
+
+	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
+	if !errors.Is(err, storage.ErrAlreadyClaimed) {
+		t.Fatalf("err = %v, want ErrAlreadyClaimed for a non-holder", err)
+	}
+	if !strings.Contains(err.Error(), "by bob") {
+		t.Errorf("err = %q, want the holder named", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
@@ -84,7 +157,7 @@ func TestHeartbeatDisabledReclaimRevertsNothing(t *testing.T) {
 	_, mock, tx := beginMockTx(t)
 
 	cutoff := time.Now().UTC()
-	got, err := ReclaimExpiredLeasesInTx(context.Background(), tx, cutoff, types.ReclaimFilter{}, "reaper")
+	got, err := ReclaimExpiredLeasesInTx(disabledCtx(), tx, cutoff, types.ReclaimFilter{}, "reaper")
 	if err != nil {
 		t.Fatalf("a disabled reclaim must succeed with an empty result, got: %v", err)
 	}
@@ -96,11 +169,11 @@ func TestHeartbeatDisabledReclaimRevertsNothing(t *testing.T) {
 	}
 }
 
-// TestHeartbeatEnabledOverrideBeatsDisabledConfig: the per-call override
-// (WithHeartbeatEnabled) must win over the disabled default, so a deployment
-// that opts back in — and the ENABLED-path tests — get real lease machinery.
+// TestHeartbeatEnabledByDefaultArmsLease: the other half of the same pin.
+// With no override and nothing configured — a bare context, exactly what a
+// deployment that never heard of the key gets — a winning claim arms a lease.
 // The mock expects the lease INSERT that only the enabled path performs.
-func TestHeartbeatEnabledOverrideBeatsDisabledConfig(t *testing.T) {
+func TestHeartbeatEnabledByDefaultArmsLease(t *testing.T) {
 	_, mock, tx := beginMockTx(t)
 
 	const id = "bd-1"
@@ -116,22 +189,20 @@ func TestHeartbeatEnabledOverrideBeatsDisabledConfig(t *testing.T) {
 		WithArgs(id).
 		WillReturnRows(sqlmock.NewRows([]string{"label"}))
 
-	ctx := WithHeartbeatEnabled(context.Background(), true)
-	_, _, err := ExecuteClaim(ctx, tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
+	_, _, err := ExecuteClaim(context.Background(), tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
 	if err != nil {
-		t.Fatalf("ExecuteClaim with override: %v", err)
+		t.Fatalf("ExecuteClaim with the default configuration: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("the enabled override did not arm a lease as expected: %v", err)
+		t.Fatalf("a default claim did not arm the lease the enabled path owes it: %v", err)
 	}
 }
 
-// TestHeartbeatDisabledConflictCopyTellsTheTruth: with the feature off (this
-// fork's default), a claim refusal on an OPEN issue held by someone else must
-// NOT promise lease expiry - no lease was armed at claim time, so nothing will
-// ever surface it for bd reclaim. The copy is composed by
-// storage.ClaimHolderSteeringRefusal, shared with the domain-stack twin, so
-// this pins both producers.
+// TestHeartbeatDisabledConflictCopyTellsTheTruth: with the feature off, a
+// claim refusal on an OPEN issue held by someone else must NOT promise lease
+// expiry - no lease was armed at claim time, so nothing will ever surface it
+// for bd reclaim. The copy is composed by storage.ClaimHolderSteeringRefusal,
+// shared with the domain-stack twin, so this pins both producers.
 func TestHeartbeatDisabledConflictCopyTellsTheTruth(t *testing.T) {
 	_, mock, tx := beginMockTx(t)
 
@@ -143,7 +214,7 @@ func TestHeartbeatDisabledConflictCopyTellsTheTruth(t *testing.T) {
 	expectClaimStateRead(mock, id, "bob", types.StatusOpen)
 	expectClaimStateRead(mock, id, "bob", types.StatusOpen)
 
-	_, _, err := ExecuteClaim(context.Background(), tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
+	_, _, err := ExecuteClaim(disabledCtx(), tx, publicops.ClaimRequest{Actor: claimActor, IssueID: id})
 	var conflict *publicops.ClaimConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("err = %v, want a *ClaimConflictError", err)
@@ -163,8 +234,8 @@ func TestHeartbeatDisabledConflictCopyTellsTheTruth(t *testing.T) {
 }
 
 // TestHeartbeatEnabledConflictCopyPromisesLeaseRecovery: the same refusal with
-// the machinery opted back in keeps the lease-expiry sentence - an armed lease
-// really will go stale and surface the claim for bd reclaim.
+// the machinery on keeps the lease-expiry sentence - an armed lease really
+// will go stale and surface the claim for bd reclaim.
 func TestHeartbeatEnabledConflictCopyPromisesLeaseRecovery(t *testing.T) {
 	_, mock, tx := beginMockTx(t)
 

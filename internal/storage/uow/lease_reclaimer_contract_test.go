@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
-	"github.com/steveyegge/beads/internal/storage/issueops"
 	publicops "github.com/steveyegge/beads/issueops"
 )
 
@@ -18,9 +17,6 @@ import (
 func TestLeaseReclaimerContract(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// Lease machinery ON (this fork defaults heartbeat.enabled off,
-	// gastownhall/beads#5681): these contracts pin the ENABLED semantics.
-	ctx = issueops.WithHeartbeatEnabled(ctx, true)
 	fixture := newUOWLeaseReclaimerFixture(t, ctx, "lrc")
 
 	t.Run("RevertsAStaleLease", func(t *testing.T) {
