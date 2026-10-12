@@ -107,6 +107,9 @@ var opCapability = map[string]string{
 	// with a typed capability error instead of dialing a path the older server
 	// would answer as a claim of an issue called ":reclaim".
 	OpReclaimIssues: "issues.reclaim",
+	// The advance-a-molecule role (molecule.go) dials it when served and
+	// refuses before dialing when not; it never composes a client-side copy.
+	OpAdvanceMolecule: "issues.advanceMolecule",
 }
 
 // CapProjectEnforce is the behavior capability the server advertises to announce
@@ -229,6 +232,16 @@ const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 // reads an absent priority as P0, so against it the client sends
 // issueops.DefaultCreatePriority explicitly (pinCreateDefaultPriority).
 const CapIssuesCreateDefaultPriority = "issues.create.defaultPriority"
+
+// CapCloseAutoCloseMolecule is the behavior capability announcing that
+// closeIssue and batchCloseIssues accept `auto_close_molecule` and answer
+// the auto-closed root, spelled exactly as httpapi's
+// CapIssuesCloseAutoCloseMolecule. lifecycle.go and batchcloser.go send the
+// member only when this is advertised; against an older server a close that
+// asks for it is refused before it is dialed with the typed capability
+// error — never a silent drop, and never a second, client-side copy of the
+// rule.
+const CapCloseAutoCloseMolecule = "issues.close.autoCloseMolecule"
 
 // CapExternalDependencies is the CONDITIONAL behavior capability announcing
 // that the ready, claim and close operations of this server apply bd's
@@ -369,6 +382,7 @@ var behaviorCapabilities = []string{
 	CapProjectEnforce, CapBatchApplyLarge, CapListSort, CapCountScope,
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
+	CapCloseAutoCloseMolecule,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

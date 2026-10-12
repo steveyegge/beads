@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/issueops"
 )
 
 func bdProxiedClose(t *testing.T, bd, dir string, args ...string) string {
@@ -911,6 +912,31 @@ func TestProxiedServerClose2B(t *testing.T) {
 		}
 		if got := readCloseReason(t, db, root.ID); got != "all steps complete" {
 			t.Errorf("auto-close reason: got %q, want %q", got, "all steps complete")
+		}
+	})
+
+	t.Run("json_reports_auto_closed_molecule", func(t *testing.T) {
+		t.Parallel()
+		p := newSharedProxiedProject(t, bd, "jacm")
+		root := bdProxiedCreate(t, bd, p.dir, "Molecule root", "-t", "epic", "--labels", "template")
+		s1 := bdProxiedCreate(t, bd, p.dir, "Step 1", "--parent", root.ID)
+		s2 := bdProxiedCreate(t, bd, p.dir, "Step 2", "--parent", root.ID)
+		s3 := bdProxiedCreate(t, bd, p.dir, "Step 3", "--parent", root.ID)
+		bdProxiedClose(t, bd, p.dir, s1.ID)
+		out := bdProxiedClose(t, bd, p.dir, "--json", s2.ID, s3.ID)
+		requireCloseJSONReportsAutoClosedMolecule(t, out, []string{s2.ID, s3.ID}, root.ID)
+	})
+
+	t.Run("json_reports_molecule_auto_close_refusal", func(t *testing.T) {
+		t.Parallel()
+		p := newSharedProxiedProject(t, bd, "jmar")
+		root := bdProxiedCreate(t, bd, p.dir, "Molecule root", "-t", "epic", "--labels", "template", "--assignee", "someone-else")
+		s1 := bdProxiedCreate(t, bd, p.dir, "Step 1", "--parent", root.ID)
+		out := bdProxiedClose(t, bd, p.dir, "--actor", "json-closer", "--json", s1.ID)
+		requireCloseJSONReportsMoleculeRefusal(t, out, s1.ID, root.ID,
+			&issueops.CloseNotAssigneeError{IssueID: root.ID, Assignee: "someone-else", Actor: "json-closer"})
+		if got := readStatus(t, openProxiedDB(t, p), root.ID); got != types.StatusOpen {
+			t.Errorf("a root assigned to another actor must stay open, got %q", got)
 		}
 	})
 

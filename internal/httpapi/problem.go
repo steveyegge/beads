@@ -443,6 +443,9 @@ const (
 	// the reason and session under first-close-wins, the done-status
 	// normalization, and the close policy vocabulary.
 	OpCloseIssue = "closeIssue"
+	// OpAdvanceMolecule moves a molecule on after one of its steps closed: the
+	// operation behind `bd close --continue` (issueops.MoleculeStepper).
+	OpAdvanceMolecule = "advanceMolecule"
 	// OpReopenIssue is the close's mirror, and it completes the lifecycle pair
 	// so a recovery flow works end to end over this surface. It is the one write
 	// here with no POLICY conflict code: reopen takes an issue OUT of the done
@@ -899,6 +902,13 @@ var operationCodes = map[string][]Code{
 		CodeTemplateReadOnly, CodeIssuePinned, CodeNotAssignee,
 		CodeBusy, CodeDBUnavailable, CodeInternal,
 	},
+	// No conflict code: a ready step another actor holds, or one moved out of
+	// a claimable status, is skipped for the next one rather than refused —
+	// the role's own rule — so the only 404 is the path id's.
+	OpAdvanceMolecule: {
+		CodeInvalidArgument, CodeUnauthenticated, CodeNotFound,
+		CodeBusy, CodeDBUnavailable, CodeInternal,
+	},
 	// ONE 409, and it is a PRECONDITION rather than a policy. Close has a policy
 	// guard — open children, a live blocker — and reopen is the direction that
 	// takes an issue OUT of the done category rather than putting it in, so
@@ -1036,8 +1046,9 @@ var operationCodes = map[string][]Code{
 	// the CLI itself prints identically, so a 404 would publish an invented
 	// distinction. Here the CLI already distinguishes a miss — `bd recall` has
 	// an exit-code contract for it — and the role answers Found rather than a
-	// value, so the 404 reports a distinction that exists. The stored-empty row
-	// falls on the miss side of it, which the document states.
+	// value, so the 404 reports a distinction that exists. Found is row
+	// existence: a row stored as the empty string is a 200 with an empty value,
+	// and only an absent row is the 404, which the document states.
 	OpGetMemory: {CodeInvalidArgument, CodeUnauthenticated, CodeNotFound, CodeBusy, CodeDBUnavailable, CodeInternal},
 	// The read's vocabulary exactly, because the two operations address the same
 	// resource the same way and this one's Found false is the same answer: a key
@@ -1510,10 +1521,9 @@ func EventsWatchSaturated() Result {
 //
 // A separate constructor rather than a detail argument on NotFound, because the
 // two say different things: that one is about the issue id space, and reusing
-// its sentence here would tell a client its memory key was an issue id. The
-// detail deliberately does NOT distinguish an absent row from one stored as the
-// empty string — the role cannot see the difference, so the wire must not claim
-// to.
+// its sentence here would tell a client its memory key was an issue id. It is
+// only ever the answer for an absent row: a row stored as the empty string is
+// found, and the read answers it with a 200.
 func MemoryNotFound() Result {
 	return newResult(CodeNotFound, "this workspace holds no memory under that key")
 }

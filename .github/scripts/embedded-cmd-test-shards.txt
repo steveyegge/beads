@@ -214,6 +214,7 @@
 100 70 TestEmbeddedPurgeConcurrent
 100 70 TestEmbeddedRoutedMutatingSiblingAssignTagDepTag
 
+100 71 TestEmbeddedCloseJSONReportsMoleculeAutoClose
 100 71 TestEmbeddedInitRoleRoutingExplicitDefault
 100 71 TestEmbeddedPrimeChangeDirRedirectNoticeFollowsTarget
 
