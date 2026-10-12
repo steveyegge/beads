@@ -26,9 +26,10 @@ import (
 // configuration. The disabled path must:
 //
 //   - claim still records assignee/status but arms NO lease,
-//   - `bd heartbeat` keep its error contract — a missing issue, or one the
-//     caller does not hold, still fails — and otherwise be a successful
-//     no-op, so a worker's timer loop keeps exiting 0,
+//   - `bd heartbeat` keep its error contract — a missing issue, a closed or
+//     released claim, or one held by someone else still fails — and only a
+//     LIVE holder gets the successful no-op, so a worker's timer loop keeps
+//     exiting 0 while its unit is alive and stops as soon as it is not,
 //   - `bd reclaim` revert nothing.
 //
 // The ENABLED-path contracts live in public_claim_test.go,
@@ -76,18 +77,29 @@ func TestHeartbeatDisabledClaimArmsNoLease(t *testing.T) {
 }
 
 // expectDisabledHeartbeatLook mocks the two reads a disabled heartbeat still
-// makes: the wisp routing probe and the issue row the holder check reads.
+// makes: the wisp routing probe and the issue row the holder check reads. The
+// row EXISTS with the given assignee and status — an empty assignee is a real
+// value here (an unassigned open issue, what a reclaim or release leaves
+// behind), not a missing row. Use expectDisabledHeartbeatNoRow for an id that
+// resolves to nothing at all.
 func expectDisabledHeartbeatLook(mock sqlmock.Sqlmock, id, assignee string, status types.Status) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps WHERE id = ? LIMIT 1")).
 		WithArgs(id).
 		WillReturnError(sql.ErrNoRows)
-	rows := sqlmock.NewRows([]string{"assignee", "status"})
-	if assignee != "" {
-		rows.AddRow(assignee, string(status))
-	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(assignee, ''), status FROM issues WHERE id = ?")).
 		WithArgs(id).
-		WillReturnRows(rows)
+		WillReturnRows(sqlmock.NewRows([]string{"assignee", "status"}).AddRow(assignee, string(status)))
+}
+
+// expectDisabledHeartbeatNoRow mocks the same two reads for an id that
+// resolves to no issue row at all (deleted, or never created).
+func expectDisabledHeartbeatNoRow(mock sqlmock.Sqlmock, id string) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps WHERE id = ? LIMIT 1")).
+		WithArgs(id).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(assignee, ''), status FROM issues WHERE id = ?")).
+		WithArgs(id).
+		WillReturnRows(sqlmock.NewRows([]string{"assignee", "status"}))
 }
 
 // TestHeartbeatDisabledHolderHeartbeatIsSuccessfulNoOp: with the feature off,
@@ -117,7 +129,7 @@ func TestHeartbeatDisabledRefusesANonexistentIssue(t *testing.T) {
 	_, mock, tx := beginMockTx(t)
 
 	const id = "bd-ghost"
-	expectDisabledHeartbeatLook(mock, id, "", types.StatusOpen)
+	expectDisabledHeartbeatNoRow(mock, id)
 
 	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
 	if !errors.Is(err, storage.ErrNotClaimable) {
@@ -144,6 +156,54 @@ func TestHeartbeatDisabledRefusesANonHolder(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "by bob") {
 		t.Errorf("err = %q, want the holder named", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// TestHeartbeatDisabledRefusesAnUnassignedOpenIssue: with the feature off, an
+// issue that exists but is assigned to nobody (assignee empty, status open)
+// is NOT a successful no-op — it is exactly the state a reclaimed, released,
+// or hand-unclaimed claim leaves behind, and a worker hammering it must stop
+// rather than loop at exit 0 forever. The disabled branch used to sit ABOVE
+// the holder test, which reported every state between "missing" and "held" as
+// success; this pins the reorder that closes it.
+func TestHeartbeatDisabledRefusesAnUnassignedOpenIssue(t *testing.T) {
+	_, mock, tx := beginMockTx(t)
+
+	const id = "bd-1"
+	expectDisabledHeartbeatLook(mock, id, "", types.StatusOpen)
+
+	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
+	if !errors.Is(err, storage.ErrNotClaimable) {
+		t.Fatalf("err = %v, want ErrNotClaimable for an unassigned open issue", err)
+	}
+	if !strings.Contains(err.Error(), "status open") {
+		t.Errorf("err = %q, want the status named", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// TestHeartbeatDisabledRefusesAClosedClaim: with the feature off, a claim that
+// was closed under the worker (assignee still names it, status closed) still
+// fails with the status named — same answer the enabled path gives — so the
+// worker's loop stops when its unit is finished instead of heartbeating a
+// closed issue at exit 0 forever.
+func TestHeartbeatDisabledRefusesAClosedClaim(t *testing.T) {
+	_, mock, tx := beginMockTx(t)
+
+	const id = "bd-1"
+	expectDisabledHeartbeatLook(mock, id, claimActor, types.StatusClosed)
+
+	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
+	if !errors.Is(err, storage.ErrNotClaimable) {
+		t.Fatalf("err = %v, want ErrNotClaimable for a closed claim", err)
+	}
+	if !strings.Contains(err.Error(), "status closed") {
+		t.Errorf("err = %q, want the status named", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

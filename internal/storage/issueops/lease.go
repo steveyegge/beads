@@ -332,9 +332,12 @@ func HeartbeatIssueInTx(ctx context.Context, tx DBTX, id, actor string) error {
 	// ClaimIssueInTx) so there is nothing here to refresh. The rows==0
 	// disambiguation below still runs, and that is deliberate: it is what
 	// tells a caller the issue is gone or no longer theirs, so the verb keeps
-	// its error contract whether or not the machinery is on. What it must NOT
-	// do down there is mint a lease through UpsertLeaseInTx — that is the one
-	// write "disabled" forbids.
+	// its error contract whether or not the machinery is on. Two rules it
+	// obeys down there: never mint a lease through UpsertLeaseInTx (the one
+	// write "disabled" forbids), and report the no-op only to a LIVE holder —
+	// the !enabled branch sits inside the holder test, so a closed, released,
+	// or reclaimed claim fails exactly as it does with the machinery on,
+	// instead of a worker beating a dead unit at exit 0 forever.
 	enabled := HeartbeatEnabled(ctx)
 	now := time.Now().UTC()
 	var rows int64
@@ -429,14 +432,6 @@ func HeartbeatIssueInTx(ctx context.Context, tx DBTX, id, actor string) error {
 		if assignee != "" && !actorMatches(assignee, actor) {
 			return fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, assignee)
 		}
-		if !enabled {
-			// The feature is off and the caller HOLDS the claim — that is
-			// the whole of a disabled heartbeat: nothing to refresh, and
-			// deliberately nothing minted. nil keeps an unconditional
-			// worker heartbeat loop succeeding; a caller that is gone or
-			// no longer the holder already failed just above.
-			return nil
-		}
 		if !isWisp && actorMatches(assignee, actor) && status == string(types.StatusInProgress) {
 			// The caller genuinely holds the claim but has no lease row — e.g.
 			// the claim was hand-doled through a generic update (which never
@@ -446,6 +441,17 @@ func HeartbeatIssueInTx(ctx context.Context, tx DBTX, id, actor string) error {
 			// primary UPDATE's verbatim predicate above missed it. A real
 			// worker's heartbeat re-arms recovery — under actor's current
 			// spelling, which is what the next heartbeat's fast path will see.
+			if !enabled {
+				// The feature is off and the caller is a LIVE holder — that
+				// is the whole of a disabled heartbeat: nothing to refresh,
+				// and deliberately nothing minted. nil keeps an
+				// unconditional worker heartbeat loop succeeding, but only
+				// for a live holder: every other state (missing, unassigned,
+				// closed, reclaimed, someone else's) already failed above or
+				// falls through to ErrNotClaimable below, so a worker whose
+				// unit died stops instead of looping on success forever.
+				return nil
+			}
 			return UpsertLeaseInTx(ctx, tx, id, actor, now, leaseTTL(ctx))
 		}
 		return fmt.Errorf("%w: %s status %s", storage.ErrNotClaimable, id, status)

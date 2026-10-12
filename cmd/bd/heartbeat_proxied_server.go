@@ -47,11 +47,13 @@ func runHeartbeatProxiedServer(ctx context.Context, id string) error {
 		if herr := uw.IssueUseCase().Heartbeat(ctx, issue.ID, currentActor()); herr != nil {
 			return heartbeatProxiedOutcome{}, fmt.Errorf("heartbeat %s: %w", issue.ID, herr)
 		}
-		// Resolved from the same context the heartbeat above just used, so
-		// the human line cannot report "lease refreshed" when the storage
-		// layer no-oped on heartbeat.enabled=false. Only the wording rides
-		// on this: the exit code — the worker contract — is the storage
-		// layer's answer either way.
+		// Wording only: the exit code — the worker contract — is the
+		// storage layer's answer either way. Note this reads the CLIENT's
+		// heartbeat.enabled: the heartbeat above ran inside the SERVER's
+		// transaction, which resolved the gate from the server's own
+		// configuration. When the two configs disagree the exit code is
+		// still right and only this human line can be wrong — acceptable
+		// for prose, and why nothing machine-readable branches on it.
 		return heartbeatProxiedOutcome{id: issue.ID, title: issue.Title, enabled: storeops.HeartbeatEnabled(ctx)}, nil
 	})
 	if err != nil {

@@ -1136,8 +1136,11 @@ func HeartbeatEnabled() bool {
 		// test binary. GetBool answers false for EVERY key off a nil viper,
 		// which would silently disarm dead-worker recovery for exactly the
 		// embedders that never see a config.yaml. Answer the default
-		// instead: the machinery is on unless a loaded config or the
-		// environment says otherwise.
+		// instead: the machinery is on, and nothing can turn it off in this
+		// state — both the config key and BD_HEARTBEAT_ENABLED are read
+		// through viper's AutomaticEnv, and there is no viper. An embedder
+		// that wants it off must call config.Initialize() first or override
+		// per call chain with issueops.WithHeartbeatEnabled.
 		return true
 	}
 	return GetBool("heartbeat.enabled")
