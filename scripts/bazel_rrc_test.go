@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -355,6 +356,13 @@ func TestBazelRRCLaneCommandsCoverEveryReader(t *testing.T) {
 // flags after; `test --nobuild`'s exit 1 after a successful analysis
 // passes, a failed analysis fails, and an empty command list fails.
 func TestRRCRunLanes(t *testing.T) {
+	// rrc-run-lanes.sh runs only in bazel.yml's rrc-seed and rrc-verify jobs,
+	// on Linux runners. It reads its lane list with `mapfile`, a bash 4
+	// builtin that macOS's /bin/bash 3.2 lacks (exit 127, "mapfile: command
+	// not found"); its owner keeps it Linux-only rather than porting it.
+	if runtime.GOOS != "linux" {
+		t.Skipf("rrc-run-lanes.sh is Linux-CI-only (bazel.yml rrc-seed/rrc-verify) and uses bash 4's mapfile; GOOS=%s", runtime.GOOS)
+	}
 	root := sourceRepoRoot(t)
 	script := filepath.Join(root, bazelRRCRunLanes)
 	dir := t.TempDir()

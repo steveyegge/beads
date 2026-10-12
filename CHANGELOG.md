@@ -32,7 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   description and metadata are unchanged, and omitting the flag (or passing
   `0`) is byte-identical to today's output. JSON output is untouched;
   `--include-comments` still streams every comment there.
-
 - `bd create --graph` now plans its batch through `issueops.BatchApplier`
   instead of the old `buildDomainGraphPlan` path, so a graph create gets the
   same atomic multi-row semantics as `bd batch apply`. A `waits-for` edge's
@@ -191,6 +190,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-tenant embedder serving many workspaces needs, where a
   process-global credential cannot stand in for one tenant's own.
   EXPERIMENTAL, pin an exact beads version.
+- Unlimited ready and query reads over the HTTP backend (`bd ready --limit
+  0`, `bd query --limit 0`, and every library read asking for no limit)
+  return every row against any server, bounded on the client by the new
+  `BEADS_HTTP_UNLIMITED_READ_CAP` (a positive integer up to 1000000; default
+  10000). The client never puts `limit=0` on the wire, which a `bd serve
+  --allow-non-loopback` refuses and which an older server answered with its
+  default page, silently capping the result: an unlimited ready or query
+  read is one request bounded at the cap plus one (one consistent snapshot).
+  Past the cap, or when a server reports more rows below the requested
+  bound, the read is refused with a typed error
+  (`httpclient.ErrUnlimitedReadCap`) naming the cap, never truncated. An
+  unlimited `bd list` is unchanged: it walks its keyset cursor a page at a
+  time and is bounded only by `--max-rows` / `BEADS_MAX_ROWS`. Unlike a
+  malformed `BEADS_MAX_ROWS`, which is ignored with a warning, a malformed
+  cap value fails every unlimited ready or query read rather than falling
+  back to the default.
 
 ### Changed
 
@@ -418,26 +433,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rollout) still stores P0, with no error on either side.
   Out-of-tree storage backends must now honor `DefaultPriority`; see the
   BREAKING (out-of-tree storage backends) entry under `### Changed`.
-
-
-
-- **`bd delete` no longer rewrites a citation of a surviving child into a
-  `[deleted:…]` marker for its parent.**
-  ([#7377](https://github.com/gastownhall/beads/pull/7377)). The rule that
-  turns a deleted id
-  into `[deleted:<id>]` in its neighbours' text treated `.` as a boundary,
-  and a hierarchical child's id is its parent's plus `.<n>`. Deleting
-  `bd-a1.1` turned "step bd-a1.1.2 failed" into
-  "step [deleted:bd-a1.1].2 failed", although `bd-a1.1.2` was still there;
-  deleting a parent and its descendant together could nest one marker in
-  another (`[deleted:[deleted:bd-a1].1.2]`), and a `--cascade` delete left a
-  deleted grandchild cited as `[deleted:bd-a1].1.2`. A `.` followed by an id
-  character now belongs to the id, a `.` that ends a sentence is still a
-  boundary, and each deleted id gets exactly its own marker. A second
-  citation of the same id separated from the first by a single character
-  ("bd-a1 bd-a1") is now rewritten too. The direct and proxied-server delete
-  routes share one copy of the rule.
-
 - **The http store's `GetIssue` answers a miss with `storage.ErrNotFound`,
   like the local stores.** It used to answer a missing (or empty) id with
   `(nil, nil)`, which every caller written against the backend contract
@@ -454,7 +449,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   role through (see *Added*). A missing id is a plain not-found after one
   `getIssue`, instead of a partial-id search refusal, and `bd update
   <absent> --claim` answers a not-found gc classifies.
-
+- **`bd mol wisp gc --age 0s` can miss a just-created wisp.** Dolt's
+  `DATETIME(0)` column rounds fractional seconds half-up on write rather
+  than truncating, so a wisp created in the second half of a wall-clock
+  second can read back with `updated_at` up to 0.5s in the future. The GC's
+  age check (`now.Sub(updatedAt) > ageThreshold`) then compares against a
+  negative duration and fails, even though `--age 0s`'s own contract is
+  that every wisp qualifies. `ageThreshold <= 0` now bypasses the clock
+  comparison entirely (#7236).
 - **PRs based on `hotfix/**` branches now run full CI, not just
   cross-version historical smokes and triage labeling.** `pr.yml`,
   `pr-risk.yml`, `conformance.yml`, `cross-version-smoke.yml` and
@@ -737,6 +739,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--db`, `BEADS_DB`/`BD_DB` and `-C` are reported the same way `BEADS_DIR` is.
   `bd context` also prints `cwd repo: git: unavailable` rather than silently
   omitting the one degraded state it exists to report.
+
+- **`bd delete` no longer rewrites a citation of a surviving child into a
+  `[deleted:…]` marker for its parent.**
+  ([#7377](https://github.com/gastownhall/beads/pull/7377)). The rule that
+  turns a deleted id
+  into `[deleted:<id>]` in its neighbours' text treated `.` as a boundary,
+  and a hierarchical child's id is its parent's plus `.<n>`. Deleting
+  `bd-a1.1` turned "step bd-a1.1.2 failed" into
+  "step [deleted:bd-a1.1].2 failed", although `bd-a1.1.2` was still there;
+  deleting a parent and its descendant together could nest one marker in
+  another (`[deleted:[deleted:bd-a1].1.2]`), and a `--cascade` delete left a
+  deleted grandchild cited as `[deleted:bd-a1].1.2`. A `.` followed by an id
+  character now belongs to the id, a `.` that ends a sentence is still a
+  boundary, and each deleted id gets exactly its own marker. A second
+  citation of the same id separated from the first by a single character
+  ("bd-a1 bd-a1") is now rewritten too. The direct and proxied-server delete
+  routes share one copy of the rule.
 
 - **`bd comment`/`bd comments add` refuse an abbreviated id and a reserved
   word instead of silently resolving one to the wrong issue**
