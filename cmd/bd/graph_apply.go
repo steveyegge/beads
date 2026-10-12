@@ -858,7 +858,12 @@ func graphApplyNodeIssue(node GraphApplyNode, opts GraphApplyOptions, createdBy,
 	})
 	// Backfill status-coupled timestamps: the proxied domain insert does no
 	// backfill, and neither path stamps started_at for issues born in_progress.
+	// Stamp created_at from the same clock read: left zero, the insert stamps it
+	// later and a closed node lands with closed_at before created_at (GH#7519).
 	now := time.Now().UTC()
+	if issue.CreatedAt.IsZero() {
+		issue.CreatedAt = now
+	}
 	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
 		issue.ClosedAt = &now
 	}
