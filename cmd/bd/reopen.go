@@ -69,6 +69,13 @@ another actor won the race, so retrying the same guard is pointless).`,
 			// Resolve with prefix routing (supports cross-rig reopens like `bd reopen xe-5ls`)
 			result, err := resolveAndGetIssueForMutation(ctx, store, id)
 			if err != nil {
+				// A concurrent `bd delete` that commits before this
+				// resolution is the same lost race as one that commits
+				// inside ops.Reopen below. requireSingleIfRevisionID
+				// guarantees this is the only id, so nothing is pending.
+				if reported, ok := reportIfRevisionTargetGone("reopening", id, err, ifRevision); ok {
+					return reported
+				}
 				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
 				hasError = true
 				continue
@@ -96,14 +103,15 @@ another actor won the race, so retrying the same guard is pointless).`,
 				continue
 			}
 			reopened, err := ops.Reopen(opsCtx, issueops.ReopenRequest{
-				Actor:           actor,
+				Actor:           currentActor(),
 				IssueID:         fullID,
 				Reason:          reason,
 				ExpectedVersion: ifRevision,
 				// Names the issue for the reason `bd close`'s does, and keeps
 				// the entry identical across backends: the proxied route
-				// already writes "bd: reopen <ids>".
-				Provenance: "bd: reopen " + fullID,
+				// already writes "bd: reopen <ids>". A remote store labels the
+				// entry itself (remote_backend.go).
+				Provenance: reopenProvenance(issueStore, fullID),
 			})
 			if err != nil {
 				// Only a guarded reopen reports through the conditional-write
@@ -150,7 +158,7 @@ another actor won the race, so retrying the same guard is pointless).`,
 		}
 
 		for s, ids := range mutatedStores {
-			if err := commitPendingIfEmbedded(ctx, s, actor, doltAutoCommitParams{
+			if err := commitPendingIfEmbedded(ctx, s, currentActor(), doltAutoCommitParams{
 				Command:  "reopen",
 				IssueIDs: ids,
 			}); err != nil {

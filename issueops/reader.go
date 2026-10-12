@@ -93,7 +93,9 @@ type ReadyRequest struct {
 	// Limit bounds the page. Nil means the shared ready default; 0 means
 	// unlimited. It is a pointer so that "unset" and "explicitly unlimited"
 	// stay distinguishable, which is what lets one constant serve both
-	// surfaces.
+	// surfaces. Over the http backend an unlimited ready read is one
+	// response, bounded at BEADS_HTTP_UNLIMITED_READ_CAP rows and refused
+	// past it with httpclient.ErrUnlimitedReadCap, never truncated.
 	Limit *int
 	// Offset skips the first N matching rows, on EVERY implementation. The
 	// page a caller receives is the rows at positions [Offset, Offset+Limit)

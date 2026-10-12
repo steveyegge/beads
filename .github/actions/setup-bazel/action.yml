@@ -8,7 +8,9 @@ description: >
   BAZEL_REMOTE_EXECUTOR, RBE_TLS_CERT and RBE_TLS_KEY in the step env, that rc
   enables --config=remote-exec for every bazel command; with none of them the
   job runs locally; with BAZEL_FORK_CACHE=true (and no secrets) it enables
-  the read-only fork cache (--config=fork-cache); with BAZEL_FORK_REMOTE=true
+  the read-only fork cache (--config=fork-cache), and with BAZEL_RRC_READ=true
+  too (the remote repo contents cache readers) Bazel's remote repo contents
+  cache through rbe-cache while it answers; with BAZEL_FORK_REMOTE=true
   (fork and Dependabot PRs, bazel.yml modes fork-ro/fork-rw; needs
   RBE_FORK_PR and RBE_FORK_TIER) it gets a short-lived certificate from
   rbe-fork-mint (fork-credential.sh, proving the run with a CSR artifact) and
@@ -39,15 +41,18 @@ runs:
     # unverified repo contents cache is off (write-bazelrc.sh) and the Bazel
     # binary is not cached, so a poisoned entry (a cache written by an
     # untrusted run) cannot change what executes. v3: v2 also held Bazelisk's
-    # download and the contents cache.
+    # download and the contents cache. v4: MODULE.bazel joins the key because
+    # the lock does not record non-registry repository rules (llvm_dist), so
+    # v3 kept restoring the 1.94 GB LLVM .tar.xz after the switch to the
+    # 149 MB slice.
     - name: Restore Bazel runner cache
       id: restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/bazel-ci-cache
-        key: bazel-repo-v3-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock') }}
+        key: bazel-repo-v4-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel', 'MODULE.bazel.lock') }}
         restore-keys: |
-          bazel-repo-v3-${{ runner.os }}-
+          bazel-repo-v4-${{ runner.os }}-
 
     - name: Install Bazelisk
       shell: bash
@@ -73,6 +78,8 @@ runs:
         case "$bazel_version/$arch" in
           9.2.0/amd64) bazel_sha=7668a95db1250f12c40407251e4e203b4ec8bf39bc495d2f485b2d8c99048694 ;;
           9.2.0/arm64) bazel_sha=049dd21f40ad979db11c3ee68c96a42ce75f1185e69ac61ab20de1501427a410 ;;
+          9.3.0/amd64) bazel_sha=d302d22ed77ee5658b87857249baa579db84300ecebe0a1e9a357b5b20f80eb8 ;;
+          9.3.0/arm64) bazel_sha=615cc2509819047e4930fe6643c5f01ebd705ccadf75e8f0b85f9b83cc6a6ca0 ;;
           *) echo "setup-bazel: no pinned sha256 for Bazel '$bazel_version' ($arch); add it from the release's .sha256 file" >&2; exit 1 ;;
         esac
         {

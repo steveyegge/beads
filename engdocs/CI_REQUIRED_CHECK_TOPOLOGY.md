@@ -55,9 +55,9 @@ Current PR-related workflow names:
   outputs (`rbe-enabled` is `true` in `remote`, `fork-ro` and `fork-rw`);
   every lane exports its
   `job.status` as an output named after the job. `pr.yml`'s gate requires the
-  call's result (`BAZEL`) and `BAZEL_TEST`, `BAZEL_PURE`, `BAZEL_EMBEDDED`,
-  `BAZEL_INTEGRATION`, `BAZEL_DOLTSERVER`, `BAZEL_PROXIED` and
-  `BAZEL_SERVER_STORAGE`. These lanes are the only CI run of the Linux Go
+  call's result (`BAZEL`) and `BAZEL_TEST`, `BAZEL_PURE`,
+  `BAZEL_RELEASE_CROSS`, `BAZEL_EMBEDDED`, `BAZEL_INTEGRATION`,
+  `BAZEL_DOLTSERVER`, `BAZEL_PROXIED` and `BAZEL_SERVER_STORAGE`. These lanes are the only CI run of the Linux Go
   test tiers: the legacy jobs they mirrored in `pr.yml` and `pr-risk.yml`
   are retired (ga-96smfk.22; see
   [Legacy Tier Retirement](#legacy-tier-retirement-d2)), so the gate also
@@ -620,6 +620,120 @@ job's `if:` or rotating the key, in either of two ways:
   step's own kill switch, checked before any network call. Deleting the
   variable does not disable pre-warming; it restores the default of 1.
 
+## dolt-race Shadow (Not Required)
+
+`bazel.yml`'s `bazel-dolt-race` job (check name `Bazel / dolt-race`) is an
+advisory shadow, not a required check. It runs
+`bazel test //... --config=dolt-race`, the union of `--config=doltserver` and
+`--config=doltserver-proxied` with one tag filter for both tiers, beside the
+`bazel-doltserver` and `bazel-proxied` lanes. Its purpose is to measure one
+client per group of lanes against the two lanes it would replace (end time,
+runner minutes, test counts and results) before any cutover. Each member
+target's test action key is unchanged, so the shadow shares cached results
+with the member lanes.
+
+- It runs in mode `remote` on `pull_request` and `merge_group` events only.
+  It never runs in a fork mode (`fork-ro`, `fork-rw`), in mode `cache` or
+  `local`, on `bazel-farm.yml`'s call, on push, nightly or dispatch.
+- It cannot fail the gate. It has job-level `continue-on-error`, so its
+  failure cannot fail the call's aggregate result (`BAZEL`). It has no
+  `workflow_call` output, no `bazel.yml` job `needs` it, and `pr.yml`,
+  `ci-gate.sh` and `bazel-gate.sh` never name it.
+- The gate still waits for it. `CI Gate` needs `pr.yml`'s `bazel` call, and
+  a reusable-workflow call completes only when all of its jobs have finished
+  (success, failure or timeout), `continue-on-error` ones included. A slow
+  shadow therefore delays `CI Gate` and the merge queue, up to its
+  timeout. `continue-on-error` does not cover a job GitHub cancels at its
+  own `timeout-minutes`, so every step has its own timeout and the job's
+  (65 minutes) stays at least 5 minutes above their sum and 10 above the
+  test step's (policy-tested). A hung step then fails the job, which
+  `continue-on-error` covers, before GitHub would cancel it.
+- Its ci-analytics `LANE` is `dolt-race`.
+- Policy: `scripts/bazel_dolt_race_shadow_test.go`. Removing the job, its
+  `.bazelrc` config and its line in `.github/scripts/rrc-lane-commands.txt`
+  is the rollback; nothing reads them.
+
+## Remote Repo Contents Cache
+
+A cold lane client re-runs its repository rules (gazelle's `go_deps`, the Go
+SDK, the LLVM slice) before its first action. Bazel 9's remote repo contents
+cache serves those extracted trees from rbe-west's `oss` action cache instead
+(ported from gascity's `bazel.yml`; design: gascity
+`engdocs/design/bazel-remote-repo-contents-cache.md`). The repository variable
+`RBE_REPO_CONTENTS_CACHE` rolls it out, in mode `remote` only:
+
+| value | effect |
+|---|---|
+| unset / `off` | nothing (default) |
+| `seed` | each push to main runs `bazel.yml`'s `rrc-seed` job: every lane's command in `.github/scripts/rrc-lane-commands.txt` with `--nobuild`, uploading repository trees with a 30-minute `rbe-rrc-writer-beads` certificate that rbe-west's mint signs only for that job (GitHub OIDC; `.github/scripts/rrc-writer-credential.sh`). rbe-west's `rrc-gate` admits only repo-contents entries from it |
+| `canary` | `seed`, and the `test` lane reads the cache |
+| `on` | `seed`, and every lane but the release cross-compile and the package gates reads it |
+
+Readers append `startup --experimental_remote_repo_contents_cache` and
+`common --loading_phase_threads=64` to `.bazelrc.local` before setting up
+Bazel; both are key neutral, and the lanes keep
+`--noremote_upload_local_results`. While the variable is not `off`,
+nightly.yml's call also runs `rrc-verify`: a cold fetch of every lane,
+compared with the cached entries by `tools/bazel/rrc_verify.py`; a mismatch
+fails the job and opens an `rrc-verify` issue, which lists the containment
+steps below.
+
+Mode `cache` lanes (fork PRs while rbe-fork is closed, `rbe=cache`
+dispatches) see no repository variables. The jobs with a reader step above
+pass `BAZEL_RRC_READ: 'true'` to setup-bazel, and only those: their configs
+are the ones `rrc-lane-commands.txt` seeds (`bazel-release-cross` builds for
+other platforms and does not opt in). In mode `cache` they read the same
+entries through rbe-cache's anonymous AC and CAS reads: `write-bazelrc.sh`
+adds the same two lines to its rc whenever
+`.github/actions/setup-bazel/cache-rrc-probe.sh` gets a GetCapabilities
+answer from rbe-cache, then NOT_FOUND for a GetActionResult key no action
+has and for a ByteStream Read of a blob the CAS does not hold. The reader
+lanes that run in mode `cache` use a pinned `ubuntu-24.04` runner there,
+not `ubuntu-latest`. Each job's step summary records whether it reads, and
+rbe-cache's TCP connect time (DNS lookup excluded). rbe-cache refuses every
+write, and fork-cache uploads nothing.
+
+An unreachable cache with the startup flag set costs every repository a
+failed lookup, so a cache that is closed or down when the probe runs gets
+no lines and a notice instead, and the lane fetches as before. That holds
+at probe time only. After loading, Bazel fetches a cached repository's
+files lazily from rbe-cache (:8443). If the cache goes away mid-run
+(rbe-cache-gate closes, the runner's IP is banned, or the breaker opens),
+the command fails, and Bazel does not re-fetch the repository (bazel#30218,
+gascity design R4).
+
+To stop mode `cache` lanes reading:
+
+1. Commit `fork_rrc_read=off` in both probe scripts: beads'
+   `.github/actions/setup-bazel/cache-rrc-probe.sh` and gascity's
+   `tools/rbe/cache-rrc-probe.sh`. This is the preferred way: lanes that
+   already read finish, and later runs fetch for themselves. beads has no
+   fresh-merge, so an open fork PR keeps its old switch until it is pushed
+   again.
+2. For immediate server-side containment, an operator runs
+   `rbe-cache-gate close` on core. That stops all fork-cache, cache hits
+   included, and fails the lanes that are reading at that moment.
+3. The mode `remote` lanes read the same entries: rbe-cache serves the same
+   `oss` action cache. On an `rrc-verify` mismatch, set
+   `RBE_REPO_CONTENTS_CACHE` to `seed`. That stops every mode `remote`
+   reader, while `rrc-seed` and `rrc-verify` keep running. Set it to `off`
+   only to stop seeding too; that also stops `rrc-verify`. If the run only
+   says it could not check the cache, leave the variable as it is.
+
+Known limit (gascity design R4): rbe-cache's anonymous CAS is a size
+partition whose upper store, for blobs of 512 MiB or more, is a noop. A
+cached repository with a file that large is a hit whose download always
+fails. rrc-gate does not refuse such entries today.
+
+`rrc-seed` asks for `id-token: write` and `rrc-verify` for `issues: write`, so
+every caller of `bazel.yml` (pr.yml, nightly.yml, bazel-farm.yml) grants both:
+GitHub checks a called workflow's job permissions when the run starts, even
+for jobs that skip. Neither job runs on a pull_request, merge_group or
+pull_request_target event, and every other `bazel.yml` job keeps
+`contents: read`. Rollback for the mode `remote` readers: set the variable to
+`off` (or `seed`, to keep the cache warm without readers). It does not reach
+mode `cache`; use the steps above.
+
 ## Required Check Contract
 
 After the aggregate checks are verified on the branch, branch protection or the
@@ -883,9 +997,11 @@ Required` requires them to have run remotely and passed.
     `1.3.0 (dev)`, no commit); no consumer reads it. Verified 2026-10-02:
     both package gates pass with the Bazel-built bd (MCP: 228 passed, 5
     skipped; npm: all tests and the pack dry run), the same as with a
-    `go build` bd. Both run on `blacksmith-4vcpu-ubuntu-2404` when
-    `rbe.outputs.enabled == 'true'` (4 vCPU: `pytest -n 8` is pinned to
-    timing measured there), `ubuntu-latest` otherwise. `bazel-test`'s own
+    `go build` bd. In mode remote, package-npm runs on
+    `blacksmith-4vcpu-ubuntu-2404` and package-mcp on
+    `blacksmith-8vcpu-ubuntu-2404` with `pytest -n 16`
+    (`BEADS_MCP_PYTEST_WORKERS`; the script's default is `-n 8`);
+    `ubuntu-latest` (and `-n 8`) otherwise. `bazel-test`'s own
     `bazel-ci-build-artifacts` upload is no longer consumed by anything; it
     is kept for the F3.5.3 SHA256SUMS comparison and for debugging.
   - The Dolt-backed domain, uow, tracker, doctor/fix and protocol suites
@@ -899,8 +1015,9 @@ Required` requires them to have run remotely and passed.
     `TestPinnedDoltCLIMatchesContainerImage`. The release-target
     cross-compilation (formerly pr.yml's
     `check-release-target-cross-compilation`, `go build ./...` with
-    `CGO_ENABLED=0` per target) is a step of bazel.yml's `bazel-pure` lane
-    (`BAZEL_PURE`): `scripts/ci/bazel-release-cross-compile.sh` runs one
+    `CGO_ENABLED=0` per target) is bazel.yml's `bazel-release-cross` lane
+    (`BAZEL_RELEASE_CROSS`), split out of `bazel-pure` so it runs in
+    parallel with it: `scripts/ci/bazel-release-cross-compile.sh` runs one
     remote `bazel build //tools/bazel:release_cross`, every `go_library` and
     `go_binary` for each row of `scripts/ci/release-targets.txt`, plus
     `//tools/bazel:pure_bd_has_no_cgo_only_deps` (a pure bd must not link
@@ -908,27 +1025,55 @@ Required` requires them to have run remotely and passed.
     the job it replaces.
   - `go test`'s own vet checks (cmd/go's `defaultVetFlags`, policy-tested
     equal to the toolchain's) and the golangci-lint linters `.golangci.yml`
-    enables run as nogo (`//tools/nogo`) beside every compile of every Bazel
-    lane: natively in `bazel test //... --config=ci`, and for every release
-    platform in the `bazel-pure` lane's release cross-compile
-    (engdocs/LINTING.md). The former
+    enables run as nogo (`//tools/nogo`): natively in `bazel test //...
+    --config=ci`, and for every release platform in the
+    `bazel-release-cross` lane (engdocs/LINTING.md). Since F5 S1 each
+    configuration in `scripts/nogo_lint_policy_test.go`'s
+    `nogoConfigurations` table (race, pure, js/wasm) validates in exactly
+    one required lane, not beside every compile of every lane: the race
+    configuration's nogo is owned by `test` above, and `embedded`,
+    `doltserver`, `doltserver-proxied`, `dolt-race` (shadow) and the
+    package gates pass `--norun_validations`, since they compile a strict
+    subset of what `test` already validates on that configuration
+    (`scripts/nogo_lint_policy_test.go`, engdocs/LINTING.md). Since F5 S2
+    (Variant A) the integration configuration (`--config=integration`'s
+    `gms_pure_go,integration` tags) is no longer a three-lane exception:
+    `bazel-integration` (`--config=integration`), `bazel-server-storage`
+    (`--config=doltserver-integration`) and `bazel-cmd-dolt`
+    (`--config=doltserver-cmd`) all pass `--norun_validations`. Instead
+    `bazel-integration` runs a narrow extra build step, `Nogo: integration
+    library files`, that validates only `//internal/testutil/integration`
+    (the one non-test library package the `integration` build tag selects)
+    under `--config=integration --@rules_go//go/config:race
+    --output_groups=nogo_fix`. This accepts a coverage loss: the 56
+    integration-tagged `_test.go` files listed in
+    `tools/nogo/unvalidated_integration_tests.txt` are no longer analyzed by
+    nogo in any lane (`scripts/nogo_lint_policy_test.go`'s `integ` row of
+    `nogoConfigurations` and `TestNogoIntegrationStepCoversItsConfiguration`
+    pin this; engdocs/LINTING.md). The former
     `scripts-go-checks` (`Go checks (vet)`) and `pr-lint-wrapper`
     (`PR Lint (native|windows|darwin)`) jobs are retired.
   - The repository policy tests (`./scripts/...`, including the D2 guards)
     and the tests that walk the checkout run only under Bazel, remotely:
-    `//scripts:scripts_test` and `//test/docsync:docsync_test` take
-    `//:repo_files` as data, the checkout as Bazel sees it (every tracked
-    file outside `.bazelignore`, aggregated from the `repo_files` block
-    `tools/bazel/go_srcs.py` keeps in every package; the BUILD sync step's
-    `make bazel-sync-check` fails on a package without it). The release
+    the `//scripts` go_tests and `//test/docsync:docsync_test`, each over
+    the part of the checkout it reads. `tools/bazel/go_srcs.py` keeps a
+    `repo_files` block in every package that partitions its files into
+    `repo_go_srcs`, `repo_go_test_srcs`, `repo_doc_files` and
+    `repo_other_files`, aggregated at the root; their union `//:repo_files`
+    is every tracked file outside `.bazelignore`, which only
+    `//scripts:tracked_files_test` and two repository guards read (the
+    BUILD sync step's `make bazel-sync-check` fails on a package without
+    the block). So a Go-only change re-runs no workflow policy test, and a
+    docs-only or workflow-only change no Go-source scan. The release
     formula under `.bazelignore`d `.beads/` comes in as `@beads_formulas`.
     Their former `go test` legs (`Go checks (scripts-test)` and
     `Go checks (allowlisted)`) are gone.
 
     `tools/bazel/equivalence_allowlist.txt` holds only the two `cmd/bd`
     tests of plain `go test`'s own bd build fallback, which Bazel never
-    takes; `pr-preflight-platforms` runs them on every OS ("Exercise go
-    test's bd build fallback"). `TestBazelOnlySkipsAreAllowlisted` (under
+    takes; `pr-preflight-platforms` runs them on macOS and Windows
+    ("Exercise generated Git hook timeout process boundary and go test's bd
+    build fallback"). `TestBazelOnlySkipsAreAllowlisted` (under
     Bazel too) requires every top-level test with a `TEST_SRCDIR`- or
     `bazeltest.IsBazel()`-guarded `t.Skip` to have an allowlist `skip`
     entry, and no test anywhere to run part of its checks under `go test`
@@ -1028,12 +1173,15 @@ Required` requires them to have run remotely and passed.
     - The `args` and `env` of every target tagged `embedded`,
       `dolt-server-proxied` or `dolt-server-integration` are pinned.
   - `tools/bazel/check_shard_coverage.py` runs after each tier. It requires:
-    - every Bazel shard of `//cmd/bd:bd_embedded_test` (50; the manifest's
-      frozen 20-shard block was the retired `test-embedded-cmd` jobs' split,
-      F1), `//internal/storage/embeddeddolt:embeddeddolt_embedded_test` (15;
+    - every Bazel shard of `//cmd/bd:bd_embedded_test` and
+      `//cmd/bd:bd_embedded_part2_test` (50 each: shards 1-50 and 51-100 of
+      the manifest's 100-shard block, which their ranges must tile exactly
+      once; the manifest's frozen 20-shard block, once the retired
+      `test-embedded-cmd` jobs' split, has been deleted, F1),
+      `//internal/storage/embeddeddolt:embeddeddolt_embedded_test` (40;
       the frozen 5-shard block was `test-embedded-storage`'s, F1),
-      `//cmd/bd:bd_proxied_test` (30; the frozen 15-shard block was
-      `test-proxied-cmd`'s, F2) and
+      `//cmd/bd:bd_proxied_test` (34; the manifest's frozen 15-shard block,
+      once `test-proxied-cmd`'s split, has been deleted, F2) and
       `//internal/storage/dolt:dolt_server_full_test` (16) to have run
       exactly the tests its shard script lists (list-only mode, minus
       `TestMain`, which `grep '^func Test'` lists but which is never a
@@ -1059,6 +1207,10 @@ Required` requires them to have run remotely and passed.
   it in `bazel-integration`, which `pr.yml`'s gate requires (PR Core's `go
   test` builds neither tag). Neither tier was part of a required gate
   before. `scripts/conformance.sh` stays as the local `go test` entrypoint.
+  Its Tier 3, the served HTTP corpus (`./internal/httpclient` with
+  `BEADS_TEST_EMBEDDED_DOLT=1` and `BEADS_HTTP_TEST_REQUIRED=1`), runs in
+  the embedded lane as `//internal/httpclient:httpclient_served_test`
+  (race build, 16 shards).
   `docs-mintlify.yml` likewise drops its docsync job (`go test
   ./test/docsync`, which `bazel-test` runs as `//test/docsync:docsync_test`)
   and keeps only Mintlify's network-bound broken-link check.
@@ -1115,7 +1267,7 @@ scope, not this slice's.
   `scripts/ci/check-release-cross-compile.sh <group>`, which builds every
   target in its group sequentially and reports every failure before exiting
   non-zero, so a PR touching two platforms at once sees both failures in one
-  log instead of needing a per-target re-run. (Since retired: bazel.yml's `bazel-pure`
+  log instead of needing a per-target re-run. (Since retired: bazel.yml's `bazel-release-cross`
   lane builds the same manifest with Bazel, `--platforms` per target.)
 - **`advisory-reports` fold.** `build-examples` and `complexity-report` (both
   already advisory: neither was in ci-gate's `needs`/`CI_GATE_REQUIRED`)
@@ -1168,7 +1320,7 @@ changes. They gate through `BAZEL_TEST`; pinned by
 | fast-checks: migration hygiene checks A and B | `//scripts/repochecks:migration_hygiene_test` (`MIGRATION_HYGIENE_SCOPE=tree`) |
 | fast-checks: `make fmt-check` | `//scripts/repochecks:fmt_test` (the registered SDK's gofmt) |
 | PR Policy: `checkworkflowtags` | `//scripts/repochecks:workflow_tags_test` |
-| PR Policy: `check-testing-short.sh` | `//scripts:scripts_test` (`TestCheckTestingShortPassesOnCleanRepoTree`) |
+| PR Policy: `check-testing-short.sh` | `//scripts:go_sources_test` (`TestCheckTestingShortPassesOnCleanRepoTree`) |
 | PR Policy: workapi frontend boundary | `//scripts/repochecks:workapi_frontend_boundary_test` |
 | PR Policy: `make api-check` drift | `//scripts/repochecks:types_gen_drift_test`; its `go test ./internal/httpapi/...` half is the httpapi targets in the same lane |
 | PR Policy / check-doc-flags: `check-doc-freshness.sh` | `//scripts/repochecks:doc_freshness_test` |
@@ -1202,7 +1354,9 @@ their `blacksmith-*vcpu-windows-2025` label literally; the two mixed-OS
 matrix jobs, `pr-preflight-platforms` and `check-doc-freshness-platforms`,
 run a macOS leg on `blacksmith-6vcpu-macos-26` (Apple Silicon) and a Windows
 leg on `blacksmith-4vcpu-windows-2025`, each leg naming its label in the
-matrix (`runs-on: ${{ matrix.runner }}`). There is no GitHub-hosted fallback:
+matrix (`runs-on: ${{ matrix.runner }}`). An 8 vCPU Windows preflight leg
+was tried (#7381): it restored the 4 vCPU saver's cache, but queued 63s for
+the larger runner and finished slower (144s vs 129s), so it stays on 4 vCPU. There is no GitHub-hosted fallback:
 Blacksmith serves this org's fork PRs (gascity's fork PRs run their CI on
 `blacksmith-*` labels). Fork runs get no secrets and a read-only token
 (`TestBlacksmithJobsReadNoSecrets` keeps every Blacksmith job free of secret
@@ -1259,7 +1413,7 @@ lane runs `//internal/storage/dolt:dolt_server_full_test` (16 shards) and
 ### Regression Tests
 
 `regression.yml` is retired. The suite runs as
-`//tests/regression:regression_test` (8 shards) in `bazel.yml`'s
+`//tests/regression:regression_test` (14 shards) in `bazel.yml`'s
 `bazel-cmd-dolt` lane, which `pr.yml`'s `CI Gate / Required` requires
 (`BAZEL_CMD_DOLT_REQUIRED`), so regression is now part of the aggregate gate
 on PRs and merge groups instead of a separate, path-detected advisory

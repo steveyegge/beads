@@ -242,6 +242,51 @@ func (e *CloseOpenChildrenError) Unwrap() error {
 	return ErrCloseOpenChildren
 }
 
+// ErrPinned is returned when an unforced close names a pinned issue — pinned by
+// either of the two spellings bd uses, the Pinned column or the pinned status.
+// Force (CloseRequest.Force, CloseBatchRequest.Force, CloseItem.Force) bypasses
+// it.
+var ErrPinned = errors.New("issue is pinned")
+
+// PinnedError reports the pinned issue an unforced close was refused for. Its
+// message is the sentence `bd close` has always printed for the refusal.
+type PinnedError struct {
+	// IssueID names the pinned issue.
+	IssueID string
+}
+
+func (e *PinnedError) Error() string {
+	return fmt.Sprintf("cannot modify pinned issue %s (use --force to override)", e.IssueID)
+}
+
+// Unwrap makes PinnedError match ErrPinned.
+func (e *PinnedError) Unwrap() error { return ErrPinned }
+
+// CloseNotAssigneeError reports an unforced close refused because the issue is
+// assigned to someone other than the closing actor (be-035): storage would
+// accept the id-only close, so without the guard actor A silently closes the
+// bead actor B holds. Authority is identity-by-string under the same
+// separator-insensitive comparison every assignee guard uses; an unassigned
+// issue is closable by anyone. Force bypasses it.
+//
+// It matches ErrNotOwner — the ownership refusal a release earns for the same
+// situation — and its message is the sentence `bd close` has always printed.
+type CloseNotAssigneeError struct {
+	// IssueID names the issue that refused the close.
+	IssueID string
+	// Assignee is the holder observed inside the refusing transaction.
+	Assignee string
+	// Actor is the closing actor the request named.
+	Actor string
+}
+
+func (e *CloseNotAssigneeError) Error() string {
+	return fmt.Sprintf("cannot close %s: assignee is %q, actor is %q; reclaim or use --force to override", e.IssueID, e.Assignee, e.Actor)
+}
+
+// Unwrap makes CloseNotAssigneeError match ErrNotOwner.
+func (e *CloseNotAssigneeError) Unwrap() error { return ErrNotOwner }
+
 // ErrAlreadyExists is returned when a create operation is given an ID that is
 // already occupied. The issue and wisp tables share one ID space.
 var ErrAlreadyExists = errors.New("issue already exists")
@@ -399,19 +444,29 @@ func (e *DependencyEndpointNotFoundError) Error() string {
 func (e *DependencyEndpointNotFoundError) Unwrap() error { return e.Err }
 
 // DependencyHierarchyConflictError is returned when a blocking dependency
-// would gate an issue on one of its own ancestors or descendants. Either shape
-// can never clear under the parent-child close/blocking semantics.
+// would gate an issue on one of its own ancestors or descendants. Neither
+// shape is how the hierarchy expresses "wait for what is under me".
 type DependencyHierarchyConflictError struct {
 	IssueID           string
 	BlockerID         string
 	BlockerIsAncestor bool
 }
 
+// Error states the DESCENDANT refusal as a modeling refusal, not a
+// consequence of the cascade.
+//
+// It used to read "blocked status cascades to descendants, so <blocker> would
+// inherit the block and never close". That was true until
+// gastownhall/beads#6506: a parent-child edge now propagates only the parent's
+// EXOGENOUS blockedness, so a parent that blocks on something in its own
+// subtree no longer darkens it, and the sentence described a deadlock that no
+// longer happens. The refusal itself stands — a blocks edge is not the way to
+// say "I close after my children" — so the reason has to say what is.
 func (e *DependencyHierarchyConflictError) Error() string {
 	if e.BlockerIsAncestor {
 		return fmt.Sprintf("%s cannot be blocked by its ancestor %s: %s cannot close until its descendants finish, so the gate would never clear",
 			e.IssueID, e.BlockerID, e.BlockerID)
 	}
-	return fmt.Sprintf("%s cannot be blocked by its descendant %s: blocked status cascades to descendants, so %s would inherit the block and never close",
-		e.IssueID, e.BlockerID, e.BlockerID)
+	return fmt.Sprintf("%s cannot be blocked by its descendant %s: waiting on your own subtree is a close gate, not a blocks edge — use a waits-for gate over the children (bd gate)",
+		e.IssueID, e.BlockerID)
 }

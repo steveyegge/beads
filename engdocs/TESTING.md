@@ -36,12 +36,13 @@ Each lane, as bazel.yml runs it (add your `--config=fork-cache` or
 |---|---|---|
 | Test (`bazel-test`) | `make test`, i.e. `bazel test //... --config=ci` | PR Core's selection: race, `-short`, skips. Includes nogo, gofmt and the repository guards. The default gate for every Go change. |
 | Lint, all platforms | `make ci-pr-lint` | nogo natively plus the windows/amd64 and darwin/arm64 passes. `make lint-changed` covers only your changed packages. |
-| Pure-Go (`bazel-pure`) | `bazel build --config=pure //cmd/bd:bd //cmd/bd:bd_test` | cgo off. The job's cmd/bd test subset (`PURE_CMD_BD_TESTS`), release cross-compile and js/wasm step are in bazel.yml. |
+| Pure-Go (`bazel-pure`) | `bazel build --config=pure //cmd/bd:bd //cmd/bd:bd_test` | cgo off. The job's cmd/bd test subset (`PURE_CMD_BD_TESTS`) and js/wasm step are in bazel.yml. |
+| Release cross-compile (`bazel-release-cross`) | `./scripts/ci/bazel-release-cross-compile.sh` | Every `go_library`/`go_binary` for each row of `scripts/ci/release-targets.txt`, cgo off, with nogo. |
 | Integration (`bazel-integration`) | `bazel test //... --config=integration` | The `integration`-tagged build. Runs with the read-only cache too. |
 | Dolt server (`bazel-doltserver`) | `bazel test //... --config=doltserver` | Starts its own `dolt sql-server` from the pinned binary; no docker. |
-| cmd/bd Dolt server (`bazel-cmd-dolt`) | `bazel test //cmd/bd:bd_dolt_server_test --config=doltserver-cmd` | 16 shards of the integration-tagged cmd/bd suite. |
-| Embedded Dolt (`bazel-embedded`) | `bazel test //... --config=embedded` | Remote execution only in CI; locally it is slow. |
-| Proxied server (`bazel-proxied`) | `bazel test //... --config=doltserver-proxied` | Remote execution only: 30 shards, each with a Dolt server. |
+| cmd/bd Dolt server (`bazel-cmd-dolt`) | `bazel test //cmd/bd:bd_dolt_server_test --config=doltserver-cmd` | 32 shards of the integration-tagged cmd/bd suite (the slowest tests pinned to 16 of them). |
+| Embedded Dolt (`bazel-embedded`) | `bazel test //... --config=embedded` | Remote execution only in CI; locally it is slow. Also runs the served http tiers with `BEADS_HTTP_TEST_REQUIRED=1`: `//backend/http:http_served_test`, `//internal/httpclient:httpclient_served_test` and the command corpus `//backend/http/corpus:corpus_served_test`. |
+| Proxied server (`bazel-proxied`) | `bazel test //... --config=doltserver-proxied` | Remote execution only: 34 shards, each with a Dolt server. |
 | Server-Dolt storage (`bazel-server-storage`) | `bazel test //... --config=doltserver-integration` | Remote execution only. |
 | Docs | `make check-docs` | `//test/docsync:docsync_test` and `//scripts/repochecks:doc_freshness_test` in the test lane's configuration, then `scripts/check-doc-flags.sh` against the pinned release. |
 
@@ -55,6 +56,30 @@ The Makefile keeps plain-Go twins under explicit `-go` names: `make test-go`
 offline and without Bazel, but they are not what CI enforces. GitHub Actions
 jobs that still run Go-native suites call the `-go` names, never `make test`
 (`TestWorkflowsNameTheirTestEngine`).
+
+### Native macOS C/C++ toolchain
+
+Bazel uses pinned LLVM 22.1.8 Clang on macOS, with the installed Apple SDK
+and its native linker (`xcrun --find ld`). `MODULE.bazel` selects
+`linker = "auto"` only for Darwin arm64 and x86_64. The macOS 27 SDK contains
+`arm64e.x1` TAPI targets that the bundled LLVM 22.1.8 `ld64.lld` cannot parse;
+pairing the SDK with Apple's linker avoids that incompatibility without
+changing the shared SDK, Xcode selection, or installed compiler. Darwin's
+SDK/linker are host dependencies, so this is not a hermetic macOS build.
+
+Linux x86_64 still uses the SHA-pinned LLVM compiler and bundled LLD with
+the pinned Ubuntu 24.04 sysroot. Host C/C++ toolchain detection stays disabled
+on every platform; the Darwin override does not select `local_config_cc`.
+`scripts/bazel_hermetic_cc_test.go` guards both contracts. A focused local
+race build exercises the native cgo link through Go's race standard library:
+
+```bash
+bazel test //scripts:scripts_test --config=ci --test_filter='^TestBazelHermetic'
+```
+
+This link check is separate from full macOS gate portability: the Linux-only
+timeout test backends remain tracked in upstream issue #7362. Run the full
+`make test` gate on its supported Linux platform as well.
 
 ## Choose the Smallest Useful Test
 
@@ -183,17 +208,22 @@ builds with the integration tag like `--config=integration`. Each shard runs
 its CI job's shard script, so for `--config=doltserver-integration` Bazel
 shard k runs the tests of job k+1 (both split the manifest's 16-shard block
 the same way). `--config=doltserver-proxied`'s `bd_proxied_test` instead
-runs the manifest's own 30-shard block — bin-packed by measured duration,
-not the legacy jobs' 15-shard, bd-init-cost-proxy block — so shard k there
-is not job k+1's tests; it is a different split of the same tests.
+runs the manifest's own 34-shard block, bin-packed by measured duration (the
+manifest's legacy 15-shard, bd-init-cost-proxy block, once read by PR Risk's
+retired fork/push jobs, has been deleted; those jobs no longer exist).
 
 `--config=doltserver-cmd` (`//cmd/bd:bd_dolt_server_test`, bazel.yml's
 advisory `bazel-cmd-dolt` job) runs the whole integration-tagged cmd/bd
 suite on the `local` backend: the Dolt-gated cmd/bd tests (`TestCLI_*`, the
 init and store-backed suites) that every other lane skips with
 `BEADS_TEST_SKIP=dolt` or leaves out of its manifest. It shares
-`--config=integration`'s build, passes the binary no test selection (the Go
-binary shards itself over every top-level test, 16 shards), and runs where
+`--config=integration`'s build and runs it in 32 shards: 16 run the slowest
+tests `cmd/bd/dolt_server_pinned_shards.txt` pins to them, and 16 are the Go
+binary's own round-robin shards over every other top-level test
+(`tools/bazel/go_test_pinned_shard.sh`; `//tests/regression:regression_test`
+splits the same way). After a change that moves test durations, regenerate the
+manifest from a run of the lane with `tools/bazel/pin_shards.py` (see its
+usage); a stale manifest only costs balance, never coverage. It runs where
 the integration lane runs (remote, or with the read-only cache). pr.yml's
 gate requires it once `BAZEL_CMD_DOLT_REQUIRED` is `"true"`; pr.yml then
 also passes bazel.yml `cmd-dolt-required: true`, and the PR's

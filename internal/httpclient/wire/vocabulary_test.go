@@ -68,6 +68,7 @@ func TestOperationIdsMatchTheServerRouteTable(t *testing.T) {
 		{OpListEvents, httpapi.OpListEvents},
 		{OpWatchEvents, httpapi.OpWatchEvents},
 		{OpBatchGetIssues, httpapi.OpBatchGetIssues},
+		{OpReclaimIssues, httpapi.OpReclaimIssues},
 	}
 
 	// The table is a HAND LIST, and a hand list's failure mode is omission: a new
@@ -140,6 +141,9 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if CapProjectEnforce != httpapi.CapProjectEnforce {
 		t.Errorf("CapProjectEnforce = %q, server says %q", CapProjectEnforce, httpapi.CapProjectEnforce)
 	}
+	if CapExternalDependencies != httpapi.CapExternalDependencies {
+		t.Errorf("CapExternalDependencies = %q, server says %q", CapExternalDependencies, httpapi.CapExternalDependencies)
+	}
 	if CapListSort != httpapi.CapIssuesListSort {
 		t.Errorf("CapListSort = %q, server says %q", CapListSort, httpapi.CapIssuesListSort)
 	}
@@ -148,6 +152,15 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	}
 	if CapBatchApplyLarge != httpapi.CapBatchApplyLarge {
 		t.Errorf("CapBatchApplyLarge = %q, server says %q", CapBatchApplyLarge, httpapi.CapBatchApplyLarge)
+	}
+	if CapSweepWispsPlane != httpapi.CapIssuesSweepWispsPlane {
+		t.Errorf("CapSweepWispsPlane = %q, server says %q", CapSweepWispsPlane, httpapi.CapIssuesSweepWispsPlane)
+	}
+	if CapSweepLiveDependents != httpapi.CapIssuesSweepLiveDependents {
+		t.Errorf("CapSweepLiveDependents = %q, server says %q", CapSweepLiveDependents, httpapi.CapIssuesSweepLiveDependents)
+	}
+	if CapSweepLimit != httpapi.CapIssuesSweepLimit {
+		t.Errorf("CapSweepLimit = %q, server says %q", CapSweepLimit, httpapi.CapIssuesSweepLimit)
 	}
 	if ReasonProjectMismatch != string(httpapi.ReasonProjectMismatch) {
 		t.Errorf("ReasonProjectMismatch = %q, server says %q", ReasonProjectMismatch, httpapi.ReasonProjectMismatch)
@@ -183,8 +196,14 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	// literal is spelled out member by member rather than compared against the
 	// server's own slice: a mirror checked against the thing it mirrors passes
 	// however both of them move.
-	if !slices.Equal(behaviorCapabilities, []string{httpapi.CapProjectEnforce, httpapi.CapBatchApplyLarge, httpapi.CapIssuesListSort, httpapi.CapIssuesCountScope}) {
-		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort and issues.count.scope tokens", behaviorCapabilities)
+	if !slices.Equal(behaviorCapabilities, []string{
+		httpapi.CapProjectEnforce, httpapi.CapBatchApplyLarge, httpapi.CapIssuesListSort, httpapi.CapIssuesCountScope,
+		httpapi.CapIssuesSweepWispsPlane, httpapi.CapIssuesSweepLiveDependents, httpapi.CapIssuesSweepLimit,
+		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
+	}) {
+		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
+			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit and "+
+			"issues.batchApply.depAddLineage and issues.update.allowTemplate and issues.create.defaultPriority tokens", behaviorCapabilities)
 	}
 }
 

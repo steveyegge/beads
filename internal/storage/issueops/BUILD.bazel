@@ -22,6 +22,7 @@ go_library(
         "claim_next.go",
         "close.go",
         "close_batch.go",
+        "close_guard.go",
         "commenter.go",
         "comments.go",
         "commit_pending.go",
@@ -66,6 +67,7 @@ go_library(
         "journal_prune.go",
         "labels.go",
         "lease.go",
+        "lease_reclaimer.go",
         "metadata.go",
         "metadata_cas.go",
         "molecule.go",
@@ -135,6 +137,7 @@ go_test(
         "blocked_recheck_test.go",
         "blocked_state_result_test.go",
         "blocked_state_template_test.go",
+        "close_guard_test.go",
         "close_test.go",
         "config_helpers_test.go",
         "config_prefix_test.go",
@@ -164,6 +167,7 @@ go_test(
         "journal_truncation_test.go",
         "journal_vocabulary_test.go",
         "label_rename_merged_count_test.go",
+        "lease_reclaimer_test.go",
         "lease_replica_test.go",
         "metadata_test.go",
         "prepare_timestamps_utc_test.go",
@@ -234,12 +238,51 @@ filegroup(
 # --- begin repo_files (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
 
 filegroup(
-    name = "repo_files",
+    name = "repo_doc_files",
+    srcs = glob(
+        [
+            "**/*.md",
+            "**/*.mdx",
+        ],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_srcs",
+    srcs = glob(
+        ["**/*.go"],
+        allow_empty = True,
+        exclude = [
+            "**/*_test.go",
+            "**/node_modules/**",
+        ],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_test_srcs",
+    srcs = glob(
+        ["**/*_test.go"],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_other_files",
     srcs = glob(
         ["**"],
         exclude = [
             "**/*.db",
             "**/*.exe",
+            "**/*.go",
+            "**/*.md",
+            "**/*.mdx",
             "**/*.out",
             "**/*.prof",
             "**/*.pyc",
@@ -248,7 +291,7 @@ filegroup(
             "**/node_modules/**",
         ],
     ),
-    visibility = ["//:__pkg__"],
+    visibility = ["//:__subpackages__"],
 )
 
 # --- end repo_files ---

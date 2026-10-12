@@ -64,6 +64,8 @@ var bazelPRLaneRCLines = map[string][]string{
 		"test:doltserver --test_arg=-test.parallel=4",
 		"test:doltserver --local_test_jobs=4",
 		"test:doltserver --remote_download_regex=.*/test\\.(log|xml)$",
+		// F5 S1: the race configuration's nogo is owned by the test lane.
+		"test:doltserver --norun_validations",
 	},
 	"pure": {
 		"build:pure --@rules_go//go/config:pure",
@@ -255,9 +257,9 @@ func testPackageGateJobs(t *testing.T, prGateRequired []string) {
 		if !ok {
 			t.Fatalf("%s has no %s job", bazelWorkflowName, lane.job)
 		}
-		if !reflect.DeepEqual([]string(job.Needs), []string{bazelRBEJobName}) || job.If != bazelPackageGatesIf || job.RunsOn != bazelPackageRunsOn {
+		if !reflect.DeepEqual([]string(job.Needs), []string{bazelRBEJobName}) || job.If != bazelPackageGatesIf || job.RunsOn != bazelPackageRunsOn[lane.job] {
 			t.Errorf("%s: needs %v, if %q, runs-on %q; want needs [%s], if %q, runs-on %q",
-				lane.job, job.Needs, job.If, job.RunsOn, bazelRBEJobName, bazelPackageGatesIf, bazelPackageRunsOn)
+				lane.job, job.Needs, job.If, job.RunsOn, bazelRBEJobName, bazelPackageGatesIf, bazelPackageRunsOn[lane.job])
 		}
 
 		detectCond := "steps.detect.outputs." + lane.detectOutput + " == 'true'"
@@ -318,7 +320,11 @@ func testPackageGateJobs(t *testing.T, prGateRequired []string) {
 		// e2b78f7d7a: both configs cquery to the identical
 		// bazel-out/k8-fastbuild-ST-.../bin/cmd/bd/bd_for_tests/bd path).
 		buildStep := job.step(t, "bazel build //cmd/bd:bd_for_tests")
-		if buildStep.If != bazelPathIf || buildStep.Run != `bazel build --@rules_go//go/config:race //cmd/bd:bd_for_tests --remote_download_regex='.*/bin/cmd/bd/bd_for_tests/bd$'` {
+		// F5 S1: the package gates' build is a race-configuration non-owner
+		// (bd_for_tests is also built, with its nogo already validated, by
+		// bazel-test's `bazel test //... --config=ci`), so it passes
+		// --norun_validations too.
+		if buildStep.If != bazelPathIf || buildStep.Run != `bazel build --@rules_go//go/config:race //cmd/bd:bd_for_tests --remote_download_regex='.*/bin/cmd/bd/bd_for_tests/bd$' --norun_validations` {
 			t.Errorf("%s bazel build step: if %q, run %q; want if %q", lane.job, buildStep.If, buildStep.Run, bazelPathIf)
 		}
 		pkgBD := job.step(t, "Package the Bazel-built bd")
@@ -416,8 +422,8 @@ func TestDoltServerFingerprintRunsOnTheDoltServerLane(t *testing.T) {
 // cmd/go's defaultVetFlags analyzers beside every compile of every lane, so
 // bazel.yml's required test lane (`bazel test //... --config=ci`) fails on a
 // finding. No workflow runs `go vet` any more. The repository policy tests
-// and the Go tests that walk the checkout run under Bazel
-// (//scripts:scripts_test and //test/docsync over //:repo_files), so no
+// and the Go tests that walk the checkout run under Bazel (//scripts' and
+// //test/docsync's go_tests, over the repo_files partitions they read), so no
 // workflow runs `go test` over ./scripts/... or the equivalence allowlist
 // either.
 func TestPRRunsGoTestsBazelSkips(t *testing.T) {
@@ -481,7 +487,7 @@ func TestPRRunsGoTestsBazelSkips(t *testing.T) {
 	}
 	// The allowlist's remaining skip entries run in pr-preflight-platforms
 	// (every OS), each named in its go test selector.
-	fallback := pr.job(t, "pr-preflight-platforms").step(t, "Exercise go test's bd build fallback").Run
+	fallback := pr.job(t, "pr-preflight-platforms").step(t, "Exercise generated Git hook timeout process boundary and go test's bd build fallback").Run
 	for _, line := range strings.Split(readPolicyFile(t, root, "tools/bazel/equivalence_allowlist.txt"), "\n") {
 		body, _, _ := strings.Cut(line, "#")
 		f := strings.Fields(body)

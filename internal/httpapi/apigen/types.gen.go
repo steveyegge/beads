@@ -81,8 +81,9 @@ func (e HealthStatus) Valid() bool {
 
 // Defines values for SweepRequestTier.
 const (
-	Durable   SweepRequestTier = "durable"
-	Ephemeral SweepRequestTier = "ephemeral"
+	Durable    SweepRequestTier = "durable"
+	Ephemeral  SweepRequestTier = "ephemeral"
+	WispsPlane SweepRequestTier = "wisps-plane"
 )
 
 // Valid indicates whether the value is a known member of the SweepRequestTier enum.
@@ -91,6 +92,8 @@ func (e SweepRequestTier) Valid() bool {
 	case Durable:
 		return true
 	case Ephemeral:
+		return true
+	case WispsPlane:
 		return true
 	default:
 		return false
@@ -390,7 +393,7 @@ type ApplyCloseItem struct {
 	// IT IS A STRING, and it must be the `revision` string a response carried, verbatim. A JSON number — or any other type — is a `400` naming this member. The token spans the FULL 64-bit range, so a number would be rounded past 2^53 by an IEEE-754-double parser and the guard would miss a row nothing else touched; a string round-trips exactly in every consumer.
 	ExpectedVersion *string `json:"expected_version,omitempty"`
 
-	// Force Bypasses close policy — the open-children refusal and the live-blocker refusal — and nothing else.
+	// Force Bypasses close policy — the open-children refusal and the live-blocker refusal — and the pin and the assignee guard, and nothing else: never the template guard.
 	//
 	// CLOSE POLICY EVALUATES AT THIS ITEM, against the row as this request has already changed it. A LATER item that gives a closed parent an open child is NOT refused: the policy is a gate on the closing act, not an invariant the store maintains.
 	Force *bool `json:"force,omitempty"`
@@ -472,7 +475,7 @@ type ApplyCreateItem struct {
 	// Owner The human owner, which is a different member from `assignee`: the assignee is who is working it now, the owner is who it is attributed to.
 	Owner *string `json:"owner,omitempty"`
 
-	// Priority 0 is P0/critical. Absent means the workspace default.
+	// Priority 0 is P0/critical. Absent means the create default, P2 (`2`), on a server advertising `issues.create.defaultPriority`; such a server never reads an absent member as `0`. An older server stores P0 for an absent member, so a client that does not see the token sends `2` explicitly.
 	Priority *int `json:"priority,omitempty"`
 
 	// Sender Who sent this, for the message-shaped rows a plan creates. Stored verbatim and interpreted by nothing on this surface.
@@ -492,7 +495,12 @@ type ApplyCreateItem struct {
 // A WAITS-FOR EDGE IS NORMALIZED RATHER THAN STORED AS ASKED. An absent, empty or `{}` `metadata` on a `waits-for` edge is STORED as `{"gate":"all-children"}`, because a stored waits-for row must be self-describing: readers predating the gate's introduction do not default a missing one, so an empty gate is a row those readers get wrong. A metadata that names a gate keeps it, along with the spawner and also-blocks members a caller may carry, and a gate that is neither `all-children` nor `any-children` is a `400`. Nothing else about that member is interpreted.
 //
 // THERE IS NO TYPED `waits_for` MEMBER, and that is the shape rather than an omission: every measured caller already carries the gate as metadata, a typed spelling lowers to these same bytes, and the blob carries members a two-field typed member could not express. One spelling, and it is this one.
+//
+// `has_spawner` and `thread_id` require `issues.batchApply.depAddLineage`: a client naming either on a server that has not advertised the token refuses locally before the dial rather than sending bytes an older server would answer with its own `400` for an unknown member.
 type ApplyDepAddItem struct {
+	// HasSpawner Gated by `issues.batchApply.depAddLineage`. Ignored for every `type` but `waits-for`: on a `waits-for` edge, `true` stamps `metadata.spawner_id` with this item's `target` (the id `bd create --graph`'s spawner_key/spawner_id resolved to), so a reader learns which spawned row to watch without re-deriving it from the graph plan. Absent or `false` leaves `metadata` exactly as given.
+	HasSpawner *bool `json:"has_spawner,omitempty"`
+
 	// Metadata One metadata value: ANY JSON value — string, number, boolean, null, array or object — because typed values enter through the explicit JSON metadata path and persist in older rows. It is not a string, and a client must not decode it as one.
 	//
 	// Where a member of this type is OMITTED, the key is absent; where it is present holding `null`, the key exists and holds null. Those are different states and this surface reports both.
@@ -511,6 +519,9 @@ type ApplyDepAddItem struct {
 	//
 	// A KEY REACHES BACKWARD ONLY where the ref ADDRESSES a row — an `update.target`, a `close.target`, either endpoint of a `dep_add`. The one exception is `create.metadata_refs`, whose values may reach forward or name their own item's key; the operation's description says why.
 	Target Ref `json:"target"`
+
+	// ThreadId Gated by `issues.batchApply.depAddLineage`. A plain column on the stored edge, separate from `metadata`'s blob — the graph-plan thread this edge belongs to, for a reader that groups edges by thread without parsing every edge's metadata.
+	ThreadId *string `json:"thread_id,omitempty"`
 
 	// Type The edge type, from the same OPEN vocabulary `Dependency.type` carries: checked for BEING a storable value, never for membership of a known-types list, so a workspace's own type passes.
 	Type string `json:"type"`
@@ -545,6 +556,8 @@ type ApplyItem struct {
 	// A WAITS-FOR EDGE IS NORMALIZED RATHER THAN STORED AS ASKED. An absent, empty or `{}` `metadata` on a `waits-for` edge is STORED as `{"gate":"all-children"}`, because a stored waits-for row must be self-describing: readers predating the gate's introduction do not default a missing one, so an empty gate is a row those readers get wrong. A metadata that names a gate keeps it, along with the spawner and also-blocks members a caller may carry, and a gate that is neither `all-children` nor `any-children` is a `400`. Nothing else about that member is interpreted.
 	//
 	// THERE IS NO TYPED `waits_for` MEMBER, and that is the shape rather than an omission: every measured caller already carries the gate as metadata, a typed spelling lowers to these same bytes, and the blob carries members a two-field typed member could not express. One spelling, and it is this one.
+	//
+	// `has_spawner` and `thread_id` require `issues.batchApply.depAddLineage`: a client naming either on a server that has not advertised the token refuses locally before the dial rather than sending bytes an older server would answer with its own `400` for an unknown member.
 	DepAdd *ApplyDepAddItem `json:"dep_add,omitempty"`
 
 	// Kind Which member below is read. A CLOSED set, unlike a dependency `type`: every value here is a verb this operation implements, and an unknown one is a request the server cannot execute rather than a workspace's own vocabulary.
@@ -751,7 +764,7 @@ type BatchCloseRequest struct {
 	// Actor Who is closing. `ClaimRequest.actor`'s rules exactly, and the value is recorded against every item.
 	Actor string `json:"actor"`
 
-	// Force Bypass close policy — the open-children refusal and the live-blocker refusal — for EVERY item, and nothing else. It never bypasses validation and it never bypasses existence: an id that names nothing refuses whether or not this is set. It is request-wide because the flag that spells it is.
+	// Force Bypass close policy — the open-children refusal and the live-blocker refusal — and the pin and the assignee guard for EVERY item, and nothing else. It never bypasses the template guard or validation, and it never bypasses existence: an id that names nothing refuses whether or not this is set. It is request-wide because the flag that spells it is.
 	Force *bool `json:"force,omitempty"`
 
 	// Items The issues to close, in the order the caller asked for them. Every item appears in `outcomes` at the same index.
@@ -794,7 +807,7 @@ type BatchCreateItem struct {
 	IssueType *string   `json:"issue_type,omitempty"`
 	Labels    *[]string `json:"labels,omitempty"`
 
-	// Priority 0 is P0/critical. Absent means the workspace default.
+	// Priority 0 is P0/critical. Absent means the create default, P2 (`2`), on a server advertising `issues.create.defaultPriority`; such a server never reads an absent member as `0`. An older server stores P0 for an absent member, so a client that does not see the token sends `2` explicitly.
 	Priority *int   `json:"priority,omitempty"`
 	Title    string `json:"title"`
 }
@@ -916,7 +929,7 @@ type CloseIssueRequest struct {
 	// IT IS A STRING, and it must be the `revision` string a response carried, verbatim. A JSON number — or any other type — is a `400` naming this member. The token spans the FULL 64-bit range, so a number would be rounded past 2^53 by an IEEE-754-double parser and the guard would miss a row nothing else touched; a string round-trips exactly in every consumer.
 	ExpectedVersion *string `json:"expected_version,omitempty"`
 
-	// Force Bypass close policy — the open-children refusal and the live-blocker refusal — and nothing else. The refusals are the ROLE's, so this endpoint cannot skip a guard by forgetting one exists. A forced close still reports `open_children`.
+	// Force Bypass close policy — the open-children refusal and the live-blocker refusal — and the pin and the assignee guard, and nothing else: never the template guard (see "Close guards" on `POST /v0/beads/issues/{id}:close`). The refusals are the ROLE's, so this endpoint cannot skip a guard by forgetting one exists. A forced close still reports `open_children`.
 	//
 	// IT BYPASSES POLICY, NEVER A PRECONDITION. `expected_version` is still checked with it set, for the reason `issueops.CloseRequest.Force` gives: a caller saying "close it anyway" has said nothing about whether the row is still the one it read.
 	Force *bool `json:"force,omitempty"`
@@ -956,10 +969,13 @@ type CloseOutcome struct {
 	// A BATCH WHOSE ITEMS ARE ALL `true` LANDED NOTHING, and records no history entry: a per-item success that changed nothing is not work the caller did.
 	AlreadyClosed *bool `json:"already_closed,omitempty"`
 
+	// Assignee With `not_assignee`: the issue's assignee the refusing transaction observed, exactly as `Problem.assignee` carries it for the single close. Absent on a successful item and on every other refusal.
+	Assignee *string `json:"assignee,omitempty"`
+
 	// Blockers With `not_closable` on the live-blocker refusal: the blockers that refused THIS item, exactly as `Problem.blockers` carries them for the single close, and optional for the same reason. Absent on a successful item and on every other refusal.
 	Blockers *[]Blocker `json:"blockers,omitempty"`
 
-	// Code This item's refusal, from `Problem.code`'s vocabulary and restricted to `not_found` (the id names no row in either plane) and `not_closable` (close policy refused it: open children, or a live blocker — see `open_children`). ABSENT means the item succeeded.
+	// Code This item's refusal, from `Problem.code`'s vocabulary and restricted to `not_found` (the id names no row in either plane), `not_closable` (close policy refused it: open children, or a live blocker — see `open_children`), and the close guards `template_read_only`, `issue_pinned` and `not_assignee` (see `assignee`), exactly as the single close answers them. ABSENT means the item succeeded.
 	//
 	// It is the problem vocabulary rather than a second one because an item refusal and a request refusal are the same question asked at two scopes, and a client that had to learn two vocabularies to classify one condition would be classifying the SCOPE rather than the condition.
 	Code *string `json:"code,omitempty"`
@@ -1034,9 +1050,9 @@ type ContextResponse struct {
 	// OPTIONAL, and absent means only that this server does not disclose its filesystem layout — never that it has no workspace. A client MUST NOT require it, MUST NOT treat absence as an error, and has no use for the value beyond display: it is a path on the SERVER's filesystem, which the client cannot open. Identify the workspace by `project_id` and `database`, which are required.
 	BeadsDir *string `json:"beads_dir,omitempty"`
 
-	// Capabilities The tokens this server advertises: the OPERATIONS it implements, derived from its route table, and the server-wide BEHAVIORS it enforces. v0's operation vocabulary is `ready.list`, `ready.count`, `issues.list`, `issues.query`, `issues.count`, `issues.get`, `issues.related`, `issues.create`, `issues.addComment`, `issues.batchClose`, `issues.claim`, `issues.claimNext`, `issues.release`, `issues.close`, `issues.reopen`, `issues.update`, `issues.sweep`, `issues.delete`, `issues.batchGet`, `issues.batchCreate`, `issues.batchApply`, `stats.get`, `config.list`, `config.get`, `config.set`, `config.unset`, `dependencies.cycles`, `dependencies.list`, `dependencies.count`, `dependencies.blocking`, `dependencies.tree`, `dependencies.add`, `dependencies.remove`, `memories.list`, `memories.get`, `memories.remember`, `memories.forget`, `events.list`, `events.watch`, `issues.casMetadata`; the behavior tokens are `project.enforce`, which announces that a `Bd-Project-Id` stamp for the wrong workspace is refused here rather than silently ignored, `issues.batchApplyLarge`, which announces that `POST /v0/beads/issues:batchApply` accepts the RAISED envelope — up to 1000 items (`ApplyBatchRequest.items.maxItems`), a 16 MiB body, and (for a request over 100 items) a run budget that EXTENDS to an operator-configured ceiling (`bd serve --large-apply-ceiling`, 5 minutes by default) — rather than the original 100-item, 4 MiB bound. The ceiling is a flat whole-run budget, not a value scaled by item count: a 101-item request and a 1000-item request both get the same extended budget. A request at or under 100 items is unaffected either way and keeps the server's ordinary deadline exactly as before. A client that checks for this token before sending a plan over 100 items learns whether THIS server accepts it without paying for a round trip an older server would refuse anyway, and `issues.list.sort`, which announces that `GET /v0/beads/issues` accepts the `sort` query parameter (two closed, pageable total orders — see that parameter) rather than silently answering `unknown_parameter`, and `issues.count.scope`, which announces that `GET /v0/beads/issues:count` accepts `parent`, `no_parent`, `exclude_type`, and `exclude_status` (see those parameters) rather than silently answering `unknown_parameter` for all four. The list grows additively, and an operation never appears here unless it is fully implemented. This is how a client checks for an operation or a behavior — never the version string.
+	// Capabilities The tokens this server advertises: the OPERATIONS it implements, derived from its route table, and the server-wide BEHAVIORS it enforces. v0's operation vocabulary is `ready.list`, `ready.count`, `issues.list`, `issues.query`, `issues.count`, `issues.get`, `issues.related`, `issues.create`, `issues.addComment`, `issues.batchClose`, `issues.claim`, `issues.claimNext`, `issues.release`, `issues.close`, `issues.reopen`, `issues.update`, `issues.sweep`, `issues.delete`, `issues.batchGet`, `issues.reclaim`, `issues.batchCreate`, `issues.batchApply`, `stats.get`, `config.list`, `config.get`, `config.set`, `config.unset`, `dependencies.cycles`, `dependencies.list`, `dependencies.count`, `dependencies.blocking`, `dependencies.tree`, `dependencies.add`, `dependencies.remove`, `memories.list`, `memories.get`, `memories.remember`, `memories.forget`, `events.list`, `events.watch`, `issues.casMetadata`; the behavior tokens are `project.enforce`, which announces that a `Bd-Project-Id` stamp for the wrong workspace is refused here rather than silently ignored, `issues.batchApplyLarge`, which announces that `POST /v0/beads/issues:batchApply` accepts the RAISED envelope — up to 1000 items (`ApplyBatchRequest.items.maxItems`), a 16 MiB body, and (for a request over 100 items) a run budget that EXTENDS to an operator-configured ceiling (`bd serve --large-apply-ceiling`, 5 minutes by default) — rather than the original 100-item, 4 MiB bound. The ceiling is a flat whole-run budget, not a value scaled by item count: a 101-item request and a 1000-item request both get the same extended budget. A request at or under 100 items is unaffected either way and keeps the server's ordinary deadline exactly as before. A client that checks for this token before sending a plan over 100 items learns whether THIS server accepts it without paying for a round trip an older server would refuse anyway, and `issues.list.sort`, which announces that `GET /v0/beads/issues` accepts the `sort` query parameter (two closed, pageable total orders — see that parameter) rather than silently answering `unknown_parameter`, and `issues.count.scope`, which announces that `GET /v0/beads/issues:count` accepts `parent`, `no_parent`, `exclude_type`, and `exclude_status` (see those parameters) rather than silently answering `unknown_parameter` for all four, `issues.sweep.wispsPlane`, which announces that `POST /v0/beads/issues:sweep` accepts the `wisps-plane` value of `tier` rather than silently answering `invalid_value`, `issues.sweep.liveDependents`, which announces that the same operation accepts `protect_live_dependents` and answers `skipped.live_dependent` rather than silently answering `unknown_parameter`, `issues.sweep.limit`, which announces that it accepts `limit` and answers `remaining` rather than silently answering `unknown_parameter`, and `issues.batchApply.depAddLineage`, which announces that a `dep_add` item on `POST /v0/beads/issues:batchApply` accepts `has_spawner` and `thread_id` (see `ApplyDepAddItem`) rather than a `400` naming the member unknown, and `issues.update.allowTemplate`, which announces that `PATCH /v0/beads/issues/{id}` accepts `allow_template` (see `UpdateIssueRequest`) rather than a `400` naming the member unknown, and `issues.create.defaultPriority`, which announces that a create (`POST /v0/beads/issues`, `issues:batchCreate` and `issues:batchApply` create items) with no `priority` member stores the default P2 rather than P0. One behavior token is CONDITIONAL rather than build-level: `policy.external_dependencies` announces that this server's ready, claim, claim-next, close, blocking and dependency-tree operations already apply bd's external-dependency policy (an issue blocked by an unsatisfied `external:<project>:<capability>` dependency is neither ready, claimable nor closable without force). A server advertises it only when it enforces that policy; a client that sees it must not apply the policy again, and a client that does not see it applies the policy itself. The list grows additively, and an operation never appears here unless it is fully implemented. This is how a client checks for an operation or a behavior — never the version string.
 	//
-	// THIS LIST IS BUILD-LEVEL, NOT WORKSPACE-LEVEL. It says which operations this binary serves, and for every entry but two that is the whole answer. `events.list` and `events.watch` are the exceptions: the durable events journal is a per-workspace setting that is OFF by default, so a server that advertises them may still refuse every request to both with 409 `events_journal_disabled` — correctly, because the operations exist and the workspace has no journal. A consumer of either MUST treat the capability as "this server speaks it" and the 409 as "not on this workspace", and must not read the capability as a promise that records will arrive.
+	// THIS LIST IS BUILD-LEVEL, NOT WORKSPACE-LEVEL, apart from the conditional `policy.external_dependencies` above, which depends on how this server composed its roles rather than on the build. It says which operations this binary serves, and for every entry but two that is the whole answer. `events.list` and `events.watch` are the exceptions: the durable events journal is a per-workspace setting that is OFF by default, so a server that advertises them may still refuse every request to both with 409 `events_journal_disabled` — correctly, because the operations exist and the workspace has no journal. A consumer of either MUST treat the capability as "this server speaks it" and the 409 as "not on this workspace", and must not read the capability as a promise that records will arrive.
 	Capabilities []string `json:"capabilities"`
 
 	// Database Logical database name (not a host or a DSN).
@@ -1074,7 +1090,25 @@ type ContextResponse struct {
 	//   had moved underneath it. That silent gap is the whole reason
 	//   this field exists.
 	// * `2` — the first release whose `ContextResponse` carries
-	//   `wire_revision` and `min_client_wire_revision` at all (this one).
+	//   `wire_revision` and `min_client_wire_revision` at all. Still
+	//   current: S4 widened `SweepRequest.tier`'s enum to add
+	//   `wisps-plane` and added `protect_live_dependents` and `limit`
+	//   alongside it, and none of the three bumped this counter.
+	//   `SweepRequest` is a REQUEST-body-only schema — no response ever
+	//   carries it — so nothing decodes it out of a server reply; the
+	//   new enum member and the two new fields are each something only
+	//   an UPDATED CLIENT chooses to send, behind their own behavior
+	//   tokens (`issues.sweep.wispsPlane`, `issues.sweep.liveDependents`,
+	//   `issues.sweep.limit`). An old client that never sends any of the
+	//   three has nothing to misdecode, which is exactly the additive
+	//   case this field exists to NOT gate. The wireshape drift gate
+	//   (`internal/httpapi/wireshape`) tracks, per member, whether it is
+	//   reachable from a request body, a response, or both, and treats
+	//   an enum WIDENING as additive only on a request-only member —
+	//   the identical widening on a response-side (or request+response)
+	//   member still counts as changed and still demands a bump, since
+	//   an existing client decoding a response must keep recognizing
+	//   every value the server might send it.
 	//
 	//
 	// PRESENCE, not just value: a generated client whose JSON decoder zero-values a missing integer field cannot tell, by looking at a decoded `0` alone, whether the server SENT `0` or sent nothing. This is never actually ambiguous in practice, because `0` and `1` are PERMANENTLY RETIRED values — they describe servers that predate this field or carried the brief interim string shape, and no server that implements this field (`CurrentWireRevision` starts at `2` and only increases) will ever legitimately send a literal `0` or `1`. A decoded `0` can therefore only mean "this server omitted the field," and a client inferring from `bd_version` per the paragraph below is doing exactly the right thing in that case, never guessing at a value the field could have meant on its own. A client that wants presence as a first-class fact rather than an inference anyway should decode `wire_revision` into a nullable type, or check for the JSON key's presence directly, instead of relying on this retirement guarantee.
@@ -1186,7 +1220,7 @@ type CreateIssueRequest struct {
 	// ParentId Creates a typed `parent-child` edge from the new issue to this target. It must not duplicate an edge `dependencies` already spells; naming the same pair twice with two types is a `400`.
 	ParentId *string `json:"parent_id,omitempty"`
 
-	// Priority 0 is P0/critical. Absent means the workspace default.
+	// Priority 0 is P0/critical. Absent means the create default, P2 (`2`), on a server advertising `issues.create.defaultPriority`; such a server never reads an absent member as `0`. An older server stores P0 for an absent member, so a client that does not see the token sends `2` explicitly.
 	Priority *int `json:"priority,omitempty"`
 
 	// Sender Who sent this, for the message-shaped rows an orchestrator creates. Stored verbatim and interpreted by nothing on this surface.
@@ -1555,7 +1589,7 @@ type Problem struct {
 	// IT IS A STRING, and it must be the `revision` string a response carried, verbatim. A JSON number — or any other type — is a `400` naming this member. The token spans the FULL 64-bit range, so a number would be rounded past 2^53 by an IEEE-754-double parser and the guard would miss a row nothing else touched; a string round-trips exactly in every consumer.
 	ActualVersion *string `json:"actual_version,omitempty"`
 
-	// Assignee With `already_claimed`: the actor currently holding the issue, read inside the transaction that refused.
+	// Assignee With `already_claimed`: the actor currently holding the issue, read inside the transaction that refused. With `not_assignee`: the issue's assignee the refusing close observed — always present on that code.
 	//
 	// IT IS OPTIONAL ON EVERY OPERATION BUT THE CLAIM. `POST /v0/beads/issues/{id}:claim` always carries it, because its conflict path reads the row it lost to. `PATCH /v0/beads/issues/{id}` and `POST /v0/beads/issues:batchApply` carry it only when the refusing transaction reported a holder, and `POST /v0/beads/issues/{id}:release` never does — the ownership fence refuses without naming anyone. An absent member means "this refusal could not name the holder", never "nobody holds it"; re-read the row.
 	Assignee *string `json:"assignee,omitempty"`
@@ -1566,7 +1600,7 @@ type Problem struct {
 	// BlockerId With `dependency_cycle`, hierarchy refusal only: the ancestor or descendant the edge named as blocker. See `issue_id`.
 	BlockerId *string `json:"blocker_id,omitempty"`
 
-	// BlockerIsAncestor With `dependency_cycle`, hierarchy refusal only: true when `blocker_id` is an ANCESTOR of `issue_id` (which cannot close until its descendants finish, so the gate would never clear), false when it is a DESCENDANT (blocked status cascades, so it would inherit the block and never close). Both polarities are reported; this member is never omitted to mean false. See `issue_id`.
+	// BlockerIsAncestor With `dependency_cycle`, hierarchy refusal only: true when `blocker_id` is an ANCESTOR of `issue_id` (which cannot close until its descendants finish, so the gate would never clear), false when it is a DESCENDANT (waiting on your own subtree is a close gate, not a blocks edge — use a waits-for gate over the children). Both polarities are reported; this member is never omitted to mean false. See `issue_id`.
 	BlockerIsAncestor *bool `json:"blocker_is_ancestor,omitempty"`
 
 	// Blockers With `not_closable`, and ONLY on the live-blocker refusal: the live blockers that refused the close, in the order the refusing check reported them, read from the refusal's typed list rather than parsed out of any message. Never present together with `open_children`.
@@ -1576,7 +1610,7 @@ type Problem struct {
 	// IT IS OPTIONAL. A refusal that could not name its blockers omits it and keeps the generic `detail`; absence means "this refusal did not name them", never "nothing blocks it". Re-read the issue's dependencies then.
 	Blockers *[]Blocker `json:"blockers,omitempty"`
 
-	// Code The stable machine-readable reason, and the ONLY member a client may dispatch on. v0's vocabulary: `invalid_argument` (400, also emitted by the Host-header middleware on any route), `invalid_cursor` (400), `unauthenticated` (401, only on a server configured with a token file), `not_found` (404), `already_claimed` (409), `not_claimable` (409), `not_closable` (409), `not_releasable` (409), `dependency_cycle` (409), `dependency_exists` (409), `already_exists` (409), `precondition_failed` (409), `events_journal_disabled` (409), `events_journal_truncated` (410), `busy` (503), `db_unavailable` (503), `events_watch_saturated` (503), `internal` (500). Renaming or removing a status+code pair is a breaking change; ADDING one is not, so clients MUST default-branch on unknown values and fall back to the status class (unknown 4xx → client bug, fail loud; unknown 503 → retry per `Retry-After`; other unknown 5xx → server fault).
+	// Code The stable machine-readable reason, and the ONLY member a client may dispatch on. v0's vocabulary: `invalid_argument` (400, also emitted by the Host-header middleware on any route), `invalid_cursor` (400), `unauthenticated` (401, only on a server configured with a token file), `not_found` (404), `already_claimed` (409), `not_claimable` (409), `not_closable` (409), `not_releasable` (409), `template_read_only` (409), `issue_pinned` (409), `not_assignee` (409), `dependency_cycle` (409), `dependency_exists` (409), `already_exists` (409), `precondition_failed` (409), `events_journal_disabled` (409), `events_journal_truncated` (410), `busy` (503), `db_unavailable` (503), `events_watch_saturated` (503), `internal` (500). Renaming or removing a status+code pair is a breaking change; ADDING one is not, so clients MUST default-branch on unknown values and fall back to the status class (unknown 4xx → client bug, fail loud; unknown 503 → retry per `Retry-After`; other unknown 5xx → server fault).
 	Code string `json:"code"`
 
 	// DeclaredLater With `invalid_argument` on a batch operation whose items may name each other: whether the unresolvable key IS declared by the request, at a LATER index.
@@ -1701,6 +1735,44 @@ type ReadyPage struct {
 	// Items Empty array (never null) when nothing is ready.
 	Items []IssueWithCounts `json:"items"`
 }
+
+// ReclaimIssuesRequest One sweep of stale leases. Every member but `actor` is optional, and every scope member NARROWS the sweep; see the operation.
+//
+// `additionalProperties: false`, so an unknown member is a `400` naming the member — a narrowing term this server silently ignored would widen what is reverted.
+type ReclaimIssuesRequest struct {
+	// Actor Who ran the sweep. REQUIRED: each reverted row's recovery event and history entry are attributed to it. Validated by the same rules as the claim's `actor`.
+	Actor string `json:"actor"`
+
+	// AnyReplica Also revert leases another replica granted. The one member that WIDENS the sweep; see the operation. Absent means `false`.
+	AnyReplica *bool `json:"any_replica,omitempty"`
+
+	// Assignees Only leases held by one of these owners are eligible.
+	Assignees *[]string `json:"assignees,omitempty"`
+
+	// ExcludeLabels An issue carrying ANY of these labels is never eligible.
+	ExcludeLabels *[]string `json:"exclude_labels,omitempty"`
+
+	// Ids Only these issues are eligible. An id that is not currently a stale lease is absent from the answer rather than refused. The cap is on the REQUEST, counted before deduplication. A blank entry is refused.
+	Ids *[]string `json:"ids,omitempty"`
+
+	// Labels Only issues carrying ALL of these labels are eligible.
+	Labels *[]string `json:"labels,omitempty"`
+
+	// LabelsAny Only issues carrying AT LEAST ONE of these labels are eligible.
+	LabelsAny *[]string `json:"labels_any,omitempty"`
+
+	// OlderThanSeconds The grace window past a lease's own expiry, in seconds (fractions allowed): only a lease that expired more than this long ago is eligible. Absent means `0`, every currently expired lease. A negative value is refused.
+	OlderThanSeconds *float64 `json:"older_than_seconds,omitempty"`
+}
+
+// ReclaimIssuesResult Every row the sweep reverted, in the order the sweep found them.
+type ReclaimIssuesResult struct {
+	// Reclaimed One entry per reverted row. Empty array (never null) when nothing was stale in scope.
+	Reclaimed []ReclaimedLease `json:"reclaimed"`
+}
+
+// ReclaimedLease One row a lease sweep reverted.
+type ReclaimedLease = types.ReclaimedLease
 
 // Ref Names ONE issue, either by an id that already exists or by the `key` a create item earlier in the same request gave itself.
 //
@@ -1937,8 +2009,14 @@ type SweepRequest struct {
 	// DryRun Report what the sweep WOULD do and delete nothing. The counts, the skips and the refusals are the same ones the real sweep would produce, computed against the same snapshot — and nothing is recorded in history either.
 	DryRun *bool `json:"dry_run,omitempty"`
 
+	// Limit Cap how many beads this sweep deletes, OLDEST-CLOSED-FIRST. Absent or zero means unbounded. A negative value is a `400` invalid_argument, the same as the role's own ErrValidation. Behind the `issues.sweep.limit` behavior token: an older server answers `unknown_parameter` for this name.
+	Limit *int64 `json:"limit,omitempty"`
+
 	// Pattern Keep only beads whose id matches this shell glob (`*`, `?`, `[...]`, `\` escapes; `*` also crosses `-` and `.`, since an id is not a path). Absent matches every bead in the tier. A MALFORMED glob is a `400`, never a pattern that matches nothing.
 	Pattern *string `json:"pattern,omitempty"`
+
+	// ProtectLiveDependents Skip a closed candidate that a LIVE (not-done) bead depends on through a parent/child, tracks, or blocks edge, so closing a dependent's dependency does not erase the row a live bead still points at. Protection is TRANSITIVE and crosses the ephemeral/durable plane boundary. Behind the `issues.sweep.liveDependents` behavior token: an older server answers `unknown_parameter` for this name.
+	ProtectLiveDependents *bool `json:"protect_live_dependents,omitempty"`
 
 	// ProtectReferenced Skip candidates whose id is CITED — as a literal, at word boundaries — in the description, notes or comments of any bead that is not done, so a decision trail a live bead still points at is not deleted out from under it.
 	//
@@ -1948,10 +2026,14 @@ type SweepRequest struct {
 	ProtectReferenced *bool `json:"protect_referenced,omitempty"`
 
 	// Tier Which plane to clear. `ephemeral` is the wisp tier (`bd purge`) and `durable` is the issue tier (`bd prune`). The two are DISJOINT: a sweep of one can never touch a bead of the other. Required, with no default — a caller handed the wrong tier has nothing to notice until the beads are gone.
+	//
+	// `wisps-plane` is a THIRD, wider tier: it clears the whole wisps table (ephemeral beads) AND any durable bead with no history row, in one pass. Behind the `issues.sweep.wispsPlane` behavior token: an older server answers `invalid_value` for this member, since it predates the token and knows only the first two values.
 	Tier SweepRequestTier `json:"tier"`
 }
 
 // SweepRequestTier Which plane to clear. `ephemeral` is the wisp tier (`bd purge`) and `durable` is the issue tier (`bd prune`). The two are DISJOINT: a sweep of one can never touch a bead of the other. Required, with no default — a caller handed the wrong tier has nothing to notice until the beads are gone.
+//
+// `wisps-plane` is a THIRD, wider tier: it clears the whole wisps table (ephemeral beads) AND any durable bead with no history row, in one pass. Behind the `issues.sweep.wispsPlane` behavior token: an older server answers `invalid_value` for this member, since it predates the token and knows only the first two values.
 type SweepRequestTier string
 
 // SweepResult What one sweep did. Every number describes the SAME snapshot, because the selection and the deletion ran in one transaction.
@@ -1973,17 +2055,23 @@ type SweepResult struct {
 	// ReferencedIds A BOUNDED SAMPLE of the ids `skipped.referenced` counts — at most 100, in the order the candidate query returned them. It is a sample, not the set: compare its length against 100 to tell a truncated one from a complete one. Absent when nothing was protected.
 	ReferencedIds *[]string `json:"referenced_ids,omitempty"`
 
-	// Skipped The candidates a sweep declined to delete, bucketed by WHY. They are separate counters rather than one number because they mean different things: the first two are PROTECTIONS, and the last four are the sweep declining to trust its own input.
+	// Remaining How many beads this sweep's own selection left unswept because `limit` cut it off, oldest-closed-first. Always 0 when `limit` was absent, zero, or at least as large as the matching set — never a dropped count, a 0 here means nothing was left over. Present only behind the `issues.sweep.limit` behavior token.
+	Remaining *int64 `json:"remaining,omitempty"`
+
+	// Skipped The candidates a sweep declined to delete, bucketed by WHY. They are separate counters rather than one number because they mean different things: `pinned`, `referenced` and `live_dependent` are PROTECTIONS, and the other four are the sweep declining to trust its own input.
 	Skipped SweepSkips `json:"skipped"`
 
 	// Swept How many beads were deleted, or under `dry_run` would be.
 	Swept int `json:"swept"`
 }
 
-// SweepSkips The candidates a sweep declined to delete, bucketed by WHY. They are separate counters rather than one number because they mean different things: the first two are PROTECTIONS, and the last four are the sweep declining to trust its own input.
+// SweepSkips The candidates a sweep declined to delete, bucketed by WHY. They are separate counters rather than one number because they mean different things: `pinned`, `referenced` and `live_dependent` are PROTECTIONS, and the other four are the sweep declining to trust its own input.
 type SweepSkips struct {
 	// ClosedAtOrAfterCutoff Candidates whose close timestamp did not satisfy `closed_before`. See `not_closed`.
 	ClosedAtOrAfterCutoff int `json:"closed_at_or_after_cutoff"`
+
+	// LiveDependent Candidates protected by `protect_live_dependents`. Always 0 when that member is false or absent. Present only behind the `issues.sweep.liveDependents` behavior token.
+	LiveDependent *int `json:"live_dependent,omitempty"`
 
 	// NotClosed Candidates the tier query returned that the recheck found were not closed. A NON-ZERO VALUE HERE IS A DEFENSE FIRING, not a normal outcome: the query asked for exactly the beads this excludes.
 	NotClosed int `json:"not_closed"`
@@ -2010,6 +2098,9 @@ type TreeNode = types.TreeNode
 type UpdateIssueRequest struct {
 	// Actor Who is editing the issue. `ClaimRequest.actor`'s rules exactly: the server trims it, then refuses an empty result, anything longer than 256 BYTES (the `maxLength` above counts characters — the byte limit is the binding one), and any control character including newline. The value reaches the history entry's attribution and the storage commit message, so an unvalidated newline would forge audit-trail lines.
 	Actor string `json:"actor"`
+
+	// AllowTemplate The caller edits a template deliberately, so the template read-only refusal (`409 template_read_only`) stands down for this request. `bd label` and `bd set-state` send it: they have always written to templates. It bypasses nothing else, and has no effect on an issue that is not a template. Advertised by the `issues.update.allowTemplate` capability token; a server that predates the member refuses it as an unknown parameter, and such a server never applies the template guard either.
+	AllowTemplate *bool `json:"allow_template,omitempty"`
 
 	// Claim Claims the issue for `actor` in the same transaction as `patch`: `bd update <id> --claim`, served by the same role. The claim sets `assignee` to `actor` and `status` to `in_progress`, then the patch applies, so a `patch.assignee` or `patch.status` overrides the claim's value. Eligibility is `{id}:claim`'s: a claimable status, and unassigned, already held by `actor`, or held by a configured claim pool. Held by `actor` and `in_progress` already is an idempotent success. A refusal is `409 already_claimed` or `409 not_claimable` naming `claim`, and writes nothing — the patch included. With `claim: true` the `patch` may be empty. It must not be combined with `expected_assignee`, `expected_status` or `force_assignee_transfer`; a request that does is a `400` naming `claim`.
 	Claim *bool `json:"claim,omitempty"`
@@ -2745,6 +2836,9 @@ type ClaimNextIssueJSONRequestBody = ClaimNextRequest
 
 // DeleteIssuesJSONRequestBody defines body for DeleteIssues for application/json ContentType.
 type DeleteIssuesJSONRequestBody = DeleteIssuesRequest
+
+// ReclaimIssuesJSONRequestBody defines body for ReclaimIssues for application/json ContentType.
+type ReclaimIssuesJSONRequestBody = ReclaimIssuesRequest
 
 // SweepIssuesJSONRequestBody defines body for SweepIssues for application/json ContentType.
 type SweepIssuesJSONRequestBody = SweepRequest
