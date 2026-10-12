@@ -200,10 +200,16 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 // against one local bare Git remote. The fixture redirects only the synthetic
 // authenticated URL and injects a concurrent ref move before the real push.
 func TestWorkerEnvAutosyncPushAgainstFixture(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skipf("worker-env autosync push fixture follows the Linux-only worker-env-autosync.yml test policy; GOOS=%s", runtime.GOOS)
+	}
+	python := requireHostTool(t, "python3")
+	requireHostTool(t, "bash")
+	requireHostTool(t, "git")
 	push := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob).step(t, "Commit and push the sync branch")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "python3", "-I", filepath.Join(bazelPolicyRoot(t), "scripts/worker_env_autosync_push_fixture.py"), "--fixture", t.TempDir())
+	cmd := exec.CommandContext(ctx, python, "-I", filepath.Join(bazelPolicyRoot(t), "scripts/worker_env_autosync_push_fixture.py"), "--fixture", t.TempDir())
 	cmd.Stdin = strings.NewReader(push.Run)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("worker-env autosync push fixture: %v\n%s", err, out)
