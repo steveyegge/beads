@@ -1655,6 +1655,13 @@ func TestGraphApplyNodeIssueStampsCreatedAtWithStatusTimestamps(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", status, err)
 		}
+		if status == "open" {
+			// The served create item does not carry created_at (GH#7519 CI).
+			if !issue.CreatedAt.IsZero() {
+				t.Fatalf("open: created_at stamped; the served wire refuses it")
+			}
+			continue
+		}
 		if issue.CreatedAt.IsZero() {
 			t.Fatalf("%s: created_at left zero for the insert to stamp", status)
 		}
@@ -1665,7 +1672,7 @@ func TestGraphApplyNodeIssueStampsCreatedAtWithStatusTimestamps(t *testing.T) {
 		case "in_progress":
 			stamp = issue.StartedAt
 		}
-		if status != "open" && (stamp == nil || stamp.Before(issue.CreatedAt)) {
+		if stamp == nil || stamp.Before(issue.CreatedAt) {
 			t.Fatalf("%s: status timestamp %v before created_at %v", status, stamp, issue.CreatedAt)
 		}
 	}
