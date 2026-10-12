@@ -15,8 +15,8 @@ import (
 )
 
 // ifRevisionFlagHelp is the shared half of --if-revision's --help text across
-// `bd update`, `bd close`, `bd assign` and `bd delete`: the value syntax, the
-// one-id rule and the exit-code contract. Each verb appends what is specific
+// `bd update`, `bd close`, `bd assign`, `bd delete` and `bd reopen`: the value
+// syntax, the one-id rule and the exit-code contract. Each verb appends what is specific
 // to it (close has no other guards to compose with; update composes with
 // --if-assignee/--if-status).
 const ifRevisionFlagHelp = "Apply the write only if the issue's current revision equals this value (the decimal int64 from `bd show --json`'s \"revision\" field). One id only: refused before any write when combined with more than one issue id. A mismatch writes nothing and exits 13 (vs 1 for other failures)."
@@ -61,25 +61,82 @@ const (
 // gascity's bdstore_conditional.go classifier expects from a single-id write
 // guarded by --if-revision: "precondition_failed" for a stale --if-revision,
 // --if-assignee or --if-status guard (T4.5 requires all three to report
-// through the one envelope when --if-revision is present), or
-// "conditional_write_unsupported" for a backend that cannot honor
+// through the one envelope when --if-revision is present), for the row
+// having vanished out from under the guard entirely (storage.ErrNotFound),
+// or "conditional_write_unsupported" for a backend that cannot honor
 // ExpectedVersion at all. ok is false for any other failure, which the
 // caller's own (unrelated) failure handling reports unchanged.
-func classifyIfRevisionFailure(err error) (code, reason string, expected, current *int64, ok bool) {
+//
+// ifRevision is the --if-revision flag's own parsed value, used ONLY as the
+// expected_revision fallback for the bare storage.ErrVersionMismatch sentinel
+// below, which (unlike *issueops.VersionMismatchError) carries no Expected
+// field of its own. Every upstream producer in this repo returns the typed
+// error; the bare sentinel is what bd-enterprise's HTTP client maps a 409
+// precondition_failed onto (internal/enterprise/httpstore/wire/problem.go),
+// since the wire body it decodes carries no current revision either. The
+// fallback keeps that HTTP-backed path classified correctly instead of
+// falling through to the caller's generic (uncoded, exit-1) failure handling.
+func classifyIfRevisionFailure(err error, ifRevision *int64) (code, reason string, expected, current *int64, ok bool) {
 	var vme *issueops.VersionMismatchError
 	switch {
 	case errors.As(err, &vme):
 		return ifRevisionCodePreconditionFailed, "revision mismatch", &vme.Expected, &vme.Current, true
+	case errors.Is(err, storage.ErrNotFound):
+		// The row named by a single-id --if-revision write no longer exists:
+		// a guarded write that lost to a concurrent delete (mc-zndi7.73),
+		// observed either inside the guarded write or at the verb's
+		// pre-flight resolution (reportIfRevisionTargetGone). Both are the
+		// same precondition failure from this guard's point of view: the
+		// exact revision the caller named is gone, so there is nothing left
+		// to compare it against. A mistyped id under --if-revision reports
+		// the same way — the CLI cannot tell "never existed" from "deleted
+		// a moment ago", and either way the named revision is not current.
+		// current is omitted (nothing to report); expected falls back to the
+		// caller's own --if-revision value, same as the bare
+		// storage.ErrVersionMismatch case below.
+		return ifRevisionCodePreconditionFailed, "issue no longer exists", ifRevision, nil, true
 	case errors.Is(err, storage.ErrAssigneeMismatch):
 		return ifRevisionCodePreconditionFailed, "assignee mismatch", nil, nil, true
 	case errors.Is(err, storage.ErrStatusMismatch):
 		return ifRevisionCodePreconditionFailed, "status mismatch", nil, nil, true
+	case errors.Is(err, storage.ErrVersionMismatch):
+		// current is deliberately omitted (unknown to this sentinel) rather
+		// than guessed — gascity tolerates the omission, decoding only the
+		// fields present in the body.
+		return ifRevisionCodePreconditionFailed, "revision mismatch", ifRevision, nil, true
 	}
 	var unsupported *issueops.ErrUnsupported
 	if errors.As(err, &unsupported) {
 		return ifRevisionCodeUnsupported, "", nil, nil, true
 	}
 	return "", "", nil, nil, false
+}
+
+// reportIfRevisionTargetGone reports a single-id --if-revision write whose
+// pre-flight resolution (resolveAndGetIssueForMutation on the direct route,
+// the advisory pre-read on the proxied route) found no row. Every guarded
+// verb resolves the row BEFORE its guarded write, so a racer that loses to a
+// concurrent `bd delete` sees the row vanish either here or inside the guarded
+// write, depending only on which side of the delete's commit its resolution
+// lands (mc-zndi7.81 for delete, ga-vnycm2.10 for close/update/assign/reopen).
+// Both are the same outcome — the revision the caller named is gone — so both
+// report precondition_failed / ExitGuardMismatch with the reason "issue no
+// longer exists". With no --if-revision there is no guard to report through,
+// and any other resolution failure is not a guard outcome; ok is false for
+// both and the caller's ordinary failure handling applies unchanged. `bd
+// delete --cascade` resolves through deleteBatch instead: its not-found error
+// keeps the storage.ErrNotFound sentinel, so the caller's
+// reportIfRevisionFailure classifies it the same way.
+//
+// err is matched with isNotFoundErr, which also accepts ResolvePartialID's
+// unwrapped "no issue found matching" text, and reported as the literal
+// storage.ErrNotFound sentinel classifyIfRevisionFailure matches via
+// errors.Is.
+func reportIfRevisionTargetGone(action, id string, err error, ifRevision *int64) (reportedErr error, ok bool) {
+	if ifRevision == nil || !isNotFoundErr(err) {
+		return nil, false
+	}
+	return reportIfRevisionFailure(action, id, storage.ErrNotFound, ifRevision)
 }
 
 // ifRevisionFailureBody is the machine JSON this CLI attaches to a refused
@@ -113,8 +170,8 @@ type ifRevisionFailureBody struct {
 // human "error" text always contains "precondition failed" so gascity's
 // code-less fallback (bdstore_conditional.go:320-327) still matches if a
 // caller ever loses the `code` field.
-func reportIfRevisionFailure(action, id string, err error) (reportedErr error, ok bool) {
-	code, reason, expected, current, ok := classifyIfRevisionFailure(err)
+func reportIfRevisionFailure(action, id string, err error, ifRevision *int64) (reportedErr error, ok bool) {
+	code, reason, expected, current, ok := classifyIfRevisionFailure(err, ifRevision)
 	if !ok {
 		return nil, false
 	}

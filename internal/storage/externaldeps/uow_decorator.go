@@ -39,6 +39,22 @@ var _ uow.ProviderUnwrapper = (*uowProvider)(nil)
 // to HTTP handlers, which must never run workspace hooks.
 func (p *uowProvider) Unwrap() uow.UnitOfWorkProvider { return p.UnitOfWorkProvider }
 
+// AppliedToProvider is Applied for the unit-of-work chain: it reports whether
+// provider's decorator chain includes WrapUOWProvider's policy layer.
+func AppliedToProvider(provider uow.UnitOfWorkProvider) bool {
+	for provider != nil {
+		if _, ok := provider.(*uowProvider); ok {
+			return true
+		}
+		u, ok := provider.(uow.ProviderUnwrapper)
+		if !ok {
+			return false
+		}
+		provider = u.Unwrap()
+	}
+	return false
+}
+
 // RunNonTx preserves the optional maintenance capability exposed by the
 // proxied provider. Wrapping the provider must not make unrelated commands
 // such as compact lose access to their pinned connection.
@@ -69,7 +85,15 @@ func (p *uowProvider) EdgeReader() (publicops.EdgeReader, error)    { return uow
 func (p *uowProvider) BlockingAnnotator() (publicops.BlockingAnnotator, error) {
 	return uow.NewBlockingAnnotator(p)
 }
-func (p *uowProvider) TreeWalker() (publicops.TreeWalker, error) { return uow.NewTreeWalker(p) }
+func (p *uowProvider) TreeWalker() (publicops.TreeWalker, error)   { return uow.NewTreeWalker(p) }
+func (p *uowProvider) BatchGetter() (publicops.BatchGetter, error) { return uow.NewBatchGetter(p) }
+
+// MoleculeStepper composes over this decorator's own roles, so the advance's
+// claim answers to the external-dependency policy the claimer applies.
+func (p *uowProvider) MoleculeStepper() (publicops.MoleculeStepper, error) {
+	return uow.NewMoleculeStepper(p)
+}
+
 func (p *uowProvider) GraphCounter() (publicops.GraphCounter, error) {
 	return uow.NewGraphCounter(p)
 }
@@ -117,7 +141,10 @@ func (p *uowProvider) VersionReconciler() (publicops.VersionReconciler, error) {
 }
 func (p *uowProvider) MetadataCAS() (publicops.MetadataCAS, error) { return uow.NewMetadataCAS(p) }
 func (p *uowProvider) Releaser() (publicops.Releaser, error)       { return uow.NewReleaser(p) }
-func (p *uowProvider) Memories() (memoryops.Memories, error)       { return uow.NewMemories(p) }
+func (p *uowProvider) LeaseReclaimer() (publicops.LeaseReclaimer, error) {
+	return uow.NewLeaseReclaimer(p)
+}
+func (p *uowProvider) Memories() (memoryops.Memories, error) { return uow.NewMemories(p) }
 func (p *uowProvider) EventsJournalCursor() (storage.EventsJournalCursor, error) {
 	return uow.NewEventsJournalCursor(p)
 }
@@ -167,11 +194,13 @@ var (
 	_ uow.IssueLifecycleSource           = (*uowProvider)(nil)
 	_ uow.IssueReaderSource              = (*uowProvider)(nil)
 	_ uow.IssueClaimerSource             = (*uowProvider)(nil)
+	_ uow.MoleculeStepperSource          = (*uowProvider)(nil)
 	_ uow.RelationsSource                = (*uowProvider)(nil)
 	_ uow.EdgeReaderSource               = (*uowProvider)(nil)
 	_ uow.BlockingAnnotatorSource        = (*uowProvider)(nil)
 	_ uow.TreeWalkerSource               = (*uowProvider)(nil)
 	_ uow.GraphCounterSource             = (*uowProvider)(nil)
+	_ uow.BatchGetterSource              = (*uowProvider)(nil)
 	_ uow.CounterSource                  = (*uowProvider)(nil)
 	_ uow.ReadyCounterSource             = (*uowProvider)(nil)
 	_ uow.ReadyClaimerSource             = (*uowProvider)(nil)
@@ -192,6 +221,7 @@ var (
 	_ uow.VersionReconcilerSource        = (*uowProvider)(nil)
 	_ uow.MetadataCASSource              = (*uowProvider)(nil)
 	_ uow.ReleaserSource                 = (*uowProvider)(nil)
+	_ uow.LeaseReclaimerSource           = (*uowProvider)(nil)
 	_ uow.MemoriesSource                 = (*uowProvider)(nil)
 	_ uow.EventsJournalCursorSource      = (*uowProvider)(nil)
 )

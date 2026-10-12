@@ -105,7 +105,7 @@ Force: Delete and orphan dependents
 		if len(issueIDs) > 1 || cascade {
 			if err := deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, false, ifRevision); err != nil {
 				if ifRevision != nil {
-					if reported, ok := reportIfRevisionFailure("deleting", issueIDs[0], err); ok {
+					if reported, ok := reportIfRevisionFailure("deleting", issueIDs[0], err, ifRevision); ok {
 						return reported
 					}
 				}
@@ -125,6 +125,14 @@ Force: Delete and orphan dependents
 		// one place a convenience is not.
 		routedResult, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
+			// mc-zndi7.81: this pre-flight existence check runs before
+			// deleter.Delete() and the per-id lock fence #7244 added, so a
+			// same-token --if-revision racer that loses the fence sees the
+			// row disappear right here instead of inside the guarded write
+			// below — see reportIfRevisionTargetGone.
+			if reported, ok := reportIfRevisionTargetGone("deleting", issueID, err, ifRevision); ok {
+				return reported
+			}
 			if isNotFoundErr(err) {
 				return HandleError("issue %s not found", issueID)
 			}
@@ -144,7 +152,7 @@ Force: Delete and orphan dependents
 		// rewrite runs INSIDE the transaction that deletes, because it is the
 		// role's.
 		request := issueops.DeleteRequest{
-			Actor:           actor,
+			Actor:           currentActor(),
 			IDs:             []string{issueID},
 			Force:           force,
 			DryRun:          dryRun || !force,
@@ -162,7 +170,7 @@ Force: Delete and orphan dependents
 				// preview-with-error below — same split delete's real run makes,
 				// so --dry-run and the real run answer a stale token identically.
 				if ifRevision != nil {
-					if reported, ok := reportIfRevisionFailure("deleting", issueID, err); ok {
+					if reported, ok := reportIfRevisionFailure("deleting", issueID, err, ifRevision); ok {
 						return reported
 					}
 				}
@@ -181,7 +189,7 @@ Force: Delete and orphan dependents
 		}
 		if err != nil {
 			if ifRevision != nil {
-				if reported, ok := reportIfRevisionFailure("deleting", issueID, err); ok {
+				if reported, ok := reportIfRevisionFailure("deleting", issueID, err, ifRevision); ok {
 					return reported
 				}
 			}
@@ -345,7 +353,15 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 		defer func() { _ = routedStore.Close() }()
 	}
 	if len(notFound) > 0 {
-		return fmt.Errorf("issues not found: %s", strings.Join(notFound, ", "))
+		// The role's own existence probe reports a missing id with this same
+		// error, and its text is the flat list every caller has always
+		// printed. What it adds is the storage.ErrNotFound sentinel, which
+		// lets the guarded `bd delete --cascade` caller's
+		// reportIfRevisionFailure report a target that a concurrent `bd
+		// delete` removed before this resolution as the same lost race as one
+		// removed inside deleter.Delete below: precondition_failed, not exit 1
+		// (see reportIfRevisionTargetGone).
+		return &issueops.NotFoundError{IDs: notFound}
 	}
 	batchStore := store
 	if routedStore != nil {
@@ -359,7 +375,7 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 	// --force is the confirmation as well as the orphan mode, so an unconfirmed
 	// run asks the role what it WOULD do; see the single-id path.
 	request := issueops.DeleteRequest{
-		Actor:           actor,
+		Actor:           currentActor(),
 		IDs:             resolvedIDs,
 		Cascade:         cascade,
 		Force:           force,
@@ -380,7 +396,7 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 			// because an unrelated dry-run failure (not-found, bad request) on a
 			// guarded call still belongs to the generic preview path.
 			if ifRevision != nil {
-				if _, _, _, _, ok := classifyIfRevisionFailure(err); ok {
+				if _, _, _, _, ok := classifyIfRevisionFailure(err, ifRevision); ok {
 					return err
 				}
 			}
