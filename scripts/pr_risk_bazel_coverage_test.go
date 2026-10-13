@@ -1173,6 +1173,10 @@ func TestBazelRetiredLanesArePinned(t *testing.T) {
 	// The dolt-race union config carries its proxied member's
 	// line (TestBazelDoltRaceConfigIsMemberUnion pins the union).
 	evictionAllowed["test:"+bazelDoltRaceConfig+" --experimental_remote_cache_eviction_retries=0"] = true
+	// The dolt-int union config carries its server-storage member's line
+	// (item 5 A2: doltserver-cmd has none of its own;
+	// TestBazelDoltIntConfigIsMemberUnion pins the union).
+	evictionAllowed["test:"+bazelDoltIntConfig+" --experimental_remote_cache_eviction_retries=0"] = true
 	for _, line := range strings.Split(rc, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "#") && strings.Contains(line, "remote_cache_eviction_retries") && !evictionAllowed[line] {

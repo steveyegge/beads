@@ -45,6 +45,7 @@ Each lane, as bazel.yml runs it (add your `--config=fork-cache` or
 | Proxied server (`bazel-proxied`) | `bazel test //... --config=doltserver-proxied` | Remote execution only: 34 shards, each with a Dolt server. |
 | Dolt server + proxied (`bazel-dolt-race`) | `bazel test //... --config=dolt-race` | Both rows above in one invocation; CI runs this instead of them in mode `remote`. |
 | Server-Dolt storage (`bazel-server-storage`) | `bazel test //... --config=doltserver-integration` | Remote execution only. |
+| Server storage + cmd/bd Dolt server (`bazel-dolt-int`) | `bazel test //... --config=dolt-int` | The two rows above in one invocation; CI runs this instead of them in mode `remote`. No job-level `continue-on-error`: it reports a `server_storage_result` output (plain-gated, like `bazel-server-storage`) and a `cmd_dolt_result` output (advisory unless `BAZEL_CMD_DOLT_REQUIRED` is `true`, like `bazel-cmd-dolt`) separately, via a per-tier classify step over the BEP, since its members have different gating categories. |
 | Docs | `make check-docs` | `//test/docsync:docsync_test` and `//scripts/repochecks:doc_freshness_test` in the test lane's configuration, then `scripts/check-doc-flags.sh` against the pinned release. |
 
 `make check` runs the testing.Short policy, `make ci-pr-lint` and
@@ -201,7 +202,9 @@ backend; run `go test` with docker and the pulled image to exercise it.
 PR Risk's heavier server tiers have configs of their own, run by bazel.yml
 only with remote execution, each in a job of its own (`bazel-proxied`,
 which in mode `remote` is folded with `bazel-doltserver` into
-`bazel-dolt-race`, and `bazel-server-storage`): `--config=doltserver-proxied` is the
+`bazel-dolt-race`, and `bazel-server-storage`, which in mode `remote` is
+folded with `bazel-cmd-dolt` into `bazel-dolt-int`):
+`--config=doltserver-proxied` is the
 proxied-server cmd/bd tier ("Test (Proxied Dolt Cmd N/15)",
 `//cmd/bd:bd_proxied_test`), and `--config=doltserver-integration` the
 server-Dolt storage tier ("Test (Server Dolt Conformance)", "Test (Server

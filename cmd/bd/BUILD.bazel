@@ -1675,14 +1675,22 @@ sh_test(
 sh_test(
     name = "bd_dolt_server_test",
     size = "large",
-    # --config=doltserver-cmd's -test.timeout=19m fires (with a goroutine
-    # dump) before Bazel's 1200s action limit (eternal under the lane's
-    # --test_timeout), which kills without one.
+    # args' -test.timeout=19m fires (with a goroutine dump) before Bazel's
+    # 1200s action limit (eternal under the lane's --test_timeout), which
+    # kills without one.
     timeout = "eternal",
     srcs = ["//tools/bazel:go_test_pinned_shard.sh"],
     args = [
         "$(rootpath :dolt_server_pinned_shards.txt)",
         "$(rootpath :bd_test)",
+        # Item 5 A2: moved from --config=doltserver-cmd's --test_arg
+        # (go_test_pinned_shard.sh forwards args after its own, so this
+        # lands last in argv, same as the config's --test_arg did). Go's own
+        # timeout fires first and dumps every goroutine to test.log, which
+        # Bazel's 1200s cap does not. The move keeps this out of
+        # --config=dolt-int, whose other member (server-storage) has a 15m
+        # Go timeout of its own.
+        "-test.timeout=19m",
     ],
     data = [
         ":bd_for_tests",
@@ -1700,6 +1708,9 @@ sh_test(
         "BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)",
         "BEADS_TEST_COMPACT_GC_FIXTURE": "$(rlocationpath :compact_gc_fixture)",
         "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
+        # Item 5 A2: moved from --config=doltserver-cmd's --test_env, so
+        # --config=dolt-int does not set it for server-storage's targets too.
+        "BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION": "1",
         "BEADS_TEST_REQUIRE_DOLT_CONTAINER": "1",
         # TestSharedServerConcurrent (skipped everywhere else) as a bounded
         # smoke: 6 concurrent bd clients, 3 per database, against 2

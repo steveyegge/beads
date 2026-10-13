@@ -25,6 +25,10 @@ var ciAnalyticsLaneJobs = map[string]string{
 	// The dolt-server + proxied union lane (item 5; mode remote): its
 	// own lane value, so the A/B queries can pair it with its members.
 	"bazel-dolt-race": "dolt-race",
+	// The server-Dolt storage + cmd/bd Dolt-server union lane (item 5 A2;
+	// mode remote): its own lane value, so the A/B queries can pair it
+	// with its members.
+	"bazel-dolt-int": "dolt-int",
 }
 
 // ciAnalyticsExcludedJobs are bazel.yml jobs that deliberately do not run

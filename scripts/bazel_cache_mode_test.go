@@ -295,9 +295,11 @@ func TestBazelCacheModeReachesTheRC(t *testing.T) {
 					wantSkips = append(wantSkips, id)
 				}
 			}
-			// Flag-gated lanes' skips are accepted whatever the flag says.
+			// Flag-gated lanes' skips are accepted whatever the flag says,
+			// unless their union lane ran instead (bazel-dolt-int, for
+			// bazel-cmd-dolt, in mode remote: item 5 A2).
 			for lane, g := range bazelFlagGatedLanes {
-				if !ran[lane] {
+				if !ran[lane] && !ran[bazelUnionOf(lane)] {
 					wantSkips = append(wantSkips, g.id)
 				}
 			}

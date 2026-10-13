@@ -56,7 +56,10 @@ Current PR-related workflow names:
   every lane exports its
   `job.status` as an output named after the job (in mode `remote`, the
   `bazel-doltserver` and `bazel-proxied` outputs carry the `bazel-dolt-race`
-  union job's status instead; see [dolt-race Union Lane](#dolt-race-union-lane)).
+  union job's status instead, see [dolt-race Union Lane](#dolt-race-union-lane);
+  the `bazel-server-storage` and `bazel-cmd-dolt` outputs carry the
+  `bazel-dolt-int` union job's status instead, see
+  [dolt-int Union Lane](#dolt-int-union-lane)).
   `pr.yml`'s gate requires the
   call's result (`BAZEL`) and `BAZEL_TEST`, `BAZEL_PURE`,
   `BAZEL_RELEASE_CROSS`, `BAZEL_EMBEDDED`, `BAZEL_INTEGRATION`,
@@ -659,6 +662,112 @@ with the slower tier and the other tier's runner is saved.
   cutover PR: the gate ids never changed and the action keys are equal both
   ways, so cached results carry back.
 
+## dolt-int Union Lane
+
+In mode `remote`, `bazel.yml`'s `bazel-dolt-int` job (check name
+`Bazel / dolt-int`) runs the server-storage and cmd-dolt tiers in one
+`bazel test //... --config=dolt-int`, in place of the `bazel-server-storage`
+(`server-storage lane`) and `bazel-cmd-dolt` (`cmd-dolt tier`) jobs.
+`--config=dolt-int` is exactly the union of `--config=doltserver-integration`
+and `--config=doltserver-cmd`, with one tag filter for both tiers. The final
+argv and environment Bazel assembles for all 63 `TestRunner` actions (17
+server-storage + 46 cmd-dolt) are unchanged under the union, so the remote
+action digest -- what RBE's cache keys on -- is unaffected and cached results
+should carry over (confirmed in practice by the first merge group's
+`tests_cached == tests_total` in ci-analytics, not claimed here as already
+observed). This is *not* a claim that the union is local-actionKey-identical
+to the members: moving cmd-dolt's `-test.timeout` arg and
+`BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION` env from `--config=doltserver-cmd`
+onto the two cmd-dolt targets' own `args`/`env` (so the union's tag filter
+alone decides which targets see them, and server-storage's Go timeout does
+not change) moves them out of the build configuration's own fingerprint,
+which every target under that configuration picks up, into each target's own
+attributes, which only it carries -- changing the local actionKey for
+cmd-dolt's 46 actions. One client waits on rbe-west for both tiers at once,
+so the job ends with the slower tier and the other tier's runner is saved.
+
+Unlike dolt-race, this union's members do not share a gating category:
+`bazel-server-storage` is plain-gated (`BAZEL_SERVER_STORAGE`), while
+`bazel-cmd-dolt` is flag-gated and advisory (`BAZEL_CMD_DOLT`,
+`BAZEL_CMD_DOLT_REQUIRED`). The union job therefore carries *no* job-level
+`continue-on-error`: on push, nightly and dispatch nothing reads
+`BAZEL_SERVER_STORAGE` off a `workflow_call` output, so a job-level
+`continue-on-error` (which would make `job.status` read success regardless
+of the `bazel test` step's own result) would let a server-storage failure
+end such a run green, where it must stay red exactly as it does on main
+today. Instead the `bazel test` step and the two per-tier "Every target and shard
+ran tests" steps (`check-ss`, `check-cd`, below) each carry their own
+`continue-on-error`, and an always() "Classify tier results" step
+(`tools/bazel/classify_tier_results.py`) reads the BEP by target label,
+folds each check step's outcome in via `--check NAME=OUTCOME`, computes each
+tier's own result, and fails the job itself iff server-storage's tier failed
+(a cmd-dolt-only test or zero-testcase failure leaves the job green, as
+`bazel-cmd-dolt`'s own `continue-on-error` already does outside mode
+`remote`); `bazel`'s exit code being neither 0 nor 3 (not attributable to one
+tier) or a non-`PASSED` result for a label outside both `--tier` lists (the
+label/tag lists having drifted from the BUILD files, rather than trust a
+silent pass) both mark every tier failed and fail the job regardless. The
+classify script's own flags are hardened to match: `--bep`/`--rc`/
+`--gate-tier`/`--github-output` may each be given only once, and a repeated
+`--tier`/`--check` name is rejected, so an edit that accidentally widens or
+un-gates a tier fails the script rather than silently changing what gates
+the job (`scripts/bazel_dolt_int_test.go`'s exact pin of the classify step's
+`run:` argv closes the same gap one level up). The job exposes two outputs,
+`server_storage_result` and `cmd_dolt_result`, one per tier, instead of the
+uniform `result` every other lane's always() step records.
+
+- Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
+  dispatch and `bazel-farm.yml`'s authorized call), and only when `integration`
+  is not `"off"` (matching the members). In the fork modes (`fork-ro`,
+  `fork-rw`), `cache` and `local`, `bazel-server-storage` and `bazel-cmd-dolt`
+  run as before: there a single client does both tiers' work without
+  in-flight deduplication, so a union would cost the sum of the tiers rather
+  than the max, on the run's critical path.
+- Exactly one arm runs in any mode. `bazel-server-storage`'s and
+  `bazel-cmd-dolt`'s `workflow_call` outputs each read the union's matching
+  per-tier output first, then their own member's, so `pr.yml`'s gate ids
+  (`BAZEL_SERVER_STORAGE`, `BAZEL_CMD_DOLT`), `ci-gate.sh` and
+  `bazel-gate.sh` are unchanged: a job that dies before the classify step
+  leaves both outputs empty, and `pr.yml` falls back an empty
+  `needs.bazel.outputs.bazel-server-storage`/`bazel-cmd-dolt` to the literal
+  `"skipped"` (`pr.yml`'s `BAZEL_SERVER_STORAGE`/`BAZEL_CMD_DOLT` env lines),
+  so `ci-gate.sh` takes its "was skipped" branch, not "is unset" (that branch
+  is only an env var that is empty after the `||` fallback, which these never
+  are) -- `report_failure "$var was skipped"`, the same failure as an empty
+  `bazel-server-storage`/`bazel-cmd-dolt` result today -- and the per-mode
+  skips are the members' as before.
+- `check_testcases.py` runs twice over the union's BEP, once per tier
+  (`check-ss`, scoped with `--label` to server-storage's two targets; `check-cd`,
+  scoped to cmd-dolt's two), each with `continue-on-error: true` so a
+  zero-testcase shard in one tier reaches only that tier's classify result
+  (must-fix 2 of PR #7535's review), not the other's and not the job
+  directly. `--label`'s sets are policy-tied to the BUILD files' own
+  `dolt-server-integration`/`dolt-server-cmd` tag sets
+  (`TestBazelDoltIntTierLabelsMatchTheTags`), the same sets
+  `TestBazelDoltIntFitsTheJobsBudget` derives, so the two cannot drift apart.
+  `check_shard_coverage.py` still runs once over the union's BEP. The job
+  also runs a "Shard balance" step scoped with
+  `--label //internal/storage/dolt:dolt_server_full_test`, distinct from
+  `bazel-server-storage`'s own unscoped shard-balance step, since the union's
+  BEP otherwise mixes both tiers' shards under one report. The `bazel test`
+  step has a 25-minute timeout, every step has one (the two check steps
+  1 minute each, preserving the pre-split step's combined 2-minute budget),
+  and the job's (58 minutes) is at least their sum plus 5 and below the merge
+  queue's 60-minute check timeout -- leaving only about 2 minutes for runner
+  pickup and the rbe job inside that 60-minute budget, so a hang that runs to
+  this job's own timeout can drop the merge group; accepted, because such a
+  run is red anyway and the 58-minute job timeout bounds only this job, not
+  the whole run. "Upload test logs" runs `if: failure() || steps.test.outcome
+  == 'failure'`, not `failure()` alone, since the `bazel test` step's own
+  `continue-on-error` means an ordinary test failure there does not make
+  `failure()` true until the classify step (which runs after it) exits
+  non-zero.
+- Its ci-analytics `LANE` is `dolt-int`.
+- Policy: `scripts/bazel_dolt_int_test.go`, and
+  `tools/bazel/classify_tier_results_test.py` for the classify script itself.
+  Rollback is a revert of the cutover PR: the gate ids never changed and the
+  remote action digests are equal both ways, so cached results carry back.
+
 ## Remote Repo Contents Cache
 
 A cold lane client re-runs its repository rules (gazelle's `go_deps`, the Go
@@ -1045,8 +1154,9 @@ Required` requires them to have run remotely and passed.
     (Variant A) the integration configuration (`--config=integration`'s
     `gms_pure_go,integration` tags) is no longer a three-lane exception:
     `bazel-integration` (`--config=integration`), `bazel-server-storage`
-    (`--config=doltserver-integration`) and `bazel-cmd-dolt`
-    (`--config=doltserver-cmd`) all pass `--norun_validations`. Instead
+    (`--config=doltserver-integration`), `bazel-cmd-dolt`
+    (`--config=doltserver-cmd`) and `bazel-dolt-int` (`--config=dolt-int`,
+    the union of the latter two) all pass `--norun_validations`. Instead
     `bazel-integration` runs a narrow extra build step, `Nogo: integration
     library files`, that validates only `//internal/testutil/integration`
     (the one non-test library package the `integration` build tag selects)

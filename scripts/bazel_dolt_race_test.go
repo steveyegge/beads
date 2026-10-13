@@ -44,6 +44,22 @@ var bazelUnionLanes = map[string][]string{
 	bazelDoltRaceJobName: {bazelDoltJobName, bazelProxiedJobName},
 }
 
+// bazelUnionHasFlagGatedMember reports whether a union job runs in place of
+// at least one flag-gated, advisory member (bazel-dolt-int's bazel-cmd-dolt,
+// item 5 A2): such a union must carry that member's own continue-on-error, so
+// a failure confined to that member's tier stays out of the call's aggregate
+// result (BAZEL) in the union's mode exactly as it already is through the
+// member outside it. The gated member's id still reads the union's result
+// directly (bazelLaneReporter), unaffected either way.
+func bazelUnionHasFlagGatedMember(job string) bool {
+	for _, m := range bazelUnionLanes[job] {
+		if _, ok := bazelFlagGatedLanes[m]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // bazelUnionOf: the union job a gated member belongs to, or "".
 func bazelUnionOf(member string) string {
 	for union, members := range bazelUnionLanes {
@@ -54,11 +70,23 @@ func bazelUnionOf(member string) string {
 	return ""
 }
 
+// bazelUnionMemberOutputKey: the union job's own output key that carries a
+// member's tier result, for unions that do not report "result" uniformly
+// (item 5 A2's bazel-dolt-int: must-fix 2's per-tier outputs, since a
+// job-level continue-on-error would hide a server-storage failure from
+// anything that is not itself gated on that one tier). Members not listed
+// here read their union's plain "result" output, as dolt-race's do.
+var bazelUnionMemberOutputKey = map[string]string{
+	bazelServerJobName:  "server_storage_result",
+	bazelCmdDoltJobName: "cmd_dolt_result",
+}
+
 // bazelLaneCallOutput: the workflow_call output value bazel.yml must declare
 // for a lane that reports its job.status.
 func bazelLaneCallOutput(lane string) string {
 	if union := bazelUnionOf(lane); union != "" {
-		return "${{ jobs." + union + ".outputs.result || jobs." + lane + ".outputs.result }}"
+		key := cmp.Or(bazelUnionMemberOutputKey[lane], "result")
+		return "${{ jobs." + union + ".outputs." + key + " || jobs." + lane + ".outputs.result }}"
 	}
 	return "${{ jobs." + lane + ".outputs.result }}"
 }
@@ -100,11 +128,13 @@ func bazelCallOutputValue(t *testing.T, name string, jobs map[string]string) str
 	}
 	ctx := map[string]string{}
 	for _, m := range regexp.MustCompile(`jobs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)`).FindAllStringSubmatch(expr, -1) {
-		v := ""
-		if m[2] == "result" {
-			v = jobs[m[1]]
-		}
-		ctx[m[0]] = v
+		// Every job.outputs reference in a lane's own workflow_call output
+		// expression carries that job's conclusion for gating purposes,
+		// whatever its output key is named (plain "result", or one of a
+		// union's per-tier keys: must-fix 2). jobs is keyed by job name only,
+		// so every reference to a given job resolves to the same simulated
+		// value regardless of which output key reads it.
+		ctx[m[0]] = jobs[m[1]]
 	}
 	v, err := evalGHExpr(expr, ctx)
 	if err != nil {
