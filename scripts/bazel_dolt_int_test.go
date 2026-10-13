@@ -328,6 +328,27 @@ func TestBazelDoltIntIsGated(t *testing.T) {
 	if !strings.Contains(unionShardBalance.Run, "--label //internal/storage/dolt:dolt_server_full_test") {
 		t.Errorf("%s Shard balance step = %q, want --label //internal/storage/dolt:dolt_server_full_test", bazelDoltIntJobName, unionShardBalance.Run)
 	}
+
+	// Upload test logs (must-fix 4, PR #7535 review): the `bazel test` step
+	// carries its own continue-on-error, so failure() alone stays false on an
+	// ordinary test failure until the classify step (which runs after this
+	// one) exits non-zero -- by which point this step has already been
+	// evaluated. steps.test.outcome == 'failure' catches that case directly;
+	// no other test in this suite pins this job's own "Upload test logs" if
+	// (TestBazelWorkflowSecretsAndFailureSurface only inventories
+	// continue-on-error paths, and bazel_dolt_race_test.go/ci_workflow_test.go
+	// pin only the other lanes' upload-logs steps), so a future accidental
+	// revert of this condition to plain failure() would otherwise go
+	// unnoticed (mutation G, PR #7535 review round 3).
+	logs := job.step(t, "Upload test logs")
+	const wantLogsIf = "${{ (failure() || steps.test.outcome == 'failure') && steps.test.outcome != 'skipped' }}"
+	if logs.If != wantLogsIf {
+		t.Errorf("%s Upload test logs if = %q, want %q", bazelDoltIntJobName, logs.If, wantLogsIf)
+	}
+	if logs.With["name"] != "bazel-dolt-int-testlogs" {
+		t.Errorf("%s Upload test logs name = %q, want bazel-dolt-int-testlogs", bazelDoltIntJobName, logs.With["name"])
+	}
+
 	for _, member := range bazelUnionLanes[bazelDoltIntJobName] {
 		for _, step := range workflow.job(t, member).Steps {
 			if strings.Contains(step.Run, "shard_budget.py") && member != bazelServerJobName {
