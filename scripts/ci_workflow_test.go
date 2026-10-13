@@ -1567,7 +1567,7 @@ const (
 // bazel.yml's jobs: the rbe job that decides the execution mode, the
 // --config=ci lane, one job per CI job a Bazel config mirrors, and the two
 // package gates (F3), sorted alphabetically to match TestBazelWorkflowJobsAndExecutionMode's sort.Strings.
-var bazelJobNames = []string{bazelCmdDoltJobName, bazelDoltRaceJobName, bazelDoltJobName, bazelEmbedJobName, bazelIntegJobName, bazelProxiedJobName, bazelPureJobName, bazelReleaseCrossJobName, bazelServerJobName, bazelJobName, bazelPackageMCPJobName, bazelPackageNPMJobName, bazelRBEJobName, bazelRBEPrewarmJobName, bazelRRCSeedJob, bazelRRCVerifyJob}
+var bazelJobNames = []string{bazelCmdDoltJobName, bazelDoltIntJobName, bazelDoltRaceJobName, bazelDoltJobName, bazelEmbedJobName, bazelIntegJobName, bazelProxiedJobName, bazelPureJobName, bazelReleaseCrossJobName, bazelServerJobName, bazelJobName, bazelPackageMCPJobName, bazelPackageNPMJobName, bazelRBEJobName, bazelRBEPrewarmJobName, bazelRRCSeedJob, bazelRRCVerifyJob}
 
 // The lanes that only run remotely (skipped unless the rbe job chose remote);
 // bazel-integration runs remotely or with the read-only cache (bazelIntegIf);
@@ -1726,8 +1726,15 @@ const bazelIntegIf = "${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outp
 // `integration` input (an explicit "off" skips it too, gastownhall/beads
 // #7486 review), but unlike bazel-integration/bazel-cmd-dolt it is
 // remote-only (wantRemoteOnlyIf), not mode cache -- there is no PR-time
-// warm-cache run of this tier, only remote or nothing.
-const bazelServerStorageIf = "${{ needs.rbe.outputs.enabled == 'true' && inputs.integration != 'off' }}"
+// warm-cache run of this tier, only remote or nothing. Mode remote minus:
+// there bazel-dolt-int runs this tier instead (item 5 A2,
+// bazel_dolt_int_test.go).
+const bazelServerStorageIf = "${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.integration != 'off' }}"
+
+// bazelCmdDoltMemberIf: bazel-cmd-dolt's pre-union rule (bazelIntegIf) minus
+// mode remote, where bazel-dolt-int runs this tier instead (item 5 A2,
+// bazel_dolt_int_test.go).
+const bazelCmdDoltMemberIf = "${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' && needs.rbe.outputs.mode != 'remote' }}"
 
 // F3: package-mcp and package-npm's if. Unlike every other lane's, it does
 // not read the rbe job's outputs at all - only the caller's package-gates
@@ -1881,7 +1888,13 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 		// bazel.yml's own run - and thus pr.yml's ci-gate - red for a job
 		// nothing requires.
 		_, flagGated := bazelFlagGatedLanes[name]
-		if job.ContinueOnError && name != bazelRBEPrewarmJobName && !flagGated {
+		// A union lane with a flag-gated member (item 5 A2: bazel-dolt-int,
+		// bazel-cmd-dolt) carries the same continue-on-error as that member
+		// would alone: the gated member's id still reads this job's result
+		// directly (unaffected), and continue-on-error only keeps a
+		// flag-gated-member-only failure out of the call's own aggregate
+		// (BAZEL), as it already is through the member outside this mode.
+		if job.ContinueOnError && name != bazelRBEPrewarmJobName && !flagGated && !bazelUnionHasFlagGatedMember(name) {
 			t.Errorf("%s continue-on-error hides failures from pr.yml's ci-gate", name)
 		}
 		// A flag-gated lane is advisory until its flag says otherwise, and
@@ -1977,10 +1990,15 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 				// review).
 				wantJobIf = bazelServerStorageIf
 			}
-		} else if name == bazelIntegJobName || name == bazelCmdDoltJobName {
-			// The cmd/bd Dolt-server tier runs exactly where the integration
-			// lane does: its build is --config=integration's.
+		} else if name == bazelIntegJobName {
+			// bazel-integration is not part of either union; it stays as
+			// before, in every mode the union jobs also run in.
 			wantJobIf = bazelIntegIf
+		} else if name == bazelCmdDoltJobName {
+			// The cmd/bd Dolt-server tier runs exactly where the integration
+			// lane does, minus mode remote: there bazel-dolt-int runs this
+			// tier instead (item 5 A2, bazel_dolt_int_test.go).
+			wantJobIf = bazelCmdDoltMemberIf
 		} else if name == bazelRBEPrewarmJobName {
 			// The lanes' runs-on ternary at 2 vCPU (no Bazel client); only
 			// the size and the if differ. Not a lane: never uses
@@ -1992,9 +2010,15 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 			// (bazel_dolt_race_test.go); the lanes' runner and setup-bazel
 			// env otherwise.
 			wantJobIf = bazelDoltRaceJobIf
+		} else if name == bazelDoltIntJobName {
+			// Mode remote only, in place of its members
+			// (bazel_dolt_int_test.go); the lanes' runner and setup-bazel
+			// env otherwise.
+			wantJobIf = bazelDoltIntJobIf
 		}
-		// The union's members: their own rule, minus mode remote
-		// (TestBazelDoltRaceArmsExactlyOnePerMode).
+		// The unions' members: their own rule, minus mode remote
+		// (TestBazelDoltRaceArmsExactlyOnePerMode,
+		// TestBazelDoltIntArmsExactlyOnePerMode).
 		switch name {
 		case bazelDoltJobName:
 			wantJobIf = bazelDoltMemberIf
@@ -2573,8 +2597,10 @@ func TestBazelLaneIsGated(t *testing.T) {
 			t.Errorf("bazelUnionLanes lists %s, which %s does not have", union, bazelWorkflowName)
 		}
 		for _, m := range members {
-			if _, gated := bazelLaneGateIDs[m]; !gated {
-				t.Errorf("union lane %s member %s is not a gated lane", union, m)
+			_, gated := bazelLaneGateIDs[m]
+			_, flagGated := bazelFlagGatedLanes[m]
+			if !gated && !flagGated {
+				t.Errorf("union lane %s member %s is neither a gated nor a flag-gated lane", union, m)
 			}
 		}
 	}
@@ -2880,11 +2906,20 @@ func bazelLaneRunModes(t *testing.T, lane, ifExpr string, with map[string]string
 	case bazelServerStorageIf:
 		// Remote-only (unlike bazelIntegIf, no mode cache run), but also
 		// honors `integration` like bazel-integration/bazel-cmd-dolt
-		// (gastownhall/beads#7486 review).
+		// (gastownhall/beads#7486 review). Minus mode remote: there
+		// bazel-dolt-int runs this tier instead (item 5 A2).
 		if strings.EqualFold(with["integration"], "off") {
 			return map[string]bool{}
 		}
-		return map[string]bool{"remote": true, "fork-ro": true, "fork-rw": true}
+		return map[string]bool{"fork-ro": true, "fork-rw": true}
+	case bazelCmdDoltMemberIf:
+		// Where bazel-integration runs, minus mode remote: there
+		// bazel-dolt-int runs this tier instead (item 5 A2,
+		// bazel_dolt_int_test.go).
+		if strings.EqualFold(with["integration"], "off") {
+			return map[string]bool{}
+		}
+		return map[string]bool{"fork-ro": true, "fork-rw": true, "cache": true}
 	case bazelPackageGatesIf:
 		// F3: unlike every other lane, these two never skip because of the
 		// rbe job's decision - only because the caller turned them off
@@ -3073,9 +3108,11 @@ func TestBazelGateSimulation(t *testing.T) {
 				if bazelLaneReporter(lanes, lane, mode) == "" {
 					wantSkips = append(wantSkips, id)
 				}
-			} else if g, flagGated := bazelFlagGatedLanes[lane]; !modes[mode] && flagGated {
+			} else if g, flagGated := bazelFlagGatedLanes[lane]; flagGated && bazelLaneReporter(lanes, lane, mode) == "" {
 				// Listed even while advisory, so flipping the flag is the
-				// only change that makes it required.
+				// only change that makes it required. Skipped by design only
+				// when neither the lane nor its union lane (bazel-dolt-int in
+				// mode remote, for bazel-cmd-dolt) runs in this mode.
 				wantSkips = append(wantSkips, g.id)
 			}
 		}
@@ -3153,7 +3190,19 @@ func TestBazelGateSimulation(t *testing.T) {
 				// Required (flag "true"): exactly a gated lane.
 				scFlags(lane+" required, as designed", "success", base(), on, true, "")
 				if !modes[mode] {
-					scFlags(lane+" required, ran and failed", "success", with(lane, "failure"), on, false, g.id)
+					// Not its own job in this mode (skipped by design, or its
+					// union reports instead, as bazel-dolt-int does for
+					// bazel-cmd-dolt in mode remote); if it ran anyway and
+					// failed, the gate still sees it through its id, unless
+					// the union's result shadows the stray failure (reported
+					// first in the workflow_call output), in which case
+					// there is nothing to blame it for.
+					out := with(lane, "failure")
+					if bazelCallOutputValue(t, lane, out) != "failure" {
+						scFlags(lane+" required, ran and failed", "success", out, on, true, "")
+					} else {
+						scFlags(lane+" required, ran and failed", "success", out, on, false, g.id)
+					}
 					continue
 				}
 				for _, result := range []string{"", "failure", "cancelled"} {
@@ -4623,8 +4672,9 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 			// (bazelCIAnalyticsStepNames): reporting only, never a `needs`
 			// of anything and never read back by this workflow or its
 			// callers.
-			_, flagGated := bazelFlagGatedLanes[strings.TrimSuffix(strings.TrimPrefix(path, ".jobs."), ".continue-on-error")]
-			if path != bazelRBEPrewarmContinueOnErrorPath && !flagGated && !ciAnalyticsPaths[path] {
+			jobName := strings.TrimSuffix(strings.TrimPrefix(path, ".jobs."), ".continue-on-error")
+			_, flagGated := bazelFlagGatedLanes[jobName]
+			if path != bazelRBEPrewarmContinueOnErrorPath && !flagGated && !ciAnalyticsPaths[path] && !bazelUnionHasFlagGatedMember(jobName) {
 				t.Errorf("%s: %s hides failures from pr.yml's ci-gate", bazelWorkflowName, path)
 			}
 		}
@@ -5862,9 +5912,7 @@ func TestBazelCmdDoltJob(t *testing.T) {
 		"test:integration --@rules_go//go/config:race",
 		"test:" + config + " --test_tag_filters=dolt-server-cmd",
 		"test:" + config + " --test_timeout=-1,-1,-1,1200",
-		"test:" + config + " --test_arg=-test.timeout=19m",
 		"test:" + config + " --test_arg=-test.parallel=4",
-		"test:" + config + " --test_env=BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION=1",
 		"test:" + config + " --test_env=GO_TEST_WRAP_TESTV=1",
 	} {
 		if !rc[want] {
@@ -5909,10 +5957,18 @@ func TestBazelCmdDoltJob(t *testing.T) {
 	}
 	for _, want := range []string{
 		`srcs = ["//tools/bazel:go_test_pinned_shard.sh"]`,
-		"args = [\n        \"$(rootpath :dolt_server_pinned_shards.txt)\",\n        \"$(rootpath :bd_test)\",\n    ]",
+		`"$(rootpath :dolt_server_pinned_shards.txt)",`,
+		`"$(rootpath :bd_test)",`,
+		// Item 5 A2: moved here from --config=doltserver-cmd's --test_arg,
+		// so --config=dolt-int does not set it for server-storage's targets
+		// too (whose own Go timeout is 15m).
+		`"-test.timeout=19m",`,
 		`tags = ["dolt-server-cmd"]`,
 		`"GOMAXPROCS": "4"`,
 		`"BEADS_TEST_GIT_IDENTITY": "1"`,
+		// Item 5 A2: moved here from --config=doltserver-cmd's --test_env,
+		// same reason as the args move above.
+		`"BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION": "1",`,
 	} {
 		if !strings.Contains(rule, want) {
 			t.Errorf("%s lacks %s", target, want)
@@ -5990,11 +6046,19 @@ func TestBazelIntegrationExcludesBdTestOnlyWhereCmdDoltCovers(t *testing.T) {
 		}
 	}
 
-	// Coverage where it is dropped: bazel-cmd-dolt runs in every mode
-	// bazel-integration does (same if, for every caller's inputs).
-	if integ.If != bazelIntegIf || cmdDolt.If != integ.If {
-		t.Errorf("%s if = %q, %s if = %q; want both %q (the cmd/bd tier must run wherever integration drops bd_test)",
-			bazelIntegJobName, integ.If, bazelCmdDoltJobName, cmdDolt.If, bazelIntegIf)
+	// Coverage where it is dropped: the cmd/bd tier (bazel-cmd-dolt, or
+	// bazel-dolt-int in mode remote, item 5 A2) runs in every mode
+	// bazel-integration does.
+	if integ.If != bazelIntegIf {
+		t.Errorf("%s if = %q, want %q", bazelIntegJobName, integ.If, bazelIntegIf)
+	}
+	wantModes := bazelLaneRunModes(t, bazelIntegJobName, bazelIntegIf, nil)
+	cmdDoltModes := bazelLaneRunModes(t, bazelCmdDoltJobName, cmdDolt.If, nil)
+	doltIntModes := bazelLaneRunModes(t, bazelDoltIntJobName, workflow.job(t, bazelDoltIntJobName).If, nil)
+	for _, mode := range bazelRBEModes {
+		if got := cmdDoltModes[mode] || doltIntModes[mode]; got != wantModes[mode] {
+			t.Errorf("mode %s: cmd/bd tier covered (bazel-cmd-dolt or bazel-dolt-int) = %v, want %v (the cmd/bd tier must run wherever integration drops bd_test)", mode, got, wantModes[mode])
+		}
 	}
 	// ... and pr.yml's gate accepts their skips in the same modes only.
 	requireHostTool(t, "bash")

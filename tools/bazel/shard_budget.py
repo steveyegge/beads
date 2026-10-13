@@ -32,6 +32,16 @@ Day one: this prints `::warning` and always exits 0 (CI must not block on
 it yet). Pass --fail-on-imbalance (a workflow step can gate this behind a
 repository variable) to exit 1 and print `::error` instead, once the budget
 has run clean for a while.
+
+--label (repeatable) restricts which sharded targets this invocation judges,
+by exact label. A union job's BEP has every member's shards in it; pass each
+label whose owning lane's job this script runs in (item 5 A2:
+bazel-dolt-int's step passes only server-storage's
+//internal/storage/dolt:dolt_server_full_test, so it keeps judging that tier
+alone and not cmd-dolt's bd_dolt_server_test / regression_test shards, which
+no job budgeted before the union and which this script has never judged).
+Omitted (bazel-server-storage's own step, unchanged): every sharded target in
+the BEP, as before.
 """
 
 import argparse
@@ -113,11 +123,19 @@ class Imbalance:
         )
 
 
-def evaluate(shard_durations):
+def evaluate(shard_durations, labels=None):
     """Return a sorted list of Imbalance for every target with >= 2 executed
-    shards this invocation, whether or not it crosses the warn threshold."""
+    shards this invocation, whether or not it crosses the warn threshold.
+
+    labels, if given (a set), restricts evaluation to those exact labels: a
+    union job's BEP covers every member's shards, and a caller that only
+    owns one member's shard budget passes its labels so the other member's
+    shards are never judged here.
+    """
     out = []
     for label, per_shard in sorted(shard_durations.items()):
+        if labels is not None and label not in labels:
+            continue
         if len(per_shard) < 2:
             continue
         durations = list(per_shard.values())
@@ -137,10 +155,16 @@ def main(argv=None):
         action="store_true",
         help="exit 1 (and print ::error) past the fail threshold; default is warn-only",
     )
+    ap.add_argument(
+        "--label",
+        action="append",
+        default=None,
+        help="restrict to this exact target label (repeatable); default: every sharded target in the BEP",
+    )
     args = ap.parse_args(argv)
 
     shard_durations = read_shard_durations(args.bep)
-    results = evaluate(shard_durations)
+    results = evaluate(shard_durations, labels=set(args.label) if args.label else None)
 
     failed = False
     for r in results:

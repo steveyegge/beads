@@ -56,7 +56,10 @@ Current PR-related workflow names:
   every lane exports its
   `job.status` as an output named after the job (in mode `remote`, the
   `bazel-doltserver` and `bazel-proxied` outputs carry the `bazel-dolt-race`
-  union job's status instead; see [dolt-race Union Lane](#dolt-race-union-lane)).
+  union job's status instead, see [dolt-race Union Lane](#dolt-race-union-lane);
+  the `bazel-server-storage` and `bazel-cmd-dolt` outputs carry the
+  `bazel-dolt-int` union job's status instead, see
+  [dolt-int Union Lane](#dolt-int-union-lane)).
   `pr.yml`'s gate requires the
   call's result (`BAZEL`) and `BAZEL_TEST`, `BAZEL_PURE`,
   `BAZEL_RELEASE_CROSS`, `BAZEL_EMBEDDED`, `BAZEL_INTEGRATION`,
@@ -659,6 +662,56 @@ with the slower tier and the other tier's runner is saved.
   cutover PR: the gate ids never changed and the action keys are equal both
   ways, so cached results carry back.
 
+## dolt-int Union Lane
+
+In mode `remote`, `bazel.yml`'s `bazel-dolt-int` job (check name
+`Bazel / dolt-int`) runs the server-storage and cmd-dolt tiers in one
+`bazel test //... --config=dolt-int`, in place of the `bazel-server-storage`
+(`server-storage lane`) and `bazel-cmd-dolt` (`cmd-dolt tier`) jobs.
+`--config=dolt-int` is exactly the union of `--config=doltserver-integration`
+and `--config=doltserver-cmd`, with one tag filter for both tiers, so every
+member target's test action is unchanged (`bazel aquery`: the 17 + 46 = 63
+`TestRunner` actions are byte-identical under the member configs and the
+union). One client waits on rbe-west for both tiers at once, so the job ends
+with the slower tier and the other tier's runner is saved.
+
+Unlike dolt-race, this union's members do not share a gating category:
+`bazel-server-storage` is plain-gated (`BAZEL_SERVER_STORAGE`), while
+`bazel-cmd-dolt` is flag-gated and advisory (`BAZEL_CMD_DOLT`,
+`BAZEL_CMD_DOLT_REQUIRED`). The union job therefore carries
+`continue-on-error: true`, matching `bazel-cmd-dolt`'s own setting, so a
+failure confined to the cmd-dolt tier does not redden the workflow_call's
+aggregate `BAZEL` output; it still reddens the `BAZEL_CMD_DOLT` id directly,
+exactly as `bazel-cmd-dolt` alone would have. `BAZEL_SERVER_STORAGE` is
+unaffected by `continue-on-error` either way, since it was never
+flag-gated/advisory.
+
+- Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
+  dispatch and `bazel-farm.yml`'s authorized call). In the fork modes
+  (`fork-ro`, `fork-rw`), `cache` and `local`, `bazel-server-storage` and
+  `bazel-cmd-dolt` run as before: there a single client does both tiers' work
+  without in-flight deduplication, so a union would cost the sum of the
+  tiers rather than the max, on the run's critical path.
+- Exactly one arm runs in any mode. The union's `job.status` is both the
+  `bazel-server-storage` and the `bazel-cmd-dolt` `workflow_call` output (each
+  reads the union's result first, then its member's), so `pr.yml`'s gate
+  ids (`BAZEL_SERVER_STORAGE`, `BAZEL_CMD_DOLT`), `ci-gate.sh` and
+  `bazel-gate.sh` are unchanged: a union that reported nothing reads as
+  `skipped`, which mode `remote` never allows, and the per-mode skips are the
+  members' as before.
+- `check_testcases.py` and `check_shard_coverage.py` run once over the
+  union's BEP. The job also runs a "Shard balance" step scoped with
+  `--label //internal/storage/dolt:dolt_server_full_test`, distinct from
+  `bazel-server-storage`'s own unscoped shard-balance step, since the union's
+  BEP otherwise mixes both tiers' shards under one report. The `bazel test`
+  step has a 23-minute timeout, every step has one, and the job's
+  (56 minutes) is at least their sum plus 5 and below the merge queue's
+  60-minute check timeout.
+- Its ci-analytics `LANE` is `dolt-int`.
+- Policy: `scripts/bazel_dolt_int_test.go`. Rollback is a revert of the
+  cutover PR: the gate ids never changed and the action keys are equal both
+  ways, so cached results carry back.
+
 ## Remote Repo Contents Cache
 
 A cold lane client re-runs its repository rules (gazelle's `go_deps`, the Go
@@ -1045,8 +1098,9 @@ Required` requires them to have run remotely and passed.
     (Variant A) the integration configuration (`--config=integration`'s
     `gms_pure_go,integration` tags) is no longer a three-lane exception:
     `bazel-integration` (`--config=integration`), `bazel-server-storage`
-    (`--config=doltserver-integration`) and `bazel-cmd-dolt`
-    (`--config=doltserver-cmd`) all pass `--norun_validations`. Instead
+    (`--config=doltserver-integration`), `bazel-cmd-dolt`
+    (`--config=doltserver-cmd`) and `bazel-dolt-int` (`--config=dolt-int`,
+    the union of the latter two) all pass `--norun_validations`. Instead
     `bazel-integration` runs a narrow extra build step, `Nogo: integration
     library files`, that validates only `//internal/testutil/integration`
     (the one non-test library package the `integration` build tag selects)

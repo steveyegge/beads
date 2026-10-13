@@ -44,6 +44,22 @@ var bazelUnionLanes = map[string][]string{
 	bazelDoltRaceJobName: {bazelDoltJobName, bazelProxiedJobName},
 }
 
+// bazelUnionHasFlagGatedMember reports whether a union job runs in place of
+// at least one flag-gated, advisory member (bazel-dolt-int's bazel-cmd-dolt,
+// item 5 A2): such a union must carry that member's own continue-on-error, so
+// a failure confined to that member's tier stays out of the call's aggregate
+// result (BAZEL) in the union's mode exactly as it already is through the
+// member outside it. The gated member's id still reads the union's result
+// directly (bazelLaneReporter), unaffected either way.
+func bazelUnionHasFlagGatedMember(job string) bool {
+	for _, m := range bazelUnionLanes[job] {
+		if _, ok := bazelFlagGatedLanes[m]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // bazelUnionOf: the union job a gated member belongs to, or "".
 func bazelUnionOf(member string) string {
 	for union, members := range bazelUnionLanes {
