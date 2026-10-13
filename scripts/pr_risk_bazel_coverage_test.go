@@ -817,7 +817,7 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 		// go_test_pinned_shard.sh selects and skips by design (each test in
 		// exactly one shard: TestPinnedShardWrapperSplit), and is reviewed
 		// here for pinnedShardTargets only (the dolt-server-cmd targets and
-		// the embedded lane's httpclient_served_test, whose args are pinned
+		// the embedded lane's served targets, whose args are pinned
 		// above); pinnedShardWrapperUsers fails if anything else runs
 		// through it.
 		exempt := filepath.ToSlash(rel) == pinnedShardWrapper
@@ -904,13 +904,13 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_EMBEDDED_DOLT": "1"},
 		},
 		"//backend/http:http_served_test": {
-			[]string{"$(rootpath :http_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
+			[]string{"$(rootpath :served_pinned_shards.txt)", "$(rootpath :http_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
 			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)", "BEADS_TEST_EMBEDDED_DOLT": "1"},
 		},
 		// The served command corpus (backend/http/corpus/README.md), with the
 		// same switches as http_served_test.
 		"//backend/http/corpus:corpus_served_test": {
-			[]string{"$(rootpath :corpus_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
+			[]string{"$(rootpath :served_pinned_shards.txt)", "$(rootpath :corpus_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
 			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)", "BEADS_TEST_EMBEDDED_DOLT": "1"},
 		},
 		"//cmd/bd:bd_proxied_test": {

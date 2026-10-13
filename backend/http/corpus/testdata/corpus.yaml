@@ -13,6 +13,9 @@
 # and on an embedded workspace, with BEADS_ACTOR=worker and CLAUDE_SESSION_ID set
 # on both. See README.md for the fields. Reads come first; writes after them
 # each own their target ids (e2e-t-*), so write order never changes a read.
+# The shapes are dealt round robin, in this order, across the suite's parts,
+# and each part seeds its own workspaces: a shape may rely on the seed and its
+# own setup, never on another shape having run.
 #
 # pending: {slice, reason} marks a known failure. The shape still runs; when it
 # passes the subtest FAILS until the mark is removed. That is how a slice proves
@@ -87,7 +90,7 @@ files:
         {"key": "t-cm", "id": "e2e-t-cm", "title": "target cm", "type": "task"},
         {"key": "t-rel", "id": "e2e-t-rel", "title": "target rel", "type": "task", "assignee": "worker"},
         {"key": "t-xfer", "id": "e2e-t-xfer", "title": "target xfer", "type": "task", "assignee": "worker"},
-        {"key": "t-ifa", "id": "e2e-t-ifa", "title": "target ifa", "type": "task", "assignee": "worker"},
+        {"key": "t-ifa", "id": "e2e-t-ifa", "title": "target ifa", "type": "task", "assignee": "worker", "metadata": {"seeded": "keep"}},
         {"key": "t-death", "id": "e2e-t-death", "title": "target death", "type": "task", "assignee": "worker"},
         {"key": "t-rc", "id": "e2e-t-rc", "title": "target rc", "type": "task", "assignee": "worker"},
         {"key": "t-boot", "id": "e2e-t-boot", "title": "target boot", "type": "task"},
@@ -530,6 +533,10 @@ shapes:
     args: [update, --json, e2e-t-ifa, --set-metadata, k=v, --if-status, in_progress, --if-assignee, worker]
     compare: exit
     verify: [[show, --json, e2e-t-ifa]]
+  # e2e-t-ifa is seeded with metadata seeded=keep, so each refused (exit 13)
+  # update's verify still holds that the refusal left existing metadata
+  # alone, in whichever corpus part runs it (the parts seed separately, so
+  # the k=v written by gc-update-if-assignment may not be there).
   - id: gc-update-if-assignment-assignee-stale
     source: gc bdstore_conditional.go UpdateIfAssignment mismatch (exit 13)
     args: [update, --json, e2e-t-ifa, --set-metadata, probe=a, --if-status, in_progress, --if-assignee, nobody]

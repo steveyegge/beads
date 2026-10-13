@@ -237,14 +237,69 @@ type outcome struct {
 	requests           int64
 }
 
-// TestServedCorpus is the suite. Each shape is a subtest; a pending shape is
-// still RUN and then skipped with what it did, so a slice that fixes it sees
-// the subtest fail with "now passes; remove the pending mark".
-// BEADS_CORPUS_SKIP_PENDING=1 skips pending shapes without running them.
-// BEADS_CORPUS_REPORT=<path> writes a JSON summary.
-func TestServedCorpus(t *testing.T) {
+// corpusParts is how many parts the shapes are dealt across. Each part is a
+// top-level test of its own (TestServedCorpusPart1..N, servedCorpusParts)
+// that starts its own server and seeds its own pair of workspaces, so the
+// embedded lane runs each part in a Bazel shard of its own
+// (served_pinned_shards.txt pins part k to shard k). The parts can be split
+// because no shape depends on another's effects: every comparison is the
+// served side against the embedded side after the same commands, and each
+// part keeps corpus order, so its reads still run on the bare seed before
+// any of its writes (see testdata/corpus.yaml's header).
+const corpusParts = 4
+
+// servedCorpusParts are the parts' tests, one per part, in part order.
+var servedCorpusParts = []func(*testing.T){
+	TestServedCorpusPart1, TestServedCorpusPart2, TestServedCorpusPart3, TestServedCorpusPart4,
+}
+
+func TestServedCorpusPart1(t *testing.T) { testServedCorpus(t, 1) }
+func TestServedCorpusPart2(t *testing.T) { testServedCorpus(t, 2) }
+func TestServedCorpusPart3(t *testing.T) { testServedCorpus(t, 3) }
+func TestServedCorpusPart4(t *testing.T) { testServedCorpus(t, 4) }
+
+// corpusPartNameErr fails a part test whose name is not its part's: a
+// TestServedCorpusPart3 that ran part 2 would run part 2's shapes twice and
+// silently drop its own.
+func corpusPartNameErr(name string, part int) error {
+	if want := fmt.Sprintf("TestServedCorpusPart%d", part); name != want {
+		return fmt.Errorf("%s runs corpus part %d; only %s may (fix its testServedCorpus call)", name, part, want)
+	}
+	return nil
+}
+
+// corpusPart returns the shapes part (1..corpusParts) runs.
+func corpusPart(shapes []shape, part int) []shape {
+	return corpusPartOf(shapes, part, corpusParts)
+}
+
+// corpusPartOf deals shapes round robin, in corpus order, across parts parts
+// and returns part's (1-based) share: shapes part-1, part-1+parts, and so on.
+// Round robin keeps each part a mix of the corpus's reads and writes in
+// their original order.
+func corpusPartOf(shapes []shape, part, parts int) []shape {
+	var out []shape
+	for i := part - 1; i < len(shapes); i += parts {
+		out = append(out, shapes[i])
+	}
+	return out
+}
+
+// testServedCorpus is the suite, for one part of the corpus. Each shape is a
+// subtest; a pending shape is still RUN and then skipped with what it did, so
+// a slice that fixes it sees the subtest fail with "now passes; remove the
+// pending mark". BEADS_CORPUS_SKIP_PENDING=1 skips pending shapes without
+// running them. BEADS_CORPUS_REPORT=<path> writes a JSON summary of every
+// part this process has run.
+func testServedCorpus(t *testing.T, part int) {
+	// First, before the engine gate: a part test wired to the wrong part
+	// fails in every lane, not only where the corpus runs.
+	if err := corpusPartNameErr(t.Name(), part); err != nil {
+		t.Fatal(err)
+	}
 	skipUnlessEmbeddedDolt(t)
 	c, allow := loadCorpus(t)
+	shapes := corpusPart(c.Shapes, part)
 	profile := loadReferenceProfile(t)
 	bin := buildBD(t)
 
@@ -283,7 +338,7 @@ func TestServedCorpus(t *testing.T) {
 
 	skipPending := os.Getenv("BEADS_CORPUS_SKIP_PENDING") == "1"
 	var outcomes []outcome
-	for _, s := range c.Shapes {
+	for _, s := range shapes {
 		s := s
 		t.Run(s.ID, func(t *testing.T) {
 			o := outcome{id: s.ID}
@@ -328,7 +383,7 @@ func TestServedCorpus(t *testing.T) {
 		})
 	}
 
-	summarize(t, outcomes)
+	summarize(t, part, len(c.Shapes), outcomes)
 }
 
 // runShape runs one shape on both sides and returns every way the served run
@@ -777,7 +832,11 @@ func bulkPlan(b bulkGraph) string {
 	return string(raw)
 }
 
-func summarize(t *testing.T, outcomes []outcome) {
+// reported is every outcome of every part this process has run, in the order
+// the parts ran, for BEADS_CORPUS_REPORT.
+var reported []outcome
+
+func summarize(t *testing.T, part, total int, outcomes []outcome) {
 	t.Helper()
 	counts := map[string]int{}
 	var lines []string
@@ -789,7 +848,8 @@ func summarize(t *testing.T, outcomes []outcome) {
 		counts[key]++
 		lines = append(lines, fmt.Sprintf("%-26s %-48s req=%-3d %s", o.status, o.id, o.requests, firstLine(o.detail)))
 	}
-	t.Logf("corpus summary: %v\n%s", counts, strings.Join(lines, "\n"))
+	t.Logf("corpus summary, part %d of %d (%d of %d shapes): %v\n%s", part, corpusParts, len(outcomes), total, counts, strings.Join(lines, "\n"))
+	reported = append(reported, outcomes...)
 	if path := os.Getenv("BEADS_CORPUS_REPORT"); path != "" {
 		type row struct {
 			ID       string `json:"id"`
@@ -798,7 +858,7 @@ func summarize(t *testing.T, outcomes []outcome) {
 			Detail   string `json:"detail,omitempty"`
 		}
 		var out []row
-		for _, o := range outcomes {
+		for _, o := range reported {
 			out = append(out, row{o.id, o.status, o.requests, o.detail})
 		}
 		raw, _ := json.MarshalIndent(out, "", " ")

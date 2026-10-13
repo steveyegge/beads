@@ -8,7 +8,10 @@ embedded workspace.
 
 ## What runs
 
-`TestServedCorpus` does the following:
+The shapes are dealt round robin, in corpus order, across `corpusParts`
+parts (`corpus_test.go`). Each part is a top-level test,
+`TestServedCorpusPart1` .. `TestServedCorpusPartN`, and each does the
+following for its share of the shapes:
 
 1. Builds `bd` from this tree. `BEADS_TEST_BD_BINARY=<path>` reuses a prebuilt
    binary instead.
@@ -29,8 +32,8 @@ embedded workspace.
    `seed` from `testdata/corpus.yaml`: one graph of named rows, plus bulk
    graphs that put more than one server page of ready rows and wisps in the
    store. Both sides use `BEADS_ACTOR=worker` and set `CLAUDE_SESSION_ID`.
-5. Runs each shape as a subtest, on both sides. The embedded run must exit
-   with the shape's `expect_exit` and match its `expect_stderr`. If it does
+5. Runs each of its shapes as a subtest, on both sides. The embedded run must
+   exit with the shape's `expect_exit` and match its `expect_stderr`. If it does
    not, the shape is wrong or bd changed, and the subtest fails as a corpus
    bug that no pending mark or allowlist entry hides. The served run must:
    - exit like the embedded run;
@@ -43,17 +46,35 @@ embedded workspace.
    - for writes, give the same JSON from every `verify` read on both sides
      afterwards.
 
-The run takes about five minutes.
+A part takes its own server, workspaces and seed, so no shape can see
+another part's writes. That is safe because no shape depends on another
+shape's effects:
+- every check compares the served run with the embedded run after the same
+  commands, so it holds whatever ran before it on both sides;
+- each part keeps corpus order, so its reads still run on the bare seed,
+  before any of its writes;
+- each write owns its target ids (`e2e-t-*`, or ids it creates).
+
+`TestCorpusPartsDealEveryShapeOnce` checks that every shape is in exactly one
+part, in corpus order. A new shape must keep that independence: it may rely on
+the seed and its own `setup`, never on another shape having run.
+
+Every part seeds again (the server and seed take about 100s of a part's run
+on the CI executors), so running all the parts in one process takes longer
+than one run over every shape did. Run one part with
+`-run 'TestServedCorpusPart2$'`.
 
 ```
 CGO_ENABLED=1 BEADS_TEST_EMBEDDED_DOLT=1 BEADS_HTTP_TEST_REQUIRED=1 \
-  go test -tags gms_pure_go -run 'TestServedCorpus|TestCorpusFile' ./backend/http/corpus/
+  go test -tags gms_pure_go -run 'TestServedCorpus|TestCorpus' ./backend/http/corpus/
 ```
 
 In CI, `//backend/http/corpus:corpus_served_test` runs the suite with both
 variables set, in the Embedded Dolt lane (`--config=embedded`; see
-[engdocs/TESTING.md](../../../engdocs/TESTING.md)). `corpus_test` on its own
-sets neither, so it skips `TestServedCorpus`.
+[engdocs/TESTING.md](../../../engdocs/TESTING.md)). Its
+`served_pinned_shards.txt` pins part k to Bazel shard k, so the parts run
+concurrently. `corpus_test` on its own sets neither variable, so it skips
+the parts.
 
 Two environment variables change the run:
 - `BEADS_CORPUS_REPORT=<file>` writes a JSON summary with per-shape status

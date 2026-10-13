@@ -202,6 +202,8 @@ go_test(
         "//:.github/scripts/server-storage-test-shards.txt",
         "//:nested_go_modules",
         "//:repo_go_test_srcs",
+        "//backend/http:repo_other_files",
+        "//backend/http/corpus:repo_other_files",
         "//cmd/bd:repo_other_files",
         "//internal/httpclient:repo_other_files",
         "//internal/storage/dolt:repo_other_files",
