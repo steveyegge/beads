@@ -27,18 +27,38 @@ import (
 // searchRouteSeed is one row of the seed every route gets. Distinct priorities
 // among the "routed" rows make a --limit cut the same rows on every route
 // regardless of creation-time ties.
+//
+// The "kinded" rows are one of each kind of row a listing hides by default and
+// search's scope takes back (issueops.SearchListRequest): a template, a gate,
+// an infra-typed wisp and a durable row of the same infra type. They match a
+// word of their own rather than "routed", so the ordered queries below still
+// see one row per priority.
 type searchRouteSeed struct {
 	title string
 	args  []string
-	close bool
+	then  searchRouteStep
 }
 
+// searchRouteStep is what a route does to a seed row once it has created it.
+type searchRouteStep int
+
+const (
+	srAsCreated searchRouteStep = iota
+	srClose
+	srMarkTemplate // no create flag makes a template, so this is raw SQL
+	srPromote      // out of the ephemeral plane creating an infra type puts it in
+)
+
 var searchRouteSeeds = []searchRouteSeed{
-	{"Routed alpha task", []string{"--type", "task", "--priority", "0", "--assignee", "alice", "--label", "lane:a"}, false},
-	{"Routed beta bug", []string{"--type", "bug", "--priority", "1", "--assignee", "bob", "--label", "lane:b"}, false},
-	{"re-ROUTED gamma", []string{"--type", "feature", "--priority", "2", "--label", "lane:a"}, false},
-	{"Routed and done", []string{"--type", "task", "--priority", "3"}, true},
-	{"unrelated delta", []string{"--type", "task", "--priority", "4", "--label", "lane:a"}, false},
+	{"Routed alpha task", []string{"--type", "task", "--priority", "0", "--assignee", "alice", "--label", "lane:a"}, srAsCreated},
+	{"Routed beta bug", []string{"--type", "bug", "--priority", "1", "--assignee", "bob", "--label", "lane:b"}, srAsCreated},
+	{"re-ROUTED gamma", []string{"--type", "feature", "--priority", "2", "--label", "lane:a"}, srAsCreated},
+	{"Routed and done", []string{"--type", "task", "--priority", "3"}, srClose},
+	{"unrelated delta", []string{"--type", "task", "--priority", "4", "--label", "lane:a"}, srAsCreated},
+	{"Kinded template", []string{"--type", "task"}, srMarkTemplate},
+	{"Kinded gate", []string{"--type", "gate"}, srAsCreated},
+	{"Kinded wisp message", []string{"--type", "message"}, srAsCreated},
+	{"Kinded promoted message", []string{"--type", "message"}, srPromote},
 }
 
 const (
@@ -46,6 +66,11 @@ const (
 	srBeta  = "Routed beta bug|open"
 	srGamma = "re-ROUTED gamma|open"
 	srDone  = "Routed and done|closed"
+
+	skTemplate = "Kinded template|open"
+	skGate     = "Kinded gate|open"
+	skWisp     = "Kinded wisp message|open"
+	skPromoted = "Kinded promoted message|open"
 )
 
 // searchRouteQuery is one flag set. want is the seed's answer as title|status:
@@ -73,17 +98,48 @@ var searchRouteQueries = []searchRouteQuery{
 	{"query flag", []string{"--query", "gamma"}, false, true, []string{srGamma}},
 	{"no match", []string{"nothing-matches-this"}, false, true, nil},
 	{"priority-max", []string{"routed", "--priority-max", "1"}, false, false, []string{srAlpha, srBeta}},
+	// --type is expanded as `bd list` expands it before the Reader validates it.
+	{"type alias", []string{"routed", "--type", "feat"}, false, true, []string{srGamma}},
+	// Every kind of row comes back under no flag and under its own --type. An
+	// infra type is the one that also narrows a listing to its ephemeral rows;
+	// search's scope keeps the durable row of that type beside the wisp.
+	{"every kind of row", []string{"kinded"}, false, true, []string{skTemplate, skGate, skWisp, skPromoted}},
+	{"type message keeps both planes", []string{"kinded", "--type", "message"}, false, true, []string{skWisp, skPromoted}},
+	{"type gate", []string{"kinded", "--type", "gate"}, false, true, []string{skGate}},
+	{"type task keeps the template", []string{"kinded", "--type", "task"}, false, true, []string{skTemplate}},
+}
+
+// searchRouteRefusals are flag sets every route must refuse, naming the value
+// it refused, rather than answer with an empty result.
+var searchRouteRefusals = []struct {
+	name  string
+	args  []string
+	value string
+}{
+	{"unknown type", []string{"routed", "--type", "no-such-type"}, "no-such-type"},
 }
 
 type searchRouteRow struct{ ID, Title, Status string }
 
-// seedSearchRoutes creates searchRouteSeeds through one route's create and
-// close.
-func seedSearchRoutes(create func(title string, args []string) string, closeIssue func(id string)) {
+// searchRouteOps is how one route writes the seed.
+type searchRouteOps struct {
+	create       func(title string, args []string) string
+	close        func(id string)
+	markTemplate func(id string)
+	promote      func(id string)
+}
+
+// seedSearchRoutes creates searchRouteSeeds through one route's writes.
+func seedSearchRoutes(ops searchRouteOps) {
 	for _, s := range searchRouteSeeds {
-		id := create(s.title, s.args)
-		if s.close {
-			closeIssue(id)
+		id := ops.create(s.title, s.args)
+		switch s.then {
+		case srClose:
+			ops.close(id)
+		case srMarkTemplate:
+			ops.markTemplate(id)
+		case srPromote:
+			ops.promote(id)
 		}
 	}
 }
@@ -136,9 +192,9 @@ func searchRouteComparable(rows []searchRouteRow, ordered bool) []string {
 
 // checkSearchRoute runs every query on one route and holds each answer to its
 // want. A query listIssues cannot carry (wireCan false) must refuse on a
-// remote route rather than answer without the flag. It returns the decoded
-// answers by query name, for a route that is compared row for row with
-// another one over the same database.
+// remote route rather than answer without the flag, and every refusal must
+// refuse on every route. It returns the decoded answers by query name, for a
+// route that is compared row for row with another one over the same database.
 func checkSearchRoute(t *testing.T, route, bd, dir string, env []string, remote bool) map[string][]searchRouteRow {
 	t.Helper()
 	answers := map[string][]searchRouteRow{}
@@ -162,6 +218,14 @@ func checkSearchRoute(t *testing.T, route, bd, dir string, env []string, remote 
 		}
 		if got := searchRouteComparable(rows, q.ordered); !slices.Equal(got, want) {
 			t.Errorf("%s: %s bd search %v answered %v, want %v", q.name, route, q.args, got, want)
+		}
+	}
+	for _, r := range searchRouteRefusals {
+		stdout, stderr, code := runSearchRoute(t, bd, dir, env, r.args...)
+		if code == 0 {
+			t.Errorf("%s: %s bd search %v succeeded with %s; it must refuse", r.name, route, r.args, strings.TrimSpace(stdout))
+		} else if !strings.Contains(stdout+stderr, r.value) {
+			t.Errorf("%s: %s bd search %v refused (exit %d) without naming %q:\n%s%s", r.name, route, r.args, code, r.value, stdout, stderr)
 		}
 	}
 	return answers

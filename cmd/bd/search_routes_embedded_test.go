@@ -17,12 +17,14 @@ func TestEmbeddedSearchRoutesAgree(t *testing.T) {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
 	bd := buildEmbeddedBD(t)
-	dir, _, _ := bdInit(t, bd, "--prefix", "sp")
-	seedSearchRoutes(
-		func(title string, args []string) string {
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "sp")
+	seedSearchRoutes(searchRouteOps{
+		create: func(title string, args []string) string {
 			return bdCreate(t, bd, dir, append([]string{title}, args...)...).ID
 		},
-		func(id string) { bdClose(t, bd, dir, id) },
-	)
+		close:        func(id string) { bdClose(t, bd, dir, id) },
+		markTemplate: func(id string) { markIssueTemplate(t, beadsDir, "sp", id) },
+		promote:      func(id string) { bdPromote(t, bd, dir, id) },
+	})
 	checkSearchRoute(t, "direct", bd, dir, bdEnv(dir), false)
 }

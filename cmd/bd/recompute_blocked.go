@@ -54,9 +54,11 @@ Examples:
 			return runRecomputeBlockedProxiedServer(ctx)
 		}
 
-		// One library entry for every backend (storage.RecomputeBlocked): a
-		// local store recomputes its own column; a remote backend answers that
-		// its server maintains the column, and recomputes nothing.
+		// One library entry for every store (storage.RecomputeBlocked): a
+		// local store recomputes its own column; a remote backend (`bd
+		// connect`) answers that its server maintains the column, and
+		// recomputes nothing. The --proxied-server route above bypasses it on
+		// purpose; runRecomputeBlockedProxiedServer says why.
 		result, err := storage.RecomputeBlocked(ctx, store)
 		if err != nil {
 			var unsup *storage.ErrUnsupported

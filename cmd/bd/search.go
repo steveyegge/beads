@@ -156,7 +156,10 @@ func searchListRequest(cmd *cobra.Command, query string) (issueops.ListRequest, 
 		req.Status = status
 	}
 	req.Assignee = str("assignee")
-	req.IssueType = str("type")
+	// Expanded before the Reader validates it, as `bd list` does
+	// (list_input.go): an alias (feat, mol, mr, ...) names its canonical type,
+	// and a name the workspace does not know is refused, never an empty answer.
+	req.IssueType = utils.NormalizeIssueType(str("type"))
 	req.Labels = utils.NormalizeLabels(labels)
 	req.LabelsAny = utils.NormalizeLabels(labelsAny)
 	req.DescContains = str("desc-contains")
@@ -271,7 +274,7 @@ func init() {
 	searchCmd.Flags().String("query", "", "Search query (alternative to positional argument)")
 	searchCmd.Flags().StringP("status", "s", "", "Filter by stored status (comma-separated for OR; open, in_progress, blocked, deferred, closed, all). Default searches all statuses including closed. Note: dependency-blocked issues use 'bd blocked'")
 	searchCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
-	searchCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, decision, merge-request, molecule, gate)")
+	searchCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, decision, message, molecule, gate, spike, story, milestone); custom types require types.custom config, and an unknown type is an error. Aliases: feat/enhancement→feature, mol→molecule, dec/adr→decision, mr→merge-request")
 	searchCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL)")
 	searchCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE)")
 	searchCmd.Flags().IntP("limit", "n", 50, "Limit results (default: 50)")

@@ -30,7 +30,13 @@ type ServerMaintainedBlockedState interface {
 // RecomputeBlocked is the one library entry for the is_blocked repair
 // (`bd recompute-blocked`), the named repair of
 // issueops.BlockedStateInvariant's merge clause — the one way that
-// invariant's persisted column can be stale. Every backend goes through it.
+// invariant's persisted column can be stale. Every store goes through it. The
+// `--proxied-server` route deliberately does not: it runs
+// versioncontrolops.RecomputeAllBlockedOnConn (the guard, recompute, staging
+// set and commit message a local store uses) on a pinned non-transactional
+// connection, because the repair's DOLT_ADD/DOLT_COMMIT are stored procedures
+// Dolt refuses inside an explicit transaction and its commit must stage
+// `issues` alone (cmd/bd/recompute_blocked_proxied_server.go).
 //
 // A LOCAL store (BlockedRecomputer) recomputes its whole column from the
 // dependency graph and commits the result, idempotently.

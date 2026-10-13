@@ -210,5 +210,10 @@ func newUOWReaderFixture(t *testing.T, provider UnitOfWorkProvider, prefix strin
 				return "bd: comment " + issueID, err
 			})
 		},
+		PromoteWisp: func(ctx context.Context, id, actor string) error {
+			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+				return "bd: promote " + id, uw.IssueUseCase().PromoteWisp(ctx, id, actor)
+			})
+		},
 	}
 }

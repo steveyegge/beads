@@ -1260,6 +1260,14 @@ paths:
             `message` rows need `include_infra` as well as, or instead of,
             this one. What `include_ephemeral` alone reaches is the ephemeral
             rows of the types a listing already shows.
+
+
+            A `type` this workspace calls infra is the one NARROWING it lifts.
+            Such a type on its own reads only that type's ephemeral rows, which
+            is where creating one puts it; with `include_ephemeral` the type's
+            durable rows (a promoted wisp, an issue retyped after it was
+            created) are listed as well. `include_infra` alone keeps the
+            narrowing.
           schema:
             type: boolean
             default: false
@@ -1890,8 +1898,8 @@ paths:
 
 
             It has a SECOND effect under `include_infra`: a type this workspace
-            calls infra routes the count to the ephemeral tier. See that
-            parameter.
+            calls infra routes the count to the ephemeral tier, unless
+            `include_ephemeral` is also set. See that parameter.
           schema:
             type: string
         - name: assignee
@@ -2052,6 +2060,11 @@ paths:
             lives in the wisps table while remaining ordinary durable work.
             Reaching it needed `include_infra`, which also drops template rows of
             the named type — one silent undercount traded for another.
+
+
+            Beside `include_infra` it also lifts the fourth change's routing of
+            an infra `type`, so that type's durable rows are counted along with
+            its ephemeral ones rather than instead of them.
           schema:
             type: boolean
             default: false
@@ -2074,7 +2087,9 @@ paths:
             template molecules are EXCLUDED, which a default count includes;
             gate beads are EXCLUDED unless `type=gate` asks for them by name;
             and a `type` this workspace calls infra ROUTES the count to the
-            ephemeral tier instead of the durable one.
+            ephemeral tier instead of the durable one — unless
+            `include_ephemeral` is also set, which keeps the durable tier as
+            well, as `GET /v0/beads/issues` does.
 
 
             The infra vocabulary is the WORKSPACE's, read from its configuration

@@ -322,6 +322,14 @@ type ListRequest struct {
 	// field alone reaches is the ephemeral rows of the types a listing already
 	// shows.
 	//
+	// AN INFRA IssueType IS THE ONE NARROWING IT LIFTS. Naming a type the
+	// workspace calls infra reads only that type's EPHEMERAL rows, which is
+	// where creating one puts it; with this flag set the request reads the
+	// type's rows on both planes instead, because an infra-typed row can still
+	// be durable — a promoted wisp, an issue retyped after it was created, or
+	// one written before its type joined types.infra. That is the superset
+	// promise above applied to the narrowing; IncludeInfra alone keeps it.
+	//
 	// THE MERGED ANSWER IS ONE ORDER. Both planes are ordered together by
 	// SortBy as if they were a single table — not the durable rows followed by
 	// the ephemeral ones — so a Limit truncates the merged order rather than

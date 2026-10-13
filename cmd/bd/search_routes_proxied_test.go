@@ -22,12 +22,26 @@ func TestProxiedServerSearchRoutesAgree(t *testing.T) {
 	}
 	bd := buildEmbeddedBD(t)
 	p := newSharedProxiedProject(t, bd, "sp")
-	seedSearchRoutes(
-		func(title string, args []string) string {
+	seedSearchRoutes(searchRouteOps{
+		create: func(title string, args []string) string {
 			return bdProxiedCreate(t, bd, p.dir, append([]string{title}, args...)...).ID
 		},
-		func(id string) { bdProxiedClose(t, bd, p.dir, id) },
-	)
+		close: func(id string) { bdProxiedClose(t, bd, p.dir, id) },
+		markTemplate: func(id string) {
+			res, err := openProxiedDB(t, p).Exec("UPDATE issues SET is_template = 1 WHERE id = ?", id)
+			if err != nil {
+				t.Fatalf("mark %s a template: %v", id, err)
+			}
+			if n, err := res.RowsAffected(); err != nil || n != 1 {
+				t.Fatalf("mark %s a template: %d rows affected (err %v), want 1", id, n, err)
+			}
+		},
+		promote: func(id string) {
+			if out, err := bdProxiedRun(t, bd, p.dir, "promote", id); err != nil {
+				t.Fatalf("bd promote %s: %v\n%s", id, err, out)
+			}
+		},
+	})
 	proxied := checkSearchRoute(t, "proxied", bd, p.dir, bdProxiedEnv(p.dir), false)
 
 	sp := startServe(t, bd, p.dir, bdProxiedEnv(p.dir))

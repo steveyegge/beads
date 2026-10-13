@@ -303,6 +303,7 @@ func newDoltReaderFixture(t *testing.T, prefix string) (conformance.ReaderFixtur
 			_, err := store.AddIssueComment(ctx, issueID, author, text)
 			return err
 		},
+		PromoteWisp: store.PromoteFromEphemeral,
 	}
 	return fixture, ctx, func() {
 		cancel()

@@ -54,6 +54,7 @@ func servedReaderFixture(t *testing.T, name string) conformance.ReaderFixture {
 		CreateWisp:    c.seedIssue,
 		AddDependency: c.seedDependency,
 		AddComment:    c.seedComment,
+		PromoteWisp:   c.seedPromotion,
 	}
 }
 

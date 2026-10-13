@@ -282,5 +282,6 @@ func newEmbeddedReaderFixture(t *testing.T, prefix string) conformance.ReaderFix
 			_, err := te.store.AddIssueComment(ctx, issueID, author, text)
 			return err
 		},
+		PromoteWisp: te.store.PromoteFromEphemeral,
 	}
 }

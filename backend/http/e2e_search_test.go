@@ -3,7 +3,6 @@
 package bdhttp_test
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -20,14 +19,10 @@ func TestE2E_SearchOverHTTP(t *testing.T) {
 	other := createE2EIssue(t, bd, "something else")
 	mustRun(t, bd, "close", closedRouted, "--json")
 
+	// A refusal of the raw SearchIssuesWithCounts seam is the S26 regression
+	// itself, not a missing dependency: S6c (the externaldeps reader
+	// passthrough) is underneath, so nothing on this route reaches that seam.
 	r := bd("search", "ROUTED", "--json")
-	if r.code != 0 && strings.Contains(r.stderr, "SearchIssuesWithCounts") {
-		// Until S6c is underneath, the external-dependency decorator answers
-		// IssueReader with a reader built from the raw method seam, and the
-		// http client refuses that seam's SearchIssuesWithCounts. The refusal
-		// is loud — never an empty or wrong answer — which is what is asserted.
-		t.Skip("needs S6c (externaldeps reader passthrough): " + strings.TrimSpace(r.stderr))
-	}
 	if r.code != 0 {
 		t.Fatalf("bd search failed (exit %d): stdout=%s stderr=%s", r.code, r.stdout, r.stderr)
 	}
