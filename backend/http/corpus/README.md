@@ -32,6 +32,10 @@ following for its share of the shapes:
    `seed` from `testdata/corpus.yaml`: one graph of named rows, plus bulk
    graphs that put more than one server page of ready rows and wisps in the
    store. Both sides use `BEADS_ACTOR=worker` and set `CLAUDE_SESSION_ID`.
+   The embedded side is initialized and seeded on its own goroutine while
+   steps 2 and 3 run and the served side is seeded (`prepareSide`): the two
+   sides share no directory, env or process, and each runs the seed in
+   order, so the seeded data does not depend on the overlap.
 5. Runs each of its shapes as a subtest, on both sides. The embedded run must
    exit with the shape's `expect_exit` and match its `expect_stderr`. If it does
    not, the shape is wrong or bd changed, and the subtest fails as a corpus
@@ -59,10 +63,18 @@ shape's effects:
 part, in corpus order. A new shape must keep that independence: it may rely on
 the seed and its own `setup`, never on another shape having run.
 
-Every part seeds again (the server and seed take about 100s of a part's run
-on the CI executors), so running all the parts in one process takes longer
-than one run over every shape did. Run one part with
+Every part seeds again, so running all the parts in one process takes
+longer than one run over every shape did; each part logs its setup time
+(`part N setup ...`). Run one part with
 `-run 'TestServedCorpusPart2$'`.
+
+There are four parts. In the embedded lane each part's setup (server start
+plus both seeds, run concurrently) takes ~62-76s and the shapes ~242s in
+total. Four parts ran 114-146s each and three ran 170-180s. Three would save
+one setup (~75 test-seconds a run), but the longest part is the lane's
+served long pole and sits on the CI gate's critical path, so four parts win.
+To change the count, update `corpusParts`, `servedCorpusParts`,
+`served_pinned_shards.txt` and the target's `shard_count` together.
 
 ```
 CGO_ENABLED=1 BEADS_TEST_EMBEDDED_DOLT=1 BEADS_HTTP_TEST_REQUIRED=1 \
