@@ -1639,7 +1639,7 @@ func ciAnalyticsContinueOnErrorPaths(t *testing.T) map[string]bool {
 }
 
 // bazelDoltIntTestContinueOnErrorPath: bazel-dolt-int's `bazel test` step's
-// continue-on-error key path, the one other step-level exception
+// continue-on-error key path, one of the step-level exceptions
 // TestBazelWorkflowSecretsAndFailureSurface allows (must-fix 2). Unlike the
 // CI analytics steps' (reporting only, read by nothing), this one is load
 // bearing: the always() "Classify tier results" step right after it (which
@@ -1658,6 +1658,29 @@ func bazelDoltIntTestContinueOnErrorPath(t *testing.T) string {
 	}
 	t.Fatalf("%s has no step with id \"test\"", bazelDoltIntJobName)
 	return ""
+}
+
+// bazelDoltIntCheckContinueOnErrorPaths: bazel-dolt-int's two per-tier
+// check_testcases.py steps' continue-on-error key paths (should-fix 2,
+// PR #7535 review), the same load-bearing shape as
+// bazelDoltIntTestContinueOnErrorPath above: each step's own continue-on-
+// error keeps a zero-testcase shard in one tier from failing the job
+// directly, but the always() "Classify tier results" step folds its outcome
+// into that tier's result through --check, so nothing is hidden from
+// pr.yml's ci-gate, only moved.
+func bazelDoltIntCheckContinueOnErrorPaths(t *testing.T) map[string]bool {
+	t.Helper()
+	job := readCIWorkflow(t, bazelWorkflowName).job(t, bazelDoltIntJobName)
+	paths := map[string]bool{}
+	for i, step := range job.Steps {
+		if step.ID == "check-ss" || step.ID == "check-cd" {
+			paths[fmt.Sprintf(".jobs.%s.steps[%d].continue-on-error", bazelDoltIntJobName, i)] = true
+		}
+	}
+	if len(paths) != 2 {
+		t.Fatalf("%s: want 2 check-ss/check-cd steps, found %d", bazelDoltIntJobName, len(paths))
+	}
+	return paths
 }
 
 // rbe-fork: the lanes' setup-bazel env that asks it for a certificate (modes
@@ -1910,12 +1933,21 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 		// bazel.yml's own run - and thus pr.yml's ci-gate - red for a job
 		// nothing requires.
 		_, flagGated := bazelFlagGatedLanes[name]
-		// A union lane with a flag-gated member (item 5 A2: bazel-dolt-int,
-		// bazel-cmd-dolt) carries the same continue-on-error as that member
-		// would alone: the gated member's id still reads this job's result
-		// directly (unaffected), and continue-on-error only keeps a
-		// flag-gated-member-only failure out of the call's own aggregate
-		// (BAZEL), as it already is through the member outside this mode.
+		// A union lane with a flag-gated member (item 5's bazel-dolt-race,
+		// standing in for bazel-doltserver and bazel-proxied in mode remote;
+		// see bazelUnionLanes) carries the same job-level continue-on-error
+		// as that member would alone: the gated member's id still reads this
+		// job's result directly (unaffected), and continue-on-error only
+		// keeps a flag-gated-member-only failure out of the call's own
+		// aggregate (BAZEL), as it already is through the member outside
+		// this mode. This is unrelated to item 5 A2's bazel-dolt-int, which
+		// carries no job-level continue-on-error at all: its gating is
+		// entirely step-level (its own `bazel test` step, and its two
+		// per-tier check_testcases.py steps, each folded into job.status by
+		// the always() classify step right after them; see
+		// bazelDoltIntTestContinueOnErrorPath and
+		// bazelDoltIntCheckContinueOnErrorPaths in
+		// TestBazelWorkflowSecretsAndFailureSurface, must-fix 2).
 		if job.ContinueOnError && name != bazelRBEPrewarmJobName && !flagGated && !bazelUnionHasFlagGatedMember(name) {
 			t.Errorf("%s continue-on-error hides failures from pr.yml's ci-gate", name)
 		}
@@ -4700,6 +4732,7 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 	}
 	ciAnalyticsPaths := ciAnalyticsContinueOnErrorPaths(t)
 	doltIntTestPath := bazelDoltIntTestContinueOnErrorPath(t)
+	doltIntCheckPaths := bazelDoltIntCheckContinueOnErrorPaths(t)
 	secretRef := regexp.MustCompile(`\bsecrets\s*(\.|\[)`)
 	walkYAML(root, "", func(path string, key bool, value string) {
 		if key && value == "continue-on-error" {
@@ -4713,14 +4746,19 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 			// two CI analytics steps in every lane job
 			// (bazelCIAnalyticsStepNames): reporting only, never a `needs`
 			// of anything and never read back by this workflow or its
-			// callers. So is bazel-dolt-int's own `bazel test` step
-			// (bazelDoltIntTestContinueOnErrorPath): its always() classify
-			// step right after it (no continue-on-error of its own) decides
-			// job.status per-tier from this step's outcome and rc, so
-			// nothing is hidden, only moved (must-fix 2).
+			// callers. So are three steps in bazel-dolt-int's own job: its
+			// `bazel test` step (bazelDoltIntTestContinueOnErrorPath) and its
+			// two per-tier "Every target and shard ran tests" steps,
+			// check-ss and check-cd (bazelDoltIntCheckContinueOnErrorPaths,
+			// should-fix 2) — each one's own continue-on-error keeps a
+			// single shard's failure from failing the job directly, but the
+			// always() classify step right after them (no continue-on-error
+			// of its own) folds every one of their outcomes, plus the test
+			// step's own rc, into job.status per tier via --check, so
+			// nothing is hidden from pr.yml's ci-gate, only moved.
 			jobName := strings.TrimSuffix(strings.TrimPrefix(path, ".jobs."), ".continue-on-error")
 			_, flagGated := bazelFlagGatedLanes[jobName]
-			if path != bazelRBEPrewarmContinueOnErrorPath && path != doltIntTestPath && !flagGated && !ciAnalyticsPaths[path] && !bazelUnionHasFlagGatedMember(jobName) {
+			if path != bazelRBEPrewarmContinueOnErrorPath && path != doltIntTestPath && !doltIntCheckPaths[path] && !flagGated && !ciAnalyticsPaths[path] && !bazelUnionHasFlagGatedMember(jobName) {
 				t.Errorf("%s: %s hides failures from pr.yml's ci-gate", bazelWorkflowName, path)
 			}
 		}

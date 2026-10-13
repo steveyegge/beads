@@ -695,16 +695,26 @@ Unlike dolt-race, this union's members do not share a gating category:
 `continue-on-error` (which would make `job.status` read success regardless
 of the `bazel test` step's own result) would let a server-storage failure
 end such a run green, where it must stay red exactly as it does on main
-today. Instead only the `bazel test` step carries `continue-on-error`, and an
-always() "Classify tier results" step (`tools/bazel/classify_tier_results.py`)
-reads the BEP by target label, computes each tier's own result, and fails
-the job itself iff server-storage's tier failed (a cmd-dolt-only test failure
-leaves the job green, as `bazel-cmd-dolt`'s own `continue-on-error` already
-does outside mode `remote`) or `bazel`'s exit code was neither 0 nor 3 (not
-attributable to one tier, so both are marked failed and the job fails
-regardless). The job exposes two outputs, `server_storage_result` and
-`cmd_dolt_result`, one per tier, instead of the uniform `result` every other
-lane's always() step records.
+today. Instead the `bazel test` step and the two per-tier "Every target and shard
+ran tests" steps (`check-ss`, `check-cd`, below) each carry their own
+`continue-on-error`, and an always() "Classify tier results" step
+(`tools/bazel/classify_tier_results.py`) reads the BEP by target label,
+folds each check step's outcome in via `--check NAME=OUTCOME`, computes each
+tier's own result, and fails the job itself iff server-storage's tier failed
+(a cmd-dolt-only test or zero-testcase failure leaves the job green, as
+`bazel-cmd-dolt`'s own `continue-on-error` already does outside mode
+`remote`); `bazel`'s exit code being neither 0 nor 3 (not attributable to one
+tier) or a non-`PASSED` result for a label outside both `--tier` lists (the
+label/tag lists having drifted from the BUILD files, rather than trust a
+silent pass) both mark every tier failed and fail the job regardless. The
+classify script's own flags are hardened to match: `--bep`/`--rc`/
+`--gate-tier`/`--github-output` may each be given only once, and a repeated
+`--tier`/`--check` name is rejected, so an edit that accidentally widens or
+un-gates a tier fails the script rather than silently changing what gates
+the job (`scripts/bazel_dolt_int_test.go`'s exact pin of the classify step's
+`run:` argv closes the same gap one level up). The job exposes two outputs,
+`server_storage_result` and `cmd_dolt_result`, one per tier, instead of the
+uniform `result` every other lane's always() step records.
 
 - Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
   dispatch and `bazel-farm.yml`'s authorized call), and only when `integration`
@@ -718,22 +728,40 @@ lane's always() step records.
   per-tier output first, then their own member's, so `pr.yml`'s gate ids
   (`BAZEL_SERVER_STORAGE`, `BAZEL_CMD_DOLT`), `ci-gate.sh` and
   `bazel-gate.sh` are unchanged: a job that dies before the classify step
-  leaves both outputs empty, which `ci-gate.sh` treats as unset (the same
-  `report_failure` path as an empty `bazel-server-storage`/`bazel-cmd-dolt`
-  result, just a different message), and the per-mode skips are the
-  members' as before.
-- `check_testcases.py` and `check_shard_coverage.py` run once over the
-  union's BEP. The job also runs a "Shard balance" step scoped with
+  leaves both outputs empty, and `pr.yml` falls back an empty
+  `needs.bazel.outputs.bazel-server-storage`/`bazel-cmd-dolt` to the literal
+  `"skipped"` (`pr.yml`'s `BAZEL_SERVER_STORAGE`/`BAZEL_CMD_DOLT` env lines),
+  so `ci-gate.sh` takes its "was skipped" branch, not "is unset" (that branch
+  is only an env var that is empty after the `||` fallback, which these never
+  are) -- `report_failure "$var was skipped"`, the same failure as an empty
+  `bazel-server-storage`/`bazel-cmd-dolt` result today -- and the per-mode
+  skips are the members' as before.
+- `check_testcases.py` runs twice over the union's BEP, once per tier
+  (`check-ss`, scoped with `--label` to server-storage's two targets; `check-cd`,
+  scoped to cmd-dolt's two), each with `continue-on-error: true` so a
+  zero-testcase shard in one tier reaches only that tier's classify result
+  (must-fix 2 of PR #7535's review), not the other's and not the job
+  directly. `--label`'s sets are policy-tied to the BUILD files' own
+  `dolt-server-integration`/`dolt-server-cmd` tag sets
+  (`TestBazelDoltIntTierLabelsMatchTheTags`), the same sets
+  `TestBazelDoltIntFitsTheJobsBudget` derives, so the two cannot drift apart.
+  `check_shard_coverage.py` still runs once over the union's BEP. The job
+  also runs a "Shard balance" step scoped with
   `--label //internal/storage/dolt:dolt_server_full_test`, distinct from
   `bazel-server-storage`'s own unscoped shard-balance step, since the union's
   BEP otherwise mixes both tiers' shards under one report. The `bazel test`
-  step has a 25-minute timeout, every step has one, and the job's
-  (58 minutes) is at least their sum plus 5 and below the merge queue's
-  60-minute check timeout -- leaving only about 2 minutes for runner pickup
-  and the rbe job inside that 60-minute budget, so a hang that runs to this
-  job's own timeout can drop the merge group; accepted, because such a run
-  is red anyway and the 58-minute job timeout bounds only this job, not the
-  whole run.
+  step has a 25-minute timeout, every step has one (the two check steps
+  1 minute each, preserving the pre-split step's combined 2-minute budget),
+  and the job's (58 minutes) is at least their sum plus 5 and below the merge
+  queue's 60-minute check timeout -- leaving only about 2 minutes for runner
+  pickup and the rbe job inside that 60-minute budget, so a hang that runs to
+  this job's own timeout can drop the merge group; accepted, because such a
+  run is red anyway and the 58-minute job timeout bounds only this job, not
+  the whole run. "Upload test logs" runs `if: failure() || steps.test.outcome
+  == 'failure'`, not `failure()` alone, since the `bazel test` step's own
+  `continue-on-error` means an ordinary test failure there does not make
+  `failure()` true until the classify step (which runs after it) exits
+  non-zero.
 - Its ci-analytics `LANE` is `dolt-int`.
 - Policy: `scripts/bazel_dolt_int_test.go`, and
   `tools/bazel/classify_tier_results_test.py` for the classify script itself.

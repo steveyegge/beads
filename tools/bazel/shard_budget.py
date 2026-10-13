@@ -42,6 +42,15 @@ alone and not cmd-dolt's bd_dolt_server_test / regression_test shards, which
 no job budgeted before the union and which this script has never judged).
 Omitted (bazel-server-storage's own step, unchanged): every sharded target in
 the BEP, as before.
+
+A --label naming a target with no executed shard result in the BEP at all is
+a workflow authoring error (a typo, or a target renamed out from under a
+pinned step), not a budget outcome: the step prints ::error and exits 1
+rather than silently reporting "no sharded test target executed two or more
+shards" (PR #7535 review, should-fix 3, carried across both rounds). A label
+present but with fewer than two executed shards this run is not an error
+(cache hits can legitimately leave zero or one shard executed); it is simply
+skipped by evaluate(), same as before.
 """
 
 import argparse
@@ -164,9 +173,15 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     shard_durations = read_shard_durations(args.bep)
-    results = evaluate(shard_durations, labels=set(args.label) if args.label else None)
 
     failed = False
+    if args.label:
+        for label in sorted(set(args.label) - set(shard_durations)):
+            failed = True
+            print(f"::error title=shard budget::{label}: --label, but the BEP has no executed shard for it")
+
+    results = evaluate(shard_durations, labels=set(args.label) if args.label else None)
+
     for r in results:
         if r.fail and args.fail_on_imbalance:
             failed = True

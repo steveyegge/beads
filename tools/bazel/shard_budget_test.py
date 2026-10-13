@@ -208,6 +208,32 @@ class MainTest(unittest.TestCase):
             os.unlink(path)
         self.assertEqual(rc, 0)
 
+    def test_unknown_label_fails_even_without_fail_on_imbalance(self):
+        # PR #7535 review, should-fix 3 (carried): a --label naming a target
+        # with no executed shard in the BEP at all is a workflow authoring
+        # error (a typo, or a renamed target), not a quiet "nothing to
+        # judge" success.
+        events = [test_result_event("//storage:t", i, 80_000) for i in range(1, 10)]
+        path = write_bep(events)
+        try:
+            rc = shard_budget.main(["--bep", path, "--label", "//nope:x"])
+        finally:
+            os.unlink(path)
+        self.assertEqual(rc, 1)
+
+    def test_label_present_with_one_shard_is_not_an_error(self):
+        # A label can legitimately have zero or one executed shard this run
+        # (the rest were cache hits): evaluate() already skips it as
+        # insufficient evidence, and that must stay a 0, not the unknown-
+        # label error above.
+        events = [test_result_event("//storage:t", 1, 80_000)]
+        path = write_bep(events)
+        try:
+            rc = shard_budget.main(["--bep", path, "--label", "//storage:t"])
+        finally:
+            os.unlink(path)
+        self.assertEqual(rc, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

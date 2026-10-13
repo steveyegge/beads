@@ -2701,12 +2701,40 @@ jobs:
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           exit "$rc"
 
-      # The member lanes' checks, once over the union's BEP: check_testcases
-      # covers both tiers (cmd-dolt has no shard-coverage check of its own).
-      - name: Every target and shard ran tests
+      # check_testcases split per tier (should-fix 2, PR #7535 review): a
+      # single shared step with no continue-on-error would fail this job
+      # outright on a cmd-dolt-only zero-testcase shard (e.g. TestMain dying
+      # on dolt server start under BEADS_TEST_REQUIRE_DOLT_CONTAINER=1),
+      # where main (bazel-cmd-dolt alone) stays green, and the divergence
+      # would only show up under the documented rollback to
+      # BAZEL_CMD_DOLT_REQUIRED=false. Each step is --label-scoped to its own
+      # tier (so a --label typo or a label the run did not test fails
+      # closed, not open: check_testcases.py's own --label section) and
+      # carries continue-on-error so neither can fail the job by itself; the
+      # classify step below folds each step's own outcome into that tier's
+      # result with --check, so a cmd-dolt failure here reaches
+      # cmd_dolt_result only, same as a cmd-dolt BEP test failure does.
+      - name: Every target and shard ran tests (server-storage)
+        id: check-ss
         if: ${{ always() && steps.test.outcome != 'skipped' }}
-        timeout-minutes: 2
-        run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json"
+        continue-on-error: true
+        timeout-minutes: 1
+        run: >-
+          python3 tools/bazel/check_testcases.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --label //internal/storage/dolt:dolt_server_full_test
+          --label //internal/storage/dolt:dolt_server_conformance_test
+
+      - name: Every target and shard ran tests (cmd-dolt)
+        id: check-cd
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        run: >-
+          python3 tools/bazel/check_testcases.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --label //cmd/bd:bd_dolt_server_test
+          --label //tests/regression:regression_test
 
       # bazel-server-storage's own check (cmd-dolt has none): every
       # full-suite shard ran exactly the tests its shard script lists, and
@@ -2733,8 +2761,13 @@ jobs:
           --bep "$RUNNER_TEMP/bazel-bep.json"
           --label //internal/storage/dolt:dolt_server_full_test
 
+      # failure() alone misses an ordinary test failure here: the `bazel
+      # test` step carries its own continue-on-error (must-fix 2), so a
+      # failing test does not make failure() true until the classify step
+      # (which runs after this one) exits non-zero. steps.test.outcome ==
+      # 'failure' catches that case directly (nit, PR #7535 review).
       - name: Upload test logs
-        if: ${{ failure() && steps.test.outcome != 'skipped' }}
+        if: ${{ (failure() || steps.test.outcome == 'failure') && steps.test.outcome != 'skipped' }}
         timeout-minutes: 3
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -2793,6 +2826,8 @@ jobs:
         timeout-minutes: 1
         env:
           TEST_RC: ${{ steps.test.outputs.rc }}
+          CHECK_SS_OUTCOME: ${{ steps.check-ss.outcome }}
+          CHECK_CD_OUTCOME: ${{ steps.check-cd.outcome }}
         run: >-
           python3 tools/bazel/classify_tier_results.py
           --bep "$RUNNER_TEMP/bazel-bep.json"
@@ -2800,6 +2835,8 @@ jobs:
           --tier server-storage=//internal/storage/dolt:dolt_server_full_test,//internal/storage/dolt:dolt_server_conformance_test
           --tier cmd-dolt=//cmd/bd:bd_dolt_server_test,//tests/regression:regression_test
           --gate-tier server-storage
+          --check "server-storage=$CHECK_SS_OUTCOME"
+          --check "cmd-dolt=$CHECK_CD_OUTCOME"
           --github-output "$GITHUB_OUTPUT"
 
   # F3: moved here from pr.yml so the gate depends on nothing but the rbe

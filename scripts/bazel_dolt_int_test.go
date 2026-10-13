@@ -54,6 +54,13 @@ const bazelDoltIntJobTimeoutMargin = 5
 // compile (its own step was 25).
 const bazelDoltIntTestStepTimeout = 25
 
+// bazelDoltIntClassifyRun: the classify step's run body, exactly (must-fix 3,
+// PR #7535 review): pinned by equality, not substring, so an appended
+// --gate-tier or a second --tier/--check cannot sneak past a Contains check
+// (argparse and dict() would otherwise just let the last value silently
+// win, un-gating or re-gating a tier).
+const bazelDoltIntClassifyRun = `python3 tools/bazel/classify_tier_results.py --bep "$RUNNER_TEMP/bazel-bep.json" --rc "$TEST_RC" --tier server-storage=//internal/storage/dolt:dolt_server_full_test,//internal/storage/dolt:dolt_server_conformance_test --tier cmd-dolt=//cmd/bd:bd_dolt_server_test,//tests/regression:regression_test --gate-tier server-storage --check "server-storage=$CHECK_SS_OUTCOME" --check "cmd-dolt=$CHECK_CD_OUTCOME" --github-output "$GITHUB_OUTPUT"`
+
 // bazelDoltIntTestRun: the union's `bazel test` step body, exactly. Unlike
 // the retired tiers' (bazelTierTestRun), it captures rc as a step output (no
 // job-level continue-on-error to rely on job.status instead) for the
@@ -80,10 +87,13 @@ var bazelDoltIntMembers = []struct{ config, tag string }{
 // TestBazelDoltIntConfigIsMemberUnion: --config=dolt-int is exactly the set
 // union of its members' lines, except that each member's --test_tag_filters
 // is replaced by one filter naming both members' tags. Every flag stays a
-// member's own, so each member target's test action is unchanged (item 5 A2,
-// aquery-verified byte-identical actionKeys). Both arms run, the mode
-// deciding which, so drift between them would split results by mode: a flag
-// added to a member must be added to the union too.
+// member's own, so each member target's test action is unchanged in the
+// sense that matters for caching (item 5 A2, aquery-verified: byte-identical
+// remote action digests, the key RBE's cache lookups use; each action's
+// local actionKey differs, since dolt-int reaches these flags through the
+// target's own env/args rather than the member's build configuration). Both
+// arms run, the mode deciding which, so drift between them would split
+// results by mode: a flag added to a member must be added to the union too.
 func TestBazelDoltIntConfigIsMemberUnion(t *testing.T) {
 	rc := readPolicyFile(t, bazelPolicyRoot(t), ".bazelrc")
 	const tagPrefix = "test --test_tag_filters="
@@ -231,39 +241,78 @@ func TestBazelDoltIntIsGated(t *testing.T) {
 	if classify.If != "${{ always() && steps.test.outcome != 'skipped' }}" {
 		t.Errorf("%s classify step if = %q, want always() guarded by steps.test.outcome (a dead job before this step must leave both outputs empty)", bazelDoltIntJobName, classify.If)
 	}
-	// steps.test.outputs.rc reaches the script through env, not interpolated
-	// directly into the run script (TestBazelWorkflowForkFarmInputs forbids
-	// "${{" in any run: body; see "Record job result"'s JOB_STATUS for the
-	// existing pattern this follows).
-	if got, want := classify.Env["TEST_RC"], "${{ steps.test.outputs.rc }}"; got != want {
-		t.Errorf("%s classify step env.TEST_RC = %q, want %q", bazelDoltIntJobName, got, want)
-	}
-	for _, want := range []string{
-		"--bep \"$RUNNER_TEMP/bazel-bep.json\"",
-		"--rc \"$TEST_RC\"",
-		"--tier server-storage=//internal/storage/dolt:dolt_server_full_test,//internal/storage/dolt:dolt_server_conformance_test",
-		"--tier cmd-dolt=//cmd/bd:bd_dolt_server_test,//tests/regression:regression_test",
-		"--gate-tier server-storage",
-		"--github-output \"$GITHUB_OUTPUT\"",
+	// steps.test.outputs.rc and each per-tier check step's own outcome reach
+	// the script through env, not interpolated directly into the run script
+	// (TestBazelWorkflowForkFarmInputs forbids "${{" in any run: body; see
+	// "Record job result"'s JOB_STATUS for the existing pattern this
+	// follows).
+	for env, want := range map[string]string{
+		"TEST_RC":          "${{ steps.test.outputs.rc }}",
+		"CHECK_SS_OUTCOME": "${{ steps.check-ss.outcome }}",
+		"CHECK_CD_OUTCOME": "${{ steps.check-cd.outcome }}",
 	} {
-		if !strings.Contains(classify.Run, want) {
-			t.Errorf("%s classify step run missing %q:\n%s", bazelDoltIntJobName, want, classify.Run)
+		if got := classify.Env[env]; got != want {
+			t.Errorf("%s classify step env.%s = %q, want %q", bazelDoltIntJobName, env, got, want)
 		}
+	}
+	// Pinned by exact equality, not substring (must-fix 3): see
+	// bazelDoltIntClassifyRun's own comment.
+	if got, want := strings.TrimSpace(classify.Run), bazelDoltIntClassifyRun; got != want {
+		t.Errorf("%s classify step run changed; want exactly:\n%s\ngot:\n%s", bazelDoltIntJobName, want, got)
 	}
 	if strings.Contains(classify.Run, "${{") {
 		t.Errorf("%s classify step run interpolates an expression directly: %q", bazelDoltIntJobName, classify.Run)
 	}
-	// server-storage's two checks and its own "No test target is marked
-	// flaky" step (cmd-dolt has none of either): textually identical, once
-	// over the union's BEP.
+	// server-storage's own "No test target is marked flaky" and "Every
+	// listed test ran in its shard" steps (cmd-dolt has neither): textually
+	// identical, once over the union's BEP. "Every target and shard ran
+	// tests" is bespoke per tier below (should-fix 2: split, continue-on-
+	// error, --label-scoped, and the result folded into that tier alone).
 	for member, steps := range map[string][]string{
-		bazelServerJobName: {"No test target is marked flaky", "Every target and shard ran tests", "Every listed test ran in its shard"},
+		bazelServerJobName: {"No test target is marked flaky", "Every listed test ran in its shard"},
 	} {
 		m := workflow.job(t, member)
 		for _, name := range steps {
 			want, got := m.step(t, name), job.step(t, name)
 			if strings.TrimSpace(got.Run) != strings.TrimSpace(want.Run) || got.If != want.If {
 				t.Errorf("%s step %q = (if %q) %q, want %s's (if %q) %q", bazelDoltIntJobName, name, got.If, got.Run, member, want.If, want.Run)
+			}
+		}
+	}
+	// The split check_testcases steps (should-fix 2, PR #7535 review): each
+	// --label-scoped to its own tier, continue-on-error so a zero-testcase
+	// shard in either tier cannot fail the job by itself -- the classify
+	// step's --check folds each step's own outcome into that tier's result
+	// instead (bazelDoltIntClassifyRun pins the --check args).
+	for id, want := range map[string]struct {
+		name   string
+		labels []string
+	}{
+		"check-ss": {"Every target and shard ran tests (server-storage)", []string{
+			"//internal/storage/dolt:dolt_server_full_test",
+			"//internal/storage/dolt:dolt_server_conformance_test",
+		}},
+		"check-cd": {"Every target and shard ran tests (cmd-dolt)", []string{
+			"//cmd/bd:bd_dolt_server_test",
+			"//tests/regression:regression_test",
+		}},
+	} {
+		step := job.step(t, want.name)
+		if step.ID != id {
+			t.Errorf("%s step %q id = %q, want %q (the classify step reads steps.%s.outcome)", bazelDoltIntJobName, want.name, step.ID, id, id)
+		}
+		if step.If != "${{ always() && steps.test.outcome != 'skipped' }}" {
+			t.Errorf("%s step %q if = %q, want always() guarded by steps.test.outcome", bazelDoltIntJobName, want.name, step.If)
+		}
+		if v, ok := step.ContinueOnError.(bool); !ok || !v {
+			t.Errorf("%s step %q: want continue-on-error: true (its outcome feeds the classify step's --check, not job.status directly), got %v", bazelDoltIntJobName, want.name, step.ContinueOnError)
+		}
+		if !strings.Contains(step.Run, "check_testcases.py") {
+			t.Errorf("%s step %q run = %q, want it to run check_testcases.py", bazelDoltIntJobName, want.name, step.Run)
+		}
+		for _, label := range want.labels {
+			if !strings.Contains(step.Run, "--label "+label) {
+				t.Errorf("%s step %q run missing --label %s:\n%s", bazelDoltIntJobName, want.name, label, step.Run)
 			}
 		}
 	}
@@ -422,6 +471,7 @@ func TestBazelDoltIntArmsExactlyOnePerMode(t *testing.T) {
 // gascity Python test files this repo also wraps, e.g. bazel_rrc_test.go's
 // rrc_verify_test.py).
 const classifyTierResultsTest = "tools/bazel/classify_tier_results_test.py"
+const checkTestcasesTest = "tools/bazel/check_testcases_test.py"
 
 // TestClassifyTierResultsUnitTests runs classify_tier_results.py's own
 // behavioural test (must-fix 2(f)): the script the "Classify tier results"
@@ -434,6 +484,22 @@ func TestClassifyTierResultsUnitTests(t *testing.T) {
 	cmd.Dir = filepath.Join(root, "tools", "bazel")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%s failed: %v\n%s", classifyTierResultsTest, err, out)
+	}
+}
+
+// TestCheckTestcasesUnitTests runs check_testcases.py's own behavioural test
+// (should-fix 2 of PR #7535's review): the script the union's two per-tier
+// "Every target and shard ran tests" steps (check-ss, check-cd) each call
+// with their own --label set, covering that --label both restricts the
+// check to its own tier's targets and still fails closed on a label the BEP
+// has no result for, or a zero-testcase shard within its own tier.
+func TestCheckTestcasesUnitTests(t *testing.T) {
+	root := sourceRepoRoot(t)
+	python := requireHostTool(t, "python3")
+	cmd := exec.Command(python, filepath.Join(root, checkTestcasesTest), "-v")
+	cmd.Dir = filepath.Join(root, "tools", "bazel")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s failed: %v\n%s", checkTestcasesTest, err, out)
 	}
 }
 
@@ -501,5 +567,110 @@ func TestBazelDoltIntFitsTheJobsBudget(t *testing.T) {
 	}
 	if total > budget {
 		t.Errorf("--config=%s: %d test actions, more than --config=remote-exec's --jobs=%d: the tiers would no longer run at once", bazelDoltIntConfig, total, budget)
+	}
+}
+
+// bazelDoltIntTierNames maps each member's tag to the --tier/--check name
+// bazel.yml's classify step uses for it.
+var bazelDoltIntTierNames = map[string]string{
+	"dolt-server-integration": "server-storage",
+	"dolt-server-cmd":         "cmd-dolt",
+}
+
+// bazelDoltIntTaggedLabels returns, for each of the union's tags, the exact
+// sorted set of labels the BUILD files tag with it: the same rule-block walk
+// TestBazelDoltIntFitsTheJobsBudget uses to sum shard counts, but keeping
+// each rule's own label (//pkg:name) instead.
+func bazelDoltIntTaggedLabels(t *testing.T) map[string][]string {
+	t.Helper()
+	root := bazelPolicyRoot(t)
+	ruleStart := regexp.MustCompile(`(?m)^[A-Za-z_][A-Za-z0-9_]*\($`)
+	nameLine := regexp.MustCompile(`(?m)^    name = "([^"]+)",$`)
+	out := map[string][]string{}
+	for _, f := range repoFiles(t, root, 300) {
+		if path.Base(f) != "BUILD.bazel" {
+			continue
+		}
+		build := readPolicyFile(t, root, f)
+		pkg := path.Dir(f)
+		if pkg == "." {
+			pkg = ""
+		}
+		for _, loc := range ruleStart.FindAllStringIndex(build, -1) {
+			end := strings.Index(build[loc[0]:], "\n)\n")
+			if end < 0 {
+				continue
+			}
+			rule := build[loc[0] : loc[0]+end]
+			nm := nameLine.FindStringSubmatch(rule)
+			if nm == nil {
+				continue
+			}
+			for _, mem := range bazelDoltIntMembers {
+				tagLine := `"` + mem.tag + `"`
+				for _, line := range strings.Split(rule, "\n") {
+					if strings.HasPrefix(line, "    tags = [") && strings.Contains(line, tagLine) {
+						out[mem.tag] = append(out[mem.tag], "//"+pkg+":"+nm[1])
+						break
+					}
+				}
+			}
+		}
+	}
+	for tag := range out {
+		slices.Sort(out[tag])
+	}
+	return out
+}
+
+// TestBazelDoltIntTierLabelsMatchTheTags ties the classify step's --tier
+// label lists, and the per-tier check_testcases.py steps' --label lists, to
+// the BUILD files' own tag sets -- the same sets TestBazelDoltIntFitsTheJobsBudget
+// walks (must-fix 1, PR #7535 review): classify_tier_results.py fails every
+// tier closed on a non-PASSED result for a label outside every --tier, but
+// only if these lists actually name every tagged target. A target tagged
+// dolt-server-integration or dolt-server-cmd without a matching update here
+// (and to bazelDoltIntTestActions/bazelDoltIntClassifyRun, which this test
+// also indirectly guards) would otherwise run untracked.
+func TestBazelDoltIntTierLabelsMatchTheTags(t *testing.T) {
+	tagged := bazelDoltIntTaggedLabels(t)
+	workflow := readCIWorkflow(t, bazelWorkflowName)
+	job := workflow.job(t, bazelDoltIntJobName)
+
+	classify := job.step(t, "Classify tier results")
+	tierArg := regexp.MustCompile(`--tier ([a-z-]+)=(\S+)`)
+	gotTiers := map[string][]string{}
+	for _, m := range tierArg.FindAllStringSubmatch(classify.Run, -1) {
+		gotTiers[m[1]] = strings.Split(m[2], ",")
+	}
+
+	checkSteps := map[string]string{
+		"dolt-server-integration": "Every target and shard ran tests (server-storage)",
+		"dolt-server-cmd":         "Every target and shard ran tests (cmd-dolt)",
+	}
+
+	for _, mem := range bazelDoltIntMembers {
+		want := tagged[mem.tag]
+		if len(want) == 0 {
+			t.Fatalf("no BUILD rule is tagged %q", mem.tag)
+		}
+		tierName := bazelDoltIntTierNames[mem.tag]
+
+		got := slices.Clone(gotTiers[tierName])
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("classify step --tier %s=... labels %v, want the %q-tagged labels from the BUILD files %v", tierName, got, mem.tag, want)
+		}
+
+		step := job.step(t, checkSteps[mem.tag])
+		for _, label := range want {
+			if !strings.Contains(step.Run, "--label "+label) {
+				t.Errorf("%s step %q missing --label %s (one of %q's tagged labels)", bazelDoltIntJobName, checkSteps[mem.tag], label, mem.tag)
+			}
+		}
+		gotLabelCount := strings.Count(step.Run, "--label ")
+		if gotLabelCount != len(want) {
+			t.Errorf("%s step %q has %d --label args, want exactly %d (%v)", bazelDoltIntJobName, checkSteps[mem.tag], gotLabelCount, len(want), want)
+		}
 	}
 }

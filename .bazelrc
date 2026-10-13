@@ -317,9 +317,12 @@ test:doltserver-cmd --norun_validations
 # members: the race build, tags=gms_pure_go,integration, keep_going,
 # test_summary, the eternal 1200s timeout, GO_TEST_WRAP_TESTV=1,
 # -test.parallel=4, local_test_jobs, remote_download_regex and
-# norun_validations. So each member target's test action is unchanged
-# (aquery: all 63 TestRunner actions byte-identical), and cached results
-# carry over both ways.
+# norun_validations. So each member target's test action is unchanged in the
+# sense that matters for caching (aquery: all 63 TestRunner actions' remote
+# action digests are byte-identical, the key RBE's cache lookups use), though
+# each action's local actionKey differs since these flags now reach the
+# target via its own env/args rather than the member's build configuration.
+# Cached results carry over both ways regardless.
 # New for cmd-dolt here: --experimental_remote_cache_eviction_retries=0.
 # server-storage already has it (above); cmd-dolt did not (it has no
 # --config=sole-run of its own, unlike doltserver). Adding it to the union is
