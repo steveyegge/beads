@@ -8,7 +8,9 @@
 package corpus_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +19,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -288,37 +292,56 @@ func testServedCorpus(t *testing.T, part int) {
 	profile := loadReferenceProfile(t)
 	bin := buildBD(t)
 
-	serverAddr := startCorpusServer(t)
-	proxy := newReferenceProxy(t, profile, serverAddr)
-	proxyAddr := startProxy(t, proxy)
-
 	common := []string{
 		"BEADS_ACTOR=worker",
 		"CLAUDE_SESSION_ID=corpus-session-s23",
 		"BD_BACKUP_ENABLED=false",
 		"BD_EXPORT_AUTO=false",
 	}
+
+	// The embedded side needs no server: init and seed it on a goroutine
+	// while this one starts the server and seeds the served side. Each side
+	// has its own directories, env and bd processes (prepareSide), and each
+	// still runs the seed in order, so the seeded data is what it was when
+	// the two sides were seeded command by command in turn. The deferred
+	// cancel and Wait run on every exit, a t.Fatal included, so the goroutine
+	// never outlives the test or its TempDirs.
+	setupStart := time.Now()
+	ctx, cancel := context.WithCancel(context.Background())
+	var seeding sync.WaitGroup
+	defer seeding.Wait()
+	defer cancel()
+	local := &side{name: "embedded", dir: t.TempDir(), files: t.TempDir(), env: common}
+	var localErr error
+	seeding.Add(1)
+	go func() {
+		defer seeding.Done()
+		localErr = prepareSide(ctx, t, bin, c, local,
+			[]string{"init", "-p", corpusPrefix, "--non-interactive", "--skip-hooks", "--skip-agents", "-q"})
+		if localErr != nil {
+			cancel()
+		}
+	}()
+
+	serverAddr := startCorpusServer(t)
+	proxy := newReferenceProxy(t, profile, serverAddr)
+	proxyAddr := startProxy(t, proxy)
 	served := &side{name: "served", dir: t.TempDir(), files: t.TempDir(),
 		env: append([]string{"BEADS_HTTP_TOKEN=" + proxyAddr + "=" + corpusToken}, common...)}
-	local := &side{name: "embedded", dir: t.TempDir(), files: t.TempDir(), env: common}
-
-	if r := runBD(t, bin, served.dir, served.env, "", "connect", "http://"+proxyAddr, "--expect-project-id", corpusProjectID, "--json"); r.code != 0 {
-		t.Fatalf("bd connect: %s", r)
+	servedErr := prepareSide(ctx, t, bin, c, served,
+		[]string{"connect", "http://" + proxyAddr, "--expect-project-id", corpusProjectID, "--json"})
+	if servedErr != nil {
+		cancel()
 	}
-	if r := runBD(t, bin, local.dir, local.env, "", "init", "-p", corpusPrefix, "--non-interactive", "--skip-hooks", "--skip-agents", "-q"); r.code != 0 {
-		t.Fatalf("bd init (embedded): %s", r)
-	}
-	for _, sd := range []*side{served, local} {
-		writeAssets(t, c.Files, sd.files)
-	}
-	for _, args := range c.Seed {
-		for _, sd := range []*side{served, local} {
-			argv := expand(t, bin, sd, args)
-			if r := runBD(t, bin, sd.dir, sd.env, "", argv...); r.code != 0 {
-				t.Fatalf("seed %v on %s failed; the seed must use shapes that work on the reference profile: %s", args, sd.name, r)
-			}
+	seeding.Wait()
+	// The side that failed first is the one to report; the other may only
+	// have seen the cancel.
+	for _, err := range []error{servedErr, localErr} {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
 		}
 	}
+	t.Logf("part %d setup (server start and both sides seeded concurrently): %s", part, time.Since(setupStart).Round(100*time.Millisecond))
 	proxy.takeRefusals()
 
 	skipPending := os.Getenv("BEADS_CORPUS_SKIP_PENDING") == "1"
@@ -746,7 +769,9 @@ func brief(v any) string {
 
 var placeholder = regexp.MustCompile(`\{(file|rev):([^}]+)\}`)
 
-// expand substitutes {file:NAME} and {rev:ID} in args for side sd.
+// expand substitutes {file:NAME} and {rev:ID} in args for side sd. It never
+// fails t (a {rev:} it cannot read becomes "0"), so prepareSide may call it
+// off the test's goroutine.
 func expand(t *testing.T, bin string, sd *side, args []string) []string {
 	t.Helper()
 	out := make([]string, len(args))
@@ -757,7 +782,11 @@ func expand(t *testing.T, bin string, sd *side, args []string) []string {
 			case "file":
 				return filepath.Join(sd.files, parts[2])
 			default:
-				r := runBD(t, bin, sd.dir, sd.env, "", "show", parts[2], "--json")
+				r, err := execBD(context.Background(), bin, sd.dir, sd.env, "", "show", parts[2], "--json")
+				if err != nil {
+					t.Logf("{rev:%s} on %s: %v", parts[2], sd.name, err)
+					return "0"
+				}
 				if r.code != 0 {
 					t.Logf("{rev:%s} on %s: show failed: %s", parts[2], sd.name, r)
 					return "0"
@@ -781,17 +810,49 @@ func expand(t *testing.T, bin string, sd *side, args []string) []string {
 	return out
 }
 
-func writeAssets(t *testing.T, assets []corpusAsset, dir string) {
+// prepareSide attaches sd to its store with bd attach (connect or init),
+// writes the corpus's asset files into sd.files and runs the seed on sd, in
+// order. It touches only sd's own directories and bd processes and returns a
+// failure as an error instead of failing t, so testServedCorpus runs it for
+// the two sides at once; it stops before its next bd once ctx is done.
+func prepareSide(ctx context.Context, t *testing.T, bin string, c *corpusFile, sd *side, attach []string) error {
 	t.Helper()
+	r, err := execBD(ctx, bin, sd.dir, sd.env, "", attach...)
+	if err != nil {
+		return err
+	}
+	if r.code != 0 {
+		return fmt.Errorf("bd %s on %s: %s", strings.Join(attach, " "), sd.name, r)
+	}
+	if err := writeAssets(c.Files, sd.files); err != nil {
+		return fmt.Errorf("%s: %w", sd.name, err)
+	}
+	for _, args := range c.Seed {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r, err := execBD(ctx, bin, sd.dir, sd.env, "", expand(t, bin, sd, args)...)
+		if err != nil {
+			return err
+		}
+		if r.code != 0 {
+			return fmt.Errorf("seed %v on %s failed; the seed must use shapes that work on the reference profile: %s", args, sd.name, r)
+		}
+	}
+	return nil
+}
+
+func writeAssets(assets []corpusAsset, dir string) error {
 	for _, a := range assets {
 		content := a.Content
 		if a.Bulk != nil {
 			content = bulkPlan(*a.Bulk)
 		}
 		if err := os.WriteFile(filepath.Join(dir, a.Name), []byte(content), 0o600); err != nil {
-			t.Fatalf("write asset %s: %v", a.Name, err)
+			return fmt.Errorf("write asset %s: %w", a.Name, err)
 		}
 	}
+	return nil
 }
 
 func bulkPlan(b bulkGraph) string {

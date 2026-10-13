@@ -32,6 +32,10 @@ following for its share of the shapes:
    `seed` from `testdata/corpus.yaml`: one graph of named rows, plus bulk
    graphs that put more than one server page of ready rows and wisps in the
    store. Both sides use `BEADS_ACTOR=worker` and set `CLAUDE_SESSION_ID`.
+   The embedded side is initialized and seeded on its own goroutine while
+   steps 2 and 3 run and the served side is seeded (`prepareSide`): the two
+   sides share no directory, env or process, and each runs the seed in
+   order, so the seeded data does not depend on the overlap.
 5. Runs each of its shapes as a subtest, on both sides. The embedded run must
    exit with the shape's `expect_exit` and match its `expect_stderr`. If it does
    not, the shape is wrong or bd changed, and the subtest fails as a corpus
@@ -59,9 +63,9 @@ shape's effects:
 part, in corpus order. A new shape must keep that independence: it may rely on
 the seed and its own `setup`, never on another shape having run.
 
-Every part seeds again (the server and seed take about 100s of a part's run
-on the CI executors), so running all the parts in one process takes longer
-than one run over every shape did. Run one part with
+Every part seeds again, so running all the parts in one process takes
+longer than one run over every shape did; each part logs its setup time
+(`part N setup ...`). Run one part with
 `-run 'TestServedCorpusPart2$'`.
 
 ```

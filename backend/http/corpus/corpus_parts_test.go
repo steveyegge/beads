@@ -3,7 +3,14 @@
 package corpus_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -67,5 +74,97 @@ func TestCorpusPartIsRoundRobinInOrder(t *testing.T) {
 		if got := fmt.Sprint(ids); got != w {
 			t.Errorf("part %d of 4 = %s, want %s", part, got, w)
 		}
+	}
+}
+
+// fakeBD writes a stand-in for bd that appends its arguments, one call per
+// line, to calls.log in its working directory, and exits 3 when an argument
+// is "boom".
+func fakeBD(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "bd")
+	script := "#!/bin/sh\necho \"$*\" >> calls.log\nfor a in \"$@\"; do [ \"$a\" = boom ] && { echo boom >&2; exit 3; }; done\nexit 0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+func calls(t *testing.T, sd *side) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(sd.dir, "calls.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSpace(string(raw)), "\n")
+}
+
+// prepareSide is what lets testServedCorpus seed the served and embedded
+// sides at once: each side attaches, writes its assets and runs the seed in
+// its own directories, in seed order, and a failure comes back as an error
+// rather than a t.Fatal from a goroutine that is not the test's.
+func TestPrepareSideSeedsBothSidesConcurrently(t *testing.T) {
+	bin := fakeBD(t)
+	c := &corpusFile{
+		Files: []corpusAsset{{Name: "plan.json", Content: "{}"}},
+		Seed:  [][]string{{"create", "--graph", "{file:plan.json}"}, {"close", "e2e-x"}},
+	}
+	a := &side{name: "served", dir: t.TempDir(), files: t.TempDir()}
+	b := &side{name: "embedded", dir: t.TempDir(), files: t.TempDir()}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, sd := range []*side{a, b} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = prepareSide(context.Background(), t, bin, c, sd, []string{"init", sd.name})
+		}()
+	}
+	wg.Wait()
+	for i, sd := range []*side{a, b} {
+		if errs[i] != nil {
+			t.Fatalf("%s: %v", sd.name, errs[i])
+		}
+		want := []string{"init " + sd.name, "create --graph " + filepath.Join(sd.files, "plan.json"), "close e2e-x"}
+		if got := calls(t, sd); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s ran %q, want %q", sd.name, got, want)
+		}
+		if _, err := os.Stat(filepath.Join(sd.files, "plan.json")); err != nil {
+			t.Errorf("%s: asset not written: %v", sd.name, err)
+		}
+	}
+}
+
+func TestPrepareSideReportsAFailedStepAsAnError(t *testing.T) {
+	bin := fakeBD(t)
+	c := &corpusFile{Seed: [][]string{{"create", "boom"}, {"close", "e2e-x"}}}
+	sd := &side{name: "embedded", dir: t.TempDir(), files: t.TempDir()}
+	err := prepareSide(context.Background(), t, bin, c, sd, []string{"init"})
+	if err == nil || !strings.Contains(err.Error(), "seed [create boom] on embedded failed") || !strings.Contains(err.Error(), "exit=3") {
+		t.Fatalf("err = %v, want the failed seed step with its exit", err)
+	}
+	if got := calls(t, sd); !reflect.DeepEqual(got, []string{"init", "create boom"}) {
+		t.Errorf("ran %q; the seed must stop at the failed step", got)
+	}
+
+	sd = &side{name: "served", dir: t.TempDir(), files: t.TempDir()}
+	if err := prepareSide(context.Background(), t, bin, c, sd, []string{"connect", "boom"}); err == nil || !strings.Contains(err.Error(), "bd connect boom on served") {
+		t.Fatalf("err = %v, want the failed attach", err)
+	}
+}
+
+// Once the other side has failed, the test cancels: a side stops before its
+// next step instead of seeding on for nothing.
+func TestPrepareSideStopsWhenCancelled(t *testing.T) {
+	bin := fakeBD(t)
+	c := &corpusFile{Seed: [][]string{{"create", "e2e-x"}}}
+	sd := &side{name: "embedded", dir: t.TempDir(), files: t.TempDir()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := prepareSide(ctx, t, bin, c, sd, []string{"init"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(filepath.Join(sd.dir, "calls.log")); !os.IsNotExist(err) {
+		t.Errorf("bd ran after the cancel (calls.log: %v)", err)
 	}
 }

@@ -1506,6 +1506,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # The served targets' per-test durations, on every run: their pinned
+      # shard manifests (backend/http/served_pinned_shards.txt from
+      # tools/bazel/pin_shards.py, the corpus parts' split) are sized from a
+      # sharded run of this lane, and the logs above are kept only on failure.
+      # test.xml only, a few KB each.
+      - name: Upload served test timings
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          overwrite: true # a job re-run is the same run: replace, not 409
+          name: bazel-embedded-served-testxml
+          path: bazel-testlogs/backend/http/**/test.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
       # Same redacted summary as bazel-test's; see its comment.
       - name: CI analytics summary
         id: ci-analytics
