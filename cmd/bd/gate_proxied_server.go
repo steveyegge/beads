@@ -498,58 +498,43 @@ func runGateListProxiedServer(cmd *cobra.Command, ctx context.Context, args []st
 	allFlag, _ := cmd.Flags().GetBool("all")
 	limit, _ := cmd.Flags().GetInt("limit")
 
+	if len(args) == 0 {
+		// The workspace-wide listing is the shared entry's, on this route too.
+		return runGateList(ctx, allFlag, limit)
+	}
+
 	uw, err := proxiedOpenReadUOW(ctx)
 	if err != nil {
 		return err
 	}
 	defer uw.Close(ctx)
 
-	if len(args) == 1 {
-		target, isWisp, err := workapi.GetIssueOrWisp(ctx, workapi.NewUOWDetailSource(uw), args[0])
-		if errors.Is(err, storage.ErrNotFound) {
-			return HandleErrorRespectJSON("issue not found: %s", args[0])
-		}
-		if err != nil {
-			return HandleErrorRespectJSON("resolving %s: %v", args[0], err)
-		}
-		var metas []*types.IssueWithDependencyMetadata
-		if isWisp {
-			metas, err = uw.DependencyUseCase().ListWispWithIssueMetadata(ctx, target.ID, domain.DepListFilter{Direction: domain.DepDirectionOut})
-		} else {
-			metas, err = uw.DependencyUseCase().ListWithIssueMetadata(ctx, target.ID, domain.DepListFilter{Direction: domain.DepDirectionOut})
-		}
-		if err != nil {
-			return HandleErrorRespectJSON("%v", err)
-		}
-		deps := make([]*types.Issue, 0, len(metas))
-		for _, m := range metas {
-			if m != nil {
-				deps = append(deps, &m.Issue)
-			}
-		}
-		gates := filterIssueGates(deps, allFlag, limit)
-		if jsonOutput {
-			return outputJSON(gates)
-		}
-		displayGates(gates, allFlag)
-		return nil
+	target, isWisp, err := workapi.GetIssueOrWisp(ctx, workapi.NewUOWDetailSource(uw), args[0])
+	if errors.Is(err, storage.ErrNotFound) {
+		return HandleErrorRespectJSON("issue not found: %s", args[0])
 	}
-
-	gateType := types.IssueType("gate")
-	filter := types.IssueFilter{
-		IssueType: &gateType,
-		Limit:     limit,
+	if err != nil {
+		return HandleErrorRespectJSON("resolving %s: %v", args[0], err)
 	}
-	if !allFlag {
-		filter.ExcludeStatus = []types.Status{types.StatusClosed}
+	var metas []*types.IssueWithDependencyMetadata
+	if isWisp {
+		metas, err = uw.DependencyUseCase().ListWispWithIssueMetadata(ctx, target.ID, domain.DepListFilter{Direction: domain.DepDirectionOut})
+	} else {
+		metas, err = uw.DependencyUseCase().ListWithIssueMetadata(ctx, target.ID, domain.DepListFilter{Direction: domain.DepDirectionOut})
 	}
-	page, err := uw.IssueUseCase().SearchIssues(ctx, "", filter)
 	if err != nil {
 		return HandleErrorRespectJSON("%v", err)
 	}
-	if jsonOutput {
-		return outputJSON(page.Items)
+	deps := make([]*types.Issue, 0, len(metas))
+	for _, m := range metas {
+		if m != nil {
+			deps = append(deps, &m.Issue)
+		}
 	}
-	displayGates(page.Items, allFlag)
+	gates := filterIssueGates(deps, allFlag, limit)
+	if jsonOutput {
+		return outputJSON(gates)
+	}
+	displayGates(gates, allFlag)
 	return nil
 }

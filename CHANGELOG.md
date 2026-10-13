@@ -439,6 +439,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunBatchApplyAppliesTheDefaultPriority`.
 
 ### Fixed
+
+- **`bd gate list` works over a connected HTTP workspace** (S20). The
+  workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
+  backend refuses, so gc's `renudge-stale-human-gates` order failed on every
+  remote scope. Every route now calls one library entry,
+  `issueops.ListGates`, which asks the Querier role (`queryIssues`, served by
+  every deployed server) for `type=gate` with closed rows hidden unless
+  `--all`: the same rows the raw filter selected, on both planes. `--limit 0`
+  is unlimited, as before. The bead-scoped form (`bd gate list <id>`) is
+  unchanged.
 - **An update of a template is now refused for every caller, not only
   `bd update`.** The template guard used to be a pre-read in `cmd/bd`, so an
   update through `bd serve` (`PATCH /v0/beads/issues/{id}`), an `update` item
