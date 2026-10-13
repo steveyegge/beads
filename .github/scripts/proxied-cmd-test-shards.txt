@@ -197,6 +197,7 @@
 34 23 TestProxiedServerIfRevisionGuardUpdate
 34 23 TestProxiedServerListWatchCountsTheOffsetIntoMaxRows
 34 23 TestProxiedServerMolBurn
+34 23 TestProxiedServerSearchRoutesAgree
 34 23 TestProxiedServerServeUpdate
 34 23 TestProxiedServerUpdateConcurrentClaim
 34 23 TestProxiedServerUpdateWisp

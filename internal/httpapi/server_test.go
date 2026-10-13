@@ -638,7 +638,7 @@ func TestCapabilitiesAdvertiseEveryImplementedOperation(t *testing.T) {
 	want = append(want, "project.enforce", "issues.batchApplyLarge", "issues.list.sort", "issues.count.scope",
 		"issues.sweep.wispsPlane", "issues.sweep.liveDependents", "issues.sweep.limit",
 		"issues.batchApply.depAddLineage", "issues.update.allowTemplate", "issues.create.defaultPriority",
-		"issues.close.autoCloseMolecule")
+		"issues.close.autoCloseMolecule", "issues.list.search")
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("capabilities = %v, want %v", got, want)

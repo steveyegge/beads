@@ -13,6 +13,7 @@ go_library(
         "claimer.go",
         "commenter.go",
         "counter.go",
+        "current.go",
         "cycledetector.go",
         "deleter.go",
         "dependencyeditor.go",
@@ -34,6 +35,7 @@ go_library(
         "readycounter.go",
         "relations.go",
         "releaser.go",
+        "search.go",
         "statsreporter.go",
         "sweeper.go",
         "template_errors.go",
@@ -53,14 +55,17 @@ go_test(
     name = "issueops_test",
     srcs = [
         "claimer_external_test.go",
+        "current_test.go",
         "issueops_external_test.go",
         "molecule_internal_test.go",
         "molecule_test.go",
+        "search_test.go",
     ],
     embed = [":issueops"],
     deps = [
         "//:beads",
         "//internal/types",
+        "//internal/workapi",
     ],
 )
 

@@ -54,6 +54,7 @@ func servedReaderFixture(t *testing.T, name string) conformance.ReaderFixture {
 		CreateWisp:    c.seedIssue,
 		AddDependency: c.seedDependency,
 		AddComment:    c.seedComment,
+		PromoteWisp:   c.seedPromotion,
 	}
 }
 
@@ -179,6 +180,13 @@ func TestServedReaderListEmptyPageIsWellFormed(t *testing.T) {
 		"the List arm scopes itself with IDFilter; the empty-page shape is pinned over this wire by "+
 			"TestServedReaderListEmptyPageIsWellFormedUnderALabelScope")
 	conformance.RunReaderListEmptyPageIsWellFormed(t, t.Context(), servedReaderFixture(t, "rdr"))
+}
+
+// TestServedReaderListQueryMatchesTheTitleOrTheID runs the search-text case as
+// written: it scopes itself with a label, and Query rides listIssues' `q`
+// parameter behind issues.list.search, which this in-process server serves.
+func TestServedReaderListQueryMatchesTheTitleOrTheID(t *testing.T) {
+	conformance.RunReaderListQueryMatchesTheTitleOrTheID(t, t.Context(), servedReaderFixture(t, "rdr"))
 }
 
 func TestServedReaderListMaxRowsIsHonored(t *testing.T) {
