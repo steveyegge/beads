@@ -140,6 +140,24 @@ class EvaluateTest(unittest.TestCase):
         })
         self.assertEqual([r.label for r in results], ["//b:t", "//a:t"])
 
+    def test_labels_restricts_to_exact_matches(self):
+        # item 5 A2's union BEP has both tiers' shards; a lane that owns
+        # only one target's budget must not be skewed by the other's.
+        shards = {
+            "//a:t": {1: 10_000, 2: 20_000},
+            "//b:t": {1: 80_000, 2: 900_000},
+        }
+        results = shard_budget.evaluate(shards, labels={"//a:t"})
+        self.assertEqual([r.label for r in results], ["//a:t"])
+
+    def test_labels_none_judges_every_sharded_target(self):
+        shards = {
+            "//a:t": {1: 10_000, 2: 20_000},
+            "//b:t": {1: 80_000, 2: 900_000},
+        }
+        results = shard_budget.evaluate(shards, labels=None)
+        self.assertEqual({r.label for r in results}, {"//a:t", "//b:t"})
+
 
 class MainTest(unittest.TestCase):
     def test_warn_only_exits_zero(self):
@@ -171,6 +189,21 @@ class MainTest(unittest.TestCase):
         path = write_bep(events)
         try:
             rc = shard_budget.main(["--bep", path, "--fail-on-imbalance"])
+        finally:
+            os.unlink(path)
+        self.assertEqual(rc, 0)
+
+    def test_label_scopes_to_exact_target_ignoring_others_imbalance(self):
+        # item 5 A2's bazel-dolt-int Shard balance step: --label scopes to
+        # server-storage's own target, so a wildly imbalanced cmd-dolt shard
+        # elsewhere in the same union BEP does not fail this invocation.
+        storage_shards = {i: 80_000 for i in range(1, 10)}
+        cmd_shards = {1: 10_000, 2: 900_000}  # would fail on its own
+        events = [test_result_event("//storage:t", i, ms) for i, ms in storage_shards.items()]
+        events += [test_result_event("//cmd:t", i, ms) for i, ms in cmd_shards.items()]
+        path = write_bep(events)
+        try:
+            rc = shard_budget.main(["--bep", path, "--fail-on-imbalance", "--label", "//storage:t"])
         finally:
             os.unlink(path)
         self.assertEqual(rc, 0)

@@ -669,48 +669,76 @@ In mode `remote`, `bazel.yml`'s `bazel-dolt-int` job (check name
 `bazel test //... --config=dolt-int`, in place of the `bazel-server-storage`
 (`server-storage lane`) and `bazel-cmd-dolt` (`cmd-dolt tier`) jobs.
 `--config=dolt-int` is exactly the union of `--config=doltserver-integration`
-and `--config=doltserver-cmd`, with one tag filter for both tiers, so every
-member target's test action is unchanged (`bazel aquery`: the 17 + 46 = 63
-`TestRunner` actions are byte-identical under the member configs and the
-union). One client waits on rbe-west for both tiers at once, so the job ends
-with the slower tier and the other tier's runner is saved.
+and `--config=doltserver-cmd`, with one tag filter for both tiers. The final
+argv and environment Bazel assembles for all 63 `TestRunner` actions (17
+server-storage + 46 cmd-dolt) are unchanged under the union, so the remote
+action digest -- what RBE's cache keys on -- is unaffected and cached results
+should carry over (confirmed in practice by the first merge group's
+`tests_cached == tests_total` in ci-analytics, not claimed here as already
+observed). This is *not* a claim that the union is local-actionKey-identical
+to the members: moving cmd-dolt's `-test.timeout` arg and
+`BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION` env from `--config=doltserver-cmd`
+onto the two cmd-dolt targets' own `args`/`env` (so the union's tag filter
+alone decides which targets see them, and server-storage's Go timeout does
+not change) moves them out of the build configuration's own fingerprint,
+which every target under that configuration picks up, into each target's own
+attributes, which only it carries -- changing the local actionKey for
+cmd-dolt's 46 actions. One client waits on rbe-west for both tiers at once,
+so the job ends with the slower tier and the other tier's runner is saved.
 
 Unlike dolt-race, this union's members do not share a gating category:
 `bazel-server-storage` is plain-gated (`BAZEL_SERVER_STORAGE`), while
 `bazel-cmd-dolt` is flag-gated and advisory (`BAZEL_CMD_DOLT`,
-`BAZEL_CMD_DOLT_REQUIRED`). The union job therefore carries
-`continue-on-error: true`, matching `bazel-cmd-dolt`'s own setting, so a
-failure confined to the cmd-dolt tier does not redden the workflow_call's
-aggregate `BAZEL` output; it still reddens the `BAZEL_CMD_DOLT` id directly,
-exactly as `bazel-cmd-dolt` alone would have. `BAZEL_SERVER_STORAGE` is
-unaffected by `continue-on-error` either way, since it was never
-flag-gated/advisory.
+`BAZEL_CMD_DOLT_REQUIRED`). The union job therefore carries *no* job-level
+`continue-on-error`: on push, nightly and dispatch nothing reads
+`BAZEL_SERVER_STORAGE` off a `workflow_call` output, so a job-level
+`continue-on-error` (which would make `job.status` read success regardless
+of the `bazel test` step's own result) would let a server-storage failure
+end such a run green, where it must stay red exactly as it does on main
+today. Instead only the `bazel test` step carries `continue-on-error`, and an
+always() "Classify tier results" step (`tools/bazel/classify_tier_results.py`)
+reads the BEP by target label, computes each tier's own result, and fails
+the job itself iff server-storage's tier failed (a cmd-dolt-only test failure
+leaves the job green, as `bazel-cmd-dolt`'s own `continue-on-error` already
+does outside mode `remote`) or `bazel`'s exit code was neither 0 nor 3 (not
+attributable to one tier, so both are marked failed and the job fails
+regardless). The job exposes two outputs, `server_storage_result` and
+`cmd_dolt_result`, one per tier, instead of the uniform `result` every other
+lane's always() step records.
 
 - Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
-  dispatch and `bazel-farm.yml`'s authorized call). In the fork modes
-  (`fork-ro`, `fork-rw`), `cache` and `local`, `bazel-server-storage` and
-  `bazel-cmd-dolt` run as before: there a single client does both tiers' work
-  without in-flight deduplication, so a union would cost the sum of the
-  tiers rather than the max, on the run's critical path.
-- Exactly one arm runs in any mode. The union's `job.status` is both the
-  `bazel-server-storage` and the `bazel-cmd-dolt` `workflow_call` output (each
-  reads the union's result first, then its member's), so `pr.yml`'s gate
-  ids (`BAZEL_SERVER_STORAGE`, `BAZEL_CMD_DOLT`), `ci-gate.sh` and
-  `bazel-gate.sh` are unchanged: a union that reported nothing reads as
-  `skipped`, which mode `remote` never allows, and the per-mode skips are the
+  dispatch and `bazel-farm.yml`'s authorized call), and only when `integration`
+  is not `"off"` (matching the members). In the fork modes (`fork-ro`,
+  `fork-rw`), `cache` and `local`, `bazel-server-storage` and `bazel-cmd-dolt`
+  run as before: there a single client does both tiers' work without
+  in-flight deduplication, so a union would cost the sum of the tiers rather
+  than the max, on the run's critical path.
+- Exactly one arm runs in any mode. `bazel-server-storage`'s and
+  `bazel-cmd-dolt`'s `workflow_call` outputs each read the union's matching
+  per-tier output first, then their own member's, so `pr.yml`'s gate ids
+  (`BAZEL_SERVER_STORAGE`, `BAZEL_CMD_DOLT`), `ci-gate.sh` and
+  `bazel-gate.sh` are unchanged: a job that dies before the classify step
+  leaves both outputs empty, which `ci-gate.sh` treats as unset (the same
+  `report_failure` path as an empty `bazel-server-storage`/`bazel-cmd-dolt`
+  result, just a different message), and the per-mode skips are the
   members' as before.
 - `check_testcases.py` and `check_shard_coverage.py` run once over the
   union's BEP. The job also runs a "Shard balance" step scoped with
   `--label //internal/storage/dolt:dolt_server_full_test`, distinct from
   `bazel-server-storage`'s own unscoped shard-balance step, since the union's
   BEP otherwise mixes both tiers' shards under one report. The `bazel test`
-  step has a 23-minute timeout, every step has one, and the job's
-  (56 minutes) is at least their sum plus 5 and below the merge queue's
-  60-minute check timeout.
+  step has a 25-minute timeout, every step has one, and the job's
+  (58 minutes) is at least their sum plus 5 and below the merge queue's
+  60-minute check timeout -- leaving only about 2 minutes for runner pickup
+  and the rbe job inside that 60-minute budget, so a hang that runs to this
+  job's own timeout can drop the merge group; accepted, because such a run
+  is red anyway and the 58-minute job timeout bounds only this job, not the
+  whole run.
 - Its ci-analytics `LANE` is `dolt-int`.
-- Policy: `scripts/bazel_dolt_int_test.go`. Rollback is a revert of the
-  cutover PR: the gate ids never changed and the action keys are equal both
-  ways, so cached results carry back.
+- Policy: `scripts/bazel_dolt_int_test.go`, and
+  `tools/bazel/classify_tier_results_test.py` for the classify script itself.
+  Rollback is a revert of the cutover PR: the gate ids never changed and the
+  remote action digests are equal both ways, so cached results carry back.
 
 ## Remote Repo Contents Cache
 

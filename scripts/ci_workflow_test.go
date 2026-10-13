@@ -1638,6 +1638,28 @@ func ciAnalyticsContinueOnErrorPaths(t *testing.T) map[string]bool {
 	return paths
 }
 
+// bazelDoltIntTestContinueOnErrorPath: bazel-dolt-int's `bazel test` step's
+// continue-on-error key path, the one other step-level exception
+// TestBazelWorkflowSecretsAndFailureSurface allows (must-fix 2). Unlike the
+// CI analytics steps' (reporting only, read by nothing), this one is load
+// bearing: the always() "Classify tier results" step right after it (which
+// itself carries no continue-on-error) reads the test step's outcome and rc
+// output and decides job.status per-tier, so the test step's own
+// continue-on-error does not hide a failure from pr.yml's ci-gate, it only
+// moves which step's exit code determines it. Matched by job and step name
+// (not a fixed index), since a future step added above it would shift it.
+func bazelDoltIntTestContinueOnErrorPath(t *testing.T) string {
+	t.Helper()
+	job := readCIWorkflow(t, bazelWorkflowName).job(t, bazelDoltIntJobName)
+	for i, step := range job.Steps {
+		if step.ID == "test" {
+			return fmt.Sprintf(".jobs.%s.steps[%d].continue-on-error", bazelDoltIntJobName, i)
+		}
+	}
+	t.Fatalf("%s has no step with id \"test\"", bazelDoltIntJobName)
+	return ""
+}
+
 // rbe-fork: the lanes' setup-bazel env that asks it for a certificate (modes
 // fork-ro and fork-rw only), and the mint's status URL the rbe job probes.
 const (
@@ -2579,14 +2601,21 @@ func TestBazelLaneIsGated(t *testing.T) {
 			t.Errorf("%s job %s: gated=%v advisory=%v flag-gated=%v union=%v; add it to exactly one of bazelLaneGateIDs (with a CI_GATE_REQUIRED id in pr.yml), bazelFlagGatedLanes (with its pr.yml flag), bazelUnionLanes (with the gated members it runs in place of) or bazelAdvisoryLanes (with the reason)",
 				bazelWorkflowName, name, gated, advisory, flagGated, union)
 		}
-		// Each lane reports its job.status from an always() last step.
-		if !reflect.DeepEqual(job.Outputs, map[string]string{"result": "${{ steps.result.outputs.result }}"}) {
-			t.Errorf("%s outputs = %v, want only result from the result step", name, job.Outputs)
-		}
-		last := job.Steps[len(job.Steps)-1]
-		if last.ID != "result" || last.If != "${{ always() }}" || !reflect.DeepEqual(last.Env, map[string]string{"JOB_STATUS": "${{ job.status }}"}) ||
-			last.Run != `echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"` {
-			t.Errorf("%s last step = %+v; want the always() job.status recorder", name, last)
+		// Each lane reports its job.status from an always() last step, except
+		// bazel-dolt-int: must-fix 2's per-tier outputs mean job.status
+		// itself is not what either member reads (a cmd-dolt-only failure
+		// must leave job.status green while cmd_dolt_result reads failure),
+		// so it has its own shape, pinned in full by
+		// TestBazelDoltIntIsGated instead.
+		if name != bazelDoltIntJobName {
+			if !reflect.DeepEqual(job.Outputs, map[string]string{"result": "${{ steps.result.outputs.result }}"}) {
+				t.Errorf("%s outputs = %v, want only result from the result step", name, job.Outputs)
+			}
+			last := job.Steps[len(job.Steps)-1]
+			if last.ID != "result" || last.If != "${{ always() }}" || !reflect.DeepEqual(last.Env, map[string]string{"JOB_STATUS": "${{ job.status }}"}) ||
+				last.Run != `echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"` {
+				t.Errorf("%s last step = %+v; want the always() job.status recorder", name, last)
+			}
 		}
 		if !union {
 			wantCallOutputs[name] = bazelLaneCallOutput(name)
@@ -2941,6 +2970,18 @@ func bazelLaneRunModes(t *testing.T, lane, ifExpr string, with map[string]string
 		// nightly check (schedule, dispatch): never in a pull_request,
 		// merge_group or pull_request_target call, in any mode.
 		return map[string]bool{}
+	case bazelDoltIntJobIf:
+		// Mode remote only (bazel-dolt-race's own if is the same shape), and
+		// also honors `integration` like its members (#7491's review,
+		// must-fix 1): a server-storage/cmd-dolt skip via integration="off"
+		// must not become a silent "nothing ran the tier" gap when mode is
+		// remote (bazel_dolt_int_test.go's
+		// TestBazelDoltIntArmsExactlyOnePerMode checks that directly; this
+		// case just keeps bazelLaneRunModes consistent with it).
+		if strings.EqualFold(with["integration"], "off") {
+			return map[string]bool{}
+		}
+		return map[string]bool{"remote": true}
 	}
 	t.Fatalf("%s if = %q: teach bazelLaneRunModes which modes run it", lane, ifExpr)
 	return nil
@@ -4658,6 +4699,7 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 		}
 	}
 	ciAnalyticsPaths := ciAnalyticsContinueOnErrorPaths(t)
+	doltIntTestPath := bazelDoltIntTestContinueOnErrorPath(t)
 	secretRef := regexp.MustCompile(`\bsecrets\s*(\.|\[)`)
 	walkYAML(root, "", func(path string, key bool, value string) {
 		if key && value == "continue-on-error" {
@@ -4671,10 +4713,14 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 			// two CI analytics steps in every lane job
 			// (bazelCIAnalyticsStepNames): reporting only, never a `needs`
 			// of anything and never read back by this workflow or its
-			// callers.
+			// callers. So is bazel-dolt-int's own `bazel test` step
+			// (bazelDoltIntTestContinueOnErrorPath): its always() classify
+			// step right after it (no continue-on-error of its own) decides
+			// job.status per-tier from this step's outcome and rc, so
+			// nothing is hidden, only moved (must-fix 2).
 			jobName := strings.TrimSuffix(strings.TrimPrefix(path, ".jobs."), ".continue-on-error")
 			_, flagGated := bazelFlagGatedLanes[jobName]
-			if path != bazelRBEPrewarmContinueOnErrorPath && !flagGated && !ciAnalyticsPaths[path] && !bazelUnionHasFlagGatedMember(jobName) {
+			if path != bazelRBEPrewarmContinueOnErrorPath && path != doltIntTestPath && !flagGated && !ciAnalyticsPaths[path] && !bazelUnionHasFlagGatedMember(jobName) {
 				t.Errorf("%s: %s hides failures from pr.yml's ci-gate", bazelWorkflowName, path)
 			}
 		}

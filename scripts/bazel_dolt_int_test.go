@@ -3,7 +3,9 @@ package scripts_test
 import (
 	"cmp"
 	"maps"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -20,17 +22,18 @@ import (
 // have different gating categories: bazel-server-storage is plain-gated
 // (BAZEL_SERVER_STORAGE), bazel-cmd-dolt is flag-gated and advisory
 // (BAZEL_CMD_DOLT, continue-on-error) until pr.yml's BAZEL_CMD_DOLT_REQUIRED
-// is "true". The union carries bazel-cmd-dolt's own continue-on-error, so
-// server-storage's requirement (read directly off the job's result) is
-// unaffected and a cmd-dolt-only failure stays out of the call's own
-// aggregate (BAZEL), exactly as it already is through bazel-cmd-dolt outside
-// mode remote.
+// is "true". The union itself carries no job-level continue-on-error (see
+// TestBazelDoltIntIsGated): only the `bazel test` step does, and an always()
+// classify step (tools/bazel/classify_tier_results.py) computes each tier's
+// own result from the BEP and fails the job iff server-storage's tier
+// failed, so a cmd-dolt-only failure still leaves the job green, exactly as
+// bazel-cmd-dolt's own continue-on-error already does outside mode remote.
 const (
 	bazelDoltIntJobName = "bazel-dolt-int"
 	bazelDoltIntConfig  = "dolt-int"
-	// Mode remote, on every event that reaches it: exactly where the members
-	// do not run.
-	bazelDoltIntJobIf = "${{ needs.rbe.outputs.mode == 'remote' }}"
+	// Mode remote and integration not "off": exactly where the members do
+	// not run (see #7491's members, which skip on integration == "off" too).
+	bazelDoltIntJobIf = "${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' }}"
 )
 
 func init() {
@@ -47,8 +50,26 @@ const bazelDoltIntJobTimeoutMargin = 5
 // bazelDoltIntTestStepTimeout: the union's `bazel test` step timeout. Both
 // members share the same 1200 s Bazel test_timeout cap; the step allows about
 // 3 minutes past that cap so Bazel writes TIMEOUT logs before GitHub kills the
-// step.
-const bazelDoltIntTestStepTimeout = 23
+// step, plus the margin server-storage's own step budgeted for a cold
+// compile (its own step was 25).
+const bazelDoltIntTestStepTimeout = 25
+
+// bazelDoltIntTestRun: the union's `bazel test` step body, exactly. Unlike
+// the retired tiers' (bazelTierTestRun), it captures rc as a step output (no
+// job-level continue-on-error to rely on job.status instead) for the
+// classify step to read, alongside its own exit.
+const bazelDoltIntTestRun = `set -o pipefail
+start=$(date +%s)
+rc=0
+bazel test //... --config=dolt-int ${BAZEL_FRESH:+"$BAZEL_FRESH"} \
+  --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
+  --execution_log_compact_file="$RUNNER_TEMP/bazel-exec.log.zst" \
+  --profile="$RUNNER_TEMP/bazel-profile.json" \
+  --experimental_build_event_upload_strategy=local \
+  2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+echo "bazel test --config=dolt-int: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+echo "rc=$rc" >> "$GITHUB_OUTPUT"
+exit "$rc"`
 
 // The union's members, and the tag filter each owns.
 var bazelDoltIntMembers = []struct{ config, tag string }{
@@ -119,9 +140,14 @@ func TestBazelDoltIntConfigIsMemberUnion(t *testing.T) {
 	}
 }
 
-// TestBazelDoltIntSoleRunIsInTheUnion: where the members execute remotely
-// (the fork modes) they add --config=sole-run; the union carries that
-// config's lines itself, so both tiers' actions are the same in either arm.
+// TestBazelDoltIntSoleRunIsInTheUnion: the members never add --config=sole-run
+// or read $BAZEL_SOLE_RUN (unlike bazel-test/bazel-pure/bazel-doltserver);
+// each bakes --config=sole-run's one line (no retry on a remote cache
+// eviction) directly and unconditionally into its own .bazelrc config
+// instead. The union must carry that same line itself (not nested
+// --config=sole-run: TestBazelDoltIntConfigIsMemberUnion forbids nesting),
+// so both tiers' actions are the same whether the member or the union runs
+// them.
 func TestBazelDoltIntSoleRunIsInTheUnion(t *testing.T) {
 	rc := readPolicyFile(t, bazelPolicyRoot(t), ".bazelrc")
 	sole := bazelRCConfigLines(rc, "sole-run")
@@ -141,12 +167,12 @@ func TestBazelDoltIntSoleRunIsInTheUnion(t *testing.T) {
 	}
 }
 
-// TestBazelDoltIntIsGated pins the cutover: the union job carries
-// bazel-cmd-dolt's own continue-on-error (the mixed-gating design: see the
-// package comment above), it runs the union config with the members' checks
-// once over its BEP (the new Shard balance step is bespoke, --label-scoped to
-// server-storage's own target), and both members' workflow_call outputs read
-// its result first.
+// TestBazelDoltIntIsGated pins the cutover: the union job carries no
+// job-level continue-on-error (per-tier results come from an always()
+// classify step instead: see the package comment above), it runs the union
+// config with the members' checks once over its BEP (the new Shard balance
+// step is bespoke, --label-scoped to server-storage's own target), and both
+// members' workflow_call outputs read its per-tier result first.
 func TestBazelDoltIntIsGated(t *testing.T) {
 	workflow := readCIWorkflow(t, bazelWorkflowName)
 	job := workflow.job(t, bazelDoltIntJobName)
@@ -155,15 +181,16 @@ func TestBazelDoltIntIsGated(t *testing.T) {
 		t.Errorf("%s if: %q, want %q", bazelDoltIntJobName, job.If, bazelDoltIntJobIf)
 	}
 	// Unlike dolt-race (both members plain-gated): bazel-cmd-dolt is
-	// flag-gated/advisory with its own continue-on-error everywhere else, so
-	// the union must carry the same, or a cmd-dolt-only failure in mode
-	// remote would redden the call's aggregate (BAZEL) when it would not in
-	// any other mode. Server-storage's requirement is unaffected: pr.yml's
-	// ci-gate reads BAZEL_SERVER_STORAGE off this job's result (job.status,
-	// via the always() "Record job result" step) regardless of
-	// continue-on-error.
-	if !job.ContinueOnError {
-		t.Errorf("%s: want continue-on-error (bazel-cmd-dolt's own advisory nature, carried into the union)", bazelDoltIntJobName)
+	// flag-gated/advisory with its own continue-on-error everywhere else,
+	// but a job-level continue-on-error here would make job.status read
+	// success regardless of the `bazel test` step's own result, so a
+	// server-storage failure would end green on push/nightly/dispatch
+	// (nothing there reads BAZEL_SERVER_STORAGE off a workflow_call output
+	// to catch it), where it must stay red exactly as on main today. The
+	// job must therefore carry no continue-on-error of its own; the classify
+	// step's own exit code decides job.status per-tier instead.
+	if job.ContinueOnError {
+		t.Errorf("%s: want no job-level continue-on-error (per-tier results come from the classify step's exit code instead)", bazelDoltIntJobName)
 	}
 	if job.Name != "dolt-int" {
 		// ci-analytics' collector maps the check name "Bazel / dolt-int" to
@@ -173,14 +200,58 @@ func TestBazelDoltIntIsGated(t *testing.T) {
 	if !slices.Equal(job.Needs, []string{bazelRBEJobName}) {
 		t.Errorf("%s needs %v, want [%s]", bazelDoltIntJobName, job.Needs, bazelRBEJobName)
 	}
-	if !reflect.DeepEqual(job.Outputs, map[string]string{"result": "${{ steps.result.outputs.result }}"}) {
-		t.Errorf("%s outputs = %v, want only result from the result step", bazelDoltIntJobName, job.Outputs)
+	wantOutputs := map[string]string{
+		"server_storage_result": "${{ steps.classify.outputs.server_storage_result }}",
+		"cmd_dolt_result":       "${{ steps.classify.outputs.cmd_dolt_result }}",
+	}
+	if !reflect.DeepEqual(job.Outputs, wantOutputs) {
+		t.Errorf("%s outputs = %v, want %v (per-tier, from the classify step)", bazelDoltIntJobName, job.Outputs, wantOutputs)
 	}
 
-	// The test step: the union config, as the member lanes run theirs.
+	// The test step: the union config, as the member lanes run theirs, plus
+	// its own continue-on-error and rc capture (must-fix 2: per-tier results,
+	// not job-level continue-on-error; see the job's own comment).
 	test := job.step(t, "bazel test //... --config="+bazelDoltIntConfig)
-	if strings.TrimSpace(test.Run) != bazelTierTestRun(bazelDoltIntConfig) {
-		t.Errorf("%s test step run changed; want exactly:\n%s\ngot:\n%s", bazelDoltIntJobName, bazelTierTestRun(bazelDoltIntConfig), test.Run)
+	if want := bazelDoltIntTestRun; strings.TrimSpace(test.Run) != want {
+		t.Errorf("%s test step run changed; want exactly:\n%s\ngot:\n%s", bazelDoltIntJobName, want, test.Run)
+	}
+	if v, ok := test.ContinueOnError.(bool); !ok || !v {
+		t.Errorf("%s test step: want continue-on-error: true (the classify step below decides the job's own result per-tier), got %v", bazelDoltIntJobName, test.ContinueOnError)
+	}
+	if test.ID != "test" {
+		t.Errorf("%s test step id = %q, want %q (the classify step reads steps.test.outcome/outputs.rc)", bazelDoltIntJobName, test.ID, "test")
+	}
+	classify := job.step(t, "Classify tier results")
+	if classify.ContinueOnError != nil && classify.ContinueOnError != false {
+		t.Errorf("%s classify step: want no continue-on-error (its own exit code must decide job.status), got %v", bazelDoltIntJobName, classify.ContinueOnError)
+	}
+	if classify.ID != "classify" {
+		t.Errorf("%s classify step id = %q, want %q (the job's outputs read steps.classify.outputs.*)", bazelDoltIntJobName, classify.ID, "classify")
+	}
+	if classify.If != "${{ always() && steps.test.outcome != 'skipped' }}" {
+		t.Errorf("%s classify step if = %q, want always() guarded by steps.test.outcome (a dead job before this step must leave both outputs empty)", bazelDoltIntJobName, classify.If)
+	}
+	// steps.test.outputs.rc reaches the script through env, not interpolated
+	// directly into the run script (TestBazelWorkflowForkFarmInputs forbids
+	// "${{" in any run: body; see "Record job result"'s JOB_STATUS for the
+	// existing pattern this follows).
+	if got, want := classify.Env["TEST_RC"], "${{ steps.test.outputs.rc }}"; got != want {
+		t.Errorf("%s classify step env.TEST_RC = %q, want %q", bazelDoltIntJobName, got, want)
+	}
+	for _, want := range []string{
+		"--bep \"$RUNNER_TEMP/bazel-bep.json\"",
+		"--rc \"$TEST_RC\"",
+		"--tier server-storage=//internal/storage/dolt:dolt_server_full_test,//internal/storage/dolt:dolt_server_conformance_test",
+		"--tier cmd-dolt=//cmd/bd:bd_dolt_server_test,//tests/regression:regression_test",
+		"--gate-tier server-storage",
+		"--github-output \"$GITHUB_OUTPUT\"",
+	} {
+		if !strings.Contains(classify.Run, want) {
+			t.Errorf("%s classify step run missing %q:\n%s", bazelDoltIntJobName, want, classify.Run)
+		}
+	}
+	if strings.Contains(classify.Run, "${{") {
+		t.Errorf("%s classify step run interpolates an expression directly: %q", bazelDoltIntJobName, classify.Run)
 	}
 	// server-storage's two checks and its own "No test target is marked
 	// flaky" step (cmd-dolt has none of either): textually identical, once
@@ -238,7 +309,7 @@ func TestBazelDoltIntIsGated(t *testing.T) {
 	}
 }
 
-// TestBazelDoltIntJobTimeouts: the union's test step has a 23-minute timeout,
+// TestBazelDoltIntJobTimeouts: the union's test step has a 25-minute timeout,
 // every step has one, and the job's exceeds their sum by
 // bazelDoltIntJobTimeoutMargin minutes (a hang fails a named step) while
 // staying under the merge queue's check timeout.
@@ -297,38 +368,42 @@ func TestBazelDoltIntArmsExactlyOnePerMode(t *testing.T) {
 	}
 	for _, mode := range bazelRBEModes {
 		for _, event := range []string{"pull_request", "merge_group", "pull_request_target", "push", "schedule", "workflow_dispatch"} {
-			ctx := map[string]string{
-				"needs.rbe.outputs.mode":    mode,
-				"needs.rbe.outputs.enabled": bazelModeEnabled(mode),
-				"github.event_name":         event,
-				"inputs.integration":        "",
-			}
-			unionRuns := evalRRCIf(t, union.If, ctx)
-			if unionRuns != (mode == "remote") {
-				t.Errorf("mode %s, %s: %s runs = %v, want %v", mode, event, bazelDoltIntJobName, unionRuns, mode == "remote")
-			}
-			for name, m := range members {
-				runs := evalRRCIf(t, workflow.job(t, name).If, ctx)
-				if unionRuns && runs {
-					t.Errorf("mode %s, %s: %s and %s both run", mode, event, bazelDoltIntJobName, name)
+			for _, integration := range []string{"", "off"} {
+				ctx := map[string]string{
+					"needs.rbe.outputs.mode":    mode,
+					"needs.rbe.outputs.enabled": bazelModeEnabled(mode),
+					"github.event_name":         event,
+					"inputs.integration":        integration,
 				}
-				if got, want := unionRuns || runs, m.before(mode); got != want {
-					t.Errorf("mode %s, %s: %s's tier reported by a job = %v, want %v (where it ran before the union)", mode, event, name, got, want)
+				wantUnionRuns := mode == "remote" && integration != "off"
+				unionRuns := evalRRCIf(t, union.If, ctx)
+				if unionRuns != wantUnionRuns {
+					t.Errorf("mode %s, %s, integration %q: %s runs = %v, want %v", mode, event, integration, bazelDoltIntJobName, unionRuns, wantUnionRuns)
 				}
-				for _, res := range []string{"success", "failure", "cancelled", ""} {
-					jobs := map[string]string{}
-					switch {
-					case unionRuns:
-						jobs[bazelDoltIntJobName] = res
-					case runs:
-						jobs[name] = res
+				for name, m := range members {
+					runs := evalRRCIf(t, workflow.job(t, name).If, ctx)
+					if unionRuns && runs {
+						t.Errorf("mode %s, %s, integration %q: %s and %s both run", mode, event, integration, bazelDoltIntJobName, name)
 					}
-					want := res
-					if !unionRuns && !runs {
-						want = ""
+					wantBefore := integration != "off" && m.before(mode)
+					if got, want := unionRuns || runs, wantBefore; got != want {
+						t.Errorf("mode %s, %s, integration %q: %s's tier reported by a job = %v, want %v (where it ran before the union)", mode, event, integration, name, got, want)
 					}
-					if got := bazelCallOutputValue(t, name, jobs); got != want {
-						t.Errorf("mode %s, %s, reporting job %q: output %s = %q, want %q", mode, event, res, name, got, want)
+					for _, res := range []string{"success", "failure", "cancelled", ""} {
+						jobs := map[string]string{}
+						switch {
+						case unionRuns:
+							jobs[bazelDoltIntJobName] = res
+						case runs:
+							jobs[name] = res
+						}
+						want := res
+						if !unionRuns && !runs {
+							want = ""
+						}
+						if got := bazelCallOutputValue(t, name, jobs); got != want {
+							t.Errorf("mode %s, %s, integration %q, reporting job %q: output %s = %q, want %q", mode, event, integration, res, name, got, want)
+						}
 					}
 				}
 			}
@@ -338,6 +413,27 @@ func TestBazelDoltIntArmsExactlyOnePerMode(t *testing.T) {
 	// the only mode it runs in.
 	if union.RunsOn != bazelLaneRunsOn {
 		t.Errorf("%s runs-on = %q, want %q", bazelDoltIntJobName, union.RunsOn, bazelLaneRunsOn)
+	}
+}
+
+// classifyTierResultsTest: tools/bazel/classify_tier_results_test.py's own
+// path, run directly (its docstring), not through a Bazel target: locally
+// authored, so no SHA256 content pin is needed (unlike the vendored-from-
+// gascity Python test files this repo also wraps, e.g. bazel_rrc_test.go's
+// rrc_verify_test.py).
+const classifyTierResultsTest = "tools/bazel/classify_tier_results_test.py"
+
+// TestClassifyTierResultsUnitTests runs classify_tier_results.py's own
+// behavioural test (must-fix 2(f)): the script the "Classify tier results"
+// step above calls, covering ss-fail-only, cmd-fail-only, both, build
+// failure and rc=0 over a synthetic BEP/test summary.
+func TestClassifyTierResultsUnitTests(t *testing.T) {
+	root := sourceRepoRoot(t)
+	python := requireHostTool(t, "python3")
+	cmd := exec.Command(python, filepath.Join(root, classifyTierResultsTest), "-v")
+	cmd.Dir = filepath.Join(root, "tools", "bazel")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s failed: %v\n%s", classifyTierResultsTest, err, out)
 	}
 }
 

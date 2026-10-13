@@ -38,8 +38,10 @@ go_test(
 # Tags:
 #   dolt-server-cmd: starts a hermetic dolt sql-server and needs the
 #     integration build tag; selected by --config=doltserver-cmd (bazel.yml's
-#     bazel-cmd-dolt lane) and excluded from every other lane, whose
-#     configurations either drop both test files or set BEADS_TEST_SKIP=dolt.
+#     bazel-cmd-dolt lane) and, in mode remote, by --config=dolt-int
+#     (bazel-dolt-int, item 5 A2's union of that lane and bazel-server-storage)
+#     and excluded from every other lane, whose configurations either drop
+#     both test files or set BEADS_TEST_SKIP=dolt.
 sh_test(
     name = "regression_test",
     size = "large",

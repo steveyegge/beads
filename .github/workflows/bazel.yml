@@ -359,13 +359,17 @@ on:
         value: ${{ jobs.bazel-dolt-race.outputs.result || jobs.bazel-proxied.outputs.result }}
       # Mode remote: bazel-dolt-int runs both tiers and the member jobs
       # skip; every other mode: the reverse. One side is always empty
-      # (item 5 A2).
+      # (item 5 A2). bazel-dolt-int reports its own per-tier classification
+      # (classify_tier_results.py), not job.status: the job carries no
+      # continue-on-error, so job.status alone would read failure for both
+      # tiers on a cmd-dolt-only failure, unlike bazel-cmd-dolt's own
+      # advisory, continue-on-error nature outside mode remote.
       bazel-server-storage:
-        description: "the server-Dolt storage tier's job.status: bazel-dolt-int's in mode remote, bazel-server-storage's otherwise"
-        value: ${{ jobs.bazel-dolt-int.outputs.result || jobs.bazel-server-storage.outputs.result }}
+        description: "the server-Dolt storage tier's result: bazel-dolt-int's server_storage_result in mode remote, bazel-server-storage's job.status otherwise"
+        value: ${{ jobs.bazel-dolt-int.outputs.server_storage_result || jobs.bazel-server-storage.outputs.result }}
       bazel-cmd-dolt:
-        description: "the cmd/bd Dolt-server tier's job.status (advisory unless pr.yml's BAZEL_CMD_DOLT_REQUIRED is \"true\"): bazel-dolt-int's in mode remote, bazel-cmd-dolt's otherwise"
-        value: ${{ jobs.bazel-dolt-int.outputs.result || jobs.bazel-cmd-dolt.outputs.result }}
+        description: "the cmd/bd Dolt-server tier's result (advisory unless pr.yml's BAZEL_CMD_DOLT_REQUIRED is \"true\"): bazel-dolt-int's cmd_dolt_result in mode remote, bazel-cmd-dolt's job.status otherwise"
+        value: ${{ jobs.bazel-dolt-int.outputs.cmd_dolt_result || jobs.bazel-cmd-dolt.outputs.result }}
       package-mcp:
         description: "package-mcp's job.status (empty unless package-gates is 'on')"
         value: ${{ jobs.package-mcp.outputs.result }}
@@ -2559,43 +2563,68 @@ jobs:
   # rather than the max). One client waits on rbe-west for both tiers' shards
   # at once (17 + 46 = 63 test actions, under the remote-exec config's 64
   # jobs), so the job ends with the slower tier and the other tier's runner
-  # is saved. cmd-dolt's Go-level -test.timeout=19m and its
+  # is saved. cmd-dolt's Go-level -test.timeout=19m arg and its
   # BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION env moved from --config=doltserver-cmd
-  # onto //cmd/bd:bd_dolt_server_test's and
-  # //tests/regression:regression_test's own args/env (their comments), so
-  # the union's tag filter alone decides which targets see them: without the
-  # move, server-storage's per-shard 15m Go timeout would become 19m under
-  # the union. Every member target's test action is unchanged (aquery-
-  # verified byte-identical actionKeys for all 4 affected targets before and
-  # after), so cached results carry over both ways and a revert of the
-  # cutover re-executes nothing. Gated: its job.status is both the
-  # bazel-server-storage and the bazel-cmd-dolt workflow_call output (each
-  # reads the union's result first, then its member's); a failure in either
-  # tier reds both ids. Job-level continue-on-error, as bazel-cmd-dolt's own
-  # (every other mode): pr.yml's ci-gate reads the BAZEL_SERVER_STORAGE id
-  # directly off this job's result regardless, so server-storage's
-  # requirement is unchanged; continue-on-error only keeps a cmd-dolt-only
-  # failure (still advisory until BAZEL_CMD_DOLT_REQUIRED is "true") out of
-  # the call's own aggregate result (BAZEL), as it already is through
-  # bazel-cmd-dolt outside mode remote. Every step has a timeout and the
-  # job's exceeds their sum by 5 minutes while staying under the merge
-  # queue's 60-minute check timeout (TestBazelDoltIntJobTimeouts). The
-  # member jobs' configs and the union's must stay key-identical: the mode
-  # decides which runs (TestBazelDoltIntConfigIsMemberUnion). Its
-  # ci-analytics LANE is dolt-int.
+  # onto //cmd/bd:bd_dolt_server_test's and //tests/regression:regression_test's
+  # own args/env (their comments), so the union's tag filter alone decides
+  # which targets see them: without the move, server-storage's per-shard 15m
+  # Go timeout would become 19m under the union. The final argv and
+  # environment either way are identical (aquery-verified for all 4 affected
+  # targets, item 5 A2 PR), so remote action digests -- what RBE's cache keys
+  # on -- are unchanged and cached results should carry over; this is a local
+  # actionKey change for cmd-dolt's 46 actions, not a remote one (--test_env
+  # is part of the build configuration's own fingerprint, which every target
+  # under that configuration picks up, unlike a target's own env attribute),
+  # confirmed in practice by the first merge group's tests_cached ==
+  # tests_total in ci-analytics, not claimed here as already observed.
+  #
+  # Unlike dolt-race, the members have different gating categories:
+  # bazel-server-storage is plain-gated (BAZEL_SERVER_STORAGE), bazel-cmd-dolt
+  # is flag-gated and advisory (BAZEL_CMD_DOLT, continue-on-error) until
+  # pr.yml's BAZEL_CMD_DOLT_REQUIRED is "true". This job therefore carries no
+  # job-level continue-on-error: on push, nightly and dispatch nothing reads
+  # BAZEL_SERVER_STORAGE off a workflow_call output, so job-level
+  # continue-on-error (job.status reads success regardless of the test step's
+  # own result) would let a server-storage failure end such a run green,
+  # where it must stay red exactly as it does on main today. Instead only the
+  # `bazel test` step carries continue-on-error, and an always() step
+  # (tools/bazel/classify_tier_results.py) reads the BEP by target label,
+  # computes each tier's own result, and fails the job itself iff
+  # server-storage's tier failed (a cmd-dolt-only test failure leaves the job
+  # green, as bazel-cmd-dolt's own continue-on-error already does outside
+  # mode remote) or bazel's exit code was neither 0 nor 3 (a build or infra
+  # failure is not attributable to one tier, so both are marked failed and
+  # the job fails regardless). Both members' workflow_call outputs read this
+  # job's matching per-tier output first, then their own member's; a job that
+  # dies before the classify step leaves both outputs empty, which mode
+  # remote's gate (bazel-gate.sh, ci-gate.sh) already treats as skipped and
+  # fails, same as an empty bazel-server-storage/bazel-cmd-dolt result would.
+  # Every step has a timeout and the job's exceeds their sum by 5 minutes
+  # while staying under the merge queue's 60-minute check timeout
+  # (TestBazelDoltIntJobTimeouts): 58 leaves only about 2 minutes for runner
+  # pickup and the rbe job inside that 60-minute budget, so a hang that runs
+  # to this job's own timeout can drop the merge group; accepted, because
+  # such a run is red anyway and the 58-minute job timeout bounds only this
+  # job, not the whole run (as #7514's dolt-race job comment). The member
+  # jobs' configs and the union's must stay key-identical: the mode decides
+  # which runs (TestBazelDoltIntConfigIsMemberUnion). Its ci-analytics LANE
+  # is dolt-int.
   bazel-dolt-int:
     name: dolt-int
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.mode == 'remote' }}
-    continue-on-error: true
+    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' }}
     # At least every step's timeout-minutes plus 5, and below the merge
     # queue's 60-minute check timeout so this job alone cannot exhaust it
-    # (TestBazelDoltIntJobTimeouts). Not a whole-run bound: the rbe job runs
-    # first and sibling lanes have longer timeouts.
-    timeout-minutes: 56
+    # (TestBazelDoltIntJobTimeouts). 58 leaves only about 2 minutes for
+    # runner pickup and the rbe job inside the merge queue's 60-minute check;
+    # a hang that runs to this timeout can therefore drop the group, which is
+    # accepted because such a run is red anyway and the 58-minute job timeout
+    # bounds this job, not the whole run (as #7514's dolt-race job comment).
+    timeout-minutes: 58
     outputs:
-      result: ${{ steps.result.outputs.result }}
+      server_storage_result: ${{ steps.classify.outputs.server_storage_result }}
+      cmd_dolt_result: ${{ steps.classify.outputs.cmd_dolt_result }}
     steps:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
@@ -2648,10 +2677,16 @@ jobs:
       # its one line (no retry on a remote cache eviction) is already in the
       # union. The step timeout is >= the union's eternal-size test_timeout
       # cap (1200s, shared by bd_dolt_server_test and regression_test) + about
-      # 3 min so Bazel writes TIMEOUT logs before GitHub kills the step.
+      # 3 min so Bazel writes TIMEOUT logs before GitHub kills the step, plus
+      # the margin server-storage's own step budgets for a cold compile (its
+      # own step was 25). continue-on-error: a cmd-dolt-only test failure
+      # must not fail this step (and so the job) outright; the classify step
+      # below decides that per-tier, from this step's own exit code (written
+      # to its "rc" output) and the BEP.
       - name: bazel test //... --config=dolt-int
         id: test
-        timeout-minutes: 23
+        timeout-minutes: 25
+        continue-on-error: true
         run: |
           set -o pipefail
           start=$(date +%s)
@@ -2663,6 +2698,7 @@ jobs:
             --experimental_build_event_upload_strategy=local \
             2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
           echo "bazel test --config=dolt-int: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
           exit "$rc"
 
       # The member lanes' checks, once over the union's BEP: check_testcases
@@ -2741,16 +2777,30 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # Last step: the job's result as the bazel-server-storage and
-      # bazel-cmd-dolt workflow_call outputs for pr.yml's ci-gate. always()
-      # runs it after a failure, a timeout or a cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
+      # Last step: each tier's own result (not job.status: this job carries
+      # no continue-on-error, see the job's own comment) as the
+      # bazel-server-storage and bazel-cmd-dolt workflow_call outputs for
+      # pr.yml's ci-gate. always() runs it after a failure, a timeout or a
+      # cancellation too (steps.test.outcome stays "skipped" then, so the
+      # script's --bep file does not exist; it is only read when the test
+      # step actually ran). This step's own exit code decides job.status: it
+      # fails the job iff server-storage's tier failed, or `bazel test`'s
+      # exit code was neither 0 nor 3 (a build or infra failure, not
+      # attributable to one tier, fails both and the job).
+      - name: Classify tier results
+        id: classify
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
         timeout-minutes: 1
         env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+          TEST_RC: ${{ steps.test.outputs.rc }}
+        run: >-
+          python3 tools/bazel/classify_tier_results.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --rc "$TEST_RC"
+          --tier server-storage=//internal/storage/dolt:dolt_server_full_test,//internal/storage/dolt:dolt_server_conformance_test
+          --tier cmd-dolt=//cmd/bd:bd_dolt_server_test,//tests/regression:regression_test
+          --gate-tier server-storage
+          --github-output "$GITHUB_OUTPUT"
 
   # F3: moved here from pr.yml so the gate depends on nothing but the rbe
   # job's decision (not the whole bazel call). Only pr.yml opts in (package-gates: "on");

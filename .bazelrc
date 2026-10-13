@@ -285,10 +285,17 @@ test:doltserver-cmd --test_timeout=-1,-1,-1,1200
 # onto //cmd/bd:bd_dolt_server_test's and //tests/regression:regression_test's
 # own args/env (the rules), so --config=dolt-int below does not need them:
 # without the move, server-storage's 15m Go timeout would become 19m under
-# the union, and the env would leak into server-storage's targets. Argv
-# (target args, then -test.timeout=19m, then this config's own
-# -test.parallel=4 test_arg) and the env map are unchanged either way, so the
-# move changes no action key (aquery-verified, item 5 A2 PR).
+# the union, and the env would leak into server-storage's targets. The final
+# argv and environment Bazel assembles (target args, then -test.timeout=19m,
+# then this config's own -test.parallel=4 test_arg; same env map either way)
+# are unchanged, so the remote action digest -- what RBE's cache keys on --
+# is unaffected and cached results should carry over. This IS a local
+# actionKey change for these two targets' 46 actions: --test_env is part of
+# the build configuration's own fingerprint, picked up by every target
+# analyzed under that configuration, unlike a target's own env attribute,
+# which only the target carries. To be confirmed in practice by the first
+# merge group's tests_cached == tests_total in ci-analytics, not claimed here
+# as already observed.
 test:doltserver-cmd --test_arg=-test.parallel=4
 test:doltserver-cmd --test_env=GO_TEST_WRAP_TESTV=1
 test:doltserver-cmd --local_test_jobs=4
