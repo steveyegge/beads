@@ -695,3 +695,56 @@ func TestBazelDoltIntTierLabelsMatchTheTags(t *testing.T) {
 		}
 	}
 }
+
+// bazelDoltIntCmdDoltPinnedArgsAndEnv: the two dolt-server-cmd-tagged
+// targets that carry the moved -test.timeout=19m arg and
+// BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION env var (item 5 A2: moved off
+// --config=doltserver-cmd's --test_arg/--test_env onto the targets
+// themselves, so --config=dolt-int does not also apply them to
+// server-storage's targets). Nothing else pins these two lines once they
+// live on the target instead of in .bazelrc, so a drive-by edit that drops
+// or alters either one would silently fall back to Bazel's own default test
+// timeout, or leave BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION unset, with every
+// other policy test (TestBazelDoltIntConfigIsMemberUnion,
+// TestBazelDoltIntFitsTheJobsBudget, TestBazelDoltIntTierLabelsMatchTheTags)
+// none the wiser, since none of them inspect a tagged rule's own args/env
+// bodies.
+var bazelDoltIntCmdDoltPinnedArgsAndEnv = []struct {
+	file, rule string
+}{
+	{"tests/regression/BUILD.bazel", "regression_test"},
+	{"cmd/bd/BUILD.bazel", "bd_dolt_server_test"},
+}
+
+func TestBazelDoltIntCmdDoltTimeoutAndEnvPinned(t *testing.T) {
+	root := bazelPolicyRoot(t)
+	ruleStart := regexp.MustCompile(`(?m)^[A-Za-z_][A-Za-z0-9_]*\($`)
+	nameLine := regexp.MustCompile(`(?m)^    name = "([^"]+)",$`)
+	const wantArg = `        "-test.timeout=19m",`
+	const wantEnv = `        "BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION": "1",`
+
+	for _, tc := range bazelDoltIntCmdDoltPinnedArgsAndEnv {
+		build := readPolicyFile(t, root, tc.file)
+		var rule string
+		for _, loc := range ruleStart.FindAllStringIndex(build, -1) {
+			end := strings.Index(build[loc[0]:], "\n)\n")
+			if end < 0 {
+				continue
+			}
+			candidate := build[loc[0] : loc[0]+end]
+			if nm := nameLine.FindStringSubmatch(candidate); nm != nil && nm[1] == tc.rule {
+				rule = candidate
+				break
+			}
+		}
+		if rule == "" {
+			t.Fatalf("%s: no rule named %q found", tc.file, tc.rule)
+		}
+		if !strings.Contains(rule, wantArg) {
+			t.Errorf("%s %q: missing exact args line %q (the moved --config=doltserver-cmd -test.timeout=19m, PR #7535 item 5 A2)", tc.file, tc.rule, wantArg)
+		}
+		if !strings.Contains(rule, wantEnv) {
+			t.Errorf("%s %q: missing exact env line %q (the moved --config=doltserver-cmd BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION, PR #7535 item 5 A2)", tc.file, tc.rule, wantEnv)
+		}
+	}
+}
