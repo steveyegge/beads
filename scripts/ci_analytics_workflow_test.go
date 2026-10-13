@@ -22,7 +22,7 @@ var ciAnalyticsLaneJobs = map[string]string{
 	"bazel-proxied":        "proxied-server",
 	"bazel-server-storage": "server-storage",
 	"bazel-cmd-dolt":       "cmd-dolt",
-	// The advisory dolt-server + proxied union shadow (item 5 Phase 1): its
+	// The dolt-server + proxied union lane (item 5; mode remote): its
 	// own lane value, so the A/B queries can pair it with its members.
 	"bazel-dolt-race": "dolt-race",
 }

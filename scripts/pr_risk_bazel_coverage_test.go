@@ -197,8 +197,8 @@ func TestPRGateRequiresRemoteBazelLanes(t *testing.T) {
 		t.Errorf("pr.yml's ci-gate env sets %s; only its run script may", bazelRemoteGateID)
 	}
 	for lane, id := range bazelLaneGateIDs {
-		if !lanes[lane]["remote"] {
-			t.Errorf("gated lane %s does not run in mode remote", lane)
+		if bazelLaneReporter(lanes, lane, "remote") == "" {
+			t.Errorf("gated lane %s does not run (nor does its union lane) in mode remote", lane)
 		}
 		if !contains(required, id) && !bazelPackageJobs[lane] {
 			t.Errorf("pr.yml's ci-gate does not require %s", id)
@@ -266,13 +266,13 @@ func TestPRGateRequiresRemoteBazelLanes(t *testing.T) {
 		}
 	}
 
-	// Remote, but one gated lane failed, was cancelled or reported nothing:
-	// red, naming that lane.
+	// Remote, but one gated lane (or the union lane reporting for it)
+	// failed, was cancelled or reported nothing: red, naming that lane.
 	for lane, id := range bazelLaneGateIDs {
 		for _, mode := range []string{"remote", "fork-ro"} {
 			for _, res := range []string{"failure", "cancelled", ""} {
 				sc := prGateFor(t, lanes, "pull_request", mode)
-				sc.outputs[lane] = res
+				sc.outputs[bazelLaneReporter(lanes, lane, mode)] = res
 				if pass, log := runPRGateStep(t, gateStep, sc); pass || !regexp.MustCompile(`::error::`+id+`\b`).MatchString(log) {
 					t.Errorf("mode %s, lane %s %q: gate pass = %v, want red naming %s\n%s", mode, lane, res, pass, id, log)
 				}
@@ -1170,7 +1170,7 @@ func TestBazelRetiredLanesArePinned(t *testing.T) {
 		}
 		evictionAllowed[want] = true
 	}
-	// The dolt-race shadow's union config carries its proxied member's
+	// The dolt-race union config carries its proxied member's
 	// line (TestBazelDoltRaceConfigIsMemberUnion pins the union).
 	evictionAllowed["test:"+bazelDoltRaceConfig+" --experimental_remote_cache_eviction_retries=0"] = true
 	for _, line := range strings.Split(rc, "\n") {

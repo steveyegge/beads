@@ -178,20 +178,21 @@ test:doltserver-proxied --experimental_remote_cache_eviction_retries=0
 # above.
 test:doltserver-proxied --norun_validations
 
-# dolt-server + proxied union (item 5, Phase 1 shadow): bazel.yml's advisory
-# bazel-dolt-race job runs both tiers in one invocation, beside their own
-# lanes, to measure one client per group of lanes before any cutover. Exactly
-# the union of --config=doltserver's and --config=doltserver-proxied's lines,
-# with one tag filter naming both tiers
-# (scripts/bazel_dolt_race_shadow_test.go). Every other flag is the same in
-# both members or outside any action key for the other: the race build,
+# dolt-server + proxied union (item 5): bazel.yml's bazel-dolt-race job runs
+# both tiers in one invocation in mode remote, in place of the bazel-doltserver
+# and bazel-proxied lanes, which still run --config=doltserver and
+# --config=doltserver-proxied in every other mode. Exactly the union of the two
+# member configs' lines, with one tag filter naming both tiers
+# (scripts/bazel_dolt_race_test.go). Every other flag is the same in both
+# members or outside any action key for the other: the race build,
 # -test.parallel=4 and GO_TEST_WRAP_TESTV=1 are common; the eternal timeout
 # applies to no dolt-server target; the eviction retry count is what
-# doltserver already gets from --config=sole-run in mode remote, the only mode
-# the shadow runs in; test_summary, local_test_jobs and remote_download_regex
-# are not in any action key. So each member target's test action is
-# unchanged, and the two lanes' cached results carry over. The member configs
-# stay for make, developers and the member lanes.
+# doltserver gets from --config=sole-run wherever it executes remotely;
+# test_summary, local_test_jobs and remote_download_regex are not in any action
+# key. So each member target's test action is unchanged (aquery: all 62
+# TestRunner actions byte-identical), and whichever arm the mode picks shares
+# cached results with the other. The member configs stay for those modes, make
+# and developers.
 test:dolt-race --@rules_go//go/config:race
 test:dolt-race --test_tag_filters=dolt-server,dolt-server-proxied
 test:dolt-race --build_tests_only
