@@ -434,7 +434,6 @@ shapes:
     source: gc core pack reaper (gc bd export --all -o F)
     args: [export, --all, -o, "{file:export.jsonl}"]
     compare: exit
-    pending: {slice: "S21", reason: "export --all is not wired over http (B3 #16)"}
 
   # ================================================================ writes
   # ---------------------------------------------------------------- create
@@ -686,7 +685,7 @@ shapes:
     source: mc mol-normalized-issue-pr-v1 (promote --reason)
     args: [promote, e2e-wisp-p, --reason, "keep it"]
     compare: exit
-    pending: {slice: "S21", reason: "promote is not wired over http (B3 #16)"}
+    pending: {slice: "S21b", reason: "promote has no served operation (B3 #16): the http Store stubs PromoteFromEphemeral, updateIssue's patch does not publish persistence (W-IssuePatch.Persistence), and no server has a promote route; it needs a new additive capability, then SRV-1"}
   - id: mc-mol-burn
     source: mc review fixtures (mol burn --force)
     args: [mol, burn, e2e-wisp-m, --force]

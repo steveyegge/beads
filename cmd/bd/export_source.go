@@ -9,6 +9,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/issueops"
 )
 
 // exportSource abstracts the storage reads `bd export` performs, so the one
@@ -33,7 +34,7 @@ type exportSource interface {
 	// SearchIssues returns the full, untruncated result set for the export
 	// filter (Limit=0, MaxRows=0). Implementations MUST fail rather than
 	// return a truncated page — export is a data-integrity path.
-	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
+	ExportIssues(ctx context.Context, req issueops.ExportRequest) ([]*types.Issue, error)
 	// GetConfig reads one config key from the database (used for the
 	// export.exclude_owners owner-filter keys).
 	GetConfig(ctx context.Context, key string) (string, error)
@@ -89,8 +90,8 @@ func (storeExportSource) GetInfraTypes(ctx context.Context) map[string]bool {
 	return store.GetInfraTypes(ctx)
 }
 
-func (storeExportSource) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	return store.SearchIssues(ctx, query, filter)
+func (src storeExportSource) ExportIssues(ctx context.Context, req issueops.ExportRequest) ([]*types.Issue, error) {
+	return store.SearchIssues(ctx, "", exportIssueFilter(ctx, src, req))
 }
 
 func (storeExportSource) GetConfig(ctx context.Context, key string) (string, error) {
@@ -177,8 +178,9 @@ func (s *uowExportSource) GetInfraTypes(ctx context.Context) map[string]bool {
 	return infra
 }
 
-func (s *uowExportSource) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	page, err := s.uw.IssueUseCase().SearchIssues(ctx, query, filter)
+func (s *uowExportSource) ExportIssues(ctx context.Context, req issueops.ExportRequest) ([]*types.Issue, error) {
+	filter := exportIssueFilter(ctx, s, req)
+	page, err := s.uw.IssueUseCase().SearchIssues(ctx, "", filter)
 	if err != nil {
 		return nil, err
 	}
@@ -404,4 +406,86 @@ func mergeExportMap[V any](dst, src map[string]V) {
 	for k, v := range src {
 		dst[k] = v
 	}
+}
+
+// roleExportSource is the export read set of a remote backend, which serves
+// no raw search and no bulk relation read. The issues and every relation come
+// from ONE library entry, issueops.ReadExport, composed over role reads every
+// deployed server publishes (listIssues, listDependencies, getIssue). The
+// JSONL is then built by the same runExportFromSource as on every other route.
+type roleExportSource struct {
+	rows map[string]issueops.ExportRow
+}
+
+func (s *roleExportSource) GetInfraTypes(ctx context.Context) map[string]bool {
+	return store.GetInfraTypes(ctx)
+}
+
+func (s *roleExportSource) ExportIssues(ctx context.Context, req issueops.ExportRequest) ([]*types.Issue, error) {
+	rd, err := store.IssueReader()
+	if err != nil {
+		return nil, err
+	}
+	edges, err := store.EdgeReader()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := issueops.ReadExport(ctx, rd, edges, req)
+	if err != nil {
+		return nil, err
+	}
+	s.rows = make(map[string]issueops.ExportRow, len(rows))
+	issues := make([]*types.Issue, 0, len(rows))
+	for _, row := range rows {
+		s.rows[row.Issue.ID] = row
+		issues = append(issues, row.Issue)
+	}
+	return issues, nil
+}
+
+func (s *roleExportSource) GetConfig(ctx context.Context, key string) (string, error) {
+	return store.GetConfig(ctx, key)
+}
+
+func (s *roleExportSource) GetAllConfig(ctx context.Context) (map[string]string, error) {
+	return store.GetAllConfig(ctx)
+}
+
+// LoadExportRelations hands back what ReadExport already read; it issues no
+// request of its own.
+func (s *roleExportSource) LoadExportRelations(_ context.Context, issues []*types.Issue) (exportRelations, error) {
+	rel := exportRelations{
+		labels:        map[string][]string{},
+		deps:          map[string][]*types.Dependency{},
+		comments:      map[string][]*types.Comment{},
+		commentCounts: map[string]int{},
+		depCounts:     map[string]*types.DependencyCounts{},
+	}
+	for _, issue := range issues {
+		row, ok := s.rows[issue.ID]
+		if !ok {
+			continue
+		}
+		if len(row.Issue.Labels) > 0 {
+			rel.labels[issue.ID] = row.Issue.Labels
+		}
+		if len(row.Issue.Dependencies) > 0 {
+			rel.deps[issue.ID] = row.Issue.Dependencies
+		}
+		if len(row.Issue.Comments) > 0 {
+			rel.comments[issue.ID] = row.Issue.Comments
+		}
+		rel.commentCounts[issue.ID] = row.CommentCount
+		rel.depCounts[issue.ID] = &types.DependencyCounts{DependencyCount: row.DependencyCount, DependentCount: row.DependentCount}
+	}
+	return rel, nil
+}
+
+// WispPlaneIDs answers nothing: a remote backend publishes no plane
+// membership, so no row is stamped wisp_plane. Import then routes a
+// no-history row by its flags, which is right for every no-history row a
+// current server holds (promotion clears no_history), and wrong only for a
+// legacy promoted row that still carries the stray flag.
+func (s *roleExportSource) WispPlaneIDs(context.Context, []string) (map[string]bool, error) {
+	return nil, nil
 }

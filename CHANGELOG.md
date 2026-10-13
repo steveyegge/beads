@@ -459,6 +459,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--all`: the same rows the raw filter selected, on both planes. `--limit 0`
   is unlimited, as before. The bead-scoped form (`bd gate list <id>`) is
   unchanged.
+- **`bd export` works over a connected HTTP workspace** (S21). It read
+  through the raw `SearchIssues` method and the bulk label, dependency and
+  comment reads, which the HTTP backend refuses, so gc's 15-minute JSONL
+  export order (`gc bd export --all`) failed on every remote scope. On a remote
+  backend the read set now comes from one library entry, `issueops.ReadExport`,
+  composed over role reads every deployed server publishes: an unlimited
+  `Reader.List` for the rows, their labels and counts, `EdgeReader.ReadEdges`
+  for the dependency records, and `Reader.Get` with comments for each row
+  that has any. The JSONL is written by the same code as on every other
+  route. A failed read fails the export, never shortens it. A remote export
+  stamps no `wisp_plane` marker, because the server publishes no plane
+  membership.
 - **An update of a template is now refused for every caller, not only
   `bd update`.** The template guard used to be a pre-read in `cmd/bd`, so an
   update through `bd serve` (`PATCH /v0/beads/issues/{id}`), an `update` item
