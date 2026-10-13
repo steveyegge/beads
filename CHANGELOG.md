@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `GET /v0/beads/dependencies/blocking` accepts `is_blocked`, behind the new
+  `dependencies.blocking.isBlocked` capability token (additive; no
+  wire_revision bump), and answers each item's stored, transitive
+  `is_blocked` flag, the column `bd ready` filters on; an item whose id names
+  no row carries none. `issueops.BlockingRequest` gains `IncludeIsBlocked` on
+  every BlockingAnnotator implementation, and `issueops.BlockedFlags` is the
+  batched read over it. The HTTP backend's `IsBlockedBatch` now serves
+  through it; against a server that does not advertise the token it still
+  refuses before dialing, now with a typed capability error naming the
+  token. An unsatisfied `external:` blocker sets the flag on every route,
+  just as it keeps the issue out of `bd ready`.
 - `bd promote` works over a connected HTTP workspace (S21b). Its one library
   entry, `issueops.Promote(ctx, PromoteRoles{Reader, Lifecycle, Commenter},
   PromoteRequest)`, reads the row, refuses one that is not a wisp
