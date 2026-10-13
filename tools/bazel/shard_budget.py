@@ -43,14 +43,15 @@ no job budgeted before the union and which this script has never judged).
 Omitted (bazel-server-storage's own step, unchanged): every sharded target in
 the BEP, as before.
 
-A --label naming a target with no executed shard result in the BEP at all is
-a workflow authoring error (a typo, or a target renamed out from under a
-pinned step), not a budget outcome: the step prints ::error and exits 1
-rather than silently reporting "no sharded test target executed two or more
-shards" (PR #7535 review, should-fix 3, carried across both rounds). A label
-present but with fewer than two executed shards this run is not an error
-(cache hits can legitimately leave zero or one shard executed); it is simply
-skipped by evaluate(), same as before.
+A --label naming a target with no testResult event in the BEP at all (cached
+or executed) is a workflow authoring error (a typo, or a target renamed out
+from under a pinned step), not a budget outcome: the step prints ::error and
+exits 1 rather than silently reporting "no sharded test target executed two
+or more shards" (PR #7535 review, should-fix 3, carried across both rounds).
+A label that is in the BEP but had every shard served from cache this run --
+so it has zero executed shards, same as a label with only one -- is not an
+error: a fully cache-hit invocation is a legitimate outcome evaluate()
+already reports as "nothing to judge" for that target, same as before.
 """
 
 import argparse
@@ -96,6 +97,35 @@ def read_shard_durations(path):
             per_label = shards.setdefault(label, {})
             per_label[shard] = max(per_label.get(shard, 0), ms)
     return shards
+
+
+def read_tested_labels(path):
+    """Return the set of every label with at least one testResult event in
+    the BEP, executed or cached.
+
+    Separate from read_shard_durations, which only counts executed (non-
+    cached) attempts: a target whose every shard was a cache hit this
+    invocation has no entry in read_shard_durations at all, which is a
+    legitimate "nothing to judge" outcome (evaluate() already skips it),
+    not a --label typo. This set is what --label's fail-closed check
+    (main()) tests against instead, so a fully-cached run does not falsely
+    report an unknown label.
+    """
+    labels = set()
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            tr_id = ev.get("id", {}).get("testResult")
+            tr = ev.get("testResult")
+            if not tr_id or not tr:
+                continue
+            labels.add(tr_id["label"])
+    return labels
 
 
 class Imbalance:
@@ -176,9 +206,10 @@ def main(argv=None):
 
     failed = False
     if args.label:
-        for label in sorted(set(args.label) - set(shard_durations)):
+        tested = read_tested_labels(args.bep)
+        for label in sorted(set(args.label) - tested):
             failed = True
-            print(f"::error title=shard budget::{label}: --label, but the BEP has no executed shard for it")
+            print(f"::error title=shard budget::{label}: --label, but the BEP has no result for it")
 
     results = evaluate(shard_durations, labels=set(args.label) if args.label else None)
 

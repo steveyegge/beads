@@ -210,7 +210,7 @@ class MainTest(unittest.TestCase):
 
     def test_unknown_label_fails_even_without_fail_on_imbalance(self):
         # PR #7535 review, should-fix 3 (carried): a --label naming a target
-        # with no executed shard in the BEP at all is a workflow authoring
+        # with no testResult event in the BEP at all is a workflow authoring
         # error (a typo, or a renamed target), not a quiet "nothing to
         # judge" success.
         events = [test_result_event("//storage:t", i, 80_000) for i in range(1, 10)]
@@ -227,6 +227,26 @@ class MainTest(unittest.TestCase):
         # insufficient evidence, and that must stay a 0, not the unknown-
         # label error above.
         events = [test_result_event("//storage:t", 1, 80_000)]
+        path = write_bep(events)
+        try:
+            rc = shard_budget.main(["--bep", path, "--label", "//storage:t"])
+        finally:
+            os.unlink(path)
+        self.assertEqual(rc, 0)
+
+    def test_label_with_every_shard_cached_is_not_an_error(self):
+        # A fully cache-hit invocation of a sharded target is a legitimate
+        # outcome (nothing executed, so nothing to judge for balance), not a
+        # --label typo: read_shard_durations has zero entries for it, but
+        # read_tested_labels still sees it via its cached testResult events.
+        # This was a real CI regression (PR #7535's own dolt-int run went
+        # red here on a fully-cached //internal/storage/dolt:
+        # dolt_server_full_test) that the should-fix 3 fix above introduced
+        # and this test pins against recurring.
+        events = [
+            test_result_event("//storage:t", i, 80_000, cached=True)
+            for i in range(1, 10)
+        ]
         path = write_bep(events)
         try:
             rc = shard_budget.main(["--bep", path, "--label", "//storage:t"])
