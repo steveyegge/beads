@@ -189,13 +189,16 @@ func bazelRCConfigLines(rc, name string) []string {
 // bazelUnionEffectiveJobs: the --jobs value in effect when a union job's
 // `bazel test //... --config=<unionConfig>` step runs in mode remote
 // (closed PR #7542). Mode remote's generated rc applies
-// `build --config=remote-exec` ahead of the step's own --config, so
-// --config=remote-exec's --jobs line is the baseline every union inherits;
-// but a --jobs line on the union's own config would be the later
-// occurrence on the effective command line and win instead (PR #7542's BEP
-// showed `optionsParsed.cmdLine` carrying "--jobs=64, --jobs=128", the last
-// one winning, after a union config added its own --jobs=128 override).
-// Reading remote-exec's line alone would miss that override silently
+// `build --config=remote-exec` from an rc file, so --config=remote-exec's
+// --jobs line is the baseline every union inherits; but a --jobs line on
+// the union's own config outranks it, because that --config is given on
+// the command line (the step's own `--config=<unionConfig>`) and
+// command-line config outranks rc-file config regardless of which file's
+// line comes first (PR #7542's BEP showed `optionsParsed.cmdLine` carrying
+// "--jobs=64, --jobs=128" in that rank order, after a union config added
+// its own --jobs=128 override; the ordering there is a consequence of the
+// rank, not the rule itself, so reordering .bazelrc's lines cannot change
+// it). Reading remote-exec's line alone would miss that override silently
 // passing a budget check the real run does not meet.
 func bazelUnionEffectiveJobs(t *testing.T, rc, unionConfig string) int {
 	t.Helper()
