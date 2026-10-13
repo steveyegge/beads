@@ -39,13 +39,15 @@ go_test(
 # lane's longest action in most runs where it executed. About 100s of that
 # is the per-process server and seed, the rest the ~130 shapes (~1.9s each,
 # serial, ~242s together). The shapes are now dealt round robin across
-# corpusParts = 3 parts (corpus_test.go), each a top-level test with its own
+# corpusParts = 4 parts (corpus_test.go), each a top-level test with its own
 # server and seed, and served_pinned_shards.txt pins part k to shard k; the
-# 4th shard runs the package's engine-free tests through the binary's
+# 5th shard runs the package's engine-free tests through the binary's
 # round-robin. Each part pays the setup again, though it seeds the served
 # and embedded sides concurrently (~62-76s on the lane's executors), so a
-# part's shard is that plus ~80s of shapes. Four parts ran 115-146s each
-# with that setup; three spend one setup less in all.
+# part's shard is that plus ~60s of shapes: 114-146s measured. Three parts
+# ran 170-180s each; they save one setup (~75 test-seconds a run) but
+# lengthen the lane's served long pole, which is on the gate's critical
+# path, by ~34s.
 #
 # Tags:
 #   embedded: the embedded-Dolt tier; excluded from --config=prcore/ci,
@@ -74,7 +76,7 @@ sh_test(
         "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)",
         "BEADS_TEST_EMBEDDED_DOLT": "1",
     },
-    shard_count = 4,
+    shard_count = 5,
     tags = ["embedded"],
 )
 

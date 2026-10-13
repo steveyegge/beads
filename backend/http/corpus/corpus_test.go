@@ -251,20 +251,23 @@ type outcome struct {
 // part keeps corpus order, so its reads still run on the bare seed before
 // any of its writes (see testdata/corpus.yaml's header).
 //
-// Three parts, from the embedded lane's measured part times (PR #7538): each
+// Four parts, from the embedded lane's measured part times (PR #7538): each
 // part's server start and concurrent seed take ~62-76s and the 127 shapes
-// ~242s together, so four parts ran 115-146s each and three run ~76-85s of
-// shapes each on top of that one setup apiece, one setup less in total.
-const corpusParts = 3
+// ~242s together, so four parts ran 114-146s each and three ran 170-180s.
+// Three would save one setup (~75 test-seconds a run), but the longest part
+// is the embedded lane's served long pole, on the gate's critical path
+// (forks' above all), so the ~34s it saves is worth more.
+const corpusParts = 4
 
 // servedCorpusParts are the parts' tests, one per part, in part order.
 var servedCorpusParts = []func(*testing.T){
-	TestServedCorpusPart1, TestServedCorpusPart2, TestServedCorpusPart3,
+	TestServedCorpusPart1, TestServedCorpusPart2, TestServedCorpusPart3, TestServedCorpusPart4,
 }
 
 func TestServedCorpusPart1(t *testing.T) { testServedCorpus(t, 1) }
 func TestServedCorpusPart2(t *testing.T) { testServedCorpus(t, 2) }
 func TestServedCorpusPart3(t *testing.T) { testServedCorpus(t, 3) }
+func TestServedCorpusPart4(t *testing.T) { testServedCorpus(t, 4) }
 
 // corpusPartNameErr fails a part test whose name is not its part's: a
 // TestServedCorpusPart3 that ran part 2 would run part 2's shapes twice and

@@ -68,6 +68,14 @@ longer than one run over every shape did; each part logs its setup time
 (`part N setup ...`). Run one part with
 `-run 'TestServedCorpusPart2$'`.
 
+There are four parts. In the embedded lane each part's setup (server start
+plus both seeds, run concurrently) takes ~62-76s and the shapes ~242s in
+total. Four parts ran 114-146s each and three ran 170-180s. Three would save
+one setup (~75 test-seconds a run), but the longest part is the lane's
+served long pole and sits on the CI gate's critical path, so four parts win.
+To change the count, update `corpusParts`, `servedCorpusParts`,
+`served_pinned_shards.txt` and the target's `shard_count` together.
+
 ```
 CGO_ENABLED=1 BEADS_TEST_EMBEDDED_DOLT=1 BEADS_HTTP_TEST_REQUIRED=1 \
   go test -tags gms_pure_go -run 'TestServedCorpus|TestCorpus' ./backend/http/corpus/
