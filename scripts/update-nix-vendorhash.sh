@@ -117,8 +117,22 @@ log_info "Current vendorHash: $CURRENT_HASH"
 log_info "Setting temporary bad hash to trigger error..."
 FAKE_HASH="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-# Backup the file
-cp default.nix default.nix.backup
+# Back up to a private per-run scratch directory, never to a fixed name in
+# the repo root: `default.nix.backup` there is also the conventional name an
+# operator gives their own manual backup, and overwriting (then later
+# deleting) that file on every run can destroy one on sight. The scratch
+# dir is removed on every exit path, handled or not; a handled failure
+# restores from it first via restore_original.
+SCRATCH_DIR=$(mktemp -d "${TMPDIR:-/tmp}/nix-vendorhash.XXXXXX")
+trap 'rm -rf "$SCRATCH_DIR"' EXIT
+BACKUP="$SCRATCH_DIR/default.nix.orig"
+# -p preserves the exact original bytes and mode; a handled failure must
+# restore both, not just the content.
+cp -p default.nix "$BACKUP"
+
+restore_original() {
+    cp -p "$BACKUP" default.nix
+}
 
 # Detect sed version (GNU vs BSD). BSD sed requires an explicit backup-suffix
 # argument to -i; GNU sed must NOT be given one.
@@ -172,7 +186,7 @@ if [ -z "$ACTUAL_HASH" ]; then
     log_info "Full build log saved to: $BUILD_LOG"
 
     # Restore backup
-    mv default.nix.backup default.nix
+    restore_original
     log_info "Restored original default.nix"
 
     # Tell "the build genuinely succeeded with the fake hash rejected, so
@@ -182,9 +196,26 @@ if [ -z "$ACTUAL_HASH" ]; then
     # to appear in the log — a toolchain error or any other failure mode
     # has no such string and was previously misreported as success.
     if [ "$BUILD_EXIT" -eq 0 ]; then
-        log_success "No hash mismatch - vendorHash is already correct!"
-        rm -f "$BUILD_LOG"
-        exit 0
+        # The probe build's success only means the FAKE hash didn't trigger
+        # a mismatch — it was never a build of the real, restored file. A
+        # success exit must actually build that file, not just infer it
+        # from the probe.
+        log_info "No hash mismatch in the probe build - verifying the restored file builds as-is..."
+        RESTORE_BUILD_LOG="/tmp/nix-vendorhash-restore-build-$$.log"
+        set +e
+        run_nix build > "$RESTORE_BUILD_LOG" 2>&1
+        RESTORE_BUILD_EXIT=$?
+        set -e
+        if [ "$RESTORE_BUILD_EXIT" -eq 0 ]; then
+            log_success "No hash mismatch - vendorHash is already correct!"
+            rm -f "$BUILD_LOG" "$RESTORE_BUILD_LOG"
+            exit 0
+        else
+            log_error "The probe build reported no hash mismatch, but the restored file doesn't build either (exit $RESTORE_BUILD_EXIT) — investigate before retrying"
+            log_error "Check the restored-file build log: $RESTORE_BUILD_LOG"
+            log_error "Probe build log: $BUILD_LOG"
+            exit 1
+        fi
     elif grep -q "hash mismatch" "$BUILD_LOG"; then
         log_error "Build reported a hash mismatch (exit $BUILD_EXIT) but the got: line didn't match the extraction regex — Nix's output format may have changed"
         log_error "Check the full log: $BUILD_LOG"
@@ -202,8 +233,9 @@ log_success "Extracted actual hash: $ACTUAL_HASH"
 log_info "Updating default.nix with correct hash..."
 sed_inplace "s|vendorHash = \".*\";|vendorHash = \"$ACTUAL_HASH\";|" default.nix
 
-# Remove backup
-rm default.nix.backup
+# $BACKUP is kept until step 5 verifies (or this script exits, whichever
+# comes first) — restore_original below needs it if the verification
+# build fails. The scratch dir's EXIT trap removes it either way.
 
 # Step 5: Verify the update by rebuilding
 log_info "Verifying update with a clean build..."
@@ -231,5 +263,7 @@ else
     log_error "Build failed after updating hash"
     log_error "See /tmp/nix-build-verify.log for details"
     log_error "Initial build log: $BUILD_LOG"
+    restore_original
+    log_info "Restored original default.nix (candidate hash did not verify)"
     exit 1
 fi
