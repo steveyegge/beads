@@ -5645,6 +5645,25 @@ paths:
             maxItems: 100
             items:
               type: string
+        - name: is_blocked
+          in: query
+          description: >-
+            `true` adds each item's `is_blocked`: the issue's stored,
+            TRANSITIVE readiness flag — the column the ready set filters on,
+            which a child inherits from a blocked parent and which
+            `waits-for` and `conditional-blocks` gates set — rather than the
+            two-edge-type, direct `blocked_by` summary. It is the batched
+            readiness projection a client cache needs to answer readiness
+            with the server's own predicate. An id that names no row in
+            either plane gets no `is_blocked` member. Absent or `false`
+            answers exactly as before. Behind the
+            `dependencies.blocking.isBlocked` capability token; a server
+            that predates it answers `400` with `param: "is_blocked"` and
+            `reason: "unknown_parameter"`.
+          required: false
+          schema:
+            type: boolean
+            default: false
       security:
         - bearerToken: []
       responses:
@@ -8119,6 +8138,13 @@ components:
             carries several `parent-child` edges, which one appears here is not
             specified. A client that needs every structural edge reads them from
             `GET /v0/beads/dependencies`.
+        is_blocked:
+          type: boolean
+          description: >-
+            The issue's stored, transitive is_blocked flag — present only when
+            the request carried `is_blocked=true` (capability
+            `dependencies.blocking.isBlocked`) and the id names a row. Its
+            absence never means "not blocked".
 
     # ---------------------------------------------------------------------
     # Envelope schemas. Almost all of these have no canonical Go type behind
@@ -8299,13 +8325,16 @@ components:
             member unknown, `issues.list.search`, which announces that
             `GET /v0/beads/issues` accepts `q`, `bd search`'s free text (see
             that parameter), rather than silently answering
-            `unknown_parameter`, and `issues.list.noAssignee`,
+            `unknown_parameter`, `issues.list.noAssignee`,
             `issues.list.title` and `issues.list.ids`, which announce that
             `GET /v0/beads/issues` accepts `no_assignee`, `title` and the
             repeatable `id` respectively (`bd list --no-assignee`, `--title`
             and `--id`; see those parameters) rather than answering
-            `unknown_parameter`. One
-            behavior token is
+            `unknown_parameter`, and `dependencies.blocking.isBlocked`, which
+            announces that `GET /v0/beads/dependencies/blocking` accepts
+            `is_blocked` and answers each item's stored, transitive
+            `is_blocked` flag (see that parameter) rather than silently
+            answering `unknown_parameter`. One behavior token is
             CONDITIONAL rather than build-level: `policy.external_dependencies`
             announces that this server's ready, claim, claim-next, close,
             blocking and dependency-tree operations already apply bd's

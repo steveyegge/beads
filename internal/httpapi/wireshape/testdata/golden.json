@@ -2347,6 +2347,12 @@
     },
     {
       "schema": "IssueBlocking",
+      "member": "is_blocked",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "schema": "IssueBlocking",
       "member": "parent",
       "type": "string",
       "required": false
@@ -5661,6 +5667,15 @@
     {
       "schema": "param:getStats",
       "member": "query:skip_blocked",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listBlockingAnnotations",
+      "member": "query:is_blocked",
       "type": "boolean",
       "required": false,
       "style": "form",

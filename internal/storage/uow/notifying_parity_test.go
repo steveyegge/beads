@@ -203,6 +203,7 @@ func TestRecordingDependencyUseCaseCoversItsSurface(t *testing.T) {
 			"GetIssueDependencyRecords":            reads,
 			"GetWispDependencyRecords":             reads,
 			"IsBlocked":                            reads,
+			"IsBlockedBatch":                       reads,
 			"IsWispBlocked":                        reads,
 			"IterWispWithIssueMetadata":            reads,
 			"IterWithIssueMetadata":                reads,

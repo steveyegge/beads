@@ -727,6 +727,13 @@ func (s *Store) IsBlockedBatch(ctx context.Context, issueIDs []string) (map[stri
 	if err != nil {
 		return nil, err
 	}
+	if s.rolesAreRemote() {
+		// Over a store that serves its roles the raw edge read below is
+		// refused; the flag came from the server's annotator, and the
+		// external invariant is added from the edges of these rows only —
+		// unless the server already applies the policy itself.
+		return s.remoteExternalBlocked(ctx, issueIDs, blocked)
+	}
 	deps, err := s.inner.GetDependencyRecordsForIssues(ctx, issueIDs)
 	if err != nil {
 		return nil, err

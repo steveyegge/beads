@@ -132,10 +132,17 @@ func (a *blockingAnnotator) AnnotateBlocking(ctx context.Context, req issueops.B
 		}
 		if blocked {
 			result.Items[i].BlockedBy = blockers
+			// The flag follows IsBlockedBatch's external invariant: an
+			// unsatisfied external blocker blocks, whatever the column says.
+			if req.IncludeIsBlocked {
+				result.Items[i].IsBlocked = boolPtr(true)
+			}
 		}
 	}
 	return result, nil
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 // TreeWalker preserves synthetic external leaves for the normal down-tree
 // request. Reverse walks do not follow a source's dependencies, and the
