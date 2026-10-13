@@ -73,15 +73,18 @@ go_test(
 # (tools/bazel/go_test_pinned_shard.sh, served_pinned_shards.txt from
 # tools/bazel/pin_shards.py --shards 6 --min-seconds 3) onto 6 shards, and
 # the binary's round-robin runs the other ~28 (well under a second
-# together) in the 7th. The durations are from a sharded run of the lane
-# (bazel.yml's bazel-embedded-served-testxml artifact): 10-90s each, ~740s
-# together, 1.7-2x what the same tests took when the target ran as one
-# shard, so size the pins from a sharded run, never from a single-shard or
-# local one.
-# Regenerate the manifest from a PR run's bazel-embedded-served-testxml
-# artifact (its http_served_test directory holds shard_*_of_7/test.xml):
+# together) in the 7th. The durations are the maximum over two sharded runs
+# of the lane (bazel.yml's bazel-embedded-served-testxml artifact): 11-90s
+# each, ~770s together. The same test's time varied 2-5x between those runs
+# with the executors' load, and sharded runs took up to 2x what the
+# single-shard runs did, so size the pins from sharded runs of the lane,
+# never from a single-shard or local one.
+# Regenerate the manifest from PR runs' bazel-embedded-served-testxml
+# artifacts (each http_served_test directory holds shard_*_of_7/test.xml;
+# pass several runs, pin_shards.py takes each test's maximum):
 #   python3 tools/bazel/pin_shards.py --shards 6 --min-seconds 3 \
-#       --write backend/http/served_pinned_shards.txt <artifact>/http_served_test
+#       --write backend/http/served_pinned_shards.txt \
+#       <run1>/http_served_test <run2>/http_served_test
 #
 # Tags:
 #   embedded: the embedded-Dolt tier; excluded from --config=prcore/ci,
