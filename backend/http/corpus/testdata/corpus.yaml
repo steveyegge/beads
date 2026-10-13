@@ -13,6 +13,9 @@
 # and on an embedded workspace, with BEADS_ACTOR=worker and CLAUDE_SESSION_ID set
 # on both. See README.md for the fields. Reads come first; writes after them
 # each own their target ids (e2e-t-*), so write order never changes a read.
+# The shapes are dealt round robin, in this order, across the suite's parts,
+# and each part seeds its own workspaces: a shape may rely on the seed and its
+# own setup, never on another shape having run.
 #
 # pending: {slice, reason} marks a known failure. The shape still runs; when it
 # passes the subtest FAILS until the mark is removed. That is how a slice proves

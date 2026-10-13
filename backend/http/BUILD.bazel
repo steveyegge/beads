@@ -63,7 +63,23 @@ go_test(
 # in-process server over embedded Dolt and BEADS_HTTP_TEST_REQUIRED=1 turns a
 # skip of that tier into a failure. http_test alone skips the TestE2E_* cases
 # in every lane, because no lane sets those variables for it. It repeats
-# http_test's `env` (go_test_variant.sh).
+# http_test's `env` (go_test_pinned_shard.sh, like go_test_variant.sh, does
+# not inherit it).
+#
+# Shard count: the package's tests are serial, and as one shard the target
+# ran 235-394s on the lane's executors (2026-10-10..13), the embedded lane's
+# longest action in most runs where it executed; the lane's other shards end
+# by ~90-125s. The 19 TestE2E_* cases that take >= 3s (5-74s each, the
+# maximum over three lane runs and one local run) are pinned
+# (tools/bazel/go_test_pinned_shard.sh, served_pinned_shards.txt from
+# tools/bazel/pin_shards.py --shards 6 --min-seconds 3) onto 6 shards of
+# <= ~88 measured seconds each, and the binary's round-robin runs the other
+# ~28 (well under a second together) in the 7th.
+# Regenerate the manifest from runs of the lane:
+#   bazel test //backend/http:http_served_test --config=embedded
+#   python3 tools/bazel/pin_shards.py --shards 6 --min-seconds 3 \
+#       --write backend/http/served_pinned_shards.txt \
+#       bazel-testlogs/backend/http/http_served_test
 #
 # Tags:
 #   embedded: the embedded-Dolt tier; excluded from --config=prcore/ci,
@@ -74,14 +90,16 @@ sh_test(
     # -test.timeout=19m fires (with a goroutine dump) before Bazel's 1200s
     # action limit (eternal under --config=embedded).
     timeout = "eternal",
-    srcs = ["//tools/bazel:go_test_variant.sh"],
+    srcs = ["//tools/bazel:go_test_pinned_shard.sh"],
     args = [
+        "$(rootpath :served_pinned_shards.txt)",
         "$(rootpath :http_test)",
         "-test.v",
         "-test.count=1",
         "-test.timeout=19m",
     ],
     data = [
+        "served_pinned_shards.txt",
         ":http_test",
         "//cmd/bd:bd_for_tests",
     ],
@@ -90,6 +108,7 @@ sh_test(
         "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)",
         "BEADS_TEST_EMBEDDED_DOLT": "1",
     },
+    shard_count = 7,
     tags = ["embedded"],
 )
 
