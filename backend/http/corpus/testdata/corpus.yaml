@@ -256,11 +256,11 @@ shapes:
   - id: gc-list-on-boot
     source: gc workquery.go on_boot recovery (--no-assignee)
     args: [list, --metadata-field, gc.routed_to=pool-a, --status=in_progress, --no-assignee, --json]
-    pending: {slice: "S6c+S15b", reason: "list stub (B3 #1); --no-assignee refused by the list encoder (B3 #11)"}
+    pending: {slice: "SRV-1", reason: "S15b sends --no-assignee as listIssues no_assignee behind issues.list.noAssignee, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListScopeFiltersOverHTTP); remove the mark when reference_server.json is upgraded"}
   - id: gc-list-on-boot-workflow
     source: gc workquery.go on_boot recovery, workflow lane
     args: [list, --metadata-field, gc.run_target=pool-a, --metadata-field, gc.kind=workflow, --status=in_progress, --no-assignee, --json]
-    pending: {slice: "S6c+S15b", reason: "list stub (B3 #1); --no-assignee refused by the list encoder (B3 #11)"}
+    pending: {slice: "SRV-1", reason: "S15b sends --no-assignee as listIssues no_assignee behind issues.list.noAssignee, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListScopeFiltersOverHTTP); remove the mark when reference_server.json is upgraded"}
   - id: mc-list-meta-status
     source: mc assets snapshot.md (list --json --limit --metadata-field --status)
     args: [list, --json, --limit, "50", --metadata-field, gc.routed_to=pool-a, --status, open]
@@ -281,11 +281,11 @@ shapes:
   - id: mc-list-title
     source: mc mol-normalized-issue-pr-v1 (list --all --include-infra --json --limit --title)
     args: [list, --all, --include-infra, --json, --limit, "10", --title, "Routed open task"]
-    pending: {slice: "S6c+S15b", reason: "list stub (B3 #1); --title is a text filter the list encoder refuses (B3 #11)"}
+    pending: {slice: "SRV-1", reason: "S15b sends --title as listIssues title behind issues.list.title, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListScopeFiltersOverHTTP); remove the mark when reference_server.json is upgraded"}
   - id: mc-list-id
     source: mc skills/pr-review (list --all --id --json --limit)
     args: [list, --all, --id, "e2e-r1,e2e-a1", --json, --limit, "0"]
-    pending: {slice: "S6c+S15b", reason: "list stub (B3 #1); --id refused by the list encoder (B3 #11)"}
+    pending: {slice: "SRV-1", reason: "S15b sends --id as listIssues id behind issues.list.id, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListScopeFiltersOverHTTP); remove the mark when reference_server.json is upgraded"}
   - id: mc-list-assignee-status
     source: mc review summaries (list --assignee --json --limit --status)
     args: [list, --assignee, alice, --json, --limit, "10", --status, open]
