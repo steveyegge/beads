@@ -231,7 +231,13 @@ func (o *issueOperations) Update(ctx context.Context, request publicops.UpdateRe
 		// version and status before authorizing, so when one is stale the fence
 		// stands down and ApplyUpdate reports the mismatch instead.
 		if updatePreconditionsHold(attempt, before) {
+			if err := storageissueops.AuthorizeTemplateUpdate(before, attempt); err != nil {
+				return publicops.UpdateResult{}, "", err
+			}
 			if err := authorizeAssigneeTransfer(ctx, uw, before, attempt); err != nil {
+				return publicops.UpdateResult{}, "", err
+			}
+			if err := storageissueops.AuthorizeNotesOverwrite(before, attempt); err != nil {
 				return publicops.UpdateResult{}, "", err
 			}
 		}
@@ -267,14 +273,21 @@ func (o *issueOperations) Update(ctx context.Context, request publicops.UpdateRe
 
 // updatePreconditionsHold reports whether request's compare-and-set
 // preconditions match before — that is, whether ApplyUpdate would get past its
-// own guards, leaving the assignee fence as the operative refusal.
-// ExpectedAssignee needs no entry here: the fence already stands down whenever
-// a caller supplies one.
+// own guards, leaving the fences as the operative refusals. ExpectedAssignee
+// belongs here since the notes fence arrived: the ASSIGNEE fence stands down
+// whenever a caller supplies one, but the notes fence deliberately does not,
+// and a stale compare-and-set must outrank it (the dolt leg orders
+// CheckExpectedFieldsInTx ahead of AuthorizeNotesOverwrite). The comparison is
+// ActorMatches, not verbatim ==, matching CheckExpectedFieldsInTx (ga-wzl83);
+// a pointer to "" is a real guard meaning "expected unassigned".
 func updatePreconditionsHold(request publicops.UpdateRequest, before *types.Issue) bool {
 	if request.ExpectedVersion != nil && *request.ExpectedVersion != before.RowVersion {
 		return false
 	}
 	if request.ExpectedStatus != nil && *request.ExpectedStatus != before.Status {
+		return false
+	}
+	if request.ExpectedAssignee != nil && !storageissueops.ActorMatches(before.Assignee, *request.ExpectedAssignee) {
 		return false
 	}
 	return true
@@ -317,6 +330,9 @@ func updateSpec(request publicops.UpdateRequest) (domain.UpdateSpec, error) {
 	if patch.IssueType.Set {
 		fields["issue_type"] = string(patch.IssueType.Value)
 	}
+	setField(fields, "repeat_pattern", patch.RepeatPattern)
+	setField(fields, "repeat_start", patch.RepeatStart)
+	setField(fields, "repeat_end", patch.RepeatEnd)
 	setField(fields, "assignee", patch.Assignee)
 	setField(fields, "owner", patch.Owner)
 	setField(fields, "closed_by_session", patch.ClosedBySession)
@@ -324,12 +340,9 @@ func updateSpec(request publicops.UpdateRequest) (domain.UpdateSpec, error) {
 	setField(fields, "external_ref", patch.ExternalRef)
 	setField(fields, "due_at", patch.DueAt)
 	setField(fields, "defer_until", patch.DeferUntil)
-	setField(fields, "repeat_pattern", patch.RepeatPattern)
-	setField(fields, "repeat_start", patch.RepeatStart)
-	setField(fields, "repeat_end", patch.RepeatEnd)
-	if patch.Notes.Set && patch.AppendNotes.Set {
-		return domain.UpdateSpec{}, validationError(fmt.Errorf("update: notes and append notes cannot both be set"))
-	}
+	// Notes+AppendNotes is refused by ValidateUpdateRequest, which both
+	// callers (issueOperations.Update and the batch applier) run before
+	// building a spec — no duplicate check here.
 	setField(fields, "notes", patch.Notes)
 	if patch.AppendNotes.Set {
 		fields[storageissueops.OpAppendNotes] = patch.AppendNotes.Value
@@ -445,8 +458,15 @@ func (o *issueOperations) Close(ctx context.Context, request publicops.CloseRequ
 		if err != nil {
 			return publicops.CloseResult{}, "", err
 		}
-		return publicops.CloseResult{Issue: hydrated, Changed: !semanticIssueEqual(before, hydrated), OpenChildren: closed.OpenChildren},
-			"close issue", nil
+		result := publicops.CloseResult{Issue: hydrated, Changed: !semanticIssueEqual(before, hydrated), OpenChildren: closed.OpenChildren}
+		if attempt.AutoCloseMolecule {
+			auto, err := CloseCompletedMoleculeInUOW(ctx, uw, attempt.IssueID, attempt.Actor, attempt.Session)
+			if err != nil {
+				return publicops.CloseResult{}, "", err
+			}
+			result.AutoClosedMolecule, result.MoleculeAutoCloseRefusal = auto.Root, auto.Refusal
+		}
+		return result, "close issue", nil
 	})
 }
 

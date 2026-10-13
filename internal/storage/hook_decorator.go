@@ -153,6 +153,13 @@ func RoleFiresHooks(role any) bool {
 	// hazard, on the operation that reaches it with nothing else in the way.
 	case *hookBatchCreator:
 		return true
+	// The lease reclaimer fires the update hook once per row it reverts
+	// (hook_lease_reclaimer.go), so a scheduled reaper sweep is N
+	// subprocesses per run — the same value Releaser and ReadyClaimer are
+	// refused for, and the one whose caller is a clock rather than a human
+	// or a request.
+	case *hookLeaseReclaimer:
+		return true
 	}
 	return false
 }
@@ -327,6 +334,19 @@ func (h *HookFiringStore) RemoveLabel(ctx context.Context, issueID, label, actor
 	return nil
 }
 
+// RenameLabel renames a label across every issue and wisp that carries it,
+// firing on_update for each touched id.
+func (h *HookFiringStore) RenameLabel(ctx context.Context, oldLabel, newLabel, actor string) (renamed, merged int, ids []string, err error) {
+	renamed, merged, ids, err = h.inner.RenameLabel(ctx, oldLabel, newLabel, actor)
+	if err != nil {
+		return renamed, merged, ids, err
+	}
+	for _, id := range ids {
+		h.fireHookByID(ctx, hooks.EventUpdate, id)
+	}
+	return renamed, merged, ids, nil
+}
+
 // ── Comment mutations ───────────────────────────────────────────────
 
 // AddIssueComment adds a comment and fires on_update.
@@ -450,6 +470,15 @@ func (h *HookFiringStore) CompleteIssueOperationMetadata(ctx context.Context, is
 // row rather than taking the caller's, so a script sees the unheld issue the
 // release produced rather than the claim it had.
 func (h *HookFiringStore) CompleteIssueOperationRelease(ctx context.Context, issueID string) {
+	h.fireHookByID(ctx, hooks.EventUpdate, issueID)
+}
+
+// CompleteIssueOperationReclaim fires the update hook for one row a lease
+// sweep reverted, which is the event the generic update path fires for the
+// same write — assignee and status are exactly the fields a reclaim moves,
+// the same pair a release moves. It re-reads the row rather than taking the
+// caller's, so a script sees the unheld issue the sweep produced.
+func (h *HookFiringStore) CompleteIssueOperationReclaim(ctx context.Context, issueID string) {
 	h.fireHookByID(ctx, hooks.EventUpdate, issueID)
 }
 

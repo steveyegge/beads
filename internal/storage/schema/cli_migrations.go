@@ -126,16 +126,35 @@ func cliCompatibleMigrationSQL(name, sqlText string) string {
 		// itself is always present here: 0064's prepared RENAME executes on
 		// 2.2.0 (same measurement), so a fresh bundle always needs the column.
 		return cliMigration0066AddEventsJournalActor
-	case "0067_add_recurrence_columns.up.sql":
+	case "0070_add_recurrence_columns.up.sql":
 		// House due/repeat (fleet already applied as v67).
-		return cliMigration0067AddRecurrenceColumns
-	case "0068_add_due_missed.up.sql":
+		return cliMigration0070AddRecurrenceColumns
+	case "0071_add_due_missed.up.sql":
 		// House due-miss escalation (fleet already applied as v68).
-		return cliMigration0068AddDueMissed
-	case "0069_add_versioned_beads_schema.up.sql":
-		// Upstream versioned-beads Phase 1, renumbered 0067→0069 so it does
+		return cliMigration0071AddDueMissed
+	case "0067_add_versioned_beads_schema.up.sql":
+		// Upstream versioned-beads Phase 1 (its own 0067, kept at 0067 here too) -
 		// not collide with house recurrence/due_missed already on fleet DBs.
-		return cliMigration0069AddVersionedBeadsSchema
+		return cliMigration0067AddVersionedBeadsSchema
+	case "0068_add_attribution_status.up.sql":
+		// Direct DDL for the same reason as 0067: the source migration's
+		// PREPARE guards (INFORMATION_SCHEMA probes) are what make the raw
+		// .up.sql idempotent when replayed onto an already-migrated store,
+		// and the 2.2.x CLI no-ops a prepared ADD COLUMN and MODIFY COLUMN
+		// alike. issue_versions is always present here -- 0067 runs earlier
+		// in the same fresh-bundle series -- never carries attribution_status
+		// yet, and still has durable_state as the JSON type 0067 gave it, so
+		// both of 0068's steps always fire on a fresh bundle.
+		return cliMigration0068AddAttributionStatus
+	case "0069_widen_issue_versions_datetime_precision.up.sql":
+		// Direct DDL for the same reason as 0068: the source migration's
+		// PREPARE guards (DATETIME_PRECISION probes) are what make the raw
+		// .up.sql idempotent when replayed onto an already-widened store,
+		// and the 2.2.x CLI no-ops a prepared MODIFY COLUMN. Nothing before
+		// 0069 in the fresh-bundle series widens change_at or removed_at --
+		// 0067 creates both as plain DATETIME and 0068 retypes only
+		// durable_state -- so both of 0069's MODIFYs always fire here too.
+		return cliMigration0069WidenIssueVersionsDatetimePrecision
 	default:
 		return sqlText
 	}
@@ -168,12 +187,12 @@ func cliSubstituteAssumesWispTables(name string) bool {
 		// cliMigration0065WidenWispCommentsText is a bare MODIFY on
 		// wisp_comments.
 		return true
-	case "0067_add_recurrence_columns.up.sql":
+	case "0070_add_recurrence_columns.up.sql":
 		return true
-	case "0068_add_due_missed.up.sql":
+	case "0071_add_due_missed.up.sql":
 		return true
-	case "0069_add_versioned_beads_schema.up.sql":
-		// cliMigration0069AddVersionedBeadsSchema drops the source's
+	case "0067_add_versioned_beads_schema.up.sql":
+		// cliMigration0067AddVersionedBeadsSchema drops the source's
 		// @wisps_cr_needs_add table-exists guard and ALTERs wisps directly.
 		return true
 	default:
@@ -220,7 +239,7 @@ ALTER TABLE wisps DROP COLUMN heartbeat_at;`
 const cliMigration0060AddStorageClass = `ALTER TABLE issues ADD COLUMN storage_class VARCHAR(16);
 ALTER TABLE wisps ADD COLUMN storage_class VARCHAR(16);`
 
-const cliMigration0067AddRecurrenceColumns = `ALTER TABLE issues ADD COLUMN repeat_pattern VARCHAR(255) NOT NULL DEFAULT '';
+const cliMigration0070AddRecurrenceColumns = `ALTER TABLE issues ADD COLUMN repeat_pattern VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE issues ADD COLUMN repeat_start DATETIME;
 ALTER TABLE issues ADD COLUMN repeat_end DATETIME;
 ALTER TABLE issues ADD COLUMN due_source VARCHAR(16) NOT NULL DEFAULT '';
@@ -229,17 +248,17 @@ ALTER TABLE wisps ADD COLUMN repeat_start DATETIME;
 ALTER TABLE wisps ADD COLUMN repeat_end DATETIME;
 ALTER TABLE wisps ADD COLUMN due_source VARCHAR(16) NOT NULL DEFAULT '';`
 
-const cliMigration0068AddDueMissed = `ALTER TABLE issues ADD COLUMN due_missed INT NOT NULL DEFAULT 0;
+const cliMigration0071AddDueMissed = `ALTER TABLE issues ADD COLUMN due_missed INT NOT NULL DEFAULT 0;
 ALTER TABLE wisps ADD COLUMN due_missed INT NOT NULL DEFAULT 0;`
 
 const cliMigration0065WidenWispCommentsText = `ALTER TABLE wisp_comments MODIFY COLUMN text LONGTEXT NOT NULL;`
 const cliMigration0066AddEventsJournalActor = `ALTER TABLE bd_events_journal ADD COLUMN actor VARCHAR(255) NOT NULL DEFAULT '';`
 
-// cliMigration0069AddVersionedBeadsSchema is 0069 (upstream 0067) with its two guarded
+// cliMigration0067AddVersionedBeadsSchema is upstream's 0067 with its two guarded
 // PREPARE blocks replaced by the direct ALTERs they would run on a fresh
 // database. The CREATE TABLEs are the source file's own text: CREATE TABLE
 // IF NOT EXISTS executes on the CLI batch path unchanged.
-const cliMigration0069AddVersionedBeadsSchema = `CREATE TABLE IF NOT EXISTS issue_versions (
+const cliMigration0067AddVersionedBeadsSchema = `CREATE TABLE IF NOT EXISTS issue_versions (
     issue_id VARCHAR(255) NOT NULL,
     revision BIGINT NOT NULL,
     epoch INT NOT NULL,
@@ -262,6 +281,28 @@ CREATE TABLE IF NOT EXISTS store_epoch (
 );
 ALTER TABLE issues ADD COLUMN current_revision BIGINT NOT NULL DEFAULT 1;
 ALTER TABLE wisps ADD COLUMN current_revision BIGINT NOT NULL DEFAULT 1;`
+
+// cliMigration0068AddAttributionStatus is 0068 with its two guarded PREPARE
+// blocks replaced by the direct ALTERs they would run on a fresh database:
+// step 6's ADD COLUMN attribution_status, and step 7's MODIFY COLUMN
+// durable_state LONGBLOB (the byte-preserving type the review on
+// gastownhall/beads#6358 item 4 asked for -- see the migration's step 7
+// header). issue_versions is created earlier in the same series by 0067,
+// which still creates durable_state as JSON and whose override is left
+// untouched: 0068 is what retypes it. So the column always needs adding and
+// the retype always fires here; no wisps twin exists for this table.
+const cliMigration0068AddAttributionStatus = `ALTER TABLE issue_versions ADD COLUMN attribution_status VARCHAR(20) NOT NULL;
+ALTER TABLE issue_versions MODIFY COLUMN durable_state LONGBLOB;`
+
+// cliMigration0069WidenIssueVersionsDatetimePrecision is 0069 with its two
+// guarded PREPARE blocks replaced by the direct MODIFYs they would run on a
+// fresh database: change_at and removed_at from 0067's plain DATETIME to
+// DATETIME(6) (the microsecond widen be-hs42e.8 / gastownhall/beads#6132
+// asks for -- see the migration's header). Neither 0067's override nor
+// 0068's touches either column, so both retypes always fire here; no wisps
+// twin exists for this table.
+const cliMigration0069WidenIssueVersionsDatetimePrecision = `ALTER TABLE issue_versions MODIFY COLUMN change_at DATETIME(6) NOT NULL;
+ALTER TABLE issue_versions MODIFY COLUMN removed_at DATETIME(6);`
 
 const cliMigration0041SplitDependenciesTarget = `DELETE FROM dolt_nonlocal_tables;
 CALL DOLT_COMMIT('-Am', 'disable nonlocal tables for fk migrations');

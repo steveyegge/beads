@@ -593,6 +593,49 @@ func RunCommenterAdvancesIssueActivity(t *testing.T, ctx context.Context, fixtur
 
 // RunCommenterDeletesComment verifies exact deletion, actor attribution, and
 // refusal of an unknown comment id.
+func RunCommenterLeavesTheAnchorIssueUntouched(t *testing.T, ctx context.Context, fixture CommenterFixture) {
+	t.Helper()
+	anchor := fixture.IssuePrefix + "-untouched"
+	seedCommenterIssue(t, ctx, fixture, anchor)
+
+	before := readCommenterAnchorRow(t, ctx, fixture, anchor)
+	// A second comment on the same anchor, because "appends to the thread" is
+	// what the issue row must survive, and the second append is the one that
+	// would tempt a body into touching a comment count on the issue.
+	for i, text := range []string{"first append", "second append"} {
+		if _, err := fixture.Commenter.AddComment(ctx, publicops.AddCommentRequest{
+			Author:  "author",
+			IssueID: anchor,
+			Text:    text,
+		}); err != nil {
+			t.Fatalf("AddComment %d on %s: %v", i, anchor, err)
+		}
+	}
+	after := readCommenterAnchorRow(t, ctx, fixture, anchor)
+
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Errorf("anchor %s updated_at moved %s -> %s across two comments: the column is ON UPDATE CURRENT_TIMESTAMP, so something wrote to the issue row",
+			anchor, before.UpdatedAt.UTC(), after.UpdatedAt.UTC())
+	}
+	if after.Status != before.Status {
+		t.Errorf("anchor %s status went %q -> %q across a comment", anchor, before.Status, after.Status)
+	}
+	if after.Assignee != before.Assignee {
+		t.Errorf("anchor %s assignee went %q -> %q across a comment", anchor, before.Assignee, after.Assignee)
+	}
+	if after.Fingerprint != before.Fingerprint {
+		t.Errorf("anchor %s changed across a comment:\nbefore %s\n after %s\na comment leaves every field of the issue untouched",
+			anchor, before.Fingerprint, after.Fingerprint)
+	}
+	// The append itself has to have happened, or every equality above is a
+	// statement about a call that did nothing.
+	assertCommenterRowCount(t, ctx, fixture, "comments", anchor, 2)
+}
+
+// RunCommenterRefusesBlankText pins commenter.go:31-34 and :67 from the other
+// side: a comment of nothing but whitespace carries no information, so it is
+// ErrValidation, and per commenter.go:61-64 a deterministic request-validation
+// failure leaves persistent state unchanged.
 func RunCommenterDeletesComment(t *testing.T, ctx context.Context, fixture CommenterFixture) {
 	t.Helper()
 	anchor := fixture.IssuePrefix + "-delete"

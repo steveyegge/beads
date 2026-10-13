@@ -37,6 +37,18 @@ func (s *DoltStore) SearchIssueIDs(ctx context.Context, query string, filter typ
 	return result, err
 }
 
+// SearchIssueSummaries is the narrow-projection variant of SearchIssues;
+// returns []*types.IssueSummary instead of full issues.
+func (s *DoltStore) SearchIssueSummaries(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueSummary, error) {
+	var result []*types.IssueSummary
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.SearchIssueSummariesInTx(ctx, tx, query, filter)
+		return err
+	})
+	return result, err
+}
+
 func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, filter types.IssueFilter) ([]*types.IssueWithCounts, error) {
 	var result []*types.IssueWithCounts
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -45,6 +57,23 @@ func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, fi
 		return err
 	})
 	return result, err
+}
+
+// deferWakeSweepEligible reports whether a store opened with the given
+// readOnly/classifiedRead flags may run the lazy defer-wake sweep. A
+// classified-read open (GH#804: bd ready/bd list are read-only for the
+// CURRENT project) is eligible despite readOnly=true because the store is
+// genuinely writable underneath; strict --readonly, preview, and
+// foreign-project opens are not (be-vbhpf).
+//
+// Only the strict --readonly and preview cases are decided here, by
+// classifiedRead being false. Foreign-project and other auxiliary opens are
+// excluded one layer up: they build their own dolt.Config literals and never
+// set ClassifiedRead, so they reach this guard already fail-closed. Do not
+// look for a foreign-project term in this predicate — there is none, and
+// setting ClassifiedRead on such an open would defeat the exclusion.
+func deferWakeSweepEligible(readOnly, classifiedRead bool) bool {
+	return !readOnly || classifiedRead
 }
 
 // runScheduledSweeps runs the lazy time-based sweeps
@@ -56,33 +85,51 @@ func (s *DoltStore) SearchIssuesWithCounts(ctx context.Context, query string, fi
 // OUTSIDE the read tx below because withReadTx unconditionally rolls back (and
 // may retry its body on the read-only justification).
 //
-// The body lives on RunScheduledSweeps (due_sweep.go), which `bd due sweep`
-// and the external clock call directly; this is that same pass with its
-// result discarded and its error reduced to a warning.
+// A classified-read open (GH#804: bd ready/bd list are read-only for the
+// CURRENT project) still runs the sweep — the store is genuinely writable
+// underneath, and only the command's own semantics forbid a mutating result.
+// A strict --readonly, preview, or foreign-project open must never sweep,
+// which is why deferWakeSweepEligible checks classifiedRead rather than the
+// guard dropping the readOnly check entirely (be-vbhpf).
 func (s *DoltStore) runScheduledSweeps(ctx context.Context) {
-	if s.readOnly {
+	if !deferWakeSweepEligible(s.readOnly, s.classifiedRead) {
 		return
 	}
-	if _, err := s.RunScheduledSweeps(ctx); err != nil &&
-		!errors.Is(err, ErrCircuitOpen) && !errors.Is(err, ErrStoreClosed) {
-		warnScheduledSweepSkipped(err)
+	err := s.withCircuitWrite(ctx, func(ctx context.Context) error {
+		return s.runIssueOperationTxWithMessage(ctx, func(tx *sql.Tx) (issueops.ChangedTables, string, error) {
+			woke, err := issueops.WakeExpiredDefersInTx(ctx, tx)
+			if err != nil {
+				return nil, "", err
+			}
+			if len(woke.Issues) == 0 {
+				// Wisp-only wakes persist with the SQL commit but mint no
+				// version commit: wisp tables are dolt_ignored.
+				return nil, "", nil
+			}
+			tables := issueops.ChangedTables{}
+			tables.Add("issues", "events")
+			return tables, issueops.WakeDefersCommitMessage(len(woke.Issues)), nil
+		})
+	})
+	if err != nil && !errors.Is(err, ErrCircuitOpen) && !errors.Is(err, ErrStoreClosed) {
+		warnDeferWakeSweepSkipped(err)
 	}
 }
 
-// scheduledSweepAccessDeniedOnce rate-limits the access-denied advisory to one
+// deferWakeAccessDeniedOnce rate-limits the access-denied advisory to one
 // warning per process: a read-only-privileged SQL user hits it on every
 // ready-front read, and repeating a configuration fact on each `bd ready`
 // is noise, not signal.
-var scheduledSweepAccessDeniedOnce sync.Once
+var deferWakeAccessDeniedOnce sync.Once
 
-func warnScheduledSweepSkipped(err error) {
+func warnDeferWakeSweepSkipped(err error) {
 	if dberrors.IsAccessDenied(err) {
-		scheduledSweepAccessDeniedOnce.Do(func() {
-			fmt.Fprintf(os.Stderr, "warning: scheduled sweep skipped (SQL user lacks write privileges; expired defers will not auto-wake and due beads will not fire from this client): %v\n", err)
+		deferWakeAccessDeniedOnce.Do(func() {
+			fmt.Fprintf(os.Stderr, "warning: defer-wake sweep skipped (SQL user lacks write privileges; expired defers will not auto-wake from this client): %v\n", err)
 		})
 		return
 	}
-	fmt.Fprintf(os.Stderr, "warning: scheduled sweep skipped: %v\n", err)
+	fmt.Fprintf(os.Stderr, "warning: defer-wake sweep skipped: %v\n", err)
 }
 
 func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
@@ -105,6 +152,21 @@ func (s *DoltStore) GetReadyWorkWithCounts(ctx context.Context, filter types.Wor
 		return err
 	})
 	return result, err
+}
+
+// GetReadyWorkWithCountsAndTotal returns the ready page and the size of the
+// whole ready set in one read transaction (and one defer-wake sweep), so a
+// capped `bd ready` needs no separate count pass.
+func (s *DoltStore) GetReadyWorkWithCountsAndTotal(ctx context.Context, filter types.WorkFilter) ([]*types.IssueWithCounts, int, error) {
+	s.runScheduledSweeps(ctx)
+	var result []*types.IssueWithCounts
+	var total int
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, total, err = issueops.GetReadyWorkWithCountsAndTotalInTx(ctx, tx, filter)
+		return err
+	})
+	return result, total, err
 }
 
 // CountReadyWork returns the total ready-work count for filter. It is identical

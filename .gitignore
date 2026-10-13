@@ -131,8 +131,6 @@ bd_test
 .beads/*
 !.beads/formulas/
 !.beads/formulas/**
-!.beads/notify/
-!.beads/notify/pins.json
 .opencode/
 
 # Beads / Dolt files (added by bd init)
@@ -258,6 +256,8 @@ tmp/build/cli-docs/worktree.md
 tmp/docs/CLI_REFERENCE.md
 *.gate.lock*
 
-# backpass runtime state (never commit)
-.backpass/
-evidence/
+# Bazel: output symlinks and machine-local rc files (remote executor endpoint,
+# TLS credentials). Never commit these.
+/bazel-*
+/.bazelrc.local
+/user.bazelrc

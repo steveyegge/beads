@@ -1001,11 +1001,11 @@ Examples:
 				Status:      types.StatusOpen,
 				Priority:    issue.Priority,
 				IssueType:   types.TypeEpic,
-				CreatedBy:   actor,
+				CreatedBy:   currentActor(),
 			}
 
 			applyDefaultDue(wrapperEpic)
-			if err := store.CreateIssue(ctx, wrapperEpic, actor); err != nil {
+			if err := store.CreateIssue(ctx, wrapperEpic, currentActor()); err != nil {
 				return HandleErrorRespectJSON("failed to create wrapper epic: %v", err)
 			}
 
@@ -1013,9 +1013,9 @@ Examples:
 				IssueID:     issue.ID,
 				DependsOnID: wrapperEpic.ID,
 				Type:        types.DepParentChild,
-				CreatedBy:   actor,
+				CreatedBy:   currentActor(),
 			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
+			if err := store.AddDependency(ctx, dep, currentActor()); err != nil {
 				return HandleErrorRespectJSON("failed to link issue to epic: %v", err)
 			}
 
@@ -1082,11 +1082,11 @@ Examples:
 			IssueType:   "molecule",
 			MolType:     types.MolTypeSwarm,
 			Assignee:    coordinator,
-			CreatedBy:   actor,
+			CreatedBy:   currentActor(),
 		}
 
 		applyDefaultDue(swarmMol)
-		if err := store.CreateIssue(ctx, swarmMol, actor); err != nil {
+		if err := store.CreateIssue(ctx, swarmMol, currentActor()); err != nil {
 			return HandleErrorRespectJSON("failed to create swarm molecule: %v", err)
 		}
 
@@ -1094,9 +1094,9 @@ Examples:
 			IssueID:     swarmMol.ID,
 			DependsOnID: epicID,
 			Type:        types.DepRelatesTo,
-			CreatedBy:   actor,
+			CreatedBy:   currentActor(),
 		}
-		if err := store.AddDependency(ctx, dep, actor); err != nil {
+		if err := store.AddDependency(ctx, dep, currentActor()); err != nil {
 			return HandleErrorRespectJSON("failed to link swarm to epic: %v", err)
 		}
 

@@ -28,10 +28,12 @@ func runReadyProxiedServer(cmd *cobra.Command, ctx context.Context) error {
 		return HandleError("--offset must be >= 0")
 	}
 
-	// No cap resolver: the RunE that routed here has already resolved
-	// --max-rows / BEADS_MAX_ROWS, either to reject a live one or to validate
-	// the value it then ignores for --claim. Resolving it again would repeat
-	// the malformed-value warning and stamp a cap this route cannot enforce.
+	// No cap resolver: --max-rows / BEADS_MAX_ROWS has already been resolved
+	// twice before this route runs — once at the proxied front door and once
+	// in the RunE that routed here — and any positive cap was refused by both,
+	// on --claim as much as on a bulk read. Resolving it a third time would
+	// repeat the malformed-value warning and stamp a cap this route cannot
+	// enforce.
 	in, err := gatherReadyInput(cmd, nil)
 	if err != nil {
 		return err
@@ -51,6 +53,12 @@ func runReadyProxiedServer(cmd *cobra.Command, ctx context.Context) error {
 	// same sweep from its role (uow.readyClaimer.ClaimNext).
 	uow.WakeExpiredDefersAdvisory(ctx, uowProvider)
 
+	// --mol reads through the provider's roles, each in a unit of work of its
+	// own, so it runs before this route opens the one it holds below.
+	if in.molID != "" {
+		return runMoleculeReady(ctx, nil, proxiedResolvePartialID, in.molID)
+	}
+
 	uw, err := uowProvider.NewUOW(ctx)
 	if err != nil {
 		return HandleErrorRespectJSON("open unit of work: %v", err)
@@ -60,8 +68,6 @@ func runReadyProxiedServer(cmd *cobra.Command, ctx context.Context) error {
 	switch {
 	case in.gated:
 		return runReadyProxiedGated(ctx, uw, in)
-	case in.molID != "":
-		return runReadyProxiedMolecule(ctx, uw, in)
 	case in.explain:
 		return runReadyProxiedExplain(ctx, uw, in)
 	default:
@@ -318,16 +324,10 @@ func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, _ readyInput
 		debug.Logf("warning: failed to detect cycles: %v", err)
 	}
 
-	allBlockerIDs := make(map[string]bool)
-	for _, bi := range blockedIssues {
-		for _, blockerID := range bi.BlockedBy {
-			allBlockerIDs[blockerID] = true
-		}
-	}
-	blockerIDList := make([]string, 0, len(allBlockerIDs))
-	for id := range allBlockerIDs {
-		blockerIDList = append(blockerIDList, id)
-	}
+	blockerIDList := explainBlockerIDs(blockedIssues, readyIssues, allDeps)
+	// TODO(batchgetter): unbounded id list; see issueops.BatchGetter's doc and
+	// the importIssueLookup TODO in import_shared.go for why this is not yet
+	// routed through GetMany.
 	blockerIssues, err := uw.IssueUseCase().GetIssuesByIDs(ctx, blockerIDList)
 	if err != nil {
 		debug.Logf("warning: failed to get blocker issues: %v", err)
@@ -360,9 +360,7 @@ func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, _ readyInput
 				ui.RenderPriority(item.Priority),
 				item.Title)
 			fmt.Printf("    Reason: %s\n", item.Reason)
-			if len(item.ResolvedBlockers) > 0 {
-				fmt.Printf("    Resolved blockers: %s\n", strings.Join(item.ResolvedBlockers, ", "))
-			}
+			printReadyItemDependencies(item)
 			if item.DependentCount > 0 {
 				fmt.Printf("    Unblocks: %d issue(s)\n", item.DependentCount)
 			}
@@ -400,89 +398,6 @@ func runReadyProxiedExplain(ctx context.Context, uw uow.UnitOfWork, _ readyInput
 		fmt.Printf(", %d cycle(s)", explanation.Summary.CycleCount)
 	}
 	fmt.Printf("\n\n")
-	return nil
-}
-
-func runReadyProxiedMolecule(ctx context.Context, uw uow.UnitOfWork, in readyInput) error {
-	moleculeID := in.molID
-	subgraph, err := loadTemplateSubgraph(ctx, uowMolReader{uw: uw}, moleculeID)
-	if err != nil {
-		return HandleError("loading molecule: %v", err)
-	}
-
-	analysis := analyzeMoleculeParallel(subgraph)
-
-	var readySteps []*MoleculeReadyStep
-	for _, issue := range subgraph.Issues {
-		info := analysis.Steps[issue.ID]
-		if info != nil && info.IsReady {
-			readySteps = append(readySteps, &MoleculeReadyStep{
-				Issue:         issue,
-				ParallelInfo:  info,
-				ParallelGroup: info.ParallelGroup,
-			})
-		}
-	}
-
-	if in.jsonOut {
-		output := MoleculeReadyOutput{
-			MoleculeID:     moleculeID,
-			MoleculeTitle:  subgraph.Root.Title,
-			TotalSteps:     analysis.TotalSteps,
-			ReadySteps:     len(readySteps),
-			Steps:          readySteps,
-			ParallelGroups: analysis.ParallelGroups,
-		}
-		_ = outputJSON(output)
-		return nil
-	}
-
-	fmt.Printf("\n%s Ready steps in molecule: %s\n", ui.RenderAccent("🧪"), subgraph.Root.Title)
-	fmt.Printf("   ID: %s\n", moleculeID)
-	fmt.Printf("   Total: %d steps, %d ready\n", analysis.TotalSteps, len(readySteps))
-	if len(readySteps) == 0 {
-		fmt.Printf("\n%s No ready steps (all blocked or completed)\n\n", ui.RenderWarn("✨"))
-		return nil
-	}
-	if len(analysis.ParallelGroups) > 0 {
-		fmt.Printf("\n%s Parallel Groups:\n", ui.RenderPass("⚡"))
-		for groupName, members := range analysis.ParallelGroups {
-			readyInGroup := 0
-			for _, id := range members {
-				if info := analysis.Steps[id]; info != nil && info.IsReady {
-					readyInGroup++
-				}
-			}
-			if readyInGroup > 0 {
-				fmt.Printf("   %s: %d ready\n", groupName, readyInGroup)
-			}
-		}
-	}
-	fmt.Printf("\n%s Ready steps:\n\n", ui.RenderPass("📋"))
-	for i, step := range readySteps {
-		groupAnnotation := ""
-		if step.ParallelGroup != "" {
-			groupAnnotation = fmt.Sprintf(" [%s]", ui.RenderAccent(step.ParallelGroup))
-		}
-		fmt.Printf("%d. [%s] [%s] %s: %s%s\n", i+1,
-			ui.RenderPriority(step.Issue.Priority),
-			ui.RenderType(string(step.Issue.IssueType)),
-			ui.RenderID(step.Issue.ID),
-			step.Issue.Title,
-			groupAnnotation)
-		if len(step.ParallelInfo.CanParallel) > 0 {
-			readyParallel := []string{}
-			for _, pID := range step.ParallelInfo.CanParallel {
-				if pInfo := analysis.Steps[pID]; pInfo != nil && pInfo.IsReady {
-					readyParallel = append(readyParallel, pID)
-				}
-			}
-			if len(readyParallel) > 0 {
-				fmt.Printf("   Can run with: %v\n", readyParallel)
-			}
-		}
-	}
-	fmt.Println()
 	return nil
 }
 

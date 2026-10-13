@@ -42,7 +42,7 @@ func gatherRecurrenceFlags(cmd *cobra.Command) (recurrenceFlags, error) {
 		}
 		t, err := timeparsing.ParseRelativeTime(raw, now)
 		if err != nil {
-			return out, HandleError("invalid --%s format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", bound.flag, raw)
+			return out, HandleError("invalid --%s format %q. %s", bound.flag, raw, deferUntilFormatHint)
 		}
 		t = t.UTC()
 		*bound.dest = &t
@@ -177,7 +177,7 @@ func applyRecurrenceUpdateFlags(cmd *cobra.Command, fields map[string]any) error
 		}
 		t, err := timeparsing.ParseRelativeTime(raw, now)
 		if err != nil {
-			return HandleErrorRespectJSON("invalid --%s format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", bound.flag, raw)
+			return HandleErrorRespectJSON("invalid --%s format %q. %s", bound.flag, raw, deferUntilFormatHint)
 		}
 		fields[bound.key] = t.UTC()
 	}

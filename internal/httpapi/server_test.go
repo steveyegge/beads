@@ -84,7 +84,7 @@ func (emptyDeps) GetIssueDependencyRecords(context.Context, []string) (map[strin
 // DetectCycleReport answers for a workspace with no cycles. Without it the
 // promoted method on the embedded nil interface panics, and the provider-backed
 // cycle route would 500 through the panic recovery rather than answering.
-func (emptyDeps) DetectCycleReport(context.Context) (issueops.CycleReport, error) {
+func (emptyDeps) DetectCycleReport(context.Context, issueops.DetectCyclesRequest) (issueops.CycleReport, error) {
 	return issueops.CycleReport{Cycles: []issueops.Cycle{}}, nil
 }
 
@@ -632,10 +632,13 @@ func TestCapabilitiesAdvertiseEveryImplementedOperation(t *testing.T) {
 		t.Fatal("the route table contributed no capabilities; this case would pass against a server that advertises nothing")
 	}
 	// The behavior tokens name no route, so the table walk above cannot reach
-	// them; project.enforce is advertised in the same list. It is spelled
-	// literally here to keep this an independent oracle rather than a second
-	// call to the code under test.
-	want = append(want, "project.enforce")
+	// them; project.enforce and issues.batchApplyLarge are advertised in the
+	// same list. Both are spelled literally here to keep this an independent
+	// oracle rather than a second call to the code under test.
+	want = append(want, "project.enforce", "issues.batchApplyLarge", "issues.list.sort", "issues.count.scope",
+		"issues.sweep.wispsPlane", "issues.sweep.liveDependents", "issues.sweep.limit",
+		"issues.batchApply.depAddLineage", "issues.update.allowTemplate", "issues.update.dueClearReason", "issues.create.defaultPriority", "issues.create.repeat",
+		"issues.close.autoCloseMolecule")
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("capabilities = %v, want %v", got, want)
@@ -645,6 +648,37 @@ func TestCapabilitiesAdvertiseEveryImplementedOperation(t *testing.T) {
 	// Falsified: reversing Capabilities()' sort turns this red.
 	if !slices.IsSorted(got) {
 		t.Errorf("capabilities = %v, want them sorted", got)
+	}
+}
+
+// TestExternalDependencyPolicyIsAdvertisedOnlyWhenEnforced pins the one
+// conditional token: policy.external_dependencies rides the handshake exactly
+// when Config says the roles were composed through the policy, and the rest of
+// the list is unchanged either way.
+func TestExternalDependencyPolicyIsAdvertisedOnlyWhenEnforced(t *testing.T) {
+	read := func(cfg Config) []string {
+		ts := newTestServer(t, cfg)
+		caps, _ := decodeBody(t, ts.get(t, "/v0/beads/context"))["capabilities"].([]any)
+		var got []string
+		for _, c := range caps {
+			got = append(got, c.(string))
+		}
+		return got
+	}
+	without := read(Config{})
+	if slices.Contains(without, "policy.external_dependencies") {
+		t.Errorf("a server not composed through the policy advertises it: %v", without)
+	}
+	with := read(Config{ExternalDependencyPolicy: true})
+	if !slices.Contains(with, "policy.external_dependencies") {
+		t.Errorf("a server composed through the policy does not advertise it: %v", with)
+	}
+	if !slices.IsSorted(with) {
+		t.Errorf("capabilities = %v, want them sorted", with)
+	}
+	rest := slices.DeleteFunc(slices.Clone(with), func(c string) bool { return c == "policy.external_dependencies" })
+	if !slices.Equal(rest, without) {
+		t.Errorf("the policy flag changed other tokens: with=%v without=%v", with, without)
 	}
 }
 
@@ -1232,6 +1266,10 @@ func TestStartupLines(t *testing.T) {
 	}
 	if provider.limits.ConnMaxIdleTime <= 0 || provider.limits.ConnMaxLifetime <= 0 {
 		t.Errorf("idle/lifetime caps unset: %+v", provider.limits)
+	}
+	if provider.limits.ConnMaxIdleTime != 20*time.Second {
+		t.Errorf("ConnMaxIdleTime = %s, want 20s below Dolt's supported 30s wait_timeout",
+			provider.limits.ConnMaxIdleTime)
 	}
 }
 

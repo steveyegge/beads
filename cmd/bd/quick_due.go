@@ -27,7 +27,7 @@ func resolveQuickDue(cmd *cobra.Command, issue *types.Issue) error {
 	if dueStr != "" {
 		t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
 		if err != nil {
-			return HandleError("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
+			return HandleError("invalid --due format %q. %s", dueStr, deferUntilFormatHint)
 		}
 		issue.DueAt = &t
 		return nil

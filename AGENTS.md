@@ -1,147 +1,207 @@
-<!-- firstmate:maintained-by-project -->
-# Agent Instructions
+# Beads — Contributor Agent Instructions
 
-<!-- bd-doctor-divergence: ok -->
+This file is for agents and humans **developing beads** (`bd`). If you are
+using `bd` to track work in your own project, read the user docs instead:
+[docs site](https://beads.gascity.com/) and
+[IDE and agent setup](docs/getting-started/ide-setup.md).
 
-Always-loaded project memory. Full operational detail is in
-[AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md). This file exists for tools that
-look for `AGENTS.md`. The marker above tells `bd doctor` that `AGENTS.md` and
-`CLAUDE.md` keep different reading orders on purpose.
+<!-- Contributor-only file. Do not run `bd setup` or `bd init` against this
+checkout: they would inject the end-user beads integration block here. -->
 
-## Read first
+Nested `AGENTS.md` files hold area-specific rules; the routing table at the
+end lists them. `CLAUDE.md` files are symlinks to their sibling `AGENTS.md`.
 
-- [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) - workflow, build, test, UI, releases
-- [engdocs/PROJECT_CHARTER.md](engdocs/PROJECT_CHARTER.md) before adding feature surface
-- [engdocs/TESTING.md](engdocs/TESTING.md) for canonical test commands and PR gates
-- [PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md) before PR triage, review, land, or close
-- [CONTRIBUTING.md](CONTRIBUTING.md) before handling external PRs
-- [engdocs/CLAUDE.md](engdocs/CLAUDE.md) for architecture orientation
+## How work flows here
 
-## Ground rules
+GitHub Issues is the public tracker. Use an issue when it adds context
+reviewers need: a user-visible bug, a behavior or design change worth
+discussing, or work that spans several PRs. The issue carries the
+reproduction, impact, and evidence for a bug, or the motivation, impact, risk,
+and verification plan for a change. Small, self-explanatory changes (typos,
+flaky tests, refactors, CI or docs tweaks) can go straight to a PR whose body
+explains the why.
 
-- Run `bd prime` before tracked work. Use `--json` for programmatic `bd` calls.
-- Toolchain versions come from `go.mod`. Do not hard-code them here.
-- Issue data lives in Dolt. Sync with `bd dolt push` / `bd dolt pull`. Do not use
-  export/import as a routine git workflow. Sync concepts:
-  https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md
-- Tests: `make test` (and `make test-icu-path` only when you need the ICU regex
-  path). Do not improvise raw `go test` and discover build tags the hard way.
-- Lint: `make ci-pr-lint` must be clean. File a P0 bead if quality gates are
-  broken, even when the finding is pre-existing.
-- Never `bd edit` (opens `$EDITOR`). Use `bd update` flags, or `--description=-`
-  / `--title=-` on stdin when the text has backticks or quotes.
-- CLI visual design: status `○ ◐ ● ✓ ❄`, priority `P0`–`P4` labels. Never
-  emoji-style status icons. Full system:
-  [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md#visual-design-system)
-- Storage talks through the driver (`dolthub/driver` for Dolt). Do not add
-  beads-side flocks, engine introspection, storage-specific retry/crash recovery,
-  or public SDK types that leak driver internals. Charter:
-  [engdocs/PROJECT_CHARTER.md](engdocs/PROJECT_CHARTER.md#storage-boundary).
-  `bd doctor` embedded-mode support is enabled one subcommand at a time
-  (GH#3794); do not lift the gate in `cmd/bd/doctor.go` wholesale.
-- Generated CLI docs (`docs/CLI_REFERENCE.md`, `docs/cli-reference/`, the pages
-  array in `docs/docs.json`) are pinned by `docs/cli-docs.pin` to the last
-  *released* bd. Do not hand-edit or regenerate them from this checkout; change
-  `Long` text in `cmd/bd/` and let the release pin bump carry it.
-- Shell `cp`/`mv`/`rm` may be aliased `-i`. Use `-f` / `-rf` so agents do not hang.
-- Beads owns issue-tracking primitives. Do not encode orchestration-layer policy,
-  become a storage engine, or expand the schema when metadata would work.
+1. If the change warrants an issue, find or file one with the bug or feature
+   form. It does not need maintainer approval first; file it before or
+   alongside the PR.
+2. Work on a branch, open a PR against `main` (its body says
+   `Closes #<issue>` when there is one), and let CI and review run.
+3. Maintainers triage issues with `status/needs-triage`, `status/needs-info`,
+   `status/needs-repro`, `status/needs-design`, and `status/accepted`
+   (confirmed); see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## PR safety
+Maintainers also keep an internal bd ledger. It is optional for contributors
+and not a substitute for the GitHub issue.
 
-Before implementing work, opening a PR, or merging/closing a PR:
+## Agent contribution policy
+
+- File an issue when the change warrants one (see above). When you do, use
+  the bug or feature form fields, fill each from evidence, and answer
+  `NOT_ENOUGH_INFO` where the evidence runs out.
+- A human reviews and stands behind every issue and PR an agent drafts.
+  Evidence that the change works end-to-end is required; "unit tests pass"
+  alone is not evidence.
+- Before implementing work, opening a PR, or merging/closing a PR, run the PR
+  preflight:
+  ```bash
+  scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/beads
+  scripts/pr-preflight.sh <pr-number> --repo gastownhall/beads
+  ```
+  The preflight is the agent gate for PR handling; do not rely on
+  auto-discovery of CONTRIBUTING.md.
+- Use `gh` for GitHub issues and PRs, not browser tools. Write PR, issue,
+  comment, and review bodies to a file, run `scripts/gh-body-lint <body-file>`,
+  and pass the file with `gh ... --body-file`. Sign agent-written GitHub
+  comments and reviews per [engdocs/AGENT_SIGNING.md](engdocs/AGENT_SIGNING.md).
+
+## Contributor protection
+
+External contributor PRs have priority. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+— it contains promises we've made to contributors — and, before triaging,
+reviewing, landing, closing, or otherwise maintaining PRs,
+[PR_MAINTAINER_GUIDELINES.md](PR_MAINTAINER_GUIDELINES.md). The maintainer
+policy is to maximize community throughput: find useful contributor value,
+absorb or transform it locally when practical, preserve attribution, and use
+request-changes only as a last resort.
+
+Before implementing any feature or fix, check for existing open PRs on the
+same topic. If one exists:
+
+1. **Review it first** — read the diff, understand the approach.
+2. **Build on their work, don't rewrite it** — check out their branch,
+   fix/adapt as needed.
+3. **Preserve their tests** — keep them unless they're wrong.
+4. **Attribute properly** — `Co-authored-by:` in commits, reference their PR.
+5. **Never close or supersede their PR silently.** If a rewrite is
+   unavoidable, explain why on the original PR and credit their design/tests.
+
+## Scope: where a change belongs
+
+Read [engdocs/PROJECT_CHARTER.md](engdocs/PROJECT_CHARTER.md) before adding
+feature surface area. Beads owns issue tracking primitives and should not
+encode orchestration-layer policy, become a storage engine, or casually expand
+the database schema when metadata would work. Prefer, in order: issue
+metadata over new fields, a flag on an existing command over a new command,
+an integration or plugin over core, and leave orchestration policy to the
+orchestration layer.
+
+**Storage boundary.** Beads talks to storage through a driver interface
+(`dolthub/driver` for Dolt). Do not add beads-side flocks, engine
+introspection, storage-specific retry or crash-recovery logic, or public SDK
+return types that leak driver internals. If the boundary is too narrow, widen
+the interface or route the issue to the driver instead of patching around it
+in beads. `bd doctor` support for embedded mode is enabled one subcommand at a
+time, each human-vetted (GH#3794): do not lift the embedded-mode gate in
+`cmd/bd/doctor.go` wholesale, and keep database-layer checks and fixes
+server-gated until the driver interface covers them.
+
+**Layering.** Schema → `internal/storage/issueops` → `cmd/bd`. Add new
+primitives at the lowest layer first, one layer per PR, stacked when a fix
+spans layers. See
+[CONTRIBUTING_PR_GUIDELINES.md](CONTRIBUTING_PR_GUIDELINES.md).
+
+## Build, test, lint
+
+Bazel is the build and test system: CI gates on the `bazel test` lanes in
+`.github/workflows/bazel.yml`, and nogo (lint + vet), gofmt and the repository
+guards exist only as Bazel targets. Install
+[Bazelisk](https://github.com/bazelbuild/bazelisk) as `bazel`; the pre-commit
+and pre-push hooks need it.
 
 ```bash
-scripts/pr-preflight.sh --search "<topic keywords>" --repo gastownhall/beads
-scripts/pr-preflight.sh <pr-number> --repo gastownhall/beads
+make test          # bazel test //... --config=ci: the CI test lane (nogo, gofmt, guards, unit tests)
+make check         # testing.Short policy + make ci-pr-lint + make test
+make ci-pr-lint    # nogo lint + vet gate, native plus windows/darwin
+make check-docs    # bazel docsync + doc freshness, then the CLI flag check
+make bazel-sync    # after adding/removing/renaming Go files or changing imports/go.mod
+make install       # build and install bd to ~/.local/bin (canonical)
 ```
 
-External contributor PRs have priority. Review and build on their branch when
-possible, preserve tests and attribution, and never close or supersede them
-silently.
+- Each other tier has its own lane (`--config=integration`, `doltserver`,
+  `embedded`, ...); [engdocs/TESTING.md](engdocs/TESTING.md) lists the exact
+  command per lane and is the canonical source for test selection, design,
+  and PR-readiness gates.
+- Where actions run: contributors add `--config=fork-cache` (rbe-west's
+  anonymous read-only cache; nothing is uploaded), maintainers with an rbe-west
+  certificate `--config=remote-exec`, agent hosts whose `~/.bazelrc` names the
+  executor neither. Make yours the default with a `build --config=...` line in
+  the gitignored `.bazelrc.local`, or pass `BAZEL_FLAGS=...` to make.
+- `go test` (`./scripts/test.sh`, `make test-go`) is an inner-loop
+  convenience only. CI does not enforce it, and it skips nogo, gofmt and the
+  guards; finish with `make test`.
+- **Do NOT** use `go build -o bd ./cmd/bd`, `go install ./cmd/bd`, or raw
+  `go run ./cmd/bd ...`: they bypass the canonical build path, leave stale
+  binaries, and raw `go run` misses the `gms_pure_go` tag. Use `make install`,
+  `./bd`, or `go run -tags gms_pure_go ./cmd/bd ...`.
+- All new features need tests.
+- **Never pollute a production database with test issues.** Use `t.TempDir()`
+  in Go tests and a disposable working directory for manual `bd` experiments.
+- `make ci-pr-lint` must pass with zero issues; see
+  [engdocs/LINTING.md](engdocs/LINTING.md).
+- If BUILD files are out of sync and you cannot run `make bazel-sync`, CI
+  syncs them: on same-repo PRs the bazel-autofix workflow pushes the fix to
+  your branch (pull before pushing again); fork PRs get a comment with an
+  apply recipe.
+- If you changed behavior, update the user docs (`docs/`, via the
+  `beads-docs` skill) or README in the same PR.
 
-## House fork notes
+## Commits and PRs
 
-This checkout is the RooseveltAdvisors/beads house fork. Conservative git
-(report, do not commit/push/Dolt-sync) unless the current user or orchestrator
-brief grants it. Assigned issues may require a progress trail before a
-done-class close; see `internal/storage/issueops/comment_progress.go` and pass
-`--reason` on `bd close`.
+- Conventional Commits: `type(scope): summary` (`fix`, `feat`, `docs`,
+  `test`, `refactor`, `chore`, `ci`, `perf`).
+- For agent-prepared commits, include the `Agent-Signature:` trailer described
+  in [engdocs/AGENT_SIGNING.md](engdocs/AGENT_SIGNING.md). Use
+  `unknown-model` or `unknown-reasoning` when reliable runtime metadata is
+  unavailable.
+- Maintainers working from the internal ledger may also end the subject with
+  the bead ID, e.g. `(bd-abc)`, so `bd doctor` can detect orphaned issues.
+- Work on a feature branch and open a PR against `main`; direct pushes to
+  `main` are reserved for releases and narrow operational fixes.
+- When the user asks to bump the version, use `./scripts/bump-version.sh`; the
+  full release process is in [RELEASING.md](RELEASING.md).
 
-## Backpass
+## Ending a session
 
-`.backpassrc.json` is gpu-host-specific. Do not add, commit, or push it toward
-Kun or upstream remotes. Always pass `--analysis-agent` / `--analysis-model` and
-`--synthesis-agent` / `--synthesis-model`; do not rely on config model defaults
-(the zai-general lane has no credits). Never zai-general.
+Do not push to `main`. Before handing off:
 
-```bash
-bunx backpass@latest scan --force --json
-bunx backpass@latest --analysis-agent codex --analysis-model gpt-5.6-luna --synthesis-agent cursor --synthesis-model cursor-grok-4.6-high
-```
+1. Run the quality gates your change needs (`make test`, `make ci-pr-lint`,
+   and the other Bazel lanes [engdocs/TESTING.md](engdocs/TESTING.md)
+   selects). If gates are broken on `main`, report it as a P0 issue.
+2. Record follow-up work as GitHub issues (or ledger beads, for maintainers).
+3. Commit, push, or open a PR only when the person you are working for asked
+   you to. Report changed files, validation run, and anything left open.
 
-If acpx cannot authenticate those harnesses, pin the same healthy models on a
-logged-in agent (for example pi `openai/gpt-5.6-luna`), never zai-general.
+## CLI output
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
-## Beads Issue Tracker
+**NEVER use emoji-style icons** (🔴🟠🟡🔵⚪) in CLI output. **ALWAYS use small
+Unicode symbols** with semantic colors: status `○ ◐ ● ✓ ❄`; priority as a
+`P0`–`P4` label with color (no status glyph). The full visual design system
+and CLI design principles are in
+[engdocs/UI_PHILOSOPHY.md](engdocs/UI_PHILOSOPHY.md).
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+## Non-interactive shell commands
 
-### Quick Reference
+Agents cannot answer prompts. Use `cp -f`, `mv -f`, `rm -f`, `rm -rf`,
+`cp -rf` (these may be aliased to `-i`); `scp`/`ssh -o BatchMode=yes`;
+`apt-get -y`; `HOMEBREW_NO_AUTO_UPDATE=1 brew`. **DO NOT use `bd edit`** — it
+opens `$EDITOR`; use `bd update <id> --title/--description/--design/--acceptance/--append-notes`
+(pipe text with special characters via `--description=-`).
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
+## Routing table
 
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   bd dolt push
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
-<!-- END BEADS INTEGRATION -->
-
-## Maintaining this file
-
-Keep this file for knowledge useful to almost every future agent session in this project.
-Do not repeat what the codebase already shows; point to the authoritative file or command instead.
-Prefer rewriting or pruning existing entries over appending new ones.
-When updating this file, preserve this bar for all agents and keep entries concise.
+| When you are touching… | Read first |
+|---|---|
+| `cmd/bd/` (commands, output, proxied-server routes) | [cmd/bd/AGENTS.md](cmd/bd/AGENTS.md) |
+| `engdocs/` (contributor and internals docs) | [engdocs/AGENTS.md](engdocs/AGENTS.md) |
+| `docs/` (the published user docs) | `.claude/skills/beads-docs/SKILL.md` |
+| Any Go test | [engdocs/TESTING.md](engdocs/TESTING.md) |
+| Lint failures or `.golangci.yml` | [engdocs/LINTING.md](engdocs/LINTING.md) |
+| A new storage operation or issueops role | [engdocs/ADDING_AN_ISSUEOPS_ROLE.md](engdocs/ADDING_AN_ISSUEOPS_ROLE.md) |
+| Schema migrations | [internal/storage/schema/migrations/README.md](internal/storage/schema/migrations/README.md) |
+| Dolt concurrency, server vs embedded mode | [engdocs/design/dolt-concurrency.md](engdocs/design/dolt-concurrency.md) |
+| Errors returned to users | [engdocs/ERROR_HANDLING.md](engdocs/ERROR_HANDLING.md) |
+| The `bd serve` HTTP surface | [engdocs/SERVE_RUNBOOK.md](engdocs/SERVE_RUNBOOK.md) |
+| A new example under `examples/` | `examples/README.md` — give the example its own README and link it there |
+| Releases and version bumps | [RELEASING.md](RELEASING.md) |
+| Scope questions | [engdocs/PROJECT_CHARTER.md](engdocs/PROJECT_CHARTER.md) |
+| Planned work and priorities | [ROADMAP.md](ROADMAP.md) |

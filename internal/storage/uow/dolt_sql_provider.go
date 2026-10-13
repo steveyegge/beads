@@ -16,6 +16,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-sql-driver/mysql"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
@@ -23,11 +24,12 @@ import (
 	db "github.com/steveyegge/beads/internal/storage/domain/db"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/schema"
+	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 )
 
 const (
 	defaultBranch           = "main"
-	defaultProxyIdleTimeout = 30 * time.Second
+	defaultProxyIdleTimeout = configfile.DefaultProxyIdleTimeout
 )
 
 type doltSQLProvider struct {
@@ -53,9 +55,16 @@ type doltSQLProvider struct {
 	// preview it still bootstraps and migrates normally — it only changes what
 	// happens when the migration gate REFUSES; see providerOptions.readOnly.
 	readOnly bool
+	// proxiedServerMode: the workspace that opened this provider is in
+	// proxied-server mode, so the commands the proxied front door refuses are
+	// off the table for its operator; see providerOptions.proxiedServerMode.
+	proxiedServerMode bool
 	// eventsJournalEnabled activates the durable events journal for THIS
 	// provider instance only. See SetEventsJournalEnabled.
 	eventsJournalEnabled atomic.Bool
+	// versionedHistoryEnabled activates dual-write issue-version history for
+	// THIS provider instance only. See SetVersionedHistoryEnabled.
+	versionedHistoryEnabled atomic.Bool
 }
 
 // SetEventsJournalEnabled activates the durable events journal for every unit
@@ -70,6 +79,13 @@ type doltSQLProvider struct {
 // write lands and the journal is simply empty.
 func (p *doltSQLProvider) SetEventsJournalEnabled(enabled bool) {
 	p.eventsJournalEnabled.Store(enabled)
+}
+
+// SetVersionedHistoryEnabled activates dual-write issue-version history for
+// every unit of work this provider begins from now on. Per instance, never
+// process-global — see SetEventsJournalEnabled.
+func (p *doltSQLProvider) SetVersionedHistoryEnabled(enabled bool) {
+	p.versionedHistoryEnabled.Store(enabled)
 }
 
 type bootstrapPreparationError struct {
@@ -123,6 +139,17 @@ type providerOptions struct {
 	// working through the upgrade window. That is the same warn-and-continue
 	// contract embeddeddolt gives its read-only-command intent.
 	readOnly bool
+	// proxiedServerMode records that the WORKSPACE is in proxied-server mode,
+	// which this provider cannot infer: it is the single funnel for the
+	// proxied CLI and for `bd serve`'s own provider on a SERVER-mode
+	// workspace, and both front a Dolt sql-server through the same dbproxy.
+	// The distinction matters to exactly one thing — which commands the front
+	// door refuses. In proxied mode `bd dolt pull` is rejected before it opens
+	// anything (proxy.dolt_pull.unsupported), so the #6575 data-behind stop
+	// has to name where that pull can be run; on a server-mode workspace the
+	// same command works, and saying otherwise would be the same class of
+	// wrong guidance in the other direction.
+	proxiedServerMode bool
 }
 
 // WithPreview opens the provider for a non-mutating preview command.
@@ -133,6 +160,13 @@ func WithPreview() ProviderOption {
 // WithReadOnly opens the provider for a command that only reads.
 func WithReadOnly() ProviderOption {
 	return func(o *providerOptions) { o.readOnly = true }
+}
+
+// WithProxiedServerMode marks the open as belonging to a proxied-server-mode
+// workspace. See providerOptions.proxiedServerMode: only the refusal guidance
+// depends on it, and only the proxied CLI open may set it.
+func WithProxiedServerMode() ProviderOption {
+	return func(o *providerOptions) { o.proxiedServerMode = true }
 }
 
 func applyProviderOptions(opts []ProviderOption) providerOptions {
@@ -146,9 +180,10 @@ func applyProviderOptions(opts []ProviderOption) providerOptions {
 }
 
 var (
-	_ UnitOfWorkProvider              = (*doltSQLProvider)(nil)
-	_ TxProvider                      = (*doltSQLProvider)(nil)
-	_ storage.EventsJournalConfigurer = (*doltSQLProvider)(nil)
+	_ UnitOfWorkProvider                 = (*doltSQLProvider)(nil)
+	_ TxProvider                         = (*doltSQLProvider)(nil)
+	_ storage.EventsJournalConfigurer    = (*doltSQLProvider)(nil)
+	_ storage.VersionedHistoryConfigurer = (*doltSQLProvider)(nil)
 )
 
 func (p *doltSQLProvider) NewUOW(ctx context.Context) (UnitOfWork, error) {
@@ -176,14 +211,18 @@ func (p *doltSQLProvider) BeginTx(ctx context.Context) (Tx, error) {
 		return nil, fmt.Errorf("uow: failed to start transaction: %w", err)
 	}
 
-	// Bind journal activation to the connection this unit of work is pinned to,
-	// AFTER START TRANSACTION so the seq allocation's UPDATE and the SELECT that
-	// must observe it are inside one transaction on one session. The scope is
-	// released when the connection is (doltServerTx.releaseConn / poisonConn),
-	// so an entry cannot outlive its transaction.
+	// Bind journal and versioned-history activation to the connection this unit
+	// of work is pinned to, AFTER START TRANSACTION so the seq allocation's
+	// UPDATE and the SELECT that must observe it are inside one transaction on
+	// one session. Both scopes are released when the connection is
+	// (doltServerTx.releaseConn / poisonConn), so an entry cannot outlive its
+	// transaction. The blocked-recheck scope is bound and released the same
+	// way; Commit takes what it recorded once the transaction has committed.
 	return &doltServerTx{
 		conn:              conn,
 		clearJournalScope: issueops.ScopeEventsJournalTransaction(conn, p.eventsJournalEnabled.Load()),
+		clearVersionScope: issueops.ScopeVersionedHistoryTransaction(conn, p.versionedHistoryEnabled.Load()),
+		clearRecheckScope: issueops.ScopeBlockedRecheckTransaction(conn),
 	}, nil
 }
 
@@ -269,10 +308,18 @@ func (p *doltSQLProvider) initSchemaAttempt(ctx context.Context, database string
 		// database by the time it runs, so a fresh bootstrap reads version 0
 		// and passes.
 		schema.WithMigrationGate(func(ctx context.Context, c *sql.Conn) error {
-			return schema.CheckSharedStoreMigrateGate(ctx, c, "", nil, nil)
+			return schema.CheckSharedStoreMigrateGate(ctx, c, "", nil, dataBehindAdopter(p.readOnly))
 		})); err != nil {
 		var gateErr *schema.RemoteMigrateGateError
 		if errors.As(err, &gateErr) {
+			// The gate reads the database, never the workspace, so it cannot
+			// know which commands this operator's front door will refuse. Only
+			// a proxied-server-mode workspace refuses `bd dolt pull`, and this
+			// provider also serves `bd serve` on a server-mode workspace,
+			// where that pull works — so the flag is the caller's, not a
+			// property of being behind a proxy (gastownhall/beads#6575
+			// follow-up).
+			gateErr.Proxied = p.proxiedServerMode
 			if p.readOnly {
 				return readThroughRefusedMigration(ctx, conn, database, gateErr)
 			}
@@ -284,6 +331,39 @@ func (p *doltSQLProvider) initSchemaAttempt(ctx context.Context, database string
 		return classifyInitSchemaError(err)
 	}
 	return nil
+}
+
+// dataBehindAdopter injects the one ancestry fact the smart gate's #6575
+// data-behind check needs on this path. Without it localDataBehind short-
+// circuits on a nil adopter, so a proxied store that is level on schema and
+// BEHIND the remote in data could never route to smartDataBehind: it reported
+// the blunt shared-store refusal instead, whose body names `bd migrate --force`
+// and `bd dolt push` — the designated-migrator recipe, which in this state is
+// the #6368 wedge the stop exists to prevent. The refusal itself was always
+// safe here (the shared arm suppresses the first-mover auto-migrate whatever
+// the ancestry says); the guidance it printed was not.
+//
+// Only AheadBehind is wired, deliberately. It is the complete data-behind
+// predicate (behind >= 1 whatever ahead is, plus which shape), so the stop is
+// fully covered — while leaving IsStrictAncestor/WorkingSetClean nil keeps
+// routeAdoptFastForward returning false, so the remote-AHEAD arm still routes
+// to the same plain adopt directive it does today. Nothing but the data-behind
+// state changes message. FastForward stays nil for a stronger reason: the
+// fast-forward is a WRITE that would promote the schema for every co-resident
+// client of this server, which is exactly what the shared gate refuses to do
+// unattended (#5920), and CheckSharedStoreMigrateGate suppresses it on a
+// shared store regardless.
+func dataBehindAdopter(readOnly bool) *schema.FastForwardAdopter {
+	return &schema.FastForwardAdopter{
+		AheadBehind: func(ctx context.Context, db schema.DBConn, ref string) (int, int, error) {
+			return versioncontrolops.LocalAheadBehind(ctx, db, ref)
+		},
+		// No FastForward is wired above, so canAutoFastForward is already
+		// false and this flag changes nothing today. Set anyway so the
+		// adopter's safety invariant ("ReadOnly means cannot write here")
+		// does not come to depend on that coincidence.
+		ReadOnly: readOnly,
+	}
 }
 
 // readThroughRefusedMigration serves a read command from a database the
@@ -310,6 +390,19 @@ func readThroughRefusedMigration(ctx context.Context, conn *sql.Conn, database s
 		// The gate refused AND the database cannot even be attached: report
 		// the refusal, which is the actionable half.
 		return backoff.Permanent(gateErr)
+	}
+	// #6575: the data-behind stop's remedy is the pull, and the consent verb
+	// this template names does not unlock a remote-backed shared store at all
+	// (schema.SharedConsentCommandForced). Print that stop's own block, which
+	// REPLACES the migrate-or-adopt framing rather than decorating it, and say
+	// only what read-through adds on top.
+	if gateErr.IsDataBehind() {
+		fmt.Fprintf(os.Stderr,
+			"Warning: %[1]s"+
+				"  Read-only command: continuing on schema v%[2]d without migrating.\n"+
+				"  Writes stay blocked until the steps above are done.\n",
+			gateErr.UserMessage(), gateErr.CurrentVersion)
+		return nil
 	}
 	fmt.Fprintf(os.Stderr,
 		"Warning: %[1]v\n"+
@@ -591,9 +684,13 @@ const pingAttemptTimeout = 10 * time.Second
 // application-level rejection that can reach us as one, so at boot an OpError
 // is always the connection itself: refused while the server restarts, reset,
 // or broken pipe. MySQL's own rejections arrive as *mysql.MySQLError and stay
-// permanent. A name that does not resolve is the exception — it will not start
-// resolving, so retrying only spends the whole budget before reporting the
-// same misconfiguration.
+// permanent here. A name that does not resolve is the exception — it will not
+// start resolving, so retrying only spends the whole budget before reporting
+// the same misconfiguration.
+//
+// The db proxy's own upstream-outage report (proxy.IsUpstreamOutageError) is
+// a *mysql.MySQLError too, so this function calls it permanent; pingWithRetry
+// handles it first and retries it only for upstreamOutageRetryWindow.
 //
 // context.DeadlineExceeded counts only because pingWithRetry applies a
 // per-attempt deadline and checks the caller's context *before* consulting
@@ -624,12 +721,45 @@ func isTransientPingError(err error) bool {
 		errors.As(err, &opErr)
 }
 
+// upstreamOutageRetryWindow is how long pingWithRetry keeps retrying the db
+// proxy's report that its external upstream is unreachable (refused, socket
+// gone, or closed before the greeting; see dbproxy/proxy/upstream_error.go).
+// Long enough to ride out an endpoint that is flapping or rebinding (a Dolt
+// restart, a front whose target is being replaced, a server briefly at its
+// connection limit), short enough that a real outage fails within a couple of
+// seconds instead of spending the full 30s bootstrap budget on a dead
+// upstream. A var so tests can shorten it.
+var upstreamOutageRetryWindow = time.Second
+
+// outageWindowBackOff clamps the wrapped backoff so that, once the first
+// upstream-outage report has been seen, no wait runs past the end of
+// upstreamOutageRetryWindow: the last attempt lands at the window's end
+// rather than up to one backoff interval after it.
+type outageWindowBackOff struct {
+	backoff.BackOff
+	deadline time.Time // zero until the first upstream-outage report
+}
+
+func (b *outageWindowBackOff) NextBackOff() time.Duration {
+	d := b.BackOff.NextBackOff()
+	if d == backoff.Stop || b.deadline.IsZero() {
+		return d
+	}
+	if remaining := time.Until(b.deadline); remaining < d {
+		return max(remaining, 0)
+	}
+	return d
+}
+
 // pingWithRetry pings until the server answers, the error proves durable, or
 // bo's MaxElapsedTime is spent. Each attempt gets its own deadline:
 // backoff.Retry bounds the gap between attempts but cannot interrupt one
 // already in flight, so without this cap a server that accepts TCP and then
-// stalls blocks for the caller's entire context.
+// stalls blocks for the caller's entire context. The db proxy's
+// upstream-outage report is retried only for upstreamOutageRetryWindow from
+// the first time it is seen.
 func pingWithRetry(ctx context.Context, p pinger, bo *backoff.ExponentialBackOff, attemptTimeout time.Duration) error {
+	window := &outageWindowBackOff{BackOff: bo}
 	return backoff.Retry(func() error {
 		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
 		defer cancel()
@@ -645,11 +775,20 @@ func pingWithRetry(ctx context.Context, p pinger, bo *backoff.ExponentialBackOff
 		if ctx.Err() != nil {
 			return backoff.Permanent(err)
 		}
+		if proxy.IsUpstreamOutageError(err) {
+			if window.deadline.IsZero() {
+				window.deadline = time.Now().Add(upstreamOutageRetryWindow)
+			}
+			if !time.Now().Before(window.deadline) {
+				return backoff.Permanent(err)
+			}
+			return err
+		}
 		if isTransientPingError(err) {
 			return err
 		}
 		return backoff.Permanent(err)
-	}, backoff.WithContext(bo, ctx))
+	}, backoff.WithContext(window, ctx))
 }
 
 // assertSessionDatabaseOnPool runs assertSessionDatabase on a connection pinned
@@ -721,6 +860,7 @@ func openAndInitSchema(ctx context.Context, ep proxy.Endpoint, database, rootUse
 			expectedProjectID: expectedProjectID,
 			preview:           opts.preview,
 			readOnly:          opts.readOnly,
+			proxiedServerMode: opts.proxiedServerMode,
 		}
 	}
 

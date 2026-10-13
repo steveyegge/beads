@@ -37,11 +37,37 @@ const (
 	// It bounds how long one request may hold a write transaction — not batch
 	// semantics, which have no size in them.
 	maxApplyBatchItems = issueops.MaxApplyBatchItems
-	// maxApplyBatchBodyBytes bounds the request body. A hundred items each
+	// maxApplyBatchBodyBytes bounds the request body. A thousand items each
 	// carrying a description, a design, acceptance criteria and a metadata
 	// document is the shape this has to admit, so it refuses the absurd before
-	// any of it is parsed. It is the batch create's bound for the same reason.
-	maxApplyBatchBodyBytes = 4 << 20
+	// any of it is parsed.
+	//
+	// Raised from 4 MiB to 16 MiB alongside maxApplyBatchItems's 100->1000
+	// raise: the measured max shape's body (102 creates, descriptions
+	// totaling about 878 KB) is about 1.1 MB, and 1000 items at the same
+	// density is comfortably inside 16 MiB with headroom for a caller that
+	// writes longer descriptions than that sample.
+	//
+	// See TestCapBatchApplyLargeTiesAllThreeLimits: this constant,
+	// largeApplyItemThreshold and issueops.MaxApplyBatchItems are pinned
+	// together with CapBatchApplyLarge, the token that advertises all three.
+	//
+	// See maxInflight's doc comment (server.go) for the worst-case concurrent
+	// decode memory this implies: maxInflight requests may each be decoding a
+	// body up to this size at once, before the large-apply semaphore narrows
+	// how many of them can go on to actually run.
+	maxApplyBatchBodyBytes = 16 << 20
+	// largeApplyItemThreshold is where a request crosses from "the original,
+	// always-supported shape" to "the raised envelope": a request with MORE
+	// than this many items holds the largeApplySem slot (serializing
+	// oversized transactions one at a time, Server.acquireLargeApply) and
+	// runs under a whole separate, EXTENDED budget (Server.largeApplyCeiling)
+	// instead of the ordinary requestDeadline every other request gets. It is
+	// deliberately the OLD cap, not some fraction of the new one: every
+	// request at or under this threshold runs under EXACTLY the deadline it
+	// always has — route() applies requestDeadline unconditionally, and
+	// nothing in this file touches it for such a request.
+	largeApplyItemThreshold = 100
 )
 
 // The document's member list at each of this body's levels. Every schema is
@@ -65,8 +91,9 @@ var (
 		"repeat_start", "sender", "status", "title",
 	}
 	applyUpdateItemMembers = []string{
-		"due_clear_reason", "expected_assignee", "expected_status", "expected_version",
-		"force_assignee_transfer", "force_close_policy", "patch", "target",
+		"expected_assignee", "expected_status", "expected_version",
+		"due_clear_reason", "force_assignee_transfer", "force_close_policy",
+		"force_notes_overwrite", "patch", "target",
 	}
 	applyPatchMembers = []string{
 		"acceptance_criteria", "append_notes", "assignee", "defer_until",
@@ -77,7 +104,7 @@ var (
 	applyLabelPatchMembers    = []string{"add", "remove", "replace"}
 	applyMetadataPatchMembers = []string{"merge", "replace", "set", "unset"}
 	applyCloseItemMembers     = []string{"expected_version", "force", "reason", "session", "target"}
-	applyDepAddItemMembers    = []string{"metadata", "source", "target", "type"}
+	applyDepAddItemMembers    = []string{"has_spawner", "metadata", "source", "target", "thread_id", "type"}
 
 	// applyItemKinds is the tag vocabulary, paired with the payload member each
 	// value names. It is one map rather than a switch so the enum, the member
@@ -121,6 +148,24 @@ func (s *Server) handleApplyBatch(w http.ResponseWriter, r *http.Request) {
 	request, ok := s.applyBatchRequest(w, r)
 	if !ok {
 		return
+	}
+
+	// One-wide "large write" semaphore: a request carrying more than
+	// largeApplyItemThreshold items serializes against every other large
+	// apply, so at most one oversized transaction holds a write connection
+	// at a time, and runs under an EXTENDED budget built fresh at the moment
+	// it is admitted (Server.acquireLargeApply). An ordinary (<=threshold)
+	// request never touches this, is never waited on by one, and keeps
+	// r.Context() exactly as route() built it — requestDeadline,
+	// unconditionally, the same as it always has.
+	if len(request.Items) > largeApplyItemThreshold {
+		runCtx, release, err := s.acquireLargeApply(r.Context())
+		if err != nil {
+			s.failApplyBatch(w, r, request, err)
+			return
+		}
+		defer release()
+		r = r.WithContext(runCtx)
 	}
 
 	applier, err := s.batchApplier(r)
@@ -174,6 +219,7 @@ func (s *Server) applyBatchRequest(w http.ResponseWriter, r *http.Request) (issu
 	if res != nil {
 		return refuse(res)
 	}
+	// No created_by stamp: the role defaults each create item's to the actor.
 	return issueops.ApplyBatchRequest{
 		Actor:                 actor,
 		Items:                 items,
@@ -390,7 +436,9 @@ func applyCreateItem(prefix string, encoded json.RawMessage, raw map[string]json
 		issue.NoHistory = *wire.NoHistory
 	}
 
-	item := &issueops.CreateItem{Key: derefString(wire.Key), Issue: issue}
+	// An absent `priority` is the role's default (CreateItem.DefaultPriority),
+	// never a 0 — which is P0 — made up here.
+	item := &issueops.CreateItem{Key: derefString(wire.Key), Issue: issue, DefaultPriority: wire.Priority == nil}
 	refs, res := applyMetadataRefs(prefix, raw)
 	if res != nil {
 		return nil, res
@@ -475,6 +523,9 @@ func applyUpdateItem(prefix string, encoded json.RawMessage, raw map[string]json
 	}
 	if wire.ForceAssigneeTransfer != nil {
 		item.ForceAssigneeTransfer = *wire.ForceAssigneeTransfer
+	}
+	if wire.ForceNotesOverwrite != nil {
+		item.ForceNotesOverwrite = *wire.ForceNotesOverwrite
 	}
 	item.DueClearReason = derefString(wire.DueClearReason)
 	return item, nil
@@ -794,6 +845,28 @@ func applyDepAddItem(prefix string, raw map[string]json.RawMessage) (*issueops.D
 	if metadata, present := raw["metadata"]; present {
 		item.Metadata = string(metadata)
 	}
+	// has_spawner and thread_id are additive members gated client-side by
+	// issues.batchApply.depAddLineage (routes.go CapBatchApplyDepAddLineage):
+	// the server always understands them once wired, so there is no
+	// capability check here — the gate lives entirely in the client that
+	// decides whether to SEND them against an older server.
+	hasSpawner, res := applyBoolMember(raw, prefix, "has_spawner")
+	if res != nil {
+		return nil, res
+	}
+	item.HasSpawner = hasSpawner
+	threadID, res := applyTextMember(raw, prefix, "thread_id")
+	if res != nil {
+		return nil, res
+	}
+	// The document's minLength: 1. An ABSENT thread_id already names no thread
+	// (and a re-add keeps the stored one), so an empty one would only be a
+	// second spelling of it — refused, as an empty `type` is, rather than read.
+	if _, present := raw["thread_id"]; present && threadID == "" {
+		res := InvalidArgument(prefix+"thread_id", ReasonInvalidValue, "`thread_id` must not be empty; omit it to name no thread")
+		return nil, &res
+	}
+	item.ThreadID = threadID
 	return item, nil
 }
 
@@ -992,8 +1065,16 @@ func (s *Server) failApplyBatch(w http.ResponseWriter, r *http.Request, request 
 		s.fail(w, r, res)
 
 	case errors.Is(err, issueops.ErrCloseBlocked):
-		s.fail(w, r, at(newResult(CodeNotClosable,
-			"an item closes a blocked issue; clear the blocker, or send the item's force flag"), ""))
+		s.fail(w, r, at(closeBlockedResult(err,
+			"an item closes a blocked issue", "clear the blocker, or send the item's force flag"), ""))
+
+	// An update item naming a template, or the close guards on a close item:
+	// the shared mapping, carrying the holder for not_assignee, plus the item
+	// members.
+	case errors.Is(err, issueops.ErrTemplateReadOnly),
+		errors.Is(err, issueops.ErrPinned),
+		errors.As(err, new(*issueops.CloseNotAssigneeError)):
+		s.fail(w, r, at(ClassifyError(err), ""))
 
 	case errors.Is(err, storage.ErrAlreadyClaimed):
 		res := at(newResult(CodeAlreadyClaimed,
@@ -1007,6 +1088,10 @@ func (s *Server) failApplyBatch(w http.ResponseWriter, r *http.Request, request 
 			}
 		}
 		s.fail(w, r, res)
+
+	case errors.Is(err, storage.ErrNotesOverwrite):
+		s.fail(w, r, at(newResult(CodeNotesOverwrite,
+			"an update's `patch.notes` would replace existing non-empty notes; send `force_notes_overwrite`, or use `patch.append_notes` to preserve history"), "notes"))
 
 	case errors.Is(err, issueops.ErrVersionMismatch),
 		errors.Is(err, issueops.ErrStatusMismatch),

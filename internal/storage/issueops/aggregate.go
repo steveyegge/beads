@@ -46,7 +46,7 @@ func UpdateFields(patch publicops.IssuePatch) map[string]interface{} {
 		{patch.Design.Set, "design", patch.Design.Value},
 		{patch.AcceptanceCriteria.Set, "acceptance_criteria", patch.AcceptanceCriteria.Value},
 		{patch.Notes.Set, "notes", patch.Notes.Value},
-		{patch.AppendNotes.Set, "append_notes", patch.AppendNotes.Value},
+		{patch.AppendNotes.Set, OpAppendNotes, patch.AppendNotes.Value},
 		{patch.SpecID.Set, "spec_id", patch.SpecID.Value},
 		{patch.AwaitID.Set, "await_id", patch.AwaitID.Value},
 		{patch.Status.Set, "status", patch.Status.Value},
@@ -79,6 +79,18 @@ func ValidateUpdateRequest(request publicops.UpdateRequest) error {
 	}
 	if request.ForceAssigneeTransfer && (request.Claim || !request.Patch.Assignee.Set || request.ExpectedAssignee != nil) {
 		return fmt.Errorf("%w: invalid forced assignee transfer", storage.ErrValidation)
+	}
+	if request.ForceNotesOverwrite && !request.Patch.Notes.Set {
+		return fmt.Errorf("%w: invalid forced notes overwrite", storage.ErrValidation)
+	}
+	// Checked HERE, ahead of the notes-overwrite fence in ExecuteUpdate: a
+	// patch setting both Notes and AppendNotes is an invalid REQUEST, not a
+	// refused overwrite, and must report ErrValidation even when the notes
+	// fence would independently refuse the same Notes value. The uow backend
+	// reaches this same check through validateUpdateRequest, which both of
+	// its update paths run before their own fence calls, for the same reason.
+	if request.Patch.Notes.Set && request.Patch.AppendNotes.Set {
+		return fmt.Errorf("%w: cannot combine a notes replacement with %s", storage.ErrValidation, OpAppendNotes)
 	}
 	patch := request.Patch
 	if patch.Title.Set {
@@ -211,6 +223,63 @@ func AuthorizeAssigneeTransfer(ctx context.Context, tx DBTX, before *types.Issue
 	return AuthorizeAssigneeTransferWithPools(before, request, pools)
 }
 
+// AuthorizeNotesOverwrite protects existing non-empty notes from an unforced
+// replacement. It refuses when the patch sets Notes to a
+// publicops.NotesReplacement of before.Notes (which exempts an explicit
+// clear) and request.ForceNotesOverwrite is false.
+//
+// It applies REGARDLESS of request.ExpectedAssignee, deliberately: unlike the
+// assignee fence, there is no compare-and-set that authorizes a notes
+// overwrite the way a matching ExpectedAssignee authorizes an assignee
+// transfer, so pairing a notes edit with an assignee guard does not exempt it.
+// A STALE guard still outranks it, though — both backends check the
+// compare-and-set preconditions before calling here, so a mismatch reports as
+// the mismatch, never as this refusal.
+//
+// Enforcement boundary: this fences the issueops-contract surfaces
+// (ExecuteUpdate, the uow update and batch legs). The map-based
+// UpdateIssueInTx funnel does not consult it, and it has several
+// notes-replacing callers, not one. They fall into classes that are all
+// sighted or derived rather than blind: editor pre-fill that starts from the
+// current notes (`bd edit`), read-combine-write that appends to them
+// (`bd note`, `bd defer --reason`), mechanical ID rewrites of existing text
+// (`bd rename`, delete-tombstoning), and explicit clears (`bd compact`). Each
+// derives its new value from the current notes, so none is the blind clobber
+// this fence exists to stop. `bd import` is exempt BY DESIGN (GH#6190), along with every
+// other live-state fence: its contract is row replacement, guarded by its own
+// staleness check (only strictly-newer rows rewrite local state; deliberate
+// overwrites of newer state require --allow-stale) and reported field-by-field
+// in updated_issues — the bulk-path analog of this fence's per-field --force.
+func AuthorizeNotesOverwrite(before *types.Issue, request publicops.UpdateRequest) error {
+	if !request.Patch.Notes.Set || !publicops.NotesReplacement(before.Notes, request.Patch.Notes.Value) || request.ForceNotesOverwrite {
+		return nil
+	}
+	return fmt.Errorf("%w: issue %s", storage.ErrNotesOverwrite, before.ID)
+}
+
+// AuthorizeTemplateUpdate refuses an update of a template with
+// *publicops.TemplateReadOnlyError. Templates are read-only — work comes out of
+// one by pouring it — so every update naming one refuses, whatever its patch
+// and whatever force flags it carries: no force flag waives it (only the
+// caller's explicit AllowTemplate does).
+//
+// It is the guard `bd update` (and assign, and the proxied mutations) used to
+// apply as a pre-read in cmd/bd, which left bd serve, BatchApplier update items
+// and library callers writing to templates bd refused. It sits beside the
+// other update fences and is called from the same three places — ExecuteUpdate,
+// and the unit-of-work update and batch legs — over the same-transaction
+// pre-image, after the compare-and-set preconditions, so a stale guard still
+// reports as the mismatch.
+//
+// request.AllowTemplate is the caller saying it edits a template deliberately
+// (bd label, bd set-state); the guard stands down for that request only.
+func AuthorizeTemplateUpdate(before *types.Issue, request publicops.UpdateRequest) error {
+	if before != nil && before.IsTemplate && !request.AllowTemplate {
+		return &publicops.TemplateReadOnlyError{IssueID: before.ID}
+	}
+	return nil
+}
+
 // ApplyMetadataPatch returns the canonical metadata value and whether it changes.
 func ApplyMetadataPatch(current json.RawMessage, patch publicops.MetadataPatch) (json.RawMessage, bool, error) {
 	if !patch.Replace.Set && !patch.Merge.Set && len(patch.Set) == 0 && len(patch.Unset) == 0 {
@@ -312,7 +381,17 @@ func metadataChanged(current, next json.RawMessage) (bool, error) {
 }
 
 // ApplyLabelPatch applies ordered label edits and reports whether rows changed.
+// A patch that changed the label set mints ONE version row for the issue,
+// after every label row it wrote; a patch that leaves the set as it was mints
+// nothing.
 func ApplyLabelPatch(ctx context.Context, tx DBTX, current *types.Issue, patch publicops.LabelPatch, actor string) (bool, error) {
+	return applyLabelPatch(ctx, tx, current, patch, actor, true)
+}
+
+// applyLabelPatch is the body of ApplyLabelPatch. mintVersion controls whether
+// the patch mints its own version row; ExecuteUpdate passes false and mints
+// once for the whole guarded update after its last patch.
+func applyLabelPatch(ctx context.Context, tx DBTX, current *types.Issue, patch publicops.LabelPatch, actor string, mintVersion bool) (bool, error) {
 	if !patch.Replace.Set && len(patch.Add) == 0 && len(patch.Remove) == 0 {
 		return false, nil
 	}
@@ -359,13 +438,21 @@ func ApplyLabelPatch(ctx context.Context, tx DBTX, current *types.Issue, patch p
 	if !ok {
 		return false, fmt.Errorf("apply labels: transaction must be *sql.Tx")
 	}
+	// The per-label helpers run without minting: the patch is one mutation
+	// and is versioned once below, after the last row, so the version carries
+	// the complete post-patch set rather than one row per label.
 	for _, label := range stringSetDifference(existing, target) {
-		if err := RemoveLabelInTx(ctx, sqlTx, "", "", current.ID, label, actor); err != nil {
+		if err := removeLabelInTx(ctx, sqlTx, "", "", current.ID, label, actor, false); err != nil {
 			return false, err
 		}
 	}
 	for _, label := range stringSetDifference(target, existing) {
-		if err := AddLabelInTx(ctx, sqlTx, "", "", current.ID, label, actor); err != nil {
+		if err := addLabelInTx(ctx, sqlTx, "", "", current.ID, label, actor, false); err != nil {
+			return false, err
+		}
+	}
+	if mintVersion {
+		if err := RecordVersionInTx(ctx, tx, current.ID, actor); err != nil {
 			return false, err
 		}
 	}
@@ -379,8 +466,17 @@ type ParentPatchResult struct {
 	WispRowsChanged  bool
 }
 
-// ApplyParentPatch replaces the parent-child targets and reports concrete changes.
+// ApplyParentPatch replaces the parent-child targets and reports concrete
+// changes. A patch that rewired the parent edges mints ONE version row for the
+// child (the referencing issue), after the last edge write; an unchanged
+// parent set mints nothing.
 func ApplyParentPatch(ctx context.Context, tx DBTX, current *types.Issue, parent publicops.Field[string], actor string) (ParentPatchResult, error) {
+	return applyParentPatch(ctx, tx, current, parent, actor, true)
+}
+
+// applyParentPatch is the body of ApplyParentPatch; mintVersion is
+// applyLabelPatch's, for the same reason.
+func applyParentPatch(ctx context.Context, tx DBTX, current *types.Issue, parent publicops.Field[string], actor string, mintVersion bool) (ParentPatchResult, error) {
 	if !parent.Set {
 		return ParentPatchResult{}, nil
 	}
@@ -405,14 +501,21 @@ func ApplyParentPatch(ctx context.Context, tx DBTX, current *types.Issue, parent
 	if !ok {
 		return ParentPatchResult{}, fmt.Errorf("apply parent: transaction must be *sql.Tx")
 	}
+	// The edge helpers run without minting: the patch is one mutation of the
+	// child's edge set and is versioned once below, after the last edge.
 	var recomputed RecomputeIsBlockedResult
 	for _, parentID := range stringSetDifference(existing, target) {
-		if _, err := removeDependencyInTx(ctx, sqlTx, current.ID, parentID, actor, false, &recomputed); err != nil {
+		if _, err := removeDependencyInTx(ctx, sqlTx, current.ID, parentID, actor, false, &recomputed, false); err != nil {
 			return ParentPatchResult{}, err
 		}
 	}
 	for _, parentID := range stringSetDifference(target, existing) {
-		if _, err := addDependencyInTx(ctx, sqlTx, &types.Dependency{IssueID: current.ID, DependsOnID: parentID, Type: types.DepParentChild}, actor, AddDependencyOpts{}, &recomputed); err != nil {
+		if _, err := addDependencyInTx(ctx, sqlTx, &types.Dependency{IssueID: current.ID, DependsOnID: parentID, Type: types.DepParentChild}, actor, AddDependencyOpts{}, &recomputed, false); err != nil {
+			return ParentPatchResult{}, err
+		}
+	}
+	if mintVersion {
+		if err := RecordVersionInTx(ctx, tx, current.ID, actor); err != nil {
 			return ParentPatchResult{}, err
 		}
 	}
