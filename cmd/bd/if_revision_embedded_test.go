@@ -245,6 +245,102 @@ func TestIfRevisionDeletePreflightGoneIsPreconditionFailed(t *testing.T) {
 	}
 }
 
+// TestEmbeddedIfRevisionPreflightGoneIsPreconditionFailedOnEveryVerb pins
+// ga-vnycm2.10, the close/update/assign/reopen half of mc-zndi7.81: `bd
+// close`, `bd update`, `bd assign` and `bd reopen` each resolve the row with
+// resolveAndGetIssueForMutation BEFORE their guarded write, exactly as `bd
+// delete` does (and `bd delete --cascade`, through deleteBatch). A guarded
+// write that races a winning `bd delete` on a real Dolt sql-server
+// (TestSharedServerDeleteIfRevisionSingleWinner/delete_vs_close and
+// delete_vs_update) finds the row already gone right there and, pre-fix,
+// exited 1 with an unclassified "no issue found matching" instead of the
+// ExitGuardMismatch (13) precondition_failed the same loser gets when the
+// delete lands one step later, inside its guarded write. The deterministic
+// reproduction is the delete test's: delete the row out from under a
+// --if-revision token, then present that token.
+//
+// TestProxiedServerIfRevisionTargetGoneIsPreconditionFailed
+// (if_revision_proxied_close_delete_test.go) is this test's proxied-server-leg
+// twin. The TestEmbedded name is what puts this test in a CI lane
+// (.github/scripts/embedded-test-shard.sh); under any other name it skips
+// everywhere.
+func TestEmbeddedIfRevisionPreflightGoneIsPreconditionFailedOnEveryVerb(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "pv")
+
+	for _, tc := range []struct {
+		verb string
+		args func(id, rev string) []string
+	}{
+		{"close", func(id, rev string) []string { return []string{"close", id, "--if-revision", rev, "--reason", "gone"} }},
+		{"update", func(id, rev string) []string {
+			return []string{"update", id, "--if-revision", rev, "--spec-id", "gone"}
+		}},
+		{"assign", func(id, rev string) []string { return []string{"assign", id, "someone", "--if-revision", rev} }},
+		{"reopen", func(id, rev string) []string { return []string{"reopen", id, "--if-revision", rev} }},
+		{"delete", func(id, rev string) []string { return []string{"delete", id, "--force", "--if-revision", rev} }},
+		{"delete_cascade", func(id, rev string) []string {
+			return []string{"delete", id, "--cascade", "--force", "--if-revision", rev}
+		}},
+	} {
+		t.Run(tc.verb, func(t *testing.T) {
+			issue := bdCreate(t, bd, dir, "Preflight gone "+tc.verb, "--type", "task")
+			rev0 := bdShowRevision(t, bd, dir, issue.ID)
+
+			// Stand in for the winning delete racer.
+			bdDelete(t, bd, dir, issue.ID, "--force")
+			bdShowFail(t, bd, dir, issue.ID)
+
+			out, code := bdRunFailCode(t, bd, dir, tc.args(issue.ID, revStr(rev0))...)
+			if code != ExitGuardMismatch {
+				t.Errorf("preflight-gone --if-revision %s exit code = %d, want %d\n%s", tc.verb, code, ExitGuardMismatch, out)
+			}
+			if !strings.Contains(out, "precondition failed: issue no longer exists") {
+				t.Errorf("preflight-gone %s should say \"precondition failed: issue no longer exists\", got:\n%s", tc.verb, out)
+			}
+			// Every verb's own not-found wording: "no issue found matching"
+			// (the direct resolution), "issue <id> not found" (delete's
+			// fallback), "issues not found: <id>" (deleteBatch).
+			if strings.Contains(out, "no issue found matching") || strings.Contains(out, "not found") {
+				t.Errorf("preflight-gone %s leaked the raw, unclassified resolution error instead of the guard envelope:\n%s", tc.verb, out)
+			}
+		})
+	}
+
+	// Without --if-revision there is no guard to report through: a missing
+	// id stays the ordinary not-found failure (exit 1), unchanged.
+	t.Run("unguarded_close_still_not_found", func(t *testing.T) {
+		out, code := bdRunFailCode(t, bd, dir, "close", "pv-doesnotexist", "--reason", "gone")
+		if code != 1 {
+			t.Errorf("unguarded close of a missing id exit code = %d, want 1\n%s", code, out)
+		}
+		if strings.Contains(out, "precondition failed") {
+			t.Errorf("unguarded close of a missing id must not report a guard outcome:\n%s", out)
+		}
+	})
+
+	// deleteBatch's not-found error now carries the storage.ErrNotFound
+	// sentinel the guarded cascade classifies; unguarded, it still prints the
+	// same flat list.
+	t.Run("unguarded_cascade_delete_still_not_found", func(t *testing.T) {
+		out, code := bdRunFailCode(t, bd, dir, "delete", "pv-doesnotexist", "--cascade", "--force")
+		if code != 1 {
+			t.Errorf("unguarded cascade delete of a missing id exit code = %d, want 1\n%s", code, out)
+		}
+		if !strings.Contains(out, "issues not found: pv-doesnotexist") {
+			t.Errorf("unguarded cascade delete of a missing id should say \"issues not found: pv-doesnotexist\", got:\n%s", out)
+		}
+		if strings.Contains(out, "precondition failed") {
+			t.Errorf("unguarded cascade delete of a missing id must not report a guard outcome:\n%s", out)
+		}
+	})
+}
+
 // TestIfRevisionCascadeDelete pins mc-zndi7.76 (gap 4): a single named id with
 // --cascade takes the SAME deleteBatch path a multi-id delete does
 // (cmd/bd/delete.go:105, "len(issueIDs) > 1 || cascade"), which is the only
@@ -254,7 +350,10 @@ func TestIfRevisionDeletePreflightGoneIsPreconditionFailed(t *testing.T) {
 // here). A stale guard must refuse the WHOLE cascade — the dependent survives
 // right alongside the named parent — on both the real run and the unconfirmed
 // --dry-run preview, which reports the same conditional-write envelope rather
-// than falling through to the generic preview-with-error path.
+// than falling through to the generic preview-with-error path. A target that a
+// concurrent delete removed before deleteBatch resolves it is
+// TestEmbeddedIfRevisionPreflightGoneIsPreconditionFailedOnEveryVerb's
+// delete_cascade row.
 func TestIfRevisionCascadeDelete(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")

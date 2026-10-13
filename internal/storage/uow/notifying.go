@@ -242,6 +242,10 @@ func (p *notifyingProvider) BatchGetter() (publicops.BatchGetter, error) {
 	return NewBatchGetter(p)
 }
 
+func (p *notifyingProvider) MoleculeStepper() (publicops.MoleculeStepper, error) {
+	return NewMoleculeStepper(p)
+}
+
 func (p *notifyingProvider) Counter() (publicops.Counter, error) { return NewCounter(p) }
 
 func (p *notifyingProvider) ReadyCounter() (publicops.ReadyCounter, error) {
@@ -308,6 +312,10 @@ func (p *notifyingProvider) VersionReconciler() (publicops.VersionReconciler, er
 func (p *notifyingProvider) MetadataCAS() (publicops.MetadataCAS, error) { return NewMetadataCAS(p) }
 
 func (p *notifyingProvider) Releaser() (publicops.Releaser, error) { return NewReleaser(p) }
+
+func (p *notifyingProvider) LeaseReclaimer() (publicops.LeaseReclaimer, error) {
+	return NewLeaseReclaimer(p)
+}
 
 func (p *notifyingProvider) Memories() (memoryops.Memories, error) { return NewMemories(p) }
 
@@ -405,6 +413,7 @@ var (
 	_ TreeWalkerSource          = (*notifyingProvider)(nil)
 	_ GraphCounterSource        = (*notifyingProvider)(nil)
 	_ BatchGetterSource         = (*notifyingProvider)(nil)
+	_ MoleculeStepperSource     = (*notifyingProvider)(nil)
 	_ CounterSource             = (*notifyingProvider)(nil)
 	_ ReadyCounterSource        = (*notifyingProvider)(nil)
 	_ ReadyClaimerSource        = (*notifyingProvider)(nil)
@@ -423,6 +432,7 @@ var (
 	_ WorkspaceConfigSource     = (*notifyingProvider)(nil)
 	_ VersionReconcilerSource   = (*notifyingProvider)(nil)
 	_ MemoriesSource            = (*notifyingProvider)(nil)
+	_ LeaseReclaimerSource      = (*notifyingProvider)(nil)
 	_ EventsJournalCursorSource = (*notifyingProvider)(nil)
 )
 
@@ -1006,6 +1016,25 @@ func (u *recordingIssueUC) ReleaseIssue(ctx context.Context, req publicops.Relea
 	}
 	u.rec.record(opUpdate, u.snap.anyPlane(ctx, req.IssueID))
 	return result, wrote, nil
+}
+
+// Reclaim records an update for every lease the sweep reverted.
+//
+// It is DECLARED for the same reason ReleaseIssue above is: an inherited
+// accessor would compile and record nothing, silently dropping the hook the
+// DoltStorage chain fires once per reverted row.
+//
+// A sweep reverts only issues, never wisps, so the snapshot is the issues-
+// plane snap.issue rather than anyPlane.
+func (u *recordingIssueUC) Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error) {
+	result, err := u.IssueUseCase.Reclaim(ctx, request)
+	if err != nil {
+		return result, err
+	}
+	for _, r := range result.Reclaimed {
+		u.rec.record(opUpdate, u.snap.issue(ctx, r.ID))
+	}
+	return result, nil
 }
 
 func (u *recordingIssueUC) UpdateWisp(ctx context.Context, id string, updates map[string]any, actor string) error {

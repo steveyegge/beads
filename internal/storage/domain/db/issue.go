@@ -223,9 +223,11 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 
 	// Close-policy parity with issueops.updateIssueInTx: a status that crosses
 	// into the done category is a close by another name and answers to close
-	// policy. A refusal returns before any write and aborts the caller's unit of
-	// work. The wrap keeps the sentinels matchable, so a caller distinguishes
-	// these refusals here exactly as it does on the close path.
+	// policy, and, as there, to close policy only: the pin and assignee close
+	// guards stay on the close verbs (see updateIssueInTx for why). A refusal
+	// returns before any write and aborts the caller's unit of work. The wrap
+	// keeps the sentinels matchable, so a caller distinguishes these refusals
+	// here exactly as it does on the close path.
 	if statusChanging {
 		crossing, err := issueops.CrossesIntoDoneCategoryInTx(ctx, r.runner, oldIssue.Status, updates)
 		if err != nil {
@@ -1307,6 +1309,13 @@ func (r *issueSQLRepositoryImpl) ReclaimExpiredLeases(ctx context.Context, older
 		return nil, fmt.Errorf("db: IssueSQLRepository.ReclaimExpiredLeases: %w", err)
 	}
 	return out, nil
+}
+
+// Reclaim runs the shared sweep body directly on r.runner, matching GetMany's
+// bare-passthrough shape: validation and error-wrapping both happen inside
+// issueops.ExecuteReclaimInTx.
+func (r *issueSQLRepositoryImpl) Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error) {
+	return issueops.ExecuteReclaimInTx(ctx, r.runner, request)
 }
 
 const deleteBatchSize = 200

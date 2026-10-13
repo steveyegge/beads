@@ -64,6 +64,12 @@ const (
 	// all four published — so it is built inline beside the three graph reads
 	// that share its collection. Its refusal still has to name an operation.
 	OpCountDependencyEdges Op = "countDependencyEdges"
+
+	// listDependencyCycles carries no encoder table either: the request has
+	// exactly one member (IncludeTracks) and the wire has no parameter for it
+	// at all, so there is nothing to tabulate — the one refusal is built
+	// inline beside the role. See "L-cycles-tracks".
+	OpListDependencyCycles Op = "listDependencyCycles"
 )
 
 // Disposition is what becomes of one request field on its way to the wire.
@@ -323,6 +329,10 @@ func listTable() Table {
 			refused("TitleSearch", "E-ListRequest.TitleSearch"),
 			refused("SpecPrefix", "E-ListRequest.SpecPrefix"),
 			refused("IDFilter", "E-ListRequest.IDFilter"),
+			// Behind issues.list.search: httpReader.List refuses a request
+			// carrying it, before dialing, unless the handshake advertises the
+			// token (role_reader.go refuseUnservedSearch).
+			param("Query", "q"),
 			param("Labels", "label"),
 			param("LabelsAny", "label_any"),
 			param("ExcludeLabels", "exclude_label"),
