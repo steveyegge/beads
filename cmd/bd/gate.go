@@ -17,6 +17,7 @@ import (
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/issueops"
 )
 
 // gateCmd is the parent command for gate operations
@@ -100,28 +101,28 @@ By default, shows only open gates. Use --all to include closed gates.`,
 			return nil
 		}
 
-		gateType := types.IssueType("gate")
-		filter := types.IssueFilter{
-			IssueType: &gateType,
-			Limit:     limit,
-		}
-
-		if !allFlag {
-			filter.ExcludeStatus = []types.Status{types.StatusClosed}
-		}
-
-		issues, err := store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			return HandleErrorRespectJSON("%v", err)
-		}
-
-		if jsonOutput {
-			return outputJSON(issues)
-		}
-
-		displayGates(issues, allFlag)
-		return nil
+		return runGateList(ctx, allFlag, limit)
 	},
+}
+
+// runGateList lists the workspace's gates on every route through ONE library
+// entry, issueops.ListGates, over the route's Querier (openQuerier picks the
+// direct store, the proxied server's unit of work, or the remote http
+// backend). Only the presentation stays here.
+func runGateList(ctx context.Context, allFlag bool, limit int) error {
+	querier, err := openQuerier()
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	gates, err := issueops.ListGates(ctx, querier, issueops.GateListRequest{All: allFlag, Limit: limit})
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	if jsonOutput {
+		return outputJSON(gates)
+	}
+	displayGates(gates, allFlag)
+	return nil
 }
 
 // filterIssueGates selects the gate-type issues from an issue's dependency set,

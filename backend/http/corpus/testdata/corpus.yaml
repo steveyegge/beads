@@ -54,6 +54,9 @@ files:
         {"key": "wisp-p", "id": "e2e-wisp-p", "title": "Wisp wisp-p", "type": "task", "ephemeral": true},
         {"key": "wisp-m", "id": "e2e-wisp-m", "title": "Wisp molecule", "type": "epic", "ephemeral": true},
         {"key": "wisp-m.1", "id": "e2e-wisp-m.1", "title": "wisp step", "type": "task", "ephemeral": true, "parent_key": "wisp-m"},
+        {"key": "gate-o", "id": "e2e-gate-o", "title": "Open gate", "type": "gate"},
+        {"key": "gate-c", "id": "e2e-gate-c", "title": "Closed gate", "type": "gate"},
+        {"key": "wisp-gate", "id": "e2e-wisp-gate", "title": "Wisp gate", "type": "gate", "ephemeral": true},
         {"key": "t-upd", "id": "e2e-t-upd", "title": "target upd", "type": "task", "labels": ["lane:z"]},
         {"key": "t-upd2", "id": "e2e-t-upd2", "title": "target upd2", "type": "task"},
         {"key": "t-m1", "id": "e2e-t-m1", "title": "target m1", "type": "task"},
@@ -136,7 +139,7 @@ seed:
   # (gc's own plans never set a status). Lifecycle goes through update/close.
   - [update, e2e-ip1, e2e-ipna, e2e-ipnb, e2e-mol.1, e2e-mac.2, e2e-t-rel, e2e-t-xfer, e2e-t-ifa, e2e-t-death, e2e-t-rc, e2e-t-boot, --status, in_progress]
   - [update, e2e-wisp-2, --status, in_progress]
-  - [close, --force, e2e-done, e2e-ep.2, e2e-mol.3, e2e-mac.1, e2e-t-ro]
+  - [close, --force, e2e-done, e2e-ep.2, e2e-mol.3, e2e-mac.1, e2e-t-ro, e2e-gate-c]
   - [comments, add, e2e-r1, "seed comment"]
 
 shapes:
@@ -418,10 +421,14 @@ shapes:
     source: gc checks_proxied_backup_coverage.go (backup status --json)
     args: [backup, status, --json]
     compare: exit
+  # The seed holds an open gate, a closed gate and an ephemeral gate, so the
+  # open listing and the --all listing answer different, non-empty sets.
   - id: mc-gate-list
-    source: core pack orders (gate list)
-    args: [gate, list, --json]
-    pending: {slice: "S20", reason: "gate list issues a raw SearchIssues shape the bridge refuses (B3 #15)"}
+    source: gc core pack order renudge-stale-human-gates.sh (gc bd gate list --limit 0 --json)
+    args: [gate, list, --limit, "0", --json]
+  - id: mc-gate-list-all
+    source: core pack orders (gate list --all)
+    args: [gate, list, --all, --json]
 
   - id: gc-export-all
     source: gc core pack reaper (gc bd export --all -o F)
