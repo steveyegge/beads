@@ -355,12 +355,22 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		Status:    q.csv("status"),
 		IssueType: q.str("type"),
 		Assignee:  q.str("assignee"),
+		// `bd list --no-assignee`, behind issues.list.noAssignee
+		// (CapIssuesListNoAssignee).
+		NoAssignee: q.boolean("no_assignee"),
 
 		Labels:        q.list("label"),
 		LabelsAny:     q.list("label_any"),
 		ExcludeLabels: q.list("exclude_label"),
 
 		ParentID: q.str("parent"),
+
+		// `bd list --title`, behind issues.list.title (CapIssuesListTitle).
+		TitleSearch: q.str("title"),
+		// `bd list --id`, behind issues.list.id (CapIssuesListID). A
+		// COMMA-SEPARATED string, handed over as written, as countFilters
+		// does: the role splits, trims and de-duplicates it.
+		IDFilter: q.str("id"),
 
 		Brief:            q.boolean("brief"),
 		AllFlag:          q.boolean("all"),

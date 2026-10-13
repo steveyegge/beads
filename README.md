@@ -253,7 +253,10 @@ different backend needs `--force`.
 
 `bd search`, `bd show --current` and `bd recompute-blocked` work over HTTP
 too, each in its own way. `bd search` asks the server's listing with its text (`q`, behind the `issues.list.search` capability) and
-refuses before dialing against a server that does not advertise it.
+refuses before dialing against a server that does not advertise it. `bd list
+--no-assignee`, `--title` and `--id` likewise ride the listing's
+`no_assignee`, `title` and `id`, each behind its own capability
+(`issues.list.noAssignee`, `issues.list.title`, `issues.list.id`).
 `bd show --current` finds the actor's in-progress or hooked issue through the
 server's boolean query. `bd recompute-blocked` is a no-op that exits 0: the
 server maintains `is_blocked` on every write, and repairing a stale flag is

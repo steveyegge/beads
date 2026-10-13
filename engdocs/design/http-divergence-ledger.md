@@ -47,7 +47,7 @@ the behavior.
 
 ## Summary
 
-264 rows: 204 refuse, 34 degrade, 26 retired.
+261 rows: 201 refuse, 34 degrade, 26 retired.
 
 ## Whole-behavior divergences (D9 ledger)
 
@@ -178,9 +178,7 @@ The listing publishes far more filters than the v0 wire does; every one the wire
 
 | ID | Kind | Field / flag | Divergence | Why | Spec | Pinned test |
 |---|---|---|---|---|---|---|
-| E-ListRequest.TitleSearch | refuse | `ListRequest.TitleSearch` | a title search refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.SpecPrefix | refuse | `ListRequest.SpecPrefix` | a spec-id prefix restriction refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
-| E-ListRequest.IDFilter | refuse | `ListRequest.IDFilter` | an explicit id set on the LISTING refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml); the exact-ids question is getIssue's, reached through the SearchIssues bridge's exact-ids shape (D11), not through a listing filter | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.LabelPattern | refuse | `ListRequest.LabelPattern` | a glob label filter refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) — listReadyWork does publish label_pattern, which is exactly why the absence here has to refuse rather than fall through | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.LabelRegex | refuse | `ListRequest.LabelRegex` | a regex label filter refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) — as for LabelPattern, listReadyWork publishes label_regex and the listing does not | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.TitleContains | refuse | `ListRequest.TitleContains` | a title substring filter refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
@@ -197,7 +195,6 @@ The listing publishes far more filters than the v0 wire does; every one the wire
 | E-ListRequest.DueAfter | refuse | `ListRequest.DueAfter` | a due-after bound refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.DueBefore | refuse | `ListRequest.DueBefore` | a due-before bound refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.EmptyDesc | refuse | `ListRequest.EmptyDesc` | the empty-description predicate refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
-| E-ListRequest.NoAssignee | refuse | `ListRequest.NoAssignee` | the unassigned predicate refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) — listReadyWork publishes `unassigned`; the listing does not | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.NoLabels | refuse | `ListRequest.NoLabels` | the no-labels predicate refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.Priority | refuse | `ListRequest.Priority` | an exact priority filter refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) — listReadyWork publishes `priority`; the listing does not | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |
 | E-ListRequest.PriorityMin | refuse | `ListRequest.PriorityMin` | a minimum-priority bound refuses | listIssues publishes no such parameter (internal/httpapi/reads.go handleListIssues; internal/httpapi/spec/openapi.v0.yaml) | D9 L12, D7, D8 | TestEncoderHonorsEveryTableDisposition |

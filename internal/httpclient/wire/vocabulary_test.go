@@ -151,6 +151,15 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if CapListSearch != httpapi.CapIssuesListSearch {
 		t.Errorf("CapListSearch = %q, server says %q", CapListSearch, httpapi.CapIssuesListSearch)
 	}
+	if CapListNoAssignee != httpapi.CapIssuesListNoAssignee {
+		t.Errorf("CapListNoAssignee = %q, server says %q", CapListNoAssignee, httpapi.CapIssuesListNoAssignee)
+	}
+	if CapListTitle != httpapi.CapIssuesListTitle {
+		t.Errorf("CapListTitle = %q, server says %q", CapListTitle, httpapi.CapIssuesListTitle)
+	}
+	if CapListID != httpapi.CapIssuesListID {
+		t.Errorf("CapListID = %q, server says %q", CapListID, httpapi.CapIssuesListID)
+	}
 	if CapCountScope != httpapi.CapIssuesCountScope {
 		t.Errorf("CapCountScope = %q, server says %q", CapCountScope, httpapi.CapIssuesCountScope)
 	}
@@ -205,10 +214,12 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 		httpapi.CapIssuesSweepWispsPlane, httpapi.CapIssuesSweepLiveDependents, httpapi.CapIssuesSweepLimit,
 		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
 		httpapi.CapIssuesCloseAutoCloseMolecule, httpapi.CapIssuesListSearch,
+		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapIssuesListID,
 	}) {
 		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
 			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit, "+
-			"issues.batchApply.depAddLineage, issues.update.allowTemplate, issues.create.defaultPriority, issues.close.autoCloseMolecule and issues.list.search tokens", behaviorCapabilities)
+			"issues.batchApply.depAddLineage, issues.update.allowTemplate, issues.create.defaultPriority, issues.close.autoCloseMolecule, issues.list.search, "+
+			"issues.list.noAssignee, issues.list.title and issues.list.id tokens", behaviorCapabilities)
 	}
 }
 

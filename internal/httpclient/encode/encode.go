@@ -289,6 +289,7 @@ func ListParams(req issueops.ListRequest) (url.Values, error) {
 	b.str("status", req.Status)
 	b.str("type", req.IssueType)
 	b.str("assignee", req.Assignee)
+	b.boolean("no_assignee", req.NoAssignee)
 
 	b.list("label", req.Labels)
 	b.list("label_any", req.LabelsAny)
@@ -296,6 +297,8 @@ func ListParams(req issueops.ListRequest) (url.Values, error) {
 
 	b.str("parent", req.ParentID)
 	b.str("q", req.Query)
+	b.str("title", req.TitleSearch)
+	b.str("id", req.IDFilter)
 
 	b.boolean("all", req.AllFlag)
 	b.boolean("include_templates", req.IncludeTemplates)

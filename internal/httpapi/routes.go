@@ -132,6 +132,32 @@ const CapIssuesCountScope = "issues.count.scope"
 // is never widened into an unsearched listing.
 const CapIssuesListSearch = "issues.list.search"
 
+// CapIssuesListNoAssignee, CapIssuesListTitle and CapIssuesListID are the
+// behavior capabilities that advertise GET /v0/beads/issues' `no_assignee`,
+// `title` and `id` parameters (reads.go, spec OpListIssues): `bd list
+// --no-assignee`, `--title` and `--id`, carried as issueops.ListRequest's
+// NoAssignee, TitleSearch and IDFilter and applied by the same Reader role
+// (workapi.BuildListFilter) the local route reads through. Like
+// CapIssuesListSearch each names a PARAMETER added to an existing operation, so
+// each rides behaviorCapabilities and is the token its parameter's OpenAPI
+// description cites for TestNewParameterOnExistingOperationHasABehaviorToken.
+//
+// One token per parameter rather than one for the three: each is a separate
+// cutover dependency of a separate caller (gc's on_boot recovery, the PR-intake
+// formula, the pr-review skill), and a client names exactly the one a refused
+// request needed.
+//
+// The client (internal/httpclient) refuses a request carrying any of them
+// locally against a server that does not advertise its token, with
+// ErrUnsupported naming the token: an older server answers the parameter with
+// `unknown_parameter`, and dropping it would answer a WIDER listing than asked
+// for (for gc's on_boot recovery, every in-progress bead, assigned or not).
+const (
+	CapIssuesListNoAssignee = "issues.list.noAssignee"
+	CapIssuesListTitle      = "issues.list.title"
+	CapIssuesListID         = "issues.list.id"
+)
+
 // CapIssuesSweepWispsPlane is the behavior capability that advertises the
 // `wisps-plane` value of SweepRequest.tier (sweep.go, spec SweepRequest.tier):
 // a third, wider tier that clears the whole wisps table plus any durable bead
@@ -1000,6 +1026,7 @@ var behaviorCapabilities = []string{
 	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
+	CapIssuesListNoAssignee, CapIssuesListTitle, CapIssuesListID,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:

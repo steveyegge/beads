@@ -326,12 +326,18 @@ func listTable() Table {
 			param("Status", "status"),
 			paramTo("IssueType", "type", "IssueType"),
 			param("Assignee", "assignee"),
-			refused("TitleSearch", "E-ListRequest.TitleSearch"),
+			// TitleSearch, IDFilter and NoAssignee (S15b) are each behind their own
+			// behavior token — issues.list.title, issues.list.id,
+			// issues.list.noAssignee: httpReader.List refuses a request carrying
+			// one, before dialing, unless the handshake advertises its token
+			// (role_reader.go refuseUnservedListFilters). IDFilter is sent as
+			// written; the role splits, trims and de-duplicates it on the server.
+			paramTo("TitleSearch", "title", "TitleSearch"),
 			refused("SpecPrefix", "E-ListRequest.SpecPrefix"),
-			refused("IDFilter", "E-ListRequest.IDFilter"),
+			paramTo("IDFilter", "id", "IDFilter"),
 			// Behind issues.list.search: httpReader.List refuses a request
 			// carrying it, before dialing, unless the handshake advertises the
-			// token (role_reader.go refuseUnservedSearch).
+			// token (role_reader.go refuseUnservedListFilters).
 			param("Query", "q"),
 			param("Labels", "label"),
 			param("LabelsAny", "label_any"),
@@ -354,7 +360,7 @@ func listTable() Table {
 			refused("DueAfter", "E-ListRequest.DueAfter"),
 			refused("DueBefore", "E-ListRequest.DueBefore"),
 			refused("EmptyDesc", "E-ListRequest.EmptyDesc"),
-			refused("NoAssignee", "E-ListRequest.NoAssignee"),
+			paramTo("NoAssignee", "no_assignee", "NoAssignee"),
 			refused("NoLabels", "E-ListRequest.NoLabels"),
 			dropped("SkipLabels", "E-ListRequest.SkipLabels",
 				"the wire hydrates labels either way; dropping the opt-out costs a join and hands the caller more data, never less"),
