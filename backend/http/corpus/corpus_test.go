@@ -250,17 +250,21 @@ type outcome struct {
 // served side against the embedded side after the same commands, and each
 // part keeps corpus order, so its reads still run on the bare seed before
 // any of its writes (see testdata/corpus.yaml's header).
-const corpusParts = 4
+//
+// Three parts, from the embedded lane's measured part times (PR #7538): each
+// part's server start and concurrent seed take ~62-76s and the 127 shapes
+// ~242s together, so four parts ran 115-146s each and three run ~76-85s of
+// shapes each on top of that one setup apiece, one setup less in total.
+const corpusParts = 3
 
 // servedCorpusParts are the parts' tests, one per part, in part order.
 var servedCorpusParts = []func(*testing.T){
-	TestServedCorpusPart1, TestServedCorpusPart2, TestServedCorpusPart3, TestServedCorpusPart4,
+	TestServedCorpusPart1, TestServedCorpusPart2, TestServedCorpusPart3,
 }
 
 func TestServedCorpusPart1(t *testing.T) { testServedCorpus(t, 1) }
 func TestServedCorpusPart2(t *testing.T) { testServedCorpus(t, 2) }
 func TestServedCorpusPart3(t *testing.T) { testServedCorpus(t, 3) }
-func TestServedCorpusPart4(t *testing.T) { testServedCorpus(t, 4) }
 
 // corpusPart returns the shapes part (1..corpusParts) runs.
 func corpusPart(shapes []shape, part int) []shape {
