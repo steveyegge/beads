@@ -81,9 +81,11 @@ go_test(
 # with the executors' load, and sharded runs took up to 2x what the
 # single-shard runs did, so size the pins from sharded runs of the lane,
 # never from a single-shard or local one.
-# Regenerate the manifest from PR runs' bazel-dolt-race-served-testxml
-# (same-repo) or bazel-embedded-served-testxml (fork) artifacts (each http_served_test directory holds shard_*_of_7/test.xml;
-# pass several runs, pin_shards.py takes each test's maximum):
+# Regenerate the manifest from PR runs' served-testxml artifacts
+# (bazel-dolt-race-served-testxml on same-repo runs,
+# bazel-embedded-served-testxml on fork runs; each http_served_test
+# directory holds shard_*_of_7/test.xml; pass several runs, pin_shards.py
+# takes each test's maximum):
 #   python3 tools/bazel/pin_shards.py --shards 6 --min-seconds 3 \
 #       --write backend/http/served_pinned_shards.txt \
 #       <run1>/http_served_test <run2>/http_served_test

@@ -639,7 +639,8 @@ name stays `dolt-race`). `--config=dolt-race` is exactly the union of
 with one tag filter for all three tiers, plus its own `--jobs=128`, so every
 member target's test action is unchanged (`bazel aquery`: the 182 + 27 + 35
 = 244 `TestRunner` actions are byte-identical under the member configs and
-the union). One client waits on rbe-west for all three tiers at once, so the
+the union). One client waits on rbe-west for all three tiers (two waves of
+`--jobs=128` at the cutover's 244 actions), so the
 job ends with the slowest tier and the other lane's runner is saved.
 
 - `--jobs=128` (the union's only non-member line, in no action key) is the
@@ -647,7 +648,8 @@ job ends with the slowest tier and the other lane's runner is saved.
   plus the dolt-server + proxied union's 62 actions under its 64), so the
   farm sees no higher peak. It overrides `--config=remote-exec`'s
   `--jobs=64`: the generated rc enables that as `build --config=remote-exec`,
-  and a command-line `--config` expands after every rc line.
+  and a command-line `--config` expands at command-line priority, above
+  every rc line.
 - Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
   dispatch and `bazel-farm.yml`'s authorized call). In the fork modes
   (`fork-ro`, `fork-rw`), `cache` and `local`, `bazel-embedded`,

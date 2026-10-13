@@ -218,8 +218,9 @@ test:dolt-race --norun_validations
 # member lanes used together (embedded's --jobs=64 plus the dolt-server and
 # proxied union's 62 actions). It overrides --config=remote-exec's --jobs=64,
 # which the generated rc enables as `build --config=remote-exec`: a
-# command-line --config expands after every rc line. --jobs is not in any
-# action key.
+# command-line --config expands at command-line priority, above every rc
+# line (only a later command-line token could undo it; the test step's run
+# is pinned). --jobs is not in any action key.
 test:dolt-race --jobs=128
 
 # Server-Dolt storage tier: PR Risk's "Test (Server Dolt Conformance)" and

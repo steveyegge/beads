@@ -395,18 +395,49 @@ func TestBazelDoltRaceIsGated(t *testing.T) {
 	if strings.TrimSpace(test.Run) != bazelTierTestRun(bazelDoltRaceConfig) {
 		t.Errorf("%s test step run changed; want exactly:\n%s\ngot:\n%s", bazelDoltRaceJobName, bazelTierTestRun(bazelDoltRaceConfig), test.Run)
 	}
-	// The members' per-lane checks, once over the union's BEP:
-	// bazel-embedded's and bazel-proxied's (bazel-doltserver has none), each
-	// as the member runs it.
-	for member, steps := range map[string][]string{
-		bazelEmbedJobName:   {"Every target and shard ran tests", "No test target is marked flaky"},
-		bazelProxiedJobName: {"Every target and shard ran tests", "No test target is marked flaky"},
-	} {
-		m := workflow.job(t, member)
-		for _, name := range steps {
-			want, got := m.step(t, name), job.step(t, name)
-			if strings.TrimSpace(got.Run) != strings.TrimSpace(want.Run) || got.If != want.If {
-				t.Errorf("%s step %q = (if %q) %q, want %s's (if %q) %q", bazelDoltRaceJobName, name, got.If, got.Run, member, want.If, want.Run)
+	// Every step of every member has its counterpart in the union, derived
+	// from the member jobs rather than a fixed list, so a check step added to
+	// a member cannot silently stop running in mode remote: same name (the
+	// unnamed checkout by its uses), same if and uses, and the same run,
+	// except the member's own `bazel test` step (the union's, above) and
+	// check_shard_coverage (the union of the members' arguments, below).
+	// Artifact names and step timeouts may differ (with: and timeout-minutes
+	// are not compared; the served-timings upload is pinned below). Where the
+	// members' if differs for one step (bazel-doltserver uploads its logs on
+	// a failed test step only, the others on any failure), the union's is one
+	// of theirs.
+	memberIfs := map[string][]string{}
+	for _, member := range bazelUnionLanes[bazelDoltRaceJobName] {
+		for _, step := range workflow.job(t, member).Steps {
+			label := cmp.Or(step.Name, step.Uses)
+			memberIfs[label] = append(memberIfs[label], step.If)
+		}
+	}
+	for _, member := range bazelUnionLanes[bazelDoltRaceJobName] {
+		for _, want := range workflow.job(t, member).Steps {
+			if strings.HasPrefix(want.Name, "bazel test //... --config=") {
+				continue
+			}
+			var got *ciWorkflowStep
+			for i, step := range job.Steps {
+				if (want.Name != "" && step.Name == want.Name) || (want.Name == "" && step.Name == "" && step.Uses == want.Uses) {
+					got = &job.Steps[i]
+					break
+				}
+			}
+			label := cmp.Or(want.Name, want.Uses)
+			if got == nil {
+				t.Errorf("%s step %q has no counterpart in %s: it would not run in mode remote", member, label, bazelDoltRaceJobName)
+				continue
+			}
+			if !slices.Contains(memberIfs[label], got.If) || got.Uses != want.Uses {
+				t.Errorf("%s step %q = (if %q, uses %q), want %s's uses %q and one of the members' ifs %q", bazelDoltRaceJobName, label, got.If, got.Uses, member, want.Uses, memberIfs[label])
+			}
+			if strings.Contains(want.Run, "check_shard_coverage.py") {
+				continue
+			}
+			if strings.TrimSpace(got.Run) != strings.TrimSpace(want.Run) {
+				t.Errorf("%s step %q runs %q, want %s's %q", bazelDoltRaceJobName, label, got.Run, member, want.Run)
 			}
 		}
 	}
@@ -574,11 +605,21 @@ func TestBazelDoltRaceArmsExactlyOnePerMode(t *testing.T) {
 	}
 }
 
-// bazelDoltRaceTestActions: the union's test actions, 182 embedded + 27
-// dolt-server + 35 proxied-server (aquery of mnemonic("TestRunner") under
-// --config=dolt-race, item 5 Option B, after the served tests' sharding),
-// each a target's shard.
-const bazelDoltRaceTestActions = 244
+// bazelDoltRaceWaves: the union's test actions may fill its --jobs at most
+// this many times over. At the cutover they were 244 (aquery of
+// mnemonic("TestRunner") under --config=dolt-race: 182 embedded + 27
+// dolt-server + 35 proxied-server), two waves of 128, which is what the
+// wall-clock model and the 28-minute test step assume; a third wave would
+// put the last shards' 1200 s cap past the step timeout.
+const bazelDoltRaceWaves = 2
+
+// bazelDoltRaceTestActionsFloor: a sanity floor on the counted actions, so a
+// counter that stops seeing a tier (a tag spelled another way, a rule shape
+// the parser misses) fails instead of passing under the bound: the shards
+// the union's check_shard_coverage step alone names (the embedded cmd block's
+// 100, embedded storage's 40, the three conformance --whole targets and
+// proxied's 34). Every tier must also count at least one action.
+const bazelDoltRaceTestActionsFloor = 100 + 40 + 3 + 34
 
 // TestBazelDoltRaceFitsTheJobsBudget: the union runs all three tiers' shards
 // in one invocation under its own --jobs (bazelDoltRaceNonMemberLines), which
@@ -592,8 +633,8 @@ const bazelDoltRaceTestActions = 244
 // The counted test actions are every rule tagged with one of the union's
 // tags, read from the BUILD files: its shard_count (1 when unsharded),
 // summed; a tag outside a one-line `tags = [...]` list cannot be counted and
-// fails the test. A change in the count is a change in the union's queue:
-// re-check it against the jobs budget (and the wall-clock model) and update.
+// fails the test. The count is bounded, not pinned, so a reshard needs no
+// bump here: at most bazelDoltRaceWaves x --jobs, at least the floor.
 func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 	root := bazelPolicyRoot(t)
 	rc := readPolicyFile(t, root, ".bazelrc")
@@ -626,6 +667,7 @@ func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 	}
 	ruleStart := regexp.MustCompile(`(?m)^[A-Za-z_][A-Za-z0-9_]*\($`)
 	total, targets := 0, 0
+	perTag := map[string]int{}
 	for _, f := range repoFiles(t, root, 300) {
 		if path.Base(f) != "BUILD.bazel" {
 			continue
@@ -644,13 +686,18 @@ func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 				continue
 			}
 			rule := build[loc[0] : loc[0]+end]
-			tagged := false
+			var ruleTags []string
 			for _, line := range strings.Split(rule, "\n") {
-				if strings.HasPrefix(line, "    tags = [") && slices.ContainsFunc(tags, func(tag string) bool { return strings.Contains(line, tag) }) {
-					tagged = true
+				if !strings.HasPrefix(line, "    tags = [") {
+					continue
+				}
+				for _, tag := range tags {
+					if strings.Contains(line, tag) {
+						ruleTags = append(ruleTags, tag)
+					}
 				}
 			}
-			if !tagged {
+			if len(ruleTags) == 0 {
 				continue
 			}
 			shards := 1
@@ -659,9 +706,20 @@ func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 			}
 			total += shards
 			targets++
+			for _, tag := range ruleTags {
+				perTag[tag] += shards
+			}
 		}
 	}
-	if total != bazelDoltRaceTestActions {
-		t.Errorf("--config=%s: %d test actions over %d targets, want %d (aquery-verified at the cutover): re-check against its --jobs=%d and update", bazelDoltRaceConfig, total, targets, bazelDoltRaceTestActions, bazelDoltRaceJobs)
+	if limit := bazelDoltRaceWaves * bazelDoltRaceJobs; total > limit {
+		t.Errorf("--config=%s: %d test actions over %d targets, more than %d waves of its --jobs=%d (%d): the last shards' 1200 s cap would run past the 28-minute test step; re-check the wall-clock model, the step timeout and --jobs with the farm owner", bazelDoltRaceConfig, total, targets, bazelDoltRaceWaves, bazelDoltRaceJobs, limit)
+	}
+	if total < bazelDoltRaceTestActionsFloor {
+		t.Errorf("--config=%s: %d test actions over %d targets, below the %d shards its own coverage check names: the counter is missing a tier", bazelDoltRaceConfig, total, targets, bazelDoltRaceTestActionsFloor)
+	}
+	for _, tag := range tags {
+		if perTag[tag] == 0 {
+			t.Errorf("--config=%s: no test action tagged %s counted", bazelDoltRaceConfig, tag)
+		}
 	}
 }
