@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/issueops"
+	"github.com/steveyegge/beads/memoryops"
 )
 
 // exportSource abstracts the storage reads `bd export` performs, so the one
@@ -31,16 +33,17 @@ type exportSource interface {
 	// hardcoded defaults). A nil/empty result makes the caller fall back to
 	// domain.DefaultInfraTypes(), mirroring the pre-seam behavior.
 	GetInfraTypes(ctx context.Context) map[string]bool
-	// SearchIssues returns the full, untruncated result set for the export
-	// filter (Limit=0, MaxRows=0). Implementations MUST fail rather than
-	// return a truncated page — export is a data-integrity path.
+	// ExportIssues returns the full, untruncated export set for req.
+	// Implementations MUST fail rather than return a truncated or shortened
+	// set — export is a data-integrity path.
 	ExportIssues(ctx context.Context, req issueops.ExportRequest) ([]*types.Issue, error)
 	// GetConfig reads one config key from the database (used for the
 	// export.exclude_owners owner-filter keys).
 	GetConfig(ctx context.Context, key string) (string, error)
-	// GetAllConfig reads the whole config table (used to extract kv.memory.*
-	// rows when memories are exported).
-	GetAllConfig(ctx context.Context) (map[string]string, error)
+	// ExportMemories returns every persistent memory (`bd remember`), keyed
+	// by the user key without the kv.memory. prefix. Like ExportIssues, it
+	// MUST fail rather than return a partial set.
+	ExportMemories(ctx context.Context) (map[string]string, error)
 	// LoadExportRelations bulk-loads labels, dependency records, comments,
 	// comment counts, and dependency counts for the searched issues.
 	LoadExportRelations(ctx context.Context, issues []*types.Issue) (exportRelations, error)
@@ -101,8 +104,24 @@ func (storeExportSource) GetConfig(ctx context.Context, key string) (string, err
 	return store.GetConfig(ctx, key)
 }
 
-func (storeExportSource) GetAllConfig(ctx context.Context) (map[string]string, error) {
-	return store.GetAllConfig(ctx)
+func (storeExportSource) ExportMemories(ctx context.Context) (map[string]string, error) {
+	allConfig, err := store.GetAllConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return memoriesFromConfig(allConfig), nil
+}
+
+// memoriesFromConfig extracts the persistent memories from a whole config
+// table: its kv.memory.* rows, keyed by the user key.
+func memoriesFromConfig(allConfig map[string]string) map[string]string {
+	memories := map[string]string{}
+	for k, v := range allConfig {
+		if userKey, ok := strings.CutPrefix(k, kvPrefix+memoryPrefix); ok {
+			memories[userKey] = v
+		}
+	}
+	return memories
 }
 
 func (storeExportSource) LoadExportRelations(ctx context.Context, issues []*types.Issue) (exportRelations, error) {
@@ -198,8 +217,12 @@ func (s *uowExportSource) GetConfig(ctx context.Context, key string) (string, er
 	return s.uw.ConfigUseCase().GetConfig(ctx, key)
 }
 
-func (s *uowExportSource) GetAllConfig(ctx context.Context) (map[string]string, error) {
-	return s.uw.ConfigUseCase().GetAllConfig(ctx)
+func (s *uowExportSource) ExportMemories(ctx context.Context) (map[string]string, error) {
+	allConfig, err := s.uw.ConfigUseCase().GetAllConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return memoriesFromConfig(allConfig), nil
 }
 
 // LoadExportRelations reproduces the classic bulk loaders over the
@@ -417,6 +440,9 @@ type roleExportSource struct {
 	rows map[string]issueops.ExportRow
 }
 
+// GetInfraTypes is unused on this route: only exportIssueFilter, the filter of
+// the store-shaped sources, reads it. ReadExport's listing excludes the infra
+// set the server resolves for its own workspace.
 func (s *roleExportSource) GetInfraTypes(ctx context.Context) map[string]bool {
 	return store.GetInfraTypes(ctx)
 }
@@ -447,8 +473,20 @@ func (s *roleExportSource) GetConfig(ctx context.Context, key string) (string, e
 	return store.GetConfig(ctx, key)
 }
 
-func (s *roleExportSource) GetAllConfig(ctx context.Context) (map[string]string, error) {
-	return store.GetAllConfig(ctx)
+// ExportMemories reads the served memory plane (listMemories). The config
+// table cannot stand in for it on this route: the server's settings
+// enumeration withholds every kv.* row, memories included, so reading it
+// exported no memory at all.
+func (s *roleExportSource) ExportMemories(ctx context.Context) (map[string]string, error) {
+	memories, err := store.Memories()
+	if err != nil {
+		return nil, err
+	}
+	res, err := memories.List(ctx, memoryops.ListRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return res.Memories, nil
 }
 
 // LoadExportRelations hands back what ReadExport already read; it issues no
@@ -481,11 +519,17 @@ func (s *roleExportSource) LoadExportRelations(_ context.Context, issues []*type
 	return rel, nil
 }
 
-// WispPlaneIDs answers nothing: a remote backend publishes no plane
-// membership, so no row is stamped wisp_plane. Import then routes a
-// no-history row by its flags, which is right for every no-history row a
-// current server holds (promotion clears no_history), and wrong only for a
-// legacy promoted row that still carries the stray flag.
+// WispPlaneIDs answers nothing: no served read publishes plane membership
+// (listIssues rows carry no plane field, however the listing is scoped), so a
+// remote export stamps no row wisp_plane. A current import pins an
+// unmarked no-history row to the durable plane (applyImportWispPlane). That
+// is right for a durable row that still carries the flag (a legacy promotion,
+// or an earlier unmarked import) and wrong for a genuine no-history wisp,
+// which imports onto the Dolt-versioned issues plane. It is the same data-safe
+// degradation as a store without storeWispPartitioner: a missing marker
+// mis-planes a row, while a wrong one re-planes a durable row and drops its
+// relations (bd-r9uce), so the marker is never inferred from flags. Serving
+// the membership is bd-1lbvas.
 func (s *roleExportSource) WispPlaneIDs(context.Context, []string) (map[string]bool, error) {
 	return nil, nil
 }

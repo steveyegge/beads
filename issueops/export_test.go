@@ -11,10 +11,12 @@ import (
 )
 
 type exportReader struct {
-	page  []*types.IssueWithCounts
-	lists []issueops.ListRequest
-	gets  []issueops.GetRequest
-	err   error
+	page    []*types.IssueWithCounts
+	hasMore bool
+	lists   []issueops.ListRequest
+	gets    []issueops.GetRequest
+	err     error
+	getErr  error
 }
 
 func (r *exportReader) Ready(context.Context, issueops.ReadyRequest) (issueops.IssuePage, error) {
@@ -26,11 +28,14 @@ func (r *exportReader) List(_ context.Context, req issueops.ListRequest) (issueo
 	if r.err != nil {
 		return issueops.IssuePage{}, r.err
 	}
-	return issueops.IssuePage{Items: r.page}, nil
+	return issueops.IssuePage{Items: r.page, HasMore: r.hasMore}, nil
 }
 
 func (r *exportReader) Get(_ context.Context, req issueops.GetRequest) (*issueops.IssueDetails, error) {
 	r.gets = append(r.gets, req)
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	return &issueops.IssueDetails{Comments: []*types.Comment{{IssueID: req.ID, Text: "c of " + req.ID}}}, nil
 }
 
@@ -140,6 +145,13 @@ func TestReadExportNeverShortensOnAFailure(t *testing.T) {
 	}
 	if _, err := issueops.ReadExport(context.Background(), &exportReader{page: exportPage()}, &exportEdges{missing: "x-2"}, issueops.ExportRequest{All: true}); err == nil {
 		t.Fatal("ReadExport with a vanished anchor succeeded, want an error")
+	}
+	if rows, err := issueops.ReadExport(context.Background(), &exportReader{page: exportPage(), hasMore: true}, &exportEdges{}, issueops.ExportRequest{All: true}); err == nil || rows != nil {
+		t.Fatalf("ReadExport over a truncated listing = (%v, %v), want (nil, an error)", rows, err)
+	}
+	notFound := errors.New("x-1 not found")
+	if rows, err := issueops.ReadExport(context.Background(), &exportReader{page: exportPage(), getErr: notFound}, &exportEdges{}, issueops.ExportRequest{All: true}); !errors.Is(err, notFound) || rows != nil {
+		t.Fatalf("ReadExport with a failed comment read = (%v, %v), want (nil, the failure)", rows, err)
 	}
 	var unsupported *issueops.ErrUnsupported
 	if _, err := issueops.ReadExport(context.Background(), nil, nil, issueops.ExportRequest{}); !errors.As(err, &unsupported) {

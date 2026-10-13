@@ -2,6 +2,7 @@ package issueops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -47,7 +48,9 @@ type ExportRow struct {
 //
 // A FAILED READ IS AN ERROR. Export is a data-integrity path, so a refusal or
 // a missing relation never degrades to a shorter export. An anchor the edge
-// read reports missing (a row deleted between the reads) is an error too.
+// read reports missing (a row deleted between the reads) is an error too, and
+// so is a listing page marked HasMore: the listing is unlimited, so a
+// truncated page means the reader did not honor that.
 func ReadExport(ctx context.Context, rd Reader, edges EdgeReader, req ExportRequest) ([]ExportRow, error) {
 	if rd == nil || edges == nil {
 		return nil, &ErrUnsupported{Op: "ReadExport", Backend: "nil"}
@@ -68,6 +71,9 @@ func ReadExport(ctx context.Context, rd Reader, edges EdgeReader, req ExportRequ
 	page, err := rd.List(ctx, list)
 	if err != nil {
 		return nil, fmt.Errorf("export: listing issues: %w", err)
+	}
+	if page.HasMore {
+		return nil, errors.New("export: listing issues: the listing returned a truncated page; export must never truncate")
 	}
 
 	rows := make([]ExportRow, 0, len(page.Items))

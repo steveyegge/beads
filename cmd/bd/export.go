@@ -137,7 +137,7 @@ func runExportFromSource(ctx context.Context, src exportSource) error {
 
 	issues, err := src.ExportIssues(ctx, issueops.ExportRequest{All: exportAll, IncludeInfra: exportIncludeInfra})
 	if err != nil {
-		return HandleErrorRespectJSON("failed to search issues: %v", err)
+		return HandleErrorRespectJSON("failed to read the export set: %v", err)
 	}
 
 	// Scrub test/pollution records if requested
@@ -237,26 +237,21 @@ func runExportFromSource(ctx context.Context, src exportSource) error {
 	// Memories may contain sensitive agent context and are excluded by default.
 	memoryCount := 0
 	if (exportIncludeMemories || exportAll) && !exportNoMemories {
-		allConfig, err := src.GetAllConfig(ctx)
+		memories, err := src.ExportMemories(ctx)
 		if err != nil {
-			return HandleErrorRespectJSON("failed to read config for memories: %v", err)
+			return HandleErrorRespectJSON("failed to read memories: %v", err)
 		}
-		fullPrefix := kvPrefix + memoryPrefix
 		// Sort keys for deterministic output order (GH#3474).
-		var memKeys []string
-		for k := range allConfig {
-			if strings.HasPrefix(k, fullPrefix) {
-				memKeys = append(memKeys, k)
-			}
+		memKeys := make([]string, 0, len(memories))
+		for userKey := range memories {
+			memKeys = append(memKeys, userKey)
 		}
 		sort.Strings(memKeys)
-		for _, k := range memKeys {
-			v := allConfig[k]
-			userKey := strings.TrimPrefix(k, fullPrefix)
+		for _, userKey := range memKeys {
 			record := map[string]string{
 				"_type": "memory",
 				"key":   userKey,
-				"value": v,
+				"value": memories[userKey],
 			}
 			data, err := json.Marshal(record)
 			if err != nil {

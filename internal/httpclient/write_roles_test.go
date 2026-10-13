@@ -1802,6 +1802,24 @@ func TestMemoryListAnswersAnEmptyMapNeverNil(t *testing.T) {
 	}
 }
 
+// TestMemoryListRefusesATruncatedPage: ListResult has no cursor, so a page that
+// reports more memories than it carries is refused rather than returned as the
+// whole plane (`bd export` would drop the rest silently).
+func TestMemoryListRefusesATruncatedPage(t *testing.T) {
+	w := &stubWire{page: &apigen.MemoriesPage{HasMore: true, Items: []apigen.Memory{{Key: "a", Value: "1"}}}}
+	memories, err := stubStore(t, w).Memories()
+	if err != nil {
+		t.Fatalf("Memories(): %v", err)
+	}
+	res, err := memories.List(t.Context(), memoryops.ListRequest{})
+	if err == nil {
+		t.Fatalf("List of a has_more page = %+v, want a refusal", res)
+	}
+	if !strings.Contains(err.Error(), "listMemories") {
+		t.Errorf("refusal %q does not name listMemories", err)
+	}
+}
+
 // TestWriteAccessorsRefuseWithoutATransport: a build that registered the backend
 // without linking a wire client is a wiring fault, and it must be named rather
 // than reached as a nil dereference three frames into a role.

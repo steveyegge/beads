@@ -468,9 +468,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Reader.List` for the rows, their labels and counts, `EdgeReader.ReadEdges`
   for the dependency records, and `Reader.Get` with comments for each row
   that has any. The JSONL is written by the same code as on every other
-  route. A failed read fails the export, never shortens it. A remote export
-  stamps no `wisp_plane` marker, because the server publishes no plane
-  membership.
+  route. Memories (`--all`, `--include-memories`) come from the served memory
+  plane (`listMemories`), not the settings listing, which withholds every
+  `kv.*` row and so exported none. A failed read fails the export, never
+  shortens it. A remote export does not yet stamp the `wisp_plane` marker,
+  because the server publishes no plane membership. So a current `bd import`
+  of a remote export puts genuine no-history wisps on the durable issues
+  plane instead of the wisps plane, and gc's JSONL archive keeps them.
+  Nothing is dropped.
 - **An update of a template is now refused for every caller, not only
   `bd update`.** The template guard used to be a pre-read in `cmd/bd`, so an
   update through `bd serve` (`PATCH /v0/beads/issues/{id}`), an `update` item
