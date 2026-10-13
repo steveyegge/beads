@@ -35,6 +35,15 @@ def result_event(label, status):
     return {"id": {"testResult": {"label": label}}, "testResult": {"status": status}}
 
 
+def result_event_without_status(label):
+    # proto3 JSON omits a NO_STATUS (0) field entirely rather than writing
+    # "status": "NO_STATUS", so a real BEP line for an unattempted/aborted
+    # test action looks like this, not like result_event(label, "NO_STATUS").
+    # testResult still carries other fields (cachedLocally et al), so it
+    # stays truthy; only "status" is missing.
+    return {"id": {"testResult": {"label": label}}, "testResult": {"cachedLocally": False}}
+
+
 def all_passed_bep(extra=()):
     return write_bep([result_event(l, "PASSED") for l in (SS, SS2, CD, CD2)] + list(extra))
 
@@ -63,6 +72,38 @@ class TierResultTest(unittest.TestCase):
         # falls back to the literal string "NO_STATUS", which is not PASSED.
         statuses = {SS: {"NO_STATUS"}}
         self.assertEqual(ctr.tier_result(statuses, [SS]), "failure")
+
+
+class ReadTestStatusesTest(unittest.TestCase):
+    def test_bep_testresult_with_omitted_status_field_defaults_to_no_status(self):
+        # PR #7535 review nit (fail-closed by code, uncovered by test): a
+        # testResult event whose body omits "status" entirely (the real
+        # proto3-JSON shape for NO_STATUS, e.g. a shard that never ran) must
+        # not default to PASSED, or an unattempted test would read as a pass.
+        path = write_bep([result_event_without_status(SS)])
+        try:
+            statuses = ctr.read_test_statuses(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(statuses, {SS: {"NO_STATUS"}})
+
+    def test_classify_fails_the_tier_on_an_omitted_status_result(self):
+        # End-to-end: an omitted-status event for a --tier label fails that
+        # tier (and, as the gate tier, the job), exactly as an explicit
+        # non-PASSED status would.
+        path = write_bep([
+            result_event_without_status(SS),
+            result_event(SS2, "PASSED"),
+            result_event(CD, "PASSED"),
+            result_event(CD2, "PASSED"),
+        ])
+        try:
+            results, status, reason = ctr.classify(path, 3, TIERS, "server-storage")
+        finally:
+            os.unlink(path)
+        self.assertEqual(results, {"server-storage": "failure", "cmd-dolt": "success"})
+        self.assertEqual(status, 1)
+        self.assertIsNotNone(reason)
 
 
 class ClassifyTest(unittest.TestCase):
