@@ -1510,9 +1510,13 @@ jobs:
       # shard manifests (backend/http/served_pinned_shards.txt from
       # tools/bazel/pin_shards.py, the corpus parts' split) are sized from a
       # sharded run of this lane, and the logs above are kept only on failure.
-      # test.xml only, a few KB each.
+      # test.xml only, a few KB each. Telemetry like the CI analytics upload:
+      # nothing in CI reads it, so an artifact 5xx or stall must not fail or
+      # hold the lane (scripts TestBazelEmbeddedServedTimingsUploadIsTelemetry).
       - name: Upload served test timings
         if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           overwrite: true # a job re-run is the same run: replace, not 409

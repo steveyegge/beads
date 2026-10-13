@@ -271,8 +271,12 @@ func TestServedCorpusPart4(t *testing.T) { testServedCorpus(t, 4) }
 
 // corpusPartNameErr fails a part test whose name is not its part's: a
 // TestServedCorpusPart3 that ran part 2 would run part 2's shapes twice and
-// silently drop its own.
+// silently drop its own. A part outside 1..corpusParts (a stray
+// TestServedCorpusPart5 left after the parts shrink) would run no shapes.
 func corpusPartNameErr(name string, part int) error {
+	if part < 1 || part > corpusParts {
+		return fmt.Errorf("%s runs corpus part %d; there are parts 1..%d (corpusParts)", name, part, corpusParts)
+	}
 	if want := fmt.Sprintf("TestServedCorpusPart%d", part); name != want {
 		return fmt.Errorf("%s runs corpus part %d; only %s may (fix its testServedCorpus call)", name, part, want)
 	}
@@ -431,16 +435,16 @@ func runShape(t *testing.T, bin string, s shape, served, local *side, allow map[
 
 	for _, args := range s.Setup {
 		for _, sd := range []*side{served, local} {
-			if r := runBD(t, bin, sd.dir, sd.env, "", expand(t, bin, sd, args)...); r.code != 0 {
+			if r := runBD(t, bin, sd.dir, sd.env, "", expand(context.Background(), t, bin, sd, args)...); r.code != 0 {
 				failf("setup %v failed on %s: %s", args, sd.name, r)
 				return fails
 			}
 		}
 	}
 	proxy.takeRefusals()
-	sr := runBD(t, bin, served.dir, served.env, s.Stdin, expand(t, bin, served, s.Args)...)
+	sr := runBD(t, bin, served.dir, served.env, s.Stdin, expand(context.Background(), t, bin, served, s.Args)...)
 	wireRefusals := proxy.takeRefusals()
-	lr := runBD(t, bin, local.dir, local.env, s.Stdin, expand(t, bin, local, s.Args)...)
+	lr := runBD(t, bin, local.dir, local.env, s.Stdin, expand(context.Background(), t, bin, local, s.Args)...)
 	t.Logf("bd %s\nserved: %s\nembedded: exit=%d", strings.Join(s.Args, " "), sr, lr.code)
 	if len(wireRefusals) > 0 {
 		t.Logf("reference-profile refusals on the wire: %v", wireRefusals)
@@ -487,8 +491,8 @@ func runShape(t *testing.T, bin string, s shape, served, local *side, allow map[
 		return fails
 	}
 	if len(s.PrefixOf) > 0 {
-		vs := runBD(t, bin, served.dir, served.env, "", expand(t, bin, served, s.PrefixOf)...)
-		vl := runBD(t, bin, local.dir, local.env, "", expand(t, bin, local, s.PrefixOf)...)
+		vs := runBD(t, bin, served.dir, served.env, "", expand(context.Background(), t, bin, served, s.PrefixOf)...)
+		vl := runBD(t, bin, local.dir, local.env, "", expand(context.Background(), t, bin, local, s.PrefixOf)...)
 		if vs.code != 0 || vl.code != 0 {
 			failf("prefix_of %v: exit served %d, embedded %d: served %s", s.PrefixOf, vs.code, vl.code, vs)
 		} else if d := comparePrefix(sr.stdout, lr.stdout, vs.stdout, vl.stdout); d != "" {
@@ -498,8 +502,8 @@ func runShape(t *testing.T, bin string, s shape, served, local *side, allow map[
 		failf("output parity (%s): %s", modeOf(s), d)
 	}
 	for _, args := range s.Verify {
-		vs := runBD(t, bin, served.dir, served.env, "", expand(t, bin, served, args)...)
-		vl := runBD(t, bin, local.dir, local.env, "", expand(t, bin, local, args)...)
+		vs := runBD(t, bin, served.dir, served.env, "", expand(context.Background(), t, bin, served, args)...)
+		vl := runBD(t, bin, local.dir, local.env, "", expand(context.Background(), t, bin, local, args)...)
 		if vs.code != vl.code {
 			failf("verify %v: exit served %d, embedded %d: served %s", args, vs.code, vl.code, vs)
 			continue
@@ -793,8 +797,9 @@ var placeholder = regexp.MustCompile(`\{(file|rev):([^}]+)\}`)
 
 // expand substitutes {file:NAME} and {rev:ID} in args for side sd. It never
 // fails t (a {rev:} it cannot read becomes "0"), so prepareSide may call it
-// off the test's goroutine.
-func expand(t *testing.T, bin string, sd *side, args []string) []string {
+// off the test's goroutine; its {rev:} lookup runs under ctx, so a cancelled
+// prepareSide starts no further bd there either.
+func expand(ctx context.Context, t *testing.T, bin string, sd *side, args []string) []string {
 	t.Helper()
 	out := make([]string, len(args))
 	for i, a := range args {
@@ -804,7 +809,7 @@ func expand(t *testing.T, bin string, sd *side, args []string) []string {
 			case "file":
 				return filepath.Join(sd.files, parts[2])
 			default:
-				r, err := execBD(context.Background(), bin, sd.dir, sd.env, "", "show", parts[2], "--json")
+				r, err := execBD(ctx, bin, sd.dir, sd.env, "", "show", parts[2], "--json")
 				if err != nil {
 					t.Logf("{rev:%s} on %s: %v", parts[2], sd.name, err)
 					return "0"
@@ -853,7 +858,7 @@ func prepareSide(ctx context.Context, t *testing.T, bin string, c *corpusFile, s
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		r, err := execBD(ctx, bin, sd.dir, sd.env, "", expand(t, bin, sd, args)...)
+		r, err := execBD(ctx, bin, sd.dir, sd.env, "", expand(ctx, t, bin, sd, args)...)
 		if err != nil {
 			return err
 		}

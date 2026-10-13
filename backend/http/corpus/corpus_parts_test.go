@@ -186,6 +186,9 @@ func TestCorpusPartNameMustMatchItsPart(t *testing.T) {
 		{"TestServedCorpusPart10", 1},
 		{"TestServedCorpusPart3/sub", 3},
 		{"TestServedCorpus", 1},
+		// A stray part past corpusParts would run no shapes at all.
+		{fmt.Sprintf("TestServedCorpusPart%d", corpusParts+1), corpusParts + 1},
+		{"TestServedCorpusPart0", 0},
 	} {
 		if err := corpusPartNameErr(c.name, c.part); err == nil {
 			t.Errorf("corpusPartNameErr(%q, %d) = nil, want a mismatch", c.name, c.part)
