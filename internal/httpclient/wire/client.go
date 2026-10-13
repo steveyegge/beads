@@ -73,6 +73,20 @@ type Options struct {
 	// handshake compares it against ContextResponse.project_id; "" skips the
 	// check.
 	ExpectProjectID string
+	// ResponseHeaderTimeout bounds one attempt's wait for response headers
+	// on an idempotent request (GET, or Request.Idempotent), separately from
+	// the HTTPClient's overall Timeout: zero means
+	// DefaultResponseHeaderTimeout, negative disables it. A body that is
+	// still streaming once the headers arrived is never cut off by it. Such a
+	// request that hits it, or whose connection is reset, is retried once on
+	// a new connection. A write is never retried and is bounded by the
+	// overall Timeout alone (bd serve answers a write after it commits); a
+	// write that times out before its headers fails with
+	// *ResponseHeaderTimeoutError.
+	ResponseHeaderTimeout time.Duration
+	// OnStallRetry, when set, is told about every such retry. The process-wide
+	// count is StallRetryCount either way.
+	OnStallRetry func(StallRetry)
 }
 
 // Client is one workspace's connection to one bd serve.
@@ -86,6 +100,9 @@ type Client struct {
 	userAgent string
 	maxBytes  int64
 	maxRetry  time.Duration
+
+	headerTimeout time.Duration
+	onStall       func(StallRetry)
 
 	handshake handshakeCache
 	expectID  string
@@ -124,6 +141,13 @@ func New(base *url.URL, creds CredentialProvider, opts Options) (*Client, error)
 		maxBytes:  opts.MaxResponseBytes,
 		maxRetry:  opts.MaxRetryAfter,
 		expectID:  opts.ExpectProjectID,
+		onStall:   opts.OnStallRetry,
+	}
+	switch {
+	case opts.ResponseHeaderTimeout == 0:
+		c.headerTimeout = DefaultResponseHeaderTimeout
+	case opts.ResponseHeaderTimeout > 0:
+		c.headerTimeout = opts.ResponseHeaderTimeout
 	}
 	if c.userAgent == "" {
 		c.userAgent = DefaultUserAgent
@@ -212,6 +236,10 @@ type Request struct {
 	// error names it — the close's not_assignee — when the wire does not
 	// repeat what the request already said.
 	Actor string
+	// Idempotent marks a read carried on a non-GET method (a POST batch get)
+	// as safe to replay, so a stalled or reset attempt is retried once on a
+	// new connection the way a GET is. Never set it on a write.
+	Idempotent bool
 }
 
 // Do issues r and decodes a 2xx body into out, which may be nil for a response
@@ -335,18 +363,61 @@ type response struct {
 	body   []byte
 }
 
-// roundTrip issues one HTTP request and reads its whole bounded body.
+// roundTrip issues r, retrying an idempotent request once on a new
+// connection when the first attempt stalls before its headers or has its
+// connection reset (see Options.ResponseHeaderTimeout).
+func (c *Client) roundTrip(ctx context.Context, r Request, u *url.URL, body []byte) (*response, error) {
+	res, err := c.roundTripOnce(ctx, r, u, body)
+	if err == nil {
+		return res, nil
+	}
+	reason := stallReason(err)
+	if reason == "" || ctx.Err() != nil {
+		return nil, err
+	}
+	if !idempotent(r) {
+		return nil, err
+	}
+	// The stalled connection was closed when its attempt was canceled; drop
+	// the idle ones too, so the retry dials a fresh connection rather than
+	// picking up another that may sit behind the same stuck listener slot.
+	c.hc.CloseIdleConnections()
+	event := StallRetry{Op: r.Op, Method: r.Method, Host: u.Host, Reason: reason, Retry: 1, Total: stallRetries.Add(1), Err: err}
+	if c.onStall != nil {
+		c.onStall(event)
+	}
+	res, err = c.roundTripOnce(ctx, r, u, body)
+	var hte *ResponseHeaderTimeoutError
+	if errors.As(err, &hte) {
+		hte.Attempts, hte.Retried = 2, true
+	}
+	return res, err
+}
+
+// roundTripOnce issues one HTTP request and reads its whole bounded body.
 //
 // Reading the body here rather than streaming it to the caller is what makes
 // the 401 retry above expressible at all: both attempts are then symmetric, and
 // the request body is a []byte that can be replayed. The size cap is what makes
 // that safe.
-func (c *Client) roundTrip(ctx context.Context, r Request, u *url.URL, body []byte) (*response, error) {
+func (c *Client) roundTripOnce(ctx context.Context, r Request, u *url.URL, body []byte) (*response, error) {
+	// Only a replayable request gets the header timer. bd serve sends a
+	// write's headers after the write commits, so a slow but healthy write
+	// (a large batch apply) can legitimately take longer than the header
+	// timeout, and cutting it would turn it into an unknown outcome that
+	// cannot be retried. A write stays bounded by the client's overall
+	// timeout, and a timeout before its headers is still typed below.
+	headerTimeout := time.Duration(0)
+	if idempotent(r) {
+		headerTimeout = c.headerTimeout
+	}
+	attemptCtx, ht := startHeaderTimer(ctx, headerTimeout)
+	defer ht.done()
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, r.Method, u.String(), rdr)
+	req, err := http.NewRequestWithContext(attemptCtx, r.Method, u.String(), rdr)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", r.Op, err)
 	}
@@ -360,6 +431,20 @@ func (c *Client) roundTrip(ctx context.Context, r Request, u *url.URL, body []by
 
 	//nolint:gosec // G704: the URL is the workspace's configured server, resolved from the sidecar or --server-url; dialing it IS the feature.
 	resp, err := c.hc.Do(req)
+	if !ht.arrived() || (err != nil && ht.timedOut()) {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		hte := &ResponseHeaderTimeoutError{Op: r.Op, Method: r.Method, Host: u.Host, After: headerTimeout, Attempts: 1, Replayable: idempotent(r)}
+		return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: hte}
+	}
+	if err != nil && !idempotent(r) && ctx.Err() == nil && isTimeout(err) {
+		// The client's overall timeout fired before a write's headers came
+		// back: Do returns only once headers arrive, so any timeout it
+		// reports is a timeout awaiting them.
+		hte := &ResponseHeaderTimeoutError{Op: r.Op, Method: r.Method, Host: u.Host, After: c.hc.Timeout, Attempts: 1, Err: err}
+		return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: hte}
+	}
 	if err != nil {
 		return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: err}
 	}

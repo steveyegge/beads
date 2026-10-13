@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The HTTP backend client bounds the wait for response headers at 15s
+  (`BEADS_HTTP_RESPONSE_HEADER_TIMEOUT`; `off` disables it), separately from
+  the 60s request timeout, so one silent connection no longer costs a full
+  minute. A stalled or reset read is retried once on a new connection and
+  logged to stderr with its count. A write keeps the 60s bound (the server
+  answers it after the commit) and is never retried; a write that times out
+  before its headers fails with a typed `wire.ResponseHeaderTimeoutError`
+  naming the server's host.
 - `issueops.LeaseReclaimer`, the stale-lease sweep behind `bd reclaim`, is a
   role on every leg (dolt, embedded dolt, the unit-of-work provider and the
   HTTP client), and `bd serve` publishes it as `POST /v0/beads/issues:reclaim`

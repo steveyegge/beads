@@ -251,6 +251,17 @@ credential would cross the network unencrypted) — pass `--allow-plaintext` to
 override, or use `https://`. Switching a workspace that already selects a
 different backend needs `--force`.
 
+Each HTTP request waits at most 15s for the server's response headers
+(`BEADS_HTTP_RESPONSE_HEADER_TIMEOUT`, a Go duration such as `30s`, or `off`),
+separately from the 60s bound on the whole request; a body that is still
+streaming is never cut off by it. A read (GET, or the POST batch get) whose
+headers do not arrive in time, or whose connection is reset, is retried once
+on a new connection, and each retry is logged to stderr with its count. A
+write gets no header timer (the server answers a write only after it
+commits, so a large one can be slow and healthy) and is never retried; if the
+60s bound expires before its headers, it fails with an error naming the
+server's host, because it may or may not have been applied.
+
 `bd search`, `bd show --current` and `bd recompute-blocked` work over HTTP
 too, each in its own way. `bd search` asks the server's listing with its text (`q`, behind the `issues.list.search` capability) and
 refuses before dialing against a server that does not advertise it. `bd list

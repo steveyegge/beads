@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
 	"github.com/steveyegge/beads/internal/httpclient/wire"
@@ -94,6 +96,51 @@ type DialOptions struct {
 	// Unexported so the only way to set it is the door that also refuses a
 	// nil credential.
 	explicitCredential bool
+
+	// ResponseHeaderTimeout bounds one attempt's wait for response headers,
+	// separately from the client's overall timeout (wire.DefaultTimeout):
+	// see wire.Options.ResponseHeaderTimeout. Zero takes
+	// ResponseHeaderTimeoutEnv, else wire.DefaultResponseHeaderTimeout;
+	// negative disables it.
+	ResponseHeaderTimeout time.Duration
+	// OnStallRetry is told about every retry of a stalled or reset idempotent
+	// request. Nil logs one line per retry to stderr, so a stall is visible
+	// rather than silently absorbed.
+	OnStallRetry func(wire.StallRetry)
+}
+
+// ResponseHeaderTimeoutEnv overrides the header timeout for every dial that
+// does not set DialOptions.ResponseHeaderTimeout: a Go duration ("15s",
+// "2m"), or "0"/"off" to disable it. An unparseable value refuses the dial.
+const ResponseHeaderTimeoutEnv = "BEADS_HTTP_RESPONSE_HEADER_TIMEOUT"
+
+// responseHeaderTimeout resolves the header timeout for one dial: the
+// explicit option, else ResponseHeaderTimeoutEnv, else 0 (wire's default).
+func responseHeaderTimeout(opt time.Duration) (time.Duration, error) {
+	if opt != 0 {
+		return opt, nil
+	}
+	raw := strings.TrimSpace(os.Getenv(ResponseHeaderTimeoutEnv))
+	switch raw {
+	case "":
+		return 0, nil
+	case "0", "off":
+		return -1, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("%s=%q: want a non-negative Go duration such as 15s, or off", ResponseHeaderTimeoutEnv, raw)
+	}
+	if d == 0 {
+		return -1, nil
+	}
+	return d, nil
+}
+
+// logStallRetry is the default OnStallRetry: one stderr line per retry, with
+// the retry number and the process-wide count.
+func logStallRetry(e wire.StallRetry) {
+	fmt.Fprintln(os.Stderr, e.String())
 }
 
 // Conn is the store's view of one wire client.
@@ -226,10 +273,20 @@ func DialWith(target Target, creds CredentialProvider, opts DialOptions) (*Conn,
 	// SAME flag before the sidecar carrying it even exists yet.
 	creds = guardInsecureCredential(target, creds, opts.AllowInsecureCredential || target.AllowInsecureCredential, !opts.explicitCredential)
 
+	headerTimeout, err := responseHeaderTimeout(opts.ResponseHeaderTimeout)
+	if err != nil {
+		return nil, err
+	}
+	onStall := opts.OnStallRetry
+	if onStall == nil {
+		onStall = logStallRetry
+	}
 	client, err := wire.New(target.BaseURL, creds, wire.Options{
-		HTTPClient:      opts.HTTPClient,
-		UserAgent:       opts.UserAgent,
-		ExpectProjectID: target.ExpectProjectID,
+		HTTPClient:            opts.HTTPClient,
+		UserAgent:             opts.UserAgent,
+		ExpectProjectID:       target.ExpectProjectID,
+		ResponseHeaderTimeout: headerTimeout,
+		OnStallRetry:          onStall,
 	})
 	if err != nil {
 		return nil, err
