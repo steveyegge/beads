@@ -170,6 +170,7 @@ go_test(
         "store_test.go",
         "target_test.go",
         "unlimited_read_test.go",
+        "update_persistence_test.go",
         "watch_test.go",
         "wave2b_roles_test.go",
         "wave2c_claimnext_test.go",

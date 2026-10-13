@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -1961,6 +1962,56 @@ func RunLifecycleUpdatePersistentPreservesUnversionedClass(t *testing.T, ctx con
 		t.Errorf("%s came back {ephemeral %v, no-history %v} after a persistent restatement, want a durable-plane row", id, after.Ephemeral, after.NoHistory)
 	}
 	assertLifecycleUpdateWispAbsent(t, ctx, fixture, id, "after the persistent restatement")
+}
+
+// RunLifecycleUpdatePersistentPromotesAWisp pins the move `bd promote` makes
+// (issueops.Promote): Persistence = persistent on an ephemeral wisp is a
+// MUTATION that leaves the row on the durable plane under the same id, with
+// its labels carried across and nothing left behind on the wisp plane. A
+// second identical request is the no-op the "same current mode" clause
+// promises, which is how Promote tells a lost race from a promotion.
+func RunLifecycleUpdatePersistentPromotesAWisp(t *testing.T, ctx context.Context, fixture LifecycleUpdateFixture) {
+	t.Helper()
+	if fixture.CreateWisp == nil {
+		t.Skip("fixture has no CreateWisp: this backend has no wisp plane to promote from")
+	}
+
+	id := fixture.IssuePrefix + "-lup-promote"
+	seedLifecycleUpdateWisp(t, ctx, fixture, lifecycleUpdateIssue(id, "keep-me"))
+	if got := lifecycleUpdateRow(t, ctx, fixture, id); !got.Ephemeral {
+		t.Fatalf("seeded %s is not ephemeral; the case has nothing to promote", id)
+	}
+
+	promote := publicops.UpdateRequest{Actor: "writer", IssueID: id, Patch: publicops.IssuePatch{
+		Persistence: publicops.Field[publicops.PersistenceMode]{Set: true, Value: publicops.PersistenceModePersistent},
+	}}
+	promoted, err := fixture.Lifecycle.Update(ctx, promote)
+	if err != nil {
+		t.Fatalf("promote %s: %v", id, err)
+	}
+	if !promoted.Changed {
+		t.Errorf("promoting wisp %s reported Changed = false, want a mutation", id)
+	}
+	if promoted.Issue == nil || promoted.Issue.ID != id || promoted.Issue.Ephemeral {
+		t.Errorf("promote result issue = %+v, want %s on the durable plane", promoted.Issue, id)
+	}
+
+	after := lifecycleUpdateRow(t, ctx, fixture, id)
+	if after.Ephemeral || after.NoHistory {
+		t.Errorf("%s came back {ephemeral %v, no-history %v} after the promotion, want a durable-plane row", id, after.Ephemeral, after.NoHistory)
+	}
+	if !slices.Contains(after.Labels, "keep-me") {
+		t.Errorf("%s labels after the promotion = %v, want the wisp's label carried across", id, after.Labels)
+	}
+	assertLifecycleUpdateWispAbsent(t, ctx, fixture, id, "after the promotion")
+
+	again, err := fixture.Lifecycle.Update(ctx, promote)
+	if err != nil {
+		t.Fatalf("re-promote %s: %v", id, err)
+	}
+	if again.Changed {
+		t.Errorf("re-promoting durable %s reported Changed = true, want the same-mode no-op", id)
+	}
 }
 
 // RunLifecycleUpdateProvenanceLabelsHistory pins UpdateRequest.Provenance

@@ -89,6 +89,9 @@ func TestLifecycleUpdateContract(t *testing.T) {
 	t.Run("PersistentPreservesUnversionedClass", func(t *testing.T) {
 		conformance.RunLifecycleUpdatePersistentPreservesUnversionedClass(t, ctx, fixture)
 	})
+	t.Run("PersistentPromotesAWisp", func(t *testing.T) {
+		conformance.RunLifecycleUpdatePersistentPromotesAWisp(t, ctx, fixture)
+	})
 	t.Run("ProvenanceLabelsHistory", func(t *testing.T) {
 		conformance.RunLifecycleUpdateProvenanceLabelsHistory(t, ctx, fixture)
 	})

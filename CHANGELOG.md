@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bd promote` works over a connected HTTP workspace (S21b). Its one library
+  entry, `issueops.Promote(ctx, PromoteRoles{Reader, Lifecycle, Commenter},
+  PromoteRequest)`, reads the row, refuses one that is not a wisp
+  (`*issueops.NotAWispError`, the sentence `bd promote` always printed), moves
+  it with ONE `Lifecycle.Update` whose patch is `Persistence = persistent`
+  (labels, dependencies, events and comments move with it in the role's
+  transaction), then records the promotion comment. The direct route runs it
+  over the store's own roles, so a local promote now goes through the same
+  plane move `bd update --persistent` makes, honoring `dolt.auto-commit` and
+  labelled `bd: promote <id>`. `bd serve` publishes the move as
+  `patch.persistence` on `PATCH /v0/beads/issues/{id}` behind the new
+  `issues.update.persistence` capability (additive; `wire_revision` is
+  unchanged), which also carries `bd update --persistent`, `--ephemeral` and
+  `--no-history` over HTTP. Against a server without the token the client
+  refuses before the dial, naming it; nothing is written.
 - `issueops.LeaseReclaimer`, the stale-lease sweep behind `bd reclaim`, is a
   role on every leg (dolt, embedded dolt, the unit-of-work provider and the
   HTTP client), and `bd serve` publishes it as `POST /v0/beads/issues:reclaim`

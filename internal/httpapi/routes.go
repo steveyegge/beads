@@ -221,6 +221,16 @@ const CapBatchApplyDepAddLineage = "issues.batchApply.depAddLineage"
 // still edits a template (bd-jkp9v3).
 const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 
+// CapIssuesUpdatePersistence is the behavior capability that advertises
+// IssuePatchBody.persistence on updateIssue: the role's
+// IssuePatch.Persistence, which moves the row between the durable and the wisp
+// plane in the update's own transaction. It is what `bd promote`
+// (issueops.Promote) and `bd update --persistent/--ephemeral/--no-history`
+// send over http. An older server answers the member with `400
+// invalid_argument`/`unknown_parameter`; a client that does not see this token
+// refuses the move before the dial, naming the token, rather than sending it.
+const CapIssuesUpdatePersistence = "issues.update.persistence"
+
 // CapIssuesCreateDefaultPriority is the behavior capability that advertises
 // that issues.create, issues.batchCreate and issues.batchApply's create items
 // store the create default priority (P2) for a request whose `priority` member
@@ -1034,7 +1044,7 @@ var behaviorCapabilities = []string{
 	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
-	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs,
+	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:

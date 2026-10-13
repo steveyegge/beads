@@ -249,6 +249,14 @@ const CapBatchApplyDepAddLineage = "issues.batchApply.depAddLineage"
 // (bd-jkp9v3).
 const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 
+// CapIssuesUpdatePersistence is the behavior capability announcing that
+// updateIssue accepts `patch.persistence` (issueops.IssuePatch.Persistence,
+// the plane move behind `bd promote`). lifecycle.go sends the member only to
+// a server advertising it, and refuses the move before the dial otherwise:
+// there is no client-side fallback, because the move is one transaction on
+// the server.
+const CapIssuesUpdatePersistence = "issues.update.persistence"
+
 // CapIssuesCreateDefaultPriority is the behavior capability announcing that
 // the server stores the create default priority for an ABSENT `priority`
 // member on issues.create, issues.batchCreate and issues.batchApply create
@@ -408,7 +416,7 @@ var behaviorCapabilities = []string{
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapCloseAutoCloseMolecule, CapListSearch,
-	CapListNoAssignee, CapListTitle, CapListIDs,
+	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

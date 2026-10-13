@@ -35,6 +35,7 @@ go_test(
         "e2e_export_test.go",
         "e2e_list_filters_test.go",
         "e2e_mol_test.go",
+        "e2e_promote_test.go",
         "e2e_recompute_blocked_test.go",
         "e2e_remote_roles_test.go",
         "e2e_search_test.go",

@@ -2495,11 +2495,6 @@ paths:
         Nothing has asked for it.
 
 
-        `persistence` — a plane move is an atomic aggregate migration rather
-        than a field write, and moving a row between planes mid-patch is a
-        different act from editing it.
-
-
         `closed_by_session` and `close_reason` — written under first-close-wins
         by `{id}:close`, which a patch write would bypass. A `status` that
         crosses into the done category still answers to close POLICY here; it
@@ -8287,6 +8282,11 @@ components:
             `PATCH /v0/beads/issues/{id}` accepts `allow_template` (see
             `UpdateIssueRequest`) rather than a `400` naming the member
             unknown, and
+            `issues.update.persistence`, which announces that
+            `PATCH /v0/beads/issues/{id}` accepts a `persistence` member in
+            its `patch` (see `IssuePatchBody`), the plane move behind
+            `bd promote`, rather
+            than a `400` naming the member unknown, and
             `issues.create.defaultPriority`, which announces that a create
             (`POST /v0/beads/issues`, `issues:batchCreate` and
             `issues:batchApply` create items) with no `priority` member stores
@@ -10500,9 +10500,11 @@ components:
         one-edge-one-spelling rule: a parent is a `dep_add` item of type
         `parent-child`, so the order of every edge in the request stays total.
         The single patch has no ordering to express and publishes it directly.
-        `persistence` is absent from both — moving a row between planes mid-plan
+        `persistence` is absent here — moving a row between planes mid-plan
         is a different act from writing its fields, and nothing has asked for it
-        here.
+        here. The single patch publishes it (`IssuePatchBody.persistence`,
+        behind `issues.update.persistence`), where the move is the patch's last
+        step.
       properties:
         title:
           type: string
@@ -12201,6 +12203,29 @@ components:
           description: 'RFC 3339. Explicit `null` CLEARS the deferral.'
         metadata:
           $ref: '#/components/schemas/ApplyMetadataPatch'
+        persistence:
+          type: string
+          maxLength: 255
+          description: >-
+            One of `persistent`, `ephemeral` or `no_history`; any other value
+            is a `400` naming the member. Selects the issue's complete persistence state, moving the row
+            between the durable and the wisp plane when the state changes
+            plane. `persistent` promotes a wisp: the row keeps its id, and its
+            labels, dependencies, events and comments move with it, all in
+            this update's one transaction (`bd promote`, `bd update
+            --persistent`). `ephemeral` and `no_history` select the wisp
+            retention modes (`bd update --ephemeral` / `--no-history`);
+            demoting a durable row that has retained snapshots is refused.
+            The current mode is a no-op that reports `changed: false`.
+
+
+            A PLANE MOVE IS AN AGGREGATE MIGRATION, not a field write, and it
+            is applied LAST, after every other member of the patch, so the
+            edit and the move commit together or not at all. Advertised by the
+            `issues.update.persistence` capability token; a server that
+            predates the member refuses it as an unknown parameter, and a
+            client that does not see the token refuses the move before the
+            dial rather than sending it.
 
     UpdateIssueResponse:
       type: object

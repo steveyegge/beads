@@ -719,8 +719,8 @@ func writeSideRows() []Row {
 		patchRow("Owner", "an owner edit refuses ON updateIssue",
 			"IssuePatchBody excludes owner — which the document itself calls an accident of order rather than a decision, since ApplyPatchBody DOES publish it and issues:batchApply's update item carries it"),
 		patchRow("ClosedBySession", "a closed-by-session edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes closed_by_session"),
-		patchRow("Persistence", "a persistence-mode edit refuses",
-			"neither body publishes persistence: moving a row between planes mid-plan is a different act from writing its fields"),
+		patchRow("Persistence", "a persistence-mode edit refuses ON issues:batchApply",
+			"ApplyPatchBody excludes persistence: moving a row between planes mid-plan is a different act from writing its fields. IssuePatchBody publishes it behind issues.update.persistence, and updateIssue's encoder carries it (refusing before the dial against a server without that token)"),
 		{
 			ID: "W-IssuePatch.ParentID", Kind: KindRetired,
 			What: "a parent re-hang through update used to refuse",

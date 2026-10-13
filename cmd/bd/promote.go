@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,17 +12,13 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/issueops"
 )
 
-// promotionComment is the audit comment both routes record on the promoted
-// bead. Shared by the classic and proxied-server paths so the text cannot
-// drift.
+// promotionComment is the audit comment every route records on the promoted
+// bead: issueops.PromotionComment, so the text cannot drift.
 func promotionComment(reason string) string {
-	comment := "Promoted from Level 0"
-	if reason != "" {
-		comment += ": " + reason
-	}
-	return comment
+	return issueops.PromotionComment(reason)
 }
 
 // printPromoteResult renders the `bd promote` success output. updated is the
@@ -86,25 +83,19 @@ Examples:
 			return HandleErrorRespectJSON("resolving %s: %v", id, err)
 		}
 
-		issue, err := store.GetIssue(ctx, fullID)
+		promoted, err := promoteDirect(ctx, store, fullID, reason)
 		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
+			var notWisp *issueops.NotAWispError
+			switch {
+			case errors.As(err, &notWisp):
+				return HandleErrorRespectJSON("%v", err)
+			case errors.Is(err, storage.ErrNotFound):
 				return HandleErrorRespectJSON("issue %s not found", fullID)
 			}
-			return HandleErrorRespectJSON("getting issue %s: %v", fullID, err)
-		}
-		if !issue.Ephemeral {
-			return HandleErrorRespectJSON("%s is not a wisp (already persistent)", fullID)
-		}
-
-		if err := store.PromoteFromEphemeral(ctx, fullID, currentActor()); err != nil {
 			return HandleErrorRespectJSON("promoting %s: %v", fullID, err)
 		}
-
-		// Add promotion comment (issue is now in permanent table, AddComment routes correctly
-		// via GetIssue fallback)
-		if err := store.AddComment(ctx, fullID, currentActor(), promotionComment(reason)); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, err)
+		if promoted.CommentErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, promoted.CommentErr)
 		}
 
 		commandDidWrite.Store(true)
@@ -121,4 +112,42 @@ func init() {
 	promoteCmd.Flags().StringP("reason", "r", "", "Reason for promotion")
 	promoteCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(promoteCmd)
+}
+
+// promoteDirect runs `bd promote` on the direct route through
+// issueops.Promote, the one library entry every route shares, over the
+// store's own role accessors (so its decorator stack — hooks, telemetry —
+// wraps the move and the comment). On a connected http workspace the same
+// entry dials updateIssue with `patch.persistence`, and a server without the
+// issues.update.persistence capability refuses before the dial, naming it.
+//
+// The history label is the classic "bd: promote <id>" where the store can
+// carry a caller label, and the server's own where it cannot (S6d's rule,
+// remote_backend.go).
+func promoteDirect(ctx context.Context, st storage.DoltStorage, fullID, reason string) (issueops.PromoteResult, error) {
+	opsCtx, err := issueOpsContext(ctx)
+	if err != nil {
+		return issueops.PromoteResult{}, err
+	}
+	reader, err := st.IssueReader()
+	if err != nil {
+		return issueops.PromoteResult{}, err
+	}
+	lifecycle, err := writeOps(st)
+	if err != nil {
+		return issueops.PromoteResult{}, err
+	}
+	commenter, err := st.Commenter()
+	if err != nil {
+		return issueops.PromoteResult{}, err
+	}
+	provenance := ""
+	if storeCarriesCallerAttribution(st) {
+		provenance = "bd: promote " + fullID
+	}
+	return issueops.Promote(opsCtx, issueops.PromoteRoles{
+		Reader: reader, Lifecycle: lifecycle, Commenter: commenter,
+	}, issueops.PromoteRequest{
+		Actor: currentActor(), IssueID: fullID, Reason: reason, Provenance: provenance,
+	})
 }
