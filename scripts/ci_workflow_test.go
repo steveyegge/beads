@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1638,41 +1639,61 @@ func ciAnalyticsContinueOnErrorPaths(t *testing.T) map[string]bool {
 	return paths
 }
 
-// bazelServedTimingsStepName is bazel-embedded's per-run upload of the served
-// targets' test.xml (bazel-embedded-served-testxml), which their pinned
-// shard manifests are sized from (backend/http/BUILD.bazel). Telemetry like
-// the CI analytics upload: nothing in bazel.yml, pr.yml or the gate reads it,
-// so an artifact service 5xx or stall must not turn the required embedded
-// lane red or hold it to the job timeout. Its continue-on-error is the one
+// bazelServedTimingsStepName is the embedded tier's per-run upload of the
+// served targets' test.xml, which their pinned shard manifests are sized from
+// (backend/http/BUILD.bazel): bazel-embedded's (bazel-embedded-served-testxml)
+// outside mode remote, and the union's (bazel-dolt-race-served-testxml) in
+// mode remote, where bazel-dolt-race runs that tier (item 5 Option B). The
+// names differ because an artifact name is unique per caller run
+// (TestBazelArtifactNamesUniqueInCallerRuns). Telemetry like the CI analytics
+// upload: nothing in bazel.yml, pr.yml or the gate reads it, so an artifact
+// service 5xx or stall must not turn the required embedded tier red or hold
+// it to the job timeout. Its continue-on-error is the one
 // TestBazelWorkflowSecretsAndFailureSurface allows here, and only on this
-// exact step (bazelServedTimingsContinueOnErrorPath).
+// exact step (bazelServedTimingsContinueOnErrorPaths).
 const bazelServedTimingsStepName = "Upload served test timings"
 
-// bazelServedTimingsContinueOnErrorPath returns the walkYAML path of the
-// served-timings upload's continue-on-error key, after checking the step is
-// still only that upload: upload-artifact, the fixed artifact name, test.xml
-// under backend/http only, a 2-minute timeout.
-func bazelServedTimingsContinueOnErrorPath(t *testing.T) string {
+// bazelServedTimingsArtifact: the jobs that run the embedded tier -> their
+// served-timings artifact name.
+var bazelServedTimingsArtifact = map[string]string{
+	bazelEmbedJobName:    "bazel-embedded-served-testxml",
+	bazelDoltRaceJobName: "bazel-dolt-race-served-testxml",
+}
+
+// bazelServedTimingsContinueOnErrorPaths returns the walkYAML paths of the
+// served-timings uploads' continue-on-error keys, after checking each step
+// is still only that upload: upload-artifact, its job's fixed artifact name,
+// test.xml under backend/http only, a 2-minute timeout.
+func bazelServedTimingsContinueOnErrorPaths(t *testing.T) map[string]bool {
 	t.Helper()
-	job := readCIWorkflow(t, bazelWorkflowName).job(t, bazelEmbedJobName)
-	for i, step := range job.Steps {
-		if step.Name != bazelServedTimingsStepName {
-			continue
+	workflow := readCIWorkflow(t, bazelWorkflowName)
+	paths := map[string]bool{}
+	for _, jobName := range slices.Sorted(maps.Keys(bazelServedTimingsArtifact)) {
+		name := bazelServedTimingsArtifact[jobName]
+		job := workflow.job(t, jobName)
+		found := false
+		for i, step := range job.Steps {
+			if step.Name != bazelServedTimingsStepName {
+				continue
+			}
+			if !strings.HasPrefix(step.Uses, "actions/upload-artifact@") ||
+				step.With["name"] != name ||
+				step.With["path"] != "bazel-testlogs/backend/http/**/test.xml" ||
+				step.TimeoutMinutes != 2 || fmt.Sprint(step.ContinueOnError) != "true" {
+				t.Errorf("%s step %q = %+v; want a continue-on-error, 2-minute upload-artifact of bazel-testlogs/backend/http/**/test.xml named %s", jobName, step.Name, step, name)
+			}
+			paths[fmt.Sprintf(".jobs.%s.steps[%d].continue-on-error", jobName, i)] = true
+			found = true
 		}
-		if !strings.HasPrefix(step.Uses, "actions/upload-artifact@") ||
-			step.With["name"] != "bazel-embedded-served-testxml" ||
-			step.With["path"] != "bazel-testlogs/backend/http/**/test.xml" ||
-			step.TimeoutMinutes != 2 || fmt.Sprint(step.ContinueOnError) != "true" {
-			t.Errorf("%s step %q = %+v; want a continue-on-error, 2-minute upload-artifact of bazel-testlogs/backend/http/**/test.xml named bazel-embedded-served-testxml", bazelEmbedJobName, step.Name, step)
+		if !found {
+			t.Errorf("%s has no %q step", jobName, bazelServedTimingsStepName)
 		}
-		return fmt.Sprintf(".jobs.%s.steps[%d].continue-on-error", bazelEmbedJobName, i)
 	}
-	t.Fatalf("%s has no %q step", bazelEmbedJobName, bazelServedTimingsStepName)
-	return ""
+	return paths
 }
 
 func TestBazelEmbeddedServedTimingsUploadIsTelemetry(t *testing.T) {
-	bazelServedTimingsContinueOnErrorPath(t)
+	bazelServedTimingsContinueOnErrorPaths(t)
 }
 
 // bazelDoltIntTestContinueOnErrorPath: bazel-dolt-int's `bazel test` step's
@@ -2115,6 +2136,8 @@ func TestBazelWorkflowJobsAndExecutionMode(t *testing.T) {
 			wantJobIf = bazelDoltMemberIf
 		case bazelProxiedJobName:
 			wantJobIf = bazelProxiedMemberIf
+		case bazelEmbedJobName:
+			wantJobIf = bazelEmbeddedMemberIf
 		}
 		if job.RunsOn != wantJobRunsOn {
 			t.Errorf("%s runs-on = %q, want %q", name, job.RunsOn, wantJobRunsOn)
@@ -4770,7 +4793,7 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 	ciAnalyticsPaths := ciAnalyticsContinueOnErrorPaths(t)
 	doltIntTestPath := bazelDoltIntTestContinueOnErrorPath(t)
 	doltIntCheckPaths := bazelDoltIntCheckContinueOnErrorPaths(t)
-	servedTimingsPath := bazelServedTimingsContinueOnErrorPath(t)
+	servedTimingsPaths := bazelServedTimingsContinueOnErrorPaths(t)
 	secretRef := regexp.MustCompile(`\bsecrets\s*(\.|\[)`)
 	walkYAML(root, "", func(path string, key bool, value string) {
 		if key && value == "continue-on-error" {
@@ -4794,12 +4817,12 @@ func TestBazelWorkflowSecretsAndFailureSurface(t *testing.T) {
 			// of its own) folds every one of their outcomes, plus the test
 			// step's own rc, into job.status per tier via --check, so
 			// nothing is hidden from pr.yml's ci-gate, only moved. So is
-			// bazel-embedded's served-timings upload
-			// (bazelServedTimingsContinueOnErrorPath): telemetry, read by
+			// the embedded tier's served-timings uploads
+			// (bazelServedTimingsContinueOnErrorPaths): telemetry, read by
 			// nothing in CI.
 			jobName := strings.TrimSuffix(strings.TrimPrefix(path, ".jobs."), ".continue-on-error")
 			_, flagGated := bazelFlagGatedLanes[jobName]
-			if path != bazelRBEPrewarmContinueOnErrorPath && path != doltIntTestPath && path != servedTimingsPath && !doltIntCheckPaths[path] && !flagGated && !ciAnalyticsPaths[path] && !bazelUnionHasFlagGatedMember(jobName) {
+			if path != bazelRBEPrewarmContinueOnErrorPath && path != doltIntTestPath && !servedTimingsPaths[path] && !doltIntCheckPaths[path] && !flagGated && !ciAnalyticsPaths[path] && !bazelUnionHasFlagGatedMember(jobName) {
 				t.Errorf("%s: %s hides failures from pr.yml's ci-gate", bazelWorkflowName, path)
 			}
 		}

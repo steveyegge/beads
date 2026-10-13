@@ -13,15 +13,20 @@ import (
 	"testing"
 )
 
-// The dolt-race union lane (item 5): in mode remote, bazel.yml's
-// bazel-dolt-race job runs --config=dolt-race, the union of
-// --config=doltserver and --config=doltserver-proxied, in one `bazel test`,
-// in place of the bazel-doltserver and bazel-proxied jobs; in every other
-// mode those two run as before. Its job.status is both members' workflow_call
-// output, so pr.yml's gate ids (BAZEL_DOLTSERVER, BAZEL_PROXIED), ci-gate.sh
-// and bazel-gate.sh are unchanged. Outside mode remote one client would do
-// both tiers' work with no in-flight deduplication, so the union would cost
-// the sum of the two tiers rather than the max: the members stay there.
+// The dolt-race union lane (item 5 A1b, and Option B for the embedded
+// tier): in mode remote, bazel.yml's bazel-dolt-race job runs
+// --config=dolt-race, the union of --config=embedded, --config=doltserver and
+// --config=doltserver-proxied, in one `bazel test`, in place of the
+// bazel-embedded, bazel-doltserver and bazel-proxied jobs; in every other
+// mode those three run as before. Its job.status is every member's
+// workflow_call output, so pr.yml's gate ids (BAZEL_EMBEDDED,
+// BAZEL_DOLTSERVER, BAZEL_PROXIED), ci-gate.sh and bazel-gate.sh are
+// unchanged, and every tier stays hard-gating on every event (unlike
+// bazel-dolt-int's per-tier classify, whose single gate tier would leave the
+// others non-gating on push, nightly and dispatch, where nothing reads the
+// call outputs). Outside mode remote one client would do all three tiers'
+// work with no in-flight deduplication, so the union would cost the sum of
+// the tiers rather than the max: the members stay there.
 
 const (
 	bazelDoltRaceJobName = "bazel-dolt-race"
@@ -34,6 +39,9 @@ const (
 	// execution only), minus mode remote.
 	bazelDoltMemberIf    = "${{ needs.rbe.outputs.mode != 'skip' && needs.rbe.outputs.mode != 'remote' }}"
 	bazelProxiedMemberIf = "${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' }}"
+	// bazel-embedded: remote execution only (fork-ro, fork-rw), as before
+	// Option B, minus mode remote.
+	bazelEmbeddedMemberIf = "${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' }}"
 )
 
 // bazelUnionLanes: a union job -> the gated member jobs it runs in place of
@@ -41,7 +49,7 @@ const (
 // (bazelLaneGateIDs) and its workflow_call output, which reads the union's
 // result first and the member's own otherwise (bazelLaneCallOutput).
 var bazelUnionLanes = map[string][]string{
-	bazelDoltRaceJobName: {bazelDoltJobName, bazelProxiedJobName},
+	bazelDoltRaceJobName: {bazelEmbedJobName, bazelDoltJobName, bazelProxiedJobName},
 }
 
 // bazelUnionHasFlagGatedMember reports whether a union job runs in place of
@@ -154,17 +162,33 @@ const bazelDoltRaceJobTimeoutMargin = 5
 // every merge group, so its own timeout stays below it.
 const bazelDoltRaceMergeQueueTimeout = 60
 
-// bazelDoltRaceTestStepTimeout: the union's `bazel test` step timeout. Its
-// shards run about 55-95 s on rbe-west, each capped at 1200 s; the step allows
-// about 3 minutes past that cap so Bazel writes TIMEOUT logs before GitHub
-// kills the step.
-const bazelDoltRaceTestStepTimeout = 23
+// bazelDoltRaceTestStepTimeout: the union's `bazel test` step timeout. Every
+// shard is capped at 1200 s; the slowest mode-remote embedded `bazel test`
+// measured was 1252 s (a nightly --config=fresh run, 2026-10-07), so the step
+// allows 28 minutes: past that run, and about 3 minutes past the cap so Bazel
+// writes TIMEOUT logs before GitHub kills the step. Tighten other steps, not
+// this one, if the job's sum stops fitting under the merge queue's 60.
+const bazelDoltRaceTestStepTimeout = 28
 
-// The union's members, and the tag filter each owns.
+// bazelDoltRaceJobTimeout: the job's timeout-minutes, the step sum + 5 and
+// below the merge queue's 60: about a minute of that 60 is left for runner
+// pickup and the rbe job, so a union that hangs all the way to its own
+// timeout can still drop the group (accepted: that run is red anyway).
+const bazelDoltRaceJobTimeout = 59
+
+// The union's members, and the tag filter each owns, in the union filter's
+// order.
 var bazelDoltRaceMembers = []struct{ config, tag string }{
+	{"embedded", "embedded"},
 	{"doltserver", "dolt-server"},
 	{"doltserver-proxied", "dolt-server-proxied"},
 }
+
+// bazelDoltRaceJobs: the union's one line that is no member's
+// (TestBazelDoltRaceFitsTheJobsBudget). --jobs is in no action key.
+const bazelDoltRaceJobs = 128
+
+var bazelDoltRaceNonMemberLines = []string{"test --jobs=" + strconv.Itoa(bazelDoltRaceJobs)}
 
 // bazelRCConfigLines returns .bazelrc's option lines for --config=name
 // (any command: test:name, build:name, ...), as "<command> <option>"
@@ -188,13 +212,14 @@ func bazelRCConfigLines(rc, name string) []string {
 
 // TestBazelDoltRaceConfigIsMemberUnion: --config=dolt-race is exactly the
 // set union of its members' lines, except that each member's
-// --test_tag_filters is replaced by one filter naming both members' tags.
-// Every flag stays a member's own, so each member target's test action is
-// unchanged: `bazel aquery 'mnemonic("TestRunner", ...)'` over each member's
-// targets gives byte-identical actions (key, argv, env, outputs) under the
-// member config and under the union, 27 + 35 = 62 (item 5 A1b). Both arms
-// run, the mode deciding which, so drift between them would split results
-// by mode: a flag added to a member must be added to the union too.
+// --test_tag_filters is replaced by one filter naming every member's tag, plus
+// bazelDoltRaceNonMemberLines (--jobs, in no action key). Every other flag
+// stays a member's own, so each member target's test action is unchanged:
+// `bazel aquery 'mnemonic("TestRunner", ...)'` over each member's targets
+// gives byte-identical actions (key, argv, env, outputs) under the member
+// config and under the union, 182 + 27 + 35 = 244 (item 5 Option B). Both
+// arms run, the mode deciding which, so drift between them would split
+// results by mode: a flag added to a member must be added to the union too.
 func TestBazelDoltRaceConfigIsMemberUnion(t *testing.T) {
 	rc := readPolicyFile(t, bazelPolicyRoot(t), ".bazelrc")
 	const tagPrefix = "test --test_tag_filters="
@@ -230,7 +255,18 @@ func TestBazelDoltRaceConfigIsMemberUnion(t *testing.T) {
 			gotTags = append(gotTags, v)
 			continue
 		}
+		if slices.Contains(bazelDoltRaceNonMemberLines, l) {
+			continue
+		}
 		gotRest = append(gotRest, l)
+	}
+	for _, l := range bazelDoltRaceNonMemberLines {
+		if n := slices.Index(got, l); n < 0 || slices.Index(got[n+1:], l) >= 0 {
+			t.Errorf("--config=%s: want exactly one %q line", bazelDoltRaceConfig, l)
+		}
+		if slices.Contains(want, l) {
+			t.Errorf("--config=%s: %q is a member's line, not the union's own", bazelDoltRaceConfig, l)
+		}
 	}
 	if wantTag := strings.Join(tags, ","); len(gotTags) != 1 || gotTags[0] != wantTag {
 		t.Errorf("--config=%s tag filters %v, want exactly [%s]", bazelDoltRaceConfig, gotTags, wantTag)
@@ -249,6 +285,40 @@ func TestBazelDoltRaceConfigIsMemberUnion(t *testing.T) {
 			t.Errorf("--config=%s line %q: spell the members' flags out, no nested --config", bazelDoltRaceConfig, l)
 		}
 	}
+}
+
+// bazelShardCoverageArgs splits a check_shard_coverage.py step's run into
+// everything before its first --suite/--whole and the --suite/--whole
+// arguments, one per element ("--suite <target> <script> <spec>",
+// "--whole <target>").
+func bazelShardCoverageArgs(t *testing.T, run string) (string, []string) {
+	t.Helper()
+	fields := strings.Fields(run)
+	var head []string
+	var args []string
+	for i := 0; i < len(fields); {
+		switch fields[i] {
+		case "--suite":
+			if i+3 >= len(fields) {
+				t.Fatalf("check_shard_coverage run %q: --suite needs <target> <script> <spec>", run)
+			}
+			args = append(args, strings.Join(fields[i:i+4], " "))
+			i += 4
+		case "--whole":
+			if i+1 >= len(fields) {
+				t.Fatalf("check_shard_coverage run %q: --whole needs <target>", run)
+			}
+			args = append(args, strings.Join(fields[i:i+2], " "))
+			i += 2
+		default:
+			if len(args) > 0 {
+				t.Fatalf("check_shard_coverage run %q: %q after the suites", run, fields[i])
+			}
+			head = append(head, fields[i])
+			i++
+		}
+	}
+	return strings.Join(head, " "), args
 }
 
 func sameStringSet(a, b []string) bool {
@@ -325,11 +395,12 @@ func TestBazelDoltRaceIsGated(t *testing.T) {
 	if strings.TrimSpace(test.Run) != bazelTierTestRun(bazelDoltRaceConfig) {
 		t.Errorf("%s test step run changed; want exactly:\n%s\ngot:\n%s", bazelDoltRaceJobName, bazelTierTestRun(bazelDoltRaceConfig), test.Run)
 	}
-	// The members' per-lane checks, once over the union's BEP: bazel-proxied's
-	// two (bazel-doltserver has none). check_shard_coverage takes the union
-	// of the members' --suite/--whole arguments, which is bazel-proxied's.
+	// The members' per-lane checks, once over the union's BEP:
+	// bazel-embedded's and bazel-proxied's (bazel-doltserver has none), each
+	// as the member runs it.
 	for member, steps := range map[string][]string{
-		bazelProxiedJobName: {"Every target and shard ran tests", "Every listed test ran in its shard", "No test target is marked flaky"},
+		bazelEmbedJobName:   {"Every target and shard ran tests", "No test target is marked flaky"},
+		bazelProxiedJobName: {"Every target and shard ran tests", "No test target is marked flaky"},
 	} {
 		m := workflow.job(t, member)
 		for _, name := range steps {
@@ -339,12 +410,42 @@ func TestBazelDoltRaceIsGated(t *testing.T) {
 			}
 		}
 	}
+	// check_shard_coverage takes the union of the members' --suite/--whole
+	// arguments, as each member runs its own (same if, same --bep), so every
+	// shard tiling a member checks is still checked in mode remote.
+	const coverage = "Every listed test ran in its shard"
+	gotCov := job.step(t, coverage)
+	gotHead, gotArgs := bazelShardCoverageArgs(t, gotCov.Run)
+	var wantArgs []string
 	for _, member := range bazelUnionLanes[bazelDoltRaceJobName] {
-		for _, step := range workflow.job(t, member).Steps {
-			if strings.Contains(step.Run, "shard_budget.py") || strings.Contains(step.Run, "check_shard_coverage.py") && member != bazelProxiedJobName {
+		m := workflow.job(t, member)
+		for _, step := range m.Steps {
+			if strings.Contains(step.Run, "shard_budget.py") {
 				t.Errorf("%s step %q: a per-lane check the union does not run", member, step.Name)
 			}
+			if !strings.Contains(step.Run, "check_shard_coverage.py") {
+				continue
+			}
+			if step.Name != coverage || step.If != gotCov.If {
+				t.Errorf("%s step %q (if %q): want the union's %q (if %q)", member, step.Name, step.If, coverage, gotCov.If)
+			}
+			head, args := bazelShardCoverageArgs(t, step.Run)
+			if head != gotHead {
+				t.Errorf("%s %q runs %q before its suites, the union %q", member, coverage, head, gotHead)
+			}
+			wantArgs = append(wantArgs, args...)
 		}
+	}
+	if !sameStringSet(gotArgs, wantArgs) || len(gotArgs) != len(wantArgs) {
+		t.Errorf("%s %q suites:\n%s\nwant exactly the members' (any order):\n%s", bazelDoltRaceJobName, coverage, strings.Join(gotArgs, "\n"), strings.Join(wantArgs, "\n"))
+	}
+	// bazel-embedded's served-timings upload (telemetry), under the union's
+	// own artifact name (TestBazelEmbeddedServedTimingsUploadIsTelemetry).
+	wantServed, gotServed := workflow.job(t, bazelEmbedJobName).step(t, bazelServedTimingsStepName), job.step(t, bazelServedTimingsStepName)
+	wantServed.With = maps.Clone(wantServed.With)
+	wantServed.With["name"] = bazelServedTimingsArtifact[bazelDoltRaceJobName]
+	if !reflect.DeepEqual(gotServed, wantServed) {
+		t.Errorf("%s step %q = %+v, want %s's under its own artifact name: %+v", bazelDoltRaceJobName, bazelServedTimingsStepName, gotServed, bazelEmbedJobName, wantServed)
 	}
 
 	// No job depends on it, and every member's output reads it first.
@@ -366,8 +467,8 @@ func TestBazelDoltRaceIsGated(t *testing.T) {
 	}
 }
 
-// TestBazelDoltRaceJobTimeouts: the union's test step has a 23-minute
-// timeout, every step has one, and the job's exceeds their sum by
+// TestBazelDoltRaceJobTimeouts: the union's test step has a 28-minute
+// timeout, every step has one, and the job's (59) exceeds their sum by
 // bazelDoltRaceJobTimeoutMargin minutes (a hang fails a named step) while
 // staying under the merge queue's check timeout (a hung required job would
 // otherwise drop the group).
@@ -389,6 +490,9 @@ func TestBazelDoltRaceJobTimeouts(t *testing.T) {
 		t.Errorf("%s timeout-minutes %d, want at least the sum of its step timeouts (%d) + %d",
 			bazelDoltRaceJobName, job.TimeoutMinutes, sum, bazelDoltRaceJobTimeoutMargin)
 	}
+	if job.TimeoutMinutes != bazelDoltRaceJobTimeout {
+		t.Errorf("%s timeout-minutes %d, want %d", bazelDoltRaceJobName, job.TimeoutMinutes, bazelDoltRaceJobTimeout)
+	}
 	if job.TimeoutMinutes >= bazelDoltRaceMergeQueueTimeout {
 		t.Errorf("%s timeout-minutes %d, want below the merge queue's %d-minute check timeout",
 			bazelDoltRaceJobName, job.TimeoutMinutes, bazelDoltRaceMergeQueueTimeout)
@@ -400,7 +504,7 @@ func TestBazelDoltRaceJobTimeouts(t *testing.T) {
 // the union runs exactly in mode remote, never beside a member, and each
 // member's gate id is reported by exactly one job wherever that member ran
 // before the union (bazel-doltserver: every mode but skip; bazel-proxied:
-// the remote-executing modes) and by none elsewhere, so bazel-gate.sh's
+// and bazel-embedded: the remote-executing modes) and by none elsewhere, so bazel-gate.sh's
 // per-mode skips are unchanged. The workflow_call outputs, evaluated as
 // GitHub does, carry the running arm's result: a failed or cancelled union
 // reds both ids, and a union that never reported reads as skipped, which no
@@ -414,6 +518,8 @@ func TestBazelDoltRaceArmsExactlyOnePerMode(t *testing.T) {
 	}{
 		bazelDoltJobName:    {bazelDoltMemberIf, func(m string) bool { return m != "skip" }},
 		bazelProxiedJobName: {bazelProxiedMemberIf, func(m string) bool { return bazelRemoteModes[m] }},
+		// Option B: remote execution only before the union, as proxied.
+		bazelEmbedJobName: {bazelEmbeddedMemberIf, func(m string) bool { return bazelRemoteModes[m] }},
 	}
 	if got := slices.Sorted(maps.Keys(members)); !slices.Equal(got, slices.Sorted(slices.Values(bazelUnionLanes[bazelDoltRaceJobName]))) {
 		t.Fatalf("members %v, want bazelUnionLanes' %v", got, bazelUnionLanes[bazelDoltRaceJobName])
@@ -468,17 +574,26 @@ func TestBazelDoltRaceArmsExactlyOnePerMode(t *testing.T) {
 	}
 }
 
-// bazelDoltRaceTestActions: the union's test actions, 27 dolt-server + 35
-// proxied-server (aquery, item 5 A1b), each a target's shard.
-const bazelDoltRaceTestActions = 62
+// bazelDoltRaceTestActions: the union's test actions, 182 embedded + 27
+// dolt-server + 35 proxied-server (aquery of mnemonic("TestRunner") under
+// --config=dolt-race, item 5 Option B, after the served tests' sharding),
+// each a target's shard.
+const bazelDoltRaceTestActions = 244
 
-// TestBazelDoltRaceFitsTheJobsBudget: the union runs both tiers' shards in
-// one invocation under --config=remote-exec's --jobs, so all of them must
-// fit at once or the slower tier's shards queue behind the other's and the
-// union stops ending with the slower member. Every rule tagged with one of
-// the union's tags, read from the BUILD files: its shard_count (1 when
-// unsharded), summed. A tag outside a one-line `tags = [...]` list cannot
-// be counted and fails the test.
+// TestBazelDoltRaceFitsTheJobsBudget: the union runs all three tiers' shards
+// in one invocation under its own --jobs (bazelDoltRaceNonMemberLines), which
+// overrides --config=remote-exec's for this config only. The pin is the
+// farm's concurrency, not the action count (244 > 128: the embedded tier
+// alone, 182, never fit --config=remote-exec's 64): at most what the two
+// lanes it replaces in mode remote held together, bazel-embedded's and the
+// dolt-server + proxied union's --config=remote-exec --jobs each, so Option B
+// adds no peak concurrency on rbe-west. --jobs=128 is set on test:dolt-race
+// and nowhere else, and on no member config (whose lanes keep remote-exec's).
+// The counted test actions are every rule tagged with one of the union's
+// tags, read from the BUILD files: its shard_count (1 when unsharded),
+// summed; a tag outside a one-line `tags = [...]` list cannot be counted and
+// fails the test. A change in the count is a change in the union's queue:
+// re-check it against the jobs budget (and the wall-clock model) and update.
 func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 	root := bazelPolicyRoot(t)
 	rc := readPolicyFile(t, root, ".bazelrc")
@@ -487,6 +602,23 @@ func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 		t.Fatal(".bazelrc has no build:remote-exec --jobs=N line")
 	}
 	budget, _ := strconv.Atoi(m[1])
+	if limit := 2 * budget; bazelDoltRaceJobs > limit {
+		t.Errorf("--config=%s --jobs=%d, more than the %d (2 x --config=remote-exec's --jobs=%d) the two lanes it replaces held together", bazelDoltRaceConfig, bazelDoltRaceJobs, limit, budget)
+	}
+	jobsLines := regexp.MustCompile(`(?m)^[^#\n]*--jobs=`+strconv.Itoa(bazelDoltRaceJobs)+`\b.*$`).FindAllString(rc, -1)
+	if want := []string{"test:" + bazelDoltRaceConfig + " --jobs=" + strconv.Itoa(bazelDoltRaceJobs)}; !slices.Equal(jobsLines, want) {
+		t.Errorf(".bazelrc --jobs=%d lines: %q, want exactly %q", bazelDoltRaceJobs, jobsLines, want)
+	}
+	if n := strings.Count(strings.Join(bazelRCConfigLines(rc, bazelDoltRaceConfig), "\n"), "--jobs="); n != 1 {
+		t.Errorf("--config=%s has %d --jobs lines, want 1", bazelDoltRaceConfig, n)
+	}
+	for _, mem := range bazelDoltRaceMembers {
+		for _, l := range bazelRCConfigLines(rc, mem.config) {
+			if strings.Contains(l, "--jobs") {
+				t.Errorf("--config=%s line %q: the member lanes keep --config=remote-exec's --jobs", mem.config, l)
+			}
+		}
+	}
 
 	var tags []string
 	for _, mem := range bazelDoltRaceMembers {
@@ -530,9 +662,6 @@ func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 		}
 	}
 	if total != bazelDoltRaceTestActions {
-		t.Errorf("--config=%s: %d test actions over %d targets, want %d (aquery-verified at the cutover): re-check against --jobs=%d and update", bazelDoltRaceConfig, total, targets, bazelDoltRaceTestActions, budget)
-	}
-	if total > budget {
-		t.Errorf("--config=%s: %d test actions, more than --config=remote-exec's --jobs=%d: the tiers would no longer run at once", bazelDoltRaceConfig, total, budget)
+		t.Errorf("--config=%s: %d test actions over %d targets, want %d (aquery-verified at the cutover): re-check against its --jobs=%d and update", bazelDoltRaceConfig, total, targets, bazelDoltRaceTestActions, bazelDoltRaceJobs)
 	}
 }

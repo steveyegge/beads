@@ -55,7 +55,7 @@ Current PR-related workflow names:
   outputs (`rbe-enabled` is `true` in `remote`, `fork-ro` and `fork-rw`);
   every lane exports its
   `job.status` as an output named after the job (in mode `remote`, the
-  `bazel-doltserver` and `bazel-proxied` outputs carry the `bazel-dolt-race`
+  `bazel-embedded`, `bazel-doltserver` and `bazel-proxied` outputs carry the `bazel-dolt-race`
   union job's status instead, see [dolt-race Union Lane](#dolt-race-union-lane);
   the `bazel-server-storage` and `bazel-cmd-dolt` outputs carry the
   `bazel-dolt-int` union job's status instead, see
@@ -629,34 +629,55 @@ job's `if:` or rotating the key, in either of two ways:
 ## dolt-race Union Lane
 
 In mode `remote`, `bazel.yml`'s `bazel-dolt-race` job (check name
-`Bazel / dolt-race`) runs the dolt-server and proxied-server tiers in one
-`bazel test //... --config=dolt-race`, in place of the `bazel-doltserver`
-(`dolt-server lane`) and `bazel-proxied` (`proxied-server tier`) jobs.
-`--config=dolt-race` is exactly the union of `--config=doltserver` and
-`--config=doltserver-proxied`, with one tag filter for both tiers, so every
-member target's test action is unchanged (`bazel aquery`: the 27 + 35 = 62
-`TestRunner` actions are byte-identical under the member configs and the
-union). One client waits on rbe-west for both tiers at once, so the job ends
-with the slower tier and the other tier's runner is saved.
+`Bazel / dolt-race`) runs the embedded, dolt-server and proxied-server tiers
+in one `bazel test //... --config=dolt-race`, in place of the
+`bazel-embedded` (`embedded Dolt tier`), `bazel-doltserver`
+(`dolt-server lane`) and `bazel-proxied` (`proxied-server tier`) jobs
+(item 5: A1b folded in dolt-server and proxied, Option B embedded; the lane
+name stays `dolt-race`). `--config=dolt-race` is exactly the union of
+`--config=embedded`, `--config=doltserver` and `--config=doltserver-proxied`,
+with one tag filter for all three tiers, plus its own `--jobs=128`, so every
+member target's test action is unchanged (`bazel aquery`: the 182 + 27 + 35
+= 244 `TestRunner` actions are byte-identical under the member configs and
+the union). One client waits on rbe-west for all three tiers at once, so the
+job ends with the slowest tier and the other lane's runner is saved.
 
+- `--jobs=128` (the union's only non-member line, in no action key) is the
+  concurrency the two lanes it replaces held together (`bazel-embedded`'s 64
+  plus the dolt-server + proxied union's 62 actions under its 64), so the
+  farm sees no higher peak. It overrides `--config=remote-exec`'s
+  `--jobs=64`: the generated rc enables that as `build --config=remote-exec`,
+  and a command-line `--config` expands after every rc line.
 - Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
   dispatch and `bazel-farm.yml`'s authorized call). In the fork modes
-  (`fork-ro`, `fork-rw`), `cache` and `local`, `bazel-doltserver` and
-  `bazel-proxied` run as before: there a single client does both tiers' work
-  without in-flight deduplication, so a union would cost the sum of the
-  tiers rather than the max, on the run's critical path.
-- Exactly one arm runs in any mode. The union's `job.status` is both the
-  `bazel-doltserver` and the `bazel-proxied` `workflow_call` output (each
-  reads the union's result first, then its member's), so `pr.yml`'s gate
-  ids (`BAZEL_DOLTSERVER`, `BAZEL_PROXIED`), `ci-gate.sh` and
-  `bazel-gate.sh` are unchanged: a failed or cancelled union reds both ids,
-  a union that reported nothing reads as `skipped`, which mode `remote`
-  never allows, and the per-mode skips are the members' as before.
+  (`fork-ro`, `fork-rw`), `cache` and `local`, `bazel-embedded`,
+  `bazel-doltserver` and `bazel-proxied` run as before: there a single
+  client does all tiers' work without in-flight deduplication, so a union
+  would cost the sum of the tiers rather than the max, on the run's critical
+  path.
+- Exactly one arm runs in any mode. The union's `job.status` is the
+  `bazel-embedded`, `bazel-doltserver` and `bazel-proxied` `workflow_call`
+  output (each reads the union's result first, then its member's), so
+  `pr.yml`'s gate ids (`BAZEL_EMBEDDED`, `BAZEL_DOLTSERVER`, `BAZEL_PROXIED`),
+  `ci-gate.sh` and `bazel-gate.sh` are unchanged: a failed or cancelled union
+  reds all three ids, a union that reported nothing reads as `skipped`, which
+  mode `remote` never allows, and the per-mode skips are the members' as
+  before. All three tiers are plain-gated, so `job.status` is gate-equivalent
+  to a per-tier split, and every tier stays hard-gating on push, nightly and
+  dispatch too, where nothing reads the call outputs (unlike the dolt-int
+  union below, whose members' gating differs).
 - `check_testcases.py` and `check_shard_coverage.py` run once over the
-  union's BEP (the proxied tier's `--suite`; the dolt-server tier has no
-  shard-coverage check). The `bazel test` step has a 20-minute timeout,
-  every step has one, and the job's (55 minutes) is at least their sum plus
-  5 and below the merge queue's 60-minute check timeout.
+  union's BEP (the union of the embedded and proxied tiers' `--suite` and
+  `--whole` arguments; the dolt-server tier has no shard-coverage check), and
+  the embedded tier's served-timings `test.xml` upload runs there under the
+  artifact name `bazel-dolt-race-served-testxml` (telemetry,
+  `continue-on-error`). The `bazel test` step has a 28-minute timeout (the
+  slowest mode-remote embedded run measured was 1252 s, a nightly fresh run),
+  every step has one, and the job's (59 minutes) is at least their sum plus
+  5 and below the merge queue's 60-minute check timeout. That leaves about a
+  minute of the 60 for runner pickup and the `rbe` job, so a union that hangs
+  to its own timeout can still drop the merge group: accepted, since that run
+  is red anyway.
 - Its ci-analytics `LANE` is `dolt-race`.
 - Policy: `scripts/bazel_dolt_race_test.go`. Rollback is a revert of the
   cutover PR: the gate ids never changed and the action keys are equal both
