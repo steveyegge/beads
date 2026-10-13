@@ -186,6 +186,37 @@ func bazelRCConfigLines(rc, name string) []string {
 	return out
 }
 
+// bazelUnionEffectiveJobs: the --jobs value in effect when a union job's
+// `bazel test //... --config=<unionConfig>` step runs in mode remote
+// (closed PR #7542). Mode remote's generated rc applies
+// `build --config=remote-exec` ahead of the step's own --config, so
+// --config=remote-exec's --jobs line is the baseline every union inherits;
+// but a --jobs line on the union's own config would be the later
+// occurrence on the effective command line and win instead (PR #7542's BEP
+// showed `optionsParsed.cmdLine` carrying "--jobs=64, --jobs=128", the last
+// one winning, after a union config added its own --jobs=128 override).
+// Reading remote-exec's line alone would miss that override silently
+// passing a budget check the real run does not meet.
+func bazelUnionEffectiveJobs(t *testing.T, rc, unionConfig string) int {
+	t.Helper()
+	base := regexp.MustCompile(`(?m)^build:remote-exec --jobs=(\d+)$`).FindStringSubmatch(rc)
+	if base == nil {
+		t.Fatal(".bazelrc has no build:remote-exec --jobs=N line")
+	}
+	budget, _ := strconv.Atoi(base[1])
+	jobsLine := regexp.MustCompile(`^--jobs=(\d+)$`)
+	for _, l := range bazelRCConfigLines(rc, unionConfig) {
+		_, opt, ok := strings.Cut(l, " ")
+		if !ok {
+			continue
+		}
+		if m := jobsLine.FindStringSubmatch(opt); m != nil {
+			budget, _ = strconv.Atoi(m[1])
+		}
+	}
+	return budget
+}
+
 // TestBazelDoltRaceConfigIsMemberUnion: --config=dolt-race is exactly the
 // set union of its members' lines, except that each member's
 // --test_tag_filters is replaced by one filter naming both members' tags.
@@ -472,8 +503,15 @@ func TestBazelDoltRaceArmsExactlyOnePerMode(t *testing.T) {
 // proxied-server (aquery, item 5 A1b), each a target's shard.
 const bazelDoltRaceTestActions = 62
 
-// TestBazelDoltRaceFitsTheJobsBudget: the union runs both tiers' shards in
-// one invocation under --config=remote-exec's --jobs, so all of them must
+// TestBazelDoltRaceFitsTheJobsBudget pins the one-wave rule (closed PR
+// #7542): a union's total test actions must fit in the effective --jobs so
+// every action starts in Bazel's first wave. Bazel does not schedule the
+// longest action first, so an action that lands in a second wave because
+// the first is full adds its own full duration to the critical path rather
+// than overlapping it; #7542's paired A/B runs measured this costing up to
+// +575 s of wall clock on a union that exceeded its --jobs by one tier's
+// worth of actions. The union runs both tiers' shards in one invocation
+// under the effective --jobs (bazelUnionEffectiveJobs), so all of them must
 // fit at once or the slower tier's shards queue behind the other's and the
 // union stops ending with the slower member. Every rule tagged with one of
 // the union's tags, read from the BUILD files: its shard_count (1 when
@@ -482,11 +520,7 @@ const bazelDoltRaceTestActions = 62
 func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 	root := bazelPolicyRoot(t)
 	rc := readPolicyFile(t, root, ".bazelrc")
-	m := regexp.MustCompile(`(?m)^build:remote-exec --jobs=(\d+)$`).FindStringSubmatch(rc)
-	if m == nil {
-		t.Fatal(".bazelrc has no build:remote-exec --jobs=N line")
-	}
-	budget, _ := strconv.Atoi(m[1])
+	budget := bazelUnionEffectiveJobs(t, rc, bazelDoltRaceConfig)
 
 	var tags []string
 	for _, mem := range bazelDoltRaceMembers {
@@ -533,6 +567,6 @@ func TestBazelDoltRaceFitsTheJobsBudget(t *testing.T) {
 		t.Errorf("--config=%s: %d test actions over %d targets, want %d (aquery-verified at the cutover): re-check against --jobs=%d and update", bazelDoltRaceConfig, total, targets, bazelDoltRaceTestActions, budget)
 	}
 	if total > budget {
-		t.Errorf("--config=%s: %d test actions, more than --config=remote-exec's --jobs=%d: the tiers would no longer run at once", bazelDoltRaceConfig, total, budget)
+		t.Errorf("--config=%s: %d test actions, more than the effective --jobs=%d: a second wave would add its tail test's full duration to the critical path instead of overlapping it (closed PR #7542 measured up to +575s from exactly this)", bazelDoltRaceConfig, total, budget)
 	}
 }

@@ -528,19 +528,21 @@ func TestCheckTestcasesUnitTests(t *testing.T) {
 // cmd-dolt (aquery, item 5 A2).
 const bazelDoltIntTestActions = 63
 
-// TestBazelDoltIntFitsTheJobsBudget: the union runs both tiers' shards in one
-// invocation under --config=remote-exec's --jobs, so all of them must fit at
-// once or the slower tier's shards queue behind the other's. Every rule
-// tagged with one of the union's tags, read from the BUILD files: its
-// shard_count (1 when unsharded), summed.
+// TestBazelDoltIntFitsTheJobsBudget pins the one-wave rule (closed PR #7542,
+// carried from dolt-race: see TestBazelDoltRaceFitsTheJobsBudget's own
+// comment for the mechanism and the measured +575s regression): a union's
+// total test actions must fit in the effective --jobs
+// (bazelUnionEffectiveJobs) so every action starts in Bazel's first wave,
+// since Bazel does not schedule the longest action first and a second-wave
+// tail test adds its own full duration to the critical path instead of
+// overlapping it. The union runs both tiers' shards in one invocation under
+// that budget, so all of them must fit at once or the slower tier's shards
+// queue behind the other's. Every rule tagged with one of the union's tags,
+// read from the BUILD files: its shard_count (1 when unsharded), summed.
 func TestBazelDoltIntFitsTheJobsBudget(t *testing.T) {
 	root := bazelPolicyRoot(t)
 	rc := readPolicyFile(t, root, ".bazelrc")
-	m := regexp.MustCompile(`(?m)^build:remote-exec --jobs=(\d+)$`).FindStringSubmatch(rc)
-	if m == nil {
-		t.Fatal(".bazelrc has no build:remote-exec --jobs=N line")
-	}
-	budget, _ := strconv.Atoi(m[1])
+	budget := bazelUnionEffectiveJobs(t, rc, bazelDoltIntConfig)
 
 	var tags []string
 	for _, mem := range bazelDoltIntMembers {
@@ -587,7 +589,7 @@ func TestBazelDoltIntFitsTheJobsBudget(t *testing.T) {
 		t.Errorf("--config=%s: %d test actions over %d targets, want %d (aquery-verified at the cutover): re-check against --jobs=%d and update", bazelDoltIntConfig, total, targets, bazelDoltIntTestActions, budget)
 	}
 	if total > budget {
-		t.Errorf("--config=%s: %d test actions, more than --config=remote-exec's --jobs=%d: the tiers would no longer run at once", bazelDoltIntConfig, total, budget)
+		t.Errorf("--config=%s: %d test actions, more than the effective --jobs=%d: a second wave would add its tail test's full duration to the critical path instead of overlapping it (closed PR #7542 measured up to +575s from exactly this)", bazelDoltIntConfig, total, budget)
 	}
 }
 
