@@ -266,6 +266,16 @@ func TestServedCorpusPart1(t *testing.T) { testServedCorpus(t, 1) }
 func TestServedCorpusPart2(t *testing.T) { testServedCorpus(t, 2) }
 func TestServedCorpusPart3(t *testing.T) { testServedCorpus(t, 3) }
 
+// corpusPartNameErr fails a part test whose name is not its part's: a
+// TestServedCorpusPart3 that ran part 2 would run part 2's shapes twice and
+// silently drop its own.
+func corpusPartNameErr(name string, part int) error {
+	if want := fmt.Sprintf("TestServedCorpusPart%d", part); name != want {
+		return fmt.Errorf("%s runs corpus part %d; only %s may (fix its testServedCorpus call)", name, part, want)
+	}
+	return nil
+}
+
 // corpusPart returns the shapes part (1..corpusParts) runs.
 func corpusPart(shapes []shape, part int) []shape {
 	return corpusPartOf(shapes, part, corpusParts)
@@ -290,6 +300,11 @@ func corpusPartOf(shapes []shape, part, parts int) []shape {
 // running them. BEADS_CORPUS_REPORT=<path> writes a JSON summary of every
 // part this process has run.
 func testServedCorpus(t *testing.T, part int) {
+	// First, before the engine gate: a part test wired to the wrong part
+	// fails in every lane, not only where the corpus runs.
+	if err := corpusPartNameErr(t.Name(), part); err != nil {
+		t.Fatal(err)
+	}
 	skipUnlessEmbeddedDolt(t)
 	c, allow := loadCorpus(t)
 	shapes := corpusPart(c.Shapes, part)
