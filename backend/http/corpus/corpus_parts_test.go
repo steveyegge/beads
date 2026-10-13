@@ -4,6 +4,9 @@ package corpus_test
 
 import (
 	"fmt"
+	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -68,4 +71,41 @@ func TestCorpusPartIsRoundRobinInOrder(t *testing.T) {
 			t.Errorf("part %d of 4 = %s, want %s", part, got, w)
 		}
 	}
+}
+
+// A part test wired to another part's number would run that part's shapes
+// twice and drop its own without a word; testServedCorpus refuses to run
+// unless the test's name is its part's (corpusPartNameErr).
+func TestCorpusPartNameMustMatchItsPart(t *testing.T) {
+	if err := corpusPartNameErr("TestServedCorpusPart3", 3); err != nil {
+		t.Errorf("matching name: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		part int
+	}{
+		{"TestServedCorpusPart3", 2},
+		{"TestServedCorpusPart1", 10},
+		{"TestServedCorpusPart10", 1},
+		{"TestServedCorpusPart3/sub", 3},
+		{"TestServedCorpus", 1},
+	} {
+		if err := corpusPartNameErr(c.name, c.part); err == nil {
+			t.Errorf("corpusPartNameErr(%q, %d) = nil, want a mismatch", c.name, c.part)
+		}
+	}
+	// Every wired part test passes the guard: run each with the engine
+	// off, so the guard (which comes first) is all that can fail it.
+	for k, fn := range servedCorpusParts {
+		want := fmt.Sprintf("TestServedCorpusPart%d", k+1)
+		if got := testFuncName(fn); got != want {
+			t.Errorf("servedCorpusParts[%d] is %s, want %s", k, got, want)
+		}
+	}
+}
+
+// testFuncName is fn's unqualified function name.
+func testFuncName(fn func(*testing.T)) string {
+	full := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+	return full[strings.LastIndex(full, ".")+1:]
 }
