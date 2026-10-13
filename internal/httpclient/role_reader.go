@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
 	"github.com/steveyegge/beads/internal/httpclient/encode"
@@ -85,7 +86,11 @@ var tokenedListFilters = []struct {
 	{wire.CapListSearch, func(r issueops.ListRequest) bool { return r.Query != "" }},
 	{wire.CapListNoAssignee, func(r issueops.ListRequest) bool { return r.NoAssignee }},
 	{wire.CapListTitle, func(r issueops.ListRequest) bool { return r.TitleSearch != "" }},
-	{wire.CapListID, func(r issueops.ListRequest) bool { return r.IDFilter != "" }},
+	// An id set naming no id (only commas and blanks) sends no `id`, so it
+	// needs no token.
+	{wire.CapListIDs, func(r issueops.ListRequest) bool {
+		return strings.TrimSpace(strings.ReplaceAll(r.IDFilter, ",", "")) != ""
+	}},
 }
 
 // refuseUnservedListFilters is the pre-dial gate for the tokened members. An

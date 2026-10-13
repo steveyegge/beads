@@ -25,7 +25,7 @@ import (
 // WHAT IS PARKED: `ListRequest.IDFilter` is the scoping tool almost every List
 // case reaches for, and until S15b listIssues published no id parameter, so
 // those cases parked on E-ListRequest.IDFilter. It now rides `id` behind
-// issues.list.id, which this in-process server serves, and they run as
+// issues.list.ids, which this in-process server serves, and they run as
 // written. What still parks is a case whose SUBJECT (or one arm) is a member
 // the wire refuses — Offset, ReadyFlag, PinnedFlag, ExcludeTypes, WispType,
 // SkipCounts — and each names that member's row. The refusals THEMSELVES are
@@ -189,7 +189,7 @@ func TestServedReaderListSkipCountsDropsTheCardinalitiesAndNothingElse(t *testin
 	skipKnownDivergence(t, "E-ListRequest.SkipCounts", readParkBead,
 		"the knob is DROPPED rather than refused (the wire hydrates the three cardinalities either way, and "+
 			"every text rendering of `bd list` sets it, so refusing would kill the default listing over http); "+
-			"its id scope rides `id` (issues.list.id)")
+			"its id scope rides `id` (issues.list.ids)")
 	conformance.RunReaderListSkipCountsDropsTheCardinalitiesAndNothingElse(t, t.Context(), servedReaderFixture(t, "rdr"))
 }
 
@@ -205,7 +205,7 @@ func TestServedReaderListReadyFlagCarriesTheAssigneeAndPriorityFilters(t *testin
 
 // TestServedReaderListIncludeEphemeralMergesThePlanesIntoOneOrder is the plane
 // contract client wave ga-mijra brought into range. It scopes itself with
-// IDFilter, which rides listIssues' `id` behind issues.list.id (S15b), so it
+// IDFilter, which rides listIssues' `id` behind issues.list.ids (S15b), so it
 // runs as written; TestServedReaderListIncludeEphemeralMergesThePlanesUnderALabelScope
 // is the same fixture under a label scope, plus the plane-identity assertion
 // the contract does not make.
@@ -214,7 +214,7 @@ func TestServedReaderListIncludeEphemeralMergesThePlanesIntoOneOrder(t *testing.
 }
 
 // The id-scoped List cases that parked on E-ListRequest.IDFilter until S15b
-// put `id` on listIssues (issues.list.id). They run as written now; the two
+// put `id` on listIssues (issues.list.ids). They run as written now; the two
 // below them still park, because their SUBJECT is a member the wire refuses.
 
 func TestServedReaderListCountsAreBlocksOnlyWhereGetCountsEveryEdge(t *testing.T) {
@@ -287,7 +287,7 @@ func TestServedReaderListStatusAcceptsACommaSeparatedORSet(t *testing.T) {
 // asserts that door-by-door; these assert what a projected row must contain.
 
 // TestServedReaderListBriefDropsTheFreeFormTextAndNothingElse scopes itself
-// with IDFilter, which rides `id` (issues.list.id), and the ready sibling below
+// with IDFilter, which rides `id` (issues.list.ids), and the ready sibling below
 // drives the identical assertReaderBriefRow under a label scope.
 func TestServedReaderListBriefDropsTheFreeFormTextAndNothingElse(t *testing.T) {
 	conformance.RunReaderListBriefDropsTheFreeFormTextAndNothingElse(t, t.Context(), servedReaderFixture(t, "rdr"))

@@ -163,11 +163,11 @@ const CapCountScope = "issues.count.scope"
 // `unknown_parameter`, and is never widened into the unsearched listing.
 const CapListSearch = "issues.list.search"
 
-// CapListNoAssignee, CapListTitle and CapListID are the behavior capabilities
-// announcing that listIssues honors `no_assignee`, `title` and `id` (`bd list
-// --no-assignee`, `--title`, `--id`; issueops.ListRequest's NoAssignee,
-// TitleSearch and IDFilter), spelled exactly as httpapi's
-// CapIssuesListNoAssignee, CapIssuesListTitle and CapIssuesListID. The
+// CapListNoAssignee, CapListTitle and CapListIDs are the behavior
+// capabilities announcing that listIssues honors `no_assignee`, `title` and the
+// repeatable `id` (`bd list --no-assignee`, `--title`, `--id`;
+// issueops.ListRequest's NoAssignee, TitleSearch and IDFilter), spelled exactly
+// as httpapi's CapIssuesListNoAssignee, CapIssuesListTitle and CapListIDs. The
 // Reader's List reads them off the handshake snapshot and refuses a request
 // carrying a member LOCALLY, with a typed capability error naming that
 // member's token, when the server does not advertise it — never a round trip
@@ -176,7 +176,7 @@ const CapListSearch = "issues.list.search"
 const (
 	CapListNoAssignee = "issues.list.noAssignee"
 	CapListTitle      = "issues.list.title"
-	CapListID         = "issues.list.id"
+	CapListIDs        = "issues.list.ids"
 )
 
 // CapBatchApplyLarge is the behavior capability announcing that issues.batchApply
@@ -408,7 +408,7 @@ var behaviorCapabilities = []string{
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapCloseAutoCloseMolecule, CapListSearch,
-	CapListNoAssignee, CapListTitle, CapListID,
+	CapListNoAssignee, CapListTitle, CapListIDs,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

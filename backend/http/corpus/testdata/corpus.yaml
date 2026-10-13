@@ -285,7 +285,7 @@ shapes:
   - id: mc-list-id
     source: mc skills/pr-review (list --all --id --json --limit)
     args: [list, --all, --id, "e2e-r1,e2e-a1", --json, --limit, "0"]
-    pending: {slice: "SRV-1", reason: "S15b sends --id as listIssues id behind issues.list.id, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListScopeFiltersOverHTTP); remove the mark when reference_server.json is upgraded"}
+    pending: {slice: "SRV-1", reason: "S15b sends --id as listIssues id behind issues.list.ids, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListScopeFiltersOverHTTP); remove the mark when reference_server.json is upgraded"}
   - id: mc-list-assignee-status
     source: mc review summaries (list --assignee --json --limit --status)
     args: [list, --assignee, alice, --json, --limit, "10", --status, open]

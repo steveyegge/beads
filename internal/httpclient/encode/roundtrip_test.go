@@ -187,7 +187,7 @@ func roundTripCases() []roundTripCase {
 		ParentID:    "bd-epic1",
 		Query:       "login bug",
 		TitleSearch: "Routed open task",
-		IDFilter:    "bd-1, bd-2,bd-1",
+		IDFilter:    "bd-1,bd-wisp-9,bd-42",
 
 		AllFlag:          true,
 		IncludeTemplates: true,

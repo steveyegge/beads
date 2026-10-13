@@ -1350,20 +1350,23 @@ paths:
         - name: id
           in: query
           description: >-
-            A comma-separated id set to restrict the listing to: `bd list
-            --id`. Splitting, trimming and de-duplication happen inside the
-            role, so a caller passes the string it was given. It narrows the
-            listing and lifts none of its default exclusions, so a closed id
-            in the set needs `all` (or a `status`) to be listed.
-
-
-            Behind the `issues.list.id` behavior token: an older server answers
-            `unknown_parameter` for this name. A client with the handshake's
-            capabilities cached refuses the request locally against a server
-            that does not advertise the token, rather than paying for that
-            round trip or answering about the whole workspace.
+            Restrict to these canonical ids (repeat the parameter). AND-ed with
+            every other filter, including the default exclusions, so a caller
+            addressing rows regardless of status, type or tier also sends
+            all=true, include_templates, include_gates, include_infra and
+            include_ephemeral. At most 200 values; an id longer than storage
+            holds, an empty one, one with leading or trailing whitespace, or one
+            carrying a control character or a comma is a 400 `invalid_argument`
+            on `param: "id"` — each value is matched exactly as sent, never
+            trimmed or split. An id that names no row is simply not matched.
+            Advertised by the behavior token `issues.list.ids`.
+          style: form
+          explode: true
           schema:
-            type: string
+            type: array
+            maxItems: 200
+            items:
+              type: string
         - name: sort
           in: query
           description: >-
@@ -8297,10 +8300,11 @@ components:
             `GET /v0/beads/issues` accepts `q`, `bd search`'s free text (see
             that parameter), rather than silently answering
             `unknown_parameter`, and `issues.list.noAssignee`,
-            `issues.list.title` and `issues.list.id`, which announce that
-            `GET /v0/beads/issues` accepts `no_assignee`, `title` and `id`
-            respectively (`bd list --no-assignee`, `--title` and `--id`; see
-            those parameters) rather than answering `unknown_parameter`. One
+            `issues.list.title` and `issues.list.ids`, which announce that
+            `GET /v0/beads/issues` accepts `no_assignee`, `title` and the
+            repeatable `id` respectively (`bd list --no-assignee`, `--title`
+            and `--id`; see those parameters) rather than answering
+            `unknown_parameter`. One
             behavior token is
             CONDITIONAL rather than build-level: `policy.external_dependencies`
             announces that this server's ready, claim, claim-next, close,

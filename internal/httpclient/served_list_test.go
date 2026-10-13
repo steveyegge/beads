@@ -29,7 +29,7 @@ import (
 // Almost every List case in reader_contract.go scopes itself with IDFilter, and
 // until S15b listIssues published no id parameter, so those cases were parked
 // next door and their behaviors were pinned HERE instead — same assertions,
-// scoped by a label. The id scope now rides `id` (issues.list.id) and the
+// scoped by a label. The id scope now rides `id` (issues.list.ids) and the
 // contract cases run as written beside these; the label-scoped twins stay as
 // the form of the same assertions a server without that token can still run.
 

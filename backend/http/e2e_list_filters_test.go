@@ -34,7 +34,7 @@ var listScopeShapes = []struct {
 	// A closed id in the set is listed under --all; ids outside it are not.
 	{"mc-list-id",
 		[]string{"list", "--all", "--id", "{child-c},{loner}", "--json", "--limit", "0"},
-		"issues.list.id", []string{"child-c", "loner"}},
+		"issues.list.ids", []string{"child-c", "loner"}},
 }
 
 // seedListScope adds the on_boot recovery rows to the shared seed: one

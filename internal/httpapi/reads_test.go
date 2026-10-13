@@ -504,7 +504,7 @@ func TestTheEphemeralPlaneParameterIsTheSkewSignal(t *testing.T) {
 
 // TestListForwardsTheScopeFilters is the handler half of S15b: listIssues'
 // `no_assignee` (issues.list.noAssignee), `title` (issues.list.title) and `id`
-// (issues.list.id) reach the storage seam through the Reader role as the
+// (issues.list.ids, repeatable) reach the storage seam through the Reader role as the
 // ListRequest members `bd list --no-assignee`, `--title` and `--id` set, and
 // their absence narrows nothing.
 func TestListForwardsTheScopeFilters(t *testing.T) {
@@ -530,9 +530,9 @@ func TestListForwardsTheScopeFilters(t *testing.T) {
 				t.Errorf("title leaked into TitleContains = %q", f.TitleContains)
 			}
 		}},
-		{"id is the role's comma-separated set", "/v0/beads/issues?id=e2e-r1,+e2e-a1,e2e-r1&all=true", func(t *testing.T, f types.IssueFilter) {
+		{"id is repeatable, one id per value", "/v0/beads/issues?id=e2e-r1&id=e2e-a1&all=true", func(t *testing.T, f types.IssueFilter) {
 			if !slices.Equal(f.IDs, []string{"e2e-r1", "e2e-a1"}) {
-				t.Errorf("IDs = %v, want [e2e-r1 e2e-a1] (split, trimmed and de-duplicated by the role)", f.IDs)
+				t.Errorf("IDs = %v, want [e2e-r1 e2e-a1]", f.IDs)
 			}
 		}},
 	} {

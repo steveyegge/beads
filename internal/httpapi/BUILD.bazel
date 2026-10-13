@@ -91,6 +91,7 @@ go_test(
         "get_issue_test.go",
         "large_batch_apply_test.go",
         "list_comments_omitted_test.go",
+        "list_ids_test.go",
         "list_sort_test.go",
         "memories_test.go",
         "metadata_cas_test.go",

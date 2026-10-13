@@ -5778,8 +5778,9 @@
     {
       "schema": "param:listIssues",
       "member": "query:id",
-      "type": "string",
+      "type": "array",
       "required": false,
+      "item_type": "string",
       "style": "form",
       "explode": true
     },

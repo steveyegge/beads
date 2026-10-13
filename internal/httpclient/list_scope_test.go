@@ -25,10 +25,9 @@ var listScopeCases = []struct {
 		func(r *issueops.ListRequest) { r.NoAssignee = true }, []string{"true"}},
 	{"TitleSearch", "title", wire.CapListTitle,
 		func(r *issueops.ListRequest) { r.TitleSearch = "Routed open task" }, []string{"Routed open task"}},
-	{"IDFilter", "id", wire.CapListID,
-		// Sent as written: splitting, trimming and de-duplication are the
-		// role's, on the server.
-		func(r *issueops.ListRequest) { r.IDFilter = "e2e-r1, e2e-a1" }, []string{"e2e-r1, e2e-a1"}},
+	{"IDFilter", "id", wire.CapListIDs,
+		// Split the way the role splits it, one `id` value per member.
+		func(r *issueops.ListRequest) { r.IDFilter = "e2e-r1, e2e-a1,e2e-r1" }, []string{"e2e-r1", "e2e-a1"}},
 }
 
 // TestListScopeFiltersRideTheirParametersBehindTheirTokens is S15b's client

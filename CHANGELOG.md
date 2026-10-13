@@ -32,9 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   description and metadata are unchanged, and omitting the flag (or passing
   `0`) is byte-identical to today's output. JSON output is untouched;
   `--include-comments` still streams every comment there.
-- `GET /v0/beads/issues` accepts `no_assignee`, `title` and `id`, each behind
-  its own new capability token (`issues.list.noAssignee`, `issues.list.title`,
-  `issues.list.id`; additive, no wire_revision bump), and applies them through
+- `GET /v0/beads/issues` accepts `no_assignee`, `title` and a repeatable `id`
+  (one id per value, at most 200), each behind its own new capability token
+  (`issues.list.noAssignee`, `issues.list.title`, `issues.list.ids`; additive,
+  no wire_revision bump; `id` and its token are bd-enterprise's contract,
+  adopted unchanged), and applies them through
   the same Reader role a local `bd list` reads through. Over a connected HTTP
   workspace `bd list --no-assignee`, `--title` and `--id` now work instead of
   refusing. Against a server that does not advertise a flag's token the

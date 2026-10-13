@@ -327,11 +327,12 @@ func listTable() Table {
 			paramTo("IssueType", "type", "IssueType"),
 			param("Assignee", "assignee"),
 			// TitleSearch, IDFilter and NoAssignee (S15b) are each behind their own
-			// behavior token — issues.list.title, issues.list.id,
+			// behavior token — issues.list.title, issues.list.ids,
 			// issues.list.noAssignee: httpReader.List refuses a request carrying
 			// one, before dialing, unless the handshake advertises its token
-			// (role_reader.go refuseUnservedListFilters). IDFilter is sent as
-			// written; the role splits, trims and de-duplicates it on the server.
+			// (role_reader.go refuseUnservedListFilters). IDFilter is split the
+			// way the role splits it and sent as the repeatable `id`, one value
+			// per member (bd-enterprise's contract, adopted unchanged).
 			paramTo("TitleSearch", "title", "TitleSearch"),
 			refused("SpecPrefix", "E-ListRequest.SpecPrefix"),
 			paramTo("IDFilter", "id", "IDFilter"),

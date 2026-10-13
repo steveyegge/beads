@@ -16,7 +16,7 @@ import (
 //
 // NOTHING IS PARKED HERE, and on this role that is a statement rather than a
 // happy accident. Every case scopes itself with IDFilter — the count has
-// always published `id` (the listing gained it, behind issues.list.id, with
+// always published `id` (the listing gained it, behind issues.list.ids, with
 // S15b) — and every filter the
 // contract reaches for is a parameter this operation carries. The plane cases in
 // particular cross whole: `include_infra` is one flag on the wire and one flag
