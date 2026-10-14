@@ -487,6 +487,47 @@ func TestEnvEndpointFallbackReResolvesRetryCredentials(t *testing.T) {
 	}
 }
 
+// TestEnvEndpointFallbackIgnoresEnvPasswordForRetry (PR #7561 review round 3,
+// gascity mc-3gbed follow-up). A gascity city sets a server's user and
+// password together in env, so an env BEADS_DOLT_PASSWORD is a credential
+// for the inherited env endpoint's user, never the declared endpoint's:
+// honoring it for the retry either fails auth against the declared
+// endpoint's own password, or offers the city's password to a different,
+// local server. The credentials file, keyed to the declared endpoint, is the
+// retry's only password source; with no entry there, the retry sends no
+// password at all, even though BEADS_DOLT_PASSWORD is set.
+func TestEnvEndpointFallbackIgnoresEnvPasswordForRetry(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		credFileBody string
+		wantPassword string
+	}{
+		{"declared endpoint has a credentials entry", "[127.0.0.1:3308]\npassword=project-secret\n", "project-secret"},
+		{"declared endpoint has no credentials entry", "[127.0.0.1:9999]\npassword=unrelated-secret\n", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("BEADS_DOLT_PASSWORD", "city-secret")
+			credFile := filepath.Join(t.TempDir(), "credentials")
+			if err := os.WriteFile(credFile, []byte(c.credFileBody), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
+			f := &fakeServers{stores: map[string]*DoltStore{"127.0.0.1:3308": {}}, foreign: map[string]bool{"127.0.0.1:45865": true}}
+			cfg := &Config{
+				BeadsDir: beadsDirWith(t, "dolt.port: 3308\n"), ServerHost: "127.0.0.1", ServerPort: 45865,
+				ServerPortSource: doltserver.PortSourceEnv, ServerUser: "city-robot", ServerPassword: "city-secret", ServerTLS: true,
+			}
+			if _, err := openWithEnvEndpointFallback(context.Background(), cfg, f.open); err != nil {
+				t.Fatalf("err %v; want the retry to succeed", err)
+			}
+			retryCfg := f.openedCfg[1]
+			if retryCfg.ServerPassword != c.wantPassword {
+				t.Fatalf("retry password %q; want %q (the declared endpoint's own credentials-file entry, never the env endpoint's city-secret)", retryCfg.ServerPassword, c.wantPassword)
+			}
+		})
+	}
+}
+
 // TestEnvEndpointFallbackNoteRespectsQuietAndJSON (nit). The advisory note is
 // output a normal user or script did not ask for; it must not appear under
 // --quiet or --json.

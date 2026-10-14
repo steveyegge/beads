@@ -95,28 +95,22 @@ func openWithEnvEndpointFallback(ctx context.Context, cfg *Config, open func(con
 		// the env endpoint's values in place.
 		fileCfg = configfile.DefaultConfig()
 	}
-	// retryServerUser/retryServerTLS, not fileCfg.GetDoltServerUser/TLS: those
-	// two check BEADS_DOLT_SERVER_USER/BEADS_DOLT_SERVER_TLS first, which are
-	// exactly the kind of ambient value inherited from another workspace's
-	// environment this fallback exists to escape (the same reasoning
-	// declaredHost above already applies to BEADS_DOLT_SERVER_HOST). The
-	// password just below stays the one deliberate exception: an explicit
-	// BEADS_DOLT_PASSWORD is honored, but keyed to alt.host:alt.port, not
-	// whatever host the env endpoint resolved.
+	// retryServerUser/retryServerTLS/retryServerPassword, not
+	// fileCfg.GetDoltServerUser/TLS or BEADS_DOLT_PASSWORD: those all read an
+	// ambient value inherited from another workspace's environment, which is
+	// exactly what this fallback exists to escape (the same reasoning
+	// declaredHost above already applies to BEADS_DOLT_SERVER_HOST). A city
+	// (or any environment) that sets a server's user and password together in
+	// env means an env password is never a credential for this retry's own
+	// endpoint specifically — it is the inherited server's, paired with the
+	// inherited server's user, and sending it here either fails auth against
+	// the declared endpoint's own password or, worse, offers the inherited
+	// city's password to a different, local server. The credentials file,
+	// keyed to alt.host:alt.port, is this retry's only password source; with
+	// no entry there, the retry sends no password at all.
 	retry.ServerUser = retryServerUser(fileCfg)
 	retry.ServerTLS = retryServerTLS(fileCfg)
-	if envPass := os.Getenv("BEADS_DOLT_PASSWORD"); envPass != "" {
-		// An explicit env override is a deliberate operator action, not an
-		// ambient value inherited from another workspace; honor it for the
-		// retry the same way applyConfigDefaults honors it for the first
-		// open. Looked up directly (not via the alt endpoint's own
-		// GetDoltServerPasswordForPort) so the retry's password is keyed on
-		// alt.host:alt.port specifically, not whatever host cfg's file
-		// resolves on its own.
-		retry.ServerPassword = envPass
-	} else {
-		retry.ServerPassword = configfile.LookupCredentialsPassword(alt.host, alt.port)
-	}
+	retry.ServerPassword = retryServerPassword(alt)
 
 	// S1: New()'s BEADS_TEST_MODE=1 production-port guard (applyConfigDefaults'
 	// rewrite-to-1, then New()'s defense-in-depth panic if still production)
@@ -171,6 +165,22 @@ func retryServerUser(fileCfg *configfile.Config) string {
 // retryServerUser skips GetDoltServerUser's.
 func retryServerTLS(fileCfg *configfile.Config) bool {
 	return fileCfg != nil && fileCfg.DoltServerTLS
+}
+
+// retryServerPassword is the credentials file's entry for alt (the declared
+// endpoint being retried), without GetDoltServerPasswordForPort's
+// BEADS_DOLT_PASSWORD env check: an environment that sets a server's user and
+// password together (a gascity city, for one) pairs that password with the
+// inherited env endpoint's user, not the declared endpoint's — sending it
+// here either fails auth against the declared endpoint's own password or
+// offers the inherited city's password to a different, local server (S4
+// residual, PR #7561 review round 3). There is no config.yaml/metadata.json
+// field for a password (unlike user and TLS): the credentials file is the
+// only non-env source, keyed to alt.host:alt.port specifically, not whatever
+// host cfg's file resolves on its own; with no entry there, the retry sends
+// no password at all.
+func retryServerPassword(alt declaredEndpoint) string {
+	return configfile.LookupCredentialsPassword(alt.host, alt.port)
 }
 
 // envEndpointPortVarName names the environment variable that actually

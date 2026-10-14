@@ -529,7 +529,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another no longer reads as a divergence). `bd serve` gets no retry at all —
   building its own connection outside `dolt.New`, it refuses outright instead
   of fronting an HTTP server on whatever database the inherited endpoint
-  happens to answer with.
+  happens to answer with. The retry re-resolves its own user, TLS setting and
+  password for the declared endpoint instead of carrying the env endpoint's
+  forward: an environment (a gascity city, for one) that sets a server's user
+  and password together means an inherited `BEADS_DOLT_PASSWORD` is a
+  credential for the env endpoint's user, never the declared endpoint's, so
+  the retry's password comes only from the credentials file entry keyed to
+  the declared endpoint, with no password sent when that file has none.
 
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
