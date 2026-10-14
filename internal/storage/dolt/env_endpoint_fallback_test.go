@@ -567,3 +567,98 @@ func TestEnvEndpointFallbackNoteNamesActualEnvVar(t *testing.T) {
 		t.Fatalf("note %q; want it not to claim BEADS_DOLT_SERVER_PORT, which this process never set", note.String())
 	}
 }
+
+// TestSameHost (serve false refusals, gascity mc-3gbed follow-up). Every
+// loopback spelling names the same machine as every other one; two different
+// non-loopback hosts are never equal just because neither is loopback.
+func TestSameHost(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"127.0.0.1", "127.0.0.1", true},
+		{"localhost", "localhost", true},
+		{"127.0.0.1", "localhost", true},
+		{"localhost", "127.0.0.1", true},
+		{"", "127.0.0.1", true},
+		{"::1", "[::1]", true},
+		{"10.0.0.5", "10.0.0.5", true},
+		{"10.0.0.5", "10.0.0.9", false},
+		{"10.0.0.5", "127.0.0.1", false},
+		{"127.0.0.1", "10.0.0.5", false},
+	} {
+		if got := sameHost(c.a, c.b); got != c.want {
+			t.Errorf("sameHost(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestEnvEndpointFallbackTreatsLoopbackSpellingsAsEqual (serve false
+// refusals). A declared endpoint that differs from the env endpoint only in
+// loopback spelling ("localhost" vs "127.0.0.1") is the SAME endpoint, not a
+// divergence: the fallback must not retry (there is nothing to correct), and
+// EnvEndpointDivergesFromDeclared — bd serve's own refusal check — must not
+// refuse either. Covers both spellings, in both directions.
+func TestEnvEndpointFallbackTreatsLoopbackSpellingsAsEqual(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		declaredHost string
+		envHost      string
+	}{
+		{"declared 127.0.0.1, env localhost", "127.0.0.1", "localhost"},
+		{"declared localhost, env 127.0.0.1", "localhost", "127.0.0.1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			yaml := "dolt:\n  host: " + c.declaredHost + "\n  port: 3308\n"
+			cfg := &Config{
+				BeadsDir: beadsDirWith(t, yaml), ServerHost: c.envHost, ServerPort: 3308,
+				ServerPortSource: doltserver.PortSourceEnv,
+			}
+
+			if _, ok := envEndpointFallback(cfg, ""); ok {
+				t.Fatalf("envEndpointFallback found a divergence between %q and %q; want none (same loopback machine)", c.declaredHost, c.envHost)
+			}
+			if declared, diverges := EnvEndpointDivergesFromDeclared(cfg); diverges {
+				t.Fatalf("EnvEndpointDivergesFromDeclared reported %q as a divergence from %q; want bd serve not to refuse a loopback spelling mismatch", declared, c.envHost)
+			}
+
+			note := captureFallbackNote(t)
+			f := &fakeServers{foreign: map[string]bool{net.JoinHostPort(c.envHost, "3308"): true}}
+			if _, err := openWithEnvEndpointFallback(context.Background(), cfg, f.open); err == nil || len(f.opened) != 1 || note.Len() != 0 {
+				t.Fatalf("err %v, opened %v, note %q; want the first open's error, one open, no note (same endpoint, nothing to retry)", err, f.opened, note.String())
+			}
+		})
+	}
+}
+
+// TestEnvEndpointFallbackReResolvesRetryUserAndTLSWithoutEnv (S4 residual).
+// The retry's user and TLS setting must come from the declared endpoint's own
+// file configuration even when BEADS_DOLT_SERVER_USER / BEADS_DOLT_SERVER_TLS
+// are set in the environment: those env vars are exactly the kind of ambient
+// value inherited from another workspace's shell this fallback exists to
+// escape, the same way the password branch already keys its env override to
+// alt.host:alt.port rather than letting it blanket-apply.
+func TestEnvEndpointFallbackReResolvesRetryUserAndTLSWithoutEnv(t *testing.T) {
+	t.Setenv("BEADS_DOLT_PASSWORD", "")
+	t.Setenv("BEADS_DOLT_SERVER_USER", "env-inherited-user")
+	t.Setenv("BEADS_DOLT_SERVER_TLS", "1")
+	note := captureFallbackNote(t)
+	f := &fakeServers{stores: map[string]*DoltStore{"127.0.0.1:3308": {}}, foreign: map[string]bool{"127.0.0.1:45865": true}}
+	cfg := &Config{
+		BeadsDir: beadsDirWith(t, "dolt.port: 3308\n"), ServerHost: "127.0.0.1", ServerPort: 45865,
+		ServerPortSource: doltserver.PortSourceEnv,
+	}
+	if _, err := openWithEnvEndpointFallback(context.Background(), cfg, f.open); err != nil {
+		t.Fatalf("err %v; want the retry to succeed", err)
+	}
+	if note.Len() == 0 {
+		t.Fatal("want a fallback note")
+	}
+	retryCfg := f.openedCfg[1]
+	if retryCfg.ServerUser != "root" {
+		t.Fatalf("retry user %q; want the declared endpoint's own default root, not the env's env-inherited-user", retryCfg.ServerUser)
+	}
+	if retryCfg.ServerTLS {
+		t.Fatal("retry TLS true; want the declared endpoint's own (unset -> false), not the env's BEADS_DOLT_SERVER_TLS=1")
+	}
+}

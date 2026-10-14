@@ -123,6 +123,36 @@ func TestResolveServerModeUOWTopology_AllowsEnvEndpointMatchingDeclared(t *testi
 	assert.Equal(t, 3521, topology.external.Port)
 }
 
+// Loopback spellings are not a divergence: env "localhost" and a declared
+// "127.0.0.1" (or the reverse) name the same machine, and comparing them
+// lexically refused a server that was never actually inherited from another
+// workspace (bd serve false refusal, gascity mc-3gbed follow-up).
+func TestResolveServerModeUOWTopology_AllowsEnvEndpointLoopbackSpellingMismatch(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		declaredHost string
+		envHost      string
+	}{
+		{"declared 127.0.0.1, env localhost", "127.0.0.1", "localhost"},
+		{"declared localhost, env 127.0.0.1", "localhost", "127.0.0.1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			beadsDir := serverModeBeadsDir(t, &configfile.Config{
+				DoltServerHost: c.declaredHost,
+				DoltServerPort: 3521,
+				DoltDatabase:   "beads_serve",
+			})
+			t.Setenv("BEADS_DOLT_SERVER_HOST", c.envHost)
+			t.Setenv("BEADS_DOLT_SERVER_PORT", "3521")
+
+			topology, err := resolveServerModeUOWTopology(context.Background(), beadsDir)
+			require.NoError(t, err,
+				"a loopback spelling that differs from the declared one must not read as an inherited server")
+			assert.Equal(t, 3521, topology.external.Port)
+		})
+	}
+}
+
 // Shared-server mode is one server fronting every project by design, not a
 // cross-project leak: envEndpointFallback already excludes it (S5's
 // exclusion coverage), and this refusal must agree rather than block the

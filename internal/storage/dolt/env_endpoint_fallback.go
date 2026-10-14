@@ -95,8 +95,16 @@ func openWithEnvEndpointFallback(ctx context.Context, cfg *Config, open func(con
 		// the env endpoint's values in place.
 		fileCfg = configfile.DefaultConfig()
 	}
-	retry.ServerUser = fileCfg.GetDoltServerUser()
-	retry.ServerTLS = fileCfg.GetDoltServerTLS()
+	// retryServerUser/retryServerTLS, not fileCfg.GetDoltServerUser/TLS: those
+	// two check BEADS_DOLT_SERVER_USER/BEADS_DOLT_SERVER_TLS first, which are
+	// exactly the kind of ambient value inherited from another workspace's
+	// environment this fallback exists to escape (the same reasoning
+	// declaredHost above already applies to BEADS_DOLT_SERVER_HOST). The
+	// password just below stays the one deliberate exception: an explicit
+	// BEADS_DOLT_PASSWORD is honored, but keyed to alt.host:alt.port, not
+	// whatever host the env endpoint resolved.
+	retry.ServerUser = retryServerUser(fileCfg)
+	retry.ServerTLS = retryServerTLS(fileCfg)
 	if envPass := os.Getenv("BEADS_DOLT_PASSWORD"); envPass != "" {
 		// An explicit env override is a deliberate operator action, not an
 		// ambient value inherited from another workspace; honor it for the
@@ -146,6 +154,25 @@ func openWithEnvEndpointFallback(ctx context.Context, cfg *Config, open func(con
 	return altStore, nil
 }
 
+// retryServerUser is fileCfg's own configured Dolt server user, same default
+// as GetDoltServerUser (configfile.DefaultDoltServerUser) but without that
+// method's BEADS_DOLT_SERVER_USER env check: the retry resolves the declared
+// endpoint's identity, not whatever user the inherited env endpoint's shell
+// happens to export (S4 residual, gascity mc-3gbed follow-up).
+func retryServerUser(fileCfg *configfile.Config) string {
+	if fileCfg != nil && fileCfg.DoltServerUser != "" {
+		return fileCfg.DoltServerUser
+	}
+	return configfile.DefaultDoltServerUser
+}
+
+// retryServerTLS is fileCfg's own configured Dolt server TLS setting, without
+// GetDoltServerTLS's BEADS_DOLT_SERVER_TLS env check, for the same reason
+// retryServerUser skips GetDoltServerUser's.
+func retryServerTLS(fileCfg *configfile.Config) bool {
+	return fileCfg != nil && fileCfg.DoltServerTLS
+}
+
 // envEndpointPortVarName names the environment variable that actually
 // supplied cfg's port, for the fallback note. BEADS_DOLT_SERVER_PORT is
 // checked first, matching applyConfigDefaults' own precedence;
@@ -177,7 +204,7 @@ func envEndpointFallback(cfg *Config, originalSocket string) (declaredEndpoint, 
 		return declaredEndpoint{}, false
 	}
 	alt, ok := projectDeclaredEndpoint(cfg.BeadsDir)
-	if !ok || (alt.host == cfg.ServerHost && alt.port == cfg.ServerPort) {
+	if !ok || (sameHost(alt.host, cfg.ServerHost) && alt.port == cfg.ServerPort) {
 		return declaredEndpoint{}, false
 	}
 	// S4: never retry onto a non-loopback host. The declared endpoint is read
@@ -217,6 +244,20 @@ func projectDeclaredEndpoint(beadsDir string) (declaredEndpoint, bool) {
 		return declaredEndpoint{host: hostOrLoopback(declaredHost()), port: meta.DoltServerPort, source: doltserver.PortSourceMetadataJSON}, true
 	}
 	return declaredEndpoint{}, false
+}
+
+// sameHost reports whether a and b name the same server host for the
+// divergence check above and in EnvEndpointDivergesFromDeclared. An exact
+// match is the common case; beyond that, every spelling isLocalHost treats
+// as "this machine" names the same machine as every other one — an env
+// endpoint on "localhost" and a declared endpoint on "127.0.0.1" are the
+// same server, and comparing them lexically produced a false refusal (bd
+// serve: env_endpoint_fallback.go:180, gascity mc-3gbed follow-up). Two
+// different non-loopback hosts are never equated: isLocalHost returns false
+// for a genuinely remote host, so the OR falls through to the exact-match
+// result for it.
+func sameHost(a, b string) bool {
+	return a == b || (isLocalHost(a) && isLocalHost(b))
 }
 
 func hostOrLoopback(host string) string {
