@@ -25,10 +25,14 @@ func TestTablesChangedBetweenIsEmptyAfterQuietCompact(t *testing.T) {
 	}
 	defer conn.Close()
 	recent := []string{entries[0].Hash}
-	if err := CompactAtHead(ctx, conn, planned, entries[len(entries)-1].Hash, entries[1].Hash, len(entries)-1, recent); err != nil {
+	res, err := CompactAtHead(ctx, conn, planned, entries[len(entries)-1].Hash, entries[1].Hash, len(entries)-1, recent)
+	if err != nil {
 		t.Fatalf("CompactAtHead: %v", err)
 	}
 	compacted := mainHead(t, conn)
+	if res.SquashedHead != compacted || res.KeptRowsCommit != "" {
+		t.Fatalf("result = %+v, want the squashed head %s and no kept-rows commit on a quiet store", res, compacted)
+	}
 	if compacted == planned {
 		t.Fatalf("compacted head equals the planned head %s: the squash did not rewrite history", planned)
 	}

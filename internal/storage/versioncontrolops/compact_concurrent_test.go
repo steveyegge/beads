@@ -309,7 +309,7 @@ func TestCompactAtHeadRefusesWriteBetweenHeadAndLogRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	err = CompactAtHead(ctx, conn, planned, initial, boundary, old, nil)
+	_, err = CompactAtHead(ctx, conn, planned, initial, boundary, old, nil)
 	if !errors.Is(err, ErrMainMoved) {
 		t.Fatalf("CompactAtHead error = %v, want ErrMainMoved", err)
 	}
@@ -348,7 +348,7 @@ func TestCompactAtHeadRefusesPlanNotEndingAtHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	err = CompactAtHead(ctx, conn, head, initial, stale, len(entries)-1, nil)
+	_, err = CompactAtHead(ctx, conn, head, initial, stale, len(entries)-1, nil)
 	if !errors.Is(err, ErrPlanNotAtHead) {
 		t.Fatalf("CompactAtHead error = %v, want ErrPlanNotAtHead", err)
 	}
@@ -381,8 +381,12 @@ func TestCompactAtHeadQuietStillSquashes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := CompactAtHead(ctx, conn, planned, initial, boundary, old, nil); err != nil {
+	res, err := CompactAtHead(ctx, conn, planned, initial, boundary, old, nil)
+	if err != nil {
 		t.Fatalf("quiet CompactAtHead: %v", err)
+	}
+	if got := mainHead(t, db); res.SquashedHead != got || res.KeptRowsCommit != "" {
+		t.Fatalf("result = %+v, want the squashed head %s and no kept-rows commit on a quiet store", res, got)
 	}
 
 	after, err := Log(ctx, db, 0)
@@ -439,8 +443,9 @@ func TestCompactKeepsCommitLandingBeforeReset(t *testing.T) {
 		}
 	}}
 
-	if err := Compact(ctx, hc, initial, boundary, old, nil); err != nil {
-		t.Fatalf("Compact: %v", err)
+	res, err := CompactAtHead(ctx, hc, boundary, initial, boundary, old, nil)
+	if err != nil {
+		t.Fatalf("CompactAtHead: %v", err)
 	}
 	if !fired {
 		t.Fatal("test hook never fired: Compact no longer resets main to compact-tmp")
@@ -450,6 +455,7 @@ func TestCompactKeepsCommitLandingBeforeReset(t *testing.T) {
 	}
 	assertCleanStatus(t, db)
 	assertNoTempBranch(t, db)
+	assertKeptRowsResult(t, db, boundary, res)
 	after, err := Log(ctx, db, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -474,12 +480,42 @@ func TestCompactKeepsUncommittedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := Compact(ctx, conn, initial, boundary, old, nil); err != nil {
-		t.Fatalf("Compact: %v", err)
+	res, err := CompactAtHead(ctx, conn, boundary, initial, boundary, old, nil)
+	if err != nil {
+		t.Fatalf("CompactAtHead: %v", err)
 	}
 	for _, id := range []int{1, 2, 3, 4, 700} {
 		assertRow(t, db, id, true)
 	}
 	assertCleanStatus(t, db)
 	assertNoTempBranch(t, db)
+	assertKeptRowsResult(t, db, boundary, res)
+}
+
+// assertKeptRowsResult checks what a compaction that kept rows reports: main's
+// head is the kept-rows commit, the squashed head under it holds the same data
+// as the planned head, and only the kept-rows commit changes the items table.
+func assertKeptRowsResult(t *testing.T, db *sql.DB, planned string, res CompactResult) {
+	t.Helper()
+	ctx := context.Background()
+	if res.KeptRowsCommit == "" || res.KeptRowsCommit != mainHead(t, db) {
+		t.Fatalf("KeptRowsCommit = %q, want main's head %s", res.KeptRowsCommit, mainHead(t, db))
+	}
+	if res.SquashedHead == "" || res.SquashedHead == res.KeptRowsCommit {
+		t.Fatalf("SquashedHead = %q, want the commit under the kept-rows commit %s", res.SquashedHead, res.KeptRowsCommit)
+	}
+	squashed, err := TablesChangedBetween(ctx, db, planned, res.SquashedHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(squashed) != 0 {
+		t.Fatalf("tables changed by the squash = %v, want none", squashed)
+	}
+	kept, err := TablesChangedBetween(ctx, db, planned, res.KeptRowsCommit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 1 || kept[0] != "items" {
+		t.Fatalf("tables changed up to the kept-rows commit = %v, want [items]", kept)
+	}
 }

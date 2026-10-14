@@ -40,7 +40,21 @@ import (
 // conn must be a single database connection (not a pooled *sql.DB) since the
 // stored procedures rely on session-scoped state (current branch, working set).
 func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string, oldCommits int, recentHashes []string) error {
-	return CompactAtHead(ctx, conn, planNewest(boundaryHash, recentHashes), initialHash, boundaryHash, oldCommits, recentHashes)
+	_, err := CompactAtHead(ctx, conn, planNewest(boundaryHash, recentHashes), initialHash, boundaryHash, oldCommits, recentHashes)
+	return err
+}
+
+// CompactResult says what CompactAtHead left on main.
+type CompactResult struct {
+	// SquashedHead is the head of the squashed branch: the planned history
+	// rewritten as one base commit plus the replayed recent commits. Its data
+	// equals the planned head's when the squash and replay changed nothing.
+	SquashedHead string
+	// KeptRowsCommit is the commit holding the rows main had outside the plan
+	// (a commit that reached main after the last head check, or rows a writer
+	// left uncommitted), made on top of SquashedHead. It is empty when main
+	// held no such rows, and then main's head is SquashedHead.
+	KeptRowsCommit string
 }
 
 // CompactAtHead is Compact with the head of main the plan was built from read
@@ -50,14 +64,14 @@ func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string,
 // when main is still at plannedHead but the plan's newest commit is another
 // commit, because a plan built from a log whose date order disagrees with
 // its parent order does not cover main.
-func CompactAtHead(ctx context.Context, conn DBConn, plannedHead, initialHash, boundaryHash string, oldCommits int, recentHashes []string) (retErr error) {
+func CompactAtHead(ctx context.Context, conn DBConn, plannedHead, initialHash, boundaryHash string, oldCommits int, recentHashes []string) (res CompactResult, retErr error) {
 	branchCreated := false
 
 	if err := requireMainAt(ctx, conn, plannedHead, "before building the squashed branch"); err != nil {
-		return err
+		return res, err
 	}
 	if newest := planNewest(boundaryHash, recentHashes); newest != plannedHead {
-		return fmt.Errorf("%w: main is at %s, but the newest commit in the plan is %s; "+
+		return res, fmt.Errorf("%w: main is at %s, but the newest commit in the plan is %s; "+
 			"the log's date order disagrees with its parent order, so main was left unchanged",
 			ErrPlanNotAtHead, plannedHead, newest)
 	}
@@ -80,19 +94,19 @@ func CompactAtHead(ctx context.Context, conn DBConn, plannedHead, initialHash, b
 	}
 
 	if err := execSQL("create temp branch", "CALL DOLT_BRANCH('compact-tmp', ?)", boundaryHash); err != nil {
-		return err
+		return res, err
 	}
 	branchCreated = true
 
 	if err := execSQL("checkout temp", "CALL DOLT_CHECKOUT('compact-tmp')"); err != nil {
-		return err
+		return res, err
 	}
 	if err := execSQL("soft reset to initial", "CALL DOLT_RESET('--soft', ?)", initialHash); err != nil {
-		return err
+		return res, err
 	}
 	msg := fmt.Sprintf("compact: squash %d commits into base snapshot", oldCommits)
 	if err := execSQL("commit squashed base", "CALL DOLT_COMMIT('-Am', ?)", msg); err != nil {
-		return err
+		return res, err
 	}
 
 	// --allow-empty: the preserved window can contain empty commits (a Dolt
@@ -103,15 +117,15 @@ func CompactAtHead(ctx context.Context, conn DBConn, plannedHead, initialHash, b
 	// leaving compaction permanently blocked on active databases. See #3815.
 	for _, hash := range recentHashes {
 		if err := execSQL(fmt.Sprintf("cherry-pick %s", hash[:min(8, len(hash))]), "CALL DOLT_CHERRY_PICK('--allow-empty', ?)", hash); err != nil {
-			return err
+			return res, err
 		}
 	}
 
 	if err := execSQL("checkout main", "CALL DOLT_CHECKOUT('main')"); err != nil {
-		return err
+		return res, err
 	}
 	if err := requireMainAt(ctx, conn, plannedHead, "before resetting main"); err != nil {
-		return err
+		return res, err
 	}
 	// --soft: main's working set keeps every row it holds, including a
 	// commit that reached main after the check above and rows a writer left
@@ -119,22 +133,28 @@ func CompactAtHead(ctx context.Context, conn DBConn, plannedHead, initialHash, b
 	// differs now is exactly those rows, and they are committed here so the
 	// compaction never leaves main dirty.
 	if err := execSQL("reset main to compacted", "CALL DOLT_RESET('--soft', 'compact-tmp')"); err != nil {
-		return err
+		return res, err
+	}
+	// Read from compact-tmp, which no writer touches, not from main, which a
+	// writer may move at any moment.
+	if err := conn.QueryRowContext(ctx, "SELECT DOLT_HASHOF('compact-tmp')").Scan(&res.SquashedHead); err != nil {
+		return res, fmt.Errorf("compact step %q: %w", "read the squashed head", err)
 	}
 	var dirty int
 	if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM dolt_status").Scan(&dirty); err != nil {
-		return fmt.Errorf("compact step %q: %w", "read status after reset", err)
+		return res, fmt.Errorf("compact step %q: %w", "read status after reset", err)
 	}
 	if dirty > 0 {
-		if err := execSQL("commit rows kept by the reset", "CALL DOLT_COMMIT('-Am', 'compact: commit rows main held outside the plan')"); err != nil {
-			return err
+		// DOLT_COMMIT answers with the hash of the commit it made.
+		if err := conn.QueryRowContext(ctx, "CALL DOLT_COMMIT('-Am', 'compact: commit rows main held outside the plan')").Scan(&res.KeptRowsCommit); err != nil {
+			return res, fmt.Errorf("compact step %q: %w", "commit rows kept by the reset", err)
 		}
 	}
 	if err := execSQL("delete temp branch", "CALL DOLT_BRANCH('-D', 'compact-tmp')"); err != nil {
-		return err
+		return res, err
 	}
 
-	return nil
+	return res, nil
 }
 
 // ErrMainMoved reports that main's head is no longer the commit a compaction
@@ -166,8 +186,10 @@ func MainHead(ctx context.Context, conn DBConn) (string, error) {
 
 // TablesChangedBetween names the tables whose rows or schema differ between
 // the commits from and to, read from DOLT_DIFF_SUMMARY. Called with the head a
-// compaction was planned from and the head it left on main, it answers whether
-// the squash and replay changed any data: an empty answer means they did not.
+// compaction was planned from and the squashed head (CompactResult), it
+// answers whether the squash and replay changed any data: an empty answer
+// means they did not. Rows the compaction kept are in KeptRowsCommit, above
+// the squashed head, so they are not in that answer.
 // Call it before GC, which may remove the planned head's chain. On success the
 // result is never nil, so a JSON encoder writes [] rather than null.
 func TablesChangedBetween(ctx context.Context, conn DBConn, from, to string) ([]string, error) {
