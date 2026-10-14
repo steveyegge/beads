@@ -124,7 +124,6 @@ FAKE_HASH="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 # dir is removed on every exit path, handled or not; a handled failure
 # restores from it first via restore_original.
 SCRATCH_DIR=$(mktemp -d "${TMPDIR:-/tmp}/nix-vendorhash.XXXXXX")
-trap 'rm -rf "$SCRATCH_DIR"' EXIT
 BACKUP="$SCRATCH_DIR/default.nix.orig"
 # -p preserves the exact original bytes and mode; a handled failure must
 # restore both, not just the content.
@@ -133,6 +132,25 @@ cp -p default.nix "$BACKUP"
 restore_original() {
     cp -p "$BACKUP" default.nix
 }
+
+# A SIGINT/SIGTERM during the long step (the nix build) reaches this process
+# and its nix child as one group; the child dies, this script exits through
+# the EXIT trap with the placeholder hash still in default.nix. Plain
+# `rm -rf "$SCRATCH_DIR"` there would delete the only backup while leaving
+# that placeholder in place -- worse than every handled failure, since
+# recovery becomes `git checkout default.nix`, which also discards any
+# uncommitted operator edits. The placeholder is never a valid end state, so
+# restore it here whenever it's still there; every handled exit below has
+# already restored or verified default.nix by the time it runs, so this is a
+# no-op on every path except an interrupted one.
+cleanup() {
+    if [ -f "$BACKUP" ] && grep -qF "$FAKE_HASH" default.nix 2>/dev/null; then
+        restore_original
+        log_info "Restored original default.nix (run interrupted)"
+    fi
+    rm -rf "$SCRATCH_DIR"
+}
+trap cleanup EXIT
 
 # Detect sed version (GNU vs BSD). BSD sed requires an explicit backup-suffix
 # argument to -i; GNU sed must NOT be given one.
