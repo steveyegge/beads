@@ -384,11 +384,13 @@ func (s *stubWire) ListReadyWork(_ context.Context, _ url.Values) (*apigen.Ready
 func stubStore(t *testing.T, w *stubWire) *Store {
 	t.Helper()
 	// A current server: it advertises issues.update.allowTemplate, so
-	// Lifecycle.Update leaves the template guard to it and pre-reads nothing.
-	// TestUpdateTemplateGuardAgainstAServerThatPredatesIt covers the older one.
+	// Lifecycle.Update leaves the template guard to it and pre-reads nothing,
+	// and issues.update.claim, so a claim rides updateIssue.
+	// TestUpdateTemplateGuardAgainstAServerThatPredatesIt and
+	// TestUpdateClaimAgainstAServerWithoutTheToken cover the older ones.
 	return New(testTarget(t), w, &apigen.ContextResponse{
 		BdVersion:    "1.2.3",
-		Capabilities: []string{wire.CapIssuesUpdateAllowTemplate},
+		Capabilities: []string{wire.CapIssuesUpdateAllowTemplate, wire.CapIssuesUpdateClaim},
 	})
 }
 
@@ -473,84 +475,43 @@ func predatesUpdateClaim() error {
 	}
 }
 
-// TestUpdateClaimFallsBackToClaimIssueOnlyWhenNothingIsLost pins the one claim
-// that does not ride updateIssue: a claim ALONE, against a server that refused
-// `claim` as an unknown parameter. claimIssue's request is the actor alone, so
-// it carries everything a claim-only request asked for — and nothing else, so
-// every OTHER shape returns the skew refusal as it came rather than retrying
-// as a claim that drops the patch, the guard or the override beside it.
-//
-// The refusals a CURRENT server answers on `claim` are not skew and must not
-// fall back either: `invalid_value` naming `claim` is the claim beside a
-// member it may not ride with, and a retry through claimIssue would serve the
-// claim the server just refused.
-func TestUpdateClaimFallsBackToClaimIssueOnlyWhenNothingIsLost(t *testing.T) {
+// TestUpdateClaimAgainstAServerWithoutTheToken pins the claim route the
+// handshake picks, BEFORE the dial. A server without issues.update.claim gets
+// a claim ALONE as claimIssue (whose request is the actor alone, so nothing is
+// dropped) and never an updateIssue carrying `claim`; a claim beside a patch,
+// a guard or an override is refused with ErrUnsupported naming the token and
+// dials nothing — never split into two calls, never sent to be 400'd.
+func TestUpdateClaimAgainstAServerWithoutTheToken(t *testing.T) {
 	version := int64(7)
 	holder := "someone"
 
 	for _, tc := range []struct {
-		name      string
-		req       issueops.UpdateRequest
-		refusal   error
-		wantCalls []string
+		name        string
+		req         issueops.UpdateRequest
+		wantCalls   []string
+		wantRefused bool
 	}{
-		{
-			name:      "a claim alone retries as claimIssue",
-			req:       issueops.UpdateRequest{},
-			refusal:   predatesUpdateClaim(),
-			wantCalls: []string{"updateIssue:bd-1", "claimIssue:bd-1"},
-		},
-		{
-			name:      "a claim with a patch does not",
-			req:       issueops.UpdateRequest{Patch: issueops.IssuePatch{Title: set("claimed and renamed")}},
-			refusal:   predatesUpdateClaim(),
-			wantCalls: []string{"updateIssue:bd-1"},
-		},
-		{
-			name:      "a claim with a version guard does not",
-			req:       issueops.UpdateRequest{ExpectedVersion: &version},
-			refusal:   predatesUpdateClaim(),
-			wantCalls: []string{"updateIssue:bd-1"},
-		},
-		{
-			name:      "a claim with an assignee guard does not",
-			req:       issueops.UpdateRequest{ExpectedAssignee: &holder},
-			refusal:   predatesUpdateClaim(),
-			wantCalls: []string{"updateIssue:bd-1"},
-		},
-		{
-			name:      "a claim with a close-policy override does not",
-			req:       issueops.UpdateRequest{ForceClosePolicy: true},
-			refusal:   predatesUpdateClaim(),
-			wantCalls: []string{"updateIssue:bd-1"},
-		},
-		{
-			name: "a current server's invalid claim does not",
-			req:  issueops.UpdateRequest{},
-			refusal: &wire.ProblemError{
-				Op: "updateIssue", Status: 400, Code: "invalid_argument",
-				Reason: "invalid_value", Param: "claim",
-			},
-			wantCalls: []string{"updateIssue:bd-1"},
-		},
-		{
-			name: "skew on another member does not",
-			req:  issueops.UpdateRequest{},
-			refusal: &wire.ProblemError{
-				Op: "updateIssue", Status: 400, Code: "invalid_argument",
-				Reason: encode.UnknownParameterReason, Param: "expected_version",
-			},
-			wantCalls: []string{"updateIssue:bd-1"},
-		},
+		{name: "a claim alone goes to claimIssue", req: issueops.UpdateRequest{},
+			wantCalls: []string{"claimIssue:bd-1"}},
+		{name: "a claim with a patch is refused before the dial",
+			req: issueops.UpdateRequest{Patch: issueops.IssuePatch{Title: set("claimed and renamed")}}, wantRefused: true},
+		{name: "a claim with a version guard is refused before the dial",
+			req: issueops.UpdateRequest{ExpectedVersion: &version}, wantRefused: true},
+		{name: "a claim with an assignee guard is refused before the dial",
+			req: issueops.UpdateRequest{ExpectedAssignee: &holder}, wantRefused: true},
+		{name: "a claim with a close-policy override is refused before the dial",
+			req: issueops.UpdateRequest{ForceClosePolicy: true}, wantRefused: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// No queued error: the stub answers whichever call comes first,
+			// and the calls check below is what says updateIssue was never one.
 			w := &stubWire{
-				errs: []error{tc.refusal},
 				claim: &apigen.ClaimResponse{
 					Issue: apigen.Issue{ID: "bd-1", Status: types.StatusInProgress, Assignee: "writer"},
 				},
 			}
-			lifecycle, err := stubStore(t, w).IssueLifecycle()
+			snap := &apigen.ContextResponse{BdVersion: "1.3.0", Capabilities: []string{wire.CapIssuesUpdateAllowTemplate}}
+			lifecycle, err := New(testTarget(t), w, snap).IssueLifecycle()
 			if err != nil {
 				t.Fatalf("IssueLifecycle(): %v", err)
 			}
@@ -558,22 +519,53 @@ func TestUpdateClaimFallsBackToClaimIssueOnlyWhenNothingIsLost(t *testing.T) {
 			req.Actor, req.IssueID, req.Claim = "writer", "bd-1", true
 
 			res, err := lifecycle.Update(t.Context(), req)
+			if tc.wantRefused {
+				requireCapabilityRefusal(t, err, wire.CapIssuesUpdateClaim, w)
+				return
+			}
 			if !reflect.DeepEqual(w.calls, tc.wantCalls) {
 				t.Fatalf("Update dialed %v, want %v", w.calls, tc.wantCalls)
 			}
-			if len(tc.wantCalls) == 2 {
-				if err != nil {
-					t.Fatalf("the fallback claim: %v", err)
-				}
-				if res.Issue == nil || res.Issue.Assignee != "writer" || !res.Changed {
-					t.Errorf("the fallback answered %+v, want claimIssue's claimed row", res)
-				}
-				// claimIssue carries no revision, and no other snapshot's token
-				// may stand in for one.
-				if res.Issue != nil && res.Issue.RowVersion != 0 {
-					t.Errorf("the fallback stitched RowVersion %d onto a row claimIssue answered without one", res.Issue.RowVersion)
-				}
-				return
+			if err != nil {
+				t.Fatalf("the claimIssue claim: %v", err)
+			}
+			if res.Issue == nil || res.Issue.Assignee != "writer" || !res.Changed {
+				t.Errorf("the claimIssue route answered %+v, want claimIssue's claimed row", res)
+			}
+			// claimIssue carries no revision, and no other snapshot's token
+			// may stand in for one.
+			if res.Issue != nil && res.Issue.RowVersion != 0 {
+				t.Errorf("the claimIssue route stitched RowVersion %d onto a row claimIssue answered without one", res.Issue.RowVersion)
+			}
+		})
+	}
+}
+
+// TestUpdateClaimWithTheTokenNeverFallsBack pins the other half: against a
+// server advertising issues.update.claim every claim is ONE updateIssue call,
+// and whatever that server answers is returned as it came. Not even the skew
+// 400 (which such a server never sends) re-routes the claim through
+// claimIssue: the handshake, not an error, picks the route.
+func TestUpdateClaimWithTheTokenNeverFallsBack(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		refusal error
+	}{
+		{name: "the skew refusal", refusal: predatesUpdateClaim()},
+		{name: "a current server's invalid claim", refusal: &wire.ProblemError{
+			Op: "updateIssue", Status: 400, Code: "invalid_argument",
+			Reason: "invalid_value", Param: "claim",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &stubWire{errs: []error{tc.refusal}, claim: &apigen.ClaimResponse{}}
+			lifecycle, err := stubStore(t, w).IssueLifecycle()
+			if err != nil {
+				t.Fatalf("IssueLifecycle(): %v", err)
+			}
+			_, err = lifecycle.Update(t.Context(), issueops.UpdateRequest{Actor: "writer", IssueID: "bd-1", Claim: true})
+			if want := []string{"updateIssue:bd-1"}; !reflect.DeepEqual(w.calls, want) {
+				t.Fatalf("Update dialed %v, want %v", w.calls, want)
 			}
 			if !errors.Is(err, tc.refusal) {
 				t.Errorf("Update = %v, want the server's refusal returned as it came", err)

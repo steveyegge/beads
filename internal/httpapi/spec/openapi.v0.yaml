@@ -8330,11 +8330,15 @@ components:
             `GET /v0/beads/issues` accepts `no_assignee`, `title` and the
             repeatable `id` respectively (`bd list --no-assignee`, `--title`
             and `--id`; see those parameters) rather than answering
-            `unknown_parameter`, and `dependencies.blocking.isBlocked`, which
+            `unknown_parameter`, `dependencies.blocking.isBlocked`, which
             announces that `GET /v0/beads/dependencies/blocking` accepts
             `is_blocked` and answers each item's stored, transitive
             `is_blocked` flag (see that parameter) rather than silently
-            answering `unknown_parameter`. One behavior token is
+            answering `unknown_parameter`, and `issues.update.claim`, which
+            announces that `PATCH /v0/beads/issues/{id}` accepts `claim` (see
+            `UpdateIssueRequest`) and resolves the claimed id on both planes,
+            so a wisp is claimable there, rather than a `400` naming the
+            member unknown. One behavior token is
             CONDITIONAL rather than build-level: `policy.external_dependencies`
             announces that this server's ready, claim, claim-next, close,
             blocking and dependency-tree operations already apply bd's
@@ -11929,7 +11933,9 @@ components:
             included. With `claim: true` the `patch` may be empty. It must not
             be combined with `expected_assignee`, `expected_status` or
             `force_assignee_transfer`; a request that does is a `400` naming
-            `claim`.
+            `claim`. The id resolves on both planes, so a wisp is claimable
+            here (where `{id}:claim` answers it `404`); a wisp claim takes no
+            lease. Advertised by the behavior token `issues.update.claim`.
         expected_version:
           type: string
           description: >-

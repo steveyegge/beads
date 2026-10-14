@@ -54,6 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshots) matches `ErrValidation` on every route: `bd serve` answers it
   `400 invalid_argument`, and the local refusal gains a `validation failed: `
   prefix.
+- `bd serve` advertises the new `issues.update.claim` behavior token for what
+  `PATCH /v0/beads/issues/{id}` already served untokened: `claim` (upstream
+  #6890), resolved on both planes, so a wisp is claimable there (additive; no
+  wire_revision bump). The HTTP client now picks the claim route from the
+  handshake before dialing: with the token every claim is one updateIssue call;
+  without it a claim alone goes straight to `{id}:claim` (no doomed 400 first;
+  a wisp still refuses by name, W-ClaimRequest.Wisp, now naming the token), and
+  a claim beside a patch, a guard or a force override is refused before the
+  dial with an unsupported error naming `issues.update.claim`. Skew note: a
+  server that serves `claim` untokened (wire_revision 2 builds before this
+  release) now gets those two refusals from a new client where it used to
+  serve them; upgrade bd serve.
 - `issueops.LeaseReclaimer`, the stale-lease sweep behind `bd reclaim`, is a
   role on every leg (dolt, embedded dolt, the unit-of-work provider and the
   HTTP client), and `bd serve` publishes it as `POST /v0/beads/issues:reclaim`

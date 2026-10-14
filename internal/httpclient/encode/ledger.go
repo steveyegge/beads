@@ -561,7 +561,8 @@ func writeSideRows() []Row {
 			// current server claims a wisp through updateIssue, which resolves
 			// both planes exactly as the direct route's Lifecycle.Update does, so
 			// this row is reached ONLY on claimOnlyUpdate's fallback — a server
-			// that predates `claim` on updateIssue (upstream #6890), where the
+			// that does not advertise issues.update.claim (it predates `claim` on
+			// updateIssue, upstream #6890, or serves it untokened), where the
 			// claim is dialed as claimIssue instead. That operation
 			// (issueops.Claimer's own contract) answers a wisp id with ErrNotFound
 			// on every backend — the wisp plane is not claimable through that
@@ -575,7 +576,7 @@ func writeSideRows() []Row {
 			// pays the probe.
 			ID: "W-ClaimRequest.Wisp", Kind: KindRefuse,
 			What:     "claiming a wisp is not supported by this bd serve",
-			Why:      "the server predates claiming through its update operation, and its separate claim operation excludes the wisp plane; upgrade bd serve, or claim this issue from a local workspace",
+			Why:      "the server does not advertise issues.update.claim (claiming through its update operation, which reaches the wisp plane), and its separate claim operation excludes the wisp plane; upgrade bd serve to one that advertises it, or claim this issue from a local workspace",
 			SpecRow:  updateSpec,
 			PinnedBy: pinnedByS3Conformance,
 		},
