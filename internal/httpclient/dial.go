@@ -97,9 +97,9 @@ type DialOptions struct {
 	// nil credential.
 	explicitCredential bool
 
-	// ResponseHeaderTimeout bounds one attempt's wait for response headers,
-	// separately from the client's overall timeout (wire.DefaultTimeout):
-	// see wire.Options.ResponseHeaderTimeout. Zero takes
+	// ResponseHeaderTimeout bounds a read's first attempt's wait for response
+	// headers, separately from the client's overall timeout
+	// (wire.DefaultTimeout): see wire.Options.ResponseHeaderTimeout. Zero takes
 	// ResponseHeaderTimeoutEnv, else wire.DefaultResponseHeaderTimeout;
 	// negative disables it.
 	ResponseHeaderTimeout time.Duration
@@ -111,7 +111,11 @@ type DialOptions struct {
 
 // ResponseHeaderTimeoutEnv overrides the header timeout for every dial that
 // does not set DialOptions.ResponseHeaderTimeout: a Go duration ("15s",
-// "2m"), or "0"/"off" to disable it. An unparseable value refuses the dial.
+// "2m") or a number of seconds ("30"), as BEADS_GATE_WAIT_TIMEOUT takes, or "0"/
+// "off" to disable it. Disabling it turns off only the timer: a read whose
+// connection is reset is still retried once, and a write that times out
+// awaiting its headers is still reported as one. An unparseable value
+// refuses the dial.
 const ResponseHeaderTimeoutEnv = "BEADS_HTTP_RESPONSE_HEADER_TIMEOUT"
 
 // responseHeaderTimeout resolves the header timeout for one dial: the
@@ -121,15 +125,18 @@ func responseHeaderTimeout(opt time.Duration) (time.Duration, error) {
 		return opt, nil
 	}
 	raw := strings.TrimSpace(os.Getenv(ResponseHeaderTimeoutEnv))
-	switch raw {
-	case "":
+	if raw == "" {
 		return 0, nil
-	case "0", "off":
+	}
+	if strings.EqualFold(raw, "off") {
 		return -1, nil
 	}
 	d, err := time.ParseDuration(raw)
+	if err != nil {
+		d, err = time.ParseDuration(raw + "s")
+	}
 	if err != nil || d < 0 {
-		return 0, fmt.Errorf("%s=%q: want a non-negative Go duration such as 15s, or off", ResponseHeaderTimeoutEnv, raw)
+		return 0, fmt.Errorf("%s=%q: want a non-negative duration such as 15s or 30, or off", ResponseHeaderTimeoutEnv, raw)
 	}
 	if d == 0 {
 		return -1, nil
