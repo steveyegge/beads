@@ -1038,7 +1038,10 @@ type ExternalDependencyQueryStore interface {
 // IsBlocked reports unblocked, or that names no row, is absent. Decorators
 // that annotate a page of ids (the external-dependency policy's
 // BlockingAnnotator) use it instead of one IsBlocked per id, and fall back to
-// that loop on a store without it.
+// that loop on a store without it. It answers for the raw store alone, with no
+// external-dependency policy applied (no `external:` blocker is ever in it), so
+// it is meant to be called from inside that policy's decorator, not probed
+// through UnwrapStore by a caller holding the decorated store.
 type BlockersBatchStore interface {
 	IsBlockedWithBlockersBatch(ctx context.Context, ids []string) (map[string][]string, error)
 }
