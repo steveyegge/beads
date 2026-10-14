@@ -361,6 +361,7 @@
 40 22 TestEventsJournalPruneNeverSplitsASkewedPair
 40 22 TestLargeBatchApplyStatementCounts356_Embedded
 40 22 TestLeaseLifecycleEmbedded
+40 22 TestPolicyBlockingAnnotatorForeignOpensAreSublinear
 
 40 23 TestEmbeddedBatchCloserBackendFailureReturnsNoOutcomes
 40 23 TestEmbeddedBatchCloserClaimNextHydratesWhenSomethingClosed
@@ -552,6 +553,7 @@
 40 38 TestEmbeddedReaderListKeysetWalkOverAnOversizedGroupLosesNothingAndRepeatsNothing
 40 38 TestEmbeddedTempRebuildIntermediatesNeverReachHistory
 40 38 TestEventsJournalPruneWhenEveryRowIsOlderThanTheCutoff
+40 38 TestPolicyBlockingAnnotatorBatchEqualsPerItem
 40 38 TestWithPeerAuth_ConcurrentPeersDoNotMixCredentials
 
 40 39 TestDualWriteContractFlagOff
