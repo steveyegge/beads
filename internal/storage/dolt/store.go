@@ -1793,7 +1793,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			cfg.Database, addr)
 	}
 
-	return openWithEnvEndpointFallback(ctx, cfg, newServerMode)
+	return openWithEnvEndpointFallback(ctx, cfg, newServerModeOpener)
 }
 
 // resolveLocalActiveDatabaseDir returns an authoritative local path only for
@@ -1945,6 +1945,14 @@ var ensureRunningDetailed = doltserver.EnsureRunningDetailed
 // and assert whether it was invoked, without spawning or killing a real
 // dolt sql-server process.
 var stopRejectedAutoStartedServer = doltserver.Stop
+
+// newServerModeOpener is newServerMode, indirected through a var (matching
+// ensureRunningDetailed/stopRejectedAutoStartedServer above) so a test can
+// substitute a fake opener and assert New's own wiring — specifically, that
+// New always opens through openWithEnvEndpointFallback rather than calling
+// this directly — without dialing a real dolt sql-server (B1/S5, gascity
+// mc-3gbed).
+var newServerModeOpener = newServerMode
 
 // newServerMode creates a DoltStore connected to a running dolt sql-server.
 // This path is pure Go and does not require CGO.

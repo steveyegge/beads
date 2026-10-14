@@ -84,6 +84,63 @@ func TestResolveServerModeUOWTopology_GlobalSelectsTheGlobalDatabase(t *testing.
 	assert.Equal(t, "beads_global", topology.database)
 }
 
+// B1: an endpoint inherited from the environment (another workspace's server,
+// carried in this shell) must refuse rather than silently serve whatever
+// database that endpoint happens to answer with. This topology is built
+// straight from resolveDoltServerConnection, never through dolt.New, so it
+// gets none of openWithEnvEndpointFallback's identity check or correction —
+// serve has to refuse outright instead (gascity mc-3gbed).
+func TestResolveServerModeUOWTopology_RefusesWhenEnvEndpointDivergesFromDeclared(t *testing.T) {
+	beadsDir := serverModeBeadsDir(t, &configfile.Config{
+		DoltServerHost: "127.0.0.1",
+		DoltServerPort: 3521,
+		DoltDatabase:   "beads_serve",
+	})
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "45923")
+
+	_, err := resolveServerModeUOWTopology(context.Background(), beadsDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to start")
+	assert.Contains(t, err.Error(), "BEADS_DOLT_SERVER_PORT")
+	assert.Contains(t, err.Error(), "127.0.0.1:3521",
+		"the refusal must name this project's own declared endpoint, not just say one exists")
+}
+
+// The environment and the declared endpoint agreeing is the ordinary case —
+// an operator's shell whose BEADS_DOLT_SERVER_PORT happens to match this
+// project's own config.yaml/metadata.json — and must resolve exactly as
+// before the B1 fix.
+func TestResolveServerModeUOWTopology_AllowsEnvEndpointMatchingDeclared(t *testing.T) {
+	beadsDir := serverModeBeadsDir(t, &configfile.Config{
+		DoltServerHost: "127.0.0.1",
+		DoltServerPort: 3521,
+		DoltDatabase:   "beads_serve",
+	})
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "3521")
+
+	topology, err := resolveServerModeUOWTopology(context.Background(), beadsDir)
+	require.NoError(t, err)
+	assert.Equal(t, 3521, topology.external.Port)
+}
+
+// Shared-server mode is one server fronting every project by design, not a
+// cross-project leak: envEndpointFallback already excludes it (S5's
+// exclusion coverage), and this refusal must agree rather than block the
+// documented shared-server deployment.
+func TestResolveServerModeUOWTopology_SharedServerModeIsExcludedFromTheRefusal(t *testing.T) {
+	beadsDir := serverModeBeadsDir(t, &configfile.Config{
+		DoltServerHost: "127.0.0.1",
+		DoltServerPort: 3521,
+		DoltDatabase:   "beads_project",
+	})
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "45923")
+
+	_, err := resolveServerModeUOWTopology(context.Background(), beadsDir)
+	require.NoError(t, err,
+		"shared-server mode's one server for every project is not a cross-project leak; envEndpointFallback excludes it the same way")
+}
+
 // The no-metadata.json corner. The CLI store open in this same process takes
 // the literal default database name there (main.go's cfg == nil branch), and
 // the whole point of routing serve through the same resolution is that the two

@@ -388,6 +388,24 @@ func resolveServerModeUOWTopologyWithTransportResolver(ctx context.Context, bead
 	if err := resolveDoltServerConnection(ctx, beadsDir, fileCfg, conn); err != nil {
 		return sqlServerUOWTopology{}, err
 	}
+
+	// B1: this topology is built straight from resolveDoltServerConnection,
+	// not through dolt.New, so it never gets openWithEnvEndpointFallback's
+	// identity check or its correction. An endpoint inherited from the
+	// environment (another workspace's server, carried in this shell) would
+	// otherwise have serve silently migrate and front THAT database over
+	// HTTP. Refuse instead of guessing: unlike the CLI's own open, a wrong
+	// guess here is a running server, not a single failed command.
+	if declared, diverges := dolt.EnvEndpointDivergesFromDeclared(conn); diverges {
+		return sqlServerUOWTopology{}, fmt.Errorf(
+			"bd serve: refusing to start: the Dolt server endpoint for %s came from the "+
+				"environment (BEADS_DOLT_SERVER_PORT or BEADS_DOLT_PORT) and differs from "+
+				"this project's own declared endpoint (%s); this usually means a server "+
+				"inherited from another workspace. Unset the env var, or run `bd serve` from "+
+				"a shell that does not carry it, so it connects to this project's own server",
+			beadsDir, declared)
+	}
+
 	if conn.Gateway {
 		// Unreachable while a configured command is the only thing that can set
 		// Gateway (dolt.ApplyGatewayCredential is its sole writer, and the check
