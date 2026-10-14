@@ -1017,12 +1017,19 @@ func (m PersistenceMode) IsValid() bool {
 	return slices.Contains(validPersistenceModes, m)
 }
 
+// ErrUnversionedWispMove is NormalizePersistenceMode's refusal to move an
+// unversioned record to a wisp mode. The record is sound and the requested
+// move is what is refused, so callers can classify it apart from the
+// row-invariant errors the function also returns.
+var ErrUnversionedWispMove = errors.New("cannot move unversioned record")
+
 // NormalizePersistenceMode maps a requested mode from current to its exact
 // persistence fields without mutating an issue. The returned values are
 // Ephemeral, NoHistory, and StorageClass, respectively. Plane and retention
 // changes preserve the create-selected class. Promotion clears an explicit
 // ephemeral class marker to select normalized versioned storage. An
-// unversioned record may remain persistent but cannot move to a wisp mode.
+// unversioned record may remain persistent but cannot move to a wisp mode
+// (ErrUnversionedWispMove).
 func NormalizePersistenceMode(current Issue, mode PersistenceMode) (bool, bool, StorageClass, error) {
 	if !mode.IsValid() {
 		return false, false, "", fmt.Errorf("invalid persistence mode %q", mode)
@@ -1041,7 +1048,7 @@ func NormalizePersistenceMode(current Issue, mode PersistenceMode) (bool, bool, 
 		return false, false, "", fmt.Errorf("storage class ephemeral requires ephemeral or no_history")
 	}
 	if current.StorageClass == StorageClassUnversioned && mode != PersistenceModePersistent {
-		return false, false, "", fmt.Errorf("cannot move unversioned record to persistence mode %q", mode)
+		return false, false, "", fmt.Errorf("%w to persistence mode %q", ErrUnversionedWispMove, mode)
 	}
 	if persistenceMode(current) == mode {
 		return current.Ephemeral, current.NoHistory, current.StorageClass, nil

@@ -214,12 +214,12 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 		httpapi.CapIssuesSweepWispsPlane, httpapi.CapIssuesSweepLiveDependents, httpapi.CapIssuesSweepLimit,
 		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
 		httpapi.CapIssuesCloseAutoCloseMolecule, httpapi.CapIssuesListSearch,
-		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapListIDs,
+		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapListIDs, httpapi.CapIssuesUpdatePersistence,
 	}) {
 		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
 			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit, "+
 			"issues.batchApply.depAddLineage, issues.update.allowTemplate, issues.create.defaultPriority, issues.close.autoCloseMolecule, issues.list.search, "+
-			"issues.list.noAssignee, issues.list.title and issues.list.ids tokens", behaviorCapabilities)
+			"issues.list.noAssignee, issues.list.title, issues.list.ids and issues.update.persistence tokens", behaviorCapabilities)
 	}
 }
 

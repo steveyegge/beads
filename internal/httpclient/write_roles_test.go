@@ -410,7 +410,9 @@ func TestUpdateRefusesEveryMemberTheWireExcludes(t *testing.T) {
 		"Patch.ClosedBySession": {Patch: issueops.IssuePatch{ClosedBySession: set("s1")}},
 		"Patch.SpecID":          {Patch: issueops.IssuePatch{SpecID: set("spec")}},
 		"Patch.AwaitID":         {Patch: issueops.IssuePatch{AwaitID: set("await")}},
-		"Patch.Persistence":     {Patch: issueops.IssuePatch{Persistence: set(issueops.PersistenceModeEphemeral)}},
+		// Patch.Persistence WAS here; issues.update.persistence publishes it
+		// (S21b). TestUpdatePersistenceIsSentOnlyToAServerThatAdvertisesIt
+		// is the positive assertion and the pre-dial capability refusal.
 
 		// Patch.Labels.Add and Patch.Labels.Remove WERE here, and their absence
 		// is the flip rather than an oversight: upstream #5510 published

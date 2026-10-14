@@ -685,7 +685,7 @@ shapes:
     source: mc mol-normalized-issue-pr-v1 (promote --reason)
     args: [promote, e2e-wisp-p, --reason, "keep it"]
     compare: exit
-    pending: {slice: "S21b", reason: "promote has no served operation (B3 #16): the http Store stubs PromoteFromEphemeral, updateIssue's patch does not publish persistence (W-IssuePatch.Persistence), and no server has a promote route; it needs a new additive capability, then SRV-1"}
+    pending: {slice: "SRV-1", reason: "the reference server does not advertise issues.update.persistence, so the client refuses at its capability preflight"}
   - id: mc-mol-burn
     source: mc review fixtures (mol burn --force)
     args: [mol, burn, e2e-wisp-m, --force]

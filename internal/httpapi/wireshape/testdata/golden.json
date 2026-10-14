@@ -2919,6 +2919,12 @@
     },
     {
       "schema": "IssuePatchBody",
+      "member": "persistence",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "IssuePatchBody",
       "member": "priority",
       "type": "integer",
       "required": false

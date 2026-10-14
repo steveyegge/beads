@@ -335,6 +335,9 @@ func (l *httpLifecycle) Update(ctx context.Context, req issueops.UpdateRequest) 
 		return issueops.UpdateResult{}, invalid("update names no field to write")
 	}
 
+	if err := l.requirePersistenceMove(ctx, req); err != nil {
+		return issueops.UpdateResult{}, err
+	}
 	req, err = l.applyTemplateGuardForServer(ctx, req)
 	if err != nil {
 		return issueops.UpdateResult{}, err
@@ -415,6 +418,33 @@ func serverPredatesUpdateClaim(err error) bool {
 	return errors.As(err, &problem) &&
 		problem.Reason == encode.UnknownParameterReason &&
 		problem.Param == "claim"
+}
+
+// requirePersistenceMove refuses, before anything is dialed, an update that
+// moves the row between planes (IssuePatch.Persistence: `bd promote`, `bd
+// update --persistent`) against a server that does not advertise
+// wire.CapIssuesUpdatePersistence. Such a server refuses `patch.persistence`
+// as an unknown parameter, and the move is one transaction on the server, so
+// there is no client-side fallback: the refusal is the typed capability error
+// naming the token (*wire.CapabilityError, which unwraps to
+// *storage.ErrUnsupported with Capability set), never a dropped member and a
+// "no change" answer.
+func (l *httpLifecycle) requirePersistenceMove(ctx context.Context, req issueops.UpdateRequest) error {
+	if !req.Patch.Persistence.Set {
+		return nil
+	}
+	snap, err := l.store.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if snap != nil && slices.Contains(snap.Capabilities, wire.CapIssuesUpdatePersistence) {
+		return nil
+	}
+	// The case-2 text names the server and the token, so `bd promote`
+	// against an older server says what to upgrade rather than only that the
+	// operation is unsupported. It unwraps to *storage.ErrUnsupported with
+	// Capability set, like every other capability refusal.
+	return wire.NewCapabilityError(wire.OpUpdateIssue, wire.CapIssuesUpdatePersistence, l.store.target.String(), snap)
 }
 
 // applyTemplateGuardForServer decides, BEFORE the dial and from the cached
@@ -779,6 +809,12 @@ func encodeIssuePatch(patch issueops.IssuePatch) (map[string]any, error) {
 	}
 	setString(out, "assignee", patch.Assignee)
 	setString(out, "parent_id", patch.ParentID)
+	// The plane move (issues.update.persistence). Update has already refused
+	// it, before the dial, against a server that does not advertise the token;
+	// this only spells it.
+	if patch.Persistence.Set {
+		out["persistence"] = string(patch.Persistence.Value)
+	}
 	if metadataPatched(patch.Metadata) {
 		document, err := encodeMetadataPatch(patch.Metadata)
 		if err != nil {
@@ -910,8 +946,6 @@ func refuseExcludedPatchMembers(patch issueops.IssuePatch) error {
 		return refuse(encode.OpUpdateIssue, "W-IssuePatch.SpecID")
 	case patch.AwaitID.Set:
 		return refuse(encode.OpUpdateIssue, "W-IssuePatch.AwaitID")
-	case patch.Persistence.Set:
-		return refuse(encode.OpUpdateIssue, "W-IssuePatch.Persistence")
 	}
 	return nil
 }

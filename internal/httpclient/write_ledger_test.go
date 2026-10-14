@@ -318,6 +318,12 @@ func writeShapes() []writeShape {
 				"Assignee": member("assignee"),
 				"ParentID": member("parent_id"),
 				"Metadata": member("metadata"),
+				// The plane move, carried since issues.update.persistence
+				// (S21b, `bd promote` over http). Only this shape: the batch
+				// item's ApplyPatchBody still excludes it, so
+				// W-IssuePatch.Persistence stays a refusal there — the Owner
+				// row's arrangement, the other way round.
+				"Persistence": member("persistence"),
 			},
 			// NOTHING IS PENDING, and the set is empty rather than absent for the
 			// reason the second list in accessors.go was: it held the two

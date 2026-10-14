@@ -534,11 +534,12 @@ func TestServedLifecycleCloseExpectedVersionSingleWinnerUnderConcurrency(t *test
 // `force_notes_overwrite` before them. Their rows (W-UpdateRequest.Claim,
 // .ForceAssigneeTransfer, .ForceClosePolicy) are RETIRED.
 //
-// What still parks after them is TWO members updateIssue publishes nothing for
-// (W-IssuePatch.Persistence, W-UpdateRequest.Provenance), each named so the
-// lock counts the contract rather than reading it as unwritten. Both refusals
-// are themselves asserted by TestUpdateRefusesEveryMemberTheWireExcludes, which
-// RUNS, so no park here stands in for an unpinned behavior.
+// What still parks after them is ONE member updateIssue publishes nothing for
+// (W-UpdateRequest.Provenance), named so the lock counts the contract rather
+// than reading it as unwritten. W-IssuePatch.Persistence left the parks with
+// issues.update.persistence (S21b). The remaining refusal is itself asserted by
+// TestUpdateRefusesEveryMemberTheWireExcludes, which RUNS, so no park here
+// stands in for an unpinned behavior.
 
 // TestServedLifecycleUpdateClaimIsAMutationWhenThePatchRestoresTheRow is the
 // claim folded into an update: a mutation even when the patch beside it restores
@@ -808,16 +809,26 @@ func TestServedLifecycleUpdateClosePolicy(t *testing.T) {
 	conformance.RunLifecycleUpdateClosePolicy(t, t.Context(), newServedUpdateFixture(t, "hlcp"))
 }
 
-// TestServedLifecycleUpdatePersistentPreservesUnversionedClass parks on
-// IssuePatch.Persistence, which neither IssuePatchBody nor ApplyPatchBody
-// publishes: moving a row between planes mid-plan is a different act from
-// writing its fields, and a dropped persistence mode would answer "no change"
-// to a request that asked for one.
+// TestServedLifecycleUpdatePersistentPreservesUnversionedClass RUNS since
+// issues.update.persistence (S21b): IssuePatchBody publishes `persistence` and
+// the client sends it, so the restatement is the server's own role call.
 func TestServedLifecycleUpdatePersistentPreservesUnversionedClass(t *testing.T) {
-	skipKnownDivergence(t, "W-IssuePatch.Persistence", parkBead,
-		"the case restates an unversioned row as persistent, and the wire publishes no persistence member "+
-			"on either patch body; the client refuses it rather than reporting a no-op it did not ask the server for")
 	conformance.RunLifecycleUpdatePersistentPreservesUnversionedClass(t, t.Context(), newServedUpdateFixture(t, "hlpu"))
+}
+
+// TestServedLifecycleUpdateWispModesRefuseAnUnversionedRow is the role's
+// refusal answered as a 400 the client maps back to ErrValidation; before the
+// role classified it, the server answered a 500 `internal` and emitted
+// `request_error` for a request the caller could have fixed.
+func TestServedLifecycleUpdateWispModesRefuseAnUnversionedRow(t *testing.T) {
+	conformance.RunLifecycleUpdateWispModesRefuseAnUnversionedRow(t, t.Context(), newServedUpdateFixture(t, "hluw"))
+}
+
+// TestServedLifecycleUpdatePersistentPromotesAWisp is the plane move `bd
+// promote` sends over http (issues.update.persistence, S21b), served by the
+// role the direct route runs.
+func TestServedLifecycleUpdatePersistentPromotesAWisp(t *testing.T) {
+	conformance.RunLifecycleUpdatePersistentPromotesAWisp(t, t.Context(), newServedUpdateFixture(t, "hlpw"))
 }
 
 // TestServedLifecycleUpdateProvenanceLabelsHistory is the update-side twin of
