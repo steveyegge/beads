@@ -479,8 +479,13 @@ func predatesUpdateClaim() error {
 // handshake picks, BEFORE the dial. A server without issues.update.claim gets
 // a claim ALONE as claimIssue (whose request is the actor alone, so nothing is
 // dropped) and never an updateIssue carrying `claim`; a claim beside a patch,
-// a guard or an override is refused with ErrUnsupported naming the token and
-// dials nothing — never split into two calls, never sent to be 400'd.
+// a guard, an override or AllowTemplate is refused with ErrUnsupported naming
+// the token and dials nothing — never split into two calls, never sent to be
+// 400'd. The claim alone pre-reads the row first, for the template guard
+// claimIssue's role does not run
+// (TestUpdateClaimRefusesATemplateWithoutTheToken, and
+// TestUpdateClaimFailsClosedWhenThePreReadFails for a read that fails), and
+// claimOnlyUpdate reads it back after the claim for the labels.
 func TestUpdateClaimAgainstAServerWithoutTheToken(t *testing.T) {
 	version := int64(7)
 	holder := "someone"
@@ -492,7 +497,7 @@ func TestUpdateClaimAgainstAServerWithoutTheToken(t *testing.T) {
 		wantRefused bool
 	}{
 		{name: "a claim alone goes to claimIssue", req: issueops.UpdateRequest{},
-			wantCalls: []string{"claimIssue:bd-1"}},
+			wantCalls: []string{"getIssue:bd-1", "claimIssue:bd-1", "getIssue:bd-1"}},
 		{name: "a claim with a patch is refused before the dial",
 			req: issueops.UpdateRequest{Patch: issueops.IssuePatch{Title: set("claimed and renamed")}}, wantRefused: true},
 		{name: "a claim with a version guard is refused before the dial",
@@ -501,14 +506,19 @@ func TestUpdateClaimAgainstAServerWithoutTheToken(t *testing.T) {
 			req: issueops.UpdateRequest{ExpectedAssignee: &holder}, wantRefused: true},
 		{name: "a claim with a close-policy override is refused before the dial",
 			req: issueops.UpdateRequest{ForceClosePolicy: true}, wantRefused: true},
+		{name: "a claim with allow_template is refused before the dial",
+			req: issueops.UpdateRequest{AllowTemplate: true}, wantRefused: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// No queued error: the stub answers whichever call comes first,
 			// and the calls check below is what says updateIssue was never one.
-			w := &stubWire{
-				claim: &apigen.ClaimResponse{
-					Issue: apigen.Issue{ID: "bd-1", Status: types.StatusInProgress, Assignee: "writer"},
+			w := &templateServerWire{
+				stubWire: &stubWire{
+					claim: &apigen.ClaimResponse{
+						Issue: apigen.Issue{ID: "bd-1", Status: types.StatusInProgress, Assignee: "writer"},
+					},
 				},
+				row: &types.Issue{ID: "bd-1", Title: "work"},
 			}
 			snap := &apigen.ContextResponse{BdVersion: "1.3.0", Capabilities: []string{wire.CapIssuesUpdateAllowTemplate}}
 			lifecycle, err := New(testTarget(t), w, snap).IssueLifecycle()
@@ -520,7 +530,7 @@ func TestUpdateClaimAgainstAServerWithoutTheToken(t *testing.T) {
 
 			res, err := lifecycle.Update(t.Context(), req)
 			if tc.wantRefused {
-				requireCapabilityRefusal(t, err, wire.CapIssuesUpdateClaim, w)
+				requireCapabilityRefusal(t, err, wire.CapIssuesUpdateClaim, w.stubWire)
 				return
 			}
 			if !reflect.DeepEqual(w.calls, tc.wantCalls) {
@@ -536,6 +546,89 @@ func TestUpdateClaimAgainstAServerWithoutTheToken(t *testing.T) {
 			// may stand in for one.
 			if res.Issue != nil && res.Issue.RowVersion != 0 {
 				t.Errorf("the claimIssue route stitched RowVersion %d onto a row claimIssue answered without one", res.Issue.RowVersion)
+			}
+		})
+	}
+}
+
+// TestUpdateClaimRefusesATemplateWithoutTheToken pins the template read-only
+// guard on the claimIssue route. A claim alone against a server without
+// issues.update.claim never dials updateIssue, so the server's update guard
+// (issues.update.allowTemplate) never sees it, and claimIssue's role has no
+// template check (bd-jkp9v3). The client refuses a template on its own
+// pre-read, before claimIssue is dialed, with or without allowTemplate in the
+// handshake.
+func TestUpdateClaimRefusesATemplateWithoutTheToken(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		caps []string
+	}{
+		{name: "a server that guards updateIssue", caps: []string{wire.CapIssuesUpdateAllowTemplate}},
+		{name: "a server with neither token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &templateServerWire{
+				stubWire: &stubWire{
+					claim: &apigen.ClaimResponse{
+						Issue: apigen.Issue{ID: "bd-1", Status: types.StatusInProgress, Assignee: "writer"},
+					},
+				},
+				row: &types.Issue{ID: "bd-1", Title: "tmpl", IsTemplate: true},
+			}
+			snap := &apigen.ContextResponse{BdVersion: "1.3.0", Capabilities: tc.caps}
+			lifecycle, err := New(testTarget(t), w, snap).IssueLifecycle()
+			if err != nil {
+				t.Fatalf("IssueLifecycle(): %v", err)
+			}
+
+			_, err = lifecycle.Update(t.Context(), issueops.UpdateRequest{Actor: "writer", IssueID: "bd-1", Claim: true})
+			var refusal *issueops.TemplateReadOnlyError
+			if !errors.As(err, &refusal) {
+				t.Fatalf("Update err = %v, want a TemplateReadOnlyError", err)
+			}
+			if want := []string{"getIssue:bd-1"}; !reflect.DeepEqual(w.calls, want) {
+				t.Errorf("calls = %v, want %v: the template is refused before claimIssue is dialed", w.calls, want)
+			}
+		})
+	}
+}
+
+// TestUpdateClaimFailsClosedWhenThePreReadFails pins the third arm of the
+// token-less claim's template pre-read: a read that fails for any reason but
+// not-found returns that failure before claimIssue is dialed. The row's
+// template bit is unknown then, and claiming it anyway is the template claim
+// the pre-read exists to refuse.
+func TestUpdateClaimFailsClosedWhenThePreReadFails(t *testing.T) {
+	readErr := errors.New("getIssue: 503 service unavailable")
+	for _, tc := range []struct {
+		name string
+		caps []string
+	}{
+		{name: "a server that guards updateIssue", caps: []string{wire.CapIssuesUpdateAllowTemplate}},
+		{name: "a server with neither token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &templateServerWire{
+				stubWire: &stubWire{
+					claim: &apigen.ClaimResponse{
+						Issue: apigen.Issue{ID: "bd-1", Status: types.StatusInProgress, Assignee: "writer"},
+					},
+				},
+				row:     &types.Issue{ID: "bd-1", Title: "tmpl", IsTemplate: true},
+				readErr: readErr,
+			}
+			snap := &apigen.ContextResponse{BdVersion: "1.3.0", Capabilities: tc.caps}
+			lifecycle, err := New(testTarget(t), w, snap).IssueLifecycle()
+			if err != nil {
+				t.Fatalf("IssueLifecycle(): %v", err)
+			}
+
+			_, err = lifecycle.Update(t.Context(), issueops.UpdateRequest{Actor: "writer", IssueID: "bd-1", Claim: true})
+			if !errors.Is(err, readErr) {
+				t.Fatalf("Update err = %v, want the pre-read's failure %v", err, readErr)
+			}
+			if want := []string{"getIssue:bd-1"}; !reflect.DeepEqual(w.calls, want) {
+				t.Errorf("calls = %v, want %v: a failed pre-read must not go on to claimIssue", w.calls, want)
 			}
 		})
 	}
@@ -1843,7 +1936,8 @@ func TestWriteAccessorsRefuseWithoutATransport(t *testing.T) {
 // updateIssue — or instead of it.
 type templateServerWire struct {
 	*stubWire
-	row *types.Issue
+	row     *types.Issue
+	readErr error // non-nil: getIssue fails with it, for a reason other than not-found
 }
 
 func (w *templateServerWire) Preflight(context.Context, string) error { return nil }
@@ -1853,6 +1947,9 @@ func (w *templateServerWire) Do(_ context.Context, req wire.Request, out any) er
 		return fmt.Errorf("templateServerWire: unexpected generic dispatch %q", req.Op)
 	}
 	w.calls = append(w.calls, "getIssue:"+req.IssueID)
+	if w.readErr != nil {
+		return w.readErr
+	}
 	if w.row == nil {
 		return fmt.Errorf("no issue %s: %w", req.IssueID, issueops.ErrNotFound)
 	}

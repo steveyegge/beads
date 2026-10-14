@@ -271,8 +271,9 @@ const CapIssuesUpdatePersistence = "issues.update.persistence"
 // spelled exactly as httpapi's constant of the same name. Lifecycle.Update
 // reads it from the cached handshake before the dial: with it, a claim rides
 // updateIssue; without it, a claim alone goes to claimIssue (a wisp then
-// refuses by name, W-ClaimRequest.Wisp) and a claim beside a patch, a guard or
-// a force override is refused before the dial with ErrUnsupported naming it.
+// refuses by name, W-ClaimRequest.Wisp) and a claim beside a patch, a guard, a
+// force override or `allow_template` is refused before the dial with
+// ErrUnsupported naming it.
 const CapIssuesUpdateClaim = "issues.update.claim"
 
 // CapIssuesCreateDefaultPriority is the behavior capability announcing that

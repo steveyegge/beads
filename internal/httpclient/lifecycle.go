@@ -304,7 +304,7 @@ func copyTime(value *time.Time) *time.Time {
 // planes (a wisp included), and answered with the post-write `revision` like
 // every other update. That is what a server advertising
 // wire.CapIssuesUpdateClaim serves, and the token is read from the cached
-// handshake BEFORE the dial (claimRouteForServer): against a server without
+// handshake BEFORE the dial (claimWithoutUpdateClaim): against a server without
 // it a claim alone goes to claimIssue (claimOnlyUpdate) and a claim beside
 // anything else is refused, naming the token, without a dial.
 func (l *httpLifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (result issueops.UpdateResult, err error) {
@@ -420,13 +420,33 @@ func updateFlags(req issueops.UpdateRequest) wire.UpdateFlags {
 // A claim ALONE is exactly claimIssue's request (isClaimOnlyUpdate), so it
 // goes there (claimOnlyUpdate): an ordinary issue is claimed as before, and a
 // wisp, which claimIssue's role excludes, refuses by name
-// (W-ClaimRequest.Wisp). A claim beside a patch, a guard or a force override
-// is refused before the dial with ErrUnsupported naming the token, rather
-// than split into claimIssue then updateIssue (a caller could observe the
-// issue claimed but not patched) or sent to a server that would 400 it.
+// (W-ClaimRequest.Wisp). A claim beside a patch, a guard, a force override or
+// AllowTemplate is refused before the dial with ErrUnsupported naming the
+// token, rather than split into claimIssue then updateIssue (a caller could
+// observe the issue claimed but not patched) or sent to a server that would
+// 400 it.
+//
+// The template read-only guard runs HERE, on a pre-read, whatever the
+// handshake says about wire.CapIssuesUpdateAllowTemplate: that token means
+// updateIssue guards templates, and this route never dials updateIssue.
+// claimIssue's role has no template check (bd-jkp9v3), so without this read
+// a claim alone would claim a template, which Update refuses on every other
+// route. Any other row goes on to claimIssue as before (a wisp to its refusal
+// by name), and so does an id the pre-read cannot find: claimIssue's
+// not-found is the one to report.
 func (l *httpLifecycle) claimWithoutUpdateClaim(ctx context.Context, req issueops.UpdateRequest) (issueops.UpdateResult, error) {
 	if !isClaimOnlyUpdate(req) {
 		return issueops.UpdateResult{}, l.store.unsupportedCapability("Lifecycle.Update", wire.CapIssuesUpdateClaim)
+	}
+	before, err := l.store.GetIssue(ctx, req.IssueID)
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+	case err != nil:
+		return issueops.UpdateResult{}, err
+	default:
+		if err := storageops.AuthorizeTemplateUpdate(before, req); err != nil {
+			return issueops.UpdateResult{}, err
+		}
 	}
 	return l.claimOnlyUpdate(ctx, req)
 }

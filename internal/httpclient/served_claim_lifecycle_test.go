@@ -821,6 +821,62 @@ func TestServedUpdateClaimBesideAPatchNeedsTheToken(t *testing.T) {
 	}
 }
 
+// TestServedUpdateClaimRefusesATemplateWithoutTheToken is the served pin of
+// the template read-only guard on the claimIssue route. Without
+// issues.update.claim a claim alone never dials updateIssue, whose guard is
+// the one issues.update.allowTemplate advertises, and claimIssue's role has no
+// template check (bd-jkp9v3): a dial would claim the template. The client
+// refuses on its own pre-read instead — with allowTemplate in the handshake (a
+// build that serves `claim` untokened) or without it (one older still) — and
+// the template stays open and unassigned.
+func TestServedUpdateClaimRefusesATemplateWithoutTheToken(t *testing.T) {
+	env := newServedEnv(t, "hlct")
+	ctx := t.Context()
+	for _, tc := range []struct {
+		name          string
+		id            string
+		allowTemplate bool
+	}{
+		{name: "a server that guards updateIssue", id: "hlct-guarded", allowTemplate: true},
+		{name: "a server with neither token", id: "hlct-older"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := env.createIssue(ctx, &types.Issue{
+				ID: tc.id, Title: tc.id, Status: types.StatusOpen, Priority: 2,
+				IssueType: types.TypeTask, IsTemplate: true,
+			}, "seed"); err != nil {
+				t.Fatalf("seed the template %s: %v", tc.id, err)
+			}
+			subject, transport := env.updateClaimSubject(t, false)
+			if !tc.allowTemplate {
+				subject.ctxRes.Capabilities = slices.DeleteFunc(subject.ctxRes.Capabilities, func(token string) bool {
+					return token == wire.CapIssuesUpdateAllowTemplate
+				})
+			}
+			lifecycle, err := subject.IssueLifecycle()
+			if err != nil {
+				t.Fatalf("IssueLifecycle(): %v", err)
+			}
+
+			_, err = lifecycle.Update(ctx, issueops.UpdateRequest{Actor: "claimant", IssueID: tc.id, Claim: true})
+			var refusal *issueops.TemplateReadOnlyError
+			if !errors.As(err, &refusal) {
+				t.Fatalf("claim-only update on a template returned %v, want a TemplateReadOnlyError", err)
+			}
+			if got := transport.refused.Load() + transport.claimDials.Load(); got != 0 {
+				t.Errorf("the refused claim dialed %d claim requests, want 0", got)
+			}
+			row, err := env.getIssue(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("read the template back: %v", err)
+			}
+			if row.Status != types.StatusOpen || row.Assignee != "" {
+				t.Errorf("the refused claim left %s as %s/%q, want open/unassigned", tc.id, row.Status, row.Assignee)
+			}
+		})
+	}
+}
+
 // TestClaimOnlyUpdateHydratesLabelsAndCreatedByForOutputParity pins
 // `bd update <id> --claim --json` printing the same "labels" and "created_by"
 // over an http workspace as the direct route does, on BOTH routes a claim-only
