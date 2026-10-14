@@ -133,18 +133,21 @@ restore_original() {
     cp -p "$BACKUP" default.nix
 }
 
-# A SIGINT/SIGTERM during the long step (the nix build) reaches this process
-# and its nix child as one group; the child dies, this script exits through
-# the EXIT trap with the placeholder hash still in default.nix. Plain
+# A SIGINT/SIGTERM during the long steps (the nix builds) reaches this process
+# and its nix child as one group; the child dies, and this script exits
+# through the EXIT trap with default.nix still holding the placeholder hash
+# (probe build) or an unverified candidate hash (step 5). Plain
 # `rm -rf "$SCRATCH_DIR"` there would delete the only backup while leaving
-# that placeholder in place -- worse than every handled failure, since
-# recovery becomes `git checkout default.nix`, which also discards any
-# uncommitted operator edits. The placeholder is never a valid end state, so
-# restore it here whenever it's still there; every handled exit below has
-# already restored or verified default.nix by the time it runs, so this is a
-# no-op on every path except an interrupted one.
+# either in place -- worse than every handled failure, since recovery becomes
+# `git checkout default.nix`, which also discards any uncommitted operator
+# edits. Neither is a valid end state: VERIFIED is set only once a build has
+# verified default.nix as it stands, so restore the original whenever the run
+# ends before that. Every handled exit below has already restored or verified
+# default.nix by the time this runs, so it is a no-op on every path except an
+# interrupted one.
+VERIFIED=false
 cleanup() {
-    if [ -f "$BACKUP" ] && grep -qF "$FAKE_HASH" default.nix 2>/dev/null; then
+    if [ "$VERIFIED" != true ] && [ -f "$BACKUP" ] && ! cmp -s "$BACKUP" default.nix; then
         restore_original
         log_info "Restored original default.nix (run interrupted)"
     fi
@@ -175,7 +178,11 @@ sed_inplace "s|vendorHash = \".*\";|vendorHash = \"$FAKE_HASH\";|" default.nix
 
 # Step 2: Run nix build and capture the error
 log_info "Building to get actual hash (this will fail intentionally)..."
-BUILD_LOG="/tmp/nix-vendorhash-build-$$.log"
+# Per-run log names under ${TMPDIR:-/tmp}, like the scratch dir: a fixed name
+# in a shared /tmp collides with another run's (or another user's) log. They
+# live outside the scratch dir because a failure keeps the logs it names.
+BUILD_LOG="${TMPDIR:-/tmp}/nix-vendorhash-build-$$.log"
+VERIFY_LOG="${TMPDIR:-/tmp}/nix-vendorhash-verify-$$.log"
 # This build is expected to fail (the fake hash above is designed to trigger
 # a hash-mismatch error), so capture its real exit status explicitly instead
 # of `|| true`, which would discard it. The exit status (not a "hash
@@ -219,12 +226,13 @@ if [ -z "$ACTUAL_HASH" ]; then
         # success exit must actually build that file, not just infer it
         # from the probe.
         log_info "No hash mismatch in the probe build - verifying the restored file builds as-is..."
-        RESTORE_BUILD_LOG="/tmp/nix-vendorhash-restore-build-$$.log"
+        RESTORE_BUILD_LOG="${TMPDIR:-/tmp}/nix-vendorhash-restore-build-$$.log"
         set +e
         run_nix build > "$RESTORE_BUILD_LOG" 2>&1
         RESTORE_BUILD_EXIT=$?
         set -e
         if [ "$RESTORE_BUILD_EXIT" -eq 0 ]; then
+            VERIFIED=true
             log_success "No hash mismatch - vendorHash is already correct!"
             rm -f "$BUILD_LOG" "$RESTORE_BUILD_LOG"
             exit 0
@@ -251,9 +259,9 @@ log_success "Extracted actual hash: $ACTUAL_HASH"
 log_info "Updating default.nix with correct hash..."
 sed_inplace "s|vendorHash = \".*\";|vendorHash = \"$ACTUAL_HASH\";|" default.nix
 
-# $BACKUP is kept until step 5 verifies (or this script exits, whichever
-# comes first) — restore_original below needs it if the verification
-# build fails. The scratch dir's EXIT trap removes it either way.
+# $BACKUP is kept until step 5 verifies: restore_original below needs it if
+# the verification build fails, and the EXIT trap if that build is
+# interrupted. The trap removes the scratch dir either way.
 
 # Step 5: Verify the update by rebuilding
 log_info "Verifying update with a clean build..."
@@ -264,8 +272,9 @@ log_info "Verifying update with a clean build..."
 # extraction above relies on `grep -o` legitimately returning non-zero on no
 # match, which pipefail would turn into a script abort under `set -e`.
 set -o pipefail
-if run_nix build 2>&1 | tee /tmp/nix-build-verify.log; then
+if run_nix build 2>&1 | tee "$VERIFY_LOG"; then
     set +o pipefail
+    VERIFIED=true
     log_success "Build successful! vendorHash updated correctly."
     echo ""
     log_info "Summary:"
@@ -275,11 +284,11 @@ if run_nix build 2>&1 | tee /tmp/nix-build-verify.log; then
     log_success "default.nix has been updated"
 
     # Clean up build logs
-    rm -f "$BUILD_LOG" /tmp/nix-build-verify.log
+    rm -f "$BUILD_LOG" "$VERIFY_LOG"
 else
     set +o pipefail
     log_error "Build failed after updating hash"
-    log_error "See /tmp/nix-build-verify.log for details"
+    log_error "See $VERIFY_LOG for details"
     log_error "Initial build log: $BUILD_LOG"
     restore_original
     log_info "Restored original default.nix (candidate hash did not verify)"

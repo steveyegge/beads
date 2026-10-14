@@ -1537,10 +1537,11 @@ func TestPinnedDoltCLIMatchesContainerImage(t *testing.T) {
 
 // TestPinnedDoltCLIAtLeastRecommendedMin guards doltversion.RecommendedMin
 // against the pinned Dolt CLI version (scripts/ci/install-dolt.sh) drifting
-// below it. RecommendedMin documents itself as aligned with the CLI pins,
-// but nothing enforced that claim: a pin lowered below RecommendedMin would
-// mean every CI run exercises a Dolt CLI the package's own policy already
-// warns is below the matrix-tested floor.
+// below it (#7500). TestPinnedDoltCLIMatchesContainerImage holds the container
+// image and tools/bazel/dolt.bzl to that same pin, so this covers every CI
+// Dolt. A pin lowered below RecommendedMin would mean every CI run exercises a
+// Dolt CLI the package's own policy already warns is below the matrix-tested
+// floor.
 func TestPinnedDoltCLIAtLeastRecommendedMin(t *testing.T) {
 	root := sourceRepoRoot(t)
 
@@ -1553,6 +1554,35 @@ func TestPinnedDoltCLIAtLeastRecommendedMin(t *testing.T) {
 	pinned := doltversion.MustParse(cliVersion)
 	if !pinned.AtLeast(doltversion.RecommendedMin) {
 		t.Errorf("pinned Dolt CLI %s is below doltversion.RecommendedMin %s", cliVersion, doltversion.RecommendedMin)
+	}
+}
+
+// TestUpdateVendorHashWorkflowBuildsIndependently guards #7499: the dependabot
+// vendorHash job must not take scripts/update-nix-vendorhash.sh's exit status
+// on trust. A script that wrongly exits 0 on a broken build (as it did on
+// #7441) is caught only if an unconditional `nix build .#default` runs after
+// it and before the job reports a match or pushes the hash.
+func TestUpdateVendorHashWorkflowBuildsIndependently(t *testing.T) {
+	const verify = "Verify the build independently of the script's exit status"
+	job := readCIWorkflow(t, "update-vendor-hash.yml").job(t, "update-vendor-hash")
+	if job.ContinueOnError {
+		t.Error("update-vendor-hash job has continue-on-error; a failed build would not fail it")
+	}
+	step := job.step(t, verify)
+	if strings.TrimSpace(step.Run) != "nix build .#default" || step.If != "" || step.ContinueOnError != nil {
+		t.Errorf("%q: run %q, if %q, continue-on-error %v; want an unconditional `nix build .#default`",
+			verify, step.Run, step.If, step.ContinueOnError)
+	}
+	update := job.stepIndex(t, "Update vendorHash")
+	if run := strings.TrimSpace(job.Steps[update].Run); run != "./scripts/update-nix-vendorhash.sh" {
+		t.Errorf("\"Update vendorHash\" runs %q, want ./scripts/update-nix-vendorhash.sh", run)
+	}
+	at := job.stepIndex(t, verify)
+	for _, later := range []string{"Detect whether hash changed", "Commit and push hash update"} {
+		if i := job.stepIndex(t, later); !(update < at && at < i) {
+			t.Errorf("%q is step %d, %q step %d and %q step %d; the build must run after the script and before %q",
+				verify, at, "Update vendorHash", update, later, i, later)
+		}
 	}
 }
 
