@@ -295,7 +295,7 @@ func (s *uowExportSource) LoadExportRelations(ctx context.Context, issues []*typ
 
 	// The wisp_labels / wisp_comments rows of a wisp are keyed by an issue_id
 	// that lives in the WISPS table (promotion moves them to the durable
-	// tables, issueops.PromoteFromEphemeralInTx), so the three wisp readers
+	// tables, issueops.MoveIssuePersistenceInTx), so the three wisp readers
 	// below only need the ids that are wisps right now. Handing them the
 	// whole workspace was pure waste — on a 19k-issue rig with no wisps it
 	// was three 19k-placeholder statements answering nothing (wy-237yfi).

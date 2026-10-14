@@ -816,6 +816,14 @@ func TestServedLifecycleUpdatePersistentPreservesUnversionedClass(t *testing.T) 
 	conformance.RunLifecycleUpdatePersistentPreservesUnversionedClass(t, t.Context(), newServedUpdateFixture(t, "hlpu"))
 }
 
+// TestServedLifecycleUpdateWispModesRefuseAnUnversionedRow is the role's
+// refusal answered as a 400 the client maps back to ErrValidation; before the
+// role classified it, the server answered a 500 `internal` and emitted
+// `request_error` for a request the caller could have fixed.
+func TestServedLifecycleUpdateWispModesRefuseAnUnversionedRow(t *testing.T) {
+	conformance.RunLifecycleUpdateWispModesRefuseAnUnversionedRow(t, t.Context(), newServedUpdateFixture(t, "hluw"))
+}
+
 // TestServedLifecycleUpdatePersistentPromotesAWisp is the plane move `bd
 // promote` sends over http (issues.update.persistence, S21b), served by the
 // role the direct route runs.

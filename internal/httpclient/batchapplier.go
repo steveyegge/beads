@@ -482,7 +482,7 @@ func applyRefBody(ref issueops.Ref) (apigen.Ref, error) {
 // applyPatchExcludedMembers is the refusal half of the apply patch's allowlist,
 // in the order encodeApplyPatch decides them.
 //
-// THE ALLOWLIST IS NOT updateIssue's, and the two differences run in opposite
+// THE ALLOWLIST IS NOT updateIssue's, and the differences run in opposite
 // directions, which is why this cannot share refuseExcludedPatchMembers:
 //
 //	owner       IS published here and refused there. ApplyPatchBody carries it;
@@ -492,17 +492,22 @@ func applyRefBody(ref issueops.Ref) (apigen.Ref, error) {
 //	            a parent is a dep_add item of type parent-child, so the order of
 //	            every edge in a plan stays total and there is one spelling for
 //	            an edge.
+//	persistence is published THERE, behind issues.update.persistence, and
+//	            absent here, also deliberately: moving a row between planes
+//	            mid-plan is a different act from writing its fields.
 //
-// The other three — spec_id, await_id, closed_by_session — and persistence are
-// absent from both bodies.
+// The other three — spec_id, await_id, closed_by_session — are absent from
+// both bodies.
 var applyPatchExcludedMembers = []struct {
 	member string
 	ledger string
 	set    func(issueops.IssuePatch) bool
 }{
-	// ParentID is this document's OWN exclusion and gets its own row; the other
-	// four are absent from both patch bodies, so they cite the rows that
-	// already refuse them rather than minting a second reason for one fact.
+	// ParentID is this document's OWN exclusion and gets its own row; SpecID,
+	// AwaitID and ClosedBySession are absent from both patch bodies, so they
+	// cite the rows that already refuse them rather than minting a second
+	// reason for one fact. Persistence cites W-IssuePatch.Persistence, the row
+	// that refuses it on this operation alone.
 	{"ParentID", "W-ApplyPatch.ParentID", func(p issueops.IssuePatch) bool { return p.ParentID.Set }},
 	{"SpecID", "W-IssuePatch.SpecID", func(p issueops.IssuePatch) bool { return p.SpecID.Set }},
 	{"AwaitID", "W-IssuePatch.AwaitID", func(p issueops.IssuePatch) bool { return p.AwaitID.Set }},

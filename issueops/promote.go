@@ -43,7 +43,10 @@ type PromoteRoles struct {
 }
 
 // NotAWispError refuses a promotion of a row that is not an ephemeral wisp:
-// it is already durable, or another writer promoted it first.
+// it is already durable, or another writer promoted it first. A no-history
+// wisp (NoHistory set, Ephemeral not) is refused with the same sentence,
+// because the gate reads the Ephemeral flag as `bd promote` always has;
+// `bd update --persistent` is the move for that row.
 type NotAWispError struct {
 	ID string
 }

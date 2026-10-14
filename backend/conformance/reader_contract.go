@@ -113,9 +113,9 @@ type ReaderFixture struct {
 	AddDependency func(context.Context, *types.Dependency, string) error
 	// AddComment puts one comment on a durable issue.
 	AddComment func(ctx context.Context, issueID, author, text string) error
-	// PromoteWisp moves a seeded wisp into the durable plane, as `bd promote`
-	// does. It is the only way to seed a DURABLE row of an infra type: creating
-	// one routes it to the wisps plane on every backend.
+	// PromoteWisp moves a seeded wisp into the durable plane. It is the only
+	// way to seed a DURABLE row of an infra type: creating one routes it to the
+	// wisps plane on every backend.
 	PromoteWisp func(ctx context.Context, id, actor string) error
 }
 

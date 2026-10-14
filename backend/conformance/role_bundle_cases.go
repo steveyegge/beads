@@ -488,6 +488,7 @@ var roleContractCases = []roleContract{
 		RunLifecycleUpdateParentIDReplacesTheParentEdge,
 		RunLifecycleUpdateParentIDReplacesEveryParent,
 		RunLifecycleUpdatePersistentPreservesUnversionedClass,
+		RunLifecycleUpdateWispModesRefuseAnUnversionedRow,
 		RunLifecycleUpdatePersistentPromotesAWisp,
 		RunLifecycleUpdateProvenanceLabelsHistory,
 		RunLifecycleUpdateRefusesATemplate,

@@ -15,12 +15,6 @@ import (
 	"github.com/steveyegge/beads/issueops"
 )
 
-// promotionComment is the audit comment every route records on the promoted
-// bead: issueops.PromotionComment, so the text cannot drift.
-func promotionComment(reason string) string {
-	return issueops.PromotionComment(reason)
-}
-
 // printPromoteResult renders the `bd promote` success output. updated is the
 // best-effort post-promote re-read used only by --json (it may be nil, in
 // which case the JSON path prints nothing, matching the classic behavior).
@@ -85,27 +79,47 @@ Examples:
 
 		promoted, err := promoteDirect(ctx, store, fullID, reason)
 		if err != nil {
-			var notWisp *issueops.NotAWispError
-			switch {
-			case errors.As(err, &notWisp):
-				return HandleErrorRespectJSON("%v", err)
-			case errors.Is(err, storage.ErrNotFound):
-				return HandleErrorRespectJSON("issue %s not found", fullID)
-			}
-			return HandleErrorRespectJSON("promoting %s: %v", fullID, err)
+			return promoteFailure(fullID, err)
 		}
-		if promoted.CommentErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, promoted.CommentErr)
-		}
-
-		commandDidWrite.Store(true)
-
-		var updated *types.Issue
-		if jsonOutput {
-			updated, _ = store.GetIssue(ctx, fullID)
-		}
-		return printPromoteResult(fullID, updated)
+		return reportPromotion(fullID, promoted, func() *types.Issue {
+			updated, _ := store.GetIssue(ctx, fullID)
+			return updated
+		})
 	},
+}
+
+// promoteFailure maps a promotion that did not land to the command's error:
+// the typed refusal for a row that is not a wisp, the classic sentence for a
+// row that is gone, and the id for anything else. Shared by the direct and
+// proxied-server routes, which both run issueops.Promote, so the error
+// contract cannot drift.
+func promoteFailure(fullID string, err error) error {
+	var notWisp *issueops.NotAWispError
+	switch {
+	case errors.As(err, &notWisp):
+		return HandleErrorRespectJSON("%v", err)
+	case errors.Is(err, storage.ErrNotFound):
+		return HandleErrorRespectJSON("issue %s not found", fullID)
+	}
+	return HandleErrorRespectJSON("promoting %s: %v", fullID, err)
+}
+
+// reportPromotion reports a promotion that landed, for both routes: a comment
+// that could not be written is a warning (the move stands, as
+// issueops.PromoteResult.CommentErr says), then the success output. reread is
+// the best-effort --json re-read, called only under --json.
+func reportPromotion(fullID string, promoted issueops.PromoteResult, reread func() *types.Issue) error {
+	if promoted.CommentErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", fullID, promoted.CommentErr)
+	}
+
+	commandDidWrite.Store(true)
+
+	var updated *types.Issue
+	if jsonOutput {
+		updated = reread()
+	}
+	return printPromoteResult(fullID, updated)
 }
 
 func init() {
@@ -115,11 +129,13 @@ func init() {
 }
 
 // promoteDirect runs `bd promote` on the direct route through
-// issueops.Promote, the one library entry every route shares, over the
-// store's own role accessors (so its decorator stack — hooks, telemetry —
-// wraps the move and the comment). On a connected http workspace the same
-// entry dials updateIssue with `patch.persistence`, and a server without the
-// issues.update.persistence capability refuses before the dial, naming it.
+// issueops.Promote, the one library entry every route shares (the
+// proxied-server route runs it over the provider's roles,
+// runPromoteProxiedServer), over the store's own role accessors (so its
+// decorator stack — hooks, telemetry — wraps the move and the comment). On a
+// connected http workspace the same entry dials updateIssue with
+// `patch.persistence`, and a server without the issues.update.persistence
+// capability refuses before the dial, naming it.
 //
 // The history label is the classic "bd: promote <id>" where the store can
 // carry a caller label, and the server's own where it cannot (S6d's rule,

@@ -3,6 +3,7 @@ package issueops_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/steveyegge/beads/issueops"
@@ -96,7 +97,7 @@ func TestPromoteMovesTheWispThroughOnePersistenceUpdateThenComments(t *testing.T
 	}
 	// The update is the plane move and nothing else.
 	only := issueops.IssuePatch{Persistence: u.Patch.Persistence}
-	if !patchEqual(u.Patch, only) {
+	if !reflect.DeepEqual(u.Patch, only) {
 		t.Errorf("update patch carries more than the persistence move: %+v", u.Patch)
 	}
 	if len(f.comments) != 1 {
@@ -203,11 +204,4 @@ func TestPromoteValidatesTheRequest(t *testing.T) {
 			}
 		})
 	}
-}
-
-func patchEqual(a, b issueops.IssuePatch) bool {
-	return a.Persistence == b.Persistence &&
-		!a.Title.Set && !a.Status.Set && !a.Assignee.Set && !a.ParentID.Set &&
-		!a.Notes.Set && !a.Priority.Set && !a.IssueType.Set &&
-		len(a.Labels.Add) == 0 && len(a.Labels.Remove) == 0 && !a.Labels.Replace.Set
 }

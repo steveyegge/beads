@@ -1920,10 +1920,10 @@ func RunLifecycleUpdateParentIDReplacesEveryParent(t *testing.T, ctx context.Con
 
 // RunLifecycleUpdatePersistentPreservesUnversionedClass pins the half of the
 // Persistence clause nobody else asserts: "Persistent preserves an existing
-// durable unversioned class" (issueops/issueops.go:135-136). The refusal beside
-// it — an unversioned row cannot be demoted to a wisp mode — is pinned
-// elsewhere; this clause says the legal direction is a no-op that does NOT
-// normalize the row into versioned storage.
+// durable unversioned class" (issueops/issueops.go:149). The refusal beside
+// it — an unversioned row cannot be demoted to a wisp mode — is
+// RunLifecycleUpdateWispModesRefuseAnUnversionedRow; this clause says the legal
+// direction is a no-op that does NOT normalize the row into versioned storage.
 //
 // WHAT A PERSISTENCE RESTATEMENT MUST NOT DO is where the two observations come
 // in. A persistence MOVE deletes the row from one plane and re-inserts it into
@@ -1962,6 +1962,40 @@ func RunLifecycleUpdatePersistentPreservesUnversionedClass(t *testing.T, ctx con
 		t.Errorf("%s came back {ephemeral %v, no-history %v} after a persistent restatement, want a durable-plane row", id, after.Ephemeral, after.NoHistory)
 	}
 	assertLifecycleUpdateWispAbsent(t, ctx, fixture, id, "after the persistent restatement")
+}
+
+// RunLifecycleUpdateWispModesRefuseAnUnversionedRow pins the refusal beside
+// that clause: Ephemeral and NoHistory "select wisp retention modes, never
+// durable unversioned storage" (issueops/issueops.go:150-151), so an
+// unversioned row asked for either is refused. The refusal is the request's,
+// a deterministic validation failure, so it matches ErrValidation on every
+// leg — over http that is the 400 naming the patch rather than a 500 that
+// drops the reason and alerts the operator — and it leaves the row where it
+// was: durable, still unversioned, and absent from the wisp plane.
+func RunLifecycleUpdateWispModesRefuseAnUnversionedRow(t *testing.T, ctx context.Context, fixture LifecycleUpdateFixture) {
+	t.Helper()
+
+	id := fixture.IssuePrefix + "-lup-unversioned-wisp"
+	seeded := lifecycleUpdateIssue(id)
+	seeded.StorageClass = types.StorageClassUnversioned
+	seedLifecycleUpdateIssue(t, ctx, fixture, seeded)
+
+	for _, mode := range []publicops.PersistenceMode{publicops.PersistenceModeEphemeral, publicops.PersistenceModeNoHistory} {
+		label := "after the refused " + string(mode) + " move"
+		before := lifecycleUpdateRow(t, ctx, fixture, id)
+		if _, err := fixture.Lifecycle.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: id, Patch: publicops.IssuePatch{
+			Persistence: publicops.Field[publicops.PersistenceMode]{Set: true, Value: mode},
+		}}); !errors.Is(err, storage.ErrValidation) {
+			t.Fatalf("move unversioned %s to %s: error = %v, want ErrValidation", id, mode, err)
+		}
+		assertLifecycleUpdateRowUnchanged(t, ctx, fixture, id, label, before)
+		after := lifecycleUpdateRow(t, ctx, fixture, id)
+		if after.Ephemeral || after.NoHistory || after.StorageClass != types.StorageClassUnversioned {
+			t.Errorf("%s %s = {ephemeral %v, no-history %v, class %q}, want the durable unversioned row it was",
+				id, label, after.Ephemeral, after.NoHistory, after.StorageClass)
+		}
+		assertLifecycleUpdateWispAbsent(t, ctx, fixture, id, label)
+	}
 }
 
 // RunLifecycleUpdatePersistentPromotesAWisp pins the move `bd promote` makes
