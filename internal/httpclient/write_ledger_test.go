@@ -274,10 +274,10 @@ func writeShapes() []writeShape {
 				// #7247 review port): each was published — the force pair by
 				// upstream #5484, `claim` by upstream #6890 — and refused only
 				// by this client. Their rows are RETIRED the same way. A claim
-				// ALONE against a server that predates `claim` still reaches
-				// claimIssue instead, as a fallback on that server's skew
-				// refusal (see claimOnlyUpdate); against a current one it is
-				// this body.
+				// ALONE against a server without issues.update.claim reaches
+				// claimIssue instead, decided from the handshake (see
+				// claimWithoutUpdateClaim); against one with it, it is this
+				// body.
 				"ForceAssigneeTransfer": member("force_assignee_transfer"),
 				"ForceClosePolicy":      member("force_close_policy"),
 				"Claim":                 member("claim"),

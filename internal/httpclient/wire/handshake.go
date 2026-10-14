@@ -266,6 +266,16 @@ const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 // the server.
 const CapIssuesUpdatePersistence = "issues.update.persistence"
 
+// CapIssuesUpdateClaim is the behavior capability announcing that updateIssue
+// accepts `claim` and resolves the claimed id on both planes (a wisp included),
+// spelled exactly as httpapi's constant of the same name. Lifecycle.Update
+// reads it from the cached handshake before the dial: with it, a claim rides
+// updateIssue; without it, a claim alone goes to claimIssue (a wisp then
+// refuses by name, W-ClaimRequest.Wisp) and a claim beside a patch, a guard, a
+// force override or `allow_template` is refused before the dial with
+// ErrUnsupported naming it.
+const CapIssuesUpdateClaim = "issues.update.claim"
+
 // CapIssuesCreateDefaultPriority is the behavior capability announcing that
 // the server stores the create default priority for an ABSENT `priority`
 // member on issues.create, issues.batchCreate and issues.batchApply create
@@ -425,7 +435,7 @@ var behaviorCapabilities = []string{
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapCloseAutoCloseMolecule, CapListSearch,
-	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence, CapBlockingIsBlocked,
+	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence, CapBlockingIsBlocked, CapIssuesUpdateClaim,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

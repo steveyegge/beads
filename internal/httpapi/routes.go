@@ -240,6 +240,23 @@ const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 // refuses the move before the dial, naming the token, rather than sending it.
 const CapIssuesUpdatePersistence = "issues.update.persistence"
 
+// CapIssuesUpdateClaim is the behavior capability that advertises
+// UpdateIssueRequest's `claim` member (update.go, upstream #6890): updateIssue
+// claims the row in the update's own transaction, through the same
+// Lifecycle.Update the direct route's `bd update --claim` runs, and resolves
+// the id on BOTH planes, so a wisp is claimable here where claimIssue (the
+// Claimer role) answers it not-found by contract. A claim combines with a
+// patch and with `expected_version` in one write and answers the post-write
+// `revision`; a wisp claim takes no lease.
+//
+// The member shipped untokened (it is on the pretoken request-body baseline),
+// so a client could only find it by eating the skew 400. The token makes that
+// a handshake read: a client that does not see it sends a claim alone to
+// claimIssue (where a wisp refuses by name, W-ClaimRequest.Wisp) and refuses a
+// claim beside anything else before the dial, naming this token. One token
+// covers both planes: no server has served `claim` on one plane only.
+const CapIssuesUpdateClaim = "issues.update.claim"
+
 // CapIssuesCreateDefaultPriority is the behavior capability that advertises
 // that issues.create, issues.batchCreate and issues.batchApply's create items
 // store the create default priority (P2) for a request whose `priority` member
@@ -1053,7 +1070,7 @@ var behaviorCapabilities = []string{
 	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
-	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked,
+	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked, CapIssuesUpdateClaim,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:

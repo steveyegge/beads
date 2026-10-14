@@ -556,15 +556,27 @@ func TestServedLifecycleUpdateClaimIsAMutationWhenThePatchRestoresTheRow(t *test
 // which it answers the way such a server did: the skew 400 naming the member,
 // raised before any database work. Everything else about that server —
 // claimIssue among it — is the current one's, which is the point: the
-// fallback route it forces is claimIssue, served for real.
+// route the client must take instead is claimIssue, served for real.
 type predatesUpdateClaimTransport struct {
 	next http.RoundTripper
-	// refused counts the claims it answered, so a case can tell the fallback
-	// ran from a current-server claim that happened to agree with it.
+	// refused counts the updateIssue claims it answered with the skew 400.
+	// The client reads the handshake first, so against this server it is 0
+	// on every case: a claim that reached it is a round trip the token
+	// exists to save.
 	refused atomic.Int32
+	// claimDials counts claimIssue requests, so a case can tell the
+	// claimIssue route ran.
+	claimDials atomic.Int32
+	// servesClaim makes it a CURRENT server's transport: updateIssue's
+	// `claim` passes through like everything else, and only the counting
+	// remains.
+	servesClaim bool
 }
 
 func (p *predatesUpdateClaimTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, ":claim") {
+		p.claimDials.Add(1)
+	}
 	if req.Method == http.MethodPatch && req.GetBody != nil {
 		body, err := req.GetBody()
 		if err != nil {
@@ -573,7 +585,7 @@ func (p *predatesUpdateClaimTransport) RoundTrip(req *http.Request) (*http.Respo
 		var members map[string]json.RawMessage
 		decodeErr := json.NewDecoder(body).Decode(&members)
 		_ = body.Close()
-		if _, claims := members["claim"]; decodeErr == nil && claims {
+		if _, claims := members["claim"]; decodeErr == nil && claims && !p.servesClaim {
 			p.refused.Add(1)
 			if req.Body != nil {
 				_ = req.Body.Close()
@@ -597,29 +609,58 @@ func (p *predatesUpdateClaimTransport) RoundTrip(req *http.Request) (*http.Respo
 }
 
 // predatingUpdateClaim is a second client store over env's server, dialing it
-// through predatesUpdateClaimTransport.
+// through predatesUpdateClaimTransport, whose handshake lacks
+// issues.update.claim the way such a server's does.
 func (env *servedEnv) predatingUpdateClaim(t *testing.T) (*Store, *predatesUpdateClaimTransport) {
 	t.Helper()
-	transport := &predatesUpdateClaimTransport{next: http.DefaultTransport}
+	return env.updateClaimSubject(t, false)
+}
+
+// updateClaimSubject is a client store over env's server through a counting
+// predatesUpdateClaimTransport. With advertised it carries the served
+// handshake as is (issues.update.claim included, and the transport passes
+// every request through: this server serves the member); without it the
+// handshake lacks the token and updateIssue's `claim` is the skew 400.
+func (env *servedEnv) updateClaimSubject(t *testing.T, advertised bool) (*Store, *predatesUpdateClaimTransport) {
+	t.Helper()
+	snapshot, err := env.subject.snapshot(t.Context())
+	if err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	if !slices.Contains(snapshot.Capabilities, wire.CapIssuesUpdateClaim) {
+		t.Fatalf("the served build does not advertise %q, though its updateIssue serves `claim`", wire.CapIssuesUpdateClaim)
+	}
+	masked := *snapshot
+	var transport *predatesUpdateClaimTransport
+	if advertised {
+		transport = &predatesUpdateClaimTransport{next: http.DefaultTransport, servesClaim: true}
+	} else {
+		transport = &predatesUpdateClaimTransport{next: http.DefaultTransport}
+		masked.Capabilities = slices.DeleteFunc(slices.Clone(snapshot.Capabilities), func(token string) bool {
+			return token == wire.CapIssuesUpdateClaim
+		})
+	}
 	client, err := wire.New(env.subject.target.BaseURL, nil, wire.Options{HTTPClient: &http.Client{Transport: transport}})
 	if err != nil {
-		t.Fatalf("build the predating client: %v", err)
+		t.Fatalf("build the client: %v", err)
 	}
-	return New(env.subject.target, client, nil), transport
+	return New(env.subject.target, client, &masked), transport
 }
 
 // TestServedUpdateClaimsAWisp pins the direct route's wisp claim over this
 // wire: `bd update <id> --claim` on a wisp claims it, because updateIssue's
 // claim resolves both planes like the rest of the operation (it sets no
-// IssuePlaneOnly), exactly as the local Lifecycle.Update does.
+// IssuePlaneOnly), exactly as the local Lifecycle.Update does — and the
+// in-process server says so in its handshake (issues.update.claim), which is
+// what sends the claim there: ONE updateIssue call, no claimIssue.
 //
-// It used to refuse by name on every server (W-ClaimRequest.Wisp), when the
-// claim went through claimIssue, whose role excludes the wisp plane. That
-// refusal survives only on the fallback route — see the case below.
+// Without the token the claim goes to claimIssue, whose role excludes the wisp
+// plane, so a wisp refuses by name (W-ClaimRequest.Wisp) — see the case below.
 func TestServedUpdateClaimsAWisp(t *testing.T) {
 	env := newServedEnv(t, "hlcx")
 	ctx := t.Context()
-	lifecycle, err := env.subject.IssueLifecycle()
+	subject, transport := env.updateClaimSubject(t, true)
+	lifecycle, err := subject.IssueLifecycle()
 	if err != nil {
 		t.Fatalf("IssueLifecycle(): %v", err)
 	}
@@ -640,6 +681,9 @@ func TestServedUpdateClaimsAWisp(t *testing.T) {
 		result.Issue.Status != types.StatusInProgress || result.Issue.Assignee != "claimant" {
 		t.Fatalf("claim-only update on a wisp answered %+v, want the claimed row", result)
 	}
+	if got := transport.claimDials.Load(); got != 0 {
+		t.Errorf("the claim dialed claimIssue %d times, want 0: the token sends it to updateIssue", got)
+	}
 	// The reference store's GetIssue auto-routes to the wisps table when the
 	// durable one has no such row (issueops.GetIssueInTx), so this reads the
 	// wisp back the same way env.getIssue would for a durable row.
@@ -653,19 +697,22 @@ func TestServedUpdateClaimsAWisp(t *testing.T) {
 	if !isWispIssue(row) {
 		t.Errorf("the claim moved %s off the wisp plane", id)
 	}
+	if result.Issue.RowVersion == 0 || result.Issue.RowVersion != row.RowVersion {
+		t.Errorf("the wisp claim answered RowVersion %d, want the post-claim row's %d", result.Issue.RowVersion, row.RowVersion)
+	}
 }
 
 // TestClaimOnlyUpdateRefusesAWispByNameOnAServerThatPredatesUpdateClaim is
 // W-ClaimRequest.Wisp's pin.
 //
-// Against a server that predates `claim` on updateIssue, a claim-only
-// UpdateRequest falls back to claimIssue (httpLifecycle.claimOnlyUpdate), and
-// claimIssue's role excludes the wisp plane on every backend (see
-// TestServedClaimerRefusesAWispIDAsNotFound next door). Left alone, a wisp id
-// would surface as the wire's generic not-found — "no issue or wisp with that
-// id" — a live row reported as though it does not exist. This case pins that
-// the fallback instead recognizes the id names a wisp and refuses BY NAME,
-// leaving the wisp row untouched.
+// Against a server without issues.update.claim, a claim-only UpdateRequest
+// goes to claimIssue (httpLifecycle.claimOnlyUpdate) without first trying
+// updateIssue, and claimIssue's role excludes the wisp plane on every backend
+// (see TestServedClaimerRefusesAWispIDAsNotFound next door). Left alone, a
+// wisp id would surface as the wire's generic not-found — "no issue or wisp
+// with that id" — a live row reported as though it does not exist. This case
+// pins that the client instead recognizes the id names a wisp and refuses BY
+// NAME, citing the missing token, leaving the wisp row untouched.
 func TestClaimOnlyUpdateRefusesAWispByNameOnAServerThatPredatesUpdateClaim(t *testing.T) {
 	env := newServedEnv(t, "hlcw")
 	ctx := t.Context()
@@ -691,8 +738,14 @@ func TestClaimOnlyUpdateRefusesAWispByNameOnAServerThatPredatesUpdateClaim(t *te
 	if errors.As(err, &refusal) && refusal.Row.ID != "W-ClaimRequest.Wisp" {
 		t.Errorf("the refusal cites %q, want W-ClaimRequest.Wisp", refusal.Row.ID)
 	}
-	if got := transport.refused.Load(); got != 1 {
-		t.Errorf("the predating server refused %d claims, want 1: the case must reach the fallback through the skew refusal", got)
+	if !strings.Contains(err.Error(), wire.CapIssuesUpdateClaim) {
+		t.Errorf("the refusal %q does not name %s, the token the server lacks", err, wire.CapIssuesUpdateClaim)
+	}
+	if got := transport.refused.Load(); got != 0 {
+		t.Errorf("the client sent updateIssue %d claims, want 0: the handshake lacks the token", got)
+	}
+	if got := transport.claimDials.Load(); got != 1 {
+		t.Errorf("the client dialed claimIssue %d times, want 1", got)
 	}
 
 	// The refusal left the wisp exactly as seeded: still open, still
@@ -706,6 +759,121 @@ func TestClaimOnlyUpdateRefusesAWispByNameOnAServerThatPredatesUpdateClaim(t *te
 	}
 	if row.Status != types.StatusOpen || row.Assignee != "" {
 		t.Errorf("the refused claim left %s as %s/%q, want open/unassigned", id, row.Status, row.Assignee)
+	}
+}
+
+// TestServedUpdateClaimBesideAPatchNeedsTheToken pins the pre-dial refusal: a
+// claim combined with a patch cannot ride claimIssue (its request is the actor
+// alone), so against a server without issues.update.claim it is refused with
+// ErrUnsupported naming the token and NOTHING is dialed — the row is neither
+// claimed nor patched. With the token the same request is one updateIssue call
+// that claims and patches the wisp together.
+func TestServedUpdateClaimBesideAPatchNeedsTheToken(t *testing.T) {
+	env := newServedEnv(t, "hlcp")
+	ctx := t.Context()
+	const id = "hlcp-wisp"
+	if err := env.createWisp(ctx, &types.Issue{
+		ID: id, Title: id, Status: types.StatusOpen, Priority: 2,
+		IssueType: types.TypeTask,
+	}, "seed"); err != nil {
+		t.Fatalf("seed the wisp %s: %v", id, err)
+	}
+	req := issueops.UpdateRequest{
+		Actor: "claimant", IssueID: id, Claim: true,
+		Patch: issueops.IssuePatch{Notes: issueops.Field[string]{Set: true, Value: "taken"}},
+	}
+
+	predating, transport := env.predatingUpdateClaim(t)
+	lifecycle, err := predating.IssueLifecycle()
+	if err != nil {
+		t.Fatalf("IssueLifecycle(): %v", err)
+	}
+	_, err = lifecycle.Update(ctx, req)
+	var unsupported *storage.ErrUnsupported
+	if !errors.As(err, &unsupported) || unsupported.Capability != wire.CapIssuesUpdateClaim {
+		t.Fatalf("claim beside a patch without the token returned %v, want ErrUnsupported naming %s", err, wire.CapIssuesUpdateClaim)
+	}
+	if got := transport.refused.Load() + transport.claimDials.Load(); got != 0 {
+		t.Errorf("the refused claim dialed %d claim requests, want 0", got)
+	}
+	row, err := env.reference.GetIssue(ctx, id)
+	if err != nil {
+		t.Fatalf("read the wisp back: %v", err)
+	}
+	if row.Status != types.StatusOpen || row.Assignee != "" || row.Notes != "" {
+		t.Errorf("the refused claim left %s as %s/%q notes %q, want it untouched", id, row.Status, row.Assignee, row.Notes)
+	}
+
+	current, _ := env.updateClaimSubject(t, true)
+	lifecycle, err = current.IssueLifecycle()
+	if err != nil {
+		t.Fatalf("IssueLifecycle(): %v", err)
+	}
+	if _, err := lifecycle.Update(ctx, req); err != nil {
+		t.Fatalf("claim beside a patch with the token: %v", err)
+	}
+	row, err = env.reference.GetIssue(ctx, id)
+	if err != nil {
+		t.Fatalf("read the wisp back: %v", err)
+	}
+	if row.Status != types.StatusInProgress || row.Assignee != "claimant" || row.Notes != "taken" || !isWispIssue(row) {
+		t.Errorf("the claim left %s as %s/%q notes %q wisp=%v, want the claimed, patched wisp", id, row.Status, row.Assignee, row.Notes, isWispIssue(row))
+	}
+}
+
+// TestServedUpdateClaimRefusesATemplateWithoutTheToken is the served pin of
+// the template read-only guard on the claimIssue route. Without
+// issues.update.claim a claim alone never dials updateIssue, whose guard is
+// the one issues.update.allowTemplate advertises, and claimIssue's role has no
+// template check (bd-jkp9v3): a dial would claim the template. The client
+// refuses on its own pre-read instead — with allowTemplate in the handshake (a
+// build that serves `claim` untokened) or without it (one older still) — and
+// the template stays open and unassigned.
+func TestServedUpdateClaimRefusesATemplateWithoutTheToken(t *testing.T) {
+	env := newServedEnv(t, "hlct")
+	ctx := t.Context()
+	for _, tc := range []struct {
+		name          string
+		id            string
+		allowTemplate bool
+	}{
+		{name: "a server that guards updateIssue", id: "hlct-guarded", allowTemplate: true},
+		{name: "a server with neither token", id: "hlct-older"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := env.createIssue(ctx, &types.Issue{
+				ID: tc.id, Title: tc.id, Status: types.StatusOpen, Priority: 2,
+				IssueType: types.TypeTask, IsTemplate: true,
+			}, "seed"); err != nil {
+				t.Fatalf("seed the template %s: %v", tc.id, err)
+			}
+			subject, transport := env.updateClaimSubject(t, false)
+			if !tc.allowTemplate {
+				subject.ctxRes.Capabilities = slices.DeleteFunc(subject.ctxRes.Capabilities, func(token string) bool {
+					return token == wire.CapIssuesUpdateAllowTemplate
+				})
+			}
+			lifecycle, err := subject.IssueLifecycle()
+			if err != nil {
+				t.Fatalf("IssueLifecycle(): %v", err)
+			}
+
+			_, err = lifecycle.Update(ctx, issueops.UpdateRequest{Actor: "claimant", IssueID: tc.id, Claim: true})
+			var refusal *issueops.TemplateReadOnlyError
+			if !errors.As(err, &refusal) {
+				t.Fatalf("claim-only update on a template returned %v, want a TemplateReadOnlyError", err)
+			}
+			if got := transport.refused.Load() + transport.claimDials.Load(); got != 0 {
+				t.Errorf("the refused claim dialed %d claim requests, want 0", got)
+			}
+			row, err := env.getIssue(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("read the template back: %v", err)
+			}
+			if row.Status != types.StatusOpen || row.Assignee != "" {
+				t.Errorf("the refused claim left %s as %s/%q, want open/unassigned", tc.id, row.Status, row.Assignee)
+			}
+		})
 	}
 }
 
@@ -734,10 +902,13 @@ func TestClaimOnlyUpdateHydratesLabelsAndCreatedByForOutputParity(t *testing.T) 
 		// wantRevision says whether the claimed row carries the post-claim
 		// row version, which only updateIssue answers with.
 		wantRevision bool
-		wantRefused  int32
+		// wantClaimDials is how many claimIssue requests the route sends
+		// through the predating transport: the token-less handshake sends
+		// the claim there directly, never to updateIssue first.
+		wantClaimDials int32
 	}{
-		{name: "current server", store: env.subject, wantRevision: true, wantRefused: 0},
-		{name: "server predating update claim", store: predating, wantRevision: false, wantRefused: 1},
+		{name: "current server", store: env.subject, wantRevision: true, wantClaimDials: 0},
+		{name: "server predating update claim", store: predating, wantRevision: false, wantClaimDials: 1},
 	} {
 		t.Run(route.name, func(t *testing.T) {
 			lifecycle, err := route.store.IssueLifecycle()
@@ -752,14 +923,17 @@ func TestClaimOnlyUpdateHydratesLabelsAndCreatedByForOutputParity(t *testing.T) 
 			}, "the-original-author"); err != nil {
 				t.Fatalf("seed %s: %v", id, err)
 			}
-			before := transport.refused.Load()
+			before := transport.claimDials.Load()
 
 			result, err := lifecycle.Update(ctx, issueops.UpdateRequest{Actor: "claimant", IssueID: id, Claim: true})
 			if err != nil {
 				t.Fatalf("claim-only update on a labeled issue: %v", err)
 			}
-			if got := transport.refused.Load() - before; got != route.wantRefused {
-				t.Fatalf("the predating server refused %d claims, want %d: the route under test is not the one that ran", got, route.wantRefused)
+			if got := transport.claimDials.Load() - before; got != route.wantClaimDials {
+				t.Fatalf("the route sent %d claimIssue requests, want %d: the route under test is not the one that ran", got, route.wantClaimDials)
+			}
+			if got := transport.refused.Load(); got != 0 {
+				t.Fatalf("the client sent updateIssue %d claims the predating server refused, want 0: the handshake decides the route", got)
 			}
 			if result.Issue == nil {
 				t.Fatal("claim-only update returned a nil Issue")

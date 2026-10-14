@@ -546,7 +546,7 @@ func writeSideRows() []Row {
 			What: "a claim combined with a patch, a guard or a force override used to refuse",
 			Why: "RETIRED by the #7247 review port. The refusal stood on 'updateIssue cannot perform a claim, on this wire or on any other' — and upstream gastownhall/beads#6890, the capability the row itself named, had already published `claim` on updateIssue: the claim and the patch applied by the same role in one transaction, so PATCH claim was the server's shape and only this client's refusal. " +
 				"The body now sends `claim` as a pointer set true only on request, so a claim alone, a claim with a patch and a claim with a version guard are each ONE updateIssue call, answered with the post-write `revision` like every other update. " +
-				"The claimIssue route survives as the fallback for a claim ALONE against a server that predates the member, which refuses it as an unknown parameter before any database work; a combination against such a server returns that skew refusal rather than splitting into two calls",
+				"That is the route against a server advertising issues.update.claim. Against one without the token, which the client reads from the handshake before any dial, a claim ALONE goes to claimIssue after a template pre-read (claimIssue's role has no template guard) and a combination is refused before the dial with an unsupported error naming the token, rather than split into two calls",
 			SpecRow:  updateSpec,
 			PinnedBy: pinned,
 		},
@@ -561,7 +561,8 @@ func writeSideRows() []Row {
 			// current server claims a wisp through updateIssue, which resolves
 			// both planes exactly as the direct route's Lifecycle.Update does, so
 			// this row is reached ONLY on claimOnlyUpdate's fallback — a server
-			// that predates `claim` on updateIssue (upstream #6890), where the
+			// that does not advertise issues.update.claim (it predates `claim` on
+			// updateIssue, upstream #6890, or serves it untokened), where the
 			// claim is dialed as claimIssue instead. That operation
 			// (issueops.Claimer's own contract) answers a wisp id with ErrNotFound
 			// on every backend — the wisp plane is not claimable through that
@@ -575,7 +576,7 @@ func writeSideRows() []Row {
 			// pays the probe.
 			ID: "W-ClaimRequest.Wisp", Kind: KindRefuse,
 			What:     "claiming a wisp is not supported by this bd serve",
-			Why:      "the server predates claiming through its update operation, and its separate claim operation excludes the wisp plane; upgrade bd serve, or claim this issue from a local workspace",
+			Why:      "the server does not advertise issues.update.claim (claiming through its update operation, which reaches the wisp plane), and its separate claim operation excludes the wisp plane; upgrade bd serve to one that advertises it, or claim this issue from a local workspace",
 			SpecRow:  updateSpec,
 			PinnedBy: pinnedByS3Conformance,
 		},

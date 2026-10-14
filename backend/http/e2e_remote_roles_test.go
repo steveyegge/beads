@@ -676,10 +676,13 @@ func TestE2E_AdvertisedExternalPolicyIsPassedThrough(t *testing.T) {
 	f.mustRun(nil, "show", id, "--json")
 	f.mustRun(nil, "update", other, "--claim", "--json")
 	// claim-next is the server's ONE atomic operation, not a client-side
-	// read-then-claim loop.
+	// read-then-claim loop. Only its own requests count: the MC handshake
+	// lacks issues.update.claim, so the claim of other above went to
+	// claimIssue by design.
+	readyClaimFrom := len(counter.snapshot())
 	f.mustRun(nil, "ready", "--claim", "--json")
 	var claimNexts, byID int
-	for _, p := range counter.snapshot() {
+	for _, p := range counter.snapshot()[readyClaimFrom:] {
 		switch {
 		case p == "POST /v0/beads/issues:claimNext":
 			claimNexts++
