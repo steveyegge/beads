@@ -251,21 +251,29 @@ func TestWrapUOWProviderBlockedFlagAgreesWithReadyWork(t *testing.T) {
 // edge's.
 func TestWrapUOWProviderBlockedFlagResolvesOnlyTheAskedRefs(t *testing.T) {
 	blocked, free, elsewhere := issue("be-blocked"), issue("be-free"), issue("be-elsewhere")
+	// shipped's external blocker is SATISFIED: the foreign project's labelled
+	// index carries a closed provider of the capability. Its record is answered
+	// and resolved, and it must still read unblocked — the half of the
+	// predicate a "raise every answered external record" body would break.
+	shipped := issue("be-shipped")
 	const ghost = "be-ghost"
 	inner := &fakeUOW{deps: &fakeDependencyUseCase{
 		external: map[string][]*types.Dependency{
-			blocked.ID:   {externalDep(blocked.ID, "external:remote:payments", types.DepBlocks)},
+			blocked.ID:   {externalDep(blocked.ID, "external:remote:invoices", types.DepBlocks)},
+			shipped.ID:   {externalDep(shipped.ID, "external:remote:payments", types.DepBlocks)},
 			elsewhere.ID: {externalDep(elsewhere.ID, "external:other:billing", types.DepBlocks)},
 			ghost:        {externalDep(ghost, "external:orphan:audit", types.DepBlocks)},
 		},
-		isBlocked: map[string]bool{blocked.ID: false, free.ID: false, elsewhere.ID: false},
+		isBlocked: map[string]bool{blocked.ID: false, free.ID: false, elsewhere.ID: false, shipped.ID: false},
 	}}
 	opens := make(map[string]int)
 	provider := WrapUOWProvider(&fakeUOWProvider{uw: inner},
 		func(project ProjectName) (string, bool) { return "/projects/" + string(project), true },
 		func(_ context.Context, path string) (storage.DoltStorage, error) {
 			opens[path]++
-			return &fakeStore{}, nil
+			return &fakeStore{labels: map[string][]*types.Issue{
+				"provides:payments": {{ID: "remote-done", Status: types.StatusClosed}},
+			}}, nil
 		},
 	)
 	uw, err := provider.NewUOW(t.Context())
@@ -282,6 +290,16 @@ func TestWrapUOWProviderBlockedFlagResolvesOnlyTheAskedRefs(t *testing.T) {
 		{
 			asked:     []string{blocked.ID, free.ID},
 			want:      map[string]bool{blocked.ID: true, free.ID: false},
+			wantOpens: map[string]int{"/projects/remote": 1},
+		},
+		{
+			asked:     []string{shipped.ID, free.ID},
+			want:      map[string]bool{shipped.ID: false, free.ID: false},
+			wantOpens: map[string]int{"/projects/remote": 1},
+		},
+		{
+			asked:     []string{blocked.ID, shipped.ID},
+			want:      map[string]bool{blocked.ID: true, shipped.ID: false},
 			wantOpens: map[string]int{"/projects/remote": 1},
 		},
 	} {
