@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -498,5 +499,53 @@ func TestTheEphemeralPlaneParameterIsTheSkewSignal(t *testing.T) {
 	body := decodeBody(t, resp)
 	if body["param"] != "include_ephemerals" || body["reason"] != string(ReasonUnknownParameter) {
 		t.Errorf("body = %v, want param=include_ephemerals reason=unknown_parameter", body)
+	}
+}
+
+// TestListForwardsTheScopeFilters is the handler half of S15b: listIssues'
+// `no_assignee` (issues.list.noAssignee), `title` (issues.list.title) and `id`
+// (issues.list.ids, repeatable) reach the storage seam through the Reader role as the
+// ListRequest members `bd list --no-assignee`, `--title` and `--id` set, and
+// their absence narrows nothing.
+func TestListForwardsTheScopeFilters(t *testing.T) {
+	for _, tc := range []struct {
+		name, path string
+		check      func(t *testing.T, f types.IssueFilter)
+	}{
+		{"absent narrows nothing", "/v0/beads/issues", func(t *testing.T, f types.IssueFilter) {
+			if f.NoAssignee || f.TitleSearch != "" || len(f.IDs) != 0 {
+				t.Errorf("filter = {NoAssignee:%v TitleSearch:%q IDs:%v}, want none set", f.NoAssignee, f.TitleSearch, f.IDs)
+			}
+		}},
+		{"no_assignee", "/v0/beads/issues?no_assignee=true&status=in_progress", func(t *testing.T, f types.IssueFilter) {
+			if !f.NoAssignee {
+				t.Error("no_assignee=true did not reach the filter")
+			}
+		}},
+		{"title", "/v0/beads/issues?title=Routed+open+task", func(t *testing.T, f types.IssueFilter) {
+			if f.TitleSearch != "Routed open task" {
+				t.Errorf("TitleSearch = %q, want %q", f.TitleSearch, "Routed open task")
+			}
+			if f.TitleContains != "" {
+				t.Errorf("title leaked into TitleContains = %q", f.TitleContains)
+			}
+		}},
+		{"id is repeatable, one id per value", "/v0/beads/issues?id=e2e-r1&id=e2e-a1&all=true", func(t *testing.T, f types.IssueFilter) {
+			if !slices.Equal(f.IDs, []string{"e2e-r1", "e2e-a1"}) {
+				t.Errorf("IDs = %v, want [e2e-r1 e2e-a1]", f.IDs)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, rec := newReadServer(t, Config{})
+			if resp := ts.get(t, tc.path); resp.StatusCode != http.StatusOK {
+				t.Fatalf("GET %s: status = %d, want 200", tc.path, resp.StatusCode)
+			}
+			filters := rec.searchFilters()
+			if len(filters) != 1 {
+				t.Fatalf("search calls = %d, want 1", len(filters))
+			}
+			tc.check(t, filters[0])
+		})
 	}
 }

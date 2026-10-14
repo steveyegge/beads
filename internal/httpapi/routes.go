@@ -132,6 +132,40 @@ const CapIssuesCountScope = "issues.count.scope"
 // is never widened into an unsearched listing.
 const CapIssuesListSearch = "issues.list.search"
 
+// CapIssuesListNoAssignee and CapIssuesListTitle are the behavior
+// capabilities that advertise GET /v0/beads/issues' `no_assignee` and `title`
+// parameters (reads.go, spec OpListIssues): `bd list --no-assignee` and
+// `--title`, carried as issueops.ListRequest's NoAssignee and TitleSearch and
+// applied by the same Reader role (workapi.BuildListFilter) the local route
+// reads through. Like CapIssuesListSearch each names a PARAMETER added to an
+// existing operation, so each rides behaviorCapabilities and is the token its
+// parameter's OpenAPI description cites for
+// TestNewParameterOnExistingOperationHasABehaviorToken.
+//
+// One token per parameter rather than one for the set: each is a separate
+// cutover dependency of a separate caller (gc's on_boot recovery, the PR-intake
+// formula; CapListIDs below is the pr-review skill's), and a client names
+// exactly the one a refused request needed.
+//
+// The client (internal/httpclient) refuses a request carrying either locally
+// against a server that does not advertise its token, with ErrUnsupported
+// naming the token: an older server answers the parameter with
+// `unknown_parameter`, and dropping it would answer a WIDER listing than asked
+// for (for gc's on_boot recovery, every in-progress bead, assigned or not).
+const (
+	CapIssuesListNoAssignee = "issues.list.noAssignee"
+	CapIssuesListTitle      = "issues.list.title"
+)
+
+// CapListIDs is the behavior capability that advertises the repeatable `id`
+// filter on listIssues (issueops.ListRequest.IDFilter; `bd list --id`). It
+// rides beside `issues.list` for the reason CapIssuesListSort does: the
+// operation already exists, and what this announces is one more member it
+// understands. The contract — one id per value, at most maxListIDs values,
+// each matched exactly as sent — and the token's spelling are bd-enterprise's
+// (E9-S2), adopted unchanged so the two servers publish one `id`.
+const CapListIDs = "issues.list.ids"
+
 // CapIssuesSweepWispsPlane is the behavior capability that advertises the
 // `wisps-plane` value of SweepRequest.tier (sweep.go, spec SweepRequest.tier):
 // a third, wider tier that clears the whole wisps table plus any durable bead
@@ -1000,6 +1034,7 @@ var behaviorCapabilities = []string{
 	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
+	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:

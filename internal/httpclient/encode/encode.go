@@ -35,6 +35,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -289,6 +290,7 @@ func ListParams(req issueops.ListRequest) (url.Values, error) {
 	b.str("status", req.Status)
 	b.str("type", req.IssueType)
 	b.str("assignee", req.Assignee)
+	b.boolean("no_assignee", req.NoAssignee)
 
 	b.list("label", req.Labels)
 	b.list("label_any", req.LabelsAny)
@@ -296,6 +298,8 @@ func ListParams(req issueops.ListRequest) (url.Values, error) {
 
 	b.str("parent", req.ParentID)
 	b.str("q", req.Query)
+	b.str("title", req.TitleSearch)
+	b.list("id", splitIDSet(req.IDFilter))
 
 	b.boolean("all", req.AllFlag)
 	b.boolean("include_templates", req.IncludeTemplates)
@@ -312,6 +316,28 @@ func ListParams(req issueops.ListRequest) (url.Values, error) {
 	b.boolean("brief", req.Brief)
 	b.intPtr("limit", req.Limit)
 	return b.done()
+}
+
+// splitIDSet reads ListRequest.IDFilter's comma-separated set the way the role
+// does (workapi.BuildListFilter: split on commas, trim, drop empties and
+// repeats) and hands back one member per listIssues `id` value, which is the
+// repeatable shape the server takes (issues.list.ids). A set naming no id
+// sends no `id` at all.
+func splitIDSet(set string) []string {
+	if set == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range strings.Split(set, ",") {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // QueryParams encodes a boolean-expression query onto

@@ -32,6 +32,7 @@ go_test(
     srcs = [
         "attach_test.go",
         "e2e_cli_test.go",
+        "e2e_list_filters_test.go",
         "e2e_mol_test.go",
         "e2e_recompute_blocked_test.go",
         "e2e_remote_roles_test.go",

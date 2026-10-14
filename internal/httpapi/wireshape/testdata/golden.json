@@ -5777,6 +5777,15 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:id",
+      "type": "array",
+      "required": false,
+      "item_type": "string",
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:include_ephemeral",
       "type": "boolean",
       "required": false,
@@ -5849,6 +5858,15 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:no_assignee",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:parent",
       "type": "string",
       "required": false,
@@ -5882,6 +5900,14 @@
       "type": "array",
       "required": false,
       "item_type": "string",
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:title",
+      "type": "string",
+      "required": false,
       "style": "form",
       "explode": true
     },

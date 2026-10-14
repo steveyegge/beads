@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
 	"github.com/steveyegge/beads/internal/httpclient/encode"
@@ -63,7 +64,7 @@ func (r httpReader) Ready(ctx context.Context, req issueops.ReadyRequest) (issue
 
 // List serves listIssues, through the pager in list_walk.go.
 func (r httpReader) List(ctx context.Context, req issueops.ListRequest) (issueops.IssuePage, error) {
-	if err := r.refuseUnservedSearch(ctx, req); err != nil {
+	if err := r.refuseUnservedListFilters(ctx, req); err != nil {
 		return issueops.IssuePage{}, err
 	}
 	params, err := encode.ListParams(req)
@@ -73,28 +74,53 @@ func (r httpReader) List(ctx context.Context, req issueops.ListRequest) (issueop
 	return r.store.walkIssues(ctx, params, req)
 }
 
-// refuseUnservedSearch is the pre-dial gate for ListRequest.Query, which rides
-// listIssues' `q` only on a server advertising issues.list.search. An older
-// server answers `q` with 400 unknown_parameter, so a search against it is
-// refused HERE, with the typed capability error naming the token: never a
-// round trip that is refused anyway, and never the unsearched listing passed
-// off as the search.
+// tokenedListFilters are the ListRequest members listIssues carries only on a
+// server advertising a behavior token of their own, each with that token:
+// `bd search`'s text (S26) and `bd list --title`, `--id` and `--no-assignee`
+// (S15b). Order decides which token a request carrying several names; each
+// refusal is complete on its own, so any order is honest.
+var tokenedListFilters = []struct {
+	token string
+	set   func(issueops.ListRequest) bool
+}{
+	{wire.CapListSearch, func(r issueops.ListRequest) bool { return r.Query != "" }},
+	{wire.CapListNoAssignee, func(r issueops.ListRequest) bool { return r.NoAssignee }},
+	{wire.CapListTitle, func(r issueops.ListRequest) bool { return r.TitleSearch != "" }},
+	// An id set naming no id (only commas and blanks) sends no `id`, so it
+	// needs no token.
+	{wire.CapListIDs, func(r issueops.ListRequest) bool {
+		return strings.TrimSpace(strings.ReplaceAll(r.IDFilter, ",", "")) != ""
+	}},
+}
+
+// refuseUnservedListFilters is the pre-dial gate for the tokened members. An
+// older server answers each one's parameter with 400 unknown_parameter, so a
+// request carrying one against a server that does not advertise its token is
+// refused HERE, with the typed capability error naming that token: never a
+// round trip that is refused anyway, and never a wider listing (the
+// unsearched one, every in-progress bead instead of the unassigned ones, the
+// whole workspace instead of an id set) passed off as the answer.
 //
 // listIssues is a baseline operation, so dispatch preflights nothing for it;
-// this is the one handshake a search costs, and a request without Query never
-// asks for it.
-func (r httpReader) refuseUnservedSearch(ctx context.Context, req issueops.ListRequest) error {
-	if req.Query == "" {
-		return nil
+// this is the one handshake a tokened request costs, and a request without
+// any of these members never asks for it.
+func (r httpReader) refuseUnservedListFilters(ctx context.Context, req issueops.ListRequest) error {
+	var snap *apigen.ContextResponse
+	for _, f := range tokenedListFilters {
+		if !f.set(req) {
+			continue
+		}
+		if snap == nil {
+			var err error
+			if snap, err = r.store.snapshot(ctx); err != nil {
+				return err
+			}
+		}
+		if snap == nil || !slices.Contains(snap.Capabilities, f.token) {
+			return r.store.unsupportedCapability("Reader.List", f.token)
+		}
 	}
-	snap, err := r.store.snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if snap != nil && slices.Contains(snap.Capabilities, wire.CapListSearch) {
-		return nil
-	}
-	return r.store.unsupportedCapability("Reader.List", wire.CapListSearch)
+	return nil
 }
 
 // Get serves getIssue, including the two landed include parameters that retired
