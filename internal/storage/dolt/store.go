@@ -1793,7 +1793,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			cfg.Database, addr)
 	}
 
-	return newServerMode(ctx, cfg)
+	return openWithEnvEndpointFallback(ctx, cfg, newServerMode)
 }
 
 // resolveLocalActiveDatabaseDir returns an authoritative local path only for
@@ -2451,6 +2451,11 @@ func (s *DoltStore) verifyProjectIdentity(ctx context.Context, beadsDir string, 
 // init instead. Every other open, CreateIfMissing or not, keeps its original
 // text.
 func projectIdentityMismatchError(localID, dbID, database string, openedByInit bool) error {
+	return &projectIdentityMismatch{err: projectIdentityMismatchMessage(localID, dbID, database, openedByInit)}
+}
+
+// projectIdentityMismatchMessage is projectIdentityMismatchError's text.
+func projectIdentityMismatchMessage(localID, dbID, database string, openedByInit bool) error {
 	if openedByInit {
 		return fmt.Errorf(
 			"PROJECT IDENTITY MISMATCH — refusing to initialize against an existing database\n\n"+

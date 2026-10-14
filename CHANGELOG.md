@@ -509,6 +509,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A server endpoint inherited from the environment (`BEADS_DOLT_SERVER_PORT`)
+  no longer locks bd out of a project that declares its own: when the env's
+  server answers with another project's database (PROJECT IDENTITY MISMATCH)
+  and the project's `.beads` explicitly declares a different endpoint
+  (`config.yaml` `dolt.host`/`dolt.port`, else `metadata.json`
+  `dolt_server_host`/`dolt_server_port`), bd retries once on that endpoint,
+  verifies the project's identity there, and proceeds with a note on stderr;
+  if that endpoint serves another project too, it refuses with the original
+  error. An agent session carrying its own workspace's server in its
+  environment can now run bd inside a different checkout. Ports from any
+  other source, sockets, gateways and the shared server are unchanged.
+
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
   backend refuses, so gc's `renudge-stale-human-gates` order failed on every
