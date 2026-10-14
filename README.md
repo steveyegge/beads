@@ -251,6 +251,29 @@ credential would cross the network unencrypted) — pass `--allow-plaintext` to
 override, or use `https://`. Switching a workspace that already selects a
 different backend needs `--force`.
 
+Each read (a GET, or the POST batch get) gives its first attempt 15s, from
+when the request is sent, to get the server's response headers
+(`BEADS_HTTP_RESPONSE_HEADER_TIMEOUT`: a duration such as `30s`, a number of
+seconds, or `off`). A read whose headers do not arrive in time, or whose
+connection is reset, is retried once on another connection, and each retry
+is logged to stderr with its count. The retry has no header timer, but it
+runs on what is left of the 60s bound on the whole request, counted from
+when the first attempt was sent: a slow but healthy read still finishes if
+the retry's headers and body together fit in that remainder (about 45s after
+a header timeout), and one that needs longer now fails at 60s. The header
+timer never cuts off a body that is still streaming; the 60s bound still
+does. The events:watch stream's connect gets neither the header timer nor
+the retry. On Windows a reset connection is retried only when it surfaces as
+an early EOF, because the check matches the Unix reset error (`ECONNRESET`),
+which a Windows reset (`WSAECONNRESET`) is not. A write gets no
+header timer (the server answers a write only after it commits, so a large
+one can be slow and healthy) and is never retried; if the 60s bound expires
+after it was sent but before its headers, it fails with an error naming the
+server's host, because it may or may not have been applied. A dial or TLS
+timeout stays a plain connection error, since the server never saw the
+request. `off` turns off only the header timer: a reset read is still
+retried, and a write's timeout is still reported as above.
+
 `bd search`, `bd show --current` and `bd recompute-blocked` work over HTTP
 too, each in its own way. `bd search` asks the server's listing with its text (`q`, behind the `issues.list.search` capability) and
 refuses before dialing against a server that does not advertise it. `bd list

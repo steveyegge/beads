@@ -476,6 +476,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of a remote export puts genuine no-history wisps on the durable issues
   plane instead of the wisps plane, and gc's JSONL archive keeps them.
   Nothing is dropped.
+- **A silent HTTP connection no longer costs a read the full 60s.** The HTTP
+  backend client gives a read's first attempt 15s from when it is sent to get
+  its response headers (`BEADS_HTTP_RESPONSE_HEADER_TIMEOUT`: a duration, a
+  number of seconds, or `off`), then retries it once on another connection
+  with no header timer, on what is left of the same 60s request timeout. A
+  slow but healthy read still finishes if its retry's headers and body
+  together fit in that remainder (about 45s); one that needs longer now fails
+  at 60s. A read whose connection is reset is retried the same way (on Windows
+  only when the reset surfaces as an early EOF), and each retry is logged to
+  stderr with its count. The events:watch stream's connect gets neither the
+  timer nor the retry. A write is never retried; one that was sent and timed
+  out before its headers fails with a typed `wire.ResponseHeaderTimeoutError`
+  naming the server's host, because it may or may not have been applied,
+  while a dial or TLS timeout stays a plain connection error. The batch get,
+  a read on POST, is now also retried on a 503 the way a GET is.
 - **An update of a template is now refused for every caller, not only
   `bd update`.** The template guard used to be a pre-read in `cmd/bd`, so an
   update through `bd serve` (`PATCH /v0/beads/issues/{id}`), an `update` item
