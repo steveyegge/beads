@@ -10,6 +10,7 @@ go_library(
         "batchcloser.go",
         "batchcreator.go",
         "batchgetter.go",
+        "blocked_querier.go",
         "blocked_recomputer.go",
         "bridge.go",
         "ca.go",
@@ -96,6 +97,7 @@ go_test(
     srcs = [
         "backend_credential_test.go",
         "batchapplier_test.go",
+        "blocked_querier_test.go",
         "brief_test.go",
         "bulk_roles_test.go",
         "ca_permissions_unix_test.go",
@@ -194,6 +196,7 @@ go_test(
     embed = [":httpclient"],
     shard_count = 2,
     deps = [
+        "//:beads",
         "//backend/conformance",
         "//internal/eventsjournal",
         "//internal/hooks",

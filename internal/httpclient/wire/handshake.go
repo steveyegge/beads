@@ -179,6 +179,15 @@ const (
 	CapListIDs        = "issues.list.ids"
 )
 
+// CapBlockingIsBlocked is the behavior capability announcing that
+// listBlockingAnnotations honors `is_blocked` (issueops.BlockingRequest.
+// IncludeIsBlocked), spelled exactly as httpapi's
+// CapDependenciesBlockingIsBlocked. The annotator refuses a request asking
+// for the flag LOCALLY, with a typed capability error naming this token, when
+// the server does not advertise it, so the IsBlockedBatch read never dials a
+// server that would answer `unknown_parameter`.
+const CapBlockingIsBlocked = "dependencies.blocking.isBlocked"
+
 // CapBatchApplyLarge is the behavior capability announcing that issues.batchApply
 // accepts a batch larger than the compiled-in floor (100 items), up to the
 // raised ceiling (1000), spelled exactly as httpapi's constant of the same name
@@ -416,7 +425,7 @@ var behaviorCapabilities = []string{
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapCloseAutoCloseMolecule, CapListSearch,
-	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence,
+	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence, CapBlockingIsBlocked,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

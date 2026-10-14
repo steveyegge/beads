@@ -427,11 +427,6 @@ func (unsupportedDoltStorage) IsBlocked(_ context.Context, _ string) (_ bool, _ 
 	return
 }
 
-func (unsupportedDoltStorage) IsBlockedBatch(_ context.Context, _ []string) (_ map[string]bool, err error) {
-	err = errUnsupported("IsBlockedBatch")
-	return
-}
-
 func (unsupportedDoltStorage) IterAllDependencyRecords(_ context.Context) (_ storage.Iter[types.Dependency], err error) {
 	err = errUnsupported("IterAllDependencyRecords")
 	return
@@ -732,4 +727,4 @@ func (unsupportedDoltStorage) VersionReconciler() (_ issueops.VersionReconciler,
 	return
 }
 
-// NOTE: partial shell (143 of 201 methods generated; 58 left to this package's hand-written set).
+// NOTE: partial shell (142 of 201 methods generated; 59 left to this package's hand-written set).

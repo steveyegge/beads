@@ -720,12 +720,21 @@ func (s *Store) IsBlocked(ctx context.Context, issueID string) (bool, []string, 
 // IsBlockedBatch preserves the external blocker invariant for batch callers.
 // The embedded Dolt implementation promotes this method from the wrapped
 // store, so it must be declared explicitly here rather than relying on
-// IsBlocked alone. Like IsBlocked, it refuses over a store that serves its
-// roles.
+// IsBlocked alone. Over a store that serves its roles the flag comes from the
+// server's annotator (dependencies.blocking.isBlocked), and
+// remoteExternalBlocked adds the invariant unless the server already applies
+// the policy; only IsBlocked still refuses there.
 func (s *Store) IsBlockedBatch(ctx context.Context, issueIDs []string) (map[string]bool, error) {
 	blocked, err := s.inner.IsBlockedBatch(ctx, issueIDs)
 	if err != nil {
 		return nil, err
+	}
+	if s.rolesAreRemote() {
+		// Over a store that serves its roles the raw edge read below is
+		// refused; the flag came from the server's annotator, and the
+		// external invariant is added from the edges of these rows only —
+		// unless the server already applies the policy itself.
+		return s.remoteExternalBlocked(ctx, issueIDs, blocked)
 	}
 	deps, err := s.inner.GetDependencyRecordsForIssues(ctx, issueIDs)
 	if err != nil {

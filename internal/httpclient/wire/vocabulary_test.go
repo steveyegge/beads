@@ -160,6 +160,9 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if CapListIDs != httpapi.CapListIDs {
 		t.Errorf("CapListIDs = %q, server says %q", CapListIDs, httpapi.CapListIDs)
 	}
+	if CapBlockingIsBlocked != httpapi.CapDependenciesBlockingIsBlocked {
+		t.Errorf("CapBlockingIsBlocked = %q, server says %q", CapBlockingIsBlocked, httpapi.CapDependenciesBlockingIsBlocked)
+	}
 	if CapCountScope != httpapi.CapIssuesCountScope {
 		t.Errorf("CapCountScope = %q, server says %q", CapCountScope, httpapi.CapIssuesCountScope)
 	}
@@ -214,12 +217,12 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 		httpapi.CapIssuesSweepWispsPlane, httpapi.CapIssuesSweepLiveDependents, httpapi.CapIssuesSweepLimit,
 		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
 		httpapi.CapIssuesCloseAutoCloseMolecule, httpapi.CapIssuesListSearch,
-		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapListIDs, httpapi.CapIssuesUpdatePersistence,
+		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapListIDs, httpapi.CapIssuesUpdatePersistence, httpapi.CapDependenciesBlockingIsBlocked,
 	}) {
 		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
 			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit, "+
 			"issues.batchApply.depAddLineage, issues.update.allowTemplate, issues.create.defaultPriority, issues.close.autoCloseMolecule, issues.list.search, "+
-			"issues.list.noAssignee, issues.list.title, issues.list.ids and issues.update.persistence tokens", behaviorCapabilities)
+			"issues.list.noAssignee, issues.list.title, issues.list.ids, issues.update.persistence and dependencies.blocking.isBlocked tokens", behaviorCapabilities)
 	}
 }
 

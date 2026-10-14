@@ -166,6 +166,15 @@ const (
 // (E9-S2), adopted unchanged so the two servers publish one `id`.
 const CapListIDs = "issues.list.ids"
 
+// CapDependenciesBlockingIsBlocked is the behavior capability that advertises
+// GET /v0/beads/dependencies/blocking's `is_blocked` parameter (blocking.go):
+// issueops.BlockingRequest.IncludeIsBlocked, which adds each item's stored,
+// transitive is_blocked flag to the decoration. It is the batched readiness
+// projection behind storage's IsBlockedBatch on a role-served backend
+// (issueops.BlockedFlags). The client refuses the read locally, naming this
+// token, against a server that does not advertise it.
+const CapDependenciesBlockingIsBlocked = "dependencies.blocking.isBlocked"
+
 // CapIssuesSweepWispsPlane is the behavior capability that advertises the
 // `wisps-plane` value of SweepRequest.tier (sweep.go, spec SweepRequest.tier):
 // a third, wider tier that clears the whole wisps table plus any durable bead
@@ -1044,7 +1053,7 @@ var behaviorCapabilities = []string{
 	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
-	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence,
+	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:
