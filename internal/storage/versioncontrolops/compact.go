@@ -13,13 +13,14 @@ import (
 //  3. Soft-reset to initial commit (collapses old history into working set)
 //  4. Commit as single squashed base
 //  5. Cherry-pick each recent commit on top
-//  6. Checkout main, hard-reset to temp branch
+//  6. Checkout main, soft-reset to temp branch, and commit any rows main
+//     held outside the plan
 //  7. Delete temp branch
 //
 // The plan (boundaryHash, recentHashes) is read from main's log before
 // Compact runs. Compact refuses before step 1 when main's head is not the
-// head the plan was built from, and checks again just before the hard reset
-// in step 6: a commit that reached main after the plan was read is in no
+// head the plan was built from, and checks again just before the reset in
+// step 6: a commit that reached main after the plan was read is in no
 // cherry-pick, so resetting main past it would delete a write that had
 // already reported success. On a refusal main is left untouched and the temp
 // branch removed.
@@ -110,8 +111,22 @@ func CompactAtHead(ctx context.Context, conn DBConn, plannedHead, initialHash, b
 	if err := requireMainAt(ctx, conn, plannedHead, "before resetting main"); err != nil {
 		return err
 	}
-	if err := execSQL("reset main to compacted", "CALL DOLT_RESET('--hard', 'compact-tmp')"); err != nil {
+	// --soft: main's working set keeps every row it holds, including a
+	// commit that reached main after the check above and rows a writer left
+	// uncommitted. The squashed tree equals the planned head's, so whatever
+	// differs now is exactly those rows, and they are committed here so the
+	// compaction never leaves main dirty.
+	if err := execSQL("reset main to compacted", "CALL DOLT_RESET('--soft', 'compact-tmp')"); err != nil {
 		return err
+	}
+	var dirty int
+	if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM dolt_status").Scan(&dirty); err != nil {
+		return fmt.Errorf("compact step %q: %w", "read status after reset", err)
+	}
+	if dirty > 0 {
+		if err := execSQL("commit rows kept by the reset", "CALL DOLT_COMMIT('-Am', 'compact: commit rows main held outside the plan')"); err != nil {
+			return err
+		}
 	}
 	if err := execSQL("delete temp branch", "CALL DOLT_BRANCH('-D', 'compact-tmp')"); err != nil {
 		return err

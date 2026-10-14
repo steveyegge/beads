@@ -286,6 +286,7 @@ func TestCompactQuietStillSquashes(t *testing.T) {
 		assertRow(t, db, id, true)
 	}
 	assertNoTempBranch(t, db)
+	assertCleanStatus(t, db)
 }
 
 // The proxied planner reads main's head with MainHead before it reads the
@@ -398,5 +399,86 @@ func TestCompactAtHeadQuietStillSquashes(t *testing.T) {
 	if hashAfter != hashBefore {
 		t.Fatalf("items value hash changed: %s -> %s", hashBefore, hashAfter)
 	}
+	assertNoTempBranch(t, db)
+	assertCleanStatus(t, db)
+}
+
+// assertCleanStatus fails unless main's working set equals its head: a store
+// left dirty by a compaction is what the compactor's quarantine reads as drift.
+func assertCleanStatus(t *testing.T, db DBConn) {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM dolt_status").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("dolt_status has %d rows after compact, want 0", n)
+	}
+}
+
+// A commit that lands on main after the last head check and before the reset
+// is in no cherry-pick. The reset must keep its rows, and the compaction must
+// commit them, so main holds them in a commit and its working set is clean.
+func TestCompactKeepsCommitLandingBeforeReset(t *testing.T) {
+	db := startCompactTestServer(t)
+	ctx := context.Background()
+	initial, boundary, old := squashAllPlan(t, db)
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	fired := false
+	hc := hookConn{Conn: conn, before: func(query string) {
+		if !fired && strings.HasPrefix(query, "CALL DOLT_RESET(") && strings.Contains(query, "'compact-tmp'") {
+			fired = true
+			writeOnMain(t, db, 600)
+		}
+	}}
+
+	if err := Compact(ctx, hc, initial, boundary, old, nil); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if !fired {
+		t.Fatal("test hook never fired: Compact no longer resets main to compact-tmp")
+	}
+	for _, id := range []int{1, 2, 3, 4, 600} {
+		assertRow(t, db, id, true)
+	}
+	assertCleanStatus(t, db)
+	assertNoTempBranch(t, db)
+	after, err := Log(ctx, db, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// initial commit + squashed base + the commit holding the late row
+	if len(after) != 3 {
+		t.Fatalf("commits after compact = %d, want 3", len(after))
+	}
+}
+
+// bd reports a write as done before any Dolt commit holds it, so main's
+// working set can carry rows when the compaction runs. They must survive the
+// reset and be committed by the compaction.
+func TestCompactKeepsUncommittedRow(t *testing.T) {
+	db := startCompactTestServer(t)
+	ctx := context.Background()
+	initial, boundary, old := squashAllPlan(t, db)
+	mustExec(t, db, "INSERT INTO items VALUES (700, 'written, not committed')")
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := Compact(ctx, conn, initial, boundary, old, nil); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	for _, id := range []int{1, 2, 3, 4, 700} {
+		assertRow(t, db, id, true)
+	}
+	assertCleanStatus(t, db)
 	assertNoTempBranch(t, db)
 }
