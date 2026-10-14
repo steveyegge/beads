@@ -19,6 +19,7 @@ go_library(
         "dependencyeditor.go",
         "edgereader.go",
         "errors.go",
+        "export.go",
         "gates.go",
         "graphcounter.go",
         "importer.go",
@@ -57,6 +58,7 @@ go_test(
     srcs = [
         "claimer_external_test.go",
         "current_test.go",
+        "export_test.go",
         "gates_test.go",
         "issueops_external_test.go",
         "molecule_internal_test.go",
