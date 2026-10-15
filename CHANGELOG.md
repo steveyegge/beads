@@ -2212,14 +2212,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Raised the `golang.org/x/crypto` floor to `v0.56.0`, past the two
-  fixable advisories it carries into a locally built `bd`.** `govulncheck`
-  reports both as reachable from `bd`'s own code on `main`:
+- **Raised the `golang.org/x/net` floor to `v0.60.0` and `golang.org/x/crypto`
+  to `v0.57.0`, past the seven fixable advisories they carry into a locally
+  built `bd`.** `govulncheck` reports all seven as reachable from `bd`'s own
+  code on `main`:
 
   | Advisory | Module on `main` | Fixed in |
   |---|---|---|
+  | GO-2026-6603 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6610 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6611 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6612 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6617 | `golang.org/x/net v0.58.0` | `v0.60.0` |
   | GO-2026-6355 | `golang.org/x/crypto v0.55.0` | `v0.56.0` |
   | GO-2026-6354 | `golang.org/x/crypto v0.55.0` | `v0.56.0` |
+
+  `x/net v0.60.0` requires `x/crypto v0.57.0`, `x/text v0.42.0` and
+  `x/mod v0.41.0`, so those rise with it.
 
   GO-2026-5932 (also `x/crypto`) has no fixed version at any release, so it
   is carried forward and named rather than counted as resolved. Both example
