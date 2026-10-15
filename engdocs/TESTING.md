@@ -192,7 +192,8 @@ failure (per test and in every `TestMain`) instead of a skip; lanes that
 exist to run the Dolt suites set it. `BEADS_TEST_REQUIRE_SOCAT=1` does the
 same for the proxied subtests that bridge an external endpoint with `socat`
 (external-unix, the outage/reconnect matrix); `//cmd/bd:bd_proxied_test`
-sets it, and the legacy GitHub proxied jobs, which have no `socat`, do not.
+sets it; the legacy GitHub proxied jobs retired in #7353 had no `socat`
+and left it unset.
 
 Under Bazel, `bazel test //... --config=doltserver` runs the Dolt-backed
 domain, uow, tracker, doctor/fix, protocol and testutil suites on the `local`
