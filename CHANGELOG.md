@@ -978,6 +978,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd context` also prints `cwd repo: git: unavailable` rather than silently
   omitting the one degraded state it exists to report.
 
+- **`bd delete` no longer rewrites a citation of a surviving child into a
+  `[deleted:…]` marker for its parent.**
+  ([#7377](https://github.com/gastownhall/beads/pull/7377)). The rule that
+  turns a deleted id
+  into `[deleted:<id>]` in its neighbours' text treated `.` as a boundary,
+  and a hierarchical child's id is its parent's plus `.<n>`. Deleting
+  `bd-a1.1` turned "step bd-a1.1.2 failed" into
+  "step [deleted:bd-a1.1].2 failed", although `bd-a1.1.2` was still there;
+  deleting a parent and its descendant together could nest one marker in
+  another (`[deleted:[deleted:bd-a1].1.2]`), and a `--cascade` delete left a
+  deleted grandchild cited as `[deleted:bd-a1].1.2`. A `.` followed by an id
+  character now belongs to the id, a `.` that ends a sentence is still a
+  boundary, and each deleted id gets exactly its own marker. A second
+  citation of the same id separated from the first by a single character
+  ("bd-a1 bd-a1") is now rewritten too. The direct and proxied-server delete
+  routes share one copy of the rule.
+
 - **`bd comment`/`bd comments add` refuse an abbreviated id and a reserved
   word instead of silently resolving one to the wrong issue**
   ([#5393](https://github.com/gastownhall/beads/pull/5393)). `bd comment list
