@@ -316,6 +316,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Closing an issue skips the union statements for the closed and pinned
+  rows below it** (#5427, #5939). A close settles `is_blocked` over the
+  closed row's whole parent-child subtree. A recompute of 32 or more rows
+  already sends rows with no dependency rows of their own to a plain
+  `is_blocked = 1 -> 0` update instead of the two union statements; closed
+  and pinned rows now take that path too, since the mark statement refuses
+  them and the unmark statement clears them whatever the union holds.
+  Closing a finished epic with hundreds of closed children no longer runs
+  each of them through the union statements. The same rows are recomputed,
+  and rechecked after commit, as before.
+
 - **`created_by` defaults to the actor in the library, for every create
   shape and every backend.** `PreparePublicCreateRequest`, which
   `Lifecycle.Create`, `BatchCreator` items and batch-apply create items all
