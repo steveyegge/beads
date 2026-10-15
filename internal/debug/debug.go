@@ -9,6 +9,7 @@ var (
 	enabled     = os.Getenv("BD_DEBUG") != ""
 	verboseMode = false
 	quietMode   = false
+	jsonMode    = false
 )
 
 func Enabled() bool {
@@ -28,6 +29,18 @@ func SetQuiet(quiet bool) {
 // IsQuiet returns true if quiet mode is enabled
 func IsQuiet() bool {
 	return quietMode
+}
+
+// SetJSON marks that the command's output is machine-readable (--json or
+// --format json). Callers outside the normal output path (e.g. an advisory
+// note on a fallback) use IsJSON to stay out of a machine-readable stream.
+func SetJSON(json bool) {
+	jsonMode = json
+}
+
+// IsJSON returns true if JSON output mode is enabled.
+func IsJSON() bool {
+	return jsonMode
 }
 
 func Logf(format string, args ...interface{}) {

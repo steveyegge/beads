@@ -1278,6 +1278,10 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{jsonOutput, true}
 		}
+		// jsonOutput is now resolved for this command; let lower layers that
+		// cannot see the flag (e.g. the dolt store's own advisory notes) stay
+		// out of a machine-readable stream too.
+		debug.SetJSON(jsonOutput)
 		if !cmd.Root().PersistentFlags().Changed("readonly") {
 			readonlyMode = config.GetBool("readonly")
 		} else {

@@ -509,6 +509,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A server endpoint inherited from the environment (`BEADS_DOLT_SERVER_PORT`)
+  no longer locks bd out of a project that declares its own: when the env's
+  server answers with another project's database (PROJECT IDENTITY MISMATCH)
+  and the project's `.beads` explicitly declares a different endpoint
+  (`config.yaml` `dolt.port`, else `metadata.json` `dolt_server_port`, with
+  the host following bd's normal precedence — `metadata.json`
+  `dolt_server_host` before `config.yaml` `dolt.host`, never
+  `BEADS_DOLT_SERVER_HOST` itself), bd retries once on that endpoint,
+  verifies the project's identity there, and proceeds with a note on stderr;
+  if that endpoint serves another project too, it refuses with the original
+  error. An agent session carrying its own workspace's server in its
+  environment can now run bd inside a different checkout. The retry never
+  fires for an open that may create the database (`bd init`, `bd bootstrap`),
+  for a configured socket, a gateway credential, or the shared server, and it
+  never dials a declared endpoint off this machine — loopback only
+  (`127.0.0.1`, `localhost`, `::1`/`[::1]`, every spelling treated as the same
+  machine, so an env endpoint on one spelling and a declared endpoint on
+  another no longer reads as a divergence). `bd serve` gets no retry at all —
+  building its own connection outside `dolt.New`, it refuses outright instead
+  of fronting an HTTP server on whatever database the inherited endpoint
+  happens to answer with. The retry re-resolves its own user, TLS setting and
+  password for the declared endpoint instead of carrying the env endpoint's
+  forward: an environment (a gascity city, for one) that sets a server's user
+  and password together means an inherited `BEADS_DOLT_PASSWORD` is a
+  credential for the env endpoint's user, never the declared endpoint's, so
+  the retry's password comes only from the credentials file entry keyed to
+  the declared endpoint, with no password sent when that file has none.
+
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
   backend refuses, so gc's `renudge-stale-human-gates` order failed on every
