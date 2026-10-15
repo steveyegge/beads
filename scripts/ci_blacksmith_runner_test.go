@@ -3,6 +3,7 @@ package scripts_test
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -61,6 +62,25 @@ const blacksmithWindows4vcpuRunsOn = "${{ 'blacksmith-4vcpu-windows-2025' }}"
 // every lane's pinned runs-on is the same literal apart from the label.
 func bazelRemoteRunsOn(label string) string {
 	return "${{ needs.rbe.outputs.mode == 'remote' && '" + label + "' || 'ubuntu-latest' }}"
+}
+
+// bazelRRCCacheReaderRunsOn is bazelRemoteRunsOn for the lanes that read the
+// remote repo contents cache in mode cache (isBazelRRCCacheReader): their
+// GitHub-hosted fallback is ubuntu-24.04, not ubuntu-latest, because the
+// cached trees come from a 24.04 host (design R2) and the image must not
+// move under them.
+func bazelRRCCacheReaderRunsOn(label string) string {
+	return "${{ needs.rbe.outputs.mode == 'remote' && '" + label + "' || 'ubuntu-24.04' }}"
+}
+
+// isBazelRRCCacheReader: a remote repo contents cache reader
+// (bazelRRCReadLanes) that also runs in mode cache (not remote-only).
+// bazel-dolt-race and bazel-dolt-int run only in mode remote (their own ifs,
+// TestBazelDoltRaceArmsExactlyOnePerMode, TestBazelDoltIntArmsExactlyOnePerMode),
+// so they keep the lanes' ubuntu-latest fallback like the remote-only jobs:
+// the fallback branch of their runs-on ternary is never actually taken.
+func isBazelRRCCacheReader(name string) bool {
+	return slices.Contains(bazelRRCReadLanes, name) && !bazelRemoteOnlyJobs[name] && name != bazelDoltRaceJobName && name != bazelDoltIntJobName
 }
 
 // The default lane size: every action executes on rbe-west, but the
@@ -580,10 +600,13 @@ func TestBlacksmithBazelRunnerSizes(t *testing.T) {
 	for _, mode := range []string{"remote", "fork-ro", "fork-rw", "local", "cache", "skip"} {
 		ctx := map[string]string{"needs.rbe.outputs.mode": mode}
 		for name, job := range workflow.Jobs {
-			if name == bazelRBEJobName {
-				continue
+			if name == bazelRBEJobName || isBazelRRCJob(name) {
+				continue // rrc jobs: push/schedule only, never a fork (literal label)
 			}
 			want := "ubuntu-latest"
+			if isBazelRRCCacheReader(name) {
+				want = "ubuntu-24.04"
+			}
 			if mode == "remote" {
 				want = "blacksmith-4vcpu-ubuntu-2404"
 				if label, ok := wantRemote[name]; ok {

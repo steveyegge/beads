@@ -176,12 +176,18 @@ func roundTripCases() []roundTripCase {
 		Status:    "open,in_progress",
 		IssueType: "bug",
 		Assignee:  "agent-7",
+		// Beside Assignee on purpose: the wire carries both as written and the
+		// role decides what the pair means.
+		NoAssignee: true,
 
 		Labels:        []string{"alpha", "beta"},
 		LabelsAny:     []string{"gamma"},
 		ExcludeLabels: []string{"delta", "epsilon"},
 
-		ParentID: "bd-epic1",
+		ParentID:    "bd-epic1",
+		Query:       "login bug",
+		TitleSearch: "Routed open task",
+		IDFilter:    "bd-1,bd-wisp-9,bd-42",
 
 		AllFlag:          true,
 		IncludeTemplates: true,

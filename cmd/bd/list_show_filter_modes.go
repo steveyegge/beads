@@ -66,11 +66,11 @@ func getHierarchicalChildren(ctx context.Context, store storage.DoltStorage, dbP
 		parentIssue, err = s.GetIssue(ctx, parentID)
 		return err
 	})
+	if errors.Is(err, storage.ErrNotFound) || (err == nil && parentIssue == nil) {
+		return nil, fmt.Errorf("parent issue '%s' not found", parentID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("error checking parent issue: %v", err)
-	}
-	if parentIssue == nil {
-		return nil, fmt.Errorf("parent issue '%s' not found", parentID)
 	}
 
 	// Use recursive search to find all descendants using the same logic as --parent filter.
@@ -297,54 +297,4 @@ func gatherProxiedHierarchical(ctx context.Context, uw uow.UnitOfWork, parentID 
 	out = append(out, parent)
 	out = append(out, descendants...)
 	return out, nil
-}
-
-type currentIssueSearcher interface {
-	SearchIssues(context.Context, string, types.IssueFilter) ([]*types.Issue, error)
-}
-
-// resolveCurrentIssueID determines the current active issue for the agent.
-// Priority: in-progress assigned to actor > hooked > last touched.
-func resolveCurrentIssueID(ctx context.Context) string {
-	return resolveCurrentIssueIDFrom(ctx, store, getActorWithGit, GetLastTouchedID)
-}
-
-func resolveCurrentIssueIDFrom(ctx context.Context, searcher currentIssueSearcher, currentActor func() string, fallback func() string) string {
-	if searcher == nil {
-		return fallback()
-	}
-	actor := currentActor()
-	if actor == "" {
-		return fallback()
-	}
-
-	for _, status := range []types.Status{types.StatusInProgress, types.StatusHooked} {
-		status := status
-		filter := types.IssueFilter{
-			Status:   &status,
-			Assignee: &actor,
-		}
-		issues, err := searcher.SearchIssues(ctx, "", filter)
-		if err == nil && len(issues) > 0 {
-			return issues[0].ID
-		}
-	}
-
-	return fallback()
-}
-
-func resolveCurrentIssueIDProxied(ctx context.Context, uw uow.UnitOfWork) string {
-	currentActor := getActorWithGit()
-	if currentActor == "" {
-		return ""
-	}
-	for _, status := range []types.Status{types.StatusInProgress, types.StatusHooked} {
-		st := status
-		filter := types.IssueFilter{Status: &st, Assignee: &currentActor}
-		page, err := uw.IssueUseCase().SearchIssues(ctx, "", filter)
-		if err == nil && len(page.Items) > 0 {
-			return page.Items[0].ID
-		}
-	}
-	return ""
 }

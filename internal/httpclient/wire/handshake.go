@@ -107,6 +107,9 @@ var opCapability = map[string]string{
 	// with a typed capability error instead of dialing a path the older server
 	// would answer as a claim of an issue called ":reclaim".
 	OpReclaimIssues: "issues.reclaim",
+	// The advance-a-molecule role (molecule.go) dials it when served and
+	// refuses before dialing when not; it never composes a client-side copy.
+	OpAdvanceMolecule: "issues.advanceMolecule",
 }
 
 // CapProjectEnforce is the behavior capability the server advertises to announce
@@ -150,6 +153,40 @@ const CapListSort = "issues.list.sort"
 // declared now for the same reason CapListSort was: the capability-union
 // parity gate compares this client's whole vocabulary with the server's.
 const CapCountScope = "issues.count.scope"
+
+// CapListSearch is the behavior capability announcing that listIssues honors
+// `q`, `bd search`'s free text (issueops.ListRequest.Query), spelled exactly
+// as httpapi's CapIssuesListSearch. The Reader's List reads it off the
+// handshake snapshot and refuses a request that carries Query LOCALLY, with a
+// typed capability error naming this token, when the server does not
+// advertise it — so a search never dials a server that would answer
+// `unknown_parameter`, and is never widened into the unsearched listing.
+const CapListSearch = "issues.list.search"
+
+// CapListNoAssignee, CapListTitle and CapListIDs are the behavior
+// capabilities announcing that listIssues honors `no_assignee`, `title` and the
+// repeatable `id` (`bd list --no-assignee`, `--title`, `--id`;
+// issueops.ListRequest's NoAssignee, TitleSearch and IDFilter), spelled exactly
+// as httpapi's CapIssuesListNoAssignee, CapIssuesListTitle and CapListIDs. The
+// Reader's List reads them off the handshake snapshot and refuses a request
+// carrying a member LOCALLY, with a typed capability error naming that
+// member's token, when the server does not advertise it — never a round trip
+// an older server answers `unknown_parameter`, never a wider listing than
+// asked for.
+const (
+	CapListNoAssignee = "issues.list.noAssignee"
+	CapListTitle      = "issues.list.title"
+	CapListIDs        = "issues.list.ids"
+)
+
+// CapBlockingIsBlocked is the behavior capability announcing that
+// listBlockingAnnotations honors `is_blocked` (issueops.BlockingRequest.
+// IncludeIsBlocked), spelled exactly as httpapi's
+// CapDependenciesBlockingIsBlocked. The annotator refuses a request asking
+// for the flag LOCALLY, with a typed capability error naming this token, when
+// the server does not advertise it, so the IsBlockedBatch read never dials a
+// server that would answer `unknown_parameter`.
+const CapBlockingIsBlocked = "dependencies.blocking.isBlocked"
 
 // CapBatchApplyLarge is the behavior capability announcing that issues.batchApply
 // accepts a batch larger than the compiled-in floor (100 items), up to the
@@ -221,6 +258,24 @@ const CapBatchApplyDepAddLineage = "issues.batchApply.depAddLineage"
 // (bd-jkp9v3).
 const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 
+// CapIssuesUpdatePersistence is the behavior capability announcing that
+// updateIssue accepts `patch.persistence` (issueops.IssuePatch.Persistence,
+// the plane move behind `bd promote`). lifecycle.go sends the member only to
+// a server advertising it, and refuses the move before the dial otherwise:
+// there is no client-side fallback, because the move is one transaction on
+// the server.
+const CapIssuesUpdatePersistence = "issues.update.persistence"
+
+// CapIssuesUpdateClaim is the behavior capability announcing that updateIssue
+// accepts `claim` and resolves the claimed id on both planes (a wisp included),
+// spelled exactly as httpapi's constant of the same name. Lifecycle.Update
+// reads it from the cached handshake before the dial: with it, a claim rides
+// updateIssue; without it, a claim alone goes to claimIssue (a wisp then
+// refuses by name, W-ClaimRequest.Wisp) and a claim beside a patch, a guard, a
+// force override or `allow_template` is refused before the dial with
+// ErrUnsupported naming it.
+const CapIssuesUpdateClaim = "issues.update.claim"
+
 // CapIssuesCreateDefaultPriority is the behavior capability announcing that
 // the server stores the create default priority for an ABSENT `priority`
 // member on issues.create, issues.batchCreate and issues.batchApply create
@@ -230,6 +285,16 @@ const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
 // issueops.DefaultCreatePriority explicitly (pinCreateDefaultPriority).
 const CapIssuesCreateDefaultPriority = "issues.create.defaultPriority"
 
+// CapCloseAutoCloseMolecule is the behavior capability announcing that
+// closeIssue and batchCloseIssues accept `auto_close_molecule` and answer
+// the auto-closed root, spelled exactly as httpapi's
+// CapIssuesCloseAutoCloseMolecule. lifecycle.go and batchcloser.go send the
+// member only when this is advertised; against an older server a close that
+// asks for it is refused before it is dialed with the typed capability
+// error — never a silent drop, and never a second, client-side copy of the
+// rule.
+const CapCloseAutoCloseMolecule = "issues.close.autoCloseMolecule"
+
 // CapExternalDependencies is the CONDITIONAL behavior capability announcing
 // that the ready, claim and close operations of this server apply bd's
 // external-dependency policy themselves, spelled exactly as httpapi's constant
@@ -237,21 +302,19 @@ const CapIssuesCreateDefaultPriority = "issues.create.defaultPriority"
 //
 // It is not in behaviorCapabilities because it is not a property of the build:
 // httpapi advertises it only when the serving process composed its roles
-// through the policy layer, so httpapi.Capabilities() — the build-level list
-// the parity gate compares against — never contains it.
+// through the policy layer (httpapi.Config.ExternalDependencyPolicy, which
+// `bd serve` sets from its actual composition), so httpapi.Capabilities() —
+// the build-level list the parity gate compares against — never contains it.
 //
-// UNCONSUMED since S3 reconciliation (2026-10): THIS token is unread by this
-// client, not because OSS lacks external-dependency policy enforcement — the
-// externaldeps decorator (internal/storage/externaldeps) exists in OSS and is
-// wired unconditionally into the local storage chain (cmd/bd/storage_chain.go),
-// so a local backend already applies the policy itself. What this http
-// client specifically lacks is a client-side COMPOSITION of that same
-// decorator around a storage.ExternalDependencyQueryStore-backed remote
-// store, because a remote server advertising this capability applies the
-// policy on its own side before answering — there is nothing left for the
-// client to decorate. The token stays declared, because the server-side
-// capability and its wire spelling are real and S10 schedules the client half
-// that reads it.
+// The externaldeps decorator (internal/storage/externaldeps) wraps the http
+// store the same as any local backend (cmd/bd/storage_chain.go), and consults
+// storage.ExternalDependencyPolicyProber — which httpclient.Store implements
+// by checking for this token in the handshake. Against a server that
+// advertises it, every policy-bearing role is the http store's own, passed
+// through untouched (claim-next stays the server's atomic operation). Only a
+// server that does NOT advertise it — an older bd serve, or another server —
+// gets client-side enforcement: the policy is never silently skipped merely
+// because the store is remote.
 const CapExternalDependencies = "policy.external_dependencies"
 
 // ClientWireRevision is the wire shape this client was built to speak and
@@ -371,6 +434,8 @@ var behaviorCapabilities = []string{
 	CapProjectEnforce, CapBatchApplyLarge, CapListSort, CapCountScope,
 	CapSweepWispsPlane, CapSweepLiveDependents, CapSweepLimit,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
+	CapCloseAutoCloseMolecule, CapListSearch,
+	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence, CapBlockingIsBlocked, CapIssuesUpdateClaim,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

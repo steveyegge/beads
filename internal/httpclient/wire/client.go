@@ -73,6 +73,22 @@ type Options struct {
 	// handshake compares it against ContextResponse.project_id; "" skips the
 	// check.
 	ExpectProjectID string
+	// ResponseHeaderTimeout bounds the first attempt's wait for response
+	// headers on an idempotent request (GET, or Request.Idempotent), counted
+	// from when the request has been written and separately from the
+	// HTTPClient's overall Timeout: zero means DefaultResponseHeaderTimeout,
+	// negative disables it. A body that is still streaming once the headers
+	// arrived is never cut off by it. Such a request that hits it, or whose
+	// connection is reset, is retried once on another connection, with no
+	// header timer and only what is left of the overall Timeout, counted from
+	// when the first attempt was sent. A write is never
+	// retried and is bounded by the overall Timeout alone (bd serve answers a
+	// write after it commits). A written request whose headers do not come
+	// back in time fails with *ResponseHeaderTimeoutError.
+	ResponseHeaderTimeout time.Duration
+	// OnStallRetry, when set, is told about every such retry. The process-wide
+	// count is StallRetryCount either way.
+	OnStallRetry func(StallRetry)
 }
 
 // Client is one workspace's connection to one bd serve.
@@ -86,6 +102,9 @@ type Client struct {
 	userAgent string
 	maxBytes  int64
 	maxRetry  time.Duration
+
+	headerTimeout time.Duration
+	onStall       func(StallRetry)
 
 	handshake handshakeCache
 	expectID  string
@@ -124,6 +143,13 @@ func New(base *url.URL, creds CredentialProvider, opts Options) (*Client, error)
 		maxBytes:  opts.MaxResponseBytes,
 		maxRetry:  opts.MaxRetryAfter,
 		expectID:  opts.ExpectProjectID,
+		onStall:   opts.OnStallRetry,
+	}
+	switch {
+	case opts.ResponseHeaderTimeout == 0:
+		c.headerTimeout = DefaultResponseHeaderTimeout
+	case opts.ResponseHeaderTimeout > 0:
+		c.headerTimeout = opts.ResponseHeaderTimeout
 	}
 	if c.userAgent == "" {
 		c.userAgent = DefaultUserAgent
@@ -212,6 +238,23 @@ type Request struct {
 	// error names it — the close's not_assignee — when the wire does not
 	// repeat what the request already said.
 	Actor string
+	// Idempotent marks a read carried on a non-GET method (a POST batch get)
+	// as safe to replay, the way a GET is (see Replayable). Never set it on a
+	// write.
+	Idempotent bool
+}
+
+// Replayable reports whether r may be sent again after an attempt that got no
+// usable answer: the safe methods, or a read carried on POST that says so
+// (Idempotent). It is the one predicate both retries consult: the wire's
+// retry of a stalled or reset attempt on another connection, and the store's
+// bounded retry of a 503.
+func (r Request) Replayable() bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	return r.Idempotent
 }
 
 // Do issues r and decodes a 2xx body into out, which may be nil for a response
@@ -335,13 +378,70 @@ type response struct {
 	body   []byte
 }
 
-// roundTrip issues one HTTP request and reads its whole bounded body.
+// roundTrip issues r, retrying an idempotent request once on another
+// connection when the first attempt stalls before its headers or has its
+// connection reset (see Options.ResponseHeaderTimeout).
 //
-// Reading the body here rather than streaming it to the caller is what makes
-// the 401 retry above expressible at all: both attempts are then symmetric, and
-// the request body is a []byte that can be replayed. The size cap is what makes
-// that safe.
+// The request is built and stamped once and each attempt sends a copy, so the
+// retry replays what the first attempt sent and the credential source is
+// consulted before any clock starts. The retry gets no header timer, and both
+// attempts share the one overall budget the client's Timeout gives a request,
+// counted, as that Timeout is, from when the first attempt is sent: a
+// credential source slow to resolve (a cold token command) is not the
+// server's time. The timer cannot tell a connection that went silent from a
+// serve still working on a slow read, so a retry cut short by it again would
+// fail a healthy read the client used to wait out. Bounded by what is left of
+// the overall Timeout instead, such a read still finishes if its headers and
+// body fit in what is left, and no read waits longer than that Timeout.
 func (c *Client) roundTrip(ctx context.Context, r Request, u *url.URL, body []byte) (*response, error) {
+	req, err := c.newRequest(ctx, r, u, body)
+	if err != nil {
+		return nil, err
+	}
+	if !r.Replayable() {
+		// Only a replayable request gets the header timer. bd serve sends a
+		// write's headers after the write commits, so a slow but healthy write
+		// (a large batch apply) can legitimately take longer than the header
+		// timeout, and cutting it would turn it into an unknown outcome that
+		// cannot be retried. A write stays bounded by the client's overall
+		// timeout, and a timeout awaiting its headers is typed in
+		// roundTripOnce.
+		return c.roundTripOnce(ctx, r, u, req, 0, time.Time{})
+	}
+	sent := time.Now()
+	res, err := c.roundTripOnce(ctx, r, u, req, c.headerTimeout, time.Time{})
+	if err == nil {
+		return res, nil
+	}
+	var deadline time.Time
+	if c.hc.Timeout > 0 {
+		deadline = sent.Add(c.hc.Timeout)
+	}
+	reason := stallReason(err)
+	if reason == "" || ctx.Err() != nil || (!deadline.IsZero() && !time.Now().Before(deadline)) {
+		return nil, err
+	}
+	// No idle-pool flush: canceling the stalled attempt closed its connection
+	// (net/http never pools a canceled HTTP/1.1 connection, which is what bd
+	// serve speaks; behind an HTTP/2 proxy the retry may share the proxy's
+	// connection), so the retry rides another one. The transport may also be
+	// shared by every client in the process, and its idle connections to
+	// other servers are none of this request's business.
+	event := StallRetry{Op: r.Op, Method: r.Method, Host: u.Host, Reason: reason, Retry: 1, Total: stallRetries.Add(1), Err: err}
+	if c.onStall != nil {
+		c.onStall(event)
+	}
+	res, err = c.roundTripOnce(ctx, r, u, req, 0, deadline)
+	var hte *ResponseHeaderTimeoutError
+	if errors.As(err, &hte) {
+		hte.After, hte.Attempts, hte.Retried, hte.Reason = time.Since(sent), 2, true, reason
+	}
+	return res, err
+}
+
+// newRequest builds r's HTTP request and stamps it (see stampRequest).
+// roundTripOnce sends a copy of it per attempt.
+func (c *Client) newRequest(ctx context.Context, r Request, u *url.URL, body []byte) (*http.Request, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -357,10 +457,60 @@ func (c *Client) roundTrip(ctx context.Context, r Request, u *url.URL, body []by
 	if err := c.stampRequest(ctx, r.Op, req); err != nil {
 		return nil, err
 	}
+	return req, nil
+}
+
+// roundTripOnce sends one copy of the stamped request and reads its whole
+// bounded body. headerTimeout (0: none) bounds its wait for headers once it is
+// written, and deadline (zero: none) bounds the whole attempt on top of ctx
+// and the client's own Timeout.
+//
+// Reading the body here rather than streaming it to the caller is what makes
+// the 401 retry above expressible at all: both attempts are then symmetric, and
+// the request body is a []byte that can be replayed. The size cap is what makes
+// that safe.
+func (c *Client) roundTripOnce(ctx context.Context, r Request, u *url.URL, stamped *http.Request, headerTimeout time.Duration, deadline time.Time) (*response, error) {
+	attemptCtx := ctx
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		attemptCtx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+	attemptCtx, ht := startHeaderTimer(attemptCtx, headerTimeout)
+	defer ht.done()
+	req := stamped.Clone(attemptCtx)
+	if stamped.GetBody != nil {
+		// Clone shares the body reader, which an earlier attempt may have
+		// consumed; every attempt sends the body from its start.
+		b, err := stamped.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", r.Op, err)
+		}
+		req.Body = b
+	}
 
 	//nolint:gosec // G704: the URL is the workspace's configured server, resolved from the sidecar or --server-url; dialing it IS the feature.
 	resp, err := c.hc.Do(req)
+	if ht.stop() {
+		// The header timer fired first. Headers that raced it are discarded:
+		// the attempt's context is already canceled, so its body is lost.
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		hte := &ResponseHeaderTimeoutError{Op: r.Op, Method: r.Method, Host: u.Host, After: headerTimeout, Attempts: 1, Replayable: r.Replayable()}
+		return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: hte}
+	}
 	if err != nil {
+		// A timeout after the request was written ran out awaiting its
+		// headers: Do returns once they arrive, so whichever bound fired (the
+		// client's Timeout or this attempt's deadline) fired before them. A
+		// timeout before the request was written (a dial or TLS handshake)
+		// stays a plain ConnectError, because the server cannot have seen
+		// the request. The caller's own context expiring is the caller's.
+		if wroteAt, ok := ht.written(); ok && ctx.Err() == nil && isTimeout(err) {
+			hte := &ResponseHeaderTimeoutError{Op: r.Op, Method: r.Method, Host: u.Host, After: time.Since(wroteAt), Attempts: 1, Replayable: r.Replayable(), Err: err}
+			return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: hte}
+		}
 		return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()

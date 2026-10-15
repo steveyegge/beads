@@ -3,8 +3,10 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -175,8 +177,39 @@ func TestMoveIssuePersistenceInTxRefusesUnversionedDemotion(t *testing.T) {
 		_, err = issueops.MoveIssuePersistenceInTx(ctx, tx, current, types.PersistenceModeEphemeral, "test-actor")
 		return err
 	})
-	if err == nil {
-		t.Fatal("unversioned demotion succeeded")
+	// The request is refused, not the row: ErrValidation is what makes this a
+	// 400 over http rather than a 500.
+	if !errors.Is(err, storage.ErrValidation) || !errors.Is(err, types.ErrUnversionedWispMove) {
+		t.Fatalf("unversioned demotion error = %v, want ErrValidation wrapping ErrUnversionedWispMove", err)
+	}
+	got, err := store.GetIssue(ctx, issue.ID)
+	if err != nil || got.Ephemeral || got.NoHistory {
+		t.Fatalf("refusal state = %#v, %v", got, err)
+	}
+}
+
+func TestMoveIssuePersistenceInTxRefusesDemotionWithRetainedSnapshots(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	issue := &types.Issue{ID: "persist-snapshot", Title: "snapshot", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	// The snapshot tables have no default id since migration 0051.
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO issue_snapshots (id, issue_id, snapshot_time, compaction_level, original_size, compressed_size, original_content) VALUES (?, ?, NOW(), 1, 1, 1, ?)`, "persist-snapshot-row", issue.ID, "snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	err := store.withRetryTx(ctx, func(tx *sql.Tx) error {
+		current, err := issueops.GetIssueInTx(ctx, tx, issue.ID)
+		if err != nil {
+			return err
+		}
+		_, err = issueops.MoveIssuePersistenceInTx(ctx, tx, current, types.PersistenceModeEphemeral, "test-actor")
+		return err
+	})
+	if !errors.Is(err, storage.ErrValidation) {
+		t.Fatalf("demotion with retained snapshots error = %v, want ErrValidation", err)
 	}
 	got, err := store.GetIssue(ctx, issue.ID)
 	if err != nil || got.Ephemeral || got.NoHistory {

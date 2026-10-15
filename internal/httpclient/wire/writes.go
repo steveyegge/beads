@@ -253,9 +253,9 @@ type UpdateFlags struct {
 	// Claim claims the issue for the actor in the SAME transaction as the
 	// patch (upstream #6890): `bd update <id> --claim`, served by the same
 	// role. With it set the patch may be empty — the claim is then the whole
-	// write. A server that predates the member refuses it as an unknown
-	// parameter before any database work, which is what makes that refusal
-	// safe for a caller to read as skew.
+	// write. The client sets it only for a server advertising
+	// CapIssuesUpdateClaim, read from the handshake before the dial; a server
+	// that predates the member would refuse it as an unknown parameter.
 	Claim bool
 	// ForceAssigneeTransfer bypasses ONLY the anti-steal fence on a genuine
 	// transfer away from a live foreign in-progress owner. The server
@@ -558,10 +558,10 @@ func (c *Client) RememberMemory(ctx context.Context, body apigen.RememberRequest
 	return &out, nil
 }
 
-// RecallMemory reads one memory. A miss — including a row stored as the empty
-// string — is a 404, which the problem mapper turns into issueops.ErrNotFound;
-// the memory role converts that to its own Found-false result, because
-// memoryops has deliberately no ErrNotFound.
+// RecallMemory reads one memory. A miss is a 404, which the problem mapper
+// turns into issueops.ErrNotFound; the memory role converts that to its own
+// Found-false result, because memoryops has deliberately no ErrNotFound. A row
+// stored as the empty string is not a miss: it is a 200 with an empty value.
 func (c *Client) RecallMemory(ctx context.Context, key string) (*apigen.Memory, error) {
 	path, err := MemoryPath(key)
 	if err != nil {
