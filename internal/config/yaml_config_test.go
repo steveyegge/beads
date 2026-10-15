@@ -1,10 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -914,6 +916,23 @@ func TestValidateYamlConfigValue_PrimeMaxMemoryChars(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidateYamlConfigValue_PrimeNoMemories checks that the validator accepts
+// exactly the values the reader (viper's GetBool) reads as a boolean.
+func TestValidateYamlConfigValue_PrimeNoMemories(t *testing.T) {
+	for _, value := range []string{"true", "false", "TRUE", "True", "tRuE", "off", "1", ""} {
+		_, parseErr := strconv.ParseBool(value)
+		err := validateYamlConfigValue("prime.no-memories", value)
+		if (err == nil) != (parseErr == nil) {
+			t.Errorf("value %q: validator error %v, but the reader's parse error is %v", value, err, parseErr)
+		}
+		if err != nil {
+			if want := fmt.Sprintf("prime.no-memories must be true or false, got %q", value); err.Error() != want {
+				t.Errorf("value %q: expected error %q, got %q", value, want, err.Error())
+			}
+		}
 	}
 }
 

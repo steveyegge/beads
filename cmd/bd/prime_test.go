@@ -484,7 +484,7 @@ func TestFormatMemoriesForPrimeTimesOutOpeningStore(t *testing.T) {
 	})
 	t.Setenv(primeStoreTimeoutEnv, "1ms")
 
-	out := formatMemoriesForPrime(false)
+	out := formatMemoriesForPrime(false, primeHookInlineLimit)
 	if !strings.Contains(out, "timed out") {
 		t.Fatalf("expected timeout warning in prime memory output, got %q", out)
 	}
@@ -519,7 +519,7 @@ func TestFormatMemoriesForPrimeTimesOutOpeningRegisteredBackend(t *testing.T) {
 		proxiedServerMode = oldProxied
 	})
 
-	out := formatMemoriesForPrime(false)
+	out := formatMemoriesForPrime(false, primeHookInlineLimit)
 	if !strings.Contains(out, "timed out after 50ms") {
 		t.Fatalf("expected the store-open timeout banner in prime memory output, got %q", out)
 	}
@@ -566,7 +566,7 @@ func TestFormatMemoriesForPrimeReportsUnavailableStore(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			stubPrimeStoreOpen(t, openErr)
 
-			out := formatMemoriesForPrime(tt.compact)
+			out := formatMemoriesForPrime(tt.compact, primeHookInlineLimit)
 			for _, want := range []string{tt.header, "connection refused", "were NOT injected this session", "bd doctor"} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("prime memory output missing %q, got %q", want, out)
@@ -585,7 +585,7 @@ func TestFormatMemoriesForPrimeStaysSilentWithoutWorkspace(t *testing.T) {
 	stubPrimeStoreOpen(t, fmt.Errorf("%w.\nHint: run 'bd init'", ErrNoBeadsDatabase))
 
 	for _, compact := range []bool{false, true} {
-		if out := formatMemoriesForPrime(compact); out != "" {
+		if out := formatMemoriesForPrime(compact, primeHookInlineLimit); out != "" {
 			t.Fatalf("formatMemoriesForPrime(compact=%v) = %q, want silence when no workspace is resolved", compact, out)
 		}
 	}

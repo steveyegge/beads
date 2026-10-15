@@ -39,7 +39,7 @@ var primeProxiedProviderOpen = func(ctx context.Context, beadsDir string) (uow.U
 // cannot serve — provider open failure, read failure — renders the same
 // unavailable banner the classic route renders (gh#5877); only "no workspace"
 // stays silent.
-func formatMemoriesForPrimeProxied(compact bool) string {
+func formatMemoriesForPrimeProxied(compact bool, room int) string {
 	timeout := primeStoreTimeout()
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -57,7 +57,7 @@ func formatMemoriesForPrimeProxied(compact bool) string {
 		}
 		return formatPrimeMemoryUnavailable(compact, err)
 	}
-	return renderPrimeMemoryPlane(plane, compact)
+	return renderPrimeMemoryPlane(plane, compact, room)
 }
 
 // primeProxiedMemoryPlane reads the memory plane through the proxied plane's
