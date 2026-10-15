@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -217,13 +218,31 @@ func countFilters(q *query) issueops.CountRequest {
 		NoAssignee:     q.boolean("no_assignee"),
 		NoLabels:       q.boolean("no_labels"),
 		MetadataFields: q.metadataFields("metadata_field"),
+		HasMetadataKey: q.str("has_metadata_key"),
 
-		// The plane switch, forwarded as the boolean the caller sent. What it
-		// MEANS — merge the wisps tier, drop templates, drop gates, and route an
-		// infra type to the ephemeral tier — is four decisions the role makes
-		// from the WORKSPACE's own infra vocabulary, which is a config load this
-		// handler must never perform.
+		// The plane switches, each forwarded as the boolean the caller sent.
+		// What include_infra MEANS — merge the wisps tier, drop templates, drop
+		// gates, and route an infra type to the ephemeral tier — is four
+		// decisions the role makes from the WORKSPACE's own infra vocabulary,
+		// which is a config load this handler must never perform.
 		IncludeInfra: q.boolean("include_infra"),
+		// include_ephemeral is the first of those four and none of the rest, so
+		// it reaches the role as its own field and never as IncludeInfra: folded
+		// into it, a plane-only count would also lose its templates and gates.
+		IncludeEphemeral: q.boolean("include_ephemeral"),
+
+		// The four scope fields behind `issues.count.scope` (S8): ParentID and
+		// ExcludeTypes are read exactly as the listing reads them (q.str("parent"),
+		// q.list("exclude_type")), because the role documents its own ParentID and
+		// ExcludeTypes as spelling ListRequest's fields identically. NoParent and
+		// ExcludeStatus have no listing counterpart to mirror — NoParent is a new
+		// boolean switch and ExcludeStatus is a Count-only capability the listing
+		// never exposed — so both are read with this file's own conventions for
+		// their kind (q.boolean, q.list) rather than a listing precedent.
+		ParentID:      q.str("parent"),
+		NoParent:      q.boolean("no_parent"),
+		ExcludeTypes:  q.list("exclude_type"),
+		ExcludeStatus: q.list("exclude_status"),
 	}
 }
 
@@ -337,12 +356,23 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		Status:    q.csv("status"),
 		IssueType: q.str("type"),
 		Assignee:  q.str("assignee"),
+		// `bd list --no-assignee`, behind issues.list.noAssignee
+		// (CapIssuesListNoAssignee).
+		NoAssignee: q.boolean("no_assignee"),
 
 		Labels:        q.list("label"),
 		LabelsAny:     q.list("label_any"),
 		ExcludeLabels: q.list("exclude_label"),
 
 		ParentID: q.str("parent"),
+
+		// `bd list --title`, behind issues.list.title (CapIssuesListTitle).
+		TitleSearch: q.str("title"),
+		// `bd list --id`, behind issues.list.ids (CapListIDs). The id scope
+		// arrives as a repeated parameter and reaches the role as the
+		// comma-separated set issueops.ListRequest.IDFilter is. The join is
+		// lossless only because listIDFilter refuses a comma inside a value.
+		IDFilter: listIDFilter(q),
 
 		Brief:            q.boolean("brief"),
 		AllFlag:          q.boolean("all"),
@@ -356,6 +386,9 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 
 		MetadataFields: q.metadataFields("metadata_field"),
 		HasMetadataKey: q.str("has_metadata_key"),
+
+		// `bd search`'s text, behind issues.list.search (CapIssuesListSearch).
+		Query: q.str("q"),
 
 		Limit: q.limit(),
 	}
@@ -426,6 +459,54 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, body)
+}
+
+// maxListIDs bounds listIssues' repeatable `id` filter. It is the spec's
+// `maxItems`, and TestListIDsBoundMatchesTheSpec holds the two together.
+const maxListIDs = 200
+
+// listIDFilter decodes listIssues' repeatable `id` filter into the comma-separated
+// set issueops.ListRequest.IDFilter takes. The contract is bd-enterprise's
+// (E9-S2), adopted unchanged.
+//
+// Every value is bounded the way a path id is (customMethodTarget): longer than
+// the column holds, or carrying a control character, names no row that can
+// exist. Unlike the path, a malformed value here is a 400 naming `id` rather
+// than a 404 — there is no single resource to be missing — and two more shapes
+// are refused because of what the role does with the joined set: a COMMA,
+// because the role splits the set on commas and a value carrying one would
+// silently address two ids the caller never named; and LEADING OR TRAILING
+// WHITESPACE, because the role trims every member, so a padded value would
+// silently address the trimmed id — a different one from the id named.
+func listIDFilter(q *query) string {
+	vals := q.list("id")
+	if len(vals) == 0 {
+		return ""
+	}
+	if len(vals) > maxListIDs {
+		q.invalid("id", fmt.Sprintf("at most %d id values per request; got %d", maxListIDs, len(vals)))
+		return ""
+	}
+	for _, id := range vals {
+		switch {
+		case strings.TrimSpace(id) == "":
+			q.invalid("id", "an id value is empty")
+			return ""
+		case strings.Contains(id, ","):
+			q.invalid("id", fmt.Sprintf("%q carries a comma; repeat the parameter once per id instead", id))
+			return ""
+		case strings.ContainsFunc(id, isControlChar):
+			q.invalid("id", "an id value carries a control character")
+			return ""
+		case strings.TrimSpace(id) != id:
+			q.invalid("id", fmt.Sprintf("%q has leading or trailing whitespace; send the canonical id", id))
+			return ""
+		case types.CheckFieldLen("id", id) != nil:
+			q.invalid("id", fmt.Sprintf("an id value is longer than %d characters", types.MaxFieldLen))
+			return ""
+		}
+	}
+	return strings.Join(vals, ",")
 }
 
 // handleQueryIssues answers GET /v0/beads/issues:query.
@@ -593,6 +674,15 @@ func invalidFilterParam(err error) (string, bool) {
 	switch {
 	case strings.HasPrefix(msg, "invalid status "):
 		return "status", true
+	// The count role's own refusals (S8 review fix): a misspelled
+	// --exclude-status entry, and --parent set together with --no-parent.
+	// Both are the ROLE's ErrValidation. They are named here the same way as
+	// the `status` row above and the metadata-key rows below, so the client
+	// learns which parameter to fix rather than reading an unclassified 500.
+	case strings.HasPrefix(msg, "invalid exclude-status "):
+		return "exclude_status", true
+	case strings.HasPrefix(msg, "--parent and --no-parent are mutually exclusive"):
+		return "no_parent", true
 	case strings.HasPrefix(msg, "invalid issue type "):
 		return "type", true
 	case strings.HasPrefix(msg, "invalid sort policy "):

@@ -92,6 +92,9 @@ func TestReaderContract(t *testing.T) {
 	t.Run("ListEmptyPageIsWellFormed", func(t *testing.T) {
 		conformance.RunReaderListEmptyPageIsWellFormed(t, ctx, fixture)
 	})
+	t.Run("ListQueryMatchesTheTitleOrTheID", func(t *testing.T) {
+		conformance.RunReaderListQueryMatchesTheTitleOrTheID(t, ctx, fixture)
+	})
 	t.Run("GetResolvesTheExactIDAcrossBothPlanes", func(t *testing.T) {
 		conformance.RunReaderGetResolvesTheExactIDAcrossBothPlanes(t, ctx, fixture)
 	})
@@ -205,6 +208,11 @@ func newUOWReaderFixture(t *testing.T, provider UnitOfWorkProvider, prefix strin
 			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
 				_, err := uw.CommentUseCase().AddCommentToIssue(ctx, issueID, author, text)
 				return "bd: comment " + issueID, err
+			})
+		},
+		PromoteWisp: func(ctx context.Context, id, actor string) error {
+			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+				return "bd: promote " + id, uw.IssueUseCase().PromoteWisp(ctx, id, actor)
 			})
 		},
 	}
