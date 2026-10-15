@@ -32,6 +32,7 @@ go_test(
         "handshake_test.go",
         "handshake_wire_revision_test.go",
         "helpers_test.go",
+        "large_apply_timeout_test.go",
         "paths_test.go",
         "problem_test.go",
         "problem_wire_revision_test.go",
