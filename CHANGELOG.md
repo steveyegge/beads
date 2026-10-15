@@ -620,11 +620,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Out-of-tree storage backends must now honor `DefaultPriority`; see the
   BREAKING (out-of-tree storage backends) entry under `### Changed`.
 - Blocked-state repair no longer lets a stale `is_blocked` bit on a parent
-  with no reason row of its own survive in a malformed parent-child cycle
-  (gastownhall/beads#7386). The explained-parent walk now climbs through such
-  a parent, whose bit is inherited, instead of treating it as a final
-  unexplained ancestor; `bd doctor`'s Blocked State check counts the stale bit
-  and `--fix` clears it.
+  with no reason row of its own hold itself up through a parent that blocks
+  on its own child, in a malformed parent-child cycle (gastownhall/beads#7386).
+  The explained-parent walk, on both the full repair and the per-write
+  recompute, now climbs through such a parent, whose bit is inherited,
+  instead of treating it as a final unexplained ancestor; `bd doctor`'s
+  Blocked State check counts the stale bit and `--fix` clears it.
 
 - `bd show --current` over the HTTP backend no longer prints the wrong issue.
   Its in-progress/hooked lookup used the raw `SearchIssues` method, which

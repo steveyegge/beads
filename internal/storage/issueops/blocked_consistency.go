@@ -552,18 +552,24 @@ type parentEdge struct {
 //     with no reason row of its own is decided by neither read — its bit is
 //     inherited — so the walk climbs through it (withoutReasonAmongInTx) and
 //     lets the set below decide it;
-//   - the set itself (dropBlockedFromAbove): the GREATEST set of read parents
-//     all of whose blocked parents are in it. Start from everything read, and
+//   - the set itself (dropBlockedFromAbove): the GREATEST set of the parents
+//     the walk entered as explained (the read's parents, those a scoped walk
+//     found explained, and the no-reason parents it climbed through) all of
+//     whose blocked parents are in it. Start from everything entered, and
 //     drop any parent with a blocked parent outside the set, until nothing
 //     drops. Greatest, because "exogenously blocked" needs a finite chain up
 //     to a real outside reason, so a malformed hierarchy cycle of close gates
 //     with nothing exogenous above it stays explained. The greatest set is
-//     unique, so the order of the drops cannot change it.
+//     unique, so the order of the drops cannot change it. Only the read's
+//     parents are returned: the others only decide what drops.
 //
 // COST. Nothing when the read is empty, which covers every store with no close
 // gate and every batch with none at or above it. Otherwise it is one indexed
-// edge read per level of nested close gates, plus a by-id read per level on
-// the scoped path, over parents that are few by construction.
+// edge read per level the walk climbs, plus, at a level that meets blocked
+// parents it has not met before, an explained read of them by id on the
+// scoped path (explainedAmongInTx) and, on both paths, a reason-row read by id
+// of those still undecided (withoutReasonAmongInTx), over parents that are few
+// by construction.
 func pruneExplainedByAncestryInTx(
 	ctx context.Context, tx DBTX, read subtreeExplainedParents, complete bool,
 ) (subtreeExplainedParents, error) {
@@ -571,8 +577,9 @@ func pruneExplainedByAncestryInTx(
 		return read, nil
 	}
 	refs := read.refs()
-	// explained holds every blocked parent the walk has met: true while it is
-	// explained by its own subtree, false once it is known not to be.
+	// explained holds every blocked parent the walk has met: true while it may
+	// still be explained (explained by its own subtree, or a no-reason parent
+	// the walk climbs through), false once it is known not to be.
 	explained := make(map[parentRef]bool, len(refs))
 	for _, p := range refs {
 		explained[p] = true
@@ -1283,10 +1290,12 @@ func parentsExplainedBySubtreeCoreSQL(parentTable, parentDepTable, cand string) 
 // (an open blocks/conditional-blocks target, issue or wisp) and leg 5 (a
 // blocking waits-for gate), for a dependency row aliased rowAlias.
 //
-// It is a per-ROW predicate, but its one caller evaluates it in a set: inside
-// parentsExplainedBySubtreeSQL's aggregate, over the reason rows of the parents
-// that statement can be asked about, once. It is never applied per row of an
-// enclosing leg — that is the correlated shape #6288 removed and B2 measured.
+// It is a per-ROW predicate, but both callers evaluate it in a set, over a
+// bounded list of parents' rows: parentsExplainedBySubtreeSQL's aggregate,
+// over the reason rows of the parents that statement can be asked about, once,
+// and withoutReasonAmongInTx, over the rows of the parents the walk could not
+// otherwise decide, by id. It is never applied per row of an enclosing leg —
+// that is the correlated shape #6288 removed and B2 measured.
 //
 //nolint:gosec // G201: rowAlias is a constant; waitsForGateBlockedSQLFor rewrites a constant template.
 func blockingReasonSQL(rowAlias string) string {
