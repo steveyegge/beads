@@ -93,7 +93,9 @@ type ReadyRequest struct {
 	// Limit bounds the page. Nil means the shared ready default; 0 means
 	// unlimited. It is a pointer so that "unset" and "explicitly unlimited"
 	// stay distinguishable, which is what lets one constant serve both
-	// surfaces.
+	// surfaces. Over the http backend an unlimited ready read is one
+	// response, bounded at BEADS_HTTP_UNLIMITED_READ_CAP rows and refused
+	// past it with httpclient.ErrUnlimitedReadCap, never truncated.
 	Limit *int
 	// Offset skips the first N matching rows, on EVERY implementation. The
 	// page a caller receives is the rows at positions [Offset, Offset+Limit)
@@ -150,6 +152,17 @@ type ListRequest struct {
 	SpecPrefix  string
 	// IDFilter is a comma-separated id set.
 	IDFilter string
+	// Query is `bd search`'s free text, with that command's meaning and not
+	// TitleSearch's: a row matches when its title contains the text or its id
+	// does, case-insensitively, and an id-shaped text also matches an exact
+	// id, an id prefix and the external ref. It is the `query` argument of the
+	// storage seam's SearchIssues, carried as a member so a backend that
+	// serves only roles can answer a search.
+	//
+	// It narrows; it lifts no default exclusion. A caller that wants search's
+	// "every status, every kind of row" answer asks for that with AllFlag and
+	// the Include* members, as for any other listing.
+	Query string
 
 	Labels        []string
 	LabelsAny     []string
@@ -308,6 +321,14 @@ type ListRequest struct {
 	// this. IncludeInfra does BOTH, which makes it strictly wider; what this
 	// field alone reaches is the ephemeral rows of the types a listing already
 	// shows.
+	//
+	// AN INFRA IssueType IS THE ONE NARROWING IT LIFTS. Naming a type the
+	// workspace calls infra reads only that type's EPHEMERAL rows, which is
+	// where creating one puts it; with this flag set the request reads the
+	// type's rows on both planes instead, because an infra-typed row can still
+	// be durable — a promoted wisp, an issue retyped after it was created, or
+	// one written before its type joined types.infra. That is the superset
+	// promise above applied to the narrowing; IncludeInfra alone keeps it.
 	//
 	// THE MERGED ANSWER IS ONE ORDER. Both planes are ordered together by
 	// SortBy as if they were a single table — not the durable rows followed by

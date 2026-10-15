@@ -75,11 +75,12 @@ func bazelRRCCacheReaderRunsOn(label string) string {
 
 // isBazelRRCCacheReader: a remote repo contents cache reader
 // (bazelRRCReadLanes) that also runs in mode cache (not remote-only).
-// bazel-dolt-race runs only in mode remote on PRs and merge groups (its own
-// if, TestBazelDoltRaceShadowRunsOnlyInRemotePRCalls), so it keeps the
-// lanes' ubuntu-latest fallback like the remote-only jobs.
+// bazel-dolt-race and bazel-dolt-int run only in mode remote (their own ifs,
+// TestBazelDoltRaceArmsExactlyOnePerMode, TestBazelDoltIntArmsExactlyOnePerMode),
+// so they keep the lanes' ubuntu-latest fallback like the remote-only jobs:
+// the fallback branch of their runs-on ternary is never actually taken.
 func isBazelRRCCacheReader(name string) bool {
-	return slices.Contains(bazelRRCReadLanes, name) && !bazelRemoteOnlyJobs[name] && name != bazelDoltRaceJobName
+	return slices.Contains(bazelRRCReadLanes, name) && !bazelRemoteOnlyJobs[name] && name != bazelDoltRaceJobName && name != bazelDoltIntJobName
 }
 
 // The default lane size: every action executes on rbe-west, but the

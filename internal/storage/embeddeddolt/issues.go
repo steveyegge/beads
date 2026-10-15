@@ -198,6 +198,18 @@ func (s *EmbeddedDoltStore) IsBlocked(ctx context.Context, issueID string) (bool
 	return blocked, blockers, err
 }
 
+// IsBlockedWithBlockersBatch answers IsBlocked for every id in one
+// connection (storage.BlockersBatchStore).
+func (s *EmbeddedDoltStore) IsBlockedWithBlockersBatch(ctx context.Context, ids []string) (map[string][]string, error) {
+	var result map[string][]string
+	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
+		var err error
+		result, err = issueops.IsBlockedWithBlockersBatchInTx(ctx, tx, ids)
+		return err
+	})
+	return result, err
+}
+
 // IsBlockedBatch returns the denormalized transitive is_blocked flag for each id
 // in one batched read. Delegates to issueops.IsBlockedBatchInTx.
 func (s *EmbeddedDoltStore) IsBlockedBatch(ctx context.Context, ids []string) (map[string]bool, error) {

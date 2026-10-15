@@ -55,8 +55,23 @@ Where it gates:
   `--norun_validations`, since each compiles a strict subset of what `test`
   already validates on that configuration (`scripts/nogo_lint_policy_test.go`'s
   `TestNogoConfigurationsHaveOneValidatingLane` pins this).
-- **Every other Bazel lane** (integration) still validates what it compiles,
-  including files only its build tags select.
+- The `integration`, `doltserver-integration` and `doltserver-cmd`
+  configurations (owned by `bazel-integration`, `bazel-server-storage` and
+  `bazel-cmd-dolt`) all pass `--norun_validations`: none of their full
+  `bazel test` lanes validates nogo. Instead `bazel-integration` runs a
+  narrow extra step, `Nogo: integration library files`, that builds only
+  `//internal/testutil/integration` under `--config=integration
+  --@rules_go//go/config:race --output_groups=nogo_fix`, so the one
+  non-test library package these configurations add (selected by the
+  `integration` build tag) still gets vet+golangci-lint coverage. This is a
+  deliberate, narrower scope than the other groups above: the 56
+  integration-tagged `_test.go` files (listed in
+  `tools/nogo/unvalidated_integration_tests.txt`) are no longer analyzed by
+  nogo in any lane, because `bazel test //... --config=integration` never
+  builds with validations and no lane builds those test binaries outside of
+  `bazel test`. `scripts/nogo_lint_policy_test.go`'s
+  `TestNogoConfigurationsHaveOneValidatingLane` (the `integ` row) and
+  `TestNogoIntegrationStepCoversItsConfiguration` pin this trade-off.
 
 Every PR is checked against the whole tree, not only its diff: the tree has
 no findings, so there is no baseline to scope against.

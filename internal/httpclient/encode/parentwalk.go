@@ -212,12 +212,21 @@ func recognizeIntents(f types.IssueFilter, cfg ListConfig) (walkIntents, error) 
 	}
 	// The same rule for the plane, and it has TWO suppressors rather than one:
 	// `--include-infra` admits the wisp plane as well as the infra types, and an
-	// infra `--type` routes to the plane on its own. Either one leaves SkipWisps
-	// false whatever the ephemeral flag was, so under either of them the pair is
-	// the same question as the infra intent alone — `--all --no-pinned` and
-	// `--status all` again — and inventing the second parameter would be a
-	// distinction the re-derivation cannot see.
-	if intents.IncludeInfra || cfg.IsInfra(issueType) {
+	// infra `--type` admits it on its own. Either one leaves SkipWisps false
+	// whatever the ephemeral flag was, so SkipWisps cannot carry the intent
+	// under either of them.
+	//
+	// Under `--include-infra` alone the pair is the same question as the infra
+	// intent — `--all --no-pinned` and `--status all` again — and inventing the
+	// second parameter would be a distinction the re-derivation cannot see. An
+	// infra `--type` is different: it also narrows the read to that type's
+	// ephemeral rows, and the ephemeral flag LIFTS that narrowing (so durable
+	// rows of the type come back too), so there the plane intent leaves its
+	// trace in Ephemeral instead — present without the flag, absent with it.
+	switch {
+	case cfg.IsInfra(issueType):
+		intents.IncludeEphemeral = f.Ephemeral == nil
+	case intents.IncludeInfra:
 		intents.IncludeEphemeral = false
 	}
 

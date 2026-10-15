@@ -10,6 +10,7 @@ go_library(
         "paths.go",
         "problem.go",
         "revision_tolerance.go",
+        "stall_retry.go",
         "stream.go",
         "writes.go",
     ],
@@ -37,6 +38,7 @@ go_test(
         "project_stamp_test.go",
         "revision_tolerance_test.go",
         "skew_test.go",
+        "stall_retry_test.go",
         "stream_test.go",
         "vocabulary_test.go",
         "writes_batch_cap_test.go",
@@ -57,6 +59,7 @@ go_test(
         "//internal/types",
         "//issueops",
         "@in_gopkg_yaml_v3//:yaml_v3",
+        "@org_golang_x_net//netutil",
     ],
 )
 

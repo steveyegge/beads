@@ -113,6 +113,10 @@ type ReaderFixture struct {
 	AddDependency func(context.Context, *types.Dependency, string) error
 	// AddComment puts one comment on a durable issue.
 	AddComment func(ctx context.Context, issueID, author, text string) error
+	// PromoteWisp moves a seeded wisp into the durable plane. It is the only
+	// way to seed a DURABLE row of an infra type: creating one routes it to the
+	// wisps plane on every backend.
+	PromoteWisp func(ctx context.Context, id, actor string) error
 }
 
 // RunReaderReadyDefaultTypeExclusionsYieldToAnExplicitType pins
@@ -784,6 +788,112 @@ func RunReaderListReadyFlagRefusesAFilterItCannotCarry(t *testing.T, ctx context
 		t.Fatalf("List --id without --ready: %v", err)
 	}
 	assertReaderPageIDs(t, "List --id without --ready", page, []string{one})
+}
+
+// RunReaderListQueryMatchesTheTitleOrTheID pins ListRequest.Query: `bd
+// search`'s text, which matches a row whose title OR id contains it, case
+// insensitively, and which narrows without lifting a default exclusion — and
+// issueops.SearchListRequest, the request every `bd search` route sends, which
+// does lift them.
+//
+// EVERY KIND OF ROW the search scope promises is seeded with the text, because
+// a scope that silently loses one kind answers every other row correctly: a
+// template, a gate, a wisp of an infra type, and a DURABLE row of that type —
+// a promoted wisp, which a type filter that narrows an infra type to its
+// ephemeral rows drops with no error. Each must come back under the bare scope
+// and under its own type.
+//
+// It scopes itself with a label rather than an id set, so the served leg runs
+// it as written: listIssues publishes no id parameter.
+func RunReaderListQueryMatchesTheTitleOrTheID(t *testing.T, ctx context.Context, fixture ReaderFixture) {
+	t.Helper()
+	if fixture.PromoteWisp == nil {
+		t.Fatal("fixture has no PromoteWisp: a durable row of an infra type cannot be seeded, and it is the row a narrowed type filter drops")
+	}
+	scope := readerLabel(fixture, "lsquery")
+	needle := strings.ToLower(fixture.IssuePrefix) + "qneedle"
+	titleHit := readerID(fixture, "lsquery", "title")
+	idHit := readerID(fixture, "lsquery", "idhit")
+	closedHit := readerID(fixture, "lsquery", "closed")
+	miss := readerID(fixture, "lsquery", "miss")
+	template := readerID(fixture, "lsquery", "template")
+	gate := readerID(fixture, "lsquery", "gate")
+	wispMessage := readerID(fixture, "lsquery", "wispmsg")
+	promotedMessage := readerID(fixture, "lsquery", "promotedmsg")
+
+	// The title carries the needle in UPPER case and the request asks in lower,
+	// so a case-sensitive match finds nothing.
+	titleIssue := readerIssue(titleHit, types.TypeTask, scope)
+	titleIssue.Title = "fix the " + strings.ToUpper(needle) + " path"
+	// The id-hit's title says nothing about it: only its id can match.
+	idIssue := readerIssue(idHit, types.TypeTask, scope)
+	idIssue.Title = "unrelated words"
+	closedIssue := readerIssue(closedHit, types.TypeTask, scope)
+	closedIssue.Title = "old " + needle
+	closedIssue.Status = types.StatusClosed
+	missIssue := readerIssue(miss, types.TypeTask, scope)
+	missIssue.Title = "nothing to see"
+	templateIssue := readerIssue(template, types.TypeTask, scope)
+	templateIssue.Title = needle + " template"
+	templateIssue.IsTemplate = true
+	gateIssue := readerIssue(gate, types.TypeGate, scope)
+	gateIssue.Title = needle + " gate"
+	for _, issue := range []*types.Issue{titleIssue, idIssue, closedIssue, missIssue, templateIssue, gateIssue} {
+		seedReaderIssue(t, ctx, fixture, issue)
+	}
+	// Two rows of the same infra type, one per plane. `message` is built in,
+	// so the type is valid on every backend without configuration.
+	for _, id := range []string{wispMessage, promotedMessage} {
+		message := readerIssue(id, types.TypeMessage, scope)
+		message.Title = needle + " message"
+		message.Ephemeral = true
+		seedReaderWisp(t, ctx, fixture, message)
+	}
+	if err := fixture.PromoteWisp(ctx, promotedMessage, "seed"); err != nil {
+		t.Fatalf("promote wisp %s: %v", promotedMessage, err)
+	}
+
+	searchType := func(issueType types.IssueType) publicops.ListRequest {
+		req := searchScoped(needle, scope)
+		req.IssueType = string(issueType)
+		return req
+	}
+
+	for _, tc := range []struct {
+		name string
+		req  publicops.ListRequest
+		want []string
+	}{
+		{"a title match, case-insensitively, under the default exclusions", publicops.ListRequest{Labels: []string{scope}, Query: needle}, []string{titleHit}},
+		{"AllFlag takes the closed match back", publicops.ListRequest{Labels: []string{scope}, Query: needle, AllFlag: true}, []string{titleHit, closedHit}},
+		{"an id match whose title does not contain the text", publicops.ListRequest{Labels: []string{scope}, Query: idHit, AllFlag: true}, []string{idHit}},
+		{"text nothing contains", publicops.ListRequest{Labels: []string{scope}, Query: needle + "-absent", AllFlag: true}, nil},
+		{"no text narrows nothing", publicops.ListRequest{Labels: []string{scope}}, []string{titleHit, idHit, miss}},
+		{"SearchListRequest, `bd search`'s scope, takes every status and every kind of row back", searchScoped(needle, scope), []string{titleHit, closedHit, template, gate, wispMessage, promotedMessage}},
+		{"SearchListRequest under an infra type keeps both planes' rows of it", searchType(types.TypeMessage), []string{wispMessage, promotedMessage}},
+		{"SearchListRequest under the gate type", searchType(types.TypeGate), []string{gate}},
+		{"SearchListRequest under a plain type keeps its templates", searchType(types.TypeTask), []string{titleHit, closedHit, template}},
+		// Outside the search scope an infra type alone reads only its
+		// ephemeral rows, which is where creating one puts it; IncludeEphemeral
+		// is what lifts that narrowing to the durable rows as well.
+		{"an infra type alone reads only its ephemeral rows", publicops.ListRequest{Labels: []string{scope}, Query: needle, IssueType: string(types.TypeMessage)}, []string{wispMessage}},
+		{"IncludeEphemeral lifts that narrowing", publicops.ListRequest{Labels: []string{scope}, Query: needle, IssueType: string(types.TypeMessage), IncludeEphemeral: true}, []string{wispMessage, promotedMessage}},
+	} {
+		page, err := fixture.Reader.List(ctx, tc.req)
+		if err != nil {
+			t.Errorf("List %s: %v", tc.name, err)
+			continue
+		}
+		assertReaderPageIDSet(t, "List "+tc.name, page, tc.want)
+	}
+}
+
+// searchScoped is the library's search request narrowed to one case's label,
+// the request every `bd search` route sends.
+func searchScoped(query, label string) publicops.ListRequest {
+	req := publicops.SearchListRequest(query)
+	req.Labels = []string{label}
+	return req
 }
 
 // RunReaderListEmptyPageIsWellFormed pins the page shape when nothing matches

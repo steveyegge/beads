@@ -13,9 +13,17 @@ nogo actions, and only the owner's own keys are actually validated.
 
 Scope (S1): the race configuration group only -- bazel-test (owner, race)
 vs. embedded/doltserver/doltserver-proxied/dolt-race (non-owners, which pass
---norun_validations). The integration group (S2) is out of scope until its
-lanes gain the same split; see scripts/nogo_lint_policy_test.go's
-nogoConfigurations table, which this script's RACE_GROUP mirrors.
+--norun_validations); see scripts/nogo_lint_policy_test.go's
+nogoConfigurations table, which this script's RACE_GROUP mirrors. The
+integration group (S2) has since gained its own validating lane -- a narrow
+`bazel build --output_groups=nogo_fix` step over the integration-only
+go_library targets, not a full validating test lane -- checked statically by
+nogo_lint_policy_test.go's checkNogoOnlyStepRow and
+nogo_integration_scan_test.go (independent review of #7486, latent item);
+this script's dynamic aquery/query-based action-key cross-check is still S1
+(RACE_GROUP) only, since S2's owner has no non-owner test lane building the
+same configuration to compare actions against -- there is nothing dynamic
+left to cross-check for S2 the way there is for S1.
 
 Each config's key-affecting flags (the same fingerprint
 scripts/nogo_lint_policy_test.go's nogoKeyFlags parses) are read
@@ -100,13 +108,16 @@ def key_flags(line: str) -> list[str]:
             out.append(tok)
     return out
 
-CONFIG_LINE_RE = re.compile(r"^(build|test):([A-Za-z0-9_-]+)\s+(.*)$")
-TEST_TAG_FILTERS_RE = re.compile(r"^(?:build|test) --test_tag_filters=(\S+)$")
-BUILD_TESTS_ONLY_RE = re.compile(r"^(?:build|test) --build_tests_only$")
+CONFIG_LINE_RE = re.compile(r"^(common|build|test):([A-Za-z0-9_-]+)\s+(.*)$")
+TEST_TAG_FILTERS_RE = re.compile(r"^(?:common|build|test) --test_tag_filters=(\S+)$")
+BUILD_TESTS_ONLY_RE = re.compile(r"^(?:common|build|test) --build_tests_only$")
 
 
 def bazelrc_lines(rc_text: str, name: str) -> list[str]:
-    """Every raw ("build"|"test", opt) line for --config=name, in file order."""
+    """Every raw ("common"|"build"|"test", opt) line for --config=name, in
+    file order. "common" applies to build and test alike, exactly as a
+    common:X line reached through --config=X does in the real .bazelrc
+    (independent review of #7486, must-fix 5 / #7482 should-fix 1)."""
     out = []
     for line in rc_text.splitlines():
         line = line.split(" #", 1)[0].rstrip()
@@ -117,18 +128,26 @@ def bazelrc_lines(rc_text: str, name: str) -> list[str]:
 
 
 def expand_config(rc_text: str, name: str, seen: set[str]) -> list[str]:
-    """Recursively follows nested --config=Y references, as the Go test does."""
+    """Recursively follows nested --config=Y references, as the Go test does.
+
+    A --config= reference is recognized wherever it appears among a line's
+    options -- on a common/build/test line, and not only as the line's
+    first (or only) option. An earlier version matched only a whole line
+    beginning "build --config=" / "test --config=", so a --config=
+    reference on a common: line, or not in first position, silently
+    expanded to nothing (independent review of #7486, must-fix 5, mirroring
+    #7482 should-fix 1's fix to scripts/nogo_lint_policy_test.go's Go
+    version of this function).
+    """
     if name in seen:
         return []
     seen.add(name)
     out = []
     for line in bazelrc_lines(rc_text, name):
-        for prefix in ("build --config=", "test --config="):
-            if line.startswith(prefix):
-                out.extend(expand_config(rc_text, line[len(prefix):], seen))
-                break
-        else:
-            out.append(line)
+        out.append(line)
+        for tok in line.split():
+            if tok.startswith("--config="):
+                out.extend(expand_config(rc_text, tok[len("--config="):], seen))
     return out
 
 
@@ -266,6 +285,21 @@ def main() -> int:
             "not the build, so it is not checked here."
         )
     owner_actions = run_nogo_actions(args.bazel, owner_fp, "//...")
+    if not owner_actions:
+        # A set-difference check below (non_owner_actions.keys() -
+        # owner_actions.keys()) is vacuously empty when both sides are
+        # empty, which would otherwise report full coverage for an owner
+        # query that silently matched nothing (a mnemonic rename, a broken
+        # --config, aquery returning no actions at all) -- the exact
+        # failure mode this script exists to catch, not pass through
+        # (review of #7482, should-fix 4).
+        print(
+            f"nogo_ownership: FAIL\n  {name}: owner --config={owner} query "
+            "returned zero RunNogo/ValidateNogo actions over //...; cannot "
+            "verify anything covers the non-owners",
+            file=sys.stderr,
+        )
+        return 2
 
     problems = []
     for non_owner in non_owners:
@@ -295,6 +329,23 @@ def main() -> int:
             non_owner_universe = lane_universe(args.bazel, tagged)
 
         non_owner_actions = run_nogo_actions(args.bazel, non_owner_fp, non_owner_universe)
+        if not non_owner_actions:
+            # Mirrors the owner-empty guard above (review of #7482, should-fix
+            # 4): a non-owner query that silently matched nothing (a bad
+            # universe expression, an aquery mnemonic rename local to this
+            # config) makes the set-difference below vacuously empty too,
+            # reporting full coverage for a non-owner this script never
+            # actually queried. The owner side is already known non-empty
+            # here, so an empty non-owner is the same failure mode, not a
+            # legitimately nogo-free lane (independent review of #7486,
+            # should-fix).
+            problems.append(
+                f"{name}: --config={non_owner} query over {non_owner_universe!r} "
+                "returned zero RunNogo/ValidateNogo actions even though the "
+                f"owner --config={owner} has {len(owner_actions)}; cannot verify "
+                "this non-owner is actually covered"
+            )
+            continue
         missing = sorted(non_owner_actions[k] for k in non_owner_actions.keys() - owner_actions.keys())
         if missing:
             problems.append(

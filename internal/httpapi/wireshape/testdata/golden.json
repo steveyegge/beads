@@ -34,6 +34,48 @@
       "item_type": "object"
     },
     {
+      "schema": "AdvanceMoleculeRequest",
+      "member": "actor",
+      "type": "string",
+      "required": true
+    },
+    {
+      "schema": "AdvanceMoleculeRequest",
+      "member": "auto_claim",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "schema": "AdvanceMoleculeResponse",
+      "member": "claimed",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "schema": "AdvanceMoleculeResponse",
+      "member": "closed_step",
+      "type": "object",
+      "required": true
+    },
+    {
+      "schema": "AdvanceMoleculeResponse",
+      "member": "complete",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "schema": "AdvanceMoleculeResponse",
+      "member": "molecule_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "AdvanceMoleculeResponse",
+      "member": "next_step",
+      "type": "object",
+      "required": false
+    },
+    {
       "schema": "AnchorEdgeCount",
       "member": "count",
       "type": "integer",
@@ -594,6 +636,12 @@
       "member": "actor",
       "type": "string",
       "required": true
+    },
+    {
+      "schema": "BatchCloseRequest",
+      "member": "auto_close_molecule",
+      "type": "boolean",
+      "required": false
     },
     {
       "schema": "BatchCloseRequest",
@@ -1168,6 +1216,12 @@
     },
     {
       "schema": "CloseIssueRequest",
+      "member": "auto_close_molecule",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "schema": "CloseIssueRequest",
       "member": "expected_version",
       "type": "string",
       "required": false
@@ -1198,9 +1252,21 @@
     },
     {
       "schema": "CloseIssueResponse",
+      "member": "auto_closed_molecule",
+      "type": "object",
+      "required": false
+    },
+    {
+      "schema": "CloseIssueResponse",
       "member": "issue",
       "type": "object",
       "required": true
+    },
+    {
+      "schema": "CloseIssueResponse",
+      "member": "molecule_auto_close_refusal",
+      "type": "string",
+      "required": false
     },
     {
       "schema": "CloseIssueResponse",
@@ -1224,6 +1290,12 @@
       "schema": "CloseOutcome",
       "member": "assignee",
       "type": "string",
+      "required": false
+    },
+    {
+      "schema": "CloseOutcome",
+      "member": "auto_closed_molecule",
+      "type": "object",
       "required": false
     },
     {
@@ -1256,6 +1328,12 @@
       "member": "issue_id",
       "type": "string",
       "required": true
+    },
+    {
+      "schema": "CloseOutcome",
+      "member": "molecule_auto_close_refusal",
+      "type": "string",
+      "required": false
     },
     {
       "schema": "CloseOutcome",
@@ -2269,6 +2347,12 @@
     },
     {
       "schema": "IssueBlocking",
+      "member": "is_blocked",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "schema": "IssueBlocking",
       "member": "parent",
       "type": "string",
       "required": false
@@ -2836,6 +2920,12 @@
     {
       "schema": "IssuePatchBody",
       "member": "parent_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "IssuePatchBody",
+      "member": "persistence",
       "type": "string",
       "required": false
     },
@@ -4867,6 +4957,13 @@
       "style": "simple"
     },
     {
+      "schema": "param:advanceMolecule",
+      "member": "path:id",
+      "type": "string",
+      "required": true,
+      "style": "simple"
+    },
+    {
       "schema": "param:claimIssue",
       "member": "path:id",
       "type": "string",
@@ -5578,6 +5675,15 @@
     },
     {
       "schema": "param:listBlockingAnnotations",
+      "member": "query:is_blocked",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listBlockingAnnotations",
       "member": "query:issue_id",
       "type": "array",
       "required": true,
@@ -5692,6 +5798,15 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:id",
+      "type": "array",
+      "required": false,
+      "item_type": "string",
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:include_ephemeral",
       "type": "boolean",
       "required": false,
@@ -5764,7 +5879,24 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:no_assignee",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:parent",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:q",
       "type": "string",
       "required": false,
       "style": "form",
@@ -5789,6 +5921,14 @@
       "type": "array",
       "required": false,
       "item_type": "string",
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:title",
+      "type": "string",
+      "required": false,
       "style": "form",
       "explode": true
     },
@@ -6106,6 +6246,8 @@
     "AddCommentRequest": "request",
     "AddDependenciesRequest": "request",
     "AddDependenciesResponse": "response",
+    "AdvanceMoleculeRequest": "request",
+    "AdvanceMoleculeResponse": "response",
     "AnchorEdgeCount": "response",
     "ApplyBatchRequest": "request",
     "ApplyBatchResponse": "response",

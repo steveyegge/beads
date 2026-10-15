@@ -16,10 +16,17 @@ go_binary(
 # (compact_gc_target_test.go), entirely env-driven at run time, so one
 # prebuilt copy covers every test case and mode: the test never needs a host
 # Go toolchain under Bazel (bazeltest.RunfileEnv, BEADS_TEST_COMPACT_GC_FIXTURE).
+# pure/race pinned explicitly, like :bd_for_tests: stdlib-only (encoding/json,
+# fmt, os), so it needs neither cgo nor the race detector, and nothing about
+# it depends on either; pinning keeps that true whatever --config the
+# consuming go_test builds under (prcore/embedded/doltserver-*), instead of
+# relying on this tiny fixture happening to inherit a compatible default.
 go_binary(
     name = "compact_gc_fixture",
     testonly = True,
     srcs = ["testdata/compact-gc-fixture.go"],
+    pure = "on",
+    race = "off",
 )
 
 go_library(
@@ -242,6 +249,7 @@ go_library(
         "mol_progress.go",
         "mol_proxied_server.go",
         "mol_ready_gated.go",
+        "mol_roles.go",
         "mol_seed.go",
         "mol_show.go",
         "mol_squash.go",
@@ -306,13 +314,13 @@ go_library(
         "schema.go",
         "schema_skew.go",
         "search.go",
-        "search_proxied_server.go",
         "send_metrics.go",
         "serve.go",
         "setup.go",
         "ship.go",
         "show.go",
         "show_children.go",
+        "show_current.go",
         "show_display.go",
         "show_format.go",
         "show_proxied_server.go",
@@ -509,6 +517,7 @@ go_binary(
     race = "off",
     visibility = [
         "//backend/http:__pkg__",
+        "//backend/http/corpus:__pkg__",
         "//cmd/bd:__subpackages__",
         "//internal/beads:__pkg__",
         "//internal/storage/uow:__pkg__",
@@ -771,6 +780,7 @@ go_test(
         "export_exclude_owner_test.go",
         "export_max_rows_gate_test.go",
         "export_proxied_integration_test.go",
+        "export_source_role_test.go",
         "export_source_wisp_subset_test.go",
         "export_test.go",
         "external_policy_direct_integration_test.go",
@@ -989,6 +999,7 @@ go_test(
         "mol_ready_gated_hint_test.go",
         "mol_ready_gated_proxied_integration_test.go",
         "mol_ready_gated_test.go",
+        "mol_route_parity_integration_test.go",
         "mol_show_proxied_integration_test.go",
         "mol_squash_embedded_test.go",
         "mol_squash_proxied_integration_test.go",
@@ -1102,6 +1113,9 @@ go_test(
         "schema_test.go",
         "search_embedded_test.go",
         "search_proxied_integration_test.go",
+        "search_routes_embedded_test.go",
+        "search_routes_parity_test.go",
+        "search_routes_proxied_test.go",
         "search_test.go",
         "send_metrics_diagnostics_test.go",
         "serve_batch_close_proxied_integration_test.go",
@@ -1259,6 +1273,7 @@ go_test(
         "where_cgo_test.go",
         "where_embedded_test.go",
         "where_test.go",
+        "wisp_abandoned_test.go",
         "wisp_gc_active_embedded_test.go",
         "wisp_gc_purge_closed_embedded_test.go",
         "wisp_proxied_integration_test.go",
@@ -1341,6 +1356,7 @@ go_test(
         "//internal/storage/issueops",
         "//internal/storage/journalscan",
         "//internal/storage/kvkeys",
+        "//internal/storage/memoryops",
         "//internal/storage/schema",
         "//internal/storage/uow",
         "//internal/storage/versioncontrolops",
@@ -1660,14 +1676,22 @@ sh_test(
 sh_test(
     name = "bd_dolt_server_test",
     size = "large",
-    # --config=doltserver-cmd's -test.timeout=19m fires (with a goroutine
-    # dump) before Bazel's 1200s action limit (eternal under the lane's
-    # --test_timeout), which kills without one.
+    # args' -test.timeout=19m fires (with a goroutine dump) before Bazel's
+    # 1200s action limit (eternal under the lane's --test_timeout), which
+    # kills without one.
     timeout = "eternal",
     srcs = ["//tools/bazel:go_test_pinned_shard.sh"],
     args = [
         "$(rootpath :dolt_server_pinned_shards.txt)",
         "$(rootpath :bd_test)",
+        # Item 5 A2: moved from --config=doltserver-cmd's --test_arg
+        # (go_test_pinned_shard.sh forwards args after its own, so this
+        # lands last in argv, same as the config's --test_arg did). Go's own
+        # timeout fires first and dumps every goroutine to test.log, which
+        # Bazel's 1200s cap does not. The move keeps this out of
+        # --config=dolt-int, whose other member (server-storage) has a 15m
+        # Go timeout of its own.
+        "-test.timeout=19m",
     ],
     data = [
         ":bd_for_tests",
@@ -1685,6 +1709,9 @@ sh_test(
         "BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)",
         "BEADS_TEST_COMPACT_GC_FIXTURE": "$(rlocationpath :compact_gc_fixture)",
         "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
+        # Item 5 A2: moved from --config=doltserver-cmd's --test_env, so
+        # --config=dolt-int does not set it for server-storage's targets too.
+        "BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION": "1",
         "BEADS_TEST_REQUIRE_DOLT_CONTAINER": "1",
         # TestSharedServerConcurrent (skipped everywhere else) as a bounded
         # smoke: 6 concurrent bd clients, 3 per database, against 2
