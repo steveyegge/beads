@@ -550,6 +550,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming the server's host, because it may or may not have been applied,
   while a dial or TLS timeout stays a plain connection error. The batch get,
   a read on POST, is now also retried on a 503 the way a GET is.
+- **A large batch apply over HTTP no longer fails at 60s while the server
+  commits it.** `bd serve` runs an `issues:batchApply` of more than 100 items
+  (a large `bd create --graph` plan, say) under its `--large-apply-ceiling`
+  (5 minutes by default), on a context detached from the client, but the HTTP
+  backend client gave every request 60s. A large apply that took longer
+  failed client-side with a timeout while the server went on to commit it.
+  Such a request is now dialed with 6 minutes, which covers the server's
+  default ceiling plus what it may spend before (reading the request, waiting
+  for the one-wide large-apply slot) and after (writing the answer back).
+  Every other request keeps 60s. An `*http.Client` passed in through
+  `backend/http`'s `Options.HTTPClient` is raised the same way for that one
+  request when its `Timeout` is shorter than 6 minutes; one with no `Timeout`
+  stays unbounded. A server whose `--large-apply-ceiling` is raised past about
+  5m15s can still outlast the client: it does not advertise its ceiling, so
+  the client cannot learn it.
 - **An update of a template is now refused for every caller, not only
   `bd update`.** The template guard used to be a pre-read in `cmd/bd`, so an
   update through `bd serve` (`PATCH /v0/beads/issues/{id}`), an `update` item
