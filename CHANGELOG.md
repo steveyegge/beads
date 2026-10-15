@@ -524,6 +524,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd gate check` works over a connected HTTP workspace.** Its open-gate
+  listing built the same raw `SearchIssues` filter `bd gate list` did before
+  S20, so the HTTP backend refused the command before reading a gate and gc's
+  core `gate-sweep` order (`bd gate check --type=timer --escalate`) failed on
+  every remote scope. It now lists through `issueops.ListGates` over the
+  route's Querier (direct, proxied and remote alike). Closing a resolved gate
+  and a bead gate's sighting were already served; the gh:run discovery's
+  `await_id` persist still refuses on the wire and counts as that gate's
+  error. The served corpus gains `mc-gate-check-timer`, `mc-gate-check-gh`
+  and `gate-check-all`.
+
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
   backend refuses, so gc's `renudge-stale-human-gates` order failed on every
