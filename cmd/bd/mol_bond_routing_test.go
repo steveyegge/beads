@@ -124,6 +124,10 @@ func TestDiscoverMolBondOperandRouting(t *testing.T) {
 			if err := os.Chdir(repoDir); err != nil {
 				t.Fatalf("chdir repoDir: %v", err)
 			}
+			// Role detection reads the process-wide RepoContext cache, which the
+			// previous case built for its own, now-deleted repo. Rebuild it from
+			// repoDir.
+			resetRepoContextCachesForTest(t)
 
 			disc, err := discoverMolBondOperand(ctx, primaryStore, tc.operand, nil)
 			if err != nil {
@@ -504,6 +508,10 @@ func TestMolBondAutoRoutedReadOnlyFailsFast(t *testing.T) {
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatalf("chdir repoDir: %v", err)
 	}
+	// Role detection reads the process-wide RepoContext cache, which an
+	// earlier test in this binary may have built for its own, now-deleted
+	// repo. Rebuild it from repoDir.
+	resetRepoContextCachesForTest(t)
 
 	discA, err := discoverMolBondOperand(ctx, primaryStore, "shared-ro1", nil)
 	if err != nil {

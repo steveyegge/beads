@@ -51,6 +51,10 @@ func TestMaintainerAutoRouteMutationWritesThrough(t *testing.T) {
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatalf("chdir repoDir: %v", err)
 	}
+	// Role detection reads the process-wide RepoContext cache, which an
+	// earlier test in this binary may have built for its own, now-deleted
+	// repo. Rebuild it from repoDir.
+	resetRepoContextCachesForTest(t)
 
 	rr, err := resolveAndGetIssueForMutation(ctx, primaryStore, "shared-hub")
 	if err != nil {
