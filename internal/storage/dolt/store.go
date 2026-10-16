@@ -2373,7 +2373,9 @@ func warnRemoteSyncOpenRefusal(err error) bool {
 }
 
 var (
-	cleanServerCircuitState = CleanStaleCircuitBreakerFiles
+	// Sweeps at most once per process: a test that needs the real sweep to run
+	// here must also start a fresh staleCircuitSweep.
+	cleanServerCircuitState = cleanStaleCircuitBreakerFilesOnce
 	newServerCircuitBreaker = maybeNewCircuitBreaker
 	ensureResolvedPortFile  = doltserver.EnsurePortFile
 )

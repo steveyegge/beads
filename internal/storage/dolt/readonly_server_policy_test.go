@@ -1,8 +1,12 @@
 package dolt
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestInitializeServerCircuitBreakerHonorsDisableAutoStart(t *testing.T) {
@@ -45,6 +49,62 @@ func TestInitializeServerCircuitBreakerHonorsDisableAutoStart(t *testing.T) {
 	}
 	if cleanCalls != 2 || newCalls != 2 {
 		t.Fatalf("classified-read server open circuit calls: clean=%d new=%d, want 2 each", cleanCalls, newCalls)
+	}
+}
+
+// TestServerOpenSweepsCircuitDirOncePerProcess pins the open-time sweep to
+// what its doc has always called it: an init-time cleanup. A process opens
+// stores more than once — every write command opens a non-mutating preview
+// store for the workspace-identity check before its writable one (be-0gfcs),
+// and a long-lived embedder opens one per request — and each open re-read
+// every breaker file in the directory. Nothing the sweep could find changes
+// between two opens of one process, so only the first open sweeps; an explicit
+// CleanStaleCircuitBreakerFiles (bd doctor --fix) still sweeps on demand.
+func TestServerOpenSweepsCircuitDirOncePerProcess(t *testing.T) {
+	t.Setenv("BEADS_TEST_MODE", "")
+	dir := t.TempDir()
+	t.Setenv(testCircuitBreakerDirEnv, dir)
+	// This test process may already have spent its sweep on an earlier test.
+	original := staleCircuitSweep
+	staleCircuitSweep = new(sync.Once)
+	t.Cleanup(func() { staleCircuitSweep = original })
+
+	staleOpen := func(name string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		data, err := json.Marshal(circuitState{State: circuitOpen, TrippedAt: time.Now().Add(-circuitStaleTTL - time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	exists := func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
+
+	first := staleOpen("beads-dolt-circuit-127-0-0-1-40001-first.json")
+	if initializeServerCircuitBreaker(&Config{ServerPort: 3307}) == nil {
+		t.Fatal("writable server open must retain circuit breaker behavior")
+	}
+	if exists(first) {
+		t.Fatal("the first server open in the process did not sweep the circuit directory")
+	}
+
+	second := staleOpen("beads-dolt-circuit-127-0-0-1-40002-second.json")
+	if initializeServerCircuitBreaker(&Config{ServerPort: 3307}) == nil {
+		t.Fatal("writable server open must retain circuit breaker behavior")
+	}
+	if !exists(second) {
+		t.Fatal("a second server open in the same process swept the circuit directory again")
+	}
+
+	CleanStaleCircuitBreakerFiles()
+	if exists(second) {
+		t.Fatal("an explicit CleanStaleCircuitBreakerFiles (bd doctor --fix) no longer sweeps")
 	}
 }
 
