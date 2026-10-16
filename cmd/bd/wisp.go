@@ -810,10 +810,11 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 		ids[i] = issue.ID
 	}
 	// Cascade must stay OFF here too. findAbandonedWisps has already expanded
-	// dependents and kept only the unprotected ones, so a deleteBatch cascade
-	// would re-expand from that set to ALL transitive dependents — including
-	// blocked/in-progress steps that isProtectedWisp just excluded (GH#4394's
-	// protection is only enforced in the pre-filter; cascade bypasses it).
+	// dependents and kept only the unprotected ones that meet --age, so a
+	// deleteBatch cascade would re-expand from that set to ALL transitive
+	// dependents — including blocked/in-progress steps that isProtectedWisp
+	// just excluded (GH#4394's protection is only enforced in the pre-filter;
+	// cascade bypasses it) and fresh steps the --age check just spared.
 	// Without cascade the list is deleted exactly as filtered and live
 	// dependents are orphaned (edges dropped, is_blocked recomputed).
 	if err := deleteBatch(nil, ids, true, false, false, jsonOutput, false, nil, "wisp gc"); err != nil {
@@ -923,7 +924,7 @@ func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThre
 					continue
 				}
 				// Children are held to the same --age contract as parents.
-				if now.Sub(child.UpdatedAt) <= ageThreshold {
+				if !wispIsAbandoned(now, child.UpdatedAt, ageThreshold) {
 					continue
 				}
 				abandoned = append(abandoned, child)

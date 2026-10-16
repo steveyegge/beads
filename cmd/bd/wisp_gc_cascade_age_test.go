@@ -153,3 +153,64 @@ func TestWispGCRaisingAgeDoesNotSaveFreshChild(t *testing.T) {
 		}
 	}
 }
+
+// TestWispGCCascadeChildAgesAtStoragePrecision holds cascade children to the
+// parents' age predicate, wispIsAbandoned, at Dolt's DATETIME(0) precision
+// (#7236). A step closed at 12:00:00.7 is stored as 12:00:01, so a gc at
+// 12:00:00.9 reads it 100ms in the future. --age 0s must still collect it with
+// its stale parent; the raw now.Sub(updated_at) <= threshold skip that #7236
+// replaced for parents reads -100ms and misses it, orphaning the step once its
+// parent is deleted. --age 1h must spare it at that instant and collect it two
+// hours later.
+//
+// The step is closed because under --age 0s the parent scan already collects
+// every wisp it sees that is not closed, protected or an infra type, so only a
+// wisp the scan passes over, such as a closed step without --all, reaches the
+// cascade's own age check.
+func TestWispGCCascadeChildAgesAtStoragePrecision(t *testing.T) {
+	base := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	parent := &types.Issue{
+		ID:        "gc-stale-parent",
+		Status:    types.StatusOpen,
+		UpdatedAt: base.Add(-24 * time.Hour),
+	}
+	step := &types.Issue{
+		ID:        "gc-closed-step",
+		Status:    types.StatusClosed,
+		UpdatedAt: base.Add(700 * time.Millisecond).Round(time.Second), // 12:00:01
+	}
+	old := wispGCNow
+	t.Cleanup(func() { wispGCNow = old })
+
+	for _, tc := range []struct {
+		now       time.Time
+		threshold time.Duration
+		wantStep  bool
+	}{
+		{base.Add(900 * time.Millisecond), 0, true},
+		{base.Add(900 * time.Millisecond), time.Hour, false},
+		{base.Add(2 * time.Hour), time.Hour, true},
+	} {
+		wispGCNow = func() time.Time { return tc.now }
+		r := &cascadeAgeReader{
+			issues:   []*types.Issue{parent, step},
+			children: map[string]bool{step.ID: true},
+		}
+		got, err := findAbandonedWisps(context.Background(), r, false, tc.threshold, nil)
+		if err != nil {
+			t.Fatalf("findAbandonedWisps(--age %s): %v", tc.threshold, err)
+		}
+		collected := make(map[string]bool, len(got))
+		for _, issue := range got {
+			collected[issue.ID] = true
+		}
+		if !collected[parent.ID] {
+			t.Errorf("findAbandonedWisps(--age %s) at %s: stale parent %q not collected; collected=%v",
+				tc.threshold, tc.now.Format("15:04:05.000"), parent.ID, collected)
+		}
+		if collected[step.ID] != tc.wantStep {
+			t.Errorf("findAbandonedWisps(--age %s) at %s, closed step updated_at 12:00:01: collected=%v, want %v",
+				tc.threshold, tc.now.Format("15:04:05.000"), collected[step.ID], tc.wantStep)
+		}
+	}
+}
