@@ -3,8 +3,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -16,8 +18,14 @@ import (
 // tables SetConfig projects from status.custom and types.custom) sat
 // uncommitted: never pushed, and a dirty internal key refused the next pull.
 //
-// The last step pins the kv.* screen on memory writes: a dirty internal config
-// key that the memory write did not make is refused, named, and left alone.
+// The secret-key step pins the yaml-only branch of `bd config unset`: the
+// leaked credential row it deletes must be committed too, or HEAD (what
+// `bd dolt push` publishes) keeps it.
+//
+// The last steps pin the kv.* screen on memory writes: a dirty internal config
+// key that the memory write did not make (here the issue_prefix of an unwired
+// `bd rename-prefix`) is named and left alone, and the memory command still
+// succeeds with a warning, because its own write has landed.
 func TestCLI_ServerModeConfigWritesCommit_E2E(t *testing.T) {
 	skipIfNoDolt(t)
 
@@ -77,15 +85,54 @@ func TestCLI_ServerModeConfigWritesCommit_E2E(t *testing.T) {
 		}
 	}
 
-	mustBD("sql", "INSERT INTO config (`key`, value) VALUES ('gh4078_internal', 'another writer')")
-	out, err := bd("remember", "--key", "gh4078-screened", "screened memory")
-	if err == nil {
-		t.Fatalf("bd remember committed over a dirty internal config key:\n%s", out)
+	// A bd that predates notion.token moving to config.yaml stored it in the
+	// config table, and that row was committed and pushed.
+	mustBD("sql", "INSERT INTO config (`key`, value) VALUES ('notion.token', 'gh4078-leaked-credential')")
+	mustBD("dolt", "commit", "-m", "gh4078: an older bd stored notion.token in the database")
+	if got := dirtyConfigTables(); got != "" {
+		t.Fatalf("precondition: %s dirty after bd dolt commit", got)
 	}
-	if !strings.Contains(out, "gh4078_internal") {
-		t.Fatalf("refusal does not name the internal key:\n%s", out)
+	if out := mustBD("config", "unset", "notion.token"); !strings.Contains(out, "Also removed a stored notion.token row") {
+		t.Fatalf("bd config unset notion.token did not remove the stored row:\n%s", out)
+	}
+	if got := dirtyConfigTables(); got != "" {
+		t.Fatalf("after bd config unset notion.token: %s left uncommitted, so HEAD still publishes the credential (GH#4078)", got)
+	}
+
+	mustBD("rename-prefix", "rvx-")
+	if got := dirtyConfigTables(); got != "config" {
+		t.Fatalf("precondition: dirty = %q after bd rename-prefix, want its unwired issue_prefix write in config", got)
+	}
+	stdout, stderr, err := runBDExecSeparated(t, testBD, tmpDir, env, "remember", "--key", "gh4078-screened", "screened memory", "--json")
+	if err != nil {
+		t.Fatalf("bd remember failed after its write landed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	var remembered struct {
+		Key             string   `json:"key"`
+		Committed       *bool    `json:"committed"`
+		DirtyConfigKeys []string `json:"dirty_config_keys"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &remembered); err != nil {
+		t.Fatalf("bd remember --json stdout is not one JSON object: %v\n%s", err, stdout)
+	}
+	if remembered.Key != "gh4078-screened" || remembered.Committed == nil || *remembered.Committed ||
+		!slices.Equal(remembered.DirtyConfigKeys, []string{"issue_prefix"}) {
+		t.Fatalf("bd remember --json = %s, want key gh4078-screened, committed false, dirty_config_keys [issue_prefix]", stdout)
+	}
+	if !strings.Contains(stderr, "Warning:") || !strings.Contains(stderr, "issue_prefix") {
+		t.Fatalf("bd remember stderr does not warn about the refused commit naming issue_prefix:\n%s", stderr)
+	}
+	if out := mustBD("recall", "gh4078-screened"); !strings.Contains(out, "screened memory") {
+		t.Fatalf("the screened memory was not stored:\n%s", out)
+	}
+	if out := mustBD("forget", "gh4078-screened"); !strings.Contains(out, "Warning:") || !strings.Contains(out, "issue_prefix") {
+		t.Fatalf("bd forget did not warn about the refused commit naming issue_prefix:\n%s", out)
 	}
 	if got := dirtyConfigTables(); got != "config" {
-		t.Fatalf("after the refused memory commit: dirty = %q, want config left for bd dolt commit", got)
+		t.Fatalf("after the refused memory commits: dirty = %q, want config left for bd dolt commit", got)
+	}
+	mustBD("dolt", "commit", "-m", "gh4078: commit the screened config")
+	if got := dirtyConfigTables(); got != "" {
+		t.Fatalf("after bd dolt commit: %s still dirty", got)
 	}
 }

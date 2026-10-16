@@ -722,9 +722,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lookup tables projected from it, so a concurrent operation's other dirty
   tables are never swept; `batch` and `off` defer them to `bd dolt commit`
   like every other write. `bd remember` and `bd forget` commit only user
-  `kv.*` rows, and refuse with the keys named when an internal config key is
-  dirty. This restores the v1.0.1 behavior from
-  [#3052](https://github.com/gastownhall/beads/pull/3052)
+  `kv.*` rows. When an internal config key is dirty (such as the
+  `issue_prefix` that `bd rename-prefix` writes), the memory is still
+  stored but not committed: the command warns on stderr with the keys named
+  and exits 0, `--json` adds `committed: false`, `commit_error` and
+  `dirty_config_keys`, and `bd dolt commit` publishes the memory with those
+  keys. v1.0.1 ([#3052](https://github.com/gastownhall/beads/pull/3052)),
+  whose commits this restores, also warned on a failed memory commit
+  instead of failing the write. `bd config unset` of a yaml-only secret key
+  also commits its delete of a credential row an older bd stored in the
+  database, so HEAD, which `bd dolt push` publishes, no longer keeps it
   ([#4078](https://github.com/gastownhall/beads/issues/4078)).
 
 - **PRs based on `hotfix/**` branches now run full CI, not just

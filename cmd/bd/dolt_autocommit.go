@@ -172,9 +172,19 @@ func commitPendingIfEmbedded(ctx context.Context, st storage.DoltStorage, actor 
 //
 // Unlike commitMemoryWrite it does not screen other dirty config rows: the
 // operator is writing config on purpose, the trust level of `bd dolt commit`.
+// The config verbs return a failed commit as the command's failure, where
+// remember and forget only warn: a memory commit is refused whenever another
+// writer left an internal key dirty, so exit 1 there would be routine for a
+// write that landed, while this commit is never refused and fails only on a
+// genuine error, which its "committing config write" prefix attributes to the
+// commit rather than the write. (config unset's delete of a leaked secret row
+// warns too: the YAML unset is that command's contract.)
 // rename-prefix and migrate also write config (issue_prefix, sync.branch) and
 // are deliberately not wired here: they are multi-step operations, and when
 // their config row should become a commit is the GH#2455 question itself.
+// `bd kv set`/`clear` and the kv.memory rows `bd import` writes are not wired
+// here yet either, so on this route they stay in the working set until a later
+// commit stages config, such as `bd dolt commit`.
 func commitConfigWrite(ctx context.Context, st storage.DoltStorage, command string) error {
 	if err := commitConfigTable(ctx, st, command, storage.DoltStorage.CommitConfigOnly); err != nil {
 		return fmt.Errorf("committing config write: %w", err)
@@ -184,7 +194,9 @@ func commitConfigWrite(ctx context.Context, st storage.DoltStorage, command stri
 
 // commitMemoryWrite is commitConfigWrite for bd remember/forget. A memory is
 // user kv.* data, so its commit takes only kv.* config rows with it
-// (CommitConfigUserKVOnly): a dirty internal key is refused, not swept in.
+// (CommitConfigUserKVOnly): a dirty internal key is refused, not swept in. The
+// refusal is a *storage.ConfigCommitRefusedError naming the keys, and the
+// callers report it as a warning: by then the memory write has landed.
 func commitMemoryWrite(ctx context.Context, st storage.DoltStorage, command string) error {
 	if err := commitConfigTable(ctx, st, command, storage.DoltStorage.CommitConfigUserKVOnly); err != nil {
 		return fmt.Errorf("committing memory write: %w", err)
