@@ -1023,6 +1023,7 @@ go_test(
         "pour_unknown_vars_test.go",
         "pour_wisp_var_validation_test.go",
         "preflight_test.go",
+        "prime_disabled_test.go",
         "prime_divergence_test.go",
         "prime_embedded_test.go",
         "prime_gemini_hook_test.go",

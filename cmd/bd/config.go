@@ -1356,6 +1356,7 @@ var recognizedConfigKeys = map[string]bool{
 	"auto_compact_enabled": true, "schema_version": true,
 	"output.title-length": true,
 	"prime.max-memories":  true, "prime.max-memory-chars": true,
+	"prime.disabled": true,
 	// Opt-in ceiling on the persistent-memory corpus, enforced by `bd
 	// remember` (0 = off). Yaml-only for the same reason the prime caps are:
 	// it is read through viper, so a DB-backed write would never be seen.
