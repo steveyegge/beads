@@ -2,8 +2,10 @@ package issueops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -32,6 +34,14 @@ func moveIssuePersistenceInTx(ctx context.Context, tx DBTX, current *types.Issue
 	}
 	ephemeral, noHistory, storageClass, err := types.NormalizePersistenceMode(*current, mode)
 	if err != nil {
+		// The unversioned refusal is the request's: the row is sound and the
+		// move it asks for is one its class never makes. The other errors
+		// describe a row that breaks its own persistence invariants, so they
+		// stay unclassified; an invalid mode is refused before any update
+		// path gets here (ValidateUpdateRequest).
+		if errors.Is(err, types.ErrUnversionedWispMove) {
+			return PersistenceMoveResult{}, fmt.Errorf("%w: %w", storage.ErrValidation, err)
+		}
 		return PersistenceMoveResult{}, err
 	}
 	sourceWisp, err := isActiveWispForPersistenceMove(ctx, tx, current.ID)
@@ -164,6 +174,9 @@ func persistenceIssueTable(wisp bool) string {
 	return "issues"
 }
 
+// rejectPersistenceDemotion refuses a durable-to-wisp move of a row that has
+// retained snapshots. The refusal is the request's (ErrValidation); a failed
+// count is not.
 func rejectPersistenceDemotion(ctx context.Context, tx DBTX, id string) error {
 	for _, table := range []string{"issue_snapshots", "compaction_snapshots"} {
 		var count int
@@ -171,7 +184,7 @@ func rejectPersistenceDemotion(ctx context.Context, tx DBTX, id string) error {
 			return fmt.Errorf("check retained snapshots in %s: %w", table, err)
 		}
 		if count > 0 {
-			return fmt.Errorf("cannot demote issue %s with retained snapshots", id)
+			return fmt.Errorf("%w: cannot demote issue %s with retained snapshots", storage.ErrValidation, id)
 		}
 	}
 	return nil

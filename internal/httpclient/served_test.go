@@ -312,6 +312,10 @@ func (c *servedComposition) seedComment(ctx context.Context, issueID, author, te
 	return err
 }
 
+func (c *servedComposition) seedPromotion(ctx context.Context, id, actor string) error {
+	return c.reference.PromoteFromEphemeral(ctx, id, actor)
+}
+
 // queryScalar is the composition's raw-row hook: a single-row query against the
 // REFERENCE store, which is where the rows a contract seeded actually live.
 //

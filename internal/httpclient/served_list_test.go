@@ -27,11 +27,11 @@ import (
 // asserted through the same composition.
 //
 // Almost every List case in reader_contract.go scopes itself with IDFilter, and
-// listIssues publishes no id parameter, so those cases are parked next door and
-// their behaviors are pinned HERE instead — same assertions, scoped by a label,
-// which the wire does carry. What is not restated here is anything the contract
-// case actually runs: this file exists to close the gap the parking opened, not
-// to grow a second contract.
+// until S15b listIssues published no id parameter, so those cases were parked
+// next door and their behaviors were pinned HERE instead — same assertions,
+// scoped by a label. The id scope now rides `id` (issues.list.ids) and the
+// contract cases run as written beside these; the label-scoped twins stay as
+// the form of the same assertions a server without that token can still run.
 
 // listScope mints a label nothing else in the package uses.
 func listScope(name string) string { return servedIssuePrefix + "-ls-" + name }
@@ -1472,7 +1472,7 @@ func TestServedReaderRefusesTheFiltersTheWireCannotCarry(t *testing.T) {
 		field string
 		req   issueops.ListRequest
 	}{
-		{"IDFilter", issueops.ListRequest{IDFilter: listID("refuse", "a")}},
+		{"SpecPrefix", issueops.ListRequest{SpecPrefix: "docs/"}},
 		{"ReadyFlag", issueops.ListRequest{ReadyFlag: true}},
 		{"Offset", issueops.ListRequest{Offset: 1}},
 		{"PinnedFlag", issueops.ListRequest{PinnedFlag: true}},
@@ -1519,9 +1519,8 @@ func seedListWisp(t *testing.T, ctx context.Context, c *servedComposition, id, s
 // TestServedReaderListIncludeEphemeralMergesThePlanesUnderALabelScope is
 // RunReaderListIncludeEphemeralMergesThePlanesIntoOneOrder with the id scope
 // swapped for a label one, which is the swap this whole file exists to make:
-// the contract case scopes itself with IDFilter and listIssues publishes no id
-// parameter (E-ListRequest.IDFilter), so the case is parked next door and its
-// behavior is pinned here instead.
+// the contract case scopes itself with IDFilter, which was parked next door
+// until S15b put `id` on listIssues; both run now.
 //
 // WHAT IT IS ABOUT is not admission but ORDER. That the flag admits wisps at
 // all is already covered by RunReaderListDefaultExclusionsAndTheirOverrides,

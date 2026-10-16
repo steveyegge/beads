@@ -192,6 +192,13 @@ func writeShapes() []writeShape {
 				// (#5506) and the client wave sends it (ga-jbuyf), so it left
 				// the pending set for this one.
 				"ExpectedVersion": member("expected_version"),
+				// Sent where issues.close.autoCloseMolecule is advertised.
+				// Against a server that does not advertise it, a close that
+				// asks for it is refused before dialing (the typed
+				// storage.ErrUnsupported naming the token), and bd close
+				// sends the close without it and prints the unserved
+				// notice instead (S16).
+				"AutoCloseMolecule": member("auto_close_molecule"),
 			},
 		},
 		{
@@ -267,10 +274,10 @@ func writeShapes() []writeShape {
 				// #7247 review port): each was published — the force pair by
 				// upstream #5484, `claim` by upstream #6890 — and refused only
 				// by this client. Their rows are RETIRED the same way. A claim
-				// ALONE against a server that predates `claim` still reaches
-				// claimIssue instead, as a fallback on that server's skew
-				// refusal (see claimOnlyUpdate); against a current one it is
-				// this body.
+				// ALONE against a server without issues.update.claim reaches
+				// claimIssue instead, decided from the handshake (see
+				// claimWithoutUpdateClaim); against one with it, it is this
+				// body.
 				"ForceAssigneeTransfer": member("force_assignee_transfer"),
 				"ForceClosePolicy":      member("force_close_policy"),
 				"Claim":                 member("claim"),
@@ -311,6 +318,12 @@ func writeShapes() []writeShape {
 				"Assignee": member("assignee"),
 				"ParentID": member("parent_id"),
 				"Metadata": member("metadata"),
+				// The plane move, carried since issues.update.persistence
+				// (S21b, `bd promote` over http). Only this shape: the batch
+				// item's ApplyPatchBody still excludes it, so
+				// W-IssuePatch.Persistence stays a refusal there — the Owner
+				// row's arrangement, the other way round.
+				"Persistence": member("persistence"),
 			},
 			// NOTHING IS PENDING, and the set is empty rather than absent for the
 			// reason the second list in accessors.go was: it held the two
@@ -456,10 +469,11 @@ func writeShapes() []writeShape {
 			source: reflect.TypeOf(issueops.CloseBatchRequest{}),
 			body:   reflect.TypeOf(apigen.BatchCloseRequest{}),
 			carried: map[string]carriage{
-				"Actor":   member("actor"),
-				"Items":   member("items"),
-				"Session": member("session"),
-				"Force":   member("force"),
+				"Actor":             member("actor"),
+				"Items":             member("items"),
+				"Session":           member("session"),
+				"Force":             member("force"),
+				"AutoCloseMolecule": member("auto_close_molecule"),
 			},
 		},
 		{

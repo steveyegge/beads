@@ -433,8 +433,33 @@ func (a *remoteBlockingAnnotator) AnnotateBlocking(ctx context.Context, req issu
 		for _, ref := range blockers[result.Items[i].ID] {
 			result.Items[i].BlockedBy = appendUnique(result.Items[i].BlockedBy, ref)
 		}
+		if req.IncludeIsBlocked && len(blockers[result.Items[i].ID]) > 0 {
+			result.Items[i].IsBlocked = boolPtr(true)
+		}
 	}
 	return result, nil
+}
+
+// remoteExternalBlocked adds the external-dependency invariant to a remote
+// store's IsBlockedBatch answer: an id with an unsatisfied external blocker
+// is blocked. A server that enforces the policy already folded it in.
+func (s *Store) remoteExternalBlocked(ctx context.Context, ids []string, blocked map[string]bool) (map[string]bool, error) {
+	if enforced, err := s.serverEnforcesPolicy(ctx); err != nil || enforced {
+		if err != nil {
+			return nil, err
+		}
+		return blocked, nil
+	}
+	external, err := s.externalBlockersFor(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for id, refs := range external {
+		if len(refs) > 0 {
+			blocked[id] = true
+		}
+	}
+	return blocked, nil
 }
 
 // ── TreeWalker ──────────────────────────────────────────────────────

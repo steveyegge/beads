@@ -717,15 +717,102 @@ func (s *Store) IsBlocked(ctx context.Context, issueID string) (bool, []string, 
 	return blocked || len(blockers) > 0, blockers, nil
 }
 
+// blockedState is one id's IsBlocked answer.
+type blockedState struct {
+	blocked  bool
+	blockers []string
+}
+
+// blockedStates answers IsBlocked for every one of ids with the same per-id
+// result, in a bounded number of reads: the local half through the inner
+// store's storage.BlockersBatchStore (one IsBlocked per id on a store without
+// it), and the external half from ONE read of the ids' own edges, whose refs
+// are resolved together, so each foreign project is opened at most once
+// however many ids name it.
+func (s *Store) blockedStates(ctx context.Context, ids []string) (map[string]blockedState, error) {
+	distinct := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		distinct = append(distinct, id)
+	}
+	states, err := s.localBlockedStates(ctx, distinct)
+	if err != nil {
+		return nil, err
+	}
+	deps, err := s.inner.GetDependencyRecordsForIssues(ctx, distinct)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]reference, 0)
+	for _, id := range distinct {
+		for _, dep := range deps[id] {
+			if dep != nil && dep.Type.IsBlockingEdge() && isExternalReference(dep.DependsOnID) {
+				refs = append(refs, parseReference(dep.DependsOnID))
+			}
+		}
+	}
+	satisfied, err := s.resolveReferences(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range distinct {
+		state := states[id]
+		for _, dep := range deps[id] {
+			if dep != nil && dep.Type.IsBlockingEdge() && isExternalReference(dep.DependsOnID) && !satisfied[dep.DependsOnID] {
+				state.blockers = appendUnique(state.blockers, dep.DependsOnID)
+			}
+		}
+		state.blocked = state.blocked || len(state.blockers) > 0
+		states[id] = state
+	}
+	return states, nil
+}
+
+// localBlockedStates is the inner store's IsBlocked for every one of ids.
+func (s *Store) localBlockedStates(ctx context.Context, ids []string) (map[string]blockedState, error) {
+	states := make(map[string]blockedState, len(ids))
+	if batch, ok := storage.UnwrapStore(s.inner).(storage.BlockersBatchStore); ok {
+		blocked, err := batch.IsBlockedWithBlockersBatch(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		for id, blockers := range blocked {
+			states[id] = blockedState{blocked: true, blockers: blockers}
+		}
+		return states, nil
+	}
+	for _, id := range ids {
+		blocked, blockers, err := s.inner.IsBlocked(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		states[id] = blockedState{blocked: blocked, blockers: blockers}
+	}
+	return states, nil
+}
+
 // IsBlockedBatch preserves the external blocker invariant for batch callers.
 // The embedded Dolt implementation promotes this method from the wrapped
 // store, so it must be declared explicitly here rather than relying on
-// IsBlocked alone. Like IsBlocked, it refuses over a store that serves its
-// roles.
+// IsBlocked alone. Over a store that serves its roles the flag comes from the
+// server's annotator (dependencies.blocking.isBlocked), and
+// remoteExternalBlocked adds the invariant unless the server already applies
+// the policy; only IsBlocked still refuses there.
 func (s *Store) IsBlockedBatch(ctx context.Context, issueIDs []string) (map[string]bool, error) {
 	blocked, err := s.inner.IsBlockedBatch(ctx, issueIDs)
 	if err != nil {
 		return nil, err
+	}
+	if s.rolesAreRemote() {
+		// Over a store that serves its roles the raw edge read below is
+		// refused; the flag came from the server's annotator, and the
+		// external invariant is added from the edges of these rows only —
+		// unless the server already applies the policy itself.
+		return s.remoteExternalBlocked(ctx, issueIDs, blocked)
 	}
 	deps, err := s.inner.GetDependencyRecordsForIssues(ctx, issueIDs)
 	if err != nil {

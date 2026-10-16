@@ -88,6 +88,12 @@ func (p *uowProvider) BlockingAnnotator() (publicops.BlockingAnnotator, error) {
 func (p *uowProvider) TreeWalker() (publicops.TreeWalker, error)   { return uow.NewTreeWalker(p) }
 func (p *uowProvider) BatchGetter() (publicops.BatchGetter, error) { return uow.NewBatchGetter(p) }
 
+// MoleculeStepper composes over this decorator's own roles, so the advance's
+// claim answers to the external-dependency policy the claimer applies.
+func (p *uowProvider) MoleculeStepper() (publicops.MoleculeStepper, error) {
+	return uow.NewMoleculeStepper(p)
+}
+
 func (p *uowProvider) GraphCounter() (publicops.GraphCounter, error) {
 	return uow.NewGraphCounter(p)
 }
@@ -188,6 +194,7 @@ var (
 	_ uow.IssueLifecycleSource           = (*uowProvider)(nil)
 	_ uow.IssueReaderSource              = (*uowProvider)(nil)
 	_ uow.IssueClaimerSource             = (*uowProvider)(nil)
+	_ uow.MoleculeStepperSource          = (*uowProvider)(nil)
 	_ uow.RelationsSource                = (*uowProvider)(nil)
 	_ uow.EdgeReaderSource               = (*uowProvider)(nil)
 	_ uow.BlockingAnnotatorSource        = (*uowProvider)(nil)
@@ -442,6 +449,41 @@ func (u *issueUseCase) guardExternalClose(ctx context.Context, id string, force 
 type dependencyUseCase struct {
 	domain.DependencyUseCase
 	policy *Store
+}
+
+// IsBlockedBatch keeps the external blocker invariant on the stored column,
+// as the store decorator's IsBlockedBatch does: an id with an unsatisfied
+// external blocker is blocked whatever the column says. The served is_blocked
+// flag is this read on bd serve's unit-of-work arm, so it decides by the
+// edges and resolver GetReadyWork excludes by, read through the same unit of
+// work. Unlike Ready it resolves only the refs of the ids the column
+// answered: a client asks in chunks, and no chunk may reopen every foreign
+// project the workspace names. An id naming no row stays absent.
+func (u *dependencyUseCase) IsBlockedBatch(ctx context.Context, ids []string) (map[string]bool, error) {
+	blocked, err := u.DependencyUseCase.IsBlockedBatch(ctx, ids)
+	if err != nil || len(blocked) == 0 {
+		return blocked, err
+	}
+	records, err := u.GetExternalBlockingDependencyRecords(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("external dependencies: %w", err)
+	}
+	answered := make(map[string][]*types.Dependency, len(blocked))
+	for id := range blocked {
+		if deps, ok := records[id]; ok {
+			answered[id] = deps
+		}
+	}
+	state, err := u.policy.blockingStateFromRecords(ctx, answered)
+	if err != nil {
+		return nil, fmt.Errorf("external dependencies: %w", err)
+	}
+	for id := range blocked {
+		if len(state.refsByIssue[id]) > 0 {
+			blocked[id] = true
+		}
+	}
+	return blocked, nil
 }
 
 func (u *dependencyUseCase) GetDependencyTree(ctx context.Context, rootID string, opts domain.DepTreeOpts) ([]*types.TreeNode, error) {

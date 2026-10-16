@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/steveyegge/beads/internal/httpclient/wire"
@@ -37,10 +36,12 @@ const (
 // of a reviewer's memory: a role that wants to reach the server has no other
 // route to it.
 //
-// It is also the one place that knows an operation's HTTP method, so the bounded
-// 503 retry lives here: the wire layer bounds Retry-After and hands it back but
-// never sleeps or resends, precisely because whether a 503 is safe to come back
-// to is a question only the method answers, and only a GET's answer is yes.
+// The bounded 503 retry lives here too: the wire layer bounds Retry-After and
+// hands it back but never sleeps on it. Whether a 503 is safe to come back to
+// is the question wire.Request.Replayable answers, and only a read's answer
+// is yes. (The wire does resend a replayable request once, at once, when its
+// first attempt stalled before any headers or had its connection reset; that
+// retry answers a transport-level failure, a 503 is the server's answer.)
 //
 // A store with no transport is a build-wiring fault (ErrNoTransport), not the
 // user's: the workspace and the server may both be fine.
@@ -58,11 +59,12 @@ func (s *Store) dispatch(ctx context.Context, req wire.Request, out any) error {
 	}
 
 	err := s.wire.Do(ctx, req, out)
-	// Only an idempotent GET is retried. A 503 can interrupt a non-idempotent
-	// write whose first attempt already committed before the server ran out of
-	// slots, so resending a POST/PATCH/DELETE could double-apply it — DELETE
-	// included, since forgetMemory is a mutation the wire happens to spell as one.
-	if req.Method != http.MethodGet {
+	// Only a replayable read is retried: a GET, or a read on POST that says so
+	// (the batch get). A 503 can interrupt a non-idempotent write whose first
+	// attempt already committed before the server ran out of slots, so
+	// resending a POST/PATCH/DELETE could double-apply it — DELETE included,
+	// since forgetMemory is a mutation the wire happens to spell as one.
+	if !req.Replayable() {
 		return err
 	}
 	for attempt := 0; attempt < maxIdempotentRetries; attempt++ {

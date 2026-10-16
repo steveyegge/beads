@@ -108,10 +108,7 @@ func listRequestRows() []Row {
 		return refusal("E-ListRequest."+field, tyListRequest, field, what, why, fieldSpec)
 	}
 	rows := []Row{
-		listRefusal("TitleSearch", "a title search refuses", noWireList),
 		listRefusal("SpecPrefix", "a spec-id prefix restriction refuses", noWireList),
-		listRefusal("IDFilter", "an explicit id set on the LISTING refuses",
-			noWireList+"; the exact-ids question is getIssue's, reached through the SearchIssues bridge's exact-ids shape (D11), not through a listing filter"),
 		listRefusal("LabelPattern", "a glob label filter refuses",
 			noWireList+" — listReadyWork does publish label_pattern, which is exactly why the absence here has to refuse rather than fall through"),
 		listRefusal("LabelRegex", "a regex label filter refuses",
@@ -130,8 +127,6 @@ func listRequestRows() []Row {
 		listRefusal("DueAfter", "a due-after bound refuses", noWireList),
 		listRefusal("DueBefore", "a due-before bound refuses", noWireList),
 		listRefusal("EmptyDesc", "the empty-description predicate refuses", noWireList),
-		listRefusal("NoAssignee", "the unassigned predicate refuses",
-			noWireList+" — listReadyWork publishes `unassigned`; the listing does not"),
 		listRefusal("NoLabels", "the no-labels predicate refuses", noWireList),
 		listRefusal("Priority", "an exact priority filter refuses",
 			noWireList+" — listReadyWork publishes `priority`; the listing does not"),
