@@ -670,14 +670,10 @@ Examples:
 		var recordSeen func(gate *types.Issue) error
 		if !dryRun {
 			persistAwaitID = func(gateID, runID string) error {
-				return updateGateAwaitIDFunc(nil, gateID, runID)
+				return gateCheckPersistAwaitIDFunc(ctx, gateID, runID)
 			}
 			recordSeen = func(gate *types.Issue) error {
-				if err := store.UpdateIssue(ctx, gate.ID, beadGateSeenUpdate(gate.AwaitID), currentActor()); err != nil {
-					return err
-				}
-				commandDidWrite.Store(true)
-				return nil
+				return updateGateThroughLifecycle(ctx, gate.ID, beadGateSeenPatch(gate.AwaitID))
 			}
 		}
 
@@ -740,6 +736,42 @@ func printNoOpenGates(typeFilter string) {
 	} else {
 		fmt.Println("No open gates found.")
 	}
+}
+
+// updateGateThroughLifecycle is gate check's one write besides the close: a
+// patch to a gate through the Lifecycle role, so every route the direct path
+// serves (Dolt, embedded, Postgres, and a connected HTTP workspace, whose role
+// sends issues.update) applies it the same way. The legacy map-based
+// UpdateIssue is not on the HTTP store at all, so the sighting written through
+// it was refused before any request was sent.
+func updateGateThroughLifecycle(ctx context.Context, gateID string, patch issueops.IssuePatch) error {
+	lifecycle, err := openIssueLifecycle()
+	if err != nil {
+		return err
+	}
+	ctx, err = issueOpsContext(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := lifecycle.Update(ctx, issueops.UpdateRequest{Actor: currentActor(), IssueID: gateID, Patch: patch}); err != nil {
+		return err
+	}
+	commandDidWrite.Store(true)
+	return nil
+}
+
+// persistGateCheckAwaitID records a gh:run gate's discovered run ID through
+// the Lifecycle role. A backend that cannot carry an await_id edit (the HTTP
+// wire's issue patch has no await_id member) refuses it before any request;
+// that refusal is rendered as the missing capability, not as the role method
+// that raised it, and stays this gate's error so the rest of the sweep runs.
+func persistGateCheckAwaitID(ctx context.Context, gateID, runID string) error {
+	err := updateGateThroughLifecycle(ctx, gateID, issueops.IssuePatch{AwaitID: issueops.Field[string]{Set: true, Value: runID}})
+	var unsupported *storage.ErrUnsupported
+	if errors.As(err, &unsupported) {
+		return fmt.Errorf("run %s cannot be recorded as await_id: this backend does not serve an await_id update; give the gate a numeric run ID or check it in a local workspace", runID)
+	}
+	return err
 }
 
 func evaluateGates(ctx context.Context, gates []*types.Issue, now time.Time, getter issueGetter, persistAwaitID func(gateID, runID string) error, recordSeen func(gate *types.Issue) error) []gateCheckResult {
@@ -872,6 +904,7 @@ func runGHCommand(args ...string) (stdout, stderr []byte, err error) {
 var (
 	discoverRunIDByWorkflowNameFunc = discoverRunIDByWorkflowName
 	updateGateAwaitIDFunc           = updateGateAwaitID
+	gateCheckPersistAwaitIDFunc     = persistGateCheckAwaitID
 	checkGHRunStatusFunc            = checkGHRunStatus
 )
 
@@ -1576,6 +1609,14 @@ func beadGateSeenUpdate(awaitID string) map[string]interface{} {
 	return map[string]interface{}{
 		storageissueops.OpSetMetadata: map[string]json.RawMessage{beadGateSeenKey: value},
 	}
+}
+
+// beadGateSeenPatch is beadGateSeenUpdate as a Lifecycle patch: the same
+// single-key metadata set, which a connected HTTP workspace sends as
+// issues.update.
+func beadGateSeenPatch(awaitID string) issueops.IssuePatch {
+	value, _ := json.Marshal(awaitID)
+	return issueops.IssuePatch{Metadata: issueops.MetadataPatch{Set: map[string]json.RawMessage{beadGateSeenKey: value}}}
 }
 
 // beadGateRetargetUpdate is the update that points a bead gate at awaitID.

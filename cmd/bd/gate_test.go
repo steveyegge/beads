@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,8 @@ type fakeGateCheckStore struct {
 	queries      []issueops.QueryRequest
 	searchCalled bool
 	closeCalls   []gateCloseCall
+	updates      []issueops.UpdateRequest
+	updateErr    error
 }
 
 // SearchIssues records that the raw filter was used: gate check lists through
@@ -55,6 +58,26 @@ func (f *fakeGateCheckStore) Query(_ context.Context, req issueops.QueryRequest)
 		items = append(items, &types.IssueWithCounts{Issue: issue})
 	}
 	return issueops.IssuePage{Items: items}, nil
+}
+
+// IssueLifecycle hands back a Lifecycle that records Update: gate check's
+// sighting and await_id writes go through the role (issues.update over HTTP),
+// never through the legacy map-based UpdateIssue the HTTP store does not serve.
+func (f *fakeGateCheckStore) IssueLifecycle() (issueops.Lifecycle, error) {
+	return &fakeGateLifecycle{store: f}, nil
+}
+
+type fakeGateLifecycle struct {
+	issueops.Lifecycle
+	store *fakeGateCheckStore
+}
+
+func (l *fakeGateLifecycle) Update(_ context.Context, req issueops.UpdateRequest) (issueops.UpdateResult, error) {
+	l.store.updates = append(l.store.updates, req)
+	if l.store.updateErr != nil {
+		return issueops.UpdateResult{}, l.store.updateErr
+	}
+	return issueops.UpdateResult{}, nil
 }
 
 func (f *fakeGateCheckStore) CloseIssue(_ context.Context, id, reason, actor, session string) error {
@@ -1741,21 +1764,14 @@ func TestGateCheck_GHRunWorkflowDiscoveryPersistence(t *testing.T) {
 				t.Fatalf("set limit flag: %v", err)
 			}
 
-			updateCalls := 0
 			discoverRunIDByWorkflowNameFunc = func(workflowHint string) (string, error) {
 				if workflowHint != "release.yml" {
 					t.Fatalf("unexpected workflow hint %q", workflowHint)
 				}
 				return "12345", nil
 			}
-			updateGateAwaitIDFunc = func(_ interface{}, gateID, runID string) error {
-				updateCalls++
-				if gateID != "bd-gate" {
-					t.Fatalf("expected gate ID bd-gate, got %q", gateID)
-				}
-				if runID != "12345" {
-					t.Fatalf("expected discovered run ID 12345, got %q", runID)
-				}
+			updateGateAwaitIDFunc = func(_ interface{}, _, _ string) error {
+				t.Fatal("gate check persisted await_id through the legacy UpdateIssue path; want the Lifecycle role")
 				return nil
 			}
 			checkGHRunStatusFunc = func(runID string) (bool, bool, string, error) {
@@ -1771,8 +1787,18 @@ func TestGateCheck_GHRunWorkflowDiscoveryPersistence(t *testing.T) {
 				}
 			})
 
-			if updateCalls != tt.wantUpdateCalls {
-				t.Fatalf("updateGateAwaitIDFunc call count = %d, want %d", updateCalls, tt.wantUpdateCalls)
+			if len(fakeStore.updates) != tt.wantUpdateCalls {
+				t.Fatalf("Lifecycle.Update call count = %d, want %d", len(fakeStore.updates), tt.wantUpdateCalls)
+			}
+			if tt.wantUpdateCalls == 1 {
+				req := fakeStore.updates[0]
+				if req.IssueID != "bd-gate" || req.Actor != "test-actor" {
+					t.Fatalf("Lifecycle.Update = %+v, want bd-gate by test-actor", req)
+				}
+				want := issueops.IssuePatch{AwaitID: issueops.Field[string]{Set: true, Value: "12345"}}
+				if !reflect.DeepEqual(req.Patch, want) {
+					t.Fatalf("Lifecycle.Update patch = %+v, want only AwaitID=12345", req.Patch)
+				}
 			}
 			if len(fakeStore.closeCalls) != tt.wantCloseCalls {
 				t.Fatalf("CloseIssue call count = %d, want %d", len(fakeStore.closeCalls), tt.wantCloseCalls)
@@ -2205,4 +2231,58 @@ func TestCheckGHRunNotFoundNamesTheRepository(t *testing.T) {
 			t.Fatalf("err = %q; it must name the repository the run ID was looked up in", err)
 		}
 	})
+}
+
+// TestGateCheckWritesGoThroughTheLifecycleRole pins gate check's two non-close
+// writes to the Lifecycle role: the bead-gate sighting is a single-key metadata
+// set and the gh:run discovery is an await_id patch, which a connected HTTP
+// workspace sends as issues.update (the sighting) or refuses before the dial
+// (await_id). The legacy map-based UpdateIssue is not on the HTTP store, so a
+// sighting written through it never reached the server.
+func TestGateCheckWritesGoThroughTheLifecycleRole(t *testing.T) {
+	origStore, origActor := store, actor
+	t.Cleanup(func() { store, actor = origStore, origActor })
+	fake := &fakeGateCheckStore{}
+	store, actor = fake, "test-actor"
+
+	if err := updateGateThroughLifecycle(context.Background(), "bd-gate", beadGateSeenPatch("rig:bd-x")); err != nil {
+		t.Fatalf("sighting: %v", err)
+	}
+	if err := persistGateCheckAwaitID(context.Background(), "bd-run", "4242"); err != nil {
+		t.Fatalf("await_id: %v", err)
+	}
+	if len(fake.updates) != 2 {
+		t.Fatalf("Lifecycle.Update calls = %d, want 2", len(fake.updates))
+	}
+	seen := fake.updates[0]
+	wantSeen := issueops.IssuePatch{Metadata: issueops.MetadataPatch{Set: map[string]json.RawMessage{beadGateSeenKey: json.RawMessage(`"rig:bd-x"`)}}}
+	if seen.IssueID != "bd-gate" || seen.Actor != "test-actor" || !reflect.DeepEqual(seen.Patch, wantSeen) {
+		t.Fatalf("sighting update = %+v, want a %s metadata set on bd-gate", seen, beadGateSeenKey)
+	}
+	run := fake.updates[1]
+	wantRun := issueops.IssuePatch{AwaitID: issueops.Field[string]{Set: true, Value: "4242"}}
+	if run.IssueID != "bd-run" || !reflect.DeepEqual(run.Patch, wantRun) {
+		t.Fatalf("await_id update = %+v, want AwaitID=4242 on bd-run", run)
+	}
+}
+
+// TestGateCheckAwaitIDRefusalNamesTheMissingCapability: a backend that cannot
+// carry an await_id edit (the HTTP wire) refuses through the role, and the
+// gate's error says what is missing rather than the role method that refused.
+func TestGateCheckAwaitIDRefusalNamesTheMissingCapability(t *testing.T) {
+	origStore, origActor := store, actor
+	t.Cleanup(func() { store, actor = origStore, origActor })
+	store, actor = &fakeGateCheckStore{updateErr: &storage.ErrUnsupported{Op: "Lifecycle.Update", Backend: "http"}}, "test-actor"
+
+	err := persistGateCheckAwaitID(context.Background(), "bd-run", "4242")
+	if err == nil {
+		t.Fatal("persistGateCheckAwaitID succeeded against a backend that refuses await_id")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "await_id") || !strings.Contains(msg, "4242") {
+		t.Fatalf("refusal %q does not name the await_id update and the run", msg)
+	}
+	if strings.Contains(msg, "Lifecycle.Update") || strings.Contains(msg, "UpdateIssue") {
+		t.Fatalf("refusal %q leaks a Go method name", msg)
+	}
 }
