@@ -97,18 +97,24 @@ func (s ignoredCursorState) reconcileNeeded() bool {
 	return s.needsUntrack || s.strayScratch
 }
 
-// readIgnoredCursorState answers both halves of the gate in always-succeeding
-// reads: three bounded reads on a healthy database (cursor at HEAD, scratch in
-// the working set, scratch at HEAD; the last is skipped when the working-set
-// probe already found the scratch). That property is not incidental: a Dolt
-// session that issues a FAILING statement stays pinned to its pre-statement
-// catalog snapshot for the rest of its pooled life (be-bv7x), and this runs on
-// every writable open and every lock-free fast-path evaluation.
+// readIgnoredCursorState answers both halves of the gate. On a healthy
+// database that is three SHOW TABLES listings: the cursor at HEAD, the scratch
+// in the working set, and the scratch at HEAD (skipped when the working-set
+// listing already holds the scratch); a dolt_ignore read joins them only when
+// the cursor is tracked at HEAD. None of them may fail, and that is not
+// incidental: a Dolt session that issues a FAILING statement stays pinned to
+// its pre-statement catalog snapshot for the rest of its pooled life
+// (be-bv7x), and this runs on every writable open and every lock-free
+// fast-path evaluation. A SHOW TABLES listing fails with no database selected
+// (1105) and on a session whose database was dropped (1049), so both callers
+// must already have the session on the target database; a session that may
+// have no usable database needs tableInCurrentDatabase.
 //
 // qualifier is the identifier-quoted database name selectTargetDatabase
-// returned, or empty when the session is already on the target database. The
-// working-set scratch probe needs no qualifier: it reads information_schema
-// against DATABASE(), which both callers have already put on the target.
+// returned, or empty when the session is already on the target database. Both
+// HEAD probes take it. The working-set scratch probe takes no qualifier: it
+// lists the session's current database, which both callers have already made
+// the target.
 func readIgnoredCursorState(ctx context.Context, db DBConn, qualifier string) (ignoredCursorState, error) {
 	var state ignoredCursorState
 
@@ -118,7 +124,10 @@ func readIgnoredCursorState(ctx context.Context, db DBConn, qualifier string) (i
 	}
 	state.needsUntrack = needsUntrack
 
-	stray, err := schemaTableExists(ctx, db, ignoredCursorUntrackTempTable)
+	// Both callers have the session on the target database (alreadyConverged
+	// after selectTargetDatabase, MigrateUp after its preparation), so this
+	// per-open read takes the SHOW TABLES prober.
+	stray, err := showTableExists(ctx, db, ignoredCursorUntrackTempTable)
 	if err != nil {
 		return state, fmt.Errorf("probing %s: %w", ignoredCursorUntrackTempTable, err)
 	}
@@ -135,8 +144,8 @@ func readIgnoredCursorState(ctx context.Context, db DBConn, qualifier string) (i
 
 // healTrackedIgnoredCursorTable untracks a legacy tracked-at-HEAD
 // ignored_schema_migrations table and restores its rows, reporting whether it
-// changed anything. It runs on every writable open and costs three bounded
-// reads on a healthy database.
+// changed anything. It runs on every writable open and costs three SHOW TABLES
+// listings on a healthy database (see readIgnoredCursorState).
 //
 // Failure policy, straight from the #5816 lesson that a heal must never mint a
 // new class of un-openable database: everything up to and including the

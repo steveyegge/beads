@@ -99,8 +99,9 @@ func alreadyConverged(ctx context.Context, db DBConn, databaseName string, selec
 	// scratch table that either keeps the resurrection hazard armed or sits
 	// at HEAD as tracked residue that dolt pull refuses.
 	//
-	// Three always-succeeding reads on the hot path of a healthy database,
-	// each bounded to one row.
+	// Three SHOW TABLES listings on the hot path of a healthy database, safe
+	// to issue because selectTargetDatabase has put the session on the
+	// target (see readIgnoredCursorState).
 	state, err := readIgnoredCursorState(ctx, db, qualifier)
 	if err != nil {
 		return false, err

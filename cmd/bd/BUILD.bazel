@@ -217,6 +217,7 @@ go_library(
         "list_format.go",
         "list_input.go",
         "list_output.go",
+        "list_page_edges.go",
         "list_proxied_server.go",
         "list_roles.go",
         "list_show_filter_modes.go",
@@ -249,6 +250,7 @@ go_library(
         "mol_progress.go",
         "mol_proxied_server.go",
         "mol_ready_gated.go",
+        "mol_roles.go",
         "mol_seed.go",
         "mol_show.go",
         "mol_squash.go",
@@ -313,13 +315,13 @@ go_library(
         "schema.go",
         "schema_skew.go",
         "search.go",
-        "search_proxied_server.go",
         "send_metrics.go",
         "serve.go",
         "setup.go",
         "ship.go",
         "show.go",
         "show_children.go",
+        "show_current.go",
         "show_display.go",
         "show_format.go",
         "show_proxied_server.go",
@@ -612,6 +614,8 @@ go_test(
         "compact_tier2_embedded_test.go",
         "completions_test.go",
         "config_apply_test.go",
+        "config_commit_server_integration_test.go",
+        "config_commit_write_test.go",
         "config_drift_test.go",
         "config_drift_windows_test.go",
         "config_embedded_test.go",
@@ -683,6 +687,7 @@ go_test(
         "defer_wake_proxied_integration_test.go",
         "defer_wake_server_test.go",
         "delete_embedded_test.go",
+        "delete_exact_id_test.go",
         "delete_if_revision_proxied_concurrency_test.go",
         "delete_input_test.go",
         "delete_proxied_integration_test.go",
@@ -779,6 +784,7 @@ go_test(
         "export_exclude_owner_test.go",
         "export_max_rows_gate_test.go",
         "export_proxied_integration_test.go",
+        "export_source_role_test.go",
         "export_source_wisp_subset_test.go",
         "export_test.go",
         "external_policy_direct_integration_test.go",
@@ -795,6 +801,7 @@ go_test(
         "formula_help_test.go",
         "formula_primitives_test.go",
         "formula_schema_test.go",
+        "gate_check_listing_test.go",
         "gate_check_proxied_integration_test.go",
         "gate_discover_test.go",
         "gate_embedded_test.go",
@@ -880,6 +887,8 @@ go_test(
         "init_git_bootstrap_routing_test.go",
         "init_guard_force_e2e_test.go",
         "init_guard_test.go",
+        "init_home_guard_cgo_test.go",
+        "init_home_guard_test.go",
         "init_hooks_test.go",
         "init_metrics_test.go",
         "init_mode_inherit_test.go",
@@ -937,6 +946,9 @@ go_test(
         "list_helpers_test.go",
         "list_limit_policy_test.go",
         "list_output_test.go",
+        "list_page_edges_embedded_test.go",
+        "list_page_edges_store_test.go",
+        "list_page_edges_test.go",
         "list_proxied_integration_test.go",
         "list_proxied_watch_max_rows_test.go",
         "list_ready_brief_test.go",
@@ -997,6 +1009,7 @@ go_test(
         "mol_ready_gated_hint_test.go",
         "mol_ready_gated_proxied_integration_test.go",
         "mol_ready_gated_test.go",
+        "mol_route_parity_integration_test.go",
         "mol_show_proxied_integration_test.go",
         "mol_squash_embedded_test.go",
         "mol_squash_proxied_integration_test.go",
@@ -1020,6 +1033,7 @@ go_test(
         "pour_unknown_vars_test.go",
         "pour_wisp_var_validation_test.go",
         "preflight_test.go",
+        "prime_disabled_test.go",
         "prime_divergence_test.go",
         "prime_embedded_test.go",
         "prime_gemini_hook_test.go",
@@ -1100,6 +1114,7 @@ go_test(
         "restore_embedded_test.go",
         "restore_test.go",
         "root_context_lifecycle_test.go",
+        "routed_local_near_miss_test.go",
         "routed_test.go",
         "routing_notice_test.go",
         "routing_read_remote_test.go",
@@ -1110,6 +1125,9 @@ go_test(
         "schema_test.go",
         "search_embedded_test.go",
         "search_proxied_integration_test.go",
+        "search_routes_embedded_test.go",
+        "search_routes_parity_test.go",
+        "search_routes_proxied_test.go",
         "search_test.go",
         "send_metrics_diagnostics_test.go",
         "serve_batch_close_proxied_integration_test.go",
@@ -1269,6 +1287,7 @@ go_test(
         "where_test.go",
         "wisp_abandoned_test.go",
         "wisp_gc_active_embedded_test.go",
+        "wisp_gc_cascade_age_test.go",
         "wisp_gc_purge_closed_embedded_test.go",
         "wisp_proxied_integration_test.go",
         "wisp_test.go",
@@ -1324,6 +1343,8 @@ go_test(
         "//internal/githooksenv",
         "//internal/hooks",
         "//internal/httpapi",
+        "//internal/httpclient",
+        "//internal/httpclient/encode",
         "//internal/linear",
         "//internal/metrics",
         "//internal/migration",
@@ -1350,6 +1371,7 @@ go_test(
         "//internal/storage/issueops",
         "//internal/storage/journalscan",
         "//internal/storage/kvkeys",
+        "//internal/storage/memoryops",
         "//internal/storage/schema",
         "//internal/storage/uow",
         "//internal/storage/versioncontrolops",
@@ -1576,7 +1598,7 @@ sh_test(
         "BEADS_TEST_REQUIRE_DOLT_CONTAINER": "1",
         # The external-unix / outage-matrix subtests bridge endpoints with
         # socat, which the workers have: fail rather than skip if it is
-        # missing (requireSocat). The legacy GitHub lane leaves this unset.
+        # missing (requireSocat). The retired GitHub lane left this unset.
         "BEADS_TEST_REQUIRE_SOCAT": "1",
         # The 4-vCPU runner shape: -test.parallel defaults to GOMAXPROCS, and
         # the job runs 4 tests at once, not one per worker core (39
@@ -1669,14 +1691,22 @@ sh_test(
 sh_test(
     name = "bd_dolt_server_test",
     size = "large",
-    # --config=doltserver-cmd's -test.timeout=19m fires (with a goroutine
-    # dump) before Bazel's 1200s action limit (eternal under the lane's
-    # --test_timeout), which kills without one.
+    # args' -test.timeout=19m fires (with a goroutine dump) before Bazel's
+    # 1200s action limit (eternal under the lane's --test_timeout), which
+    # kills without one.
     timeout = "eternal",
     srcs = ["//tools/bazel:go_test_pinned_shard.sh"],
     args = [
         "$(rootpath :dolt_server_pinned_shards.txt)",
         "$(rootpath :bd_test)",
+        # Item 5 A2: moved from --config=doltserver-cmd's --test_arg
+        # (go_test_pinned_shard.sh forwards args after its own, so this
+        # lands last in argv, same as the config's --test_arg did). Go's own
+        # timeout fires first and dumps every goroutine to test.log, which
+        # Bazel's 1200s cap does not. The move keeps this out of
+        # --config=dolt-int, whose other member (server-storage) has a 15m
+        # Go timeout of its own.
+        "-test.timeout=19m",
     ],
     data = [
         ":bd_for_tests",
@@ -1694,6 +1724,9 @@ sh_test(
         "BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)",
         "BEADS_TEST_COMPACT_GC_FIXTURE": "$(rlocationpath :compact_gc_fixture)",
         "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
+        # Item 5 A2: moved from --config=doltserver-cmd's --test_env, so
+        # --config=dolt-int does not set it for server-storage's targets too.
+        "BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION": "1",
         "BEADS_TEST_REQUIRE_DOLT_CONTAINER": "1",
         # TestSharedServerConcurrent (skipped everywhere else) as a bounded
         # smoke: 6 concurrent bd clients, 3 per database, against 2

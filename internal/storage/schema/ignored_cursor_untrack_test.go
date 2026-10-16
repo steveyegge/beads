@@ -114,11 +114,11 @@ func expectCursorCopyColumns(mock sqlmock.Sqlmock, table string, present int) st
 	return strings.Join(cursorTableColumns[:present], ", ")
 }
 
-// expectScratchProbes mocks the gate's scratch half: the working-set probe,
-// then, only when that found nothing, the tracked-at-HEAD probe that catches a
-// scratch surviving only as a pending deletion.
+// expectScratchProbes mocks the gate's scratch half: the working-set SHOW
+// TABLES listing, then, only when that found nothing, the tracked-at-HEAD
+// probe that catches a scratch surviving only as a pending deletion.
 func expectScratchProbes(mock sqlmock.Sqlmock, qualifier string, inWorkingSet, atHead bool) {
-	expectSchemaTableExists(mock, ignoredCursorUntrackTempTable, inWorkingSet)
+	expectShowTable(mock, ignoredCursorUntrackTempTable, inWorkingSet)
 	if !inWorkingSet {
 		expectHeadTableProbe(mock, qualifier, ignoredCursorUntrackTempTable, atHead)
 	}

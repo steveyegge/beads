@@ -167,7 +167,8 @@ type CountRequest struct {
 	//   - template molecules are excluded, which a default count includes;
 	//   - gate beads are excluded, unless IssueType asks for gates by name;
 	//   - an IssueType the workspace calls infra routes the count to the
-	//     ephemeral tier instead of the durable one.
+	//     ephemeral tier instead of the durable one — unless IncludeEphemeral
+	//     is also set, which lifts that routing, as it does for a listing.
 	//
 	// The infra vocabulary is the WORKSPACE's, read from configuration inside
 	// the implementation. A caller does not supply it and cannot: that is the
@@ -197,6 +198,11 @@ type CountRequest struct {
 	// IncludeTemplates admits them. That predates this field and is unchanged by
 	// it; only IncludeInfra sets out to reconcile cardinality, and it pays for
 	// that with three changes beyond the plane.
+	//
+	// Beside IncludeInfra it does one thing more, the same thing it does to a
+	// listing: it lifts the fourth change's routing of an infra IssueType, so
+	// the durable rows of that type (a promoted wisp, a retyped issue) are
+	// counted along with its wisps rather than instead of them.
 	//
 	// Unset — and with IncludeInfra also unset — the count is durable-plane
 	// only: the historical answer, unchanged.

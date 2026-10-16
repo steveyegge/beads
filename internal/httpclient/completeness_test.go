@@ -260,7 +260,6 @@ var legitimatelyUnsupported = map[string]string{
 	"GetDependentRecordsForIssues":  "raw read: no multi-id dependents operation",
 	"GetDependents":                 "raw read: no dependents operation off getIssue",
 	"IsBlocked":                     "raw read: role BlockingAnnotator serves this shape",
-	"IsBlockedBatch":                "raw read: role BlockingAnnotator serves this shape",
 	"IterAllDependencyRecords":      "raw read: streaming has no wire shape",
 	"IterDependenciesWithMetadata":  "raw read: streaming has no wire shape",
 	"IterDependentsWithMetadata":    "raw read: streaming has no wire shape",

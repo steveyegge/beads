@@ -69,6 +69,7 @@ func TestOperationIdsMatchTheServerRouteTable(t *testing.T) {
 		{OpWatchEvents, httpapi.OpWatchEvents},
 		{OpBatchGetIssues, httpapi.OpBatchGetIssues},
 		{OpReclaimIssues, httpapi.OpReclaimIssues},
+		{OpAdvanceMolecule, httpapi.OpAdvanceMolecule},
 	}
 
 	// The table is a HAND LIST, and a hand list's failure mode is omission: a new
@@ -147,6 +148,21 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if CapListSort != httpapi.CapIssuesListSort {
 		t.Errorf("CapListSort = %q, server says %q", CapListSort, httpapi.CapIssuesListSort)
 	}
+	if CapListSearch != httpapi.CapIssuesListSearch {
+		t.Errorf("CapListSearch = %q, server says %q", CapListSearch, httpapi.CapIssuesListSearch)
+	}
+	if CapListNoAssignee != httpapi.CapIssuesListNoAssignee {
+		t.Errorf("CapListNoAssignee = %q, server says %q", CapListNoAssignee, httpapi.CapIssuesListNoAssignee)
+	}
+	if CapListTitle != httpapi.CapIssuesListTitle {
+		t.Errorf("CapListTitle = %q, server says %q", CapListTitle, httpapi.CapIssuesListTitle)
+	}
+	if CapListIDs != httpapi.CapListIDs {
+		t.Errorf("CapListIDs = %q, server says %q", CapListIDs, httpapi.CapListIDs)
+	}
+	if CapBlockingIsBlocked != httpapi.CapDependenciesBlockingIsBlocked {
+		t.Errorf("CapBlockingIsBlocked = %q, server says %q", CapBlockingIsBlocked, httpapi.CapDependenciesBlockingIsBlocked)
+	}
 	if CapCountScope != httpapi.CapIssuesCountScope {
 		t.Errorf("CapCountScope = %q, server says %q", CapCountScope, httpapi.CapIssuesCountScope)
 	}
@@ -158,6 +174,12 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	}
 	if CapSweepLiveDependents != httpapi.CapIssuesSweepLiveDependents {
 		t.Errorf("CapSweepLiveDependents = %q, server says %q", CapSweepLiveDependents, httpapi.CapIssuesSweepLiveDependents)
+	}
+	if CapIssuesCreateGates != httpapi.CapIssuesCreateGates {
+		t.Errorf("CapIssuesCreateGates = %q, server says %q", CapIssuesCreateGates, httpapi.CapIssuesCreateGates)
+	}
+	if CapIssuesUpdateGates != httpapi.CapIssuesUpdateGates {
+		t.Errorf("CapIssuesUpdateGates = %q, server says %q", CapIssuesUpdateGates, httpapi.CapIssuesUpdateGates)
 	}
 	if CapSweepLimit != httpapi.CapIssuesSweepLimit {
 		t.Errorf("CapSweepLimit = %q, server says %q", CapSweepLimit, httpapi.CapIssuesSweepLimit)
@@ -200,10 +222,14 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 		httpapi.CapProjectEnforce, httpapi.CapBatchApplyLarge, httpapi.CapIssuesListSort, httpapi.CapIssuesCountScope,
 		httpapi.CapIssuesSweepWispsPlane, httpapi.CapIssuesSweepLiveDependents, httpapi.CapIssuesSweepLimit,
 		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
+		httpapi.CapIssuesCloseAutoCloseMolecule, httpapi.CapIssuesListSearch,
+		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapListIDs, httpapi.CapIssuesUpdatePersistence, httpapi.CapDependenciesBlockingIsBlocked, httpapi.CapIssuesUpdateClaim,
+		httpapi.CapIssuesCreateGates, httpapi.CapIssuesUpdateGates,
 	}) {
 		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
-			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit and "+
-			"issues.batchApply.depAddLineage and issues.update.allowTemplate and issues.create.defaultPriority tokens", behaviorCapabilities)
+			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit, "+
+			"issues.batchApply.depAddLineage, issues.update.allowTemplate, issues.create.defaultPriority, issues.close.autoCloseMolecule, issues.list.search, "+
+			"issues.list.noAssignee, issues.list.title, issues.list.ids, issues.update.persistence, dependencies.blocking.isBlocked, issues.update.claim, issues.create.gates and issues.update.gates tokens", behaviorCapabilities)
 	}
 }
 

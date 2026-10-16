@@ -35,6 +35,14 @@ import (
 // pieces: the shared request stamp, redirectRefused, the bounded error-body
 // read, mapProblem. Only once the stream is open does the vocabulary become
 // SSE.
+//
+// What the connect does NOT share is roundTrip's stall handling: it gets no
+// response-header timer and no retry on another connection (see
+// Options.ResponseHeaderTimeout). With the timeout removed, a connect that
+// lands on a connection gone silent waits until the caller's context ends, as
+// every connect did before the timer existed. The timer was scoped to Do's
+// reads, where the shadow run's stall cost each read the full 60s; bounding
+// this connect is a separate change.
 
 // watchIdleTimeout is how long a stream may go silent before this client
 // declares it dead and fails loudly.

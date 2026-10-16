@@ -48,6 +48,7 @@ func UpdateFields(patch publicops.IssuePatch) map[string]interface{} {
 		{patch.AppendNotes.Set, OpAppendNotes, patch.AppendNotes.Value},
 		{patch.SpecID.Set, "spec_id", patch.SpecID.Value},
 		{patch.AwaitID.Set, "await_id", patch.AwaitID.Value},
+		{patch.Waiters.Set, "waiters", PatchWaiters(patch.Waiters)},
 		{patch.Status.Set, "status", patch.Status.Value},
 		{patch.Priority.Set, "priority", patch.Priority.Value},
 		{patch.IssueType.Set, "issue_type", patch.IssueType.Value},
@@ -64,6 +65,17 @@ func UpdateFields(patch publicops.IssuePatch) map[string]interface{} {
 		}
 	}
 	return updates
+}
+
+// PatchWaiters is the storage value a set IssuePatch.Waiters writes: a copy of
+// the list, with a nil list spelled empty so a clear stores the empty JSON
+// array rather than JSON null. Both the issueops and the unit-of-work update
+// bodies write through it.
+func PatchWaiters(field publicops.Field[[]string]) []string {
+	if len(field.Value) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), field.Value...)
 }
 
 // ValidateUpdateRequest checks mutually exclusive guarded-update options and
@@ -103,6 +115,9 @@ func ValidateUpdateRequest(request publicops.UpdateRequest) error {
 		if err := types.ValidateIssueEstimatedMinutes(patch.EstimatedMinutes.Value); err != nil {
 			return fmt.Errorf("%w: update estimated_minutes: %w", storage.ErrValidation, err)
 		}
+	}
+	if err := ValidateGatePatch(patch); err != nil {
+		return err
 	}
 	if patch.Persistence.Set && !patch.Persistence.Value.IsValid() {
 		return fmt.Errorf("%w: invalid persistence mode %q", storage.ErrValidation, patch.Persistence.Value)

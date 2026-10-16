@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/remotecache"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/issueops"
@@ -284,6 +285,9 @@ var configSetCmd = &cobra.Command{
 			return HandleError("setting config: %v", err)
 		}
 		noteDirectConfigWrite()
+		if err := commitConfigWrite(rootCtx, store, "config set"); err != nil {
+			return HandleError("%v", err)
+		}
 
 		if jsonOutput {
 			if err := outputJSON(map[string]string{
@@ -327,6 +331,22 @@ type secretRowCleanup struct {
 	present bool // a row was there when we read it
 	removed bool
 	err     error
+	// commitErr is a failed Dolt commit of a delete that did land. It is a
+	// fourth thing to tell the user, not a failed removal: the row is gone from
+	// the working set, but HEAD, which is what `bd dolt push` publishes, still
+	// carries it until something commits the delete (GH#4078). After
+	// storage.ErrCommitIndeterminate the commit may have landed after all, so
+	// the report says the removal may not be committed rather than that it is
+	// not (see commitIndeterminate).
+	commitErr error
+}
+
+// commitIndeterminate reports whether commitErr leaves the delete's commit
+// unknown rather than failed: the store marks an error whose outcome may be
+// unknown, such as a connection lost during DOLT_COMMIT, with
+// storage.ErrCommitIndeterminate. `bd dolt commit` is the remedy either way.
+func (c secretRowCleanup) commitIndeterminate() bool {
+	return errors.Is(c.commitErr, storage.ErrCommitIndeterminate)
 }
 
 // describe writes the database half of the report. It says nothing at all for
@@ -337,6 +357,12 @@ func (c secretRowCleanup) describe(key, location string) {
 	case c.removed:
 		fmt.Printf("Also removed a stored %s row from the database, left by a bd that predates the key moving to %s.\n", key, location)
 		fmt.Printf("⚠ Rotate this credential: the row was replicated to every Dolt remote this workspace pushed to, and deleting it here does not unpublish it.\n")
+		switch {
+		case c.commitIndeterminate():
+			fmt.Fprintf(os.Stderr, "⚠ The removal may not be committed (%v): if it is not, HEAD still carries the row and `bd dolt push` keeps publishing it. Run `bd dolt commit` to be sure.\n", c.commitErr)
+		case c.commitErr != nil:
+			fmt.Fprintf(os.Stderr, "⚠ The removal is not committed (%v): HEAD still carries the row and `bd dolt push` keeps publishing it until `bd dolt commit` records the delete.\n", c.commitErr)
+		}
 	case c.err != nil && c.present:
 		// The one case that is not a maybe: the read found the row and the
 		// delete failed, so bd knows a live credential is still in the table.
@@ -350,8 +376,18 @@ func (c secretRowCleanup) describe(key, location string) {
 // jsonFields carries the same three-way distinction to machine consumers.
 // database_row_removed is always present for a secret key so a script can tell
 // "nothing leaked" from "the field is missing because bd is older".
+// database_commit_indeterminate qualifies database_commit_failed rather than
+// replacing it, so a script that checks only database_commit_failed never takes
+// a delete that may be uncommitted, and a credential HEAD may still publish,
+// for a committed one.
 func (c secretRowCleanup) jsonFields(payload map[string]interface{}) {
 	payload["database_row_removed"] = c.removed
+	if c.commitErr != nil {
+		payload["database_commit_failed"] = c.commitErr.Error()
+		if c.commitIndeterminate() {
+			payload["database_commit_indeterminate"] = true
+		}
+	}
 	switch {
 	case c.err != nil && c.present:
 		payload["database_row_present"] = true
@@ -366,6 +402,10 @@ func (c secretRowCleanup) jsonFields(payload map[string]interface{}) {
 // goes on stderr with that error rather than to stdout, which `--json` owns.
 func (c secretRowCleanup) rowNote(key string) string {
 	switch {
+	case c.removed && c.commitIndeterminate():
+		return fmt.Sprintf("\nA stored %s row WAS removed from the database, but the removal may not be committed (%v); run `bd dolt commit` to be sure, and rotate that credential — it was replicated to every Dolt remote this workspace pushed to.", key, c.commitErr)
+	case c.removed && c.commitErr != nil:
+		return fmt.Sprintf("\nA stored %s row WAS removed from the database, but the removal is not committed (%v); run `bd dolt commit`, and rotate that credential — it was replicated to every Dolt remote this workspace pushed to.", key, c.commitErr)
 	case c.removed:
 		return fmt.Sprintf("\nA stored %s row WAS removed from the database; rotate that credential — it was replicated to every Dolt remote this workspace pushed to.", key)
 	case c.err != nil && c.present:
@@ -462,10 +502,16 @@ func unsetLeakedSecretRow(key string) secretRowCleanup {
 		return secretRowCleanup{err: err}
 	}
 	present, removed, err := removeStoredSecretRow(rootCtx, settings, key)
+	cleanup := secretRowCleanup{present: present, removed: removed, err: err}
 	if removed {
 		noteDirectConfigWrite()
+		// Commit the delete like any other config write (GH#4078): until it is
+		// committed, HEAD still holds the credential and every `bd dolt push`
+		// keeps publishing it. A failure is reported, not returned — the delete
+		// itself landed, and the YAML unset is the command's contract.
+		cleanup.commitErr = commitConfigWrite(rootCtx, store, "config unset")
 	}
-	return secretRowCleanup{present: present, removed: removed, err: err}
+	return cleanup
 }
 
 // removeStoredSecretRow deletes key's row, reporting whether one was there and
@@ -910,6 +956,9 @@ var configUnsetCmd = &cobra.Command{
 			return HandleError("deleting config: %v", err)
 		}
 		noteDirectConfigWrite()
+		if err := commitConfigWrite(rootCtx, store, "config unset"); err != nil {
+			return HandleError("%v", err)
+		}
 
 		// Clear the config.yaml layer unconditionally and report what the
 		// write actually did. Pre-checking with GetYamlConfig would read
@@ -1247,6 +1296,10 @@ Examples:
 					}
 				}
 				commandDidWrite.Store(true)
+				// One scoped commit for the whole batch, not one per key.
+				if err := commitConfigWrite(rootCtx, store, "config set-many"); err != nil {
+					return HandleError("%v", err)
+				}
 			}
 		}
 
@@ -1356,6 +1409,7 @@ var recognizedConfigKeys = map[string]bool{
 	"auto_compact_enabled": true, "schema_version": true,
 	"output.title-length": true,
 	"prime.max-memories":  true, "prime.max-memory-chars": true,
+	"prime.disabled": true,
 	// Opt-in ceiling on the persistent-memory corpus, enforced by `bd
 	// remember` (0 = off). Yaml-only for the same reason the prime caps are:
 	// it is read through viper, so a DB-backed write would never be seen.
