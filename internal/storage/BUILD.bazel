@@ -70,6 +70,7 @@ go_library(
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/hooks",
+        "//internal/storage/kvkeys",
         "//internal/types",
         "//issueops",
         "//journalops",

@@ -730,6 +730,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negative duration and fails, even though `--age 0s`'s own contract is
   that every wisp qualifies. `ageThreshold <= 0` now bypasses the clock
   comparison entirely (#7236).
+- **`bd mol wisp gc` no longer deletes a fresh step because a wisp it
+  depends on is abandoned.** The GC applied `--age` only to the wisps it
+  selected directly, then deleted their dependents at any age as long as
+  they were not live work, so a step created seconds earlier went with an
+  old wisp it depended on, and raising `--age` did not help. A dependent
+  now has to meet `--age` itself, by the same rule as the wisp it depends
+  on (including the #7236 rounding fix). One that is too young is spared
+  and loses its edge to the deleted wisp: an open one is collected once it
+  ages out, a closed one is left for `--all`, `--closed` or `bd purge`,
+  since without `--all` the GC reaches a closed wisp only as the dependent
+  of an abandoned one (#5219).
 - `bd create --parent` works on the HTTP backend: the create role mints the
   `<parent>.<n>` child id (and inherits the parent's labels) inside the
   create on every route, instead of the CLI reserving it through a raw
@@ -737,6 +748,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or without an id) and `bd mol progress` no longer answer empty or refuse
   over http, and `bd ready --mol` step rows carry their assignee and
   timestamps.
+- **Server-mode config writes are committed again.** On the direct SQL-server
+  route, `bd remember`, `bd forget` and `bd config set|unset|set-many` wrote
+  the `config` table but never created a Dolt commit: `maybeAutoCommit`
+  returns early off the embedded route, and plain `Commit()` excludes config
+  (GH#2455). The rows sat in the working set, where `bd dolt push` does not
+  carry them, and a dirty internal key such as `status.custom` made the next
+  `bd dolt pull` refuse until an explicit `bd dolt commit`. With
+  `dolt.auto-commit` on (the default) these writes now commit right away
+  through the scoped `CommitConfigOnly`, which stages only `config` and the
+  lookup tables projected from it, so a concurrent operation's other dirty
+  tables are never swept; `batch` and `off` defer them to `bd dolt commit`
+  like every other write. `bd remember` and `bd forget` commit only user
+  `kv.*` rows. When an internal config key is dirty (such as the
+  `issue_prefix` that `bd rename-prefix` writes), the memory is still
+  stored but not committed: the command warns on stderr with the keys named
+  and exits 0, `--json` adds `committed: false`, `commit_error` and
+  `dirty_config_keys`, and `bd dolt commit` publishes the memory with those
+  keys. v1.0.1 ([#3052](https://github.com/gastownhall/beads/pull/3052)),
+  whose commits this restores, also warned on a failed memory commit
+  instead of failing the write. `bd config unset` of a yaml-only secret key
+  also commits its delete of a credential row an older bd stored in the
+  database, so HEAD, which `bd dolt push` publishes, no longer keeps it
+  ([#4078](https://github.com/gastownhall/beads/issues/4078)).
+
 - **PRs based on `hotfix/**` branches now run full CI, not just
   cross-version historical smokes and triage labeling.** `pr.yml`,
   `pr-risk.yml`, `conformance.yml`, `cross-version-smoke.yml` and
@@ -1020,6 +1055,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd context` also prints `cwd repo: git: unavailable` rather than silently
   omitting the one degraded state it exists to report.
 
+- **Server-mode `bd federation sync` and `bd federation status` work with Dolt
+  remotes that have no stored peer credentials**
+  ([#5128](https://github.com/gastownhall/beads/pull/5128), fixes
+  [#4837](https://github.com/gastownhall/beads/issues/4837)). A remote added
+  by `bd federation add-peer` without `--user` or by `bd dolt remote add` has
+  no `federation_peers` row, and every server-mode `bd federation` push, pull
+  and fetch to it failed at the credential lookup with `failed to get peer
+  credentials: not found: federation peer <name>`. A missing row now means no
+  stored credentials, as it already did in embedded mode, so the operation
+  runs with Dolt's own credential discovery: `bd federation sync` without
+  `--peer` syncs those remotes too, and `status` fetches them. Errors reading
+  or decrypting a stored row still fail. A mistyped `--peer` now fails with
+  Dolt's own unknown-remote error instead.
+
 - **`bd comment`/`bd comments add` refuse an abbreviated id and a reserved
   word instead of silently resolving one to the wrong issue**
   ([#5393](https://github.com/gastownhall/beads/pull/5393)). `bd comment list
@@ -1045,6 +1094,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separately and found to already be exact-id-only by construction (its
   resolution never performed abbreviation matching in the first place) — a
   regression test now locks that in rather than leaving it undocumented.
+
+- **`bd delete` no longer resolves an id it cannot find to a different issue
+  whose id begins with it.**
+  ([#7375](https://github.com/gastownhall/beads/pull/7375)). The direct
+  (embedded and server) route resolved
+  each id with the abbreviation-tolerant resolver, so an id that was already
+  gone (a retried delete, a re-run `--from-file` list, a parent whose child
+  survives) resolved by leading-prefix match to whichever surviving issue's id
+  it begins: after `fx-t00003` was deleted, `bd delete fx-t00003` previewed
+  `fx-t000031` and printed `bd delete fx-t000031 --force` as the next step,
+  and with `--force` deleted it. `--quiet` silenced the partial-id notice, so
+  a `--force --quiet` re-run deleted issues it never named without a word.
+  `bd delete` now requires an exact id on the preview and with `--force`, as
+  `bd comment` does and as the team-server route already did; full ids, bare
+  full hashes, child ids and routed ids resolve as before. An abbreviation is
+  refused with `issue "t000" not found: bd delete needs the full issue id, and
+  "t000" is only the start of fx-t000031`, naming every id it matches; under
+  `--if-revision` it is the guard's lost race instead (`precondition_failed`,
+  exit 13), as for any other gone id. This is a user-visible change: a script
+  or habit that deletes by abbreviation now gets that error and must pass the
+  full id. Reads and other writes keep accepting abbreviations; see [Working
+  with IDs](docs/core-concepts/hash-ids.md#working-with-ids).
 
 - **A git hook beads never wrote is no longer reported as installed**
   ([#6084](https://github.com/gastownhall/beads/issues/6084)). `getHookVersion`
@@ -1809,6 +1880,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the existing message.
 
 ### Changed
+
+- **`bd init` refuses to initialize directly in your home directory**
+  ([#4635](https://github.com/gastownhall/beads/issues/4635)). `bd init` sets
+  up the directory it runs in as a project: it runs `git init` there unless it
+  finds a repository, and installs agent files — `CLAUDE.md`, `AGENTS.md`,
+  `.gitignore`, `.claude/`, `.codex/`, `.cursor/`, `.agents/`. In your home
+  directory most of those are your agents' user-wide settings, so bd's hooks
+  ended up running in every project, and init did this silently under
+  `--non-interactive`, which engages automatically whenever stdin is not a TTY
+  (so: whenever an agent runs it). A project is virtually never the home
+  directory itself, so this now refuses with exit code `15`
+  (`ExitHomeDirRefused`; `13` and `14` already mean a lost conditional-write
+  race and a migration freeze), documented at
+  `docs/recovery/init-safety.md#init-home-refused`.
+
+  Deliberately narrow: it fires only when the working directory is *exactly*
+  your home directory, your home is not itself a git repository (tracked
+  dotfiles are unaffected, but a home that only sits inside an enclosing
+  repository, or a `GIT_DIR` inherited from the environment, does not count),
+  and you did not name a `BEADS_DIR` yourself. A subdirectory of home is an
+  ordinary project and is never refused. If you do name a `BEADS_DIR` from
+  an untracked home, init sets up only that workspace: no `git init`, no
+  agent files or `.gitignore` in your home directory, and nothing in a
+  repository your home sits inside (no hooks, `beads.role`, Dolt remote taken
+  from its origin, or bootstrap commit) unless a flag such as `--stealth` or
+  `--setup-exclude` asks for it. `--force` and
+  `--reinit-local` do not override the refusal — they bypass the local
+  data-safety guard, which is a different question from "is this the right
+  directory". The guard runs first in init's `RunE`, ahead of every path with
+  an effect, including the proxied dispatch and the store-opening
+  `--reinit-local` pre-checks.
 
 - **The managed shared Dolt server now opens its configured remotesapi
   listener** ([#6020](https://github.com/gastownhall/beads/pull/6020)).

@@ -249,3 +249,10 @@ func (s *Store) CommitAll(_ context.Context, _ string) (bool, error) { return fa
 // CommitPending reports nothing pending, for the same reason: write paths call
 // it opportunistically and must not error.
 func (s *Store) CommitPending(_ context.Context, _ string) (bool, error) { return false, nil }
+
+// CommitConfigOnly and CommitConfigUserKVOnly, the scoped commits after a
+// config or memory write (GH#4078), join the family for the same D3 reason:
+// the write is durable once the server answers, so there is nothing to flush,
+// and refusing would fail a command whose write already landed.
+func (s *Store) CommitConfigOnly(_ context.Context, _ string) error       { return nil }
+func (s *Store) CommitConfigUserKVOnly(_ context.Context, _ string) error { return nil }
