@@ -251,6 +251,36 @@ func runsPostCommandMaintenance(cmdName string, strictReadonly bool) bool {
 	return effectiveRootStorePolicy(cmdName, strictReadonly).runMaintenance
 }
 
+// readMemoEnvVar turns the per-command http read memo off when set to "0": an
+// operator who suspects a stale read can rule the memo out without a rebuild.
+const readMemoEnvVar = "BD_HTTP_READ_MEMO"
+
+// commandMemoizesReads reports whether this invocation's http transport may
+// answer an identical row or settings read from a response it already received
+// (httpclient.WithReadMemo, bts-xpw.3.14.6). A one-shot command may: it reads,
+// writes and exits within seconds, and each write it makes drops the memo.
+//
+// A process that outlives its reads may not, and bd serve is excluded for the
+// reason runsPostCommandMaintenance excludes it — a server is not a command.
+// Over an http workspace it answers other clients, who must see what other
+// writers changed. A --watch or --follow poll exists to see exactly those
+// changes, and a memo would answer its polls from a snapshot instead.
+// BD_HTTP_READ_MEMO=0 turns the memo off for every command.
+func commandMemoizesReads(cmd *cobra.Command) bool {
+	if os.Getenv(readMemoEnvVar) == "0" {
+		return false
+	}
+	if cmd.Name() == serveCmdName {
+		return false
+	}
+	for _, name := range []string{"watch", "follow"} {
+		if f := cmd.Flags().Lookup(name); f != nil && f.Value.String() == "true" {
+			return false
+		}
+	}
+	return true
+}
+
 // resolveDoltServerConnection fills in how to reach the workspace's Dolt SQL
 // server — host, port, socket, user, password, TLS — on doltCfg.
 //
@@ -2128,8 +2158,20 @@ var rootCmd = &cobra.Command{
 		// swallowed the same way, which let a preview failure wave the
 		// real, mutating open through unexamined — the one thing this check
 		// exists to prevent (be-3bt2e). Those cases now refuse instead.
+		//
+		// openCtx scopes ONE http transport to the gate's preview open and the
+		// real open below (bts-xpw.3.14.6): over a gateway each dial pays its
+		// own handshake and, with a gasworks credential, its own sts.Context,
+		// so sharing it saves both on every write. A one-shot command's
+		// transport also answers its repeated row and settings reads from the
+		// response it already has (commandMemoizesReads). Other backends
+		// ignore both.
+		openCtx := httpclient.WithSharedConnections(rootCtx)
+		if commandMemoizesReads(cmd) {
+			openCtx = httpclient.WithReadMemo(openCtx)
+		}
 		if !useReadOnly && !globalFlag && os.Getenv("BEADS_SKIP_IDENTITY_CHECK") != "1" {
-			idStore, previewErr := newPreviewStoreFromConfig(rootCtx, beadsDir)
+			idStore, previewErr := newPreviewStoreFromConfig(openCtx, beadsDir)
 			switch {
 			case previewErr == nil:
 				checkErr := validateWorkspaceIdentity(rootCtx, idStore, beadsDir)
@@ -2150,7 +2192,7 @@ var rootCmd = &cobra.Command{
 		// Dolt manages these files itself; external interference is never safe.
 
 		if _, ok := backends.Lookup(cfg.GetBackend()); ok {
-			store, err = newRegisteredBackendStore(rootCtx, cfg.GetBackend(), beadsDir, useReadOnly)
+			store, err = newRegisteredBackendStore(openCtx, cfg.GetBackend(), beadsDir, useReadOnly)
 		} else {
 			store, err = newDoltStore(rootCtx, doltCfg)
 		}

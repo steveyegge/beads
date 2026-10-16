@@ -521,6 +521,17 @@ func designRows() []Row {
 			// refuses without dialing.
 			PinnedBy: pinnedByS3Conformance,
 		},
+		{
+			ID: "L-read-memo", Kind: KindDegrade,
+			What: "inside one bd command, a repeated getIssue, getSetting or listSettings read of the same URL within ReadMemoTTL (5 s) of the server's answer is answered from that answer unless the command wrote in between; locally every re-read sees other writers at once",
+			Why: "a command resolves an id, fetches the row and reads it again for output, and over a gateway each read is a sequential round trip (bd show --json made three requests for one row). The memo (wire.Client.EnableReadMemo, httpclient.WithReadMemo) answers the repeats from the first response, so the command sees the row as of that one read, which is what a single fetch would show. " +
+				"IT IS BOUNDED, NOT A CACHE: it lives on one process's transport and dies with it; only one-shot commands opt in (never bd serve, --watch or --follow); any non-GET through the transport clears it before it is sent and after it returns, and a read that overlapped a write is not stored, so a command always re-reads what its own write could have changed; only a 2xx answer that decoded is kept; an entry ages from the server's answer and a hit never renews it. " +
+				"Other writers' changes reach a later read of the same command only after the TTL, which is the residue this row records. A guarded write built from a memoized row (an expected revision, a CAS) fails safely on a version mismatch rather than losing an update. BD_HTTP_READ_MEMO=0 turns the memo off. " +
+				"Further pins outside this package's scan: internal/httpclient/wire TestReadMemoIsDroppedByAnyWrite, TestReadMemoKeepsOnlySuccessesAndExpires and TestReadMemoAgesFromTheServersAnswerNotTheLastHit; backend/http TestE2E_ShowFetchesTheIssueOnce and TestE2E_CloseRereadsItsOwnWrite",
+			SpecRow: "mc-5dkzp, bts-xpw.3.14.6",
+			// The bound the row rests on: only a one-shot command memoizes.
+			PinnedBy: "TestOnlyOneShotCommandsMemoizeRemoteReads",
+		},
 	}
 }
 
