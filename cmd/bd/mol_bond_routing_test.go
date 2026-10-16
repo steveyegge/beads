@@ -22,12 +22,13 @@ import (
 // show/update/close use.
 //
 // discoverMolBondOperand resolves through the same local, prefix-route, and
-// contributor auto-route order, read-only, before the accepted home is reopened
-// writable.
+// auto-route order, read-only, before the accepted home is reopened writable.
 //
 // The cases mirror TestResolveCloseTargets:
 //   - maintainer-mode local resolution (no routing involved)
-//   - contributor-mode operand that lives only in the routed planning store
+//   - an operand that lives only in the routed planning store, reached through
+//     the contributor, maintainer, or default auto-route; each reopens its
+//     home writable for the bond
 func TestDiscoverMolBondOperandRouting(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -37,7 +38,6 @@ func TestDiscoverMolBondOperandRouting(t *testing.T) {
 		localSeed     string
 		planningSeed  string
 		operand       string
-		wantForbidden bool
 		wantWritable  bool
 		wantStore     string
 	}{
@@ -55,7 +55,7 @@ func TestDiscoverMolBondOperandRouting(t *testing.T) {
 			routingKey:    "routing.contributor",
 			planningSeed:  "shared-routed",
 			operand:       "shared-routed",
-			wantForbidden: true,
+			wantWritable:  true,
 			wantStore:     "planning",
 		},
 		{
@@ -83,6 +83,7 @@ func TestDiscoverMolBondOperandRouting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			initConfigForTest(t)
+			neutralizeRoutingModeEnv(t)
 
 			tmpDir := t.TempDir()
 			repoDir := filepath.Join(tmpDir, "repo")
@@ -137,15 +138,6 @@ func TestDiscoverMolBondOperandRouting(t *testing.T) {
 			if disc.issue == nil || disc.issue.ID != tc.operand || disc.formula != "" {
 				t.Fatalf("operand %q discovery = %#v", tc.operand, disc)
 			}
-			if disc.mutationForbidden != tc.wantForbidden {
-				t.Errorf("operand %q: mutationForbidden = %v, want %v", tc.operand, disc.mutationForbidden, tc.wantForbidden)
-			}
-			if disc.mutationForbidden {
-				formula := &molBondDiscovery{operand: "mol-test", formula: "mol-test"}
-				if _, _, err := validateMolBondHomes(primaryStore, formula, disc); err == nil || !strings.Contains(err.Error(), "auto-routing") {
-					t.Errorf("forbidden auto-routed operand error = %v, want clear refusal", err)
-				}
-			}
 			localKey := dependencyStoreKey(primaryStore)
 			if tc.wantStore == "local" && disc.storeKey != localKey {
 				t.Errorf("operand %q storeKey = %q, want local %q", tc.operand, disc.storeKey, localKey)
@@ -160,16 +152,7 @@ func TestDiscoverMolBondOperandRouting(t *testing.T) {
 					t.Fatalf("resolveAndGetIssueForMutation(%q): %v", tc.operand, err)
 				}
 				defer rr.Close()
-				if rr.MutationForbidden {
-					t.Fatalf("operand %q: maintainer/default route unexpectedly forbids mutation", tc.operand)
-				}
-				routedStore, ok := storage.UnwrapStore(rr.Store).(interface{ IsReadOnly() bool })
-				if !ok {
-					t.Fatalf("operand %q: routed store %T does not expose read-only state", tc.operand, rr.Store)
-				}
-				if routedStore.IsReadOnly() {
-					t.Fatalf("operand %q: maintainer/default mutation route reopened read-only", tc.operand)
-				}
+				requireWritableAutoRoute(t, "operand "+tc.operand, rr)
 			}
 		})
 	}
@@ -466,69 +449,66 @@ func TestSameBondStoreSeparateHandles(t *testing.T) {
 	}
 }
 
-// TestMolBondAutoRoutedReadOnlyFailsFast verifies the write-path guard for
-// contributor auto-routing: the planning store deliberately opens read-only
-// (it hydrates a foreign project that must never be mutated), so a bond pinned
-// to it must fail fast during read-only validation — before any
-// mutation is attempted — rather than surface a store-layer write refusal
-// halfway through the bond.
-func TestMolBondAutoRoutedReadOnlyFailsFast(t *testing.T) {
-	initConfigForTest(t)
+// TestMolBondContributorAutoRoutedWriteThrough runs bd mol bond's pipeline
+// (planMolBond, openMolBondHome, materialize, bond) on two issues that live in a
+// contributor's planning repository, reached through the contributor
+// auto-route. The planning repository is the contributor's own, so the bond
+// commits there as an update or close of a planning issue does
+// (TestContributorAutoRouteWritesThrough): the validated home reopens writable
+// and a fresh routed read sees the dependency.
+func TestMolBondContributorAutoRoutedWriteThrough(t *testing.T) {
+	primaryStore, _, _ := setupAutoRoute(t, "contributor", "routing.contributor", "shared-bond")
 	ctx := context.Background()
 
-	tmpDir := t.TempDir()
-	repoDir := filepath.Join(tmpDir, "repo")
-	planningDir := filepath.Join(tmpDir, "planning")
-
-	runCmd(t, tmpDir, "git", "init", repoDir)
-	// Force repo-local hooks so tests ignore any global hooksPath override.
-	runCmd(t, repoDir, "git", "config", "core.hooksPath", ".git/hooks")
-	runCmd(t, repoDir, "git", "config", "beads.role", "contributor")
-
-	primaryStore := newTestStoreIsolatedDB(t, filepath.Join(repoDir, ".beads", "beads.db"), "shared")
-	if err := primaryStore.SetConfig(ctx, "routing.mode", "auto"); err != nil {
-		t.Fatalf("set routing.mode: %v", err)
-	}
-	if err := primaryStore.SetConfig(ctx, "routing.contributor", planningDir); err != nil {
-		t.Fatalf("set routing.contributor: %v", err)
-	}
-
-	planningStore := newTestStoreIsolatedDB(t, filepath.Join(planningDir, ".beads", "beads.db"), "shared")
-	seedIssue(t, ctx, planningStore, "shared-ro1")
-	seedIssue(t, ctx, planningStore, "shared-ro2")
-	if err := planningStore.Close(); err != nil {
-		t.Fatalf("close planning store: %v", err)
-	}
-
-	oldWD, err := os.Getwd()
+	in := molBondInput{argA: "shared-hub", argB: "shared-bond", bondType: types.BondTypeSequential}
+	plan, err := planMolBond(ctx, primaryStore, in)
 	if err != nil {
-		t.Fatalf("getwd: %v", err)
+		t.Fatalf("planMolBond on two contributor-routed issues: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(oldWD) })
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatalf("chdir repoDir: %v", err)
+	defer plan.Close()
+	if plan.targetStoreKey == dependencyStoreKey(primaryStore) {
+		t.Fatalf("bond home resolved to the local store; want the contributor planning store")
 	}
-	// Role detection reads the process-wide RepoContext cache, which an
-	// earlier test in this binary may have built for its own, now-deleted
-	// repo. Rebuild it from repoDir.
-	resetRepoContextCachesForTest(t)
+	plan.Close()
 
-	discA, err := discoverMolBondOperand(ctx, primaryStore, "shared-ro1", nil)
+	home, closeHome, err := openMolBondHome(ctx, primaryStore, plan)
 	if err != nil {
-		t.Fatalf("discover first auto-routed operand: %v", err)
+		t.Fatalf("openMolBondHome: %v", err)
 	}
-	defer discA.Close()
-	discB, err := discoverMolBondOperand(ctx, primaryStore, "shared-ro2", nil)
+	defer closeHome()
+	if routedStoreIsReadOnly(t, home) {
+		t.Fatalf("the contributor auto-route reopened the bond home read-only")
+	}
+	opA, opB, err := materializeMolBondOperands(ctx, home, plan, nil)
 	if err != nil {
-		t.Fatalf("discover second auto-routed operand: %v", err)
+		t.Fatalf("materialize operands: %v", err)
 	}
-	defer discB.Close()
+	if _, err := bondMolBondOperands(ctx, home, opA, opB, in); err != nil {
+		t.Fatalf("bond in the contributor planning store: %v", err)
+	}
+	closeHome()
 
-	_, _, err = validateMolBondHomes(primaryStore, discA, discB)
-	if err == nil {
-		t.Fatal("validateMolBondHomes should reject a bond pinned to the contributor auto-routed store")
+	// Verify through a fresh routed read that the bond committed in the
+	// planning database: shared-bond (B) now depends on shared-hub (A).
+	rr, err := resolveAndGetIssueWithRouting(ctx, primaryStore, "shared-bond")
+	if err != nil {
+		t.Fatalf("re-reading the routed issue: %v", err)
 	}
-	if !strings.Contains(err.Error(), "auto-routing") || !strings.Contains(err.Error(), "forbids mutation") {
-		t.Errorf("fail-fast error should explain the forbidden contributor auto-route, got: %v", err)
+	defer rr.Close()
+	if !rr.Routed {
+		t.Fatalf("re-read resolved shared-bond without routing; want the contributor auto-route")
+	}
+	deps, err := rr.Store.GetDependenciesWithMetadata(ctx, "shared-bond")
+	if err != nil {
+		t.Fatalf("reading dependencies from the planning store: %v", err)
+	}
+	found := false
+	for _, dep := range deps {
+		if dep.ID == "shared-hub" && dep.DependencyType == types.DepBlocks {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("bond did not commit in the planning store: shared-bond dependencies = %+v", deps)
 	}
 }

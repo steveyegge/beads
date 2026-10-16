@@ -110,7 +110,10 @@ func buildEmbeddedBD(t *testing.T) string {
 func bdEnv(dir string) []string {
 	var env []string
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "BEADS_") {
+		// Viper reads BD_<KEY> above config.yaml, and agent hosts export
+		// BD_ROUTING_MODE, which overrides the routing.mode a test's
+		// workspace holds.
+		if strings.HasPrefix(e, "BEADS_") || strings.HasPrefix(e, "BD_ROUTING_MODE=") {
 			continue
 		}
 		env = append(env, e)

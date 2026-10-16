@@ -178,10 +178,16 @@ func openRoutedReadStore(ctx context.Context, store storage.DoltStorage) (storag
 	return openAutoRoutedStore(ctx, store, false)
 }
 
-// openAutoRoutedStore opens the target selected by auto-routing. Contributor
-// routing always stays read-only because it hydrates a foreign planning
-// project. Maintainer/default routes may be opened writable for commands whose
-// mutation home has already been validated.
+// openAutoRoutedStore opens the target selected by auto-routing. Every rule,
+// maintainer, contributor and default alike, opens writable when writable is
+// set, for write-intent callers (resolveAndGetIssueForMutation and its exact
+// twin, bd close target resolution) that commit the change where the issue
+// lives. A contributor's target is their own planning repository, the one bd
+// create already writes to, so a planning issue is claimed, commented on and
+// closed there (GH#2345, beads-0km). Reads stay read-only.
+//
+// The target opens its own dolt_database, as a prefix route does
+// (openRoutedTargetStore, autoRouteTargetDatabase).
 func openAutoRoutedStore(ctx context.Context, store storage.DoltStorage, writable bool) (storage.DoltStorage, bool, routing.RoutingRule, error) {
 	repoPath, rule := determineAutoRoutedRepoPath(ctx, store)
 	if repoPath == "" || repoPath == "." {
@@ -190,13 +196,11 @@ func openAutoRoutedStore(ctx context.Context, store storage.DoltStorage, writabl
 
 	targetRepoPath := routing.ExpandPath(repoPath)
 	targetBeadsDir := filepath.Join(targetRepoPath, ".beads")
-	var targetStore storage.DoltStorage
-	var err error
-	if writable && rule != routing.RuleContributor {
-		targetStore, err = newDoltStoreFromConfig(ctx, targetBeadsDir)
-	} else {
-		targetStore, err = newReadOnlyStoreFromConfig(ctx, targetBeadsDir)
+	database, err := autoRouteTargetDatabase(targetBeadsDir, writable)
+	if err != nil {
+		return nil, false, rule, fmt.Errorf("failed to open routed store at %s: target has no dolt_database configured: %w", targetRepoPath, err)
 	}
+	targetStore, err := openRoutedTargetStore(ctx, targetBeadsDir, database, writable)
 	if err != nil {
 		return nil, false, rule, fmt.Errorf("failed to open routed store at %s: %w", targetRepoPath, err)
 	}
