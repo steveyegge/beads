@@ -1339,6 +1339,8 @@ go_test(
         "//internal/githooksenv",
         "//internal/hooks",
         "//internal/httpapi",
+        "//internal/httpclient",
+        "//internal/httpclient/encode",
         "//internal/linear",
         "//internal/metrics",
         "//internal/migration",

@@ -146,9 +146,11 @@
 
 100 61 TestEmbeddedUpdateRoutedStoreCommitsTargetHead
 
+100 62 TestEmbeddedGateCheckSkipsTemplateGates
 100 62 TestEmbeddedReadyBlockersAndLabels
 
 100 63 TestEmbeddedDepAndLinkBatchAutoCommitDoesNotAdvanceHead
+100 63 TestEmbeddedGateCheckLimitCountsOnlyLiveGates
 100 63 TestEmbeddedIfRevisionDeletePreflightGoneParentIsPreconditionFailed
 
 100 64 TestEmbeddedGateWaiterCheckLifecycle
