@@ -2661,6 +2661,13 @@ func TestCreateGateRefusalWritesNothing(t *testing.T) {
 // miss; the retry re-reads (keeping the other waiter) and re-deduplicates.
 func TestAddGateWaiterIsAGuardedWholeListUpdate(t *testing.T) {
 	setGateTestActor(t)
+	origSleep := gateAddWaiterSleep
+	t.Cleanup(func() { gateAddWaiterSleep = origSleep })
+	var sleeps []time.Duration
+	gateAddWaiterSleep = func(_ context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		return nil
+	}
 	gate := func() *types.Issue {
 		return &types.Issue{ID: "bd-g", IssueType: "gate", Waiters: []string{"a"}, RowVersion: 7}
 	}
@@ -2719,15 +2726,58 @@ func TestAddGateWaiterIsAGuardedWholeListUpdate(t *testing.T) {
 		}
 	})
 
-	t.Run("gives up after the attempt bound", func(t *testing.T) {
+	t.Run("backs off between attempts", func(t *testing.T) {
+		sleeps = nil
 		roles := newFakeGateRoles(gate())
-		roles.concurrent = []string{"x1", "x2", "x3", "x4"}
+		roles.concurrent = []string{"x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9"}
+		added, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if err != nil || !added {
+			t.Fatalf("addGateWaiter = %v, %v; want added once the nine concurrent writers are done", added, err)
+		}
+		if len(roles.updates) != 10 || len(sleeps) != 9 {
+			t.Fatalf("updates = %d, sleeps = %d; want 10 writes with a backoff before each retry", len(roles.updates), len(sleeps))
+		}
+		want := gateAddWaiterBackoffBase
+		for i, d := range sleeps {
+			if d < want/2 || d >= want {
+				t.Errorf("backoff %d = %s, want in [%s, %s)", i+1, d, want/2, want)
+			}
+			if want*2 <= gateAddWaiterBackoffCap {
+				want *= 2
+			} else {
+				want = gateAddWaiterBackoffCap
+			}
+		}
+	})
+
+	t.Run("gives up after the attempt bound", func(t *testing.T) {
+		sleeps = nil
+		roles := newFakeGateRoles(gate())
+		for i := 0; i <= gateAddWaiterMaxAttempts; i++ {
+			roles.concurrent = append(roles.concurrent, fmt.Sprintf("x%d", i))
+		}
 		_, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
 		if !errors.Is(err, issueops.ErrVersionMismatch) {
 			t.Fatalf("addGateWaiter error = %v, want the version mismatch", err)
 		}
-		if len(roles.updates) != gateAddWaiterAttempts {
-			t.Fatalf("updates = %d, want %d attempts", len(roles.updates), gateAddWaiterAttempts)
+		if len(roles.updates) != gateAddWaiterMaxAttempts {
+			t.Fatalf("updates = %d, want %d attempts", len(roles.updates), gateAddWaiterMaxAttempts)
+		}
+	})
+
+	t.Run("a cancelled wait stops the loop", func(t *testing.T) {
+		roles := newFakeGateRoles(gate())
+		roles.concurrent = []string{"x1", "x2"}
+		gateAddWaiterSleep = func(context.Context, time.Duration) error { return context.Canceled }
+		t.Cleanup(func() {
+			gateAddWaiterSleep = func(_ context.Context, d time.Duration) error {
+				sleeps = append(sleeps, d)
+				return nil
+			}
+		})
+		_, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if !errors.Is(err, context.Canceled) || len(roles.updates) != 1 {
+			t.Fatalf("addGateWaiter = %v after %d updates, want the cancellation after one write", err, len(roles.updates))
 		}
 	})
 
@@ -2784,6 +2834,9 @@ func TestFindPendingGatesListsThroughListGates(t *testing.T) {
 	}
 	if len(fake.queries) != 1 || fake.queries[0].Expression != issueops.GateListExpression {
 		t.Fatalf("queries = %+v, want one ListGates query", fake.queries)
+	}
+	if fake.queries[0].IncludeClosed {
+		t.Fatal("gate discover listed closed gates; only open gates await a run")
 	}
 }
 

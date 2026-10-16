@@ -339,6 +339,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`bd gate discover` skips template gates, as `bd gate check` does.** A
+  template gh:run gate is a proto that work is poured from; on the direct,
+  proxied and embedded routes `bd gate discover` used to record a discovered
+  run ID on it, which every later pour copied. It is now left alone on every
+  route. `bd gate add-waiter` on a template gate is refused by the update
+  role's template guard, where the direct, proxied and embedded routes all
+  used to write the waiter.
+- **`bd gate create` refuses a negative `--timeout` on every route**
+  (`timeout cannot be negative`); the direct, proxied and embedded routes
+  used to store it. A `--type` longer than 32 characters fails with the same
+  typed validation error instead of a raw Dolt column error.
+- **`bd gate create` and `bd gate add-waiter` follow `dolt.auto-commit`
+  like every other role write.** Under `dolt.auto-commit=off` `bd gate
+  create` no longer makes its own Dolt commit on the direct and embedded
+  routes (the proxied route already did not). The Dolt commit messages are
+  the role's: `bd: create gate X blocking Y` becomes the create's default
+  message, and `bd gate add-waiter`'s becomes the update's (`bd: update X`
+  on the direct and embedded routes, `update issue` on the proxied route).
+  On the proxied route `bd gate create` no longer journals a
+  `dependency_added` event on the blocked issue, matching the direct route
+  and `bd create --deps`.
 - **Gate members are bounds-checked in the library, on every local backend.**
   `issueops.Lifecycle.Create`, `Lifecycle.Update` and `BatchApplier` (create
   and update items) now refuse, with a typed `*issueops.GateFieldError`
@@ -569,22 +590,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     explicit commit; the proxied-server route now uses the same role.
   - `bd gate add-waiter` reads the gate through `Reader.Get`, deduplicates,
     and writes the whole waiter list through `Lifecycle.Update` guarded by
-    the row version it read, retrying up to three times on a version
-    mismatch. Two concurrent adders no longer lose each other's waiter.
+    the row version it read. On a version mismatch it re-reads and retries
+    after a jittered, doubling backoff (10 ms up to 400 ms per wait, at most
+    20 writes), so a convoy of workers registering on one gate at once all
+    succeed. On the direct route concurrent adders used to lose
+    each other's waiters while every one exited 0; no waiter is lost now.
     Over HTTP it needs `issues.update.gates`.
   - `bd gate discover` lists through `issueops.ListGates` (as `bd gate check`
     does) and records each discovered run ID through `Lifecycle.Update`, the
     same `await_id` write `bd gate check` and `bd close` make. Over HTTP it
-    needs `issues.update.gates`.
+    needs `issues.update.gates`. Its summary now counts only the gates whose
+    run ID was recorded, and it exits non-zero when any matched gate's write
+    failed (it used to report such a gate as updated and exit 0).
 
-  Against a server that does not advertise the token a command needs, it is
-  refused before any write, naming the token. `bd gate discover` skips
-  template gates, as `bd gate check` does: a template is read-only, so
-  recording a run ID on one failed with "templates are read-only". The
-  served corpus gains `mc-gate-create-timer`, `mc-gate-check-timer-resolves`,
-  `mc-gate-add-waiter` and `mc-update-await-id` (pending until the reference
-  server advertises the gate tokens), pinned passing by
-  `TestE2E_GatesOverHTTP`.
+  Against a server that does not advertise the token it needs, `bd gate
+  create` and `bd gate add-waiter` are refused before any write, naming the
+  token; `bd gate discover` writes nothing and reports the token as that
+  gate's error. The served corpus gains `mc-gate-create-timer`,
+  `mc-gate-check-timer-resolves`, `mc-gate-add-waiter` and
+  `mc-update-await-id` (pending until the reference server advertises the
+  gate tokens), pinned passing by `TestE2E_GatesOverHTTP`.
 - **`bd gate check` works over a connected HTTP workspace.** Its open-gate
   listing built the same raw `SearchIssues` filter `bd gate list` did before
   S20, so the HTTP backend refused the command before reading a gate and gc's

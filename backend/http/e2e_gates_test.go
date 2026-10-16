@@ -4,9 +4,13 @@ package bdhttp_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -172,6 +176,78 @@ func TestE2E_GatesOverHTTP(t *testing.T) {
 		}
 	})
 
+	// A convoy registering on one gate at once: every adder must exit 0 and
+	// every waiter must be on the gate. Each round of simultaneous guarded
+	// writes has one winner, so this pins the retry backoff, not just the
+	// compare-and-set.
+	t.Run("concurrent add-waiter", func(t *testing.T) {
+		const adders = 10
+		target := f.create("convoy target")
+		gate := firstJSONField(t, f.mustRun(nil, "gate", "create", "--blocks", target, "--json").stdout, "id")
+		results := make([]bdResult, adders+1)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i <= adders; i++ {
+			waiter := fmt.Sprintf("rig/workers/c%d", i%adders) // the last one repeats c0
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				results[i] = f.run(nil, "gate", "add-waiter", gate, waiter)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		for i, r := range results {
+			if r.code != 0 {
+				t.Errorf("adder %d exited %d: %s", i, r.code, r.stderr)
+			}
+		}
+		got := showGate(t, f, gate).Waiters
+		slices.Sort(got)
+		var want []string
+		for i := 0; i < adders; i++ {
+			want = append(want, fmt.Sprintf("rig/workers/c%d", i))
+		}
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("waiters after %d concurrent adders = %v, want each exactly once: %v", adders+1, got, want)
+		}
+	})
+
+	// gate discover over HTTP: a fake gh answers the run listing, and the
+	// discovered run ID is recorded through updateIssue (issues.update.gates).
+	binDir := t.TempDir()
+	gh := `#!/bin/sh
+case "$1 $2" in
+"run list") echo '[{"databaseId":4242,"name":"ci-wf","status":"in_progress","conclusion":"","createdAt":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","workflowName":"ci-wf","headBranch":"main"}]' ;;
+*) echo "unexpected gh $*" >&2; exit 3 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(gh), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	ghEnv := []string{"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
+
+	t.Run("discover", func(t *testing.T) {
+		target := f.create("discover target")
+		gate := firstJSONField(t, f.mustRun(nil, "gate", "create", "--type=gh:run", "--await-id=ci-wf", "--blocks", target, "--json").stdout, "id")
+		counter.reset()
+		r := f.run(ghEnv, "gate", "discover")
+		if r.code != 0 {
+			t.Fatalf("gate discover exited %d: %s %s", r.code, r.stdout, r.stderr)
+		}
+		if !strings.Contains(r.stdout, "Updated 1 gate(s)") {
+			t.Errorf("gate discover output = %q, want one updated gate", r.stdout)
+		}
+		if w := writesOf(counter.snapshot()); len(w) != 1 || !strings.HasPrefix(w[0], "PATCH /v0/beads/issues/") {
+			t.Errorf("gate discover wrote %v, want one updateIssue", w)
+		}
+		if g := showGate(t, f, gate); g.AwaitID != "4242" {
+			t.Errorf("await_id after discover = %q, want 4242", g.AwaitID)
+		}
+	})
+
 	t.Run("refused without the tokens", func(t *testing.T) {
 		if waiterGate == "" {
 			t.Skip("the advertised case created no gate")
@@ -203,6 +279,29 @@ func TestE2E_GatesOverHTTP(t *testing.T) {
 			if w := writesOf(maskedCounter.snapshot()); len(w) != 0 {
 				t.Errorf("a refused %s wrote %v; the refusal must come before any write", tc.name, w)
 			}
+		}
+
+		// gate discover finds the run but cannot record it: the gate's error
+		// names the token, nothing is written, and the command fails rather
+		// than reporting the gate as updated.
+		runTarget := f.create("masked discover target")
+		runGate := firstJSONField(t, f.mustRun(nil, "gate", "create", "--type=gh:run", "--await-id=ci-wf", "--blocks", runTarget, "--json").stdout, "id")
+		maskedCounter.reset()
+		r := m.run(ghEnv, "gate", "discover")
+		if r.code == 0 {
+			t.Errorf("gate discover against a server without issues.update.gates exited 0: %s", r.stdout)
+		}
+		if !strings.Contains(r.stderr, "issues.update.gates") || !strings.Contains(r.stderr, runGate) {
+			t.Errorf("gate discover refusal does not name the gate and issues.update.gates: %s", r.stderr)
+		}
+		if strings.Contains(r.stdout, "Updated 1") {
+			t.Errorf("gate discover reported the refused gate as updated: %s", r.stdout)
+		}
+		if w := writesOf(maskedCounter.snapshot()); len(w) != 0 {
+			t.Errorf("a refused gate discover wrote %v", w)
+		}
+		if g := showGate(t, f, runGate); g.AwaitID != "ci-wf" {
+			t.Errorf("await_id after a refused discover = %q, want ci-wf untouched", g.AwaitID)
 		}
 
 		if !readyIDs(t, m)[target] {

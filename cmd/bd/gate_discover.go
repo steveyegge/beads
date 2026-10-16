@@ -125,7 +125,11 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 	})
 
 	// Step 3/4: report matches (and, outside dry-run, persist them)
+	// matchCount counts the gates whose run ID was recorded (or, under
+	// --dry-run, would be); updateFailures the matched gates whose write
+	// failed, which fail the command after the summary.
 	matchCount := 0
+	updateFailures := 0
 	for _, m := range matches {
 		if m.err != nil {
 			fmt.Fprintf(os.Stderr, "  %s %s - %v\n",
@@ -141,20 +145,22 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		matchCount++
 		runIDStr := strconv.FormatInt(m.run.DatabaseID, 10)
 
 		if dryRun {
+			matchCount++
 			fmt.Printf("  %s %s → run %s (%s) [dry-run]\n",
 				ui.RenderPass("✓"), ui.RenderID(m.gate.ID), runIDStr, m.run.Status)
 			continue
 		}
 
 		if err := updateGateAwaitID(ctx, m.gate.ID, runIDStr); err != nil {
+			updateFailures++
 			fmt.Fprintf(os.Stderr, "  %s %s - update failed: %v\n",
 				ui.RenderFail("✗"), ui.RenderID(m.gate.ID), err)
 			continue
 		}
+		matchCount++
 
 		fmt.Printf("  %s %s → run %s (%s)\n",
 			ui.RenderPass("✓"), ui.RenderID(m.gate.ID), runIDStr, m.run.Status)
@@ -187,6 +193,9 @@ func runGateDiscover(cmd *cobra.Command, args []string) error {
 			details = append(details, fmt.Sprintf("%s: %v", label, failures[repo]))
 		}
 		return HandleError("querying GitHub runs failed for %d repo(s): %s", len(failures), strings.Join(details, "; "))
+	}
+	if updateFailures > 0 {
+		return HandleError("recording the discovered run ID failed for %d gate(s)", updateFailures)
 	}
 
 	return nil

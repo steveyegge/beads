@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"slices"
@@ -279,11 +280,54 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 	},
 }
 
-// gateAddWaiterAttempts bounds addGateWaiter's compare-and-set loop. A miss
-// means another writer changed the gate between the read and the write; each
-// retry re-reads and re-deduplicates, so three attempts cover concurrent
-// adders without spinning on a gate that is being rewritten continuously.
-const gateAddWaiterAttempts = 3
+// addGateWaiter's compare-and-set budget. A version miss means another writer
+// changed the gate between this command's read and its write; under a convoy
+// (a phase finishing together, every worker registering on the same gate) each
+// round of simultaneous writes has exactly one winner, so retrying at once
+// would fail all but a handful of adders. Each retry therefore waits a
+// jittered, doubling backoff first: gateAddWaiterBackoffBase, doubled per miss
+// up to gateAddWaiterBackoffCap, each wait drawn uniformly from [d/2, d) so
+// the losers of one round do not collide again in the next.
+//
+// The loop is bounded by gateAddWaiterMaxAttempts writes, not by wall time:
+// one round's latency is the server's (a loaded remote server can take
+// seconds per read and write), and a wall-clock budget would fail a convoy on
+// a slow server after only two or three rounds. Each round has a winner, so
+// the bound carries at least that many simultaneous adders; the jitter
+// spreads them further. The waits themselves add up to at most about 6s, and
+// a gate rewritten without pause still fails after the last attempt.
+const (
+	gateAddWaiterMaxAttempts = 20
+	gateAddWaiterBackoffBase = 10 * time.Millisecond
+	gateAddWaiterBackoffCap  = 400 * time.Millisecond
+)
+
+// gateAddWaiterBackoff is the wait before retry number retry (1-based):
+// jittered in [d/2, d) around d = base * 2^(retry-1), capped.
+func gateAddWaiterBackoff(retry int) time.Duration {
+	d := gateAddWaiterBackoffBase
+	for i := 1; i < retry && d < gateAddWaiterBackoffCap; i++ {
+		d *= 2
+	}
+	if d > gateAddWaiterBackoffCap {
+		d = gateAddWaiterBackoffCap
+	}
+	half := d / 2
+	return half + time.Duration(rand.Int64N(int64(d-half))) // #nosec G404 -- retry jitter, not a secret
+}
+
+// gateAddWaiterSleep waits d or until ctx is done. It is a variable so tests
+// can record the backoff without sleeping.
+var gateAddWaiterSleep = func(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // addGateWaiter registers waiter on the gate gateID through the Reader and
 // Lifecycle roles, so every route (local, proxied server, and a connected HTTP
@@ -298,7 +342,14 @@ const gateAddWaiterAttempts = 3
 // the role stores the list it is given.
 func addGateWaiter(ctx context.Context, reader issueops.Reader, lifecycle issueops.Lifecycle, gateID, waiter string) (bool, error) {
 	var lastErr error
-	for attempt := 0; attempt < gateAddWaiterAttempts; attempt++ {
+	attempts := 0
+	for attempts < gateAddWaiterMaxAttempts {
+		if attempts > 0 {
+			if err := gateAddWaiterSleep(ctx, gateAddWaiterBackoff(attempts)); err != nil {
+				return false, fmt.Errorf("updating gate: %w", err)
+			}
+		}
+		attempts++
 		details, err := reader.Get(ctx, issueops.GetRequest{ID: gateID})
 		if errors.Is(err, storage.ErrNotFound) {
 			return false, fmt.Errorf("gate not found: %s", gateID)
@@ -330,7 +381,7 @@ func addGateWaiter(ctx context.Context, reader issueops.Reader, lifecycle issueo
 		}
 		lastErr = err
 	}
-	return false, fmt.Errorf("updating gate: %s changed on every one of %d attempts: %w", gateID, gateAddWaiterAttempts, lastErr)
+	return false, fmt.Errorf("updating gate: %s changed on every one of %d attempts: %w", gateID, attempts, lastErr)
 }
 
 // renderGateWaiterAlready and renderGateWaiterAdded are shared by the direct
