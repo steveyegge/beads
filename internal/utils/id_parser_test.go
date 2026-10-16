@@ -970,4 +970,109 @@ func TestResolvePartialID_TitleFalsePositive(t *testing.T) {
 	}
 }
 
-// TestLooksLikePrefixedID tests the helper function for detecting prefixed IDs
+// TestResolvePartialID_WispSubstringCollision is a regression test for gcy-g4o:
+// a real bead (gcy-oqf) and an ephemeral wisp (gcy-wisp-goqfo) coexist, and a
+// lookup of gcy-oqf that missed the exact-ID fast path fell through to partial
+// matching, where the wisp's hash "wisp-goqfo" contains the substring "oqf".
+// Partial matching has been leading-prefix only since #4939 (strings.HasPrefix
+// replaced strings.Contains at both call sites), and neither "wisp-goqfo" nor
+// the stripped "goqfo" starts with "oqf". With only the wisp stored, nothing
+// short-circuits the partial path, so both forms of the id must come back not
+// found. Once the real bead exists, the exact-ID fast path returns it before
+// partial matching runs.
+func TestResolvePartialID_WispSubstringCollision(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	real := &types.Issue{
+		ID:        "gcy-oqf",
+		Title:     "Real bug bead",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeBug,
+	}
+	wisp := &types.Issue{
+		ID:        "gcy-wisp-goqfo",
+		Title:     "Order wisp",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+
+	if err := store.CreateIssue(ctx, wisp, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetConfig(ctx, "issue_prefix", "gcy"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The wisp alone must not answer for gcy-oqf: this is the lookup gcy-g4o
+	// silently resolved to the wisp.
+	for _, input := range []string{"gcy-oqf", "oqf"} {
+		if got, err := utils.ResolvePartialID(ctx, store, input); err == nil {
+			t.Errorf("utils.ResolvePartialID(%q) = %q; want not found (wisp substring collision)", input, got)
+		}
+	}
+
+	if err := store.CreateIssue(ctx, real, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The real bead must still resolve to itself. This lookup is answered by
+	// the exact-ID fast path, so it passes under any partial matcher; the
+	// wisp-only loop above is the substring-collision assertion.
+	result, err := utils.ResolvePartialID(ctx, store, "gcy-oqf")
+	if err != nil {
+		t.Fatalf("utils.ResolvePartialID(%q) unexpected error: %v", "gcy-oqf", err)
+	}
+	if result != "gcy-oqf" {
+		t.Errorf("utils.ResolvePartialID(%q) = %q; want %q (the exact ID must resolve to itself)", "gcy-oqf", result, "gcy-oqf")
+	}
+}
+
+// TestResolvePartialID_WispLastSegment verifies that a bare wisp hash resolves
+// to its wisp ("t3st" finds "bd-wisp-t3st") through the wisp fallback's exact
+// branch, even beside a longer wisp hash it abbreviates. The Dolt store merges
+// wisps into the unfiltered search, so a matcher that let the first loop claim
+// "wisp-t3st" as an abbreviation of "t3st" would make this lookup ambiguous
+// with bd-wisp-t3stzz instead of exact.
+func TestResolvePartialID_WispLastSegment(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	wisp := &types.Issue{
+		ID:        "bd-wisp-t3st",
+		Title:     "Test wisp",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	sibling := &types.Issue{
+		ID:        "bd-wisp-t3stzz",
+		Title:     "Sibling wisp",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := store.CreateIssue(ctx, wisp, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateIssue(ctx, sibling, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatal(err)
+	}
+
+	// "t3st" is exactly the hash of bd-wisp-t3st and must resolve to it.
+	result, err := utils.ResolvePartialID(ctx, store, "t3st")
+	if err != nil {
+		t.Fatalf("utils.ResolvePartialID(%q) unexpected error: %v", "t3st", err)
+	}
+	if result != "bd-wisp-t3st" {
+		t.Errorf("utils.ResolvePartialID(%q) = %q; want %q", "t3st", result, "bd-wisp-t3st")
+	}
+}

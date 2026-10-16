@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/issueops"
 )
 
 var gateTestStdoutMu sync.Mutex
@@ -33,13 +34,27 @@ type gateCloseCall struct {
 type fakeGateCheckStore struct {
 	storage.DoltStorage
 	issues       []*types.Issue
-	searchFilter types.IssueFilter
+	queries      []issueops.QueryRequest
+	searchCalled bool
 	closeCalls   []gateCloseCall
 }
 
-func (f *fakeGateCheckStore) SearchIssues(_ context.Context, _ string, filter types.IssueFilter) ([]*types.Issue, error) {
-	f.searchFilter = filter
+// SearchIssues records that the raw filter was used: gate check lists through
+// the Querier role (ListGates), which a remote backend serves, and must not.
+func (f *fakeGateCheckStore) SearchIssues(_ context.Context, _ string, _ types.IssueFilter) ([]*types.Issue, error) {
+	f.searchCalled = true
 	return f.issues, nil
+}
+
+func (f *fakeGateCheckStore) Querier() (issueops.Querier, error) { return f, nil }
+
+func (f *fakeGateCheckStore) Query(_ context.Context, req issueops.QueryRequest) (issueops.IssuePage, error) {
+	f.queries = append(f.queries, req)
+	items := make([]*types.IssueWithCounts, 0, len(f.issues))
+	for _, issue := range f.issues {
+		items = append(items, &types.IssueWithCounts{Issue: issue})
+	}
+	return issueops.IssuePage{Items: items}, nil
 }
 
 func (f *fakeGateCheckStore) CloseIssue(_ context.Context, id, reason, actor, session string) error {
@@ -1768,14 +1783,15 @@ func TestGateCheck_GHRunWorkflowDiscoveryPersistence(t *testing.T) {
 			if !gateTestContains(output, "Checked 1 gates: 1 resolved, 0 escalated, 0 errors") {
 				t.Fatalf("summary output missing expected counts: %q", output)
 			}
-			if fakeStore.searchFilter.IssueType == nil || *fakeStore.searchFilter.IssueType != "gate" {
-				t.Fatalf("expected gate filter, got %+v", fakeStore.searchFilter)
+			if fakeStore.searchCalled {
+				t.Fatal("gate check listed through the raw SearchIssues filter; want issueops.ListGates")
 			}
-			if len(fakeStore.searchFilter.ExcludeStatus) != 1 || fakeStore.searchFilter.ExcludeStatus[0] != types.StatusClosed {
-				t.Fatalf("expected closed-status exclusion, got %+v", fakeStore.searchFilter.ExcludeStatus)
+			if len(fakeStore.queries) != 1 {
+				t.Fatalf("Querier.Query calls = %d, want 1", len(fakeStore.queries))
 			}
-			if fakeStore.searchFilter.Limit != 100 {
-				t.Fatalf("expected limit 100, got %d", fakeStore.searchFilter.Limit)
+			q := fakeStore.queries[0]
+			if q.Expression != "type=gate" || q.IncludeClosed || q.Limit == nil || *q.Limit != 100 {
+				t.Fatalf("gate check query = %+v, want type=gate, closed excluded, limit 100", q)
 			}
 			if tt.wantCloseCalls == 1 {
 				call := fakeStore.closeCalls[0]

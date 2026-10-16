@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -322,6 +323,152 @@ func seedInitWorkspaceIdentity(
 	return nil
 }
 
+// resolveUserHomeDir returns the user's home directory.
+//
+// It prefers the OS account database over $HOME so the guard keys off the real
+// account home even when $HOME has been repointed — which happens constantly in
+// this repo's own tests, and in any sandbox that fakes a home. Both sources are
+// best-effort: in a CGO-free build user.Current() falls back to os.UserHomeDir()
+// (i.e. $HOME on Unix) itself, so this is a preference, not a guarantee of
+// $HOME-independence. Mirrors the home resolution in internal/beads'
+// isPathInSafeBoundary.
+//
+// A package var so tests can stub it.
+var resolveUserHomeDir = func() string {
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir
+	}
+	home, _ := os.UserHomeDir()
+	return home
+}
+
+// isUserHomeDir reports whether dir is the user's home directory (path-boundary
+// comparison, symlink/case tolerant). Used to guard `bd init` against turning
+// $HOME into a git repo (GH#4635).
+func isUserHomeDir(dir string) bool {
+	home := resolveUserHomeDir()
+	return home != "" && utils.PathsEqual(dir, home)
+}
+
+// isGitWorkTreeRoot reports whether dir is itself the top level of a git work
+// tree. It asks through initArtifactGitCommand, the way init's own `git init`
+// decision does, so git's routing environment is scrubbed: an inherited
+// GIT_DIR or GIT_WORK_TREE cannot vouch for a directory that init's probe will
+// then find untracked and `git init`. And the top level must be dir itself: a
+// home that merely sits inside an ancestor's work tree was never tracked on
+// purpose, and init would still install agent files into it.
+func isGitWorkTreeRoot(dir string) bool {
+	out, err := initArtifactGitCommand(dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return false
+	}
+	return utils.PathsEqual(strings.TrimSpace(string(out)), dir)
+}
+
+// guardInitInHomeDir refuses `bd init` directly in the user's home directory
+// when that directory is not itself a git repository and the caller did not
+// name a BEADS_DIR.
+//
+// `bd init` sets up the directory it runs in as a project: it runs `git init`
+// there unless it finds a repository, and installs agent files (CLAUDE.md,
+// AGENTS.md, .gitignore, .agents/, .codex/, .cursor/, .claude/settings.json).
+// In the home directory most of those are the agents' user-wide settings, so
+// bd's hooks would run in every project — a silent footgun, especially under
+// --non-interactive, which auto-engages whenever stdin is not a TTY, i.e.
+// whenever an agent runs init (GH#4635). A real project is virtually never the
+// home directory itself.
+//
+// This runs as the first thing in init's RunE, ahead of every path that has an
+// effect: the proxied dispatch (runInitProxiedServer -> EnsureGitRepo -> git
+// init), the --reinit-local/--force pre-checks (countExistingIssues opens a
+// real store, which creates the data directory and can run migrations), and
+// the mode globals RunE sets on itself. A guard placed after any of those
+// refuses only after the damage it exists to prevent.
+//
+// Fail-open by construction: an unresolvable home, a working directory that is
+// not home, or a home that is itself a git repository all mean "not the case
+// this guards", and init proceeds unchanged.
+//
+// A caller-supplied BEADS_DIR is the opt-out the refusal offers, and keepHomeClean
+// holds it to what the refusal promises. Init proceeds, but does not set the
+// home directory up as a project: an explicit BEADS_DIR already skips the
+// `git init`, and keepHomeClean tells RunE to skip the agent files and the
+// project .gitignore too. Without that, the recommended escape hatch still
+// installed the user-wide agent settings the refusal exists to keep out of
+// $HOME.
+//
+// keepHomeClean also means "outside every repository". It is only ever true
+// when the home is not itself a work-tree root, so any repository git finds
+// from here is not the home's own: one enclosing it (a dotfiles or monorepo
+// checkout above it), or one an inherited GIT_DIR names. The opt-out must not
+// set that repository up as the project either: no hooks, no beads.role or
+// fork setup, no Dolt remote taken from its origin, and no bootstrap commit,
+// which would stage the legacy ~/.beads and whatever agent files the home
+// already has into it. Each route gates those on keepHomeClean where it
+// reaches them. Flags that ask for a change there still make it: --stealth
+// and --setup-exclude write its .git/info/exclude, and the interactive
+// --contributor and --team wizards work in it.
+//
+// The opt-out check reads beadsDirFromCaller, NOT os.Getenv("BEADS_DIR"). By the
+// time this runs the root PersistentPreRunE has already exported a beads dir it
+// discovered for itself, and beads.FindBeadsDir() accepts any ancestor .beads/
+// holding a config.yaml — including this project's own legacy user-level
+// ~/.beads/config.yaml. Keying off the live environment therefore made the
+// guard fail open for exactly the long-standing users most likely to have
+// scaffolding in $HOME worth not clobbering. `bd -C <dir> init` exported one
+// too, and that one does not even move the working directory the scaffolding
+// lands in.
+//
+// Refusals carry ExitHomeDirRefused so a script can branch on the number, like
+// init's three other refusal classes. The message is printed here rather than
+// returned so the exit code is the error's whole payload; docs/recovery/
+// init-safety.md#init-home-refused is the recovery playbook it points at.
+func guardInitInHomeDir() (keepHomeClean bool, err error) {
+	cwd, wdErr := os.Getwd()
+	if wdErr != nil || !isUserHomeDir(cwd) || isGitWorkTreeRoot(cwd) {
+		return false, nil
+	}
+	if beadsDirFromCaller != "" {
+		return true, nil
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", homeDirRefusalMessage(cwd))
+	return false, &exitError{Code: ExitHomeDirRefused}
+}
+
+// homeDirRefusalMessage is the What/Why/Next refusal text for a `bd init` run
+// directly in an untracked home directory.
+//
+// The BEADS_DIR escape hatch is described as what it is: not the refused init
+// with the guard lifted, but a different one that sets up only the workspace
+// the caller names (see keepHomeClean in guardInitInHomeDir). Saying "set
+// BEADS_DIR if you really mean it" without that caveat sends the user somewhere
+// they did not intend to go. The `mkdir -p` is load-bearing, not decoration:
+// init refuses a BEADS_DIR whose parent directory does not exist yet.
+func homeDirRefusalMessage(cwd string) string {
+	return fmt.Sprintf(`bd init refuses: %s is your home directory, and it is not itself a git repository.
+
+  Why: init sets up the directory it runs in as a project: it runs
+       'git init' there unless it finds a repository, and installs agent
+       files (CLAUDE.md, AGENTS.md, .gitignore, .claude/, .codex/,
+       .cursor/, .agents/). In your home directory most of those are
+       user-wide agent settings, so bd's hooks would run in every project.
+       A project is virtually never the home directory itself.
+
+  Next:
+    Initialize a project instead (recommended):
+      cd ~/some-project && bd init
+
+    Keep the workspace in a directory you name, without setting up your
+    home directory as a project:
+      mkdir -p <dir> && BEADS_DIR=<dir>/.beads bd init
+      (a BEADS_DIR you name runs a DIFFERENT init: no git init, agent
+       files, .gitignore, hooks or commit here or in a repository around
+       it; the workspace lives in <dir>)
+
+    Recovery playbook:
+      docs/recovery/init-safety.md#init-home-refused`, cwd)
+}
+
 var initCmd = &cobra.Command{
 	Use:           "init",
 	GroupID:       "setup",
@@ -362,6 +509,14 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
   • --contributor and --team flags are rejected (wizards require interaction)
   Also auto-detected when stdin is not a terminal or CI=true is set.`,
 	RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
+		// First, before anything with an effect: never turn $HOME into a git
+		// repo or install agent files into it (GH#4635). See
+		// guardInitInHomeDir for why the position matters.
+		keepHomeClean, homeErr := guardInitInHomeDir()
+		if homeErr != nil {
+			return homeErr
+		}
+
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		contributor, _ := cmd.Flags().GetBool("contributor")
@@ -399,6 +554,23 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// Keep the exact input the former destructive-confirmation block used:
 		// before config/dirname fallback and before normalization.
 		destroyTokenPrefix := prefix
+
+		// The caller named a BEADS_DIR from an untracked home directory: the
+		// opt-out the home refusal offers, held to what it promises. Skipping
+		// the agent files and hooks here covers both routes (the proxied one
+		// reads both from its input); the project .gitignore, the role and
+		// fork setup, the origin-derived Dolt remote and the bootstrap commit
+		// are gated on keepHomeClean where each route reaches them, because
+		// any repository around the home is not the project's (see
+		// guardInitInHomeDir).
+		if keepHomeClean {
+			skipAgents = true
+			skipHooks = true
+			if !quiet {
+				fmt.Fprintln(os.Stderr, "Note: this is your home directory, so init sets up only the workspace BEADS_DIR names: no agent files, .gitignore, hooks or commit here or in a repository around it.")
+				fmt.Fprintln(os.Stderr, "  To install an agent integration for every project on purpose: bd setup <recipe> --global")
+			}
+		}
 
 		// --force is a deprecated alias for --reinit-local. They share
 		// semantics for the local data-safety guard; both refuse remote
@@ -668,6 +840,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				stealth:                stealth,
 				skipHooks:              skipHooks,
 				skipAgents:             skipAgents,
+				keepHomeClean:          keepHomeClean,
 				reinitLocal:            reinitLocal,
 				contributor:            contributor,
 				team:                   team,
@@ -898,7 +1071,10 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 				// --reinit-local / local init.
 				hasData, err := gitRemoteHasDoltDataRefStatus(earlySyncURL)
 				earlyRemoteHasDoltData, earlyProbeNote = resolveRemoteHasDoltDataProbe(earlySyncURL, hasData, err)
-			} else if earlyRemoteSource == initSyncRemoteNone && !stealth && isGitRepo() && !isBareGitRepo() {
+			} else if earlyRemoteSource == initSyncRemoteNone && !stealth && !keepHomeClean && isGitRepo() && !isBareGitRepo() {
+				// Not under keepHomeClean: a repository git finds from the
+				// home is not the project's, so its origin is not this
+				// workspace's remote (see guardInitInHomeDir).
 				if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
 					earlySyncURL = normalizeRemoteURL(originURL)
 					hasData, probeErr := gitOriginHasDoltDataRefStatus()
@@ -966,6 +1142,14 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			return fmt.Errorf("failed to get current directory: %v", err)
 		}
 
+		// KNOWN GAP: this is the live BEADS_DIR, which may be one the root
+		// pre-run exported for itself rather than one the caller named — the
+		// distinction beadsDirFromCaller (main.go) exists for, and the one
+		// guardInitInHomeDir keys on. So a discovered beads dir counts as
+		// explicit here and skips the git init below. Left unchanged on
+		// purpose: reconciling init's caller-intent reads (this,
+		// beadsDirFromCaller, beadsDirProvidedAtStartup) changes init well
+		// beyond the home guard and belongs in its own change.
 		hasExplicitBeadsDir := os.Getenv("BEADS_DIR") != ""
 
 		// Use the beadsDir computed earlier (before any directory creation)
@@ -1114,9 +1298,12 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			// may not be a repo we should mutate (e.g. running from a worktree
 			// with an external BEADS_DIR). When BEADS_DIR points to the same
 			// repo's .beads/, the gitignore update is still appropriate.
+			// Also skip it in an untracked home directory (keepHomeClean): a
+			// BEADS_DIR the caller names under $HOME is still "local" by this
+			// test, and ~/.gitignore is not this init's to edit (GH#4635).
 			cwdAbs, _ := filepath.Abs(cwd)
 			beadsDirIsLocal := strings.HasPrefix(beadsDirAbs, filepath.Clean(cwdAbs)+string(filepath.Separator))
-			if beadsDirIsLocal {
+			if beadsDirIsLocal && !keepHomeClean {
 				if stealth {
 					// Stealth mode: route Dolt-file ignore patterns into .git/info/exclude instead
 					// of a tracked .gitignore so collaborators never see beads-related changes.
@@ -1285,7 +1472,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					fmt.Printf("  %s Remote has no Dolt data yet; initialized a fresh local database\n", ui.RenderWarn("!"))
 				}
 			}
-		} else if syncRemoteSource == initSyncRemoteNone && !stealth && isGitRepo() && !isBareGitRepo() {
+		} else if syncRemoteSource == initSyncRemoteNone && !stealth && !keepHomeClean && isGitRepo() && !isBareGitRepo() {
+			// keepHomeClean: as in the early remote check above.
 			if originURL, err := gitOriginGetURL(); err == nil && originURL != "" {
 				syncURL = normalizeRemoteURL(originURL)
 				syncURLFromGitOrigin = true
@@ -1891,12 +2079,19 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
+		// projectRoleRepo is isInitRoleGitRepo held to keepHomeClean. The role,
+		// the fork routing (which also creates ~/.beads-planning) and the fork
+		// exclude below all write into the repository that probe finds, and
+		// under keepHomeClean that repository encloses the home instead of
+		// holding the project (see guardInitInHomeDir).
+		projectRoleRepo := func() bool { return !keepHomeClean && isInitRoleGitRepo(ctx) }
+
 		// Prompt for contributor mode if:
 		// - In a git repo (needed to set beads.role config)
 		// - Interactive terminal (stdin is TTY) and not --non-interactive
 		// - No explicit --contributor or --team flag provided
 		// - No explicit --role flag provided
-		if isInitRoleGitRepo(ctx) && !contributor && !team && roleFlag == "" && !nonInteractive && shouldPromptForRole() {
+		if projectRoleRepo() && !contributor && !team && roleFlag == "" && !nonInteractive && shouldPromptForRole() {
 			promptedContributor, err := promptContributorMode()
 			if err != nil {
 				if isCanceled(err) {
@@ -1911,7 +2106,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			} else if promptedContributor {
 				contributor = true // Triggers contributor wizard below
 			}
-		} else if isInitRoleGitRepo(ctx) && !contributor && !team {
+		} else if projectRoleRepo() && !contributor && !team {
 			// If prompt was skipped (non-interactive or CI environment),
 			// ensure beads.role is set to avoid "not configured" warning
 			// during diagnostics. Use --role flag if provided, otherwise default.
@@ -1947,7 +2142,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 
 			// Contributor setup must also pin role detection to contributor.
 			// Without this, SSH remotes can be inferred as maintainer and bypass routing.
-			if isInitRoleGitRepo(ctx) {
+			if projectRoleRepo() {
 				if err := setBeadsRole("contributor"); err != nil && !quiet {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set beads.role=contributor: %v\n", err)
 				}
@@ -1980,7 +2175,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// the write will then fail to reach. Gating on the inherited isGitRepo()
 		// instead is what used to make this safety net write the role into a
 		// redirected repository.
-		if isInitRoleGitRepo(ctx) {
+		if projectRoleRepo() {
 			if _, hasRole := getBeadsRole(); !hasRole {
 				fallbackRole := "maintainer"
 				if roleFlag != "" {
@@ -1996,7 +2191,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// Non-interactive, idempotent; only fires when upstream remote detected
 		// and routing.contributor is not already set.
 		// This gate also enables planning-repository creation and config.yaml updates.
-		if !contributor && isInitRoleGitRepo(ctx) {
+		if !contributor && projectRoleRepo() {
 			if err := autoConfigureForkContributor(ctx, store, quiet || nonInteractive, roleFlag); err != nil && !quiet {
 				fmt.Fprintf(os.Stderr, "Warning: failed to auto-configure fork contributor routing: %v\n", err)
 			}
@@ -2039,7 +2234,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 			}
-		} else if !stealth && isInitRoleGitRepo(ctx) {
+		} else if !stealth && projectRoleRepo() {
 			// Auto-detect fork and prompt (skip if stealth - it handles exclude already)
 			if isFork, upstreamURL := detectForkSetup(); isFork {
 				if nonInteractive {
@@ -2156,14 +2351,19 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		if !stealth && useLocalBeads {
+		// Not under keepHomeClean: the repository git finds from the home is
+		// not the project's, and the commit would stage the legacy ~/.beads
+		// and the home's own agent files into it (see guardInitInHomeDir).
+		if !stealth && useLocalBeads && !keepHomeClean {
 			commitEmbeddedInitArtifacts(cwd, quiet)
 		}
 
 		// Check for missing git upstream and warn if not configured.
 		// Only warn when remotes exist (has origin but no upstream).
 		// Skip for brand-new repos with no remotes — the warning is noise there.
-		if isGitRepo() && !quiet {
+		// Skip under keepHomeClean too: that advice is for a repository that
+		// is not the project's.
+		if isGitRepo() && !keepHomeClean && !quiet {
 			if gitHasAnyRemotes() && !gitHasUpstream() {
 				fmt.Fprintf(os.Stderr, "\n%s Git upstream not configured\n", ui.RenderWarn("⚠"))
 				fmt.Fprintf(os.Stderr, "  For sync workflows, set your upstream with:\n")
