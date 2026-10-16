@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/issueops"
 )
 
@@ -303,6 +304,9 @@ func TestReportIfRevisionTargetGone(t *testing.T) {
 	}{
 		{"sentinel_guarded", fmt.Errorf("resolving: %w", storage.ErrNotFound), &ifRevision, true},
 		{"partial_id_text_guarded", errors.New(`no issue found matching "bd-x"`), &ifRevision, true},
+		// bd delete's exact resolution: bd-x is gone, its child bd-x.1 is not.
+		{"abbreviation_guarded", &utils.AbbreviatedIDError{Input: "bd-x", Matches: []string{"bd-x.1"}}, &ifRevision, true},
+		{"abbreviation_unguarded", &utils.AbbreviatedIDError{Input: "bd-x", Matches: []string{"bd-x.1"}}, nil, false},
 		{"sentinel_unguarded", storage.ErrNotFound, nil, false},
 		{"other_error_guarded", errors.New("connection refused"), &ifRevision, false},
 	} {

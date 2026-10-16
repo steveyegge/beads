@@ -14,15 +14,6 @@ import (
 	"github.com/steveyegge/beads/internal/workapi"
 )
 
-type watchListDependencyStoreStub struct {
-	allDeps map[string][]*types.Dependency
-	err     error
-}
-
-func (s watchListDependencyStoreStub) GetAllDependencyRecords(_ context.Context) (map[string][]*types.Dependency, error) {
-	return s.allDeps, s.err
-}
-
 func TestListParseTimeFlag(t *testing.T) {
 	cases := []string{
 		"2025-12-26",
@@ -390,8 +381,8 @@ func TestListDisplayPrettyList_TruncatedSummary(t *testing.T) {
 func TestDisplayWatchedIssueList_UsesDependencyHierarchy(t *testing.T) {
 	parent := &types.Issue{ID: "bd-zparent", Title: "Parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
 	child := &types.Issue{ID: "bd-achild", Title: "Child", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	store := watchListDependencyStoreStub{
-		allDeps: map[string][]*types.Dependency{
+	store := &edgeSourceStub{
+		edges: map[string][]*types.Dependency{
 			child.ID: {
 				{IssueID: child.ID, DependsOnID: parent.ID, Type: types.DepParentChild},
 			},

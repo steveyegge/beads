@@ -411,7 +411,12 @@ func TestUpdateRefusesEveryMemberTheWireExcludes(t *testing.T) {
 		"Patch.Owner":           {Patch: issueops.IssuePatch{Owner: set("someone")}},
 		"Patch.ClosedBySession": {Patch: issueops.IssuePatch{ClosedBySession: set("s1")}},
 		"Patch.SpecID":          {Patch: issueops.IssuePatch{SpecID: set("spec")}},
-		"Patch.AwaitID":         {Patch: issueops.IssuePatch{AwaitID: set("await")}},
+		// Patch.AwaitID and Patch.Waiters WERE here; issues.update.gates
+		// publishes both.
+		// TestUpdateSendsTheGateMembersToAServerThatAdvertisesThem is the
+		// positive assertion, and
+		// TestUpdateRefusesTheGateMembersAgainstAServerWithoutTheToken the
+		// pre-dial capability refusal.
 		// Patch.Persistence WAS here; issues.update.persistence publishes it
 		// (S21b). TestUpdatePersistenceIsSentOnlyToAServerThatAdvertisesIt
 		// is the positive assertion and the pre-dial capability refusal.

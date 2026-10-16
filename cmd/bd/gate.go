@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/httpclient"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
@@ -653,16 +654,9 @@ Examples:
 		escalateFlag, _ := cmd.Flags().GetBool("escalate")
 		limit, _ := cmd.Flags().GetInt("limit")
 
-		gateType := types.IssueType("gate")
-		filter := types.IssueFilter{
-			IssueType:     &gateType,
-			ExcludeStatus: []types.Status{types.StatusClosed},
-			Limit:         limit,
-		}
-
 		ctx := rootCtx
 
-		gates, err := store.SearchIssues(ctx, "", filter)
+		gates, err := listOpenGatesForCheck(ctx, limit)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
@@ -677,14 +671,10 @@ Examples:
 		var recordSeen func(gate *types.Issue) error
 		if !dryRun {
 			persistAwaitID = func(gateID, runID string) error {
-				return updateGateAwaitIDFunc(nil, gateID, runID)
+				return gateCheckPersistAwaitIDFunc(ctx, gateID, runID)
 			}
 			recordSeen = func(gate *types.Issue) error {
-				if err := store.UpdateIssue(ctx, gate.ID, beadGateSeenUpdate(gate.AwaitID), currentActor()); err != nil {
-					return err
-				}
-				commandDidWrite.Store(true)
-				return nil
+				return updateGateThroughLifecycle(ctx, gate.ID, beadGateSeenPatch(gate.AwaitID))
 			}
 		}
 
@@ -701,6 +691,32 @@ Examples:
 	},
 }
 
+// listOpenGatesForCheck lists the open gates `bd gate check` evaluates through
+// the same library entry `bd gate list` uses, issueops.ListGates over the
+// route's Querier (openQuerier: the direct store, the proxied server's unit
+// of work, or the remote http backend's queryIssues). It is the question the
+// raw SearchIssues filter used to ask — the gate type, both planes, closed
+// rows excluded, cut at limit — but a remote backend serves it, where the raw
+// filter was refused before any gate was read. Templates are left out of the
+// query (see listOpenGatesWith); the per-type selection stays with
+// filterCheckableGates.
+func listOpenGatesForCheck(ctx context.Context, limit int) ([]*types.Issue, error) {
+	querier, err := openQuerier()
+	if err != nil {
+		return nil, err
+	}
+	return listOpenGatesWith(ctx, querier, limit)
+}
+
+// listOpenGatesWith is listOpenGatesForCheck over a given Querier: the open
+// gates only (gate check never evaluates a closed one), minus templates, cut at
+// limit. The templates go in the query, not after it: a page of a persisted
+// proto's gates, newer than the live ones, would otherwise fill --limit and
+// leave the sweep nothing to check.
+func listOpenGatesWith(ctx context.Context, querier issueops.Querier, limit int) ([]*types.Issue, error) {
+	return issueops.ListGates(ctx, querier, issueops.GateListRequest{ExcludeTemplates: true, Limit: limit})
+}
+
 type gateCheckResult struct {
 	gate      *types.Issue
 	resolved  bool
@@ -709,9 +725,21 @@ type gateCheckResult struct {
 	err       error
 }
 
+// filterCheckableGates selects the listed gates a sweep evaluates: those that
+// match typeFilter, minus templates. A template's gate is a blueprint that every
+// pour copies, await_id included. Checking one fails every sweep where its
+// write is refused (the Lifecycle role's template guard, a served close) and
+// rewrites the proto where it is not (a local close, the proxied-server route's
+// writes): a closed timer gate, a recorded sighting, or a run ID every later
+// pour would await. listOpenGatesWith already leaves templates out of the
+// query; the skip here is the backstop for a listing that returns one anyway.
+// The direct and the proxied-server routes both select here.
 func filterCheckableGates(gates []*types.Issue, typeFilter string) []*types.Issue {
 	var out []*types.Issue
 	for _, gate := range gates {
+		if gate.IsTemplate {
+			continue
+		}
 		if shouldCheckGate(gate, typeFilter) {
 			out = append(out, gate)
 		}
@@ -726,6 +754,75 @@ func printNoOpenGates(typeFilter string) {
 		fmt.Println("No open gates found.")
 	}
 }
+
+// updateGateThroughLifecycle is gate check's one write besides the close: a
+// patch to a gate through the Lifecycle role, so every route the direct path
+// serves (Dolt, embedded, Postgres, and a connected HTTP workspace, whose role
+// sends issues.update) applies it the same way. The legacy map-based
+// UpdateIssue is not on the HTTP store at all, so the sighting written through
+// it was refused before any request was sent.
+func updateGateThroughLifecycle(ctx context.Context, gateID string, patch issueops.IssuePatch) error {
+	lifecycle, err := openIssueLifecycle()
+	if err != nil {
+		return err
+	}
+	ctx, err = issueOpsContext(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := lifecycle.Update(ctx, issueops.UpdateRequest{Actor: currentActor(), IssueID: gateID, Patch: patch}); err != nil {
+		return err
+	}
+	commandDidWrite.Store(true)
+	return nil
+}
+
+// awaitIDPatchRefusal is the divergence-ledger row a connected HTTP
+// workspace's Lifecycle role refused an await_id edit by, before any request,
+// while the wire's issue patch had no await_id member. The row is retired: the
+// patch carries await_id behind issues.update.gates, and a server that does
+// not advertise that token earns the capability error, which
+// persistGateCheckAwaitID returns as the role raised it.
+const awaitIDPatchRefusal = "W-IssuePatch.AwaitID"
+
+// persistGateCheckAwaitID records a gh:run gate's discovered run ID through
+// the Lifecycle role. The one refusal it rewords is the HTTP wire's
+// (awaitIDPatchRefusal), whose own text names the role method and the wire
+// operation rather than what the user can do about it. That refusal stays
+// this gate's error, so the rest of the sweep runs. Every other error,
+// another unsupported capability included, is returned as the role raised it.
+func persistGateCheckAwaitID(ctx context.Context, gateID, runID string) error {
+	err := updateGateThroughLifecycle(ctx, gateID, issueops.IssuePatch{AwaitID: issueops.Field[string]{Set: true, Value: runID}})
+	var refused *httpclient.InexpressibleError
+	if errors.As(err, &refused) && refused.Refused != nil && refused.Refused.Row.ID == awaitIDPatchRefusal {
+		serverURL := ""
+		if refused.Unsup != nil {
+			serverURL = refused.Unsup.ServerURL
+		}
+		return &awaitIDRefusedError{runID: runID, serverURL: serverURL, err: err}
+	}
+	return err
+}
+
+// awaitIDRefusedError is the HTTP wire's await_id refusal, reworded for the
+// gate check row that prints it: it names the run, await_id and the server.
+// Unwrap keeps the refusal, so errors.As still reaches *storage.ErrUnsupported
+// and the ledger row.
+type awaitIDRefusedError struct {
+	runID     string
+	serverURL string
+	err       error
+}
+
+func (e *awaitIDRefusedError) Error() string {
+	server := "this backend"
+	if e.serverURL != "" {
+		server = "bd serve at " + e.serverURL
+	}
+	return fmt.Sprintf("run %s cannot be recorded as await_id: %s does not accept an await_id update; check the gate in a local workspace", e.runID, server)
+}
+
+func (e *awaitIDRefusedError) Unwrap() error { return e.err }
 
 func evaluateGates(ctx context.Context, gates []*types.Issue, now time.Time, getter issueGetter, persistAwaitID func(gateID, runID string) error, recordSeen func(gate *types.Issue) error) []gateCheckResult {
 	results := make([]gateCheckResult, 0, len(gates))
@@ -857,6 +954,7 @@ func runGHCommand(args ...string) (stdout, stderr []byte, err error) {
 var (
 	discoverRunIDByWorkflowNameFunc = discoverRunIDByWorkflowName
 	updateGateAwaitIDFunc           = updateGateAwaitID
+	gateCheckPersistAwaitIDFunc     = persistGateCheckAwaitID
 	checkGHRunStatusFunc            = checkGHRunStatus
 )
 
@@ -1290,9 +1388,9 @@ func beadGateNotFound(err error) bool {
 
 // routedBeadGateGetter gives direct-mode gate checks the same local -> prefix
 // route -> contributor fallback used by other read commands. Routed stores are
-// opened read-only and closed before the result is returned. Unlike
-// getIssueWithRouting, a route that fails or misses is reported as
-// errBeadGateTargetUnconfirmed instead of as the local not-found.
+// opened read-only and closed before the result is returned. A route that
+// fails or misses is reported as errBeadGateTargetUnconfirmed instead of as
+// the local not-found.
 type routedBeadGateGetter struct {
 	localStore storage.DoltStorage
 }
@@ -1561,6 +1659,14 @@ func beadGateSeenUpdate(awaitID string) map[string]interface{} {
 	return map[string]interface{}{
 		storageissueops.OpSetMetadata: map[string]json.RawMessage{beadGateSeenKey: value},
 	}
+}
+
+// beadGateSeenPatch is beadGateSeenUpdate as a Lifecycle patch: the same
+// single-key metadata set, which a connected HTTP workspace sends as
+// issues.update.
+func beadGateSeenPatch(awaitID string) issueops.IssuePatch {
+	value, _ := json.Marshal(awaitID)
+	return issueops.IssuePatch{Metadata: issueops.MetadataPatch{Set: map[string]json.RawMessage{beadGateSeenKey: value}}}
 }
 
 // beadGateRetargetUpdate is the update that points a bead gate at awaitID.

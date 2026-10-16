@@ -264,6 +264,7 @@
 
 40 14 TestBatchCreatorContract
 40 14 TestBlockingAnnotatorContract
+40 14 TestCloseSendsClosedAndPinnedRowsToThePlainUnmark
 40 14 TestCountsIncludeWispDependencies
 40 14 TestEmbeddedIssueOperationsPersistenceRollbackWispAndDetachedResults
 40 14 TestEmbeddedOpenForRemoteSync_DataBehind
@@ -388,7 +389,7 @@
 40 24 TestReopenIssue
 
 40 25 TestBatchGetterContract
-40 25 TestCloseSendsClosedAndPinnedRowsToThePlainUnmark
+40 25 TestDatabases
 40 25 TestDualWriteFixtureKitIsWired
 40 25 TestEmbeddedBatchCloserClaimNextIsNilWhenNothingClosed
 40 25 TestEmbeddedIssueOperationsUpdateClaimHonorsConfiguredActiveStatuses

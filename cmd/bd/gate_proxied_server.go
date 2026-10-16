@@ -87,13 +87,6 @@ func runGateCheckProxiedServer(cmd *cobra.Command, ctx context.Context) error {
 		return HandleErrorRespectJSON("proxied-server UOW provider not initialized")
 	}
 
-	gateType := types.IssueType("gate")
-	filter := types.IssueFilter{
-		IssueType:     &gateType,
-		ExcludeStatus: []types.Status{types.StatusClosed},
-		Limit:         limit,
-	}
-
 	discovered := map[string]string{}
 	var seen []*types.Issue
 	var persistAwaitID func(gateID, runID string) error
@@ -109,17 +102,12 @@ func runGateCheckProxiedServer(cmd *cobra.Command, ctx context.Context) error {
 		}
 	}
 
-	readUW, err := proxiedOpenReadUOW(ctx)
+	// The listing is the shared entry's, on this route too (gate list's S20).
+	gates, err := listOpenGatesForCheck(ctx, limit)
 	if err != nil {
-		return err
-	}
-	page, err := readUW.IssueUseCase().SearchIssues(ctx, "", filter)
-	if err != nil {
-		readUW.Close(ctx)
 		return HandleErrorRespectJSON("%v", err)
 	}
-	filteredGates := filterCheckableGates(page.Items, gateTypeFilter)
-	readUW.Close(ctx)
+	filteredGates := filterCheckableGates(gates, gateTypeFilter)
 
 	if len(filteredGates) == 0 {
 		printNoOpenGates(gateTypeFilter)

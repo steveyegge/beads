@@ -639,7 +639,8 @@ func TestCapabilitiesAdvertiseEveryImplementedOperation(t *testing.T) {
 		"issues.sweep.wispsPlane", "issues.sweep.liveDependents", "issues.sweep.limit",
 		"issues.batchApply.depAddLineage", "issues.update.allowTemplate", "issues.create.defaultPriority",
 		"issues.close.autoCloseMolecule", "issues.list.search",
-		"issues.list.noAssignee", "issues.list.title", "issues.list.ids", "issues.update.persistence", "dependencies.blocking.isBlocked", "issues.update.claim")
+		"issues.list.noAssignee", "issues.list.title", "issues.list.ids", "issues.update.persistence", "dependencies.blocking.isBlocked", "issues.update.claim",
+		"issues.create.gates", "issues.update.gates")
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("capabilities = %v, want %v", got, want)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -879,6 +880,27 @@ func TestValidateYamlConfigValue_PrimeMaxMemories(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidateYamlConfigValue_PrimeDisabled: prime.disabled takes exactly the
+// strings viper's GetBool reads, so `bd config set` cannot store a value that
+// bd prime would silently read as false.
+func TestValidateYamlConfigValue_PrimeDisabled(t *testing.T) {
+	if !IsYamlOnlyKey("prime.disabled") {
+		t.Fatal("prime.disabled must be yaml-only: bd prime reads it through viper before any store is open")
+	}
+	for _, value := range []string{"true", "false", "TRUE", "False", "1", "0", "t", "f"} {
+		if err := validateYamlConfigValue("prime.disabled", value); err != nil {
+			t.Errorf("value %q: unexpected error %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "yes", "off", "tRuE", "2"} {
+		err := validateYamlConfigValue("prime.disabled", value)
+		want := fmt.Sprintf("prime.disabled must be true or false, got %q", value)
+		if err == nil || err.Error() != want {
+			t.Errorf("value %q: got error %v, want %q", value, err, want)
+		}
 	}
 }
 
