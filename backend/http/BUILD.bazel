@@ -33,6 +33,7 @@ go_test(
         "attach_test.go",
         "e2e_cli_test.go",
         "e2e_export_test.go",
+        "e2e_gates_test.go",
         "e2e_list_filters_test.go",
         "e2e_list_page_edges_test.go",
         "e2e_mol_test.go",

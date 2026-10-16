@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -237,9 +238,6 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if usesProxiedServer() {
-			return runGateAddWaiterProxiedServer(cmd, rootCtx, args)
-		}
 		CheckReadonly("gate add-waiter")
 
 		evt := metrics.NewCommandEvent("gate-add-waiter")
@@ -251,34 +249,27 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 
 		gateID := args[0]
 		waiter := args[1]
-		ctx := rootCtx
 
-		var issue *types.Issue
-		var err error
-
-		issue, err = store.GetIssue(ctx, gateID)
+		reader, err := openIssueReader()
 		if err != nil {
-			return HandleError("gate not found: %s", gateID)
+			return HandleError("%v", err)
+		}
+		lifecycle, err := openIssueLifecycle()
+		if err != nil {
+			return HandleError("%v", err)
+		}
+		ctx, err := issueOpsContext(rootCtx)
+		if err != nil {
+			return HandleError("%v", err)
 		}
 
-		if issue.IssueType != "gate" {
-			return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+		added, err := addGateWaiter(ctx, reader, lifecycle, gateID, waiter)
+		if err != nil {
+			return HandleError("%v", err)
 		}
-
-		for _, w := range issue.Waiters {
-			if w == waiter {
-				renderGateWaiterAlready(gateID)
-				return nil
-			}
-		}
-
-		newWaiters := append(issue.Waiters, waiter)
-
-		updates := map[string]interface{}{
-			"waiters": newWaiters,
-		}
-		if err := store.UpdateIssue(ctx, gateID, updates, currentActor()); err != nil {
-			return HandleError("updating gate: %v", err)
+		if !added {
+			renderGateWaiterAlready(gateID)
+			return nil
 		}
 
 		commandDidWrite.Store(true)
@@ -286,6 +277,60 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 		renderGateWaiterAdded(gateID, waiter)
 		return nil
 	},
+}
+
+// gateAddWaiterAttempts bounds addGateWaiter's compare-and-set loop. A miss
+// means another writer changed the gate between the read and the write; each
+// retry re-reads and re-deduplicates, so three attempts cover concurrent
+// adders without spinning on a gate that is being rewritten continuously.
+const gateAddWaiterAttempts = 3
+
+// addGateWaiter registers waiter on the gate gateID through the Reader and
+// Lifecycle roles, so every route (local, proxied server, and a connected HTTP
+// workspace, which sends getIssue then updateIssue behind issues.update.gates)
+// runs the same steps. It reports false, writing nothing, when the waiter is
+// already registered.
+//
+// The write is a whole-value waiter list guarded by the row version the read
+// returned, so two concurrent adders cannot lose each other's waiter: the
+// second write misses its version, re-reads the list with the first waiter in
+// it, and writes again. The deduplication is this command's, not the role's;
+// the role stores the list it is given.
+func addGateWaiter(ctx context.Context, reader issueops.Reader, lifecycle issueops.Lifecycle, gateID, waiter string) (bool, error) {
+	var lastErr error
+	for attempt := 0; attempt < gateAddWaiterAttempts; attempt++ {
+		details, err := reader.Get(ctx, issueops.GetRequest{ID: gateID})
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, fmt.Errorf("gate not found: %s", gateID)
+		}
+		if err != nil {
+			return false, fmt.Errorf("reading gate %s: %w", gateID, err)
+		}
+		gate := &details.Issue
+		if gate.IssueType != "gate" {
+			return false, fmt.Errorf("%s is not a gate issue (type=%s)", gateID, gate.IssueType)
+		}
+		if slices.Contains(gate.Waiters, waiter) {
+			return false, nil
+		}
+
+		waiters := append(slices.Clone(gate.Waiters), waiter)
+		version := gate.RowVersion
+		_, err = lifecycle.Update(ctx, issueops.UpdateRequest{
+			Actor:           currentActor(),
+			IssueID:         gate.ID,
+			Patch:           issueops.IssuePatch{Waiters: issueops.Field[[]string]{Set: true, Value: waiters}},
+			ExpectedVersion: &version,
+		})
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, issueops.ErrVersionMismatch) {
+			return false, fmt.Errorf("updating gate: %w", err)
+		}
+		lastErr = err
+	}
+	return false, fmt.Errorf("updating gate: %s changed on every one of %d attempts: %w", gateID, gateAddWaiterAttempts, lastErr)
 }
 
 // renderGateWaiterAlready and renderGateWaiterAdded are shared by the direct
@@ -326,9 +371,6 @@ Examples:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if usesProxiedServer() {
-			return runGateCreateProxiedServer(cmd, rootCtx)
-		}
 		CheckReadonly("gate create")
 
 		evt := metrics.NewCommandEvent("gate-create")
@@ -343,37 +385,25 @@ Examples:
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		ctx := rootCtx
-
-		targetIssue, err := store.GetIssue(ctx, in.blocksID)
+		reader, err := openIssueReader()
 		if err != nil {
-			return HandleErrorRespectJSON("issue not found: %s", in.blocksID)
+			return HandleErrorRespectJSON("%v", err)
+		}
+		lifecycle, err := openIssueLifecycle()
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+		ctx, err := issueOpsContext(rootCtx)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
-		gate := buildGateIssue(in, targetIssue.ID)
-		metadata, metaErr := gateMetadataForCreate(in, targetIssue)
-		if metaErr != nil {
-			return HandleErrorRespectJSON("%v", metaErr)
-		}
-		gate.Metadata = metadata
-
-		if err := store.CreateIssue(ctx, gate, currentActor()); err != nil {
-			return HandleErrorRespectJSON("creating gate: %v", err)
+		gate, targetIssue, err := createGateThroughRoles(ctx, reader, lifecycle, in)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
-		dep := &types.Dependency{
-			IssueID:     targetIssue.ID,
-			DependsOnID: gate.ID,
-			Type:        types.DepBlocks,
-		}
-		if err := store.AddDependency(ctx, dep, currentActor()); err != nil {
-			return HandleErrorRespectJSON("adding blocking dependency: %v", err)
-		}
-
-		commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
-		if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-			return HandleErrorRespectJSON("failed to commit: %v", err)
-		}
+		commandDidWrite.Store(true)
 
 		if jsonOutput {
 			return outputJSON(gate)
@@ -382,6 +412,48 @@ Examples:
 		renderGateCreated(gate, targetIssue, in)
 		return nil
 	},
+}
+
+// createGateThroughRoles creates the gate and its blocking edge as ONE Lifecycle.Create:
+// the gate row plus a reverse blocks dependency from the blocked issue to the
+// new gate, in one transaction and one version commit on every route. A
+// connected HTTP workspace sends it as one createIssue carrying the gate
+// members, behind issues.create.gates; a server that does not advertise that
+// token is refused before any request is sent, and nothing is written.
+//
+// It returns the created gate (without its dependency records, which
+// `bd gate create` has never printed) and the blocked issue.
+func createGateThroughRoles(ctx context.Context, reader issueops.Reader, lifecycle issueops.Lifecycle, in gateCreateInput) (*types.Issue, *types.Issue, error) {
+	details, err := reader.Get(ctx, issueops.GetRequest{ID: in.blocksID})
+	if err != nil {
+		// Every target-lookup failure has always been reported as not-found.
+		return nil, nil, fmt.Errorf("issue not found: %s", in.blocksID)
+	}
+	target := &details.Issue
+
+	gate := buildGateIssue(in, target.ID)
+	metadata, err := gateMetadataForCreate(in, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	gate.Metadata = metadata
+
+	result, err := lifecycle.Create(ctx, issueops.CreateRequest{
+		Actor: currentActor(),
+		Issue: gate,
+		Dependencies: []issueops.CreateDependency{{
+			TargetID: target.ID,
+			Type:     types.DepBlocks,
+			Reverse:  true,
+		}},
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating gate: %w", err)
+	}
+	created := result.Issue
+	created.Dependencies = nil
+	created.Comments = nil
+	return created, target, nil
 }
 
 // gateCreateInput carries `bd gate create`'s parsed flags. Both routes gather

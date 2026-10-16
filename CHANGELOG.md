@@ -557,6 +557,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd gate create`, `bd gate add-waiter` and `bd gate discover` work over a
+  connected HTTP workspace.** They wrote through the legacy `CreateIssue`,
+  `AddDependency` and map-based `UpdateIssue`, which the HTTP store does not
+  implement, so each failed before any gate member reached the wire. They now
+  run through the library roles on every route:
+  - `bd gate create` is ONE `Lifecycle.Create` carrying the gate members and
+    a reverse `blocks` edge from the blocked issue to the new gate, so the
+    gate and its edge land atomically (one `createIssue` over HTTP, behind
+    `issues.create.gates`). The direct route used to make two writes and an
+    explicit commit; the proxied-server route now uses the same role.
+  - `bd gate add-waiter` reads the gate through `Reader.Get`, deduplicates,
+    and writes the whole waiter list through `Lifecycle.Update` guarded by
+    the row version it read, retrying up to three times on a version
+    mismatch. Two concurrent adders no longer lose each other's waiter.
+    Over HTTP it needs `issues.update.gates`.
+  - `bd gate discover` lists through `issueops.ListGates` (as `bd gate check`
+    does) and records each discovered run ID through `Lifecycle.Update`, the
+    same `await_id` write `bd gate check` and `bd close` make. Over HTTP it
+    needs `issues.update.gates`.
+
+  Against a server that does not advertise the token a command needs, it is
+  refused before any write, naming the token. `bd gate discover` skips
+  template gates, as `bd gate check` does: a template is read-only, so
+  recording a run ID on one failed with "templates are read-only". The
+  served corpus gains `mc-gate-create-timer`, `mc-gate-check-timer-resolves`,
+  `mc-gate-add-waiter` and `mc-update-await-id` (pending until the reference
+  server advertises the gate tokens), pinned passing by
+  `TestE2E_GatesOverHTTP`.
 - **`bd gate check` works over a connected HTTP workspace.** Its open-gate
   listing built the same raw `SearchIssues` filter `bd gate list` did before
   S20, so the HTTP backend refused the command before reading a gate and gc's
