@@ -35,7 +35,8 @@ go_test(
     srcs = [
         "bazel_autofix_push_test.go",
         "bazel_cache_mode_test.go",
-        "bazel_dolt_race_shadow_test.go",
+        "bazel_dolt_int_test.go",
+        "bazel_dolt_race_test.go",
         "bazel_farm_workflow_test.go",
         "bazel_fork_mode_test.go",
         "bazel_go_repository_tools_test.go",
@@ -82,6 +83,7 @@ go_test(
     # re-runs the rest of this suite too.
     env = {"BEADS_TEST_GO": "$(rlocationpath @go_sdk//:bin/go)"},
     deps = [
+        "//internal/doltversion",
         "//internal/formula",
         "//internal/testutil/bazeltest",
         "//scripts/internal/testbash",
@@ -141,6 +143,8 @@ go_test(
         "repo_helpers_test.go",
         "required_suite_test.go",
         "test_script_test.go",
+        "update_nix_vendorhash_test.go",
+        "update_nix_vendorhash_unix_test.go",
         "upgrade_smoke_loop_test.go",
     ],
     data = [
@@ -201,6 +205,8 @@ go_test(
         "//:.github/scripts/server-storage-test-shards.txt",
         "//:nested_go_modules",
         "//:repo_go_test_srcs",
+        "//backend/http:repo_other_files",
+        "//backend/http/corpus:repo_other_files",
         "//cmd/bd:repo_other_files",
         "//internal/httpclient:repo_other_files",
         "//internal/storage/dolt:repo_other_files",

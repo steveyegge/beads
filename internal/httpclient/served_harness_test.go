@@ -58,6 +58,9 @@ type servedEnv struct {
 	dataDir   string
 	database  string
 	prefix    string
+	// base is the in-process server's URL, for a case that dials its own
+	// client the way the product does rather than through subject.
+	base *url.URL
 }
 
 const servedDatabase = "httpconf"
@@ -185,6 +188,7 @@ func newServedEnvExpecting(t *testing.T, prefix, expectID string, opts ...func(*
 		dataDir:  filepath.Join(beadsDir, "embeddeddolt"),
 		database: servedDatabase,
 		prefix:   prefix,
+		base:     base,
 	}
 }
 

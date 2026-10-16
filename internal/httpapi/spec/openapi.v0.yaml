@@ -1260,6 +1260,14 @@ paths:
             `message` rows need `include_infra` as well as, or instead of,
             this one. What `include_ephemeral` alone reaches is the ephemeral
             rows of the types a listing already shows.
+
+
+            A `type` this workspace calls infra is the one NARROWING it lifts.
+            Such a type on its own reads only that type's ephemeral rows, which
+            is where creating one puts it; with `include_ephemeral` the type's
+            durable rows (a promoted wisp, an issue retyped after it was
+            created) are listed as well. `include_infra` alone keeps the
+            narrowing.
           schema:
             type: boolean
             default: false
@@ -1291,6 +1299,74 @@ paths:
           description: Only issues carrying this top-level metadata key.
           schema:
             type: string
+        - name: q
+          in: query
+          description: >-
+            `bd search`'s free text. A row matches when its title or its id
+            contains the text, case-insensitively; a text shaped like an issue
+            id also matches that exact id, an id prefix, and the external
+            reference. It narrows the listing and lifts none of its default
+            exclusions, so a caller that wants `bd search`'s every-status,
+            every-kind answer also sends `all`, `include_templates`,
+            `include_gates`, `include_infra` and `include_ephemeral`.
+
+
+            Behind the `issues.list.search` behavior token: an older server
+            answers `unknown_parameter` for this name. A client with the
+            handshake's capabilities cached refuses a search locally against a
+            server that does not advertise the token, rather than paying for
+            that round trip.
+          schema:
+            type: string
+        - name: no_assignee
+          in: query
+          description: >-
+            Only issues with no assignee: `bd list --no-assignee`, handed to
+            the role as written beside the other filters.
+
+
+            Behind the `issues.list.noAssignee` behavior token: an older server
+            answers `unknown_parameter` for this name. A client with the
+            handshake's capabilities cached refuses the request locally against
+            a server that does not advertise the token, rather than paying for
+            that round trip or listing assigned issues as well.
+          schema:
+            type: boolean
+            default: false
+        - name: title
+          in: query
+          description: >-
+            Case-insensitive substring match on the title: `bd list --title`.
+            It narrows the listing and lifts none of its default exclusions.
+
+
+            Behind the `issues.list.title` behavior token: an older server
+            answers `unknown_parameter` for this name. A client with the
+            handshake's capabilities cached refuses the request locally against
+            a server that does not advertise the token, rather than paying for
+            that round trip or answering the unnarrowed listing.
+          schema:
+            type: string
+        - name: id
+          in: query
+          description: >-
+            Restrict to these canonical ids (repeat the parameter). AND-ed with
+            every other filter, including the default exclusions, so a caller
+            addressing rows regardless of status, type or tier also sends
+            all=true, include_templates, include_gates, include_infra and
+            include_ephemeral. At most 200 values; an id longer than storage
+            holds, an empty one, one with leading or trailing whitespace, or one
+            carrying a control character or a comma is a 400 `invalid_argument`
+            on `param: "id"` — each value is matched exactly as sent, never
+            trimmed or split. An id that names no row is simply not matched.
+            Advertised by the behavior token `issues.list.ids`.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 200
+            items:
+              type: string
         - name: sort
           in: query
           description: >-
@@ -1503,12 +1579,14 @@ paths:
         either.
 
 
-        `spec_id`, `await_*`, `mol_type`, `wisp_type`, `work_type`,
-        `storage_class`, `source_*`, `pinned`, `is_template` and the event
-        quartet (`event_kind`, `actor`, `target`, `payload`) — workflow and
-        classification plumbing this surface publishes on no operation, read or
-        write. `PATCH /v0/beads/issues/{id}` says the same of `spec_id` and
-        `await_id`.
+        `spec_id`, `mol_type`, `wisp_type`, `work_type`, `storage_class`,
+        `source_*`, `pinned`, `is_template` and the event quartet
+        (`event_kind`, `actor`, `target`, `payload`) — workflow and
+        classification plumbing this surface accepts on no write. `PATCH
+        /v0/beads/issues/{id}` says the same of `spec_id`. The gate members
+        `await_type`, `await_id`, `timeout` and `waiters` ARE published here,
+        behind `issues.create.gates`, and every read of an `Issue` carries
+        them.
 
 
         The per-type `storage-class.<type>` keys in `config.yaml` are CLI-door
@@ -1871,8 +1949,8 @@ paths:
 
 
             It has a SECOND effect under `include_infra`: a type this workspace
-            calls infra routes the count to the ephemeral tier. See that
-            parameter.
+            calls infra routes the count to the ephemeral tier, unless
+            `include_ephemeral` is also set. See that parameter.
           schema:
             type: string
         - name: assignee
@@ -2033,6 +2111,11 @@ paths:
             lives in the wisps table while remaining ordinary durable work.
             Reaching it needed `include_infra`, which also drops template rows of
             the named type — one silent undercount traded for another.
+
+
+            Beside `include_infra` it also lifts the fourth change's routing of
+            an infra `type`, so that type's durable rows are counted along with
+            its ephemeral ones rather than instead of them.
           schema:
             type: boolean
             default: false
@@ -2055,7 +2138,9 @@ paths:
             template molecules are EXCLUDED, which a default count includes;
             gate beads are EXCLUDED unless `type=gate` asks for them by name;
             and a `type` this workspace calls infra ROUTES the count to the
-            ephemeral tier instead of the durable one.
+            ephemeral tier instead of the durable one — unless
+            `include_ephemeral` is also set, which keeps the durable tier as
+            well, as `GET /v0/beads/issues` does.
 
 
             The infra vocabulary is the WORKSPACE's, read from its configuration
@@ -2412,11 +2497,6 @@ paths:
         Nothing has asked for it.
 
 
-        `persistence` — a plane move is an atomic aggregate migration rather
-        than a field write, and moving a row between planes mid-patch is a
-        different act from editing it.
-
-
         `closed_by_session` and `close_reason` — written under first-close-wins
         by `{id}:close`, which a patch write would bypass. A `status` that
         crosses into the done category still answers to close POLICY here; it
@@ -2432,8 +2512,13 @@ paths:
         import is for.
 
 
-        `spec_id` and `await_id` — workflow plumbing this surface publishes
-        nowhere yet.
+        `spec_id` — workflow plumbing this surface accepts on no write.
+
+
+        `await_type` and `timeout` — no local update route changes them, so
+        the patch does not either; they are written at create
+        (`issues.create.gates`). `await_id` and `waiters` ARE patch members,
+        behind `issues.update.gates`.
 
 
         ## Planes
@@ -5567,6 +5652,25 @@ paths:
             maxItems: 100
             items:
               type: string
+        - name: is_blocked
+          in: query
+          description: >-
+            `true` adds each item's `is_blocked`: the issue's stored,
+            TRANSITIVE readiness flag — the column the ready set filters on,
+            which a child inherits from a blocked parent and which
+            `waits-for` and `conditional-blocks` gates set — rather than the
+            two-edge-type, direct `blocked_by` summary. It is the batched
+            readiness projection a client cache needs to answer readiness
+            with the server's own predicate. An id that names no row in
+            either plane gets no `is_blocked` member. Absent or `false`
+            answers exactly as before. Behind the
+            `dependencies.blocking.isBlocked` capability token; a server
+            that predates it answers `400` with `param: "is_blocked"` and
+            `reason: "unknown_parameter"`.
+          required: false
+          schema:
+            type: boolean
+            default: false
       security:
         - bearerToken: []
       responses:
@@ -8041,6 +8145,13 @@ components:
             carries several `parent-child` edges, which one appears here is not
             specified. A client that needs every structural edge reads them from
             `GET /v0/beads/dependencies`.
+        is_blocked:
+          type: boolean
+          description: >-
+            The issue's stored, transitive is_blocked flag — present only when
+            the request carried `is_blocked=true` (capability
+            `dependencies.blocking.isBlocked`) and the id names a row. Its
+            absence never means "not blocked".
 
     # ---------------------------------------------------------------------
     # Envelope schemas. Almost all of these have no canonical Go type behind
@@ -8195,7 +8306,7 @@ components:
             `skipped.live_dependent` rather than silently answering
             `unknown_parameter`, `issues.sweep.limit`, which announces
             that it accepts `limit` and answers `remaining` rather than
-            silently answering `unknown_parameter`, and
+            silently answering `unknown_parameter`,
             `issues.batchApply.depAddLineage`, which announces that a
             `dep_add` item on `POST /v0/beads/issues:batchApply` accepts
             `has_spawner` and `thread_id` (see `ApplyDepAddItem`) rather than
@@ -8204,6 +8315,11 @@ components:
             `PATCH /v0/beads/issues/{id}` accepts `allow_template` (see
             `UpdateIssueRequest`) rather than a `400` naming the member
             unknown, and
+            `issues.update.persistence`, which announces that
+            `PATCH /v0/beads/issues/{id}` accepts a `persistence` member in
+            its `patch` (see `IssuePatchBody`), the plane move behind
+            `bd promote`, rather
+            than a `400` naming the member unknown, and
             `issues.create.defaultPriority`, which announces that a create
             (`POST /v0/beads/issues`, `issues:batchCreate` and
             `issues:batchApply` create items) with no `priority` member stores
@@ -8213,7 +8329,30 @@ components:
             `POST /v0/beads/issues:batchClose` accept `auto_close_molecule`
             and answer `auto_closed_molecule` and
             `molecule_auto_close_refusal` rather than a `400` naming the
-            member unknown. One behavior token is
+            member unknown, `issues.list.search`, which announces that
+            `GET /v0/beads/issues` accepts `q`, `bd search`'s free text (see
+            that parameter), rather than silently answering
+            `unknown_parameter`, `issues.list.noAssignee`,
+            `issues.list.title` and `issues.list.ids`, which announce that
+            `GET /v0/beads/issues` accepts `no_assignee`, `title` and the
+            repeatable `id` respectively (`bd list --no-assignee`, `--title`
+            and `--id`; see those parameters) rather than answering
+            `unknown_parameter`, `dependencies.blocking.isBlocked`, which
+            announces that `GET /v0/beads/dependencies/blocking` accepts
+            `is_blocked` and answers each item's stored, transitive
+            `is_blocked` flag (see that parameter) rather than silently
+            answering `unknown_parameter`, and `issues.update.claim`, which
+            announces that `PATCH /v0/beads/issues/{id}` accepts `claim` (see
+            `UpdateIssueRequest`) and resolves the claimed id on both planes,
+            so a wisp is claimable there, rather than a `400` naming the
+            member unknown, and `issues.create.gates`, which announces that
+            `POST /v0/beads/issues` and `issues:batchApply` create items accept
+            the gate members `await_type`, `await_id`, `timeout` and `waiters`
+            (see `CreateIssueRequest`), and `issues.update.gates`, which
+            announces that `PATCH /v0/beads/issues/{id}`'s `patch` and an
+            `issues:batchApply` update item's `patch` accept `await_id` and
+            `waiters` (see `IssuePatchBody`), each rather than a `400` naming
+            the member unknown. One behavior token is
             CONDITIONAL rather than build-level: `policy.external_dependencies`
             announces that this server's ready, claim, claim-next, close,
             blocking and dependency-tree operations already apply bd's
@@ -10264,6 +10403,42 @@ components:
             Creates the issue on the ephemeral plane WITHOUT history, and
             without the garbage collection an ordinary ephemeral row is eligible
             for. Mutually exclusive with `ephemeral`.
+        await_type:
+          type: string
+          maxLength: 32
+          description: >-
+            The gate's await condition type (`gh:run`, `gh:pr`, `timer`,
+            `human`, `bead`, or a formula-defined type). Free-form: there is no
+            vocabulary, and any issue type may carry it, as a local create
+            allows. At most 32 characters, the stored column's width; a longer
+            value is a `400` naming this member. Requires the behavior token
+            `issues.create.gates`.
+        await_id:
+          type: string
+          maxLength: 255
+          description: >-
+            The gate's condition identifier (a run id, a PR number, a
+            `bead:<id>`). Opaque here; at most 255 characters, the stored
+            column's width, and a longer value is a `400` naming this member.
+            Requires the behavior token `issues.create.gates`.
+        timeout:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The gate's timeout in NANOSECONDS, the encoding `Issue.timeout`
+            reads back. A negative value is a `400` naming this member.
+            Requires the behavior token `issues.create.gates`.
+        waiters:
+          type: array
+          items:
+            type: string
+          description: >-
+            The addresses woken when the gate clears, stored as sent:
+            duplicates are kept and nothing is trimmed, as a local create
+            stores them. The list's JSON encoding must fit the stored TEXT
+            column (65535 bytes); a larger one is a `400` naming this member.
+            Requires the behavior token `issues.create.gates`.
         metadata_refs:
           type: object
           additionalProperties:
@@ -10408,9 +10583,11 @@ components:
         one-edge-one-spelling rule: a parent is a `dep_add` item of type
         `parent-child`, so the order of every edge in the request stays total.
         The single patch has no ordering to express and publishes it directly.
-        `persistence` is absent from both — moving a row between planes mid-plan
+        `persistence` is absent here — moving a row between planes mid-plan
         is a different act from writing its fields, and nothing has asked for it
-        here.
+        here. The single patch publishes it (`IssuePatchBody.persistence`,
+        behind `issues.update.persistence`), where the move is the patch's last
+        step.
       properties:
         title:
           type: string
@@ -10495,6 +10672,25 @@ components:
           description: 'RFC 3339. Explicit `null` CLEARS the deferral.'
         metadata:
           $ref: '#/components/schemas/ApplyMetadataPatch'
+        await_id:
+          type: string
+          maxLength: 255
+          description: >-
+            Replaces the gate's condition identifier; the empty string clears
+            it. Not nullable. At most 255 characters, the stored column's
+            width; a longer value is a `400` naming this member. Requires the
+            behavior token `issues.update.gates`.
+        waiters:
+          type: array
+          items:
+            type: string
+          description: >-
+            A WHOLE-VALUE replacement of the gate's waiter list; `[]` clears
+            it. Not nullable. Stored as sent (duplicates kept: deduplicating
+            is the caller's, as `bd gate add-waiter` does). The list's JSON
+            encoding must fit the stored TEXT column (65535 bytes); a larger
+            one is a `400` naming this member. Requires the behavior token
+            `issues.update.gates`.
 
     ApplyLabelPatch:
       type: object
@@ -11806,7 +12002,9 @@ components:
             included. With `claim: true` the `patch` may be empty. It must not
             be combined with `expected_assignee`, `expected_status` or
             `force_assignee_transfer`; a request that does is a `400` naming
-            `claim`.
+            `claim`. The id resolves on both planes, so a wisp is claimable
+            here (where `{id}:claim` answers it `404`); a wisp claim takes no
+            lease. Advertised by the behavior token `issues.update.claim`.
         expected_version:
           type: string
           description: >-
@@ -12109,6 +12307,48 @@ components:
           description: 'RFC 3339. Explicit `null` CLEARS the deferral.'
         metadata:
           $ref: '#/components/schemas/ApplyMetadataPatch'
+        await_id:
+          type: string
+          maxLength: 255
+          description: >-
+            Replaces the gate's condition identifier; the empty string clears
+            it. Not nullable. At most 255 characters, the stored column's
+            width; a longer value is a `400` naming this member. Requires the
+            behavior token `issues.update.gates`.
+        waiters:
+          type: array
+          items:
+            type: string
+          description: >-
+            A WHOLE-VALUE replacement of the gate's waiter list; `[]` clears
+            it. Not nullable. Stored as sent (duplicates kept: deduplicating
+            is the caller's, as `bd gate add-waiter` does). The list's JSON
+            encoding must fit the stored TEXT column (65535 bytes); a larger
+            one is a `400` naming this member. Requires the behavior token
+            `issues.update.gates`.
+        persistence:
+          type: string
+          maxLength: 255
+          description: >-
+            One of `persistent`, `ephemeral` or `no_history`; any other value
+            is a `400` naming the member. Selects the issue's complete persistence state, moving the row
+            between the durable and the wisp plane when the state changes
+            plane. `persistent` promotes a wisp: the row keeps its id, and its
+            labels, dependencies, events and comments move with it, all in
+            this update's one transaction (`bd promote`, `bd update
+            --persistent`). `ephemeral` and `no_history` select the wisp
+            retention modes (`bd update --ephemeral` / `--no-history`);
+            demoting a durable row that has retained snapshots is refused.
+            The current mode is a no-op that reports `changed: false`.
+
+
+            A PLANE MOVE IS AN AGGREGATE MIGRATION, not a field write, and it
+            is applied LAST, after every other member of the patch, so the
+            edit and the move commit together or not at all. Advertised by the
+            `issues.update.persistence` capability token; a server that
+            predates the member refuses it as an unknown parameter, and a
+            client that does not see the token refuses the move before the
+            dial rather than sending it.
 
     UpdateIssueResponse:
       type: object
@@ -12345,6 +12585,42 @@ components:
             reference and an id belonging to another repository are legitimate
             targets, so only an absence this database can SEE is refused —
             `ApplyDepAddItem`'s rule, unchanged.
+        await_type:
+          type: string
+          maxLength: 32
+          description: >-
+            The gate's await condition type (`gh:run`, `gh:pr`, `timer`,
+            `human`, `bead`, or a formula-defined type). Free-form: there is no
+            vocabulary, and any issue type may carry it, as a local create
+            allows. At most 32 characters, the stored column's width; a longer
+            value is a `400` naming this member. Requires the behavior token
+            `issues.create.gates`.
+        await_id:
+          type: string
+          maxLength: 255
+          description: >-
+            The gate's condition identifier (a run id, a PR number, a
+            `bead:<id>`). Opaque here; at most 255 characters, the stored
+            column's width, and a longer value is a `400` naming this member.
+            Requires the behavior token `issues.create.gates`.
+        timeout:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The gate's timeout in NANOSECONDS, the encoding `Issue.timeout`
+            reads back. A negative value is a `400` naming this member.
+            Requires the behavior token `issues.create.gates`.
+        waiters:
+          type: array
+          items:
+            type: string
+          description: >-
+            The addresses woken when the gate clears, stored as sent:
+            duplicates are kept and nothing is trimmed, as a local create
+            stores them. The list's JSON encoding must fit the stored TEXT
+            column (65535 bytes); a larger one is a `400` naming this member.
+            Requires the behavior token `issues.create.gates`.
         waits_for:
           $ref: '#/components/schemas/CreateIssueWaitsFor'
         force_id_prefix:

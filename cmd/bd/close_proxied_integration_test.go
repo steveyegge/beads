@@ -359,14 +359,14 @@ func TestProxiedServerCloseB(t *testing.T) {
 	})
 }
 
-// TestProxiedServerClose3 was split off TestProxiedServerClose (as
-// TestProxiedServerClose2 was before it) so that no single top-level suite
-// carries 23 bd-init subtests: that one parent alone cost ~2060
-// slot-seconds under -test.parallel=4 and pushed its 15-shard legacy shard
-// past go test's 15m timeout on every run (gastownhall/beads#7151). Those
-// 23 now sit in TestProxiedServerClose, TestProxiedServerCloseB,
-// TestProxiedServerClose3 and TestProxiedServerClose4. Its own second half
-// is TestProxiedServerClose4.
+// TestProxiedServerClose3 was split off TestProxiedServerClose in
+// gastownhall/beads#7173 (as TestProxiedServerClose2 was before it) so that
+// no single top-level suite carries 23 bd-init subtests: that one parent
+// alone cost ~2060 slot-seconds under -test.parallel=4 and pushed its shard
+// of the since-retired 15-shard legacy jobs past go test's 15m timeout on
+// every run. Those 23 now sit in TestProxiedServerClose,
+// TestProxiedServerCloseB, TestProxiedServerClose3 and
+// TestProxiedServerClose4. Its own second half is TestProxiedServerClose4.
 func TestProxiedServerClose3(t *testing.T) {
 	requireSharedProxiedServer(t)
 	t.Parallel()
@@ -512,7 +512,7 @@ func TestProxiedServerClose3(t *testing.T) {
 // all 12 of its bd-init subtests in one parent, whichever 15-shard legacy
 // shard hosted Close3 timed out in turn (6, then 1) while shard 5 dropped to
 // 5m, so the remaining weight is carried as two parents of six on two shards
-// (gastownhall/beads#7151).
+// (gastownhall/beads#7173).
 func TestProxiedServerClose4(t *testing.T) {
 	requireSharedProxiedServer(t)
 	t.Parallel()

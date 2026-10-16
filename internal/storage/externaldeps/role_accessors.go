@@ -120,22 +120,44 @@ type blockingAnnotator struct {
 	policy *Store
 }
 
+// AnnotateBlocking overlays, on the backend's own answer, what IsBlocked
+// reports for each item: a blocked item's BlockedBy is IsBlocked's blocker
+// list (local live blockers plus unsatisfied external refs). It reads that
+// for the whole page at
+// once (blockedStates), so a page costs a bounded number of reads and opens
+// each foreign project at most once, instead of IsBlocked's reads and foreign
+// opens per item.
 func (a *blockingAnnotator) AnnotateBlocking(ctx context.Context, req issueops.BlockingRequest) (issueops.BlockingResult, error) {
 	result, err := a.inner.AnnotateBlocking(ctx, req)
 	if err != nil {
 		return issueops.BlockingResult{}, err
 	}
+	if len(result.Items) == 0 {
+		return result, nil
+	}
+	ids := make([]string, 0, len(result.Items))
+	for _, item := range result.Items {
+		ids = append(ids, item.ID)
+	}
+	states, err := a.policy.blockedStates(ctx, ids)
+	if err != nil {
+		return issueops.BlockingResult{}, err
+	}
 	for i := range result.Items {
-		blocked, blockers, err := a.policy.IsBlocked(ctx, result.Items[i].ID)
-		if err != nil {
-			return issueops.BlockingResult{}, err
-		}
-		if blocked {
-			result.Items[i].BlockedBy = blockers
+		state := states[result.Items[i].ID]
+		if state.blocked {
+			result.Items[i].BlockedBy = state.blockers
+			// The flag follows IsBlockedBatch's external invariant: an
+			// unsatisfied external blocker blocks, whatever the column says.
+			if req.IncludeIsBlocked {
+				result.Items[i].IsBlocked = boolPtr(true)
+			}
 		}
 	}
 	return result, nil
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 // TreeWalker preserves synthetic external leaves for the normal down-tree
 // request. Reverse walks do not follow a source's dependencies, and the

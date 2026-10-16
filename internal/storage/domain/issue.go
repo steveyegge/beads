@@ -863,8 +863,10 @@ func (u *issueUseCaseImpl) isWispID(ctx context.Context, id string) (bool, error
 // PromoteWisp moves an active wisp to the Dolt-versioned issues plane,
 // preserving its id, wisp_type, labels, dependencies, events, and comments.
 // One-way: the promoted row is no longer ephemeral, so purge won't reclaim
-// it. The repository error passes through unwrapped — the CLI surfaces it
-// verbatim and its text is part of the classic error contract.
+// it. The repository error passes through unwrapped. `bd promote` does not
+// call it: the proxied-server route runs issueops.Promote, whose move is
+// ApplyUpdate's persistence branch (MovePersistence), which also carries the
+// child counter.
 func (u *issueUseCaseImpl) PromoteWisp(ctx context.Context, id, actor string) error {
 	if id == "" {
 		return fmt.Errorf("promote wisp: id must not be empty")

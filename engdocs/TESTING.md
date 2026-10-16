@@ -41,9 +41,11 @@ Each lane, as bazel.yml runs it (add your `--config=fork-cache` or
 | Integration (`bazel-integration`) | `bazel test //... --config=integration` | The `integration`-tagged build. Runs with the read-only cache too. |
 | Dolt server (`bazel-doltserver`) | `bazel test //... --config=doltserver` | Starts its own `dolt sql-server` from the pinned binary; no docker. |
 | cmd/bd Dolt server (`bazel-cmd-dolt`) | `bazel test //cmd/bd:bd_dolt_server_test --config=doltserver-cmd` | 32 shards of the integration-tagged cmd/bd suite (the slowest tests pinned to 16 of them). |
-| Embedded Dolt (`bazel-embedded`) | `bazel test //... --config=embedded` | Remote execution only in CI; locally it is slow. Also runs the served http tiers with `BEADS_HTTP_TEST_REQUIRED=1`: `//backend/http:http_served_test`, `//internal/httpclient:httpclient_served_test` and the command corpus `//backend/http/corpus:corpus_served_test`. |
+| Embedded Dolt (`bazel-embedded`) | `bazel test //... --config=embedded` | Remote execution only in CI; locally it is slow. Also runs the served http tiers with `BEADS_HTTP_TEST_REQUIRED=1`: `//backend/http:http_served_test`, `//internal/httpclient:httpclient_served_test` and the command corpus `//backend/http/corpus:corpus_served_test`, each sharded through `tools/bazel/go_test_pinned_shard.sh`. |
 | Proxied server (`bazel-proxied`) | `bazel test //... --config=doltserver-proxied` | Remote execution only: 34 shards, each with a Dolt server. |
+| Dolt server + proxied (`bazel-dolt-race`) | `bazel test //... --config=dolt-race` | Both rows above in one invocation; CI runs this instead of them in mode `remote`. |
 | Server-Dolt storage (`bazel-server-storage`) | `bazel test //... --config=doltserver-integration` | Remote execution only. |
+| Server storage + cmd/bd Dolt server (`bazel-dolt-int`) | `bazel test //... --config=dolt-int` | The two rows above in one invocation; CI runs this instead of them in mode `remote`. No job-level `continue-on-error`: it reports a `server_storage_result` output (plain-gated, like `bazel-server-storage`) and a `cmd_dolt_result` output (advisory unless `BAZEL_CMD_DOLT_REQUIRED` is `true`, like `bazel-cmd-dolt`) separately, via a per-tier classify step over the BEP, since its members have different gating categories. |
 | Docs | `make check-docs` | `//test/docsync:docsync_test` and `//scripts/repochecks:doc_freshness_test` in the test lane's configuration, then `scripts/check-doc-flags.sh` against the pinned release. |
 
 `make check` runs the testing.Short policy, `make ci-pr-lint` and
@@ -190,7 +192,8 @@ failure (per test and in every `TestMain`) instead of a skip; lanes that
 exist to run the Dolt suites set it. `BEADS_TEST_REQUIRE_SOCAT=1` does the
 same for the proxied subtests that bridge an external endpoint with `socat`
 (external-unix, the outage/reconnect matrix); `//cmd/bd:bd_proxied_test`
-sets it, and the legacy GitHub proxied jobs, which have no `socat`, do not.
+sets it; the legacy GitHub proxied jobs retired in #7353 had no `socat`
+and left it unset.
 
 Under Bazel, `bazel test //... --config=doltserver` runs the Dolt-backed
 domain, uow, tracker, doctor/fix, protocol and testutil suites on the `local`
@@ -199,7 +202,10 @@ remotely with `--config=remote-exec`. No Bazel target uses the `container`
 backend; run `go test` with docker and the pulled image to exercise it.
 PR Risk's heavier server tiers have configs of their own, run by bazel.yml
 only with remote execution, each in a job of its own (`bazel-proxied`,
-`bazel-server-storage`): `--config=doltserver-proxied` is the
+which in mode `remote` is folded with `bazel-doltserver` into
+`bazel-dolt-race`, and `bazel-server-storage`, which in mode `remote` is
+folded with `bazel-cmd-dolt` into `bazel-dolt-int`):
+`--config=doltserver-proxied` is the
 proxied-server cmd/bd tier ("Test (Proxied Dolt Cmd N/15)",
 `//cmd/bd:bd_proxied_test`), and `--config=doltserver-integration` the
 server-Dolt storage tier ("Test (Server Dolt Conformance)", "Test (Server

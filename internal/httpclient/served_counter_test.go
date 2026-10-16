@@ -15,9 +15,9 @@ import (
 // The Counter contract, run through the http client against a real bd serve.
 //
 // NOTHING IS PARKED HERE, and on this role that is a statement rather than a
-// happy accident. Every case scopes itself with IDFilter — the count publishes
-// `id` where the LISTING does not, which is why the Reader family parks nine
-// cases on E-ListRequest.IDFilter and this one parks none — and every filter the
+// happy accident. Every case scopes itself with IDFilter — the count has
+// always published `id` (the listing gained it, behind issues.list.ids, with
+// S15b) — and every filter the
 // contract reaches for is a parameter this operation carries. The plane cases in
 // particular cross whole: `include_infra` is one flag on the wire and one flag
 // on the request, and what it MEANS is four decisions the server's own role

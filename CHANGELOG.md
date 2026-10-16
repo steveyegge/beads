@@ -9,6 +9,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bd serve` publishes the gate members: `await_type`,
+  `await_id`, `timeout` (nanoseconds) and `waiters` on `POST
+  /v0/beads/issues` and on `issues:batchApply` create items, behind the new
+  `issues.create.gates` capability token, and `await_id` and `waiters` (a
+  whole-value replacement; `[]` clears) on the `patch` of `PATCH
+  /v0/beads/issues/{id}` and of `issues:batchApply` update items, behind
+  `issues.update.gates`. Additive; no wire_revision bump. The bounds are the
+  library role's, the same ones a local create or update now enforces (see
+  Changed), answered as `400 invalid_argument` with `param` naming the
+  member.
+- `issueops.IssuePatch.Waiters`: a whole-value replacement of a gate's waiter
+  list (nil or empty clears it, stored as `[]`), on `Lifecycle.Update` and on
+  `BatchApplier` update items, on every backend. `issueops.GateFieldError`
+  (`Field`, `Detail`; wraps `ErrValidation`) names the gate member a create or
+  update refused, as one of the new `issueops.GateFieldAwaitType`,
+  `GateFieldAwaitID`, `GateFieldTimeout` and `GateFieldWaiters` constants.
+- The HTTP client sends the gate members on create, update and
+  `issues:batchApply` (create and update items) to a server that advertises
+  `issues.create.gates` / `issues.update.gates`. Against an older server a
+  request naming any gate member is refused before the dial with a typed
+  capability error naming the missing token (never sent without the
+  member); a batchApply plan is checked whole, so no partial plan is sent.
+  A request naming no gate member is unaffected by either token.
+- `GET /v0/beads/dependencies/blocking` accepts `is_blocked`, behind the new
+  `dependencies.blocking.isBlocked` capability token (additive; no
+  wire_revision bump), and answers each item's stored, transitive
+  `is_blocked` flag, the column `bd ready` filters on; an item whose id names
+  no row carries none. `issueops.BlockingRequest` gains `IncludeIsBlocked` on
+  every BlockingAnnotator implementation, and `issueops.BlockedFlags` is the
+  batched read over it. The HTTP backend's `IsBlockedBatch` now serves
+  through it; against a server that does not advertise the token it still
+  refuses before dialing, now with a typed capability error naming the
+  token. An unsatisfied `external:` blocker sets the flag on every route,
+  just as it keeps the issue out of `bd ready`.
+- `bd promote` works over a connected HTTP workspace (S21b). Its one library
+  entry, `issueops.Promote(ctx, PromoteRoles{Reader, Lifecycle, Commenter},
+  PromoteRequest)`, reads the row, refuses one that is not a wisp
+  (`*issueops.NotAWispError`, the sentence `bd promote` always printed), moves
+  it with ONE `Lifecycle.Update` whose patch is `Persistence = persistent`
+  (labels, dependencies, events, comments and the child counter move with it
+  in the role's transaction), then records the promotion comment. The direct
+  and proxied-server routes run it over their own roles, so a local promote
+  now makes the same plane move `bd update --persistent` makes, honoring
+  `dolt.auto-commit`. That changes five things a script can see on those
+  routes: the workspace's `on_update` hook fires twice, once for the move and
+  once for the comment (the direct route never fired it, the proxied-server
+  route fired it once); the promotion comment is a row `bd comments` lists
+  (the direct route recorded only a `commented` event); a promoted parent
+  keeps its child counter, so its next `bd create --parent` mints the number
+  after its wisp children's instead of failing with
+  `issue already exists: <parent>.1`; a promotion records two Dolt
+  commits, `bd: promote <id>` for the move and `bd: comment <id>` for the
+  comment (an embedded workspace recorded one, `bd: promote (auto-commit)`,
+  and the proxied-server route one, `bd: promote <id>`); and a promote that
+  loses a race to a concurrent one fails with the not-a-wisp sentence instead
+  of `promoting <id>: wisp <id> not found`. A comment that cannot
+  be written leaves the promotion standing behind a warning on every route;
+  the proxied-server route used to roll the promotion back. `bd serve`
+  publishes the move as `patch.persistence` on `PATCH /v0/beads/issues/{id}`
+  behind the new `issues.update.persistence` capability (additive;
+  `wire_revision` is unchanged), which also carries `bd update --persistent`,
+  `--ephemeral` and `--no-history` over HTTP. Against a server without the
+  token the client refuses before the dial, naming it; nothing is written. A
+  move the workspace refuses (an `unversioned`-class row asked for
+  `--ephemeral` or `--no-history`, or a demotion of a row with retained
+  snapshots) matches `ErrValidation` on every route: `bd serve` answers it
+  `400 invalid_argument`, and the local refusal gains a `validation failed: `
+  prefix.
+- `bd serve` advertises the new `issues.update.claim` behavior token for what
+  `PATCH /v0/beads/issues/{id}` already served untokened: `claim` (upstream
+  #6890), resolved on both planes, so a wisp is claimable there (additive; no
+  wire_revision bump). The HTTP client now picks the claim route from the
+  handshake before dialing: with the token every claim is one updateIssue call;
+  without it a claim alone goes to `{id}:claim` (no doomed 400 first; a wisp
+  still refuses by name, W-ClaimRequest.Wisp, now naming the token), and a
+  claim beside a patch, a guard, a force override or `allow_template` is
+  refused before the dial with an unsupported error naming
+  `issues.update.claim`. Skew note: a server that serves `claim` untokened
+  (wire_revision 2 builds before this release) now gets those two refusals
+  from a new client where it used to serve them; upgrade bd serve. A template
+  claimed alone without the token is still refused, on the client's own
+  pre-read: `{id}:claim` has no template guard (bd-jkp9v3).
 - `issueops.LeaseReclaimer`, the stale-lease sweep behind `bd reclaim`, is a
   role on every leg (dolt, embedded dolt, the unit-of-work provider and the
   HTTP client), and `bd serve` publishes it as `POST /v0/beads/issues:reclaim`
@@ -32,6 +114,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   description and metadata are unchanged, and omitting the flag (or passing
   `0`) is byte-identical to today's output. JSON output is untouched;
   `--include-comments` still streams every comment there.
+- `GET /v0/beads/issues` accepts `no_assignee`, `title` and a repeatable `id`
+  (one id per value, at most 200), each behind its own new capability token
+  (`issues.list.noAssignee`, `issues.list.title`, `issues.list.ids`; additive,
+  no wire_revision bump; `id` and its token are bd-enterprise's contract,
+  adopted unchanged), and applies them through
+  the same Reader role a local `bd list` reads through. Over a connected HTTP
+  workspace `bd list --no-assignee`, `--title` and `--id` now work instead of
+  refusing. Against a server that does not advertise a flag's token the
+  client refuses before dialing, and the refusal names the token (every
+  capability refusal over HTTP now names its token).
+- `GET /v0/beads/issues` accepts `q`, `bd search`'s free text, behind the
+  new `issues.list.search` capability token (additive; no wire_revision
+  bump). `issueops.ListRequest` gains `Query`, with `SearchIssues`' meaning
+  (title or id contains the text, case-insensitively), on every Reader
+  implementation, and `issueops.SearchListRequest` is search's scope as a
+  request. Every `bd search` route (direct, `--proxied-server` and the HTTP
+  backend) now asks `Reader.List` with it through one flag mapping; against
+  a server that does not advertise the token the HTTP client refuses before
+  dialing with a typed capability error. Two things a script can see follow
+  from that mapping: `bd search --type` expands aliases (`feat`, `mol`,
+  `dec`, ...) and validates the type as `bd list` does, so an unknown type
+  now exits 1 where it used to answer an empty result, and `bd search
+  --json` rows carry `comments_omitted` (additive) as `bd list --json` rows
+  do.
 - `bd create --graph` now plans its batch through `issueops.BatchApplier`
   instead of the old `buildDomainGraphPlan` path, so a graph create gets the
   same atomic multi-row semantics as `bd batch apply`. A `waits-for` edge's
@@ -237,6 +343,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It used to apply merges by default, writing the composite and deleting the
   source rules. Scripts using `--auto` or `--group` to apply merges must add
   `--force`. ([#5719](https://github.com/gastownhall/beads/issues/5719))
+- **Gate members are bounds-checked in the library, on every local backend.**
+  `issueops.Lifecycle.Create`, `Lifecycle.Update` and `BatchApplier` (create
+  and update items) now refuse, with a typed `*issueops.GateFieldError`
+  wrapping `ErrValidation`: a negative `Timeout` (previously accepted and
+  stored), an `await_type` over 32 characters, an `await_id` over 255
+  characters, and a waiter list whose JSON encoding exceeds its TEXT column
+  (65535 bytes). Creates check all four; an update can change only
+  `await_id` and `waiters`, so it checks those two. The over-width values
+  previously failed with a raw Dolt driver error. There is no `await_type` vocabulary, no gate-type-only rule
+  and no waiter deduplication.
+- **Over an http workspace, a bd command answers its repeated reads of a row
+  or setting from one response.** `bd show <id> --json` makes one request
+  instead of three, text `bd show` three instead of six, and `bd update`,
+  `bd close`, `bd label add`, `bd comments` and `bd dep add` one to seven
+  fewer (port of bd-enterprise e626072b8). A one-shot command's transport
+  answers an identical `getIssue`, `getSetting` or `listSettings` GET from the
+  answer it already received, for at most 5 s from that answer. Any write the
+  command makes clears it, and only a 2xx that decoded is kept. `bd serve`,
+  `--watch` and `--follow` never memoize, and neither do library embedders.
+  Within one command a re-read no longer sees another writer's change made in
+  the meantime (ledger row `L-read-memo`); `BD_HTTP_READ_MEMO=0` turns the
+  memo off. The identity-gate preview and the real open now share one
+  transport, so a write makes one handshake. `bd list` reads its vocabulary
+  with one `listSettings`, and the hook decorator skips its post-write re-reads
+  when no hook for the event is installed.
 - **`created_by` defaults to the actor in the library, for every create
   shape and every backend.** `PreparePublicCreateRequest`, which
   `Lifecycle.Create`, `BatchCreator` items and batch-apply create items all
@@ -429,6 +560,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunBatchApplyAppliesTheDefaultPriority`.
 
 ### Fixed
+
+- **`bd gate check` works over a connected HTTP workspace.** Its open-gate
+  listing built the same raw `SearchIssues` filter `bd gate list` did before
+  S20, so the HTTP backend refused the command before reading a gate and gc's
+  core `gate-sweep` order (`bd gate check --type=timer --escalate`) failed on
+  every remote scope. It now lists through `issueops.ListGates` over the
+  route's Querier (direct, proxied and remote alike). Closing a resolved gate
+  was already served. A bead gate's first sighting of its awaited bead
+  (`await_seen`, recorded when the check finds that bead, not yet closed, in
+  the gate's own store) was written through the legacy map-based
+  `UpdateIssue`, which the HTTP store does not implement, so every open bead
+  gate with an open target was an error on every sweep; it now goes through
+  the Lifecycle role's `Update` (a single-key metadata set, `issues.update` on
+  the wire), as does the gh:run discovery's `await_id` persist, which the
+  HTTP client sends to a server that advertises `issues.update.gates` (see
+  Added). Against an older server it refuses that patch before the dial, so a
+  gh:run gate with a workflow-name hint stays that gate's error, naming the
+  missing token and the server rather than a Go method.
+  The sweep also skips the gates of a persisted proto
+  (`bd cook --persist`): they are templates that every pour copies, so a
+  write to one was refused on every sweep and, in a local workspace, a
+  resolved one (an expired timer, say) was closed in the proto itself. The
+  listing's query leaves them out (`template=false`), so they take no row of
+  `--limit` and cannot crowd a live gate out of the sweep; `bd gate list`
+  still lists them. A negative `--limit` is now an error; the direct and
+  proxied routes used to read it as no limit. The served corpus gains
+  `mc-gate-check-timer`, `mc-gate-check-gh`, `gate-check-all` and a served
+  test over await-typed and template gates.
+
+- **`bd list`'s text renderings read only the listed issues' dependency
+  edges.** The tree (the default), `--deps`, `--parent`, `--format` and
+  `--watch` loaded every dependency record in the workspace
+  (`GetAllDependencyRecords`) to draw one page. Over a connected HTTP
+  workspace that is a walk of the whole workspace: every issue id, 200 per
+  request, then every id's edges, 100 per request. `bd list --limit 20`
+  against a ~3,800-issue workspace made 62 sequential requests (~5.7 s at
+  ~50 ms a round trip). Every rendering reads only edges a listed issue owns,
+  so the listing now reads exactly those through the `EdgeReader` role: one
+  request per 100 listed ids over HTTP. The same listing makes 6 requests
+  (~0.5 s), one more than `bd list --json`, and prints the same bytes. On a
+  local store a default page is as fast or faster. A listing that covers most
+  of a large store now pays batched reads (four queries per 200 listed ids)
+  instead of one scan of both edge tables, which costs more past roughly
+  1,000 listed rows: +0.07 s at 1,000 rows and +0.46 s at 4,000 on embedded
+  Dolt. A store with many wisps, whose edges the old read also scanned, is
+  faster at every page size.
+- **`bd gate list` works over a connected HTTP workspace** (S20). The
+  workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
+  backend refuses, so gc's `renudge-stale-human-gates` order failed on every
+  remote scope. Every route now calls one library entry,
+  `issueops.ListGates`, which asks the Querier role (`queryIssues`, served by
+  every deployed server) for `type=gate` with closed rows hidden unless
+  `--all`: the same rows the raw filter selected, on both planes. `--limit 0`
+  is unlimited, as before. The bead-scoped form (`bd gate list <id>`) is
+  unchanged.
+- **`bd export` works over a connected HTTP workspace** (S21). It read
+  through the raw `SearchIssues` method and the bulk label, dependency and
+  comment reads, which the HTTP backend refuses, so gc's 15-minute JSONL
+  export order (`gc bd export --all`) failed on every remote scope. On a remote
+  backend the read set now comes from one library entry, `issueops.ReadExport`,
+  composed over role reads every deployed server publishes: an unlimited
+  `Reader.List` for the rows, their labels and counts, `EdgeReader.ReadEdges`
+  for the dependency records, and `Reader.Get` with comments for each row
+  that has any. The JSONL is written by the same code as on every other
+  route. Memories (`--all`, `--include-memories`) come from the served memory
+  plane (`listMemories`), not the settings listing, which withholds every
+  `kv.*` row and so exported none. A failed read fails the export, never
+  shortens it. A remote export does not yet stamp the `wisp_plane` marker,
+  because the server publishes no plane membership. So a current `bd import`
+  of a remote export puts genuine no-history wisps on the durable issues
+  plane instead of the wisps plane, and gc's JSONL archive keeps them.
+  Nothing is dropped.
+- **A silent HTTP connection no longer costs a read the full 60s.** The HTTP
+  backend client gives a read's first attempt 15s from when it is sent to get
+  its response headers (`BEADS_HTTP_RESPONSE_HEADER_TIMEOUT`: a duration, a
+  number of seconds, or `off`), then retries it once on another connection
+  with no header timer, on what is left of the same 60s request timeout. A
+  slow but healthy read still finishes if its retry's headers and body
+  together fit in that remainder (about 45s); one that needs longer now fails
+  at 60s. A read whose connection is reset is retried the same way (on Windows
+  only when the reset surfaces as an early EOF), and each retry is logged to
+  stderr with its count. The events:watch stream's connect gets neither the
+  timer nor the retry. A write is never retried; one that was sent and timed
+  out before its headers fails with a typed `wire.ResponseHeaderTimeoutError`
+  naming the server's host, because it may or may not have been applied,
+  while a dial or TLS timeout stays a plain connection error. The batch get,
+  a read on POST, is now also retried on a 503 the way a GET is.
+- **A large batch apply over HTTP no longer fails at 60s while the server
+  commits it.** `bd serve` runs an `issues:batchApply` of more than 100 items
+  (a large `bd create --graph` plan, say) under its `--large-apply-ceiling`
+  (5 minutes by default), on a context detached from the client, but the HTTP
+  backend client gave every request 60s. A large apply that took longer
+  failed client-side with a timeout while the server went on to commit it.
+  Such a request is now dialed with 6 minutes, which covers the server's
+  default ceiling plus what it may spend before (reading the request, waiting
+  for the one-wide large-apply slot) and after (writing the answer back).
+  Every other request keeps 60s. An `*http.Client` passed in through
+  `backend/http`'s `Options.HTTPClient` is raised the same way for that one
+  request when its `Timeout` is shorter than 6 minutes; one with no `Timeout`
+  stays unbounded. A server whose `--large-apply-ceiling` is raised past about
+  5m15s can still outlast the client: it does not advertise its ceiling, so
+  the client cannot learn it.
 - **An update of a template is now refused for every caller, not only
   `bd update`.** The template guard used to be a pre-read in `cmd/bd`, so an
   update through `bd serve` (`PATCH /v0/beads/issues/{id}`), an `update` item
@@ -498,6 +731,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rollout) still stores P0, with no error on either side.
   Out-of-tree storage backends must now honor `DefaultPriority`; see the
   BREAKING (out-of-tree storage backends) entry under `### Changed`.
+- Blocked-state repair no longer lets a stale `is_blocked` bit on a parent
+  with no reason row of its own hold itself up through a parent that blocks
+  on its own child, in a malformed parent-child cycle (gastownhall/beads#7386).
+  The explained-parent walk, on both the full repair and the per-write
+  recompute, now climbs through such a parent, whose bit is inherited,
+  instead of treating it as a final unexplained ancestor; `bd doctor`'s
+  Blocked State check counts the stale bit and `--fix` clears it.
+
+- `bd show --current` over the HTTP backend no longer prints the wrong issue.
+  Its in-progress/hooked lookup used the raw `SearchIssues` method, which
+  the HTTP backend refuses; the refusal was swallowed and the command fell
+  back to the last-touched issue, exit 0. The lookup now reads through the
+  `issueops.Querier` role, and a failed read is an error on every route
+  (including `--proxied-server`), never a fallback. A miss (nothing in
+  progress or hooked, or no actor) is another matter: `--proxied-server` now
+  falls back to the last-touched issue as the direct route always has, where
+  it used to fail with `no current issue found`.
+- `bd list --type <infra type> --include-ephemeral` (and `GET
+  /v0/beads/issues` with the same parameters) now include that type's durable
+  rows — a promoted wisp, an issue retyped after it was created — beside its
+  wisps, as `--include-ephemeral` promises; the type used to narrow the read
+  to its wisps alone. `bd count --include-infra --include-ephemeral` and the
+  count endpoint count the same rows. An infra `--type` without
+  `--include-ephemeral` still reads only the wisps, and `bd search --type
+  <infra type>`, now served by the same listing, still finds that type's
+  wisps and durable rows alike.
+- `bd recompute-blocked` on a workspace connected to `bd serve` is a no-op
+  that exits 0 instead of refusing: the server maintains `is_blocked` on
+  every write and the column lives in its database. `--json` reports
+  `{"rows_corrected": 0, "maintained_by": "server"}`.
 - **The http store's `GetIssue` answers a miss with `storage.ErrNotFound`,
   like the local stores.** It used to answer a missing (or empty) id with
   `(nil, nil)`, which every caller written against the backend contract
@@ -522,6 +785,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negative duration and fails, even though `--age 0s`'s own contract is
   that every wisp qualifies. `ageThreshold <= 0` now bypasses the clock
   comparison entirely (#7236).
+- **`bd mol wisp gc` no longer deletes a fresh step because a wisp it
+  depends on is abandoned.** The GC applied `--age` only to the wisps it
+  selected directly, then deleted their dependents at any age as long as
+  they were not live work, so a step created seconds earlier went with an
+  old wisp it depended on, and raising `--age` did not help. A dependent
+  now has to meet `--age` itself, by the same rule as the wisp it depends
+  on (including the #7236 rounding fix). One that is too young is spared
+  and loses its edge to the deleted wisp: an open one is collected once it
+  ages out, a closed one is left for `--all`, `--closed` or `bd purge`,
+  since without `--all` the GC reaches a closed wisp only as the dependent
+  of an abandoned one (#5219).
 - `bd create --parent` works on the HTTP backend: the create role mints the
   `<parent>.<n>` child id (and inherits the parent's labels) inside the
   create on every route, instead of the CLI reserving it through a raw
@@ -529,6 +803,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or without an id) and `bd mol progress` no longer answer empty or refuse
   over http, and `bd ready --mol` step rows carry their assignee and
   timestamps.
+- **Server-mode config writes are committed again.** On the direct SQL-server
+  route, `bd remember`, `bd forget` and `bd config set|unset|set-many` wrote
+  the `config` table but never created a Dolt commit: `maybeAutoCommit`
+  returns early off the embedded route, and plain `Commit()` excludes config
+  (GH#2455). The rows sat in the working set, where `bd dolt push` does not
+  carry them, and a dirty internal key such as `status.custom` made the next
+  `bd dolt pull` refuse until an explicit `bd dolt commit`. With
+  `dolt.auto-commit` on (the default) these writes now commit right away
+  through the scoped `CommitConfigOnly`, which stages only `config` and the
+  lookup tables projected from it, so a concurrent operation's other dirty
+  tables are never swept; `batch` and `off` defer them to `bd dolt commit`
+  like every other write. `bd remember` and `bd forget` commit only user
+  `kv.*` rows. When an internal config key is dirty (such as the
+  `issue_prefix` that `bd rename-prefix` writes), the memory is still
+  stored but not committed: the command warns on stderr with the keys named
+  and exits 0, `--json` adds `committed: false`, `commit_error` and
+  `dirty_config_keys`, and `bd dolt commit` publishes the memory with those
+  keys. v1.0.1 ([#3052](https://github.com/gastownhall/beads/pull/3052)),
+  whose commits this restores, also warned on a failed memory commit
+  instead of failing the write. `bd config unset` of a yaml-only secret key
+  also commits its delete of a credential row an older bd stored in the
+  database, so HEAD, which `bd dolt push` publishes, no longer keeps it
+  ([#4078](https://github.com/gastownhall/beads/issues/4078)).
+
 - **PRs based on `hotfix/**` branches now run full CI, not just
   cross-version historical smokes and triage labeling.** `pr.yml`,
   `pr-risk.yml`, `conformance.yml`, `cross-version-smoke.yml` and
@@ -819,6 +1117,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd context` also prints `cwd repo: git: unavailable` rather than silently
   omitting the one degraded state it exists to report.
 
+- **Server-mode `bd federation sync` and `bd federation status` work with Dolt
+  remotes that have no stored peer credentials**
+  ([#5128](https://github.com/gastownhall/beads/pull/5128), fixes
+  [#4837](https://github.com/gastownhall/beads/issues/4837)). A remote added
+  by `bd federation add-peer` without `--user` or by `bd dolt remote add` has
+  no `federation_peers` row, and every server-mode `bd federation` push, pull
+  and fetch to it failed at the credential lookup with `failed to get peer
+  credentials: not found: federation peer <name>`. A missing row now means no
+  stored credentials, as it already did in embedded mode, so the operation
+  runs with Dolt's own credential discovery: `bd federation sync` without
+  `--peer` syncs those remotes too, and `status` fetches them. Errors reading
+  or decrypting a stored row still fail. A mistyped `--peer` now fails with
+  Dolt's own unknown-remote error instead.
+
 - **`bd comment`/`bd comments add` refuse an abbreviated id and a reserved
   word instead of silently resolving one to the wrong issue**
   ([#5393](https://github.com/gastownhall/beads/pull/5393)). `bd comment list
@@ -844,6 +1156,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separately and found to already be exact-id-only by construction (its
   resolution never performed abbreviation matching in the first place) — a
   regression test now locks that in rather than leaving it undocumented.
+
+- **`bd delete` no longer resolves an id it cannot find to a different issue
+  whose id begins with it.**
+  ([#7375](https://github.com/gastownhall/beads/pull/7375)). The direct
+  (embedded and server) route resolved
+  each id with the abbreviation-tolerant resolver, so an id that was already
+  gone (a retried delete, a re-run `--from-file` list, a parent whose child
+  survives) resolved by leading-prefix match to whichever surviving issue's id
+  it begins: after `fx-t00003` was deleted, `bd delete fx-t00003` previewed
+  `fx-t000031` and printed `bd delete fx-t000031 --force` as the next step,
+  and with `--force` deleted it. `--quiet` silenced the partial-id notice, so
+  a `--force --quiet` re-run deleted issues it never named without a word.
+  `bd delete` now requires an exact id on the preview and with `--force`, as
+  `bd comment` does and as the team-server route already did; full ids, bare
+  full hashes, child ids and routed ids resolve as before. An abbreviation is
+  refused with `issue "t000" not found: bd delete needs the full issue id, and
+  "t000" is only the start of fx-t000031`, naming every id it matches; under
+  `--if-revision` it is the guard's lost race instead (`precondition_failed`,
+  exit 13), as for any other gone id. This is a user-visible change: a script
+  or habit that deletes by abbreviation now gets that error and must pass the
+  full id. Reads and other writes keep accepting abbreviations; see [Working
+  with IDs](docs/core-concepts/hash-ids.md#working-with-ids).
 
 - **A git hook beads never wrote is no longer reported as installed**
   ([#6084](https://github.com/gastownhall/beads/issues/6084)). `getHookVersion`
@@ -1608,6 +1942,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the existing message.
 
 ### Changed
+
+- **`bd init` refuses to initialize directly in your home directory**
+  ([#4635](https://github.com/gastownhall/beads/issues/4635)). `bd init` sets
+  up the directory it runs in as a project: it runs `git init` there unless it
+  finds a repository, and installs agent files — `CLAUDE.md`, `AGENTS.md`,
+  `.gitignore`, `.claude/`, `.codex/`, `.cursor/`, `.agents/`. In your home
+  directory most of those are your agents' user-wide settings, so bd's hooks
+  ended up running in every project, and init did this silently under
+  `--non-interactive`, which engages automatically whenever stdin is not a TTY
+  (so: whenever an agent runs it). A project is virtually never the home
+  directory itself, so this now refuses with exit code `15`
+  (`ExitHomeDirRefused`; `13` and `14` already mean a lost conditional-write
+  race and a migration freeze), documented at
+  `docs/recovery/init-safety.md#init-home-refused`.
+
+  Deliberately narrow: it fires only when the working directory is *exactly*
+  your home directory, your home is not itself a git repository (tracked
+  dotfiles are unaffected, but a home that only sits inside an enclosing
+  repository, or a `GIT_DIR` inherited from the environment, does not count),
+  and you did not name a `BEADS_DIR` yourself. A subdirectory of home is an
+  ordinary project and is never refused. If you do name a `BEADS_DIR` from
+  an untracked home, init sets up only that workspace: no `git init`, no
+  agent files or `.gitignore` in your home directory, and nothing in a
+  repository your home sits inside (no hooks, `beads.role`, Dolt remote taken
+  from its origin, or bootstrap commit) unless a flag such as `--stealth` or
+  `--setup-exclude` asks for it. `--force` and
+  `--reinit-local` do not override the refusal — they bypass the local
+  data-safety guard, which is a different question from "is this the right
+  directory". The guard runs first in init's `RunE`, ahead of every path with
+  an effect, including the proxied dispatch and the store-opening
+  `--reinit-local` pre-checks.
 
 - **The managed shared Dolt server now opens its configured remotesapi
   listener** ([#6020](https://github.com/gastownhall/beads/pull/6020)).

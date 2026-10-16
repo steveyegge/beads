@@ -253,9 +253,9 @@ type UpdateFlags struct {
 	// Claim claims the issue for the actor in the SAME transaction as the
 	// patch (upstream #6890): `bd update <id> --claim`, served by the same
 	// role. With it set the patch may be empty — the claim is then the whole
-	// write. A server that predates the member refuses it as an unknown
-	// parameter before any database work, which is what makes that refusal
-	// safe for a caller to read as skew.
+	// write. The client sets it only for a server advertising
+	// CapIssuesUpdateClaim, read from the handshake before the dial; a server
+	// that predates the member would refuse it as an unknown parameter.
 	Claim bool
 	// ForceAssigneeTransfer bypasses ONLY the anti-steal fence on a genuine
 	// transfer away from a live foreign in-progress owner. The server
@@ -539,7 +539,11 @@ func (c *Client) ApplyBatch(ctx context.Context, body ApplyBatchRequest) (*apige
 	}
 
 	var out apigen.ApplyBatchResponse
-	r := Request{Op: OpApplyBatch, Method: http.MethodPost, Path: PathIssuesBatchApply, Body: body, Actor: body.Actor}
+	// A plan over the server's large-apply threshold runs under the server's
+	// extended budget, so it is dialed under the matching client ceiling
+	// rather than DefaultTimeout.
+	r := Request{Op: OpApplyBatch, Method: http.MethodPost, Path: PathIssuesBatchApply, Body: body, Actor: body.Actor,
+		Timeout: largeApplyTimeout(len(body.Items))}
 	if err := c.dispatch(ctx, r, &out); err != nil {
 		return nil, err
 	}

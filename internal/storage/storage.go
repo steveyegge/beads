@@ -1032,6 +1032,20 @@ type ExternalDependencyQueryStore interface {
 	GetExternalBlockingDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error)
 }
 
+// BlockersBatchStore is IsBlocked for many ids in a bounded number of reads.
+// The answer holds exactly the ids IsBlocked reports blocked, each mapped to
+// the blocker list IsBlocked returns for it (nil when it has none); an id
+// IsBlocked reports unblocked, or that names no row, is absent. Decorators
+// that annotate a page of ids (the external-dependency policy's
+// BlockingAnnotator) use it instead of one IsBlocked per id, and fall back to
+// that loop on a store without it. It answers for the raw store alone, with no
+// external-dependency policy applied (no `external:` blocker is ever in it), so
+// it is meant to be called from inside that policy's decorator, not probed
+// through UnwrapStore by a caller holding the decorated store.
+type BlockersBatchStore interface {
+	IsBlockedWithBlockersBatch(ctx context.Context, ids []string) (map[string][]string, error)
+}
+
 // RemoteBackendStore is implemented by a DoltStorage that is a pure network
 // client of a remote bd serve process (a registered backend whose
 // backends.Backend.Remote is true — see internal/storage/backends). It is
