@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/httpclient"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
@@ -696,8 +697,9 @@ Examples:
 // of work, or the remote http backend's queryIssues). It is the question the
 // raw SearchIssues filter used to ask — the gate type, both planes, closed
 // rows excluded, cut at limit — but a remote backend serves it, where the raw
-// filter was refused before any gate was read. The per-type selection stays
-// with filterCheckableGates.
+// filter was refused before any gate was read. Templates are left out of the
+// query (see listOpenGatesWith); the per-type selection stays with
+// filterCheckableGates.
 func listOpenGatesForCheck(ctx context.Context, limit int) ([]*types.Issue, error) {
 	querier, err := openQuerier()
 	if err != nil {
@@ -707,9 +709,12 @@ func listOpenGatesForCheck(ctx context.Context, limit int) ([]*types.Issue, erro
 }
 
 // listOpenGatesWith is listOpenGatesForCheck over a given Querier: the open
-// gates only (gate check never evaluates a closed one), cut at limit.
+// gates only (gate check never evaluates a closed one), minus templates, cut at
+// limit. The templates go in the query, not after it: a page of a persisted
+// proto's gates, newer than the live ones, would otherwise fill --limit and
+// leave the sweep nothing to check.
 func listOpenGatesWith(ctx context.Context, querier issueops.Querier, limit int) ([]*types.Issue, error) {
-	return issueops.ListGates(ctx, querier, issueops.GateListRequest{Limit: limit})
+	return issueops.ListGates(ctx, querier, issueops.GateListRequest{ExcludeTemplates: true, Limit: limit})
 }
 
 type gateCheckResult struct {
@@ -720,9 +725,21 @@ type gateCheckResult struct {
 	err       error
 }
 
+// filterCheckableGates selects the listed gates a sweep evaluates: those that
+// match typeFilter, minus templates. A template's gate is a blueprint that every
+// pour copies, await_id included. Checking one fails every sweep where its
+// write is refused (the Lifecycle role's template guard, a served close) and
+// rewrites the proto where it is not (a local close, the proxied-server route's
+// writes): a closed timer gate, a recorded sighting, or a run ID every later
+// pour would await. listOpenGatesWith already leaves templates out of the
+// query; the skip here is the backstop for a listing that returns one anyway.
+// The direct and the proxied-server routes both select here.
 func filterCheckableGates(gates []*types.Issue, typeFilter string) []*types.Issue {
 	var out []*types.Issue
 	for _, gate := range gates {
+		if gate.IsTemplate {
+			continue
+		}
 		if shouldCheckGate(gate, typeFilter) {
 			out = append(out, gate)
 		}
@@ -760,19 +777,49 @@ func updateGateThroughLifecycle(ctx context.Context, gateID string, patch issueo
 	return nil
 }
 
+// awaitIDPatchRefusal is the divergence-ledger row a connected HTTP
+// workspace's Lifecycle role refuses an await_id edit by, before any request:
+// the wire's issue patch has no await_id member.
+const awaitIDPatchRefusal = "W-IssuePatch.AwaitID"
+
 // persistGateCheckAwaitID records a gh:run gate's discovered run ID through
-// the Lifecycle role. A backend that cannot carry an await_id edit (the HTTP
-// wire's issue patch has no await_id member) refuses it before any request;
-// that refusal is rendered as the missing capability, not as the role method
-// that raised it, and stays this gate's error so the rest of the sweep runs.
+// the Lifecycle role. The one refusal it rewords is the HTTP wire's
+// (awaitIDPatchRefusal), whose own text names the role method and the wire
+// operation rather than what the user can do about it. That refusal stays
+// this gate's error, so the rest of the sweep runs. Every other error,
+// another unsupported capability included, is returned as the role raised it.
 func persistGateCheckAwaitID(ctx context.Context, gateID, runID string) error {
 	err := updateGateThroughLifecycle(ctx, gateID, issueops.IssuePatch{AwaitID: issueops.Field[string]{Set: true, Value: runID}})
-	var unsupported *storage.ErrUnsupported
-	if errors.As(err, &unsupported) {
-		return fmt.Errorf("run %s cannot be recorded as await_id: this backend does not serve an await_id update; give the gate a numeric run ID or check it in a local workspace", runID)
+	var refused *httpclient.InexpressibleError
+	if errors.As(err, &refused) && refused.Refused != nil && refused.Refused.Row.ID == awaitIDPatchRefusal {
+		serverURL := ""
+		if refused.Unsup != nil {
+			serverURL = refused.Unsup.ServerURL
+		}
+		return &awaitIDRefusedError{runID: runID, serverURL: serverURL, err: err}
 	}
 	return err
 }
+
+// awaitIDRefusedError is the HTTP wire's await_id refusal, reworded for the
+// gate check row that prints it: it names the run, await_id and the server.
+// Unwrap keeps the refusal, so errors.As still reaches *storage.ErrUnsupported
+// and the ledger row.
+type awaitIDRefusedError struct {
+	runID     string
+	serverURL string
+	err       error
+}
+
+func (e *awaitIDRefusedError) Error() string {
+	server := "this backend"
+	if e.serverURL != "" {
+		server = "bd serve at " + e.serverURL
+	}
+	return fmt.Sprintf("run %s cannot be recorded as await_id: %s does not accept an await_id update; check the gate in a local workspace", e.runID, server)
+}
+
+func (e *awaitIDRefusedError) Unwrap() error { return e.err }
 
 func evaluateGates(ctx context.Context, gates []*types.Issue, now time.Time, getter issueGetter, persistAwaitID func(gateID, runID string) error, recordSeen func(gate *types.Issue) error) []gateCheckResult {
 	results := make([]gateCheckResult, 0, len(gates))

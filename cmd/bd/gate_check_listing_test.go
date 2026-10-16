@@ -29,7 +29,9 @@ func (q *recordingGateQuerier) Query(_ context.Context, req issueops.QueryReques
 // TestGateCheckListsOpenGatesThroughListGates pins the gate check listing to
 // the Querier role (queryIssues on a remote backend) instead of the raw
 // SearchIssues filter the http store refused before reading a gate: the gate
-// type, closed excluded, the --limit carried as given (0 = unlimited).
+// type, closed excluded, templates excluded in the query itself (so a
+// persisted proto's gates take no row of --limit), the --limit carried as
+// given (0 = unlimited).
 func TestGateCheckListsOpenGatesThroughListGates(t *testing.T) {
 	for _, limit := range []int{0, 5, 100} {
 		q := &recordingGateQuerier{items: []*types.IssueWithCounts{
@@ -41,7 +43,7 @@ func TestGateCheckListsOpenGatesThroughListGates(t *testing.T) {
 			t.Fatalf("limit %d: listOpenGatesWith: %v", limit, err)
 		}
 		l := limit
-		want := issueops.QueryRequest{Expression: "type=gate", IncludeClosed: false, Limit: &l}
+		want := issueops.QueryRequest{Expression: "type=gate AND template=false", IncludeClosed: false, Limit: &l}
 		if len(q.calls) != 1 || !reflect.DeepEqual(q.calls[0], want) {
 			t.Fatalf("limit %d: Query calls = %#v, want one %#v", limit, q.calls, want)
 		}

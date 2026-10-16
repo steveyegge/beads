@@ -538,11 +538,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Lifecycle role's `Update` (a single-key metadata set, `issues.update` on
   the wire), as does the gh:run discovery's `await_id` persist. The HTTP
   client still refuses the `await_id` patch before the dial, so a gh:run gate
-  with a workflow-name hint stays that gate's error, now saying the
-  `await_id` update is not served rather than naming a Go method. A negative
-  `--limit` is now an error; the direct and proxied routes used to read it as
-  no limit. The served corpus gains `mc-gate-check-timer`, `mc-gate-check-gh`,
-  `gate-check-all` and a served test over await-typed gates.
+  with a workflow-name hint stays that gate's error, now naming the run and
+  the server that does not accept the `await_id` update rather than a Go
+  method. The sweep also skips the gates of a persisted proto
+  (`bd cook --persist`): they are templates that every pour copies, so a
+  write to one was refused on every sweep and, in a local workspace, a
+  resolved one (an expired timer, say) was closed in the proto itself. The
+  listing's query leaves them out (`template=false`), so they take no row of
+  `--limit` and cannot crowd a live gate out of the sweep; `bd gate list`
+  still lists them. A negative `--limit` is now an error; the direct and
+  proxied routes used to read it as no limit. The served corpus gains
+  `mc-gate-check-timer`, `mc-gate-check-gh`, `gate-check-all` and a served
+  test over await-typed and template gates.
 
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP

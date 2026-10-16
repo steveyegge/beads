@@ -62,7 +62,9 @@ func gateCheckWrites(reqs []string) []string {
 //   - a merged gh:pr gate closes, a closed one escalates and stays open;
 //   - a gh:run gate with a workflow-name hint discovers its run but cannot
 //     persist await_id over the wire: that gate's error names the await_id
-//     update, not a Go method, and await_id is untouched.
+//     update and the server, not a Go method, and await_id is untouched;
+//   - a persisted proto's gates are templates: listed, but no sweep evaluates
+//     or writes them, and they take no row of --limit (they sort first here).
 //
 // The corpus.yaml shapes prove the listing only (their gates have no
 // await_type); this is the test that proves what the sweep does to the gates.
@@ -79,10 +81,15 @@ func TestServedGateCheckOverAwaitTypedGates(t *testing.T) {
 	if err := store.SetConfig(ctx, "issue_prefix", corpusPrefix); err != nil {
 		t.Fatalf("set the issue prefix: %v", err)
 	}
+	// The templates keep P0 and every other row gets P2, so the store's default
+	// order puts the template gates ahead of every live one.
 	seed := func(i *types.Issue) {
 		t.Helper()
 		i.Status = types.StatusOpen
 		i.Title = i.ID
+		if !i.IsTemplate {
+			i.Priority = 2
+		}
 		if err := store.CreateIssue(ctx, i, "seed"); err != nil {
 			t.Fatalf("seed %s: %v", i.ID, err)
 		}
@@ -99,6 +106,9 @@ func TestServedGateCheckOverAwaitTypedGates(t *testing.T) {
 	seed(&types.Issue{ID: "e2e-g-pr-merged", IssueType: "gate", AwaitType: "gh:pr", AwaitID: "11"})
 	seed(&types.Issue{ID: "e2e-g-pr-closed", IssueType: "gate", AwaitType: "gh:pr", AwaitID: "12"})
 	seed(&types.Issue{ID: "e2e-g-run-hint", IssueType: "gate", AwaitType: "gh:run", AwaitID: "ci-wf"})
+	seed(&types.Issue{ID: "e2e-tpl-timer", IssueType: "gate", AwaitType: "timer", Timeout: time.Millisecond, IsTemplate: true})
+	seed(&types.Issue{ID: "e2e-tpl-bead", IssueType: "gate", AwaitType: "bead", AwaitID: "e2e-tgt-open", IsTemplate: true})
+	seed(&types.Issue{ID: "e2e-tpl-run", IssueType: "gate", AwaitType: "gh:run", AwaitID: "ci-wf", IsTemplate: true})
 
 	tokenFile := filepath.Join(t.TempDir(), "tokens")
 	if err := os.WriteFile(tokenFile, []byte(corpusToken+"\n"), 0o600); err != nil {
@@ -212,6 +222,40 @@ esac
 		}
 	})
 
+	t.Run("limit counts only live gates", func(t *testing.T) {
+		// bd gate list still lists templates, so its first three rows show the
+		// order the sweep's own listing would be cut from.
+		r := runBD(t, bin, dir, env, "", "gate", "list", "--limit", "3", "--json")
+		var listed []types.Issue
+		if start := strings.Index(r.stdout, "["); r.code != 0 || start < 0 || json.Unmarshal([]byte(r.stdout[start:]), &listed) != nil {
+			t.Fatalf("bd gate list --limit 3 --json: %s", r)
+		}
+		var ids []string
+		for _, g := range listed {
+			if strings.HasPrefix(g.ID, "e2e-tpl-") {
+				ids = append(ids, g.ID)
+			}
+		}
+		if len(listed) != 3 || len(ids) != 3 {
+			t.Fatalf("bd gate list --limit 3 listed %d gates, %d of them templates (%v), want the three template gates first", len(listed), len(ids), ids)
+		}
+		reqs.take()
+
+		r = runBD(t, bin, dir, env, "", "gate", "check", "--dry-run", "--limit", "3")
+		if r.code != 0 {
+			t.Fatalf("bd gate check --dry-run --limit 3: %s", r)
+		}
+		if w := gateCheckWrites(reqs.take()); len(w) != 0 {
+			t.Fatalf("--dry-run sent writes %v\n%s", w, r)
+		}
+		if !strings.Contains(r.stdout, "Checked 3 gates") {
+			t.Errorf("--limit 3 behind three template gates must still check three live gates:\n%s", r)
+		}
+		if strings.Contains(r.stdout+r.stderr, "e2e-tpl-") {
+			t.Errorf("a template gate was checked:\n%s", r)
+		}
+	})
+
 	t.Run("timer sweep closes the expired timer", func(t *testing.T) {
 		r := runBD(t, bin, dir, env, "", "gate", "check", "--type=timer", "--escalate")
 		if r.code != 0 {
@@ -220,6 +264,7 @@ esac
 		reqs.take()
 		wantStatus("e2e-g-timer", types.StatusClosed)
 		wantStatus("e2e-g-timer-pending", types.StatusOpen)
+		wantStatus("e2e-tpl-timer", types.StatusOpen)
 	})
 
 	t.Run("bead sweep records the sighting and closes the done gate", func(t *testing.T) {
@@ -233,12 +278,18 @@ esac
 			if strings.Contains(w, "e2e-g-bead-open") {
 				sighted = true
 			}
+			if strings.Contains(w, "e2e-tpl-bead") {
+				t.Errorf("the sweep wrote to the template gate: %s", w)
+			}
 		}
 		if !sighted {
 			t.Errorf("no write to e2e-g-bead-open reached the server; writes: %v\n%s", writes, r)
 		}
 		if seen := seenOf("e2e-g-bead-open"); seen != "e2e-tgt-open" {
 			t.Errorf("e2e-g-bead-open await_seen = %q, want e2e-tgt-open\n%s", seen, r)
+		}
+		if seen := seenOf("e2e-tpl-bead"); seen != "" {
+			t.Errorf("e2e-tpl-bead recorded a sighting %q; a template gate is never checked", seen)
 		}
 		wantStatus("e2e-g-bead-open", types.StatusOpen)
 		wantStatus("e2e-g-bead-closed", types.StatusClosed)
@@ -268,6 +319,12 @@ esac
 		if !strings.Contains(r.stderr, "e2e-g-run-hint") || !strings.Contains(r.stderr, "await_id") {
 			t.Errorf("gh:run error does not name the gate and the await_id update:\n%s", r)
 		}
+		if !strings.Contains(r.stderr, "bd serve at http://"+proxyAddr) {
+			t.Errorf("gh:run error does not name the server it reached:\n%s", r)
+		}
+		if strings.Contains(r.stderr, "e2e-tpl-run") {
+			t.Errorf("the template gh:run gate was checked:\n%s", r)
+		}
 		for _, leak := range []string{"UpdateIssue", "Lifecycle.Update", "updateIssue"} {
 			if strings.Contains(r.stderr, leak) {
 				t.Errorf("gh:run error leaks %q:\n%s", leak, r)
@@ -277,5 +334,8 @@ esac
 			t.Errorf("e2e-g-run-hint await_id = %q, want ci-wf untouched", got)
 		}
 		wantStatus("e2e-g-run-hint", types.StatusOpen)
+		if got := get("e2e-tpl-run").AwaitID; got != "ci-wf" {
+			t.Errorf("e2e-tpl-run await_id = %q, want ci-wf untouched", got)
+		}
 	})
 }

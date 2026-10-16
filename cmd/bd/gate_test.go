@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/httpclient"
+	"github.com/steveyegge/beads/internal/httpclient/encode"
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
@@ -191,6 +193,41 @@ func TestShouldCheckGate(t *testing.T) {
 					tt.awaitType, tt.typeFilter, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestFilterCheckableGatesSkipsTemplates: no type filter selects a persisted
+// proto's gates, even from a listing that returned them beside the open ones
+// (gate check's own query leaves them out). A template gate is the blueprint
+// every pour copies, so a sweep neither evaluates nor writes it.
+func TestFilterCheckableGatesSkipsTemplates(t *testing.T) {
+	var gates []*types.Issue
+	for _, awaitType := range []string{"gh:run", "gh:pr", "timer", "human", "bead"} {
+		gates = append(gates,
+			&types.Issue{ID: "live-" + awaitType, IssueType: "gate", AwaitType: awaitType},
+			&types.Issue{ID: "tpl-" + awaitType, IssueType: "gate", AwaitType: awaitType, IsTemplate: true},
+		)
+	}
+	every := []string{"live-gh:run", "live-gh:pr", "live-timer", "live-human", "live-bead"}
+	for _, tt := range []struct {
+		filter string
+		want   []string
+	}{
+		{"", every},
+		{"all", every},
+		{"gh", []string{"live-gh:run", "live-gh:pr"}},
+		{"gh:run", []string{"live-gh:run"}},
+		{"gh:pr", []string{"live-gh:pr"}},
+		{"timer", []string{"live-timer"}},
+		{"bead", []string{"live-bead"}},
+	} {
+		var got []string
+		for _, gate := range filterCheckableGates(gates, tt.filter) {
+			got = append(got, gate.ID)
+		}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("filterCheckableGates(%q) = %v, want %v", tt.filter, got, tt.want)
+		}
 	}
 }
 
@@ -653,6 +690,25 @@ func TestBeadGateSeenUpdate_KeepsOtherMetadata(t *testing.T) {
 	gate.AwaitID = "rig:bd-y"
 	if beadGateTargetSeen(gate) {
 		t.Error("a sighting of the old await_id counts after the gate was retargeted")
+	}
+}
+
+// TestBeadGateSeenPatchMatchesTheMapUpdate ties the sighting's two encodings
+// together: the direct route records it as beadGateSeenPatch through the
+// Lifecycle role, while the proxied route and rename still write
+// beadGateSeenUpdate's map. A gate must read back the same sighting whichever
+// route recorded it.
+func TestBeadGateSeenPatchMatchesTheMapUpdate(t *testing.T) {
+	for _, awaitID := range []string{"bd-x", "rig:bd-x", `bd-"quoted"`} {
+		update := beadGateSeenUpdate(awaitID)
+		set, ok := update[storageissueops.OpSetMetadata].(map[string]json.RawMessage)
+		if len(update) != 1 || !ok {
+			t.Fatalf("beadGateSeenUpdate(%q) = %v, want a single metadata set", awaitID, update)
+		}
+		want := issueops.IssuePatch{Metadata: issueops.MetadataPatch{Set: set}}
+		if got := beadGateSeenPatch(awaitID); !reflect.DeepEqual(got, want) {
+			t.Errorf("beadGateSeenPatch(%q) = %+v, want the map update's set %+v", awaitID, got, want)
+		}
 	}
 }
 
@@ -1816,8 +1872,8 @@ func TestGateCheck_GHRunWorkflowDiscoveryPersistence(t *testing.T) {
 				t.Fatalf("Querier.Query calls = %d, want 1", len(fakeStore.queries))
 			}
 			q := fakeStore.queries[0]
-			if q.Expression != "type=gate" || q.IncludeClosed || q.Limit == nil || *q.Limit != 100 {
-				t.Fatalf("gate check query = %+v, want type=gate, closed excluded, limit 100", q)
+			if q.Expression != "type=gate AND template=false" || q.IncludeClosed || q.Limit == nil || *q.Limit != 100 {
+				t.Fatalf("gate check query = %+v, want type=gate AND template=false, closed excluded, limit 100", q)
 			}
 			if tt.wantCloseCalls == 1 {
 				call := fakeStore.closeCalls[0]
@@ -1830,6 +1886,118 @@ func TestGateCheck_GHRunWorkflowDiscoveryPersistence(t *testing.T) {
 				if call.actor != "test-actor" {
 					t.Fatalf("expected CloseIssue actor test-actor, got %q", call.actor)
 				}
+			}
+		})
+	}
+}
+
+// templateGateCheckStore answers a bead gate's target lookup, so a sweep that
+// evaluates a bead gate shows up in gets.
+type templateGateCheckStore struct {
+	*fakeGateCheckStore
+	gets []string
+}
+
+func (s *templateGateCheckStore) GetIssue(_ context.Context, id string) (*types.Issue, error) {
+	s.gets = append(s.gets, id)
+	return &types.Issue{ID: id, Status: types.StatusOpen}, nil
+}
+
+// TestGateCheckSkipsTemplateGates sweeps a persisted proto's gates beside the
+// open ones. The listing's query leaves templates out, but this fake answers
+// every expression alike, so the rows reach filterCheckableGates and the test
+// pins that backstop. The Lifecycle role refuses a write to a template, so
+// evaluating one failed every sweep, after a gh:run gate had already asked
+// GitHub for its run. A template gate is neither evaluated nor written, and an
+// ordinary gate beside it still is.
+func TestGateCheckSkipsTemplateGates(t *testing.T) {
+	expired := time.Now().Add(-2 * time.Hour)
+	templates := []*types.Issue{
+		{ID: "bd-proto.gate-await-ci", IssueType: "gate", AwaitType: "gh:run", AwaitID: "release.yml", IsTemplate: true},
+		{ID: "bd-proto.gate-await-bead", IssueType: "gate", AwaitType: "bead", AwaitID: "bd-target", IsTemplate: true},
+		{ID: "bd-proto.gate-await-timer", IssueType: "gate", AwaitType: "timer", CreatedAt: expired, Timeout: time.Hour, IsTemplate: true},
+	}
+	live := &types.Issue{ID: "bd-timer", IssueType: "gate", AwaitType: "timer", CreatedAt: expired, Timeout: time.Hour}
+
+	for _, tt := range []struct {
+		name       string
+		gates      []*types.Issue
+		wantClosed []string
+		wantOutput string
+	}{
+		{"only templates", templates, nil, "No open gates found."},
+		{"templates beside a live gate", append(slices.Clone(templates), live), []string{"bd-timer"}, "Checked 1 gates: 1 resolved, 0 escalated, 0 errors"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			origStore := store
+			origRootCtx := rootCtx
+			origJSONOutput := jsonOutput
+			origReadonlyMode := readonlyMode
+			origActor := actor
+			origDiscover := discoverRunIDByWorkflowNameFunc
+			origUpdate := updateGateAwaitIDFunc
+			origStatus := checkGHRunStatusFunc
+			t.Cleanup(func() {
+				store = origStore
+				rootCtx = origRootCtx
+				jsonOutput = origJSONOutput
+				readonlyMode = origReadonlyMode
+				actor = origActor
+				discoverRunIDByWorkflowNameFunc = origDiscover
+				updateGateAwaitIDFunc = origUpdate
+				checkGHRunStatusFunc = origStatus
+				resetGateCheckFlags(t)
+			})
+			resetGateCheckFlags(t)
+
+			fake := &templateGateCheckStore{fakeGateCheckStore: &fakeGateCheckStore{issues: tt.gates}}
+			store = fake
+			rootCtx = context.Background()
+			jsonOutput = false
+			readonlyMode = false
+			actor = "test-actor"
+
+			var ghCalls []string
+			discoverRunIDByWorkflowNameFunc = func(workflowHint string) (string, error) {
+				ghCalls = append(ghCalls, "discover "+workflowHint)
+				return "12345", nil
+			}
+			checkGHRunStatusFunc = func(runID string) (bool, bool, string, error) {
+				ghCalls = append(ghCalls, "status "+runID)
+				return false, false, "in progress", nil
+			}
+			updateGateAwaitIDFunc = func(_ interface{}, gateID, _ string) error {
+				ghCalls = append(ghCalls, "legacy await_id write "+gateID)
+				return nil
+			}
+
+			var runErr error
+			output := captureGateStdout(t, func() { runErr = gateCheckCmd.RunE(gateCheckCmd, nil) })
+			if runErr != nil {
+				t.Fatalf("gateCheckCmd.RunE: %v\noutput:\n%s", runErr, output)
+			}
+			if !gateTestContains(output, tt.wantOutput) {
+				t.Errorf("output %q does not contain %q", output, tt.wantOutput)
+			}
+			if len(ghCalls) != 0 {
+				t.Errorf("the template gh:run gate was evaluated: %v", ghCalls)
+			}
+			if len(fake.gets) != 0 {
+				t.Errorf("the template bead gate's target was looked up: %v", fake.gets)
+			}
+			var written []string
+			for _, req := range fake.updates {
+				written = append(written, req.IssueID)
+			}
+			if len(written) != 0 {
+				t.Errorf("Lifecycle.Update wrote %v, want no write to a template gate", written)
+			}
+			var closed []string
+			for _, call := range fake.closeCalls {
+				closed = append(closed, call.id)
+			}
+			if !slices.Equal(closed, tt.wantClosed) {
+				t.Errorf("closed gates = %v, want %v", closed, tt.wantClosed)
 			}
 		})
 	}
@@ -2266,23 +2434,74 @@ func TestGateCheckWritesGoThroughTheLifecycleRole(t *testing.T) {
 	}
 }
 
-// TestGateCheckAwaitIDRefusalNamesTheMissingCapability: a backend that cannot
-// carry an await_id edit (the HTTP wire) refuses through the role, and the
-// gate's error says what is missing rather than the role method that refused.
-func TestGateCheckAwaitIDRefusalNamesTheMissingCapability(t *testing.T) {
+// gateCheckWireRefusal is what a connected HTTP workspace's Lifecycle role
+// returns for a patch member the v0 wire has no member for, before any
+// request: the encoder's divergence-ledger row joined to the store's
+// unsupported sentinel, as (*httpclient.Store).inexpressible builds it.
+func gateCheckWireRefusal(row string) error {
+	return &httpclient.InexpressibleError{
+		Unsup: &httpclient.ErrHTTPUnsupported{
+			Unsup:     &storage.ErrUnsupported{Op: "Lifecycle.Update", Backend: "http"},
+			ServerURL: "http://127.0.0.1:9",
+		},
+		Refused: &encode.RefusedError{Op: encode.OpUpdateIssue, Row: encode.RowByID(row)},
+	}
+}
+
+// TestGateCheckAwaitIDRefusalNamesTheRunAndTheServer: the HTTP wire refuses an
+// await_id edit by its ledger row, and that refusal alone is reworded, so the
+// gate's row names the run, await_id and the server instead of the role
+// method and the wire operation. The typed chain survives the reword.
+func TestGateCheckAwaitIDRefusalNamesTheRunAndTheServer(t *testing.T) {
 	origStore, origActor := store, actor
 	t.Cleanup(func() { store, actor = origStore, origActor })
-	store, actor = &fakeGateCheckStore{updateErr: &storage.ErrUnsupported{Op: "Lifecycle.Update", Backend: "http"}}, "test-actor"
+	refusal := gateCheckWireRefusal(awaitIDPatchRefusal)
+	store, actor = &fakeGateCheckStore{updateErr: refusal}, "test-actor"
 
 	err := persistGateCheckAwaitID(context.Background(), "bd-run", "4242")
-	if err == nil {
-		t.Fatal("persistGateCheckAwaitID succeeded against a backend that refuses await_id")
+	want := "run 4242 cannot be recorded as await_id: bd serve at http://127.0.0.1:9 does not accept an await_id update; check the gate in a local workspace"
+	if err == nil || err.Error() != want {
+		t.Fatalf("await_id refusal = %v, want %q", err, want)
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "await_id") || !strings.Contains(msg, "4242") {
-		t.Fatalf("refusal %q does not name the await_id update and the run", msg)
+	if !errors.Is(err, refusal) || !errors.Is(err, encode.ErrRefused) {
+		t.Errorf("reworded refusal %v no longer wraps the role's refusal", err)
 	}
-	if strings.Contains(msg, "Lifecycle.Update") || strings.Contains(msg, "UpdateIssue") {
-		t.Fatalf("refusal %q leaks a Go method name", msg)
+	var unsupported *storage.ErrUnsupported
+	if !errors.As(err, &unsupported) || unsupported.Op != "Lifecycle.Update" || unsupported.Backend != "http" {
+		t.Errorf("reworded refusal %v does not reach *storage.ErrUnsupported", err)
+	}
+	var refused *encode.RefusedError
+	if !errors.As(err, &refused) || refused.Row.ID != awaitIDPatchRefusal {
+		t.Errorf("reworded refusal %v does not reach the %s ledger row", err, awaitIDPatchRefusal)
+	}
+}
+
+// TestGateCheckAwaitIDPassesOtherRefusalsThrough: every other error from the
+// await_id write is returned exactly as the role raised it. Another patch
+// member's refusal, or a server that does not advertise the capability the
+// member needs, says something the await_id sentence would hide.
+func TestGateCheckAwaitIDPassesOtherRefusalsThrough(t *testing.T) {
+	origStore, origActor := store, actor
+	t.Cleanup(func() { store, actor = origStore, origActor })
+	actor = "test-actor"
+
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{"another patch member's refusal", gateCheckWireRefusal("W-IssuePatch.SpecID")},
+		{"a capability the server does not advertise", &httpclient.ErrHTTPUnsupported{
+			Unsup:     &storage.ErrUnsupported{Op: "Lifecycle.Update", Backend: "http", Capability: "issues.update.gates"},
+			ServerURL: "http://127.0.0.1:9",
+		}},
+		{"a local backend's refusal", &storage.ErrUnsupported{Op: "Lifecycle.Update", Backend: "dolt"}},
+		{"a failed write", errors.New("connection reset")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store = &fakeGateCheckStore{updateErr: tt.err}
+			if err := persistGateCheckAwaitID(context.Background(), "bd-run", "4242"); err != tt.err {
+				t.Fatalf("persistGateCheckAwaitID = %v, want the role's own error %v", err, tt.err)
+			}
+		})
 	}
 }

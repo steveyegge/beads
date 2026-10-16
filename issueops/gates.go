@@ -13,10 +13,16 @@ import (
 // it (QueryRequest.IncludeClosed).
 const GateListExpression = "type=gate"
 
-// GateListRequest describes `bd gate list` over the whole workspace.
+// GateListRequest describes `bd gate list` over the whole workspace, and the
+// listing `bd gate check` evaluates.
 type GateListRequest struct {
 	// All admits closed gates, which the listing otherwise hides.
 	All bool
+	// ExcludeTemplates leaves template gates (a persisted proto's, which every
+	// pour copies) out of the query itself, so none of them takes a row of
+	// Limit. `bd gate list` leaves it unset and lists them; `bd gate check`,
+	// which never evaluates a template, sets it.
+	ExcludeTemplates bool
 	// Limit bounds the rows returned; 0 means unlimited. A negative limit is
 	// the Querier's ErrValidation.
 	Limit int
@@ -31,7 +37,9 @@ type GateListRequest struct {
 // The question is exactly the one the raw filter used to ask: the gate type,
 // both planes, closed rows excluded unless All is set, no other default
 // suppression (templates, pinned rows and ephemeral gates are all listed),
-// in the store's default order, cut at Limit.
+// in the store's default order, cut at Limit. ExcludeTemplates adds
+// `template=false` to the expression rather than dropping templates from the
+// page, so the cut at Limit counts only the gates that remain.
 //
 // A failed read is an error, never an empty list. Rows come back in the
 // Querier's order; a row carrying no issue is dropped.
@@ -39,9 +47,13 @@ func ListGates(ctx context.Context, querier Querier, req GateListRequest) ([]*ty
 	if querier == nil {
 		return nil, &ErrUnsupported{Op: "ListGates", Backend: "nil"}
 	}
+	expression := GateListExpression
+	if req.ExcludeTemplates {
+		expression += " AND template=false"
+	}
 	limit := req.Limit
 	page, err := querier.Query(ctx, QueryRequest{
-		Expression:    GateListExpression,
+		Expression:    expression,
 		IncludeClosed: req.All,
 		Limit:         &limit,
 	})
