@@ -144,18 +144,25 @@ seed:
 
 shapes:
   # ---------------------------------------------------------------- show
+  # requests pins each show's round trips (mc-5dkzp): resolving the id,
+  # fetching the row and reading it for output are one request per id, which
+  # the per-command read memo answers once.
   - id: gc-show-json
     source: gc bdstore.go BdStore.Get (show --json <id>); counts must not read 0
     args: [show, --json, e2e-blk]
+    requests: 1
   - id: gc-show-json-batch
     source: gc bdstore_exact_batch.go GetExactBatch
     args: [show, --json, e2e-r1, e2e-a1, e2e-blk, e2e-mol]
+    requests: 4
   - id: gc-show-json-wisp
     source: gc workquery.go blocked_by enrichment; wisps live in the ready tier
     args: [show, e2e-wisp-1, --json]
+    requests: 1
   - id: gc-show-id-flag
     source: gc cmd_bd_show_watch.go bdWatchRunner (show --json --id=<id>)
     args: [show, --json, --id=e2e-r1]
+    requests: 1
   # The worker holds eight in-progress issues; e2e-ip1 is the only P0 among
   # them, so "first in the store's default order" (priority first) names it on
   # both sides. Among equal priorities the order rests on created_at, and a
@@ -163,16 +170,21 @@ shapes:
   - id: gc-show-current
     source: gc cmd_bd_show_watch.go bdWatchRunner (show --current --json)
     args: [show, --current, --json]
+    requests: 3
   - id: gc-show-missing
     source: gc BdStore.Get not-found classification (routing fallbacks)
     args: [show, --json, e2e-nonexistent]
     expect_exit: 1
     expect_stderr: "(?i)not found"
     compare: exit
+    requests: 1
+  # Text show reads the row, then its dependents and its comments: three
+  # different URLs the memo cannot collapse.
   - id: mc-show-text
     source: mc prompts (bd show <id>, ~80)
     args: [show, e2e-r1]
     compare: text
+    requests: 3
 
   # ---------------------------------------------------------------- ready
   # e2e-wr and e2e-wisp-wr are the only open rows assigned to the worker when

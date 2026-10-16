@@ -54,7 +54,7 @@ func TestE2E_PerCommandRequestBudget(t *testing.T) {
 			}{
 				{"ready", 2, []string{"ready", "--json"}},
 				{"list", 4, []string{"list", "--json"}},
-				{"show", 2, []string{"show", target, "--json"}},
+				{"show", 1, []string{"show", target, "--json"}},
 				{"create", 2, []string{"create", "budget created", "-t", "task", "--json"}},
 				{"update --append-notes", 3, []string{"update", target, "--append-notes", "more", "--json"}},
 				{"update --status", 3, []string{"update", target, "--status", "in_progress", "--json"}},
