@@ -391,8 +391,8 @@ type schemaSentinelColumn struct {
 	//        — just without the timestamp damage.
 	//   (ii) The migration that creates the column AND the migration that
 	//        creates the table carrying it must both be ABOVE the floor, so the
-	//        replay can still heal both shapes the single INFORMATION_SCHEMA
-	//        COUNT(*) probe collapses: table absent entirely, and table present
+	//        replay can still heal both shapes the column probe collapses
+	//        (sentinelColumnExists): table absent entirely, and table present
 	//        but column-less. A floor above the table's creator would strand
 	//        the table-absent shape in a permanent re-migration loop.
 	//
@@ -441,9 +441,8 @@ var (
 		// A historical ignored-v16 ordinal collision can leave the local
 		// leases table present but without the column frozen 0016 adds; a
 		// database materialized out of band can be missing the leases table
-		// altogether. The single COLUMNS probe reads both shapes as absent and
-		// the replay heals both: 0012 re-creates the table, 0016 adds the
-		// column.
+		// altogether. The column probe reads both shapes as absent and the
+		// replay heals both: 0012 re-creates the table, 0016 adds the column.
 		//
 		// The floor of 11 is what keeps that heal from also being a data loss.
 		// Every released tree (v1.1.0, v1.1.2, v1.2.x) tops the ignored series
@@ -1674,7 +1673,26 @@ var sentinelTableExists = func(ctx context.Context, db DBConn, table string) (bo
 // INFORMATION_SCHEMA form: 0.15 s against 5-6 s per probe on a Dolt server
 // hosting ~30 databases (measured 2026-09-17). The repair paths keep
 // schemaColumnExists as is — they run once per migration, not per open.
-var sentinelColumnExists = showColumnExists
+//
+// SHOW COLUMNS fails on a missing table, and the carrier table is exactly what
+// a release-lineage store lacks (no leases before ignored/0012). A failing
+// statement is not free here: on the store's multiStatements DSN it pins the
+// pooled Dolt session to its pre-statement catalog, so a table another
+// connection creates afterwards stays "not found" on it (be-bv7x; reproduced
+// on dolt 2.1.8 and 2.2.0). So the carrier's existence is read first through
+// sentinelTableExists, whose read succeeds whether or not the table is there,
+// and SHOW COLUMNS is only sent to a table that is. A missing table reads as a
+// missing column, as the INFORMATION_SCHEMA count did.
+var sentinelColumnExists = func(ctx context.Context, db DBConn, table, column string) (bool, error) {
+	present, err := sentinelTableExists(ctx, db, table)
+	if err != nil {
+		return false, fmt.Errorf("probing %s: %w", table, err)
+	}
+	if !present {
+		return false, nil
+	}
+	return showColumnExists(ctx, db, table, column)
+}
 
 func (m migrationSource) pendingVersions(ctx context.Context, db DBConn) ([]int, error) {
 	current, err := m.currentVersion(ctx, db)
