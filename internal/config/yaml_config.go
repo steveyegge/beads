@@ -1323,17 +1323,22 @@ func mappingValueUnsetRefusal(lines []string, idx, indent int, key string) error
 	return nil
 }
 
-// valueContinuesBelow reports whether the text after a key's colon leaves the
-// value to the following lines: it is empty once a trailing comment is dropped,
-// or holds only anchors and tags.
-func valueContinuesBelow(rest string) bool {
-	rest = strings.TrimSpace(rest)
-	if i := strings.Index(rest, " #"); i >= 0 {
-		rest = rest[:i]
-	} else if strings.HasPrefix(rest, "#") {
-		rest = ""
-	}
-	for _, tok := range strings.Fields(rest) {
+// valueContinuesBelow reports whether text leaves the value to the following
+// lines: it holds only anchors and tags before an optional comment. The text is
+// what follows a key's colon, or a whole line that declares no key (stepOver).
+//
+// A "#" at the start of a line or after whitespace starts a comment, so the
+// comment begins at the first token that starts with "#". Cutting at the first
+// " #" instead read the comment line `# see #12` as the content `# see`:
+// stepOver skipped the target beneath it as a subtree, and unset reported the
+// key as never set while it stayed live. The cut also missed a comment set off
+// by a tab, and it read `sub:  # note #2` as a key with a value of its own, so
+// unset commented that line out and orphaned the mapping beneath it.
+func valueContinuesBelow(text string) bool {
+	for _, tok := range strings.Fields(text) {
+		if strings.HasPrefix(tok, "#") {
+			return true
+		}
 		if !strings.HasPrefix(tok, "&") && !strings.HasPrefix(tok, "!") {
 			return false
 		}
@@ -1430,13 +1435,26 @@ func (w *nestedKeyWalk) step(name string, indent int) bool {
 // read the item's `host:` as a direct child of `dolt:` and commented out a key
 // the file never set, reporting success (mc-2nfr1).
 //
+// Blank lines and comments are not content, and neither is a line holding only
+// node properties (`&a`, `!!map`): those decorate the node beneath them, which
+// under a matched parent is the parent's own mapping, so the match continues
+// into it. yaml.v3 accepts that mapping indented past the properties, and
+// skipping it as a subtree left `dolt.host` live on
+//
+//	dolt:
+//	  &a
+//	    host: 10.0.0.1
+//
+// while the unset reported the key as never set. valueContinuesBelow draws the
+// same line for the text after a key's colon (`base: &b`), so it decides here
+// too.
+//
 // The skip is armed only while none is. Narrowing an armed one would end the
 // skip over a section the key does not own partway through it, and widening
 // one would trust a line that need not end anything: yaml.v3 accepts a quoted
 // value continued at column 0, and the target can follow it.
 func (w *nestedKeyWalk) stepOver(line string) {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") || w.opaque >= 0 {
+	if w.opaque >= 0 || valueContinuesBelow(line) {
 		return
 	}
 	w.opaque = lineIndent(line)
