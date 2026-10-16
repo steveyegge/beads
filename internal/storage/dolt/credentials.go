@@ -632,6 +632,12 @@ func isMissingFederationPeer(err error) bool {
 // without --user, or bootstrap via sync.remote) never create a peer row, but
 // still need status/fetch/pull/push via normal Dolt credential discovery
 // (GH#4837). Malformed, decryption, and database errors remain fatal.
+//
+// An unknown peer name (a mistyped --peer) is therefore passed through too:
+// without a row it looks the same as a credential-free remote, so Dolt rejects
+// it with its own remote error. A name check added in front of this must
+// consult PersistedRemoteInfos as well as ListRemotes, or it rejects a remote
+// persisted on disk that a cold sql-server does not list yet (GH#2118).
 func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn func(creds *remoteCredentials) error) error {
 	peer, err := s.GetFederationPeer(ctx, peerName)
 	if err != nil {

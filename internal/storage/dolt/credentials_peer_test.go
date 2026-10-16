@@ -2,12 +2,14 @@ package dolt
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // TestWithPeerCredentialsMissingPeerRow covers the behavior #4837 asked for:
@@ -120,4 +122,101 @@ func TestIsMissingFederationPeer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFederationVerbsWithoutPeerRow is the end-to-end case #4837 reported: a
+// Dolt remote registered without a federation_peers row (add-peer without
+// --user, bd dolt remote add) must push, fetch and pull through the
+// server-mode peer verbs, all of which used to fail at the credential lookup.
+// Peer setup mirrors TestPullFromSettlesFKCascadeViolations, except that the
+// remote is registered with AddRemote alone.
+func TestFederationVerbsWithoutPeerRow(t *testing.T) {
+	store, cleanup := setupConcurrentTestStore(t)
+	defer cleanup()
+	ctx, cancel := testContext(t)
+	defer cancel()
+	db := store.db
+
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type) "+
+			"VALUES ('rowless-a', 'rowless-a', '', '', '', '', 'open', 2, 'task')"); err != nil {
+		t.Fatalf("seed issue: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'seed issue')"); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+
+	peerDB := uniqueTestDBName(t)
+	remoteURL := "file:///tmp/" + peerDB + "_remote"
+	if err := store.AddRemote(ctx, "peer", remoteURL); err != nil {
+		t.Fatalf("add remote: %v", err)
+	}
+	assertNoPeerRow := func(when string) {
+		t.Helper()
+		if _, err := store.GetFederationPeer(ctx, "peer"); !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("%s: GetFederationPeer() error = %v, want storage.ErrNotFound", when, err)
+		}
+	}
+	assertNoPeerRow("after AddRemote")
+
+	if err := store.PushTo(ctx, "peer"); err != nil {
+		t.Fatalf("PushTo a remote without a peer row: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_CLONE(?, ?)", remoteURL, peerDB); err != nil {
+		t.Fatalf("clone peer database: %v", err)
+	}
+
+	// The peer adds an issue and pushes it back to the shared remote.
+	peerConn, err := sql.Open("mysql", doltutil.ServerDSN{
+		Host: "127.0.0.1", Port: testServerPort, User: "root", Database: peerDB,
+	}.String())
+	if err != nil {
+		t.Fatalf("open peer connection: %v", err)
+	}
+	defer peerConn.Close()
+	peerConn.SetMaxOpenConns(1)
+	for _, q := range []string{
+		"INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type) " +
+			"VALUES ('rowless-b', 'rowless-b', '', '', '', '', 'open', 2, 'task')",
+		"CALL DOLT_COMMIT('-Am', 'peer adds issue')",
+		"CALL DOLT_PUSH('origin', 'main')",
+	} {
+		if _, err := peerConn.ExecContext(ctx, q); err != nil {
+			t.Fatalf("peer %q: %v", q, err)
+		}
+	}
+	var peerHead string
+	if err := peerConn.QueryRowContext(ctx, "SELECT DOLT_HASHOF('HEAD')").Scan(&peerHead); err != nil {
+		t.Fatalf("read peer HEAD: %v", err)
+	}
+
+	if err := store.Fetch(ctx, "peer"); err != nil {
+		t.Fatalf("Fetch from a remote without a peer row: %v", err)
+	}
+	var fetched string
+	if err := db.QueryRowContext(ctx,
+		"SELECT hash FROM dolt_remote_branches WHERE name = 'remotes/peer/main'").Scan(&fetched); err != nil {
+		t.Fatalf("read fetched tracking ref: %v", err)
+	}
+	if fetched != peerHead {
+		t.Fatalf("Fetch left remotes/peer/main at %s, want the peer's HEAD %s", fetched, peerHead)
+	}
+
+	conflicts, err := store.PullFrom(ctx, "peer")
+	if err != nil {
+		t.Fatalf("PullFrom a remote without a peer row: %v", err)
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("expected no conflicts, got %d", len(conflicts))
+	}
+	var pulled int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issues WHERE id = 'rowless-b'").Scan(&pulled); err != nil {
+		t.Fatalf("count pulled issue: %v", err)
+	}
+	if pulled != 1 {
+		t.Fatalf("PullFrom did not merge the peer's issue: %d row(s) for rowless-b, want 1", pulled)
+	}
+
+	// Proceeding without a row must not create one.
+	assertNoPeerRow("after push, fetch and pull")
 }
