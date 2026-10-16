@@ -653,16 +653,9 @@ Examples:
 		escalateFlag, _ := cmd.Flags().GetBool("escalate")
 		limit, _ := cmd.Flags().GetInt("limit")
 
-		gateType := types.IssueType("gate")
-		filter := types.IssueFilter{
-			IssueType:     &gateType,
-			ExcludeStatus: []types.Status{types.StatusClosed},
-			Limit:         limit,
-		}
-
 		ctx := rootCtx
 
-		gates, err := store.SearchIssues(ctx, "", filter)
+		gates, err := listOpenGatesForCheck(ctx, limit)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
@@ -699,6 +692,28 @@ Examples:
 
 		return printGateCheckSummary(len(results), resolvedCount, escalatedCount, errorCount, dryRun)
 	},
+}
+
+// listOpenGatesForCheck lists the open gates `bd gate check` evaluates through
+// the same library entry `bd gate list` uses, issueops.ListGates over the
+// route's Querier (openQuerier: the direct store, the proxied server's unit
+// of work, or the remote http backend's queryIssues). It is the question the
+// raw SearchIssues filter used to ask — the gate type, both planes, closed
+// rows excluded, cut at limit — but a remote backend serves it, where the raw
+// filter was refused before any gate was read. The per-type selection stays
+// with filterCheckableGates.
+func listOpenGatesForCheck(ctx context.Context, limit int) ([]*types.Issue, error) {
+	querier, err := openQuerier()
+	if err != nil {
+		return nil, err
+	}
+	return listOpenGatesWith(ctx, querier, limit)
+}
+
+// listOpenGatesWith is listOpenGatesForCheck over a given Querier: the open
+// gates only (gate check never evaluates a closed one), cut at limit.
+func listOpenGatesWith(ctx context.Context, querier issueops.Querier, limit int) ([]*types.Issue, error) {
+	return issueops.ListGates(ctx, querier, issueops.GateListRequest{Limit: limit})
 }
 
 type gateCheckResult struct {

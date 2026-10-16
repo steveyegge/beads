@@ -441,6 +441,23 @@ shapes:
   - id: mc-gate-list-all
     source: core pack orders (gate list --all)
     args: [gate, list, --all, --json]
+  # gate check lists the open gates through the same ListGates entry. No
+  # seeded gate carries an await type (no wire create accepts await_*), so the
+  # typed sweeps find nothing of their type and the untyped one lists the open
+  # gates and evaluates none: the listing is what these shapes prove served,
+  # and nothing resolves, escalates (no gt exec) or writes.
+  - id: mc-gate-check-timer
+    source: gc core pack gate-sweep.sh (bd gate check --type=timer --escalate)
+    args: [gate, check, --type=timer, --escalate]
+    compare: text
+  - id: mc-gate-check-gh
+    source: gc core pack gate-sweep.sh (bd gate check --type=gh --escalate)
+    args: [gate, check, --type=gh, --escalate]
+    compare: text
+  - id: gate-check-all
+    source: bd gate check (every open gate)
+    args: [gate, check]
+    compare: text
 
   - id: gc-export-all
     source: gc core pack reaper (gc bd export --all -o F)

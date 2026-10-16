@@ -797,6 +797,7 @@ go_test(
         "formula_help_test.go",
         "formula_primitives_test.go",
         "formula_schema_test.go",
+        "gate_check_listing_test.go",
         "gate_check_proxied_integration_test.go",
         "gate_discover_test.go",
         "gate_embedded_test.go",
