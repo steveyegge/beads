@@ -11,6 +11,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/issueops"
 )
 
@@ -125,15 +126,19 @@ func classifyIfRevisionFailure(err error, ifRevision *int64) (code, reason strin
 // and any other resolution failure is not a guard outcome; ok is false for
 // both and the caller's ordinary failure handling applies unchanged. `bd
 // delete --cascade` resolves through deleteBatch instead: its not-found error
-// keeps the storage.ErrNotFound sentinel, so the caller's
-// reportIfRevisionFailure classifies it the same way.
+// and its abbreviation refusal both keep the storage.ErrNotFound sentinel, so
+// the caller's reportIfRevisionFailure classifies them the same way.
 //
 // err is matched with isNotFoundErr, which also accepts ResolvePartialID's
-// unwrapped "no issue found matching" text, and reported as the literal
-// storage.ErrNotFound sentinel classifyIfRevisionFailure matches via
-// errors.Is.
+// unwrapped "no issue found matching" text, or as
+// utils.ErrAbbreviatedIDNotAllowed: under `bd delete`'s exact resolution an id
+// that is only the start of other ids names no row either (a deleted parent
+// whose child survives), so it is the same gone target. Either way it is
+// reported as the literal storage.ErrNotFound sentinel
+// classifyIfRevisionFailure matches via errors.Is.
 func reportIfRevisionTargetGone(action, id string, err error, ifRevision *int64) (reportedErr error, ok bool) {
-	if ifRevision == nil || !isNotFoundErr(err) {
+	gone := isNotFoundErr(err) || errors.Is(err, utils.ErrAbbreviatedIDNotAllowed)
+	if ifRevision == nil || !gone {
 		return nil, false
 	}
 	return reportIfRevisionFailure(action, id, storage.ErrNotFound, ifRevision)

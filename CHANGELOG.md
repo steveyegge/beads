@@ -1059,12 +1059,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd delete` now requires an exact id on the preview and with `--force`, as
   `bd comment` does and as the team-server route already did; full ids, bare
   full hashes, child ids and routed ids resolve as before. An abbreviation is
-  refused with `bd delete needs the full issue id: no issue has the id "t000",
-  which is the start of fx-t000031`, naming every id it matches. This is a
-  user-visible change: a script or habit that deletes by abbreviation now gets
-  that error and must pass the full id. Reads and other writes keep accepting
-  abbreviations; see [Working with
-  IDs](docs/core-concepts/hash-ids.md#working-with-ids).
+  refused with `issue "t000" not found: bd delete needs the full issue id, and
+  "t000" is only the start of fx-t000031`, naming every id it matches; under
+  `--if-revision` it is the guard's lost race instead (`precondition_failed`,
+  exit 13), as for any other gone id. This is a user-visible change: a script
+  or habit that deletes by abbreviation now gets that error and must pass the
+  full id. Reads and other writes keep accepting abbreviations; see [Working
+  with IDs](docs/core-concepts/hash-ids.md#working-with-ids).
 
 - **A git hook beads never wrote is no longer reported as installed**
   ([#6084](https://github.com/gastownhall/beads/issues/6084)). `getHookVersion`

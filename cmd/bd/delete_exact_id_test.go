@@ -167,8 +167,10 @@ func runDeleteCmd(t *testing.T, args []string) (string, error) {
 // route never resolves (DeleteRequest.IDs are exact), so it is not here.
 //
 // An abbreviation of a live issue is refused the same way: the resolver cannot
-// tell it from a stale full id. The refusal says delete needs the full id and
-// names the ids the input begins, so the caller can retype one.
+// tell it from a stale full id. The refusal says the id was not found (the
+// words gascity's isBdNotFound reads as an already-gone bead), that delete
+// needs the full id, and names the ids the input begins, so the caller can
+// retype one.
 func TestDeleteRefusesStaleIDThatPrefixesAnotherIssue(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -251,6 +253,9 @@ func TestDeleteRefusesStaleIDThatPrefixesAnotherIssue(t *testing.T) {
 				t.Errorf("bd delete %v (force=%v) succeeded; want a refusal, since no stored issue has that exact id (store holds %v)",
 					named, tc.force, tc.stored)
 			}
+			if !strings.Contains(stderr, "not found") {
+				t.Errorf("bd delete %v refusal does not say the id was not found; stderr:\n%s", named, stderr)
+			}
 			if !strings.Contains(stderr, "bd delete needs the full issue id") {
 				t.Errorf("bd delete %v refusal does not say delete needs the full id; stderr:\n%s", named, stderr)
 			}
@@ -258,6 +263,66 @@ func TestDeleteRefusesStaleIDThatPrefixesAnotherIssue(t *testing.T) {
 				if !strings.Contains(stderr, id) {
 					t.Errorf("bd delete %v refusal does not name the full id %s; stderr:\n%s", named, id, stderr)
 				}
+			}
+		})
+	}
+}
+
+// TestDeleteIfRevisionGoneIDThatPrefixesAnotherIssue pins the --if-revision
+// contract for the refusal above: a guarded delete whose target is gone
+// reports the guard's lost race (precondition_failed, exit 13) when the gone
+// id is the start of a surviving id, a deleted parent whose child survives,
+// exactly as it does when the gone id is the start of nothing. gascity's
+// conditional deletes switch on that code, so a refusal exiting 1 would read
+// as a hard failure of a benign race. The single-id path and --cascade (which
+// resolves through deleteBatch) are both covered, and the guarded write never
+// runs.
+func TestDeleteIfRevisionGoneIDThatPrefixesAnotherIssue(t *testing.T) {
+	cases := []struct {
+		name    string
+		stored  []string
+		cascade bool
+		json    bool
+	}{
+		{name: "single id", stored: []string{"fx-ep1.1"}},
+		{name: "single id --json", stored: []string{"fx-ep1.1"}, json: true},
+		{name: "--cascade", stored: []string{"fx-ep1.1"}, cascade: true},
+		{name: "--cascade --json", stored: []string{"fx-ep1.1"}, cascade: true, json: true},
+		// The gone id begins nothing: the plain not-found these must match.
+		{name: "single id, no survivor", stored: []string{"fx-zz9"}},
+		{name: "--cascade, no survivor", stored: []string{"fx-zz9"}, cascade: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := useDeleteExactStub(t, tc.stored...)
+			jsonOutput = tc.json
+			setDeleteFlag(t, "force", "true")
+			setDeleteFlag(t, "if-revision", "1")
+			if tc.cascade {
+				setDeleteFlag(t, "cascade", "true")
+			}
+
+			stderr, err := runDeleteCmd(t, []string{"fx-ep1"})
+
+			if code, ok := exitCodeFromError(err); !ok || code != ExitGuardMismatch {
+				t.Fatalf("bd delete fx-ep1 --if-revision 1 (cascade=%v, store holds %v): err = %v; want exit %d; stderr:\n%s",
+					tc.cascade, tc.stored, err, ExitGuardMismatch, stderr)
+			}
+			if !strings.Contains(stderr, "Error deleting fx-ep1: precondition failed: issue no longer exists") {
+				t.Errorf("stderr does not report the lost race:\n%s", stderr)
+			}
+			if strings.Contains(stderr, "not found") {
+				t.Errorf("stderr leaked the unguarded not-found or refusal text beside the guard envelope:\n%s", stderr)
+			}
+			if tc.json {
+				body := decodeIfRevisionBody(t, lastJSONLine(t, stderr), jsonEnvelopeEnabled())
+				if body["code"] != ifRevisionCodePreconditionFailed || body["id"] != "fx-ep1" || body["expected_revision"] != float64(1) {
+					t.Errorf("JSON body = %v; want code %q, id fx-ep1, expected_revision 1", body, ifRevisionCodePreconditionFailed)
+				}
+			}
+			if len(s.deleter.requests) != 0 {
+				t.Errorf("the guarded write ran: role requests %+v", s.deleter.requests)
 			}
 		})
 	}

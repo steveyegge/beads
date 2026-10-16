@@ -143,8 +143,8 @@ Force: Delete and orphan dependents
 			if isNotFoundErr(err) {
 				return HandleError("issue %s not found", issueID)
 			}
-			if msg, ok := deleteAbbreviationRefusal(err); ok {
-				return HandleError("%s", msg)
+			if refusal := deleteAbbreviationRefusal(err); refusal != nil {
+				return HandleError("%v", refusal)
 			}
 			return HandleError("%v", err)
 		}
@@ -313,17 +313,33 @@ func renderSingleDeletePreview(
 	return nil
 }
 
-// deleteAbbreviationRefusal words the refusal of an id that names no issue
+// deleteAbbreviationRefusal is the refusal of an id that names no issue
 // exactly but is the start of one or more: delete needs the full id, so say
-// that and name the ids it begins. ok is false for any other error.
-func deleteAbbreviationRefusal(err error) (string, bool) {
+// that and name the ids it begins. It is nil for any other error.
+func deleteAbbreviationRefusal(err error) error {
 	var abbrev *utils.AbbreviatedIDError
 	if !errors.As(err, &abbrev) {
-		return "", false
+		return nil
 	}
-	return fmt.Sprintf("bd delete needs the full issue id: no issue has the id %q, which is the start of %s",
-		abbrev.Input, strings.Join(abbrev.Matches, ", ")), true
+	return &deleteAbbreviationError{abbrev: abbrev}
 }
+
+// deleteAbbreviationError is that refusal. To a delete, an id that is only the
+// start of other ids names no row, so the text leads with "not found" — the
+// words gascity's isBdNotFound reads as an already-gone bead — and the error
+// unwraps to storage.ErrNotFound, which lets a guarded `bd delete --cascade`
+// report it as the same lost race as any other gone target (see
+// reportIfRevisionTargetGone).
+type deleteAbbreviationError struct {
+	abbrev *utils.AbbreviatedIDError
+}
+
+func (e *deleteAbbreviationError) Error() string {
+	return fmt.Sprintf("issue %q not found: bd delete needs the full issue id, and %q is only the start of %s",
+		e.abbrev.Input, e.abbrev.Input, strings.Join(e.abbrev.Matches, ", "))
+}
+
+func (e *deleteAbbreviationError) Unwrap() []error { return []error{storage.ErrNotFound, e.abbrev} }
 
 // deleteIssue removes an issue from the database.
 func deleteIssue(ctx context.Context, issueID string) error {
@@ -360,8 +376,8 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 		if err != nil {
 			if isNotFoundErr(err) {
 				notFound = append(notFound, id)
-			} else if msg, ok := deleteAbbreviationRefusal(err); ok {
-				return errors.New(msg)
+			} else if refusal := deleteAbbreviationRefusal(err); refusal != nil {
+				return refusal
 			} else {
 				return fmt.Errorf("getting issue %s: %v", id, err)
 			}
