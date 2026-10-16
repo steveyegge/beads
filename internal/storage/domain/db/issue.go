@@ -1287,9 +1287,14 @@ func (r *issueSQLRepositoryImpl) UnclaimIssueIfAssignee(ctx context.Context, id,
 // (time.Now().UTC()), same TTL resolution (issueops.LeaseTTL), and the same
 // only-current-owner classification (storage.ErrAlreadyClaimed /
 // ErrNotClaimable) — so classic `bd reclaim` staleness semantics see proxied
-// heartbeats identically. Deliberately NO Dolt commit: the leases table is
-// dolt_ignored (bd-lrgn1), and the cmd layer commits this transaction with
-// uow.RunTxEphemeral (plain SQL COMMIT, nothing in dolt_log).
+// heartbeats identically. Deliberately NO Dolt commit here: a refresh writes
+// only the dolt_ignored leases table (bd-lrgn1). A re-arm is recorded as a
+// mutation (versioned rows), so a caller must commit this unit of work with
+// a message, as the Heartbeater role's uow leg does (uow.RunTxScoped). A
+// refusal is returned as an error, so the caller's unit of work rolls back
+// and the orphaned-lease delete the refusal made is not kept on this door
+// (no production caller reaches it; the role's leg commits refusals, and the
+// live-claim predicate keeps an orphan from ever answering a refresh).
 func (r *issueSQLRepositoryImpl) HeartbeatIssue(ctx context.Context, id, actor string) error {
 	if issueops.IsActiveWispInTx(ctx, r.runner, id) {
 		return fmt.Errorf("db: IssueSQLRepository.HeartbeatIssue: %w: %s is ephemeral", storage.ErrNotClaimable, id)
@@ -1322,6 +1327,13 @@ func (r *issueSQLRepositoryImpl) ReclaimExpiredLeases(ctx context.Context, older
 		return nil, fmt.Errorf("db: IssueSQLRepository.ReclaimExpiredLeases: %w", err)
 	}
 	return out, nil
+}
+
+// RenewLease runs the shared heartbeat body directly on r.runner, Reclaim's
+// bare-passthrough shape: validation, the wisp refusal and the typed
+// refusals all happen inside issueops.ExecuteHeartbeatInTx.
+func (r *issueSQLRepositoryImpl) RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error) {
+	return issueops.ExecuteHeartbeatInTx(ctx, r.runner, request)
 }
 
 // Reclaim runs the shared sweep body directly on r.runner, matching GetMany's

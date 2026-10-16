@@ -89,6 +89,12 @@ var versionCompositeMutations = []string{
 // does. Every write plumbing bottoms out in one of these; the structural
 // cross-check (TestEveryBeadMutatorMintsOrIsExempt) keeps the list complete.
 var versionedEntryPoints = []string{
+	// the heartbeat family mints on its RE-ARM path only (recorded as a
+	// mutation); a refresh writes only the clone-local leases table and mints
+	// nothing.
+	"RenewLeaseInTx",
+	"HeartbeatIssueInTx",
+	"ExecuteHeartbeatInTx",
 	// create — the singular path mints in place; the batch path defers the
 	// mint past PersistDependenciesWithOptionsResult so the first version
 	// carries the creation-time edge set.
@@ -244,7 +250,6 @@ var versionNeverMints = map[string]string{
 	"UpdateIssueIDInTx":                "rename: out of contract by design",
 	"ApplyCompactionInTx":              "compaction bookkeeping: out of contract by design",
 	"RestoreFromSnapshotInTx":          "restore: Phase 3",
-	"HeartbeatIssueInTx":               "lease keepalive: writes only the clone-local leases table, never a durable bead field",
 	"BootstrapInTx":                    "bootstrap: config and metadata tables only, no issue-plane row",
 }
 

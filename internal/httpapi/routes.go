@@ -836,6 +836,18 @@ var routeTable = []route{
 		handler:      (*Server).handleRelease,
 	},
 	{
+		op:     OpHeartbeatIssue,
+		method: http.MethodPost,
+		// The lease refresh, on the dispatcher the close built. Everything the
+		// claim row says about the wildcard's width holds here unchanged.
+		pattern:      customMethodPattern,
+		specPath:     "/v0/beads/issues/{id}:heartbeat",
+		customMethod: ":heartbeat",
+		capability:   "issues.heartbeat",
+		implemented:  true,
+		handler:      (*Server).handleHeartbeat,
+	},
+	{
 		op:     OpCloseIssue,
 		method: http.MethodPost,
 		// The second row on the shared wildcard, and the reason the dispatcher

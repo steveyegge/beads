@@ -271,6 +271,7 @@
 40 14 TestEmbeddedReaderReadyDefaultTypeExclusionsYieldToAnExplicitType
 40 14 TestEmbeddedReadyClaimerClaimsTheFrontRowAndReturnsThePostClaimState
 40 14 TestEmbeddedReadyClaimerDoesNotMutateTheCallerRequest
+40 14 TestHeartbeatIssueCommitsARefusalOnlyWhenItReadTheIssueEmbedded
 40 14 TestHistory_NullTextColumns
 
 40 15 TestCreateIssuesRejectStaleUpserts
@@ -395,6 +396,7 @@
 40 25 TestEmbeddedReadyClaimerLeavesEphemeralRowsOutOfTheDefaultReadySet
 40 25 TestEmbeddedReadyClaimerRejectsLimitOffsetBriefAndEmptyActor
 40 25 TestGetDependentRecordsForIssuesEmbedded
+40 25 TestHeartbeaterContract
 40 25 TestIgnoredCursorHealIsIdempotent
 40 25 TestIsBlockedBatchEmbedded
 40 25 TestReadyWorkPageTotal

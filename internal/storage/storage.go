@@ -387,6 +387,16 @@ type Storage interface {
 	// assignee and status per reverted row, which is on_update, the same
 	// event Releaser fires. See hook_lease_reclaimer.go.
 	LeaseReclaimer() (issueops.LeaseReclaimer, error)
+	// Heartbeater returns the lease-refresh surface for this store: push the
+	// lease the caller holds on one issue forward by the store's TTL.
+	//
+	// It is a WRITE role and its hook decorator WRAPS: a refresh writes only
+	// the ephemeral lease row and fires nothing, but a re-arm (a live claim
+	// with no lease row, HeartbeatResult.Rearmed) is recorded as a mutation
+	// and fires on_update once. That is why RoleFiresHooks answers true for
+	// it, and a server must take it off a peeled store. See
+	// hook_heartbeater.go.
+	Heartbeater() (issueops.Heartbeater, error)
 
 	// MoleculeStepper returns the advance-a-molecule surface for this store:
 	// find a molecule's next ready step after one closed and, on request,

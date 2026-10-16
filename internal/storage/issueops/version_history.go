@@ -98,6 +98,14 @@ func versionedHistoryEnabled(tx DBTX) bool {
 	return on
 }
 
+// VersionedHistoryEnabledFor reports whether versioned history is active on
+// tx, the transaction ScopeVersionedHistoryTransaction bound. A commit path
+// that stages a NAMED set of tables uses it to add
+// VersionedHistoryStagedTables only when the transaction could have minted.
+func VersionedHistoryEnabledFor(tx DBTX) bool {
+	return versionedHistoryEnabled(tx)
+}
+
 // VersionedHistoryStagedTables names every table RecordVersionInTx writes, so
 // a staging path can add them to whatever it was already going to stage.
 //

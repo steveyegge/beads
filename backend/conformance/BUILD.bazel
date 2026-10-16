@@ -31,6 +31,7 @@ go_library(
         "edge_reader_contract.go",
         "expected_revision_contract.go",
         "graph_counter_contract.go",
+        "heartbeater_contract.go",
         "history_matching.go",
         "importer_contract.go",
         "issue_operations_contract.go",

@@ -96,6 +96,9 @@ files:
         {"key": "t-ifa", "id": "e2e-t-ifa", "title": "target ifa", "type": "task", "assignee": "worker", "metadata": {"seeded": "keep"}},
         {"key": "t-death", "id": "e2e-t-death", "title": "target death", "type": "task", "assignee": "worker"},
         {"key": "t-rc", "id": "e2e-t-rc", "title": "target rc", "type": "task", "assignee": "worker"},
+        {"key": "t-hb", "id": "e2e-t-hb", "title": "target hb", "type": "task"},
+        {"key": "t-hb2", "id": "e2e-t-hb2", "title": "target hb2", "type": "task"},
+        {"key": "t-hb3", "id": "e2e-t-hb3", "title": "target hb3", "type": "task"},
         {"key": "t-boot", "id": "e2e-t-boot", "title": "target boot", "type": "task"},
         {"key": "t-ro", "id": "e2e-t-ro", "title": "target reopen", "type": "task"},
         {"key": "t-dr", "id": "e2e-t-dr", "title": "target dep remove", "type": "task", "deps": [{"target": "t-db"}]},
@@ -710,6 +713,35 @@ shapes:
     compare: exit
     verify: [[show, --json, e2e-t-rc]]
     pending: {slice: "SRV-1", reason: "the reference server does not advertise issues.reclaim (B3 #12), so the client refuses at its capability preflight"}
+  - id: gc-heartbeat
+    source: gc formulas/mol-do-work.toml:47 (gc bd heartbeat <id> -> bd heartbeat)
+    setup: [[update, e2e-t-hb, --claim]]
+    args: [heartbeat, e2e-t-hb, --json]
+    verify: [[show, --json, e2e-t-hb]]
+    pending: {slice: "reference-server-heartbeat", reason: "the reference server does not advertise issues.heartbeat, so the client refuses at its capability preflight; pinned passing by backend/http TestE2E_HeartbeatOverHTTP; remove the mark when reference_server.json is upgraded"}
+  - id: gc-heartbeat-non-holder
+    source: gc formulas/mol-do-work.toml:47 (a worker heartbeating a bead another actor holds)
+    setup: [[update, e2e-t-hb2, --claim, --actor, alice]]
+    args: [heartbeat, e2e-t-hb2]
+    expect_exit: 1
+    expect_stderr: "(?i)claimed by|alice"
+    compare: exit
+    pending: {slice: "reference-server-heartbeat", reason: "the reference server does not advertise issues.heartbeat, so the client refuses at its capability preflight; pinned passing by backend/http TestE2E_HeartbeatOverHTTP; remove the mark when reference_server.json is upgraded"}
+  - id: gc-heartbeat-closed
+    source: gc formulas/mol-do-work.toml:47 (a worker heartbeating a bead that was closed under it)
+    setup: [[update, e2e-t-hb3, --claim], [close, e2e-t-hb3]]
+    args: [heartbeat, e2e-t-hb3]
+    expect_exit: 1
+    expect_stderr: "(?i)status closed|is closed"
+    compare: exit
+    pending: {slice: "reference-server-heartbeat", reason: "the reference server does not advertise issues.heartbeat, so the client refuses at its capability preflight; pinned passing by backend/http TestE2E_HeartbeatOverHTTP; remove the mark when reference_server.json is upgraded"}
+  - id: gc-heartbeat-wisp
+    source: gc formulas/mol-do-work.toml:47 (a heartbeat on a wisp, which is never leased)
+    args: [heartbeat, e2e-wisp-2]
+    expect_exit: 1
+    expect_stderr: "(?i)ephemeral"
+    compare: exit
+    pending: {slice: "reference-server-heartbeat", reason: "the reference server does not advertise issues.heartbeat, so the client refuses at its capability preflight; pinned passing by backend/http TestE2E_HeartbeatOverHTTP; remove the mark when reference_server.json is upgraded"}
   - id: mc-promote
     source: mc mol-normalized-issue-pr-v1 (promote --reason)
     args: [promote, e2e-wisp-p, --reason, "keep it"]

@@ -144,7 +144,11 @@ func (p *uowProvider) Releaser() (publicops.Releaser, error)       { return uow.
 func (p *uowProvider) LeaseReclaimer() (publicops.LeaseReclaimer, error) {
 	return uow.NewLeaseReclaimer(p)
 }
-func (p *uowProvider) Memories() (memoryops.Memories, error) { return uow.NewMemories(p) }
+
+// Heartbeater passes through: the external-dependency policy governs what a
+// write may point at, and a heartbeat on an existing claim points at nothing.
+func (p *uowProvider) Heartbeater() (publicops.Heartbeater, error) { return uow.NewHeartbeater(p) }
+func (p *uowProvider) Memories() (memoryops.Memories, error)       { return uow.NewMemories(p) }
 func (p *uowProvider) EventsJournalCursor() (storage.EventsJournalCursor, error) {
 	return uow.NewEventsJournalCursor(p)
 }
@@ -222,6 +226,7 @@ var (
 	_ uow.MetadataCASSource              = (*uowProvider)(nil)
 	_ uow.ReleaserSource                 = (*uowProvider)(nil)
 	_ uow.LeaseReclaimerSource           = (*uowProvider)(nil)
+	_ uow.HeartbeaterSource              = (*uowProvider)(nil)
 	_ uow.MemoriesSource                 = (*uowProvider)(nil)
 	_ uow.EventsJournalCursorSource      = (*uowProvider)(nil)
 )
