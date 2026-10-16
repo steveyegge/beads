@@ -51,9 +51,11 @@ func gateCheckWrites(reqs []string) []string {
 }
 
 // TestServedGateCheckOverAwaitTypedGates runs `bd gate check` over HTTP, through
-// the reference proxy, against REAL await-typed gates. No wire create accepts
-// await_*, so the gates are seeded straight into the served store before it
-// listens, and every outcome is read back from that store:
+// the reference proxy, against REAL await-typed gates. The reference server
+// advertises neither gate token (issues.create.gates, issues.update.gates), so
+// no create through it carries await_*: the gates are seeded straight into the
+// served store before it listens, and every outcome is read back from that
+// store:
 //
 //   - --dry-run writes nothing;
 //   - an expired timer closes, a pending one stays open;
@@ -61,8 +63,10 @@ func gateCheckWrites(reqs []string) []string {
 //     and one whose target is closed closes;
 //   - a merged gh:pr gate closes, a closed one escalates and stays open;
 //   - a gh:run gate with a workflow-name hint discovers its run but cannot
-//     persist await_id over the wire: that gate's error names the await_id
-//     update and the server, not a Go method, and await_id is untouched;
+//     persist await_id through a server without issues.update.gates: the
+//     client refuses the patch before the dial, that gate's error names the
+//     missing token and the server, not a Go method, and await_id is
+//     untouched;
 //   - a persisted proto's gates are templates: listed, but no sweep evaluates
 //     or writes them, and they take no row of --limit (they sort first here).
 //
@@ -308,16 +312,16 @@ esac
 		}
 	})
 
-	t.Run("gh:run await_id persist refuses by name", func(t *testing.T) {
+	t.Run("gh:run await_id persist refuses by the missing token", func(t *testing.T) {
 		r := runBD(t, bin, dir, env, "", "gate", "check", "--type=gh:run")
 		if r.code == 0 {
-			t.Fatalf("bd gate check --type=gh:run succeeded; the wire cannot carry await_id: %s", r)
+			t.Fatalf("bd gate check --type=gh:run succeeded; the reference server does not advertise issues.update.gates: %s", r)
 		}
 		if w := gateCheckWrites(reqs.take()); len(w) != 0 {
 			t.Errorf("the refused await_id persist sent writes %v", w)
 		}
-		if !strings.Contains(r.stderr, "e2e-g-run-hint") || !strings.Contains(r.stderr, "await_id") {
-			t.Errorf("gh:run error does not name the gate and the await_id update:\n%s", r)
+		if !strings.Contains(r.stderr, "e2e-g-run-hint") || !strings.Contains(r.stderr, `does not advertise capability "issues.update.gates"`) {
+			t.Errorf("gh:run error does not name the gate and the missing issues.update.gates token:\n%s", r)
 		}
 		if !strings.Contains(r.stderr, "bd serve at http://"+proxyAddr) {
 			t.Errorf("gh:run error does not name the server it reached:\n%s", r)
@@ -325,7 +329,9 @@ esac
 		if strings.Contains(r.stderr, "e2e-tpl-run") {
 			t.Errorf("the template gh:run gate was checked:\n%s", r)
 		}
-		for _, leak := range []string{"UpdateIssue", "Lifecycle.Update", "updateIssue"} {
+		// The capability refusal names the wire operation (updateIssue) that
+		// needs the token; the role and store methods stay out of it.
+		for _, leak := range []string{"UpdateIssue", "Lifecycle.Update"} {
 			if strings.Contains(r.stderr, leak) {
 				t.Errorf("gh:run error leaks %q:\n%s", leak, r)
 			}

@@ -569,11 +569,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UpdateIssue`, which the HTTP store does not implement, so every open bead
   gate with an open target was an error on every sweep; it now goes through
   the Lifecycle role's `Update` (a single-key metadata set, `issues.update` on
-  the wire), as does the gh:run discovery's `await_id` persist. The HTTP
-  client still refuses the `await_id` patch before the dial, so a gh:run gate
-  with a workflow-name hint stays that gate's error, now naming the run and
-  the server that does not accept the `await_id` update rather than a Go
-  method. The sweep also skips the gates of a persisted proto
+  the wire), as does the gh:run discovery's `await_id` persist, which the
+  HTTP client sends to a server that advertises `issues.update.gates` (see
+  Added). Against an older server it refuses that patch before the dial, so a
+  gh:run gate with a workflow-name hint stays that gate's error, naming the
+  missing token and the server rather than a Go method.
+  The sweep also skips the gates of a persisted proto
   (`bd cook --persist`): they are templates that every pour copies, so a
   write to one was refused on every sweep and, in a local workspace, a
   resolved one (an expired timer, say) was closed in the proto itself. The
