@@ -169,7 +169,6 @@ go_library(
         "graph_proxied_server.go",
         "graph_visual.go",
         "heartbeat.go",
-        "heartbeat_proxied_server.go",
         "help_all.go",
         "help_supplements.go",
         "history.go",

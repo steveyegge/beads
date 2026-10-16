@@ -1,12 +1,19 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/uow"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/workapi"
+	"github.com/steveyegge/beads/issueops"
 )
 
 var heartbeatCmd = &cobra.Command{
@@ -48,8 +55,14 @@ Examples:
 		ctx := rootCtx
 		id := args[0]
 
+		// One role on every route: the store's own
+		// Heartbeater accessor on the direct routes — dolt, embedded dolt and
+		// a registered HTTP backend, where it dials issues.heartbeat and an
+		// older server is refused before the dial naming the token — and the
+		// proxied-server provider's on the proxied one. Every leg writes ONLY
+		// the lease row: no revision remint, no history, no Dolt commit.
 		if usesProxiedServer() {
-			return runHeartbeatProxiedServer(ctx, id)
+			return runHeartbeatProxied(ctx, id)
 		}
 
 		result, err := resolveAndGetIssueForMutation(ctx, store, id)
@@ -68,7 +81,14 @@ Examples:
 		defer result.Close()
 
 		issueStore := result.Store
-		if err := issueStore.HeartbeatIssue(ctx, result.ResolvedID, currentActor()); err != nil {
+		heartbeater, err := issueStore.Heartbeater()
+		if err != nil {
+			return HandleErrorRespectJSON("heartbeat %s: %v", result.ResolvedID, err)
+		}
+		if _, err := heartbeater.Heartbeat(ctx, issueops.HeartbeatRequest{
+			Actor:   currentActor(),
+			IssueID: result.ResolvedID,
+		}); err != nil {
 			return HandleErrorRespectJSON("heartbeat %s: %v", result.ResolvedID, err)
 		}
 
@@ -85,9 +105,68 @@ Examples:
 	},
 }
 
-// renderHeartbeatSuccess prints the success shape both storage routes share —
-// the classic path and the proxied-server path (heartbeat_proxied_server.go)
-// call exactly this code, so the --json contract workers parse
+// runHeartbeatProxied is bd heartbeat on the proxied-server plane: the id is
+// resolved exactly, on either plane, in a read unit of work of its own, and
+// the refresh goes through the provider's OWN Heartbeater accessor (the
+// capability the uow leg commits with RunTxEphemeral's SQL-only form, so a
+// heartbeat still mints exactly ZERO Dolt commits, bd-lrgn1). Nothing here
+// sets commandDidWrite. The exit code is the worker contract: 0 = lease
+// refreshed; nonzero = the lease is gone and the worker should stop.
+func runHeartbeatProxied(ctx context.Context, id string) error {
+	issue, err := proxiedHeartbeatTarget(ctx, id)
+	if err != nil {
+		return err
+	}
+	heartbeater, err := proxiedHeartbeater()
+	if err != nil {
+		return HandleErrorRespectJSON("heartbeat %s: %v", issue.ID, err)
+	}
+	if _, err := heartbeater.Heartbeat(ctx, issueops.HeartbeatRequest{
+		Actor:   currentActor(),
+		IssueID: issue.ID,
+	}); err != nil {
+		return HandleErrorRespectJSON("heartbeat %s: %v", issue.ID, err)
+	}
+	SetLastTouchedID(issue.ID)
+	return renderHeartbeatSuccess(issue.ID, issue.Title)
+}
+
+// proxiedHeartbeatTarget reads the row a proxied heartbeat names, on either
+// plane (a wisp resolves here and the role refuses it as ephemeral), for its
+// canonical id and the title the feedback line prints.
+func proxiedHeartbeatTarget(ctx context.Context, id string) (*types.Issue, error) {
+	uw, err := proxiedOpenReadUOW(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer uw.Close(ctx)
+	issue, _, err := workapi.GetIssueOrWisp(ctx, workapi.NewUOWDetailSource(uw), id)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, HandleErrorRespectJSON("issue %s not found", id)
+	}
+	if err != nil {
+		return nil, HandleErrorRespectJSON("resolving %s: %v", id, err)
+	}
+	return issue, nil
+}
+
+// proxiedHeartbeater takes the lease refresh through the proxied-server
+// provider's own capability accessor, proxiedLeaseReclaimer's two-step and for
+// its reason: the accessor is where each layer is added.
+func proxiedHeartbeater() (issueops.Heartbeater, error) {
+	if uowProvider == nil {
+		return nil, errors.New("proxied-server UOW provider not initialized")
+	}
+	src, ok := uowProvider.(uow.HeartbeaterSource)
+	if !ok {
+		return nil, fmt.Errorf("proxied-server provider %T does not offer the lease-refresh surface", uowProvider)
+	}
+	return src.Heartbeater()
+}
+
+// renderHeartbeatSuccess prints the success shape every storage route shares —
+// the direct path and the proxied-server path (runHeartbeatProxied) call
+// exactly this code, so the --json contract workers parse
 // ({"id","status":"heartbeat","owner"}) cannot drift between modes.
 func renderHeartbeatSuccess(id, title string) error {
 	if jsonOutput {

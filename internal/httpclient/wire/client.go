@@ -276,7 +276,9 @@ type Request struct {
 	Actor string
 	// Idempotent marks a read carried on a non-GET method (a POST batch get)
 	// as safe to replay, the way a GET is (see Replayable). Never set it on a
-	// write.
+	// write whose replay could double-apply. The one write that sets it is the
+	// lease heartbeat (heartbeatIssue): a repeat only moves the expiry later,
+	// and a replay after the lease is gone fails the holder fence.
 	Idempotent bool
 	// Timeout, when positive, RAISES the client's per-request ceiling for this
 	// one request — never lowers it, and never bounds a client whose

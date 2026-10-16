@@ -3,43 +3,35 @@
 package httpclient
 
 import (
-	"context"
-	"errors"
-	"net/http"
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
-	"github.com/steveyegge/beads/internal/httpapi/apigen"
-	"github.com/steveyegge/beads/internal/httpclient/wire"
-	"github.com/steveyegge/beads/issueops"
+	"github.com/steveyegge/beads/internal/storage"
 )
 
-// The Heartbeater contract, run against a real bd serve through
-// POST /v0/beads/issues/{id}:heartbeat .
-//
-// THE SUBJECT IS THE SERVED OPERATION, NOT YET THIS CLIENT'S ACCESSOR. The
-// client leg (httpclient.Store.Heartbeater, its preflight, local validation
-// and problem mapping) lands in the next commit; until then Store's
-// accessor is the generated refusing shell and Heartbeater sits on
-// completeness_test's unsupported allowlist. servedWireHeartbeater below is the
-// thinnest dial that lets the contract reach the server: it builds the
-// documented request, sends it through this store's own dispatch (so the
-// capability preflight and the wire's problem mapping are the real ones), and
-// rebuilds the role's typed errors from the documented members. The next commit replaces
-// it with env.subject.Heartbeater() and deletes it.
+// The Heartbeater contract, run through the http client's accessor against a
+// real bd serve: POST /v0/beads/issues/{id}:heartbeat.
+// Nothing is parked: the id rides in the path and the actor is the body's one
+// member, and every request rule the role lists is raised before the dial
+// (heartbeater.go).
 //
 // Seeding and every precondition (the claim, the close, the release, the
 // reclaim, the status move) go through the REFERENCE store's own roles, never
 // the wire, per the harness's binding rule; the post-state is read raw.
 //
-// NO HOOK CASE YET: the served route's hook is the CLIENT's decorator around
-// the client's accessor (served_lease_reclaimer_test.go's shape), which is the
-// next commit's accessor. HookedHeartbeater is left nil, so that one
-// assertion skips loudly; the next commit wires it.
+// THE HOOK CASE runs the heartbeater off a HookFiringStore wrapped around the
+// client, the chain cmd/bd composes for a connected workspace: bd serve runs
+// no hooks, so it is the CLIENT's decorator that must fire none for a
+// refresh — the native refresh fires none on any route (a re-arm, recorded as
+// a mutation, fires on_update).
 func newServedHeartbeaterFixture(t *testing.T, prefix string) conformance.HeartbeaterFixture {
 	t.Helper()
 	env := newServedEnv(t, prefix)
 	ref := env.reference
+	heartbeater, err := env.subject.Heartbeater()
+	if err != nil {
+		t.Fatalf("Heartbeater(): %v", err)
+	}
 	claimer, err := ref.IssueClaimer()
 	if err != nil {
 		t.Fatalf("IssueClaimer(): %v", err)
@@ -56,9 +48,16 @@ func newServedHeartbeaterFixture(t *testing.T, prefix string) conformance.Heartb
 	if err != nil {
 		t.Fatalf("LeaseReclaimer(): %v", err)
 	}
+	runner, fired := conformance.NewUpdateHookLog(t)
+	hooked := heartbeater
+	if runner != nil {
+		if hooked, err = storage.NewHookFiringStore(env.subject, runner).Heartbeater(); err != nil {
+			t.Fatalf("hooked Heartbeater(): %v", err)
+		}
+	}
 	return conformance.HeartbeaterFixture{
 		IssuePrefix:                env.prefix,
-		Heartbeater:                servedWireHeartbeater{store: env.subject},
+		Heartbeater:                heartbeater,
 		CreateIssue:                env.createIssue,
 		CreateWisp:                 env.createWisp,
 		Claimer:                    claimer,
@@ -70,63 +69,9 @@ func newServedHeartbeaterFixture(t *testing.T, prefix string) conformance.Heartb
 		CountHistory:               env.countHistory,
 		SetJournalEnabled:          ref.SetEventsJournalEnabled,
 		SetVersionedHistoryEnabled: ref.SetVersionedHistoryEnabled,
+		HookedHeartbeater:          hooked,
+		FiredUpdates:               fired,
 	}
-}
-
-// servedWireHeartbeater dials issues.heartbeat for the contract above. It is
-// test scaffolding until the client accessor lands; see newServedHeartbeaterFixture.
-type servedWireHeartbeater struct{ store *Store }
-
-func (h servedWireHeartbeater) Heartbeat(ctx context.Context, req issueops.HeartbeatRequest) (issueops.HeartbeatResult, error) {
-	// The one rule the wire cannot carry: the id is a PATH segment, and an
-	// empty one names the collection rather than an issue. Every other rule
-	// (the actor's) is the server's to refuse.
-	if req.IssueID == "" {
-		return issueops.HeartbeatResult{}, &issueops.HeartbeatFieldError{
-			Field: issueops.HeartbeatFieldIssueID, Detail: "validation failed: heartbeat requires an issue id",
-		}
-	}
-	path, err := wire.IssueMethodPath(req.IssueID, wire.MethodHeartbeat)
-	if err != nil {
-		return issueops.HeartbeatResult{}, err
-	}
-	var out apigen.HeartbeatIssueResponse
-	if err := h.store.dispatch(ctx, wire.Request{
-		Op:      wire.OpHeartbeatIssue,
-		Method:  http.MethodPost,
-		Path:    path,
-		Body:    apigen.HeartbeatIssueRequest{Actor: req.Actor},
-		IssueID: req.IssueID,
-		Actor:   req.Actor,
-	}, &out); err != nil {
-		return issueops.HeartbeatResult{}, servedHeartbeatError(err)
-	}
-	return issueops.HeartbeatResult{
-		IssueID:        out.Id,
-		Holder:         out.Holder,
-		HeartbeatAt:    out.HeartbeatAt,
-		LeaseExpiresAt: out.LeaseExpiresAt,
-		Rearmed:        out.Rearmed,
-	}, nil
-}
-
-// servedHeartbeatError rebuilds the role's typed refusals from the documented
-// problem members. `lease_not_held` and `not_found` already arrive typed from
-// the wire's code table; `already_claimed` arrives as the claim's conflict
-// shape and becomes the heartbeat's, and a 400 naming `actor` becomes the
-// role's field error.
-func servedHeartbeatError(err error) error {
-	var claim *issueops.ClaimConflictError
-	if errors.As(err, &claim) && errors.Is(err, issueops.ErrAlreadyClaimed) {
-		return &issueops.LeaseConflictError{
-			IssueID: claim.IssueID, Holder: claim.Assignee, Status: claim.Status, Err: issueops.ErrAlreadyClaimed,
-		}
-	}
-	var problem *wire.ProblemError
-	if errors.As(err, &problem) && problem.Code == "invalid_argument" && problem.Param == "actor" {
-		return &issueops.HeartbeatFieldError{Field: issueops.HeartbeatFieldActor, Detail: problem.Detail}
-	}
-	return err
 }
 
 func TestServedHeartbeaterRefreshesTheHoldersLease(t *testing.T) {

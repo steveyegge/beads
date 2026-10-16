@@ -640,8 +640,7 @@ var codeSentinel = map[string]func(*ProblemError, target) error{
 
 	// lease_not_held is the HEARTBEAT's refusal: the actor holds no live claim
 	// (open, closed, released, reclaimed, moved off in_progress, or a wisp).
-	// It is on this table for set-equality with the document; the accessor
-	// that dials issues.heartbeat lands after the operation. The typed error is
+	// httpclient's Heartbeater reaches it (heartbeater.go). The typed error is
 	// rebuilt whole from `issue_status` and `reason: ephemeral` (a wisp), and
 	// it wraps ErrLeaseNotHeld, which also matches ErrNotClaimable, in the
 	// native heartbeat's own words ("<id> status <status>", "<id> is
