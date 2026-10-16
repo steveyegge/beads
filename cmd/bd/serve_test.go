@@ -175,6 +175,26 @@ func TestOnlyOneShotCommandsMemoizeRemoteReads(t *testing.T) {
 	}
 }
 
+// TestReadMemoKillSwitchTurnsTheMemoOff (mc-5dkzp): BD_HTTP_READ_MEMO=0 takes
+// the memo away from every command, so an operator who suspects a stale read
+// can rule it out without a rebuild. Any other value leaves the default.
+func TestReadMemoKillSwitchTurnsTheMemoOff(t *testing.T) {
+	oneShot := &cobra.Command{Use: "show"}
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"", true},
+		{"1", true},
+		{"0", false},
+	} {
+		t.Setenv(readMemoEnvVar, tc.value)
+		if got := commandMemoizesReads(oneShot); got != tc.want {
+			t.Errorf("%s=%q: commandMemoizesReads(show) = %v, want %v", readMemoEnvVar, tc.value, got, tc.want)
+		}
+	}
+}
+
 // TestServeRefusalsPromiseNothing is the honesty gate on the mode gate. The
 // refusal is typed so a caller can dispatch on it, and it must promise nothing
 // — claiming otherwise sends an operator to do the wrong work.

@@ -251,6 +251,10 @@ func runsPostCommandMaintenance(cmdName string, strictReadonly bool) bool {
 	return effectiveRootStorePolicy(cmdName, strictReadonly).runMaintenance
 }
 
+// readMemoEnvVar turns the per-command http read memo off when set to "0": an
+// operator who suspects a stale read can rule the memo out without a rebuild.
+const readMemoEnvVar = "BD_HTTP_READ_MEMO"
+
 // commandMemoizesReads reports whether this invocation's http transport may
 // answer an identical row or settings read from a response it already received
 // (httpclient.WithReadMemo, bts-xpw.3.14.6). A one-shot command may: it reads,
@@ -261,7 +265,11 @@ func runsPostCommandMaintenance(cmdName string, strictReadonly bool) bool {
 // Over an http workspace it answers other clients, who must see what other
 // writers changed. A --watch or --follow poll exists to see exactly those
 // changes, and a memo would answer its polls from a snapshot instead.
+// BD_HTTP_READ_MEMO=0 turns the memo off for every command.
 func commandMemoizesReads(cmd *cobra.Command) bool {
+	if os.Getenv(readMemoEnvVar) == "0" {
+		return false
+	}
 	if cmd.Name() == serveCmdName {
 		return false
 	}
