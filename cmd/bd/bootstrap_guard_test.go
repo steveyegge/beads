@@ -136,6 +136,9 @@ var forgeSyncRemoteForms = []struct {
 	{"already git+https", "git+https://github.com/org/repo.git", "git+https://github.com/org/repo.git"},
 	{"git+ssh without user", "git+ssh://github.com/org/repo.git", "git+ssh://github.com/org/repo.git"},
 	{"gitlab", "https://gitlab.com/group/repo.git", "git+https://gitlab.com/group/repo.git"},
+	// No .git suffix, so only the host can make it a forge: github.com, after
+	// the last "@" of the authority (mc-gcmer).
+	{"multi-@ userinfo", "https://a@b@github.com/org/repo", "git+https://a@b@github.com/org/repo"},
 }
 
 // newForgeSyncRemoteWorkspace builds a workspace whose config.yaml carries

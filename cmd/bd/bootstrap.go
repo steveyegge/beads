@@ -274,7 +274,11 @@ Examples:
 		}
 
 		if err := executeBootstrapPlan(plan, cfg, nonInteractive); err != nil {
-			return HandleError("Bootstrap failed: %v", err)
+			// The error can carry sync.remote verbatim, credentials and all:
+			// sanitizeURL passes through a URL net/url cannot parse (a
+			// password with an unencoded "#" or "?"), and Dolt's "invalid
+			// remote url:" repeats it. Scrub it where it is printed.
+			return HandleError("Bootstrap failed: %s", scrubURLCredentials(err.Error()))
 		}
 		return nil
 	},
