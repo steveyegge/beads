@@ -162,6 +162,10 @@ func writeShapes() []writeShape {
 						"notes", "status", "priority", "issue_type", "assignee", "owner",
 						"estimated_minutes", "external_ref", "due_at", "defer_until",
 						"sender", "metadata", "labels", "ephemeral", "no_history",
+						// The gate members, behind issues.create.gates:
+						// carried to a server that
+						// advertises it, refused before the dial otherwise.
+						"await_type", "await_id", "timeout", "waiters",
 					},
 					// The members of a types.Issue this vocabulary does NOT
 					// spell — the creation stamp, the workflow and
@@ -177,13 +181,9 @@ func writeShapes() []writeShape {
 				// Issue spread drives is left out (wirePriority).
 				"DefaultPriority": absenceOf("priority"),
 			},
-			// The gate members, published behind issues.create.gates
-			// under the live W-CreateRequest.Issue refusal.
-			// They leave this set when the encoder reads the token and sends
-			// them.
-			pending: map[string]string{
-				"await_type": "Issue", "await_id": "Issue", "timeout": "Issue", "waiters": "Issue",
-			},
+			// The gate members sat in a pending set here while the wire
+			// published them and this client still refused them (the wire
+			// slice); the client slice moved them into the Issue spread above.
 		},
 		{
 			name:   "closeIssue",
@@ -331,15 +331,19 @@ func writeShapes() []writeShape {
 				// W-IssuePatch.Persistence stays a refusal there — the Owner
 				// row's arrangement, the other way round.
 				"Persistence": member("persistence"),
+				// The gate members, behind issues.update.gates.
+				// They sat in the pending set while the
+				// wire published them under the W-IssuePatch.AwaitID and
+				// W-IssuePatch.Waiters refusals; the flip moved them here and
+				// retired the refusals.
+				"AwaitID": member("await_id"),
+				"Waiters": member("waiters"),
 			},
-			// The set held the two incremental-label members #5510 published
-			// under an existing refusal, until client wave ga-jpywb moved both
-			// into `carried` — which is what the map documents a flip as. It
-			// now holds await_id and waiters, published behind
-			// issues.update.gates under the live
-			// W-IssuePatch.AwaitID and W-IssuePatch.Waiters refusals; they
-			// leave it when the encoder reads the token and sends them.
-			pending: map[string]string{"await_id": "AwaitID", "waiters": "Waiters"},
+			// NOTHING IS PENDING. The set held the two incremental-label
+			// members #5510 published under an existing refusal until client
+			// wave ga-jpywb, and await_id and waiters until the gate
+			// members' client slice, each moved into `carried` — which is what the map
+			// documents a flip as.
 		},
 		{
 			// The nested metadata document, and the reason it is a shape of its
@@ -543,19 +547,14 @@ func writeShapes() []writeShape {
 						"status", "priority", "issue_type", "assignee", "owner", "estimated_minutes",
 						"external_ref", "due_at", "defer_until", "sender", "metadata", "labels",
 						"ephemeral", "no_history",
+						// The gate members, behind issues.create.gates.
+						"await_type", "await_id", "timeout", "waiters",
 					},
 					partial: "W-CreateItem.Issue",
 				},
 				"MetadataRefs": member("metadata_refs"),
 				// The absence of `priority` (wirePriority).
 				"DefaultPriority": absenceOf("priority"),
-			},
-			// The gate members, published behind issues.create.gates
-			// under the live W-CreateItem.Issue refusal.
-			// They leave this set when the encoder reads the token and sends
-			// them.
-			pending: map[string]string{
-				"await_type": "Issue", "await_id": "Issue", "timeout": "Issue", "waiters": "Issue",
 			},
 		},
 		{
@@ -609,12 +608,11 @@ func writeShapes() []writeShape {
 				// expressible on this document.
 				"Labels":   member("labels"),
 				"Metadata": member("metadata"),
+				// The gate members, behind issues.update.gates,
+				// spelled as on updateIssue.
+				"AwaitID": member("await_id"),
+				"Waiters": member("waiters"),
 			},
-			// await_id and waiters, published behind issues.update.gates
-			// under the live W-IssuePatch.AwaitID and
-			// W-IssuePatch.Waiters refusals. They leave this set when the
-			// encoder reads the token and sends them.
-			pending: map[string]string{"await_id": "AwaitID", "waiters": "Waiters"},
 		},
 		{
 			// The label edit, a shape of its own for the reason the metadata

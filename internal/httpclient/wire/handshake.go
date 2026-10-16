@@ -280,11 +280,10 @@ const CapIssuesUpdateClaim = "issues.update.claim"
 // announcing the gate members, spelled exactly as
 // httpapi's constants of the same names: await_type, await_id, timeout and
 // waiters on createIssue and batchApply create items, and await_id and
-// waiters on updateIssue's and batchApply update items' patch. This client
-// still refuses every gate member before the dial (W-CreateRequest.Issue,
-// W-CreateItem.Issue, W-IssuePatch.AwaitID, W-IssuePatch.Waiters); the tokens
-// are mirrored here so the advertised vocabulary stays set-equal with the
-// server's, and the encoders read them once they send the members.
+// waiters on updateIssue's and batchApply update items' patch. The encoders
+// send the members only to a server advertising the matching token, and
+// refuse the request before the dial naming it otherwise
+// (W-CreateRequest.Gates; the retired W-IssuePatch.AwaitID).
 const (
 	CapIssuesCreateGates = "issues.create.gates"
 	CapIssuesUpdateGates = "issues.update.gates"

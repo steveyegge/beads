@@ -512,9 +512,10 @@ func TestServedLifecycleUpdatePreservesTheCreationStamp(t *testing.T) {
 // The other two of the four race IssuePatch.SpecID/.AwaitID/.Owner updates
 // against each other (RunLifecycleUpdateExpectedVersionSingleWinnerWithDisjointColumnsUnderConcurrency,
 // RunLifecycleUpdateExpectedVersionSingleWinnerAcrossUpdateAndCloseUnderConcurrency),
-// and stay off this leg: those three fields are refused on updateIssue by
-// name (W-IssuePatch.SpecID, W-IssuePatch.AwaitID, W-IssuePatch.Owner,
-// internal/httpclient/encode/ledger.go), a pre-existing D8 refuse-not-drop
+// and stay off this leg: SpecID and Owner are still refused on updateIssue by
+// name (W-IssuePatch.SpecID, W-IssuePatch.Owner,
+// internal/httpclient/encode/ledger.go; AwaitID is carried
+// behind issues.update.gates), a pre-existing D8 refuse-not-drop
 // decision this slice does not reopen, not a race outcome the wire could
 // report correctly — see issuePatchFieldsNotOnUpdateWireWaiverReason
 // (internal/storage/leg_contract_wiring_test.go).
@@ -1029,20 +1030,15 @@ func TestServedLifecycleUpdateAllowTemplateEditsATemplate(t *testing.T) {
 	conformance.RunLifecycleUpdateAllowTemplateEditsATemplate(t, t.Context(), newServedUpdateFixture(t, "hlua"))
 }
 
-// TestServedLifecycleUpdatePatchesTheGateMembers is PARKED on
-// W-IssuePatch.AwaitID and W-IssuePatch.Waiters: IssuePatchBody publishes both
-// behind issues.update.gates, but this client does not send them yet and
-// refuses both before the dial (gateParkBead).
+// TestServedLifecycleUpdatePatchesTheGateMembers RUNS:
+// the served Config advertises issues.update.gates and this client sends
+// await_id and waiters to a server that does. It and the bounds case below
+// were parked on W-IssuePatch.AwaitID, now retired.
 func TestServedLifecycleUpdatePatchesTheGateMembers(t *testing.T) {
-	skipKnownDivergence(t, "W-IssuePatch.AwaitID", gateParkBead,
-		"the case patches await_id and waiters; IssuePatchBody publishes both behind issues.update.gates, but this client does not send them yet (W-IssuePatch.AwaitID, W-IssuePatch.Waiters) and refuses both before the dial")
 	conformance.RunLifecycleUpdatePatchesTheGateMembers(t, t.Context(), newServedUpdateFixture(t, "hlugate"))
 }
 
-// TestServedLifecycleUpdateBoundsTheGateMembers is PARKED on the same rows.
 func TestServedLifecycleUpdateBoundsTheGateMembers(t *testing.T) {
-	skipKnownDivergence(t, "W-IssuePatch.AwaitID", gateParkBead,
-		"the case patches await_id and waiters at and past their bounds; IssuePatchBody publishes both behind issues.update.gates, but this client does not send them yet (W-IssuePatch.AwaitID, W-IssuePatch.Waiters) and refuses both before the dial")
 	conformance.RunLifecycleUpdateBoundsTheGateMembers(t, t.Context(), newServedUpdateFixture(t, "hlugbnd"))
 }
 

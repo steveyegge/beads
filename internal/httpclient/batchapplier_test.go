@@ -155,15 +155,14 @@ func TestApplyBatchRefusesEveryMemberTheWireExcludes(t *testing.T) {
 			{"SpecID", "W-IssuePatch.SpecID", issueops.IssuePatch{
 				SpecID: issueops.Field[string]{Set: true, Value: "spec-1"},
 			}},
-			{"AwaitID", "W-IssuePatch.AwaitID", issueops.IssuePatch{
-				AwaitID: issueops.Field[string]{Set: true, Value: "await-1"},
-			}},
 			{"ClosedBySession", "W-IssuePatch.ClosedBySession", issueops.IssuePatch{
 				ClosedBySession: issueops.Field[string]{Set: true, Value: "sess-1"},
 			}},
-			{"Waiters", "W-IssuePatch.Waiters", issueops.IssuePatch{
-				Waiters: issueops.Field[[]string]{Set: true, Value: []string{"w1"}},
-			}},
+			// AwaitID and Waiters WERE here: both are carried behind
+			// issues.update.gates (W-IssuePatch.AwaitID retired).
+			// TestUpdateSendsTheGateMembersToAServerThatAdvertisesThem
+			// and TestUpdateRefusesTheGateMembersAgainstAServerWithoutTheToken
+			// are the positive assertion and the pre-dial capability refusal.
 			{"Persistence", "W-IssuePatch.Persistence", issueops.IssuePatch{
 				Persistence: issueops.Field[issueops.PersistenceMode]{Set: true, Value: types.PersistenceModeEphemeral},
 			}},
