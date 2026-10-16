@@ -37,7 +37,18 @@ bd gate resolve <gate-id>    # close a gate manually
 | `timer` | a duration after gate creation | `bd gate check` once the timeout elapses |
 | `gh:run` | a GitHub Actions workflow to complete successfully | `bd gate check` (uses `gh run view`) |
 | `gh:pr` | a pull request to merge | `bd gate check` (uses `gh pr view`) |
-| `bead` | a bead to close — a plain ID names a bead in this rig, the cross-rig form is `<rig>:<bead-id>` | `bd gate check` for plain local IDs; cross-rig values cannot be checked — resolve those manually |
+| `bead` | a bead to close, or to be deleted once a check has seen it — a plain ID names a bead in this rig, the cross-rig form is `<rig>:<bead-id>` | `bd gate check` for plain local IDs; cross-rig values cannot be checked — resolve those manually |
+
+A `bead` gate also closes when its awaited bead is deleted, as long as an
+earlier `bd gate check` saw that bead in this rig; the check records the
+sighting in the gate's `await_seen` metadata. An await ID that no check has
+seen, such as a typo or a bead deleted before the first check, keeps the gate
+pending with a diagnostic: correct the await ID or close the gate with
+`bd gate resolve`. Renaming the awaited bead with `bd rename` or
+`bd rename-prefix` moves the gate's await ID and sighting to the new ID, so a
+rename does not count as a deletion, even to a `bd gate check` or `bd close`
+that read the gate before the rename; a rename that fails partway leaves the
+gate pending without a sighting, never resolved.
 
 Timeouts use Go duration syntax: `30m`, `1h`, `24h` (there is no `d` unit —
 write `24h`, not `1d`).

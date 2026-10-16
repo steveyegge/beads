@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -189,13 +190,22 @@ func bdRunWithFlockRetry(t *testing.T, bd, dir string, args ...string) ([]byte, 
 
 // bdInit creates a temp dir with a git repo, runs bd init --quiet with the
 // given extra args, and returns (dir, beadsDir, combined output).
-// Fatals if bd init fails.
+// Fatals if bd init fails. bd init runs on a schema already migrated from a
+// per-process template (seedEmbeddedSchema) when seededInitDatabase knows the
+// arguments.
 func bdInit(t *testing.T, bd string, extraArgs ...string) (dir, beadsDir string, out string) {
 	t.Helper()
 	dir = t.TempDir()
 	initGitRepoAt(t, dir)
+	database, seeded := seededInitDatabase(extraArgs)
+	if seeded {
+		seedEmbeddedSchema(t, dir, database)
+	}
 	out = runBDInit(t, bd, dir, extraArgs...)
 	beadsDir = filepath.Join(dir, ".beads")
+	if seeded {
+		requireSeededEmbeddedInit(t, beadsDir, database)
+	}
 	return
 }
 
@@ -329,12 +339,12 @@ func requireNoFile(t *testing.T, path string) {
 	}
 }
 
-// TestEmbeddedInitA, TestEmbeddedInitB, and TestEmbeddedInitC were split from
-// TestEmbeddedInit (originally ~356s, measured under --config=embedded) into
-// 3 top-level tests over disjoint subtest groups, for CI shard balance (see
-// scripts/ci/embedded_cmd_test_durations.json and engdocs/TESTING.md). Every original
-// subtest is preserved exactly once.
-func TestEmbeddedInitA(t *testing.T) {
+// The TestEmbeddedInitA*, TestEmbeddedInitB* and TestEmbeddedInitC tests were
+// split from TestEmbeddedInit (originally ~356s, measured under
+// --config=embedded) into top-level tests over disjoint subtest groups, for CI
+// shard balance (see scripts/ci/embedded_cmd_test_durations.json and
+// engdocs/TESTING.md). Every original subtest is preserved exactly once.
+func TestEmbeddedInitABasic(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
 	}
@@ -469,6 +479,15 @@ func TestEmbeddedInitA(t *testing.T) {
 			t.Errorf("issue_prefix: got %q, want %q", val, "alpha")
 		}
 	})
+}
+
+func TestEmbeddedInitAForkAutoContributor(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
 
 	t.Run("fork_auto_contributor", func(t *testing.T) {
 		dir := t.TempDir()
@@ -532,6 +551,15 @@ func TestEmbeddedInitA(t *testing.T) {
 			t.Errorf("beads.role: got %q, want %q", role, "contributor")
 		}
 	})
+}
+
+func TestEmbeddedInitAGitOriginRemote(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
 
 	t.Run("git_origin_registered_as_dolt_remote", func(t *testing.T) {
 		bareDir := filepath.Join(t.TempDir(), "plain.git")
@@ -574,6 +602,15 @@ func TestEmbeddedInitA(t *testing.T) {
 			t.Fatalf("bd dolt push did not publish refs/dolt/data:\n%s", lsOut)
 		}
 	})
+}
+
+func TestEmbeddedInitAPushConsentAndRemoteBootstrap(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
 
 	// The #5068 refusal and consent paths, end to end.
 
@@ -759,7 +796,7 @@ func TestEmbeddedInitA(t *testing.T) {
 	})
 }
 
-func TestEmbeddedInitB(t *testing.T) {
+func TestEmbeddedInitBRemoteSchemaAndCloneFailure(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
 	}
@@ -917,6 +954,15 @@ func TestEmbeddedInitB(t *testing.T) {
 			t.Fatalf(".beads/config.yaml should not exist after a failed clone; init must not silently fall through to fresh init")
 		}
 	})
+}
+
+func TestEmbeddedInitBStealthAndForceReinit(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
 
 	// Regression: bd init --stealth must not touch any git-visible files. Previously it
 	// created/modified the tracked project-root .gitignore via doctor.EnsureProjectGitignore, which
@@ -1081,6 +1127,15 @@ func TestEmbeddedInitB(t *testing.T) {
 			t.Errorf("issue_prefix after --force: got %q, want %q", val, "fi")
 		}
 	})
+}
+
+func TestEmbeddedInitBAutoCommitAndJSONLRemote(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
 
 	t.Run("auto_commit_bypasses_hooks", func(t *testing.T) {
 		dir := t.TempDir()
@@ -1518,7 +1573,17 @@ func TestInitGateBusyClassifiedAsLockContention(t *testing.T) {
 	}
 }
 
-func TestEmbeddedInitRoleRouting(t *testing.T) {
+// The role routing cases are two top-level tests, not one: each case is a
+// full embedded init under -race and they cannot run in parallel (t.Setenv).
+func TestEmbeddedInitRoleRoutingExplicitDefault(t *testing.T) {
+	testEmbeddedInitRoleRouting(t, "explicit", "default")
+}
+
+func TestEmbeddedInitRoleRoutingRetainedFork(t *testing.T) {
+	testEmbeddedInitRoleRouting(t, "retained", "fork")
+}
+
+func testEmbeddedInitRoleRouting(t *testing.T, names ...string) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
 	}
@@ -1530,6 +1595,9 @@ func TestEmbeddedInitRoleRouting(t *testing.T) {
 		{"retained", "contributor", "", "contributor"},
 		{"fork", "", "", "contributor"},
 	} {
+		if !slices.Contains(names, tc.name) {
+			continue
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			target, decoy, home := newInitRoleFixture(t)
 			if tc.initial != "" {
@@ -1597,12 +1665,31 @@ func TestEmbeddedInitRoleRouting(t *testing.T) {
 	}
 }
 
-func TestEmbeddedInitSelectedExcludeRouting(t *testing.T) {
+// The selected-exclude routing cases are four top-level tests, not one: each
+// case is a full embedded init under -race and they cannot run in parallel
+// (t.Setenv), so one function held a whole Bazel shard for ~2 minutes.
+func TestEmbeddedInitSelectedExcludeRoutingStealthInvalid(t *testing.T) {
+	testEmbeddedInitSelectedExcludeRouting(t, "stealth_invalid")
+}
+
+func TestEmbeddedInitSelectedExcludeRoutingStealthDecoyQuiet(t *testing.T) {
+	testEmbeddedInitSelectedExcludeRouting(t, "stealth_decoy", "quiet_stealth")
+}
+
+func TestEmbeddedInitSelectedExcludeRoutingForkDecoyAuto(t *testing.T) {
+	testEmbeddedInitSelectedExcludeRouting(t, "fork_decoy", "fork_auto_invalid")
+}
+
+func TestEmbeddedInitSelectedExcludeRoutingForkInvalidQuiet(t *testing.T) {
+	testEmbeddedInitSelectedExcludeRouting(t, "fork_invalid", "quiet_fork")
+}
+
+func testEmbeddedInitSelectedExcludeRouting(t *testing.T, names ...string) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
 	}
 	bd := buildEmbeddedBD(t)
-	for _, name := range []string{"stealth_decoy", "stealth_invalid", "fork_decoy", "fork_invalid", "quiet_stealth", "quiet_fork", "fork_auto_invalid"} {
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			target, decoy, home := newInitRoleFixture(t)
 			global := filepath.Join(home, ".gitconfig")
@@ -1724,12 +1811,27 @@ func TestEmbeddedInitArtifactRouting(t *testing.T) {
 	}
 }
 
-func TestEmbeddedInitGitBootstrapRouting(t *testing.T) {
+// The git bootstrap routing cases are three top-level tests, not one: each
+// case is a full embedded init under -race and they cannot run in parallel
+// (t.Setenv).
+func TestEmbeddedInitGitBootstrapRoutingFreshQuiet(t *testing.T) {
+	testEmbeddedInitGitBootstrapRouting(t, "fresh", "quiet")
+}
+
+func TestEmbeddedInitGitBootstrapRoutingDecoyInvalid(t *testing.T) {
+	testEmbeddedInitGitBootstrapRouting(t, "decoy", "invalid")
+}
+
+func TestEmbeddedInitGitBootstrapRoutingExistingExplicit(t *testing.T) {
+	testEmbeddedInitGitBootstrapRouting(t, "existing_invalid", "explicit_storage")
+}
+
+func testEmbeddedInitGitBootstrapRouting(t *testing.T, names ...string) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
 	}
 	bd := buildEmbeddedBD(t)
-	for _, name := range []string{"fresh", "decoy", "invalid", "existing_invalid", "explicit_storage", "quiet"} {
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			existing, decoy, home := newInitRoleFixture(t)
 			target := t.TempDir()

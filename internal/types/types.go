@@ -1017,12 +1017,19 @@ func (m PersistenceMode) IsValid() bool {
 	return slices.Contains(validPersistenceModes, m)
 }
 
+// ErrUnversionedWispMove is NormalizePersistenceMode's refusal to move an
+// unversioned record to a wisp mode. The record is sound and the requested
+// move is what is refused, so callers can classify it apart from the
+// row-invariant errors the function also returns.
+var ErrUnversionedWispMove = errors.New("cannot move unversioned record")
+
 // NormalizePersistenceMode maps a requested mode from current to its exact
 // persistence fields without mutating an issue. The returned values are
 // Ephemeral, NoHistory, and StorageClass, respectively. Plane and retention
 // changes preserve the create-selected class. Promotion clears an explicit
 // ephemeral class marker to select normalized versioned storage. An
-// unversioned record may remain persistent but cannot move to a wisp mode.
+// unversioned record may remain persistent but cannot move to a wisp mode
+// (ErrUnversionedWispMove).
 func NormalizePersistenceMode(current Issue, mode PersistenceMode) (bool, bool, StorageClass, error) {
 	if !mode.IsValid() {
 		return false, false, "", fmt.Errorf("invalid persistence mode %q", mode)
@@ -1041,7 +1048,7 @@ func NormalizePersistenceMode(current Issue, mode PersistenceMode) (bool, bool, 
 		return false, false, "", fmt.Errorf("storage class ephemeral requires ephemeral or no_history")
 	}
 	if current.StorageClass == StorageClassUnversioned && mode != PersistenceModePersistent {
-		return false, false, "", fmt.Errorf("cannot move unversioned record to persistence mode %q", mode)
+		return false, false, "", fmt.Errorf("%w to persistence mode %q", ErrUnversionedWispMove, mode)
 	}
 	if persistenceMode(current) == mode {
 		return current.Ephemeral, current.NoHistory, current.StorageClass, nil
@@ -1230,7 +1237,8 @@ type IssueWithCounts struct {
 	// WHICH SURFACES SET IT, because this type is shared by more than the
 	// listing and an absent marker means different things on them. It is set
 	// by the page epilogue behind issueops.Reader.List — `bd list --json` on
-	// both routes, its --ready arm included, and GET /v0/beads/issues. It is
+	// both routes, its --ready arm included, `bd search --json` on every
+	// route, and GET /v0/beads/issues. It is
 	// NOT set by Reader.Ready (GET /v0/beads/ready) or by the claim response
 	// that returns this type, so on those an absent marker says nothing about
 	// whether a row's comments exist: read comment_count there. Extending the
@@ -1360,11 +1368,29 @@ func RevisionToken(v int64) string {
 
 // ParseRevisionToken reads a wire revision token back to the internal int64.
 //
-// It accepts exactly what RevisionToken emits. A caller must echo the token a
-// response carried rather than compose one, so anything else is a client that
-// invented a value, and reporting that as a parse failure is more useful than
-// guessing at it.
+// It accepts exactly what RevisionToken emits — the exact inverse of
+// strconv.FormatInt — and nothing strconv.ParseInt alone would additionally
+// tolerate: no leading "+" (FormatInt never emits one), no leading zero on
+// any digit string longer than one character (FormatInt never pads "7" out
+// to "007", positive or negative), and never "-0" (FormatInt(0, 10) is "0",
+// never "-0"). A caller must echo the token a response carried rather than
+// compose one, so anything else is a client that invented a value, and
+// reporting that as a parse failure is more useful than guessing at it.
 func ParseRevisionToken(s string) (int64, error) {
+	if strings.HasPrefix(s, "+") {
+		return 0, fmt.Errorf("revision token %q: leading \"+\" is not a token RevisionToken ever emits", s)
+	}
+	digits := s
+	negative := strings.HasPrefix(s, "-")
+	if negative {
+		digits = s[1:]
+	}
+	if negative && digits == "0" {
+		return 0, fmt.Errorf("revision token %q: \"-0\" is not a token RevisionToken ever emits", s)
+	}
+	if len(digits) > 1 && digits[0] == '0' {
+		return 0, fmt.Errorf("revision token %q: a leading zero is not a token RevisionToken ever emits", s)
+	}
 	return strconv.ParseInt(s, 10, 64)
 }
 
@@ -2362,6 +2388,13 @@ func (s SortPolicy) IsValid() bool {
 type ReclaimedLease struct {
 	ID            string `json:"id"`
 	PreviousOwner string `json:"previous_owner"`
+
+	// Revision is the fresh RevisionToken minted for this issue's row by the
+	// same UPDATE that reverted its lease — the one this package's
+	// RevisionToken/ParseRevisionToken pair encodes, the same wire shape as
+	// IssueDetails.Revision. A caller that re-fetches after a reclaim sees a
+	// different token than one that raced it.
+	Revision string `json:"revision"`
 }
 
 // ReclaimFilter scopes which stale-lease issues bd reclaim may revert. The

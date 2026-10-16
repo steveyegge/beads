@@ -30,6 +30,7 @@ import (
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/hooks"
+	"github.com/steveyegge/beads/internal/httpclient"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/migration"
 	"github.com/steveyegge/beads/internal/molecules"
@@ -248,6 +249,36 @@ func runsPostCommandMaintenance(cmdName string, strictReadonly bool) bool {
 		return false
 	}
 	return effectiveRootStorePolicy(cmdName, strictReadonly).runMaintenance
+}
+
+// readMemoEnvVar turns the per-command http read memo off when set to "0": an
+// operator who suspects a stale read can rule the memo out without a rebuild.
+const readMemoEnvVar = "BD_HTTP_READ_MEMO"
+
+// commandMemoizesReads reports whether this invocation's http transport may
+// answer an identical row or settings read from a response it already received
+// (httpclient.WithReadMemo, bts-xpw.3.14.6). A one-shot command may: it reads,
+// writes and exits within seconds, and each write it makes drops the memo.
+//
+// A process that outlives its reads may not, and bd serve is excluded for the
+// reason runsPostCommandMaintenance excludes it — a server is not a command.
+// Over an http workspace it answers other clients, who must see what other
+// writers changed. A --watch or --follow poll exists to see exactly those
+// changes, and a memo would answer its polls from a snapshot instead.
+// BD_HTTP_READ_MEMO=0 turns the memo off for every command.
+func commandMemoizesReads(cmd *cobra.Command) bool {
+	if os.Getenv(readMemoEnvVar) == "0" {
+		return false
+	}
+	if cmd.Name() == serveCmdName {
+		return false
+	}
+	for _, name := range []string{"watch", "follow"} {
+		if f := cmd.Flags().Lookup(name); f != nil && f.Value.String() == "true" {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveDoltServerConnection fills in how to reach the workspace's Dolt SQL
@@ -840,6 +871,10 @@ func refreshBoundCommandConfig(cmd *cobra.Command) {
 		readonlyMode = config.GetBool("readonly")
 	}
 	if !root.PersistentFlags().Changed("actor") {
+		// Raw write, not setActor: every caller runs in PersistentPreRunE
+		// BEFORE deferActorGitFallback, which then decides from this value
+		// whether the git user.name fallback is pending. A call after it would
+		// need setActor (and the deferral re-run) to keep that decision true.
 		actor = resolveConfiguredActor()
 	}
 	if !root.PersistentFlags().Changed("dolt-auto-commit") {
@@ -893,11 +928,74 @@ func resolveConfiguredActor() string {
 	return config.GetString("actor")
 }
 
+// actorGitFallbackPending records that PersistentPreRunE deferred the
+// getActorWithGit fallback (git config user.name, then $USER) instead of
+// resolving it eagerly. Most invocations — every read-only list/show/query a
+// tool like gascity issues by the hundred — never consult the actor, and the
+// eager lookup cost one `git config` subprocess per bd call. currentActor
+// performs the deferred resolution on first use, so the resolved value and its
+// priority order are unchanged; only the moment of the lookup moves.
+//
+// Guarded by actorMu together with the resolution it triggers. Plain writes to
+// actor elsewhere stay unguarded, exactly as before this was introduced.
+var (
+	actorMu                 sync.Mutex
+	actorGitFallbackPending bool
+)
+
+// deferActorGitFallback replaces the former eager `actor = getActorWithGit()`
+// in PersistentPreRunE. A non-empty actor (--actor, BEADS_ACTOR, BD_ACTOR or
+// config.yaml) is already the answer getActorWithGit would return, so only an
+// empty actor needs the deferred fallback.
+func deferActorGitFallback() {
+	actorMu.Lock()
+	defer actorMu.Unlock()
+	actorGitFallbackPending = actor == ""
+}
+
+// currentActor returns the actor for this invocation, resolving a fallback
+// deferred by deferActorGitFallback on first use. Command code reads the actor
+// through this instead of the raw global so that the git lookup happens only
+// when an actor is actually needed.
+func currentActor() string {
+	actorMu.Lock()
+	defer actorMu.Unlock()
+	resolvePendingActorLocked()
+	return actor
+}
+
+// resolvePendingActorLocked performs a deferred fallback. Caller holds actorMu.
+func resolvePendingActorLocked() {
+	if !actorGitFallbackPending {
+		return
+	}
+	actorGitFallbackPending = false
+	deferred := actor
+	actor = resolveActorWithGit()
+	// Keep the CommandContext copy in step, as the eager assignment did
+	// before syncCommandContext copied it.
+	if cmdCtx != nil && cmdCtx.Actor == deferred {
+		cmdCtx.Actor = actor
+	}
+}
+
 // getActorWithGit returns the actor for audit trails with git config fallback.
 // Priority: --actor flag > BEADS_ACTOR env > BD_ACTOR env (deprecated) > git config user.name > $USER > "unknown"
 // This provides a sensible default for developers: their git identity is used unless
-// explicitly overridden
+// explicitly overridden.
+//
+// After PersistentPreRunE it returns the same value as currentActor (resolving
+// a deferred fallback once, into the global, as the eager assignment did).
 func getActorWithGit() string {
+	actorMu.Lock()
+	defer actorMu.Unlock()
+	resolvePendingActorLocked()
+	return resolveActorWithGit()
+}
+
+// resolveActorWithGit is getActorWithGit's resolution order, without the
+// deferred-fallback bookkeeping. Caller holds actorMu or owns the global.
+func resolveActorWithGit() string {
 	// If actor is already set (from --actor flag), use it
 	if actor != "" {
 		return actor
@@ -1239,6 +1337,10 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{dbPath, true}
 		}
+		// Reads and writes the raw global on purpose: this runs before
+		// deferActorGitFallback, so no fallback is pending yet and the value
+		// is only the flag/env/config actor. currentActor() here would resolve
+		// git user.name eagerly, which is what the deferral exists to avoid.
 		if !cmd.Root().PersistentFlags().Changed("actor") && actor == "" {
 			actor = resolveConfiguredActor()
 		} else if cmd.Root().PersistentFlags().Changed("actor") {
@@ -1674,11 +1776,14 @@ var rootCmd = &cobra.Command{
 			return HandleProxyCapabilityError(AssertProxyCapability(ProxyModeProxied, ProxyCapReadonly))
 		}
 
-		// Set actor for audit trail
-		actor = getActorWithGit()
-		// Attach actor to the command span now that we have it.
-		if commandSpan != nil {
-			commandSpan.SetAttributes(attribute.String("bd.actor", actor))
+		// Set actor for audit trail. The git config user.name fallback is
+		// resolved lazily by currentActor, so commands that never consult the
+		// actor (read-only queries) do not spawn a git subprocess for it.
+		deferActorGitFallback()
+		// Attach actor to the command span. Only a recording span (telemetry
+		// enabled) needs the value, so a noop span does not force the lookup.
+		if commandSpan != nil && commandSpan.IsRecording() {
+			commandSpan.SetAttributes(attribute.String("bd.actor", currentActor()))
 		}
 
 		// Check if this is a read-only command (GH#804) or an explicitly
@@ -2053,8 +2158,20 @@ var rootCmd = &cobra.Command{
 		// swallowed the same way, which let a preview failure wave the
 		// real, mutating open through unexamined — the one thing this check
 		// exists to prevent (be-3bt2e). Those cases now refuse instead.
+		//
+		// openCtx scopes ONE http transport to the gate's preview open and the
+		// real open below (bts-xpw.3.14.6): over a gateway each dial pays its
+		// own handshake and, with a gasworks credential, its own sts.Context,
+		// so sharing it saves both on every write. A one-shot command's
+		// transport also answers its repeated row and settings reads from the
+		// response it already has (commandMemoizesReads). Other backends
+		// ignore both.
+		openCtx := httpclient.WithSharedConnections(rootCtx)
+		if commandMemoizesReads(cmd) {
+			openCtx = httpclient.WithReadMemo(openCtx)
+		}
 		if !useReadOnly && !globalFlag && os.Getenv("BEADS_SKIP_IDENTITY_CHECK") != "1" {
-			idStore, previewErr := newPreviewStoreFromConfig(rootCtx, beadsDir)
+			idStore, previewErr := newPreviewStoreFromConfig(openCtx, beadsDir)
 			switch {
 			case previewErr == nil:
 				checkErr := validateWorkspaceIdentity(rootCtx, idStore, beadsDir)
@@ -2075,7 +2192,7 @@ var rootCmd = &cobra.Command{
 		// Dolt manages these files itself; external interference is never safe.
 
 		if _, ok := backends.Lookup(cfg.GetBackend()); ok {
-			store, err = newRegisteredBackendStore(rootCtx, cfg.GetBackend(), beadsDir, useReadOnly)
+			store, err = newRegisteredBackendStore(openCtx, cfg.GetBackend(), beadsDir, useReadOnly)
 		} else {
 			store, err = newDoltStore(rootCtx, doltCfg)
 		}
@@ -2683,6 +2800,28 @@ func validateWorkspaceIdentity(ctx context.Context, s storage.DoltStorage, beads
 		return nil // No config, skip validation (fresh init)
 	}
 	configProjectID := cfg.ProjectID
+	if cfg.GetBackend() == httpclient.Backend {
+		// The http backend's identity pin lives in the per-user, gitignored
+		// sidecar, not in metadata.json: `bd connect` (MED-6) stopped
+		// mirroring project_id into the git-tracked config, so cfg.ProjectID
+		// here is whatever the workspace carried BEFORE connect — generally
+		// a different project's id than the server `bd connect --force`
+		// just pointed it at. Comparing that stale value against the live
+		// database's _project_id below would flag every write as drift.
+		// Read the sidecar instead, exactly as applyContextBackend
+		// (context_cmd.go) does for `bd context`. A missing sidecar
+		// (ErrNotConnected) or any other read failure falls through to the
+		// "no project_id" skip just below, the same as a pre-identity
+		// workspace — the wire handshake's own ExpectProjectID gate (design
+		// D6) is what actually refuses a mismatched server at dial time;
+		// this check only needs to avoid a FALSE mismatch once that gate has
+		// already passed.
+		target, err := httpclient.LoadTarget(beadsDir)
+		if err != nil {
+			return nil
+		}
+		configProjectID = target.ExpectProjectID
+	}
 	if configProjectID == "" {
 		return nil // No project_id in config (pre-identity era)
 	}

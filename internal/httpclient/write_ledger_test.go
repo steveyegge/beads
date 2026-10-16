@@ -78,9 +78,18 @@ type carriage struct {
 	// incremental add or remove has no expression. CreateRequest.Issue is the
 	// other, and its excluded shape is a set of MEMBERS rather than a mode.
 	partial string
+	// absenceOf names the member a field is carried as the ABSENCE of, when
+	// another field drives that member's presence. CreateRequest.DefaultPriority
+	// is the population: "use the default" is `priority` left out, the member
+	// the Issue spread otherwise drives (wirePriority). It drives no member of
+	// its own, so the wire -> source direction does not count it, but the
+	// member must still be published.
+	absenceOf string
 }
 
 func member(name string) carriage { return carriage{member: name} }
+
+func absenceOf(name string) carriage { return carriage{absenceOf: name} }
 
 func spread(names ...string) carriage { return carriage{spread: names} }
 
@@ -164,6 +173,9 @@ func writeShapes() []writeShape {
 				"Dependencies":            member("dependencies"),
 				"WaitsFor":                member("waits_for"),
 				"ForceIDPrefix":           member("force_id_prefix"),
+				// DefaultPriority is the ABSENCE of `priority`: the member the
+				// Issue spread drives is left out (wirePriority).
+				"DefaultPriority": absenceOf("priority"),
 			},
 		},
 		{
@@ -180,6 +192,13 @@ func writeShapes() []writeShape {
 				// (#5506) and the client wave sends it (ga-jbuyf), so it left
 				// the pending set for this one.
 				"ExpectedVersion": member("expected_version"),
+				// Sent where issues.close.autoCloseMolecule is advertised.
+				// Against a server that does not advertise it, a close that
+				// asks for it is refused before dialing (the typed
+				// storage.ErrUnsupported naming the token), and bd close
+				// sends the close without it and prints the unserved
+				// notice instead (S16).
+				"AutoCloseMolecule": member("auto_close_molecule"),
 			},
 		},
 		{
@@ -255,13 +274,15 @@ func writeShapes() []writeShape {
 				// #7247 review port): each was published — the force pair by
 				// upstream #5484, `claim` by upstream #6890 — and refused only
 				// by this client. Their rows are RETIRED the same way. A claim
-				// ALONE against a server that predates `claim` still reaches
-				// claimIssue instead, as a fallback on that server's skew
-				// refusal (see claimOnlyUpdate); against a current one it is
-				// this body.
+				// ALONE against a server without issues.update.claim reaches
+				// claimIssue instead, decided from the handshake (see
+				// claimWithoutUpdateClaim); against one with it, it is this
+				// body.
 				"ForceAssigneeTransfer": member("force_assignee_transfer"),
 				"ForceClosePolicy":      member("force_close_policy"),
 				"Claim":                 member("claim"),
+				// The template guard's stand-down (bd label, bd set-state).
+				"AllowTemplate": member("allow_template"),
 			},
 		},
 		{
@@ -297,6 +318,12 @@ func writeShapes() []writeShape {
 				"Assignee": member("assignee"),
 				"ParentID": member("parent_id"),
 				"Metadata": member("metadata"),
+				// The plane move, carried since issues.update.persistence
+				// (S21b, `bd promote` over http). Only this shape: the batch
+				// item's ApplyPatchBody still excludes it, so
+				// W-IssuePatch.Persistence stays a refusal there — the Owner
+				// row's arrangement, the other way round.
+				"Persistence": member("persistence"),
 			},
 			// NOTHING IS PENDING, and the set is empty rather than absent for the
 			// reason the second list in accessors.go was: it held the two
@@ -373,21 +400,23 @@ func writeShapes() []writeShape {
 			},
 		},
 		{
-			// NOT total, unlike bd-enterprise's: OSS's apigen.SweepRequest has
-			// no member for ProtectLiveDependents or Limit, so both are absent
-			// from carried below and the source -> wire arm obliges the two
-			// W-SweepRequest rows (W-SweepRequest.ProtectLiveDependents,
-			// W-SweepRequest.Limit) rather than a member.
+			// S4 extended the sweep carriage: apigen.SweepRequest now
+			// publishes protect_live_dependents and limit too, each carried
+			// by the role field of the same name (behind
+			// CapSweepLiveDependents and CapSweepLimit respectively —
+			// see sweeper.go's refuseUnservedSweep).
 			name:   "sweepIssues",
 			source: reflect.TypeOf(issueops.SweepRequest{}),
 			body:   reflect.TypeOf(apigen.SweepRequest{}),
 			carried: map[string]carriage{
-				"Actor":             member("actor"),
-				"Tier":              member("tier"),
-				"ClosedBefore":      member("closed_before"),
-				"IDPattern":         member("pattern"),
-				"ProtectReferenced": member("protect_referenced"),
-				"DryRun":            member("dry_run"),
+				"Actor":                 member("actor"),
+				"Tier":                  member("tier"),
+				"ClosedBefore":          member("closed_before"),
+				"IDPattern":             member("pattern"),
+				"ProtectReferenced":     member("protect_referenced"),
+				"DryRun":                member("dry_run"),
+				"ProtectLiveDependents": member("protect_live_dependents"),
+				"Limit":                 member("limit"),
 			},
 		},
 		{
@@ -440,10 +469,11 @@ func writeShapes() []writeShape {
 			source: reflect.TypeOf(issueops.CloseBatchRequest{}),
 			body:   reflect.TypeOf(apigen.BatchCloseRequest{}),
 			carried: map[string]carriage{
-				"Actor":   member("actor"),
-				"Items":   member("items"),
-				"Session": member("session"),
-				"Force":   member("force"),
+				"Actor":             member("actor"),
+				"Items":             member("items"),
+				"Session":           member("session"),
+				"Force":             member("force"),
+				"AutoCloseMolecule": member("auto_close_molecule"),
 			},
 		},
 		{
@@ -508,6 +538,8 @@ func writeShapes() []writeShape {
 					partial: "W-CreateItem.Issue",
 				},
 				"MetadataRefs": member("metadata_refs"),
+				// The absence of `priority` (wirePriority).
+				"DefaultPriority": absenceOf("priority"),
 			},
 		},
 		{
@@ -592,18 +624,24 @@ func writeShapes() []writeShape {
 			},
 		},
 		{
-			// The edge item. The gate normalization a waits-for edge gets is
-			// the ROLE's and travels inside the blob. HasSpawner and ThreadID
-			// have no wire member, so they are absent from carried below and
-			// refuse under W-DepAddItem.HasSpawner and W-DepAddItem.ThreadID.
+			// The edge item. TOTAL. The gate normalization a waits-for edge
+			// gets is the ROLE's and travels inside the blob. HasSpawner and
+			// ThreadID are carried unconditionally at this structural layer —
+			// CapBatchApplyDepAddLineage is a separate, client-side refusal
+			// (batchapplier.go's refuseUnservedDepAddLineage) gating WHETHER
+			// this client sends either member against an older server, not
+			// whether the field reaches the wire body type at all. (HasSpawner
+			// off a waits-for edge is the role's no-op, dropped by value.)
 			name:   "applyBatch/item/dep_add",
 			source: reflect.TypeOf(issueops.DepAddItem{}),
 			body:   reflect.TypeOf(apigen.ApplyDepAddItem{}),
 			carried: map[string]carriage{
-				"Source":   member("source"),
-				"Target":   member("target"),
-				"Type":     member("type"),
-				"Metadata": member("metadata"),
+				"Source":     member("source"),
+				"Target":     member("target"),
+				"Type":       member("type"),
+				"Metadata":   member("metadata"),
+				"HasSpawner": member("has_spawner"),
+				"ThreadID":   member("thread_id"),
 			},
 		},
 		{
@@ -642,7 +680,7 @@ func TestEveryWireExcludedWriteMemberCarriesALedgerRow(t *testing.T) {
 					continue
 				}
 				ways := 0
-				for _, set := range []bool{how.member != "", len(how.spread) > 0, how.routed != ""} {
+				for _, set := range []bool{how.member != "", len(how.spread) > 0, how.routed != "", how.absenceOf != ""} {
 					if set {
 						ways++
 					}
@@ -652,6 +690,11 @@ func TestEveryWireExcludedWriteMemberCarriesALedgerRow(t *testing.T) {
 					t.Errorf("%s.%s claims more than one of a body member, a spread and a route; it has exactly one", shape.source.Name(), name)
 				case ways == 0:
 					t.Errorf("%s.%s is in the carried table with neither a member nor a route", shape.source.Name(), name)
+				case how.absenceOf != "":
+					if !members[how.absenceOf] {
+						t.Errorf("%s.%s is carried as the absence of %q, which %s does not publish: %v",
+							shape.source.Name(), name, how.absenceOf, shape.body.Name(), sortedKeys(members))
+					}
 				default:
 					for _, wireMember := range how.members() {
 						if !members[wireMember] {

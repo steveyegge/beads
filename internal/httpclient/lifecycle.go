@@ -15,6 +15,8 @@ import (
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
 	"github.com/steveyegge/beads/internal/httpclient/encode"
 	"github.com/steveyegge/beads/internal/httpclient/wire"
+	"github.com/steveyegge/beads/internal/storage"
+	storageops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/issueops"
 )
@@ -39,8 +41,8 @@ var _ issueops.Lifecycle = (*httpLifecycle)(nil)
 // dropping: IDPrefix where it would act on an explicit, unforced id, which the
 // server publishes no member for on purpose (W-CreateRequest.IDPrefix), and
 // every member of the issue outside the wire's twenty (W-CreateRequest.Issue)
-// — save a CreatedBy that names the actor, which the server stamps from the
-// actor itself. A create that reported success having silently dropped the
+// — save a CreatedBy that names the actor, which the server's create role
+// defaults to on its own (issueops.PreparePublicCreateRequest). A create that reported success having silently dropped the
 // storage class, the molecule type or the creation time is a row the caller
 // believes they wrote and did not.
 //
@@ -60,6 +62,9 @@ func (l *httpLifecycle) Create(ctx context.Context, req issueops.CreateRequest) 
 	}
 	body, err := createBody(req)
 	if err != nil {
+		return issueops.CreateResult{}, err
+	}
+	if err := l.store.pinCreateDefaultPriority(ctx, &body.Priority); err != nil {
 		return issueops.CreateResult{}, err
 	}
 
@@ -111,11 +116,11 @@ func createBody(req issueops.CreateRequest) (apigen.CreateIssueRequest, error) {
 	}
 
 	issue := req.Issue
-	// Priority is sent ALWAYS, for batchCreateIssues' reason: 0 is P0 and a real
-	// request, so an absent member — which the server reads as the workspace
-	// default — would silently reprioritize every critical issue a plan creates.
-	priority := issue.Priority
-	body := apigen.CreateIssueRequest{Actor: req.Actor, Title: issue.Title, Priority: &priority}
+	priority, err := wirePriority(issue.Priority, req.DefaultPriority)
+	if err != nil {
+		return apigen.CreateIssueRequest{}, err
+	}
+	body := apigen.CreateIssueRequest{Actor: req.Actor, Title: issue.Title, Priority: priority}
 
 	setItemString(&body.Id, issue.ID)
 	setItemString(&body.Description, issue.Description)
@@ -295,10 +300,13 @@ func copyTime(value *time.Time) *time.Time {
 // A CLAIM rides the same request (upstream #6890): `claim` is a top-level
 // member beside the patch, so a claim alone, a claim with a patch and a claim
 // with a version guard are each ONE updateIssue call, claimed and patched in
-// one transaction by the same role the direct route runs, and answered with the
-// post-write `revision` like every other update. The one claim that goes
-// anywhere else is a claim ALONE to a server that predates the member — see
-// serverPredatesUpdateClaim.
+// one transaction by the same role the direct route runs, resolved on both
+// planes (a wisp included), and answered with the post-write `revision` like
+// every other update. That is what a server advertising
+// wire.CapIssuesUpdateClaim serves, and the token is read from the cached
+// handshake BEFORE the dial (claimWithoutUpdateClaim): against a server without
+// it a claim alone goes to claimIssue (claimOnlyUpdate) and a claim beside
+// anything else is refused, naming the token, without a dial.
 func (l *httpLifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (result issueops.UpdateResult, err error) {
 	// Write-side parity with reads: decorates a bare *encode.RefusedError —
 	// however deeply refuseUnwirableUpdateMembers/encodeIssuePatch/
@@ -330,11 +338,26 @@ func (l *httpLifecycle) Update(ctx context.Context, req issueops.UpdateRequest) 
 		return issueops.UpdateResult{}, invalid("update names no field to write")
 	}
 
+	if err := l.requirePersistenceMove(ctx, req); err != nil {
+		return issueops.UpdateResult{}, err
+	}
+	if req.Claim {
+		served, err := l.store.servesCapability(ctx, wire.CapIssuesUpdateClaim)
+		if err != nil {
+			return issueops.UpdateResult{}, err
+		}
+		if !served {
+			return l.claimWithoutUpdateClaim(ctx, req)
+		}
+	}
+
+	req, err = l.applyTemplateGuardForServer(ctx, req)
+	if err != nil {
+		return issueops.UpdateResult{}, err
+	}
+
 	res, err := l.wire.UpdateIssue(ctx, req.IssueID, req.Actor, patch, updateGuards(req), updateFlags(req))
 	if err != nil {
-		if req.Claim && isClaimOnlyUpdate(req) && serverPredatesUpdateClaim(err) {
-			return l.claimOnlyUpdate(ctx, req)
-		}
 		return issueops.UpdateResult{}, err
 	}
 	// The stitch releaser.go documents: types.Issue.RowVersion is `json:"-"`, so
@@ -384,26 +407,111 @@ func updateFlags(req issueops.UpdateRequest) wire.UpdateFlags {
 		ForceAssigneeTransfer: req.ForceAssigneeTransfer,
 		ForceClosePolicy:      req.ForceClosePolicy,
 		ForceNotesOverwrite:   req.ForceNotesOverwrite,
+		AllowTemplate:         req.AllowTemplate,
 	}
 }
 
-// serverPredatesUpdateClaim reports whether err is a server that predates
-// `claim` on updateIssue (upstream #6890) refusing the member: the version-skew
-// 400 — `unknown_parameter`, naming `claim` itself. Such a server checks body
-// members before it reads anything else, so the refusal arrives before any
-// database work and nothing the request asked for was written.
+// claimWithoutUpdateClaim is the claim against a server that does not
+// advertise wire.CapIssuesUpdateClaim — one that predates `claim` on
+// updateIssue (upstream #6890) and answers the member with the skew 400, or a
+// build that serves it untokened. The handshake decides; the client never
+// dials updateIssue with a claim to find out.
 //
-// It is the SKEW signal, not the capability list, because no capability token
-// announces the member — it is additive, so it bumped no wire revision either —
-// and the reason is what dispatches, never the code alone: `invalid_value`
-// naming `claim` is a current server refusing a claim beside a member it may
-// not ride with, which is the caller's error to see, not a server to route
-// around.
-func serverPredatesUpdateClaim(err error) bool {
-	var problem *wire.ProblemError
-	return errors.As(err, &problem) &&
-		problem.Reason == encode.UnknownParameterReason &&
-		problem.Param == "claim"
+// A claim ALONE is exactly claimIssue's request (isClaimOnlyUpdate), so it
+// goes there (claimOnlyUpdate): an ordinary issue is claimed as before, and a
+// wisp, which claimIssue's role excludes, refuses by name
+// (W-ClaimRequest.Wisp). A claim beside a patch, a guard, a force override or
+// AllowTemplate is refused before the dial with ErrUnsupported naming the
+// token, rather than split into claimIssue then updateIssue (a caller could
+// observe the issue claimed but not patched) or sent to a server that would
+// 400 it.
+//
+// The template read-only guard runs HERE, on a pre-read, whatever the
+// handshake says about wire.CapIssuesUpdateAllowTemplate: that token means
+// updateIssue guards templates, and this route never dials updateIssue.
+// claimIssue's role has no template check (bd-jkp9v3), so without this read
+// a claim alone would claim a template, which Update refuses on every other
+// route. Any other row goes on to claimIssue as before (a wisp to its refusal
+// by name), and so does an id the pre-read cannot find: claimIssue's
+// not-found is the one to report.
+func (l *httpLifecycle) claimWithoutUpdateClaim(ctx context.Context, req issueops.UpdateRequest) (issueops.UpdateResult, error) {
+	if !isClaimOnlyUpdate(req) {
+		return issueops.UpdateResult{}, l.store.unsupportedCapability("Lifecycle.Update", wire.CapIssuesUpdateClaim)
+	}
+	before, err := l.store.GetIssue(ctx, req.IssueID)
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+	case err != nil:
+		return issueops.UpdateResult{}, err
+	default:
+		if err := storageops.AuthorizeTemplateUpdate(before, req); err != nil {
+			return issueops.UpdateResult{}, err
+		}
+	}
+	return l.claimOnlyUpdate(ctx, req)
+}
+
+// requirePersistenceMove refuses, before anything is dialed, an update that
+// moves the row between planes (IssuePatch.Persistence: `bd promote`, `bd
+// update --persistent`) against a server that does not advertise
+// wire.CapIssuesUpdatePersistence. Such a server refuses `patch.persistence`
+// as an unknown parameter, and the move is one transaction on the server, so
+// there is no client-side fallback: the refusal is the typed capability error
+// naming the token (*wire.CapabilityError, which unwraps to
+// *storage.ErrUnsupported with Capability set), never a dropped member and a
+// "no change" answer.
+func (l *httpLifecycle) requirePersistenceMove(ctx context.Context, req issueops.UpdateRequest) error {
+	if !req.Patch.Persistence.Set {
+		return nil
+	}
+	snap, err := l.store.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if snap != nil && slices.Contains(snap.Capabilities, wire.CapIssuesUpdatePersistence) {
+		return nil
+	}
+	// The case-2 text names the server and the token, so `bd promote`
+	// against an older server says what to upgrade rather than only that the
+	// operation is unsupported. It unwraps to *storage.ErrUnsupported with
+	// Capability set, like every other capability refusal.
+	return wire.NewCapabilityError(wire.OpUpdateIssue, wire.CapIssuesUpdatePersistence, l.store.target.String(), snap)
+}
+
+// applyTemplateGuardForServer decides, BEFORE the dial and from the cached
+// handshake, how the template read-only guard (storage
+// issueops.AuthorizeTemplateUpdate) reaches the server this request goes to.
+//
+// A server advertising wire.CapIssuesUpdateAllowTemplate enforces the guard in
+// the update's own transaction and accepts `allow_template`, so req goes out
+// as is. A server without the token predates both: it would edit a template
+// for any caller, and it refuses `allow_template` as an unknown parameter. So
+// against it the client runs the same rule itself, on a pre-read of the row —
+// the refusal `bd update` and `bd assign` always made before dialing — and
+// clears AllowTemplate, which that server has no guard to stand down. A row
+// the pre-read cannot find goes out unchanged: the server's own not-found
+// answer is the one to report.
+func (l *httpLifecycle) applyTemplateGuardForServer(ctx context.Context, req issueops.UpdateRequest) (issueops.UpdateRequest, error) {
+	snap, err := l.store.snapshot(ctx)
+	if err != nil {
+		return req, err
+	}
+	if snap != nil && slices.Contains(snap.Capabilities, wire.CapIssuesUpdateAllowTemplate) {
+		return req, nil
+	}
+	if req.AllowTemplate {
+		req.AllowTemplate = false
+		return req, nil
+	}
+	before, err := l.store.GetIssue(ctx, req.IssueID)
+	if errors.Is(err, storage.ErrNotFound) {
+		// GetIssue answers a miss with ErrNotFound, like the local stores.
+		return req, nil
+	}
+	if err != nil {
+		return req, err
+	}
+	return req, storageops.AuthorizeTemplateUpdate(before, req)
 }
 
 // Close dials POST issues/{id}:close.
@@ -417,6 +525,15 @@ func (l *httpLifecycle) Close(ctx context.Context, req issueops.CloseRequest) (i
 
 	body := closeBody(req.Actor, req.Reason, req.Session, req.Force)
 	body.ExpectedVersion = revisionGuard(req.ExpectedVersion)
+	// AutoCloseMolecule rides the member only where the server advertises it;
+	// elsewhere the close is refused before it is dialed (molecule.go).
+	if err := l.store.requireAutoCloseMolecule(ctx, "IssueLifecycle.Close", req.AutoCloseMolecule); err != nil {
+		return issueops.CloseResult{}, err
+	}
+	if req.AutoCloseMolecule {
+		autoClose := true
+		body.AutoCloseMolecule = &autoClose
+	}
 	res, err := l.wire.CloseIssue(ctx, req.IssueID, body)
 	if err != nil {
 		return issueops.CloseResult{}, err
@@ -427,11 +544,16 @@ func (l *httpLifecycle) Close(ctx context.Context, req issueops.CloseRequest) (i
 	if issue.RowVersion, err = parseRevision("closeIssue", res.Revision); err != nil {
 		return issueops.CloseResult{}, err
 	}
-	return issueops.CloseResult{
-		Issue:        &issue,
-		Changed:      !res.AlreadyClosed,
-		OpenChildren: res.OpenChildren,
-	}, nil
+	result := issueops.CloseResult{
+		Issue:              &issue,
+		Changed:            !res.AlreadyClosed,
+		OpenChildren:       res.OpenChildren,
+		AutoClosedMolecule: res.AutoClosedMolecule,
+	}
+	if res.MoleculeAutoCloseRefusal != nil {
+		result.MoleculeAutoCloseRefusal = *res.MoleculeAutoCloseRefusal
+	}
+	return result, nil
 }
 
 // Reopen dials POST issues/{id}:reopen.
@@ -526,17 +648,12 @@ func closeBody(actor, reason, session string, force bool) apigen.CloseIssueReque
 	return body
 }
 
-// claimOnlyUpdate is the claim a server that predates `claim` on updateIssue
+// claimOnlyUpdate is the claim a server without wire.CapIssuesUpdateClaim
 // can still serve: a claim and nothing else, dialed as claimIssue through the
-// Claimer role. Update reaches it only after such a server refused the member
-// as unknown (serverPredatesUpdateClaim) and only for a claim-only request
-// (isClaimOnlyUpdate) — claimIssue's own request is `{actor}` alone (see
-// apigen.ClaimRequest), so a claim-only UpdateRequest IS that request, and
-// anything beside the claim would be dropped by it. A claim combined with a
-// patch, a guard or a force override is therefore NOT retried here: the skew
-// refusal is returned as it came, rather than synthesized as two calls
-// (claimIssue then updateIssue), which would let a caller observe an issue
-// claimed but not yet patched.
+// Claimer role. Update reaches it only through claimWithoutUpdateClaim, and
+// only for a claim-only request (isClaimOnlyUpdate) — claimIssue's own request
+// is `{actor}` alone (see apigen.ClaimRequest), so a claim-only UpdateRequest
+// IS that request, and anything beside the claim would be dropped by it.
 //
 // That keeps `bd update <id> --claim --json` — gc's exclusive claim path —
 // working against an older bd serve. The two roles' result shapes line up
@@ -598,7 +715,8 @@ func (l *httpLifecycle) claimOnlyUpdate(ctx context.Context, req issueops.Update
 	// caller re-reads), where a borrowed one could pass over a write this claim
 	// never saw. Against a current server the claim rides updateIssue instead,
 	// whose `revision` Update stitches as it does for any patch, so the real
-	// token is missing only on this pre-#6890 fallback.
+	// token is missing only on this fallback, against a server without
+	// issues.update.claim.
 	if issue != nil {
 		if hydrated, hydrateErr := l.store.GetIssue(ctx, req.IssueID); hydrateErr == nil && hydrated != nil {
 			withLabels := *issue
@@ -625,6 +743,7 @@ func isClaimOnlyUpdate(req issueops.UpdateRequest) bool {
 		!req.ForceAssigneeTransfer &&
 		!req.ForceClosePolicy &&
 		!req.ForceNotesOverwrite &&
+		!req.AllowTemplate &&
 		!req.IssuePlaneOnly &&
 		req.Provenance == "" &&
 		req.ExpectedVersion == nil &&
@@ -717,6 +836,12 @@ func encodeIssuePatch(patch issueops.IssuePatch) (map[string]any, error) {
 	}
 	setString(out, "assignee", patch.Assignee)
 	setString(out, "parent_id", patch.ParentID)
+	// The plane move (issues.update.persistence). Update has already refused
+	// it, before the dial, against a server that does not advertise the token;
+	// this only spells it.
+	if patch.Persistence.Set {
+		out["persistence"] = string(patch.Persistence.Value)
+	}
 	if metadataPatched(patch.Metadata) {
 		document, err := encodeMetadataPatch(patch.Metadata)
 		if err != nil {
@@ -848,8 +973,6 @@ func refuseExcludedPatchMembers(patch issueops.IssuePatch) error {
 		return refuse(encode.OpUpdateIssue, "W-IssuePatch.SpecID")
 	case patch.AwaitID.Set:
 		return refuse(encode.OpUpdateIssue, "W-IssuePatch.AwaitID")
-	case patch.Persistence.Set:
-		return refuse(encode.OpUpdateIssue, "W-IssuePatch.Persistence")
 	}
 	return nil
 }
@@ -896,11 +1019,17 @@ func setNullableTime(out map[string]any, member string, field issueops.Field[*ti
 // operation the Lifecycle role uses (design D8's off-role list, extended by the
 // `bd close` decision).
 //
-// Its one caller at tip is the molecule auto-close, which closes a parent whose
-// children have all finished and discards nothing about the outcome. Routing it
-// onto the role's operation rather than refusing it is what keeps that path
-// working over http; it carries no reason-per-item and no force, so the mapping
-// is total.
+// Routing it onto the role's operation rather than refusing it is what keeps
+// the molecule auto-close (which closes a parent whose children have all
+// finished) and the other raw closes cmd/bd makes outside `bd close` working
+// over http. It sends force because the raw close is the unguarded one
+// everywhere else: dolt, embedded and proxied run it as
+// issueops.CloseIssueInTx, which applies neither the close guards nor close
+// policy, and its signature carries no force a caller could use to waive a
+// refusal those backends never make. Sent unforced, a pinned or claimed root
+// would stop closing over http and nowhere else. The template guard has no
+// bypass on the wire, so a template still refuses here where the other
+// backends close it; no raw caller is known to close one.
 func (s *Store) CloseIssue(ctx context.Context, id, reason, actor, session string) error {
 	w, err := s.roleWire("CloseIssue")
 	if err != nil {
@@ -912,6 +1041,67 @@ func (s *Store) CloseIssue(ctx context.Context, id, reason, actor, session strin
 	if err := requireID("issue id", id); err != nil {
 		return err
 	}
-	_, err = w.CloseIssue(ctx, id, closeBody(actor, reason, session, false))
+	_, err = w.CloseIssue(ctx, id, closeBody(actor, reason, session, true))
 	return err
+}
+
+// wirePriority projects a create's priority onto the wire's optional member.
+//
+// It is sent WHENEVER THE CALLER NAMED ONE, zero included: 0 is P0 and a real
+// request, so an absent member would silently reprioritize critical work. It
+// is absent only when the request asks for the default (DefaultPriority), and
+// then the server's role applies the default — the one place it lives — rather
+// than this client spelling the number, PROVIDED the server says it does:
+// pinCreateDefaultPriority fills the member in for one that does not. The
+// pointer addresses a local copy, never the caller's field.
+func wirePriority(priority int, useDefault bool) (*int, error) {
+	if err := storageops.ValidateCreatePriority(priority, useDefault); err != nil {
+		return nil, err
+	}
+	if useDefault {
+		return nil, nil
+	}
+	return &priority, nil
+}
+
+// pinCreateDefaultPriority decides, before the dial and from the cached
+// handshake, whether the absent priorities among the given wire members may
+// stay absent. A server advertising wire.CapIssuesCreateDefaultPriority stores
+// the create default for an absent member; an older one reads absent as 0 and
+// would store P0 (critical) for every create that asked for the default. So
+// against an older server each absent member is set to
+// issueops.DefaultCreatePriority explicitly. A request naming every priority
+// costs no handshake.
+//
+// The decision assumes the create reaches the build that answered the
+// handshake. The handshake is fetched once per Store and cached for its life
+// (one command, in cmd/bd), so a create that lands on an older build — a
+// server rolled back under a live Store, or mixed builds behind one URL —
+// still goes out with the member absent, and that server stores P0 with no
+// error on either side. A capability that gates a member an older server
+// refuses is loud on a stale handshake (the `has_spawner` that
+// refuseUnservedDepAddLineage gates draws a 400); this one gates the ABSENCE
+// of a member every server already reads, so nothing refuses it.
+func (s *Store) pinCreateDefaultPriority(ctx context.Context, priorities ...**int) error {
+	var absent []**int
+	for _, p := range priorities {
+		if *p == nil {
+			absent = append(absent, p)
+		}
+	}
+	if len(absent) == 0 {
+		return nil
+	}
+	snap, err := s.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if snap != nil && slices.Contains(snap.Capabilities, wire.CapIssuesCreateDefaultPriority) {
+		return nil
+	}
+	for _, p := range absent {
+		priority := issueops.DefaultCreatePriority
+		*p = &priority
+	}
+	return nil
 }

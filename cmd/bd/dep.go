@@ -37,7 +37,7 @@ func addDependencyEdgesDirect(ctx context.Context, st storage.DoltStorage, edges
 		return err
 	}
 	_, err = editor.AddDependencies(ctx, issueops.AddDependenciesRequest{
-		Actor:                 actor,
+		Actor:                 currentActor(),
 		Edges:                 edges,
 		SkipPerEdgeCycleCheck: skipPerEdgeCycleCheck,
 	})
@@ -213,41 +213,6 @@ func resolveUnresolvedDepTarget(sourceID, dependsOnArg string, resolveErr error)
 	return "", fmt.Errorf("resolving dependency ID %s: %v", dependsOnArg, resolveErr)
 }
 
-// isChildOf returns true if childID is a hierarchical child of parentID.
-// For example, "bd-abc.1" is a child of "bd-abc", and "bd-abc.1.2" is a child of "bd-abc.1".
-func isChildOf(childID, parentID string) bool {
-	_, isAncestor := hierarchicalParentRelation(childID, parentID)
-	return isAncestor
-}
-
-func hierarchicalParentRelation(childID, targetID string) (immediateParent string, isAncestor bool) {
-	// A child ID has the format "parentID.N" or "parentID.N.M" etc.
-	// Use ParseHierarchicalID to get the actual parent
-	_, actualParentID, depth := types.ParseHierarchicalID(childID)
-	if depth == 0 {
-		return "", false // Not a hierarchical ID
-	}
-	// Check if the immediate parent matches
-	if actualParentID == targetID {
-		return actualParentID, true
-	}
-	// Also check if targetID is an ancestor (e.g., "bd-abc" is an ancestor of "bd-abc.1.2")
-	return actualParentID, strings.HasPrefix(childID, targetID+".")
-}
-
-// isDisallowedHierarchicalDependency reports whether an explicit dependency
-// conflicts with hierarchy encoded in a dotted issue ID. The one allowed match
-// is a parent-child edge to the immediate dotted-ID parent; blocking and other
-// edge types to any parent/ancestor, plus parent-child edges to higher ancestors,
-// remain rejected.
-func isDisallowedHierarchicalDependency(fromID, toID string, depType types.DependencyType) bool {
-	immediateParent, isAncestor := hierarchicalParentRelation(fromID, toID)
-	if !isAncestor {
-		return false
-	}
-	return depType != types.DepParentChild || toID != immediateParent
-}
-
 var depCmd = &cobra.Command{
 	Use:     "dep [issue-id]",
 	GroupID: "deps",
@@ -312,10 +277,6 @@ Examples:
 			}
 			defer toCleanup()
 
-			if isDisallowedHierarchicalDependency(fromID, toID, types.DepBlocks) {
-				return HandleErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
-			}
-
 			opsCtx, err := issueOpsContext(ctx)
 			if err != nil {
 				return HandleErrorRespectJSON("%v", err)
@@ -330,7 +291,7 @@ Examples:
 				warnIfCyclesExist(fromStore)
 			}
 
-			if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
+			if err := commitPendingIfEmbedded(ctx, fromStore, currentActor(), doltAutoCommitParams{
 				Command:  "dep add",
 				IssueIDs: []string{fromID, toID},
 			}); err != nil {
@@ -498,9 +459,8 @@ Examples:
 		}
 
 		dt := canonicalDependencyType(types.DependencyType(depType))
-		if isDisallowedHierarchicalDependency(fromID, toID, dt) {
-			return HandleErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
-		}
+		// The dotted-id hierarchy refusal is the role's
+		// (issueops.CheckDottedChildDependency), raised by AddDependencies below.
 
 		if err := validateDependencyType(dt); err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -509,6 +469,15 @@ Examples:
 		opsCtx, err := issueOpsContext(ctx)
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
+		}
+		// The confirmation line names both issues by title. Adding an edge
+		// changes neither title, so read them now, while the resolution's
+		// reads above are still fresh: over http those two lookups are then
+		// answered without a round trip, where after the write they would be
+		// two more (bts-xpw.3.14.6).
+		var fromTitle, toTitle string
+		if !jsonOutput {
+			fromTitle, toTitle = lookupTitle(fromID), lookupTitle(toID)
 		}
 		edge := issueops.DependencyEdge{IssueID: fromID, DependsOnID: toID, Type: dt}
 		if err := addDependencyEdgesDirect(opsCtx, fromStore, []issueops.DependencyEdge{edge}, false); err != nil {
@@ -520,7 +489,7 @@ Examples:
 			warnIfCyclesExist(fromStore)
 		}
 
-		if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
+		if err := commitPendingIfEmbedded(ctx, fromStore, currentActor(), doltAutoCommitParams{
 			Command:  "dep add",
 			IssueIDs: []string{fromID, toID},
 		}); err != nil {
@@ -540,7 +509,7 @@ Examples:
 		}
 
 		fmt.Printf("%s Added dependency: %s %s %s (%s)\n",
-			ui.RenderPass("✓"), formatFeedbackIDParen(fromID, lookupTitle(fromID)), depRelationFor(dt).phrase, formatFeedbackIDParen(toID, lookupTitle(toID)), dt)
+			ui.RenderPass("✓"), formatFeedbackIDParen(fromID, fromTitle), depRelationFor(dt).phrase, formatFeedbackIDParen(toID, toTitle), dt)
 		return nil
 	},
 }
@@ -827,7 +796,9 @@ func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge) ([]bulkDepEd
 			current.DependsOnID = toID
 		}
 
-		if isDisallowedHierarchicalDependency(current.IssueID, current.DependsOnID, current.Type) {
+		// The role refuses this edge too; asking the library rule here only lets
+		// the bulk report name every offending line before anything is written.
+		if issueops.IsDottedChildDependency(current.IssueID, current.DependsOnID, current.Type) {
 			errs = append(errs, fmt.Sprintf("line %d: cannot add dependency: %s is already a child of %s", edge.Line, current.IssueID, current.DependsOnID))
 			resolved = append(resolved, current)
 			continue
@@ -1270,7 +1241,7 @@ var depRemoveCmd = &cobra.Command{
 			return HandleErrorRespectJSON("%v", err)
 		}
 		result, err := editor.RemoveDependency(opsCtx, issueops.RemoveDependencyRequest{
-			Actor:       actor,
+			Actor:       currentActor(),
 			IssueID:     fullFromID,
 			DependsOnID: fullToID,
 		})
@@ -1278,7 +1249,7 @@ var depRemoveCmd = &cobra.Command{
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		if err := commitPendingIfEmbedded(ctx, fromStore, actor, doltAutoCommitParams{
+		if err := commitPendingIfEmbedded(ctx, fromStore, currentActor(), doltAutoCommitParams{
 			Command:  "dep remove",
 			IssueIDs: []string{fullFromID, fullToID},
 		}); err != nil {

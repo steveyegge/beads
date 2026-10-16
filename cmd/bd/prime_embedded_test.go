@@ -101,6 +101,55 @@ func TestEmbeddedPrime(t *testing.T) {
 			t.Errorf("expected --memories-only to omit full command guide: %s", out)
 		}
 	})
+
+	// ===== prime.disabled =====
+
+	// A session that sets BD_PRIME_DISABLED gets nothing from the hook line it
+	// inherits, whatever that line's flags, while the workspace (and its
+	// memories) stays as it is.
+	t.Run("prime_disabled_env", func(t *testing.T) {
+		for _, args := range [][]string{nil, {"--full"}, {"--memories-only"}, {"--hook-json"}} {
+			cmd := exec.Command(bd, append([]string{"prime"}, args...)...)
+			cmd.Dir = dir
+			cmd.Env = append(bdEnv(dir), "BD_PRIME_DISABLED=true")
+			stdout, stderr, err := runCommandBuffers(t, cmd)
+			if err != nil {
+				t.Fatalf("bd prime %v failed: %v\nstderr:\n%s", args, err, stderr.String())
+			}
+			out := stdout.String()
+			if len(args) == 1 && args[0] == "--hook-json" {
+				if !strings.Contains(out, `"additionalContext":""`) {
+					t.Errorf("disabled bd prime --hook-json should send an empty envelope, got %s", out)
+				}
+				continue
+			}
+			if out != "" {
+				t.Errorf("disabled bd prime %v printed %q", args, out[:min(200, len(out))])
+			}
+		}
+		if out := bdPrime(t, bd, dir, "--memories-only"); !strings.Contains(out, "prime-test-mem") {
+			t.Errorf("without BD_PRIME_DISABLED the memories come back: %s", out)
+		}
+	})
+
+	t.Run("prime_disabled_config", func(t *testing.T) {
+		set := func(value string) {
+			cmd := exec.Command(bd, "config", "set", "prime.disabled", value)
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			if _, stderr, err := runCommandBuffers(t, cmd); err != nil {
+				t.Fatalf("bd config set prime.disabled %s: %v\n%s", value, err, stderr.String())
+			}
+		}
+		set("true")
+		if out := bdPrime(t, bd, dir); out != "" {
+			t.Errorf("prime.disabled=true in config, bd prime printed %q", out[:min(200, len(out))])
+		}
+		set("false")
+		if out := bdPrime(t, bd, dir); !strings.Contains(out, "prime-test-mem") {
+			t.Errorf("prime.disabled=false must restore the briefing: %s", out[:min(200, len(out))])
+		}
+	})
 }
 
 // TestEmbeddedPrimeConcurrent exercises prime operations concurrently.

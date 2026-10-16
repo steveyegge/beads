@@ -332,6 +332,22 @@ type migrationSource struct {
 	// TestSentinelTablesAreCreatedByTheSeries enforces the creating side only;
 	// the dropping side is this comment.
 	sentinelTables []string
+	// sentinelFlooredTables are clone-local tables whose absence contradicts an
+	// otherwise at-latest cursor, but — unlike sentinelTables — only back to
+	// each table's own replayFloor rather than unconditionally to 0. events,
+	// bd_events_journal, and bd_events_seq are dolt_ignored (never part of
+	// committed history, so a fresh clone can arrive at-latest without them)
+	// but floor-0 would replay ignored/0007's unguarded
+	// `UPDATE wisps SET is_blocked = 0` (see schemaSentinelColumn.replayFloor)
+	// for a table absence that says nothing about migrations that predate it.
+	//
+	// INVARIANT: no future migration in this series may DROP or RENAME a
+	// floored sentinel table. Older binaries in the field check their own
+	// sentinel list against the live schema, so removing one would make every
+	// healthy newer database read as "contradicted" to them and replay the
+	// series from their floor. TestSentinelFlooredTablesAreCreatedByTheSeries
+	// enforces the creating side only; the dropping side is this comment.
+	sentinelFlooredTables []schemaSentinelTable
 	// sentinelColumns are clone-local columns whose absence contradicts an
 	// otherwise at-latest cursor. Unlike a missing sentinel table, a missing
 	// column disbelieves the cursor only back to the column's replayFloor: it
@@ -345,6 +361,15 @@ type migrationSource struct {
 	// and replay the series from their floor. TestSentinelColumnsAreCreatedByTheSeries
 	// enforces the creating side only; the dropping side is this comment.
 	sentinelColumns []schemaSentinelColumn
+}
+
+type schemaSentinelTable struct {
+	table string
+	// replayFloor is the highest cursor value this sentinel's absence still
+	// leaves believable — same semantics and the same two constraints as
+	// schemaSentinelColumn.replayFloor, applied to a whole table's presence
+	// instead of one column's.
+	replayFloor int
 }
 
 type schemaSentinelColumn struct {
@@ -366,8 +391,8 @@ type schemaSentinelColumn struct {
 	//        — just without the timestamp damage.
 	//   (ii) The migration that creates the column AND the migration that
 	//        creates the table carrying it must both be ABOVE the floor, so the
-	//        replay can still heal both shapes the single INFORMATION_SCHEMA
-	//        COUNT(*) probe collapses: table absent entirely, and table present
+	//        replay can still heal both shapes the column probe collapses
+	//        (sentinelColumnExists): table absent entirely, and table present
 	//        but column-less. A floor above the table's creator would strand
 	//        the table-absent shape in a permanent re-migration loop.
 	//
@@ -391,12 +416,33 @@ var (
 		// missing; wisps is checked too so a partially materialized database
 		// is caught by whichever is absent.
 		sentinelTables: []string{"wisps", "wisp_dependencies"},
+		// events is created by ignored/0019 (floor 18: everything at or below
+		// must stay out of the replay, and 0019 itself must stay in it) and
+		// bd_events_journal/bd_events_seq are both created by ignored/0022
+		// (floor 21, same reasoning). All three are dolt_ignored and never
+		// part of committed history, so a clone can arrive with the cursor
+		// at-latest but without them — exactly the leases shape below, except
+		// a whole-table absence rather than a column-on-an-existing-table one.
+		//
+		// The journal tables are ignored unconditionally; events is the one
+		// version-gated pattern ({"events", 62} below), so strictly its
+		// ignore is only asserted once the main cursor reaches 0062. That is
+		// safe here rather than a hole: this replay runs on the ignored plane,
+		// which migrateUpAfterReconcile only reaches after the main pass
+		// succeeded, and a main pass from below 62 applies
+		// 0062_events_dolt_ignore, whose REPLACE INTO dolt_ignore lands
+		// before the ignored plane is touched. So the clamp can never have
+		// 0019 re-create events as tracked-at-HEAD.
+		sentinelFlooredTables: []schemaSentinelTable{
+			{table: "events", replayFloor: 18},
+			{table: "bd_events_journal", replayFloor: 21},
+			{table: "bd_events_seq", replayFloor: 21},
+		},
 		// A historical ignored-v16 ordinal collision can leave the local
 		// leases table present but without the column frozen 0016 adds; a
 		// database materialized out of band can be missing the leases table
-		// altogether. The single COLUMNS probe reads both shapes as absent and
-		// the replay heals both: 0012 re-creates the table, 0016 adds the
-		// column.
+		// altogether. The column probe reads both shapes as absent and the
+		// replay heals both: 0012 re-creates the table, 0016 adds the column.
 		//
 		// The floor of 11 is what keeps that heal from also being a data loss.
 		// Every released tree (v1.1.0, v1.1.2, v1.2.x) tops the ignored series
@@ -1363,28 +1409,40 @@ func (m migrationSource) bootstrapSQL() string {
 
 // hasContentHashColumn reports whether the cursor table already carries the
 // content_hash column. A not-yet-created table simply reports false.
-//
-// It probes a single table with SHOW COLUMNS rather than INFORMATION_SCHEMA.COLUMNS,
-// whose predicate Dolt does not push down. The LIKE narrows the result set, but
-// we still compare the Field name exactly because '_' is a LIKE single-character
-// wildcard.
 func (m migrationSource) hasContentHashColumn(ctx context.Context, db DBConn) (bool, error) {
-	//nolint:gosec // G201: m.cursorTable is a hardcoded constant; the LIKE literal is fixed.
-	rows, err := db.QueryContext(ctx, "SHOW COLUMNS FROM "+m.cursorTable+" LIKE 'content_hash'")
+	return showColumnExists(ctx, db, m.cursorTable, "content_hash")
+}
+
+// showColumnExists reports whether table carries column, probing the ONE table
+// with SHOW COLUMNS rather than INFORMATION_SCHEMA.COLUMNS, whose predicate Dolt
+// does not push down: on a server hosting ~30 databases the INFORMATION_SCHEMA
+// form scanned every database and took 5-6 s per probe (measured 2026-09-17,
+// portharbour, dolt 2.3.x), and cursorRealityFloor runs it on EVERY store open —
+// a 15-store federated `gc ready` spent ~80 s of its 90 s here. SHOW COLUMNS on
+// the same server answers in 0.15 s.
+//
+// The LIKE narrows the result set, but the Field name is still compared exactly
+// because '_' is a LIKE single-character wildcard (the LIKE literal is left
+// unescaped on purpose: the exact compare is the guard, and the repair-path
+// mocks pin this literal form). A missing table reports false, as the
+// INFORMATION_SCHEMA count did. table and column are the hardcoded
+// identifiers the migration series names — never user input.
+func showColumnExists(ctx context.Context, db DBConn, table, column string) (bool, error) {
+	//nolint:gosec // G201: table and the LIKE literal are migration-series constants.
+	rows, err := db.QueryContext(ctx, "SHOW COLUMNS FROM "+table+" LIKE '"+column+"'")
 	if err != nil {
-		// SHOW COLUMNS errors on a missing table; the old INFORMATION_SCHEMA
-		// probe returned count 0 instead. Preserve that: an absent cursor table
-		// has no content_hash column.
+		// SHOW COLUMNS errors on a missing table; the INFORMATION_SCHEMA probe
+		// returned count 0 instead. Preserve that: an absent table has no columns.
 		if dberrors.IsTableNotExist(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("checking %s.content_hash: %w", m.cursorTable, err)
+		return false, fmt.Errorf("checking %s.%s: %w", table, column, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return false, fmt.Errorf("checking %s.content_hash: %w", m.cursorTable, err)
+		return false, fmt.Errorf("checking %s.%s: %w", table, column, err)
 	}
 	// SHOW COLUMNS returns Field, Type, Null, Key, Default, Extra (and possibly
 	// more on some servers); scan every column into RawBytes and read the first
@@ -1396,14 +1454,14 @@ func (m migrationSource) hasContentHashColumn(ctx context.Context, db DBConn) (b
 	}
 	for rows.Next() {
 		if err := rows.Scan(dest...); err != nil {
-			return false, fmt.Errorf("checking %s.content_hash: %w", m.cursorTable, err)
+			return false, fmt.Errorf("checking %s.%s: %w", table, column, err)
 		}
-		if len(cells) > 0 && string(cells[0]) == "content_hash" {
+		if len(cells) > 0 && string(cells[0]) == column {
 			return true, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("checking %s.content_hash: %w", m.cursorTable, err)
+		return false, fmt.Errorf("checking %s.%s: %w", table, column, err)
 	}
 	return false, nil
 }
@@ -1540,7 +1598,7 @@ func (m migrationSource) currentVersion(ctx context.Context, db DBConn) (int, er
 // corroborates. limited is false when nothing is missing (believe the cursor as
 // read); otherwise floor is the highest version still believable — 0 for a
 // missing sentinel table, and the sentinel's replayFloor for a missing sentinel
-// column.
+// floored table or sentinel column.
 //
 // Clamping rather than erroring is deliberate: the series is written to be
 // re-runnable against a database that already has some of it.
@@ -1552,8 +1610,10 @@ func (m migrationSource) currentVersion(ctx context.Context, db DBConn) (int, er
 // rather than merely diagnose.
 //
 // Sentinel tables are probed first and short-circuit the whole check: they
-// floor at 0, so no column probe could lower the answer, and skipping it keeps
-// this cheap on the path every store open takes.
+// floor at 0, so no floored-table or column probe could lower the answer, and
+// skipping it keeps this cheap on the path every store open takes. Floored
+// tables are then probed together with columns, each clamping floor to the
+// lowest replayFloor of anything found absent.
 func (m migrationSource) cursorRealityFloor(ctx context.Context, db DBConn) (int, bool, error) {
 	for _, table := range m.sentinelTables {
 		present, err := sentinelTableExists(ctx, db, table)
@@ -1565,6 +1625,19 @@ func (m migrationSource) cursorRealityFloor(ctx context.Context, db DBConn) (int
 		}
 	}
 	floor, limited := 0, false
+	for _, st := range m.sentinelFlooredTables {
+		present, err := sentinelTableExists(ctx, db, st.table)
+		if err != nil {
+			return 0, false, fmt.Errorf("checking %s sentinel floored table %s: %w", m.cursorTable, st.table, err)
+		}
+		if present {
+			continue
+		}
+		if !limited || st.replayFloor < floor {
+			floor = st.replayFloor
+		}
+		limited = true
+	}
 	for _, column := range m.sentinelColumns {
 		present, err := sentinelColumnExists(ctx, db, column.table, column.column)
 		if err != nil {
@@ -1595,7 +1668,31 @@ var sentinelTableExists = func(ctx context.Context, db DBConn, table string) (bo
 	return n > 0, nil
 }
 
-var sentinelColumnExists = schemaColumnExists
+// sentinelColumnExists runs on EVERY store open (cursorRealityFloor), so it
+// takes the SHOW COLUMNS prober rather than schemaColumnExists's
+// INFORMATION_SCHEMA form: 0.15 s against 5-6 s per probe on a Dolt server
+// hosting ~30 databases (measured 2026-09-17). The repair paths keep
+// schemaColumnExists as is — they run once per migration, not per open.
+//
+// SHOW COLUMNS fails on a missing table, and the carrier table is exactly what
+// a release-lineage store lacks (no leases before ignored/0012). A failing
+// statement is not free here: on the store's multiStatements DSN it pins the
+// pooled Dolt session to its pre-statement catalog, so a table another
+// connection creates afterwards stays "not found" on it (be-bv7x; reproduced
+// on dolt 2.1.8 and 2.2.0). So the carrier's existence is read first through
+// sentinelTableExists, whose read succeeds whether or not the table is there,
+// and SHOW COLUMNS is only sent to a table that is. A missing table reads as a
+// missing column, as the INFORMATION_SCHEMA count did.
+var sentinelColumnExists = func(ctx context.Context, db DBConn, table, column string) (bool, error) {
+	present, err := sentinelTableExists(ctx, db, table)
+	if err != nil {
+		return false, fmt.Errorf("probing %s: %w", table, err)
+	}
+	if !present {
+		return false, nil
+	}
+	return showColumnExists(ctx, db, table, column)
+}
 
 func (m migrationSource) pendingVersions(ctx context.Context, db DBConn) ([]int, error) {
 	current, err := m.currentVersion(ctx, db)

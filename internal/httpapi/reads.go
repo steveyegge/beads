@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -355,12 +356,23 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		Status:    q.csv("status"),
 		IssueType: q.str("type"),
 		Assignee:  q.str("assignee"),
+		// `bd list --no-assignee`, behind issues.list.noAssignee
+		// (CapIssuesListNoAssignee).
+		NoAssignee: q.boolean("no_assignee"),
 
 		Labels:        q.list("label"),
 		LabelsAny:     q.list("label_any"),
 		ExcludeLabels: q.list("exclude_label"),
 
 		ParentID: q.str("parent"),
+
+		// `bd list --title`, behind issues.list.title (CapIssuesListTitle).
+		TitleSearch: q.str("title"),
+		// `bd list --id`, behind issues.list.ids (CapListIDs). The id scope
+		// arrives as a repeated parameter and reaches the role as the
+		// comma-separated set issueops.ListRequest.IDFilter is. The join is
+		// lossless only because listIDFilter refuses a comma inside a value.
+		IDFilter: listIDFilter(q),
 
 		Brief:            q.boolean("brief"),
 		AllFlag:          q.boolean("all"),
@@ -374,6 +386,9 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 
 		MetadataFields: q.metadataFields("metadata_field"),
 		HasMetadataKey: q.str("has_metadata_key"),
+
+		// `bd search`'s text, behind issues.list.search (CapIssuesListSearch).
+		Query: q.str("q"),
 
 		Limit: q.limit(),
 	}
@@ -444,6 +459,54 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, body)
+}
+
+// maxListIDs bounds listIssues' repeatable `id` filter. It is the spec's
+// `maxItems`, and TestListIDsBoundMatchesTheSpec holds the two together.
+const maxListIDs = 200
+
+// listIDFilter decodes listIssues' repeatable `id` filter into the comma-separated
+// set issueops.ListRequest.IDFilter takes. The contract is bd-enterprise's
+// (E9-S2), adopted unchanged.
+//
+// Every value is bounded the way a path id is (customMethodTarget): longer than
+// the column holds, or carrying a control character, names no row that can
+// exist. Unlike the path, a malformed value here is a 400 naming `id` rather
+// than a 404 — there is no single resource to be missing — and two more shapes
+// are refused because of what the role does with the joined set: a COMMA,
+// because the role splits the set on commas and a value carrying one would
+// silently address two ids the caller never named; and LEADING OR TRAILING
+// WHITESPACE, because the role trims every member, so a padded value would
+// silently address the trimmed id — a different one from the id named.
+func listIDFilter(q *query) string {
+	vals := q.list("id")
+	if len(vals) == 0 {
+		return ""
+	}
+	if len(vals) > maxListIDs {
+		q.invalid("id", fmt.Sprintf("at most %d id values per request; got %d", maxListIDs, len(vals)))
+		return ""
+	}
+	for _, id := range vals {
+		switch {
+		case strings.TrimSpace(id) == "":
+			q.invalid("id", "an id value is empty")
+			return ""
+		case strings.Contains(id, ","):
+			q.invalid("id", fmt.Sprintf("%q carries a comma; repeat the parameter once per id instead", id))
+			return ""
+		case strings.ContainsFunc(id, isControlChar):
+			q.invalid("id", "an id value carries a control character")
+			return ""
+		case strings.TrimSpace(id) != id:
+			q.invalid("id", fmt.Sprintf("%q has leading or trailing whitespace; send the canonical id", id))
+			return ""
+		case types.CheckFieldLen("id", id) != nil:
+			q.invalid("id", fmt.Sprintf("an id value is longer than %d characters", types.MaxFieldLen))
+			return ""
+		}
+	}
+	return strings.Join(vals, ",")
 }
 
 // handleQueryIssues answers GET /v0/beads/issues:query.

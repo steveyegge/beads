@@ -73,6 +73,9 @@ func TestMain(m *testing.M) {
 	if compositionStop != nil {
 		compositionStop()
 	}
+	if servedTemplateDir != "" {
+		_ = os.RemoveAll(servedTemplateDir)
+	}
 	os.Exit(code)
 }
 
@@ -237,6 +240,9 @@ func serveRoles(store storage.DoltStorage) (httpapi.Config, error) {
 	if cfg.BatchGetter, err = store.BatchGetter(); err != nil {
 		return cfg, err
 	}
+	if cfg.LeaseReclaimer, err = store.LeaseReclaimer(); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -304,6 +310,10 @@ func (c *servedComposition) seedDependency(ctx context.Context, dep *types.Depen
 func (c *servedComposition) seedComment(ctx context.Context, issueID, author, text string) error {
 	_, err := c.reference.AddIssueComment(ctx, issueID, author, text)
 	return err
+}
+
+func (c *servedComposition) seedPromotion(ctx context.Context, id, actor string) error {
+	return c.reference.PromoteFromEphemeral(ctx, id, actor)
 }
 
 // queryScalar is the composition's raw-row hook: a single-row query against the

@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -198,8 +197,8 @@ func TestPRGateRequiresRemoteBazelLanes(t *testing.T) {
 		t.Errorf("pr.yml's ci-gate env sets %s; only its run script may", bazelRemoteGateID)
 	}
 	for lane, id := range bazelLaneGateIDs {
-		if !lanes[lane]["remote"] {
-			t.Errorf("gated lane %s does not run in mode remote", lane)
+		if bazelLaneReporter(lanes, lane, "remote") == "" {
+			t.Errorf("gated lane %s does not run (nor does its union lane) in mode remote", lane)
 		}
 		if !contains(required, id) && !bazelPackageJobs[lane] {
 			t.Errorf("pr.yml's ci-gate does not require %s", id)
@@ -267,13 +266,13 @@ func TestPRGateRequiresRemoteBazelLanes(t *testing.T) {
 		}
 	}
 
-	// Remote, but one gated lane failed, was cancelled or reported nothing:
-	// red, naming that lane.
+	// Remote, but one gated lane (or the union lane reporting for it)
+	// failed, was cancelled or reported nothing: red, naming that lane.
 	for lane, id := range bazelLaneGateIDs {
 		for _, mode := range []string{"remote", "fork-ro"} {
 			for _, res := range []string{"failure", "cancelled", ""} {
 				sc := prGateFor(t, lanes, "pull_request", mode)
-				sc.outputs[lane] = res
+				sc.outputs[bazelLaneReporter(lanes, lane, mode)] = res
 				if pass, log := runPRGateStep(t, gateStep, sc); pass || !regexp.MustCompile(`::error::`+id+`\b`).MatchString(log) {
 					t.Errorf("mode %s, lane %s %q: gate pass = %v, want red naming %s\n%s", mode, lane, res, pass, id, log)
 				}
@@ -319,11 +318,10 @@ func TestBazelRetiredLanesCheckListedTestsRan(t *testing.T) {
 	// liveShardCount dispatches a suite's -1 shardCount to the accessor that
 	// reads its target's own shard_count from its BUILD.bazel rule — the
 	// single source of truth for a lane's shard split. See
-	// bazelProxiedShardCount's doc comment (scripts/ci_workflow_test.go) for
+	// bazelProxiedShardCount's doc comment (scripts/embedded_shard_count_test.go) for
 	// the shared rationale.
 	liveShardCount := map[string]func(*testing.T) int{
 		"//cmd/bd:bd_proxied_test":                                   bazelProxiedShardCount,
-		"//cmd/bd:bd_embedded_test":                                  bazelEmbeddedCmdShardCount,
 		"//internal/storage/embeddeddolt:embeddeddolt_embedded_test": bazelEmbeddedStorageShardCount,
 		"//internal/storage/dolt:dolt_server_full_test":              bazelServerFullShardCount,
 	}
@@ -335,22 +333,28 @@ func TestBazelRetiredLanesCheckListedTestsRan(t *testing.T) {
 		{bazelEmbedJobName, "embedded", []suite{
 			// bazel-embedded runs its own duration-balanced manifest blocks
 			// (scripts/ci/embedded_{cmd,storage}_test_durations.json), not
-			// PR Risk's frozen 20- and 5-shard blocks (slice F1): neither is
-			// a drop-in retirement of its legacy job's shard count, just its
-			// tests. bazelEmbeddedCmdShardCount/bazelEmbeddedStorageShardCount
+			// PR Risk's 20-shard cmd block, which was frozen and has since
+			// been deleted (those jobs no longer exist; see
+			// engdocs/TESTING.md), or the still-frozen 5-shard storage block
+			// (slice F1): neither is a drop-in retirement of its legacy
+			// job's shard count, just its tests.
+			// bazelEmbeddedCmdShardCount/bazelEmbeddedStorageShardCount
 			// read the real counts from BUILD.bazel, making these suites'
 			// `want` (below) genuine cross-file pins against bazel.yml's own
 			// check_shard_coverage.py arguments, not independently
 			// hard-coded literals that could drift from BUILD.bazel
 			// unnoticed (S1).
-			{"test-embedded-cmd", "Test", "//cmd/bd:bd_embedded_test", ".github/scripts/embedded-test-shard.sh", -1},
+			// The cmd/bd block is split over embeddedCmdTargets: one
+			// --suite each, SHARDS@OFFSET/TOTAL (added below).
 			{"test-embedded-storage", "Test", "//internal/storage/embeddeddolt:embeddeddolt_embedded_test", ".github/scripts/embedded-storage-test-shard.sh", -1},
-		}, []string{"//internal/storage/embeddeddolt:embeddeddolt_conformance_core_test", "//internal/storage/embeddeddolt:embeddeddolt_conformance_audit_test"}},
+		}, []string{"//internal/storage/embeddeddolt:embeddeddolt_conformance_core_test", "//internal/storage/embeddeddolt:embeddeddolt_conformance_core_slow_test", "//internal/storage/embeddeddolt:embeddeddolt_conformance_audit_test"}},
 		{bazelProxiedJobName, "doltserver-proxied", []suite{
 			// bazel-proxied runs its own duration-balanced manifest block
-			// (scripts/ci/proxied_test_durations.json), not PR Risk's frozen
-			// 15-shard bd-init-cost-proxy block: it is not a drop-in
-			// retirement of test-proxied-cmd's shard count, just its tests.
+			// (scripts/ci/proxied_test_durations.json), not PR Risk's
+			// 15-shard bd-init-cost-proxy block, which was frozen and has
+			// since been deleted (that job no longer exists; see
+			// engdocs/TESTING.md): it was never a drop-in retirement of
+			// test-proxied-cmd's shard count, just its tests.
 			// bazelProxiedShardCount reads the real count from
 			// cmd/bd/BUILD.bazel, making this suite's `want` (below) a
 			// genuine cross-file pin against bazel.yml's own
@@ -366,6 +370,11 @@ func TestBazelRetiredLanesCheckListedTestsRan(t *testing.T) {
 		job := readCIWorkflow(t, bazelWorkflowName).job(t, c.lane)
 		step := job.step(t, "Every listed test ran in its shard")
 		want := []string{"python3 tools/bazel/check_shard_coverage.py", `--bep "$RUNNER_TEMP/bazel-bep.json"`}
+		if c.lane == bazelEmbedJobName {
+			for _, p := range bazelEmbeddedCmdParts(t) {
+				want = append(want, fmt.Sprintf("--suite %s %s %s", p.label, ".github/scripts/embedded-test-shard.sh", p.spec()))
+			}
+		}
 		for _, s := range c.suites {
 			shards := s.shardCount
 			if shards < 0 {
@@ -532,6 +541,51 @@ esac
 			t.Errorf("--whole %v: pass = %v, want %v (mention %q):\n%s", c.names, err == nil, c.pass, c.mention, out)
 		}
 	}
+	// A 2-shard block split over two 1-shard targets (SHARDS@OFFSET/TOTAL):
+	// //pkg:p's shard 1 is the script's shard 1, //pkg:q's shard 1 its shard
+	// 2. The targets must tile the block exactly once.
+	splitLogs := filepath.Join(dir, "split")
+	for target, names := range map[string][]string{"p": {"TestA", "TestB"}, "q": {"TestC"}} {
+		d := filepath.Join(splitLogs, "pkg", target)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		xml := `<testsuites><testsuite name="pkg">`
+		for _, n := range names {
+			xml += `<testcase name="` + n + `"></testcase>`
+		}
+		if err := os.WriteFile(filepath.Join(d, "test.xml"), []byte(xml+`</testsuite></testsuites>`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	splitBEP := filepath.Join(dir, "split.json")
+	if err := os.WriteFile(splitBEP, []byte(`{"id":{"targetConfigured":{"label":"//pkg:p"}},"configured":{"targetKind":"sh_test rule"}}
+{"id":{"testResult":{"label":"//pkg:p","run":1,"attempt":1}}}
+{"id":{"targetConfigured":{"label":"//pkg:q"}},"configured":{"targetKind":"sh_test rule"}}
+{"id":{"testResult":{"label":"//pkg:q","run":1,"attempt":1}}}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name    string
+		suites  []string
+		pass    bool
+		mention string
+	}{
+		{"split exact", []string{"//pkg:p", "1@0/2", "//pkg:q", "1@1/2"}, true, ""},
+		{"split shard run twice", []string{"//pkg:p", "1@0/2", "//pkg:q", "1@0/2"}, false, "run by more than one target"},
+		{"split shard run by no target", []string{"//pkg:p", "1@0/2"}, false, "no target runs shard(s) [2]"},
+		{"split range past the total", []string{"//pkg:p", "1@0/2", "//pkg:q", "1@2/2"}, false, "exceed"},
+	} {
+		args := []string{script, "--bep", splitBEP, "--testlogs", splitLogs}
+		for i := 0; i < len(c.suites); i += 2 {
+			args = append(args, "--suite", c.suites[i], shard, c.suites[i+1])
+		}
+		out, err := exec.Command(python, args...).CombinedOutput()
+		if (err == nil) != c.pass || (c.mention != "" && !strings.Contains(string(out), c.mention)) {
+			t.Errorf("%s: pass = %v, want %v (mention %q):\n%s", c.name, err == nil, c.pass, c.mention, out)
+		}
+	}
 	if out, err := exec.Command(python, script, "--bep", writeBEP(2), "--testlogs", filepath.Join(dir, "logs0"), "--suite", label, shard, "2", "--whole", "//pkg:absent").CombinedOutput(); err == nil {
 		t.Errorf("--whole for a target the BEP lacks passed:\n%s", out)
 	}
@@ -550,199 +604,6 @@ esac
 		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "failed") {
 			t.Errorf("shard script %s %v: check passed or did not say it failed:\n%s", c.script, c.env, out)
 		}
-	}
-}
-
-// Review G1: the checker's input is the real shard scripts' list-only
-// output (every retired lane's: the embedded, proxied and server suites). Every name they list, for every shard, must be a test go test
-// runs (declared `func Name(t *testing.T)` in the package's _test.go files),
-// or one check_shard_coverage.py drops as NOT_TESTS; and each NOT_TESTS name
-// must really not be a test (TestMain takes *testing.M). Otherwise the
-// checker reports a listed test that "did not run" on every real run.
-func TestShardScriptsListOnlyRealTests(t *testing.T) {
-	// The CI shard scripts use bash 4 associative arrays (Linux runners only).
-	requireAutofixBash(t)
-	root := sourceRepoRoot(t)
-	m := regexp.MustCompile(`(?m)^NOT_TESTS = frozenset\(\{([^}]*)\}\)`).FindStringSubmatch(readPolicyFile(t, root, "tools/bazel/check_shard_coverage.py"))
-	if m == nil {
-		t.Fatal("tools/bazel/check_shard_coverage.py has no NOT_TESTS = frozenset({...})")
-	}
-	notTests := map[string]bool{}
-	for _, q := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(m[1], -1) {
-		notTests[q[1]] = true
-	}
-	for _, c := range []struct{ job, script, pkg string }{
-		{"test-embedded-cmd", ".github/scripts/embedded-test-shard.sh", "cmd/bd"},
-		{"test-embedded-storage", ".github/scripts/embedded-storage-test-shard.sh", "internal/storage/embeddeddolt"},
-		// D2 step 2: the proxied and server lanes' suites.
-		{"test-proxied-cmd", ".github/scripts/proxied-test-shard.sh", "cmd/bd"},
-		{"test-server-storage-full", ".github/scripts/server-storage-test-shard.sh", "internal/storage/dolt"},
-	} {
-		var src strings.Builder
-		files, err := filepath.Glob(filepath.Join(root, c.pkg, "*_test.go"))
-		if err != nil || len(files) == 0 {
-			t.Fatalf("%s: no _test.go files (%v)", c.pkg, err)
-		}
-		for _, f := range files {
-			data, err := os.ReadFile(f)
-			if err != nil {
-				t.Fatal(err)
-			}
-			src.Write(data)
-			src.WriteString("\n")
-		}
-		declared := map[string]bool{}
-		for _, d := range regexp.MustCompile(`(?m)^func (Test\w*)\(\w+ \*testing\.T\) \{`).FindAllStringSubmatch(src.String(), -1) {
-			declared[d[1]] = true
-		}
-
-		// B1: validate every total this script's committed manifest holds a
-		// block for, plus this job's own PR Risk matrix size and (for
-		// test-proxied-cmd) the Bazel lane's own shard_count — not just
-		// whichever total happens to equal this PR Risk job's matrix. Before
-		// F2 those always coincided; now the Bazel-only bazel-proxied lane
-		// reads a manifest block (30) that no PR-Risk-matrix-only check ever
-		// exercises, so a fork PR (which never runs bazel-proxied) could
-		// corrupt that block and still merge green. Looping over every
-		// distinct total in the manifest closes that gap for this script and
-		// any other script that later grows a second block the same way.
-		mm := shardManifestDefault.FindStringSubmatch(readPolicyFile(t, root, c.script))
-		if mm == nil {
-			t.Fatalf("%s has no ${BEADS_TEST_SHARD_MANIFEST:-...} default manifest", c.script)
-		}
-		totalsSet := map[int]bool{}
-		for _, line := range strings.Split(readPolicyFile(t, root, mm[1]), "\n") {
-			line, _, _ = strings.Cut(line, "#")
-			fields := strings.Fields(line)
-			if len(fields) == 0 {
-				continue
-			}
-			if n, err := strconv.Atoi(fields[0]); err == nil {
-				totalsSet[n] = true
-			}
-		}
-		switch c.script {
-		case ".github/scripts/proxied-test-shard.sh":
-			totalsSet[bazelProxiedShardCount(t)] = true
-		case ".github/scripts/embedded-test-shard.sh":
-			// F1: the Bazel-only bazel-embedded lane reads a 50-shard cmd
-			// block that no PR-Risk-matrix-only (20-shard) check exercises;
-			// without this, "BUILD.bazel's shard_count and bazel.yml's
-			// check_shard_coverage.py arg both drift to a new total with no
-			// manifest block" passes every policy test (see review S3) --
-			// the lane then silently goes 100% hash fallback and loses its
-			// duration balancing.
-			totalsSet[bazelEmbeddedCmdShardCount(t)] = true
-		case ".github/scripts/embedded-storage-test-shard.sh":
-			// F1: mirrors the cmd case above for the 15-shard storage block.
-			totalsSet[bazelEmbeddedStorageShardCount(t)] = true
-		case ".github/scripts/server-storage-test-shard.sh":
-			totalsSet[bazelServerFullShardCount(t)] = true
-		}
-		totals := make([]int, 0, len(totalsSet))
-		for n := range totalsSet {
-			totals = append(totals, n)
-		}
-		sort.Ints(totals)
-
-		for _, shards := range totals {
-			// The scripts' hash fallback forks per test (seconds per shard
-			// for the server suite): list the shards concurrently.
-			outs, errs := make([][]byte, shards+1), make([]error, shards+1)
-			var wg sync.WaitGroup
-			for k := 1; k <= shards; k++ {
-				wg.Add(1)
-				go func(k int) {
-					defer wg.Done()
-					cmd := exec.Command("bash", c.script, strconv.Itoa(k), strconv.Itoa(shards))
-					cmd.Dir = root
-					cmd.Env = append(os.Environ(), "BEADS_TEST_SHARD_LIST_ONLY=1")
-					outs[k], errs[k] = cmd.Output()
-				}(k)
-			}
-			wg.Wait()
-			listed, manifestSum := 0, 0
-			for k := 1; k <= shards; k++ {
-				if errs[k] != nil {
-					// The script itself exits 1 on a duplicate manifest entry
-					// or a manifest entry that names no discovered test
-					// (rename/typo/stale-after-delete), for the requested
-					// total only: this is what catches a corrupted block
-					// that a PR-Risk-matrix-only check at a different total
-					// would never see.
-					t.Fatalf("%s %d %d: %v\n%s", c.script, k, shards, errs[k], outs[k])
-				}
-				for _, line := range strings.Split(string(outs[k]), "\n") {
-					if mc := regexp.MustCompile(`^  manifest: (\d+), fallback: \d+$`).FindStringSubmatch(line); mc != nil {
-						n, _ := strconv.Atoi(mc[1])
-						manifestSum += n
-						continue
-					}
-					name, ok := strings.CutPrefix(line, "  ")
-					if !ok || !strings.HasPrefix(name, "Test") || strings.ContainsAny(name, " :") {
-						continue
-					}
-					listed++
-					isTest := declared[name]
-					switch {
-					case notTests[name] && isTest:
-						t.Errorf("%s shard %d/%d lists %s, which check_shard_coverage.py drops, but it is a real test", c.script, k, shards, name)
-					case !notTests[name] && !isTest:
-						t.Errorf("%s shard %d/%d lists %s, which is not a `func %s(t *testing.T)` test in %s: check_shard_coverage.py would report it missing on every run (add it to NOT_TESTS only if go test never runs it)",
-							c.script, k, shards, name, name, c.pkg)
-					}
-				}
-			}
-			if listed < 50 {
-				t.Errorf("%s at %d shards listed only %d tests; did the list-only output format change?", c.script, shards, listed)
-			}
-			// S1: a total that is supposed to have a committed manifest
-			// block (every total this loop considers does: it is either a
-			// live job's matrix size or a total this script's own manifest
-			// already names) must not have silently gone 100% hash fallback,
-			// which is what "the whole block was deleted" looks like from
-			// here: check_shard_coverage.py would still pass (it rebuilds
-			// its expectation from this same script), so nothing else
-			// catches it.
-			if manifestSum == 0 {
-				t.Errorf("%s at %d shards: manifest entries for this total sum to 0 across all shards (100%% hash fallback); its committed block in %s may have been deleted", c.script, shards, mm[1])
-			}
-		}
-	}
-	for name := range notTests {
-		if name != "TestMain" {
-			t.Errorf("NOT_TESTS has %s; only TestMain is never a test", name)
-		}
-	}
-}
-
-// S3: the Bazel-only 30-shard block is not frozen like the legacy 15-shard
-// block (TestShardScriptsListOnlyRealTests's B1 fix catches outright
-// corruption, but not a committed block that has drifted from the currently
-// discovered TestProxiedServer*/TestServerMode* test set, e.g. a test added,
-// renamed, or removed without anyone running --write). gen_proxied_shard_
-// manifest.py --check verifies only that the committed block names every
-// discovered test exactly once -- not that its shard *assignments* match a
-// fresh LPT pack -- and fails with the exact command to fix it when a name
-// is missing, stale, or duplicated. It deliberately does NOT fail merely
-// because proxied_test_durations.json's weights changed and the existing
-// packing is now suboptimal: two PRs each adding one proxied test would
-// otherwise force a full repack and conflict on unrelated shard lines (see
-// --repack below for the explicit opt-in to that). Run --check here so a
-// block with missing/stale/duplicate names fails go test ./scripts/...
-// (//scripts:scripts_test under Bazel) instead of only
-// surfacing as a test silently never running in any shard. The legacy
-// 15-shard block is deliberately excluded: its header documents that it is
-// frozen and must not be regenerated (see
-// .github/scripts/proxied-cmd-test-shards.txt and engdocs/TESTING.md), so a
-// --check against it would always fail by design.
-func TestProxiedShardManifestGeneratorNotStale(t *testing.T) {
-	python := requireHostTool(t, "python3")
-	root := sourceRepoRoot(t)
-	cmd := exec.Command(python, "scripts/ci/gen_proxied_shard_manifest.py", "30", "--weights=duration", "--check")
-	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Errorf("gen_proxied_shard_manifest.py 30 --weights=duration --check: %v\n%s", err, out)
 	}
 }
 
@@ -929,7 +790,9 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 
 	// Committed rc files: only .bazelrc. .bazelrc.local and user.bazelrc are
 	// developer-local (gitignored) and would be try-imported into CI runs.
-	for _, f := range repoFiles(t, root) {
+	// Under Bazel the listing is //:repo_other_files, every tracked file but
+	// Go and Markdown source (no rc file is either): several hundred files.
+	for _, f := range repoFiles(t, root, 300) {
 		base := filepath.Base(f)
 		if strings.Contains(base, "bazelrc") && f != ".bazelrc" && f != setupBazelActionDir+"/write-bazelrc.sh" {
 			t.Errorf("committed rc file %s: .bazelrc's try-import would load it into every CI run", f)
@@ -951,12 +814,24 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// go_test_pinned_shard.sh selects and skips by design (each test in
+		// exactly one shard: TestPinnedShardWrapperSplit), and is reviewed
+		// here for pinnedShardTargets only (the dolt-server-cmd targets and
+		// the embedded lane's served targets, whose args are pinned
+		// above); pinnedShardWrapperUsers fails if anything else runs
+		// through it.
+		exempt := filepath.ToSlash(rel) == pinnedShardWrapper
+		if exempt {
+			for _, e := range pinnedShardWrapperUsers(t, root) {
+				t.Error(e)
+			}
+		}
 		for i, line := range strings.Split(string(data), "\n") {
 			code := strings.TrimSpace(line)
 			if strings.HasPrefix(code, "#") {
 				continue
 			}
-			if scriptNarrow.MatchString(code) {
+			if scriptNarrow.MatchString(code) && !exempt {
 				t.Errorf("%s:%d %q can select, skip or re-run the retired tiers' lanes' tests", rel, i+1, code)
 			}
 			for _, m := range regexp.MustCompile(`--config=([A-Za-z0-9_-]+)`).FindAllStringSubmatch(code, -1) {
@@ -984,17 +859,31 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 		args []string
 		env  map[string]string
 	}
+	embeddedCmdEnv := map[string]string{
+		"BEADS_TEST_BD_BINARY": "$(rlocationpath :bd)", "BEADS_TEST_EMBEDDED_DOLT": "1", "BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)",
+		// bdInit's schema template and the race runtime's exit sleep:
+		// neither selects or skips a test.
+		"BEADS_TEST_EMBEDDED_SCHEMA_TOOL": "$(rlocationpath //internal/storage/embeddeddolt/cmd:cmd_norace)", "GORACE": "atexit_sleep_ms=0",
+	}
 	want := map[string]target{
 		"//cmd/bd:bd_embedded_test": {
-			[]string{"$(rootpath //:.github/scripts/embedded-test-shard.sh)", "BEADS_TEST_CMD_BINARY", "$(rootpath :bd_test)", "-test.timeout=19m"},
-			map[string]string{"BEADS_TEST_BD_BINARY": "$(rlocationpath :bd)", "BEADS_TEST_EMBEDDED_DOLT": "1", "BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)"},
+			[]string{"--shard-offset=0", "--shard-total=100", "$(rootpath //:.github/scripts/embedded-test-shard.sh)", "BEADS_TEST_CMD_BINARY", "$(rootpath :bd_test)", "-test.timeout=19m"},
+			embeddedCmdEnv,
+		},
+		"//cmd/bd:bd_embedded_part2_test": {
+			[]string{"--shard-offset=50", "--shard-total=100", "$(rootpath //:.github/scripts/embedded-test-shard.sh)", "BEADS_TEST_CMD_BINARY", "$(rootpath :bd_test)", "-test.timeout=19m"},
+			embeddedCmdEnv,
 		},
 		"//internal/storage/embeddeddolt:embeddeddolt_embedded_test": {
 			[]string{"$(rootpath //:.github/scripts/embedded-storage-test-shard.sh)", "BEADS_TEST_EMBEDDED_TEST_BINARY", "$(rootpath :embeddeddolt_test)", "-test.timeout=19m"},
 			map[string]string{"BEADS_TEST_EMBEDDED_DOLT": "1"},
 		},
 		"//internal/storage/embeddeddolt:embeddeddolt_conformance_core_test": {
-			[]string{"$(rootpath :embeddeddolt_test)", "-test.v", "-test.count=1", "-test.timeout=19m", "-test.run=^TestConformance$$", "-test.skip=^TestConformance$$/^Audit$$"},
+			[]string{"$(rootpath :embeddeddolt_test)", "-test.v", "-test.count=1", "-test.timeout=19m", "-test.run=^TestConformance$$", "-test.skip=^TestConformance$$/^(Audit|ReadyCountsPageChunking|Portable)$$"},
+			map[string]string{"BEADS_TEST_EMBEDDED_DOLT": "1"},
+		},
+		"//internal/storage/embeddeddolt:embeddeddolt_conformance_core_slow_test": {
+			[]string{"$(rootpath :embeddeddolt_test)", "-test.v", "-test.count=1", "-test.timeout=19m", "-test.run=^TestConformance$$/^(ReadyCountsPageChunking|Portable)$$"},
 			map[string]string{"BEADS_TEST_EMBEDDED_DOLT": "1"},
 		},
 		"//internal/storage/embeddeddolt:embeddeddolt_conformance_audit_test": {
@@ -1011,8 +900,18 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 		// script's switches: required, so a missing engine fails each served
 		// case instead of skipping it.
 		"//internal/httpclient:httpclient_served_test": {
-			[]string{"$(rootpath :httpclient_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
+			[]string{"$(rootpath :served_pinned_shards.txt)", "$(rootpath :httpclient_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
 			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_EMBEDDED_DOLT": "1"},
+		},
+		"//backend/http:http_served_test": {
+			[]string{"$(rootpath :served_pinned_shards.txt)", "$(rootpath :http_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
+			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)", "BEADS_TEST_EMBEDDED_DOLT": "1"},
+		},
+		// The served command corpus (backend/http/corpus/README.md), with the
+		// same switches as http_served_test.
+		"//backend/http/corpus:corpus_served_test": {
+			[]string{"$(rootpath :served_pinned_shards.txt)", "$(rootpath :corpus_test)", "-test.v", "-test.count=1", "-test.timeout=19m"},
+			map[string]string{"BEADS_HTTP_TEST_REQUIRED": "1", "BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)", "BEADS_TEST_EMBEDDED_DOLT": "1"},
 		},
 		"//cmd/bd:bd_proxied_test": {
 			[]string{"$(rootpath //:.github/scripts/proxied-test-shard.sh)", "BEADS_TEST_CMD_BINARY", "$(rootpath :bd_test)"},
@@ -1025,8 +924,9 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 		"//cmd/bd:bd_managed_local_test": {
 			[]string{"$(rootpath :bd_test)", "-test.run=^TestManagedLocalProxied", "-test.timeout=15m"},
 			map[string]string{
-				"BEADS_TEST_BD_BINARY": "$(rlocationpath :bd_for_tests)", "BEADS_TEST_DOLT_SERVER": "local",
-				"BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)", "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
+				"BEADS_TEST_BD_BINARY": "$(rlocationpath :bd_for_tests)", "BEADS_TEST_COMPACT_GC_FIXTURE": "$(rlocationpath :compact_gc_fixture)",
+				"BEADS_TEST_DOLT_SERVER": "local",
+				"BEADS_TEST_GOFMT":       "$(rlocationpath @go_sdk//:bin/gofmt)", "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
 				"BEADS_TEST_PROXIED_LOCAL": "1", "BEADS_TEST_REQUIRE_DOLT_CONTAINER": "1", "BEADS_TEST_SKIP": "dolt",
 			},
 		},
@@ -1098,7 +998,7 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 	// selection is the point (a required-suite contract that checks it), and
 	// nothing leaves the lanes. Pinned to exactly these args.
 	extraRunVariants := map[string][]string{
-		// The doc-freshness suite (also run by //scripts:scripts_test) under
+		// The doc-freshness suite (also run by //scripts:shell_scripts_test) under
 		// -required-suite, as pr.yml's former Linux doc-freshness leg ran it.
 		"//scripts:doc_freshness_required_test": {
 			"-test.count=1",
@@ -1204,6 +1104,8 @@ var bazelDoltServerRCLines = map[string][]string{
 		"test:doltserver-proxied --local_test_jobs=4",
 		"test:doltserver-proxied --remote_download_regex=.*/test\\.(log|xml)$",
 		"test:doltserver-proxied --experimental_remote_cache_eviction_retries=0",
+		// F5 S1: the race configuration's nogo is owned by the test lane.
+		"test:doltserver-proxied --norun_validations",
 	},
 	"doltserver-integration": {
 		"build:doltserver-integration --@rules_go//go/config:tags=gms_pure_go,integration",
@@ -1217,6 +1119,9 @@ var bazelDoltServerRCLines = map[string][]string{
 		"test:doltserver-integration --test_arg=-test.parallel=4",
 		"test:doltserver-integration --local_test_jobs=4",
 		"test:doltserver-integration --remote_download_regex=.*/test\\.(log|xml)$",
+		// F5 S2 Variant A: no full lane validates this configuration; its
+		// owner is bazel-integration's nogo-only step.
+		"test:doltserver-integration --norun_validations",
 		"test:doltserver-integration --experimental_remote_cache_eviction_retries=0",
 	},
 }
@@ -1265,6 +1170,13 @@ func TestBazelRetiredLanesArePinned(t *testing.T) {
 		}
 		evictionAllowed[want] = true
 	}
+	// The dolt-race union config carries its proxied member's
+	// line (TestBazelDoltRaceConfigIsMemberUnion pins the union).
+	evictionAllowed["test:"+bazelDoltRaceConfig+" --experimental_remote_cache_eviction_retries=0"] = true
+	// The dolt-int union config carries its server-storage member's line
+	// (item 5 A2: doltserver-cmd has none of its own;
+	// TestBazelDoltIntConfigIsMemberUnion pins the union).
+	evictionAllowed["test:"+bazelDoltIntConfig+" --experimental_remote_cache_eviction_retries=0"] = true
 	for _, line := range strings.Split(rc, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "#") && strings.Contains(line, "remote_cache_eviction_retries") && !evictionAllowed[line] {

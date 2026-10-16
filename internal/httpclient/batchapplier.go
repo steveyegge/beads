@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
@@ -84,9 +85,21 @@ func (b *httpBatchApplier) ApplyBatch(ctx context.Context, req issueops.ApplyBat
 		return issueops.ApplyBatchResult{}, invalid(
 			"a batch apply carries %d items; the limit is %d per request", len(req.Items), issueops.MaxApplyBatchItems)
 	}
+	if err := b.refuseUnservedDepAddLineage(ctx, req); err != nil {
+		return issueops.ApplyBatchResult{}, err
+	}
 
 	body, err := applyBatchBody(req)
 	if err != nil {
+		return issueops.ApplyBatchResult{}, err
+	}
+	var priorities []**int
+	for i := range body.Items {
+		if create := body.Items[i].Create; create != nil {
+			priorities = append(priorities, &create.Priority)
+		}
+	}
+	if err := b.store.pinCreateDefaultPriority(ctx, priorities...); err != nil {
 		return issueops.ApplyBatchResult{}, err
 	}
 	resp, err := b.wire.ApplyBatch(ctx, body)
@@ -94,6 +107,41 @@ func (b *httpBatchApplier) ApplyBatch(ctx context.Context, req issueops.ApplyBat
 		return issueops.ApplyBatchResult{}, applyBatchRefusal(err)
 	}
 	return decodeApplyBatchResult(req, resp)
+}
+
+// refuseUnservedDepAddLineage scans the whole plan once, before the dial, for
+// a dep_add item naming ThreadID, or HasSpawner on a waits-for edge (the one
+// type the role reads it on; see depAddNamesSpawner). Neither member is served
+// unless the handshake snapshot advertises wire.CapBatchApplyDepAddLineage:
+// an older server has never heard of either and would answer them with its
+// generic unknown-member 400 at best, or (once a server DOES know the
+// members but this gate were skipped) silently honor a field the caller
+// never meant to send past an unupgraded fleet. So this checks the
+// capability once for the whole request — never per item, and never after
+// the dial.
+func (b *httpBatchApplier) refuseUnservedDepAddLineage(ctx context.Context, req issueops.ApplyBatchRequest) error {
+	carriesLineage := false
+	for _, item := range req.Items {
+		if item.Kind == issueops.ItemDepAdd && depAddCarriesLineage(item.DepAdd) {
+			carriesLineage = true
+			break
+		}
+	}
+	if !carriesLineage {
+		return nil
+	}
+	snap, err := b.store.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	// snap is nil, nil whenever Store.snapshot has no transport AND no cached
+	// handshake (a Store built with a nil wire): nothing was ever advertised,
+	// so this falls straight through to the refusal below rather than
+	// dereferencing a nil *apigen.ContextResponse.
+	if snap != nil && slices.Contains(snap.Capabilities, wire.CapBatchApplyDepAddLineage) {
+		return nil
+	}
+	return b.store.unsupportedCapability("BatchApplier.ApplyBatch", wire.CapBatchApplyDepAddLineage)
 }
 
 // applyBatchBody projects the role's request onto the wire body.
@@ -225,11 +273,12 @@ func applyCreateItemBody(item *issueops.CreateItem, actor string) (*apigen.Apply
 		return nil, err
 	}
 
-	// Priority is sent ALWAYS, createBody's reason: 0 is P0 and a real request,
-	// so an absent member — which the server reads as the workspace default —
-	// would silently reprioritize every critical issue a plan creates.
-	priority := issue.Priority
-	out := &apigen.ApplyCreateItem{Title: issue.Title, Priority: &priority}
+	// Priority is sent whenever the item names one (see wirePriority).
+	priority, err := wirePriority(issue.Priority, item.DefaultPriority)
+	if err != nil {
+		return nil, err
+	}
+	out := &apigen.ApplyCreateItem{Title: issue.Title, Priority: priority}
 
 	setItemString(&out.Key, item.Key)
 	setItemString(&out.Id, issue.ID)
@@ -368,15 +417,6 @@ func applyDepAddItemBody(item *issueops.DepAddItem) (*apigen.ApplyDepAddItem, er
 	if item.Type == "" {
 		return nil, invalid("a dep_add item names no edge type")
 	}
-	// ApplyDepAddItem publishes neither member below, so each refuses where the
-	// role would store something the wire cannot say. The spawner flag only
-	// does that on a waits-for edge; the role ignores it on every other type.
-	switch {
-	case item.HasSpawner && item.Type == issueops.DepWaitsFor:
-		return nil, refuse(encode.OpApplyBatch, "W-DepAddItem.HasSpawner")
-	case item.ThreadID != "":
-		return nil, refuse(encode.OpApplyBatch, "W-DepAddItem.ThreadID")
-	}
 	out := &apigen.ApplyDepAddItem{Source: source, Target: target, Type: string(item.Type)}
 	// A BLANK blob is ABSENT, not malformed, and reading it any other way is a
 	// real bug rather than strictness: the role's own rule is that an absent,
@@ -390,7 +430,32 @@ func applyDepAddItemBody(item *issueops.DepAddItem) (*apigen.ApplyDepAddItem, er
 		}
 		out.Metadata = apigen.MetadataValue(blob)
 	}
+	// HasSpawner and ThreadID are gated by CapBatchApplyDepAddLineage
+	// (checked in ApplyBatch, before the dial, over the whole request) —
+	// this projection only encodes what the gate already cleared, which is
+	// why HasSpawner is sent only where depAddNamesSpawner holds.
+	setItemBool(&out.HasSpawner, depAddNamesSpawner(item))
+	setItemString(&out.ThreadId, item.ThreadID)
 	return out, nil
+}
+
+// depAddCarriesLineage reports whether a dep_add item names a member
+// CapBatchApplyDepAddLineage gates: ThreadID on any edge, HasSpawner only
+// where depAddNamesSpawner holds. Used to scan a whole request once before
+// the dial, rather than discovering the gap one item at a time after bytes
+// already left for the wire.
+func depAddCarriesLineage(item *issueops.DepAddItem) bool {
+	return item != nil && (depAddNamesSpawner(item) || item.ThreadID != "")
+}
+
+// depAddNamesSpawner reports whether a dep_add item's HasSpawner means
+// anything: the role reads it on a waits-for edge only and ignores it on
+// every other type. Off a waits-for edge the flag is therefore dropped, not
+// sent, and never needs the capability — dropping it loses nothing the role
+// would store, where refusing it would fail a mixed-version request the
+// flag cannot change.
+func depAddNamesSpawner(item *issueops.DepAddItem) bool {
+	return item.HasSpawner && item.Type == issueops.DepWaitsFor
 }
 
 // applyRefBody projects one ref, applying the exactly-one rule the schema
@@ -417,7 +482,7 @@ func applyRefBody(ref issueops.Ref) (apigen.Ref, error) {
 // applyPatchExcludedMembers is the refusal half of the apply patch's allowlist,
 // in the order encodeApplyPatch decides them.
 //
-// THE ALLOWLIST IS NOT updateIssue's, and the two differences run in opposite
+// THE ALLOWLIST IS NOT updateIssue's, and the differences run in opposite
 // directions, which is why this cannot share refuseExcludedPatchMembers:
 //
 //	owner       IS published here and refused there. ApplyPatchBody carries it;
@@ -427,17 +492,22 @@ func applyRefBody(ref issueops.Ref) (apigen.Ref, error) {
 //	            a parent is a dep_add item of type parent-child, so the order of
 //	            every edge in a plan stays total and there is one spelling for
 //	            an edge.
+//	persistence is published THERE, behind issues.update.persistence, and
+//	            absent here, also deliberately: moving a row between planes
+//	            mid-plan is a different act from writing its fields.
 //
-// The other three — spec_id, await_id, closed_by_session — and persistence are
-// absent from both bodies.
+// The other three — spec_id, await_id, closed_by_session — are absent from
+// both bodies.
 var applyPatchExcludedMembers = []struct {
 	member string
 	ledger string
 	set    func(issueops.IssuePatch) bool
 }{
-	// ParentID is this document's OWN exclusion and gets its own row; the other
-	// four are absent from both patch bodies, so they cite the rows that
-	// already refuse them rather than minting a second reason for one fact.
+	// ParentID is this document's OWN exclusion and gets its own row; SpecID,
+	// AwaitID and ClosedBySession are absent from both patch bodies, so they
+	// cite the rows that already refuse them rather than minting a second
+	// reason for one fact. Persistence cites W-IssuePatch.Persistence, the row
+	// that refuses it on this operation alone.
 	{"ParentID", "W-ApplyPatch.ParentID", func(p issueops.IssuePatch) bool { return p.ParentID.Set }},
 	{"SpecID", "W-IssuePatch.SpecID", func(p issueops.IssuePatch) bool { return p.SpecID.Set }},
 	{"AwaitID", "W-IssuePatch.AwaitID", func(p issueops.IssuePatch) bool { return p.AwaitID.Set }},

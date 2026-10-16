@@ -10,12 +10,15 @@ go_library(
         "batchcloser.go",
         "batchcreator.go",
         "batchgetter.go",
+        "blocked_querier.go",
+        "blocked_recomputer.go",
         "bridge.go",
         "ca.go",
         "ca_permissions_other.go",
         "ca_permissions_unix.go",
         "claimer.go",
         "commenter.go",
+        "conn_share.go",
         "counter.go",
         "credential.go",
         "deleter.go",
@@ -24,13 +27,17 @@ go_library(
         "dial.go",
         "dispatch.go",
         "errors.go",
+        "insecure_credential_guard.go",
         "journal.go",
+        "leasereclaimer.go",
         "lifecycle.go",
         "list_walk.go",
         "memories.go",
         "metadata.go",
         "metadatacas.go",
+        "molecule.go",
         "offrole.go",
+        "open_with.go",
         "order.go",
         "readyclaimer.go",
         "refusal.go",
@@ -48,6 +55,7 @@ go_library(
         "sweeper.go",
         "target.go",
         "target_seam.go",
+        "unlimited_read.go",
         "unsupported.go",
         "unsupported_gen.go",
         "vocabulary.go",
@@ -79,16 +87,18 @@ go_library(
 
 go_test(
     name = "httpclient_test",
-    # Unsharded, this package takes ~350s under --config=ci (BEADS_TEST_SKIP=dolt, no
-    # BEADS_TEST_EMBEDDED_DOLT): mostly wall-clock wait on the CA tests' dialer/keep-alive
-    # timeouts, not CPU. The go_test default size (medium, 300s timeout) leaves no margin
-    # and times out intermittently; size=large/timeout=long follows the same convention as
-    # //internal/storage/embeddeddolt's go_test.
+    # Unsharded, this package took 137-228s on rbe-west under --config=ci
+    # (BEADS_TEST_SKIP=dolt, no BEADS_TEST_EMBEDDED_DOLT; 2026-10-09), the test lane's
+    # longest single action. Two shards (rules_go deals tests out round-robin) put
+    # ~68s of measured test time on each; the three heaviest tests (31s, 20s, 13s)
+    # land on different shards. size=large/timeout=long follows the same convention
+    # as //internal/storage/embeddeddolt's go_test.
     size = "large",
     timeout = "long",
     srcs = [
         "backend_credential_test.go",
         "batchapplier_test.go",
+        "blocked_querier_test.go",
         "brief_test.go",
         "bulk_roles_test.go",
         "ca_permissions_unix_test.go",
@@ -96,23 +106,36 @@ go_test(
         "ca_wrong_ca_test.go",
         "completeness_test.go",
         "composition_test.go",
+        "conn_share_test.go",
         "counts_test.go",
+        "create_priority_test.go",
         "credential_source_test.go",
         "credential_test.go",
+        "dial_header_timeout_test.go",
         "dial_test.go",
         "dispatch_test.go",
         "divergence_citation_gate_test.go",
         "divergence_test.go",
+        "expected_revision_contract_test.go",
+        "getissue_miss_test.go",
         "helpers_test.go",
+        "insecure_credential_guard_test.go",
         "lifecycle_create_test.go",
         "lifecycle_update_test.go",
+        "list_scope_test.go",
+        "list_search_test.go",
         "list_sort_test.go",
+        "memo_key_test.go",
+        "memo_retry_test.go",
         "metadatacas_test.go",
+        "molecule_test.go",
+        "open_with_test.go",
         "race_detector_off_test.go",
         "race_detector_on_test.go",
         "required_served_tier_test.go",
         "roles_graph_cycles_test.go",
         "roles_test.go",
+        "served_batch_apply_large_test.go",
         "served_batch_apply_test.go",
         "served_batch_close_test.go",
         "served_batch_getter_test.go",
@@ -125,16 +148,21 @@ go_test(
         "served_counter_test.go",
         "served_detail_reads_test.go",
         "served_dualrun_test.go",
+        "served_dualwrite_history_test.go",
+        "served_external_dependency_policy_test.go",
         "served_graph_aux_test.go",
         "served_graph_counter_test.go",
         "served_harness_test.go",
         "served_hooks_test.go",
         "served_issue_operations_test.go",
         "served_journal_test.go",
+        "served_large_apply_timeout_test.go",
+        "served_lease_reclaimer_test.go",
         "served_lifecycle_create_test.go",
         "served_list_test.go",
         "served_memories_deps_test.go",
         "served_metadata_cas_test.go",
+        "served_molecule_test.go",
         "served_project_swap_test.go",
         "served_querier_test.go",
         "served_reader_test.go",
@@ -143,10 +171,13 @@ go_test(
         "served_relations_test.go",
         "served_releaser_test.go",
         "served_test.go",
+        "served_unlimited_read_test.go",
         "served_wrong_server_test.go",
         "store_dependent_test.go",
         "store_test.go",
         "target_test.go",
+        "unlimited_read_test.go",
+        "update_persistence_test.go",
         "watch_test.go",
         "wave2b_roles_test.go",
         "wave2c_claimnext_test.go",
@@ -168,7 +199,9 @@ go_test(
     # `make bazel-sync` (the directive just says so).
     data = glob(["*.go"]),
     embed = [":httpclient"],
+    shard_count = 2,
     deps = [
+        "//:beads",
         "//backend/conformance",
         "//internal/eventsjournal",
         "//internal/hooks",
@@ -179,8 +212,10 @@ go_test(
         "//internal/httpclient/wire",
         "//internal/storage",
         "//internal/storage/backends",
+        "//internal/storage/batchfixtures",
         "//internal/storage/domain",
         "//internal/storage/embeddeddolt",
+        "//internal/storage/externaldeps",
         "//internal/storage/issueops",
         "//internal/storage/sqlbuild",
         "//internal/types",
@@ -199,12 +234,26 @@ go_test(
 # fails each served case rather than skipping it. It is the script's run on
 # the lane's race build (raceEnabled shrinks its one large apply).
 #
-# Shard count: on the lane's executors (2026-10-08) the package is 702 tests
-# and ~3,700 test-seconds, the heaviest, TestServedBatchGetterContract, at
-# 170-230s. rules_go deals the tests out round-robin, so the shard that draws
-# it runs it plus about a 24th of the rest: 283s measured, ~370s at the slow
-# end. Both are under the ~410s cmd/bd shard that sets the lane's floor (see
-# bazel.yml's bazel-embedded), so this target does not lengthen the lane.
+# Shard count: on the lane's executors (rbe-west, 2026-10-09, the whole
+# embedded lane running) the package is ~750 top-level tests and ~1,100
+# test-seconds, all serial, the heaviest about 52s. Each served case copies
+# one per-process template workspace instead of initializing its own embedded
+# Dolt schema (served_harness_test.go's servedTemplateWorkspace), and
+# TestServedBatchGetterContract seeds its 1000 issues in one write: before
+# both, the package was ~3,700 test-seconds over 24 shards, the heaviest shard
+# 390s. rules_go's round-robin alone (16 shards) left shards at 40-119s,
+# wherever its split dropped the long tests, so the tests measured at >= 3s
+# (the maximum over three whole-lane runs) are pinned
+# (tools/bazel/go_test_pinned_shard.sh, served_pinned_shards.txt from
+# tools/bazel/pin_shards.py --shards 17 --min-seconds 3) onto 17 shards, and
+# the binary's round-robin deals the other ~650 (~340s of measured test
+# time; those shards ran ~1.4x their tests' summed times) over the remaining
+# 9.
+# Regenerate the manifest from runs of the lane:
+#   bazel test //... --config=embedded
+#   python3 tools/bazel/pin_shards.py --shards 17 --min-seconds 3 \
+#       --write internal/httpclient/served_pinned_shards.txt \
+#       bazel-testlogs/internal/httpclient/httpclient_served_test
 #
 # Tags:
 #   embedded: the embedded-Dolt tier; excluded from --config=prcore/ci,
@@ -217,19 +266,23 @@ sh_test(
     # that SIGTERM, so a hang would end as a bare TIMEOUT. 19m lets Go's own
     # timeout fire first and dump every goroutine to test.log.
     timeout = "eternal",
-    srcs = ["//tools/bazel:go_test_variant.sh"],
+    srcs = ["//tools/bazel:go_test_pinned_shard.sh"],
     args = [
+        "$(rootpath :served_pinned_shards.txt)",
         "$(rootpath :httpclient_test)",
         "-test.v",
         "-test.count=1",
         "-test.timeout=19m",
     ],
-    data = [":httpclient_test"],
+    data = [
+        "served_pinned_shards.txt",
+        ":httpclient_test",
+    ],
     env = {
         "BEADS_HTTP_TEST_REQUIRED": "1",
         "BEADS_TEST_EMBEDDED_DOLT": "1",
     },
-    shard_count = 24,
+    shard_count = 26,
     tags = ["embedded"],
 )
 
@@ -249,12 +302,51 @@ filegroup(
 # --- begin repo_files (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
 
 filegroup(
-    name = "repo_files",
+    name = "repo_doc_files",
+    srcs = glob(
+        [
+            "**/*.md",
+            "**/*.mdx",
+        ],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_srcs",
+    srcs = glob(
+        ["**/*.go"],
+        allow_empty = True,
+        exclude = [
+            "**/*_test.go",
+            "**/node_modules/**",
+        ],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_go_test_srcs",
+    srcs = glob(
+        ["**/*_test.go"],
+        allow_empty = True,
+        exclude = ["**/node_modules/**"],
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "repo_other_files",
     srcs = glob(
         ["**"],
         exclude = [
             "**/*.db",
             "**/*.exe",
+            "**/*.go",
+            "**/*.md",
+            "**/*.mdx",
             "**/*.out",
             "**/*.prof",
             "**/*.pyc",
@@ -263,7 +355,7 @@ filegroup(
             "**/node_modules/**",
         ],
     ),
-    visibility = ["//:__pkg__"],
+    visibility = ["//:__subpackages__"],
 )
 
 # --- end repo_files ---

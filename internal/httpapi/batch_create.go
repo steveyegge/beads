@@ -101,13 +101,7 @@ func (s *Server) batchCreateRequest(w http.ResponseWriter, r *http.Request) (iss
 	if !ok {
 		return issueops.CreateBatchRequest{}, false
 	}
-	// created_by is stamped from the actor on every item, createIssue's rule
-	// (create.go): the item publishes no created_by and the role copies the
-	// issue's rather than stamping one, so without this a batch-created issue
-	// would store none where `bd create --file` stores its actor.
-	for _, item := range items {
-		item.Issue.CreatedBy = actor
-	}
+	// No created_by stamp: the role defaults each item's to the actor.
 	return issueops.CreateBatchRequest{Actor: actor, Items: items}, true
 }
 
@@ -217,7 +211,9 @@ func batchCreateItem(index int, raw map[string]json.RawMessage) (issueops.BatchC
 		}
 		issue.Labels = *wire.Labels
 	}
-	item := issueops.BatchCreateItem{Issue: issue}
+	// An absent `priority` is the role's default (BatchCreateItem.DefaultPriority),
+	// never a 0 — which is P0 — made up here.
+	item := issueops.BatchCreateItem{Issue: issue, DefaultPriority: wire.Priority == nil}
 	if wire.Dependencies == nil {
 		return item, nil
 	}
