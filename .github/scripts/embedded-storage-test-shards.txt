@@ -388,6 +388,7 @@
 40 24 TestReopenIssue
 
 40 25 TestBatchGetterContract
+40 25 TestDatabases
 40 25 TestDualWriteFixtureKitIsWired
 40 25 TestEmbeddedBatchCloserClaimNextIsNilWhenNothingClosed
 40 25 TestEmbeddedIssueOperationsUpdateClaimHonorsConfiguredActiveStatuses
