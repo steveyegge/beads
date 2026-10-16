@@ -2373,7 +2373,7 @@ func warnRemoteSyncOpenRefusal(err error) bool {
 }
 
 var (
-	cleanServerCircuitState = CleanStaleCircuitBreakerFiles
+	cleanServerCircuitState = cleanStaleCircuitBreakerFilesOnce
 	newServerCircuitBreaker = maybeNewCircuitBreaker
 	ensureResolvedPortFile  = doltserver.EnsurePortFile
 )
