@@ -524,6 +524,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A routed `bd create` reports a failed follow-up commit** (#6254). When
+  `--repo` or the `routing.*` settings send a create to another repository,
+  the follow-up Dolt commit in that repository wrote its error only to the
+  debug log. It now prints `Warning: created <id>, but the follow-up Dolt
+  commit in <repo> failed: <error>` on stderr. The create still succeeds,
+  prints the issue and syncs a remote target, because that commit runs only
+  under `dolt.auto-commit=on`, where the create has already committed the new
+  issue.
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
   backend refuses, so gc's `renudge-stale-human-gates` order failed on every

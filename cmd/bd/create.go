@@ -606,9 +606,11 @@ var createCmd = &cobra.Command{
 		created.Comments = nil
 
 		edges := createDepEdges{parentID: parentID, specs: depSpecs, waitsFor: waitsForSpec}
-		if edges.empty() {
+		routed := repoPath != "." && targetStore != nil
+		if edges.empty() && !routed {
 			// Bare create: preserve the embedded-mode follow-up Dolt commit.
-			// The deps path commits inside its transaction instead.
+			// The deps path commits inside its transaction instead, and a
+			// routed create's one follow-up commit is flushRoutedCreate.
 			shouldCommit, err := shouldCommitCreatePostWrites(created, false)
 			if err != nil {
 				return HandleError("dolt auto-commit failed: %v", err)
@@ -621,13 +623,8 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		if repoPath != "." && targetStore != nil {
-			if err := commitPendingIfEmbedded(ctx, targetStore, currentActor(), doltAutoCommitParams{
-				Command:  "create",
-				IssueIDs: []string{created.ID},
-			}); err != nil {
-				debug.Logf("warning: failed to commit routed repo: %v", err)
-			}
+		if routed {
+			flushRoutedCreate(ctx, targetStore, repoPath, created.ID)
 		}
 
 		if remoteCache != nil {
@@ -905,6 +902,19 @@ func renderCreateDryRunPreview(issue *types.Issue, labels, deps []string) {
 
 func shouldCommitCreatePostWrites(_ *types.Issue, _ bool) (bool, error) {
 	return embeddedWritesCommitNow()
+}
+
+// flushRoutedCreate runs a routed create's follow-up Dolt commit in the target
+// store. That commit runs only under dolt.auto-commit=on, where ops.Create has
+// already committed the new row, so its failure cannot lose the issue: it is a
+// warning that names the target, and the create still succeeds.
+func flushRoutedCreate(ctx context.Context, target storage.DoltStorage, repoPath, id string) {
+	if err := commitPendingIfEmbedded(ctx, target, currentActor(), doltAutoCommitParams{
+		Command:  "create",
+		IssueIDs: []string{id},
+	}); err != nil {
+		WarnError("created %s, but the follow-up Dolt commit in %s failed: %v", id, repoPath, err)
+	}
 }
 
 func createDepsAcceptedTypeList() string {
