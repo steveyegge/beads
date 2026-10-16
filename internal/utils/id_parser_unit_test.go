@@ -253,57 +253,81 @@ func captureStderr(t *testing.T, fn func()) string {
 	return <-done
 }
 
-func TestHashSegmentPrefixMatch(t *testing.T) {
-	tests := []struct {
-		issueHash string
-		hashPart  string
-		want      bool
-	}{
-		// Direct prefix: plain hash starts with query
-		{"oqfe9", "oqf", true},
-		// Exact match
-		{"oqf", "oqf", true},
-		// The gcy-g4o repro: wisp compound hash must NOT match
-		{"wisp-goqfo", "oqf", false},
-		// Wisp last-segment match (t3st matches wisp-t3st)
-		{"wisp-t3st", "t3st", true},
-		// Partial prefix of last segment
-		{"wisp-t3st", "t3", true},
-		// No match
-		{"abc123", "xyz", false},
+// Partial matching is leading-prefix only (#4939): a fragment from the start
+// of a hash abbreviates it, while a fragment from its middle or tail names
+// nothing. #4376's first revision pinned this table on a helper; driving it
+// through the resolver pins the call sites themselves.
+func TestResolvePartialIDMatchesLeadingPrefixOnly(t *testing.T) {
+	store := &fakeResolverStore{ids: []string{"bd-a3f8e9"}, prefix: "bd"}
+
+	for _, input := range []string{"a3", "a3f8"} {
+		var resolved string
+		var err error
+		captureStderr(t, func() {
+			resolved, err = ResolvePartialID(context.Background(), store, input)
+		})
+		if err != nil || resolved != "bd-a3f8e9" {
+			t.Errorf("ResolvePartialID(%q) = (%q, %v), want (%q, nil)", input, resolved, err, "bd-a3f8e9")
+		}
 	}
-	for _, tt := range tests {
-		got := hashSegmentPrefixMatch(tt.issueHash, tt.hashPart)
-		if got != tt.want {
-			t.Errorf("hashSegmentPrefixMatch(%q, %q) = %v; want %v", tt.issueHash, tt.hashPart, got, tt.want)
+	for _, input := range []string{"f8e9", "3f8"} {
+		if resolved, err := ResolvePartialID(context.Background(), store, input); err == nil {
+			t.Errorf("ResolvePartialID(%q) = %q, want not found: %q is not a leading prefix of a3f8e9", input, resolved, input)
 		}
 	}
 }
 
-// TestHashSegmentPrefixMatchPlainHashPrefixOnly pins the intentional
-// behavior change from strings.Contains to prefix-only matching: a plain
-// (non-wisp, no-dash) hash matches a prefix fragment but no longer matches
-// a tail or middle fragment. Previously "f8e9" (tail of "a3f8e9") would
-// match via substring; that broadening was the source of the gcy-g4o
-// wrong-bead resolution and is deliberately removed.
-func TestHashSegmentPrefixMatchPlainHashPrefixOnly(t *testing.T) {
-	tests := []struct {
-		issueHash string
-		hashPart  string
-		want      bool
-	}{
-		// Prefix fragments of a plain hash still match
-		{"a3f8e9", "a3", true},
-		{"a3f8e9", "a3f8", true},
-		// Tail fragment no longer matches (old Contains behavior)
-		{"a3f8e9", "f8e9", false},
-		// Middle fragment no longer matches
-		{"a3f8e9", "3f8", false},
-	}
-	for _, tt := range tests {
-		got := hashSegmentPrefixMatch(tt.issueHash, tt.hashPart)
-		if got != tt.want {
-			t.Errorf("hashSegmentPrefixMatch(%q, %q) = %v; want %v", tt.issueHash, tt.hashPart, got, tt.want)
+// A bare wisp hash is an exact reference: "t3st" names bd-wisp-t3st through
+// the wisp fallback's exact branch, so it resolves silently, even beside
+// bd-wisp-t3stzz, which it also abbreviates. The unfiltered search returns
+// wisps (as Dolt's does), so a first-loop matcher that claimed "wisp-t3st" as
+// an abbreviation of "t3st" would add a notice, or an ambiguity with the
+// sibling.
+func TestResolvePartialIDSilentOnExactWispHash(t *testing.T) {
+	// An ambient opt-out would make the silence assertion vacuous.
+	t.Setenv("BD_NO_PARTIAL_ID_NOTICE", "")
+
+	for _, ids := range [][]string{
+		{"bd-wisp-t3st"},
+		{"bd-wisp-t3st", "bd-wisp-t3stzz"},
+	} {
+		store := &fakeResolverStore{ids: ids, prefix: "bd"}
+
+		var resolved string
+		var err error
+		out := captureStderr(t, func() {
+			resolved, err = ResolvePartialID(context.Background(), store, "t3st")
+		})
+		if err != nil {
+			t.Errorf("ids %v: ResolvePartialID returned error: %v", ids, err)
+			continue
 		}
+		if resolved != "bd-wisp-t3st" {
+			t.Errorf("ids %v: resolved = %q, want %q", ids, resolved, "bd-wisp-t3st")
+		}
+		if out != "" {
+			t.Errorf("ids %v: expected no notice for an exact wisp hash, got %q", ids, out)
+		}
+	}
+}
+
+// A leading fragment of a wisp hash is still an abbreviation: it resolves
+// through the wisp fallback and is announced like any other.
+func TestResolvePartialIDNotifiesOnWispHashAbbreviation(t *testing.T) {
+	store := &fakeResolverStore{ids: []string{"bd-wisp-t3st"}, prefix: "bd"}
+
+	var resolved string
+	var err error
+	out := captureStderr(t, func() {
+		resolved, err = ResolvePartialID(context.Background(), store, "t3")
+	})
+	if err != nil {
+		t.Fatalf("ResolvePartialID returned error: %v", err)
+	}
+	if resolved != "bd-wisp-t3st" {
+		t.Fatalf("resolved = %q, want %q", resolved, "bd-wisp-t3st")
+	}
+	if !strings.Contains(out, "bd-wisp-t3st") || !strings.Contains(out, "not an exact issue ID") {
+		t.Fatalf("expected a partial-resolution notice on stderr, got %q", out)
 	}
 }
