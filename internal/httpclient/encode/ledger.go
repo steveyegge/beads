@@ -721,13 +721,21 @@ func writeSideRows() []Row {
 			SpecRow:  "D8 refuse-not-drop",
 			PinnedBy: patchMemberPin,
 		},
+		{
+			ID: "W-IssuePatch.AwaitID", Kind: KindRetired,
+			What: "an await-id edit used to refuse",
+			Why: "RETIRED. IssuePatchBody and ApplyPatchBody publish await_id and waiters behind issues.update.gates, and both patch encoders now send them: await_id by presence (the empty string CLEARS it, as on assignee), waiters as a WHOLE-VALUE replacement whose empty or nil value travels as [] (neither member is nullable). " +
+				"They are gated on the token rather than dropped: against a server that does not advertise it, updateIssue and an issues:batchApply plan with any such update item refuse BEFORE the dial with the typed capability error naming issues.update.gates, so a gate's waiter is never silently lost and no partial plan is ever sent. " +
+				"The bounds (await_id <= 255 characters, the waiter list's JSON <= one TEXT column) are the role's (issueops.ValidateGatePatch) and arrive as a 400 naming the member. The waiters edit had its own refusal row only while the wire was being published, and it left with this one",
+			SpecRow:  "D8 refuse-not-drop",
+			PinnedBy: "TestUpdateRefusesTheGateMembersAgainstAServerWithoutTheToken",
+		},
 		// Four of these are refused by BOTH patch documents — updateIssue's and
 		// issues:batchApply's — so one row covers both operations rather than a
 		// second reason being minted for one fact. Owner is the exception and
 		// says so: ApplyPatchBody publishes it, and the batch's own encoder
 		// carries it.
 		patchRow("SpecID", "a spec-id edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes spec_id"),
-		patchRow("AwaitID", "an await-id edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes await_id"),
 		patchRow("Owner", "an owner edit refuses ON updateIssue",
 			"IssuePatchBody excludes owner — which the document itself calls an accident of order rather than a decision, since ApplyPatchBody DOES publish it and issues:batchApply's update item carries it"),
 		patchRow("ClosedBySession", "a closed-by-session edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes closed_by_session"),
@@ -795,13 +803,22 @@ func writeSideRows() []Row {
 		{
 			ID: "W-CreateRequest.Issue", Kind: KindRefuse,
 			Type: tyCreateRequest, Field: "Issue",
-			What: "a create whose Issue populates any member outside the wire's twenty refuses, naming the member",
-			Why: "createIssue publishes the whole create VOCABULARY — id, title, description, design, acceptance_criteria, notes, status, issue_type, priority, assignee, owner, estimated_minutes, external_ref, due_at, defer_until, sender, metadata, labels, ephemeral, no_history — and deliberately not the rest of a types.Issue: the creation time (created_at), because a caller-supplied creation time makes the row disagree with the journal entry that records it and re-dating history is what an import is for; and spec_id, await_*, mol_type, wisp_type, work_type, storage_class, source_*, pinned, is_template and the event quartet, which this surface publishes on no operation, read or write. " +
+			What: "a create whose Issue populates any member outside the wire's twenty-four refuses, naming the member",
+			Why: "createIssue publishes the whole create VOCABULARY — id, title, description, design, acceptance_criteria, notes, status, issue_type, priority, assignee, owner, estimated_minutes, external_ref, due_at, defer_until, sender, metadata, labels, ephemeral, no_history, and the four gate members await_type, await_id, timeout and waiters behind issues.create.gates (W-CreateRequest.Gates) — and deliberately not the rest of a types.Issue: the creation time (created_at), because a caller-supplied creation time makes the row disagree with the journal entry that records it and re-dating history is what an import is for; and spec_id, mol_type, wisp_type, work_type, storage_class, source_*, pinned, is_template and the event quartet, which this surface accepts on no write. " +
 				"ONE row rather than one per member for W-BatchCreateItem.Issue's reason — the reason is one reason — and exhaustiveness is held by the same REFLECTION over types.Issue, sharing the role-ignored table with the batch so the two operations cannot disagree about what the ROLE drops. " +
 				"Issue.Comments and Issue.Dependencies are not in this population: the role itself refuses them, so a local create fails too and this is validation rather than divergence. " +
 				"created_by is published on no create shape either, but the create role behind every one of them defaults an empty created_by to the request's actor (issueops.PreparePublicCreateRequest), the same rule a local create gets. So an empty CreatedBy and one that names the actor both arrive as the actor, and only one naming someone else refuses: the default would silently replace it. A server older than either stamp (handler or role) stores an empty created_by for that one member",
 			SpecRow:  "D8 row 16 refuse-not-drop",
 			PinnedBy: createPin,
+		},
+		{
+			ID: "W-CreateRequest.Gates", Kind: KindRefuse, Capability: "issues.create.gates",
+			What: "a create, or an issues:batchApply plan with a create item, whose Issue populates a gate member (await_type, await_id, timeout, waiters) refuses against a server that does not advertise issues.create.gates",
+			Why: "createIssue and ApplyCreateItem publish the four gate members behind issues.create.gates, and this client sends them, verbatim, to a server that advertises it: timeout in NANOSECONDS, the encoding Issue.timeout reads back, and the waiter list as given, duplicates kept. " +
+				"A server without the token has never heard of the members, so the create is refused BEFORE the dial with the typed capability error naming the token rather than sent without them: a gate stored without its await_type is a gate nothing ever resolves, and one stored without its waiters wakes nobody. On issues:batchApply the whole plan is checked before the dial, so no partial plan is sent around the refused item. " +
+				"It is a LATE refusal, not a wire gap: the members are carried, and the one row covers both create shapes because one token does (the issues.create.defaultPriority precedent). The bounds (await_type <= 32, await_id <= 255, the waiter list's JSON <= one TEXT column, timeout >= 0) are the role's (issueops.ValidateGateFields) and arrive as a 400 naming the member. issues:batchCreate's item publishes none of them and keeps refusing them under W-BatchCreateItem.Issue",
+			SpecRow:  "D8 row 16 refuse-not-drop",
+			PinnedBy: "TestCreateRefusesTheGateMembersAgainstAServerWithoutTheToken",
 		},
 		{
 			ID: "L-create-notfound", Kind: KindDegrade,
@@ -822,7 +839,7 @@ func writeSideRows() []Row {
 		},
 		// The issues:batchApply population, from client wave ga-mijra. It is
 		// SMALL, and that is the operation rather than an oversight: the create
-		// item publishes createIssue's whole twenty, the close item maps whole,
+		// item publishes createIssue's whole twenty-four, the close item maps whole,
 		// the edge item maps whole but for the spawner flag and the thread the
 		// role gained after the wire was written, and the update item's patch
 		// is WIDER than updateIssue's in the two places that matter to a plan (a
@@ -831,8 +848,8 @@ func writeSideRows() []Row {
 		{
 			ID: "W-CreateItem.Issue", Kind: KindRefuse,
 			Type: tyApplyCreateItem, Field: "Issue",
-			What: "a create ITEM whose Issue populates any member outside the wire's twenty refuses, naming the member",
-			Why: "ApplyCreateItem publishes exactly createIssue's create vocabulary — id, title, description, design, acceptance_criteria, notes, status, issue_type, priority, assignee, owner, estimated_minutes, external_ref, due_at, defer_until, sender, metadata, labels, ephemeral, no_history — and deliberately not the rest of a types.Issue, for the reasons W-CreateRequest.Issue gives in full. " +
+			What: "a create ITEM whose Issue populates any member outside the wire's twenty-four refuses, naming the member",
+			Why: "ApplyCreateItem publishes exactly createIssue's create vocabulary — id, title, description, design, acceptance_criteria, notes, status, issue_type, priority, assignee, owner, estimated_minutes, external_ref, due_at, defer_until, sender, metadata, labels, ephemeral, no_history, and the four gate members behind issues.create.gates (W-CreateRequest.Gates) — and deliberately not the rest of a types.Issue, for the reasons W-CreateRequest.Issue gives in full. " +
 				"It is a row of its OWN rather than a citation of that one because the operations are different: a caller auditing why their PLAN refuses must not be sent to a row about a single create, and the two can diverge the day either vocabulary moves. The partition itself is SHARED — one carried table, one role-ignored table, held against types.Issue by the same reflection — so they cannot disagree about what the wire carries or about what the role drops. " +
 				"Issue.Comments and Issue.Dependencies are not in this population and are refused as validation on both sides: edges in this role are ITEMS, so a create item has nowhere to put one at all. " +
 				"Nor is a CreatedBy that names the request's actor: the server's create role defaults every create item's created_by to the actor (W-CreateRequest.Issue), so that value arrives as written and only a CreatedBy naming someone else refuses",

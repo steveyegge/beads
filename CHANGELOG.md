@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bd serve` publishes the gate members: `await_type`,
+  `await_id`, `timeout` (nanoseconds) and `waiters` on `POST
+  /v0/beads/issues` and on `issues:batchApply` create items, behind the new
+  `issues.create.gates` capability token, and `await_id` and `waiters` (a
+  whole-value replacement; `[]` clears) on the `patch` of `PATCH
+  /v0/beads/issues/{id}` and of `issues:batchApply` update items, behind
+  `issues.update.gates`. Additive; no wire_revision bump. The bounds are the
+  library role's, the same ones a local create or update now enforces (see
+  Changed), answered as `400 invalid_argument` with `param` naming the
+  member.
+- `issueops.IssuePatch.Waiters`: a whole-value replacement of a gate's waiter
+  list (nil or empty clears it, stored as `[]`), on `Lifecycle.Update` and on
+  `BatchApplier` update items, on every backend. `issueops.GateFieldError`
+  (`Field`, `Detail`; wraps `ErrValidation`) names the gate member a create or
+  update refused, as one of the new `issueops.GateFieldAwaitType`,
+  `GateFieldAwaitID`, `GateFieldTimeout` and `GateFieldWaiters` constants.
+- The HTTP client sends the gate members on create, update and
+  `issues:batchApply` (create and update items) to a server that advertises
+  `issues.create.gates` / `issues.update.gates`. Against an older server a
+  request naming any gate member is refused before the dial with a typed
+  capability error naming the missing token (never sent without the
+  member); a batchApply plan is checked whole, so no partial plan is sent.
+  A request naming no gate member is unaffected by either token.
 - `GET /v0/beads/dependencies/blocking` accepts `is_blocked`, behind the new
   `dependencies.blocking.isBlocked` capability token (additive; no
   wire_revision bump), and answers each item's stored, transitive
@@ -316,6 +339,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Gate members are bounds-checked in the library, on every local backend.**
+  `issueops.Lifecycle.Create`, `Lifecycle.Update` and `BatchApplier` (create
+  and update items) now refuse, with a typed `*issueops.GateFieldError`
+  wrapping `ErrValidation`: a negative `Timeout` (previously accepted and
+  stored), an `await_type` over 32 characters, an `await_id` over 255
+  characters, and a waiter list whose JSON encoding exceeds its TEXT column
+  (65535 bytes). Creates check all four; an update can change only
+  `await_id` and `waiters`, so it checks those two. The over-width values
+  previously failed with a raw Dolt driver error. There is no `await_type` vocabulary, no gate-type-only rule
+  and no waiter deduplication.
 - **Over an http workspace, a bd command answers its repeated reads of a row
   or setting from one response.** `bd show <id> --json` makes one request
   instead of three, text `bd show` three instead of six, and `bd update`,
@@ -536,11 +569,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UpdateIssue`, which the HTTP store does not implement, so every open bead
   gate with an open target was an error on every sweep; it now goes through
   the Lifecycle role's `Update` (a single-key metadata set, `issues.update` on
-  the wire), as does the gh:run discovery's `await_id` persist. The HTTP
-  client still refuses the `await_id` patch before the dial, so a gh:run gate
-  with a workflow-name hint stays that gate's error, now naming the run and
-  the server that does not accept the `await_id` update rather than a Go
-  method. The sweep also skips the gates of a persisted proto
+  the wire), as does the gh:run discovery's `await_id` persist, which the
+  HTTP client sends to a server that advertises `issues.update.gates` (see
+  Added). Against an older server it refuses that patch before the dial, so a
+  gh:run gate with a workflow-name hint stays that gate's error, naming the
+  missing token and the server rather than a Go method.
+  The sweep also skips the gates of a persisted proto
   (`bd cook --persist`): they are templates that every pour copies, so a
   write to one was refused on every sweep and, in a local workspace, a
   resolved one (an expired timer, say) was closed in the proto itself. The

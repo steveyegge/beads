@@ -88,6 +88,7 @@ go_test(
         "edges_test.go",
         "events_test.go",
         "events_watch_test.go",
+        "gate_fields_test.go",
         "get_issue_test.go",
         "large_apply_client_budget_test.go",
         "large_batch_apply_test.go",

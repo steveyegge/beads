@@ -778,8 +778,11 @@ func updateGateThroughLifecycle(ctx context.Context, gateID string, patch issueo
 }
 
 // awaitIDPatchRefusal is the divergence-ledger row a connected HTTP
-// workspace's Lifecycle role refuses an await_id edit by, before any request:
-// the wire's issue patch has no await_id member.
+// workspace's Lifecycle role refused an await_id edit by, before any request,
+// while the wire's issue patch had no await_id member. The row is retired: the
+// patch carries await_id behind issues.update.gates, and a server that does
+// not advertise that token earns the capability error, which
+// persistGateCheckAwaitID returns as the role raised it.
 const awaitIDPatchRefusal = "W-IssuePatch.AwaitID"
 
 // persistGateCheckAwaitID records a gh:run gate's discovered run ID through
