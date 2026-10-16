@@ -1388,9 +1388,9 @@ func beadGateNotFound(err error) bool {
 
 // routedBeadGateGetter gives direct-mode gate checks the same local -> prefix
 // route -> contributor fallback used by other read commands. Routed stores are
-// opened read-only and closed before the result is returned. Unlike
-// getIssueWithRouting, a route that fails or misses is reported as
-// errBeadGateTargetUnconfirmed instead of as the local not-found.
+// opened read-only and closed before the result is returned. A route that
+// fails or misses is reported as errBeadGateTargetUnconfirmed instead of as
+// the local not-found.
 type routedBeadGateGetter struct {
 	localStore storage.DoltStorage
 }

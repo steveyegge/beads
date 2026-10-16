@@ -89,6 +89,14 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (s storage.Dol
 	return nil, fmt.Errorf("%s", nocgoEmbeddedErrMsg)
 }
 
+// newExistingDoltStoreFromConfig is the non-CGO twin of the CGO build's
+// routed-write factory. That one differs from newDoltStoreFromConfig only by
+// refusing to create a missing EMBEDDED database, and this build has no
+// embedded store; a server-mode open never creates a missing database.
+func newExistingDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
+	return newDoltStoreFromConfig(ctx, beadsDir)
+}
+
 // newReadOnlyStoreFromConfig creates a read-only SQL-server-backed storage
 // backend. It does not activate the events journal: the store refuses writes,
 // so there is no mutation for a journal row to accompany (exemption is recorded
