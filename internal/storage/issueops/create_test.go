@@ -628,7 +628,7 @@ func TestPersistDependenciesBatchValidatesPlannedHierarchyBeforeBlocking(t *test
 
 // A failed walk query is not a validation refusal: under the import mode
 // (SkipDependencyValidationErrors) the error must abort the pass rather than be
-// recorded as a skipped edge. Both checks, on the per-edge
+// recorded as a skipped edge. This covers both checks on the per-edge
 // statements (a one-edge batch); the batch graph's twin is
 // TestPersistDependenciesBatchTolerantReturnsValidationQueryErrors.
 func TestPersistDependenciesTolerantReturnsValidationQueryErrors(t *testing.T) {
@@ -775,8 +775,8 @@ func TestPersistDependenciesBatchTolerantReturnsValidationQueryErrors(t *testing
 
 // The import mode still tolerates every typed refusal the walks raise, on both
 // lookup shapes: the edge is reported as skipped and the pass goes on. This
-// pins the other side of isDependencyValidationRefusal. The
-// self-dependency case is TestPersistDependenciesSkipsValidationErrorsWhenConfigured.
+// pins the other side of isDependencyValidationRefusal. The self-dependency
+// case is TestPersistDependenciesSkipsValidationErrorsWhenConfigured.
 func TestPersistDependenciesTolerantSkipsTypedRefusals(t *testing.T) {
 	tolerant := func(skipped *[]string) storage.BatchCreateOptions {
 		return storage.BatchCreateOptions{
