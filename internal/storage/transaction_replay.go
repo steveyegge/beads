@@ -108,7 +108,7 @@ func RunReplayableTransaction(ctx context.Context, s Transactor, commitMsg strin
 	policy := backoff.WithContext(backoff.WithMaxRetries(bo, replayMaxAttempts-1), ctx)
 
 	attempts := 0
-	var lastConflict error
+	var lastConflict, lastAttempt error
 	notify := func(err error, wait time.Duration) {
 		txReplays.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "replayed")))
 		debug.Logf("transaction %q lost a write conflict on attempt %d; replaying in %v: %v\n", commitMsg, attempts, wait, err)
@@ -120,6 +120,7 @@ func RunReplayableTransaction(ctx context.Context, s Transactor, commitMsg strin
 	err := backoff.RetryNotifyWithTimer(func() error {
 		attempts++
 		err := s.RunInTransaction(ctx, commitMsg, fn)
+		lastAttempt = err
 		if err == nil {
 			return nil
 		}
@@ -129,7 +130,12 @@ func RunReplayableTransaction(ctx context.Context, s Transactor, commitMsg strin
 		}
 		return backoff.Permanent(err)
 	}, policy, notify, timer)
-	if err == nil || lastConflict == nil {
+	if err == nil || lastConflict == nil || !replayableConflict(lastAttempt) {
+		// The last attempt's own outcome is the answer, unchanged: a callback
+		// error, a non-conflict database error, or an indeterminate commit
+		// that may have landed — even when the context ended during it.
+		// Replacing it with an earlier, rolled-back conflict would tell the
+		// caller nothing was written.
 		return err
 	}
 	if errors.Is(err, lastConflict) {

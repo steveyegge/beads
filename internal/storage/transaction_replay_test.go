@@ -277,3 +277,37 @@ func TestRunReplayableTransactionCountsReplays(t *testing.T) {
 		t.Fatalf("exhausted count = %d, want 1 (only the loop that ran out of attempts)", got["exhausted"])
 	}
 }
+
+// TestRunReplayableTransactionKeepsTheLastAttemptsOwnOutcome: once a replay
+// has run, the loop's answer is the LAST attempt's outcome. An attempt that
+// ends in an indeterminate commit (its COMMIT cut by the context, so the write
+// may have landed) or in a plain failure is returned unchanged even when the
+// context ended during it — never replaced by the earlier, rolled-back
+// conflict, which would tell the caller nothing was written.
+func TestRunReplayableTransactionKeepsTheLastAttemptsOwnOutcome(t *testing.T) {
+	for name, last := range map[string]error{
+		"indeterminate commit": fmt.Errorf("sql commit (regular): %w: %w", context.Canceled, ErrCommitIndeterminate),
+		"plain failure":        errors.New("validation: dependency would create a cycle"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			useInstantReplayTimer(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tr := &scriptedTransactor{outcomes: []error{conflict(1), last}}
+			calls := 0
+			err := RunReplayableTransaction(ctx, tr, "bd: last outcome", func(Transaction) error {
+				calls++
+				if calls == 2 {
+					cancel() // the context ends during the replayed attempt
+				}
+				return nil
+			})
+			if !errors.Is(err, last) {
+				t.Fatalf("err = %v, want the last attempt's own outcome %v", err, last)
+			}
+			if errors.Is(last, ErrCommitIndeterminate) && errors.Is(err, ErrTransactionConflict) {
+				t.Fatalf("an indeterminate outcome was reported as a rolled-back conflict: %v", err)
+			}
+		})
+	}
+}
