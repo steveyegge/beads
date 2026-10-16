@@ -717,6 +717,7 @@ func writeSideRows() []Row {
 		// carries it.
 		patchRow("SpecID", "a spec-id edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes spec_id"),
 		patchRow("AwaitID", "an await-id edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes await_id"),
+		patchRow("Waiters", "a waiters edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes waiters"),
 		patchRow("Owner", "an owner edit refuses ON updateIssue",
 			"IssuePatchBody excludes owner — which the document itself calls an accident of order rather than a decision, since ApplyPatchBody DOES publish it and issues:batchApply's update item carries it"),
 		patchRow("ClosedBySession", "a closed-by-session edit refuses", "neither IssuePatchBody nor ApplyPatchBody publishes closed_by_session"),

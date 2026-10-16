@@ -124,6 +124,31 @@ func TestServedLifecycleCreateAppliesTheDefaultPriority(t *testing.T) {
 	conformance.RunLifecycleCreateAppliesTheDefaultPriority(t, t.Context(), newServedCreateFixture(t, "hlcprio"))
 }
 
+// gateParkBead is the label the gate-member parks cite: the library carries
+// await_type, await_id, timeout and waiters on every local leg, and the wire
+// publishes them in the follow-up slices (members and behavior tokens, then
+// the client encoders). Until then this client refuses each member before the
+// dial rather than dropping it, so the served legs below are parked on the
+// ledger rows that refuse them.
+const gateParkBead = "gate await fields"
+
+// TestServedLifecycleCreateWritesTheGateMembers is PARKED on
+// W-CreateRequest.Issue: createIssue does not publish await_type, await_id,
+// timeout or waiters yet, and the client refuses each rather than dropping it.
+func TestServedLifecycleCreateWritesTheGateMembers(t *testing.T) {
+	skipKnownDivergence(t, "W-CreateRequest.Issue", gateParkBead,
+		"the case creates rows carrying await_type, await_id, timeout and waiters; createIssue publishes none of them yet and the client refuses each per member rather than dropping it")
+	conformance.RunLifecycleCreateWritesTheGateMembers(t, t.Context(), newServedCreateFixture(t, "hlcgate"))
+}
+
+// TestServedLifecycleCreateBoundsTheGateMembers is PARKED on the same row: its
+// at-bound create carries all four gate members.
+func TestServedLifecycleCreateBoundsTheGateMembers(t *testing.T) {
+	skipKnownDivergence(t, "W-CreateRequest.Issue", gateParkBead,
+		"the case's at-bound create carries all four gate members, which createIssue does not publish yet; the client refuses each before the dial, so no bound is ever reached")
+	conformance.RunLifecycleCreateBoundsTheGateMembers(t, t.Context(), newServedCreateFixture(t, "hlcgbnd"))
+}
+
 // createParkBead is the bead the create-side parks cite. It is separate from
 // parkBead — the write-side parks of the close/update wave — because these
 // retire on different events: two of them wait on the wire growing a

@@ -973,6 +973,8 @@ func refuseExcludedPatchMembers(patch issueops.IssuePatch) error {
 		return refuse(encode.OpUpdateIssue, "W-IssuePatch.SpecID")
 	case patch.AwaitID.Set:
 		return refuse(encode.OpUpdateIssue, "W-IssuePatch.AwaitID")
+	case patch.Waiters.Set:
+		return refuse(encode.OpUpdateIssue, "W-IssuePatch.Waiters")
 	}
 	return nil
 }

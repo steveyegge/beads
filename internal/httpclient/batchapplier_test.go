@@ -143,7 +143,7 @@ func TestApplyBatchRefusesEveryMemberTheWireExcludes(t *testing.T) {
 		}
 	})
 
-	t.Run("the patch's own excluded member refuses, and the four shared ones cite their existing rows", func(t *testing.T) {
+	t.Run("the patch's own excluded member refuses, and the shared ones cite their existing rows", func(t *testing.T) {
 		for _, test := range []struct {
 			member string
 			row    string
@@ -160,6 +160,9 @@ func TestApplyBatchRefusesEveryMemberTheWireExcludes(t *testing.T) {
 			}},
 			{"ClosedBySession", "W-IssuePatch.ClosedBySession", issueops.IssuePatch{
 				ClosedBySession: issueops.Field[string]{Set: true, Value: "sess-1"},
+			}},
+			{"Waiters", "W-IssuePatch.Waiters", issueops.IssuePatch{
+				Waiters: issueops.Field[[]string]{Set: true, Value: []string{"w1"}},
 			}},
 			{"Persistence", "W-IssuePatch.Persistence", issueops.IssuePatch{
 				Persistence: issueops.Field[issueops.PersistenceMode]{Set: true, Value: types.PersistenceModeEphemeral},

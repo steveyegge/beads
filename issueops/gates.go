@@ -56,3 +56,35 @@ func ListGates(ctx context.Context, querier Querier, req GateListRequest) ([]*ty
 	}
 	return gates, nil
 }
+
+// The gate members a GateFieldError can name, spelled as the wire and the
+// stored columns spell them.
+const (
+	GateFieldAwaitType = "await_type"
+	GateFieldAwaitID   = "await_id"
+	GateFieldTimeout   = "timeout"
+	GateFieldWaiters   = "waiters"
+)
+
+// GateFieldError reports a gate member a create or an update refused, and the
+// one member it is about, so a front door can name that member without parsing
+// the message. It wraps ErrValidation.
+//
+// The rules are the stored columns' and nothing more, so every backend refuses
+// the same values a Dolt column always did: await_type at most 32 characters,
+// await_id at most 255, the JSON-encoded waiter list at most one TEXT column,
+// and a timeout that is not negative. There is deliberately no await_type
+// vocabulary (formula gate types are free-form), no gate-type-only rule (any
+// issue may carry the members, as local updates always allowed), and no
+// waiter deduplication.
+type GateFieldError struct {
+	// Field is one of the GateField* constants.
+	Field string
+	// Detail is the sentence the error reads as.
+	Detail string
+}
+
+func (e *GateFieldError) Error() string { return e.Detail }
+
+// Unwrap makes GateFieldError match ErrValidation.
+func (e *GateFieldError) Unwrap() error { return ErrValidation }

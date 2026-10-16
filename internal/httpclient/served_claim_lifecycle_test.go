@@ -1029,6 +1029,22 @@ func TestServedLifecycleUpdateAllowTemplateEditsATemplate(t *testing.T) {
 	conformance.RunLifecycleUpdateAllowTemplateEditsATemplate(t, t.Context(), newServedUpdateFixture(t, "hlua"))
 }
 
+// TestServedLifecycleUpdatePatchesTheGateMembers is PARKED on
+// W-IssuePatch.AwaitID and W-IssuePatch.Waiters: IssuePatchBody publishes
+// neither yet, and the client refuses both before the dial (gateParkBead).
+func TestServedLifecycleUpdatePatchesTheGateMembers(t *testing.T) {
+	skipKnownDivergence(t, "W-IssuePatch.AwaitID", gateParkBead,
+		"the case patches await_id and waiters; IssuePatchBody publishes neither yet (W-IssuePatch.AwaitID, W-IssuePatch.Waiters) and the client refuses both before the dial")
+	conformance.RunLifecycleUpdatePatchesTheGateMembers(t, t.Context(), newServedUpdateFixture(t, "hlugate"))
+}
+
+// TestServedLifecycleUpdateBoundsTheGateMembers is PARKED on the same rows.
+func TestServedLifecycleUpdateBoundsTheGateMembers(t *testing.T) {
+	skipKnownDivergence(t, "W-IssuePatch.AwaitID", gateParkBead,
+		"the case patches await_id and waiters at and past their bounds; IssuePatchBody publishes neither yet (W-IssuePatch.AwaitID, W-IssuePatch.Waiters) and the client refuses both before the dial")
+	conformance.RunLifecycleUpdateBoundsTheGateMembers(t, t.Context(), newServedUpdateFixture(t, "hlugbnd"))
+}
+
 func TestServedLifecycleUpdateRefusesUnknownIDsAndActorlessRequests(t *testing.T) {
 	conformance.RunLifecycleUpdateRefusesUnknownIDsAndActorlessRequests(t, t.Context(), newServedUpdateFixture(t, "hluu"))
 }
