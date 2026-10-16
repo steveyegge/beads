@@ -551,6 +551,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mc-gate-check-timer`, `mc-gate-check-gh`, `gate-check-all` and a served
   test over await-typed and template gates.
 
+- **`bd list`'s text renderings read only the listed issues' dependency
+  edges.** The tree (the default), `--deps`, `--parent`, `--format` and
+  `--watch` loaded every dependency record in the workspace
+  (`GetAllDependencyRecords`) to draw one page. Over a connected HTTP
+  workspace that is a walk of the whole workspace: every issue id, 200 per
+  request, then every id's edges, 100 per request. `bd list --limit 20`
+  against a ~3,800-issue workspace made 62 sequential requests (~5.7 s at
+  ~50 ms a round trip). Every rendering reads only edges a listed issue owns,
+  so the listing now reads exactly those through the `EdgeReader` role: one
+  request per 100 listed ids over HTTP. The same listing makes 6 requests
+  (~0.5 s), one more than `bd list --json`, and prints the same bytes. On a
+  local store a default page is as fast or faster. A listing that covers most
+  of a large store now pays batched reads (four queries per 200 listed ids)
+  instead of one scan of both edge tables, which costs more past roughly
+  1,000 listed rows: +0.07 s at 1,000 rows and +0.46 s at 4,000 on embedded
+  Dolt. A store with many wisps, whose edges the old read also scanned, is
+  faster at every page size.
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
   backend refuses, so gc's `renudge-stale-human-gates` order failed on every
