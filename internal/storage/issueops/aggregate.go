@@ -25,6 +25,19 @@ func (tables ChangedTables) Add(names ...string) {
 	}
 }
 
+// Sorted returns the recorded tables in name order (nil when empty).
+func (tables ChangedTables) Sorted() []string {
+	if len(tables) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(tables))
+	for table := range tables {
+		out = append(out, table)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Merge records every table in other.
 func (tables ChangedTables) Merge(other map[string]bool) {
 	for table := range other {

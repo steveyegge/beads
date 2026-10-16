@@ -122,6 +122,12 @@ type IssueSQLRepository interface {
 	// the same function the two store backends wrap. It is the publicops-typed
 	// counterpart to ReclaimExpiredLeases above, the way GetMany is to GetByIDs.
 	Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error)
+	// RenewLease runs the SHARED heartbeat body (issueops.ExecuteHeartbeatInTx)
+	// on this repository's transaction, which is how the unit-of-work provider
+	// reaches the same function the two store backends wrap. It is the
+	// publicops-typed counterpart to HeartbeatIssue above, the way Reclaim is
+	// to ReclaimExpiredLeases.
+	RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error)
 	WakeExpiredDefers(ctx context.Context) (issues, wisps int, err error)
 }
 
@@ -353,6 +359,12 @@ type IssueUseCase interface {
 	// IssueRepository.Reclaim for why it is a separate method from
 	// ReclaimExpiredLeases rather than a replacement for it.
 	Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error)
+	// RenewLease is the shape issueops.Heartbeater publishes; see
+	// IssueSQLRepository.RenewLease for why it is a separate method from
+	// Heartbeat rather than a replacement for it. It writes only the
+	// ephemeral leases table, so the caller commits it with
+	// uow.RunTxEphemeral.
+	RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error)
 	WakeExpiredDefers(ctx context.Context) (issues, wisps int, err error)
 
 	CreateIssue(ctx context.Context, params CreateIssueParams, actor string) (CreateIssueResult, error)
@@ -1996,4 +2008,12 @@ func (u *issueUseCaseImpl) ReclaimExpiredLeases(ctx context.Context, olderThan t
 // no use-case-level concern layered on top of it.
 func (u *issueUseCaseImpl) Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error) {
 	return u.issueRepo.Reclaim(ctx, request)
+}
+
+// RenewLease passes straight through to the repository with no pre-check and
+// no error-wrapping, Reclaim's reasoning: the request is fully validated inside
+// the shared body (issueops.ExecuteHeartbeatInTx), and the role's typed
+// refusals must reach the caller as the body built them.
+func (u *issueUseCaseImpl) RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error) {
+	return u.issueRepo.RenewLease(ctx, request)
 }

@@ -156,6 +156,7 @@ var legitimatelyUnsupported = map[string]string{
 	// can say anything about it, which is why the heartbeat and the reaper above
 	// keep the original reason.
 	"HeartbeatIssue":         "lease: no wire vocabulary",
+	"Heartbeater":            "lease: the role lands library-first; its served operation issues.heartbeat and this client's leg follow in the next commits, which move it into accessors.go",
 	"ReclaimExpiredLeases":   "lease: no wire vocabulary",
 	"UnclaimIssue":           "write: raw release, force flag and all (role: Releaser). Re-routing it would put a second spelling of the transition beside the role's, with a bare error where the role answers the post-state row and its reminted version",
 	"UnclaimIssueIfAssignee": "write: raw conditional release (role: Releaser, via ReleaseRequest.ExpectedAssignee). Its expectation is a STRING where the role's is a POINTER, so it cannot express the one distinction the role's guard is built on — absent means 'do not check' and empty is a refusal, and this signature spells both as \"\"",

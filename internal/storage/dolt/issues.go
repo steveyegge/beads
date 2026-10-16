@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -456,9 +457,27 @@ func (s *DoltStore) HeartbeatIssue(ctx context.Context, id, actor string) error 
 		// Wisps are ephemeral and never leased; nothing to heartbeat.
 		return fmt.Errorf("%w: %s is ephemeral", storage.ErrNotClaimable, id)
 	}
-	return s.withRetryTx(ctx, func(tx *sql.Tx) error {
-		return issueops.HeartbeatIssueInTx(ctx, tx, id, actor)
-	})
+	// A re-arm is recorded as a mutation and gets its version-control commit
+	// through the funnel; a refresh stages nothing. A refusal COMMITS (it may
+	// have deleted the caller's orphaned lease row) and is returned after.
+	var refusal error
+	if err := s.runIssueOperationTxWithMessage(ctx, func(tx *sql.Tx) (issueops.ChangedTables, string, error) {
+		renewal, err := issueops.RenewLeaseInTx(ctx, tx, id, actor)
+		refusal = nil
+		var refused *issueops.LeaseRenewalRefusal
+		if errors.As(err, &refused) {
+			refusal = err
+			return nil, "", nil
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		tables, msg := issueops.LeaseRearmVersionCommit(id, renewal.Rearmed)
+		return tables, msg, nil
+	}); err != nil {
+		return err
+	}
+	return refusal
 }
 
 // ReclaimExpiredLeases reverts in_progress issues whose lease expired more than

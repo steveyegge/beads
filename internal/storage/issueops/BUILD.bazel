@@ -58,6 +58,7 @@ go_library(
         "filters.go",
         "gate_fields.go",
         "get_issue.go",
+        "heartbeat_role.go",
         "helpers.go",
         "history.go",
         "history_presence.go",

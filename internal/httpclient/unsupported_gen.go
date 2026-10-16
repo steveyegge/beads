@@ -407,6 +407,11 @@ func (unsupportedDoltStorage) HeartbeatIssue(_ context.Context, _ string, _ stri
 	return
 }
 
+func (unsupportedDoltStorage) Heartbeater() (_ issueops.Heartbeater, err error) {
+	err = errUnsupported("Heartbeater")
+	return
+}
+
 func (unsupportedDoltStorage) History(_ context.Context, _ string) (_ []*storage.HistoryEntry, err error) {
 	err = errUnsupported("History")
 	return
@@ -727,4 +732,4 @@ func (unsupportedDoltStorage) VersionReconciler() (_ issueops.VersionReconciler,
 	return
 }
 
-// NOTE: partial shell (142 of 203 methods generated; 61 left to this package's hand-written set).
+// NOTE: partial shell (143 of 204 methods generated; 61 left to this package's hand-written set).

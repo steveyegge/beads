@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"slices"
 
 	"github.com/steveyegge/beads/internal/storage/domain/db"
 	"github.com/steveyegge/beads/internal/storage/issueops"
@@ -78,6 +79,75 @@ func (t *doltServerTx) Commit(ctx context.Context, message string) error {
 	// rollback also fails the session state is unknown, so poison the connection
 	// and let the pool discard it instead of handing it out again.
 	return t.closeOpenTxAfterFailure(ctx, err)
+}
+
+// CommitScoped ends the transaction with a Dolt commit of exactly tables
+// (plus the versioned-history tables when this transaction could have minted)
+// named message: DOLT_ADD per table, then DOLT_COMMIT('-m') — never '-Am', so
+// another writer's uncommitted change elsewhere in the working set is neither
+// committed nor attributed to this message. With nothing staged, or under a
+// deferred version commit (dolt.auto-commit batch/off), it is the plain SQL
+// COMMIT. It is what the DoltStore funnel does post-transaction, done here
+// inside the pinned session the way this transaction's -Am commit is.
+func (t *doltServerTx) CommitScoped(ctx context.Context, tables []string, message string) error {
+	if t.done {
+		return errors.New("uow: commit: already done")
+	}
+	if message == "" || len(tables) == 0 || issueops.VersionCommitDeferred(ctx) {
+		return t.Commit(ctx, "")
+	}
+	staged := append([]string(nil), tables...)
+	if issueops.VersionedHistoryEnabledFor(t.conn) {
+		for _, table := range issueops.VersionedHistoryStagedTables() {
+			if !slices.Contains(staged, table) {
+				staged = append(staged, table)
+			}
+		}
+	}
+	for _, table := range staged {
+		if err := t.drainCall(ctx, "CALL DOLT_ADD(?)", table); err != nil {
+			if isSerializationError(err) {
+				return err
+			}
+			return t.closeOpenTxAfterFailure(ctx, err)
+		}
+	}
+	stagedAny, err := issueops.HasStagedChanges(ctx, t.conn)
+	if err != nil {
+		return t.closeOpenTxAfterFailure(ctx, err)
+	}
+	if !stagedAny {
+		return t.Commit(ctx, "")
+	}
+	if err := t.drainCall(ctx, "CALL DOLT_COMMIT('-m', ?)", message); err != nil {
+		if isSerializationError(err) {
+			return err
+		}
+		return t.closeOpenTxAfterFailure(ctx, err)
+	}
+	t.done = true
+	if t.recheckBlockedAfterCommit(ctx, issueops.TakeBlockedRecheck(t.conn)) {
+		t.releaseConn()
+	} else {
+		t.poisonConn()
+	}
+	return nil
+}
+
+// drainCall runs a stored procedure on the pinned session and drains its
+// result set.
+func (t *doltServerTx) drainCall(ctx context.Context, stmt string, args ...any) error {
+	rows, err := t.conn.QueryContext(ctx, stmt, args...)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	return rows.Close()
 }
 
 // commitStatement picks the statement that ends the open transaction on the

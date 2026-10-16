@@ -16,6 +16,7 @@ go_library(
         "dependency_editor.go",
         "edgereader.go",
         "graph_counter.go",
+        "heartbeater.go",
         "init_verifier.go",
         "issue_claimer.go",
         "issue_operations.go",

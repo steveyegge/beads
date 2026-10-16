@@ -395,6 +395,7 @@
 40 25 TestEmbeddedReadyClaimerLeavesEphemeralRowsOutOfTheDefaultReadySet
 40 25 TestEmbeddedReadyClaimerRejectsLimitOffsetBriefAndEmptyActor
 40 25 TestGetDependentRecordsForIssuesEmbedded
+40 25 TestHeartbeaterContract
 40 25 TestIgnoredCursorHealIsIdempotent
 40 25 TestIsBlockedBatchEmbedded
 40 25 TestReadyWorkPageTotal
