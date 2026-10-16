@@ -160,8 +160,13 @@ func TestCheckMigrationContentSkew_UnexpectedErrorWarns(t *testing.T) {
 	if got.Status != StatusWarning {
 		t.Fatalf("status = %q, want %q (%s)", got.Status, StatusWarning, got.Message)
 	}
-	if !strings.Contains(got.Message, "Could not check") {
-		t.Errorf("message = %q, want a 'Could not check' diagnostic", got.Message)
+	// A failed local read warns with the same "Could not check" prefix, so
+	// the stage has to name the remote read for the warning to be this one.
+	if !strings.Contains(got.Message, `Could not check migration content skew (read schema_migrations at "remotes/origin/main")`) {
+		t.Errorf("message = %q, want a 'Could not check' diagnostic from the remote read", got.Message)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 

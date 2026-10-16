@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"regexp"
 	"testing"
@@ -63,6 +64,64 @@ func TestReadMigrationContentHashesAtHeadIssuesNoFailingStatement(t *testing.T) 
 			_, err = ReadMigrationContentHashes(context.Background(), db, "")
 			if err == nil || !MissingMigrationObjectErr(err) {
 				t.Fatalf("ReadMigrationContentHashes(HEAD) error = %v, want a missing-object error", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
+	}
+}
+
+// TestReadMigrationContentHashesAtHeadPassesProbeErrorsThrough covers a probe
+// that fails outright. That is not evidence the cursor is missing, so the
+// error must reach the callers as is (the doctor warns, the smart gate routes
+// undetermined) instead of reading as nothing-to-compare, and no SELECT may
+// follow it.
+func TestReadMigrationContentHashesAtHeadPassesProbeErrorsThrough(t *testing.T) {
+	probeErr := errors.New("lock wait timeout exceeded")
+	tests := []struct {
+		name   string
+		expect func(sqlmock.Sqlmock)
+	}{
+		{
+			name: "database probe fails",
+			expect: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = DATABASE()")).
+					WillReturnError(probeErr)
+			},
+		},
+		{
+			name: "table probe fails",
+			expect: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = DATABASE()")).
+					WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+				mock.ExpectQuery(`^SHOW TABLES$`).WillReturnError(probeErr)
+			},
+		},
+		{
+			name: "content_hash probe fails",
+			expect: func(mock sqlmock.Sqlmock) {
+				expectCursorProbe(mock, "schema_migrations", true)
+				mock.ExpectQuery(`SHOW COLUMNS FROM schema_migrations LIKE 'content_hash'`).
+					WillReturnError(probeErr)
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New: %v", err)
+			}
+			defer db.Close()
+			tc.expect(mock)
+
+			_, err = ReadMigrationContentHashes(context.Background(), db, "")
+			if !errors.Is(err, probeErr) {
+				t.Fatalf("ReadMigrationContentHashes(HEAD) error = %v, want the probe's error %v", err, probeErr)
+			}
+			if MissingMigrationObjectErr(err) {
+				t.Fatalf("ReadMigrationContentHashes(HEAD) error = %v reads as a missing object; a failed probe is not one", err)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatalf("unmet SQL expectations: %v", err)
