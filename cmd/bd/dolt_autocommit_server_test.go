@@ -149,6 +149,38 @@ func TestCommitPendingIfEmbeddedPropagatesEmbeddedError(t *testing.T) {
 	}
 }
 
+func TestFlushRoutedCreateWarnsOnCommitFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "commit succeeds", want: ""},
+		{
+			name: "commit fails",
+			err:  errors.New("commit failed"),
+			want: "Warning: created tgt-1, but the follow-up Dolt commit in ../planning failed: commit failed\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saveStorageMode(t)
+			serverMode = false
+			proxiedServerMode = false
+
+			fake := &fakeCommitPendingStore{err: tc.err}
+			got := captureStderr(t, func() {
+				flushRoutedCreate(context.Background(), fake, "../planning", "tgt-1")
+			})
+			if fake.commitCalls != 1 {
+				t.Fatalf("Commit calls = %d, want 1", fake.commitCalls)
+			}
+			if got != tc.want {
+				t.Fatalf("stderr = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestShouldCommitCreatePostWritesSkipsServerMode(t *testing.T) {
 	saveStorageMode(t)
 	serverMode = true

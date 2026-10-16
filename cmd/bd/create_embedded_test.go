@@ -159,6 +159,33 @@ func assertDepExists(t *testing.T, beadsDir, database, issueID, dependsOnID stri
 	}
 }
 
+// assertCommittedAtHead verifies via raw SQL that each issue is in the store's
+// HEAD commit and that its working set holds no uncommitted change.
+func assertCommittedAtHead(t *testing.T, beadsDir, database string, ids ...string) {
+	t.Helper()
+	db, cleanup, err := embeddeddolt.OpenSQL(t.Context(), filepath.Join(beadsDir, "embeddeddolt"), database, "main")
+	if err != nil {
+		t.Fatalf("OpenSQL: %v", err)
+	}
+	defer cleanup()
+	for _, id := range ids {
+		var count int
+		if err := db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM issues AS OF 'HEAD' WHERE id = ?", id).Scan(&count); err != nil {
+			t.Fatalf("count %s at HEAD: %v", id, err)
+		}
+		if count != 1 {
+			t.Errorf("issue %s at HEAD: count = %d, want 1", id, count)
+		}
+	}
+	var dirty string
+	if err := db.QueryRowContext(t.Context(), "SELECT COALESCE(GROUP_CONCAT(table_name), '') FROM dolt_status").Scan(&dirty); err != nil {
+		t.Fatalf("query dolt_status: %v", err)
+	}
+	if dirty != "" {
+		t.Errorf("uncommitted tables in the working set: %s", dirty)
+	}
+}
+
 func assertDepExistsWithType(t *testing.T, beadsDir, database, issueID, dependsOnID, expectedType string) {
 	t.Helper()
 	dataDir := filepath.Join(beadsDir, "embeddeddolt")
@@ -990,6 +1017,7 @@ func TestEmbeddedCreateCrossRepo(t *testing.T) {
 
 	// Verify issue exists in the TARGET store, not the source
 	targetBeadsDir := filepath.Join(targetDir, ".beads")
+	assertCommittedAtHead(t, targetBeadsDir, "tgt", issue.ID)
 	tgtStore := openStore(t, targetBeadsDir, "tgt")
 	got, err := tgtStore.GetIssue(t.Context(), issue.ID)
 	if err != nil {
@@ -1044,6 +1072,7 @@ func TestEmbeddedCreateCrossRepoWithParent(t *testing.T) {
 	// Verify parent-child dependency exists in the target store
 	targetBeadsDir := filepath.Join(targetDir, ".beads")
 	assertDepExists(t, targetBeadsDir, "tgt", child.ID, parent.ID)
+	assertCommittedAtHead(t, targetBeadsDir, "tgt", parent.ID, child.ID)
 }
 
 func TestEmbeddedCreateDryRunRepoDoesNotInitializeTarget(t *testing.T) {
