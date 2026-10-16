@@ -12,6 +12,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/depid"
+	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -1145,7 +1146,7 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx DBTX, issues [
 
 			if kind != DepTargetExternal && types.ExtractPrefix(dep.IssueID) == types.ExtractPrefix(dep.DependsOnID) {
 				if err := lookups.checkHierarchy(ctx, tx, dep); err != nil {
-					if opts.SkipDependencyValidationErrors {
+					if opts.SkipDependencyValidationErrors && isDependencyValidationRefusal(err) {
 						recordSkippedDependency(opts, dep, err.Error())
 						continue
 					}
@@ -1154,7 +1155,7 @@ func PersistDependenciesWithOptionsResult(ctx context.Context, tx DBTX, issues [
 			}
 
 			if err := lookups.checkCycle(ctx, tx, dep); err != nil {
-				if opts.SkipDependencyValidationErrors {
+				if opts.SkipDependencyValidationErrors && isDependencyValidationRefusal(err) {
 					recordSkippedDependency(opts, dep, err.Error())
 					continue
 				}
@@ -1221,6 +1222,24 @@ func dependencyCreatedBy(dep *types.Dependency, actor string) string {
 		return dep.CreatedBy
 	}
 	return actor
+}
+
+// isDependencyValidationRefusal reports whether err, from checkHierarchy or
+// checkCycle, is a typed refusal of the edge itself (a self-dependency, a
+// cycle, or a blocker that is the issue's own ancestor or descendant) — the
+// only failures SkipDependencyValidationErrors tolerates. Every other error is
+// a failed walk query (an untranslated statement, a timeout, a dropped
+// connection): recording it as a skipped edge would commit the import without
+// the edge and report the SQL error only as a skip reason. On a backend whose
+// transaction aborts on a failed statement, the import would instead fail
+// later at an unrelated statement, with the real cause hidden in the skip
+// reason.
+func isDependencyValidationRefusal(err error) bool {
+	if errors.Is(err, domain.ErrSelfDependency) || errors.Is(err, domain.ErrDependencyCycle) {
+		return true
+	}
+	var hierarchy *domain.DependencyHierarchyConflictError
+	return errors.As(err, &hierarchy)
 }
 
 func recordSkippedDependency(opts storage.BatchCreateOptions, dep *types.Dependency, reason string) {
