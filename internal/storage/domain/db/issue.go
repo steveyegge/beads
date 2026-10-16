@@ -787,9 +787,12 @@ func insertIssueRow(ctx context.Context, runner Runner, table string, issue *typ
 	// (issueops.insertIssueIntoTable) — the shared scanner hydrates whatever
 	// either writer stored, so a column present there and missing here is not
 	// a harmless omission but a silent, writer-dependent data loss. That is
-	// what closed_by_session was: the schema defaults it to '', so a proxied
-	// create/import read back an empty closing session while the same issue
-	// created through the classic path kept it (GH#4662).
+	// what closed_by_session was: the schema defaults it to '', so an issue
+	// written by this statement read back an empty closing session while the
+	// classic writer kept it. Only Insert without CreateOnly reaches this
+	// statement (CreateIssue callers that leave CreateOnly unset, such as the
+	// quick, todo, gate and batch proxied servers); CreateOnly creates, import
+	// and promotion go through the classic writer.
 	//
 	// Stamp a fresh non-zero row_lock at create, exactly like the classic
 	// insertIssueIntoTable (issueops/helpers.go). Without it a proxied-server

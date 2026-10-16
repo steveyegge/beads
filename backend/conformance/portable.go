@@ -582,7 +582,10 @@ func testPromoteFromEphemeral(t *testing.T, f Factory) {
 // ephemeral wisp preserves its closed_by_session provenance. Before the fix
 // (GH#4662), closed_by_session was absent from the shared issue select/scan
 // and insert column set, so promotion (read wisp -> insert issue) hydrated a
-// zero value and dropped the original closing session.
+// zero value and dropped the original closing session. Promotion re-inserts
+// through that shared (classic) writer, so this case guards GH#4662's path
+// only; the domain writer's copy of the column (db.insertIssueRow) is pinned
+// by the domain/db Insert tests.
 func testPromoteClosedWispPreservesSession(t *testing.T, f Factory) {
 	s := f(t)
 	c := ctx()
