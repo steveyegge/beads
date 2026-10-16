@@ -1274,14 +1274,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   success line, `bd comment abc123` wrote to it, and `bd delete abc123`
   previewed it and printed `bd delete ops-abc123 --force` as the next step.
   An exact hash match is not an abbreviation, so the partial-id notice stayed
-  silent too. Every command that resolves an id through the shared resolver
-  now refuses such a hash with `ambiguous issue ID: "abc123" matches 2
-  issues: [hacker-news-abc123 ops-abc123]` and asks for the full id, as
+  silent too. The shared resolver now refuses such a hash with `ambiguous
+  issue ID: "abc123" matches 2 issues: [hacker-news-abc123 ops-abc123]` and
+  asks for the full id, as
   [Working with IDs](docs/core-concepts/hash-ids.md#working-with-ids)
-  documents for ambiguous cases; ephemeral wisps follow the same rule. A hash
-  that only one prefix uses, a full id, and the workspace's own prefix
-  (`bd-abc123` in a `bd` workspace, still looked up first) resolve as before.
-  A connected HTTP workspace resolves exact ids only and was not affected.
+  documents for ambiguous cases. Wisps count too: a wisp
+  `hacker-news-wisp-abc123` beside the issue `ops-abc123` used to lose to the
+  issue without a word and now makes `abc123` ambiguous as well, and a wisp
+  whose hash is exactly the input now wins over an issue the input only
+  abbreviates, as an issue's exact hash already did. `bd update`, `bd close`,
+  `bd comment`, `bd delete`, `bd show` and the other commands that print the
+  resolver's error show that message. When a lookup falls through to a
+  routed rig or a contributor's planning store, an id that is ambiguous there
+  (a shared hash, or an abbreviation of several issues) is now reported as
+  ambiguous rather than as "no issue found". Under `--if-revision`,
+  `bd update`, `bd close`, `bd assign` and `bd reopen` report an ambiguous id
+  as the guard's lost race (`precondition_failed`, exit 13), as for any other
+  gone id, since no issue carries it: a parent deleted from the workspace's
+  own store while two of its children survive used to exit 1. A few lookups
+  report any resolver failure as not found (`bd mol show`, `bd graph` and
+  `bd mol pour` among them) and still say so, though they no longer pick one
+  of the issues. A hash that only one prefix uses, a full id, and the
+  workspace's own prefix (`bd-abc123` in a `bd` workspace, still looked up
+  first) resolve as before. A connected HTTP workspace resolves exact ids
+  only and was not affected.
 
 - **`bd mol bond <A> <B>` ignored prefix routing** — operand resolution now uses
   the same routing fallback as `bd show`/`bd update`/`bd close`, so a bead that

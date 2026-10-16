@@ -31,6 +31,10 @@ type fakeIssue struct {
 type fakeResolverStore struct {
 	issues []fakeIssue
 	config map[string]string
+	// separateWisps leaves ephemeral issues out of an unfiltered
+	// SearchIssueIDs, so only the resolver's wisp fallback finds them. By
+	// default they are merged in, as the Dolt stores do.
+	separateWisps bool
 }
 
 func (f *fakeResolverStore) SearchIssues(_ context.Context, _ string, filter types.IssueFilter) ([]*types.Issue, error) {
@@ -48,6 +52,9 @@ func (f *fakeResolverStore) SearchIssueIDs(_ context.Context, query string, filt
 	var out []string
 	for _, iss := range f.issues {
 		if filter.Ephemeral != nil && iss.ephemeral != *filter.Ephemeral {
+			continue
+		}
+		if filter.Ephemeral == nil && f.separateWisps && iss.ephemeral {
 			continue
 		}
 		if query != "" && !strings.Contains(iss.id, query) {
@@ -427,44 +434,87 @@ func TestResolvePartialID_FakeStore_SharedHashAcrossPrefixesIsAmbiguous(t *testi
 			wantErr: "ambiguous issue ID: \"abc123\" matches 2 issues: [hacker-news-abc123 ops-abc123]\nUse the full ID to disambiguate",
 		},
 		{
-			// The wisp fallback strips the "wisp-" infix before it compares
-			// hashes, so it reaches the same choice on its own.
+			// Wisp IDs carry a "wisp-" infix, which both of the resolver's
+			// searches strip before they compare hashes.
 			name:    "wisps",
 			a:       fakeIssue{id: "hacker-news-wisp-t3st", ephemeral: true},
 			b:       fakeIssue{id: "ops-wisp-t3st", ephemeral: true},
 			input:   "t3st",
 			wantErr: "ambiguous issue ID: \"t3st\" matches 2 issues: [hacker-news-wisp-t3st ops-wisp-t3st]\nUse the full ID to disambiguate",
 		},
+		{
+			// An issue and a wisp. The issue's hash matches in the first
+			// search, so the wisp fallback must still run to find the wisp
+			// when the store leaves wisps out of that search.
+			name:    "issue and wisp",
+			a:       fakeIssue{id: "ops-abc123"},
+			b:       fakeIssue{id: "hacker-news-wisp-abc123", ephemeral: true},
+			input:   "abc123",
+			wantErr: "ambiguous issue ID: \"abc123\" matches 2 issues: [hacker-news-wisp-abc123 ops-abc123]\nUse the full ID to disambiguate",
+		},
+	}
+
+	// The Dolt stores list wisps in the resolver's first, unfiltered search;
+	// a store that does not leaves them to the wisp fallback. Both shapes must
+	// reach the same answer.
+	shapes := []struct {
+		name          string
+		separateWisps bool
+	}{
+		{"wisps merged", false},
+		{"wisps separate", true},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Try both store orders, since the order is what used to decide.
-			for _, issues := range [][]fakeIssue{{tc.a, tc.b}, {tc.b, tc.a}} {
-				store := &fakeResolverStore{issues: issues, config: config}
-				for _, r := range resolvers {
-					got, err := r.resolve(ctx, store, tc.input)
-					if !errors.Is(err, utils.ErrAmbiguousID) {
-						t.Errorf("%s(%q) with %s first = (%q, %v); want an ErrAmbiguousID error", r.name, tc.input, issues[0].id, got, err)
-					} else if err.Error() != tc.wantErr {
-						t.Errorf("%s(%q) error = %q; want %q", r.name, tc.input, err, tc.wantErr)
+		for _, shape := range shapes {
+			t.Run(tc.name+"/"+shape.name, func(t *testing.T) {
+				// Try both store orders, since the order is what used to decide.
+				for _, issues := range [][]fakeIssue{{tc.a, tc.b}, {tc.b, tc.a}} {
+					store := &fakeResolverStore{issues: issues, config: config, separateWisps: shape.separateWisps}
+					for _, r := range resolvers {
+						got, err := r.resolve(ctx, store, tc.input)
+						if !errors.Is(err, utils.ErrAmbiguousID) {
+							t.Errorf("%s(%q) with %s first = (%q, %v); want an ErrAmbiguousID error", r.name, tc.input, issues[0].id, got, err)
+						} else if err.Error() != tc.wantErr {
+							t.Errorf("%s(%q) error = %q; want %q", r.name, tc.input, err, tc.wantErr)
+						}
 					}
 				}
-			}
 
-			// A full ID still names exactly one issue. A hash that only one
-			// prefix uses is still an exact match.
-			for _, r := range resolvers {
-				store := &fakeResolverStore{issues: []fakeIssue{tc.a, tc.b}, config: config}
-				if got, err := r.resolve(ctx, store, tc.b.id); err != nil || got != tc.b.id {
-					t.Errorf("%s(%q) = (%q, %v); want (%q, nil)", r.name, tc.b.id, got, err, tc.b.id)
+				// A full ID still names exactly one issue. A hash that only one
+				// prefix uses is still an exact match, including a wisp that a
+				// merging store lists in both searches.
+				for _, r := range resolvers {
+					store := &fakeResolverStore{issues: []fakeIssue{tc.a, tc.b}, config: config, separateWisps: shape.separateWisps}
+					if got, err := r.resolve(ctx, store, tc.b.id); err != nil || got != tc.b.id {
+						t.Errorf("%s(%q) = (%q, %v); want (%q, nil)", r.name, tc.b.id, got, err, tc.b.id)
+					}
+					for _, only := range []fakeIssue{tc.a, tc.b} {
+						store = &fakeResolverStore{issues: []fakeIssue{only}, config: config, separateWisps: shape.separateWisps}
+						if got, err := r.resolve(ctx, store, tc.input); err != nil || got != only.id {
+							t.Errorf("%s(%q) with only %s = (%q, %v); want (%q, nil)", r.name, tc.input, only.id, got, err, only.id)
+						}
+					}
 				}
-				store = &fakeResolverStore{issues: []fakeIssue{tc.a}, config: config}
-				if got, err := r.resolve(ctx, store, tc.input); err != nil || got != tc.a.id {
-					t.Errorf("%s(%q) with only %s = (%q, %v); want (%q, nil)", r.name, tc.input, tc.a.id, got, err, tc.a.id)
-				}
+			})
+		}
+	}
+
+	// An issue the input only abbreviates (ops-abc1234) does not stop the
+	// wisp fallback from finding a wisp that shares the matched hash, and is
+	// no candidate itself.
+	for _, shape := range shapes {
+		store := &fakeResolverStore{
+			issues:        []fakeIssue{{id: "ops-abc123"}, {id: "ops-abc1234"}, {id: "hacker-news-wisp-abc123", ephemeral: true}},
+			config:        config,
+			separateWisps: shape.separateWisps,
+		}
+		want := "ambiguous issue ID: \"abc123\" matches 2 issues: [hacker-news-wisp-abc123 ops-abc123]\nUse the full ID to disambiguate"
+		for _, r := range resolvers {
+			if got, err := r.resolve(ctx, store, "abc123"); err == nil || err.Error() != want {
+				t.Errorf("%s(%q) with an abbreviated issue beside, %s = (%q, %v); want error %q", r.name, "abc123", shape.name, got, err, want)
 			}
-		})
+		}
 	}
 
 	// The configured prefix's own spelling is looked up before any search.
@@ -477,6 +527,32 @@ func TestResolvePartialID_FakeStore_SharedHashAcrossPrefixesIsAmbiguous(t *testi
 	for _, r := range resolvers {
 		if got, err := r.resolve(ctx, store, "abc123"); err != nil || got != "bd-abc123" {
 			t.Errorf("%s(%q) = (%q, %v); want (%q, nil)", r.name, "abc123", got, err, "bd-abc123")
+		}
+	}
+}
+
+// TestResolvePartialID_FakeStore_ExactWispHashBeatsAbbreviation pins that a
+// wisp the store lists in the resolver's first search (the Dolt stores merge
+// wisps into it) matches there on its hash, as an issue does. ResolvePartialID
+// used to pass the wisp over and settle on an issue the input only
+// abbreviates; ResolvePartialIDExact, which takes no abbreviations, already
+// found the wisp through the wisp fallback.
+func TestResolvePartialID_FakeStore_ExactWispHashBeatsAbbreviation(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeResolverStore{
+		issues: []fakeIssue{{id: "ops-abc1234"}, {id: "hacker-news-wisp-abc123", ephemeral: true}},
+		config: map[string]string{"issue_prefix": "bd", "allowed_prefixes": "hacker-news,ops"},
+	}
+	resolvers := []struct {
+		name    string
+		resolve func(context.Context, utils.PartialIDResolverStore, string) (string, error)
+	}{
+		{"ResolvePartialID", utils.ResolvePartialID},
+		{"ResolvePartialIDExact", utils.ResolvePartialIDExact},
+	}
+	for _, r := range resolvers {
+		if got, err := r.resolve(ctx, store, "abc123"); err != nil || got != "hacker-news-wisp-abc123" {
+			t.Errorf("%s(%q) = (%q, %v); want (%q, nil)", r.name, "abc123", got, err, "hacker-news-wisp-abc123")
 		}
 	}
 }
