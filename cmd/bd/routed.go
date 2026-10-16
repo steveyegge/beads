@@ -205,8 +205,11 @@ func resolveAndGetIssueForMutationExact(ctx context.Context, localStore storage.
 		}
 	}
 
+	// Write intent, as in resolveAndGetIssueForMutation: a maintainer/default
+	// auto-route opens writable so the write commits where the issue lives,
+	// while a contributor auto-route stays read-only.
 	if isNotFoundErr(err) {
-		autoResult, autoErr := resolveViaAutoRouting(ctx, localStore, id, true)
+		autoResult, autoErr := resolveViaAutoRoutingWithAccess(ctx, localStore, id, true, true)
 		if autoErr == nil {
 			return autoResult, nil
 		}
