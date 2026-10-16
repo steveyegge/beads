@@ -45,6 +45,13 @@ import (
 // answer the worker needs anyway. So a 503 is retried within dispatch's bound
 // rather than reported to a worker that heartbeats every ~90s and stops on any
 // nonzero exit.
+//
+// THE COST: A REPLAY CAN UNDER-REPORT Rearmed. When a re-arm commits but its
+// answer is lost (the wire resends after a stalled or reset attempt, dispatch
+// after a 503), the replay finds the lease row the re-arm granted and answers
+// a refresh, Rearmed false, though the revision token was reminted. The
+// backstop is the guarded write itself: one composed on the old revision fails
+// its revision check once and re-reads (see issueops.HeartbeatResult.Rearmed).
 type httpHeartbeater struct{ store *Store }
 
 var _ issueops.Heartbeater = (*httpHeartbeater)(nil)

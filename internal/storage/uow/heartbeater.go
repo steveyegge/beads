@@ -55,7 +55,10 @@ func (h *heartbeater) Heartbeat(ctx context.Context, request publicops.Heartbeat
 	// working-set scan, no Dolt commit, and so nothing another writer left
 	// uncommitted (a batch-mode edit) is swept into a heartbeat commit. A
 	// re-arm is recorded as a mutation and commits exactly the tables
-	// LeaseRearmVersionCommit names, never DOLT_COMMIT('-Am').
+	// LeaseRearmVersionCommit names, never DOLT_COMMIT('-Am'), in a Dolt
+	// commit made after the SQL COMMIT (ScopedCommitter): built inside the
+	// transaction, it would write an issues row a concurrent writer changed
+	// meanwhile back to its value at this heartbeat's start.
 	type outcome struct {
 		result  publicops.HeartbeatResult
 		refusal error

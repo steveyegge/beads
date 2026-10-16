@@ -234,14 +234,21 @@ func RunTxEphemeral[T any](ctx context.Context, p UnitOfWorkProvider, work TxRea
 }
 
 // ScopedCommitter is the optional commit a unit of work offers for a write
-// whose versioned tables are KNOWN: it stages exactly tables (plus the
-// versioned-history tables when the transaction could have minted) and makes
-// a Dolt commit named message from that staged set alone, leaving any other
-// writer's uncommitted change in the working set where it was. With nothing
-// staged, or under a deferred version commit, it is the plain SQL COMMIT.
-// It is the uow twin of the DoltStore funnel's DOLT_ADD-per-table commit, and
-// what a mutation that mostly touches dolt_ignored state (a heartbeat
-// re-arm) commits through instead of DOLT_COMMIT('-Am').
+// whose versioned tables are KNOWN: it commits the SQL transaction, then
+// stages exactly tables (plus the versioned-history tables when the
+// transaction could have minted) and makes a Dolt commit named message from
+// that staged set alone, leaving another writer's uncommitted change to any
+// other table in the working set where it was. A staged table is committed
+// whole, so another writer's uncommitted change to one of those tables rides
+// in this commit, as it does in the DoltStore funnel. With nothing staged, or
+// under a deferred version commit, there is no Dolt commit. It is the uow
+// twin of the DoltStore funnel's post-transaction DOLT_ADD-per-table commit,
+// in the same order — the Dolt commit after the SQL COMMIT, never inside the
+// transaction, where it would be built from the transaction's start snapshot
+// (LatentLabsSpace/NEXUS#92) — and what a mutation that mostly touches
+// dolt_ignored state (a heartbeat re-arm) commits through instead of
+// DOLT_COMMIT('-Am'). An error means the SQL transaction did not commit; a
+// Dolt commit that fails after it is logged, never returned.
 type ScopedCommitter interface {
 	CommitScoped(ctx context.Context, tables []string, message string) error
 }
@@ -273,8 +280,9 @@ type TxScopedFunc[T any] func(ctx context.Context, uw UnitOfWork) (result T, tab
 // tables commits with the plain SQL COMMIT (no working-set scan, no Dolt
 // commit, nothing swept); one that reports tables commits through
 // ScopedCommitter, staging exactly those. Never DOLT_COMMIT('-Am'): that
-// would sweep other writers' uncommitted (batch-mode) changes into this
-// commit. Serialization losers are replayed like RunTxEphemeral's.
+// would sweep other writers' uncommitted (batch-mode) changes to other tables
+// into this commit (a staged table is committed whole). Serialization losers
+// are replayed like RunTxEphemeral's.
 func RunTxScoped[T any](ctx context.Context, p UnitOfWorkProvider, work TxScopedFunc[T]) (T, error) {
 	var result T
 	bo := backoff.NewExponentialBackOff()

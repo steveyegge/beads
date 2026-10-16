@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/types"
 	publicops "github.com/steveyegge/beads/issueops"
 )
 
@@ -74,6 +76,150 @@ func TestHeartbeaterContract(t *testing.T) {
 	t.Run("RefusesAnOrphanedLeaseOnAnIssueSomeoneElseHolds", func(t *testing.T) {
 		conformance.RunHeartbeaterRefusesAnOrphanedLeaseOnAnIssueSomeoneElseHolds(t, ctx, fixture)
 	})
+}
+
+// TestHeartbeaterRearmKeepsAConcurrentWrite is the LatentLabsSpace/NEXUS#92
+// regression for the re-arm's scoped commit: another session commits a change
+// to a different issues row while the re-arm's transaction is open, and the
+// Dolt commit the re-arm makes must stage issues as committed, with that
+// change in it, not as the re-arm's start snapshot. DOLT_ADD stages a whole
+// table from the session's transaction root, so staging inside the open
+// transaction did the latter: HEAD then disagreed with the rows every reader
+// sees, for a write still only in the working set (batch mode, or the window
+// before the writer's own Dolt commit). ScopedCommitter commits the SQL
+// transaction first.
+func TestHeartbeaterRearmKeepsAConcurrentWrite(t *testing.T) {
+	ctx := t.Context()
+	const prefix = "hbw"
+	provider := newUOWRoleFixtureProvider(t, ctx, prefix)
+	kit := newUOWRoleFixtureKit(provider, prefix)
+	lifecycle, err := provider.(IssueLifecycleSource).IssueLifecycle()
+	if err != nil {
+		t.Fatalf("IssueLifecycle(): %v", err)
+	}
+	const holder = "hb-holder"
+	for _, tc := range []struct {
+		name  string
+		write func(ctx context.Context, id, title string) error
+	}{
+		{"a write with its own dolt commit", func(ctx context.Context, id, title string) error {
+			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+				_, err := uw.RawSQLUseCase().Exec(ctx, "UPDATE issues SET title = ? WHERE id = ?", title, id)
+				return "bd: retitle " + id, err
+			})
+		}},
+		{"a write only in the working set", func(ctx context.Context, id, title string) error {
+			_, err := RunTxEphemeral(ctx, provider, func(ctx context.Context, uw UnitOfWork) (struct{}, error) {
+				_, err := uw.RawSQLUseCase().Exec(ctx, "UPDATE issues SET title = ? WHERE id = ?", title, id)
+				return struct{}{}, err
+			})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			suffix := strings.ReplaceAll(tc.name, " ", "-")
+			doled, bystander := prefix+"-doled-"+suffix, prefix+"-bystander-"+suffix
+			for _, id := range []string{doled, bystander} {
+				issue := &types.Issue{ID: id, Title: "seed " + id, Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+				if err := kit.CreateIssue(ctx, issue, "seeder"); err != nil {
+					t.Fatalf("seed %s: %v", id, err)
+				}
+			}
+			if _, err := lifecycle.Update(ctx, publicops.UpdateRequest{
+				Actor: holder, IssueID: doled,
+				Patch: publicops.IssuePatch{
+					Status:   publicops.Field[publicops.Status]{Set: true, Value: types.StatusInProgress},
+					Assignee: publicops.Field[string]{Set: true, Value: holder},
+				},
+			}); err != nil {
+				t.Fatalf("hand-dole %s: %v", doled, err)
+			}
+
+			const retitled = "retitled while the re-arm was open"
+			wrote := false
+			heartbeater, err := NewHeartbeater(&beforeScopedCommitProvider{
+				UnitOfWorkProvider: provider,
+				before: func(ctx context.Context) error {
+					if wrote {
+						return nil
+					}
+					wrote = true
+					return tc.write(ctx, bystander, retitled)
+				},
+			})
+			if err != nil {
+				t.Fatalf("NewHeartbeater: %v", err)
+			}
+			result, err := heartbeater.Heartbeat(ctx, publicops.HeartbeatRequest{Actor: holder, IssueID: doled})
+			if err != nil {
+				t.Fatalf("Heartbeat: %v", err)
+			}
+			if !result.Rearmed || !wrote {
+				t.Fatalf("result = %+v, concurrent write ran = %v: the case needs a re-arm with a write inside its window", result, wrote)
+			}
+
+			for _, at := range []string{"the working set", "HEAD"} {
+				query := "SELECT title FROM issues WHERE id = ?"
+				if at == "HEAD" {
+					query = "SELECT title FROM issues AS OF 'HEAD' WHERE id = ?"
+				}
+				var title string
+				if err := kit.QueryScalar(ctx, query, []any{bystander}, &title); err != nil {
+					t.Fatalf("read %s title at %s: %v", bystander, at, err)
+				}
+				if title != retitled {
+					t.Errorf("%s title at %s = %q, want %q: the re-arm's Dolt commit staged issues from its start snapshot", bystander, at, title, retitled)
+				}
+			}
+			// The re-arm itself is committed: its reminted row_lock is at HEAD
+			// (events is dolt_ignored, so the issues row is what its commit
+			// carries).
+			var working, head int64
+			if err := kit.QueryScalar(ctx, "SELECT row_lock FROM issues WHERE id = ?", []any{doled}, &working); err != nil {
+				t.Fatalf("read %s row_lock: %v", doled, err)
+			}
+			if err := kit.QueryScalar(ctx, "SELECT row_lock FROM issues AS OF 'HEAD' WHERE id = ?", []any{doled}, &head); err != nil {
+				t.Fatalf("read %s row_lock at HEAD: %v", doled, err)
+			}
+			var commits int
+			if err := kit.QueryScalar(ctx, "SELECT COUNT(*) FROM dolt_log WHERE message = ?", []any{"bd: re-arm lease " + doled}, &commits); err != nil {
+				t.Fatalf("count re-arm commits: %v", err)
+			}
+			if head != working || commits != 1 {
+				t.Errorf("%s row_lock at HEAD = %d (working set %d), re-arm commits = %d, want the re-arm in one Dolt commit", doled, head, working, commits)
+			}
+		})
+	}
+}
+
+// beforeScopedCommitProvider runs before ahead of each scoped commit of the
+// units of work it opens: a way into the window between a transaction's
+// writes and its commit.
+type beforeScopedCommitProvider struct {
+	UnitOfWorkProvider
+	before func(context.Context) error
+}
+
+func (p *beforeScopedCommitProvider) NewUOW(ctx context.Context) (UnitOfWork, error) {
+	uw, err := p.UnitOfWorkProvider.NewUOW(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &beforeScopedCommitUOW{UnitOfWork: uw, before: p.before}, nil
+}
+
+type beforeScopedCommitUOW struct {
+	UnitOfWork
+	before func(context.Context) error
+}
+
+func (u *beforeScopedCommitUOW) Unwrap() UnitOfWork { return u.UnitOfWork }
+
+func (u *beforeScopedCommitUOW) CommitScoped(ctx context.Context, tables []string, message string) error {
+	if err := u.before(ctx); err != nil {
+		return err
+	}
+	return commitScoped(ctx, u.UnitOfWork, tables, message)
 }
 
 // TestHeartbeaterRefusesBeforeOpeningAUOW: a malformed heartbeat is a

@@ -110,6 +110,12 @@ type HeartbeatResult struct {
 	// re-read before a guarded write. A refresh of the caller's own row
 	// is never a re-arm, including one that changed no value (two heartbeats
 	// in one second) and one under a differently spelled holder.
+	//
+	// false does not prove that nothing reminted the token: a transport that
+	// resends a heartbeat whose answer was lost (the HTTP client does) reports
+	// the resend's answer, a refresh of the lease row a committed re-arm
+	// granted. A guarded write composed on the old revision then fails its
+	// revision check once and re-reads.
 	Rearmed bool
 }
 

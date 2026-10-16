@@ -64,10 +64,14 @@ func leaseTTL(ctx context.Context) time.Duration {
 // races care about (claim, close, updateIssueInTx, reclaim, unclaim all do).
 // Paths that touch only orthogonal cells (is_blocked, compaction_level,
 // dependency metadata, rename, or reopen — which acts on closed rows) are safe
-// to merge with a reclaim and intentionally do NOT rewrite it. Heartbeats no
-// longer touch the issues row at all (bd-lrgn1): the lease lives in the
+// to merge with a reclaim and intentionally do NOT rewrite it. A heartbeat
+// REFRESH does not touch the issues row (bd-lrgn1): the lease lives in the
 // ephemeral leases table, where a racing heartbeat and reclaim contend on the
-// SAME lease row and conflict without any help. Adding a new path that sets
+// SAME lease row and conflict without any help. A heartbeat RE-ARM (a lease
+// granted to a live claim that has none) is the one deliberate remint that
+// changes no lifecycle field, and it is load-bearing: its lease INSERT shares
+// no row with a concurrent release or close, so the remint is what makes the
+// two collide (see RenewLeaseInTx). Adding a new path that sets
 // status/assignee outside updateIssueInTx without rewriting row_lock would
 // silently reintroduce the zombie-merge bug.
 //
@@ -80,10 +84,11 @@ func leaseTTL(ctx context.Context) time.Duration {
 // that already goes out of its way to preserve updated_at
 // (blocked_state.go), and bumping the token there would clobber a concurrent
 // whole-row CAS over a cell derived from OTHER rows. (The PR's second
-// exemption of this kind, the lease heartbeat, no longer arises here — since
-// bd-lrgn1 heartbeats never touch the issues row at all.) So the invariant
-// cuts both ways: status/ownership writes MUST remint, aux-marker writes MUST
-// NOT. The remint direction is enforced at build time by
+// exemption of this kind, the lease heartbeat, no longer arises here: since
+// bd-lrgn1 a refresh never touches the issues row, and a re-arm remints on
+// purpose, accepting that a guarded write composed before it fails once and
+// re-reads.) So the invariant cuts both ways: status/ownership writes MUST
+// remint, aux-marker writes MUST NOT. The remint direction is enforced at build time by
 // TestAllIssueRowWritesStampRowLock (row_lock_guard_test.go), whose exemption
 // markers are the machine-readable form of this list — widen the stamping
 // policy there first, not by ad-hoc stamps.

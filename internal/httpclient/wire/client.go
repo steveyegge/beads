@@ -112,10 +112,10 @@ type Options struct {
 	// arrived is never cut off by it. Such a request that hits it, or whose
 	// connection is reset, is retried once on another connection, with no
 	// header timer and only what is left of the overall Timeout, counted from
-	// when the first attempt was sent. A write is never
-	// retried and is bounded by the overall Timeout alone (bd serve answers a
-	// write after it commits). A written request whose headers do not come
-	// back in time fails with *ResponseHeaderTimeoutError.
+	// when the first attempt was sent. A write that is not Request.Idempotent
+	// is never retried and is bounded by the overall Timeout alone (bd serve
+	// answers a write after it commits). A written request whose headers do
+	// not come back in time fails with *ResponseHeaderTimeoutError.
 	ResponseHeaderTimeout time.Duration
 	// OnStallRetry, when set, is told about every such retry. The process-wide
 	// count is StallRetryCount either way.
