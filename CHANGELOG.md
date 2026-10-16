@@ -32,6 +32,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capability error naming the missing token (never sent without the
   member); a batchApply plan is checked whole, so no partial plan is sent.
   A request naming no gate member is unaffected by either token.
+- `bd heartbeat` works over a connected HTTP workspace.
+  The lease refresh is a role, `issueops.Heartbeater`
+  (`Heartbeat(HeartbeatRequest{Actor, IssueID}) -> HeartbeatResult{IssueID,
+  Holder, HeartbeatAt, LeaseExpiresAt, Rearmed}`), on every backend leg, and
+  `bd serve` publishes it as `POST /v0/beads/issues/{id}:heartbeat` behind the
+  new `issues.heartbeat` capability token (additive; no wire_revision bump),
+  with the new `lease_not_held` (409) problem code (`reason: ephemeral` for a
+  wisp). A refresh writes ONLY the lease row: the issue's `revision` is not
+  reminted (a guarded write against the pre-heartbeat token still lands), no
+  version, event, journal entry or Dolt commit is recorded, and no hook
+  fires. `Rearmed` is true only when the heartbeat created the caller's lease
+  row (a hand-doled claim's first heartbeat). A re-arm is recorded as a
+  mutation; a refresh is not: the re-arm remints `revision`, stamps
+  `updated_at`, records a `lease_rearmed` event, a journal entry and a
+  version, makes a Dolt commit and fires `on_update` (see Fixed); the
+  reported times are whole seconds, exactly what the lease row stores. The
+  HTTP backend's `Heartbeater()` and legacy `HeartbeatIssue` dial it;
+  against a server that does not advertise the token they refuse before
+  dialing with a typed capability error naming `issues.heartbeat`, and never
+  fall back to a re-claim or a metadata stamp. A
+  busy (503) answer is replayed, because a repeat only moves the expiry later.
+  `bd heartbeat` now runs the role on every route (the proxied-server route
+  through the provider's accessor), with the same
+  `{"id","status":"heartbeat","owner"}` success output and the same exit
+  codes. Refusal TEXT on stderr changes per route: the direct routes (Dolt
+  server, embedded) gain a `lease not held: ` prefix
+  (`heartbeat X: lease not held: issue not claimable: X status closed`); the
+  proxied-server route loses its
+  `Heartbeat: db: IssueSQLRepository.HeartbeatIssue: ` prefix and reads as the
+  direct routes do; over HTTP the refusal is the problem's detail, which names
+  the state found (`it is closed`, `an ephemeral wisp`, `open and not
+  claimed`) or, for a foreign holder, the native `issue already claimed by
+  <holder>`. An id that names no row answers not-found from the role rather
+  than "not claimable" (the CLI resolves the id first, so its output is
+  unchanged), and every refusal for a caller that holds no live claim
+  (closed, released, reclaimed, moved off in_progress, or a wisp) is
+  `issueops.ErrLeaseNotHeld`, which still matches `ErrNotClaimable`.
+
 - `GET /v0/beads/dependencies/blocking` accepts `is_blocked`, behind the new
   `dependencies.blocking.isBlocked` capability token (additive; no
   wire_revision bump), and answers each item's stored, transitive
@@ -610,6 +648,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mc-gate-check-timer-resolves`, `mc-gate-add-waiter` and
   `mc-update-await-id` (pending until the reference server advertises the
   gate tokens), pinned passing by `TestE2E_GatesOverHTTP`.
+- **`bd mol bond <A> <B>` ignored prefix routing** — operand resolution now uses
+  the same routing fallback as `bd show`/`bd update`/`bd close`, so a bead that
+  lives in a routed store (a prefix-routed rig via `routes.jsonl`, or the
+  contributor planning store) resolves instead of failing with `'<id>' not found
+  as issue or formula`. Previously `bd mol bond` resolved operands
+  against the local store only, so `gt sling <bead> <rig>` — which cooks the
+  default formula and bonds it to a rig-routed bead — died at `bd mol bond` even
+  though `bd show <bead>` resolved the same ID. Resolution is write-intent: the
+  routed target opens writable and the bond commits where the bead lives. Two
+  operands that live in the same routed rig share one store handle and bond
+  normally; only a bond whose operands resolve to genuinely different databases
+  is rejected rather than written to the wrong one. As part of this change, an
+  auto-route — contributor, maintainer or default — now opens writable for the
+  commands that change an existing issue (`bd update`, `bd close`,
+  `bd comment`, `bd unclaim`, `bd dep` and the other routed mutation commands,
+  as well as `bd mol bond`), so the write commits where the issue lives: for a
+  contributor, in the planning repository, as the contributor workflow
+  documents. Every auto-route used to open read-only, so on an embedded
+  workspace these writes were refused. `bd unclaim` now opens a routed issue
+  writable, as `bd update --claim` does, and commits the release there; on an
+  embedded workspace `bd human respond` and `bd human dismiss` now record a
+  routed change as a Dolt commit in the routed repository instead of leaving it
+  uncommitted in that repository's working set. A routed
+  write, prefix or auto, never creates the target's database: an embedded
+  repository that has not been bootstrapped yet fails the write instead of
+  gaining an empty database that `bd bootstrap` would then take for the real
+  one. An auto-routed store, read or write, now opens the target's own
+  configured `dolt_database`, as a prefix route already did, even when
+  `BEADS_DOLT_SERVER_DATABASE` names the current workspace's database. An
+  auto-routed write refuses a target whose `metadata.json` is unreadable or
+  names no `dolt_database`, while a target with no `metadata.json` at all (a
+  planning repository nothing has been created in yet) opens the one embedded
+  database it holds, or its default database when it holds none or several; a
+  prefix route still requires the target's `dolt_database`. A
+  routing failure, such as an unreadable `routes.jsonl` or a
+  routed store that fails to open, is now reported as itself instead of as
+  `no issue found matching`. Same routing-parity fix as
+  [#3608](https://github.com/gastownhall/beads/issues/3608) for `bd close`.
+  Fixes [#4714](https://github.com/gastownhall/beads/issues/4714).
+
 - **`bd gate check` works over a connected HTTP workspace.** Its open-gate
   listing built the same raw `SearchIssues` filter `bd gate list` did before
   S20, so the HTTP backend refused the command before reading a gate and gc's
@@ -655,6 +733,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1,000 listed rows: +0.07 s at 1,000 rows and +0.46 s at 4,000 on embedded
   Dolt. A store with many wisps, whose edges the old read also scanned, is
   faster at every page size.
+- A heartbeat can no longer resurrect a lease after a release or close. A
+  heartbeat re-arming a hand-doled claim (in_progress with no lease row) could
+  race a release or close on Dolt and leave an orphaned lease row on an open
+  or closed issue; every later heartbeat by the former holder then refreshed
+  it and answered success for a claim it no longer held. This affected every
+  Dolt route, including releases before this one. The re-arm is now recorded
+  as a mutation and remints the issue's row_lock, which every claim-ending
+  path rewrites, so it collides with a racing release or close and one side
+  is replayed against the other's result (the cost: a hand-doled claim's
+  first heartbeat changes its `revision` once). The refresh also requires, in
+  the same transaction, that the issue is still in_progress under the holder,
+  and a refusal deletes the caller's orphaned lease row, so a lease row
+  orphaned any other way never answers a heartbeat. A refresh and a refusal
+  still make no Dolt commit on any route; a re-arm commits only its own
+  tables (never `DOLT_COMMIT('-Am')`), so another writer's uncommitted
+  batch-mode edits to other tables stay uncommitted (a re-arm stages its
+  tables whole, as every other direct-route write does). On embedded Dolt, a heartbeat landing in
+  the same second as the previous one no longer re-grants the lease
+  (rewriting its `granted_at` / `granted_node`), and on every route a
+  heartbeat whose actor is a different spelling of the lease's holder
+  (`gastown.mayor` for `gastown__mayor`) refreshes the lease in place,
+  keeping its `granted_at` and granting replica, instead of re-granting it
+  under this node. For a Postgres port: the
+  refresh now reads the issue row, so under SERIALIZABLE expect more retried
+  serialization failures between a holder's own edits and its heartbeat.
 - **`bd gate list` works over a connected HTTP workspace** (S20). The
   workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
   backend refuses, so gc's `renudge-stale-human-gates` order failed on every

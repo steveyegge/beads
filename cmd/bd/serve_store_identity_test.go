@@ -217,6 +217,12 @@ func (*serveIdentityStore) Releaser() (issueops.Releaser, error) { return serveI
 func (*serveIdentityStore) LeaseReclaimer() (issueops.LeaseReclaimer, error) {
 	return serveIdentityRole{}, nil
 }
+
+// Heartbeater is declared at depth 1 for the same reason: its hook decorator
+// recurses, and the recursion would otherwise land on a nil-embedded promotion.
+func (*serveIdentityStore) Heartbeater() (issueops.Heartbeater, error) {
+	return serveIdentityRole{}, nil
+}
 func (*serveIdentityStore) IssueLifecycle() (issueops.Lifecycle, error) {
 	return serveIdentityRole{}, nil
 }
@@ -305,6 +311,7 @@ type serveIdentityRole struct {
 	issueops.Lifecycle
 	issueops.Releaser
 	issueops.LeaseReclaimer
+	issueops.Heartbeater
 	issueops.ReadyClaimer
 	issueops.BatchCloser
 	issueops.MetadataCAS

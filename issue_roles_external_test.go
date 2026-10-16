@@ -846,3 +846,35 @@ func TestDeleterExposesTypedUnsupportedError(t *testing.T) {
 		t.Fatalf("Deleter() error = %v, want *beads.ErrUnsupported", err)
 	}
 }
+
+// TestHeartbeaterLayersHooksOutsideTelemetry is the same pin for the lease
+// refresh. It gives the release's answer: a refresh fires nothing, but a
+// re-arm is recorded as a mutation and fires on_update
+// (internal/storage/hook_heartbeater.go), so this decorator wraps rather than
+// recursing the way Sweeper and Deleter do.
+func TestHeartbeaterLayersHooksOutsideTelemetry(t *testing.T) {
+	t.Setenv("BD_OTEL_STDOUT", "true")
+	instrumented, ok := telemetry.WrapStorage(&dolt.DoltStore{}).(*telemetry.InstrumentedStorage)
+	if !ok {
+		t.Fatal("WrapStorage() did not create InstrumentedStorage")
+	}
+
+	heartbeater, err := storage.NewHookFiringStore(instrumented, nil).Heartbeater()
+	if err != nil {
+		t.Fatalf("Heartbeater() error = %v", err)
+	}
+	if got := reflect.TypeOf(heartbeater).String(); got != "*storage.hookHeartbeater" {
+		t.Fatalf("outer layer = %s, want the hook wrapper", got)
+	}
+}
+
+func TestHeartbeaterExposesTypedUnsupportedError(t *testing.T) {
+	heartbeater, err := (*dolt.DoltStore)(nil).Heartbeater()
+	if heartbeater != nil {
+		t.Fatalf("Heartbeater() heartbeater = %T, want nil", heartbeater)
+	}
+	var unsupported *beads.ErrUnsupported
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("Heartbeater() error = %v, want *beads.ErrUnsupported", err)
+	}
+}

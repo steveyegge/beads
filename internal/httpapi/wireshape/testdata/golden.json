@@ -2040,6 +2040,44 @@
       "required": true
     },
     {
+      "schema": "HeartbeatIssueRequest",
+      "member": "actor",
+      "type": "string",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "heartbeat_at",
+      "type": "string",
+      "format": "date-time",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "holder",
+      "type": "string",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "lease_expires_at",
+      "type": "string",
+      "format": "date-time",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "rearmed",
+      "type": "boolean",
+      "required": true
+    },
+    {
       "schema": "Issue",
       "member": "acceptance_criteria",
       "type": "string",
@@ -5752,6 +5790,13 @@
       "default": "false"
     },
     {
+      "schema": "param:heartbeatIssue",
+      "member": "path:id",
+      "type": "string",
+      "required": true,
+      "style": "simple"
+    },
+    {
       "schema": "param:listBlockingAnnotations",
       "member": "query:is_blocked",
       "type": "boolean",
@@ -6404,6 +6449,8 @@
     "EventRecord.issue": "response",
     "EventsPage": "response",
     "Health": "response",
+    "HeartbeatIssueRequest": "request",
+    "HeartbeatIssueResponse": "response",
     "Issue": "response",
     "Issue.labels[]": "response",
     "Issue.metadata": "response",

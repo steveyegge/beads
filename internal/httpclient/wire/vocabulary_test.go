@@ -69,6 +69,7 @@ func TestOperationIdsMatchTheServerRouteTable(t *testing.T) {
 		{OpWatchEvents, httpapi.OpWatchEvents},
 		{OpBatchGetIssues, httpapi.OpBatchGetIssues},
 		{OpReclaimIssues, httpapi.OpReclaimIssues},
+		{OpHeartbeatIssue, httpapi.OpHeartbeatIssue},
 		{OpAdvanceMolecule, httpapi.OpAdvanceMolecule},
 	}
 
@@ -186,6 +187,9 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	}
 	if ReasonProjectMismatch != string(httpapi.ReasonProjectMismatch) {
 		t.Errorf("ReasonProjectMismatch = %q, server says %q", ReasonProjectMismatch, httpapi.ReasonProjectMismatch)
+	}
+	if ReasonEphemeral != string(httpapi.ReasonEphemeral) {
+		t.Errorf("ReasonEphemeral = %q, server says %q", ReasonEphemeral, httpapi.ReasonEphemeral)
 	}
 	if WireRevisionHeader != httpapi.WireRevisionHeader {
 		t.Errorf("WireRevisionHeader = %q, server says %q", WireRevisionHeader, httpapi.WireRevisionHeader)
