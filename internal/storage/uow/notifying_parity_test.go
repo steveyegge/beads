@@ -172,8 +172,9 @@ func TestRecordingIssueUseCaseCoversItsSurface(t *testing.T) {
 			"ReclaimExpiredLeases":         leases,
 			"WakeExpiredDefers": "the deferred-work sweep is a clock crossing rather than a user's " +
 				"mutation, and the DoltStorage plumbing fires nothing for it",
-			"PromoteWisp": "moves a row between planes without changing the bead; the DoltStorage " +
-				"plumbing has no promote hook either",
+			"PromoteWisp": "no route calls it: bd promote moves the row with ApplyUpdate's " +
+				"persistence spec, which records the update, and its DoltStorage twin, " +
+				"PromoteFromEphemeral, fires no hook either",
 		})
 }
 
@@ -202,6 +203,7 @@ func TestRecordingDependencyUseCaseCoversItsSurface(t *testing.T) {
 			"GetIssueDependencyRecords":            reads,
 			"GetWispDependencyRecords":             reads,
 			"IsBlocked":                            reads,
+			"IsBlockedBatch":                       reads,
 			"IsWispBlocked":                        reads,
 			"IterWispWithIssueMetadata":            reads,
 			"IterWithIssueMetadata":                reads,

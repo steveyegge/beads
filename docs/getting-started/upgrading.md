@@ -34,7 +34,7 @@ bd info --whats-new
    `bd version`
 5. If crossing a schema migration on a remote-backed database, only the
    designated migrator runs:
-   `bd migrate`
+   `bd migrate schema`
    `bd dolt push`
 
 Other clones must not migrate independently. After the migrator pushes, each
@@ -139,7 +139,7 @@ bd migrate --inspect --json
 bd migrate --dry-run
 
 # Apply migrations
-bd migrate
+bd migrate schema
 
 # Migrate and clean up old files
 bd migrate --yes
@@ -284,7 +284,9 @@ There is one exception, and the gate names it when it applies: if the stop is
 the *data-behind* one — this clone is level with the remote on schema but is
 missing commits it has not pulled — then `bd dolt pull` is the remedy and is
 allowed through, because migrating before that pull is what wedges the clone.
-See [Clone behind the remote](#clone-behind-the-remote). Every other
+A proxied-server workspace refuses `bd dolt pull` outright, so there the pull
+runs on the server host instead. See
+[Clone behind the remote](#clone-behind-the-remote). Every other
 pending-migration refusal still blocks the pull, so the ordering rule above is
 what to plan for.
 
@@ -307,7 +309,7 @@ also copy the `.beads` directory (or `dolt backup` in server mode) while no
 bd dolt push                              # 1. CURRENT binary: publish all local work
 bd export --all -o .beads/backup/pre-migrate.jsonl   # 2. backup (see above)
 # 3. install the new binary (see Upgrading above)
-bd migrate                                # 4. migrate as the designated migrator
+bd migrate schema                         # 4. migrate as the designated migrator
 bd dolt push                              # 5. publish the migrated schema
 bd version                                # 6. confirm the new version is active
 ```
@@ -317,10 +319,10 @@ migrating here as the designated migrator, adopting the remote's already-migrate
 database, or recovering a fork — and asks for an explicit operator decision.
 Follow the guidance it prints.
 
-For scripted or CI upgrades where nobody reads the output, run `bd migrate` as
-an explicit step in exactly one job, never in all of them. If the gate blocks a
-run it prints both the available options and the scripted override that fits
-the situation.
+For scripted or CI upgrades where nobody reads the output, run
+`bd migrate schema` as an explicit step in exactly one job, never in all of
+them. If the gate blocks a run it prints both the available options and the
+scripted override that fits the situation.
 
 **Multiple clones sharing one remote:**
 
@@ -332,7 +334,7 @@ bd dolt pull
 bd export --all -o .beads/backup/pre-migrate.jsonl
 
 # 2. Designated migrator ONLY: install the new binary, then migrate and publish.
-bd migrate
+bd migrate schema
 bd dolt push
 
 # 3. Every OTHER clone, after the migrator has pushed: pull the migrated
@@ -384,6 +386,8 @@ It runs in both server and embedded modes.
 
 This is the one pending-migration stop whose remedy is a `bd dolt pull`, and
 the one the gate links here rather than to the migrate-or-adopt recipe above.
+A proxied-server workspace refuses that pull, so it runs on the server host
+instead; the last part of this section covers that case.
 
 It fires when the clone is **level with the remote on schema but behind it in
 data** — the remote has commits this clone has not pulled. On schema alone the
@@ -430,6 +434,25 @@ bare `bd migrate schema` consent applies only to a shared database with *no*
 remote. It is safe at this point and only at this point: the pull has already
 landed the commits the clone was missing.
 
+**In proxied-server mode** the database is shared too, so the same two steps
+apply, but they run from two places. The workspace refuses `bd dolt pull`
+(`proxy.dolt_pull.unsupported`) and `bd conflicts`, so the pull, and any
+conflict resolution it needs, runs where the database lives: on the server
+host, from a workspace with direct database access. The consent step can then
+be run from the proxied workspace, but only once that pull has landed:
+
+```bash
+bd dolt pull                     # on the server host, with direct database access
+bd migrate schema --force        # then, from the proxied workspace
+```
+
+Nothing in the proxied workspace enforces that order. It refuses the bare
+`bd migrate` verb but not `bd migrate schema --force`, and
+`BD_ALLOW_REMOTE_MIGRATE=1` grants the same consent to any command. Both are
+honored before this stop is reached, so the stop never sees them: run either
+one before the pull and it migrates the database while it is still behind.
+Do not reach for either to get past the stop.
+
 ### Shared servers
 
 A server-mode database is served to every `bd` client connected to that
@@ -443,8 +466,9 @@ configured, though the two cases consent differently
 Upgrade one server's clients like this:
 
 ```bash
-# 1. Upgrade bd on every client of the server. Until step 2, an upgraded
-#    client refuses writes and most reads fail (see below).
+# 1. Upgrade bd on every client of the server. Reads keep working throughout —
+#    an upgraded client reads the old schema, it just cannot write to it
+#    (unless the server's schema is v53 or older; see below).
 bd version                     # on each client, confirm the new version
 
 # 2. Once, from a workspace already set up against this server: consent.
@@ -454,11 +478,15 @@ bd migrate schema              # add --global for the shared global database
 bd doctor
 ```
 
-Between steps 1 and 2, an upgraded client refuses writes with the gate's
-guidance, and most reads fail too: `bd list`, `bd show` and `bd ready` stop
-with `table not found: leases`, because 1.3 reads expect tables the old schema
-lacks. Nothing is silently promoted, so there is no deadline, but nothing works
-in that window either, so run step 2 as soon as the clients are upgraded.
+Between steps 1 and 2, an upgraded client reads normally and its writes are
+refused with the gate's guidance. Nothing is silently promoted, so there is no
+deadline — but the window is a degraded one, so keep it short.
+
+If the server's schema is v53 or older (1.1.x, or 1.2.2, the re-release of
+the 1.1 line), reads can fail too until step 2: `bd list` stops with
+`table not found: leases`
+([#6929](https://github.com/gastownhall/beads/issues/6929)). Run step 2 as
+soon as the clients are upgraded.
 
 **If the shared server also has a Dolt remote**, step 2 is not enough. Two
 hazards now apply at once — the co-resident lockout above and the cross-clone
@@ -485,7 +513,7 @@ there: do step 2 from a client that is already set up, or join and migrate in
 one step with `BD_ALLOW_REMOTE_MIGRATE=1 bd init …`.
 
 The same rules apply in **proxied-server mode**, which is a shared server
-reached through a local proxy. Two differences worth knowing:
+reached through a local proxy. Three differences worth knowing:
 
 - read commands print a warning and keep serving the current schema, rather
   than the read simply not touching it;
@@ -493,7 +521,10 @@ reached through a local proxy. Two differences worth knowing:
   because a daemon has no operator to consent for it. Reconcile the schema
   first with step 2, then start the daemon — or, for an unattended service,
   put `BD_ALLOW_REMOTE_MIGRATE=1` in its environment as an explicit, auditable
-  standing consent.
+  standing consent;
+- the data-behind stop's remedy, `bd dolt pull`, cannot be run from the
+  proxied workspace: run it on the server host first, then consent from the
+  proxied workspace (see [Clone behind the remote](#clone-behind-the-remote)).
 
 ## Cross-era Upgrades
 
@@ -533,9 +564,11 @@ bridge below accepts SQLite sources only.
 
 ### `.beads/embeddeddolt/`: direct upgrade
 
-Upgrade the binary and run:
+Upgrade the binary, apply the pending schema migrations, and update the
+database metadata:
 
 ```bash
+bd migrate schema
 bd migrate
 ```
 
@@ -584,8 +617,8 @@ metadata is missing or leaves `dolt_mode` blank/`embedded`; it does not override
 an explicit server selection with a local root. Compatibility admission cannot
 prove that a workspace is modern. If you know it was created by v0.55.4 through
 v0.62.0, use this explicit bridge even when its witness was lost or damaged.
-Otherwise, follow the normal `bd migrate --dry-run` and `bd migrate` flow for
-an admitted server workspace.
+Otherwise, follow the normal `bd migrate --dry-run` and `bd migrate schema`
+flow for an admitted server workspace.
 
 ### One `.beads/*.db` file: sealed SQLite bridge
 
@@ -648,7 +681,7 @@ bd hooks install
 
 ```bash
 bd migrate --dry-run
-bd migrate
+bd migrate schema
 ```
 
 ### Recovery after upgrade

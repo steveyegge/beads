@@ -97,7 +97,13 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			if claimReady {
 				return HandleErrorRespectJSON("--claim cannot be combined with --mol")
 			}
-			return runMoleculeReady(cmd, molID)
+			if store == nil {
+				return HandleErrorRespectJSON("no database connection")
+			}
+			resolve := func(ctx context.Context, arg string) (string, error) {
+				return utils.ResolvePartialID(ctx, store, arg)
+			}
+			return runMoleculeReady(rootCtx, store, resolve, molID)
 		}
 
 		explain, _ := cmd.Flags().GetBool("explain")
@@ -159,7 +165,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				return nil
 			}
 			claimed := res.Claimed
-			if err := commitPendingIfEmbedded(ctx, activeStore, actor, doltAutoCommitParams{
+			if err := commitPendingIfEmbedded(ctx, activeStore, currentActor(), doltAutoCommitParams{
 				Command:  "ready",
 				IssueIDs: []string{claimed.ID},
 			}); err != nil {
@@ -554,17 +560,11 @@ func runReadyExplain(_ *cobra.Command) error {
 		debug.Logf("warning: failed to detect cycles: %v", err)
 	}
 
-	// Collect all blocker IDs to batch-fetch blocker details
-	allBlockerIDs := make(map[string]bool)
-	for _, bi := range blockedIssues {
-		for _, blockerID := range bi.BlockedBy {
-			allBlockerIDs[blockerID] = true
-		}
-	}
-	blockerIDList := make([]string, 0, len(allBlockerIDs))
-	for id := range allBlockerIDs {
-		blockerIDList = append(blockerIDList, id)
-	}
+	// Collect all blocker IDs to batch-fetch blocker details: the blockers
+	// of blocked issues, plus the blocking-dependency targets of the ready
+	// issues, whose status decides whether --explain reports each as
+	// resolved, pinned or open.
+	blockerIDList := explainBlockerIDs(blockedIssues, readyIssues, allDeps)
 
 	// Build ready items with explanations
 	// TODO(batchgetter): unbounded id list; see issueops.BatchGetter's doc and
@@ -596,9 +596,7 @@ func runReadyExplain(_ *cobra.Command) error {
 				ui.RenderPriority(item.Priority),
 				item.Title)
 			fmt.Printf("    Reason: %s\n", item.Reason)
-			if len(item.ResolvedBlockers) > 0 {
-				fmt.Printf("    Resolved blockers: %s\n", strings.Join(item.ResolvedBlockers, ", "))
-			}
+			printReadyItemDependencies(item)
 			if item.DependentCount > 0 {
 				fmt.Printf("    Unblocks: %d issue(s)\n", item.DependentCount)
 			}
@@ -645,37 +643,32 @@ func runReadyExplain(_ *cobra.Command) error {
 	return nil
 }
 
-func runMoleculeReady(_ *cobra.Command, molIDArg string) error {
-	ctx := rootCtx
-
-	if store == nil {
-		return HandleErrorRespectJSON("no database connection")
-	}
-
-	moleculeID, err := utils.ResolvePartialID(ctx, store, molIDArg)
+// runMoleculeReady is `bd ready --mol` on every route. The molecule's nodes,
+// their readiness, the ready list and parallel groups are the library's one
+// derivation (issueops.ViewMolecule, shared with `mol current`); what is here
+// is presentation.
+func runMoleculeReady(ctx context.Context, s storage.DoltStorage, resolve func(context.Context, string) (string, error), molIDArg string) error {
+	moleculeID, err := resolve(ctx, molIDArg)
 	if err != nil {
-		return HandleErrorRespectJSON("molecule '%s' not found", molIDArg)
+		return moleculeNotResolved(molIDArg, err)
 	}
-
-	subgraph, err := loadTemplateSubgraph(ctx, store, moleculeID)
+	roles, err := currentMoleculeRoles(s)
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	view, err := issueops.ViewMolecule(ctx, roles.molecule, moleculeID)
 	if err != nil {
 		return HandleErrorRespectJSON("loading molecule: %v", err)
 	}
-
-	// Get parallel analysis to find ready steps
-	analysis := analyzeMoleculeParallel(subgraph)
-
-	// Collect ready steps
+	subgraph, analysis := view.Graph, view.Analysis
 	var readySteps []*MoleculeReadyStep
-	for _, issue := range subgraph.Issues {
+	for _, issue := range view.Ready {
 		info := analysis.Steps[issue.ID]
-		if info != nil && info.IsReady {
-			readySteps = append(readySteps, &MoleculeReadyStep{
-				Issue:         issue,
-				ParallelInfo:  info,
-				ParallelGroup: info.ParallelGroup,
-			})
-		}
+		readySteps = append(readySteps, &MoleculeReadyStep{
+			Issue:         issue,
+			ParallelInfo:  info,
+			ParallelGroup: info.ParallelGroup,
+		})
 	}
 
 	if jsonOutput {
@@ -807,4 +800,49 @@ func init() {
 	blockedCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	blockedCmd.Flags().StringSlice("exclude-label", []string{}, "Exclude issues that have ANY of these labels")
 	rootCmd.AddCommand(blockedCmd)
+}
+
+// explainBlockerIDs collects, once each, the ids whose status --explain
+// needs: every blocker of a blocked issue, and the target of every blocking
+// dependency (blocks, conditional-blocks, waits-for) of a ready issue. The
+// ready targets matter because the ready query admits an issue whose blocking
+// targets are closed OR pinned, and only the target's status tells the
+// explanation which of the two it saw.
+func explainBlockerIDs(blockedIssues []*types.BlockedIssue, readyIssues []*types.Issue, allDeps map[string][]*types.Dependency) []string {
+	seen := make(map[string]bool)
+	var ids []string
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	for _, bi := range blockedIssues {
+		for _, blockerID := range bi.BlockedBy {
+			add(blockerID)
+		}
+	}
+	for _, issue := range readyIssues {
+		for _, dep := range allDeps[issue.ID] {
+			if dep.Type == types.DepBlocks || dep.Type == types.DepConditionalBlocks || dep.Type == types.DepWaitsFor {
+				add(dep.DependsOnID)
+			}
+		}
+	}
+	return ids
+}
+
+// printReadyItemDependencies prints the three dependency lines of a ready
+// item in --explain's text form, each only when non-empty.
+func printReadyItemDependencies(item types.ReadyItem) {
+	if len(item.ResolvedBlockers) > 0 {
+		fmt.Printf("    Resolved blockers: %s\n", strings.Join(item.ResolvedBlockers, ", "))
+	}
+	if len(item.PinnedDependencies) > 0 {
+		fmt.Printf("    Pinned dependencies (never block): %s\n", strings.Join(item.PinnedDependencies, ", "))
+	}
+	if len(item.OpenDependencies) > 0 {
+		fmt.Printf("    Open dependencies (not blocking): %s\n", strings.Join(item.OpenDependencies, ", "))
+	}
 }

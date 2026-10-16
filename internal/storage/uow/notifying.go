@@ -31,8 +31,8 @@
 // # Where this plumbing deliberately differs from the DoltStorage one
 //
 // Every per-verb firing rule below is matched 1:1 against the decorator that
-// implements it (each override cites its twin). These five are the exceptions,
-// and they are listed here rather than argued in five places:
+// implements it (each override cites its twin). These four are the exceptions,
+// and they are listed here rather than argued in four places:
 //
 //  1. LABEL MULTIPLICITY ON CREATE. The DoltStorage chain replays a legacy
 //     sequence for a create that carries labels: on_create with the labels
@@ -61,16 +61,7 @@
 //     that writes nothing; the DoltStorage plumbing passes the precondition
 //     into the close. See specWrites.
 //
-//  5. THE PROMOTION COMMENT. `bd promote` records an audit comment on the
-//     promoted issue, and this plumbing's one comment verb fires on_update for
-//     it. The DoltStorage route writes that comment through the legacy
-//     AddComment, which the decorator wraps only INSIDE a transaction
-//     (hookTrackingTransaction.AddComment) and not at the store level, where
-//     promote calls it — so an embedded promote fires nothing. One verb cannot
-//     tell which caller it is serving, and "a comment landed" is the on_update
-//     this vocabulary has.
-//
-// A sixth is not a divergence but is worth stating: a unit of work whose commit
+// A fifth is not a divergence but is worth stating: a unit of work whose commit
 // message is empty is ROLLED BACK by RunTxResult, and a rolled-back attempt
 // fires nothing — so a write that lands nothing reports nothing, on both
 // plumbings.
@@ -242,6 +233,10 @@ func (p *notifyingProvider) BatchGetter() (publicops.BatchGetter, error) {
 	return NewBatchGetter(p)
 }
 
+func (p *notifyingProvider) MoleculeStepper() (publicops.MoleculeStepper, error) {
+	return NewMoleculeStepper(p)
+}
+
 func (p *notifyingProvider) Counter() (publicops.Counter, error) { return NewCounter(p) }
 
 func (p *notifyingProvider) ReadyCounter() (publicops.ReadyCounter, error) {
@@ -308,6 +303,10 @@ func (p *notifyingProvider) VersionReconciler() (publicops.VersionReconciler, er
 func (p *notifyingProvider) MetadataCAS() (publicops.MetadataCAS, error) { return NewMetadataCAS(p) }
 
 func (p *notifyingProvider) Releaser() (publicops.Releaser, error) { return NewReleaser(p) }
+
+func (p *notifyingProvider) LeaseReclaimer() (publicops.LeaseReclaimer, error) {
+	return NewLeaseReclaimer(p)
+}
 
 func (p *notifyingProvider) Memories() (memoryops.Memories, error) { return NewMemories(p) }
 
@@ -405,6 +404,7 @@ var (
 	_ TreeWalkerSource          = (*notifyingProvider)(nil)
 	_ GraphCounterSource        = (*notifyingProvider)(nil)
 	_ BatchGetterSource         = (*notifyingProvider)(nil)
+	_ MoleculeStepperSource     = (*notifyingProvider)(nil)
 	_ CounterSource             = (*notifyingProvider)(nil)
 	_ ReadyCounterSource        = (*notifyingProvider)(nil)
 	_ ReadyClaimerSource        = (*notifyingProvider)(nil)
@@ -423,6 +423,7 @@ var (
 	_ WorkspaceConfigSource     = (*notifyingProvider)(nil)
 	_ VersionReconcilerSource   = (*notifyingProvider)(nil)
 	_ MemoriesSource            = (*notifyingProvider)(nil)
+	_ LeaseReclaimerSource      = (*notifyingProvider)(nil)
 	_ EventsJournalCursorSource = (*notifyingProvider)(nil)
 )
 
@@ -1006,6 +1007,25 @@ func (u *recordingIssueUC) ReleaseIssue(ctx context.Context, req publicops.Relea
 	}
 	u.rec.record(opUpdate, u.snap.anyPlane(ctx, req.IssueID))
 	return result, wrote, nil
+}
+
+// Reclaim records an update for every lease the sweep reverted.
+//
+// It is DECLARED for the same reason ReleaseIssue above is: an inherited
+// accessor would compile and record nothing, silently dropping the hook the
+// DoltStorage chain fires once per reverted row.
+//
+// A sweep reverts only issues, never wisps, so the snapshot is the issues-
+// plane snap.issue rather than anyPlane.
+func (u *recordingIssueUC) Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error) {
+	result, err := u.IssueUseCase.Reclaim(ctx, request)
+	if err != nil {
+		return result, err
+	}
+	for _, r := range result.Reclaimed {
+		u.rec.record(opUpdate, u.snap.issue(ctx, r.ID))
+	}
+	return result, nil
 }
 
 func (u *recordingIssueUC) UpdateWisp(ctx context.Context, id string, updates map[string]any, actor string) error {

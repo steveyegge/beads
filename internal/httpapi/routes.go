@@ -119,6 +119,184 @@ const CapIssuesListSort = "issues.list.sort"
 // count.
 const CapIssuesCountScope = "issues.count.scope"
 
+// CapIssuesListSearch is the behavior capability that advertises GET
+// /v0/beads/issues' `q` parameter (reads.go, spec `q` on OpListIssues):
+// `bd search`'s free text, carried as issueops.ListRequest.Query. Like
+// CapIssuesListSort it names a PARAMETER added to an existing operation, so it
+// rides behaviorCapabilities, and it is the token the parameter's OpenAPI
+// description cites for TestNewParameterOnExistingOperationHasABehaviorToken.
+//
+// The client (internal/httpclient) refuses a search locally against a server
+// that does not advertise it, with ErrUnsupported naming the token, so a
+// search is never sent to a server that would answer `unknown_parameter` and
+// is never widened into an unsearched listing.
+const CapIssuesListSearch = "issues.list.search"
+
+// CapIssuesListNoAssignee and CapIssuesListTitle are the behavior
+// capabilities that advertise GET /v0/beads/issues' `no_assignee` and `title`
+// parameters (reads.go, spec OpListIssues): `bd list --no-assignee` and
+// `--title`, carried as issueops.ListRequest's NoAssignee and TitleSearch and
+// applied by the same Reader role (workapi.BuildListFilter) the local route
+// reads through. Like CapIssuesListSearch each names a PARAMETER added to an
+// existing operation, so each rides behaviorCapabilities and is the token its
+// parameter's OpenAPI description cites for
+// TestNewParameterOnExistingOperationHasABehaviorToken.
+//
+// One token per parameter rather than one for the set: each is a separate
+// cutover dependency of a separate caller (gc's on_boot recovery, the PR-intake
+// formula; CapListIDs below is the pr-review skill's), and a client names
+// exactly the one a refused request needed.
+//
+// The client (internal/httpclient) refuses a request carrying either locally
+// against a server that does not advertise its token, with ErrUnsupported
+// naming the token: an older server answers the parameter with
+// `unknown_parameter`, and dropping it would answer a WIDER listing than asked
+// for (for gc's on_boot recovery, every in-progress bead, assigned or not).
+const (
+	CapIssuesListNoAssignee = "issues.list.noAssignee"
+	CapIssuesListTitle      = "issues.list.title"
+)
+
+// CapListIDs is the behavior capability that advertises the repeatable `id`
+// filter on listIssues (issueops.ListRequest.IDFilter; `bd list --id`). It
+// rides beside `issues.list` for the reason CapIssuesListSort does: the
+// operation already exists, and what this announces is one more member it
+// understands. The contract — one id per value, at most maxListIDs values,
+// each matched exactly as sent — and the token's spelling are bd-enterprise's
+// (E9-S2), adopted unchanged so the two servers publish one `id`.
+const CapListIDs = "issues.list.ids"
+
+// CapDependenciesBlockingIsBlocked is the behavior capability that advertises
+// GET /v0/beads/dependencies/blocking's `is_blocked` parameter (blocking.go):
+// issueops.BlockingRequest.IncludeIsBlocked, which adds each item's stored,
+// transitive is_blocked flag to the decoration. It is the batched readiness
+// projection behind storage's IsBlockedBatch on a role-served backend
+// (issueops.BlockedFlags). The client refuses the read locally, naming this
+// token, against a server that does not advertise it.
+const CapDependenciesBlockingIsBlocked = "dependencies.blocking.isBlocked"
+
+// CapIssuesSweepWispsPlane is the behavior capability that advertises the
+// `wisps-plane` value of SweepRequest.tier (sweep.go, spec SweepRequest.tier):
+// a third, wider tier that clears the whole wisps table plus any durable bead
+// with no history row, in one pass (issueops.SweepWispsPlane). An older
+// server predating this token answers the value with a `400
+// invalid_argument`/`invalid_value` naming the member, the same per-value
+// refusal CapIssuesCountScope's doc describes for a whole parameter. The
+// client MUST check this token before sending `tier: "wisps-plane"` to a
+// server that may predate it.
+const CapIssuesSweepWispsPlane = "issues.sweep.wispsPlane"
+
+// CapIssuesSweepLiveDependents is the behavior capability that advertises
+// SweepRequest.protect_live_dependents and the paired SweepSkips.live_dependent
+// response member (sweep.go): skip a closed candidate a live bead still
+// depends on, transitively, across the ephemeral/durable plane boundary
+// (issueops.SweepRequest.ProtectLiveDependents). An older server predating
+// this token answers the request member with `400
+// invalid_argument`/`unknown_parameter`. The client MUST check this token
+// before sending the member to a server that may predate it.
+const CapIssuesSweepLiveDependents = "issues.sweep.liveDependents"
+
+// CapIssuesSweepLimit is the behavior capability that advertises
+// SweepRequest.limit and the paired SweepResult.remaining response member
+// (sweep.go): cap how many beads one sweep deletes, oldest-closed-first
+// (issueops.SweepRequest.Limit / SweepResult.Remaining). An older server
+// predating this token answers the request member with `400
+// invalid_argument`/`unknown_parameter`. The client MUST check this token
+// before sending the member to a server that may predate it.
+const CapIssuesSweepLimit = "issues.sweep.limit"
+
+// CapBatchApplyDepAddLineage is the behavior capability that advertises
+// ApplyDepAddItem's `has_spawner` and `thread_id` members (batch_apply.go):
+// additive fields a `dep_add` item may carry alongside `source`, `target`,
+// `type` and `metadata`. Like CapBatchApplyLarge it names members of an
+// EXISTING operation (issues.batchApply already has its own per-operation
+// token) rather than a route of its own, so it rides the same
+// behaviorCapabilities list. An older server predating this token answers
+// either member with `400 invalid_argument`/`unknown_parameter`. The client
+// MUST check this token before sending either member to a server that may
+// predate it; it refuses locally before the dial when the token is absent.
+const CapBatchApplyDepAddLineage = "issues.batchApply.depAddLineage"
+
+// CapIssuesUpdateAllowTemplate is the behavior capability that advertises
+// two things together: updateIssue enforces the role's template read-only
+// refusal, and UpdateIssueRequest's `allow_template` member (update.go) stands
+// it down for one request (the caller edits a template deliberately). An
+// older server predating this token answers the member with
+// `400 invalid_argument`/`unknown_parameter` and applies no template guard,
+// so a client that does not see the token refuses a template update itself
+// before the dial and sends the request without the member. That fallback
+// covers updateIssue only: an applyBatch `update` item gets no client-side
+// check (its target resolves on the server), so through an older server it
+// still edits a template (bd-jkp9v3).
+const CapIssuesUpdateAllowTemplate = "issues.update.allowTemplate"
+
+// CapIssuesUpdatePersistence is the behavior capability that advertises
+// IssuePatchBody.persistence on updateIssue: the role's
+// IssuePatch.Persistence, which moves the row between the durable and the wisp
+// plane in the update's own transaction. It is what `bd promote`
+// (issueops.Promote) and `bd update --persistent/--ephemeral/--no-history`
+// send over http. An older server answers the member with `400
+// invalid_argument`/`unknown_parameter`; a client that does not see this token
+// refuses the move before the dial, naming the token, rather than sending it.
+const CapIssuesUpdatePersistence = "issues.update.persistence"
+
+// CapIssuesUpdateClaim is the behavior capability that advertises
+// UpdateIssueRequest's `claim` member (update.go, upstream #6890): updateIssue
+// claims the row in the update's own transaction, through the same
+// Lifecycle.Update the direct route's `bd update --claim` runs, and resolves
+// the id on BOTH planes, so a wisp is claimable here where claimIssue (the
+// Claimer role) answers it not-found by contract. A claim combines with a
+// patch and with `expected_version` in one write and answers the post-write
+// `revision`; a wisp claim takes no lease.
+//
+// The member shipped untokened (it is on the pretoken request-body baseline),
+// so a client could only find it by eating the skew 400. The token makes that
+// a handshake read: a client that does not see it sends a claim alone to
+// claimIssue (where a wisp refuses by name, W-ClaimRequest.Wisp) and refuses a
+// claim beside anything else before the dial, naming this token. One token
+// covers both planes: no server has served `claim` on one plane only.
+const CapIssuesUpdateClaim = "issues.update.claim"
+
+// CapIssuesCreateDefaultPriority is the behavior capability that advertises
+// that issues.create, issues.batchCreate and issues.batchApply's create items
+// store the create default priority (P2) for a request whose `priority` member
+// is ABSENT. An older server predating this token reads an absent priority as
+// 0 and stores P0 (critical), so a client that does not see the token MUST
+// send the default explicitly rather than omit the member.
+const CapIssuesCreateDefaultPriority = "issues.create.defaultPriority"
+
+// CapExternalDependencies is the CONDITIONAL behavior capability announcing
+// that this server's ready, claim, claim-next, close, blocking-annotation and
+// dependency-tree operations already apply bd's external-dependency policy
+// (an issue blocked by an unsatisfied `external:<project>:<capability>`
+// dependency is not ready, not claimable and not closable without force). A
+// client that sees it must pass those operations through untouched: running
+// the policy again on the client would judge it against the CLIENT machine's
+// project configuration and would turn the server's atomic claim-next into a
+// read-then-claim loop.
+//
+// It is not in behaviorCapabilities because it is not a property of the
+// build: the policy is a decorator the serving process composes its roles or
+// provider through. Listen advertises it exactly when Config says the roles it
+// was handed were composed that way (Config.ExternalDependencyPolicy), so the
+// token is never advertised by a server that does not enforce the policy.
+const CapExternalDependencies = "policy.external_dependencies"
+
+// conditionalCapabilities are the behavior tokens a server advertises only
+// when its configuration says the behavior is in force. Capabilities() never
+// lists them; advertisedCapabilities adds each one whose condition holds.
+var conditionalCapabilities = []string{CapExternalDependencies}
+
+// CapIssuesCloseAutoCloseMolecule is the behavior capability that advertises
+// CloseIssueRequest.auto_close_molecule and BatchCloseRequest.auto_close_molecule
+// with their paired response members (auto_closed_molecule,
+// molecule_auto_close_refusal): close a completed molecule's root in the same
+// transaction as the step close (issueops.CloseRequest.AutoCloseMolecule). An
+// older server answers the request member with `400
+// invalid_argument`/`unknown_parameter`; the client checks this token before
+// sending it.
+const CapIssuesCloseAutoCloseMolecule = "issues.close.autoCloseMolecule"
+
 // customMethodTarget splits the custom method off the segment the router
 // matched, and reports the row that claims it.
 //
@@ -675,6 +853,16 @@ var routeTable = []route{
 		handler:      (*Server).handleReopen,
 	},
 	{
+		op:           OpAdvanceMolecule,
+		method:       http.MethodPost,
+		pattern:      customMethodPattern,
+		specPath:     "/v0/beads/issues/{id}:advanceMolecule",
+		customMethod: ":advanceMolecule",
+		capability:   "issues.advanceMolecule",
+		implemented:  true,
+		handler:      (*Server).handleAdvanceMolecule,
+	},
+	{
 		op:     OpBatchCloseIssues,
 		method: http.MethodPost,
 		// A collection-level custom method, spelled the way issues:batchCreate
@@ -740,6 +928,17 @@ var routeTable = []route{
 		capability:  "issues.batchGet",
 		implemented: true,
 		handler:     (*Server).handleBatchGetIssues,
+	},
+	{
+		op:     OpReclaimIssues,
+		method: http.MethodPost,
+		// A literal collection-level custom method, registered and preferred
+		// over the claim's wildcard for the sweep row's reason: without it,
+		// a reclaim would parse as a claim of an issue called ":reclaim".
+		pattern:     "/v0/beads/issues:reclaim",
+		capability:  "issues.reclaim",
+		implemented: true,
+		handler:     (*Server).handleReclaimIssues,
 	},
 	{
 		op:     OpAddDependencies,
@@ -866,7 +1065,13 @@ func (r route) specPathOf() string {
 // route. project.enforce announces per-request Bd-Project-Id enforcement
 // (checkProjectStamp): a stamped client reads it to know the refusal is available
 // rather than silently dropped by an older server.
-var behaviorCapabilities = []string{CapProjectEnforce, CapBatchApplyLarge, CapIssuesListSort, CapIssuesCountScope}
+var behaviorCapabilities = []string{
+	CapProjectEnforce, CapBatchApplyLarge, CapIssuesListSort, CapIssuesCountScope,
+	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
+	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
+	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
+	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked, CapIssuesUpdateClaim,
+}
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:
 // the operations it actually implements, gated on `implemented` so a stub can
@@ -883,5 +1088,16 @@ func Capabilities() []string {
 	}
 	out = append(out, behaviorCapabilities...)
 	slices.Sort(out)
+	return out
+}
+
+// advertisedCapabilities is what this server's handshake publishes: the
+// build-level Capabilities() plus each conditional token cfg puts in force.
+func advertisedCapabilities(cfg Config) []string {
+	out := Capabilities()
+	if cfg.ExternalDependencyPolicy {
+		out = append(out, CapExternalDependencies)
+		slices.Sort(out)
+	}
 	return out
 }

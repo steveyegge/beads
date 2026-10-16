@@ -21,9 +21,11 @@
 //     stays hand-written is the value rendering, which is exactly what the
 //     round-trip gate drives through the server's own decoder.
 //
-// See engdocs/design/http-client-backend.md — D7 (the refusal taxonomy), D8
-// (the role dispositions and the refuse-not-drop enumeration), D9 (the
-// divergence ledger), D11 (id resolution) and D12 (MaxRows).
+// The refusal taxonomy, the role dispositions and refuse-not-drop
+// enumeration, id resolution and MaxRows all trace back to the original
+// (bd-enterprise-internal) design's decision log; the divergence ledger
+// itself (D9 there) is reproduced in-repo at
+// engdocs/design/http-divergence-ledger.md, generated from ledger.go below.
 package encode
 
 import (
@@ -33,6 +35,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -287,12 +290,16 @@ func ListParams(req issueops.ListRequest) (url.Values, error) {
 	b.str("status", req.Status)
 	b.str("type", req.IssueType)
 	b.str("assignee", req.Assignee)
+	b.boolean("no_assignee", req.NoAssignee)
 
 	b.list("label", req.Labels)
 	b.list("label_any", req.LabelsAny)
 	b.list("exclude_label", req.ExcludeLabels)
 
 	b.str("parent", req.ParentID)
+	b.str("q", req.Query)
+	b.str("title", req.TitleSearch)
+	b.list("id", splitIDSet(req.IDFilter))
 
 	b.boolean("all", req.AllFlag)
 	b.boolean("include_templates", req.IncludeTemplates)
@@ -309,6 +316,28 @@ func ListParams(req issueops.ListRequest) (url.Values, error) {
 	b.boolean("brief", req.Brief)
 	b.intPtr("limit", req.Limit)
 	return b.done()
+}
+
+// splitIDSet reads ListRequest.IDFilter's comma-separated set the way the role
+// does (workapi.BuildListFilter: split on commas, trim, drop empties and
+// repeats) and hands back one member per listIssues `id` value, which is the
+// repeatable shape the server takes (issues.list.ids). A set naming no id
+// sends no `id` at all.
+func splitIDSet(set string) []string {
+	if set == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range strings.Split(set, ",") {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // QueryParams encodes a boolean-expression query onto
@@ -718,6 +747,9 @@ func (b *builder) intPtr(param string, value *int) {
 // intPositive emits a plain int only when it bounds something. The legacy
 // filters spell "no bound" as 0, so a zero here is an absent parameter rather
 // than the wire's `limit=0`, which means unlimited and is refused off loopback.
+// An absent `limit` is the SERVER's default, not unlimited, so a caller that
+// means unlimited must not stop here: the ready bridge's pager writes the
+// client-capped bound itself (httpclient/unlimited_read.go).
 func (b *builder) intPositive(param string, value int) {
 	if value > 0 {
 		b.v.Set(param, strconv.Itoa(value))

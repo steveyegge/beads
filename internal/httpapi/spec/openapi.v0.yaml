@@ -63,7 +63,7 @@ info:
       outside its own parameter table with `400` / `code: invalid_argument` /
       `reason: "unknown_parameter"` and `param` naming the offending key.
       Operations that declare no QUERY parameter at all reject every query key
-      the same way. Today that is twenty-six of the forty-two operations
+      the same way. Today that is twenty-seven of the forty-three operations
       here — `GET /healthz`, `GET /v0/beads/context`,
       `GET /v0/beads/dependencies/cycles`, `POST /v0/beads/issues`,
       `PATCH /v0/beads/issues/{id}`,
@@ -75,6 +75,7 @@ info:
       `POST /v0/beads/issues/{id}:casMetadata`, `POST /v0/beads/issues:sweep`,
       `POST /v0/beads/issues:delete`,
       `POST /v0/beads/issues:batchGet`,
+      `POST /v0/beads/issues:reclaim`,
       `POST /v0/beads/issues:batchCreate`,
       `POST /v0/beads/issues:batchApply`,
       `POST /v0/beads/issues:batchClose`, `GET /v0/beads/config`,
@@ -1259,6 +1260,14 @@ paths:
             `message` rows need `include_infra` as well as, or instead of,
             this one. What `include_ephemeral` alone reaches is the ephemeral
             rows of the types a listing already shows.
+
+
+            A `type` this workspace calls infra is the one NARROWING it lifts.
+            Such a type on its own reads only that type's ephemeral rows, which
+            is where creating one puts it; with `include_ephemeral` the type's
+            durable rows (a promoted wisp, an issue retyped after it was
+            created) are listed as well. `include_infra` alone keeps the
+            narrowing.
           schema:
             type: boolean
             default: false
@@ -1290,6 +1299,74 @@ paths:
           description: Only issues carrying this top-level metadata key.
           schema:
             type: string
+        - name: q
+          in: query
+          description: >-
+            `bd search`'s free text. A row matches when its title or its id
+            contains the text, case-insensitively; a text shaped like an issue
+            id also matches that exact id, an id prefix, and the external
+            reference. It narrows the listing and lifts none of its default
+            exclusions, so a caller that wants `bd search`'s every-status,
+            every-kind answer also sends `all`, `include_templates`,
+            `include_gates`, `include_infra` and `include_ephemeral`.
+
+
+            Behind the `issues.list.search` behavior token: an older server
+            answers `unknown_parameter` for this name. A client with the
+            handshake's capabilities cached refuses a search locally against a
+            server that does not advertise the token, rather than paying for
+            that round trip.
+          schema:
+            type: string
+        - name: no_assignee
+          in: query
+          description: >-
+            Only issues with no assignee: `bd list --no-assignee`, handed to
+            the role as written beside the other filters.
+
+
+            Behind the `issues.list.noAssignee` behavior token: an older server
+            answers `unknown_parameter` for this name. A client with the
+            handshake's capabilities cached refuses the request locally against
+            a server that does not advertise the token, rather than paying for
+            that round trip or listing assigned issues as well.
+          schema:
+            type: boolean
+            default: false
+        - name: title
+          in: query
+          description: >-
+            Case-insensitive substring match on the title: `bd list --title`.
+            It narrows the listing and lifts none of its default exclusions.
+
+
+            Behind the `issues.list.title` behavior token: an older server
+            answers `unknown_parameter` for this name. A client with the
+            handshake's capabilities cached refuses the request locally against
+            a server that does not advertise the token, rather than paying for
+            that round trip or answering the unnarrowed listing.
+          schema:
+            type: string
+        - name: id
+          in: query
+          description: >-
+            Restrict to these canonical ids (repeat the parameter). AND-ed with
+            every other filter, including the default exclusions, so a caller
+            addressing rows regardless of status, type or tier also sends
+            all=true, include_templates, include_gates, include_infra and
+            include_ephemeral. At most 200 values; an id longer than storage
+            holds, an empty one, one with leading or trailing whitespace, or one
+            carrying a control character or a comma is a 400 `invalid_argument`
+            on `param: "id"` — each value is matched exactly as sent, never
+            trimmed or split. An id that names no row is simply not matched.
+            Advertised by the behavior token `issues.list.ids`.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 200
+            items:
+              type: string
         - name: sort
           in: query
           description: >-
@@ -1870,8 +1947,8 @@ paths:
 
 
             It has a SECOND effect under `include_infra`: a type this workspace
-            calls infra routes the count to the ephemeral tier. See that
-            parameter.
+            calls infra routes the count to the ephemeral tier, unless
+            `include_ephemeral` is also set. See that parameter.
           schema:
             type: string
         - name: assignee
@@ -2032,6 +2109,11 @@ paths:
             lives in the wisps table while remaining ordinary durable work.
             Reaching it needed `include_infra`, which also drops template rows of
             the named type — one silent undercount traded for another.
+
+
+            Beside `include_infra` it also lifts the fourth change's routing of
+            an infra `type`, so that type's durable rows are counted along with
+            its ephemeral ones rather than instead of them.
           schema:
             type: boolean
             default: false
@@ -2054,7 +2136,9 @@ paths:
             template molecules are EXCLUDED, which a default count includes;
             gate beads are EXCLUDED unless `type=gate` asks for them by name;
             and a `type` this workspace calls infra ROUTES the count to the
-            ephemeral tier instead of the durable one.
+            ephemeral tier instead of the durable one — unless
+            `include_ephemeral` is also set, which keeps the durable tier as
+            well, as `GET /v0/beads/issues` does.
 
 
             The infra vocabulary is the WORKSPACE's, read from its configuration
@@ -2411,16 +2495,13 @@ paths:
         Nothing has asked for it.
 
 
-        `persistence` — a plane move is an atomic aggregate migration rather
-        than a field write, and moving a row between planes mid-patch is a
-        different act from editing it.
-
-
         `closed_by_session` and `close_reason` — written under first-close-wins
         by `{id}:close`, which a patch write would bypass. A `status` that
         crosses into the done category still answers to close POLICY here; it
-        does not acquire the close's semantics, which is why `{id}:close`
-        remains the operation to reach for when what you mean is "close this".
+        does not acquire the close's semantics, and that includes its close
+        guards: a patch is never refused `issue_pinned` or `not_assignee`.
+        That is why `{id}:close` remains the operation to reach for when what
+        you mean is "close this".
 
 
         `created_at`, `created_by` — `POST /v0/beads/issues` withholds them for
@@ -2500,10 +2581,11 @@ paths:
         '409':
           description: >-
             The request is well-formed and the STATE refuses it, and NOTHING WAS
-            WRITTEN. Six codes, each inherited from the operation that already
-            publishes it rather than minted here, and described in the
-            paragraphs below — `dependency_cycle` and `dependency_exists` share
-            one, because they are one member reaching the graph.
+            WRITTEN. Eight codes, described in the paragraphs below; all but
+            `template_read_only` are inherited from the operation that already
+            publishes them rather than minted here, and `dependency_cycle` and
+            `dependency_exists` share one paragraph, because they are one member
+            reaching the graph.
 
 
             `already_claimed` and `not_claimable` with `param: "claim"` are a
@@ -2556,9 +2638,18 @@ paths:
             both of which write blocking edges and do carry it: this operation
             publishes no member that writes one. What you get here is the plain
             scheduling cycle, every time.
+
+
+            `template_read_only` is an update of a template. Templates are
+            read-only — work comes out of one by pouring it — so every update
+            naming one refuses, whatever the patch and force flags, unless it
+            sets `allow_template` (a deliberate template edit).
+            It is checked after the guards above, so a stale guard still answers
+            `precondition_failed`.
           x-bd-codes:
             [already_claimed, dependency_cycle, dependency_exists,
-             not_claimable, not_closable, notes_overwrite_refused, precondition_failed]
+             not_claimable, not_closable, notes_overwrite_refused, precondition_failed,
+             template_read_only]
           content:
             application/problem+json:
               schema:
@@ -3191,8 +3282,33 @@ paths:
         the blockers themselves travel in `blockers`). The MEMBER'S PRESENCE is
         the discriminator, so telling the two apart never requires reading
         `detail`. Both refusals are the ROLE's, so `force`
-        bypasses those two and nothing else — this endpoint cannot skip a guard
-        by forgetting one exists.
+        bypasses those two — this endpoint cannot skip a guard by forgetting
+        one exists.
+
+
+        ## Close guards
+
+
+        Before close policy, a close of an issue that is not already closed
+        answers to three guards, in this order. A template refuses with
+        `409` / `template_read_only` and has no bypass. A pinned issue (the
+        `pinned` flag or the `pinned` status) refuses with `409` /
+        `issue_pinned`. An issue assigned to someone other than `actor`
+        (compared separator-insensitively; an unassigned issue is closable by
+        anyone) refuses with `409` / `not_assignee`, carrying the holder in
+        `assignee`. `force` bypasses the pin and the assignee guard. They are
+        the guards `bd close` applies, and they are the ROLE's, so every close
+        operation — this one, `POST /v0/beads/issues:batchClose` and a
+        `close` item of `POST /v0/beads/issues:batchApply` — applies them
+        alike. An idempotent re-close is not guarded: it changes nothing.
+
+
+        The guards gate the close operations, not the closed state. A status
+        update that crosses into the done category — a `PATCH` of
+        `/v0/beads/issues/{id}` or an `update` item of
+        `POST /v0/beads/issues:batchApply` — is not a close operation and
+        answers to close policy only, so it still closes a pinned issue or one
+        another actor holds.
 
 
         ## The guard
@@ -3286,12 +3402,75 @@ paths:
             bypass both. `force` does NOT bypass the guard above.
 
 
-            Nothing was written in either case.
-          x-bd-codes: [not_closable, precondition_failed]
+            `template_read_only`, `issue_pinned` and `not_assignee`: a close
+            guard refused (see "Close guards"). `not_assignee` carries the
+            holder in `assignee`. `force` bypasses the latter two.
+
+
+            Nothing was written in any case.
+          x-bd-codes: [issue_pinned, not_assignee, not_closable, precondition_failed, template_read_only]
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v0/beads/issues/{id}:advanceMolecule:
+    post:
+      operationId: advanceMolecule
+      summary: Advance a molecule to its next ready step
+      description: >-
+        The operation behind `bd close --continue`: after the step this path
+        names closed, find where its molecule stands and, with `auto_claim`,
+        claim the next ready step for `actor`.
+
+
+        A step is READY when it is open and no open step of the same molecule
+        blocks it (blocks, conditional-blocks or waits-for). The claim is a
+        real claim — the step's assignee becomes `actor` — and a step another
+        actor holds is skipped, never taken: a ready step lost that way, or one
+        moved out of a claimable status since it was read, falls through to
+        the next ready step. When every ready step is lost nothing is claimed
+        and `next_step` names the first.
+
+
+        A step in no molecule answers 200 with no `molecule_id`. A step id that
+        names nothing is `404`.
+      parameters:
+        - $ref: '#/components/parameters/IssueID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvanceMoleculeRequest'
+      security:
+        - bearerToken: []
+      responses:
+        '200':
+          description: Where the molecule stands, and what was claimed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceMoleculeResponse'
+        '400':
+          description: >-
+            Invalid request: an unknown query parameter, an unparseable or
+            oversized body, an unknown body member, or an `actor` that is empty
+            after trimming, longer than 256 bytes, or carrying control
+            characters.
+          x-bd-codes: [invalid_argument]
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -3891,6 +4070,95 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
 
+  /v0/beads/issues:reclaim:
+    post:
+      operationId: reclaimIssues
+      summary: Revert stale leases back to ready
+      description: >-
+        Reverts every in-progress issue whose LEASE has gone stale back to
+        ready: the lease row is deleted, `status` becomes `open`, the assignee
+        and `started_at` are cleared, and a recovery event naming the former
+        holder is recorded. It is the operation behind `issueops.LeaseReclaimer`
+        and `bd reclaim`, and the caller it is for is a CLOCK — a supervisor
+        reaping the work of workers that died without releasing it — rather
+        than the worker that held the claim, which releases its own with
+        `POST /v0/beads/issues/{id}:release`.
+
+
+        A lease is stale when its expiry is more than `older_than_seconds` in
+        the past. A lease a worker is still heartbeating is never eligible,
+        whatever the request names.
+
+
+        ## Scope narrows, never widens
+
+
+        Every scope member narrows the sweep and they AND-combine: `ids`,
+        `assignees`, `labels` (all of them), `labels_any` (at least one) and
+        `exclude_labels` (none of them). A request with no scope member sweeps
+        every stale lease this server granted. `any_replica` is the one member
+        that WIDENS: it disarms the granting-replica guard, so a lease another
+        replica granted is reverted too. It is an operator escape hatch for a
+        replica that is gone for good, never a normal setting.
+
+
+        AN ID THAT IS NOT A STALE LEASE IS NOT AN ERROR. An id naming no row, or
+        a row whose lease is live, or a row nobody holds, is simply absent from
+        `reclaimed`; scoping by id narrows a sweep, it does not assert that
+        every named id was reclaimable. There is no `404` on this operation.
+
+
+        ## A new revision per reverted row
+
+
+        Every reverted row's `revision` is minted fresh by the revert, and each
+        entry of `reclaimed` carries it. A holder that wakes up after its lease
+        was reclaimed and writes with the revision its claim handed it gets
+        `412 precondition_failed`, so it cannot land over work another worker
+        may already have taken.
+
+
+        The whole sweep is ONE transaction. A lease a heartbeat rescues between
+        the snapshot that found it and its row's revert is skipped, not
+        reported.
+
+
+        Available when the server advertises the `issues.reclaim` capability.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReclaimIssuesRequest'
+      security:
+        - bearerToken: []
+      responses:
+        '200':
+          description: >-
+            The rows the sweep reverted, each with its former holder and its new
+            revision. An empty array (never null) when nothing was stale.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReclaimIssuesResult'
+        '400':
+          description: >-
+            Invalid request: an unparseable body, an unknown body member, a
+            missing or invalid `actor`, a negative or non-numeric
+            `older_than_seconds`, an `ids` carrying more than 1000 entries
+            (counted before deduplication), or a blank scope entry.
+          x-bd-codes: [invalid_argument]
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
   /v0/beads/issues:batchCreate:
     post:
       operationId: batchCreateIssues
@@ -4145,6 +4413,9 @@ paths:
             or a payload its `kind` does not name, a `create` with no `title`, a
             duplicate `key`, a `Ref` with neither `key` nor `id` or with both, a
             `dep_add` with an unstorable `type` or pointing a row at ITSELF, a
+            `dep_add` from a dotted-id child to one of its own ancestors
+            (anything but the parent-child edge to its IMMEDIATE parent, judged
+            once the item's refs resolve and carrying `param` `items`), a
             `waits-for` gate outside its two values, an item a workspace's own
             validation refuses, and an edge endpoint that names nothing this
             database can see. An explicit `create.id` that already names a
@@ -4238,6 +4509,18 @@ paths:
             per-item bypasses, and a forced item never earns this.
 
 
+            `template_read_only` is an `update` or a `close` item whose target
+            is a template, exactly as `PATCH /v0/beads/issues/{id}` and
+            `POST /v0/beads/issues/{id}:close` answer it; no item member
+            bypasses it.
+
+
+            `issue_pinned` and `not_assignee` are the other two close guards
+            refusing a `close` item, exactly as
+            `POST /v0/beads/issues/{id}:close` answers them; `not_assignee`
+            carries the holder in `assignee`. `close.force` bypasses both.
+
+
             `already_claimed` is the assignee fence: an `update` whose
             `patch.assignee` transfers work away from a live foreign in-progress
             owner. `update.force_assignee_transfer` is the bypass, and
@@ -4252,7 +4535,9 @@ paths:
             and `blocker_is_ancestor`. They may come from the per-edge probe or
             from the END GATE, which is the one place an edge that is legal on
             its own and illegal in the graph this request built is caught.
-            Neither has a force bypass.
+            Neither has a force bypass. A `dep_add` from a dotted-id child to an
+            ancestor its own id names is neither: it is a `400`
+            `invalid_argument`, as on that operation.
 
 
             `already_exists` is a `create` item whose EXPLICIT `id` already
@@ -4267,7 +4552,8 @@ paths:
             a malformed request.
           x-bd-codes:
             [already_claimed, already_exists, dependency_cycle,
-             dependency_exists, not_closable, notes_overwrite_refused, precondition_failed]
+             dependency_exists, issue_pinned, not_assignee, not_closable,
+             notes_overwrite_refused, precondition_failed, template_read_only]
           content:
             application/problem+json:
               schema:
@@ -4315,8 +4601,9 @@ paths:
         contract: a refusal OF THE REQUEST is a problem document, and a refusal
         OF AN ITEM is a member of that item's outcome. `code` on an outcome is
         the same vocabulary `Problem.code` publishes, restricted to
-        `not_found` and `not_closable`, so a client classifies an item exactly
-        as it classifies a request.
+        `not_found`, `not_closable` and the three close guards
+        (`template_read_only`, `issue_pinned`, `not_assignee`), so a client
+        classifies an item exactly as it classifies a request.
 
 
         WHAT IS ATOMIC IS EVERYTHING THAT LANDS: one transaction, at most one
@@ -4360,8 +4647,9 @@ paths:
 
         NO PER-ITEM PRECONDITION. There is no counterpart here to a
         compare-and-set guard, matching the role, so `force` is a question with
-        only two answers: it bypasses blocker and open-child close policy for
-        every item, and it never bypasses validation or existence.
+        only two answers: it bypasses blocker and open-child close policy, the
+        pin and the assignee guard for every item, and it never bypasses the
+        template guard, validation or existence.
 
 
         ## Hooks and auto-commit
@@ -5357,6 +5645,25 @@ paths:
             maxItems: 100
             items:
               type: string
+        - name: is_blocked
+          in: query
+          description: >-
+            `true` adds each item's `is_blocked`: the issue's stored,
+            TRANSITIVE readiness flag — the column the ready set filters on,
+            which a child inherits from a blocked parent and which
+            `waits-for` and `conditional-blocks` gates set — rather than the
+            two-edge-type, direct `blocked_by` summary. It is the batched
+            readiness projection a client cache needs to answer readiness
+            with the server's own predicate. An id that names no row in
+            either plane gets no `is_blocked` member. Absent or `false`
+            answers exactly as before. Behind the
+            `dependencies.blocking.isBlocked` capability token; a server
+            that predates it answers `400` with `param: "is_blocked"` and
+            `reason: "unknown_parameter"`.
+          required: false
+          schema:
+            type: boolean
+            default: false
       security:
         - bearerToken: []
       responses:
@@ -5451,13 +5758,19 @@ paths:
             is empty after trimming, longer than 256 bytes or carrying control
             characters, an empty or over-long `edges` array, a blank or
             over-long endpoint id, an unstorable `type`, an edge that points an
-            issue at ITSELF, or an edge endpoint that names nothing this
-            database can see. Nothing is written in any of these cases.
+            issue at ITSELF, an edge from a dotted-id child to one of its own
+            ancestors (anything but the parent-child edge to its IMMEDIATE
+            parent), or an edge endpoint that names nothing this database can
+            see. Nothing is written in any of these cases.
 
 
             A self-dependency is a `400` rather than a `409` because it is
             request-intrinsic: it is invalid whatever the graph holds, so it is
-            a refusal of a VALUE and not a statement about state. An endpoint
+            a refusal of a VALUE and not a statement about state. The dotted-id
+            child's edge is a `400` for the same reason, carrying `param`
+            `edges`: the two ids decide it before the graph is read, so even a
+            child whose parent-child edge is already stored gets this `400`,
+            never the `409` hierarchy refusal or `dependency_exists`. An endpoint
             that names nothing is a `400` rather than a `404` for
             `POST /v0/beads/issues:batchCreate`'s reason: the refusal is about
             the request BODY, and there is no id in the path to have missed.
@@ -5489,6 +5802,11 @@ paths:
 
             Neither has a force bypass. The recovery for both is to rethink the
             edge, which is why they are one status and not a retry.
+
+
+            An edge from a dotted-id child to an ancestor its own id names is
+            neither: it is a `400` `invalid_argument`, decided from the two ids
+            before the graph is read.
           x-bd-codes: [dependency_cycle, dependency_exists]
           content:
             application/problem+json:
@@ -5605,10 +5923,10 @@ paths:
 
 
         A memory stored as the EMPTY STRING is enumerated here, because its key
-        exists, while `GET /v0/beads/memories/{key}` answers `404` for it. That
-        asymmetry is the one way a client can tell a row stored empty from a row
-        that is not there, and it is the storage seam's conflation showing
-        through rather than a rule this surface invented.
+        exists, and `GET /v0/beads/memories/{key}` agrees: it answers `200` for
+        that same row, with an empty `value`. Presence is row existence on both
+        surfaces, never whether the value happens to be non-empty; only a key
+        nothing stored is missing from either one.
 
 
         The envelope is the paginated one and `has_more` is ALWAYS false:
@@ -5765,12 +6083,13 @@ paths:
         — so a 404 reports a distinction that exists rather than minting one.
 
 
-        A MEMORY STORED AS THE EMPTY STRING IS A 404 TOO. No front door can
-        create one — storing empty content is refused — but an out-of-band write
-        to the config table can, and the role does not invent a distinction the
-        storage seam beneath it cannot see. `GET /v0/beads/memories` DOES
-        enumerate such a row, because its key exists, and that asymmetry is the
-        one way a client can tell the two apart.
+        A MEMORY STORED AS THE EMPTY STRING IS A 200, WITH AN EMPTY `value`. No
+        front door can create one — storing empty content is refused — but an
+        out-of-band write to the config table can, and presence here is row
+        existence, never whether the value happens to be non-empty. That is the
+        same rule `GET /v0/beads/memories` already followed by enumerating such
+        a row because its key exists; the two surfaces now agree rather than
+        splitting on an asymmetry a client would have had to know about.
 
 
         MEMORY CONTENT IS SERVED IN FULL, and a configured bearer does not
@@ -5812,9 +6131,9 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '404':
           description: >-
-            This workspace holds no memory under that key — or holds one stored
-            as the empty string, which answers the same way. `detail` says which
-            plane was asked, not which of those two it was.
+            This workspace holds no memory under that key. A row stored as the
+            empty string is not this case: it exists, so this operation returns
+            it as a `200` with an empty `value`, the same as any other memory.
           x-bd-codes: [not_found]
           content:
             application/problem+json:
@@ -5896,9 +6215,10 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '404':
           description: >-
-            This workspace holds no memory under that key — or holds one stored
-            as the empty string, which answers the same way — and NOTHING WAS
-            REMOVED.
+            This workspace holds no memory under that key, and NOTHING WAS
+            REMOVED. A row stored as the empty string is not this case: it
+            exists, so forgetting it removes it and answers `200`, the same as
+            any other memory.
           x-bd-codes: [not_found]
           content:
             application/problem+json:
@@ -7166,6 +7486,34 @@ components:
         comment_count:
           type: integer
           format: int64
+        gated_by:
+          type: array
+          description: >-
+            The gates actively blocking this issue: gate-typed dependencies
+            reached over a `blocks` or `conditional-blocks` edge whose own
+            status is neither closed nor pinned, on an issue that is itself
+            neither closed nor pinned. ADDITIVE and absent when empty. It is
+            DERIVED, not stored — `status` is unaffected, and an open issue an
+            open gate blocks still reports `open` — and both clauses are the
+            ones the readiness query's is_blocked column applies, so a nonempty
+            list means `bd ready` withholds this issue on a gate's account.
+            A `waits-for` edge onto a gate is deliberately NOT here: that leg
+            of the readiness rule is a fanout over the gate's children rather
+            than a status test, and it can leave the issue ready.
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: The gate issue's id; close it with `bd gate resolve`.
+              type:
+                type: string
+                description: >-
+                  The gate's await condition (human, timer, gh:run, gh:pr,
+                  bead), or `gate` when it carries none.
+              reason:
+                type: string
+                description: The reason recorded when the gate was created, if any.
         comments_omitted:
           type: boolean
           description: >-
@@ -7790,6 +8138,13 @@ components:
             carries several `parent-child` edges, which one appears here is not
             specified. A client that needs every structural edge reads them from
             `GET /v0/beads/dependencies`.
+        is_blocked:
+          type: boolean
+          description: >-
+            The issue's stored, transitive is_blocked flag — present only when
+            the request carried `is_blocked=true` (capability
+            `dependencies.blocking.isBlocked`) and the id names a row. Its
+            absence never means "not blocked".
 
     # ---------------------------------------------------------------------
     # Envelope schemas. Almost all of these have no canonical Go type behind
@@ -7902,7 +8257,7 @@ components:
             `issues.claim`, `issues.claimNext`, `issues.release`,
             `issues.close`, `issues.reopen`, `issues.update`,
             `issues.sweep`, `issues.delete`, `issues.batchGet`,
-            `issues.batchCreate`,
+            `issues.reclaim`, `issues.batchCreate`,
             `issues.batchApply`,
             `stats.get`, `config.list`, `config.get`, `config.set`,
             `config.unset`, `dependencies.cycles`,
@@ -7911,7 +8266,8 @@ components:
             `dependencies.add`, `dependencies.remove`,
             `memories.list`, `memories.get`, `memories.remember`,
             `memories.forget`, `events.list`, `events.watch`,
-            `issues.casMetadata`; the behavior tokens are `project.enforce`,
+            `issues.casMetadata`, `issues.advanceMolecule`; the behavior
+            tokens are `project.enforce`,
             which announces that a `Bd-Project-Id` stamp for the wrong workspace
             is refused here rather than silently ignored,
             `issues.batchApplyLarge`, which announces that
@@ -7934,22 +8290,82 @@ components:
             `issues.count.scope`, which announces that
             `GET /v0/beads/issues:count` accepts `parent`, `no_parent`,
             `exclude_type`, and `exclude_status` (see those parameters) rather
-            than silently answering `unknown_parameter` for all four. The
+            than silently answering `unknown_parameter` for all four,
+            `issues.sweep.wispsPlane`, which announces that
+            `POST /v0/beads/issues:sweep` accepts the `wisps-plane` value of
+            `tier` rather than silently answering `invalid_value`,
+            `issues.sweep.liveDependents`, which announces that the same
+            operation accepts `protect_live_dependents` and answers
+            `skipped.live_dependent` rather than silently answering
+            `unknown_parameter`, `issues.sweep.limit`, which announces
+            that it accepts `limit` and answers `remaining` rather than
+            silently answering `unknown_parameter`,
+            `issues.batchApply.depAddLineage`, which announces that a
+            `dep_add` item on `POST /v0/beads/issues:batchApply` accepts
+            `has_spawner` and `thread_id` (see `ApplyDepAddItem`) rather than
+            a `400` naming the member unknown, and
+            `issues.update.allowTemplate`, which announces that
+            `PATCH /v0/beads/issues/{id}` accepts `allow_template` (see
+            `UpdateIssueRequest`) rather than a `400` naming the member
+            unknown, and
+            `issues.update.persistence`, which announces that
+            `PATCH /v0/beads/issues/{id}` accepts a `persistence` member in
+            its `patch` (see `IssuePatchBody`), the plane move behind
+            `bd promote`, rather
+            than a `400` naming the member unknown, and
+            `issues.create.defaultPriority`, which announces that a create
+            (`POST /v0/beads/issues`, `issues:batchCreate` and
+            `issues:batchApply` create items) with no `priority` member stores
+            the default P2 rather than P0, and
+            `issues.close.autoCloseMolecule`, which announces that
+            `POST /v0/beads/issues/{id}:close` and
+            `POST /v0/beads/issues:batchClose` accept `auto_close_molecule`
+            and answer `auto_closed_molecule` and
+            `molecule_auto_close_refusal` rather than a `400` naming the
+            member unknown, `issues.list.search`, which announces that
+            `GET /v0/beads/issues` accepts `q`, `bd search`'s free text (see
+            that parameter), rather than silently answering
+            `unknown_parameter`, `issues.list.noAssignee`,
+            `issues.list.title` and `issues.list.ids`, which announce that
+            `GET /v0/beads/issues` accepts `no_assignee`, `title` and the
+            repeatable `id` respectively (`bd list --no-assignee`, `--title`
+            and `--id`; see those parameters) rather than answering
+            `unknown_parameter`, `dependencies.blocking.isBlocked`, which
+            announces that `GET /v0/beads/dependencies/blocking` accepts
+            `is_blocked` and answers each item's stored, transitive
+            `is_blocked` flag (see that parameter) rather than silently
+            answering `unknown_parameter`, and `issues.update.claim`, which
+            announces that `PATCH /v0/beads/issues/{id}` accepts `claim` (see
+            `UpdateIssueRequest`) and resolves the claimed id on both planes,
+            so a wisp is claimable there, rather than a `400` naming the
+            member unknown. One behavior token is
+            CONDITIONAL rather than build-level: `policy.external_dependencies`
+            announces that this server's ready, claim, claim-next, close,
+            blocking and dependency-tree operations already apply bd's
+            external-dependency policy (an issue blocked by an unsatisfied
+            `external:<project>:<capability>` dependency is neither ready,
+            claimable nor closable without force). A server advertises it
+            only when it enforces that policy; a client that sees it must not
+            apply the policy again, and a client that does not see it applies
+            the policy itself. The
             list grows additively, and an operation never appears here unless
             it is fully implemented. This is how a client checks for an
             operation or a behavior — never the version string.
 
 
-            THIS LIST IS BUILD-LEVEL, NOT WORKSPACE-LEVEL. It says which
-            operations this binary serves, and for every entry but two that is
-            the whole answer. `events.list` and `events.watch` are the
-            exceptions: the durable events journal is a per-workspace setting
-            that is OFF by default, so a server that advertises them may still
-            refuse every request to both with 409 `events_journal_disabled` —
-            correctly, because the operations exist and the workspace has no
-            journal. A consumer of either MUST treat the capability as "this
-            server speaks it" and the 409 as "not on this workspace", and must
-            not read the capability as a promise that records will arrive.
+            THIS LIST IS BUILD-LEVEL, NOT WORKSPACE-LEVEL, apart from the
+            conditional `policy.external_dependencies` above, which depends on
+            how this server composed its roles rather than on the build. It
+            says which operations this binary serves, and for every entry but
+            two that is the whole answer. `events.list` and `events.watch` are
+            the exceptions: the durable events journal is a per-workspace
+            setting that is OFF by default, so a server that advertises them
+            may still refuse every request to both with 409
+            `events_journal_disabled` — correctly, because the operations exist
+            and the workspace has no journal. A consumer of either MUST treat
+            the capability as "this server speaks it" and the 409 as "not on
+            this workspace", and must not read the capability as a promise that
+            records will arrive.
           items:
             type: string
         wire_revision:
@@ -7983,7 +8399,25 @@ components:
               had moved underneath it. That silent gap is the whole reason
               this field exists.
             * `2` — the first release whose `ContextResponse` carries
-              `wire_revision` and `min_client_wire_revision` at all (this one).
+              `wire_revision` and `min_client_wire_revision` at all. Still
+              current: S4 widened `SweepRequest.tier`'s enum to add
+              `wisps-plane` and added `protect_live_dependents` and `limit`
+              alongside it, and none of the three bumped this counter.
+              `SweepRequest` is a REQUEST-body-only schema — no response ever
+              carries it — so nothing decodes it out of a server reply; the
+              new enum member and the two new fields are each something only
+              an UPDATED CLIENT chooses to send, behind their own behavior
+              tokens (`issues.sweep.wispsPlane`, `issues.sweep.liveDependents`,
+              `issues.sweep.limit`). An old client that never sends any of the
+              three has nothing to misdecode, which is exactly the additive
+              case this field exists to NOT gate. The wireshape drift gate
+              (`internal/httpapi/wireshape`) tracks, per member, whether it is
+              reachable from a request body, a response, or both, and treats
+              an enum WIDENING as additive only on a request-only member —
+              the identical widening on a response-side (or request+response)
+              member still counts as changed and still demands a bump, since
+              an existing client decoding a response must keep recognizing
+              every value the server might send it.
 
 
             PRESENCE, not just value: a generated client whose JSON decoder
@@ -8459,6 +8893,108 @@ components:
           items:
             type: string
 
+    ReclaimIssuesRequest:
+      type: object
+      additionalProperties: false
+      required: [actor]
+      description: >-
+        One sweep of stale leases. Every member but `actor` is optional, and
+        every scope member NARROWS the sweep; see the operation.
+
+
+        `additionalProperties: false`, so an unknown member is a `400` naming
+        the member — a narrowing term this server silently ignored would widen
+        what is reverted.
+      properties:
+        actor:
+          type: string
+          description: >-
+            Who ran the sweep. REQUIRED: each reverted row's recovery event and
+            history entry are attributed to it. Validated by the same rules as
+            the claim's `actor`.
+        older_than_seconds:
+          type: number
+          format: double
+          minimum: 0
+          description: >-
+            The grace window past a lease's own expiry, in seconds (fractions
+            allowed): only a lease that expired more than this long ago is
+            eligible. Absent means `0`, every currently expired lease. A
+            negative value is refused.
+        ids:
+          type: array
+          maxItems: 1000
+          description: >-
+            Only these issues are eligible. An id that is not currently a stale
+            lease is absent from the answer rather than refused. The cap is on
+            the REQUEST, counted before deduplication. A blank entry is
+            refused.
+          items:
+            type: string
+        assignees:
+          type: array
+          description: Only leases held by one of these owners are eligible.
+          items:
+            type: string
+        labels:
+          type: array
+          description: Only issues carrying ALL of these labels are eligible.
+          items:
+            type: string
+        labels_any:
+          type: array
+          description: Only issues carrying AT LEAST ONE of these labels are eligible.
+          items:
+            type: string
+        exclude_labels:
+          type: array
+          description: An issue carrying ANY of these labels is never eligible.
+          items:
+            type: string
+        any_replica:
+          type: boolean
+          description: >-
+            Also revert leases another replica granted. The one member that
+            WIDENS the sweep; see the operation. Absent means `false`.
+
+    ReclaimIssuesResult:
+      type: object
+      required: [reclaimed]
+      description: >-
+        Every row the sweep reverted, in the order the sweep found them.
+      properties:
+        reclaimed:
+          type: array
+          description: >-
+            One entry per reverted row. Empty array (never null) when nothing
+            was stale in scope.
+          items:
+            $ref: '#/components/schemas/ReclaimedLease'
+
+    ReclaimedLease:
+      type: object
+      description: One row a lease sweep reverted.
+      x-go-type: types.ReclaimedLease
+      x-go-type-import:
+        name: types
+        path: github.com/steveyegge/beads/internal/types
+      required: [id, previous_owner, revision]
+      properties:
+        id:
+          type: string
+          description: The reverted issue's id.
+        previous_owner:
+          type: string
+          description: >-
+            The assignee the stale lease was taken from; empty when the row
+            carried none.
+        revision:
+          type: string
+          description: >-
+            The row's NEW revision, minted by the revert: the
+            optimistic-concurrency token a guarded write after the reclaim
+            needs. A decimal string, like every `revision` on this surface.
+
     SweepRequest:
       type: object
       additionalProperties: false
@@ -8478,13 +9014,20 @@ components:
       properties:
         tier:
           type: string
-          enum: [ephemeral, durable]
+          enum: [ephemeral, durable, wisps-plane]
           description: >-
             Which plane to clear. `ephemeral` is the wisp tier (`bd purge`) and
             `durable` is the issue tier (`bd prune`). The two are DISJOINT: a
             sweep of one can never touch a bead of the other. Required, with no
             default — a caller handed the wrong tier has nothing to notice
             until the beads are gone.
+
+
+            `wisps-plane` is a THIRD, wider tier: it clears the whole wisps
+            table (ephemeral beads) AND any durable bead with no history row,
+            in one pass. Behind the `issues.sweep.wispsPlane` behavior token:
+            an older server answers `invalid_value` for this member, since it
+            predates the token and knows only the first two values.
         actor:
           type: string
           minLength: 1
@@ -8546,6 +9089,25 @@ components:
             skips and the refusals are the same ones the real sweep would
             produce, computed against the same snapshot — and nothing is
             recorded in history either.
+        protect_live_dependents:
+          type: boolean
+          default: false
+          description: >-
+            Skip a closed candidate that a LIVE (not-done) bead depends on
+            through a parent/child, tracks, or blocks edge, so closing a
+            dependent's dependency does not erase the row a live bead still
+            points at. Protection is TRANSITIVE and crosses the ephemeral/durable
+            plane boundary. Behind the `issues.sweep.liveDependents` behavior
+            token: an older server answers `unknown_parameter` for this name.
+        limit:
+          type: integer
+          format: int64
+          description: >-
+            Cap how many beads this sweep deletes, OLDEST-CLOSED-FIRST. Absent
+            or zero means unbounded. A negative value is a `400`
+            invalid_argument, the same as the role's own ErrValidation. Behind
+            the `issues.sweep.limit` behavior token: an older server answers
+            `unknown_parameter` for this name.
 
     SweepResult:
       type: object
@@ -8592,6 +9154,15 @@ components:
             protected.
           items:
             type: string
+        remaining:
+          type: integer
+          format: int64
+          description: >-
+            How many beads this sweep's own selection left unswept because
+            `limit` cut it off, oldest-closed-first. Always 0 when `limit` was
+            absent, zero, or at least as large as the matching set — never a
+            dropped count, a 0 here means nothing was left over. Present only
+            behind the `issues.sweep.limit` behavior token.
 
     SweepSkips:
       type: object
@@ -8605,8 +9176,8 @@ components:
       description: >-
         The candidates a sweep declined to delete, bucketed by WHY. They are
         separate counters rather than one number because they mean different
-        things: the first two are PROTECTIONS, and the last four are the sweep
-        declining to trust its own input.
+        things: `pinned`, `referenced` and `live_dependent` are PROTECTIONS,
+        and the other four are the sweep declining to trust its own input.
       properties:
         pinned:
           type: integer
@@ -8639,6 +9210,12 @@ components:
           description: >-
             Rows the tier query returned as nothing at all. A defense of the
             same kind, on a shape rather than a value.
+        live_dependent:
+          type: integer
+          description: >-
+            Candidates protected by `protect_live_dependents`. Always 0 when
+            that member is false or absent. Present only behind the
+            `issues.sweep.liveDependents` behavior token.
 
     ReadyPage:
       type: object
@@ -8970,9 +9547,9 @@ components:
 
 
             Always present. It is the empty string only where a row was written
-            out of band with an empty value, which
-            `GET /v0/beads/memories/{key}` answers as a `404` and
-            `GET /v0/beads/memories` enumerates.
+            out of band with an empty value — a row `GET /v0/beads/memories/{key}`
+            answers `200` for, and `GET /v0/beads/memories` enumerates, the same
+            as any other memory.
 
     MemoriesPage:
       type: object
@@ -9060,11 +9637,10 @@ components:
 
 
             A previous value that was the EMPTY STRING reports true: the ROW
-            existed, even though `GET /v0/beads/memories/{key}` would have
-            answered `404` for it. That divergence is the storage seam's
-            conflation showing through, and it is stated rather than smoothed
-            over, because smoothing it would mean this member reporting
-            "nothing was there" about a write that overwrote something.
+            existed, and `GET /v0/beads/memories/{key}` would have answered
+            `200` for it too, with an empty `value` — this member and that
+            endpoint agree on what counts as present, because both read it off
+            the row rather than off the value it happened to hold.
 
     SetSettingRequest:
       type: object
@@ -9421,7 +9997,12 @@ components:
           type: integer
           minimum: 0
           maximum: 4
-          description: 0 is P0/critical. Absent means the workspace default.
+          description: >-
+            0 is P0/critical. Absent means the create default, P2 (`2`), on a
+            server advertising `issues.create.defaultPriority`; such a server
+            never reads an absent member as `0`. An older server stores P0 for
+            an absent member, so a client that does not see the token sends
+            `2` explicitly.
         issue_type:
           type: string
           description: >-
@@ -9741,7 +10322,12 @@ components:
           type: integer
           minimum: 0
           maximum: 4
-          description: 0 is P0/critical. Absent means the workspace default.
+          description: >-
+            0 is P0/critical. Absent means the create default, P2 (`2`), on a
+            server advertising `issues.create.defaultPriority`; such a server
+            never reads an absent member as `0`. An older server stores P0 for
+            an absent member, so a client that does not see the token sends
+            `2` explicitly.
         assignee:
           type: string
           maxLength: 255
@@ -9947,9 +10533,11 @@ components:
         one-edge-one-spelling rule: a parent is a `dep_add` item of type
         `parent-child`, so the order of every edge in the request stays total.
         The single patch has no ordering to express and publishes it directly.
-        `persistence` is absent from both — moving a row between planes mid-plan
+        `persistence` is absent here — moving a row between planes mid-plan
         is a different act from writing its fields, and nothing has asked for it
-        here.
+        here. The single patch publishes it (`IssuePatchBody.persistence`,
+        behind `issues.update.persistence`), where the move is the patch's last
+        step.
       properties:
         title:
           type: string
@@ -10140,7 +10728,8 @@ components:
           default: false
           description: >-
             Bypasses close policy — the open-children refusal and the
-            live-blocker refusal — and nothing else.
+            live-blocker refusal — and the pin and the assignee guard, and
+            nothing else: never the template guard.
 
 
             CLOSE POLICY EVALUATES AT THIS ITEM, against the row as this request
@@ -10205,6 +10794,12 @@ components:
         a typed spelling lowers to these same bytes, and the blob carries
         members a two-field typed member could not express. One spelling, and it
         is this one.
+
+
+        `has_spawner` and `thread_id` require `issues.batchApply.depAddLineage`:
+        a client naming either on a server that has not advertised the token
+        refuses locally before the dial rather than sending bytes an older
+        server would answer with its own `400` for an unknown member.
       properties:
         source:
           $ref: '#/components/schemas/Ref'
@@ -10220,6 +10815,24 @@ components:
             a known-types list, so a workspace's own type passes.
         metadata:
           $ref: '#/components/schemas/MetadataValue'
+        has_spawner:
+          type: boolean
+          description: >-
+            Gated by `issues.batchApply.depAddLineage`. Ignored for every
+            `type` but `waits-for`: on a `waits-for` edge, `true` stamps
+            `metadata.spawner_id` with this item's `target` (the id `bd create
+            --graph`'s spawner_key/spawner_id resolved to), so a reader learns
+            which spawned row to watch without re-deriving it from the graph
+            plan. Absent or `false` leaves `metadata` exactly as given.
+        thread_id:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: >-
+            Gated by `issues.batchApply.depAddLineage`. A plain column on the
+            stored edge, separate from `metadata`'s blob — the graph-plan
+            thread this edge belongs to, for a reader that groups edges by
+            thread without parsing every edge's metadata.
 
     ApplyBatchResponse:
       type: object
@@ -10729,10 +11342,26 @@ components:
           default: false
           description: >-
             Bypass close policy — the open-children refusal and the live-blocker
-            refusal — for EVERY item, and nothing else. It never bypasses
-            validation and it never bypasses existence: an id that names nothing
-            refuses whether or not this is set. It is request-wide because the
-            flag that spells it is.
+            refusal — and the pin and the assignee guard for EVERY item, and
+            nothing else. It never bypasses the template guard or validation,
+            and it never bypasses existence: an id that names nothing refuses
+            whether or not this is set. It is request-wide because the flag
+            that spells it is.
+        auto_close_molecule:
+          type: boolean
+          default: false
+          description: >-
+            Behind the `issues.close.autoCloseMolecule` behavior token: an
+            older server answers `unknown_parameter` for this name.
+
+
+            Close each item's molecule root when the batch completed it:
+            `CloseIssueRequest.auto_close_molecule` for every item that closed
+            or was already closed, run after all the closes inside the same
+            transaction. A batch that closes several steps of one molecule
+            decides its root once, and the root it closed, or its refusal, is
+            reported on the outcome of the first successful item under that
+            root.
 
     BatchCloseItem:
       type: object
@@ -10825,13 +11454,22 @@ components:
             refused THIS item, exactly as `Problem.blockers` carries them for
             the single close, and optional for the same reason. Absent on a
             successful item and on every other refusal.
+        assignee:
+          type: string
+          description: >-
+            With `not_assignee`: the issue's assignee the refusing transaction
+            observed, exactly as `Problem.assignee` carries it for the single
+            close. Absent on a successful item and on every other refusal.
         code:
           type: string
           description: >-
             This item's refusal, from `Problem.code`'s vocabulary and restricted
-            to `not_found` (the id names no row in either plane) and
+            to `not_found` (the id names no row in either plane),
             `not_closable` (close policy refused it: open children, or a live
-            blocker — see `open_children`). ABSENT means the item succeeded.
+            blocker — see `open_children`), and the close guards
+            `template_read_only`, `issue_pinned` and `not_assignee` (see
+            `assignee`), exactly as the single close answers them. ABSENT means
+            the item succeeded.
 
 
             It is the problem vocabulary rather than a second one because an
@@ -10845,6 +11483,15 @@ components:
             Prose for a refusal, never load-bearing and present only with
             `code`. It reflects the request and this server's own words rather
             than the role's message, for the reason `Problem.detail` gives.
+        auto_closed_molecule:
+          $ref: '#/components/schemas/Issue'
+        molecule_auto_close_refusal:
+          type: string
+          description: >-
+            `CloseIssueResponse.molecule_auto_close_refusal` for this item,
+            under `issues.close.autoCloseMolecule`; `auto_closed_molecule`
+            beside it is `CloseIssueResponse.auto_closed_molecule`. Present
+            only on a successful item.
 
     Blocker:
       type: object
@@ -10870,6 +11517,47 @@ components:
             The blocking edge's dependency type (`blocks`, `waits-for`,
             `conditional-blocks`). ABSENT when the refusal did not report it,
             which is the case for an `external:` blocker.
+
+    AdvanceMoleculeRequest:
+      type: object
+      additionalProperties: false
+      required: [actor]
+      properties:
+        actor:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[^\u0000-\u001F\u007F-\u009F\u2028\u2029]+$'
+          description: >-
+            Who advances, and with `auto_claim` the claimed step's assignee.
+            `ClaimRequest.actor`'s rules exactly.
+        auto_claim:
+          type: boolean
+          default: false
+          description: >-
+            Claim the next ready step for `actor`. Without it the operation
+            writes nothing and only names the step.
+    AdvanceMoleculeResponse:
+      type: object
+      required: [closed_step, complete, claimed]
+      properties:
+        closed_step:
+          $ref: '#/components/schemas/Issue'
+        molecule_id:
+          type: string
+          description: >-
+            The step's molecule root. ABSENT when the step belongs to no
+            molecule, and then nothing else below is set.
+        complete:
+          type: boolean
+          description: >-
+            Every step of the molecule is closed; `next_step` is then absent.
+        next_step:
+          $ref: '#/components/schemas/Issue'
+        claimed:
+          type: boolean
+          description: >-
+            `next_step` was claimed for `actor`, and is the post-claim row.
 
     CloseIssueRequest:
       type: object
@@ -10910,9 +11598,11 @@ components:
           default: false
           description: >-
             Bypass close policy — the open-children refusal and the
-            live-blocker refusal — and nothing else. The refusals are the
-            ROLE's, so this endpoint cannot skip a guard by forgetting one
-            exists. A forced close still reports `open_children`.
+            live-blocker refusal — and the pin and the assignee guard, and
+            nothing else: never the template guard (see "Close guards" on
+            `POST /v0/beads/issues/{id}:close`). The refusals are the ROLE's,
+            so this endpoint cannot skip a guard by forgetting one exists. A
+            forced close still reports `open_children`.
 
 
             IT BYPASSES POLICY, NEVER A PRECONDITION. `expected_version` is
@@ -10954,6 +11644,32 @@ components:
             member. The token spans the FULL 64-bit range, so a number would be
             rounded past 2^53 by an IEEE-754-double parser and the guard would miss a
             row nothing else touched; a string round-trips exactly in every consumer.
+        auto_close_molecule:
+          type: boolean
+          default: false
+          description: >-
+            Behind the `issues.close.autoCloseMolecule` behavior token: an
+            older server answers `unknown_parameter` for this name, and a
+            client checks the token before sending it.
+
+
+            Close the issue's molecule root IN THE SAME TRANSACTION when this
+            close completed it: the root is an auto-closing molecule root (a
+            `molecule`-typed or ephemeral root, or a template-labeled epic),
+            it is open, and every step under it is now closed. The root close
+            is unforced, guarded on the root revision read inside that
+            transaction, and records `all steps complete` and this request's
+            `session`. It runs for an idempotent re-close too, so replaying
+            the close of a molecule's last step heals a root left open.
+
+
+            OPT-IN, because an orchestrator may run its own molecule
+            lifecycle. A root that its close policy refuses (a live blocker)
+            or a close guard refuses (a template, a pinned root, a root
+            assigned to another actor) stays open, is named in
+            `molecule_auto_close_refusal`, and never fails this close. Any
+            other failure of the root close, such as a storage error, fails
+            this close with it.
     CloseIssueResponse:
       type: object
       required: [issue, already_closed, open_children, revision]
@@ -10998,6 +11714,18 @@ components:
             `float` — rounds anything past 2^53 to a value NEAR the token that is not
             it, so a guard composed from it is refused against a row nothing else
             touched. A string round-trips exactly in every consumer.
+        auto_closed_molecule:
+          $ref: '#/components/schemas/Issue'
+        molecule_auto_close_refusal:
+          type: string
+          description: >-
+            With `issues.close.autoCloseMolecule` and `auto_close_molecule`:
+            why the molecule root this close completed stayed open — the
+            root's own close policy refused it (a live blocker on the root),
+            or a close guard did (a template, a pinned root, a root assigned
+            to another actor). Prose; absent when nothing was refused. `auto_closed_molecule`,
+            beside it, is the root the close also closed, absent when none
+            was.
     ReopenIssueRequest:
       type: object
       additionalProperties: false
@@ -11205,7 +11933,9 @@ components:
             included. With `claim: true` the `patch` may be empty. It must not
             be combined with `expected_assignee`, `expected_status` or
             `force_assignee_transfer`; a request that does is a `400` naming
-            `claim`.
+            `claim`. The id resolves on both planes, so a wisp is claimable
+            here (where `{id}:claim` answers it `404`); a wisp claim takes no
+            lease. Advertised by the behavior token `issues.update.claim`.
         expected_version:
           type: string
           description: >-
@@ -11281,6 +12011,18 @@ components:
             `expected_assignee` exemption: there is no compare-and-set that
             authorizes a notes overwrite, so combining the two is legal and
             each answers its own question.
+        allow_template:
+          type: boolean
+          default: false
+          description: >-
+            The caller edits a template deliberately, so the template read-only
+            refusal (`409 template_read_only`) stands down for this request.
+            `bd label` and `bd set-state` send it: they have always written to
+            templates. It bypasses nothing else, and has no effect on an issue
+            that is not a template. Advertised by the
+            `issues.update.allowTemplate` capability token; a server that
+            predates the member refuses it as an unknown parameter, and such a
+            server never applies the template guard either.
 
     IssuePatchBody:
       type: object
@@ -11496,6 +12238,29 @@ components:
           description: 'RFC 3339. Explicit `null` CLEARS the deferral.'
         metadata:
           $ref: '#/components/schemas/ApplyMetadataPatch'
+        persistence:
+          type: string
+          maxLength: 255
+          description: >-
+            One of `persistent`, `ephemeral` or `no_history`; any other value
+            is a `400` naming the member. Selects the issue's complete persistence state, moving the row
+            between the durable and the wisp plane when the state changes
+            plane. `persistent` promotes a wisp: the row keeps its id, and its
+            labels, dependencies, events and comments move with it, all in
+            this update's one transaction (`bd promote`, `bd update
+            --persistent`). `ephemeral` and `no_history` select the wisp
+            retention modes (`bd update --ephemeral` / `--no-history`);
+            demoting a durable row that has retained snapshots is refused.
+            The current mode is a no-op that reports `changed: false`.
+
+
+            A PLANE MOVE IS AN AGGREGATE MIGRATION, not a field write, and it
+            is applied LAST, after every other member of the patch, so the
+            edit and the move commit together or not at all. Advertised by the
+            `issues.update.persistence` capability token; a server that
+            predates the member refuses it as an unknown parameter, and a
+            client that does not see the token refuses the move before the
+            dial rather than sending it.
 
     UpdateIssueResponse:
       type: object
@@ -11629,7 +12394,12 @@ components:
           type: integer
           minimum: 0
           maximum: 4
-          description: 0 is P0/critical. Absent means the workspace default.
+          description: >-
+            0 is P0/critical. Absent means the create default, P2 (`2`), on a
+            server advertising `issues.create.defaultPriority`; such a server
+            never reads an absent member as `0`. An older server stores P0 for
+            an absent member, so a client that does not see the token sends
+            `2` explicitly.
         assignee:
           type: string
           maxLength: 255
@@ -11837,6 +12607,8 @@ components:
             configured with a token file), `not_found` (404),
             `already_claimed` (409), `not_claimable` (409),
             `not_closable` (409), `not_releasable` (409),
+            `template_read_only` (409), `issue_pinned` (409),
+            `not_assignee` (409),
             `dependency_cycle` (409), `dependency_exists` (409),
             `already_exists` (409), `precondition_failed` (409),
             `events_journal_disabled` (409), `events_journal_truncated` (410),
@@ -11896,7 +12668,9 @@ components:
           type: string
           description: >-
             With `already_claimed`: the actor currently holding the issue, read
-            inside the transaction that refused.
+            inside the transaction that refused. With `not_assignee`: the
+            issue's assignee the refusing close observed — always present on
+            that code.
 
 
             IT IS OPTIONAL ON EVERY OPERATION BUT THE CLAIM. `POST
@@ -11982,9 +12756,10 @@ components:
             With `dependency_cycle`, hierarchy refusal only: true when
             `blocker_id` is an ANCESTOR of `issue_id` (which cannot close until
             its descendants finish, so the gate would never clear), false when
-            it is a DESCENDANT (blocked status cascades, so it would inherit the
-            block and never close). Both polarities are reported; this member is
-            never omitted to mean false. See `issue_id`.
+            it is a DESCENDANT (waiting on your own subtree is a close gate, not
+            a blocks edge — use a waits-for gate over the children). Both
+            polarities are reported; this member is never omitted to mean false.
+            See `issue_id`.
         expected_version:
           type: string
           description: >-

@@ -114,11 +114,12 @@ func (r *issueSQLRepositoryImpl) InsertBatch(ctx context.Context, issues []*type
 // PromoteFromEphemeral promotes an active wisp into the Dolt-versioned issues
 // plane in place: same id, wisp_type retained, labels/dependencies/events/
 // comments carried across to the permanent tables, inbound wisp-targeted
-// dependency edges retargeted, and blocked state recomputed. It delegates to
-// the exact issueops implementation the classic (direct/embedded) route runs,
-// so the two modes cannot drift. The issueops error is returned unwrapped on
-// purpose: the CLI surfaces it verbatim ("wisp <id> not found"), and that
-// text is part of the classic error contract.
+// dependency edges retargeted, and blocked state recomputed. It runs the
+// issueops implementation DoltStorage.PromoteFromEphemeral runs and returns
+// its error unwrapped ("wisp <id> not found"). `bd promote` no longer reaches
+// it on any route: issueops.Promote makes the persistence move instead
+// (MovePersistence below, on this layer), which also carries the child
+// counter.
 func (r *issueSQLRepositoryImpl) PromoteFromEphemeral(ctx context.Context, id, actor string) error {
 	if id == "" {
 		return errors.New("db: PromoteFromEphemeral: id must not be empty")
@@ -223,9 +224,11 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 
 	// Close-policy parity with issueops.updateIssueInTx: a status that crosses
 	// into the done category is a close by another name and answers to close
-	// policy. A refusal returns before any write and aborts the caller's unit of
-	// work. The wrap keeps the sentinels matchable, so a caller distinguishes
-	// these refusals here exactly as it does on the close path.
+	// policy, and, as there, to close policy only: the pin and assignee close
+	// guards stay on the close verbs (see updateIssueInTx for why). A refusal
+	// returns before any write and aborts the caller's unit of work. The wrap
+	// keeps the sentinels matchable, so a caller distinguishes these refusals
+	// here exactly as it does on the close path.
 	if statusChanging {
 		crossing, err := issueops.CrossesIntoDoneCategoryInTx(ctx, r.runner, oldIssue.Status, updates)
 		if err != nil {
@@ -1307,6 +1310,13 @@ func (r *issueSQLRepositoryImpl) ReclaimExpiredLeases(ctx context.Context, older
 		return nil, fmt.Errorf("db: IssueSQLRepository.ReclaimExpiredLeases: %w", err)
 	}
 	return out, nil
+}
+
+// Reclaim runs the shared sweep body directly on r.runner, matching GetMany's
+// bare-passthrough shape: validation and error-wrapping both happen inside
+// issueops.ExecuteReclaimInTx.
+func (r *issueSQLRepositoryImpl) Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error) {
+	return issueops.ExecuteReclaimInTx(ctx, r.runner, request)
 }
 
 const deleteBatchSize = 200

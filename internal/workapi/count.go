@@ -160,7 +160,7 @@ func BuildCountFilter(in issueops.CountRequest, cfg ListConfig) (types.IssueFilt
 	}
 
 	if in.IncludeInfra {
-		applyCountIncludeInfra(&filter, in.IssueType, cfg)
+		applyCountIncludeInfra(&filter, in.IssueType, in.IncludeEphemeral, cfg)
 	} else if !in.IncludeEphemeral {
 		filter.SkipWisps = true
 	}
@@ -178,12 +178,15 @@ func BuildCountFilter(in issueops.CountRequest, cfg ListConfig) (types.IssueFilt
 //   - template molecules are excluded (list's default);
 //   - gate beads are excluded unless requested via --type gate;
 //   - counting an infra type (agent/role/message, or the store-configured set)
-//     routes to the ephemeral wisps tier, like list's infra-type listing.
+//     routes to the ephemeral wisps tier, like list's infra-type listing —
+//     unless includeEphemeral is also set, which lifts that narrowing on both
+//     builders, so the durable rows of that type are counted as they are
+//     listed.
 //
 // A count without IncludeInfra never calls this. It keeps its historical
 // durable-only semantics unless IncludeEphemeral admits the wisps tier: the
 // first of the changes above, with none of the rest.
-func applyCountIncludeInfra(filter *types.IssueFilter, issueType string, cfg ListConfig) {
+func applyCountIncludeInfra(filter *types.IssueFilter, issueType string, includeEphemeral bool, cfg ListConfig) {
 	filter.SkipWisps = false
 
 	isTemplate := false
@@ -193,7 +196,7 @@ func applyCountIncludeInfra(filter *types.IssueFilter, issueType string, cfg Lis
 		filter.ExcludeTypes = append(filter.ExcludeTypes, "gate")
 	}
 
-	if issueType != "" && cfg.IsInfra(issueType) {
+	if issueType != "" && cfg.IsInfra(issueType) && !includeEphemeral {
 		ephemeral := true
 		filter.Ephemeral = &ephemeral
 	}

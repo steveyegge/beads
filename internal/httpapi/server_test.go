@@ -635,7 +635,11 @@ func TestCapabilitiesAdvertiseEveryImplementedOperation(t *testing.T) {
 	// them; project.enforce and issues.batchApplyLarge are advertised in the
 	// same list. Both are spelled literally here to keep this an independent
 	// oracle rather than a second call to the code under test.
-	want = append(want, "project.enforce", "issues.batchApplyLarge", "issues.list.sort", "issues.count.scope")
+	want = append(want, "project.enforce", "issues.batchApplyLarge", "issues.list.sort", "issues.count.scope",
+		"issues.sweep.wispsPlane", "issues.sweep.liveDependents", "issues.sweep.limit",
+		"issues.batchApply.depAddLineage", "issues.update.allowTemplate", "issues.create.defaultPriority",
+		"issues.close.autoCloseMolecule", "issues.list.search",
+		"issues.list.noAssignee", "issues.list.title", "issues.list.ids", "issues.update.persistence", "dependencies.blocking.isBlocked", "issues.update.claim")
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("capabilities = %v, want %v", got, want)
@@ -645,6 +649,37 @@ func TestCapabilitiesAdvertiseEveryImplementedOperation(t *testing.T) {
 	// Falsified: reversing Capabilities()' sort turns this red.
 	if !slices.IsSorted(got) {
 		t.Errorf("capabilities = %v, want them sorted", got)
+	}
+}
+
+// TestExternalDependencyPolicyIsAdvertisedOnlyWhenEnforced pins the one
+// conditional token: policy.external_dependencies rides the handshake exactly
+// when Config says the roles were composed through the policy, and the rest of
+// the list is unchanged either way.
+func TestExternalDependencyPolicyIsAdvertisedOnlyWhenEnforced(t *testing.T) {
+	read := func(cfg Config) []string {
+		ts := newTestServer(t, cfg)
+		caps, _ := decodeBody(t, ts.get(t, "/v0/beads/context"))["capabilities"].([]any)
+		var got []string
+		for _, c := range caps {
+			got = append(got, c.(string))
+		}
+		return got
+	}
+	without := read(Config{})
+	if slices.Contains(without, "policy.external_dependencies") {
+		t.Errorf("a server not composed through the policy advertises it: %v", without)
+	}
+	with := read(Config{ExternalDependencyPolicy: true})
+	if !slices.Contains(with, "policy.external_dependencies") {
+		t.Errorf("a server composed through the policy does not advertise it: %v", with)
+	}
+	if !slices.IsSorted(with) {
+		t.Errorf("capabilities = %v, want them sorted", with)
+	}
+	rest := slices.DeleteFunc(slices.Clone(with), func(c string) bool { return c == "policy.external_dependencies" })
+	if !slices.Equal(rest, without) {
+		t.Errorf("the policy flag changed other tokens: with=%v without=%v", with, without)
 	}
 }
 

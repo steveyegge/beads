@@ -39,13 +39,14 @@ const (
 var (
 	updateRequestMembers = []string{
 		"actor", updateClaimMember, "expected_assignee", "expected_status", "expected_version",
-		"force_assignee_transfer", "force_close_policy", "force_notes_overwrite", updatePatchMember,
+		"force_assignee_transfer", "force_close_policy", "force_notes_overwrite", "allow_template",
+		updatePatchMember,
 	}
 	issuePatchMembers = []string{
 		"title", "description", "design", "acceptance_criteria",
 		"notes", "append_notes", "priority", "issue_type", "status",
 		"assignee", "parent_id", "labels", "add_labels", "remove_labels", "metadata",
-		"estimated_minutes", "external_ref", "due_at", "defer_until",
+		"estimated_minutes", "external_ref", "due_at", "defer_until", "persistence",
 	}
 	// nullablePatchMembers is the closed set on which explicit `null` CLEARS
 	// rather than refuses. They are exactly the members the role models as
@@ -181,6 +182,12 @@ func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request, id string
 	if !ok {
 		return issueops.UpdateRequest{}, false
 	}
+	// allow_template is passed through: the role owns the template guard and
+	// what standing it down means.
+	allowTemplate, ok := s.booleanMember(w, r, members, "allow_template")
+	if !ok {
+		return issueops.UpdateRequest{}, false
+	}
 	if forceNotesOverwrite && !patch.Notes.Set {
 		s.fail(w, r, InvalidArgument("force_notes_overwrite", ReasonInvalidValue,
 			"`force_notes_overwrite` bypasses the fence on a NOTES REPLACEMENT; send `patch.notes` with it"))
@@ -244,6 +251,7 @@ func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request, id string
 		ForceClosePolicy:      forceClosePolicy,
 		ForceAssigneeTransfer: forceAssigneeTransfer,
 		ForceNotesOverwrite:   forceNotesOverwrite,
+		AllowTemplate:         allowTemplate,
 		Provenance:            updateProvenance,
 	}, true
 }
@@ -417,6 +425,18 @@ func (s *Server) issuePatch(w http.ResponseWriter, r *http.Request, id string, m
 			return refuse("parent_id", "`parent_id` names this issue; an issue cannot be its own parent")
 		}
 		patch.ParentID = issueops.Field[string]{Set: true, Value: *wire.ParentId}
+	}
+	if set("persistence") {
+		// The plane move (CapIssuesUpdatePersistence). The handler checks only
+		// that the value is one of the role's three modes, so an unknown one is
+		// a 400 naming the member rather than a translated storage error; the
+		// move itself, and every refusal it earns, is the role's.
+		mode := issueops.PersistenceMode(*wire.Persistence)
+		if !mode.IsValid() {
+			return refuse("persistence", fmt.Sprintf("`persistence` is %q; send %q, %q or %q",
+				*wire.Persistence, issueops.PersistenceModePersistent, issueops.PersistenceModeEphemeral, issueops.PersistenceModeNoHistory))
+		}
+		patch.Persistence = issueops.Field[issueops.PersistenceMode]{Set: true, Value: mode}
 	}
 	if set("metadata") {
 		// applyMetadataPatch, unchanged and not respelled: the replace/merge/
