@@ -2628,10 +2628,15 @@ DROP TABLE IF EXISTS wisps;
 }
 
 // TestShowTableExistsMatchesInformationSchemaOnDolt proves the per-open table
-// probe (SHOW TABLES LIKE, exact name) agrees with the INFORMATION_SCHEMA.TABLES
-// count it replaced, on a real Dolt: for a present table, an absent one, a
-// dolt_ignored table that lives only in the working set (the wisp tables'
-// shape), and a name whose '_' LIKE-matches a different table.
+// probe (the unfiltered SHOW TABLES listing, names compared case-insensitively)
+// agrees with the INFORMATION_SCHEMA.TABLES count it replaced, on a real Dolt.
+// It covers every table the open path probes — both cursor tables, the
+// sentinel and floored-sentinel tables, the column sentinel's carrier and the
+// untrack scratch table — under bd's own dolt_ignore patterns, so all but
+// schema_migrations live only in the working set. It also covers a name whose
+// '_' LIKE-matches a different table, and a table stored in another case: Dolt
+// resolves and counts table names case-insensitively there, but its SHOW
+// TABLES LIKE filter does not.
 func TestShowTableExistsMatchesInformationSchemaOnDolt(t *testing.T) {
 	testutil.RequireDoltBinary(t)
 
@@ -2648,11 +2653,11 @@ FROM INFORMATION_SCHEMA.TABLES
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%s'`, table))
 		return len(rows) == 1 && rows[0]["cnt"] == "1"
 	}
+	// The same listing and comparison showTableExists makes.
 	showTablesHas := func(table string) bool {
-		rows := queryDoltCSV(t, dir, fmt.Sprintf("SHOW TABLES LIKE '%s'", table))
-		for _, r := range rows {
+		for _, r := range queryDoltCSV(t, dir, "SHOW TABLES") {
 			for _, v := range r {
-				if v == table {
+				if strings.EqualFold(v, table) {
 					return true
 				}
 			}
@@ -2669,17 +2674,46 @@ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%s'`, table))
 		}
 	}
 
-	agree("empty database", "wisps", false)
+	probed := []string{mainSource.cursorTable, ignoredSource.cursorTable, ignoredCursorUntrackTempTable}
+	probed = append(probed, ignoredSource.sentinelTables...)
+	for _, st := range ignoredSource.sentinelFlooredTables {
+		probed = append(probed, st.table)
+	}
+	for _, sc := range ignoredSource.sentinelColumns {
+		probed = append(probed, sc.table)
+	}
 
-	runDoltSQL(t, dir, "CREATE TABLE issues (id VARCHAR(64) PRIMARY KEY)")
-	agree("committed-shape table", "issues", true)
+	for _, table := range probed {
+		agree("empty database", table, false)
+	}
 
-	runDoltSQL(t, dir, "INSERT INTO dolt_ignore VALUES ('wisp_*', true)")
-	runDoltSQL(t, dir, "CREATE TABLE wisp_dependencies (id VARCHAR(64) PRIMARY KEY)")
-	agree("dolt_ignored working-set table", "wisp_dependencies", true)
+	for _, pattern := range doltIgnorePatterns {
+		runDoltSQL(t, dir, fmt.Sprintf("REPLACE INTO dolt_ignore VALUES ('%s', true)", pattern))
+	}
+	for _, gated := range versionGatedDoltIgnorePatterns {
+		runDoltSQL(t, dir, fmt.Sprintf("REPLACE INTO dolt_ignore VALUES ('%s', true)", gated.pattern))
+	}
+	runDoltSQL(t, dir, "CREATE TABLE "+mainSource.cursorTable+" (version INT PRIMARY KEY)")
+	runDoltSQL(t, dir, "CALL DOLT_COMMIT('-Am', 'committed cursor')")
+	for _, table := range probed {
+		if table == mainSource.cursorTable || table == ignoredCursorUntrackTempTable {
+			continue
+		}
+		runDoltSQL(t, dir, "CREATE TABLE "+table+" (id VARCHAR(64) PRIMARY KEY)")
+	}
+	requireDoltNoRows(t, dir, "SELECT table_name FROM dolt_status", "dolt_status after creating only dolt_ignored tables")
+	for _, table := range probed {
+		agree("migrated shape, dolt_ignored tables in the working set", table, table != ignoredCursorUntrackTempTable)
+	}
 
-	// 'schemaxmigrations' LIKE-matches 'schema_migrations'; only the exact
-	// compare keeps the probe from reporting the cursor table present.
+	// 'schemaxmigrations' LIKE-matches 'schema_migrations'; only the name
+	// comparison keeps it from reading as the cursor table once that is gone.
 	runDoltSQL(t, dir, "CREATE TABLE schemaxmigrations (id INT PRIMARY KEY)")
-	agree("LIKE wildcard lookalike", "schema_migrations", false)
+	runDoltSQL(t, dir, "DROP TABLE "+mainSource.cursorTable)
+	agree("LIKE wildcard lookalike", mainSource.cursorTable, false)
+
+	// A table stored in another case is the same table to Dolt.
+	runDoltSQL(t, dir, "RENAME TABLE bd_events_seq TO bd_events_seq_case")
+	runDoltSQL(t, dir, "RENAME TABLE bd_events_seq_case TO BD_EVENTS_SEQ")
+	agree("table stored in another case", "bd_events_seq", true)
 }

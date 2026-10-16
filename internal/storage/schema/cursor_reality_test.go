@@ -1048,33 +1048,82 @@ func TestPendingVersionsUnderFloorDoNotReArmAuxMarkers(t *testing.T) {
 	}
 }
 
-// TestShowTableExistsComparesTheNameExactly pins the guard against SHOW TABLES
-// LIKE's '_' wildcard: a lookalike row is not the table, and an empty result
-// set is an absent table rather than an error.
-func TestShowTableExistsComparesTheNameExactly(t *testing.T) {
+// TestShowTableExistsAnswersLikeInformationSchema pins showTableExists to the
+// INFORMATION_SCHEMA.TABLES count it replaced. Dolt's SHOW TABLES LIKE filter
+// matches case-sensitively, while INFORMATION_SCHEMA — like every table
+// reference — resolves names case-insensitively, so a LIKE-filtered probe
+// reads a table stored as BD_EVENTS_SEQ as absent (dolt 2.1.8 and 2.2.0). The
+// probe therefore reads the unfiltered listing and compares names
+// case-insensitively and otherwise exactly: a '_' lookalike is not the table,
+// and an empty listing is an absent table rather than an error.
+func TestShowTableExistsAnswersLikeInformationSchema(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta("SHOW TABLES LIKE 'wisp_dependencies'")).
-		WillReturnRows(sqlmock.NewRows([]string{"Tables_in_testdb"}).AddRow("wispxdependencies"))
-	mock.ExpectQuery(regexp.QuoteMeta("SHOW TABLES LIKE 'wisp_dependencies'")).
-		WillReturnRows(sqlmock.NewRows([]string{"Tables_in_testdb"}))
-	mock.ExpectQuery(regexp.QuoteMeta("SHOW TABLES LIKE 'wisp_dependencies'")).
-		WillReturnRows(sqlmock.NewRows([]string{"Tables_in_testdb"}).AddRow("wisp_dependencies"))
-
-	for i, want := range []bool{false, false, true} {
-		got, err := showTableExists(context.Background(), db, "wisp_dependencies")
-		if err != nil {
-			t.Fatalf("probe %d: showTableExists: %v", i, err)
+	cases := []struct {
+		name   string
+		tables []string
+		probe  string
+		want   bool
+	}{
+		{name: "a LIKE lookalike is not the table", tables: []string{"issues", "wispxdependencies"}, probe: "wisp_dependencies", want: false},
+		{name: "empty database", tables: nil, probe: "wisp_dependencies", want: false},
+		{name: "exact name among others", tables: []string{"issues", "wisp_dependencies", "wisps"}, probe: "wisp_dependencies", want: true},
+		{name: "stored in another case", tables: []string{"issues", "BD_EVENTS_SEQ"}, probe: "bd_events_seq", want: true},
+	}
+	for _, tc := range cases {
+		rows := sqlmock.NewRows([]string{"Tables_in_testdb"})
+		for _, table := range tc.tables {
+			rows.AddRow(table)
 		}
-		if got != want {
-			t.Fatalf("probe %d: showTableExists = %v, want %v", i, got, want)
+		mock.ExpectQuery("^SHOW TABLES$").WillReturnRows(rows)
+	}
+	for _, tc := range cases {
+		got, err := showTableExists(context.Background(), db, tc.probe)
+		if err != nil {
+			t.Fatalf("%s: showTableExists: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: showTableExists(%q) = %v, want %v", tc.name, tc.probe, got, tc.want)
 		}
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestCurrentVersionWithoutAUsableDatabaseIssuesNoFailingStatement is the
+// be-bv7x rule for the cursor probe itself, which must succeed on any session.
+// SHOW TABLES fails with no database selected (1105) and on a session whose
+// database was dropped under it (1049), and a failing statement pins the
+// pooled session to its pre-statement catalog. The schemata read answers 0 in
+// both cases instead, so the probe stops there and reads the cursor as absent,
+// exactly as the INFORMATION_SCHEMA.TABLES count did: the strict mock admits
+// nothing after it.
+func TestCurrentVersionWithoutAUsableDatabaseIssuesNoFailingStatement(t *testing.T) {
+	for _, src := range []migrationSource{mainSource, ignoredSource} {
+		t.Run(src.cursorTable, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New: %v", err)
+			}
+			defer db.Close()
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = DATABASE()")).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+			got, err := src.currentVersion(context.Background(), db)
+			if err != nil {
+				t.Fatalf("currentVersion without a usable database: %v", err)
+			}
+			if got != 0 {
+				t.Errorf("currentVersion without a usable database = %d, want 0", got)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
 	}
 }

@@ -511,18 +511,15 @@ func expectScalar(mock sqlmock.Sqlmock, query, column string, value any) {
 		WillReturnRows(sqlmock.NewRows([]string{column}).AddRow(value))
 }
 
-// expectCursorProbe mocks the information_schema existence probe that
-// migrationSource.currentVersion issues before it ever reads the cursor
-// table. The probe was added by be-bv7x so a not-yet-created cursor table
-// never poisons the pooled Dolt session with a failing statement.
+// expectCursorProbe mocks the existence probe that migrationSource.currentVersion
+// issues before it ever reads the cursor table: the schemata read proving the
+// session has a usable current database, then the SHOW TABLES listing. The
+// probe was added by be-bv7x so a not-yet-created cursor table never poisons
+// the pooled Dolt session with a failing statement.
 func expectCursorProbe(mock sqlmock.Sqlmock, table string, exists bool) {
-	present := 0
-	if exists {
-		present = 1
-	}
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM information_schema\.tables`).
-		WithArgs(table).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(present))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = DATABASE()")).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	expectShowTable(mock, table, exists)
 }
 
 func expectDoltStatusRows(mock sqlmock.Sqlmock) {
@@ -827,15 +824,16 @@ func expectIgnoredSentinelProbes(mock sqlmock.Sqlmock, present bool) {
 	}
 }
 
-// expectShowTable mocks one showTableExists probe: SHOW TABLES answers an empty
-// result set for an absent table, never a zero count.
+// expectShowTable mocks one showTableExists probe: the database's unfiltered
+// SHOW TABLES listing, which holds table only when it exists. An absent table
+// is a listing without it, never a zero count. The listing always carries an
+// unrelated table, so a probe that took any row as presence fails.
 func expectShowTable(mock sqlmock.Sqlmock, table string, exists bool) {
-	rows := sqlmock.NewRows([]string{"Tables_in_testdb"})
+	rows := sqlmock.NewRows([]string{"Tables_in_testdb"}).AddRow("issues")
 	if exists {
 		rows.AddRow(table)
 	}
-	mock.ExpectQuery(regexp.QuoteMeta("SHOW TABLES LIKE '" + table + "'")).
-		WillReturnRows(rows)
+	mock.ExpectQuery("^SHOW TABLES$").WillReturnRows(rows)
 }
 
 func TestMigrateUpWithLockFreshBootstrapHealProbeFailuresStayFatal(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -234,9 +235,10 @@ func TestPrintGlobalDatabaseConsentHint(t *testing.T) {
 // does not describe.
 func expectRemoteBackedSharedProbe(mock sqlmock.Sqlmock) {
 	for i := 0; i < 2; i++ {
-		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM information_schema\.tables`).
-			WithArgs("schema_migrations").
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = DATABASE()")).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		mock.ExpectQuery("^SHOW TABLES$").
+			WillReturnRows(sqlmock.NewRows([]string{"Tables_in_beads"}).AddRow("schema_migrations"))
 		mock.ExpectQuery(`SELECT COALESCE\(MAX\(version\), 0\) FROM schema_migrations`).
 			WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
 	}
