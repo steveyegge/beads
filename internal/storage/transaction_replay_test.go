@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -221,8 +220,16 @@ func TestRunReplayableTransactionStopsWhenContextEnds(t *testing.T) {
 // different failure after a replay did not give up on a conflict.
 func TestRunReplayableTransactionCountsReplays(t *testing.T) {
 	useInstantReplayTimer(t)
+	// The counter is swapped for one built by the same constructor on a
+	// test-local provider, so the global meter provider is never touched.
 	reader := sdkmetric.NewManualReader()
-	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := txReplays
+	txReplays = newTxReplaysCounter(provider.Meter("test"))
+	t.Cleanup(func() {
+		txReplays = prev
+		_ = provider.Shutdown(context.Background())
+	})
 
 	noop := func(Transaction) error { return nil }
 	if err := RunReplayableTransaction(context.Background(), &scriptedTransactor{outcomes: []error{conflict(1), conflict(2), nil}}, "bd: replayed", noop); err != nil {
@@ -233,6 +240,14 @@ func TestRunReplayableTransactionCountsReplays(t *testing.T) {
 	}
 	if err := RunReplayableTransaction(context.Background(), &scriptedTransactor{outcomes: []error{conflict(1), errors.New("constraint violated")}}, "bd: failed", noop); err == nil {
 		t.Fatal("the loop that ended on a plain failure succeeded")
+	}
+	// The context ends while the loop waits to replay: not exhausted.
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := RunReplayableTransaction(ctx, &scriptedTransactor{outcomes: []error{conflict(1), nil}}, "bd: canceled", func(Transaction) error {
+		cancel()
+		return nil
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation", err)
 	}
 
 	var rm metricdata.ResourceMetrics
@@ -259,6 +274,6 @@ func TestRunReplayableTransactionCountsReplays(t *testing.T) {
 		t.Fatalf("replayed count = %d, want %d (two, then every replay of the exhausted loop, then one)", got["replayed"], want)
 	}
 	if got["exhausted"] != 1 {
-		t.Fatalf("exhausted count = %d, want 1", got["exhausted"])
+		t.Fatalf("exhausted count = %d, want 1 (only the loop that ran out of attempts)", got["exhausted"])
 	}
 }

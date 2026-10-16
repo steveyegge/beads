@@ -68,17 +68,18 @@ const (
 var replayTimer func() backoff.Timer
 
 // txReplays counts whole-transaction replays, labeled outcome=replayed for each
-// replay and outcome=exhausted when a loop gives up: the
-// RunReplayableTransaction counterpart of withRetryTx's write-retry counter. It
-// is registered against the global delegating provider, so it forwards to the
-// real provider once telemetry is initialized.
-var txReplays metric.Int64Counter
+// replay and outcome=exhausted when a loop runs out of attempts on conflicts:
+// the RunReplayableTransaction counterpart of withRetryTx's write-retry
+// counter. It is registered against the global delegating provider, so it
+// forwards to the real provider once telemetry is initialized.
+var txReplays = newTxReplaysCounter(otel.Meter("github.com/steveyegge/beads/storage"))
 
-func init() {
-	txReplays, _ = otel.Meter("github.com/steveyegge/beads/storage").Int64Counter("bd.tx_replays_total",
+func newTxReplaysCounter(meter metric.Meter) metric.Int64Counter {
+	counter, _ := meter.Int64Counter("bd.tx_replays_total",
 		metric.WithDescription("Whole-transaction replays after a lost write conflict (label: outcome=replayed|exhausted)"),
 		metric.WithUnit("{replay}"),
 	)
+	return counter
 }
 
 // RunReplayableTransaction runs fn through s.RunInTransaction and, while an
@@ -110,7 +111,7 @@ func RunReplayableTransaction(ctx context.Context, s Transactor, commitMsg strin
 	var lastConflict error
 	notify := func(err error, wait time.Duration) {
 		txReplays.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "replayed")))
-		debug.Logf("transaction %q lost a write conflict on attempt %d; replaying in %v: %v", commitMsg, attempts, wait, err)
+		debug.Logf("transaction %q lost a write conflict on attempt %d; replaying in %v: %v\n", commitMsg, attempts, wait, err)
 	}
 	var timer backoff.Timer
 	if replayTimer != nil {
@@ -131,13 +132,15 @@ func RunReplayableTransaction(ctx context.Context, s Transactor, commitMsg strin
 	if err == nil || lastConflict == nil {
 		return err
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, lastConflict) {
-		txReplays.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "exhausted")))
-		return fmt.Errorf("%w (stopped retrying after %d attempt(s): %w)", lastConflict, attempts, ctxErr)
-	}
 	if errors.Is(err, lastConflict) {
+		// The loop ended on the conflict it was replaying: its budget ran out.
 		txReplays.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "exhausted")))
 		return fmt.Errorf("%w (gave up after %d attempts: the transaction kept losing write conflicts with concurrent writers)", err, attempts)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// The context ended while waiting to replay: report both why the loop
+		// stopped and the conflict it was retrying. That is not exhaustion.
+		return fmt.Errorf("%w (stopped retrying after %d attempt(s): %w)", lastConflict, attempts, ctxErr)
 	}
 	return err
 }

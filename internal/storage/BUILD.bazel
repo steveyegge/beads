@@ -132,7 +132,6 @@ go_test(
         "//journalops",
         "//memoryops",
         "@com_github_cenkalti_backoff_v4//:backoff",
-        "@io_opentelemetry_go_otel//:otel",
         "@io_opentelemetry_go_otel//attribute",
         "@io_opentelemetry_go_otel_sdk_metric//:metric",
         "@io_opentelemetry_go_otel_sdk_metric//metricdata",
