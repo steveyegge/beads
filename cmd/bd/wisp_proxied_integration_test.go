@@ -269,6 +269,11 @@ func TestProxiedServerWispGC(t *testing.T) {
 		parentWisp := bdProxiedCreate(t, bd, p.dir, "Abandoned parent wisp", "--ephemeral")
 		staleChild := bdProxiedCreate(t, bd, p.dir, "Stale child wisp", "--ephemeral")
 		freshChild := bdProxiedCreate(t, bd, p.dir, "Fresh child wisp", "--ephemeral")
+		// Closed so that only the cascade can collect it: without --all the
+		// parent scan passes over closed wisps.
+		if out, err := bdProxiedRun(t, bd, p.dir, "close", staleChild.ID); err != nil {
+			t.Fatalf("bd close: %v\n%s", err, out)
+		}
 
 		db := openProxiedDB(t, p)
 		for _, childID := range []string{staleChild.ID, freshChild.ID} {

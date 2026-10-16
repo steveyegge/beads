@@ -621,6 +621,12 @@ A wisp is considered abandoned if:
     are age-reclaimable. If the blocked set or the custom-status list cannot be
     read, the GC aborts rather than risk reclaiming live steps.
 
+Wisps that depend on an abandoned wisp are deleted with it, closed ones
+included even without --all, but only if they too haven't been updated in
+--age duration and are not live work. A dependent that is too young is
+spared and loses its edge to the deleted wisp: an open one is collected once
+it ages out, a closed one only by --all, --closed or 'bd purge'.
+
 Abandoned wisps are deleted without creating a digest. Use 'bd mol squash'
 if you want to preserve a summary before garbage collection.
 
@@ -913,6 +919,9 @@ func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThre
 			for _, issue := range abandoned {
 				abandonedSet[issue.ID] = true
 			}
+			// Dependents skip the parent scan's not-closed clause: an
+			// abandoned molecule's finished steps go with it, even without
+			// --all.
 			for _, child := range childIssues {
 				if abandonedSet[child.ID] {
 					continue
@@ -923,7 +932,9 @@ func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThre
 				if isProtectedWisp(child, blockedSet, protectedStatuses) {
 					continue
 				}
-				// Children are held to the same --age contract as parents.
+				// Children are held to the same --age contract as parents. One
+				// spared here is detached when its parent is deleted, so a
+				// closed one is left for --all, --closed or bd purge.
 				if !wispIsAbandoned(now, child.UpdatedAt, ageThreshold) {
 					continue
 				}

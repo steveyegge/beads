@@ -85,10 +85,13 @@ func TestWispGCCascadeRespectsAge(t *testing.T) {
 		UpdatedAt: now.Add(-2 * time.Second),
 	}
 	// A child that really is abandoned must still be collected — the cascade
-	// exists for a reason and the fix must not disable it.
+	// exists for a reason and the fix must not disable it. It is closed so
+	// that only the cascade can reach it: without --all the parent scan passes
+	// over closed wisps, so an open stale child would be collected even with
+	// the cascade switched off.
 	staleChild := &types.Issue{
 		ID:        "gc-stale-child",
-		Status:    types.StatusOpen,
+		Status:    types.StatusClosed,
 		UpdatedAt: now.Add(-48 * time.Hour),
 	}
 
