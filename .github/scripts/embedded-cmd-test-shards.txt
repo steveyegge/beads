@@ -152,6 +152,7 @@
 100 63 TestEmbeddedDepAndLinkBatchAutoCommitDoesNotAdvanceHead
 100 63 TestEmbeddedGateCheckLimitCountsOnlyLiveGates
 100 63 TestEmbeddedIfRevisionDeletePreflightGoneParentIsPreconditionFailed
+100 63 TestEmbeddedListPageEdges
 
 100 64 TestEmbeddedGateWaiterCheckLifecycle
 100 64 TestEmbeddedPromoteMovesAWispParent
