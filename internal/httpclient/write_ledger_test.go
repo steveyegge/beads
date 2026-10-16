@@ -177,6 +177,13 @@ func writeShapes() []writeShape {
 				// Issue spread drives is left out (wirePriority).
 				"DefaultPriority": absenceOf("priority"),
 			},
+			// The gate members, published behind issues.create.gates
+			// under the live W-CreateRequest.Issue refusal.
+			// They leave this set when the encoder reads the token and sends
+			// them.
+			pending: map[string]string{
+				"await_type": "Issue", "await_id": "Issue", "timeout": "Issue", "waiters": "Issue",
+			},
 		},
 		{
 			name:   "closeIssue",
@@ -325,12 +332,14 @@ func writeShapes() []writeShape {
 				// row's arrangement, the other way round.
 				"Persistence": member("persistence"),
 			},
-			// NOTHING IS PENDING, and the set is empty rather than absent for the
-			// reason the second list in accessors.go was: it held the two
-			// incremental-label members #5510 published under an existing refusal,
-			// and client wave ga-jpywb moved both into `carried` — which is what
-			// the map documents a flip as. The next member upstream publishes
-			// under a live W- row starts it again.
+			// The set held the two incremental-label members #5510 published
+			// under an existing refusal, until client wave ga-jpywb moved both
+			// into `carried` — which is what the map documents a flip as. It
+			// now holds await_id and waiters, published behind
+			// issues.update.gates under the live
+			// W-IssuePatch.AwaitID and W-IssuePatch.Waiters refusals; they
+			// leave it when the encoder reads the token and sends them.
+			pending: map[string]string{"await_id": "AwaitID", "waiters": "Waiters"},
 		},
 		{
 			// The nested metadata document, and the reason it is a shape of its
@@ -541,6 +550,13 @@ func writeShapes() []writeShape {
 				// The absence of `priority` (wirePriority).
 				"DefaultPriority": absenceOf("priority"),
 			},
+			// The gate members, published behind issues.create.gates
+			// under the live W-CreateItem.Issue refusal.
+			// They leave this set when the encoder reads the token and sends
+			// them.
+			pending: map[string]string{
+				"await_type": "Issue", "await_id": "Issue", "timeout": "Issue", "waiters": "Issue",
+			},
 		},
 		{
 			// The update item. It carries every FORCE member updateIssue does:
@@ -594,6 +610,11 @@ func writeShapes() []writeShape {
 				"Labels":   member("labels"),
 				"Metadata": member("metadata"),
 			},
+			// await_id and waiters, published behind issues.update.gates
+			// under the live W-IssuePatch.AwaitID and
+			// W-IssuePatch.Waiters refusals. They leave this set when the
+			// encoder reads the token and sends them.
+			pending: map[string]string{"await_id": "AwaitID", "waiters": "Waiters"},
 		},
 		{
 			// The label edit, a shape of its own for the reason the metadata

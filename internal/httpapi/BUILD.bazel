@@ -86,6 +86,7 @@ go_test(
         "dependency_edit_test.go",
         "edge_counts_test.go",
         "edges_test.go",
+        "gate_fields_test.go",
         "events_test.go",
         "events_watch_test.go",
         "get_issue_test.go",

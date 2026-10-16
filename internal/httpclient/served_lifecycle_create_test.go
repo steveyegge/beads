@@ -102,7 +102,7 @@ func TestServedLifecycleCreateRefusesAForeignIDPrefix(t *testing.T) {
 // park will outlive the ones above.
 func TestServedLifecycleCreateWritesEveryScalarField(t *testing.T) {
 	skipKnownDivergence(t, "W-CreateRequest.Issue", createParkBead,
-		"the case sets spec_id, await_id, closed_by_session, created_at and a created_by naming someone other than its actor; createIssue publishes none of them and the client refuses each per member rather than dropping it (asserted by TestCreateRefusesEveryMemberTheWireExcludes)")
+		"the case sets spec_id, await_id, closed_by_session, created_at and a created_by naming someone other than its actor; createIssue publishes none of them but await_id (behind issues.create.gates, which this client does not send yet) and the client refuses each per member rather than dropping it (asserted by TestCreateRefusesEveryMemberTheWireExcludes)")
 	conformance.RunLifecycleCreateWritesEveryScalarField(t, t.Context(), newServedCreateFixture(t, "hlc5"))
 }
 
@@ -125,19 +125,20 @@ func TestServedLifecycleCreateAppliesTheDefaultPriority(t *testing.T) {
 }
 
 // gateParkBead is the label the gate-member parks cite: the library carries
-// await_type, await_id, timeout and waiters on every local leg, and the wire
-// publishes them in the follow-up slices (members and behavior tokens, then
-// the client encoders). Until then this client refuses each member before the
-// dial rather than dropping it, so the served legs below are parked on the
-// ledger rows that refuse them.
+// await_type, await_id, timeout and waiters on every local leg, and the server
+// publishes them behind issues.create.gates and issues.update.gates. The
+// client encoders are the follow-up slice; until then this client refuses each
+// member before the dial rather than dropping it, so the served legs below are
+// parked on the ledger rows that refuse them.
 const gateParkBead = "gate await fields"
 
 // TestServedLifecycleCreateWritesTheGateMembers is PARKED on
-// W-CreateRequest.Issue: createIssue does not publish await_type, await_id,
-// timeout or waiters yet, and the client refuses each rather than dropping it.
+// W-CreateRequest.Issue: createIssue publishes await_type, await_id, timeout
+// and waiters behind issues.create.gates, but this client does not send them
+// yet and refuses each rather than dropping it.
 func TestServedLifecycleCreateWritesTheGateMembers(t *testing.T) {
 	skipKnownDivergence(t, "W-CreateRequest.Issue", gateParkBead,
-		"the case creates rows carrying await_type, await_id, timeout and waiters; createIssue publishes none of them yet and the client refuses each per member rather than dropping it")
+		"the case creates rows carrying await_type, await_id, timeout and waiters; createIssue publishes them behind issues.create.gates, but this client does not send them yet and refuses each per member rather than dropping it")
 	conformance.RunLifecycleCreateWritesTheGateMembers(t, t.Context(), newServedCreateFixture(t, "hlcgate"))
 }
 
@@ -145,7 +146,7 @@ func TestServedLifecycleCreateWritesTheGateMembers(t *testing.T) {
 // at-bound create carries all four gate members.
 func TestServedLifecycleCreateBoundsTheGateMembers(t *testing.T) {
 	skipKnownDivergence(t, "W-CreateRequest.Issue", gateParkBead,
-		"the case's at-bound create carries all four gate members, which createIssue does not publish yet; the client refuses each before the dial, so no bound is ever reached")
+		"the case's at-bound create carries all four gate members, which createIssue publishes behind issues.create.gates but this client does not send yet; the client refuses each before the dial, so no bound is ever reached")
 	conformance.RunLifecycleCreateBoundsTheGateMembers(t, t.Context(), newServedCreateFixture(t, "hlcgbnd"))
 }
 

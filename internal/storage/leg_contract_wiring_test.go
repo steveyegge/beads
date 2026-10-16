@@ -313,21 +313,27 @@ const issueOperationsUpdateRawSeamWaiverReason = "these three cases take the unt
 // request leaves the client. internal/httpclient/encode/ledger.go already
 // names this gap per field (W-IssuePatch.SpecID, W-IssuePatch.AwaitID,
 // W-IssuePatch.Owner, D8 refuse-not-drop): neither IssuePatchBody nor
-// ApplyPatchBody publishes spec_id or await_id at all, and Owner is excluded
+// ApplyPatchBody publishes spec_id at all, and Owner is excluded
 // from IssuePatchBody specifically (ApplyPatchBody — issues:batchApply's body
 // — does carry it, which is a different operation from updateIssue). Closing
 // this gap means publishing those fields on IssuePatchBody, a wire change to
 // the write role itself, not a client-side wiring exercise — tracked as a
-// follow-up slice, S4b: publish owner/spec_id/await_id on the wire. Until
-// S4b lands, these two contracts stay off this leg rather than asserting a
-// race outcome against a request three of its own racers never send.
+// follow-up slice, S4b: publish owner/spec_id/await_id on the wire. await_id
+// is now published on both patch bodies behind issues.update.gates,
+// but this client still refuses it before the dial
+// (W-IssuePatch.AwaitID) until its encoder reads that token, and spec_id and
+// owner remain S4b's. Until both land, these two contracts stay off this leg
+// rather than asserting a race outcome against a request three of its own
+// racers never send.
 const issuePatchFieldsNotOnUpdateWireWaiverReason = "PENDING, not permanent (tracked as S4b: publish " +
 	"owner/spec_id/await_id on the wire): two of the four ExpectedVersion concurrency contracts race " +
 	"IssuePatch.SpecID/.AwaitID/.Owner edits against updateIssue, and those three fields are refused outright by " +
-	"IssuePatchBody (W-IssuePatch.SpecID, W-IssuePatch.AwaitID, W-IssuePatch.Owner in " +
+	"this client (W-IssuePatch.SpecID, W-IssuePatch.AwaitID, W-IssuePatch.Owner in " +
 	"internal/httpclient/encode/ledger.go, D8 refuse-not-drop) rather than ever reaching the server, so the race " +
-	"never happens over this wire; closing the gap means publishing those fields on IssuePatchBody, which is a " +
-	"wire change to the write role (S4b), not something this leg's test wiring can bind around today"
+	"never happens over this wire; await_id is published on IssuePatchBody behind issues.update.gates " +
+	"but not yet sent by this client, and closing the rest of the gap means publishing " +
+	"spec_id and owner on IssuePatchBody, which is a wire change to the write role (S4b), not something this " +
+	"leg's test wiring can bind around today"
 
 // TestEveryLegWiresEveryRoleContract fails when a backend leg skips a role
 // contract the conformance package exports.

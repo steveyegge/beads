@@ -175,6 +175,12 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if CapSweepLiveDependents != httpapi.CapIssuesSweepLiveDependents {
 		t.Errorf("CapSweepLiveDependents = %q, server says %q", CapSweepLiveDependents, httpapi.CapIssuesSweepLiveDependents)
 	}
+	if CapIssuesCreateGates != httpapi.CapIssuesCreateGates {
+		t.Errorf("CapIssuesCreateGates = %q, server says %q", CapIssuesCreateGates, httpapi.CapIssuesCreateGates)
+	}
+	if CapIssuesUpdateGates != httpapi.CapIssuesUpdateGates {
+		t.Errorf("CapIssuesUpdateGates = %q, server says %q", CapIssuesUpdateGates, httpapi.CapIssuesUpdateGates)
+	}
 	if CapSweepLimit != httpapi.CapIssuesSweepLimit {
 		t.Errorf("CapSweepLimit = %q, server says %q", CapSweepLimit, httpapi.CapIssuesSweepLimit)
 	}
@@ -218,11 +224,12 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
 		httpapi.CapIssuesCloseAutoCloseMolecule, httpapi.CapIssuesListSearch,
 		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapListIDs, httpapi.CapIssuesUpdatePersistence, httpapi.CapDependenciesBlockingIsBlocked, httpapi.CapIssuesUpdateClaim,
+		httpapi.CapIssuesCreateGates, httpapi.CapIssuesUpdateGates,
 	}) {
 		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
 			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit, "+
 			"issues.batchApply.depAddLineage, issues.update.allowTemplate, issues.create.defaultPriority, issues.close.autoCloseMolecule, issues.list.search, "+
-			"issues.list.noAssignee, issues.list.title, issues.list.ids, issues.update.persistence, dependencies.blocking.isBlocked and issues.update.claim tokens", behaviorCapabilities)
+			"issues.list.noAssignee, issues.list.title, issues.list.ids, issues.update.persistence, dependencies.blocking.isBlocked, issues.update.claim, issues.create.gates and issues.update.gates tokens", behaviorCapabilities)
 	}
 }
 

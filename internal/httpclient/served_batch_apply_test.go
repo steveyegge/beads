@@ -276,11 +276,12 @@ func TestServedBatchApplyAppliesTheDefaultPriority(t *testing.T) {
 }
 
 // TestServedBatchApplyCarriesTheGateMembers is PARKED on W-CreateItem.Issue and
-// W-IssuePatch.Waiters: ApplyCreateItem and ApplyPatchBody publish no gate
-// member yet, and the client refuses each before the dial (gateParkBead).
+// W-IssuePatch.Waiters: ApplyCreateItem and ApplyPatchBody publish the gate
+// members (issues.create.gates, issues.update.gates), but this client does not
+// send them yet and refuses each before the dial (gateParkBead).
 func TestServedBatchApplyCarriesTheGateMembers(t *testing.T) {
 	skipKnownDivergence(t, "W-CreateItem.Issue", gateParkBead,
-		"the case's create item carries all four gate members and its update item patches await_id and waiters; issues:batchApply publishes none of them yet (W-CreateItem.Issue, W-IssuePatch.AwaitID, W-IssuePatch.Waiters) and the client refuses each before the dial")
+		"the case's create item carries all four gate members and its update item patches await_id and waiters; issues:batchApply publishes them behind issues.create.gates and issues.update.gates, but this client does not send them yet (W-CreateItem.Issue, W-IssuePatch.AwaitID, W-IssuePatch.Waiters) and refuses each before the dial")
 	conformance.RunBatchApplyCarriesTheGateMembers(t, t.Context(), newServedBatchApplyFixture(t, "hbagate"))
 }
 

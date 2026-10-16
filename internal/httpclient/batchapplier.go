@@ -496,17 +496,20 @@ func applyRefBody(ref issueops.Ref) (apigen.Ref, error) {
 //	            absent here, also deliberately: moving a row between planes
 //	            mid-plan is a different act from writing its fields.
 //
-// The other four — spec_id, await_id, waiters, closed_by_session — are absent from
-// both bodies.
+// spec_id and closed_by_session are absent from both bodies. await_id and
+// waiters are published on both behind issues.update.gates, but this client
+// does not send them yet, so they are refused here too until its encoder reads
+// that token.
 var applyPatchExcludedMembers = []struct {
 	member string
 	ledger string
 	set    func(issueops.IssuePatch) bool
 }{
-	// ParentID is this document's OWN exclusion and gets its own row; SpecID,
-	// AwaitID, Waiters and ClosedBySession are absent from both patch bodies, so they
-	// cite the rows that already refuse them rather than minting a second
-	// reason for one fact. Persistence cites W-IssuePatch.Persistence, the row
+	// ParentID is this document's OWN exclusion and gets its own row; SpecID
+	// and ClosedBySession are absent from both patch bodies, and AwaitID and
+	// Waiters are not sent by this client yet on either, so they cite the rows
+	// that already refuse them rather than minting a second reason for one
+	// fact. Persistence cites W-IssuePatch.Persistence, the row
 	// that refuses it on this operation alone.
 	{"ParentID", "W-ApplyPatch.ParentID", func(p issueops.IssuePatch) bool { return p.ParentID.Set }},
 	{"SpecID", "W-IssuePatch.SpecID", func(p issueops.IssuePatch) bool { return p.SpecID.Set }},

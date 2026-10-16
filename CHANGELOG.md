@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bd serve` publishes the gate members: `await_type`,
+  `await_id`, `timeout` (nanoseconds) and `waiters` on `POST
+  /v0/beads/issues` and on `issues:batchApply` create items, behind the new
+  `issues.create.gates` capability token, and `await_id` and `waiters` (a
+  whole-value replacement; `[]` clears) on the `patch` of `PATCH
+  /v0/beads/issues/{id}` and of `issues:batchApply` update items, behind
+  `issues.update.gates`. Additive; no wire_revision bump. The bounds are the
+  role's and match a local create or update exactly (the stored columns'
+  widths and a timeout that is not negative), answered as `400
+  invalid_argument` with `param` naming the member. The HTTP client does not
+  send these members yet and still refuses them before the dial.
 - `GET /v0/beads/dependencies/blocking` accepts `is_blocked`, behind the new
   `dependencies.blocking.isBlocked` capability token (additive; no
   wire_revision bump), and answers each item's stored, transitive
