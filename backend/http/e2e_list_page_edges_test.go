@@ -3,10 +3,13 @@
 package bdhttp_test
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -96,64 +99,91 @@ func TestE2E_ListTextRenderingsReadOnlyTheListedIssuesEdges(t *testing.T) {
 	proxyAddr, rec := startQueryRecordingProxy(t, startE2EServer(t))
 	f := newHTTPFixture(t, bin, proxyAddr)
 
-	// Each issue is created with its outgoing edges (--deps), one subprocess
-	// apiece: a bare id is a blocks edge onto it.
-	parent := f.create("tree parent", "-t", "epic", "-p", "0")
-	childA := f.create("tree child a", "-t", "task", "-p", "1", "--deps", "parent-child:"+parent)
-	childB := f.create("tree child b", "-t", "task", "-p", "2", "--deps", "parent-child:"+parent+","+childA)
-	loner := f.create("tree loner", "-t", "task", "-p", "3", "--deps", "related:"+childA)
-	hidden := f.create("tree hidden", "-t", "task", "-p", "1", "--deps", "parent-child:"+parent+","+loner)
+	// One graph apply seeds the whole fixture, so setup costs two subprocesses
+	// rather than one per issue and edge. An edge reads "from depends on to".
+	plan := filepath.Join(t.TempDir(), "plan.json")
+	if err := os.WriteFile(plan, []byte(`{
+		"nodes": [
+			{"key": "parent", "title": "tree parent", "type": "epic", "priority": 0},
+			{"key": "a", "title": "tree child a", "type": "task", "priority": 1},
+			{"key": "b", "title": "tree child b", "type": "task", "priority": 2},
+			{"key": "loner", "title": "tree loner", "type": "task", "priority": 3},
+			{"key": "hidden", "title": "tree hidden", "type": "task", "priority": 1}
+		],
+		"edges": [
+			{"from_key": "a", "to_key": "parent", "type": "parent-child"},
+			{"from_key": "b", "to_key": "parent", "type": "parent-child"},
+			{"from_key": "b", "to_key": "a", "type": "blocks"},
+			{"from_key": "loner", "to_key": "a", "type": "related"},
+			{"from_key": "hidden", "to_key": "parent", "type": "parent-child"},
+			{"from_key": "hidden", "to_key": "loner", "type": "blocks"}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var applied struct {
+		IDs map[string]string `json:"ids"`
+	}
+	if out := f.mustRun(nil, "create", "--graph", plan, "--json").stdout; json.Unmarshal([]byte(out), &applied) != nil || len(applied.IDs) != 5 {
+		t.Fatalf("bd create --graph --json did not report the five ids: %s", out)
+	}
+	parent, childA, childB := applied.IDs["parent"], applied.IDs["a"], applied.IDs["b"]
+	loner, hidden := applied.IDs["loner"], applied.IDs["hidden"]
+	// Closed separately: the batch create cannot carry a closed row's
+	// closed_at over the wire. --force because hidden is blocked by loner.
 	f.mustRun(nil, "close", hidden, "--reason", "done", "--force")
+
+	// Through the subtest's own t: f.mustRun fails the PARENT test, which a
+	// subtest may not do.
+	run := func(t *testing.T, args ...string) string {
+		t.Helper()
+		r := runBD(t, f.bin, f.dir, nil, args...)
+		if r.code != 0 {
+			t.Fatalf("bd %s failed (exit %d): stdout=%s stderr=%s", strings.Join(args, " "), r.code, r.stdout, r.stderr)
+		}
+		return r.stdout
+	}
+	// The --json listing is the budget's base: a text rendering of a page may
+	// cost that page plus its ONE edge read. Its count does not depend on the
+	// page size below the 200-row page, so one measurement serves every page.
+	rec.reset()
+	run(t, "list", "--json")
+	base := len(rec.snapshot())
 
 	listed := []string{parent, childA, childB, loner}
 	for _, tc := range []struct {
 		name    string
 		args    []string
 		anchors []string
-		// jsonArgs is the --json listing of the same page, whose request count
-		// is the budget's base: a text rendering costs the page plus its ONE
-		// edge read. Empty for --parent, whose tree walk is not a page.
-		jsonArgs []string
-		want     []string
+		// page marks a rendering of the listing's page, held to the --json
+		// budget; the --parent tree is a walk, not a page.
+		page bool
+		want []string
 	}{
 		{
-			name: "tree", args: []string{"list"}, anchors: listed,
-			jsonArgs: []string{"list", "--json"},
-			want:     []string{"├── ○ " + childA, "└── ○ " + childB},
+			name: "tree", args: []string{"list"}, anchors: listed, page: true,
+			want: []string{"├── ○ " + childA, "└── ○ " + childB},
 		},
 		{
-			name: "deps all", args: []string{"list", "--deps=all"}, anchors: listed,
-			jsonArgs: []string{"list", "--json"},
-			want:     []string{"[depends-on]", "[related]"},
+			name: "deps all", args: []string{"list", "--deps=all"}, anchors: listed, page: true,
+			want: []string{"[depends-on]", "[related]"},
 		},
 		{
-			name: "truncated page", args: []string{"list", "--limit", "2"}, anchors: []string{parent, childA},
-			jsonArgs: []string{"list", "--json", "--limit", "2"},
-			want:     []string{"└── ○ " + childA},
+			name: "truncated page", args: []string{"list", "--limit", "2"}, anchors: []string{parent, childA}, page: true,
+			want: []string{"└── ○ " + childA},
 		},
 		{
 			name: "parent tree", args: []string{"list", "--parent", parent}, anchors: []string{parent, childA, childB},
 			want: []string{"├── ○ " + childA, "└── ○ " + childB},
 		},
 		{
-			name: "format digraph", args: []string{"list", "--format", "digraph"}, anchors: listed,
-			jsonArgs: []string{"list", "--json"},
-			want:     []string{childA + " " + parent, childB + " " + parent, childB + " " + childA, loner + " " + childA},
+			name: "format digraph", args: []string{"list", "--format", "digraph"}, anchors: listed, page: true,
+			want: []string{childA + " " + parent, childB + " " + parent, childB + " " + childA, loner + " " + childA},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Through the subtest's own t: f.mustRun fails the PARENT test,
-			// which a subtest may not do.
-			run := func(args ...string) string {
-				t.Helper()
-				r := runBD(t, f.bin, f.dir, nil, args...)
-				if r.code != 0 {
-					t.Fatalf("bd %s failed (exit %d): stdout=%s stderr=%s", strings.Join(args, " "), r.code, r.stdout, r.stderr)
-				}
-				return r.stdout
-			}
 			rec.reset()
-			out := run(tc.args...)
+			out := run(t, tc.args...)
 			reqs := rec.snapshot()
 			t.Logf("bd %s: %d requests: %v", strings.Join(tc.args, " "), len(reqs), reqs)
 
@@ -173,14 +203,9 @@ func TestE2E_ListTextRenderingsReadOnlyTheListedIssuesEdges(t *testing.T) {
 				t.Errorf("bd %s read the edges of %v, want exactly the listed issues %v",
 					strings.Join(tc.args, " "), got, want)
 			}
-			if tc.jsonArgs != nil {
-				rec.reset()
-				run(tc.jsonArgs...)
-				base := len(rec.snapshot())
-				if len(reqs) > base+1 {
-					t.Errorf("bd %s made %d requests; bd %s makes %d for the same page, and the text rendering may add only its one edge read",
-						strings.Join(tc.args, " "), len(reqs), strings.Join(tc.jsonArgs, " "), base)
-				}
+			if tc.page && len(reqs) > base+1 {
+				t.Errorf("bd %s made %d requests; bd list --json makes %d, and the text rendering may add only its one edge read",
+					strings.Join(tc.args, " "), len(reqs), base)
 			}
 			for _, w := range tc.want {
 				if !strings.Contains(out, w) {
