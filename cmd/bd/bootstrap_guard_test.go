@@ -60,6 +60,21 @@ func TestIsGitCodeRepoURL(t *testing.T) {
 		// SCP-style to non-forge — allowed
 		{"git@my-dolt.example.com:org/db", false},
 
+		// Userinfo before a forge host is stripped, in either URL form
+		{"ssh://git@github.com/org/db", true},
+		{"https://x-access-token:secret@github.com/org/db", true},
+		{"git@github.com:org/db", true},
+		// ...through the last "@" of the host part, as net/url (and so Dolt) reads it
+		{"https://a@b@github.com/org/db", true},
+		{"a@b@github.com:org/db", true},
+
+		// An "@" outside the host part never selects the host (mc-gcmer)
+		{"https://my-dolt.example.com/x@github.com/path", false},
+		{"https://my-dolt.example.com?x@github.com", false},
+		{"https://my-dolt.example.com#x@github.com", false},
+		{"my-dolt.example.com:org/x@github.com:db", false},
+		{"./backups/me@github.com:db", false},
+
 		// Edge: empty string
 		{"", false},
 	}
