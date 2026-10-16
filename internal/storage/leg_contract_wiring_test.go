@@ -120,36 +120,8 @@ func init() {
 
 		"RunLifecycleUpdateExpectedVersionSingleWinnerWithDisjointColumnsUnderConcurrency":  issuePatchFieldsNotOnUpdateWireWaiverReason,
 		"RunLifecycleUpdateExpectedVersionSingleWinnerAcrossUpdateAndCloseUnderConcurrency": issuePatchFieldsNotOnUpdateWireWaiverReason,
-
-		"RunHeartbeaterRefreshesTheHoldersLease":                          heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterChangesNothingOnTheRow":                            heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterAGuardedWriteWithThePreHeartbeatRevisionStillWins": heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAForeignHolder":                             heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAfterClose":                                 heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAfterRelease":                               heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAfterReclaim":                               heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAfterStatusMovedOffInProgress":              heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAWisp":                                      heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRearmsAHandDoledClaim":                             heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterAnswersNotFoundForAnAbsentID":                      heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesABlankOrOverLongActor":                      heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterDoesNotMutateTheRequest":                           heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterASameSecondHeartbeatIsNotARearm":                   heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAnOrphanedLeaseOnAReleasedIssue":            heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAnOrphanedLeaseOnAClosedIssue":              heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterRefusesAnOrphanedLeaseOnAnIssueSomeoneElseHolds":   heartbeaterWireNotYetPublishedWaiverReason,
-		"RunHeartbeaterCommitsOnlyItsOwnTables":                           heartbeaterWireNotYetPublishedWaiverReason,
 	})
 }
-
-// heartbeaterWireNotYetPublishedWaiverReason covers the Heartbeater contract on the
-// http leg while the role has no wire. The library role and its three library
-// legs land first; the served operation
-// (POST /v0/beads/issues/{id}:heartbeat, capability issues.heartbeat) and the
-// http client leg follow in the next slices on the same branch, which wire
-// these cases and delete this waiver.
-const heartbeaterWireNotYetPublishedWaiverReason = "Heartbeater has no wire yet: issues.heartbeat and the http client leg " +
-	"land in the commits after the library role"
 
 // cycleTracksWireGapWaiverReason covers the one CycleDetector widening option
 // the HTTP wire does not carry at all.

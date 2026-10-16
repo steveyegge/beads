@@ -190,6 +190,34 @@ func (l *roleLeaseReclaimer) reclaimRequests() []issueops.ReclaimRequest {
 	return append([]issueops.ReclaimRequest(nil), l.calls...)
 }
 
+// roleHeartbeater is the lease refresh of the store-shaped source, its own fake
+// beside roleClaimer for roleBatchGetter's reason: a separate role on a
+// separate accessor, so one fake answering both would let a test pass on a
+// server that had wired the heartbeat handler to the claim.
+type roleHeartbeater struct {
+	result issueops.HeartbeatResult
+	err    error
+
+	mu    sync.Mutex
+	calls []issueops.HeartbeatRequest
+}
+
+func (h *roleHeartbeater) Heartbeat(_ context.Context, req issueops.HeartbeatRequest) (issueops.HeartbeatResult, error) {
+	h.mu.Lock()
+	h.calls = append(h.calls, req)
+	h.mu.Unlock()
+	if h.err != nil {
+		return issueops.HeartbeatResult{}, h.err
+	}
+	return h.result, nil
+}
+
+func (h *roleHeartbeater) heartbeatRequests() []issueops.HeartbeatRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]issueops.HeartbeatRequest(nil), h.calls...)
+}
+
 // roleRelations is the single-anchor NEIGHBOR role of the store-shaped source,
 // its own fake beside roleEdgeReader for roleGraphCounter's reason: the two sit
 // on adjacent accessors and answer about the same edges, so one fake serving
@@ -990,6 +1018,9 @@ func rolesConfig(cfg Config) Config {
 	}
 	if cfg.LeaseReclaimer == nil {
 		cfg.LeaseReclaimer = &roleLeaseReclaimer{}
+	}
+	if cfg.Heartbeater == nil {
+		cfg.Heartbeater = &roleHeartbeater{}
 	}
 	if cfg.Relations == nil {
 		cfg.Relations = &roleRelations{}

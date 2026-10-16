@@ -154,6 +154,7 @@ go_test(
         "served_graph_aux_test.go",
         "served_graph_counter_test.go",
         "served_harness_test.go",
+        "served_heartbeater_test.go",
         "served_hooks_test.go",
         "served_issue_operations_test.go",
         "served_journal_test.go",

@@ -3256,6 +3256,105 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
 
+  /v0/beads/issues/{id}:heartbeat:
+    post:
+      operationId: heartbeatIssue
+      summary: Refresh the claim lease on an issue the actor holds
+      description: >-
+        What `bd heartbeat` spells. It pushes the lease forward by the
+        server's lease TTL and stamps `heartbeat_at`, and a refresh writes ONLY
+        the lease. The issue row is untouched: `revision` is NOT reminted (a
+        following `expected_version` guard written against the pre-heartbeat
+        revision still wins), the versioned-history revision does not advance,
+        `updated_at` does not move, and no event or events-journal entry is
+        written (`events.list` / `events.watch` see nothing).
+
+
+        FENCED ON THE HOLDER AND THE LIVE CLAIM: `actor` must hold the claim,
+        and the issue must be `in_progress` under it when the lease is
+        refreshed. A holder that is `in_progress` with no lease row (a claim
+        hand-doled through `updateIssue`) is re-armed and reported
+        `rearmed: true`; a refresh of an existing lease row never is. A re-arm
+        is recorded as a mutation, a refresh is not: the re-arm remints
+        `revision`, moves `updated_at` and records an event (once, so that it
+        collides with a release or close racing it rather than leaving a
+        lease on an issue that is no longer claimed); re-read the issue
+        before a guarded write after `rearmed: true`.
+        `heartbeat_at` and `lease_expires_at` are whole seconds, the values
+        stored. Wisps hold no
+        lease and are refused. Safe to repeat: a repeat only moves the expiry
+        forward. The request carries no TTL, as the claim carries none: lease
+        policy is the server's, and `lease_expires_at` reports the result so a
+        worker can see its margin.
+
+
+        There is no `expected_version` member, deliberately: the fence is the
+        holder, and the revision changes on unrelated edits by the holder
+        itself, so a revision-fenced heartbeat would fail spuriously.
+
+
+        Available when the server advertises the `issues.heartbeat` capability.
+      parameters:
+        - $ref: '#/components/parameters/IssueID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartbeatIssueRequest'
+      security:
+        - bearerToken: []
+      responses:
+        '200':
+          description: >-
+            The lease is refreshed. The body reports the lease, not the issue:
+            nothing was written to the issue row, so there is no row and no
+            `revision` to report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatIssueResponse'
+        '400':
+          description: >-
+            Invalid request: an unknown query parameter, an unparseable or
+            oversized body, an unknown body member, or an `actor` refused by the
+            rules `ClaimRequest.actor` states.
+          x-bd-codes: [invalid_argument]
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: >-
+            `already_claimed` is a live FOREIGN holder, in the claim's own
+            shape: the `assignee` extension member names the holder and
+            `issue_status` carries the status, both read inside the refusing
+            transaction.
+
+
+            `lease_not_held` is the actor holding no live claim at all: the
+            issue is not `in_progress` under this actor (open, closed,
+            released, reclaimed, or moved to another status), or it is a wisp.
+            It carries `issue_status`, and `reason: ephemeral` for a wisp;
+            `detail` names the one state the refusing transaction found. The
+            recovery is a claim, not another heartbeat. Nothing on the issue
+            is written on either refusal; the one write a refusal can make is
+            deleting a stale lease row this actor still held on an issue it no
+            longer holds a live claim on (never another holder's lease).
+          x-bd-codes: [already_claimed, lease_not_held]
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
   /v0/beads/issues/{id}:close:
     post:
       operationId: closeIssue
@@ -8262,6 +8361,7 @@ components:
             `issues.related`, `issues.create`, `issues.addComment`,
             `issues.batchClose`,
             `issues.claim`, `issues.claimNext`, `issues.release`,
+            `issues.heartbeat`,
             `issues.close`, `issues.reopen`, `issues.update`,
             `issues.sweep`, `issues.delete`, `issues.batchGet`,
             `issues.reclaim`, `issues.batchCreate`,
@@ -11186,6 +11286,51 @@ components:
             nothing — the idempotent re-claim. A claim held by a DIFFERENT
             actor is a 409, not a 200 with this flag.
 
+    HeartbeatIssueRequest:
+      type: object
+      additionalProperties: false
+      required: [actor]
+      properties:
+        actor:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[^\u0000-\u001F\u007F-\u009F\u2028\u2029]+$'
+          description: >-
+            The lease holder refreshing its lease, and the fence's subject.
+            `ClaimRequest.actor`'s rules exactly: the server trims it, then
+            refuses an empty result, anything longer than 256 BYTES (or 255
+            characters, the column's bound), and any control character
+            including newline.
+
+    HeartbeatIssueResponse:
+      type: object
+      additionalProperties: false
+      required: [id, holder, heartbeat_at, lease_expires_at, rearmed]
+      properties:
+        id:
+          type: string
+          description: The issue whose lease was refreshed.
+        holder:
+          type: string
+          description: The lease holder after the refresh (the request's `actor`).
+        heartbeat_at:
+          type: string
+          format: date-time
+          description: The server clock, in UTC, the refresh stamped on the lease.
+        lease_expires_at:
+          type: string
+          format: date-time
+          description: >-
+            `heartbeat_at` plus the server's lease TTL: the deadline the next
+            heartbeat must beat before a reclaim may revert the claim.
+        rearmed:
+          type: boolean
+          description: >-
+            True when the actor held the claim but no lease row existed for it
+            (a claim hand-doled through `updateIssue`), so the heartbeat granted
+            a fresh lease instead of refreshing one.
+
     ReleaseIssueRequest:
       type: object
       additionalProperties: false
@@ -12731,6 +12876,7 @@ components:
             configured with a token file), `not_found` (404),
             `already_claimed` (409), `not_claimable` (409),
             `not_closable` (409), `not_releasable` (409),
+            `lease_not_held` (409),
             `template_read_only` (409), `issue_pinned` (409),
             `not_assignee` (409),
             `dependency_cycle` (409), `dependency_exists` (409),
@@ -12786,7 +12932,9 @@ components:
             and the one that carries `min_wire_revision`; see the
             document-level rule and `ContextResponse.wire_revision`). Either
             way the recovery is to send something different, never to retry
-            the same request. The set may grow; default-branch on unknown
+            the same request. With `lease_not_held`: `ephemeral` (the id
+            names a wisp, which is never leased; its `issue_status` may be
+            `in_progress`). The set may grow; default-branch on unknown
             values.
         assignee:
           type: string
