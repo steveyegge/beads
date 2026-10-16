@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/steveyegge/beads/internal/configfile"
@@ -134,6 +135,43 @@ func TestServeSkipsPostCommandMaintenance(t *testing.T) {
 	// And strict readonly still wins over everything, serve included.
 	if runsPostCommandMaintenance("update", true) {
 		t.Error("strict readonly no longer suppresses post-command maintenance")
+	}
+}
+
+// TestOnlyOneShotCommandsMemoizeRemoteReads (bts-xpw.3.14.6): an http
+// transport's read memo answers a repeated row read from a response already
+// received, which is only right for a command that exits within seconds. bd
+// serve answering other clients, and a --watch or --follow poll, would show a
+// snapshot instead of the changes they exist to show.
+func TestOnlyOneShotCommandsMemoizeRemoteReads(t *testing.T) {
+	command := func(name string, args ...string) *cobra.Command {
+		t.Helper()
+		cmd := &cobra.Command{Use: name}
+		cmd.Flags().BoolP("watch", "w", false, "")
+		cmd.Flags().Bool("follow", false, "")
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatalf("%s %v: %v", name, args, err)
+		}
+		return cmd
+	}
+	for _, tc := range []struct {
+		cmd  *cobra.Command
+		args string
+		want bool
+	}{
+		{command("show"), "show", true},
+		{command("list"), "list", true},
+		{command("update"), "update", true},
+		{command("show", "--watch"), "show --watch", false},
+		{command("list", "-w"), "list -w", false},
+		{command("show", "--watch=false"), "show --watch=false", true},
+		{command("tail", "--follow"), "events tail --follow", false},
+		{command(serveCmdName), "serve", false},
+		{&cobra.Command{Use: "close"}, "close (no watch flag at all)", true},
+	} {
+		if got := commandMemoizesReads(tc.cmd); got != tc.want {
+			t.Errorf("bd %s: commandMemoizesReads = %v, want %v", tc.args, got, tc.want)
+		}
 	}
 }
 

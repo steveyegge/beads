@@ -139,6 +139,11 @@ type Client struct {
 
 	handshake handshakeCache
 	expectID  string
+
+	// memo, when EnableReadMemo turned it on, answers a repeated identical
+	// single-row or settings read from the response already received
+	// (read_memo.go). Nil is off, the default.
+	memo *readMemo
 }
 
 // New builds a client for base.
@@ -321,9 +326,35 @@ func (c *Client) Do(ctx context.Context, r Request, out any) error {
 		return fmt.Errorf("%s: %w", r.Op, err)
 	}
 
-	res, err := c.roundTrip(ctx, r, u, body)
-	if err != nil {
-		return err
+	var (
+		res *response
+		// memoKey is set only for a memoable read that MISSED, whose answer is
+		// then stored under it at memoGen. A hit is never stored again: that
+		// would renew its age (read_memo.go, put).
+		memoKey string
+		memoGen uint64
+	)
+	switch {
+	case c.memo == nil:
+	case memoable(r):
+		key := u.String()
+		if res, memoGen = c.memo.lookup(key); res == nil {
+			memoKey = key
+		}
+	case r.Method != http.MethodGet:
+		// A write may change anything a memoized read answered: drop them all
+		// before it is sent, and again once it returns. Each clear starts a new
+		// generation, so a read that overlapped the write cannot store a
+		// pre-write answer behind it either.
+		c.memo.clear()
+		defer c.memo.clear()
+	}
+	if res == nil {
+		var err error
+		res, err = c.roundTrip(ctx, r, u, body)
+		if err != nil {
+			return err
+		}
 	}
 
 	// The rotation window, and the whole of it. The server re-reads its token
@@ -353,6 +384,9 @@ func (c *Client) Do(ctx context.Context, r Request, out any) error {
 			prob.CredentialSource = credentialSource(c.creds)
 		}
 		return prob
+	}
+	if memoKey != "" {
+		c.memo.put(memoKey, res, memoGen)
 	}
 	if out == nil {
 		return nil

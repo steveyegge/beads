@@ -181,7 +181,7 @@ func open(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
 	if dialer == nil {
 		return nil, fmt.Errorf("%w: cannot dial %s", ErrNoTransport, target)
 	}
-	wire, err := dialer(ctx, target)
+	wire, err := dialShared(ctx, dialer, beadsDir, target)
 	if err != nil {
 		return nil, err
 	}
