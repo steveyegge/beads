@@ -419,8 +419,8 @@ func TestCheckChildParentDependenciesDB_NoDeps(t *testing.T) {
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
-	if check.Message != "No hierarchy-blocking anti-patterns" {
-		t.Errorf("Message = %q, want %q", check.Message, "No hierarchy-blocking anti-patterns")
+	if check.Message != "No child→parent dependencies" {
+		t.Errorf("Message = %q, want %q", check.Message, "No child→parent dependencies")
 	}
 }
 
@@ -473,63 +473,96 @@ func TestCheckChildParentDependenciesDB_BlockingDetected(t *testing.T) {
 	}
 }
 
-// TestCheckChildParentDependenciesDB_ParentBlocksChildDetected is the GH#4814
-// mirror: parent→child blocks is as deadlocking as child→parent but was
-// invisible. This direction is only flagged when a REAL parent-child edge
-// backs the dotted-ID pattern (bee-ghosttrack review, PR#5131); the dotted
-// IDs alone are not enough (see
-// TestCheckChildParentDependenciesDB_ParentBlocksChildIgnoredWithoutRealEdge).
-func TestCheckChildParentDependenciesDB_ParentBlocksChildDetected(t *testing.T) {
+// TestCheckChildParentDependenciesDB_ParentGateOnOwnChildNotFlagged pins the
+// check's scope against the reverse shape GH#4814 reported: a parent that
+// waits for, or blocks on, its own child across a real parent-child edge.
+// Since gastownhall/beads#6506 that edge holds back the parent, not the
+// child, so the children stay ready and the check must stay OK; a warning
+// would point --fix-child-parent at a working close gate. Parent Close Gates
+// reports the blocks form instead (adapted from PR#5131's mirror test).
+func TestCheckChildParentDependenciesDB_ParentGateOnOwnChildNotFlagged(t *testing.T) {
 	store := newTestDoltStore(t, "test")
 	ctx := context.Background()
 
-	parent := &types.Issue{Title: "Parent epic", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	if err := store.CreateIssue(ctx, parent, "test"); err != nil {
-		t.Fatalf("Failed to create parent: %v", err)
+	// The shape bd create --parent writes: dotted ids AND real parent-child
+	// edges. test-gate.1 has an open child, so the waits-for gate is live.
+	issues := []*types.Issue{
+		{ID: "test-gate", Title: "Parent epic", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic},
+		{ID: "test-gate.1", Title: "Child task", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "test-gate.1.1", Title: "Grandchild task", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "test-gate.2", Title: "Second child task", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+	}
+	for _, issue := range issues {
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("CreateIssue %s: %v", issue.ID, err)
+		}
+	}
+	for _, dep := range []*types.Dependency{
+		{IssueID: "test-gate.1", DependsOnID: "test-gate", Type: types.DepParentChild},
+		{IssueID: "test-gate.1.1", DependsOnID: "test-gate.1", Type: types.DepParentChild},
+		{IssueID: "test-gate.2", DependsOnID: "test-gate", Type: types.DepParentChild},
+		{IssueID: "test-gate", DependsOnID: "test-gate.1", Type: types.DepWaitsFor},
+	} {
+		if err := store.AddDependency(ctx, dep, "test"); err != nil {
+			t.Fatalf("AddDependency %s -> %s (%s): %v", dep.IssueID, dep.DependsOnID, dep.Type, err)
+		}
 	}
 
+	// A legacy blocks row onto the other child goes in raw, because the write
+	// path refuses it now. The derived flags are then inverted, so the
+	// ready-work checks below pass only if the full recompute really derived
+	// them from these edges.
 	db := store.DB()
-	childID := parent.ID + ".1"
-
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, created_at, updated_at)
-		 VALUES (?, 'Hierarchical child', '', '', '', '', 'open', 2, 'task', NOW(), NOW())`,
-		childID)
-	if err != nil {
-		t.Fatalf("Failed to insert child: %v", err)
+	for _, stmt := range []string{
+		"INSERT INTO dependencies (id, issue_id, depends_on_issue_id, type, created_at, created_by) VALUES (UUID(), 'test-gate', 'test-gate.2', 'blocks', NOW(), 'test')",
+		"UPDATE issues SET is_blocked = CASE WHEN id = 'test-gate' THEN 0 ELSE 1 END WHERE id LIKE 'test-gate%'",
+		"CALL DOLT_COMMIT('-Am', 'test: seed parent close gates')",
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if _, err := store.RecomputeAllBlocked(ctx); err != nil {
+		t.Fatalf("RecomputeAllBlocked: %v", err)
 	}
 
-	// Real structural parent-child edge: childID is a genuine child of parent.ID.
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO dependencies (id, issue_id, depends_on_issue_id, type, created_at, created_by) VALUES (UUID(), ?, ?, 'parent-child', NOW(), 'test')`,
-		childID, parent.ID)
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
 	if err != nil {
-		t.Fatalf("Failed to insert parent-child edge: %v", err)
+		t.Fatalf("GetReadyWork: %v", err)
 	}
-
-	// parent blocks child (mirror anti-pattern)
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO dependencies (id, issue_id, depends_on_issue_id, type, created_at, created_by) VALUES (UUID(), ?, ?, 'blocks', NOW(), 'test')`,
-		parent.ID, childID)
-	if err != nil {
-		t.Fatalf("Failed to insert dependency: %v", err)
+	inReady := map[string]bool{}
+	for _, issue := range ready {
+		inReady[issue.ID] = true
+	}
+	for _, id := range []string{"test-gate.1", "test-gate.1.1", "test-gate.2"} {
+		if !inReady[id] {
+			t.Errorf("%s missing from ready work: the parent's gate must not hold back its children", id)
+		}
+	}
+	if inReady["test-gate"] {
+		t.Error("test-gate is ready, but it waits for and blocks on open children")
 	}
 
 	check := checkChildParentDependenciesDB(db)
-	if check.Status != StatusWarning {
-		t.Fatalf("Status = %q, want %q (parent→child blocks must be detected)", check.Status, StatusWarning)
+	if check.Status != StatusOK {
+		t.Errorf("Status = %q, want %q (detail %q): a parent's gate on its own child is not a deadlock", check.Status, StatusOK, check.Detail)
 	}
-	if !strings.Contains(check.Detail, parent.ID) || !strings.Contains(check.Detail, childID) {
-		t.Fatalf("Detail = %q, want both parent and child ids", check.Detail)
+	if check.Message != "No child→parent dependencies" {
+		t.Errorf("Message = %q, want %q", check.Message, "No child→parent dependencies")
+	}
+
+	gates := checkParentBlocksOwnChildDB(db)
+	if !strings.Contains(gates.Detail, "test-gate→test-gate.2") {
+		t.Errorf("Parent Close Gates detail = %q, want it to list the legacy blocks row test-gate→test-gate.2", gates.Detail)
 	}
 }
 
 // TestCheckChildParentDependenciesDB_ParentBlocksChildIgnoredWithoutRealEdge
-// verifies the new parent→child arm requires a genuine parent-child edge, not
-// just a dotted-ID coincidence. IDs and edges diverge by design after a
-// reparent or import; a parent blocking on an orphaned-dotted issue with no
-// structural link is the ordinary "epic waits for its subtask" shape, not a
-// deadlock (bee-ghosttrack review, PR#5131).
+// verifies a parent blocking on an issue whose id only looks like its child's
+// is not flagged. IDs and edges diverge by design after a reparent or import;
+// a parent blocking on an orphaned-dotted issue with no structural link is the
+// ordinary "epic waits for its subtask" shape, not a deadlock (bee-ghosttrack
+// review, PR#5131).
 func TestCheckChildParentDependenciesDB_ParentBlocksChildIgnoredWithoutRealEdge(t *testing.T) {
 	store := newTestDoltStore(t, "test")
 	ctx := context.Background()

@@ -332,20 +332,20 @@ func TestChildParentDependencies_PreservesParentChildType(t *testing.T) {
 	}
 }
 
-// TestChildParentDependencies_FixesBadDeps_ReversedDirection verifies the
-// parent→child arm (the new direction added for GH#4814) removes a genuine
-// hierarchy deadlock: a parent blocked on/waiting for its own child across a
-// real parent-child edge. This uses waits-for because it is the only
-// dependency type that reaches this state via the CLI today —
-// blocks/conditional-blocks in this direction are already rejected at write
-// time by CheckBlockingHierarchyInTx once a real parent-child edge exists
-// (bee-ghosttrack review, PR#5131).
-func TestChildParentDependencies_FixesBadDeps_ReversedDirection(t *testing.T) {
+// TestChildParentDependencies_PreservesParentGateOnOwnChild verifies the fix
+// leaves a parent's gate on its own child alone, in both forms: the waits-for
+// gate the write path recommends and a legacy blocks row it now refuses.
+// Since gastownhall/beads#6506 neither holds back the child, so deleting them
+// would only let the parent close before its children. The parent stays
+// blocked and the children stay ready through the whole --fix-child-parent
+// pass, including the blocked-state recompute that runs last (adapted from
+// PR#5131's reversed-direction test).
+func TestChildParentDependencies_PreservesParentGateOnOwnChild(t *testing.T) {
 	dir := t.TempDir()
 	store := newFixTestStore(t, dir, "bd")
 	ctx := context.Background()
 
-	for _, id := range []string{"bd-abc", "bd-abc.1"} {
+	for _, id := range []string{"bd-gate", "bd-gate.1", "bd-gate.1.1", "bd-gate.2"} {
 		issue := &types.Issue{
 			ID:        id,
 			Title:     "Issue " + id,
@@ -358,58 +358,88 @@ func TestChildParentDependencies_FixesBadDeps_ReversedDirection(t *testing.T) {
 		}
 	}
 
-	// Real parent-child edge: bd-abc.1 is a structural child of bd-abc.
-	pcDep := &types.Dependency{
-		IssueID:     "bd-abc.1",
-		DependsOnID: "bd-abc",
-		Type:        types.DepParentChild,
-		CreatedAt:   time.Now(),
-		CreatedBy:   "test",
-	}
-	if err := store.AddDependency(ctx, pcDep, "test"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Deadlock: the parent (bd-abc) waits for its own child (bd-abc.1).
-	waitsDep := &types.Dependency{
-		IssueID:     "bd-abc",
-		DependsOnID: "bd-abc.1",
-		Type:        types.DepWaitsFor,
-		CreatedAt:   time.Now(),
-		CreatedBy:   "test",
-	}
-	if err := store.AddDependency(ctx, waitsDep, "test"); err != nil {
-		t.Fatal(err)
+	// Real parent-child edges, and a live waits-for gate: bd-gate.1 has an
+	// open child of its own.
+	for _, dep := range []*types.Dependency{
+		{IssueID: "bd-gate.1", DependsOnID: "bd-gate", Type: types.DepParentChild},
+		{IssueID: "bd-gate.1.1", DependsOnID: "bd-gate.1", Type: types.DepParentChild},
+		{IssueID: "bd-gate.2", DependsOnID: "bd-gate", Type: types.DepParentChild},
+		{IssueID: "bd-gate", DependsOnID: "bd-gate.1", Type: types.DepWaitsFor},
+	} {
+		dep.CreatedAt = time.Now()
+		dep.CreatedBy = "test"
+		if err := store.AddDependency(ctx, dep, "test"); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Run fix
-	if err := ChildParentDependencies(dir, false); err != nil {
-		t.Errorf("ChildParentDependencies failed: %v", err)
-	}
-
-	// The deadlocking waits-for edge must be removed...
+	// The legacy blocks row goes in raw because the write path refuses it.
+	// The derived flags are then inverted, so the flag and ready-work checks
+	// below pass only if the recompute really ran and derived them from these
+	// edges.
 	db := store.UnderlyingDB()
-	var waitsCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM dependencies WHERE type = 'waits-for'").Scan(&waitsCount); err != nil {
-		t.Fatal(err)
-	}
-	if waitsCount != 0 {
-		t.Errorf("Expected 0 'waits-for' dependencies after fix, got %d", waitsCount)
+	for _, stmt := range []string{
+		"INSERT INTO dependencies (id, issue_id, depends_on_issue_id, type, created_at, created_by) VALUES (UUID(), 'bd-gate', 'bd-gate.2', 'blocks', NOW(), 'test')",
+		"UPDATE issues SET is_blocked = CASE WHEN id = 'bd-gate' THEN 0 ELSE 1 END WHERE id LIKE 'bd-gate%'",
+		"CALL DOLT_COMMIT('-Am', 'test: seed parent close gates')",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
 	}
 
-	// ...but the real structural parent-child edge must survive.
-	var pcCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM dependencies WHERE type = 'parent-child'").Scan(&pcCount); err != nil {
+	// The --fix --fix-child-parent pass: this fix, then the blocked-state
+	// recompute that orderDoctorFixes runs last.
+	if err := ChildParentDependencies(dir, false); err != nil {
+		t.Fatalf("ChildParentDependencies failed: %v", err)
+	}
+	if err := RecomputeBlocked(dir); err != nil {
+		t.Fatalf("RecomputeBlocked failed: %v", err)
+	}
+
+	for depType, want := range map[string]int{"waits-for": 1, "blocks": 1, "parent-child": 3} {
+		var got int
+		if err := db.QueryRow("SELECT COUNT(*) FROM dependencies WHERE type = ?", depType).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s dependencies after fix = %d, want %d", depType, got, want)
+		}
+	}
+
+	// The recompute's own output: every seeded flag inverted back.
+	for id, want := range map[string]bool{"bd-gate": true, "bd-gate.1": false, "bd-gate.1.1": false, "bd-gate.2": false} {
+		var got bool
+		if err := db.QueryRow("SELECT is_blocked FROM issues WHERE id = ?", id).Scan(&got); err != nil {
+			t.Fatalf("read is_blocked of %s: %v", id, err)
+		}
+		if got != want {
+			t.Errorf("%s is_blocked after the fix = %v, want %v", id, got, want)
+		}
+	}
+
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if pcCount != 1 {
-		t.Errorf("Expected the real parent-child edge to survive, got %d", pcCount)
+	inReady := map[string]bool{}
+	for _, issue := range ready {
+		inReady[issue.ID] = true
+	}
+	for _, id := range []string{"bd-gate.1", "bd-gate.1.1", "bd-gate.2"} {
+		if !inReady[id] {
+			t.Errorf("%s missing from ready work after the fix", id)
+		}
+	}
+	if inReady["bd-gate"] {
+		t.Error("bd-gate is ready after the fix, but it still waits for and blocks on open children")
 	}
 }
 
 // TestChildParentDependencies_PreservesDottedEdgeWithoutRealParentChildLink
-// verifies the new parent→child arm requires a genuine parent-child edge, not
-// just a dotted-ID coincidence. An orphaned-dotted subtask (dotted ID
+// verifies a dotted-ID coincidence alone never removes an issue's edge onto
+// its dotted look-alike child; the fix matches on the dotted prefix alone only
+// in the child→parent direction. An orphaned-dotted subtask (dotted ID
 // surviving a reparent or import, with no --parent edge) that its "epic"
 // blocks on is an ordinary "epic waits for its subtask" shape, not a
 // deadlock, and must survive the fix (bee-ghosttrack review, PR#5131).

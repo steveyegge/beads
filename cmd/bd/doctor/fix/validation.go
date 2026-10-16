@@ -116,9 +116,9 @@ func OrphanedDependencies(path string, verbose bool) error {
 	return nil
 }
 
-// ChildParentDependencies removes hierarchy-crossing BLOCKING dependencies:
-// child→parent and parent→child blocks/conditional-blocks/waits-for edges that
-// deadlock ready-work (GH#4814). Requires opt-in via --fix-child-parent.
+// ChildParentDependencies removes child→parent blocking dependencies.
+// These often indicate a modeling mistake (deadlock: child waits for parent, parent waits for children).
+// Requires explicit opt-in via --fix-child-parent flag since some workflows may use these intentionally.
 // If verbose is true, prints each removed dependency; otherwise shows only summary.
 func ChildParentDependencies(path string, verbose bool) error {
 	beadsDir, err := resolvedWorkspaceBeadsDir(path)
@@ -137,36 +137,21 @@ func ChildParentDependencies(path string, verbose bool) error {
 		return err
 	}
 
-	// Both directions of hierarchy-crossing blocking deps (GH#4814).
-	//
-	// The legacy child→parent arm stays prefix-based: a real dotted child →
-	// any-ancestor blocking edge is already unreachable from the CLI via
-	// isDisallowedHierarchicalDependency (cmd/bd/dep.go), so this arm only
-	// ever fires on legacy/import rows.
-	//
-	// The parent→child arm requires a REAL parent-child edge between the pair,
-	// not just a dotted-ID coincidence. IDs and edges diverge by design after a
-	// reparent or import (cmd/bd/reparent_test.go), so a dotted-only pair with
-	// no structural link (e.g. an epic blocking on an orphaned-dotted subtask)
-	// is an ordinary "epic waits for its subtask" shape, not a deadlock, and
-	// must not be deleted (bee-ghosttrack review, PR#5131).
+	// Find child→parent BLOCKING dependencies where issue_id starts with depends_on_id + "."
+	// Only matches blocking types (blocks, conditional-blocks, waits-for) that cause deadlock.
+	// Excludes 'parent-child' type which is a legitimate structural hierarchy relationship.
+	// A parent's edge onto its own child (GH#4814) is not a target here: since
+	// gastownhall/beads#6506 it is a close gate. Where the cascade still locks
+	// the child out of ready work (a gate past its walk depth, or a child with
+	// a second parent, bd-eoxqs0), that is the cascade's limit, not a reason
+	// to drop the gate; see checkChildParentDependenciesDB in
+	// cmd/bd/doctor/validation.go.
 	//nolint:gosec // G202: fixDependencyUnionSQL returns a fixed internal SELECT fragment.
 	query := `
 		SELECT d.dep_table, d.issue_id, d.depends_on_id, d.type
 		FROM (` + fixDependencyUnionSQL() + `) d
-		WHERE d.type IN ('blocks', 'conditional-blocks', 'waits-for')
-		  AND (
-			d.issue_id LIKE CONCAT(d.depends_on_id, '.%')
-			OR (
-				d.depends_on_id LIKE CONCAT(d.issue_id, '.%')
-				AND EXISTS (
-					SELECT 1 FROM (` + fixDependencyUnionSQL() + `) pc
-					WHERE pc.type = 'parent-child'
-					  AND pc.issue_id = d.depends_on_id
-					  AND pc.depends_on_id = d.issue_id
-				)
-			)
-		  )
+		WHERE d.issue_id LIKE CONCAT(d.depends_on_id, '.%')
+		  AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
 	`
 	rows, err := db.Query(query)
 	if err != nil {
@@ -193,11 +178,11 @@ func ChildParentDependencies(path string, verbose bool) error {
 	}
 
 	if len(badDeps) == 0 {
-		fmt.Println("  No hierarchy-blocking anti-patterns to fix")
+		fmt.Println("  No child→parent dependencies to fix")
 		return nil
 	}
 
-	// Delete anti-pattern blocking deps (preserving legitimate parent-child type).
+	// Delete child→parent blocking dependencies (preserving parent-child type)
 	// Uses explicit transaction so writes persist when @@autocommit is OFF
 	// (e.g. Dolt server started with --no-auto-commit).
 	showIndividual := verbose || len(badDeps) < 20
@@ -214,7 +199,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 		case "wisp_dependencies":
 			_, err = tx.Exec("DELETE FROM wisp_dependencies WHERE issue_id = ? AND "+fixDependencyTargetExpr+" = ? AND type = ?", d.issueID, d.dependsOnID, d.depType)
 		default:
-			fmt.Printf("  Warning: skipped hierarchy-blocking dependency from unexpected table %s\n", d.depTable)
+			fmt.Printf("  Warning: skipped child→parent dependency from unexpected table %s\n", d.depTable)
 			continue
 		}
 		if err != nil {
@@ -222,7 +207,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 		} else {
 			removed++
 			if showIndividual {
-				fmt.Printf("  Removed hierarchy-blocking dependency: %s→%s\n", d.issueID, d.dependsOnID)
+				fmt.Printf("  Removed child→parent dependency: %s→%s\n", d.issueID, d.dependsOnID)
 			}
 		}
 	}
@@ -233,7 +218,7 @@ func ChildParentDependencies(path string, verbose bool) error {
 	// Commit changes in Dolt
 	_, _ = db.Exec("CALL DOLT_COMMIT('-Am', 'doctor: remove child-parent dependency anti-patterns')") // Best effort: commit advisory; schema fix already applied in-memory
 
-	fmt.Printf("  Fixed %d hierarchy-blocking dependency anti-pattern(s)\n", removed)
+	fmt.Printf("  Fixed %d child→parent dependency anti-pattern(s)\n", removed)
 	return nil
 }
 
