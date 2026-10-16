@@ -236,3 +236,53 @@ func TestReadMemoHoldsAtMostOneTTLOfAnswers(t *testing.T) {
 		t.Fatalf("the memo holds %d answers after one expired and one was stored; want 1", held)
 	}
 }
+
+// TestReadMemoKeepsOnlyAnswersThatDecoded: a 2xx is memoized only once it has
+// decoded. An empty or undecodable body is the server misbehaving once, and
+// keeping it would fail every identical read for a whole TTL rather than ask
+// again. A read that decoded nothing (out == nil) vouches for nothing either.
+func TestReadMemoKeepsOnlyAnswersThatDecoded(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  string
+		noOut bool
+	}{
+		{name: "empty body", body: ""},
+		{name: "undecodable body", body: `{"id":"bd-1","title":`},
+		{name: "answer nobody decoded", body: `{"id":"bd-1","title":"undecoded"}`, noOut: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			served := 0
+			c, rec := newTestClient(t, Options{}, nil, func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				served++
+				n := served
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				if n == 1 {
+					_, _ = w.Write([]byte(tc.body))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "bd-1", "title": fmt.Sprintf("read %d", n)})
+			})
+			c.EnableReadMemo()
+			path, err := IssuePath("bd-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.noOut {
+				if err := c.Do(context.Background(), Request{Op: OpGetIssue, Method: http.MethodGet, Path: path, IssueID: "bd-1"}, nil); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := memoGetIssue(t, c, "bd-1", nil); err == nil {
+				t.Fatalf("a 200 with body %q decoded without an error", tc.body)
+			}
+			title, err := memoGetIssue(t, c, "bd-1", nil)
+			if err != nil || title != "read 2" || rec.count() != 2 {
+				t.Fatalf("the read after a 200 with body %q answered (%q, %v) in %d requests; want the server asked again (\"read 2\", 2 requests)", tc.body, title, err, rec.count())
+			}
+		})
+	}
+}

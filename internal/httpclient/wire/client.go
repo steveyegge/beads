@@ -385,10 +385,9 @@ func (c *Client) Do(ctx context.Context, r Request, out any) error {
 		}
 		return prob
 	}
-	if memoKey != "" {
-		c.memo.put(memoKey, res, memoGen)
-	}
 	if out == nil {
+		// Nothing decoded the answer, so nothing vouches for it: it is not
+		// memoized (every memoable read in this package decodes its answer).
 		return nil
 	}
 	if len(bytes.TrimSpace(res.body)) == 0 {
@@ -405,6 +404,12 @@ func (c *Client) Do(ctx context.Context, r Request, out any) error {
 	}
 	if err := json.Unmarshal(decodeBody, out); err != nil {
 		return fmt.Errorf("%s: decoding the response from bd serve at %s: %w", r.Op, c.base.Redacted(), err)
+	}
+	if memoKey != "" {
+		// Only an answer that decoded is memoized. A 2xx with an empty or
+		// undecodable body is the server misbehaving once; storing it would
+		// fail every identical read for a whole TTL instead of asking again.
+		c.memo.put(memoKey, res, memoGen)
 	}
 	return nil
 }
