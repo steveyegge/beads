@@ -11,7 +11,8 @@ import (
 
 // TestHeartbeaterContract runs the Heartbeater contract against the
 // server-backed store, which wraps internal/storage/issueops.ExecuteHeartbeatInTx
-// in a retrying transaction that makes no Dolt commit.
+// in a retrying transaction that makes no Dolt commit for a refresh and one
+// for a re-arm.
 func TestHeartbeaterContract(t *testing.T) {
 	fixture, ctx, cleanup := newDoltHeartbeaterFixture(t, "hbc")
 	defer cleanup()

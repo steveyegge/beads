@@ -527,8 +527,9 @@ const (
 	// OpHeartbeatIssue refreshes the lease on one issue the actor holds, behind
 	// issueops.Heartbeater: what `bd heartbeat` spells. It is NOT claimIssue
 	// repeated: a re-claim is idempotent for the holder WITHOUT extending the
-	// lease, and this extends the lease and writes nothing else — no revision,
-	// no version, no updated_at, no event.
+	// lease, and this extends the lease. A refresh writes nothing else — no
+	// revision, no version, no updated_at, no event; a re-arm (`rearmed`) is
+	// recorded as a mutation and writes each of them.
 	OpHeartbeatIssue = "heartbeatIssue"
 	// OpListRelatedIssues reads ONE issue's neighbors in a named direction,
 	// behind issueops.Relations. It is NOT listDependencies narrowed to one

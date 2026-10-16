@@ -183,7 +183,7 @@ func TestHeartbeatSendsTheActorVerbatimAndProjectsTheAnswer(t *testing.T) {
 func TestHeartbeatMapsTheRefusalsOntoTheRolesTypes(t *testing.T) {
 	t.Run("already_claimed is a LeaseConflictError naming the holder", func(t *testing.T) {
 		stub := &heartbeatStub{replies: []func(http.ResponseWriter){heartbeatProblem(http.StatusConflict,
-			`{"status":409,"code":"already_claimed","title":"conflict","detail":"another actor holds this issue's claim; nothing was written","assignee":"alice","issue_status":"in_progress"}`)}}
+			`{"status":409,"code":"already_claimed","title":"conflict","detail":"another actor holds this issue's claim; nothing on the issue was written","assignee":"alice","issue_status":"in_progress"}`)}}
 		_, err := heartbeaterOf(t, stub.store(t, "issues.heartbeat")).Heartbeat(t.Context(),
 			issueops.HeartbeatRequest{Actor: "bob", IssueID: "bd-1"})
 		var conflict *issueops.LeaseConflictError
@@ -207,7 +207,7 @@ func TestHeartbeatMapsTheRefusalsOntoTheRolesTypes(t *testing.T) {
 
 	t.Run("lease_not_held wraps ErrLeaseNotHeld and ErrNotClaimable", func(t *testing.T) {
 		stub := &heartbeatStub{replies: []func(http.ResponseWriter){heartbeatProblem(http.StatusConflict,
-			`{"status":409,"code":"lease_not_held","title":"conflict","detail":"this actor holds no live claim on this issue: it is closed; nothing was written","issue_status":"closed"}`)}}
+			`{"status":409,"code":"lease_not_held","title":"conflict","detail":"this actor holds no live claim on this issue: it is closed; nothing on the issue was written","issue_status":"closed"}`)}}
 		_, err := heartbeaterOf(t, stub.store(t, "issues.heartbeat")).Heartbeat(t.Context(),
 			issueops.HeartbeatRequest{Actor: "worker", IssueID: "bd-2"})
 		var conflict *issueops.LeaseConflictError
@@ -227,7 +227,7 @@ func TestHeartbeatMapsTheRefusalsOntoTheRolesTypes(t *testing.T) {
 
 	t.Run("lease_not_held with reason ephemeral is a wisp", func(t *testing.T) {
 		stub := &heartbeatStub{replies: []func(http.ResponseWriter){heartbeatProblem(http.StatusConflict,
-			`{"status":409,"code":"lease_not_held","title":"conflict","detail":"this issue is an ephemeral wisp, which is never leased; nothing was written","issue_status":"in_progress","reason":"ephemeral"}`)}}
+			`{"status":409,"code":"lease_not_held","title":"conflict","detail":"this issue is an ephemeral wisp, which is never leased; nothing on the issue was written","issue_status":"in_progress","reason":"ephemeral"}`)}}
 		_, err := heartbeaterOf(t, stub.store(t, "issues.heartbeat")).Heartbeat(t.Context(),
 			issueops.HeartbeatRequest{Actor: "worker", IssueID: "bd-w"})
 		var conflict *issueops.LeaseConflictError

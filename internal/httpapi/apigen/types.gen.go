@@ -1517,7 +1517,7 @@ type HeartbeatIssueResponse struct {
 	// LeaseExpiresAt `heartbeat_at` plus the server's lease TTL: the deadline the next heartbeat must beat before a reclaim may revert the claim.
 	LeaseExpiresAt time.Time `json:"lease_expires_at"`
 
-	// Rearmed True when the actor held the claim but no lease row existed for it (a claim hand-doled through `updateIssue`), so the heartbeat granted a fresh lease instead of refreshing one.
+	// Rearmed True when the actor held the claim but no lease row existed for it (a claim hand-doled through `updateIssue`), so the heartbeat granted a fresh lease instead of refreshing one. A re-arm is recorded as a mutation of the issue: its `revision` is reminted, `updated_at` moves and an event is recorded, so re-read the issue before a guarded write. False for every refresh, which writes only the lease.
 	Rearmed bool `json:"rearmed"`
 }
 

@@ -698,7 +698,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch-mode edits to other tables stay uncommitted (a re-arm stages its
   tables whole, as every other direct-route write does). On embedded Dolt, a heartbeat landing in
   the same second as the previous one no longer re-grants the lease
-  (rewriting its `granted_at` / `granted_node`). For a Postgres port: the
+  (rewriting its `granted_at` / `granted_node`), and on every route a
+  heartbeat whose actor is a different spelling of the lease's holder
+  (`gastown.mayor` for `gastown__mayor`) refreshes the lease in place,
+  keeping its `granted_at` and granting replica, instead of re-granting it
+  under this node. For a Postgres port: the
   refresh now reads the issue row, so under SERIALIZABLE expect more retried
   serialization failures between a holder's own edits and its heartbeat.
 - **`bd gate list` works over a connected HTTP workspace** (S20). The

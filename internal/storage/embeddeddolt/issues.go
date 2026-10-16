@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -114,11 +113,15 @@ func (s *EmbeddedDoltStore) UpdateIssueChecked(ctx context.Context, id string, u
 }
 
 // HeartbeatIssue refreshes the lease on an issue actor holds in_progress.
-// Delegates SQL work to issueops; EmbeddedDolt auto-commits the transaction.
+// Delegates SQL work to issueops. A REFRESH writes only the dolt_ignored
+// leases row, so it stages nothing and mints no Dolt commit; a RE-ARM is
+// recorded as a mutation and gets the one version-control commit
+// issueops.LeaseRearmVersionCommit names.
 func (s *EmbeddedDoltStore) HeartbeatIssue(ctx context.Context, id, actor string) error {
-	// A re-arm is recorded as a mutation and gets its version-control commit
-	// through the funnel; a refresh stages nothing. A refusal COMMITS (it may
-	// have deleted the caller's orphaned lease row) and is returned after.
+	// A refusal that read the issue row COMMITS (it may have deleted the
+	// caller's orphaned lease row) and is returned after; one whose issue read
+	// failed is returned from the callback, so its transaction rolls back
+	// (issueops.LeaseRenewalRefusalCommits).
 	var refusal error
 	if err := s.runIssueOperationTxWithMessage(ctx, func(tx *sql.Tx) (issueops.ChangedTables, string, error) {
 		refusal = nil
@@ -127,8 +130,7 @@ func (s *EmbeddedDoltStore) HeartbeatIssue(ctx context.Context, id, actor string
 			return nil, "", fmt.Errorf("%w: %s is ephemeral", storage.ErrNotClaimable, id)
 		}
 		renewal, err := issueops.RenewLeaseInTx(ctx, tx, id, actor)
-		var refused *issueops.LeaseRenewalRefusal
-		if errors.As(err, &refused) {
+		if issueops.LeaseRenewalRefusalCommits(err) {
 			refusal = err
 			return nil, "", nil
 		}

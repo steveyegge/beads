@@ -16,10 +16,11 @@ import (
 // plane (bd-aq0ql). The worker contract is the exit code (workers call
 // heartbeat every ~90s and only check rc), the --json success shape is
 // {"id","status":"heartbeat","owner"}, and — the bd-lrgn1 invariant — a
-// heartbeat mints exactly ZERO Dolt commits: the lease write lands in the
+// refresh mints exactly ZERO Dolt commits: the lease write lands in the
 // dolt_ignored leases table via the SQL-only ephemeral commit, with the same
 // timestamps/format classic `bd reclaim` staleness semantics consume (the
-// SQL body is literally issueops.HeartbeatIssueInTx in both modes).
+// SQL body is literally issueops.HeartbeatIssueInTx in both modes). A re-arm
+// is recorded as a mutation and mints exactly one (rearms_hand_doled_claim).
 func TestProxiedServerHeartbeat(t *testing.T) {
 	requireSharedProxiedServer(t)
 	t.Parallel()

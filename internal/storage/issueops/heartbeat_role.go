@@ -57,11 +57,13 @@ func heartbeatFieldError(field, detail string) error {
 // refusal HeartbeatRefusalCommits recognizes and report the refusal after the
 // commit, so the cleanup is not rolled back with it.
 //
-// WHAT IT MUST NEVER DO is everything RenewLeaseInTx's own doc rules out, and
-// the conformance contract asserts each one: remint row_lock, record a
-// version (current_revision, issue_versions), stamp updated_at, write an
+// WHAT A REFRESH MUST NEVER DO is everything RenewLeaseInTx's own doc rules
+// out, and the conformance contract asserts each one: remint row_lock, record
+// a version (current_revision, issue_versions), stamp updated_at, write an
 // event or a journal entry. The legs add the other two: no version-control
-// commit and no hook.
+// commit and no hook. A RE-ARM (HeartbeatResult.Rearmed) does every one of
+// them, because it is recorded as a mutation: the legs commit it once, as
+// LeaseRearmVersionCommit names, and the hook decorator fires on_update.
 func ExecuteHeartbeatInTx(ctx context.Context, tx DBTX, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error) {
 	if err := ValidateHeartbeatRequest(request); err != nil {
 		return publicops.HeartbeatResult{}, err

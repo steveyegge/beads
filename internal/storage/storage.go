@@ -390,9 +390,11 @@ type Storage interface {
 	// Heartbeater returns the lease-refresh surface for this store: push the
 	// lease the caller holds on one issue forward by the store's TTL.
 	//
-	// It is a WRITE role, and its hook decorator RECURSES UNWRAPPED: a
-	// heartbeat writes only the ephemeral lease row, and no hook fires for it
-	// on any route (the raw HeartbeatIssue fires none). See
+	// It is a WRITE role and its hook decorator WRAPS: a refresh writes only
+	// the ephemeral lease row and fires nothing, but a re-arm (a live claim
+	// with no lease row, HeartbeatResult.Rearmed) is recorded as a mutation
+	// and fires on_update once. That is why RoleFiresHooks answers true for
+	// it, and a server must take it off a peeled store. See
 	// hook_heartbeater.go.
 	Heartbeater() (issueops.Heartbeater, error)
 

@@ -373,6 +373,18 @@ func (e *LeaseRenewalRefusal) Error() string { return e.Err.Error() }
 // Unwrap makes LeaseRenewalRefusal match the refusal it carries.
 func (e *LeaseRenewalRefusal) Unwrap() error { return e.Err }
 
+// LeaseRenewalRefusalCommits reports whether err is a RenewLeaseInTx refusal
+// whose transaction a legacy HeartbeatIssue leg must COMMIT rather than roll
+// back: one that read the issue row (Found), the only refusal that can carry a
+// write, the orphaned lease row it deletes. A refusal whose issue read failed
+// deletes nothing, and may follow a fast-path UPDATE that already extended an
+// orphan row's expiry, so its transaction rolls back — the rule the role's
+// HeartbeatRefusalCommits applies to the same refusal.
+func LeaseRenewalRefusalCommits(err error) bool {
+	var refused *LeaseRenewalRefusal
+	return errors.As(err, &refused) && refused.Found
+}
+
 // RenewLeaseInTx is the body of HeartbeatIssueInTx, reporting the renewal:
 // see that function for what it writes and, above all, what it must never
 // write. Its SQL text is the heartbeat's own and must stay so: the Postgres
@@ -516,8 +528,12 @@ func RenewLeaseInTx(ctx context.Context, tx DBTX, id, actor string) (LeaseRenewa
 		// orphan (the re-arm race above), and leaving it would keep a stale
 		// lease on an issue that is open, closed or someone else's. The holder
 		// fence keeps it to the caller's own row; a live holder's lease is
-		// never touched. The delete is judged in this transaction's snapshot,
-		// which is the snapshot that just found no live claim for the caller.
+		// never touched. The fence is judged under actorMatches, as the
+		// in-place refresh below judges it: a row held under another spelling
+		// of the caller (ga-v2k49) is the caller's orphan too, so its holder
+		// is read and bound back, the refresh's own lookup, on this cold path
+		// only. The delete is judged in this transaction's snapshot, which is
+		// the snapshot that just found no live claim for the caller.
 		refused := func(err error) error {
 			refusal := &LeaseRenewalRefusal{
 				IssueID: id, Found: true, Wisp: isWisp, Assignee: assignee, Status: status, Err: err,
@@ -525,7 +541,17 @@ func RenewLeaseInTx(ctx context.Context, tx DBTX, id, actor string) (LeaseRenewa
 			if isWisp {
 				return refusal
 			}
-			res, derr := tx.ExecContext(ctx, `DELETE FROM leases WHERE issue_id = ? AND holder = ?`, id, actor)
+			var leaseHolder string
+			lerr := tx.QueryRowContext(ctx, `SELECT holder FROM leases WHERE issue_id = ?`, id).Scan(&leaseHolder)
+			switch {
+			case errors.Is(lerr, sql.ErrNoRows):
+				return refusal
+			case lerr != nil:
+				return fmt.Errorf("read lease for %s: %w", id, lerr)
+			case !actorMatches(leaseHolder, actor):
+				return refusal
+			}
+			res, derr := tx.ExecContext(ctx, `DELETE FROM leases WHERE issue_id = ? AND holder = ?`, id, leaseHolder)
 			if derr != nil {
 				return fmt.Errorf("delete orphaned lease for %s: %w", id, derr)
 			}
@@ -541,9 +567,9 @@ func RenewLeaseInTx(ctx context.Context, tx DBTX, id, actor string) (LeaseRenewa
 		// above) just to bind back its own holder value. A spelling
 		// difference across layers (ga-wzl83) already makes that predicate
 		// affect 0 rows and fall here; fixing the disambiguation instead
-		// means the caller still self-heals correctly (re-arms below, under
-		// its current spelling) at the cost of the slow path on a spelling
-		// mismatch, never on the byte-identical common case.
+		// means the caller still self-heals correctly (its row is refreshed in
+		// place below, under its current spelling) at the cost of the slow
+		// path on a spelling mismatch, never on the byte-identical common case.
 		if assignee != "" && !actorMatches(assignee, actor) {
 			return LeaseRenewal{}, refused(fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, assignee))
 		}
@@ -554,8 +580,12 @@ func RenewLeaseInTx(ctx context.Context, tx DBTX, id, actor string) (LeaseRenewa
 			// semantics, or (ga-v2k49) the existing lease row's holder is a
 			// different spelling of the same identity (ga-wzl83) and the
 			// primary UPDATE's verbatim predicate above missed it. A real
-			// worker's heartbeat re-arms recovery — under actor's current
-			// spelling, which is what the next heartbeat's fast path will see.
+			// worker's heartbeat recovers under actor's current spelling: a
+			// lease row the caller already holds is refreshed in place (its
+			// holder rewritten to that spelling, which the next heartbeat's
+			// UPDATE matches), and a missing one is re-armed. An ASSIGNEE
+			// spelled differently from actor still fails the verbatim
+			// live-claim check, so that holder takes this path on every beat.
 			//
 			// FIRST, is there a lease row for this issue the caller already
 			// holds? Then this is a refresh the fast path missed without

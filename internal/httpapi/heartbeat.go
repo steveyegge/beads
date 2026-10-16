@@ -18,13 +18,16 @@ var heartbeatRequestMembers = []string{claimActorMember}
 // handleHeartbeat refreshes the lease on one issue the actor holds: the verb
 // `bd heartbeat` spells, behind issueops.Heartbeater.
 //
-// A REFRESH WRITES ONLY THE LEASE ROW (a re-arm, `rearmed: true`, is
-// recorded as a mutation; see issueops.Heartbeater), and that is the role's promise rather than
-// this handler's: no revision is reminted (so the holder's own guarded writes
-// keep their token across heartbeats), no version is recorded, updated_at does
-// not move, and no event or journal entry is written. That is also why the
-// response carries no `revision` member: nothing was written to the row, and
-// publishing the unchanged token would invite a reader to assume otherwise.
+// A REFRESH WRITES ONLY THE LEASE ROW, and that is the role's promise rather
+// than this handler's: no revision is reminted (so the holder's own guarded
+// writes keep their token across heartbeats), no version is recorded,
+// updated_at does not move, and no event or journal entry is written. A
+// RE-ARM (`rearmed: true`: a live claim that had no lease row) is recorded as
+// a mutation and remints the revision; see issueops.Heartbeater. The response
+// carries no `revision` member either way: it reports the lease, not the
+// issue, so a refresh publishes no unchanged token a reader could take for a
+// write, and `rearmed: true` tells the caller to re-read the issue before a
+// guarded write.
 //
 // THE ACTOR IS THE FENCE'S SUBJECT, the release's posture: the heartbeat lands
 // only while the actor holds the claim. It is caller-asserted provenance, not
@@ -106,7 +109,7 @@ func (s *Server) failHeartbeat(w http.ResponseWriter, r *http.Request, err error
 	switch {
 	case errors.As(err, &conflict) && errors.Is(err, issueops.ErrAlreadyClaimed):
 		res := newResult(CodeAlreadyClaimed,
-			"another actor holds this issue's claim; nothing was written")
+			"another actor holds this issue's claim; nothing on the issue was written")
 		if conflict.Holder != "" {
 			res = res.WithAssignee(conflict.Holder)
 		}
@@ -156,7 +159,9 @@ func (s *Server) failHeartbeat(w http.ResponseWriter, r *http.Request, err error
 // state only, so a reader of `bd heartbeat` output (and a pattern over it)
 // can tell a closed issue from a released one and from a wisp.
 func leaseNotHeldDetail(conflict *issueops.LeaseConflictError) string {
-	const tail = "; nothing was written"
+	// The tail is "on the issue": the one write a refusal can make is deleting
+	// a stale lease row this actor still held (see the 409's description).
+	const tail = "; nothing on the issue was written"
 	switch {
 	case conflict.Ephemeral:
 		return "this issue is an ephemeral wisp, which is never leased" + tail

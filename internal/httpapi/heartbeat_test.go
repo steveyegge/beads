@@ -29,7 +29,9 @@ func newHeartbeatServer(t *testing.T, heartbeater *roleHeartbeater) *testServer 
 // TestHeartbeatMapsTheRequestAndProjectsTheLease pins both halves of a
 // success: the path id and the trimmed actor reach the role, and the role's
 // result reaches the wire member for member — with NO `revision` and no issue
-// body, because a heartbeat writes nothing to the row.
+// body, because the response reports the lease, not the issue: even after a
+// re-arm, which reminted the revision, `rearmed` is how the caller learns to
+// re-read the issue.
 func TestHeartbeatMapsTheRequestAndProjectsTheLease(t *testing.T) {
 	at := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	heartbeater := &roleHeartbeater{result: issueops.HeartbeatResult{
@@ -71,7 +73,7 @@ func TestHeartbeatMapsTheRequestAndProjectsTheLease(t *testing.T) {
 	}
 	for _, absent := range []string{"revision", "issue", "changed"} {
 		if _, present := body[absent]; present {
-			t.Errorf("response carries %q; a heartbeat writes nothing to the row", absent)
+			t.Errorf("response carries %q; a heartbeat answers the lease, not the issue", absent)
 		}
 	}
 }

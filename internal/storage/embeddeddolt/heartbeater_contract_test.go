@@ -14,7 +14,8 @@ import (
 
 // TestHeartbeaterContract runs the Heartbeater contract against the embedded
 // store, which wraps internal/storage/issueops.ExecuteHeartbeatInTx in one
-// connection's transaction and records no version entry after it.
+// connection's transaction and records no version entry after a refresh, one
+// after a re-arm.
 func TestHeartbeaterContract(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 	te := newTestEnv(t, "hbc")

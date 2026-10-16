@@ -31,10 +31,13 @@ it up. Heartbeat pushes lease_expires_at forward and stamps heartbeat_at = now.
 Only the current owner may heartbeat. If the lease has already been reclaimed or
 the issue closed, heartbeat fails so the worker learns to stop.
 
-Leases live in an ephemeral, node-local table: heartbeats write no Dolt commit
-and no history, so any cadence comfortably below the TTL is fine. Leases are
-only enforceable on the node that granted them; cross-machine claim visibility
-rides the issue's status and assignee, which do commit.
+Leases live in an ephemeral, node-local table: a heartbeat that refreshes your
+lease writes no Dolt commit and no history, so any cadence comfortably below
+the TTL is fine. Only a re-arm (the first heartbeat of a claim that has no
+lease, such as one set by a plain update) is recorded as a change to the issue
+and committed, once. Leases are only enforceable on the node that granted them;
+cross-machine claim visibility rides the issue's status and assignee, which do
+commit.
 
 Examples:
   bd heartbeat bd-123
@@ -59,8 +62,9 @@ Examples:
 		// Heartbeater accessor on the direct routes — dolt, embedded dolt and
 		// a registered HTTP backend, where it dials issues.heartbeat and an
 		// older server is refused before the dial naming the token — and the
-		// proxied-server provider's on the proxied one. Every leg writes ONLY
-		// the lease row: no revision remint, no history, no Dolt commit.
+		// proxied-server provider's on the proxied one. On every leg a refresh
+		// writes ONLY the lease row (no revision remint, no history, no Dolt
+		// commit); a re-arm is recorded as a mutation and committed once.
 		if usesProxiedServer() {
 			return runHeartbeatProxied(ctx, id)
 		}
@@ -108,10 +112,11 @@ Examples:
 // runHeartbeatProxied is bd heartbeat on the proxied-server plane: the id is
 // resolved exactly, on either plane, in a read unit of work of its own, and
 // the refresh goes through the provider's OWN Heartbeater accessor (the
-// capability the uow leg commits with RunTxEphemeral's SQL-only form, so a
-// heartbeat still mints exactly ZERO Dolt commits, bd-lrgn1). Nothing here
-// sets commandDidWrite. The exit code is the worker contract: 0 = lease
-// refreshed; nonzero = the lease is gone and the worker should stop.
+// capability the uow leg commits with RunTxScoped: a refresh names no tables
+// and takes its SQL-only form, so it mints exactly ZERO Dolt commits,
+// bd-lrgn1; a re-arm mints exactly one). Nothing here sets commandDidWrite.
+// The exit code is the worker contract: 0 = lease refreshed; nonzero = the
+// lease is gone and the worker should stop.
 func runHeartbeatProxied(ctx context.Context, id string) error {
 	issue, err := proxiedHeartbeatTarget(ctx, id)
 	if err != nil {

@@ -14,7 +14,8 @@ import (
 // TestHeartbeaterContract runs the Heartbeater contract against the
 // unit-of-work provider, which reaches internal/storage/issueops.
 // ExecuteHeartbeatInTx through domain.IssueUseCase.RenewLease inside one unit
-// of work committed with RunTxEphemeral's SQL-only form.
+// of work committed with RunTxScoped: the SQL-only form for a refresh, the
+// scoped commit for a re-arm.
 func TestHeartbeaterContract(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

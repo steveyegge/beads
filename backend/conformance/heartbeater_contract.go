@@ -202,7 +202,7 @@ func RunHeartbeaterChangesNothingOnTheRow(t *testing.T, ctx context.Context, fix
 		t.Fatalf("a heartbeat changed the issue's durable state:\nbefore %+v\nafter  %+v", before, after)
 	}
 	if got := heartbeaterFired(t, ctx, fixture, id); got != fired {
-		t.Fatalf("on_update fired %d time(s) for %s across a heartbeat, want 0: a heartbeat fires no hook", got-fired, id)
+		t.Fatalf("on_update fired %d time(s) for %s across a refresh, want 0: a refresh fires no hook", got-fired, id)
 	}
 }
 

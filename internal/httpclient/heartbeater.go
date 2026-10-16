@@ -18,8 +18,10 @@ import (
 //
 // THE MAPPING IS TOTAL: the id rides in the path and the actor is the body's one
 // member, so nothing here refuses on shape and the ledger carries no row for this
-// operation. The answer carries no revision, deliberately: a heartbeat writes
-// only the lease, so there is no token to stitch back.
+// operation. The answer carries no revision, deliberately: it reports the
+// lease, not the issue. A refresh writes only the lease, so there is no token
+// to stitch back; a re-arm remints it, which Rearmed reports so the caller
+// re-reads the issue before a guarded write.
 //
 // THE REQUEST RULES ARE CHECKED BEFORE THE DIAL, in the order
 // internal/storage/issueops.ValidateHeartbeatRequest applies them and with its
@@ -37,8 +39,9 @@ import (
 // writes depend on.
 //
 // IT IS REPLAYABLE (wire.Request.Idempotent), the one write this client marks
-// so. A repeat only moves the expiry later and writes nothing else, and a
-// replay that lands after a reclaim fails the holder fence, which is the
+// so. A repeat only moves the expiry later and writes nothing else (a repeat
+// of a re-arm finds the lease row the first one granted and refreshes it), and
+// a replay that lands after a reclaim fails the holder fence, which is the
 // answer the worker needs anyway. So a 503 is retried within dispatch's bound
 // rather than reported to a worker that heartbeats every ~90s and stops on any
 // nonzero exit.

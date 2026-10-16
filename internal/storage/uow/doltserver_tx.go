@@ -165,12 +165,15 @@ func (t *doltServerTx) commitStatement(ctx context.Context, message string) (str
 	}
 	// An empty message selects the EPHEMERAL commit form (bd-aq0ql): a plain
 	// SQL COMMIT persists the transaction's writes into the working set
-	// without minting a Dolt commit or history. It has two entry points:
+	// without minting a Dolt commit or history. It has these entry points:
 	//
-	//   - uow.RunTxEphemeral, for work that touches ONLY dolt_ignored state —
-	//     today the leases table (bd-lrgn1), whose heartbeats must never create
-	//     commits. RunTx/RunTxResult treat an empty commitMsg as "nothing to
-	//     commit" and never call Commit at all, so they cannot reach it that way.
+	//   - uow.RunTxEphemeral, for work that touches ONLY dolt_ignored state.
+	//     RunTx/RunTxResult treat an empty commitMsg as "nothing to commit" and
+	//     never call Commit at all, so they cannot reach it that way.
+	//   - uow.RunTxScoped, for an attempt that names no tables — a lease
+	//     refresh (bd-lrgn1), which writes only the dolt_ignored leases table
+	//     and must never create a commit. A heartbeat that re-arms names its
+	//     tables instead and takes the scoped commit.
 	//   - RunTx/RunTxResult under a deferred-version-commit context, via the
 	//     blanking just above (GH#4995). There the writes are ordinary versioned
 	//     rows and the ONLY-dolt_ignored-state rationale does not apply: the

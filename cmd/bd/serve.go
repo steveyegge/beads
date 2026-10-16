@@ -870,8 +870,9 @@ type serveRoles struct {
 	// POST /v0/beads/issues:reclaim. Its hook decorator WRAPS (a reclaim is an
 	// update per reverted row), which is why it comes off the peeled store with
 	// the releaser: bd serve runs no hooks. heartbeater, the lease refresh
-	// behind POST /v0/beads/issues/{id}:heartbeat, fires no hook on any route
-	// (its decorator recurses unwrapped) and comes off the same store.
+	// behind POST /v0/beads/issues/{id}:heartbeat, comes off the same store
+	// for the same reason: its decorator WRAPS too, firing on_update for a
+	// re-arm (a refresh fires nothing).
 	leaseReclaimer issueops.LeaseReclaimer
 	heartbeater    issueops.Heartbeater
 	relations      issueops.Relations
