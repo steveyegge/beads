@@ -3,9 +3,12 @@ package wire
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -75,19 +78,30 @@ func TestReadMemoCollapsesRepeatedRowReads(t *testing.T) {
 }
 
 // TestReadMemoIsDroppedByAnyWrite: a write through the client may change what a
-// memoized read said, so the next read goes back to the server.
+// memoized read said, so the next read goes back to the server — whatever the
+// write's method, since the wire spells writes as all four.
 func TestReadMemoIsDroppedByAnyWrite(t *testing.T) {
-	c, rec := memoServer(t)
-	c.EnableReadMemo()
+	issuePath, _ := IssuePath("bd-1")
+	settingPath, _ := SettingPath("k")
+	for _, write := range []Request{
+		{Op: OpUpdateIssue, Method: http.MethodPatch, Path: issuePath, Body: map[string]any{}},
+		{Op: OpCreateIssue, Method: http.MethodPost, Path: PathIssues, Body: map[string]any{}},
+		{Op: OpSetSetting, Method: http.MethodPut, Path: settingPath, Body: map[string]any{}},
+		{Op: OpUnsetSetting, Method: http.MethodDelete, Path: settingPath},
+	} {
+		t.Run(write.Method, func(t *testing.T) {
+			c, rec := memoServer(t)
+			c.EnableReadMemo()
 
-	before, _ := memoGetIssue(t, c, "bd-1", nil)
-	path, _ := IssuePath("bd-1")
-	if err := c.Do(context.Background(), Request{Op: OpUpdateIssue, Method: http.MethodPatch, Path: path, Body: map[string]any{}}, nil); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := memoGetIssue(t, c, "bd-1", nil)
-	if rec.count() != 3 || before == after {
-		t.Fatalf("read after a write: %d requests, %q then %q; want the row re-read", rec.count(), before, after)
+			before, _ := memoGetIssue(t, c, "bd-1", nil)
+			if err := c.Do(context.Background(), write, nil); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := memoGetIssue(t, c, "bd-1", nil)
+			if rec.count() != 3 || before == after {
+				t.Fatalf("read after a %s: %d requests, %q then %q; want the row re-read", write.Method, rec.count(), before, after)
+			}
+		})
 	}
 }
 
@@ -237,6 +251,46 @@ func TestReadMemoHoldsAtMostOneTTLOfAnswers(t *testing.T) {
 	}
 }
 
+// TestReadMemoNeverKeepsA5xx: a 5xx is not an answer to remember. A 503 above
+// all — dispatch comes back to a busy read through Do again (dispatch.go's
+// retry loop), and a memoized 503 would answer every retry with the same
+// refusal. The 2xx that follows it is the read's answer, and that one is kept.
+func TestReadMemoNeverKeepsA5xx(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusBadGateway} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			var mu sync.Mutex
+			served := 0
+			c, rec := newTestClient(t, Options{}, nil, func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				served++
+				n := served
+				mu.Unlock()
+				if n == 1 {
+					problemJSON(w, status, fmt.Sprintf(`{"type":"about:blank","title":"failing","status":%d,"detail":"try again"}`, status))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "bd-1", "title": fmt.Sprintf("read %d", n)})
+			})
+			c.EnableReadMemo()
+
+			_, err := memoGetIssue(t, c, "bd-1", nil)
+			var prob *ProblemError
+			if !errors.As(err, &prob) || prob.Status != status {
+				t.Fatalf("first read: %v, want the server's %d", err, status)
+			}
+			again, err := memoGetIssue(t, c, "bd-1", nil)
+			if err != nil || rec.count() != 2 {
+				t.Fatalf("the read after a %d answered (%q, %v) in %d requests; want the server asked again (2 requests)", status, again, err, rec.count())
+			}
+			third, err := memoGetIssue(t, c, "bd-1", nil)
+			if err != nil || third != again || rec.count() != 2 {
+				t.Fatalf("the 2xx after a %d was not memoized: %q then %q in %d requests", status, again, third, rec.count())
+			}
+		})
+	}
+}
+
 // TestReadMemoKeepsOnlyAnswersThatDecoded: a 2xx is memoized only once it has
 // decoded. An empty or undecodable body is the server misbehaving once, and
 // keeping it would fail every identical read for a whole TTL rather than ask
@@ -284,5 +338,113 @@ func TestReadMemoKeepsOnlyAnswersThatDecoded(t *testing.T) {
 				t.Fatalf("the read after a 200 with body %q answered (%q, %v) in %d requests; want the server asked again (\"read 2\", 2 requests)", tc.body, title, err, rec.count())
 			}
 		})
+	}
+}
+
+// TestReadMemoIsPerClient: each client holds its own memo. In either order, a
+// read through one client is never answered from what another client read,
+// and turning the memo on for one client turns it on for no other.
+func TestReadMemoIsPerClient(t *testing.T) {
+	for _, first := range []int{0, 1} {
+		t.Run(fmt.Sprintf("client %d reads first", first), func(t *testing.T) {
+			var mu sync.Mutex
+			served := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				served++
+				n := served
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "bd-1", "title": fmt.Sprintf("read %d", n)})
+			}))
+			t.Cleanup(srv.Close)
+			base, err := url.Parse(srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var clients [3]*Client
+			for i := range clients {
+				if clients[i], err = New(base, nil, Options{HTTPClient: srv.Client()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			clients[0].EnableReadMemo()
+			clients[1].EnableReadMemo()
+			// clients[2] never opts in.
+			requests := func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return served
+			}
+			a, b := clients[first], clients[1-first]
+
+			a1, _ := memoGetIssue(t, a, "bd-1", nil)
+			b1, _ := memoGetIssue(t, b, "bd-1", nil)
+			if requests() != 2 || a1 == b1 {
+				t.Fatalf("two clients' first reads made %d requests and answered %q and %q; want each to ask the server", requests(), a1, b1)
+			}
+			a2, _ := memoGetIssue(t, a, "bd-1", nil)
+			b2, _ := memoGetIssue(t, b, "bd-1", nil)
+			if requests() != 2 || a2 != a1 || b2 != b1 {
+				t.Fatalf("each client's repeat read: %d requests, %q/%q then %q/%q; want each answered from its own memo", requests(), a1, b1, a2, b2)
+			}
+			for range 2 {
+				_, _ = memoGetIssue(t, clients[2], "bd-1", nil)
+			}
+			if requests() != 4 || clients[2].ReadMemoEnabled() {
+				t.Fatalf("a client that never opted in memoized (%d requests, enabled=%v)", requests(), clients[2].ReadMemoEnabled())
+			}
+		})
+	}
+}
+
+// TestReadMemoDropsAnAnswerReadWhileAWriteWasInFlight: a read that starts and
+// finishes while a write is on the wire (after the write's own pre-send clear)
+// may carry the pre-write row. The write's clear on the way back drops it, so
+// a read that starts once the write has returned asks the server again.
+func TestReadMemoDropsAnAnswerReadWhileAWriteWasInFlight(t *testing.T) {
+	writeArrived, releaseWrite := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	served := 0
+	c, rec := newTestClient(t, Options{ResponseHeaderTimeout: -1}, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			close(writeArrived)
+			<-releaseWrite
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		mu.Lock()
+		served++
+		n := served
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "bd-1", "title": fmt.Sprintf("read %d", n)})
+	})
+	c.EnableReadMemo()
+	path, err := IssuePath("bd-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wrote := make(chan error, 1)
+	go func() {
+		wrote <- c.Do(context.Background(), Request{Op: OpUpdateIssue, Method: http.MethodPatch, Path: path, Body: map[string]any{}}, nil)
+	}()
+	<-writeArrived // the write's pre-send clear has run, and the server holds it
+	during, err := memoGetIssue(t, c, "bd-1", nil)
+	close(releaseWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := memoGetIssue(t, c, "bd-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.count() != 3 || after == during {
+		t.Fatalf("the read after the write answered %q (the in-flight read's %q) in %d requests; want it re-read (3 requests)", after, during, rec.count())
 	}
 }
