@@ -48,6 +48,7 @@ func TestSyncFailureTextDistinguishesSSHDialTimeoutFromAuth(t *testing.T) {
 		{"pull step", timeout, "pull: " + explained},
 		{"push step over a CLI transfer", fmt.Errorf("push: %w", cliTransfer), "push: " + explained},
 		{"bare CLI transfer", cliTransfer, explained},
+		{"credentialed remote in the step is scrubbed", fmt.Errorf("pull https://u:secret@remote.example/org/db: %w", errors.New(gitText)), "pull https://remote.example/org/db: " + explained},
 	} {
 		if got := syncFailureText(tc.err); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
