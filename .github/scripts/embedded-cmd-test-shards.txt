@@ -143,7 +143,9 @@
 100 59 TestEmbeddedDeferAutoWake
 
 100 60 TestEmbeddedCommentsCLI
+100 60 TestEmbeddedRoutedWriteMissDoesNotCreateTargetDatabase
 
+100 61 TestEmbeddedContributorRoutedWritesCommitInPlanning
 100 61 TestEmbeddedUpdateRoutedStoreCommitsTargetHead
 
 100 62 TestEmbeddedGateCheckSkipsTemplateGates
