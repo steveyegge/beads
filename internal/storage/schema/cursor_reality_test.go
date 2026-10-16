@@ -12,7 +12,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-// stubSentinelTables replaces the INFORMATION_SCHEMA probe with a fixed answer
+// stubSentinelTables replaces the table-existence probe with a fixed answer
 // for the duration of a test, following the issueRowCounter seam convention in
 // this package. The DBConn is never touched, so these run with no database.
 func stubSentinelTables(t *testing.T, present map[string]bool, probeErr error) *[]string {
@@ -1070,6 +1070,7 @@ func TestShowTableExistsAnswersLikeInformationSchema(t *testing.T) {
 		want   bool
 	}{
 		{name: "a LIKE lookalike is not the table", tables: []string{"issues", "wispxdependencies"}, probe: "wisp_dependencies", want: false},
+		{name: "a name containing the table is not the table", tables: []string{"bd_events_journal", "bd_events_seq"}, probe: "events", want: false},
 		{name: "empty database", tables: nil, probe: "wisp_dependencies", want: false},
 		{name: "exact name among others", tables: []string{"issues", "wisp_dependencies", "wisps"}, probe: "wisp_dependencies", want: true},
 		{name: "stored in another case", tables: []string{"issues", "BD_EVENTS_SEQ"}, probe: "bd_events_seq", want: true},

@@ -1547,19 +1547,16 @@ func (m migrationSource) currentVersion(ctx context.Context, db DBConn) (int, er
 	// not-yet-created cursor table poisons the pooled connection: tables
 	// created afterwards on other connections stay invisible to this one for
 	// the rest of its life in the pool (be-bv7x).
-	var cursorExists int
-	if err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
-		m.cursorTable,
-	).Scan(&cursorExists); err != nil {
+	cursorExists, err := tableInCurrentDatabase(ctx, db, m.cursorTable)
+	if err != nil {
 		return 0, fmt.Errorf("probing %s existence: %w", m.cursorTable, err)
 	}
-	if cursorExists == 0 {
+	if !cursorExists {
 		return 0, nil
 	}
 
 	var current int
-	err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
+	err = db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+m.cursorTable).Scan(&current)
 	if err != nil && err != sql.ErrNoRows {
 		if dberrors.IsTableNotExist(err) {
 			return 0, nil
@@ -1657,28 +1654,32 @@ func (m migrationSource) cursorRealityFloor(ctx context.Context, db DBConn) (int
 // sentinelTableExists is a function variable for the same reason
 // issueRowCounter is: it lets the cursor-reality tests exercise the real
 // decision without a live database. It runs on EVERY store open
-// (cursorRealityFloor, two tables on the ignored source), so it takes the
-// SHOW TABLES prober for the reason sentinelColumnExists takes SHOW COLUMNS.
+// (cursorRealityFloor: the sentinel and floored-sentinel tables, and the
+// column sentinel's carrier), so it takes the SHOW TABLES prober for the
+// reason sentinelColumnExists takes SHOW COLUMNS.
 var sentinelTableExists = showTableExists
 
 // showTableExists reports whether the session's current database holds table,
 // probing with SHOW TABLES rather than INFORMATION_SCHEMA.TABLES. Dolt does not
 // push the TABLES predicate down any more than the COLUMNS one: the probe walks
-// the catalog of every database on the server, and the open path ran it three
-// times per store open (two sentinels plus the stray-scratch check). On a
-// shared server taking a dozen bd opens a second those walks were a large share
-// of the server's CPU (measured 2026-10-08, 9 databases, dolt 2.1.10); SHOW
-// TABLES reads only the current database.
+// the catalog of every database on the server. On a sql-server hosting 28
+// databases the INFORMATION_SCHEMA read costs 25-30 ms against 0.6 ms for the
+// listing (dolt 2.1.8), and the open path asks a dozen times per bd write.
+//
+// It reads the unfiltered listing and compares names case-insensitively, which
+// is what the INFORMATION_SCHEMA count it replaced answers: Dolt resolves and
+// counts table names case-insensitively, but its SHOW TABLES LIKE filter
+// matches case-sensitively, so a filtered probe would read a table stored as
+// BD_EVENTS_SEQ as absent. The comparison is otherwise exact; without a LIKE
+// pattern, '_' wildcards cannot match a lookalike either.
 //
 // Unlike the INFORMATION_SCHEMA count, SHOW TABLES errors when no database is
-// selected, so this is only for callers already on the target database: the
-// cursor-existence probe in currentVersion, which must succeed on any session
-// (be-bv7x), keeps the INFORMATION_SCHEMA form. The name is compared exactly
-// because '_' is a LIKE single-character wildcard; table is a migration-series
-// constant, never user input.
+// selected or the selected one was dropped, so it is only for callers already
+// on the target database: the cursor-existence probe in currentVersion, which
+// must succeed on any session (be-bv7x), gates it with tableInCurrentDatabase.
+// table is a migration-series constant, never user input.
 func showTableExists(ctx context.Context, db DBConn, table string) (bool, error) {
-	//nolint:gosec // G201: table is a migration-series constant.
-	rows, err := db.QueryContext(ctx, "SHOW TABLES LIKE '"+table+"'")
+	rows, err := db.QueryContext(ctx, "SHOW TABLES")
 	if err != nil {
 		return false, fmt.Errorf("checking table %s: %w", table, err)
 	}
@@ -1699,7 +1700,7 @@ func showTableExists(ctx context.Context, db DBConn, table string) (bool, error)
 		if err := rows.Scan(dest...); err != nil {
 			return false, fmt.Errorf("checking table %s: %w", table, err)
 		}
-		if len(cells) > 0 && string(cells[0]) == table {
+		if len(cells) > 0 && strings.EqualFold(string(cells[0]), table) {
 			return true, nil
 		}
 	}
@@ -1707,6 +1708,26 @@ func showTableExists(ctx context.Context, db DBConn, table string) (bool, error)
 		return false, fmt.Errorf("checking table %s: %w", table, err)
 	}
 	return false, nil
+}
+
+// tableInCurrentDatabase is showTableExists for a session that may have no
+// usable database: the cursor-existence probe runs on any session, so it must
+// never issue a statement that can fail (be-bv7x). SHOW TABLES fails with no
+// database selected (1105) and on a session whose database was dropped under
+// it (1049); the schemata read answers 0 in both cases instead, which reads
+// the table as absent, exactly as the INFORMATION_SCHEMA.TABLES count with
+// TABLE_SCHEMA = DATABASE() did. Both reads are one round trip each.
+func tableInCurrentDatabase(ctx context.Context, db DBConn, table string) (bool, error) {
+	var usable int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = DATABASE()",
+	).Scan(&usable); err != nil {
+		return false, err
+	}
+	if usable == 0 {
+		return false, nil
+	}
+	return showTableExists(ctx, db, table)
 }
 
 // sentinelColumnExists runs on EVERY store open (cursorRealityFloor), so it
