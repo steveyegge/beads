@@ -370,7 +370,18 @@ func (cb *circuitBreaker) writeState(state circuitState) {
 //   - Legacy port-0 files (beads-dolt-circuit-0.json) from before the port-0 fix
 //   - Any breaker file whose open/half-open state is older than circuitStaleTTL
 //
-// Called during init to ensure a clean starting state (GH#2598).
+// It also removes files that would otherwise only accumulate (GH#4636):
+//   - Closed-state files no writer has modified in closedSweepTTL
+//   - Corrupt files that do not parse as breaker state
+//
+// The same rules apply in the live directory and the legacy
+// "/tmp/beads-circuit" one; setting BEADS_TEST_CIRCUIT_DIR (tests) skips the
+// legacy directory.
+//
+// Called during init to ensure a clean starting state (GH#2598). Store open
+// reaches it at most once per process, through
+// cleanStaleCircuitBreakerFilesOnce; bd doctor --fix calls it directly and
+// still sweeps on demand.
 func CleanStaleCircuitBreakerFiles() {
 	dir, legacyFile := circuitBreakerPaths()
 
