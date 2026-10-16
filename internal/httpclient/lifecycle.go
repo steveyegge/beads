@@ -292,7 +292,9 @@ func issueCarriesGates(issue *issueops.Issue) bool {
 }
 
 // setGateMembers writes the four gate members of a create body, each only
-// when populated. The values travel as given: the bounds (await_type <= 32,
+// when populated, so an empty waiter list is absent rather than []: a create
+// has no list to clear, while a patch must spell its clear (setGatePatch).
+// The values travel as given: the bounds (await_type <= 32,
 // await_id <= 255, the waiter list's JSON <= one TEXT column, timeout >= 0)
 // are the role's (issueops.ValidateGateFields) and the server answers a
 // breach with a 400 naming the member, so a second copy of them here would

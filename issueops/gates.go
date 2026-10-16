@@ -70,17 +70,22 @@ const (
 // one member it is about, so a front door can name that member without parsing
 // the message. It wraps ErrValidation.
 //
-// The rules are the stored columns' and nothing more, so every backend refuses
-// the same values a Dolt column always did: await_type at most 32 characters,
-// await_id at most 255, the JSON-encoded waiter list at most one TEXT column,
-// and a timeout that is not negative. There is deliberately no await_type
-// vocabulary (formula gate types are free-form), no gate-type-only rule (any
-// issue may carry the members, as local updates always allowed), and no
-// waiter deduplication.
+// The widths are the stored columns' and nothing more, so every backend
+// refuses the same values a Dolt column always did: await_type at most 32
+// characters, await_id at most 255, and the JSON-encoded waiter list at most
+// one TEXT column. The one rule no column enforces is a timeout that is not
+// negative (timeout_ns is a BIGINT), which the wire publishes as minimum 0;
+// the raw store creates do not run it yet (see ValidateGateFields). There is
+// deliberately no await_type vocabulary (formula gate types are free-form), no
+// gate-type-only rule (any issue may carry the members, as local updates
+// always allowed), and no waiter deduplication.
 type GateFieldError struct {
 	// Field is one of the GateField* constants.
 	Field string
-	// Detail is the sentence the error reads as.
+	// Detail is the sentence the error reads as. It is prose, and the HTTP
+	// client's copy ends with the server's own clause ("; nothing was
+	// created", "; nothing was written"), so a caller dispatches on Field,
+	// never on Detail.
 	Detail string
 }
 

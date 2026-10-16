@@ -15,15 +15,19 @@ import (
 const MaxAwaitTypeLen = 32
 
 // ValidateGateFields checks an issue's gate members against the stored
-// columns, for every create shape: PreparePublicCreateRequest runs it, so
-// Lifecycle.Create, BatchCreator items and BatchApplier create items share it
-// on every backend.
+// columns, for every create shape of the role: PreparePublicCreateRequest
+// runs it, so Lifecycle.Create, BatchCreator items and BatchApplier create
+// items share it on every backend.
 //
-// The rules are the columns' and no more (see publicops.GateFieldError):
+// The widths are the columns' and no more (see publicops.GateFieldError):
 // a Dolt column already refused an oversized value with a raw driver error,
 // and a Postgres text column accepted it, so this converges the two on one
-// typed refusal. The one rule that is not a width is a non-negative timeout,
-// which no command line can produce and the wire publishes as minimum 0.
+// typed refusal. The one rule that is not a width, a non-negative timeout, is
+// no column's (timeout_ns is a BIGINT); the wire publishes it as minimum 0.
+// The raw store creates (CreateIssue, CreateIssues) and import do not run
+// this check, so bd gate create --timeout=-5m, a formula step's gate.timeout
+// and a template clone still store a negative timeout until they move onto
+// the role.
 func ValidateGateFields(issue *types.Issue) error {
 	if issue == nil {
 		return nil
