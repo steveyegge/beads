@@ -765,14 +765,23 @@ func discoverMolBondOperand(ctx context.Context, localStore storage.DoltStorage,
 	parser := formula.NewParser()
 	f, loadErr := parser.LoadByName(operand)
 	if loadErr == nil {
-		// Discovery must fail the same way materialization would: an
-		// enum/pattern/provided-empty violation in --var values fails the
-		// cook, so surfacing it here makes --dry-run and execution reject
-		// the bond identically, before any writable reopen (#5253).
-		if err := formula.ValidateProvidedVars(f, vars); err != nil {
-			return nil, err
+		// Discovery must fail the same way materialization would, and
+		// materialization (resolveAndCookFormulaWithVars) resolves inheritance
+		// before it validates anything: parser.Resolve is what runs
+		// Formula.Validate, which LoadByName never does (#5761). Validating
+		// --var values against the resolved formula also checks a var
+		// declared only in a parent. An enum/pattern/provided-empty violation
+		// fails the cook, so surfacing it here makes --dry-run and execution
+		// reject the bond identically, before any writable reopen (#5253).
+		// Both are wrapped the way the cook wraps them, so the messages match.
+		resolved, resolveErr := parser.Resolve(f)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolving formula %q: %w", operand, resolveErr)
 		}
-		return &molBondDiscovery{operand: operand, formula: f.Formula}, nil
+		if err := formula.ValidateProvidedVars(resolved, vars); err != nil {
+			return nil, fmt.Errorf("formula %q: %w", operand, err)
+		}
+		return &molBondDiscovery{operand: operand, formula: resolved.Formula}, nil
 	}
 	if !isNotFoundErr(err) {
 		return nil, err
@@ -843,10 +852,10 @@ func materializeMolBondOperand(ctx context.Context, activeStore storage.DoltStor
 	if d.issue == nil {
 		subgraph, err := resolveAndCookFormulaWithVars(d.operand, nil, vars)
 		if err != nil {
-			if errors.Is(err, formula.ErrVarValidation) {
-				// Don't double-wrap: the operand IS a formula, and the --var
-				// values it was given fail enum/pattern/required-empty
-				// constraints, which is a distinct condition from "not found".
+			if errors.Is(err, formula.ErrVarValidation) || errors.Is(err, formula.ErrValidation) {
+				// Don't double-wrap: operand IS a formula that either does not
+				// validate or was given --var values failing its enum/pattern/
+				// required-empty constraints, both distinct from "not found".
 				return nil, err
 			}
 			return nil, fmt.Errorf("'%s' not found as issue or formula: %w", d.operand, err)

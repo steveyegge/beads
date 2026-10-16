@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,7 +81,7 @@ func TestMolBondExecutionRejectsEnumViolatingVar(t *testing.T) {
 
 // TestMaterializeMolBondOperandPassesVarValidationThrough covers the writable
 // phase directly: even if a violating value reaches the cook (discovery only
-// checks vars that are provided against the formula it loaded), the sentinel
+// checks vars that are provided against the formula it resolved), the sentinel
 // must pass through unwrapped so callers and users see the constraint
 // violation, not a bogus not-found.
 func TestMaterializeMolBondOperandPassesVarValidationThrough(t *testing.T) {
@@ -98,5 +99,100 @@ func TestMaterializeMolBondOperandPassesVarValidationThrough(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "not found as issue or formula") {
 		t.Fatalf("err = %q: the var-validation failure was double-wrapped as not-found", err)
+	}
+}
+
+// The direct (non-proxied) bond previews and executes through
+// discoverMolBondOperand and materializeMolBondOperand, not resolveOrDescribe
+// and resolveOrCookToSubgraph, so #5761's dry-run guarantee has to hold for
+// this pair too: discovery is all a --dry-run runs, so whatever it accepts is
+// previewed as a successful bond. As in mol_bond_dryrun_validation_test.go, the
+// two phases are asserted against EACH OTHER, so a validation rule added later
+// cannot re-open the gap.
+func TestDiscoverMolBondOperandRejectsWhatMaterializeRejects(t *testing.T) {
+	writeSearchableFormula(t, "dryrun-invalid-gate", invalidGateFormula)
+	s := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
+	ctx := context.Background()
+
+	_, discoverErr := discoverMolBondOperand(ctx, s, "dryrun-invalid-gate", nil)
+	_, materializeErr := materializeMolBondOperand(ctx, s,
+		&molBondDiscovery{operand: "dryrun-invalid-gate"}, nil)
+
+	if materializeErr == nil {
+		t.Fatal("materialization accepted an invalid formula, so this test is no longer testing the gap")
+	}
+	if discoverErr == nil {
+		t.Fatalf("discovery accepted a formula materialization rejects (materialization said: %v)", materializeErr)
+	}
+	for name, err := range map[string]error{"discovery": discoverErr, "materialization": materializeErr} {
+		if !errors.Is(err, formula.ErrValidation) {
+			t.Errorf("%s error does not wrap formula.ErrValidation: %v", name, err)
+		}
+		if !strings.Contains(err.Error(), "waits_for") {
+			t.Errorf("%s error does not name the failing field: %v", name, err)
+		}
+		if strings.Contains(err.Error(), "not found as issue or formula") {
+			t.Errorf("%s reported an invalid formula as not found: %v", name, err)
+		}
+	}
+	if discoverErr.Error() != materializeErr.Error() {
+		t.Errorf("discovery and materialization report different errors:\n discovery:       %v\n materialization: %v", discoverErr, materializeErr)
+	}
+}
+
+// The cook validates --var values against the MERGED formula, so discovery
+// must resolve inheritance first: a var declared only in a parent is otherwise
+// unchecked, and the dry-run previews a bond execution refuses.
+func TestDiscoverMolBondOperandValidatesVarsAgainstTheMergedFormula(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".beads", "formulas")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir formulas dir: %v", err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".formula.toml"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("discover-parent", `formula = "discover-parent"
+version = 1
+type = "workflow"
+
+[vars.env]
+enum = ["dev", "prod"]
+
+[[steps]]
+id = "deploy"
+title = "Deploy to {{env}}"
+type = "task"
+`)
+	write("discover-child", `formula = "discover-child"
+version = 1
+type = "workflow"
+extends = ["discover-parent"]
+`)
+	t.Setenv("GT_ROOT", root)
+
+	s := newTestStoreWithPrefix(t, filepath.Join(t.TempDir(), "test.db"), "test")
+	ctx := context.Background()
+	vars := map[string]string{"env": "staging"} // not in the parent's enum
+
+	_, discoverErr := discoverMolBondOperand(ctx, s, "discover-child", vars)
+	_, materializeErr := materializeMolBondOperand(ctx, s,
+		&molBondDiscovery{operand: "discover-child"}, vars)
+
+	if materializeErr == nil {
+		t.Fatal("materialization accepted a var value outside the inherited enum")
+	}
+	if discoverErr == nil {
+		t.Fatalf("discovery accepted a var value materialization rejects; the enum is declared only in the parent (materialization said: %v)", materializeErr)
+	}
+	for name, err := range map[string]error{"discovery": discoverErr, "materialization": materializeErr} {
+		if !errors.Is(err, formula.ErrVarValidation) {
+			t.Errorf("%s error does not wrap formula.ErrVarValidation: %v", name, err)
+		}
+	}
+	if discoverErr.Error() != materializeErr.Error() {
+		t.Errorf("discovery and materialization report different errors:\n discovery:       %v\n materialization: %v", discoverErr, materializeErr)
 	}
 }

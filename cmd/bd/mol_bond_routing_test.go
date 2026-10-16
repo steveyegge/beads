@@ -321,7 +321,7 @@ func TestMolBondPrefixRoutedWriteThrough(t *testing.T) {
 
 	// Verify through a fresh routed read that the bond committed in the rig
 	// database: gt-mol2 (B) now depends on gt-mol1 (A).
-	rr, err := resolveViaPrefixRoutingWithAccess(ctx, "gt-mol2", false)
+	rr, err := resolveViaPrefixRoutingWithAccess(ctx, "gt-mol2", false, false)
 	if err != nil {
 		t.Fatalf("reopening routed store to verify the write: %v", err)
 	}
@@ -431,12 +431,12 @@ func TestSameBondStoreSeparateHandles(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
-	rrA, err := resolveViaPrefixRoutingWithAccess(ctx, "gt-idn1", true)
+	rrA, err := resolveViaPrefixRoutingWithAccess(ctx, "gt-idn1", true, false)
 	if err != nil {
 		t.Fatalf("first route-open: %v", err)
 	}
 	defer rrA.Close()
-	rrB, err := resolveViaPrefixRoutingWithAccess(ctx, "gt-idn1", true)
+	rrB, err := resolveViaPrefixRoutingWithAccess(ctx, "gt-idn1", true, false)
 	if err != nil {
 		t.Fatalf("second route-open: %v", err)
 	}
