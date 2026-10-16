@@ -1784,25 +1784,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`bd init` refuses to initialize directly in your home directory**
-  ([#4635](https://github.com/gastownhall/beads/issues/4635)). Run there, `bd
-  init` would `git init` your home directory and scaffold agent files into it —
-  `CLAUDE.md`, `AGENTS.md`, `.gitignore`, `.claude/`, `.codex/`, `.agents/` —
-  overwriting any you already keep there, and it did so silently under
+  ([#4635](https://github.com/gastownhall/beads/issues/4635)). `bd init` sets
+  up the directory it runs in as a project: it runs `git init` there unless it
+  finds a repository, and installs agent files — `CLAUDE.md`, `AGENTS.md`,
+  `.gitignore`, `.claude/`, `.codex/`, `.cursor/`, `.agents/`. In your home
+  directory most of those are your agents' user-wide settings, so bd's hooks
+  ended up running in every project, and init did this silently under
   `--non-interactive`, which engages automatically whenever stdin is not a TTY
   (so: whenever an agent runs it). A project is virtually never the home
-  directory itself, so this now refuses with exit code `13`
-  (`ExitHomeDirRefused`), documented at
+  directory itself, so this now refuses with exit code `15`
+  (`ExitHomeDirRefused`; `13` and `14` already mean a lost conditional-write
+  race and a migration freeze), documented at
   `docs/recovery/init-safety.md#init-home-refused`.
 
   Deliberately narrow: it fires only when the working directory is *exactly*
-  your home directory, your home is not already a git repository (tracked
-  dotfiles are unaffected), and you did not name a `BEADS_DIR` yourself. A
-  subdirectory of home is an ordinary project and is never refused. `--force`
-  and `--reinit-local` do not override it — they bypass the local data-safety
-  guard, which is a different question from "is this the right directory". The
-  guard runs first in init's `RunE`, ahead of every path with an effect,
-  including the proxied dispatch and the store-opening `--reinit-local`
-  pre-checks.
+  your home directory, your home is not itself a git repository (tracked
+  dotfiles are unaffected, but a home that only sits inside an enclosing
+  repository, or a `GIT_DIR` inherited from the environment, does not count),
+  and you did not name a `BEADS_DIR` yourself. A subdirectory of home is an
+  ordinary project and is never refused. If you do name a `BEADS_DIR` from
+  an untracked home, init sets up only that workspace: no `git init`, no
+  agent files or `.gitignore` in your home directory, and nothing in a
+  repository your home sits inside (no hooks, `beads.role`, Dolt remote taken
+  from its origin, or bootstrap commit) unless a flag such as `--stealth` or
+  `--setup-exclude` asks for it. `--force` and
+  `--reinit-local` do not override the refusal — they bypass the local
+  data-safety guard, which is a different question from "is this the right
+  directory". The guard runs first in init's `RunE`, ahead of every path with
+  an effect, including the proxied dispatch and the store-opening
+  `--reinit-local` pre-checks.
 
 - **The managed shared Dolt server now opens its configured remotesapi
   listener** ([#6020](https://github.com/gastownhall/beads/pull/6020)).

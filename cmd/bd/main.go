@@ -101,6 +101,13 @@ var changeDirEnvSnapshot map[string]envSnapshotValue
 //
 // Neither is the caller saying "use this". Consult this snapshot, not the live
 // environment, when the answer must mean caller intent (GH#4635).
+//
+// A BEADS_DIR imported from a .beads/.env file is deliberately left out too,
+// although beadsDirProvidedAtStartup counts it as user selection for role
+// detection: the loaders read the .env of the beads dir beads.FindBeadsDir()
+// discovers from the working directory, which in a home directory is the legacy
+// ~/.beads/.env. Counting it would let the same discovered ~/.beads opt out of
+// the home-directory guard; the caller opts out by exporting BEADS_DIR.
 var beadsDirFromCaller = os.Getenv("BEADS_DIR")
 
 var (

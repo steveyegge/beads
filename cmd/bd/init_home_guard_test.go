@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,31 +36,40 @@ func TestIsUserHomeDir_UnresolvableHome(t *testing.T) {
 	}
 }
 
-// TestGuardInitInHomeDir covers the conditions under which the guard declines
-// to fire: an explicit BEADS_DIR, an already-tracked home, and any directory
-// that simply is not home.
+// TestGuardInitInHomeDir covers the guard's three answers: refuse (an
+// untracked home, no BEADS_DIR from the caller), proceed but keep the home
+// clean (the same home, with one), and stand aside (a home that is itself a
+// git repository, or any directory that simply is not home).
 func TestGuardInitInHomeDir(t *testing.T) {
 	t.Run("refuses_in_untracked_home", func(t *testing.T) {
 		home := t.TempDir()
 		stubHomeDir(t, home)
-		chdir(t, home)
+		t.Chdir(home)
 		stubCallerBeadsDir(t, "")
 
-		err := guardInitInHomeDir()
+		_, err := guardInitInHomeDir()
 		if err == nil {
 			t.Fatal("guardInitInHomeDir() = nil, want a refusal in an untracked home")
 		}
 		assertHomeDirRefusal(t, err)
 	})
 
-	t.Run("allows_when_the_caller_supplied_beads_dir", func(t *testing.T) {
+	// The opt-out the refusal offers is a different init, not this one with
+	// the guard lifted: it may proceed, but it must not set the home up as a
+	// project (TestInitInUntrackedHomeWithCallerBeadsDir_SetsUpOnlyTheWorkspace
+	// runs it).
+	t.Run("caller_beads_dir_proceeds_but_keeps_home_clean", func(t *testing.T) {
 		home := t.TempDir()
 		stubHomeDir(t, home)
-		chdir(t, home)
+		t.Chdir(home)
 		stubCallerBeadsDir(t, filepath.Join(home, "elsewhere", ".beads"))
 
-		if err := guardInitInHomeDir(); err != nil {
-			t.Errorf("guardInitInHomeDir() = %v, want nil when the caller named a BEADS_DIR", err)
+		keepHomeClean, err := guardInitInHomeDir()
+		if err != nil {
+			t.Fatalf("guardInitInHomeDir() = %v, want nil when the caller named a BEADS_DIR", err)
+		}
+		if !keepHomeClean {
+			t.Error("keepHomeClean = false, want true: init would install agent files into the untracked home")
 		}
 	})
 
@@ -75,43 +83,104 @@ func TestGuardInitInHomeDir(t *testing.T) {
 	t.Run("refuses_when_bd_exported_beads_dir_for_itself", func(t *testing.T) {
 		home := t.TempDir()
 		stubHomeDir(t, home)
-		chdir(t, home)
+		t.Chdir(home)
 		stubCallerBeadsDir(t, "")
 		// What the root pre-run does, and what `bd -C <dir>` does: set the
 		// live env without the caller having named anything.
 		t.Setenv("BEADS_DIR", filepath.Join(home, ".beads"))
 
-		err := guardInitInHomeDir()
+		_, err := guardInitInHomeDir()
 		if err == nil {
 			t.Fatal("guardInitInHomeDir() = nil; a bd-exported BEADS_DIR is not caller opt-in")
 		}
 		assertHomeDirRefusal(t, err)
 	})
 
-	t.Run("allows_when_home_is_already_a_git_repo", func(t *testing.T) {
+	// "Is this home tracked?" has to be asked the way init's own `git init`
+	// decision asks it, with git's routing environment scrubbed. A plain probe
+	// believes an inherited GIT_DIR, while init does not: it would find the
+	// home untracked, `git init` it and install agent files there.
+	t.Run("refuses_when_git_dir_is_inherited", func(t *testing.T) {
+		other := t.TempDir()
+		gitInitAt(t, other)
 		home := t.TempDir()
 		stubHomeDir(t, home)
-		chdir(t, home)
+		t.Chdir(home)
 		stubCallerBeadsDir(t, "")
-		gitInitAt(t, home)
+		t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+		if !isGitRepo() {
+			t.Fatal("precondition: isGitRepo() = false under an inherited GIT_DIR, so this no longer reproduces the plain probe's false positive")
+		}
 
-		if err := guardInitInHomeDir(); err != nil {
-			t.Errorf("guardInitInHomeDir() = %v, want nil when home is already tracked", err)
+		_, err := guardInitInHomeDir()
+		if err == nil {
+			t.Fatal("guardInitInHomeDir() = nil; an inherited GIT_DIR does not make the home a repository")
+		}
+		assertHomeDirRefusal(t, err)
+	})
+
+	// Only a repository rooted at the home itself means someone set the home
+	// up on purpose. A home that merely sits inside an enclosing work tree
+	// still gets init's agent files, so it is refused like any untracked one,
+	// and a caller BEADS_DIR there is the same opt-out: keepHomeClean, which
+	// also keeps init out of the enclosing repository
+	// (TestInitInUntrackedHomeWithCallerBeadsDir_SetsUpOnlyTheWorkspace).
+	t.Run("refuses_when_home_only_sits_inside_an_enclosing_repo", func(t *testing.T) {
+		root := t.TempDir()
+		gitInitAt(t, root)
+		home := filepath.Join(root, "home")
+		if err := os.Mkdir(home, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		stubHomeDir(t, home)
+		t.Chdir(home)
+		stubCallerBeadsDir(t, "")
+		if !isGitRepo() {
+			t.Fatal("precondition: isGitRepo() = false inside the enclosing repository, so this no longer reproduces the plain probe's false positive")
+		}
+
+		_, err := guardInitInHomeDir()
+		if err == nil {
+			t.Fatal("guardInitInHomeDir() = nil; an enclosing repository does not make the home itself tracked")
+		}
+		assertHomeDirRefusal(t, err)
+
+		stubCallerBeadsDir(t, filepath.Join(t.TempDir(), ".beads"))
+		if keepHomeClean, err := guardInitInHomeDir(); err != nil || !keepHomeClean {
+			t.Errorf("with a caller BEADS_DIR: guardInitInHomeDir() = (%v, %v), want (true, nil)", keepHomeClean, err)
 		}
 	})
 
-	t.Run("allows_in_an_ordinary_project_dir", func(t *testing.T) {
+	// A home that is itself a repository was set up as a project on purpose,
+	// so init runs there exactly as anywhere else, BEADS_DIR or not.
+	t.Run("stands_aside_when_home_is_itself_a_git_repo", func(t *testing.T) {
+		home := t.TempDir()
+		stubHomeDir(t, home)
+		t.Chdir(home)
+		gitInitAt(t, home)
+
+		for _, callerBeadsDir := range []string{"", filepath.Join(home, "notes", ".beads")} {
+			stubCallerBeadsDir(t, callerBeadsDir)
+			if keepHomeClean, err := guardInitInHomeDir(); err != nil || keepHomeClean {
+				t.Errorf("caller BEADS_DIR %q: guardInitInHomeDir() = (%v, %v), want (false, nil) in a tracked home", callerBeadsDir, keepHomeClean, err)
+			}
+		}
+	})
+
+	t.Run("stands_aside_in_an_ordinary_project_dir", func(t *testing.T) {
 		home := t.TempDir()
 		stubHomeDir(t, home)
 		project := filepath.Join(home, "project")
 		if err := os.MkdirAll(project, 0o750); err != nil {
 			t.Fatal(err)
 		}
-		chdir(t, project)
-		stubCallerBeadsDir(t, "")
+		t.Chdir(project)
 
-		if err := guardInitInHomeDir(); err != nil {
-			t.Errorf("guardInitInHomeDir() = %v, want nil for a project dir under home", err)
+		for _, callerBeadsDir := range []string{"", filepath.Join(home, "notes", ".beads")} {
+			stubCallerBeadsDir(t, callerBeadsDir)
+			if keepHomeClean, err := guardInitInHomeDir(); err != nil || keepHomeClean {
+				t.Errorf("caller BEADS_DIR %q: guardInitInHomeDir() = (%v, %v), want (false, nil) for a project dir under home", callerBeadsDir, keepHomeClean, err)
+			}
 		}
 	})
 }
@@ -126,7 +195,12 @@ func TestGuardInitInHomeDir(t *testing.T) {
 //   - --proxied-server dispatches to runInitProxiedServer, which calls
 //     EnsureGitRepo — a `git init` in the current directory.
 //
-// So the assertion is not merely "it errors": nothing may exist afterwards.
+// So the assertion is not merely "it errors": the home must still be empty.
+//
+// Every case also names a backend that cannot exist, as a circuit breaker: if
+// the guard ever fails open, init stops at the unknown-backend check, ahead of
+// every effect, and the failure below names the guard instead of a store being
+// built in the temp home.
 func TestInitCommand_RefusesInHomeDirBeforeAnySideEffect(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -142,10 +216,11 @@ func TestInitCommand_RefusesInHomeDirBeforeAnySideEffect(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			stubHomeDir(t, home)
-			chdir(t, home)
+			t.Chdir(home)
 			stubCallerBeadsDir(t, "")
 			t.Setenv("BEADS_DIR", "")
 			t.Setenv("BD_NON_INTERACTIVE", "1")
+			setInitFlag(t, "backend", homeGuardSentinelBackend)
 			for name, value := range tc.flags {
 				setInitFlag(t, name, value)
 			}
@@ -154,17 +229,27 @@ func TestInitCommand_RefusesInHomeDirBeforeAnySideEffect(t *testing.T) {
 			if err == nil {
 				t.Fatal("bd init in an untracked home returned nil, want a refusal")
 			}
+			if strings.Contains(err.Error(), homeGuardSentinelBackend) {
+				t.Fatalf("init ran past the home guard and got as far as backend selection: %v", err)
+			}
 			assertHomeDirRefusal(t, err)
 
 			// A refusal that still left something behind is not a refusal.
-			for _, name := range []string{".git", ".beads", "CLAUDE.md", "AGENTS.md", ".gitignore", ".agents", ".codex", ".claude"} {
-				if _, statErr := os.Stat(filepath.Join(home, name)); statErr == nil {
-					t.Errorf("init created %s in the home directory despite refusing", name)
-				}
+			entries, readErr := os.ReadDir(home)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			for _, entry := range entries {
+				t.Errorf("init created %s in the home directory despite refusing", entry.Name())
 			}
 		})
 	}
 }
+
+// homeGuardSentinelBackend is a --backend no bd can have: the home-guard
+// tests' circuit breaker. Init rejects it before any effect, so a guard that
+// fails open ends at that error, which names it, instead of at a real store.
+const homeGuardSentinelBackend = "review4795-home-guard-sentinel"
 
 // assertHomeDirRefusal checks that err is the home-directory refusal, by its
 // exit code rather than its message: the code is the scriptable contract
@@ -201,27 +286,14 @@ func stubHomeDir(t *testing.T, dir string) {
 	t.Cleanup(func() { resolveUserHomeDir = orig })
 }
 
-// gitInitAt makes dir a git repository.
+// gitInitAt makes dir a git repository, with git's routing environment
+// scrubbed so an inherited GIT_DIR cannot send the init somewhere else.
 func gitInitAt(t *testing.T, dir string) {
 	t.Helper()
-	cmd := exec.Command("git", "init")
-	cmd.Dir = dir
+	cmd := initArtifactGitCommand(dir, "init")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init failed: %v\n%s", err, out)
 	}
-}
-
-// chdir switches to dir for the duration of the test.
-func chdir(t *testing.T, dir string) {
-	t.Helper()
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(orig) })
 }
 
 // setInitFlag sets a flag on the shared initCmd and restores it afterwards —
@@ -258,18 +330,20 @@ func setInitFlag(t *testing.T, name, value string) {
 //
 // The half that made this worth blocking on: the `git init` is separately
 // gated on the same env, so it stayed skipped — but the agent scaffolding is
-// not. CLAUDE.md, AGENTS.md and .claude/ are written relative to the working
-// directory with no BEADS_DIR gate at all, so the bypass still clobbered the
-// files in $HOME the guard exists to protect.
+// not. CLAUDE.md, AGENTS.md, .claude/, .codex/, .cursor/ and .agents/ are
+// written relative to the working directory whatever BEADS_DIR says, so the
+// bypass still installed into $HOME the user-wide agent settings the guard
+// exists to keep out of it.
 //
-// --backend names a backend that cannot exist, as a circuit breaker: if the
-// guard ever fails open again, init stops at the unknown-backend error instead
-// of building a real store in someone's home directory, and the assertion
-// below reports that error rather than hanging on Dolt.
+// --backend names a backend that cannot exist (homeGuardSentinelBackend), as
+// a circuit breaker: if the guard ever fails open again, init stops at the
+// unknown-backend error instead of building a real store in someone's home
+// directory, and the assertion below reports that error rather than hanging
+// on Dolt.
 func TestInitThroughRootCmd_RefusesInHomeDirWithDiscoveredBeadsDir(t *testing.T) {
 	home := t.TempDir()
 	stubHomeDir(t, home)
-	chdir(t, home)
+	t.Chdir(home)
 	stubCallerBeadsDir(t, "")
 
 	// The caller named nothing. Anything in BEADS_DIR from here on was put
@@ -304,20 +378,20 @@ func TestInitThroughRootCmd_RefusesInHomeDirWithDiscoveredBeadsDir(t *testing.T)
 	})
 	store, dbPath = nil, ""
 
-	rootCmd.SetArgs([]string{"init", "--backend", "review4795-home-guard-sentinel", "--prefix", "hg"})
+	rootCmd.SetArgs([]string{"init", "--backend", homeGuardSentinelBackend, "--prefix", "hg"})
 	err := rootCmd.Execute()
 
 	if err == nil {
 		t.Fatal("bd init in an untracked home returned nil, want a refusal")
 	}
-	if strings.Contains(err.Error(), "review4795-home-guard-sentinel") {
+	if strings.Contains(err.Error(), homeGuardSentinelBackend) {
 		t.Fatalf("init ran past the home guard and got as far as backend selection: %v", err)
 	}
 	assertHomeDirRefusal(t, err)
 
-	// The files the bypass could still clobber, none of which is gated on
+	// The files the bypass could still install, none of which is gated on
 	// BEADS_DIR: scaffolding is written relative to the working directory.
-	for _, name := range []string{".git", "CLAUDE.md", "AGENTS.md", ".gitignore", ".agents", ".codex", ".claude"} {
+	for _, name := range []string{".git", "CLAUDE.md", "AGENTS.md", ".gitignore", ".agents", ".codex", ".claude", ".cursor"} {
 		if _, statErr := os.Stat(filepath.Join(home, name)); statErr == nil {
 			t.Errorf("init created %s in the home directory despite refusing", name)
 		}

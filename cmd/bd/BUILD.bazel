@@ -882,6 +882,7 @@ go_test(
         "init_git_bootstrap_routing_test.go",
         "init_guard_force_e2e_test.go",
         "init_guard_test.go",
+        "init_home_guard_cgo_test.go",
         "init_home_guard_test.go",
         "init_hooks_test.go",
         "init_metrics_test.go",
