@@ -231,3 +231,123 @@ func TestResolvePartialIDExact_RefusesSentinelTokens(t *testing.T) {
 		}
 	}
 }
+
+// TestResolvePartialID_FakeStore_QualifiedInputsNeverResolveToAnotherBead pins
+// the leading-prefix matcher (#4939) against inputs that a looser matcher
+// resolves to an unrelated bead. Each input names no issue in its store but
+// shares a fragment with the store's only bead (the decoy), so a matcher that
+// compares less than the whole hash part — a substring test, or only the text
+// after the last dash — hands back the decoy. Each must stay a plain not-found
+// on both resolvers: the default one would act on the decoy, and the
+// exact-only one would claim the input abbreviates it.
+//
+// Every case also resolves a genuine leading-prefix abbreviation of its decoy,
+// so a not-found cannot pass merely because the fixture answers nothing.
+func TestResolvePartialID_FakeStore_QualifiedInputsNeverResolveToAnotherBead(t *testing.T) {
+	ctx := context.Background()
+	// The controls are abbreviations, which announce themselves on stderr;
+	// that notice is pinned in id_parser_unit_test.go.
+	t.Setenv("BD_NO_PARTIAL_ID_NOTICE", "1")
+
+	cases := []struct {
+		name    string
+		prefix  string
+		decoy   fakeIssue
+		control string   // a leading-prefix abbreviation of decoy
+		inputs  []string // ids that name no issue in the store
+	}{
+		{
+			// The reported gcy-g4o incident: "oqf" is only a substring of
+			// the wisp hash "goqfo".
+			name:    "substring of a wisp hash",
+			prefix:  "gcy",
+			decoy:   fakeIssue{id: "gcy-wisp-goqfo", ephemeral: true},
+			control: "goq",
+			inputs:  []string{"gcy-oqf", "oqf"},
+		},
+		{
+			// A routed command tries prefix routing only after the local
+			// lookup reports not-found, so a local hit here would act on
+			// bd-8wnq2 instead of the hr- rig's issue.
+			name:    "foreign prefix",
+			prefix:  "bd",
+			decoy:   fakeIssue{id: "bd-8wnq2"},
+			control: "8wnq",
+			inputs:  []string{"hr-8wnq"},
+		},
+		{
+			name:    "wisp-qualified id against a plain hash",
+			prefix:  "gcy",
+			decoy:   fakeIssue{id: "gcy-g4oab"},
+			control: "g4o",
+			inputs:  []string{"gcy-wisp-g4o"},
+		},
+		{
+			name:    "wisp-qualified id against a mol-qualified hash",
+			prefix:  "bd",
+			decoy:   fakeIssue{id: "bd-mol-t3xyz"},
+			control: "bd-mol-t3",
+			inputs:  []string{"bd-wisp-t3"},
+		},
+		{
+			name:    "fragment after an interior dash",
+			prefix:  "bd",
+			decoy:   fakeIssue{id: "bd-mol-abcde"},
+			control: "bd-mol-ab",
+			inputs:  []string{"abc"},
+		},
+		{
+			// Nothing follows the last dash, and an empty fragment is a
+			// prefix of everything.
+			name:    "trailing dash",
+			prefix:  "bd",
+			decoy:   fakeIssue{id: "bd-mol-abcde"},
+			control: "bd-mol-ab",
+			inputs:  []string{"bd-ol-", "ol-"},
+		},
+		{
+			// A trailing dash is fine after a leading prefix of the hash
+			// (the control), and nowhere else.
+			name:    "trailing dash against a numeric tail",
+			prefix:  "bd",
+			decoy:   fakeIssue{id: "bd-x-aap-1"},
+			control: "bd-x-aap-",
+			inputs:  []string{"aap-", "bd-aap-"},
+		},
+		{
+			name:    "lone dash",
+			prefix:  "bd",
+			decoy:   fakeIssue{id: "bd-a3f8e9"},
+			control: "a3f8",
+			inputs:  []string{"-"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeResolverStore{
+				issues: []fakeIssue{tc.decoy},
+				config: map[string]string{"issue_prefix": tc.prefix},
+			}
+			if got, err := utils.ResolvePartialID(ctx, store, tc.control); err != nil || got != tc.decoy.id {
+				t.Fatalf("fixture sanity check failed: ResolvePartialID(%q) = (%q, %v); want (%q, nil)", tc.control, got, err, tc.decoy.id)
+			}
+
+			for _, input := range tc.inputs {
+				got, err := utils.ResolvePartialID(ctx, store, input)
+				if err == nil {
+					t.Errorf("ResolvePartialID(%q) = %q; want not found — %q names no issue here", input, got, input)
+				} else if !strings.Contains(err.Error(), "no issue found matching") {
+					t.Errorf("ResolvePartialID(%q) error = %v; want a plain not-found", input, err)
+				}
+
+				got, err = utils.ResolvePartialIDExact(ctx, store, input)
+				if err == nil {
+					t.Errorf("ResolvePartialIDExact(%q) = %q; want not found — %q names no issue here", input, got, input)
+				} else if errors.Is(err, utils.ErrAbbreviatedIDNotAllowed) || !strings.Contains(err.Error(), "no issue found matching") {
+					t.Errorf("ResolvePartialIDExact(%q) error = %v; want a plain not-found — %q abbreviates no issue here", input, err, input)
+				}
+			}
+		})
+	}
+}
