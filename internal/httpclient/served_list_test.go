@@ -1478,7 +1478,9 @@ func TestServedReaderRefusesTheFiltersTheWireCannotCarry(t *testing.T) {
 		{"PinnedFlag", issueops.ListRequest{PinnedFlag: true}},
 		{"PriorityMax", issueops.ListRequest{PriorityMax: &priority}},
 		{"UpdatedAfter", issueops.ListRequest{UpdatedAfter: &cutoff}},
-		{"TitleContains", issueops.ListRequest{TitleContains: "anything"}},
+		// A TitleContains alone folds onto `title`; only a pair that differs
+		// is left with no parameter to ride.
+		{"TitleContains", issueops.ListRequest{TitleSearch: "something", TitleContains: "anything"}},
 		{"ExcludeTypes", issueops.ListRequest{ExcludeTypes: []string{"chore"}}},
 	} {
 		page, err := reader.List(ctx, test.req)
@@ -1494,6 +1496,41 @@ func TestServedReaderRefusesTheFiltersTheWireCannotCarry(t *testing.T) {
 		t.Error("Ready with an Offset answered instead of refusing")
 	} else {
 		assertServedRefusal(t, "Ready with an Offset", err, "Offset")
+	}
+}
+
+// TestServedListTitleContainsAnswersWhatTitleAnswers: `bd list
+// --title-contains X` folds onto listIssues `title`, and the store compiles
+// both to the same case-insensitive substring predicate, so over the wire the
+// two flags answer the same rows, as do both flags set to one value.
+func TestServedListTitleContainsAnswersWhatTitleAnswers(t *testing.T) {
+	ctx := t.Context()
+	c, reader := servedReader(t)
+	const scope = "title-contains"
+	for _, id := range []string{listID("tcmatch", "a"), listID("tcmatch", "b"), listID("other", "c")} {
+		seedListIssue(t, ctx, c, id, scope, time.Time{}, 2)
+	}
+	limit := 0
+	answer := func(req issueops.ListRequest) []string {
+		t.Helper()
+		req.Labels, req.Limit = []string{scope}, &limit
+		page, err := reader.List(ctx, req)
+		if err != nil {
+			t.Fatalf("List(%+v): %v", req, err)
+		}
+		ids := pageIDs(page)
+		slices.Sort(ids)
+		return ids
+	}
+	want := []string{listID("tcmatch", "a"), listID("tcmatch", "b")}
+	for name, req := range map[string]issueops.ListRequest{
+		"title":                {TitleSearch: "LSTCMATCH"},
+		"title-contains":       {TitleContains: "LSTCMATCH"},
+		"both, the same value": {TitleSearch: "lstcmatch", TitleContains: "lstcmatch"},
+	} {
+		if got := answer(req); !slices.Equal(got, want) {
+			t.Errorf("%s: ids %v, want %v", name, got, want)
+		}
 	}
 }
 

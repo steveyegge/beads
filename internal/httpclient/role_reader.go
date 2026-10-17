@@ -63,7 +63,12 @@ func (r httpReader) Ready(ctx context.Context, req issueops.ReadyRequest) (issue
 }
 
 // List serves listIssues, through the pager in list_walk.go.
+//
+// `--title-contains` is folded onto `title` first (encode.FoldTitleContains:
+// the two compile to one predicate), so it is gated by issues.list.title like
+// `--title` is, and refused before the dial against a server without it.
 func (r httpReader) List(ctx context.Context, req issueops.ListRequest) (issueops.IssuePage, error) {
+	req = encode.FoldTitleContains(req)
 	if err := r.refuseUnservedListFilters(ctx, req); err != nil {
 		return issueops.IssuePage{}, err
 	}

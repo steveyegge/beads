@@ -31,6 +31,15 @@ var listScopeShapes = []struct {
 	{"mc-list-title",
 		[]string{"list", "--all", "--include-infra", "--json", "--limit", "10", "--title", "CHILD-A"},
 		"issues.list.title", []string{"child-a"}},
+	// --title-contains folds onto the same `title` parameter: case-insensitive
+	// substring, and the status set leaves the closed child-c out.
+	{"gc-polecat-title-contains",
+		[]string{"list", "--title-contains", "CHILD", "--status", "open,in_progress,blocked", "--json"},
+		"issues.list.title", []string{"child-a", "child-b", "child-x"}},
+	// The same value under both flags is one predicate.
+	{"title-and-title-contains-equal",
+		[]string{"list", "--all", "--title", "child-a", "--title-contains", "child-a", "--json"},
+		"issues.list.title", []string{"child-a"}},
 	// A closed id in the set is listed under --all; ids outside it are not.
 	{"mc-list-id",
 		[]string{"list", "--all", "--id", "{child-c},{loner}", "--json", "--limit", "0"},
@@ -87,6 +96,19 @@ func TestE2E_ListScopeFiltersOverHTTP(t *testing.T) {
 			}
 		})
 	}
+
+	// The listing publishes one title parameter: a differing pair refuses
+	// rather than drop either half.
+	t.Run("differing title pair refuses", func(t *testing.T) {
+		args := []string{"list", "--all", "--title", "child-a", "--title-contains", "child-b", "--json"}
+		r := remote.run(nil, args...)
+		if r.code == 0 {
+			t.Fatalf("http: bd %s exited 0; one half of the pair was dropped: %s", strings.Join(args, " "), r.stdout)
+		}
+		if !strings.Contains(r.stdout+r.stderr, "TitleContains") {
+			t.Errorf("the refusal does not name TitleContains: stdout=%s stderr=%s", r.stdout, r.stderr)
+		}
+	})
 
 	t.Run("MC server mask refuses before dialing", func(t *testing.T) {
 		proxyAddr, counter := startMaskingProxy(t, addr, mcContextMask)
