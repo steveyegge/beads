@@ -5878,6 +5878,24 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:closed_after",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:closed_before",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:created_after",
       "type": "string",
       "format": "date-time",
@@ -5904,10 +5922,106 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:defer_after",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:defer_before",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:deferred",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:desc_contains",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:due_after",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:due_before",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:empty_description",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:exclude_label",
       "type": "array",
       "required": false,
       "item_type": "string",
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:exclude_status",
+      "type": "array",
+      "required": false,
+      "item_type": "string",
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:exclude_type",
+      "type": "array",
+      "required": false,
+      "item_type": "string",
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:external_contains",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:external_ref",
+      "type": "string",
+      "required": false,
       "style": "form",
       "explode": true
     },
@@ -5984,6 +6098,22 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:label_pattern",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:label_regex",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:limit",
       "type": "integer",
       "required": false,
@@ -6002,7 +6132,64 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:mol_type",
+      "type": "string",
+      "enum": [
+        "patrol",
+        "swarm",
+        "work"
+      ],
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:no_assignee",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:no_labels",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:no_parent",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:no_pinned",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:notes_contains",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:overdue",
       "type": "boolean",
       "required": false,
       "style": "form",
@@ -6013,6 +6200,39 @@
       "schema": "param:listIssues",
       "member": "query:parent",
       "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:pinned",
+      "type": "boolean",
+      "required": false,
+      "style": "form",
+      "explode": true,
+      "default": "false"
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:priority",
+      "type": "integer",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:priority_max",
+      "type": "integer",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:priority_min",
+      "type": "integer",
       "required": false,
       "style": "form",
       "explode": true
@@ -6040,6 +6260,14 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:spec",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:status",
       "type": "array",
       "required": false,
@@ -6057,8 +6285,51 @@
     },
     {
       "schema": "param:listIssues",
+      "member": "query:title_contains",
+      "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
       "member": "query:type",
       "type": "string",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:updated_after",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:updated_before",
+      "type": "string",
+      "format": "date-time",
+      "required": false,
+      "style": "form",
+      "explode": true
+    },
+    {
+      "schema": "param:listIssues",
+      "member": "query:wisp_type",
+      "type": "string",
+      "enum": [
+        "error",
+        "escalation",
+        "gc_report",
+        "heartbeat",
+        "patrol",
+        "ping",
+        "recovery"
+      ],
       "required": false,
       "style": "form",
       "explode": true
