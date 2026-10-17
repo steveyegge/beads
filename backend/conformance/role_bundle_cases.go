@@ -63,6 +63,7 @@ var roleContractCases = []roleContract{
 		RunBatchApplyCloseItemsAnswerToTheCloseGuards,
 		RunBatchApplyRefusesADottedChildGatedOnItsOwnParent,
 		RunBatchApplyAppliesTheDefaultPriority,
+		RunBatchApplyCarriesTheGateMembers,
 	),
 
 	roleCases("BatchCloser", "BatchCloser()", oncePerRole,
@@ -463,6 +464,8 @@ var roleContractCases = []roleContract{
 		RunLifecycleCreateWritesEveryScalarField,
 		RunLifecycleCreateEchoesSubSecondTimestamps,
 		RunLifecycleCreateAppliesTheDefaultPriority,
+		RunLifecycleCreateWritesTheGateMembers,
+		RunLifecycleCreateBoundsTheGateMembers,
 	),
 
 	roleCases("LifecycleUpdate", "IssueLifecycle()", oncePerRole,
@@ -494,6 +497,8 @@ var roleContractCases = []roleContract{
 		RunLifecycleUpdateProvenanceLabelsHistory,
 		RunLifecycleUpdateRefusesATemplate,
 		RunLifecycleUpdateAllowTemplateEditsATemplate,
+		RunLifecycleUpdatePatchesTheGateMembers,
+		RunLifecycleUpdateBoundsTheGateMembers,
 	),
 
 	roleCases("Memories", "Memories()", oncePerRole,
@@ -599,6 +604,8 @@ var roleContractCases = []roleContract{
 		RunReaderListWispTypeNarrowsTheAdmittedPlaneRatherThanAdmittingIt,
 		RunReaderListBriefDropsTheFreeFormTextAndNothingElse,
 		RunReaderReadyBriefDropsTheFreeFormTextAndNothingElse,
+		RunReaderListTimeBoundsAreStrictAndWholeSecond,
+		RunReaderListFilterFamiliesNarrowToTheirRows,
 	),
 
 	roleCases("ReadyClaimer", "ReadyClaimer() and IssueReader()", oncePerRole,

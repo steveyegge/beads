@@ -259,6 +259,7 @@
 34 31 TestProxiedServerComment
 34 31 TestProxiedServerConfigB
 34 31 TestProxiedServerEventsJournal
+34 31 TestProxiedServerGateAddWaiterConvoy
 34 31 TestProxiedServerIfRevisionGuardClose
 34 31 TestProxiedServerMolBond
 

@@ -245,6 +245,57 @@ func TestIfRevisionDeletePreflightGoneIsPreconditionFailed(t *testing.T) {
 	}
 }
 
+// TestEmbeddedIfRevisionDeletePreflightGoneParentIsPreconditionFailed is the
+// test above with a gone id that is still the start of a surviving one: a
+// deleted parent whose orphaned child (<parent>.1) outlives it. `bd delete`
+// resolves exactly, so the parent's id is refused as an abbreviation of the
+// child rather than resolved to it, and under --if-revision that refusal must
+// be the same lost race (exit 13, "precondition failed") on the single-id path
+// and on --cascade's deleteBatch path, with the child untouched. The
+// TestEmbedded name is what puts this test in a CI lane
+// (.github/scripts/embedded-test-shard.sh); under any other name it skips
+// everywhere.
+func TestEmbeddedIfRevisionDeletePreflightGoneParentIsPreconditionFailed(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, _, _ := bdInit(t, bd, "--prefix", "pg")
+
+	parent := bdCreate(t, bd, dir, "Gone parent", "--type", "task")
+	child := bdCreate(t, bd, dir, "Surviving child", "--type", "task", "--parent", parent.ID)
+	if !strings.HasPrefix(child.ID, parent.ID) {
+		t.Fatalf("child id %s does not begin with its parent's id %s; this test needs it to", child.ID, parent.ID)
+	}
+	rev0 := bdShowRevision(t, bd, dir, parent.ID)
+
+	bdDelete(t, bd, dir, parent.ID, "--force")
+	// The parent is gone, yet a read still takes its id as an abbreviation and
+	// resolves it to the child: the id a delete must not resolve the same way.
+	if got := bdShow(t, bd, dir, parent.ID); got.ID != child.ID {
+		t.Fatalf("bd show %s after its delete returned %s; want the surviving child %s", parent.ID, got.ID, child.ID)
+	}
+
+	for _, extra := range [][]string{nil, {"--cascade"}} {
+		args := append([]string{"delete", parent.ID, "--if-revision", revStr(rev0), "--force"}, extra...)
+		out, code := bdRunFailCode(t, bd, dir, args...)
+		if code != ExitGuardMismatch {
+			t.Errorf("bd %s exit code = %d, want %d\n%s", strings.Join(args, " "), code, ExitGuardMismatch, out)
+		}
+		if !strings.Contains(out, "precondition failed") {
+			t.Errorf("bd %s should say \"precondition failed\", got:\n%s", strings.Join(args, " "), out)
+		}
+		if strings.Contains(out, "not found") {
+			t.Errorf("bd %s leaked the unguarded refusal instead of the guard envelope:\n%s", strings.Join(args, " "), out)
+		}
+	}
+	if got := bdShow(t, bd, dir, child.ID); got.ID != child.ID {
+		t.Errorf("bd show %s returned %s; want the child untouched", child.ID, got.ID)
+	}
+}
+
 // TestEmbeddedIfRevisionPreflightGoneIsPreconditionFailedOnEveryVerb pins
 // ga-vnycm2.10, the close/update/assign/reopen half of mc-zndi7.81: `bd
 // close`, `bd update`, `bd assign` and `bd reopen` each resolve the row with

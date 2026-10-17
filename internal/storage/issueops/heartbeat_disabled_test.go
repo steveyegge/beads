@@ -91,6 +91,20 @@ func expectDisabledHeartbeatLook(mock sqlmock.Sqlmock, id, assignee string, stat
 		WillReturnRows(sqlmock.NewRows([]string{"assignee", "status"}).AddRow(assignee, string(status)))
 }
 
+// expectDisabledHeartbeatRefusalReads mocks the one read the REFUSAL path
+// still makes after the issue row: RenewLeaseInTx reads the caller's own
+// lease row so a refusal can delete it when it survives as an orphan on an
+// issue the caller no longer holds a live claim on (main's invariant that a
+// lease row exists only while its claim is live). A disabled deployment
+// arms no lease, so the row is absent and the read answers ErrNoRows: the
+// refusal comes back unchanged and nothing is deleted. Callers that expect
+// a refusal need this; the successful no-op does not reach it.
+func expectDisabledHeartbeatRefusalReads(mock sqlmock.Sqlmock, id string) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT holder FROM leases WHERE issue_id = ?")).
+		WithArgs(id).
+		WillReturnError(sql.ErrNoRows)
+}
+
 // expectDisabledHeartbeatNoRow mocks the same two reads for an id that
 // resolves to no issue row at all (deleted, or never created).
 func expectDisabledHeartbeatNoRow(mock sqlmock.Sqlmock, id string) {
@@ -149,6 +163,7 @@ func TestHeartbeatDisabledRefusesANonHolder(t *testing.T) {
 
 	const id = "bd-1"
 	expectDisabledHeartbeatLook(mock, id, "bob", types.StatusInProgress)
+	expectDisabledHeartbeatRefusalReads(mock, id)
 
 	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
 	if !errors.Is(err, storage.ErrAlreadyClaimed) {
@@ -174,6 +189,7 @@ func TestHeartbeatDisabledRefusesAnUnassignedOpenIssue(t *testing.T) {
 
 	const id = "bd-1"
 	expectDisabledHeartbeatLook(mock, id, "", types.StatusOpen)
+	expectDisabledHeartbeatRefusalReads(mock, id)
 
 	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
 	if !errors.Is(err, storage.ErrNotClaimable) {
@@ -197,6 +213,7 @@ func TestHeartbeatDisabledRefusesAClosedClaim(t *testing.T) {
 
 	const id = "bd-1"
 	expectDisabledHeartbeatLook(mock, id, claimActor, types.StatusClosed)
+	expectDisabledHeartbeatRefusalReads(mock, id)
 
 	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
 	if !errors.Is(err, storage.ErrNotClaimable) {
@@ -204,6 +221,41 @@ func TestHeartbeatDisabledRefusesAClosedClaim(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "status closed") {
 		t.Errorf("err = %q, want the status named", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+// TestHeartbeatDisabledRefusalDeletesTheCallersOrphanedLease: the disabled
+// path keeps the refusal's ONE write — deleting the caller's own lease row
+// when it survives on an issue the caller no longer holds live. That cleanup
+// is the same invariant the enabled path enforces, not a lease write the
+// gate forbids: the gate forbids minting or refreshing one, and here the row
+// is going away. Without the row the refusal is returned untouched, which is
+// what expectDisabledHeartbeatRefusalReads' ErrNoRows pins above.
+func TestHeartbeatDisabledRefusalDeletesTheCallersOrphanedLease(t *testing.T) {
+	_, mock, tx := beginMockTx(t)
+
+	const id = "bd-1"
+	expectDisabledHeartbeatLook(mock, id, claimActor, types.StatusClosed)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT holder FROM leases WHERE issue_id = ?")).
+		WithArgs(id).
+		WillReturnRows(sqlmock.NewRows([]string{"holder"}).AddRow(claimActor))
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM leases WHERE issue_id = ? AND holder = ?")).
+		WithArgs(id, claimActor).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := HeartbeatIssueInTx(disabledCtx(), tx, id, claimActor)
+	if !errors.Is(err, storage.ErrNotClaimable) {
+		t.Fatalf("err = %v, want ErrNotClaimable for a closed claim", err)
+	}
+	var refusal *LeaseRenewalRefusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("err = %T %v, want a LeaseRenewalRefusal", err, err)
+	}
+	if !refusal.OrphanDeleted {
+		t.Error("the caller's orphaned lease row was not deleted")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)

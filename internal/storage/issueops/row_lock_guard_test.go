@@ -68,8 +68,9 @@ var sqlWriteKeywordRe = regexp.MustCompile(`(?i)\b(?:SET|VALUES|SELECT)\b`)
 //     the token would clobber a concurrent whole-row CAS (ExpectedVersion) for
 //     no content change. Analysis absorbed from gastownhall/beads#4682.
 //     (The PR's other exemption, the lease heartbeat, is moot on main: since
-//     bd-lrgn1 heartbeats live entirely in the ephemeral leases table and never
-//     touch the issues row.)
+//     bd-lrgn1 a heartbeat refresh lives entirely in the ephemeral leases
+//     table and never touches the issues row, and a re-arm remints row_lock on
+//     purpose; see the freshRowLock invariant.)
 //   - "compaction_level = ": compaction apply/restore rewrites bookkeeping and
 //     compacted body text only — cells the reclaim/close races don't care
 //     about, exempted by name in the freshRowLock invariant. The assignment

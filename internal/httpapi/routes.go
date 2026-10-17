@@ -157,6 +157,26 @@ const (
 	CapIssuesListTitle      = "issues.list.title"
 )
 
+// CapIssuesListFilters is the behavior capability that advertises the rest of
+// `bd list`'s filter vocabulary on GET /v0/beads/issues (reads.go
+// listFilterParams, spec OpListIssues): the updated/closed/defer/due bounds,
+// the priority range, the text and external-ref matches, the label
+// pattern/regex, the spec prefix, the empty-description, no-labels, no-parent,
+// pinned-flag, deferred and overdue predicates, the type and status exclusions
+// and the mol/wisp types. Each is carried as the issueops.ListRequest member
+// `bd list` sets and applied by the same Reader role (workapi.BuildListFilter)
+// the local route reads through; the handler builds no filter.
+//
+// ONE token for the set, unlike the per-parameter list tokens above: these
+// members land in one build and no server will ever carry a subset, so a split
+// would mint about twenty tokens with no cutover distinction between them.
+//
+// The client refuses a request carrying any of them locally against a server
+// that does not advertise this token, with ErrUnsupported naming it: an older
+// server answers the parameter with `unknown_parameter`, and dropping one would
+// answer a WIDER listing than asked for.
+const CapIssuesListFilters = "issues.list.filters"
+
 // CapListIDs is the behavior capability that advertises the repeatable `id`
 // filter on listIssues (issueops.ListRequest.IDFilter; `bd list --id`). It
 // rides beside `issues.list` for the reason CapIssuesListSort does: the
@@ -265,11 +285,33 @@ const CapIssuesUpdateClaim = "issues.update.claim"
 // send the default explicitly rather than omit the member.
 const CapIssuesCreateDefaultPriority = "issues.create.defaultPriority"
 
+// CapIssuesCreateGates is the behavior capability that advertises the four
+// gate members — await_type, await_id, timeout and waiters — on createIssue's
+// body and on issues:batchApply's create item. One token
+// covers both create shapes, CapIssuesCreateDefaultPriority's precedent. The
+// handlers only decode and project them: every bound is the create role's
+// (issueops.GateFieldError, the stored columns' widths and a timeout that is
+// not negative), answered as a 400 naming the member. An older server refuses
+// each as an unknown member; a client that does not see the token must refuse
+// a create carrying one before the dial rather than drop it.
+const CapIssuesCreateGates = "issues.create.gates"
+
+// CapIssuesUpdateGates is the behavior capability that advertises await_id and
+// waiters (a whole-value replacement; [] clears) on updateIssue's patch and on
+// issues:batchApply's update-item patch. await_type and
+// timeout are not patch members: no local update route changes them. It is a
+// token of its own rather than CapIssuesCreateGates because the callers that
+// depend on it (gate add-waiter, gate discover, update --await-id) are a
+// separate cutover dependency from gate create.
+const CapIssuesUpdateGates = "issues.update.gates"
+
 // CapExternalDependencies is the CONDITIONAL behavior capability announcing
-// that this server's ready, claim, claim-next, close, blocking-annotation and
-// dependency-tree operations already apply bd's external-dependency policy
-// (an issue blocked by an unsatisfied `external:<project>:<capability>`
-// dependency is not ready, not claimable and not closable without force). A
+// that this server's ready, blocked-listing, claim, claim-next, close,
+// blocking-annotation and dependency-tree operations already apply bd's
+// external-dependency policy (an issue blocked by an unsatisfied
+// `external:<project>:<capability>` dependency is not ready, not claimable and
+// not closable without force, and the blocked listing lists it with that
+// dependency among its blockers). A
 // client that sees it must pass those operations through untouched: running
 // the policy again on the client would judge it against the CLIENT machine's
 // project configuration and would turn the server's atomic claim-next into a
@@ -512,6 +554,14 @@ var routeTable = []route{
 		capability:  "ready.count",
 		implemented: true,
 		handler:     (*Server).handleCountReady,
+	},
+	{
+		op:          OpListBlockedIssues,
+		method:      http.MethodGet,
+		pattern:     "/v0/beads/blocked",
+		capability:  "blocked.list",
+		implemented: true,
+		handler:     (*Server).handleListBlocked,
 	},
 	{
 		op:          OpListIssues,
@@ -816,6 +866,18 @@ var routeTable = []route{
 		handler:      (*Server).handleRelease,
 	},
 	{
+		op:     OpHeartbeatIssue,
+		method: http.MethodPost,
+		// The lease refresh, on the dispatcher the close built. Everything the
+		// claim row says about the wildcard's width holds here unchanged.
+		pattern:      customMethodPattern,
+		specPath:     "/v0/beads/issues/{id}:heartbeat",
+		customMethod: ":heartbeat",
+		capability:   "issues.heartbeat",
+		implemented:  true,
+		handler:      (*Server).handleHeartbeat,
+	},
+	{
 		op:     OpCloseIssue,
 		method: http.MethodPost,
 		// The second row on the shared wildcard, and the reason the dispatcher
@@ -1071,6 +1133,7 @@ var behaviorCapabilities = []string{
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
 	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked, CapIssuesUpdateClaim,
+	CapIssuesCreateGates, CapIssuesUpdateGates, CapIssuesListFilters,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:

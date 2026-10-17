@@ -1441,7 +1441,8 @@ func (s *DoltStore) scopeVersionedHistoryTransaction(tx *sql.Tx) func() {
 // writes to a fixed staging list when history is active on this store, so a
 // mutation's version rows land in that mutation's own Dolt commit rather than
 // sitting dirty in the working set. Every fixed-list DOLT_ADD path in this
-// package routes through here; the tracker-based path uses
+// package routes through here except the config-table commits, which mint no
+// version rows (CommitConfigOnly); the tracker-based path uses
 // DirtyTableTracker.MarkVersionedHistoryDirty instead.
 //
 // Staging a table that turns out to be clean is free: DOLT_ADD stages nothing
@@ -2372,7 +2373,9 @@ func warnRemoteSyncOpenRefusal(err error) bool {
 }
 
 var (
-	cleanServerCircuitState = CleanStaleCircuitBreakerFiles
+	// Sweeps at most once per process: a test that needs the real sweep to run
+	// here must also start a fresh staleCircuitSweep.
+	cleanServerCircuitState = cleanStaleCircuitBreakerFilesOnce
 	newServerCircuitBreaker = maybeNewCircuitBreaker
 	ensureResolvedPortFile  = doltserver.EnsurePortFile
 )
@@ -3775,25 +3778,9 @@ func (s *DoltStore) concludeOpenMerge(ctx context.Context, conn *sql.Conn, messa
 // config's primary key is `key`, so dolt_diff exposes to_key/from_key; an add or
 // delete leaves one side NULL, so COALESCE picks whichever key the change carries.
 func (s *DoltStore) assertDirtyConfigUserKVOnly(ctx context.Context, conn *sql.Conn) error {
-	rows, err := conn.QueryContext(ctx,
-		"SELECT COALESCE(to_key, from_key) FROM dolt_diff('HEAD', 'WORKING', 'config')")
+	unsafe, err := dirtyInternalConfigKeys(ctx, conn, false)
 	if err != nil {
 		return fmt.Errorf("inspect dirty config before pull: %w", err)
-	}
-	defer rows.Close()
-
-	var unsafe []string
-	for rows.Next() {
-		var key sql.NullString
-		if err := rows.Scan(&key); err != nil {
-			return fmt.Errorf("scan dirty config key: %w", err)
-		}
-		if key.Valid && !strings.HasPrefix(key.String, kvkeys.Prefix) {
-			unsafe = append(unsafe, key.String)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate dirty config diff: %w", err)
 	}
 	if len(unsafe) > 0 {
 		return fmt.Errorf("refusing to auto-commit %d dirty internal config key(s) before pull: %s; "+
@@ -3801,6 +3788,38 @@ func (s *DoltStore) assertDirtyConfigUserKVOnly(ctx context.Context, conn *sql.C
 			"these explicitly with `bd dolt commit` first", len(unsafe), strings.Join(unsafe, ", "), kvkeys.Prefix)
 	}
 	return nil
+}
+
+// dirtyInternalConfigKeys lists the config keys that differ from HEAD and are
+// not user KV data (outside the kv.* namespace): in the working set, or with
+// staged set, in what DOLT_ADD has staged, which is what the next DOLT_COMMIT
+// publishes. It is the screen shared by assertDirtyConfigUserKVOnly and
+// CommitConfigUserKVOnly.
+func dirtyInternalConfigKeys(ctx context.Context, conn *sql.Conn, staged bool) ([]string, error) {
+	query := "SELECT COALESCE(to_key, from_key) FROM dolt_diff('HEAD', 'WORKING', 'config')"
+	if staged {
+		query = "SELECT COALESCE(to_key, from_key) FROM dolt_diff('HEAD', 'STAGED', 'config')"
+	}
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var unsafe []string
+	for rows.Next() {
+		var key sql.NullString
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan dirty config key: %w", err)
+		}
+		if key.Valid && !strings.HasPrefix(key.String, kvkeys.Prefix) {
+			unsafe = append(unsafe, key.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate dirty config diff: %w", err)
+	}
+	return unsafe, nil
 }
 
 // CommitWithConfig creates a Dolt commit that includes the config table.
@@ -3868,19 +3887,104 @@ func (s *DoltStore) CommitAll(ctx context.Context, message string) (bool, error)
 	return committed, err
 }
 
+// CommitConfigOnly commits the config table (GH#4078). Use after
+// intentional config writes (bd config set) in server mode,
+// where generic Commit() excludes config (GH#2455) and nothing else ever
+// commits it. Scoped staging means a concurrent operation's dirty tables
+// are never swept — the same guarantee that motivated GH#2455.
+//
+// The lookup tables SetConfig projects from config (custom_statuses,
+// custom_types) are staged with it: SetConfig writes them in the same
+// transaction as the row, and a commit holding one without the other is the
+// split that projection exists to prevent. They are written only from config,
+// so staging them sweeps no other kind of work.
+//
+// For the same reason the list is never widened with the versioned-history
+// tables: a config write mints no version rows, and that list's `issues` would
+// sweep a concurrent issue mutation into this commit.
+func (s *DoltStore) CommitConfigOnly(ctx context.Context, message string) error {
+	tables := append([]string{"config"}, issueops.ConfigProjectionTables()...)
+	return s.stageAndCommit(ctx, tables, message, stageOptions{configPlane: true})
+}
+
+// CommitConfigUserKVOnly is the scoped commit for a write of this clone's own
+// user KV data (bd remember, bd forget). It stages the config table alone, and
+// since DOLT_ADD stages that whole table it applies the pre-pull screen: when
+// any dirty config row is outside kv.*, it commits nothing and returns a
+// *storage.ConfigCommitRefusedError naming those keys, rather than sweep a
+// concurrent writer's internal key (issue_prefix above all) into a memory's
+// commit — the row-level form of the GH#2455 hazard.
+//
+// The screen runs twice on the connection that stages and commits. Sessions on
+// one branch share the working set, so a key another session writes after the
+// first screen is still staged by DOLT_ADD; the second screen reads what was
+// actually staged and, on a refusal, unstages config again (unstageRefused).
+// What it cannot see is another commit path's own DOLT_ADD of config landing
+// between the second screen and DOLT_COMMIT: that change is absorbed into this
+// commit, the same absorption doltAddAndCommit documents for every scoped
+// commit, and it is an intentional config commit, not a stale key.
+func (s *DoltStore) CommitConfigUserKVOnly(ctx context.Context, message string) error {
+	return s.stageAndCommit(ctx, []string{"config"}, message,
+		stageOptions{configPlane: true, screen: refuseInternalConfigKeys})
+}
+
+// refuseInternalConfigKeys is CommitConfigUserKVOnly's screen: it fails with a
+// *storage.ConfigCommitRefusedError when a config row outside kv.* differs from
+// HEAD in the working set (before staging) or in the staged set (after).
+func refuseInternalConfigKeys(ctx context.Context, conn *sql.Conn, staged bool) error {
+	unsafe, err := dirtyInternalConfigKeys(ctx, conn, staged)
+	if err != nil {
+		if staged {
+			return fmt.Errorf("inspect staged config: %w", err)
+		}
+		return fmt.Errorf("inspect dirty config: %w", err)
+	}
+	if len(unsafe) > 0 {
+		return &storage.ConfigCommitRefusedError{Keys: unsafe}
+	}
+	return nil
+}
+
+// stageOptions are what the scoped commits ask of stageAndCommit beyond
+// doltAddAndCommit's plain stage-and-commit. The zero value is
+// doltAddAndCommit.
+type stageOptions struct {
+	// configPlane stages the list exactly as given. Only the config-table
+	// commits set it (see CommitConfigOnly); every other list goes through
+	// withVersionedHistoryTables.
+	configPlane bool
+	// screen, when set, vets the commit on its own pinned connection: once
+	// against the working set before DOLT_ADD, and once against the staged
+	// set after it. A refusal before staging leaves nothing staged; a refusal
+	// after it unstages the tables again (unstageRefused).
+	screen func(ctx context.Context, conn *sql.Conn, staged bool) error
+}
+
+// afterStageCommitScreen runs between stageAndCommit's working-set screen and
+// its DOLT_ADD. It is a no-op outside tests, which use it to write in exactly
+// the window the staged-set screen exists for.
+var afterStageCommitScreen = func() {}
+
 // doltAddAndCommit stages the specified tables and commits on a pinned
 // connection. This prevents DOLT_COMMIT('-Am') from sweeping up stale
 // working set changes from concurrent operations (GH#2455). Every caller has
 // already committed its SQL mutation, so any publication failure here has an
 // indeterminate durable outcome and must not be replayed.
 func (s *DoltStore) doltAddAndCommit(ctx context.Context, tables []string, commitMsg string) error {
+	return s.stageAndCommit(ctx, tables, commitMsg, stageOptions{})
+}
+
+// stageAndCommit is doltAddAndCommit with the scoped commits' options.
+func (s *DoltStore) stageAndCommit(ctx context.Context, tables []string, commitMsg string, opts stageOptions) error {
 	// Batch/off auto-commit (bd-4wamg): leave the writes in the working set
 	// for a later explicit commit point (bd dolt commit / CommitPending),
 	// matching doltAddAndCommitInTx.
 	if issueops.VersionCommitDeferred(ctx) {
 		return nil
 	}
-	tables = s.withVersionedHistoryTables(tables)
+	if !opts.configPlane {
+		tables = s.withVersionedHistoryTables(tables)
+	}
 	return s.withCircuitWrite(ctx, func(ctx context.Context) error {
 		conn, err := s.db.Conn(ctx)
 		if err != nil {
@@ -3889,10 +3993,23 @@ func (s *DoltStore) doltAddAndCommit(ctx context.Context, tables []string, commi
 		}
 		defer conn.Close()
 
+		if opts.screen != nil {
+			if err := opts.screen(ctx, conn, false); err != nil {
+				return err
+			}
+			afterStageCommitScreen()
+		}
+
 		for _, table := range tables {
 			if err := schema.DrainCall(ctx, conn, "CALL DOLT_ADD(?)", table); err != nil {
 				return s.recordDoltPublicationFailure(ctx,
 					fmt.Errorf("dolt add %s after SQL mutation: %w: %w", table, err, ErrCommitIndeterminate))
+			}
+		}
+
+		if opts.screen != nil {
+			if err := opts.screen(ctx, conn, true); err != nil {
+				return unstageRefused(ctx, conn, tables, err)
 			}
 		}
 
@@ -3932,6 +4049,25 @@ func (s *DoltStore) doltAddAndCommit(ctx context.Context, tables []string, commi
 		}
 		return nil
 	})
+}
+
+// unstageRefused undoes stageAndCommit's DOLT_ADD after its screen refused the
+// staged set, so the refused rows are not left staged for whichever commit
+// runs next on the branch: every DOLT_COMMIT publishes the whole staged set.
+// DOLT_RESET of a table only unstages it; its working-set changes stay. When
+// the reset itself fails, both errors are returned. The reset is table-wide,
+// so a concurrent config commit that staged config in the same window loses
+// that staging too and publishes without those rows; they stay in the working
+// set for the next config commit, which is the lesser hazard next to leaving
+// a refused internal key staged for an unrelated commit to publish.
+func unstageRefused(ctx context.Context, conn *sql.Conn, tables []string, refusal error) error {
+	for _, table := range tables {
+		if err := schema.DrainCall(ctx, conn, "CALL DOLT_RESET(?)", table); err != nil {
+			return fmt.Errorf("%w; unstaging %s afterwards also failed, so it stays staged for the next commit: %w",
+				refusal, table, err)
+		}
+	}
+	return refusal
 }
 
 func (s *DoltStore) wrapDoltPublicationFailure(ctx context.Context, op string, err error) error {

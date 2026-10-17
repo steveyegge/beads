@@ -143,12 +143,18 @@
 100 59 TestEmbeddedDeferAutoWake
 
 100 60 TestEmbeddedCommentsCLI
+100 60 TestEmbeddedRoutedWriteMissDoesNotCreateTargetDatabase
 
+100 61 TestEmbeddedContributorRoutedWritesCommitInPlanning
 100 61 TestEmbeddedUpdateRoutedStoreCommitsTargetHead
 
+100 62 TestEmbeddedGateCheckSkipsTemplateGates
 100 62 TestEmbeddedReadyBlockersAndLabels
 
 100 63 TestEmbeddedDepAndLinkBatchAutoCommitDoesNotAdvanceHead
+100 63 TestEmbeddedGateCheckLimitCountsOnlyLiveGates
+100 63 TestEmbeddedIfRevisionDeletePreflightGoneParentIsPreconditionFailed
+100 63 TestEmbeddedListPageEdges
 
 100 64 TestEmbeddedGateWaiterCheckLifecycle
 100 64 TestEmbeddedPromoteMovesAWispParent
