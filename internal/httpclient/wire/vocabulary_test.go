@@ -70,6 +70,7 @@ func TestOperationIdsMatchTheServerRouteTable(t *testing.T) {
 		{OpBatchGetIssues, httpapi.OpBatchGetIssues},
 		{OpReclaimIssues, httpapi.OpReclaimIssues},
 		{OpHeartbeatIssue, httpapi.OpHeartbeatIssue},
+		{OpListBlockedIssues, httpapi.OpListBlockedIssues},
 		{OpAdvanceMolecule, httpapi.OpAdvanceMolecule},
 	}
 
@@ -158,6 +159,9 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 	if CapListTitle != httpapi.CapIssuesListTitle {
 		t.Errorf("CapListTitle = %q, server says %q", CapListTitle, httpapi.CapIssuesListTitle)
 	}
+	if CapListFilters != httpapi.CapIssuesListFilters {
+		t.Errorf("CapListFilters = %q, server says %q", CapListFilters, httpapi.CapIssuesListFilters)
+	}
 	if CapListIDs != httpapi.CapListIDs {
 		t.Errorf("CapListIDs = %q, server says %q", CapListIDs, httpapi.CapListIDs)
 	}
@@ -228,12 +232,12 @@ func TestTheProjectIdentityVocabularyMatchesTheServer(t *testing.T) {
 		httpapi.CapBatchApplyDepAddLineage, httpapi.CapIssuesUpdateAllowTemplate, httpapi.CapIssuesCreateDefaultPriority,
 		httpapi.CapIssuesCloseAutoCloseMolecule, httpapi.CapIssuesListSearch,
 		httpapi.CapIssuesListNoAssignee, httpapi.CapIssuesListTitle, httpapi.CapListIDs, httpapi.CapIssuesUpdatePersistence, httpapi.CapDependenciesBlockingIsBlocked, httpapi.CapIssuesUpdateClaim,
-		httpapi.CapIssuesCreateGates, httpapi.CapIssuesUpdateGates,
+		httpapi.CapIssuesCreateGates, httpapi.CapIssuesUpdateGates, httpapi.CapIssuesListFilters,
 	}) {
 		t.Errorf("behaviorCapabilities = %v, want the server's project.enforce, issues.batchApplyLarge, issues.list.sort, "+
 			"issues.count.scope, issues.sweep.wispsPlane, issues.sweep.liveDependents, issues.sweep.limit, "+
 			"issues.batchApply.depAddLineage, issues.update.allowTemplate, issues.create.defaultPriority, issues.close.autoCloseMolecule, issues.list.search, "+
-			"issues.list.noAssignee, issues.list.title, issues.list.ids, issues.update.persistence, dependencies.blocking.isBlocked, issues.update.claim, issues.create.gates and issues.update.gates tokens", behaviorCapabilities)
+			"issues.list.noAssignee, issues.list.title, issues.list.ids, issues.update.persistence, dependencies.blocking.isBlocked, issues.update.claim, issues.create.gates, issues.update.gates and issues.list.filters tokens", behaviorCapabilities)
 	}
 }
 

@@ -9,6 +9,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bd blocked --flags` prints the blocked flag for each id read from stdin
+  (one per line; blank lines and repeats ignored), with `--json` as
+  `[{"id","is_blocked"}]` in the order the ids were given, omitting an id that
+  names no row on either plane. A closed id is answered too, with its stored
+  flag (a `status <> 'closed'` SQL read of the column leaves it out). It is the flag `bd ready` filters on, not the
+  listing: a row whose stored flag is set with no nameable blocker reads true
+  here and is absent from `bd blocked`. It runs `issueops.BlockedFlags` on
+  every route; over HTTP that is `listBlockingAnnotations` with `is_blocked`,
+  behind `dependencies.blocking.isBlocked`, refused before the dial against a
+  server that does not advertise it. The listing's filter flags are refused
+  with `--flags`.
+- `bd blocked --flags --raw` answers the stored `is_blocked` column itself,
+  without the external-dependency policy: a row blocked only by an
+  unsatisfied `external:` ref reads `false` (the policy-aware `--flags`
+  reads `true`); a stale flag reads `true` either way. `--raw` is for the
+  local and proxied routes, where it reads the column directly and the two
+  answer the same. Over HTTP it is answered only by a server that does not
+  advertise `policy.external_dependencies` (whose flag is the column); a
+  server advertising it answers only the policy-aware flag, so `--raw`
+  against it is refused before the dial rather than answered with the
+  decorated flag. `--raw` without `--flags` is refused.
+- `bd blocked` works over a connected HTTP workspace. The blocked listing is
+  a role, `issueops.BlockedLister` (`ListBlocked(BlockedRequest{ParentID,
+  Labels, LabelsAny, ExcludeLabels}) -> BlockedResult{Items}`), on every
+  backend leg over the same body `GetBlockedIssues` runs, and `bd serve`
+  publishes it as `GET /v0/beads/blocked` (`parent`, and the repeatable
+  `label`, `label_any` and `exclude_label`), answering `{items, has_more}`
+  with `BlockedIssue` rows (the element `bd blocked --json` prints), behind
+  the new `blocked.list` capability token (additive; no wire_revision bump).
+  The listing names unsatisfied `external:` blockers wherever the
+  external-dependency policy applies: on the server when it advertises
+  `policy.external_dependencies`, else on the client, as every other policy
+  read does. The HTTP backend's `BlockedLister()` and legacy
+  `GetBlockedIssues` dial it; against a server that does not advertise the
+  token they refuse before dialing with a typed capability error naming
+  `blocked.list`, and never compose the listing from other reads. The
+  listing is unpaged: a server answer that reports `has_more` is refused
+  with the new `httpclient.TruncatedListingError` rather than returned
+  short, and an answer over the client's 32 MiB response limit is refused
+  as any oversized response is. The external-dependency decorator's legacy
+  `GetBlockedIssues` over an HTTP store now reads the extra sources through
+  the served roles (it failed on a raw multi-id read before), so callers of
+  that door no longer fail on it; commands that also make other raw reads
+  the HTTP backend does not serve (`bd ready --explain`) still refuse on
+  those. `bd
+  blocked` runs the role on every route (the proxied-server route through
+  the provider's accessor) with unchanged output: `--json` prints the same
+  rows in the same order (priority, then newest first, then id, which now
+  also breaks a tie the order used to leave to chance), and `[]`, never
+  `null`, when nothing is blocked.
+- `bd list`'s remaining filters work over a connected HTTP workspace.
+  `GET /v0/beads/issues` accepts `updated_after`/`updated_before`,
+  `closed_after`/`closed_before`, `defer_after`/`defer_before`,
+  `due_after`/`due_before`, `priority`, `priority_min`, `priority_max`,
+  `title_contains`, `desc_contains`, `notes_contains`, `external_contains`,
+  `external_ref`, `spec`, `label_pattern`, `label_regex`,
+  `empty_description`, `no_labels`, `no_parent`, a repeatable
+  `exclude_type`, `pinned`, `no_pinned`, `deferred`, `overdue`, `mol_type`
+  and `wisp_type`, behind one new capability token, `issues.list.filters`
+  (additive; no wire_revision bump; the names are `issues:count`'s where it
+  already spells the filter), and applies them through the same Reader role a
+  local `bd list` reads through. Bounds are strict and compared at
+  whole-second precision on both routes; relative and date-only values are
+  resolved on the client's clock and timezone as locally, while `--overdue`
+  compares against the server's clock. Against a server that does not
+  advertise the token the client refuses before dialing, naming
+  `issues.list.filters`, rather than sending a filter an older server rejects
+  or dropping one and answering a wider listing. The 29 corresponding
+  divergence-ledger refusal rows are removed. The default `bd list --parent`
+  tree view does not carry these filters yet: its descendant walk still
+  refuses one over HTTP rather than drop it, and `--flat` or `--json` skips
+  the walk and applies them to the parent's direct children (not its whole
+  subtree).
+- `issueops.ListRequest.ExcludeStatus`: statuses to leave out of a listing,
+  appended to the default exclusions (never re-admitting what they hide),
+  comma-separated or repeated, each validated against the workspace's
+  statuses like `CountRequest.ExcludeStatus` (an unknown name is
+  `ErrValidation`). `GET /v0/beads/issues` accepts it as a repeatable
+  `exclude_status` under the same `issues.list.filters` token (an unknown
+  name is a `400` on `exclude_status`), so an HTTP-backed caller can leave
+  closed history out of an `all` listing (`all` plus
+  `exclude_status=closed` keeps every status not named, the `pinned` and
+  `hooked` statuses and custom done/frozen statuses included) instead of
+  reading the whole history. It is refused together with `ReadyFlag`, like the other
+  members the ready query cannot carry. There is no `bd list` flag for it
+  yet.
+
 - `bd serve` publishes the gate members: `await_type`,
   `await_id`, `timeout` (nanoseconds) and `waiters` on `POST
   /v0/beads/issues` and on `issues:batchApply` create items, behind the new
@@ -377,6 +464,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `bd serve` normalizes every RFC 3339 time bound on the issue listing and
+  count (`created_*`, `updated_*`, `closed_*`, and the new `defer_*` and
+  `due_*`) to UTC before it reaches storage. A bound carrying an offset
+  (`...+02:00`) now selects exactly what its `Z` twin does; previously a
+  backend whose timestamp column has no zone could read the offset bound's
+  wall clock and compare it hours off. `bd`'s own client always sent `Z`, so
+  its answers are unchanged.
+- `bd serve` answers a `label_regex` the database cannot compile with
+  `400 invalid_argument` (`invalid_value` on `label_regex`) on
+  `GET /v0/beads/issues`, `GET /v0/beads/ready`, `GET /v0/beads/ready:count`
+  and `POST /v0/beads/issues:claimNext`, instead of `500 internal`. The pattern is
+  still compiled by the database in its own dialect; only the attribution
+  of its refusal changed.
+- `issueops.Reader.List` refuses `PinnedFlag` together with `NoPinnedFlag`
+  with `ErrValidation` (`--pinned and --no-pinned are mutually exclusive`) on
+  every backend; it used to let `PinnedFlag` win silently. `bd list` already
+  refused the pair at flag parse, so its behavior is unchanged; over HTTP the
+  pair is a `400 invalid_argument` on `no_pinned`.
+- `issueops.Reader.List` refuses `ParentID` together with `NoParent` with
+  `ErrValidation` (`--parent and --no-parent are mutually exclusive`) on
+  every backend, as `CountRequest` already did; it used to answer with only
+  the edge-less rows under the parent's dotted id, which both clauses match.
+  `bd list` already refused the pair at flag parse, so its behavior is
+  unchanged; over HTTP the pair is a `400 invalid_argument` on `no_parent`.
+
 - **`bd gate discover` skips template gates, as `bd gate check` does.** A
   template gh:run gate is a proto that work is poured from; on the direct,
   proxied and embedded routes `bd gate discover` used to record a discovered
@@ -616,15 +728,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
+  blocked only by an unsatisfied `external:` dependency.** The
+  external-dependency policy lists such a row itself, after the label query
+  has run, and it was listed whatever its labels; it is now narrowed by the
+  label filters like every other row, on every route. On the proxied-server
+  route such a row also printed with no labels; it now prints them.
+- **`bd gate add-waiter` survives contention the store gave up replaying.**
+  It retried only a version miss, so a convoy adder failed when its guarded
+  write ended in a serialization failure or deadlock the backend stopped
+  replaying (Dolt/MySQL 1213/1205, Postgres 40001/40P01), or, over HTTP, in a
+  503 busy. Those are now retried, but at most twice: each arrives only after
+  the store or `bd serve` has spent a whole replay budget on the write (up to
+  15s), so the 20-write bound a version miss gets could hold an adder for
+  minutes. Each retry waits the jittered backoff plus a busy answer's
+  Retry-After, as `bd serve` sent it. The retry is safe because every round
+  re-reads the gate, deduplicates and writes the whole list guarded by the
+  version it read: a 503 is not proof that nothing was written (a gateway can
+  answer one after the commit), and a write that did land is found on the
+  re-read, so the waiter is never added twice; when the last write allowed is
+  answered busy, one more read checks for it before the command fails. A
+  server fault (500) and an unreachable database are still returned at once,
+  and once the retries run out the error says no write was confirmed and
+  names the write contention, instead of saying the gate kept changing.
 - `bd list --title-contains X` works against an HTTP workspace. The client
   folds it onto the listing's existing `title` parameter (the store compiles
   both flags to the same case-insensitive substring predicate), so it needs
-  the `issues.list.title` capability, like `--title`. Over HTTP these still
-  refuse: a `--title` and a `--title-contains` that differ other than in
-  letter case (the listing has one title parameter, and dropping either value
-  would widen the answer); either flag with `--parent` in the default tree
-  view; and `--closed-after`, so gascity's polecat pre-flight lookup of
-  recently closed beads still fails.
+  the `issues.list.title` capability, like `--title`. A `--title` and a
+  `--title-contains` that differ other than in letter case are two
+  predicates, so they ride `title` and `title_contains` together and also
+  need `issues.list.filters` (see Added), as does the `--closed-after` in
+  gascity's polecat pre-flight lookup of recently closed beads. Either flag
+  with `--parent` in the default tree view still refuses over HTTP.
 - **`bd gate create`, `bd gate add-waiter` and `bd gate discover` work over a
   connected HTTP workspace.** They wrote through the legacy `CreateIssue`,
   `AddDependency` and map-based `UpdateIssue`, which the HTTP store does not

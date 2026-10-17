@@ -397,6 +397,12 @@ type Storage interface {
 	// it, and a server must take it off a peeled store. See
 	// hook_heartbeater.go.
 	Heartbeater() (issueops.Heartbeater, error)
+	// BlockedLister returns the blocked-listing surface for this store: what
+	// `bd blocked` prints. It is a READ role and its hook decorator passes it
+	// through (hook_blocked_lister.go); the external-dependency decorator
+	// overrides it so the listing names unsatisfied external blockers, as its
+	// GetBlockedIssues does.
+	BlockedLister() (issueops.BlockedLister, error)
 
 	// MoleculeStepper returns the advance-a-molecule surface for this store:
 	// find a molecule's next ready step after one closed and, on request,

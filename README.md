@@ -284,7 +284,17 @@ too, each in its own way. `bd search` asks the server's listing with its text (`
 refuses before dialing against a server that does not advertise it. `bd list
 --no-assignee`, `--title` and `--id` likewise ride the listing's
 `no_assignee`, `title` and repeatable `id`, each behind its own capability
-(`issues.list.noAssignee`, `issues.list.title`, `issues.list.ids`).
+(`issues.list.noAssignee`, `issues.list.title`, `issues.list.ids`), and the
+rest of `bd list`'s filters (`--updated-*`, `--closed-*`, `--defer-*`,
+`--due-*`, `--priority*`, the text and external-ref matches, `--spec`,
+`--label-pattern`/`--label-regex`, `--exclude-type`, `--no-parent`,
+`--no-labels`, `--empty-description`, `--pinned`/`--no-pinned`,
+`--deferred`, `--overdue`, `--mol-type`, `--wisp-type`) ride it behind one
+capability, `issues.list.filters`. Time bounds are resolved on the client as
+they are locally; `--overdue` compares against the server's clock. The
+default `--parent` tree view does not carry those filters yet and refuses one
+rather than drop it; `--flat` or `--json` applies them to the parent's direct
+children (not its whole subtree).
 `bd show --current` finds the actor's in-progress or hooked issue through the
 server's boolean query. `bd recompute-blocked` is a no-op that exits 0: the
 server maintains `is_blocked` on every write, and repairing a stale flag is

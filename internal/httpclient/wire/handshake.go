@@ -111,6 +111,11 @@ var opCapability = map[string]string{
 	// does not advertise the token, so Preflight refuses locally with a typed
 	// capability error rather than dialing a route the older server lacks.
 	OpHeartbeatIssue: "issues.heartbeat",
+	// The blocked listing, dialed by httpBlockedLister. A server that
+	// predates it does not advertise the token, so Preflight refuses locally
+	// with a typed capability error naming blocked.list rather than dialing a
+	// route the older server lacks.
+	OpListBlockedIssues: "blocked.list",
 	// The advance-a-molecule role (molecule.go) dials it when served and
 	// refuses before dialing when not; it never composes a client-side copy.
 	OpAdvanceMolecule: "issues.advanceMolecule",
@@ -182,6 +187,17 @@ const (
 	CapListTitle      = "issues.list.title"
 	CapListIDs        = "issues.list.ids"
 )
+
+// CapListFilters is the behavior capability announcing that listIssues honors
+// the rest of `bd list`'s filter vocabulary — the updated/closed/defer/due
+// bounds, the priority range, the text and external-ref matches, the label
+// pattern/regex, the spec prefix, the type and status exclusions, the mol/wisp
+// types and the empty-description, no-labels, no-parent, pinned, no-pinned,
+// deferred and overdue predicates — spelled exactly as httpapi's
+// CapIssuesListFilters. One token for the set: the members land in one server
+// build. The Reader's List refuses a request carrying any of them LOCALLY,
+// naming this token, when the server does not advertise it.
+const CapListFilters = "issues.list.filters"
 
 // CapBlockingIsBlocked is the behavior capability announcing that
 // listBlockingAnnotations honors `is_blocked` (issueops.BlockingRequest.
@@ -453,7 +469,7 @@ var behaviorCapabilities = []string{
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapCloseAutoCloseMolecule, CapListSearch,
 	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence, CapBlockingIsBlocked, CapIssuesUpdateClaim,
-	CapIssuesCreateGates, CapIssuesUpdateGates,
+	CapIssuesCreateGates, CapIssuesUpdateGates, CapListFilters,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on
