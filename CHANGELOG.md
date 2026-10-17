@@ -27,7 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advertise the token the client refuses before dialing, naming
   `issues.list.filters`, rather than sending a filter an older server rejects
   or dropping one and answering a wider listing. The 29 corresponding
-  divergence-ledger refusal rows retire.
+  divergence-ledger refusal rows are removed. The default `bd list --parent`
+  tree view does not carry these filters yet: its descendant walk still
+  refuses one over HTTP rather than drop it, and `--flat` or `--json` skips
+  the walk and applies them to the parent's direct children (not its whole
+  subtree).
 - `issueops.ListRequest.ExcludeStatus`: statuses to leave out of a listing,
   appended to the default exclusions (never re-admitting what they hide),
   comma-separated or repeated, each validated against the workspace's
@@ -419,8 +423,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its answers are unchanged.
 - `bd serve` answers a `label_regex` the database cannot compile with
   `400 invalid_argument` (`invalid_value` on `label_regex`) on
-  `GET /v0/beads/issues`, `GET /v0/beads/ready` and
-  `GET /v0/beads/ready:count`, instead of `500 internal`. The pattern is
+  `GET /v0/beads/issues`, `GET /v0/beads/ready`, `GET /v0/beads/ready:count`
+  and `POST /v0/beads/issues:claimNext`, instead of `500 internal`. The pattern is
   still compiled by the database in its own dialect; only the attribution
   of its refusal changed.
 - `issueops.Reader.List` refuses `PinnedFlag` together with `NoPinnedFlag`
@@ -428,6 +432,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every backend; it used to let `PinnedFlag` win silently. `bd list` already
   refused the pair at flag parse, so its behavior is unchanged; over HTTP the
   pair is a `400 invalid_argument` on `no_pinned`.
+- `issueops.Reader.List` refuses `ParentID` together with `NoParent` with
+  `ErrValidation` (`--parent and --no-parent are mutually exclusive`) on
+  every backend, as `CountRequest` already did; it used to answer with only
+  the edge-less rows under the parent's dotted id, which both clauses match.
+  `bd list` already refused the pair at flag parse, so its behavior is
+  unchanged; over HTTP the pair is a `400 invalid_argument` on `no_parent`.
 
 - **`bd gate discover` skips template gates, as `bd gate check` does.** A
   template gh:run gate is a proto that work is poured from; on the direct,

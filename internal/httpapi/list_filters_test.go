@@ -374,6 +374,24 @@ func TestListFilterPinnedPairIsRefused(t *testing.T) {
 	}
 }
 
+// TestListFilterParentPairIsRefused: `parent` with `no_parent` is refused the
+// same way, in the sentence `bd list --parent X --no-parent` and the count
+// surface refuse it with, rather than ANDed into the parent's edge-less
+// dotted-id children.
+func TestListFilterParentPairIsRefused(t *testing.T) {
+	ts, rec := newReadServer(t, Config{})
+	resp := ts.get(t, "/v0/beads/issues?parent=bd-1&no_parent=true")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %v)", resp.StatusCode, decodeBody(t, resp))
+	}
+	if body := decodeBody(t, resp); body["param"] != "no_parent" || body["reason"] != string(ReasonInvalidValue) {
+		t.Errorf("body = %v, want invalid_value on no_parent", body)
+	}
+	if n := len(rec.searchFilters()); n != 0 {
+		t.Errorf("the contradictory pair reached storage %d time(s)", n)
+	}
+}
+
 // TestAnInvalidLabelRegexIsABadRequestNotAServerFault: the database compiles
 // label_regex in its own dialect and refuses a pattern it cannot compile with
 // "the given regular expression is invalid". On the operations that carry the

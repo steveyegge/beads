@@ -185,6 +185,27 @@ func TestPinnedPairIsRefusedByTheBuilder(t *testing.T) {
 	}
 }
 
+// TestParentPairIsRefusedByTheBuilder is the parent pair's twin of the pinned
+// test above: the CLI refuses `--parent X --no-parent` at flag parse, a served
+// listing carries both members since issues.list.filters, and the builder used
+// to AND them. The sentence is the one the http handler maps to a 400 on
+// no_parent, and the one BuildCountFilter refuses the same pair with.
+func TestParentPairIsRefusedByTheBuilder(t *testing.T) {
+	var cfg ListConfig
+	_, err := BuildListFilter(issueops.ListRequest{ParentID: "bd-1", NoParent: true}, cfg)
+	if !errors.Is(err, issueops.ErrValidation) {
+		t.Fatalf("--parent bd-1 --no-parent: err = %v, want ErrValidation", err)
+	}
+	if want := "--parent and --no-parent are mutually exclusive"; err.Error() != want {
+		t.Errorf("--parent bd-1 --no-parent: err = %q, want %q", err, want)
+	}
+	for _, in := range []issueops.ListRequest{{ParentID: "bd-1"}, {NoParent: true}} {
+		if _, err := BuildListFilter(in, cfg); err != nil {
+			t.Errorf("BuildListFilter(%+v) = %v, want no error for one member alone", in, err)
+		}
+	}
+}
+
 // TestListExcludeStatusAppendsAndValidates pins ListRequest.ExcludeStatus in
 // the builder: it is appended to the default exclusions (never in their place),
 // stands alone under AllFlag, splits commas, and an unknown name is

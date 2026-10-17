@@ -291,7 +291,10 @@ rest of `bd list`'s filters (`--updated-*`, `--closed-*`, `--defer-*`,
 `--no-labels`, `--empty-description`, `--pinned`/`--no-pinned`,
 `--deferred`, `--overdue`, `--mol-type`, `--wisp-type`) ride it behind one
 capability, `issues.list.filters`. Time bounds are resolved on the client as
-they are locally; `--overdue` compares against the server's clock.
+they are locally; `--overdue` compares against the server's clock. The
+default `--parent` tree view does not carry those filters yet and refuses one
+rather than drop it; `--flat` or `--json` applies them to the parent's direct
+children (not its whole subtree).
 `bd show --current` finds the actor's in-progress or hooked issue through the
 server's boolean query. `bd recompute-blocked` is a no-op that exits 0: the
 server maintains `is_blocked` on every write, and repairing a stale flag is

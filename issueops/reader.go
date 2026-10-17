@@ -406,6 +406,11 @@ type ListRequest struct {
 	// NoParent restricts to rows with no parent-child dependency edge. It has
 	// no dotted-id arm, so an edge-less "X.1" matches BOTH ParentID X and
 	// NoParent. The ReadyFlag arm refuses it; see that field.
+	//
+	// Setting both is refused with ErrValidation on every route, as
+	// CountRequest refuses it and in the sentence `bd list --parent X
+	// --no-parent` refuses with, rather than answered with only the edge-less
+	// rows under X's dotted id, which both clauses match.
 	ParentID string
 	NoParent bool
 	MolType  *MolType

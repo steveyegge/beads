@@ -1279,13 +1279,23 @@ paths:
             default: false
         - name: created_before
           in: query
-          description: Only issues created strictly before this instant (RFC 3339).
+          description: >-
+            Only issues created strictly before this instant. RFC 3339;
+            compared strictly and at whole-second precision (the bound is
+            truncated to the second before it is compared), and normalized
+            to UTC, so a bound carrying an offset selects exactly what its
+            `Z` twin does.
           schema:
             type: string
             format: date-time
         - name: created_after
           in: query
-          description: Only issues created strictly after this instant (RFC 3339).
+          description: >-
+            Only issues created strictly after this instant. RFC 3339;
+            compared strictly and at whole-second precision (the bound is
+            truncated to the second before it is compared), and normalized
+            to UTC, so a bound carrying an offset selects exactly what its
+            `Z` twin does.
           schema:
             type: string
             format: date-time
@@ -1736,7 +1746,8 @@ paths:
           in: query
           description: >-
             Only top-level issues, those with no parent: `bd list
-            --no-parent`.
+            --no-parent`. Sending it with `parent` is a 400 on
+            `no_parent`, as on `GET /v0/beads/issues:count`.
 
 
             Behind the `issues.list.filters` behavior token: an older
@@ -2572,39 +2583,65 @@ paths:
             type: string
         - name: created_after
           in: query
-          description: RFC 3339. Only issues created strictly after this instant.
+          description: >-
+            RFC 3339. Only issues created strictly after this instant,
+            compared at whole-second precision (the bound is truncated to
+            the second before it is compared) and normalized to UTC, so a
+            bound carrying an offset selects exactly what its `Z` twin does.
           schema:
             type: string
             format: date-time
         - name: created_before
           in: query
-          description: RFC 3339. Only issues created strictly before this instant.
+          description: >-
+            RFC 3339. Only issues created strictly before this instant,
+            compared at whole-second precision (the bound is truncated to
+            the second before it is compared) and normalized to UTC, so a
+            bound carrying an offset selects exactly what its `Z` twin does.
           schema:
             type: string
             format: date-time
         - name: updated_after
           in: query
-          description: RFC 3339.
+          description: >-
+            RFC 3339. Only issues last updated strictly after this instant,
+            compared at whole-second precision (the bound is truncated to
+            the second before it is compared) and normalized to UTC, so a
+            bound carrying an offset selects exactly what its `Z` twin does.
           schema:
             type: string
             format: date-time
         - name: updated_before
           in: query
-          description: RFC 3339.
+          description: >-
+            RFC 3339. Only issues last updated strictly before this instant,
+            compared at whole-second precision (the bound is truncated to
+            the second before it is compared) and normalized to UTC, so a
+            bound carrying an offset selects exactly what its `Z` twin does.
           schema:
             type: string
             format: date-time
         - name: closed_after
           in: query
           description: >-
-            RFC 3339. Counting closed rows needs no `status` beside it: a bare
-            count already includes them.
+            RFC 3339. Only issues closed strictly after this instant,
+            compared at whole-second precision (the bound is truncated to
+            the second before it is compared) and normalized to UTC, so a
+            bound carrying an offset selects exactly what its `Z` twin does.
+            A row whose `closed_at` is NULL never matches either bound.
+            Counting closed rows needs no `status` beside it: a bare count
+            already includes them.
           schema:
             type: string
             format: date-time
         - name: closed_before
           in: query
-          description: RFC 3339.
+          description: >-
+            RFC 3339. Only issues closed strictly before this instant,
+            compared at whole-second precision (the bound is truncated to
+            the second before it is compared) and normalized to UTC, so a
+            bound carrying an offset selects exactly what its `Z` twin does.
+            A row whose `closed_at` is NULL never matches either bound.
           schema:
             type: string
             format: date-time
@@ -2777,10 +2814,10 @@ paths:
             (built-in statuses plus this workspace's own custom ones): an
             unrecognized name is `invalid_argument` on this parameter with
             `reason: invalid_value`, rather than silently excluding nothing
-            and overcounting. There is no listing counterpart to this
-            parameter: `GET /v0/beads/issues` computes its default status
-            exclusions internally from workspace configuration and exposes no
-            equivalent knob, so this is a Count-only capability.
+            and overcounting. `GET /v0/beads/issues` takes the same
+            parameter behind the `issues.list.filters` token and validates
+            it by the same rule; there it narrows on top of the listing's
+            default status exclusions, which a count does not apply.
 
 
             Behind the `issues.count.scope` behavior token: an older server
@@ -5511,7 +5548,10 @@ paths:
             type: string
         - name: label_regex
           in: query
-          description: Regular expression matched against labels.
+          description: >-
+            Regular expression matched against labels, compiled by the
+            database in its own dialect. A pattern it cannot compile is a
+            400 `invalid_value` on this parameter.
           schema:
             type: string
         - name: priority
@@ -8996,10 +9036,11 @@ components:
             the member unknown, and `issues.list.filters`, which announces
             that `GET /v0/beads/issues` accepts the rest of `bd list`'s filter
             vocabulary (the updated, closed, defer and due bounds, the
-            priority range, the text, external-ref, label-pattern and spec
-            matches, and the empty-description, no-labels, no-parent,
-            exclude-type, exclude-status, pinned, no-pinned, deferred,
-            overdue, mol-type and wisp-type filters; see those parameters) rather than answering
+            priority range, the text, external-ref, label-pattern,
+            label-regex and spec matches, and the empty-description,
+            no-labels, no-parent, exclude-type, exclude-status, pinned,
+            no-pinned, deferred, overdue, mol-type and wisp-type filters;
+            see those parameters) rather than answering
             `unknown_parameter`. One behavior token is
             CONDITIONAL rather than build-level: `policy.external_dependencies`
             announces that this server's ready, claim, claim-next, close,

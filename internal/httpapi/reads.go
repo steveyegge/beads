@@ -231,14 +231,11 @@ func countFilters(q *query) issueops.CountRequest {
 		// into it, a plane-only count would also lose its templates and gates.
 		IncludeEphemeral: q.boolean("include_ephemeral"),
 
-		// The four scope fields behind `issues.count.scope` (S8): ParentID and
-		// ExcludeTypes are read exactly as the listing reads them (q.str("parent"),
-		// q.list("exclude_type")), because the role documents its own ParentID and
-		// ExcludeTypes as spelling ListRequest's fields identically. NoParent and
-		// ExcludeStatus have no listing counterpart to mirror — NoParent is a new
-		// boolean switch and ExcludeStatus is a Count-only capability the listing
-		// never exposed — so both are read with this file's own conventions for
-		// their kind (q.boolean, q.list) rather than a listing precedent.
+		// The four scope fields behind `issues.count.scope` (S8), each read
+		// exactly as the listing reads its twin, because the role documents
+		// them as ListRequest's fields under the same names. NoParent and
+		// ExcludeStatus were Count-only when S8 added them; the listing took
+		// both later, behind `issues.list.filters`.
 		ParentID:      q.str("parent"),
 		NoParent:      q.boolean("no_parent"),
 		ExcludeTypes:  q.list("exclude_type"),
@@ -770,13 +767,24 @@ const invalidRegexMessage = "regular expression is invalid"
 // not a 500 that pages as a server fault. Any other failure, or this text on
 // a request with no regex, keeps failReadErr's classification.
 func (s *Server) failRegexReadErr(w http.ResponseWriter, r *http.Request, err error, labelRegex string) {
-	if labelRegex != "" && strings.Contains(err.Error(), invalidRegexMessage) {
-		requestInfo(r.Context()).refuse("label_regex")
-		s.fail(w, r, InvalidArgument("label_regex", ReasonInvalidValue,
-			fmt.Sprintf("%q is not a regular expression the database can compile", labelRegex)))
+	if s.refuseUncompilableRegex(w, r, err, labelRegex) {
 		return
 	}
 	s.failReadErr(w, r, err)
+}
+
+// refuseUncompilableRegex answers err as that 400 on label_regex when it is
+// the database's compile refusal of the pattern the request sent, and reports
+// whether it did. It is split out for claimNext, which shares the ready
+// listing's filter but not its failure mapping.
+func (s *Server) refuseUncompilableRegex(w http.ResponseWriter, r *http.Request, err error, labelRegex string) bool {
+	if labelRegex == "" || !strings.Contains(err.Error(), invalidRegexMessage) {
+		return false
+	}
+	requestInfo(r.Context()).refuse("label_regex")
+	s.fail(w, r, InvalidArgument("label_regex", ReasonInvalidValue,
+		fmt.Sprintf("%q is not a regular expression the database can compile", labelRegex)))
+	return true
 }
 
 // invalidFilterParam maps a filter-construction failure back to the query

@@ -162,10 +162,10 @@ const (
 // listFilterParams, spec OpListIssues): the updated/closed/defer/due bounds,
 // the priority range, the text and external-ref matches, the label
 // pattern/regex, the spec prefix, the empty-description, no-labels, no-parent,
-// pinned-flag, deferred and overdue predicates, the type exclusion and the
-// mol/wisp types. Each is carried as the issueops.ListRequest member `bd list`
-// sets and applied by the same Reader role (workapi.BuildListFilter) the local
-// route reads through; the handler builds no filter.
+// pinned-flag, deferred and overdue predicates, the type and status exclusions
+// and the mol/wisp types. Each is carried as the issueops.ListRequest member
+// `bd list` sets and applied by the same Reader role (workapi.BuildListFilter)
+// the local route reads through; the handler builds no filter.
 //
 // ONE token for the set, unlike the per-parameter list tokens above: these
 // members land in one build and no server will ever carry a subset, so a split

@@ -273,8 +273,8 @@ func parentWalkRows() []Row {
 			ID: "P-IssueFilter." + field, Kind: KindRefuse,
 			Type: tyIssueFilter, Field: field,
 			What: "a populated IssueFilter." + field + " refuses on the descendant walk",
-			Why: "listIssues publishes no parameter for it, and the walk's inversion accounts only for the members BuildListFilter DERIVES plus the explicit filters the operation does publish. " +
-				"Anything left over is a restriction the bridge would have to drop to answer at all, and a dropped filter widens the set invisibly",
+			Why: "the walk does not send it: its inversion accounts only for the members BuildListFilter DERIVES plus the explicit filters the walk encodes, and anything left over is a restriction the bridge would have to drop to answer at all — a dropped filter widens the set invisibly. " +
+				"Most such members do have a listIssues parameter now, behind `issues.list.filters`; the walk has not taken them on yet, and `--flat` or `--json` asks listIssues for the parent's children directly",
 			SpecRow: parentWalkSpec, PinnedBy: pin,
 		}
 	}
@@ -288,15 +288,15 @@ func parentWalkRows() []Row {
 
 	rows := []Row{
 		derived("ExcludeStatus", "a status exclusion that is not the derived default refuses",
-			"listIssues publishes no exclude_status: the wire publishes the INTENT (`all`) and the server re-derives the exclusions from the same builder against its own authoritative vocabulary, which additionally heals L7's degraded client-side set for the walk. "+
-				"An exclusion list no intent reproduces is therefore unstatable, and dropping it would widen the listing to closed work"),
+			"the walk sends the INTENT (`all`) and the server re-derives the exclusions from the same builder against its own authoritative vocabulary, which additionally heals L7's degraded client-side set for the walk. "+
+				"listIssues' exclude_status (behind `issues.list.filters`) narrows on top of those defaults, but the walk does not send it, so an exclusion list no intent reproduces is unstatable here, and dropping it would widen the listing to closed work"),
 		derived("Pinned", "a pinned predicate that is not the derived default refuses",
-			"the pinned default is the FOURTH derived member and has no parameter of its own: `--pinned` selects the flagged rows and `--no-pinned` holds the unflagged predicate in place under `--all`, and the wire can express neither. "+
+			"the pinned default is the FOURTH derived member and has no parameter of its own. `--pinned` selects the flagged rows and `--no-pinned` holds the unflagged predicate in place under `--all`; listIssues publishes both behind `issues.list.filters`, but the walk does not send them. "+
 				"Its derived value is a function of the `all` intent alone — upstream #5333 stopped an every-status selector from forcing it, so `--status all` and `--all` are now one filter and one wire question — and a value that intent does not reproduce is a user's own predicate, which NARROWS, and that is precisely when dropping it would answer a different question"),
 		derived("IsTemplate", "a template predicate that is not the derived default refuses",
 			"listIssues publishes include_templates, an intent, not an is_template predicate. `&false` is what the absent flag derives and sends nothing; nil is what `--include-templates` derives and sends the flag; `&true` selects templates ONLY, which no intent on this operation can say"),
 		derived("ExcludeTypes", "a type exclusion beyond the derived gate and infra members refuses",
-			"listIssues publishes include_gates and include_infra — intents — and no exclude_type. The gate member and the whole infra vocabulary are what their absent flags derive; a leftover member is a user's `--exclude-type`, and dropping it would return the type they asked to hide"),
+			"listIssues publishes include_gates and include_infra — intents — and, behind `issues.list.filters`, an exclude_type the walk does not send. The gate member and the whole infra vocabulary are what their absent flags derive; a leftover member is a user's `--exclude-type`, and dropping it would return the type they asked to hide"),
 		derived("Ephemeral", "an ephemeral predicate that is not the derived default refuses",
 			"BuildListFilter sets it only for an infra `--type`, from the same flag the walk already encodes; the wire publishes no ephemeral PREDICATE on the listing — include_ephemeral is an intent that ADMITS the plane, not a selector that restricts to it — so any other value is unstatable"),
 		derived("SkipWisps", "a wisp-merge opt-out that is not the derived default refuses",
@@ -331,7 +331,13 @@ func parentWalkRows() []Row {
 
 // parentWalkRefusals enumerates the IssueFilter members that refuse on the
 // descendant walk: everything BuildListFilter can carry that is neither a
-// derived default nor a filter listIssues publishes.
+// derived default nor a filter the walk encodes.
+//
+// Most of them have had a listIssues parameter since `issues.list.filters`.
+// Moving one off this list is a change to the walk, and the walk must then
+// check that token itself: it dials through the SearchIssues bridge, so the
+// listing's pre-dial gate (role_reader.go refuseUnservedListFilters) never
+// sees it.
 //
 // Written out rather than derived, for the reason issueFilterBridgeRefusals is:
 // a list computed from the struct would absorb a field added upstream, and the

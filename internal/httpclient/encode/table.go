@@ -650,8 +650,8 @@ func searchExactIDsTable() Table {
 // because this shape is where the two bridges stop agreeing: the walk carries
 // `bd list`'s whole built filter, so six of its members are DERIVED defaults
 // the server re-derives (DispInverted) and eleven more are explicit user filters
-// listIssues publishes parameters for. The exact-ids shape still refuses every
-// one of them, which is why the enumeration cannot be shared.
+// it sends under their listIssues parameters. The exact-ids shape still refuses
+// every one of them, which is why the enumeration cannot be shared.
 func searchParentWalkTable() Table {
 	const inversionWhy = "a derived default of workapi.BuildListFilter, re-derived server-side from the intent parameters the encoder sends in its place (D4 parent-walk inversion)"
 	inverted := func(name, ledger string) FieldEntry {

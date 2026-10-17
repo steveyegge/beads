@@ -201,6 +201,13 @@ func BuildListFilter(in issueops.ListRequest, cfg ListConfig) (types.IssueFilter
 	if in.PinnedFlag && in.NoPinnedFlag {
 		return types.IssueFilter{}, fmt.Errorf("--pinned and --no-pinned are mutually exclusive%.0w", issueops.ErrValidation)
 	}
+	// The parent pair likewise, in the sentence `bd list` and BuildCountFilter
+	// refuse it with: a served listing carries no_parent beside parent
+	// (issues.list.filters), and ANDing the two answered only the edge-less
+	// rows under the parent's dotted id instead of refusing.
+	if in.ParentID != "" && in.NoParent {
+		return types.IssueFilter{}, fmt.Errorf("--parent and --no-parent are mutually exclusive%.0w", issueops.ErrValidation)
+	}
 
 	filter := types.IssueFilter{
 		Limit: SQLLimit(in),

@@ -3334,6 +3334,7 @@ func RunReaderListTimeBoundsAreStrictAndWholeSecond(t *testing.T, ctx context.Co
 //
 // PinnedFlag with NoPinnedFlag is a contradiction, and the role refuses it as
 // a validation error rather than letting one of the two silently win.
+// ParentID with NoParent is refused the same way, as CountRequest refuses it.
 func RunReaderListFilterFamiliesNarrowToTheirRows(t *testing.T, ctx context.Context, fixture ReaderFixture) {
 	t.Helper()
 	id := func(name string) string { return readerID(fixture, "lff", name) }
@@ -3486,6 +3487,13 @@ func RunReaderListFilterFamiliesNarrowToTheirRows(t *testing.T, ctx context.Cont
 	})
 	if !errors.Is(err, publicops.ErrValidation) {
 		t.Errorf("List with PinnedFlag and NoPinnedFlag = %v, want an error wrapping ErrValidation", err)
+	}
+
+	_, err = fixture.Reader.List(ctx, publicops.ListRequest{
+		IDFilter: readerIDFilter(parent, child, loose), ParentID: parent, NoParent: true,
+	})
+	if !errors.Is(err, publicops.ErrValidation) {
+		t.Errorf("List with ParentID and NoParent = %v, want an error wrapping ErrValidation", err)
 	}
 }
 
