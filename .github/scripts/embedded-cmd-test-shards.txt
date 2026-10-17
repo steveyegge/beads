@@ -145,6 +145,7 @@
 100 60 TestEmbeddedCommentsCLI
 100 60 TestEmbeddedRoutedWriteMissDoesNotCreateTargetDatabase
 
+100 61 TestEmbeddedBootstrapCloneFailureScrubsCredentials
 100 61 TestEmbeddedContributorRoutedWritesCommitInPlanning
 100 61 TestEmbeddedUpdateRoutedStoreCommitsTargetHead
 
