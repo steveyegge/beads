@@ -393,3 +393,12 @@ func (s *Store) BatchGetter() (issueops.BatchGetter, error) {
 func (s *Store) LeaseReclaimer() (issueops.LeaseReclaimer, error) {
 	return &httpLeaseReclaimer{store: s}, nil
 }
+
+// Heartbeater serves heartbeatIssue (POST /v0/beads/issues/{id}:heartbeat) —
+// the lease refresh behind `bd heartbeat`. Like
+// LeaseReclaimer it dials through the store directly rather than through
+// roleWire: Store.dispatch preflights issues.heartbeat, so an older server is
+// refused before the dial naming the token. See heartbeater.go.
+func (s *Store) Heartbeater() (issueops.Heartbeater, error) {
+	return &httpHeartbeater{store: s}, nil
+}

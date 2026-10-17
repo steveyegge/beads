@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/httpclient"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
@@ -236,9 +239,6 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if usesProxiedServer() {
-			return runGateAddWaiterProxiedServer(cmd, rootCtx, args)
-		}
 		CheckReadonly("gate add-waiter")
 
 		evt := metrics.NewCommandEvent("gate-add-waiter")
@@ -250,34 +250,27 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 
 		gateID := args[0]
 		waiter := args[1]
-		ctx := rootCtx
 
-		var issue *types.Issue
-		var err error
-
-		issue, err = store.GetIssue(ctx, gateID)
+		reader, err := openIssueReader()
 		if err != nil {
-			return HandleError("gate not found: %s", gateID)
+			return HandleError("%v", err)
+		}
+		lifecycle, err := openIssueLifecycle()
+		if err != nil {
+			return HandleError("%v", err)
+		}
+		ctx, err := issueOpsContext(rootCtx)
+		if err != nil {
+			return HandleError("%v", err)
 		}
 
-		if issue.IssueType != "gate" {
-			return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+		added, err := addGateWaiter(ctx, reader, lifecycle, gateID, waiter)
+		if err != nil {
+			return HandleError("%v", err)
 		}
-
-		for _, w := range issue.Waiters {
-			if w == waiter {
-				renderGateWaiterAlready(gateID)
-				return nil
-			}
-		}
-
-		newWaiters := append(issue.Waiters, waiter)
-
-		updates := map[string]interface{}{
-			"waiters": newWaiters,
-		}
-		if err := store.UpdateIssue(ctx, gateID, updates, currentActor()); err != nil {
-			return HandleError("updating gate: %v", err)
+		if !added {
+			renderGateWaiterAlready(gateID)
+			return nil
 		}
 
 		commandDidWrite.Store(true)
@@ -285,6 +278,110 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 		renderGateWaiterAdded(gateID, waiter)
 		return nil
 	},
+}
+
+// addGateWaiter's compare-and-set budget. A version miss means another writer
+// changed the gate between this command's read and its write; under a convoy
+// (a phase finishing together, every worker registering on the same gate) each
+// round of simultaneous writes has exactly one winner, so retrying at once
+// would fail all but a handful of adders. Each retry therefore waits a
+// jittered, doubling backoff first: gateAddWaiterBackoffBase, doubled per miss
+// up to gateAddWaiterBackoffCap, each wait drawn uniformly from [d/2, d) so
+// the losers of one round do not collide again in the next.
+//
+// The loop is bounded by gateAddWaiterMaxAttempts writes, not by wall time:
+// one round's latency is the server's (a loaded remote server can take
+// seconds per read and write), and a wall-clock budget would fail a convoy on
+// a slow server after only two or three rounds. Each round has a winner, so
+// the bound carries at least that many simultaneous adders; the jitter
+// spreads them further. The waits themselves add up to at most about 6s, and
+// a gate rewritten without pause still fails after the last attempt.
+const (
+	gateAddWaiterMaxAttempts = 20
+	gateAddWaiterBackoffBase = 10 * time.Millisecond
+	gateAddWaiterBackoffCap  = 400 * time.Millisecond
+)
+
+// gateAddWaiterBackoff is the wait before retry number retry (1-based):
+// jittered in [d/2, d) around d = base * 2^(retry-1), capped.
+func gateAddWaiterBackoff(retry int) time.Duration {
+	d := gateAddWaiterBackoffBase
+	for i := 1; i < retry && d < gateAddWaiterBackoffCap; i++ {
+		d *= 2
+	}
+	if d > gateAddWaiterBackoffCap {
+		d = gateAddWaiterBackoffCap
+	}
+	half := d / 2
+	return half + time.Duration(rand.Int64N(int64(d-half))) // #nosec G404 -- retry jitter, not a secret
+}
+
+// gateAddWaiterSleep waits d or until ctx is done. It is a variable so tests
+// can record the backoff without sleeping.
+var gateAddWaiterSleep = func(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// addGateWaiter registers waiter on the gate gateID through the Reader and
+// Lifecycle roles, so every route (local, proxied server, and a connected HTTP
+// workspace, which sends getIssue then updateIssue behind issues.update.gates)
+// runs the same steps. It reports false, writing nothing, when the waiter is
+// already registered.
+//
+// The write is a whole-value waiter list guarded by the row version the read
+// returned, so two concurrent adders cannot lose each other's waiter: the
+// second write misses its version, re-reads the list with the first waiter in
+// it, and writes again. The deduplication is this command's, not the role's;
+// the role stores the list it is given.
+func addGateWaiter(ctx context.Context, reader issueops.Reader, lifecycle issueops.Lifecycle, gateID, waiter string) (bool, error) {
+	var lastErr error
+	attempts := 0
+	for attempts < gateAddWaiterMaxAttempts {
+		if attempts > 0 {
+			if err := gateAddWaiterSleep(ctx, gateAddWaiterBackoff(attempts)); err != nil {
+				return false, fmt.Errorf("updating gate: %w", err)
+			}
+		}
+		attempts++
+		details, err := reader.Get(ctx, issueops.GetRequest{ID: gateID})
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, fmt.Errorf("gate not found: %s", gateID)
+		}
+		if err != nil {
+			return false, fmt.Errorf("reading gate %s: %w", gateID, err)
+		}
+		gate := &details.Issue
+		if gate.IssueType != "gate" {
+			return false, fmt.Errorf("%s is not a gate issue (type=%s)", gateID, gate.IssueType)
+		}
+		if slices.Contains(gate.Waiters, waiter) {
+			return false, nil
+		}
+
+		waiters := append(slices.Clone(gate.Waiters), waiter)
+		version := gate.RowVersion
+		_, err = lifecycle.Update(ctx, issueops.UpdateRequest{
+			Actor:           currentActor(),
+			IssueID:         gate.ID,
+			Patch:           issueops.IssuePatch{Waiters: issueops.Field[[]string]{Set: true, Value: waiters}},
+			ExpectedVersion: &version,
+		})
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, issueops.ErrVersionMismatch) {
+			return false, fmt.Errorf("updating gate: %w", err)
+		}
+		lastErr = err
+	}
+	return false, fmt.Errorf("updating gate: %s changed on every one of %d attempts: %w", gateID, attempts, lastErr)
 }
 
 // renderGateWaiterAlready and renderGateWaiterAdded are shared by the direct
@@ -325,9 +422,6 @@ Examples:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if usesProxiedServer() {
-			return runGateCreateProxiedServer(cmd, rootCtx)
-		}
 		CheckReadonly("gate create")
 
 		evt := metrics.NewCommandEvent("gate-create")
@@ -342,37 +436,25 @@ Examples:
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		ctx := rootCtx
-
-		targetIssue, err := store.GetIssue(ctx, in.blocksID)
+		reader, err := openIssueReader()
 		if err != nil {
-			return HandleErrorRespectJSON("issue not found: %s", in.blocksID)
+			return HandleErrorRespectJSON("%v", err)
+		}
+		lifecycle, err := openIssueLifecycle()
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+		ctx, err := issueOpsContext(rootCtx)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
-		gate := buildGateIssue(in, targetIssue.ID)
-		metadata, metaErr := gateMetadataForCreate(in, targetIssue)
-		if metaErr != nil {
-			return HandleErrorRespectJSON("%v", metaErr)
-		}
-		gate.Metadata = metadata
-
-		if err := store.CreateIssue(ctx, gate, currentActor()); err != nil {
-			return HandleErrorRespectJSON("creating gate: %v", err)
+		gate, targetIssue, err := createGateThroughRoles(ctx, reader, lifecycle, in)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
-		dep := &types.Dependency{
-			IssueID:     targetIssue.ID,
-			DependsOnID: gate.ID,
-			Type:        types.DepBlocks,
-		}
-		if err := store.AddDependency(ctx, dep, currentActor()); err != nil {
-			return HandleErrorRespectJSON("adding blocking dependency: %v", err)
-		}
-
-		commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
-		if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-			return HandleErrorRespectJSON("failed to commit: %v", err)
-		}
+		commandDidWrite.Store(true)
 
 		if jsonOutput {
 			return outputJSON(gate)
@@ -381,6 +463,48 @@ Examples:
 		renderGateCreated(gate, targetIssue, in)
 		return nil
 	},
+}
+
+// createGateThroughRoles creates the gate and its blocking edge as ONE Lifecycle.Create:
+// the gate row plus a reverse blocks dependency from the blocked issue to the
+// new gate, in one transaction and one version commit on every route. A
+// connected HTTP workspace sends it as one createIssue carrying the gate
+// members, behind issues.create.gates; a server that does not advertise that
+// token is refused before any request is sent, and nothing is written.
+//
+// It returns the created gate (without its dependency records, which
+// `bd gate create` has never printed) and the blocked issue.
+func createGateThroughRoles(ctx context.Context, reader issueops.Reader, lifecycle issueops.Lifecycle, in gateCreateInput) (*types.Issue, *types.Issue, error) {
+	details, err := reader.Get(ctx, issueops.GetRequest{ID: in.blocksID})
+	if err != nil {
+		// Every target-lookup failure has always been reported as not-found.
+		return nil, nil, fmt.Errorf("issue not found: %s", in.blocksID)
+	}
+	target := &details.Issue
+
+	gate := buildGateIssue(in, target.ID)
+	metadata, err := gateMetadataForCreate(in, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	gate.Metadata = metadata
+
+	result, err := lifecycle.Create(ctx, issueops.CreateRequest{
+		Actor: currentActor(),
+		Issue: gate,
+		Dependencies: []issueops.CreateDependency{{
+			TargetID: target.ID,
+			Type:     types.DepBlocks,
+			Reverse:  true,
+		}},
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating gate: %w", err)
+	}
+	created := result.Issue
+	created.Dependencies = nil
+	created.Comments = nil
+	return created, target, nil
 }
 
 // gateCreateInput carries `bd gate create`'s parsed flags. Both routes gather
@@ -670,14 +794,10 @@ Examples:
 		var recordSeen func(gate *types.Issue) error
 		if !dryRun {
 			persistAwaitID = func(gateID, runID string) error {
-				return updateGateAwaitIDFunc(nil, gateID, runID)
+				return gateCheckPersistAwaitIDFunc(ctx, gateID, runID)
 			}
 			recordSeen = func(gate *types.Issue) error {
-				if err := store.UpdateIssue(ctx, gate.ID, beadGateSeenUpdate(gate.AwaitID), currentActor()); err != nil {
-					return err
-				}
-				commandDidWrite.Store(true)
-				return nil
+				return updateGateThroughLifecycle(ctx, gate.ID, beadGateSeenPatch(gate.AwaitID))
 			}
 		}
 
@@ -700,8 +820,9 @@ Examples:
 // of work, or the remote http backend's queryIssues). It is the question the
 // raw SearchIssues filter used to ask — the gate type, both planes, closed
 // rows excluded, cut at limit — but a remote backend serves it, where the raw
-// filter was refused before any gate was read. The per-type selection stays
-// with filterCheckableGates.
+// filter was refused before any gate was read. Templates are left out of the
+// query (see listOpenGatesWith); the per-type selection stays with
+// filterCheckableGates.
 func listOpenGatesForCheck(ctx context.Context, limit int) ([]*types.Issue, error) {
 	querier, err := openQuerier()
 	if err != nil {
@@ -711,9 +832,12 @@ func listOpenGatesForCheck(ctx context.Context, limit int) ([]*types.Issue, erro
 }
 
 // listOpenGatesWith is listOpenGatesForCheck over a given Querier: the open
-// gates only (gate check never evaluates a closed one), cut at limit.
+// gates only (gate check never evaluates a closed one), minus templates, cut at
+// limit. The templates go in the query, not after it: a page of a persisted
+// proto's gates, newer than the live ones, would otherwise fill --limit and
+// leave the sweep nothing to check.
 func listOpenGatesWith(ctx context.Context, querier issueops.Querier, limit int) ([]*types.Issue, error) {
-	return issueops.ListGates(ctx, querier, issueops.GateListRequest{Limit: limit})
+	return issueops.ListGates(ctx, querier, issueops.GateListRequest{ExcludeTemplates: true, Limit: limit})
 }
 
 type gateCheckResult struct {
@@ -724,9 +848,21 @@ type gateCheckResult struct {
 	err       error
 }
 
+// filterCheckableGates selects the listed gates a sweep evaluates: those that
+// match typeFilter, minus templates. A template's gate is a blueprint that every
+// pour copies, await_id included. Checking one fails every sweep where its
+// write is refused (the Lifecycle role's template guard, a served close) and
+// rewrites the proto where it is not (a local close, the proxied-server route's
+// writes): a closed timer gate, a recorded sighting, or a run ID every later
+// pour would await. listOpenGatesWith already leaves templates out of the
+// query; the skip here is the backstop for a listing that returns one anyway.
+// The direct and the proxied-server routes both select here.
 func filterCheckableGates(gates []*types.Issue, typeFilter string) []*types.Issue {
 	var out []*types.Issue
 	for _, gate := range gates {
+		if gate.IsTemplate {
+			continue
+		}
 		if shouldCheckGate(gate, typeFilter) {
 			out = append(out, gate)
 		}
@@ -741,6 +877,75 @@ func printNoOpenGates(typeFilter string) {
 		fmt.Println("No open gates found.")
 	}
 }
+
+// updateGateThroughLifecycle is gate check's one write besides the close: a
+// patch to a gate through the Lifecycle role, so every route the direct path
+// serves (Dolt, embedded, Postgres, and a connected HTTP workspace, whose role
+// sends issues.update) applies it the same way. The legacy map-based
+// UpdateIssue is not on the HTTP store at all, so the sighting written through
+// it was refused before any request was sent.
+func updateGateThroughLifecycle(ctx context.Context, gateID string, patch issueops.IssuePatch) error {
+	lifecycle, err := openIssueLifecycle()
+	if err != nil {
+		return err
+	}
+	ctx, err = issueOpsContext(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := lifecycle.Update(ctx, issueops.UpdateRequest{Actor: currentActor(), IssueID: gateID, Patch: patch}); err != nil {
+		return err
+	}
+	commandDidWrite.Store(true)
+	return nil
+}
+
+// awaitIDPatchRefusal is the divergence-ledger row a connected HTTP
+// workspace's Lifecycle role refused an await_id edit by, before any request,
+// while the wire's issue patch had no await_id member. The row is retired: the
+// patch carries await_id behind issues.update.gates, and a server that does
+// not advertise that token earns the capability error, which
+// persistGateCheckAwaitID returns as the role raised it.
+const awaitIDPatchRefusal = "W-IssuePatch.AwaitID"
+
+// persistGateCheckAwaitID records a gh:run gate's discovered run ID through
+// the Lifecycle role. The one refusal it rewords is the HTTP wire's
+// (awaitIDPatchRefusal), whose own text names the role method and the wire
+// operation rather than what the user can do about it. That refusal stays
+// this gate's error, so the rest of the sweep runs. Every other error,
+// another unsupported capability included, is returned as the role raised it.
+func persistGateCheckAwaitID(ctx context.Context, gateID, runID string) error {
+	err := updateGateThroughLifecycle(ctx, gateID, issueops.IssuePatch{AwaitID: issueops.Field[string]{Set: true, Value: runID}})
+	var refused *httpclient.InexpressibleError
+	if errors.As(err, &refused) && refused.Refused != nil && refused.Refused.Row.ID == awaitIDPatchRefusal {
+		serverURL := ""
+		if refused.Unsup != nil {
+			serverURL = refused.Unsup.ServerURL
+		}
+		return &awaitIDRefusedError{runID: runID, serverURL: serverURL, err: err}
+	}
+	return err
+}
+
+// awaitIDRefusedError is the HTTP wire's await_id refusal, reworded for the
+// gate check row that prints it: it names the run, await_id and the server.
+// Unwrap keeps the refusal, so errors.As still reaches *storage.ErrUnsupported
+// and the ledger row.
+type awaitIDRefusedError struct {
+	runID     string
+	serverURL string
+	err       error
+}
+
+func (e *awaitIDRefusedError) Error() string {
+	server := "this backend"
+	if e.serverURL != "" {
+		server = "bd serve at " + e.serverURL
+	}
+	return fmt.Sprintf("run %s cannot be recorded as await_id: %s does not accept an await_id update; check the gate in a local workspace", e.runID, server)
+}
+
+func (e *awaitIDRefusedError) Unwrap() error { return e.err }
 
 func evaluateGates(ctx context.Context, gates []*types.Issue, now time.Time, getter issueGetter, persistAwaitID func(gateID, runID string) error, recordSeen func(gate *types.Issue) error) []gateCheckResult {
 	results := make([]gateCheckResult, 0, len(gates))
@@ -872,6 +1077,7 @@ func runGHCommand(args ...string) (stdout, stderr []byte, err error) {
 var (
 	discoverRunIDByWorkflowNameFunc = discoverRunIDByWorkflowName
 	updateGateAwaitIDFunc           = updateGateAwaitID
+	gateCheckPersistAwaitIDFunc     = persistGateCheckAwaitID
 	checkGHRunStatusFunc            = checkGHRunStatus
 )
 
@@ -1305,9 +1511,9 @@ func beadGateNotFound(err error) bool {
 
 // routedBeadGateGetter gives direct-mode gate checks the same local -> prefix
 // route -> contributor fallback used by other read commands. Routed stores are
-// opened read-only and closed before the result is returned. Unlike
-// getIssueWithRouting, a route that fails or misses is reported as
-// errBeadGateTargetUnconfirmed instead of as the local not-found.
+// opened read-only and closed before the result is returned. A route that
+// fails or misses is reported as errBeadGateTargetUnconfirmed instead of as
+// the local not-found.
 type routedBeadGateGetter struct {
 	localStore storage.DoltStorage
 }
@@ -1576,6 +1782,14 @@ func beadGateSeenUpdate(awaitID string) map[string]interface{} {
 	return map[string]interface{}{
 		storageissueops.OpSetMetadata: map[string]json.RawMessage{beadGateSeenKey: value},
 	}
+}
+
+// beadGateSeenPatch is beadGateSeenUpdate as a Lifecycle patch: the same
+// single-key metadata set, which a connected HTTP workspace sends as
+// issues.update.
+func beadGateSeenPatch(awaitID string) issueops.IssuePatch {
+	value, _ := json.Marshal(awaitID)
+	return issueops.IssuePatch{Metadata: issueops.MetadataPatch{Set: map[string]json.RawMessage{beadGateSeenKey: value}}}
 }
 
 // beadGateRetargetUpdate is the update that points a bead gate at awaitID.

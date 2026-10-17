@@ -183,6 +183,18 @@
     },
     {
       "schema": "ApplyCreateItem",
+      "member": "await_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "ApplyCreateItem",
+      "member": "await_type",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "ApplyCreateItem",
       "member": "defer_until",
       "type": "string",
       "format": "date-time",
@@ -302,9 +314,23 @@
     },
     {
       "schema": "ApplyCreateItem",
+      "member": "timeout",
+      "type": "integer",
+      "format": "int64",
+      "required": false
+    },
+    {
+      "schema": "ApplyCreateItem",
       "member": "title",
       "type": "string",
       "required": true
+    },
+    {
+      "schema": "ApplyCreateItem",
+      "member": "waiters",
+      "type": "array",
+      "required": false,
+      "item_type": "string"
     },
     {
       "schema": "ApplyDepAddItem",
@@ -483,6 +509,12 @@
     },
     {
       "schema": "ApplyPatchBody",
+      "member": "await_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "ApplyPatchBody",
       "member": "defer_until",
       "type": "string",
       "format": "date-time",
@@ -570,6 +602,13 @@
       "member": "title",
       "type": "string",
       "required": false
+    },
+    {
+      "schema": "ApplyPatchBody",
+      "member": "waiters",
+      "type": "array",
+      "required": false,
+      "item_type": "string"
     },
     {
       "schema": "ApplyUpdateItem",
@@ -1529,6 +1568,18 @@
     },
     {
       "schema": "CreateIssueRequest",
+      "member": "await_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "CreateIssueRequest",
+      "member": "await_type",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "CreateIssueRequest",
       "member": "defer_until",
       "type": "string",
       "format": "date-time",
@@ -1660,9 +1711,23 @@
     },
     {
       "schema": "CreateIssueRequest",
+      "member": "timeout",
+      "type": "integer",
+      "format": "int64",
+      "required": false
+    },
+    {
+      "schema": "CreateIssueRequest",
       "member": "title",
       "type": "string",
       "required": true
+    },
+    {
+      "schema": "CreateIssueRequest",
+      "member": "waiters",
+      "type": "array",
+      "required": false,
+      "item_type": "string"
     },
     {
       "schema": "CreateIssueRequest",
@@ -1972,6 +2037,44 @@
       "enum": [
         "ok"
       ],
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueRequest",
+      "member": "actor",
+      "type": "string",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "heartbeat_at",
+      "type": "string",
+      "format": "date-time",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "holder",
+      "type": "string",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "lease_expires_at",
+      "type": "string",
+      "format": "date-time",
+      "required": true
+    },
+    {
+      "schema": "HeartbeatIssueResponse",
+      "member": "rearmed",
+      "type": "boolean",
       "required": true
     },
     {
@@ -2852,6 +2955,12 @@
     },
     {
       "schema": "IssuePatchBody",
+      "member": "await_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "schema": "IssuePatchBody",
       "member": "defer_until",
       "type": "string",
       "format": "date-time",
@@ -2953,6 +3062,13 @@
       "member": "title",
       "type": "string",
       "required": false
+    },
+    {
+      "schema": "IssuePatchBody",
+      "member": "waiters",
+      "type": "array",
+      "required": false,
+      "item_type": "string"
     },
     {
       "schema": "IssueWithCounts",
@@ -5674,6 +5790,13 @@
       "default": "false"
     },
     {
+      "schema": "param:heartbeatIssue",
+      "member": "path:id",
+      "type": "string",
+      "required": true,
+      "style": "simple"
+    },
+    {
       "schema": "param:listBlockingAnnotations",
       "member": "query:is_blocked",
       "type": "boolean",
@@ -6257,6 +6380,7 @@
     "ApplyCreateItem": "request",
     "ApplyCreateItem.labels[]": "request",
     "ApplyCreateItem.metadata_refs": "request",
+    "ApplyCreateItem.waiters[]": "request",
     "ApplyDepAddItem": "request",
     "ApplyItem": "request",
     "ApplyItemResult": "response",
@@ -6268,6 +6392,7 @@
     "ApplyMetadataPatch.set": "request",
     "ApplyMetadataPatch.unset[]": "request",
     "ApplyPatchBody": "request",
+    "ApplyPatchBody.waiters[]": "request",
     "ApplyUpdateItem": "request",
     "BatchCloseItem": "request",
     "BatchCloseRequest": "request",
@@ -6303,6 +6428,7 @@
     "CreateIssueDependency": "request",
     "CreateIssueRequest": "request",
     "CreateIssueRequest.labels[]": "request",
+    "CreateIssueRequest.waiters[]": "request",
     "CreateIssueWaitsFor": "request",
     "Cycle": "response",
     "CycleMember": "response",
@@ -6323,6 +6449,8 @@
     "EventRecord.issue": "response",
     "EventsPage": "response",
     "Health": "response",
+    "HeartbeatIssueRequest": "request",
+    "HeartbeatIssueResponse": "response",
     "Issue": "response",
     "Issue.labels[]": "response",
     "Issue.metadata": "response",
@@ -6342,6 +6470,7 @@
     "IssuePatchBody.add_labels[]": "request",
     "IssuePatchBody.labels[]": "request",
     "IssuePatchBody.remove_labels[]": "request",
+    "IssuePatchBody.waiters[]": "request",
     "IssueWithCounts": "response",
     "IssueWithCounts.labels[]": "response",
     "IssueWithCounts.metadata": "response",

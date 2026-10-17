@@ -265,6 +265,26 @@ const CapIssuesUpdateClaim = "issues.update.claim"
 // send the default explicitly rather than omit the member.
 const CapIssuesCreateDefaultPriority = "issues.create.defaultPriority"
 
+// CapIssuesCreateGates is the behavior capability that advertises the four
+// gate members — await_type, await_id, timeout and waiters — on createIssue's
+// body and on issues:batchApply's create item. One token
+// covers both create shapes, CapIssuesCreateDefaultPriority's precedent. The
+// handlers only decode and project them: every bound is the create role's
+// (issueops.GateFieldError, the stored columns' widths and a timeout that is
+// not negative), answered as a 400 naming the member. An older server refuses
+// each as an unknown member; a client that does not see the token must refuse
+// a create carrying one before the dial rather than drop it.
+const CapIssuesCreateGates = "issues.create.gates"
+
+// CapIssuesUpdateGates is the behavior capability that advertises await_id and
+// waiters (a whole-value replacement; [] clears) on updateIssue's patch and on
+// issues:batchApply's update-item patch. await_type and
+// timeout are not patch members: no local update route changes them. It is a
+// token of its own rather than CapIssuesCreateGates because the callers that
+// depend on it (gate add-waiter, gate discover, update --await-id) are a
+// separate cutover dependency from gate create.
+const CapIssuesUpdateGates = "issues.update.gates"
+
 // CapExternalDependencies is the CONDITIONAL behavior capability announcing
 // that this server's ready, claim, claim-next, close, blocking-annotation and
 // dependency-tree operations already apply bd's external-dependency policy
@@ -816,6 +836,18 @@ var routeTable = []route{
 		handler:      (*Server).handleRelease,
 	},
 	{
+		op:     OpHeartbeatIssue,
+		method: http.MethodPost,
+		// The lease refresh, on the dispatcher the close built. Everything the
+		// claim row says about the wildcard's width holds here unchanged.
+		pattern:      customMethodPattern,
+		specPath:     "/v0/beads/issues/{id}:heartbeat",
+		customMethod: ":heartbeat",
+		capability:   "issues.heartbeat",
+		implemented:  true,
+		handler:      (*Server).handleHeartbeat,
+	},
+	{
 		op:     OpCloseIssue,
 		method: http.MethodPost,
 		// The second row on the shared wildcard, and the reason the dispatcher
@@ -1071,6 +1103,7 @@ var behaviorCapabilities = []string{
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
 	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked, CapIssuesUpdateClaim,
+	CapIssuesCreateGates, CapIssuesUpdateGates,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:

@@ -450,6 +450,12 @@ type ApplyCreateItem struct {
 	AcceptanceCriteria *string `json:"acceptance_criteria,omitempty"`
 	Assignee           *string `json:"assignee,omitempty"`
 
+	// AwaitId The gate's condition identifier (a run id, a PR number, a `bead:<id>`). Opaque here; at most 255 characters, the stored column's width, and a longer value is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	AwaitId *string `json:"await_id,omitempty"`
+
+	// AwaitType The gate's await condition type (`gh:run`, `gh:pr`, `timer`, `human`, `bead`, or a formula-defined type). Free-form: there is no vocabulary, and any issue type may carry it, as a local create allows. At most 32 characters, the stored column's width; a longer value is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	AwaitType *string `json:"await_type,omitempty"`
+
 	// DeferUntil RFC 3339. The issue is hidden from ready work until then.
 	DeferUntil  *time.Time `json:"defer_until,omitempty"`
 	Description *string    `json:"description,omitempty"`
@@ -510,7 +516,13 @@ type ApplyCreateItem struct {
 
 	// Status The status the issue is created in, from this workspace's own configured vocabulary. Absent means the workspace default.
 	Status *string `json:"status,omitempty"`
-	Title  string  `json:"title"`
+
+	// Timeout The gate's timeout in NANOSECONDS, the encoding `Issue.timeout` reads back. A negative value is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	Timeout *int64 `json:"timeout,omitempty"`
+	Title   string `json:"title"`
+
+	// Waiters The addresses woken when the gate clears, stored as sent: duplicates are kept and nothing is trimmed, as a local create stores them. The list's JSON encoding must fit the stored TEXT column (65535 bytes); a larger one is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	Waiters *[]string `json:"waiters,omitempty"`
 }
 
 // ApplyDepAddItem Asserts ONE dependency edge, under `POST /v0/beads/dependencies:add`'s rules. An edge from a row to itself is a `400`.
@@ -685,6 +697,9 @@ type ApplyPatchBody struct {
 	// Assignee The assignee. A transfer away from a live foreign in-progress owner is refused with `409 already_claimed` unless `force_assignee_transfer` is set or `expected_assignee` matched.
 	Assignee *string `json:"assignee,omitempty"`
 
+	// AwaitId Replaces the gate's condition identifier; the empty string clears it. Not nullable. At most 255 characters, the stored column's width; a longer value is a `400` naming this member. Requires the behavior token `issues.update.gates`.
+	AwaitId *string `json:"await_id,omitempty"`
+
 	// DeferUntil RFC 3339. Explicit `null` CLEARS the deferral.
 	DeferUntil  *time.Time `json:"defer_until,omitempty"`
 	Description *string    `json:"description,omitempty"`
@@ -726,6 +741,9 @@ type ApplyPatchBody struct {
 
 	// Title Must not be blank after trimming; the length bound is what the column holds.
 	Title *string `json:"title,omitempty"`
+
+	// Waiters A WHOLE-VALUE replacement of the gate's waiter list; `[]` clears it. Not nullable. Stored as sent (duplicates kept: deduplicating is the caller's, as `bd gate add-waiter` does). The list's JSON encoding must fit the stored TEXT column (65535 bytes); a larger one is a `400` naming this member. Requires the behavior token `issues.update.gates`.
+	Waiters *[]string `json:"waiters,omitempty"`
 }
 
 // ApplyUpdateItem Patches one existing issue, under `PATCH /v0/beads/issues/{id}`'s rules.
@@ -1101,7 +1119,7 @@ type ContextResponse struct {
 	// OPTIONAL, and absent means only that this server does not disclose its filesystem layout — never that it has no workspace. A client MUST NOT require it, MUST NOT treat absence as an error, and has no use for the value beyond display: it is a path on the SERVER's filesystem, which the client cannot open. Identify the workspace by `project_id` and `database`, which are required.
 	BeadsDir *string `json:"beads_dir,omitempty"`
 
-	// Capabilities The tokens this server advertises: the OPERATIONS it implements, derived from its route table, and the server-wide BEHAVIORS it enforces. v0's operation vocabulary is `ready.list`, `ready.count`, `issues.list`, `issues.query`, `issues.count`, `issues.get`, `issues.related`, `issues.create`, `issues.addComment`, `issues.batchClose`, `issues.claim`, `issues.claimNext`, `issues.release`, `issues.close`, `issues.reopen`, `issues.update`, `issues.sweep`, `issues.delete`, `issues.batchGet`, `issues.reclaim`, `issues.batchCreate`, `issues.batchApply`, `stats.get`, `config.list`, `config.get`, `config.set`, `config.unset`, `dependencies.cycles`, `dependencies.list`, `dependencies.count`, `dependencies.blocking`, `dependencies.tree`, `dependencies.add`, `dependencies.remove`, `memories.list`, `memories.get`, `memories.remember`, `memories.forget`, `events.list`, `events.watch`, `issues.casMetadata`, `issues.advanceMolecule`; the behavior tokens are `project.enforce`, which announces that a `Bd-Project-Id` stamp for the wrong workspace is refused here rather than silently ignored, `issues.batchApplyLarge`, which announces that `POST /v0/beads/issues:batchApply` accepts the RAISED envelope — up to 1000 items (`ApplyBatchRequest.items.maxItems`), a 16 MiB body, and (for a request over 100 items) a run budget that EXTENDS to an operator-configured ceiling (`bd serve --large-apply-ceiling`, 5 minutes by default) — rather than the original 100-item, 4 MiB bound. The ceiling is a flat whole-run budget, not a value scaled by item count: a 101-item request and a 1000-item request both get the same extended budget. A request at or under 100 items is unaffected either way and keeps the server's ordinary deadline exactly as before. A client that checks for this token before sending a plan over 100 items learns whether THIS server accepts it without paying for a round trip an older server would refuse anyway, and `issues.list.sort`, which announces that `GET /v0/beads/issues` accepts the `sort` query parameter (two closed, pageable total orders — see that parameter) rather than silently answering `unknown_parameter`, and `issues.count.scope`, which announces that `GET /v0/beads/issues:count` accepts `parent`, `no_parent`, `exclude_type`, and `exclude_status` (see those parameters) rather than silently answering `unknown_parameter` for all four, `issues.sweep.wispsPlane`, which announces that `POST /v0/beads/issues:sweep` accepts the `wisps-plane` value of `tier` rather than silently answering `invalid_value`, `issues.sweep.liveDependents`, which announces that the same operation accepts `protect_live_dependents` and answers `skipped.live_dependent` rather than silently answering `unknown_parameter`, `issues.sweep.limit`, which announces that it accepts `limit` and answers `remaining` rather than silently answering `unknown_parameter`, `issues.batchApply.depAddLineage`, which announces that a `dep_add` item on `POST /v0/beads/issues:batchApply` accepts `has_spawner` and `thread_id` (see `ApplyDepAddItem`) rather than a `400` naming the member unknown, and `issues.update.allowTemplate`, which announces that `PATCH /v0/beads/issues/{id}` accepts `allow_template` (see `UpdateIssueRequest`) rather than a `400` naming the member unknown, and `issues.update.persistence`, which announces that `PATCH /v0/beads/issues/{id}` accepts a `persistence` member in its `patch` (see `IssuePatchBody`), the plane move behind `bd promote`, rather than a `400` naming the member unknown, and `issues.create.defaultPriority`, which announces that a create (`POST /v0/beads/issues`, `issues:batchCreate` and `issues:batchApply` create items) with no `priority` member stores the default P2 rather than P0, and `issues.close.autoCloseMolecule`, which announces that `POST /v0/beads/issues/{id}:close` and `POST /v0/beads/issues:batchClose` accept `auto_close_molecule` and answer `auto_closed_molecule` and `molecule_auto_close_refusal` rather than a `400` naming the member unknown, `issues.list.search`, which announces that `GET /v0/beads/issues` accepts `q`, `bd search`'s free text (see that parameter), rather than silently answering `unknown_parameter`, `issues.list.noAssignee`, `issues.list.title` and `issues.list.ids`, which announce that `GET /v0/beads/issues` accepts `no_assignee`, `title` and the repeatable `id` respectively (`bd list --no-assignee`, `--title` and `--id`; see those parameters) rather than answering `unknown_parameter`, `dependencies.blocking.isBlocked`, which announces that `GET /v0/beads/dependencies/blocking` accepts `is_blocked` and answers each item's stored, transitive `is_blocked` flag (see that parameter) rather than silently answering `unknown_parameter`, and `issues.update.claim`, which announces that `PATCH /v0/beads/issues/{id}` accepts `claim` (see `UpdateIssueRequest`) and resolves the claimed id on both planes, so a wisp is claimable there, rather than a `400` naming the member unknown. One behavior token is CONDITIONAL rather than build-level: `policy.external_dependencies` announces that this server's ready, claim, claim-next, close, blocking and dependency-tree operations already apply bd's external-dependency policy (an issue blocked by an unsatisfied `external:<project>:<capability>` dependency is neither ready, claimable nor closable without force). A server advertises it only when it enforces that policy; a client that sees it must not apply the policy again, and a client that does not see it applies the policy itself. The list grows additively, and an operation never appears here unless it is fully implemented. This is how a client checks for an operation or a behavior — never the version string.
+	// Capabilities The tokens this server advertises: the OPERATIONS it implements, derived from its route table, and the server-wide BEHAVIORS it enforces. v0's operation vocabulary is `ready.list`, `ready.count`, `issues.list`, `issues.query`, `issues.count`, `issues.get`, `issues.related`, `issues.create`, `issues.addComment`, `issues.batchClose`, `issues.claim`, `issues.claimNext`, `issues.release`, `issues.heartbeat`, `issues.close`, `issues.reopen`, `issues.update`, `issues.sweep`, `issues.delete`, `issues.batchGet`, `issues.reclaim`, `issues.batchCreate`, `issues.batchApply`, `stats.get`, `config.list`, `config.get`, `config.set`, `config.unset`, `dependencies.cycles`, `dependencies.list`, `dependencies.count`, `dependencies.blocking`, `dependencies.tree`, `dependencies.add`, `dependencies.remove`, `memories.list`, `memories.get`, `memories.remember`, `memories.forget`, `events.list`, `events.watch`, `issues.casMetadata`, `issues.advanceMolecule`; the behavior tokens are `project.enforce`, which announces that a `Bd-Project-Id` stamp for the wrong workspace is refused here rather than silently ignored, `issues.batchApplyLarge`, which announces that `POST /v0/beads/issues:batchApply` accepts the RAISED envelope — up to 1000 items (`ApplyBatchRequest.items.maxItems`), a 16 MiB body, and (for a request over 100 items) a run budget that EXTENDS to an operator-configured ceiling (`bd serve --large-apply-ceiling`, 5 minutes by default) — rather than the original 100-item, 4 MiB bound. The ceiling is a flat whole-run budget, not a value scaled by item count: a 101-item request and a 1000-item request both get the same extended budget. A request at or under 100 items is unaffected either way and keeps the server's ordinary deadline exactly as before. A client that checks for this token before sending a plan over 100 items learns whether THIS server accepts it without paying for a round trip an older server would refuse anyway, and `issues.list.sort`, which announces that `GET /v0/beads/issues` accepts the `sort` query parameter (two closed, pageable total orders — see that parameter) rather than silently answering `unknown_parameter`, and `issues.count.scope`, which announces that `GET /v0/beads/issues:count` accepts `parent`, `no_parent`, `exclude_type`, and `exclude_status` (see those parameters) rather than silently answering `unknown_parameter` for all four, `issues.sweep.wispsPlane`, which announces that `POST /v0/beads/issues:sweep` accepts the `wisps-plane` value of `tier` rather than silently answering `invalid_value`, `issues.sweep.liveDependents`, which announces that the same operation accepts `protect_live_dependents` and answers `skipped.live_dependent` rather than silently answering `unknown_parameter`, `issues.sweep.limit`, which announces that it accepts `limit` and answers `remaining` rather than silently answering `unknown_parameter`, `issues.batchApply.depAddLineage`, which announces that a `dep_add` item on `POST /v0/beads/issues:batchApply` accepts `has_spawner` and `thread_id` (see `ApplyDepAddItem`) rather than a `400` naming the member unknown, and `issues.update.allowTemplate`, which announces that `PATCH /v0/beads/issues/{id}` accepts `allow_template` (see `UpdateIssueRequest`) rather than a `400` naming the member unknown, and `issues.update.persistence`, which announces that `PATCH /v0/beads/issues/{id}` accepts a `persistence` member in its `patch` (see `IssuePatchBody`), the plane move behind `bd promote`, rather than a `400` naming the member unknown, and `issues.create.defaultPriority`, which announces that a create (`POST /v0/beads/issues`, `issues:batchCreate` and `issues:batchApply` create items) with no `priority` member stores the default P2 rather than P0, and `issues.close.autoCloseMolecule`, which announces that `POST /v0/beads/issues/{id}:close` and `POST /v0/beads/issues:batchClose` accept `auto_close_molecule` and answer `auto_closed_molecule` and `molecule_auto_close_refusal` rather than a `400` naming the member unknown, `issues.list.search`, which announces that `GET /v0/beads/issues` accepts `q`, `bd search`'s free text (see that parameter), rather than silently answering `unknown_parameter`, `issues.list.noAssignee`, `issues.list.title` and `issues.list.ids`, which announce that `GET /v0/beads/issues` accepts `no_assignee`, `title` and the repeatable `id` respectively (`bd list --no-assignee`, `--title` and `--id`; see those parameters) rather than answering `unknown_parameter`, `dependencies.blocking.isBlocked`, which announces that `GET /v0/beads/dependencies/blocking` accepts `is_blocked` and answers each item's stored, transitive `is_blocked` flag (see that parameter) rather than silently answering `unknown_parameter`, and `issues.update.claim`, which announces that `PATCH /v0/beads/issues/{id}` accepts `claim` (see `UpdateIssueRequest`) and resolves the claimed id on both planes, so a wisp is claimable there, rather than a `400` naming the member unknown, and `issues.create.gates`, which announces that `POST /v0/beads/issues` and `issues:batchApply` create items accept the gate members `await_type`, `await_id`, `timeout` and `waiters` (see `CreateIssueRequest`), and `issues.update.gates`, which announces that `PATCH /v0/beads/issues/{id}`'s `patch` and an `issues:batchApply` update item's `patch` accept `await_id` and `waiters` (see `IssuePatchBody`), each rather than a `400` naming the member unknown. One behavior token is CONDITIONAL rather than build-level: `policy.external_dependencies` announces that this server's ready, claim, claim-next, close, blocking and dependency-tree operations already apply bd's external-dependency policy (an issue blocked by an unsatisfied `external:<project>:<capability>` dependency is neither ready, claimable nor closable without force). A server advertises it only when it enforces that policy; a client that sees it must not apply the policy again, and a client that does not see it applies the policy itself. The list grows additively, and an operation never appears here unless it is fully implemented. This is how a client checks for an operation or a behavior — never the version string.
 	//
 	// THIS LIST IS BUILD-LEVEL, NOT WORKSPACE-LEVEL, apart from the conditional `policy.external_dependencies` above, which depends on how this server composed its roles rather than on the build. It says which operations this binary serves, and for every entry but two that is the whole answer. `events.list` and `events.watch` are the exceptions: the durable events journal is a per-workspace setting that is OFF by default, so a server that advertises them may still refuse every request to both with 409 `events_journal_disabled` — correctly, because the operations exist and the workspace has no journal. A consumer of either MUST treat the capability as "this server speaks it" and the 409 as "not on this workspace", and must not read the capability as a promise that records will arrive.
 	Capabilities []string `json:"capabilities"`
@@ -1215,6 +1233,12 @@ type CreateIssueRequest struct {
 	Actor    string  `json:"actor"`
 	Assignee *string `json:"assignee,omitempty"`
 
+	// AwaitId The gate's condition identifier (a run id, a PR number, a `bead:<id>`). Opaque here; at most 255 characters, the stored column's width, and a longer value is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	AwaitId *string `json:"await_id,omitempty"`
+
+	// AwaitType The gate's await condition type (`gh:run`, `gh:pr`, `timer`, `human`, `bead`, or a formula-defined type). Free-form: there is no vocabulary, and any issue type may carry it, as a local create allows. At most 32 characters, the stored column's width; a longer value is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	AwaitType *string `json:"await_type,omitempty"`
+
 	// DeferUntil RFC 3339. The issue is hidden from ready work until then. Not nullable, for `estimated_minutes`' reason.
 	DeferUntil *time.Time `json:"defer_until,omitempty"`
 
@@ -1280,8 +1304,14 @@ type CreateIssueRequest struct {
 	// Status The status the issue is created in, from this workspace's own configured vocabulary. Absent means the workspace's own default, which is `open` today — unlike `issue_type`, the role fills this one in before it validates.
 	Status *string `json:"status,omitempty"`
 
+	// Timeout The gate's timeout in NANOSECONDS, the encoding `Issue.timeout` reads back. A negative value is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	Timeout *int64 `json:"timeout,omitempty"`
+
 	// Title The issue's title. Must not be blank after trimming.
 	Title string `json:"title"`
+
+	// Waiters The addresses woken when the gate clears, stored as sent: duplicates are kept and nothing is trimmed, as a local create stores them. The list's JSON encoding must fit the stored TEXT column (65535 bytes); a larger one is a `400` naming this member. Requires the behavior token `issues.create.gates`.
+	Waiters *[]string `json:"waiters,omitempty"`
 
 	// WaitsFor A typed `waits-for` edge from the new issue to a spawner whose children gate it. It records a readiness primitive; it does not define scheduling or execution policy.
 	//
@@ -1467,6 +1497,30 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// HeartbeatIssueRequest defines model for HeartbeatIssueRequest.
+type HeartbeatIssueRequest struct {
+	// Actor The lease holder refreshing its lease, and the fence's subject. `ClaimRequest.actor`'s rules exactly: the server trims it, then refuses an empty result, anything longer than 256 BYTES (or 255 characters, the column's bound), and any control character including newline.
+	Actor string `json:"actor"`
+}
+
+// HeartbeatIssueResponse defines model for HeartbeatIssueResponse.
+type HeartbeatIssueResponse struct {
+	// HeartbeatAt The server clock, in UTC, the refresh stamped on the lease.
+	HeartbeatAt time.Time `json:"heartbeat_at"`
+
+	// Holder The lease holder after the refresh (the request's `actor`).
+	Holder string `json:"holder"`
+
+	// Id The issue whose lease was refreshed.
+	Id string `json:"id"`
+
+	// LeaseExpiresAt `heartbeat_at` plus the server's lease TTL: the deadline the next heartbeat must beat before a reclaim may revert the claim.
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
+
+	// Rearmed True when the actor held the claim but no lease row existed for it (a claim hand-doled through `updateIssue`), so the heartbeat granted a fresh lease instead of refreshing one. A re-arm is recorded as a mutation of the issue: its `revision` is reminted, `updated_at` moves and an event is recorded, so re-read the issue before a guarded write. False for every refresh, which writes only the lease.
+	Rearmed bool `json:"rearmed"`
+}
+
 // Issue A tracked work item. Property semantics documented here apply to every schema that repeats them below.
 type Issue = types.Issue
 
@@ -1519,6 +1573,9 @@ type IssuePatchBody struct {
 	//
 	// `{id}:claim` remains the operation that ACQUIRES work: it carries its own eligibility rules and sets the status with the assignee in one act. This member is the raw write, fenced.
 	Assignee *string `json:"assignee,omitempty"`
+
+	// AwaitId Replaces the gate's condition identifier; the empty string clears it. Not nullable. At most 255 characters, the stored column's width; a longer value is a `400` naming this member. Requires the behavior token `issues.update.gates`.
+	AwaitId *string `json:"await_id,omitempty"`
 
 	// DeferUntil RFC 3339. Explicit `null` CLEARS the deferral.
 	DeferUntil  *time.Time `json:"defer_until,omitempty"`
@@ -1577,6 +1634,9 @@ type IssuePatchBody struct {
 
 	// Title The issue's title. Must not be blank after trimming; the length bound is what the column holds.
 	Title *string `json:"title,omitempty"`
+
+	// Waiters A WHOLE-VALUE replacement of the gate's waiter list; `[]` clears it. Not nullable. Stored as sent (duplicates kept: deduplicating is the caller's, as `bd gate add-waiter` does). The list's JSON encoding must fit the stored TEXT column (65535 bytes); a larger one is a `400` naming this member. Requires the behavior token `issues.update.gates`.
+	Waiters *[]string `json:"waiters,omitempty"`
 }
 
 // IssueWithCounts An `Issue` plus relationship cardinalities. This is the element type of both `/v0/beads/ready` and `/v0/beads/issues`, matching what `bd ready --json` and `bd list --json` emit. Property semantics are documented on `Issue`.
@@ -1666,7 +1726,7 @@ type Problem struct {
 	// IT IS OPTIONAL. A refusal that could not name its blockers omits it and keeps the generic `detail`; absence means "this refusal did not name them", never "nothing blocks it". Re-read the issue's dependencies then.
 	Blockers *[]Blocker `json:"blockers,omitempty"`
 
-	// Code The stable machine-readable reason, and the ONLY member a client may dispatch on. v0's vocabulary: `invalid_argument` (400, also emitted by the Host-header middleware on any route), `invalid_cursor` (400), `unauthenticated` (401, only on a server configured with a token file), `not_found` (404), `already_claimed` (409), `not_claimable` (409), `not_closable` (409), `not_releasable` (409), `template_read_only` (409), `issue_pinned` (409), `not_assignee` (409), `dependency_cycle` (409), `dependency_exists` (409), `already_exists` (409), `precondition_failed` (409), `events_journal_disabled` (409), `events_journal_truncated` (410), `busy` (503), `db_unavailable` (503), `events_watch_saturated` (503), `internal` (500). Renaming or removing a status+code pair is a breaking change; ADDING one is not, so clients MUST default-branch on unknown values and fall back to the status class (unknown 4xx → client bug, fail loud; unknown 503 → retry per `Retry-After`; other unknown 5xx → server fault).
+	// Code The stable machine-readable reason, and the ONLY member a client may dispatch on. v0's vocabulary: `invalid_argument` (400, also emitted by the Host-header middleware on any route), `invalid_cursor` (400), `unauthenticated` (401, only on a server configured with a token file), `not_found` (404), `already_claimed` (409), `not_claimable` (409), `not_closable` (409), `not_releasable` (409), `lease_not_held` (409), `template_read_only` (409), `issue_pinned` (409), `not_assignee` (409), `dependency_cycle` (409), `dependency_exists` (409), `already_exists` (409), `precondition_failed` (409), `events_journal_disabled` (409), `events_journal_truncated` (410), `busy` (503), `db_unavailable` (503), `events_watch_saturated` (503), `internal` (500). Renaming or removing a status+code pair is a breaking change; ADDING one is not, so clients MUST default-branch on unknown values and fall back to the status class (unknown 4xx → client bug, fail loud; unknown 503 → retry per `Retry-After`; other unknown 5xx → server fault).
 	Code string `json:"code"`
 
 	// DeclaredLater With `invalid_argument` on a batch operation whose items may name each other: whether the unresolvable key IS declared by the request, at a LATER index.
@@ -1736,7 +1796,7 @@ type Problem struct {
 	// With `precondition_failed`: the body member carrying the guard that missed. It is the same spelling a 400 on the same operation would use, so a client reads one member to find the offending input whichever way the request was refused.
 	Param *string `json:"param,omitempty"`
 
-	// Reason With `invalid_argument`: `unknown_parameter` (this server does not know that parameter — version skew; degrade or fall back), `invalid_value` (the value is not one this server will act on: malformed, out of vocabulary, or — for `limit=0` under `--allow-non-loopback` — legal but refused in this server's configuration; `detail` says which), `project_mismatch` (the `Bd-Project-Id` header named a project this server does not serve — a document-level refusal like the Host-header 400, raised on every enforced route, and the one that carries `server_project_id`; see the document-level rule), or `wire_revision_unsupported` (the `Bd-Wire-Revision` header named a revision below `ContextResponse.min_client_wire_revision` — also a document-level refusal, raised on every route including the identity handshake, and the one that carries `min_wire_revision`; see the document-level rule and `ContextResponse.wire_revision`). Either way the recovery is to send something different, never to retry the same request. The set may grow; default-branch on unknown values.
+	// Reason With `invalid_argument`: `unknown_parameter` (this server does not know that parameter — version skew; degrade or fall back), `invalid_value` (the value is not one this server will act on: malformed, out of vocabulary, or — for `limit=0` under `--allow-non-loopback` — legal but refused in this server's configuration; `detail` says which), `project_mismatch` (the `Bd-Project-Id` header named a project this server does not serve — a document-level refusal like the Host-header 400, raised on every enforced route, and the one that carries `server_project_id`; see the document-level rule), or `wire_revision_unsupported` (the `Bd-Wire-Revision` header named a revision below `ContextResponse.min_client_wire_revision` — also a document-level refusal, raised on every route including the identity handshake, and the one that carries `min_wire_revision`; see the document-level rule and `ContextResponse.wire_revision`). Either way the recovery is to send something different, never to retry the same request. With `lease_not_held`: `ephemeral` (the id names a wisp, which is never leased; its `issue_status` may be `in_progress`). The set may grow; default-branch on unknown values.
 	Reason *string `json:"reason,omitempty"`
 
 	// RequestId Opaque correlation id for this request, echoed in the server's request log line. Never a dispatch key and never a retry key. (This server mints per-process ids that do not survive a restart; a deployment may substitute any identifier with the same log-correlation property, such as an edge trace id.)
@@ -2896,6 +2956,9 @@ type ClaimIssueJSONRequestBody = ClaimRequest
 
 // CloseIssueJSONRequestBody defines body for CloseIssue for application/json ContentType.
 type CloseIssueJSONRequestBody = CloseIssueRequest
+
+// HeartbeatIssueJSONRequestBody defines body for HeartbeatIssue for application/json ContentType.
+type HeartbeatIssueJSONRequestBody = HeartbeatIssueRequest
 
 // ReleaseIssueJSONRequestBody defines body for ReleaseIssue for application/json ContentType.
 type ReleaseIssueJSONRequestBody = ReleaseIssueRequest

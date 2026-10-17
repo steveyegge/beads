@@ -130,7 +130,9 @@ func TestRecordingIssueUseCaseCoversItsSurface(t *testing.T) {
 		"has no name for a deletion and the row is gone (hook_deleter.go, hookTrackingTransaction.DeleteIssue)"
 	leases := "lease and claim bookkeeping the DoltStorage plumbing fires no hook for: " +
 		"HookFiringStore overrides neither UnclaimIssue, UnclaimIssueIfAssignee, HeartbeatIssue nor " +
-		"ReclaimExpiredLeases, so `bd unclaim` and `bd heartbeat` run no script on either plumbing"
+		"ReclaimExpiredLeases, so `bd unclaim` runs no script on either plumbing, and neither does a " +
+		"heartbeat through these doors (`bd heartbeat` takes the Heartbeater role, whose re-arm records " +
+		"an update through RenewLease)"
 
 	assertPartition(t, "IssueUseCase", interfaceMethods(reflect.TypeOf((*domain.IssueUseCase)(nil)).Elem()),
 		reflect.TypeOf((*recordingIssueUC)(nil)), map[string]string{

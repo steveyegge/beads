@@ -155,7 +155,27 @@ func acquireEmbeddedLock(beadsDir string, serverMode bool) (util.Unlocker, error
 // keeps that true for the dolt.shared-server layer; the one deliberate
 // exception is BEADS_DOLT_SHARED_SERVER, which is machine-global in every
 // resolver in the tree (see sharedServerModeForWorkspace).
-func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (s storage.DoltStorage, err error) {
+func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
+	return openDoltStoreFromConfig(ctx, beadsDir, false)
+}
+
+// newExistingDoltStoreFromConfig is newDoltStoreFromConfig for a write routed
+// to another workspace (a prefix route or an auto-route, see
+// openRoutedTargetStore): it opens that workspace's database writable, but
+// refuses an embedded workspace that holds no database yet instead of creating
+// one there. The routed open runs before the lookup it serves, so a created
+// database would outlive an id that misses, and `bd bootstrap` would then take
+// the empty database for the real one and skip the clone from sync.remote. The
+// probe is embeddeddolt.HasRepository, the adapter's own marker check. A
+// server-mode open already refuses a missing database: it does not set
+// CreateIfMissing.
+func newExistingDoltStoreFromConfig(ctx context.Context, beadsDir string) (storage.DoltStorage, error) {
+	return openDoltStoreFromConfig(ctx, beadsDir, true)
+}
+
+// openDoltStoreFromConfig is the body of newDoltStoreFromConfig and
+// newExistingDoltStoreFromConfig; requireExisting selects the latter.
+func openDoltStoreFromConfig(ctx context.Context, beadsDir string, requireExisting bool) (s storage.DoltStorage, err error) {
 	defer func() { s, err = activateEventsJournalStore(beadsDir, s, err) }()
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
@@ -178,6 +198,12 @@ func newDoltStoreFromConfig(ctx context.Context, beadsDir string) (s storage.Dol
 	}
 	if effectiveServerMode(beadsDir, cfg) {
 		return dolt.NewFromConfig(ctx, beadsDir)
+	}
+	// Refuse before the sanitize migration below, which renames the legacy
+	// directory and rewrites metadata.json: a refused open writes nothing.
+	if requireExisting && !embeddeddolt.HasRepository(beadsDir) {
+		return nil, fmt.Errorf("embeddeddolt: no embedded database at %s; a routed write does not create one (run 'bd bootstrap' in that repository first)",
+			filepath.Join(beadsDir, "embeddeddolt"))
 	}
 	database := configfile.DefaultDoltDatabase
 	if cfg != nil {

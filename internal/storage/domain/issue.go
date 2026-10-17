@@ -122,6 +122,12 @@ type IssueSQLRepository interface {
 	// the same function the two store backends wrap. It is the publicops-typed
 	// counterpart to ReclaimExpiredLeases above, the way GetMany is to GetByIDs.
 	Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error)
+	// RenewLease runs the SHARED heartbeat body (issueops.ExecuteHeartbeatInTx)
+	// on this repository's transaction, which is how the unit-of-work provider
+	// reaches the same function the two store backends wrap. It is the
+	// publicops-typed counterpart to HeartbeatIssue above, the way Reclaim is
+	// to ReclaimExpiredLeases.
+	RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error)
 	WakeExpiredDefers(ctx context.Context) (issues, wisps int, err error)
 }
 
@@ -353,6 +359,14 @@ type IssueUseCase interface {
 	// IssueRepository.Reclaim for why it is a separate method from
 	// ReclaimExpiredLeases rather than a replacement for it.
 	Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error)
+	// RenewLease is the shape issueops.Heartbeater publishes; see
+	// IssueSQLRepository.RenewLease for why it is a separate method from
+	// Heartbeat rather than a replacement for it. A refresh writes only the
+	// ephemeral leases table, but a re-arm (HeartbeatResult.Rearmed) writes
+	// versioned rows, so the caller commits with uow.RunTxScoped and the
+	// tables issueops.LeaseRearmVersionCommit names, as the uow Heartbeater
+	// does — never with uow.RunTxEphemeral.
+	RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error)
 	WakeExpiredDefers(ctx context.Context) (issues, wisps int, err error)
 
 	CreateIssue(ctx context.Context, params CreateIssueParams, actor string) (CreateIssueResult, error)
@@ -1954,10 +1968,13 @@ func (u *issueUseCaseImpl) UnclaimIfAssignee(ctx context.Context, id, actor, exp
 	return nil
 }
 
-// Heartbeat refreshes the lease on an issue actor holds in_progress. The
-// write touches ONLY the ephemeral leases table (bd-lrgn1), so the caller
-// must run it under uow.RunTxEphemeral's no-Dolt-commit form — a heartbeat
-// mints no Dolt commit and no history in any mode (bd-aq0ql).
+// Heartbeat refreshes the lease on an issue actor holds in_progress. A
+// refresh touches ONLY the ephemeral leases table (bd-lrgn1) and needs no Dolt
+// commit. A re-arm (a live claim with no lease row the caller holds) is
+// recorded as a mutation in versioned tables, and this method cannot report
+// one, so never commit it with uow.RunTxEphemeral: take RenewLease, which
+// reports the re-arm, and commit as the Heartbeater role does
+// (uow.RunTxScoped with issueops.LeaseRearmVersionCommit).
 func (u *issueUseCaseImpl) Heartbeat(ctx context.Context, id, actor string) error {
 	if id == "" {
 		return fmt.Errorf("Heartbeat: id must not be empty")
@@ -1996,4 +2013,12 @@ func (u *issueUseCaseImpl) ReclaimExpiredLeases(ctx context.Context, olderThan t
 // no use-case-level concern layered on top of it.
 func (u *issueUseCaseImpl) Reclaim(ctx context.Context, request publicops.ReclaimRequest) (publicops.ReclaimResult, error) {
 	return u.issueRepo.Reclaim(ctx, request)
+}
+
+// RenewLease passes straight through to the repository with no pre-check and
+// no error-wrapping, Reclaim's reasoning: the request is fully validated inside
+// the shared body (issueops.ExecuteHeartbeatInTx), and the role's typed
+// refusals must reach the caller as the body built them.
+func (u *issueUseCaseImpl) RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error) {
+	return u.issueRepo.RenewLease(ctx, request)
 }

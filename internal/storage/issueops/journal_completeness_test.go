@@ -98,7 +98,16 @@ var mutationEntryPoints = []string{
 	"ClaimReadyIssueInTx",
 	"UnclaimIssueInTx",
 	"UnclaimIssueIfAssigneeInTx",
-	// HeartbeatIssueInTx is deliberately absent — see journalExemptMutations.
+	// The heartbeat family journals on its RE-ARM path only (a live claim
+	// with no lease row the caller holds: row_lock reminted, a lease granted,
+	// recorded as a mutation). Its REFRESH path writes only the clone-local
+	// leases table and still records nothing; the fast-path return in
+	// RenewLeaseInTx says why. The ruling that exempted the whole family
+	// changed when the re-arm became a mutation (it must collide with a racing
+	// release or close on row_lock), so the family is listed here.
+	"RenewLeaseInTx",
+	"HeartbeatIssueInTx",
+	"ExecuteHeartbeatInTx",
 	"ReclaimExpiredLeasesInTx",
 	// plane moves, graph edges, labels, comments, renames
 	"PromoteFromEphemeralInTx",
@@ -209,13 +218,7 @@ var beadDMLExemptions = map[string]string{
 // never are. TestExemptMutationsDoNotJournal pins the decision from the other
 // side — each must exist and must NOT emit — so re-adding an emit fails loudly
 // instead of silently reversing the ruling.
-var journalExemptMutations = map[string]string{
-	"HeartbeatIssueInTx": "high-frequency lease keepalive: writes only the clone-local `leases` table " +
-		"(lease-liveness state), never a durable bead field. Journaling it would put a full-snapshot " +
-		"write plus the shared seq-counter serialization on the hottest write in the fleet, and a replay " +
-		"consumer gains nothing — lease state is working-set-plane and expires on its own. Lease RECLAIM " +
-		"is the opposite case and does journal: it clears assignee and reverts status, which is durable.",
-}
+var journalExemptMutations = map[string]string{}
 
 // TestEveryMutationFunctionJournals parses this package's source, builds the
 // intra-package call graph, and asserts every mutation entry point either

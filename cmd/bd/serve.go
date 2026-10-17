@@ -320,6 +320,7 @@ func runServe() error {
 			GraphCounter:      roles.edgeCounter,
 			BatchGetter:       roles.batchGetter,
 			LeaseReclaimer:    roles.leaseReclaimer,
+			Heartbeater:       roles.heartbeater,
 			Relations:         roles.relations,
 			Commenter:         roles.commenter,
 			BlockingAnnotator: roles.blocking,
@@ -682,6 +683,7 @@ type serveRoleSource interface {
 	GraphCounter() (issueops.GraphCounter, error)
 	BatchGetter() (issueops.BatchGetter, error)
 	LeaseReclaimer() (issueops.LeaseReclaimer, error)
+	Heartbeater() (issueops.Heartbeater, error)
 	IssueRelations() (issueops.Relations, error)
 	Commenter() (issueops.Commenter, error)
 	BlockingAnnotator() (issueops.BlockingAnnotator, error)
@@ -750,6 +752,7 @@ func serveIssueRoles(src serveRoleSource, journalEnabled bool) (serveRoles, erro
 		{"graph counter", func() (err error) { roles.edgeCounter, err = src.GraphCounter(); return }},
 		{"batch getter", func() (err error) { roles.batchGetter, err = src.BatchGetter(); return }},
 		{"lease reclaimer", func() (err error) { roles.leaseReclaimer, err = src.LeaseReclaimer(); return }},
+		{"heartbeater", func() (err error) { roles.heartbeater, err = src.Heartbeater(); return }},
 		{"issue relations", func() (err error) { roles.relations, err = src.IssueRelations(); return }},
 		{"commenter", func() (err error) { roles.commenter, err = src.Commenter(); return }},
 		{"blocking annotator", func() (err error) { roles.blocking, err = src.BlockingAnnotator(); return }},
@@ -866,8 +869,12 @@ type serveRoles struct {
 	// leaseReclaimer is the stale-lease sweep behind
 	// POST /v0/beads/issues:reclaim. Its hook decorator WRAPS (a reclaim is an
 	// update per reverted row), which is why it comes off the peeled store with
-	// the releaser: bd serve runs no hooks.
+	// the releaser: bd serve runs no hooks. heartbeater, the lease refresh
+	// behind POST /v0/beads/issues/{id}:heartbeat, comes off the same store
+	// for the same reason: its decorator WRAPS too, firing on_update for a
+	// re-arm (a refresh fires nothing).
 	leaseReclaimer issueops.LeaseReclaimer
+	heartbeater    issueops.Heartbeater
 	relations      issueops.Relations
 	commenter      issueops.Commenter
 	blocking       issueops.BlockingAnnotator

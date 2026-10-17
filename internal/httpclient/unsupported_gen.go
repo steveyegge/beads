@@ -402,11 +402,6 @@ func (unsupportedDoltStorage) HasRemote(_ context.Context, _ string) (_ bool, er
 	return
 }
 
-func (unsupportedDoltStorage) HeartbeatIssue(_ context.Context, _ string, _ string) (err error) {
-	err = errUnsupported("HeartbeatIssue")
-	return
-}
-
 func (unsupportedDoltStorage) History(_ context.Context, _ string) (_ []*storage.HistoryEntry, err error) {
 	err = errUnsupported("History")
 	return
@@ -727,4 +722,4 @@ func (unsupportedDoltStorage) VersionReconciler() (_ issueops.VersionReconciler,
 	return
 }
 
-// NOTE: partial shell (142 of 201 methods generated; 59 left to this package's hand-written set).
+// NOTE: partial shell (141 of 204 methods generated; 63 left to this package's hand-written set).

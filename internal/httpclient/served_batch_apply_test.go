@@ -275,6 +275,13 @@ func TestServedBatchApplyAppliesTheDefaultPriority(t *testing.T) {
 	conformance.RunBatchApplyAppliesTheDefaultPriority(t, t.Context(), newServedBatchApplyFixture(t, "hbaprio"))
 }
 
+// TestServedBatchApplyCarriesTheGateMembers RUNS: the
+// served Config advertises issues.create.gates and issues.update.gates, and
+// this client sends the gate members on both create and update items.
+func TestServedBatchApplyCarriesTheGateMembers(t *testing.T) {
+	conformance.RunBatchApplyCarriesTheGateMembers(t, t.Context(), newServedBatchApplyFixture(t, "hbagate"))
+}
+
 // TestServedBatchApplyStampsSpawnerIDOnlyWhenNamed wires the dep_add
 // HasSpawner/ThreadID lineage conformance case onto the http leg (S5): a
 // served default Config always advertises CapBatchApplyDepAddLineage (it is

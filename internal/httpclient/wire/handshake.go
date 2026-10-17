@@ -107,6 +107,10 @@ var opCapability = map[string]string{
 	// with a typed capability error instead of dialing a path the older server
 	// would answer as a claim of an issue called ":reclaim".
 	OpReclaimIssues: "issues.reclaim",
+	// The lease refresh, dialed by httpHeartbeater. A server that predates it
+	// does not advertise the token, so Preflight refuses locally with a typed
+	// capability error rather than dialing a route the older server lacks.
+	OpHeartbeatIssue: "issues.heartbeat",
 	// The advance-a-molecule role (molecule.go) dials it when served and
 	// refuses before dialing when not; it never composes a client-side copy.
 	OpAdvanceMolecule: "issues.advanceMolecule",
@@ -276,6 +280,19 @@ const CapIssuesUpdatePersistence = "issues.update.persistence"
 // ErrUnsupported naming it.
 const CapIssuesUpdateClaim = "issues.update.claim"
 
+// CapIssuesCreateGates and CapIssuesUpdateGates are the behavior capabilities
+// announcing the gate members, spelled exactly as
+// httpapi's constants of the same names: await_type, await_id, timeout and
+// waiters on createIssue and batchApply create items, and await_id and
+// waiters on updateIssue's and batchApply update items' patch. The encoders
+// send the members only to a server advertising the matching token, and
+// refuse the request before the dial naming it otherwise
+// (W-CreateRequest.Gates; the retired W-IssuePatch.AwaitID).
+const (
+	CapIssuesCreateGates = "issues.create.gates"
+	CapIssuesUpdateGates = "issues.update.gates"
+)
+
 // CapIssuesCreateDefaultPriority is the behavior capability announcing that
 // the server stores the create default priority for an ABSENT `priority`
 // member on issues.create, issues.batchCreate and issues.batchApply create
@@ -436,6 +453,7 @@ var behaviorCapabilities = []string{
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapCloseAutoCloseMolecule, CapListSearch,
 	CapListNoAssignee, CapListTitle, CapListIDs, CapIssuesUpdatePersistence, CapBlockingIsBlocked, CapIssuesUpdateClaim,
+	CapIssuesCreateGates, CapIssuesUpdateGates,
 }
 
 // CapabilityFor reports the capability token gating op, and whether op is on

@@ -1849,6 +1849,11 @@ const (
 	// EventLeaseReclaimed records that a stale lease was reverted to ready by
 	// bd reclaim (dead-worker recovery). old_value is the previous owner.
 	EventLeaseReclaimed EventType = "lease_reclaimed"
+	// EventLeaseRearmed records that a heartbeat re-armed a claim that held no
+	// lease row (a claim hand-doled through a generic update): the lease was
+	// granted and row_lock reminted. new_value is the holder. A plain lease
+	// refresh records no event.
+	EventLeaseRearmed EventType = "lease_rearmed"
 )
 
 // ProvenanceEvent is one entry in the append-only provenance log: a typed

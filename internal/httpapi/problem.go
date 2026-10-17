@@ -113,6 +113,18 @@ const (
 	// distinction before then reads the row, which the operation description
 	// tells it to do for a safety reason rather than a taste one.
 	CodeNotReleasable Code = "not_releasable"
+	// CodeLeaseNotHeld is a heartbeat refused because the actor holds no live
+	// claim on the row: it is open, closed, released, reclaimed, moved off
+	// in_progress, or a wisp (wisps are never leased). The `issue_status`
+	// extension carries the status the refusing transaction observed, from
+	// *issueops.LeaseConflictError's typed field.
+	//
+	// It is MINTED rather than folded into CodeNotClaimable for
+	// CodeNotReleasable's reason: an open, unassigned row is the most claimable
+	// row a workspace has, and answering `not_claimable` about it would send a
+	// worker somewhere there is nothing to find. A FOREIGN holder is not this
+	// code: that is the claim's own `already_claimed`, naming the holder.
+	CodeLeaseNotHeld Code = "lease_not_held"
 	// CodeNotClosable is close policy refusing an unforced close: open
 	// children, or a live blocker. The open-children refusal carries the count
 	// in the `open_children` extension member, read inside the refusing
@@ -293,6 +305,7 @@ var codeStatus = map[Code]int{
 	CodeIssuePinned:      http.StatusConflict,
 	CodeNotAssignee:      http.StatusConflict,
 	CodeNotReleasable:    http.StatusConflict,
+	CodeLeaseNotHeld:     http.StatusConflict,
 	CodeDependencyCycle:  http.StatusConflict,
 	CodeDependencyExists: http.StatusConflict,
 	CodeAlreadyExists:    http.StatusConflict,
@@ -345,6 +358,12 @@ const (
 	// client built for a revision it no longer supports, never to retry the same
 	// request.
 	ReasonWireRevisionUnsupported Reason = "wire_revision_unsupported"
+	// ReasonEphemeral qualifies a 409 CodeLeaseNotHeld: the id names a wisp,
+	// which is never leased, so no claim on it can ever be heartbeaten. It is
+	// the typed form of issueops.LeaseConflictError.Ephemeral, so a client
+	// tells a wisp from an unclaimed issue without parsing `detail` (a wisp's
+	// `issue_status` can be in_progress).
+	ReasonEphemeral Reason = "ephemeral"
 )
 
 // staticDetail is the set of codes whose `detail` is FIXED, whatever the
@@ -505,6 +524,13 @@ const (
 	// row, and this one sweeps MANY leases on a clock's say-so and reports an id
 	// that was not a stale lease by leaving it out of `reclaimed`.
 	OpReclaimIssues = "reclaimIssues"
+	// OpHeartbeatIssue refreshes the lease on one issue the actor holds, behind
+	// issueops.Heartbeater: what `bd heartbeat` spells. It is NOT claimIssue
+	// repeated: a re-claim is idempotent for the holder WITHOUT extending the
+	// lease, and this extends the lease. A refresh writes nothing else — no
+	// revision, no version, no updated_at, no event; a re-arm (`rearmed`) is
+	// recorded as a mutation and writes each of them.
+	OpHeartbeatIssue = "heartbeatIssue"
 	// OpListRelatedIssues reads ONE issue's neighbors in a named direction,
 	// behind issueops.Relations. It is NOT listDependencies narrowed to one
 	// anchor: that operation answers the stored edge ROWS with their targets
@@ -764,6 +790,17 @@ var operationCodes = map[string][]Code{
 	// named a version of. Its only 400s are the role's own refusals and the
 	// handler's shape checks.
 	OpReclaimIssues: {CodeInvalidArgument, CodeUnauthenticated, CodeBusy, CodeDBUnavailable, CodeInternal},
+	// Two 409s, and they answer different questions. `already_claimed` is a
+	// live FOREIGN holder, in the claim's own shape: `assignee` names the
+	// holder and `issue_status` the status, both from the refusing
+	// transaction's *issueops.LeaseConflictError. `lease_not_held` is the
+	// actor holding no live claim at all, with `issue_status`. No
+	// precondition_failed: the fence is the holder, not a revision.
+	OpHeartbeatIssue: {
+		CodeInvalidArgument, CodeUnauthenticated, CodeNotFound,
+		CodeAlreadyClaimed, CodeLeaseNotHeld,
+		CodeBusy, CodeDBUnavailable, CodeInternal,
+	},
 	// The same vocabulary as the stored-edge read beside it, and no not_found
 	// for a stronger version of the same reason: this operation probes no id's
 	// existence at all, so there is nothing it could 404 on.
@@ -1145,6 +1182,15 @@ func (r Result) WithAssignee(assignee string) Result {
 // status at the moment of refusal). Same rule as WithAssignee.
 func (r Result) WithIssueStatus(status string) Result {
 	r.Problem.IssueStatus = &status
+	return r
+}
+
+// WithReason attaches the `reason` member to a refusal other than the 400
+// (InvalidArgument sets its own). Same rule as WithAssignee: it comes from the
+// typed error's own field, never from parsing the refusal's prose.
+func (r Result) WithReason(reason Reason) Result {
+	v := string(reason)
+	r.Problem.Reason = &v
 	return r
 }
 

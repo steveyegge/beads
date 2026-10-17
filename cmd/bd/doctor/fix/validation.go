@@ -140,6 +140,12 @@ func ChildParentDependencies(path string, verbose bool) error {
 	// Find child→parent BLOCKING dependencies where issue_id starts with depends_on_id + "."
 	// Only matches blocking types (blocks, conditional-blocks, waits-for) that cause deadlock.
 	// Excludes 'parent-child' type which is a legitimate structural hierarchy relationship.
+	// A parent's edge onto its own child (GH#4814) is not a target here: since
+	// gastownhall/beads#6506 it is a close gate. Where the cascade still locks
+	// the child out of ready work (a gate past its walk depth, or a child with
+	// a second parent, bd-eoxqs0), that is the cascade's limit, not a reason
+	// to drop the gate; see checkChildParentDependenciesDB in
+	// cmd/bd/doctor/validation.go.
 	//nolint:gosec // G202: fixDependencyUnionSQL returns a fixed internal SELECT fragment.
 	query := `
 		SELECT d.dep_table, d.issue_id, d.depends_on_id, d.type
