@@ -377,6 +377,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`bd gate discover` skips template gates, as `bd gate check` does.** A
+  template gh:run gate is a proto that work is poured from; on the direct,
+  proxied and embedded routes `bd gate discover` used to record a discovered
+  run ID on it, which every later pour copied. It is now left alone on every
+  route. `bd gate add-waiter` on a template gate is refused by the update
+  role's template guard, where the direct, proxied and embedded routes all
+  used to write the waiter.
+- **`bd gate create` refuses a negative `--timeout` on every route**
+  (`timeout cannot be negative`); the direct, proxied and embedded routes
+  used to store it. A `--type` longer than 32 characters fails with the same
+  typed validation error instead of a raw Dolt column error.
+- **`bd gate create` and `bd gate add-waiter` follow `dolt.auto-commit`
+  like every other role write.** Under `dolt.auto-commit=off` `bd gate
+  create` no longer makes its own Dolt commit on the direct and embedded
+  routes (the proxied route already did not). The Dolt commit messages are
+  the role's: `bd: create gate X blocking Y` becomes the create's default
+  message, and `bd gate add-waiter`'s becomes the update's (`bd: update X`
+  on the direct and embedded routes, `update issue` on the proxied route).
+  On the proxied route `bd gate create` no longer journals a
+  `dependency_added` event on the blocked issue, matching the direct route
+  and `bd create --deps`.
 - **Gate members are bounds-checked in the library, on every local backend.**
   `issueops.Lifecycle.Create`, `Lifecycle.Update` and `BatchApplier` (create
   and update items) now refuse, with a typed `*issueops.GateFieldError`
@@ -595,6 +616,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd gate create`, `bd gate add-waiter` and `bd gate discover` work over a
+  connected HTTP workspace.** They wrote through the legacy `CreateIssue`,
+  `AddDependency` and map-based `UpdateIssue`, which the HTTP store does not
+  implement, so each failed before any gate member reached the wire. They now
+  run through the library roles on every route:
+  - `bd gate create` is ONE `Lifecycle.Create` carrying the gate members and
+    a reverse `blocks` edge from the blocked issue to the new gate, so the
+    gate and its edge land atomically (one `createIssue` over HTTP, behind
+    `issues.create.gates`). The direct route used to make two writes and an
+    explicit commit; the proxied-server route now uses the same role.
+  - `bd gate add-waiter` reads the gate through `Reader.Get`, deduplicates,
+    and writes the whole waiter list through `Lifecycle.Update` guarded by
+    the row version it read. On a version mismatch it re-reads and retries
+    after a jittered, doubling backoff (10 ms up to 400 ms per wait, at most
+    20 writes), so a convoy of workers registering on one gate at once all
+    succeed. On the direct route concurrent adders used to lose
+    each other's waiters while every one exited 0; no waiter is lost now.
+    Over HTTP it needs `issues.update.gates`.
+  - `bd gate discover` lists through `issueops.ListGates` (as `bd gate check`
+    does) and records each discovered run ID through `Lifecycle.Update`, the
+    same `await_id` write `bd gate check` and `bd close` make. Over HTTP it
+    needs `issues.update.gates`. Its summary now counts only the gates whose
+    run ID was recorded, and it exits non-zero when any matched gate's write
+    failed (it used to report such a gate as updated and exit 0).
+
+  Against a server that does not advertise the token it needs, `bd gate
+  create` and `bd gate add-waiter` are refused before any write, naming the
+  token; `bd gate discover` writes nothing and reports the token as that
+  gate's error. The served corpus gains `mc-gate-create-timer`,
+  `mc-gate-check-timer-resolves`, `mc-gate-add-waiter` and
+  `mc-update-await-id` (pending until the reference server advertises the
+  gate tokens), pinned passing by `TestE2E_GatesOverHTTP`.
 - **`bd import` no longer reports a failed dependency check as a skipped
   dependency.** Import skips an edge the dependency checks refuse (a
   self-dependency, a cycle, or a blocker that is the issue's own ancestor or
