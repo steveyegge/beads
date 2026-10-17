@@ -728,6 +728,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The storage filter builder binds every time bound (`created_*`,
+  `updated_*`, `closed_*`, `started_*`, `defer_*`, `due_*`) as the UTC
+  spelling of its instant. An engine whose timestamp column carries no zone
+  drops a literal's offset, so a `+02:00` bound would have compared as that
+  wall clock; Dolt already honored the offset and `bd` resolves bounds to UTC,
+  so no answer changes here. A stale comment about a SQLite backend on the
+  keyset cursor binding is corrected.
+
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query

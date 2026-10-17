@@ -296,18 +296,23 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 		{"due_at", "<", filter.DueBefore},
 	} {
 		if tc.v != nil {
+			// The UTC spelling of the instant, at whole seconds. The columns
+			// hold UTC wall clock; an engine whose column carries no zone
+			// (a SQL `timestamp` WITHOUT time zone) drops a literal's offset,
+			// so a bound spelled `+02:00` would compare as that wall clock.
+			// Spelled in UTC, every engine compares the instant. Dolt already
+			// honors the offset, so this changes nothing there.
 			whereClauses = append(whereClauses, fmt.Sprintf("%s %s ?", tc.col, tc.op))
-			args = append(args, tc.v.Format(time.RFC3339))
+			args = append(args, tc.v.UTC().Format(time.RFC3339))
 		}
 	}
 
 	if filter.AfterCreatedAt != nil {
-		// Bind the cursor time as time.Time, not a formatted string: the issues/
-		// wisps created_at columns are DATETIME (NUMERIC affinity), so an RFC3339
-		// string parameter mis-compares on the SQLite backend, while a time.Time
-		// value compares correctly on every backend — the same binding EventsSince
-		// uses. It is bound twice under either order (the sargable upper bound
-		// and the strict bound), followed by the id tie-break.
+		// Bind the cursor time as time.Time, not a formatted string — the same
+		// binding EventsSince uses — so the driver carries the instant itself
+		// rather than a spelling of it. It is bound twice under either order
+		// (the sargable upper bound and the strict bound), followed by the id
+		// tie-break.
 		ac := *filter.AfterCreatedAt
 		// AfterCreatedAt alone decides that a position was supplied; AfterPriority
 		// decides which ORDER it is a position in. The two predicates are
