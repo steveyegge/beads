@@ -179,3 +179,105 @@ func TestServedLegacyGetBlockedIssuesThroughTheDecorator(t *testing.T) {
 		})
 	}
 }
+
+// TestServedBlockedListingFiltersExternalOnlyRowsByLabel pins the label filters
+// on the rows the decoration lists itself (blocked by nothing but an
+// unsatisfied external ref), which the listing's label query never saw: they
+// are judged by the same labels, wherever the policy is applied (the server's
+// decorator when the server advertises it, the client's otherwise), through
+// the role and the legacy door alike. A labelled row blocked locally rides
+// along, the query's own answer to the same filter.
+func TestServedBlockedListingFiltersExternalOnlyRowsByLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		env      func(*testing.T) *servedEnv
+		enforced bool
+	}{
+		{"server enforces", func(t *testing.T) *servedEnv { return newPolicyServedEnv(t, "bxs") }, true},
+		{"client enforces", func(t *testing.T) *servedEnv { return newServedEnv(t, "bxc") }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := tc.env(t)
+			ctx := t.Context()
+			if enforced, err := env.subject.ServerEnforcesExternalDependencyPolicy(ctx); err != nil || enforced != tc.enforced {
+				t.Fatalf("ServerEnforcesExternalDependencyPolicy = %v, %v; want %v", enforced, err, tc.enforced)
+			}
+			p := env.prefix
+			for i, seed := range []struct {
+				id     string
+				labels []string
+			}{
+				{"blocker", nil},
+				{"local", []string{"lane:a"}},
+				{"tagged", []string{"lane:a", "team:x"}},
+				{"bare", nil},
+			} {
+				if err := env.createIssue(ctx, &types.Issue{
+					ID: p + "-" + seed.id, Title: seed.id, Status: types.StatusOpen, Priority: i,
+					IssueType: types.TypeTask, Labels: seed.labels,
+				}, "seed"); err != nil {
+					t.Fatalf("seed %s: %v", seed.id, err)
+				}
+			}
+			for _, dep := range []*types.Dependency{
+				{IssueID: p + "-local", DependsOnID: p + "-blocker", Type: types.DepBlocks},
+				{IssueID: p + "-tagged", DependsOnID: "external:otherproj:payments", Type: types.DepBlocks},
+				{IssueID: p + "-bare", DependsOnID: "external:otherproj:billing", Type: types.DepBlocks},
+			} {
+				if err := env.addDependency(ctx, dep, "seed"); err != nil {
+					t.Fatalf("seed %s -> %s: %v", dep.IssueID, dep.DependsOnID, err)
+				}
+			}
+
+			decorated := externaldeps.New(env.subject, nil, nil)
+			lister, err := decorated.BlockedLister()
+			if err != nil {
+				t.Fatalf("decorated BlockedLister: %v", err)
+			}
+			for _, fc := range []struct {
+				name string
+				req  issueops.BlockedRequest
+				want []string
+			}{
+				{"no filter", issueops.BlockedRequest{}, []string{"bare", "local", "tagged"}},
+				{"label", issueops.BlockedRequest{Labels: []string{"lane:a"}}, []string{"local", "tagged"}},
+				{"labels are all required", issueops.BlockedRequest{Labels: []string{"lane:a", "team:x"}}, []string{"tagged"}},
+				{"label any", issueops.BlockedRequest{LabelsAny: []string{"lane:b", "team:x"}}, []string{"tagged"}},
+				{"exclude label", issueops.BlockedRequest{ExcludeLabels: []string{"lane:a"}}, []string{"bare"}},
+				{"label matching none", issueops.BlockedRequest{Labels: []string{"no-such-label"}}, []string{}},
+			} {
+				t.Run(fc.name, func(t *testing.T) {
+					want := make([]string, 0, len(fc.want))
+					for _, id := range fc.want {
+						want = append(want, p+"-"+id)
+					}
+					res, err := lister.ListBlocked(ctx, fc.req)
+					if err != nil {
+						t.Fatalf("ListBlocked: %v", err)
+					}
+					if got := sortedBlockedIDs(res.Items); !slices.Equal(got, want) {
+						t.Errorf("ListBlocked(%+v) = %v, want %v", fc.req, got, want)
+					}
+					legacy, err := decorated.GetBlockedIssues(ctx, types.WorkFilter{
+						Labels: fc.req.Labels, LabelsAny: fc.req.LabelsAny, ExcludeLabels: fc.req.ExcludeLabels,
+					})
+					if err != nil {
+						t.Fatalf("GetBlockedIssues: %v", err)
+					}
+					if got := sortedBlockedIDs(legacy); !slices.Equal(got, want) {
+						t.Errorf("GetBlockedIssues(%+v) = %v, want %v", fc.req, got, want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func sortedBlockedIDs(items []*types.BlockedIssue) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}

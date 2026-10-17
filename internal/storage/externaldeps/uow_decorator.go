@@ -358,20 +358,18 @@ func (u *issueUseCase) GetBlockedIssues(ctx context.Context, filter types.WorkFi
 			parentDeps[id] = append(parentDeps[id], deps...)
 		}
 	}
-	issues, err := u.IssueUseCase.GetIssuesByIDs(ctx, missing)
+	// GetMany reads both planes with labels hydrated, as the store decorator's
+	// reads do; GetIssuesByIDs here would leave Labels empty, so the label
+	// filter below could not judge these rows and they would print unlabelled.
+	issues, err := getManyChunked(ctx, u.IssueUseCase, missing)
 	if err != nil {
 		return nil, fmt.Errorf("external dependencies: load blocked sources: %w", err)
 	}
-	wisps, err := u.IssueUseCase.GetWispsByIDs(ctx, missing)
-	if err != nil {
-		return nil, fmt.Errorf("external dependencies: load blocked wisp sources: %w", err)
-	}
-	issues = append(issues, wisps...)
 	for _, issue := range issues {
 		if issue == nil || issue.Status == types.StatusClosed || issue.Status == types.StatusPinned {
 			continue
 		}
-		if !matchesParentFilter(issue.ID, filter.ParentID, parentDeps) {
+		if !matchesParentFilter(issue.ID, filter.ParentID, parentDeps) || !matchesLabelFilter(issue.Labels, filter) {
 			continue
 		}
 		refs := slices.Clone(state.refsByIssue[issue.ID])

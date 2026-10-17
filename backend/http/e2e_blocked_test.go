@@ -5,6 +5,7 @@ package bdhttp_test
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -37,9 +38,14 @@ func TestE2E_BlockedOverHTTP(t *testing.T) {
 		// the two workspaces differently.
 		kid := f.create("gate-kid", "-t", "task", "-p", "3")
 		tagged := f.create("tagged", "-t", "task", "-p", "1", "-l", "lane:a")
+		// Blocked by nothing but an unsatisfied external ref, as child-x is,
+		// and labelled: the decorator lists such rows itself, after the label
+		// query ran, so the filter arms must judge them too.
+		extTagged := f.create("ext-tagged", "-t", "task", "-p", "4", "-l", "lane:a")
 		f.mustRun(nil, "dep", "add", kid, gp, "--type", "parent-child")
 		f.mustRun(nil, "dep", "add", gp, blocker)
 		f.mustRun(nil, "dep", "add", tagged, blocker)
+		f.mustRun(nil, "dep", "add", extTagged, "external:other:cap")
 	}
 
 	local := newEmbeddedFixture(t, bin)
@@ -50,6 +56,7 @@ func TestE2E_BlockedOverHTTP(t *testing.T) {
 	for _, args := range [][]string{
 		{"blocked", "--json"},
 		{"blocked", "--json", "--label", "lane:a"},
+		{"blocked", "--json", "--label-any", "lane:a"},
 		{"blocked", "--json", "--exclude-label", "lane:a"},
 		{"blocked", "--json", "--parent", "{gate-parent}"},
 		{"blocked", "--json", "--label", "no-such-label"},
@@ -81,6 +88,43 @@ func TestE2E_BlockedOverHTTP(t *testing.T) {
 			t.Errorf("served bd blocked --json does not list child-x blocked by its external ref: %v", got)
 		}
 	})
+
+	// The arms above compare the two answers, which agree just as well when
+	// both list a row the filter rules out. These pin which rows each filter
+	// leaves, the external-only ones (child-x unlabelled, ext-tagged
+	// labelled) among them.
+	for _, tc := range []struct {
+		args          []string
+		want          []string // the whole listing, when set
+		listed, ruled []string
+	}{
+		{args: []string{"--label", "lane:a"}, want: []string{"ext-tagged", "tagged"}},
+		{args: []string{"--label-any", "lane:a"}, want: []string{"ext-tagged", "tagged"}},
+		{args: []string{"--label", "no-such-label"}, want: []string{}},
+		{args: []string{"--exclude-label", "lane:a"}, listed: []string{"child-x"}, ruled: []string{"ext-tagged", "tagged"}},
+	} {
+		t.Run("filters external-only rows "+strings.Join(tc.args, " "), func(t *testing.T) {
+			for _, f := range []struct {
+				name string
+				f    *remoteRolesFixture
+			}{{"local", local}, {"served", served}} {
+				got := f.f.titlesOf(f.f.mustRun(nil, append([]string{"blocked", "--json"}, tc.args...)...).stdout)
+				if tc.want != nil && !slices.Equal(got, tc.want) {
+					t.Errorf("%s bd blocked %s listed %v, want %v", f.name, strings.Join(tc.args, " "), got, tc.want)
+				}
+				for _, title := range tc.listed {
+					if !slices.Contains(got, title) {
+						t.Errorf("%s bd blocked %s does not list %s: %v", f.name, strings.Join(tc.args, " "), title, got)
+					}
+				}
+				for _, title := range tc.ruled {
+					if slices.Contains(got, title) {
+						t.Errorf("%s bd blocked %s lists %s, which the filter rules out: %v", f.name, strings.Join(tc.args, " "), title, got)
+					}
+				}
+			}
+		})
+	}
 
 	t.Run("older server mask", func(t *testing.T) {
 		proxyAddr, counter := startMaskingProxy(t, addr, mcContextMask)

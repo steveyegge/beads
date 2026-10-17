@@ -590,10 +590,12 @@ func (s *Store) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) (
 
 // decorateBlocked is GetBlockedIssues' decoration of an undecorated blocked
 // listing (base): unsatisfied external refs are added to each row's blockers,
-// and the sources blocked only by such refs are listed too. The two reads it
-// makes for those extra sources (their parent edges, when the filter names a
-// parent, and the rows themselves) are passed in, so the remote blocked
-// lister can make them through roles a served store answers.
+// and the sources blocked only by such refs are listed too, narrowed by the
+// same parent and label filters the base listing was. The two reads it makes
+// for those extra sources (their parent edges, when the filter names a
+// parent, and the rows themselves, labels hydrated as GetIssuesByIDs and
+// GetMany both hydrate them) are passed in, so the remote blocked lister can
+// make them through roles a served store answers.
 func (s *Store) decorateBlocked(
 	ctx context.Context,
 	filter types.WorkFilter,
@@ -650,6 +652,9 @@ func (s *Store) decorateBlocked(
 	}
 	for _, issue := range issues {
 		if issue == nil || issue.Status == types.StatusClosed || issue.Status == types.StatusPinned {
+			continue
+		}
+		if !matchesLabelFilter(issue.Labels, filter) {
 			continue
 		}
 		refs := slices.Clone(state.refsByIssue[issue.ID])
@@ -713,6 +718,32 @@ func matchesParentFilter(issueID string, parentID *string, allDeps map[string][]
 		}
 	}
 	return false
+}
+
+// matchesLabelFilter is the label half of the blocked body's filter
+// (sqlbuild.LabelSetClauses in issueops.GetBlockedIssuesInTx), for a row the
+// decoration adds after that query ran: every Labels entry present, at least
+// one LabelsAny entry present when any is named, and no ExcludeLabels entry
+// present. It compares with Go string equality, which is the SQL comparison
+// under the collation every beads table is created with (utf8mb4_0900_bin;
+// see issueops' createBatchCache).
+func matchesLabelFilter(labels []string, filter types.WorkFilter) bool {
+	for _, label := range filter.Labels {
+		if !slices.Contains(labels, label) {
+			return false
+		}
+	}
+	if len(filter.LabelsAny) > 0 && !slices.ContainsFunc(filter.LabelsAny, func(label string) bool {
+		return slices.Contains(labels, label)
+	}) {
+		return false
+	}
+	for _, label := range filter.ExcludeLabels {
+		if slices.Contains(labels, label) {
+			return false
+		}
+	}
+	return true
 }
 
 // IsBlocked includes explicit unsatisfied external blockers in the close guard.

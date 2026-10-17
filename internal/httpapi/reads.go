@@ -623,6 +623,11 @@ func (s *Server) acceptQuery(w http.ResponseWriter, r *http.Request, q *query) b
 // unlimited read buffers the whole active set and its JSON encoding inside one
 // shared process, which must not be reachable by arbitrary network peers.
 //
+// The blocked listing (handleListBlocked) never reaches this check: it takes
+// no limit at all, like `bd blocked`, so it answers its whole set on every
+// bind. That set is the blocked one, not the whole active one; see the
+// operation's description and engdocs/SERVE_RUNBOOK.md.
+//
 // The bind mode is deliberately NOT advertised in ContextResponse. A client
 // that wants an unlimited read asks for one and, on this 400, re-issues with
 // an explicit limit; it is a client-side fix, never a retry.

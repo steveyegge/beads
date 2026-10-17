@@ -286,10 +286,12 @@ const CapIssuesCreateGates = "issues.create.gates"
 const CapIssuesUpdateGates = "issues.update.gates"
 
 // CapExternalDependencies is the CONDITIONAL behavior capability announcing
-// that this server's ready, claim, claim-next, close, blocking-annotation and
-// dependency-tree operations already apply bd's external-dependency policy
-// (an issue blocked by an unsatisfied `external:<project>:<capability>`
-// dependency is not ready, not claimable and not closable without force). A
+// that this server's ready, blocked-listing, claim, claim-next, close,
+// blocking-annotation and dependency-tree operations already apply bd's
+// external-dependency policy (an issue blocked by an unsatisfied
+// `external:<project>:<capability>` dependency is not ready, not claimable and
+// not closable without force, and the blocked listing lists it with that
+// dependency among its blockers). A
 // client that sees it must pass those operations through untouched: running
 // the policy again on the client would judge it against the CLIENT machine's
 // project configuration and would turn the server's atomic claim-next into a

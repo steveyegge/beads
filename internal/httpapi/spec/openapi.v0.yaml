@@ -708,7 +708,9 @@ paths:
         else the parent. A row whose flag is set but which has neither is not
         listed. Where the server applies the external-dependency policy
         (`policy.external_dependencies`), an unsatisfied `external:` blocker is
-        added to the row's `blocked_by`.
+        added to the row's `blocked_by`, and a row blocked only by such refs
+        (neither closed nor pinned) is listed too, narrowed by the same
+        `parent` and label filters as every other row.
 
 
         Ordered by priority ascending, then `created_at` descending, then id.
@@ -8544,11 +8546,13 @@ components:
             `waiters` (see `IssuePatchBody`), each rather than a `400` naming
             the member unknown. One behavior token is
             CONDITIONAL rather than build-level: `policy.external_dependencies`
-            announces that this server's ready, claim, claim-next, close,
-            blocking and dependency-tree operations already apply bd's
-            external-dependency policy (an issue blocked by an unsatisfied
-            `external:<project>:<capability>` dependency is neither ready,
-            claimable nor closable without force). A server advertises it
+            announces that this server's ready, blocked-listing, claim,
+            claim-next, close, blocking and dependency-tree operations already
+            apply bd's external-dependency policy (an issue blocked by an
+            unsatisfied `external:<project>:<capability>` dependency is
+            neither ready, claimable nor closable without force, and the
+            blocked listing lists it with that dependency in its
+            `blocked_by`). A server advertises it
             only when it enforces that policy; a client that sees it must not
             apply the policy again, and a client that does not see it applies
             the policy itself. The

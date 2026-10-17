@@ -50,7 +50,8 @@ type BlockedResult struct {
 // nor pinned, else the parent. A row whose flag is set but which has neither
 // is not listed. Where the external-dependency policy applies, an unsatisfied
 // external: blocker is added to the row's blockers, and a row blocked only by
-// such refs is listed too.
+// such refs is listed too, narrowed by the request's parent and label filters
+// like every other row.
 //
 // IT IS NOT A PAGE. There is no limit and no cursor, like the local command,
 // and an answer is never truncated.

@@ -24,21 +24,28 @@ import (
 // against any other server the server's listing is decorated here, through
 // reads a served store answers (EdgeReader, BatchGetter). remoteBlockedLister
 // decides per call, since the handshake is read lazily, and a failed probe
-// fails the call rather than skipping the policy.
+// fails the call rather than skipping the policy. Unlike ReadyCounter's, the
+// remote lister keeps no local leg to fall back on, so no local lister is
+// built for it: the inner store's lister already carries the inner layers.
+// Nor is remoteBlockedLister wrapped again: with telemetry on, the inner
+// lister already carries its span around the server's listing, and wrapping
+// would nest a second span of the same name. The policy probe, and the
+// decoration against a server that leaves the policy to its clients, run
+// outside that span.
 func (s *Store) BlockedLister() (issueops.BlockedLister, error) {
-	lister, err := storageissueops.NewBlockedListerOver(s)
-	if err != nil {
-		return nil, err
-	}
-	if wrapper, ok := s.inner.(blockedListerWrapper); ok {
-		lister = wrapper.WrapBlockedLister(lister)
-	}
 	if s.rolesAreRemote() {
 		inner, err := s.inner.BlockedLister()
 		if err != nil {
 			return nil, err
 		}
 		return &remoteBlockedLister{inner: inner, policy: s}, nil
+	}
+	lister, err := storageissueops.NewBlockedListerOver(s)
+	if err != nil {
+		return nil, err
+	}
+	if wrapper, ok := s.inner.(blockedListerWrapper); ok {
+		lister = wrapper.WrapBlockedLister(lister)
 	}
 	return lister, nil
 }
@@ -75,8 +82,7 @@ func (l *remoteBlockedLister) ListBlocked(ctx context.Context, req issueops.Bloc
 }
 
 // remoteIssuesByIDs reads rows by id through the inner BatchGetter, which a
-// served store answers, in requests of at most issueops.MaxGetManyIDs ids. A
-// missing id is simply absent, as GetIssuesByIDs leaves it.
+// served store answers.
 func (s *Store) remoteIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -85,6 +91,14 @@ func (s *Store) remoteIssuesByIDs(ctx context.Context, ids []string) ([]*types.I
 	if err != nil {
 		return nil, err
 	}
+	return getManyChunked(ctx, getter, ids)
+}
+
+// getManyChunked reads rows by id through getter, in requests of at most
+// issueops.MaxGetManyIDs ids, both planes, labels hydrated (GetMany's one
+// hydration, the label filter's input). A missing id is simply absent, as
+// GetIssuesByIDs leaves it.
+func getManyChunked(ctx context.Context, getter issueops.BatchGetter, ids []string) ([]*types.Issue, error) {
 	var out []*types.Issue
 	for start := 0; start < len(ids); start += issueops.MaxGetManyIDs {
 		end := min(start+issueops.MaxGetManyIDs, len(ids))

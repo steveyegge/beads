@@ -666,6 +666,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
+  blocked only by an unsatisfied `external:` dependency.** The
+  external-dependency policy lists such a row itself, after the label query
+  has run, and it was listed whatever its labels; it is now narrowed by the
+  label filters like every other row, on every route. On the proxied-server
+  route such a row also printed with no labels; it now prints them.
 - **`bd gate add-waiter` survives contention the store gave up replaying.**
   It retried only a version miss, so a convoy adder failed when its guarded
   write ended in a serialization failure or deadlock the backend stopped

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -186,6 +187,44 @@ func TestProxiedServerBlocked(t *testing.T) {
 		}
 		if ids[outside.ID] {
 			t.Errorf("non-descendant %s leaked into --parent result", outside.ID)
+		}
+	})
+
+	t.Run("label_filters_apply_to_external_only_rows", func(t *testing.T) {
+		t.Parallel()
+		p := newSharedProxiedProject(t, bd, "bkl")
+		// A row blocked only by an unsatisfied external ref is listed by the
+		// unit-of-work decorator after the label query ran, so the filters
+		// must judge it by its own labels, read hydrated.
+		tagged := bdProxiedCreate(t, bd, p.dir, "Externally blocked, labelled", "-l", "lane:a")
+		bare := bdProxiedCreate(t, bd, p.dir, "Externally blocked, unlabelled")
+		for _, id := range []string{tagged.ID, bare.ID} {
+			if _, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "dep", "add", id, "external:otherproj:cap"); err != nil {
+				t.Fatalf("dep add %s external: %v\n%s", id, err, stderr)
+			}
+		}
+		for _, tc := range []struct {
+			args []string
+			want []string
+		}{
+			{nil, []string{tagged.ID, bare.ID}},
+			{[]string{"--label", "lane:a"}, []string{tagged.ID}},
+			{[]string{"--label-any", "lane:a"}, []string{tagged.ID}},
+			{[]string{"--exclude-label", "lane:a"}, []string{bare.ID}},
+		} {
+			got := bdProxiedBlockedJSON(t, bd, p, tc.args...)
+			ids := make([]string, 0, len(got))
+			for _, bi := range got {
+				ids = append(ids, bi.ID)
+				if bi.ID == tagged.ID && !slices.Equal(bi.Labels, []string{"lane:a"}) {
+					t.Errorf("bd blocked %v: %s prints labels %v, want [lane:a]", tc.args, bi.ID, bi.Labels)
+				}
+			}
+			slices.Sort(ids)
+			slices.Sort(tc.want)
+			if !slices.Equal(ids, tc.want) {
+				t.Errorf("bd blocked %v listed %v, want %v", tc.args, ids, tc.want)
+			}
 		}
 	})
 }
