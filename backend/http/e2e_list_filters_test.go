@@ -8,12 +8,16 @@ import (
 	"testing"
 )
 
-// listScopeShapes are the four maintainer-city `bd list` shapes S15b serves,
-// one per corpus shape (backend/http/corpus/testdata/corpus.yaml), with the
-// token each needs and the titles each must answer on the scope seed:
+// listScopeShapes are the tokened `bd list` shapes, with the token each needs
+// and the titles each must answer on the scope seed. Five are corpus shapes
+// (backend/http/corpus/testdata/corpus.yaml) and one pins the title fold:
 //   - gc-list-on-boot: gc's default on_boot hook, run on every agent boot;
 //   - gc-list-on-boot-workflow: the same recovery, workflow lane;
 //   - mc-list-title: the PR-intake formula's `--title "$SUBJECT"`;
+//   - gc-polecat-title-contains: the polecat pre-flight's open-bead lookup,
+//     `--title-contains "$SYMPTOM_KEY"`, folded onto `title`;
+//   - title-and-title-contains-equal (not a corpus shape): one value under
+//     both title flags is one `title`;
 //   - mc-list-id: the pr-review skill's `--id <ids>`.
 var listScopeShapes = []struct {
 	corpusID string

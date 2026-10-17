@@ -1502,7 +1502,8 @@ func TestServedReaderRefusesTheFiltersTheWireCannotCarry(t *testing.T) {
 // TestServedListTitleContainsAnswersWhatTitleAnswers: `bd list
 // --title-contains X` folds onto listIssues `title`, and the store compiles
 // both to the same case-insensitive substring predicate, so over the wire the
-// two flags answer the same rows, as do both flags set to one value.
+// two flags answer the same rows, as do both flags set to one value, in the
+// same or a different letter case.
 func TestServedListTitleContainsAnswersWhatTitleAnswers(t *testing.T) {
 	ctx := t.Context()
 	c, reader := servedReader(t)
@@ -1524,9 +1525,10 @@ func TestServedListTitleContainsAnswersWhatTitleAnswers(t *testing.T) {
 	}
 	want := []string{listID("tcmatch", "a"), listID("tcmatch", "b")}
 	for name, req := range map[string]issueops.ListRequest{
-		"title":                {TitleSearch: "LSTCMATCH"},
-		"title-contains":       {TitleContains: "LSTCMATCH"},
-		"both, the same value": {TitleSearch: "lstcmatch", TitleContains: "lstcmatch"},
+		"title":                        {TitleSearch: "LSTCMATCH"},
+		"title-contains":               {TitleContains: "LSTCMATCH"},
+		"both, the same value":         {TitleSearch: "lstcmatch", TitleContains: "lstcmatch"},
+		"both, differing only in case": {TitleSearch: "LSTCMATCH", TitleContains: "lstcmatch"},
 	} {
 		if got := answer(req); !slices.Equal(got, want) {
 			t.Errorf("%s: ids %v, want %v", name, got, want)

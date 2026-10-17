@@ -82,8 +82,10 @@ func (r httpReader) List(ctx context.Context, req issueops.ListRequest) (issueop
 // tokenedListFilters are the ListRequest members listIssues carries only on a
 // server advertising a behavior token of their own, each with that token:
 // `bd search`'s text (S26) and `bd list --title`, `--id` and `--no-assignee`
-// (S15b). Order decides which token a request carrying several names; each
-// refusal is complete on its own, so any order is honest.
+// (S15b). `--title-contains` has no entry: List folds it onto TitleSearch
+// first (encode.FoldTitleContains), so it is gated by issues.list.title.
+// Order decides which token a request carrying several names; each refusal is
+// complete on its own, so any order is honest.
 var tokenedListFilters = []struct {
 	token string
 	set   func(issueops.ListRequest) bool

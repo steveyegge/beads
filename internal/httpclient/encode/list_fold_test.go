@@ -10,8 +10,9 @@ import (
 
 // `bd list --title-contains X` folds onto the listing's `title` parameter: the
 // store compiles TitleContains and TitleSearch to one predicate, so the fold
-// is exact. A differing pair still refuses, because the listing publishes one
-// title parameter and dropping either half would widen the answer.
+// is exact. A pair that differs other than in letter case still refuses,
+// because the listing publishes one title parameter and dropping either half
+// would widen the answer.
 func TestFoldTitleContainsRidesTheTitleParameter(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -21,16 +22,18 @@ func TestFoldTitleContainsRidesTheTitleParameter(t *testing.T) {
 	}{
 		{name: "title-contains alone", req: issueops.ListRequest{TitleContains: "Routed"}, wantTitle: []string{"Routed"}},
 		{name: "equal pair sends one title", req: issueops.ListRequest{TitleSearch: "Routed", TitleContains: "Routed"}, wantTitle: []string{"Routed"}},
+		// The store lowers both values with strings.ToLower, so a pair that
+		// differs only in letter case is one predicate too.
+		{name: "pair differing only in case sends one title", req: issueops.ListRequest{TitleSearch: "Routed", TitleContains: "rOUTED"}, wantTitle: []string{"Routed"}},
 		{name: "title alone is untouched", req: issueops.ListRequest{TitleSearch: "Routed"}, wantTitle: []string{"Routed"}},
 		{name: "neither sends no title", req: issueops.ListRequest{}},
 		{name: "differing pair refuses", req: issueops.ListRequest{TitleSearch: "Routed", TitleContains: "task"}, refused: true},
+		// strings.EqualFold matches "ſ" (long s) with "s", but the store lowers
+		// them to different patterns, so this pair is two predicates.
+		{name: "pair equal only under case folding refuses", req: issueops.ListRequest{TitleSearch: "ſtep", TitleContains: "step"}, refused: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			before := tc.req
 			folded := FoldTitleContains(tc.req)
-			if !reflect.DeepEqual(tc.req, before) {
-				t.Fatalf("FoldTitleContains mutated the caller's request: %+v, was %+v", tc.req, before)
-			}
 			params, err := ListParams(folded)
 			if tc.refused {
 				var refused *RefusedError

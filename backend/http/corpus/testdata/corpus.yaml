@@ -312,6 +312,10 @@ shapes:
     source: gascity core formulas/mol-polecat-base.toml (list --title-contains --status a,b,c --json)
     args: [list, --title-contains, "Routed", --status, "open,in_progress,blocked", --json]
     pending: {slice: "SRV-1", reason: "--title-contains folds onto listIssues title behind issues.list.title, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListScopeFiltersOverHTTP); remove the mark when reference_server.json is upgraded"}
+  - id: gc-polecat-title-contains-closed-after
+    source: gascity core formulas/mol-polecat-base.toml (pre-flight 3d, list --title-contains --status closed --closed-after DATE --json)
+    args: [list, --title-contains, "closed task", --status, closed, --closed-after, "2000-01-01", --json]
+    pending: {slice: "SRV-1+list-closed-after", reason: "two refusals: against the reference server --title-contains folds onto listIssues title behind issues.list.title, which it does not advertise, so the client refuses before dialing; past that, listIssues publishes no closed_after parameter, so the encoder refuses --closed-after (E-ListRequest.ClosedAfter); remove the mark when reference_server.json is upgraded and listIssues carries closed_after"}
   - id: mc-list-assignee-status
     source: mc review summaries (list --assignee --json --limit --status)
     args: [list, --assignee, alice, --json, --limit, "10", --status, open]

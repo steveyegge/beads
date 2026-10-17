@@ -114,7 +114,7 @@ func listRequestRows() []Row {
 		listRefusal("LabelRegex", "a regex label filter refuses",
 			noWireList+" — as for LabelPattern, listReadyWork publishes label_regex and the listing does not"),
 		listRefusal("TitleContains", "a title substring that differs from the title filter refuses",
-			"listIssues publishes one title parameter. A TitleContains alone, or equal to TitleSearch, is folded onto `title` before encoding (FoldTitleContains: both compile to the same LOWER(title) LIKE predicate), so only a pair that differs reaches this row, and sending either half alone would answer a wider listing"),
+			"listIssues publishes one title parameter. A TitleContains alone, or equal to TitleSearch once both are lowered, is folded onto `title` before encoding (FoldTitleContains: both compile to the same LOWER(title) LIKE predicate on the strings.ToLower of the value), so only a pair that still differs reaches this row, and sending either half alone would answer a wider listing"),
 		listRefusal("DescContains", "a description substring filter refuses", noWireList),
 		listRefusal("NotesContains", "a notes substring filter refuses", noWireList),
 		listRefusal("ExternalContains", "an external-ref substring filter refuses", noWireList),

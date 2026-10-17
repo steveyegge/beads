@@ -345,9 +345,10 @@ func listTable() Table {
 			param("ExcludeLabels", "exclude_label"),
 			refused("LabelPattern", "E-ListRequest.LabelPattern"),
 			refused("LabelRegex", "E-ListRequest.LabelRegex"),
-			// A TitleContains alone or equal to TitleSearch never reaches the
-			// encoder: httpReader.List folds it onto `title` first
-			// (FoldTitleContains). What is left is a pair that differs.
+			// A TitleContains alone, or equal to TitleSearch up to letter
+			// case, never reaches the encoder: httpReader.List folds it onto
+			// `title` first (FoldTitleContains). What is left is a pair that
+			// differs.
 			refused("TitleContains", "E-ListRequest.TitleContains"),
 			refused("DescContains", "E-ListRequest.DescContains"),
 			refused("NotesContains", "E-ListRequest.NotesContains"),

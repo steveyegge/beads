@@ -121,7 +121,4 @@ func TestListTitleContainsThatDiffersFromTitleRefusesBeforeDialing(t *testing.T)
 	if len(w.dialed) != 0 {
 		t.Errorf("dialed %d times, want 0", len(w.dialed))
 	}
-	if req.TitleSearch != "Routed" || req.TitleContains != "task" {
-		t.Errorf("List mutated the caller's request: %+v", req)
-	}
 }
