@@ -15,9 +15,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/httpclient"
+	"github.com/steveyegge/beads/internal/httpclient/wire"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
+	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/issueops"
@@ -296,11 +298,33 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 // the bound carries at least that many simultaneous adders; the jitter
 // spreads them further. The waits themselves add up to at most about 6s, and
 // a gate rewritten without pause still fails after the last attempt.
+//
+// A busy server's Retry-After raises one wait to what it asked for, but never
+// past gateAddWaiterRetryAfterCap (see gateAddWaiterRetryWait), so a busy
+// server can stretch the waits to at most about 40s in all.
 const (
-	gateAddWaiterMaxAttempts = 20
-	gateAddWaiterBackoffBase = 10 * time.Millisecond
-	gateAddWaiterBackoffCap  = 400 * time.Millisecond
+	gateAddWaiterMaxAttempts   = 20
+	gateAddWaiterBackoffBase   = 10 * time.Millisecond
+	gateAddWaiterBackoffCap    = 400 * time.Millisecond
+	gateAddWaiterRetryAfterCap = 2 * time.Second
 )
+
+// gateAddWaiterRetryWait is the wait before retry number retry after the
+// failed write err: the jittered backoff, raised to the server's Retry-After
+// when err is a busy answer that carries one, capped at
+// gateAddWaiterRetryAfterCap. bd serve sends Retry-After on its busy answers
+// (1s when its admission limiter is saturated, 5s when its transaction retry
+// budget is spent); honoring it, capped, spares a saturated server most of a
+// convoy's twenty quick re-dials without letting one header park an adder for
+// long.
+func gateAddWaiterRetryWait(retry int, err error) time.Duration {
+	wait := gateAddWaiterBackoff(retry)
+	var problem *wire.ProblemError
+	if errors.Is(err, wire.ErrBusy) && errors.As(err, &problem) && problem.RetryAfter > wait {
+		wait = min(problem.RetryAfter, gateAddWaiterRetryAfterCap)
+	}
+	return wait
+}
 
 // gateAddWaiterBackoff is the wait before retry number retry (1-based):
 // jittered in [d/2, d) around d = base * 2^(retry-1), capped.
@@ -345,7 +369,7 @@ func addGateWaiter(ctx context.Context, reader issueops.Reader, lifecycle issueo
 	attempts := 0
 	for attempts < gateAddWaiterMaxAttempts {
 		if attempts > 0 {
-			if err := gateAddWaiterSleep(ctx, gateAddWaiterBackoff(attempts)); err != nil {
+			if err := gateAddWaiterSleep(ctx, gateAddWaiterRetryWait(attempts, lastErr)); err != nil {
 				return false, fmt.Errorf("updating gate: %w", err)
 			}
 		}
@@ -376,12 +400,40 @@ func addGateWaiter(ctx context.Context, reader issueops.Reader, lifecycle issueo
 		if err == nil {
 			return true, nil
 		}
-		if !errors.Is(err, issueops.ErrVersionMismatch) {
+		if !gateAddWaiterLostRound(err) {
 			return false, fmt.Errorf("updating gate: %w", err)
 		}
 		lastErr = err
 	}
 	return false, fmt.Errorf("updating gate: %s changed on every one of %d attempts: %w", gateID, attempts, lastErr)
+}
+
+// gateAddWaiterLostRound reports whether a failed guarded write is a lost
+// round the loop retries: a version miss, or contention the store gave up
+// replaying. On a SERIALIZABLE store (Postgres) the role envelope replays a
+// serialization failure or deadlock a bounded number of times and then
+// returns it (a rolled-back transaction); over HTTP bd serve answers a
+// refused admission or a spent retry budget as 503 busy (wire.ErrBusy).
+//
+// Retrying is safe because of how a round is built, NOT because every busy
+// answer means nothing was written. bd serve's own busy answers are no-write,
+// but the client maps any 503 to wire.ErrBusy, and a gateway in front of the
+// server can answer 503 after the write committed. Each round re-reads the
+// gate, deduplicates, and writes the whole list guarded by the row version it
+// read, so a write that did land is found on the re-read (the waiter is
+// already there: nothing more is written) and a stale list can never
+// overwrite a newer one. So a retry never adds a waiter twice and never
+// drops another adder's.
+//
+// Everything else is returned at once, including the classes a retry would
+// also survive but that are not contention: a refusal, a database bd serve
+// cannot reach (wire.ErrDBUnavailable), and a server fault such as an
+// indeterminate commit (wire.ErrServerFault, a 500). Those are for the caller
+// to see, not for a convoy loop to hammer twenty times.
+func gateAddWaiterLostRound(err error) bool {
+	return errors.Is(err, issueops.ErrVersionMismatch) ||
+		uow.IsSerializationError(err) ||
+		errors.Is(err, wire.ErrBusy)
 }
 
 // renderGateWaiterAlready and renderGateWaiterAdded are shared by the direct

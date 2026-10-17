@@ -616,6 +616,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd gate add-waiter` survives contention the store gave up replaying.**
+  It retried only a version miss, so a convoy adder failed when its guarded
+  write ended in a serialization failure or deadlock the backend stopped
+  replaying (Dolt/MySQL 1213/1205, Postgres 40001/40P01), or, over HTTP, in a
+  503 busy. Those are now retried like a version miss, under the same
+  jittered backoff and 20-write bound, and a busy answer's Retry-After raises
+  that round's wait, capped at 2s. The retry is safe because every round
+  re-reads the gate, deduplicates and writes the whole list guarded by the
+  version it read: a 503 is not proof that nothing was written (a gateway can
+  answer one after the commit), and a write that did land is found on the
+  re-read, so the waiter is never added twice. A server fault (500) and an
+  unreachable database are still returned at once.
 - `bd list --title-contains X` works against an HTTP workspace. The client
   folds it onto the listing's existing `title` parameter (the store compiles
   both flags to the same case-insensitive substring predicate), so it needs
