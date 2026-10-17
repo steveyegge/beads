@@ -284,6 +284,11 @@ type ListRequest struct {
 	// On the ReadyFlag arm neither applies: that set decides pinned for itself,
 	// which is why PinnedFlag is refused there and NoPinnedFlag merely accepted
 	// (see AllFlag).
+	//
+	// The two together are a contradiction and are refused with ErrValidation
+	// on every route, the way `bd list --pinned --no-pinned` refuses: no
+	// answer is both only-flagged and only-unflagged, and letting one win
+	// would answer a question the caller did not ask.
 	PinnedFlag       bool
 	NoPinnedFlag     bool
 	IncludeTemplates bool

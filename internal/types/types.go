@@ -931,6 +931,10 @@ func ValidMolTypeNames() string {
 	return joinNamesWithOr(validMolTypes)
 }
 
+// ValidMolTypes returns the accepted non-empty mol-type values, in canonical
+// order, as a copy the caller may keep.
+func ValidMolTypes() []MolType { return slices.Clone(validMolTypes) }
+
 // WispType categorizes ephemeral wisps for TTL-based compaction (gt-9br)
 type WispType string
 
@@ -969,6 +973,10 @@ func (w WispType) IsValid() bool {
 func ValidWispTypeNames() string {
 	return joinNamesWithOr(validWispTypes)
 }
+
+// ValidWispTypes returns the accepted non-empty wisp-type values, in canonical
+// order, as a copy the caller may keep.
+func ValidWispTypes() []WispType { return slices.Clone(validWispTypes) }
 
 // StorageClass is the create-selected marker for a record's history and
 // replication contract. Persistence plane transitions preserve the marker

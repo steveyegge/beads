@@ -103,48 +103,23 @@ func readyRequestRows() []Row {
 // longest population in the ledger, and deliberately so: `bd list` publishes
 // far more filters than the v0 listing does, and every one of them is a set
 // this client would widen if it dropped it.
+//
+// [Retired: the twenty-nine filter rows that stood here — the spec prefix, the
+// label pattern/regex, the four text and two external-ref matches, the eight
+// updated/closed/defer/due bounds, the priority triple, EmptyDesc, NoLabels,
+// NoParent, ExcludeTypes, the pinned pair, the mol/wisp types and the
+// deferred/overdue predicates. listIssues publishes every one of them behind
+// the issues.list.filters behavior token, the encoder sends them (listTable
+// maps each to its parameter), and httpReader.List refuses a request carrying
+// one against a server that does not advertise the token, before dialing and
+// naming the token, so none of them can be dropped. What is left below is the
+// part of the vocabulary that is a different question (ReadyFlag), a different
+// projection (IncludeComments) or a page shape (Offset).]
 func listRequestRows() []Row {
 	listRefusal := func(field, what, why string) Row {
 		return refusal("E-ListRequest."+field, tyListRequest, field, what, why, fieldSpec)
 	}
 	rows := []Row{
-		listRefusal("SpecPrefix", "a spec-id prefix restriction refuses", noWireList),
-		listRefusal("LabelPattern", "a glob label filter refuses",
-			noWireList+" — listReadyWork does publish label_pattern, which is exactly why the absence here has to refuse rather than fall through"),
-		listRefusal("LabelRegex", "a regex label filter refuses",
-			noWireList+" — as for LabelPattern, listReadyWork publishes label_regex and the listing does not"),
-		listRefusal("TitleContains", "a title substring that differs from the title filter refuses",
-			"listIssues publishes one title parameter. A TitleContains alone, or equal to TitleSearch once both are lowered, is folded onto `title` before encoding (FoldTitleContains: both compile to the same LOWER(title) LIKE predicate on the strings.ToLower of the value), so only a pair that still differs reaches this row, and sending either half alone would answer a wider listing"),
-		listRefusal("DescContains", "a description substring filter refuses", noWireList),
-		listRefusal("NotesContains", "a notes substring filter refuses", noWireList),
-		listRefusal("ExternalContains", "an external-ref substring filter refuses", noWireList),
-		listRefusal("ExternalRef", "an exact external-ref filter refuses", noWireList),
-		listRefusal("UpdatedAfter", "an updated-after bound refuses", noWireList+" — only the created bounds are published"),
-		listRefusal("UpdatedBefore", "an updated-before bound refuses", noWireList+" — only the created bounds are published"),
-		listRefusal("ClosedAfter", "a closed-after bound refuses", noWireList),
-		listRefusal("ClosedBefore", "a closed-before bound refuses", noWireList),
-		listRefusal("DeferAfter", "a defer-after bound refuses", noWireList),
-		listRefusal("DeferBefore", "a defer-before bound refuses", noWireList),
-		listRefusal("DueAfter", "a due-after bound refuses", noWireList),
-		listRefusal("DueBefore", "a due-before bound refuses", noWireList),
-		listRefusal("EmptyDesc", "the empty-description predicate refuses", noWireList),
-		listRefusal("NoLabels", "the no-labels predicate refuses", noWireList),
-		listRefusal("Priority", "an exact priority filter refuses",
-			noWireList+" — listReadyWork publishes `priority`; the listing does not"),
-		listRefusal("PriorityMin", "a minimum-priority bound refuses", noWireList),
-		listRefusal("PriorityMax", "a maximum-priority bound refuses", noWireList),
-		listRefusal("PinnedFlag", "selecting the pinned-FLAG rows refuses",
-			noWireList+". The pinned STATUS is reachable through `status`; the flag is a separate predicate at any status and has no parameter"),
-		listRefusal("NoPinnedFlag", "holding the unflagged predicate in place refuses",
-			noWireList+". It changes nothing on a default listing and NARROWS under `all` or a pinned/hooked status — which is precisely when dropping it would widen the answer"),
-		listRefusal("ExcludeTypes", "a type exclusion refuses",
-			noWireList+" — listReadyWork publishes exclude_type; the listing publishes only the four include_* toggles"),
-		listRefusal("NoParent", "the top-level-only predicate refuses", noWireList),
-		listRefusal("MolType", "a molecule-type restriction refuses", noWireList),
-		listRefusal("WispType", "a wisp-type restriction refuses",
-			noWireList+". The listing now ADMITS the wisp plane — include_ephemeral landed upstream and the encoder sends it (L1 retired) — so this refusal is no longer redundant with an invisible plane: it is the only thing standing between a caller and a listing that returns every wisp type when they named one"),
-		listRefusal("DeferredFlag", "the deferred predicate refuses", noWireList),
-		listRefusal("OverdueFlag", "the overdue predicate refuses", noWireList),
 		listRefusal("ReadyFlag", "switching a listing onto the ready set refuses",
 			"ReadyFlag is not a filter but a change of QUESTION: it selects the blocker-aware ready query, which reads a narrower filter vocabulary than a ListRequest can describe. Over the wire that question is listReadyWork, a different operation with a different parameter table. "+
 				"Routing it there would have to decide, silently, which of this request's fields survive the crossing — so v1 refuses and the retirement path is an explicit route in the store, not a re-encode here"),

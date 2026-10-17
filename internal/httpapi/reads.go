@@ -392,6 +392,7 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 
 		Limit: q.limit(),
 	}
+	listFilterParams(q, &req)
 
 	// THE ORDER AND THE CURSOR ARE ONE DECISION. Each served order is a keyset
 	// contract — its own position shape and its own strictly-after predicate —
@@ -459,6 +460,102 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, body)
+}
+
+// listFilterParams decodes the rest of `bd list`'s filter vocabulary, the
+// members behind issues.list.filters (CapIssuesListFilters), into the request
+// the Reader role reads.
+//
+// It is DECODE ONLY. Every member reaches the role as the value the caller
+// sent, and workapi.BuildListFilter stays the one interpreter: how PinnedFlag
+// meets AllFlag and Status, what a type exclusion normalizes to, what a bound
+// compares against — all of that is the role's, on every route. The names are
+// countIssues' wherever that operation already spells the member (countFilters
+// above), so the same filter has one name on both operations.
+//
+// The two closed vocabularies are refused HERE with a 400 naming the
+// parameter, as `bd list --mol-type` / `--wisp-type` refuse at the CLI: the
+// role would match nothing for an unknown value, which a caller would read as
+// "no such rows" rather than "no such type".
+//
+// It is a function of its own, beside countFilters, so a test can drive it
+// over an empty query and read back the exact parameter set it asks for.
+func listFilterParams(q *query, req *issueops.ListRequest) {
+	req.TitleContains = q.str("title_contains")
+	req.DescContains = q.str("desc_contains")
+	req.NotesContains = q.str("notes_contains")
+	req.ExternalContains = q.str("external_contains")
+	req.ExternalRef = q.str("external_ref")
+	req.SpecPrefix = q.str("spec")
+	req.LabelPattern = q.str("label_pattern")
+	req.LabelRegex = q.str("label_regex")
+
+	req.UpdatedAfter = q.timestamp("updated_after")
+	req.UpdatedBefore = q.timestamp("updated_before")
+	req.ClosedAfter = q.timestamp("closed_after")
+	req.ClosedBefore = q.timestamp("closed_before")
+	req.DeferAfter = q.timestamp("defer_after")
+	req.DeferBefore = q.timestamp("defer_before")
+	req.DueAfter = q.timestamp("due_after")
+	req.DueBefore = q.timestamp("due_before")
+
+	req.Priority = q.integer("priority")
+	req.PriorityMin = q.integer("priority_min")
+	req.PriorityMax = q.integer("priority_max")
+
+	req.EmptyDesc = q.boolean("empty_description")
+	req.NoLabels = q.boolean("no_labels")
+	req.NoParent = q.boolean("no_parent")
+	req.ExcludeTypes = q.list("exclude_type")
+
+	req.PinnedFlag = q.boolean("pinned")
+	req.NoPinnedFlag = q.boolean("no_pinned")
+	req.DeferredFlag = q.boolean("deferred")
+	// `now` is THIS server's clock: the role compares due_at against the time
+	// the query runs, which over http is the server's rather than the
+	// invoking process's. The document says so on the parameter.
+	req.OverdueFlag = q.boolean("overdue")
+
+	if v, ok := closedEnum(q, "mol_type", molTypeNames()); ok {
+		mt := issueops.MolType(v)
+		req.MolType = &mt
+	}
+	if v, ok := closedEnum(q, "wisp_type", wispTypeNames()); ok {
+		wt := issueops.WispType(v)
+		req.WispType = &wt
+	}
+}
+
+// closedEnum reads an optional closed-vocabulary parameter. PRESENT-BUT-EMPTY
+// is refused with the unknown values rather than read as absent: an empty
+// pointer member on the role is a real empty-string predicate, so a client that sent
+// one and saw it treated as absent would get the wider listing.
+func closedEnum(q *query, name string, allowed []string) (string, bool) {
+	if !q.has(name) {
+		return "", false
+	}
+	v := q.oneOf(name, "", allowed...)
+	if v == "" {
+		q.invalid(name, fmt.Sprintf("an empty value is not one of %s", strings.Join(allowed, ", ")))
+		return "", false
+	}
+	return v, true
+}
+
+// molTypeNames and wispTypeNames are the closed vocabularies mol_type and
+// wisp_type accept, read off the types package's own lists so the spec's enum
+// (held equal by TestListFilterEnumsMatchTheTypesVocabulary) and this server
+// cannot drift from what `bd list` validates.
+func molTypeNames() []string { return enumNames(types.ValidMolTypes()) }
+
+func wispTypeNames() []string { return enumNames(types.ValidWispTypes()) }
+
+func enumNames[T ~string](vals []T) []string {
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		out[i] = string(v)
+	}
+	return out
 }
 
 // maxListIDs bounds listIssues' repeatable `id` filter. It is the spec's
@@ -683,6 +780,10 @@ func invalidFilterParam(err error) (string, bool) {
 		return "exclude_status", true
 	case strings.HasPrefix(msg, "--parent and --no-parent are mutually exclusive"):
 		return "no_parent", true
+	// The listing role's refusal of the pinned pair (issues.list.filters):
+	// the same sentence `bd list --pinned --no-pinned` refuses with.
+	case strings.HasPrefix(msg, "--pinned and --no-pinned are mutually exclusive"):
+		return "no_pinned", true
 	case strings.HasPrefix(msg, "invalid issue type "):
 		return "type", true
 	case strings.HasPrefix(msg, "invalid sort policy "):

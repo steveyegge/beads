@@ -125,6 +125,7 @@ go_test(
         "insecure_credential_guard_test.go",
         "lifecycle_create_test.go",
         "lifecycle_update_test.go",
+        "list_filters_test.go",
         "list_scope_test.go",
         "list_search_test.go",
         "list_sort_test.go",

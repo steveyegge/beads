@@ -49,9 +49,15 @@ func TestE2E_SearchOverHTTP(t *testing.T) {
 		t.Errorf("bd search %s did not match the issue by its id: %v", other, byID)
 	}
 
-	// A flag listIssues publishes nothing for refuses rather than widening the
-	// search.
-	if r := bd("search", "routed", "--desc-contains", "pool", "--json"); r.code == 0 {
-		t.Errorf("bd search --desc-contains succeeded over http; the wire cannot carry it, so it must refuse: %s", r.stdout)
+	// A search filter rides listIssues behind issues.list.filters and narrows
+	// rather than being dropped: "pool" is in a TITLE here and in no
+	// description, so the answer is empty, where a dropped filter would answer
+	// every routed row.
+	r = bd("search", "routed", "--desc-contains", "pool", "--json")
+	if r.code != 0 {
+		t.Fatalf("bd search --desc-contains failed over http (exit %d): stdout=%s stderr=%s", r.code, r.stdout, r.stderr)
+	}
+	if narrowed := jsonIDSet(t, r.stdout); len(narrowed) != 0 {
+		t.Errorf("bd search routed --desc-contains pool = %v, want nothing: no description contains it", narrowed)
 	}
 }

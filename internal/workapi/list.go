@@ -194,6 +194,13 @@ func BuildListFilter(in issueops.ListRequest, cfg ListConfig) (types.IssueFilter
 	if err := issueops.ValidateReadyFlagScope(in); err != nil {
 		return types.IssueFilter{}, err
 	}
+	// The pinned pair is a contradiction, refused here rather than in any one
+	// frontend so every route agrees: the CLI refuses it at flag parse, and a
+	// served listing carries both members (issues.list.filters), where the
+	// branch below used to let PinnedFlag win silently.
+	if in.PinnedFlag && in.NoPinnedFlag {
+		return types.IssueFilter{}, fmt.Errorf("--pinned and --no-pinned are mutually exclusive%.0w", issueops.ErrValidation)
+	}
 
 	filter := types.IssueFilter{
 		Limit: SQLLimit(in),

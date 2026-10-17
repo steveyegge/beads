@@ -1,6 +1,7 @@
 package workapi
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -159,5 +160,25 @@ func TestStatusAllCannotBeCombined(t *testing.T) {
 	want := `status "all" cannot be combined with other statuses`
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err, want)
+	}
+}
+
+// TestPinnedPairIsRefusedByTheBuilder pins the library half of the pinned
+// pair's refusal. The CLI refuses `--pinned --no-pinned` at flag parse, but the
+// builder is the one point every route passes through — a served listing
+// carries both members since issues.list.filters — and it used to let
+// PinnedFlag win silently. Each member alone still builds.
+func TestPinnedPairIsRefusedByTheBuilder(t *testing.T) {
+	var cfg ListConfig
+	for _, status := range []string{"", "all", "open"} {
+		_, err := BuildListFilter(issueops.ListRequest{Status: status, PinnedFlag: true, NoPinnedFlag: true}, cfg)
+		if !errors.Is(err, issueops.ErrValidation) {
+			t.Errorf("--status=%q --pinned --no-pinned: err = %v, want ErrValidation", status, err)
+		}
+	}
+	for _, in := range []issueops.ListRequest{{PinnedFlag: true}, {NoPinnedFlag: true}} {
+		if _, err := BuildListFilter(in, cfg); err != nil {
+			t.Errorf("BuildListFilter(%+v) = %v, want no error for one member alone", in, err)
+		}
 	}
 }
