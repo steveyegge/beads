@@ -86,7 +86,6 @@ go_test(
     deps = [
         "//internal/configfile",
         "//internal/doltserver",
-        "//internal/gitenv",
         "//internal/storage/depid",
         "//internal/storage/dolt",
         "//internal/storage/doltutil",

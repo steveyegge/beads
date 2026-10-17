@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/gitenv"
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 // setupGitRepo creates a temporary git repository for testing
@@ -59,6 +59,9 @@ func setupGitRepoInDir(t *testing.T, dir string) {
 		// (the r880 clobber class, wy-qlvlmf).
 		t.Fatal("setupGitRepoInDir: empty dir would run git against the host checkout")
 	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Fatalf("setupGitRepoInDir: %q is not an existing directory (err=%v)", dir, err)
+	}
 
 	// Create .beads directory
 	beadsDir := filepath.Join(dir, ".beads")
@@ -81,7 +84,7 @@ func setupGitRepoInDir(t *testing.T, dir string) {
 	// some other repository.
 	cmd := gitCommand("config", "core.hooksPath", ".git/hooks")
 	cmd.Dir = dir
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	cmd.Env = testutil.WithoutGitRepoLocationEnv(os.Environ())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to set core.hooksPath for test repo: %v\n%s", err, out)
 	}

@@ -28,8 +28,8 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil"
 	"github.com/steveyegge/beads/internal/testutil/bazeltest"
 )
 
@@ -455,7 +455,7 @@ func runGitForBootstrapTest(t *testing.T, dir string, args ...string) {
 		dir = t.TempDir()
 	}
 	cmd.Dir = dir
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	cmd.Env = testutil.WithoutGitRepoLocationEnv(os.Environ())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
@@ -469,7 +469,7 @@ func runGitForBootstrapTest(t *testing.T, dir string, args ...string) {
 // This lives in the pure-Go helper file, not alongside the embedded-Dolt
 // helpers: cmd/bd/where_test.go carries no build tag, so it compiles under
 // CGO_ENABLED=0 where every `//go:build cgo` file is excluded. Keep this
-// helper stdlib-only and keep it here.
+// helper free of cgo-only dependencies and keep it here.
 func initGitRepoAt(t *testing.T, dir string) {
 	t.Helper()
 	if dir == "" {
@@ -487,7 +487,7 @@ func initGitRepoAt(t *testing.T, dir string) {
 	} {
 		cmd := gitCommand(args...)
 		cmd.Dir = dir
-		cmd.Env = gitenv.ScrubRouting(os.Environ())
+		cmd.Env = testutil.WithoutGitRepoLocationEnv(os.Environ())
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %s failed: %v\n%s", args[0], err, out)
 		}
