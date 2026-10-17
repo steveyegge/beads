@@ -616,6 +616,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rejected `dolt push` or `dolt pull` no longer prints remote
+  credentials.** `cliTransferError` wrapped dolt's output verbatim, so a
+  non-fast-forward rejection against `git+https://x-access-token:<token>@host/repo`
+  put the token in the terminal and in the auto-push warning. URL userinfo in
+  the operation, remote and subprocess output is now redacted (HTTP(S)
+  userinfo whole; SSH keeps the account and drops a password), and the host,
+  ref and failure cause are kept.
+
 - **`bd gate create`, `bd gate add-waiter` and `bd gate discover` work over a
   connected HTTP workspace.** They wrote through the legacy `CreateIssue`,
   `AddDependency` and map-based `UpdateIssue`, which the HTTP store does not
