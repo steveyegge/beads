@@ -715,8 +715,14 @@ paths:
 
 
         THERE IS NO `limit` AND NO CURSOR, like the local command, and
-        `has_more` is therefore always false in v0. Available when the server
-        advertises `blocked.list`.
+        `has_more` is therefore always false in v0. The whole listing is one
+        response body, and this server bounds it by nothing but the blocked
+        set itself, so a client's own response-size limit is the effective
+        bound (bd's HTTP client refuses a body over 32 MiB, loudly, rather than
+        reading part of it). A client MUST refuse an answer with `has_more`
+        true rather than treat it as the whole listing: a later server may
+        bound the answer and say so there, and with no cursor there is nothing
+        to page with. Available when the server advertises `blocked.list`.
       security:
         - bearerToken: []
       parameters:

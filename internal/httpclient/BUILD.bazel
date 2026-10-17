@@ -144,6 +144,7 @@ go_test(
         "served_batch_apply_test.go",
         "served_batch_close_test.go",
         "served_batch_getter_test.go",
+        "served_blocked_external_test.go",
         "served_blocked_lister_test.go",
         "served_bridge_test.go",
         "served_bulk_test.go",

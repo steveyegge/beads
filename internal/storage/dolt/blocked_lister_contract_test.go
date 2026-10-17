@@ -1,6 +1,8 @@
 package dolt
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
@@ -24,5 +26,15 @@ func TestBlockedListerContract(t *testing.T) {
 		CreateIssue:   kit.CreateIssue,
 		CreateWisp:    kit.CreateWisp,
 		AddDependency: kit.AddDependency,
+		MarkBlocked: func(ctx context.Context, id string) error {
+			res, err := store.db.ExecContext(ctx, "UPDATE issues SET is_blocked = 1 WHERE id = ?", id)
+			if err != nil {
+				return err
+			}
+			if n, err := res.RowsAffected(); err != nil || n != 1 {
+				return fmt.Errorf("marked %d rows (err %v), want 1", n, err)
+			}
+			return nil
+		},
 	})
 }

@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 
@@ -39,11 +40,35 @@ func (l *httpBlockedLister) ListBlocked(ctx context.Context, req issueops.Blocke
 	}, &body); err != nil {
 		return issueops.BlockedResult{}, err
 	}
+	// The listing is not a page, and this client has no cursor to follow. A
+	// server that bounded the answer and said so (a later server may cap an
+	// unpaged read) is refused rather than returned short: a caller reads a
+	// missing row as an unblocked one.
+	if body.HasMore {
+		return issueops.BlockedResult{}, &TruncatedListingError{Op: wire.OpListBlockedIssues, Found: len(body.Items)}
+	}
 	items := make([]*types.BlockedIssue, 0, len(body.Items))
 	for i := range body.Items {
 		items = append(items, &body.Items[i])
 	}
 	return storageops.BlockedResultOf(items), nil
+}
+
+// TruncatedListingError is the refusal of an unpaged listing the server
+// answered only in part: it returned Found rows and reported more remaining
+// (has_more). The operation publishes no cursor, so there is nothing to page
+// with, and returning the rows would be a silently short answer.
+type TruncatedListingError struct {
+	// Op is the wire operation.
+	Op string
+	// Found is how many rows the server returned.
+	Found int
+}
+
+func (e *TruncatedListingError) Error() string {
+	return fmt.Sprintf("%s over http: bd serve returned %d rows and reported more remaining; "+
+		"the listing has no cursor, so this client refuses the truncated answer (narrow the request)",
+		e.Op, e.Found)
 }
 
 // blockedParams encodes the request as the operation's query: one parameter

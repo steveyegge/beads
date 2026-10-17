@@ -576,7 +576,16 @@ func (s *Store) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) (
 	if err != nil {
 		return nil, err
 	}
-	return s.decorateBlocked(ctx, filter, base, s.inner.GetDependencyRecordsForIssues, s.inner.GetIssuesByIDs)
+	// A served store refuses the two raw reads the decoration makes for the
+	// extra sources; over one they go through the roles it serves, as the
+	// remote blocked lister's do (blocked_lister.go). Against a server that
+	// applies the policy itself the decoration adds nothing (loadBlockingState
+	// stands down) and neither read is made.
+	dependencyRecords, issuesByIDs := s.inner.GetDependencyRecordsForIssues, s.inner.GetIssuesByIDs
+	if s.rolesAreRemote() {
+		dependencyRecords, issuesByIDs = s.remoteEdges, s.remoteIssuesByIDs
+	}
+	return s.decorateBlocked(ctx, filter, base, dependencyRecords, issuesByIDs)
 }
 
 // decorateBlocked is GetBlockedIssues' decoration of an undecorated blocked
@@ -632,9 +641,12 @@ func (s *Store) decorateBlocked(
 			filteredMissingIDs = append(filteredMissingIDs, issueID)
 		}
 	}
-	issues, err := issuesByIDs(ctx, filteredMissingIDs)
-	if err != nil {
-		return nil, fmt.Errorf("external dependencies: load blocked sources: %w", err)
+	var issues []*types.Issue
+	if len(filteredMissingIDs) > 0 {
+		issues, err = issuesByIDs(ctx, filteredMissingIDs)
+		if err != nil {
+			return nil, fmt.Errorf("external dependencies: load blocked sources: %w", err)
+		}
 	}
 	for _, issue := range issues {
 		if issue == nil || issue.Status == types.StatusClosed || issue.Status == types.StatusPinned {

@@ -203,3 +203,28 @@ func blockedRowIDs(items []*types.BlockedIssue) []string {
 	}
 	return ids
 }
+
+// TestBlockedRefusesAServerThatReportsMore: the listing has no cursor, so a
+// server that answers part of it with has_more is refused with a typed error,
+// never returned as a short listing a caller would read as complete.
+func TestBlockedRefusesAServerThatReportsMore(t *testing.T) {
+	stub := &blockedStub{reply: `{"items":[` +
+		`{"id":"bd-1","title":"a","priority":0,"created_at":"2026-10-16T01:00:00Z","updated_at":"2026-10-16T01:00:00Z","blocked_by_count":1,"blocked_by":["x"]}` +
+		`],"has_more":true}`}
+	s := stub.store(t, "blocked.list")
+
+	result, err := blockedListerOf(t, s).ListBlocked(t.Context(), issueops.BlockedRequest{})
+	var truncated *TruncatedListingError
+	if !errors.As(err, &truncated) {
+		t.Fatalf("ListBlocked with has_more = %d items, err %v; want *TruncatedListingError", len(result.Items), err)
+	}
+	if truncated.Found != 1 || truncated.Op != wire.OpListBlockedIssues {
+		t.Errorf("TruncatedListingError = %+v, want Op %s and Found 1", truncated, wire.OpListBlockedIssues)
+	}
+	if result.Items != nil {
+		t.Errorf("a refused listing returned %d rows", len(result.Items))
+	}
+	if _, err := s.GetBlockedIssues(t.Context(), types.WorkFilter{}); !errors.As(err, &truncated) {
+		t.Errorf("GetBlockedIssues with has_more: err %v, want *TruncatedListingError", err)
+	}
+}

@@ -23,7 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read does. The HTTP backend's `BlockedLister()` and legacy
   `GetBlockedIssues` dial it; against a server that does not advertise the
   token they refuse before dialing with a typed capability error naming
-  `blocked.list`, and never compose the listing from other reads. `bd
+  `blocked.list`, and never compose the listing from other reads. The
+  listing is unpaged: a server answer that reports `has_more` is refused
+  with the new `httpclient.TruncatedListingError` rather than returned
+  short, and an answer over the client's 32 MiB response limit is refused
+  as any oversized response is. The external-dependency decorator's legacy
+  `GetBlockedIssues` over an HTTP store now reads the extra sources through
+  the served roles (it failed on a raw multi-id read before), so callers of
+  that door no longer fail on it; commands that also make other raw reads
+  the HTTP backend does not serve (`bd ready --explain`) still refuse on
+  those. `bd
   blocked` runs the role on every route (the proxied-server route through
   the provider's accessor) with unchanged output: `--json` prints the same
   rows in the same order (priority, then newest first, then id, which now

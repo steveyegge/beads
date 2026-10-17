@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 	publicops "github.com/steveyegge/beads/issueops"
@@ -36,6 +37,12 @@ type BlockedListerFixture struct {
 	// AddDependency seeds ONE edge, recomputing the stored blocked flag the
 	// way every dependency write does.
 	AddDependency func(context.Context, *types.Dependency, string) error
+	// MarkBlocked sets the stored is_blocked flag on one durable issue
+	// directly, without the edge that would justify it: the stale flag `bd
+	// recompute-blocked` exists to repair. It must fail unless exactly one row
+	// changed. A nil hook means this leg cannot write the column, and the case
+	// that needs it skips with that reason.
+	MarkBlocked func(context.Context, string) error
 }
 
 // RunBlockedLister runs every blocked-listing case as a subtest of t.
@@ -49,6 +56,9 @@ func RunBlockedLister(t *testing.T, ctx context.Context, fixture BlockedListerFi
 	t.Run("ParentFilter", func(t *testing.T) { runBlockedParentFilter(t, ctx, fixture) })
 	t.Run("LabelFilters", func(t *testing.T) { runBlockedLabelFilters(t, ctx, fixture) })
 	t.Run("Order", func(t *testing.T) { runBlockedOrder(t, ctx, fixture) })
+	t.Run("NamesWaitsForAndConditionalBlockers", func(t *testing.T) { runBlockedNamesWaitsForAndConditionalBlockers(t, ctx, fixture) })
+	t.Run("OmitsAStaleFlagWithNoNameableBlocker", func(t *testing.T) { runBlockedOmitsAStaleFlag(t, ctx, fixture) })
+	t.Run("HasNoTypeExclusions", func(t *testing.T) { runBlockedHasNoTypeExclusions(t, ctx, fixture) })
 	t.Run("EmptyIsAnEmptySlice", func(t *testing.T) { runBlockedEmptyIsAnEmptySlice(t, ctx, fixture) })
 	t.Run("DoesNotMutateTheCallerRequest", func(t *testing.T) { runBlockedDoesNotMutateTheRequest(t, ctx, fixture) })
 }
@@ -178,43 +188,126 @@ func runBlockedLabelFilters(t *testing.T, ctx context.Context, f BlockedListerFi
 }
 
 // runBlockedOrder: priority ascending, then created_at descending, then id.
+//
+// The created_at values are seeded explicitly, so every key decides at least
+// one pair: two rows share a priority and differ in created_at (newest first),
+// and five share both priority and created_at (the id breaks the tie). The
+// expected order is written out rather than recomputed from the answer.
 func runBlockedOrder(t *testing.T, ctx context.Context, f BlockedListerFixture) {
 	label := f.IssuePrefix + "-bl-order"
 	blocker := blListerID(f, "order-blocker")
 	blListerSeedIssue(t, ctx, f, blListerIssue(blocker, 1, label+"-other"))
-	var ids []string
-	for i, priority := range []int{3, 0, 2, 0, 1} {
-		id := blListerID(f, fmt.Sprintf("order-%d", i))
-		ids = append(ids, id)
-		blListerSeedIssue(t, ctx, f, blListerIssue(id, priority, label))
-		blListerSeedEdge(t, ctx, f, id, blocker, types.DepBlocks)
+	older := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	// Two of the five tied rows are wisps. The store body assembles rows
+	// issues-plane first, each plane in id order, so the ids alone would put
+	// the tied run in the wrong order (b, d, e, then a, c); only the id
+	// tiebreak puts it right.
+	rows := []struct {
+		name     string
+		priority int
+		created  time.Time
+		wisp     bool
+	}{
+		{"order-p3", 3, newer, false},
+		{"order-p0-older", 0, older, false},
+		{"order-p0-newer-e", 0, newer, false},
+		{"order-p0-newer-c", 0, newer, true},
+		{"order-p0-newer-a", 0, newer, true},
+		{"order-p0-newer-d", 0, newer, false},
+		{"order-p0-newer-b", 0, newer, false},
+		{"order-p1", 1, older, false},
 	}
-	items := blListerList(t, ctx, f, publicops.BlockedRequest{Labels: []string{label}})
-	if len(items) != len(ids) {
-		t.Fatalf("listed %d rows (%v), want %d", len(items), blListerIDs(items), len(ids))
-	}
-	sorted := slices.IsSortedFunc(items, func(a, b *types.BlockedIssue) int {
-		switch {
-		case a.Priority != b.Priority:
-			return a.Priority - b.Priority
-		case !a.CreatedAt.Equal(b.CreatedAt):
-			if a.CreatedAt.After(b.CreatedAt) {
-				return -1
+	for _, row := range rows {
+		issue := blListerIssue(blListerID(f, row.name), row.priority, label)
+		issue.CreatedAt = row.created
+		issue.UpdatedAt = row.created
+		if row.wisp {
+			issue.Ephemeral = true
+			if err := f.CreateWisp(ctx, issue, "seed"); err != nil {
+				t.Fatalf("seed wisp %s: %v", issue.ID, err)
 			}
-			return 1
-		case a.ID < b.ID:
-			return -1
-		case a.ID > b.ID:
-			return 1
+		} else {
+			blListerSeedIssue(t, ctx, f, issue)
 		}
-		return 0
-	})
-	if !sorted {
-		t.Errorf("listing %v is not ordered by priority ascending, created_at descending, id", blListerIDs(items))
+		blListerSeedEdge(t, ctx, f, issue.ID, blocker, types.DepBlocks)
 	}
-	if items[0].Priority != 0 || items[len(items)-1].Priority != 3 {
-		t.Errorf("first priority %d, last %d: want 0 first and 3 last", items[0].Priority, items[len(items)-1].Priority)
+	want := []string{
+		blListerID(f, "order-p0-newer-a"),
+		blListerID(f, "order-p0-newer-b"),
+		blListerID(f, "order-p0-newer-c"),
+		blListerID(f, "order-p0-newer-d"),
+		blListerID(f, "order-p0-newer-e"),
+		blListerID(f, "order-p0-older"),
+		blListerID(f, "order-p1"),
+		blListerID(f, "order-p3"),
 	}
+	got := blListerIDs(blListerList(t, ctx, f, publicops.BlockedRequest{Labels: []string{label}}))
+	if !slices.Equal(got, want) {
+		t.Errorf("listing order = %v, want %v (priority ascending, created_at descending, id)", got, want)
+	}
+}
+
+// runBlockedNamesWaitsForAndConditionalBlockers: a waits-for onto a spawner
+// whose child is still open, and a conditional-blocks onto an open target,
+// each name their target, as a blocks edge does.
+func runBlockedNamesWaitsForAndConditionalBlockers(t *testing.T, ctx context.Context, f BlockedListerFixture) {
+	label := f.IssuePrefix + "-bl-wf"
+	spawner, spawned := blListerID(f, "wf-spawner"), blListerID(f, "wf-spawned")
+	waiter := blListerID(f, "wf-waiter")
+	target, conditional := blListerID(f, "cb-target"), blListerID(f, "cb-src")
+	blListerSeedIssue(t, ctx, f, blListerIssue(spawner, 1, label+"-other"))
+	blListerSeedIssue(t, ctx, f, blListerIssue(spawned, 1, label+"-other"))
+	blListerSeedIssue(t, ctx, f, blListerIssue(target, 1, label+"-other"))
+	blListerSeedIssue(t, ctx, f, blListerIssue(waiter, 1, label))
+	blListerSeedIssue(t, ctx, f, blListerIssue(conditional, 1, label))
+	blListerSeedEdge(t, ctx, f, spawned, spawner, types.DepParentChild)
+	blListerSeedEdge(t, ctx, f, waiter, spawner, types.DepWaitsFor)
+	blListerSeedEdge(t, ctx, f, conditional, target, types.DepConditionalBlocks)
+
+	items := blListerList(t, ctx, f, publicops.BlockedRequest{Labels: []string{label}})
+	blListerAssertRows(t, items, map[string][]string{waiter: {spawner}, conditional: {target}})
+}
+
+// runBlockedOmitsAStaleFlag: a row whose stored flag says blocked but which
+// has no active blocker and no parent names no blocker, so it is not listed.
+// This is the narrowing gc's readiness projection documents relying on.
+func runBlockedOmitsAStaleFlag(t *testing.T, ctx context.Context, f BlockedListerFixture) {
+	if f.MarkBlocked == nil {
+		t.Skip("this leg cannot write the stored is_blocked flag directly")
+	}
+	label := f.IssuePrefix + "-bl-stale"
+	stale, real, blocker := blListerID(f, "stale-src"), blListerID(f, "stale-real"), blListerID(f, "stale-blocker")
+	blListerSeedIssue(t, ctx, f, blListerIssue(stale, 1, label))
+	blListerSeedIssue(t, ctx, f, blListerIssue(real, 1, label))
+	blListerSeedIssue(t, ctx, f, blListerIssue(blocker, 1, label+"-other"))
+	blListerSeedEdge(t, ctx, f, real, blocker, types.DepBlocks)
+	if err := f.MarkBlocked(ctx, stale); err != nil {
+		t.Fatalf("mark %s blocked: %v", stale, err)
+	}
+
+	items := blListerList(t, ctx, f, publicops.BlockedRequest{Labels: []string{label}})
+	blListerAssertRows(t, items, map[string][]string{real: {blocker}})
+}
+
+// runBlockedHasNoTypeExclusions: a gate is listed like any other row; the
+// blocked door excludes no issue type (unlike the ready front).
+func runBlockedHasNoTypeExclusions(t *testing.T, ctx context.Context, f BlockedListerFixture) {
+	label := f.IssuePrefix + "-bl-type"
+	gate, epic, blocker := blListerID(f, "type-gate"), blListerID(f, "type-epic"), blListerID(f, "type-blocker")
+	g := blListerIssue(gate, 1, label)
+	g.IssueType = types.TypeGate
+	g.AwaitType = "human"
+	blListerSeedIssue(t, ctx, f, g)
+	e := blListerIssue(epic, 1, label)
+	e.IssueType = types.TypeEpic
+	blListerSeedIssue(t, ctx, f, e)
+	blListerSeedIssue(t, ctx, f, blListerIssue(blocker, 1, label+"-other"))
+	blListerSeedEdge(t, ctx, f, gate, blocker, types.DepBlocks)
+	blListerSeedEdge(t, ctx, f, epic, blocker, types.DepBlocks)
+
+	items := blListerList(t, ctx, f, publicops.BlockedRequest{Labels: []string{label}})
+	blListerAssertRows(t, items, map[string][]string{gate: {blocker}, epic: {blocker}})
 }
 
 // runBlockedEmptyIsAnEmptySlice: nothing blocked is an empty, non-nil slice
