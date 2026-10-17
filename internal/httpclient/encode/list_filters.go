@@ -23,7 +23,7 @@ var ListFiltersMembers = []string{
 	"UpdatedAfter", "UpdatedBefore", "ClosedAfter", "ClosedBefore",
 	"DeferAfter", "DeferBefore", "DueAfter", "DueBefore",
 	"Priority", "PriorityMin", "PriorityMax",
-	"EmptyDesc", "NoLabels", "NoParent", "ExcludeTypes",
+	"EmptyDesc", "NoLabels", "NoParent", "ExcludeTypes", "ExcludeStatus",
 	"PinnedFlag", "NoPinnedFlag", "DeferredFlag", "OverdueFlag",
 	"MolType", "WispType",
 }

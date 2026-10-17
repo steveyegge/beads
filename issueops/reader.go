@@ -144,6 +144,15 @@ type ListRequest struct {
 	// so `pinned` and `hooked` are the two spellings that also drop that
 	// predicate — every other status narrows to unflagged rows.
 	Status string
+	// ExcludeStatus names statuses to leave out, on top of whatever Status or
+	// the default exclusions select (it never re-admits a row they hide).
+	// Entries may be comma-separated, and each name is validated against the
+	// workspace vocabulary (built-in plus custom statuses) exactly as
+	// CountRequest.ExcludeStatus is: an unknown name is ErrValidation rather
+	// than excluding nothing, because a silently ignored exclusion answers a
+	// wider set. With AllFlag it reads the active set without the caller
+	// having to enumerate every status it wants.
+	ExcludeStatus []string
 	// IssueType is validated against the workspace vocabulary — unlike
 	// ReadyRequest.IssueType, which matches nothing rather than failing.
 	IssueType   string
@@ -442,7 +451,7 @@ type ListRequest struct {
 	// fields rather than answering a wider question than was asked. That is
 	// IDFilter, TitleSearch, SpecPrefix, the four *Contains fields,
 	// ExternalRef, every Created/Updated/Closed/Defer/Due bound, DeferredFlag,
-	// OverdueFlag, EmptyDesc, NoLabels, NoParent, PinnedFlag, PriorityMin,
+	// OverdueFlag, EmptyDesc, NoLabels, NoParent, PinnedFlag, ExcludeStatus, PriorityMin,
 	// PriorityMax, and the keyset position. There is no fallback: no
 	// combination of the two silently widens the answer.
 	//

@@ -354,6 +354,7 @@ func (b *builder) listFilters(req issueops.ListRequest) {
 	b.boolean("no_labels", req.NoLabels)
 	b.boolean("no_parent", req.NoParent)
 	b.list("exclude_type", req.ExcludeTypes)
+	b.list("exclude_status", req.ExcludeStatus)
 
 	b.boolean("pinned", req.PinnedFlag)
 	b.boolean("no_pinned", req.NoPinnedFlag)

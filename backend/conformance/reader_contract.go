@@ -3325,7 +3325,7 @@ func RunReaderListTimeBoundsAreStrictAndWholeSecond(t *testing.T, ctx context.Co
 // substrings, the empty-description and no-labels predicates, the top-level
 // predicate, the type exclusion, the spec prefix, the label pattern and
 // regex, the external-ref pair, the pinned-flag pair, the deferred and
-// overdue predicates and the molecule type.
+// overdue predicates, the status exclusion and the molecule type.
 //
 // Each row is scoped by id and every arm asks AllFlag (the pinned arms
 // excepted, which are about that interplay), so an arm whose filter the body
@@ -3403,6 +3403,16 @@ func RunReaderListFilterFamiliesNarrowToTheirRows(t *testing.T, ctx context.Cont
 	swarm := seed("mol-swarm", func(i *types.Issue) { i.MolType = types.MolTypeSwarm })
 	patrol := seed("mol-patrol", func(i *types.Issue) { i.MolType = types.MolTypePatrol })
 
+	stOpen := seed("st-open", nil)
+	stProgress := seed("st-progress", func(i *types.Issue) { i.Status = types.StatusInProgress })
+	stBlocked := seed("st-blocked", func(i *types.Issue) { i.Status = types.StatusBlocked })
+	stClosed := seed("st-closed", func(i *types.Issue) {
+		i.Status = types.StatusClosed
+		closedAt := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+		i.ClosedAt = &closedAt
+	})
+	statusScope := readerIDFilter(stOpen, stProgress, stBlocked, stClosed)
+
 	molType := func(m types.MolType) *publicops.MolType { return &m }
 	scoped := func(ids ...string) publicops.ListRequest {
 		return publicops.ListRequest{IDFilter: readerIDFilter(ids...), AllFlag: true}
@@ -3450,6 +3460,11 @@ func RunReaderListFilterFamiliesNarrowToTheirRows(t *testing.T, ctx context.Cont
 
 		{"OverdueFlag keeps the open row past its due date", with(scoped(overdue, dueLater, closedOverdue, noDue), func(r *publicops.ListRequest) { r.OverdueFlag = true }), []string{overdue}},
 
+		{"ExcludeStatus under AllFlag reads the active set", with(scoped(stOpen, stProgress, stBlocked, stClosed), func(r *publicops.ListRequest) { r.ExcludeStatus = []string{"closed"} }), []string{stOpen, stProgress, stBlocked}},
+		{"ExcludeStatus takes repeated and comma-separated values", with(scoped(stOpen, stProgress, stBlocked, stClosed), func(r *publicops.ListRequest) { r.ExcludeStatus = []string{"blocked,in_progress", " closed "} }), []string{stOpen}},
+		{"ExcludeStatus adds to the default exclusions rather than replacing them", publicops.ListRequest{IDFilter: statusScope, ExcludeStatus: []string{"blocked"}}, []string{stOpen, stProgress}},
+		{"ExcludeStatus narrows an explicit Status", publicops.ListRequest{IDFilter: statusScope, Status: "open,blocked,closed", ExcludeStatus: []string{"blocked"}}, []string{stOpen, stClosed}},
+
 		{"MolType is exact", with(scoped(swarm, patrol), func(r *publicops.ListRequest) { r.MolType = molType(types.MolTypeSwarm) }), []string{swarm}},
 	} {
 		page, err := fixture.Reader.List(ctx, test.req)
@@ -3458,6 +3473,12 @@ func RunReaderListFilterFamiliesNarrowToTheirRows(t *testing.T, ctx context.Cont
 			continue
 		}
 		assertReaderPageIDSet(t, "List ("+test.name+")", page, test.want)
+	}
+
+	// An exclusion naming no status in the workspace vocabulary is refused,
+	// never an exclusion that silently excludes nothing.
+	if _, err := fixture.Reader.List(ctx, publicops.ListRequest{IDFilter: statusScope, ExcludeStatus: []string{"clsoed"}}); !errors.Is(err, publicops.ErrValidation) {
+		t.Errorf("List with ExcludeStatus naming an unknown status = %v, want an error wrapping ErrValidation", err)
 	}
 
 	_, err := fixture.Reader.List(ctx, publicops.ListRequest{

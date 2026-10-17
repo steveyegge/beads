@@ -507,6 +507,10 @@ func listFilterParams(q *query, req *issueops.ListRequest) {
 	req.NoLabels = q.boolean("no_labels")
 	req.NoParent = q.boolean("no_parent")
 	req.ExcludeTypes = q.list("exclude_type")
+	// Validated by the role against the workspace's status vocabulary; an
+	// unknown name is a 400 on this parameter (invalidFilterParam), never an
+	// exclusion that silently excludes nothing.
+	req.ExcludeStatus = q.list("exclude_status")
 
 	req.PinnedFlag = q.boolean("pinned")
 	req.NoPinnedFlag = q.boolean("no_pinned")

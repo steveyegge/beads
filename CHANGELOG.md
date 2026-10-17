@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `issues.list.filters`, rather than sending a filter an older server rejects
   or dropping one and answering a wider listing. The 29 corresponding
   divergence-ledger refusal rows retire.
+- `issueops.ListRequest.ExcludeStatus`: statuses to leave out of a listing,
+  appended to the default exclusions (never re-admitting what they hide),
+  comma-separated or repeated, each validated against the workspace's
+  statuses like `CountRequest.ExcludeStatus` (an unknown name is
+  `ErrValidation`). `GET /v0/beads/issues` accepts it as a repeatable
+  `exclude_status` under the same `issues.list.filters` token (an unknown
+  name is a `400` on `exclude_status`), so an HTTP-backed caller can read
+  only the active rows (`all` plus `exclude_status=closed`) instead of the
+  whole history. It is refused together with `ReadyFlag`, like the other
+  members the ready query cannot carry. There is no `bd list` flag for it
+  yet.
 
 - `bd serve` publishes the gate members: `await_type`,
   `await_id`, `timeout` (nanoseconds) and `waiters` on `POST

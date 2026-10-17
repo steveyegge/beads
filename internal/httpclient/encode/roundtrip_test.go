@@ -232,6 +232,7 @@ func roundTripCases() []roundTripCase {
 		NoLabels:         true,
 		NoParent:         true,
 		ExcludeTypes:     []string{"epic", "chore,bug"},
+		ExcludeStatus:    []string{"blocked", "deferred,in_progress"},
 		PinnedFlag:       true,
 		NoPinnedFlag:     true,
 		DeferredFlag:     true,

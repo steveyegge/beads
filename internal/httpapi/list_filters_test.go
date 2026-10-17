@@ -23,7 +23,7 @@ var listFiltersParams = []string{
 	"updated_after", "updated_before", "closed_after", "closed_before",
 	"defer_after", "defer_before", "due_after", "due_before",
 	"priority", "priority_min", "priority_max",
-	"empty_description", "no_labels", "no_parent", "exclude_type",
+	"empty_description", "no_labels", "no_parent", "exclude_type", "exclude_status",
 	"pinned", "no_pinned", "deferred", "overdue",
 	"mol_type", "wisp_type",
 }
@@ -48,8 +48,8 @@ func TestListFilterParametersMatchTheDocument(t *testing.T) {
 	if !slices.Equal(read, want) {
 		t.Errorf("listFilterParams reads %v, want exactly %v", read, want)
 	}
-	if len(want) != 29 {
-		t.Errorf("issues.list.filters publishes %d parameters, want the 29 `bd list` filters", len(want))
+	if len(want) != 30 {
+		t.Errorf("issues.list.filters publishes %d parameters, want the 29 `bd list` filters plus exclude_status", len(want))
 	}
 
 	doc := loadSpec(t)
@@ -117,6 +117,7 @@ func TestListFilterParametersReachTheStorageFilter(t *testing.T) {
 				f.DeferAfter != nil || f.DeferBefore != nil || f.DueAfter != nil || f.DueBefore != nil ||
 				f.Priority != nil || f.PriorityMin != nil || f.PriorityMax != nil ||
 				f.EmptyDescription || f.NoLabels || f.NoParent || slices.Contains(f.ExcludeTypes, "epic") ||
+				!slices.Equal(f.ExcludeStatus, []types.Status{types.StatusClosed, types.StatusPinned}) ||
 				f.Deferred || f.Overdue || f.MolType != nil || f.WispType != nil {
 				t.Errorf("a listing with no filter parameter narrowed the filter: %+v", f)
 			}
@@ -195,6 +196,21 @@ func TestListFilterParametersReachTheStorageFilter(t *testing.T) {
 			want := []types.IssueType{"epic", "chore", "bug"}
 			if n := len(f.ExcludeTypes); n < len(want) || !slices.Equal(f.ExcludeTypes[n-len(want):], want) {
 				t.Errorf("ExcludeTypes = %v, want %v (repeated, and each value comma-split by the role)", f.ExcludeTypes, want)
+			}
+		}},
+		{"exclude_status=blocked&exclude_status=deferred,in_progress", func(t *testing.T, f types.IssueFilter) {
+			// APPENDED to the role's default exclusions (closed, pinned),
+			// which it computes first; never in place of them.
+			want := []types.Status{types.StatusClosed, types.StatusPinned, "blocked", "deferred", "in_progress"}
+			if !slices.Equal(f.ExcludeStatus, want) {
+				t.Errorf("ExcludeStatus = %v, want %v", f.ExcludeStatus, want)
+			}
+		}},
+		{"exclude_status=closed&all=true", func(t *testing.T, f types.IssueFilter) {
+			// Under `all` there are no defaults, so the caller's list is the
+			// whole exclusion: the active-set read.
+			if want := []types.Status{types.StatusClosed}; !slices.Equal(f.ExcludeStatus, want) {
+				t.Errorf("ExcludeStatus = %v, want %v", f.ExcludeStatus, want)
 			}
 		}},
 		{"pinned=true", func(t *testing.T, f types.IssueFilter) {

@@ -89,6 +89,7 @@ func TestListFiltersSetSeesEachMember(t *testing.T) {
 		"Priority=0":    {Priority: &zero},
 		"MolType=&\"\"": {MolType: &empty},
 		"ExcludeTypes":  {ExcludeTypes: []string{"epic"}},
+		"ExcludeStatus": {ExcludeStatus: []string{"closed"}},
 		"OverdueFlag":   {OverdueFlag: true},
 		"DueBefore":     {DueBefore: &time.Time{}},
 	} {
@@ -108,7 +109,7 @@ func TestListParamsSendsTheFilterBoundsAsTheResolvedInstant(t *testing.T) {
 	empty := issueops.WispType("")
 	v, err := ListParams(issueops.ListRequest{
 		ClosedAfter: &at, DueBefore: &at, Priority: &zero, WispType: &empty,
-		ExcludeTypes: []string{"epic", "chore"},
+		ExcludeTypes: []string{"epic", "chore"}, ExcludeStatus: []string{"closed", "blocked"},
 	})
 	if err != nil {
 		t.Fatalf("ListParams: %v", err)
@@ -123,6 +124,9 @@ func TestListParamsSendsTheFilterBoundsAsTheResolvedInstant(t *testing.T) {
 	}
 	if got, ok := v["wisp_type"]; !ok || !slices.Equal(got, []string{""}) {
 		t.Errorf("wisp_type = %v (present %v), want the empty value sent for the server to refuse by name", got, ok)
+	}
+	if got := v["exclude_status"]; !slices.Equal(got, []string{"closed", "blocked"}) {
+		t.Errorf("exclude_status = %v, want one value per member", got)
 	}
 	if got := v["exclude_type"]; !slices.Equal(got, []string{"epic", "chore"}) {
 		t.Errorf("exclude_type = %v, want one value per member", got)

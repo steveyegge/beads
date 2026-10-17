@@ -1761,6 +1761,30 @@ paths:
             type: array
             items:
               type: string
+        - name: exclude_status
+          in: query
+          description: >-
+            Statuses to leave out (repeat the parameter; a value may also be
+            comma-separated), on top of what `status` or the default
+            exclusions select; it never re-admits a row they hide. With
+            `all` it reads the active set without enumerating every status.
+            Each name is validated against the workspace's statuses (built-in
+            and custom), as `GET /v0/beads/issues:count` validates it: an
+            unknown name is a 400 `invalid_value` on this parameter, never an
+            exclusion that excludes nothing.
+
+
+            Behind the `issues.list.filters` behavior token: an older server
+            answers `unknown_parameter` for this name. A client with the
+            handshake's capabilities cached refuses the request locally
+            against a server that does not advertise the token, rather than
+            paying for that round trip or answering a wider listing.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
         - name: pinned
           in: query
           description: >-
@@ -8964,8 +8988,8 @@ components:
             vocabulary (the updated, closed, defer and due bounds, the
             priority range, the text, external-ref, label-pattern and spec
             matches, and the empty-description, no-labels, no-parent,
-            exclude-type, pinned, no-pinned, deferred, overdue, mol-type and
-            wisp-type filters; see those parameters) rather than answering
+            exclude-type, exclude-status, pinned, no-pinned, deferred,
+            overdue, mol-type and wisp-type filters; see those parameters) rather than answering
             `unknown_parameter`. One behavior token is
             CONDITIONAL rather than build-level: `policy.external_dependencies`
             announces that this server's ready, claim, claim-next, close,

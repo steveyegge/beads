@@ -175,6 +175,7 @@ func TestABuilderRefusalIsTheDocumentedBadRequest(t *testing.T) {
 		{"an unknown exclude-status name on the count surface", "/v0/beads/issues:count?exclude_status=bogus", "exclude_status"},
 		{"parent and no_parent together on the count surface", "/v0/beads/issues:count?parent=bd-1&no_parent=true", "no_parent"},
 		{"pinned and no_pinned together on the listing", "/v0/beads/issues?pinned=true&no_pinned=true", "no_pinned"},
+		{"an unknown exclude-status name on the listing", "/v0/beads/issues?exclude_status=bogus", "exclude_status"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ts, _ := newReadServer(t, Config{})

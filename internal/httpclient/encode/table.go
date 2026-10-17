@@ -324,6 +324,9 @@ func listTable() Table {
 		}},
 		Fields: []FieldEntry{
 			param("Status", "status"),
+			// Behind issues.list.filters with the rest of the filter
+			// vocabulary (encode.ListFiltersMembers).
+			paramTo("ExcludeStatus", "exclude_status", "ExcludeStatus"),
 			paramTo("IssueType", "type", "IssueType"),
 			param("Assignee", "assignee"),
 			// TitleSearch, IDFilter and NoAssignee (S15b) are each behind their own

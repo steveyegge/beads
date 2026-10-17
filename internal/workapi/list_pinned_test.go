@@ -2,6 +2,8 @@ package workapi
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -180,5 +182,33 @@ func TestPinnedPairIsRefusedByTheBuilder(t *testing.T) {
 		if _, err := BuildListFilter(in, cfg); err != nil {
 			t.Errorf("BuildListFilter(%+v) = %v, want no error for one member alone", in, err)
 		}
+	}
+}
+
+// TestListExcludeStatusAppendsAndValidates pins ListRequest.ExcludeStatus in
+// the builder: it is appended to the default exclusions (never in their place),
+// stands alone under AllFlag, splits commas, and an unknown name is
+// ErrValidation with the count's own sentence, which the http handler maps to
+// a 400 on exclude_status.
+func TestListExcludeStatusAppendsAndValidates(t *testing.T) {
+	var cfg ListConfig
+	f, err := BuildListFilter(issueops.ListRequest{ExcludeStatus: []string{"blocked, in_progress"}}, cfg)
+	if err != nil {
+		t.Fatalf("BuildListFilter: %v", err)
+	}
+	want := []types.Status{types.StatusClosed, types.StatusPinned, types.StatusBlocked, types.StatusInProgress}
+	if !slices.Equal(f.ExcludeStatus, want) {
+		t.Errorf("default listing ExcludeStatus = %v, want %v", f.ExcludeStatus, want)
+	}
+	f, err = BuildListFilter(issueops.ListRequest{AllFlag: true, ExcludeStatus: []string{"closed"}}, cfg)
+	if err != nil {
+		t.Fatalf("BuildListFilter: %v", err)
+	}
+	if want := []types.Status{types.StatusClosed}; !slices.Equal(f.ExcludeStatus, want) {
+		t.Errorf("AllFlag ExcludeStatus = %v, want %v", f.ExcludeStatus, want)
+	}
+	_, err = BuildListFilter(issueops.ListRequest{ExcludeStatus: []string{"clsoed"}}, cfg)
+	if !errors.Is(err, issueops.ErrValidation) || !strings.HasPrefix(err.Error(), "invalid exclude-status ") {
+		t.Errorf("unknown exclude status: err = %v, want ErrValidation starting \"invalid exclude-status \"", err)
 	}
 }
