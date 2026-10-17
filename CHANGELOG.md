@@ -648,6 +648,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mc-gate-check-timer-resolves`, `mc-gate-add-waiter` and
   `mc-update-await-id` (pending until the reference server advertises the
   gate tokens), pinned passing by `TestE2E_GatesOverHTTP`.
+- **`bd import` no longer reports a failed dependency check as a skipped
+  dependency.** Import skips an edge the dependency checks refuse (a
+  self-dependency, a cycle, or a blocker that is the issue's own ancestor or
+  descendant) and reports it on a `Skipped dependency:` line, or in
+  `skipped_dependencies` with `--json`. It did the same when the check's own
+  query failed, for example on a timeout, a dropped connection or a statement
+  the backend could not run: the SQL error became the skip reason, and on
+  Dolt, where the transaction survives a failed statement, the import
+  committed without the edge and exited 0. Such an error now fails the
+  import. Refused edges are still skipped as before.
+
 - **`bd mol bond <A> <B>` ignored prefix routing** — operand resolution now uses
   the same routing fallback as `bd show`/`bd update`/`bd close`, so a bead that
   lives in a routed store (a prefix-routed rig via `routes.jsonl`, or the
