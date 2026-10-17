@@ -8,12 +8,16 @@ import (
 	"testing"
 )
 
-// listScopeShapes are the four maintainer-city `bd list` shapes S15b serves,
-// one per corpus shape (backend/http/corpus/testdata/corpus.yaml), with the
-// token each needs and the titles each must answer on the scope seed:
+// listScopeShapes are the tokened `bd list` shapes, with the token each needs
+// and the titles each must answer on the scope seed. Five are corpus shapes
+// (backend/http/corpus/testdata/corpus.yaml) and one pins the title fold:
 //   - gc-list-on-boot: gc's default on_boot hook, run on every agent boot;
 //   - gc-list-on-boot-workflow: the same recovery, workflow lane;
 //   - mc-list-title: the PR-intake formula's `--title "$SUBJECT"`;
+//   - gc-polecat-title-contains: the polecat pre-flight's open-bead lookup,
+//     `--title-contains "$SYMPTOM_KEY"`, folded onto `title`;
+//   - title-and-title-contains-equal (not a corpus shape): one value under
+//     both title flags is one `title`;
 //   - mc-list-id: the pr-review skill's `--id <ids>`.
 var listScopeShapes = []struct {
 	corpusID string
@@ -30,6 +34,15 @@ var listScopeShapes = []struct {
 	// Case-insensitive substring, every status.
 	{"mc-list-title",
 		[]string{"list", "--all", "--include-infra", "--json", "--limit", "10", "--title", "CHILD-A"},
+		"issues.list.title", []string{"child-a"}},
+	// --title-contains folds onto the same `title` parameter: case-insensitive
+	// substring, and the status set leaves the closed child-c out.
+	{"gc-polecat-title-contains",
+		[]string{"list", "--title-contains", "CHILD", "--status", "open,in_progress,blocked", "--json"},
+		"issues.list.title", []string{"child-a", "child-b", "child-x"}},
+	// The same value under both flags is one predicate.
+	{"title-and-title-contains-equal",
+		[]string{"list", "--all", "--title", "child-a", "--title-contains", "child-a", "--json"},
 		"issues.list.title", []string{"child-a"}},
 	// A closed id in the set is listed under --all; ids outside it are not.
 	{"mc-list-id",
@@ -87,6 +100,19 @@ func TestE2E_ListScopeFiltersOverHTTP(t *testing.T) {
 			}
 		})
 	}
+
+	// The listing publishes one title parameter: a differing pair refuses
+	// rather than drop either half.
+	t.Run("differing title pair refuses", func(t *testing.T) {
+		args := []string{"list", "--all", "--title", "child-a", "--title-contains", "child-b", "--json"}
+		r := remote.run(nil, args...)
+		if r.code == 0 {
+			t.Fatalf("http: bd %s exited 0; one half of the pair was dropped: %s", strings.Join(args, " "), r.stdout)
+		}
+		if !strings.Contains(r.stdout+r.stderr, "TitleContains") {
+			t.Errorf("the refusal does not name TitleContains: stdout=%s stderr=%s", r.stdout, r.stderr)
+		}
+	})
 
 	t.Run("MC server mask refuses before dialing", func(t *testing.T) {
 		proxyAddr, counter := startMaskingProxy(t, addr, mcContextMask)

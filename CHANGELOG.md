@@ -616,6 +616,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd list --title-contains X` works against an HTTP workspace. The client
+  folds it onto the listing's existing `title` parameter (the store compiles
+  both flags to the same case-insensitive substring predicate), so it needs
+  the `issues.list.title` capability, like `--title`. Over HTTP these still
+  refuse: a `--title` and a `--title-contains` that differ other than in
+  letter case (the listing has one title parameter, and dropping either value
+  would widen the answer); either flag with `--parent` in the default tree
+  view; and `--closed-after`, so gascity's polecat pre-flight lookup of
+  recently closed beads still fails.
 - **`bd gate create`, `bd gate add-waiter` and `bd gate discover` work over a
   connected HTTP workspace.** They wrote through the legacy `CreateIssue`,
   `AddDependency` and map-based `UpdateIssue`, which the HTTP store does not
