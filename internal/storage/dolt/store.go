@@ -4626,12 +4626,15 @@ func (s *DoltStore) doltCLIPush(ctx context.Context, remote string, force bool, 
 // cliTransferError wraps a failed CLI transfer, distinguishing a transfer that
 // hit the bounded timeout (actionable: raise BEADS_CLI_TRANSFER_TIMEOUT, or
 // check what holds the database directory busy) from an ordinary failure.
+// URL credentials in op, remote and the subprocess output are redacted.
 func cliTransferError(op, remote string, transferCtx context.Context, out []byte, err error) error {
+	op, remote = redactURLCredentials(op), redactURLCredentials(remote)
+	detail := redactURLCredentials(strings.TrimSpace(string(out)))
 	if errors.Is(transferCtx.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("%s to %q timed out after %s (override with %s=<duration>; large transfers to cloud remotes can run long, and a busy dolt sql-server serving the database directory can stall CLI transfers): %s: %w",
-			op, remote, cliExecTimeoutDuration(), cliExecTimeoutEnv, strings.TrimSpace(string(out)), err)
+			op, remote, cliExecTimeoutDuration(), cliExecTimeoutEnv, detail, err)
 	}
-	return fmt.Errorf("%s failed: %s: %w", op, strings.TrimSpace(string(out)), err)
+	return fmt.Errorf("%s failed: %s: %w", op, detail, err)
 }
 
 // doltCLIPull shells out to `dolt pull` from the database directory.
