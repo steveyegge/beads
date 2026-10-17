@@ -309,11 +309,13 @@ func BuildIssueFilterClauses(query string, filter types.IssueFilter, tables Filt
 
 	if filter.AfterCreatedAt != nil {
 		// Bind the cursor time as time.Time, not a formatted string — the same
-		// binding EventsSince uses — so the driver carries the instant itself
-		// rather than a spelling of it. It is bound twice under either order
+		// binding EventsSince uses — but in UTC. A driver can send a time.Time
+		// as its wall clock with no zone (embedded Dolt's does), and the
+		// columns hold UTC wall clock, so a cursor in another zone would page
+		// from the wrong position there. It is bound twice under either order
 		// (the sargable upper bound and the strict bound), followed by the id
 		// tie-break.
-		ac := *filter.AfterCreatedAt
+		ac := filter.AfterCreatedAt.UTC()
 		// AfterCreatedAt alone decides that a position was supplied; AfterPriority
 		// decides which ORDER it is a position in. The two predicates are
 		// ALTERNATIVES, never conjuncts: ANDing them would keep the created

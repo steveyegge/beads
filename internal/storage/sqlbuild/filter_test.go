@@ -77,3 +77,39 @@ func TestTimeBoundsBindTheUTCInstant(t *testing.T) {
 		}
 	}
 }
+
+// TestKeysetCursorBindsTheUTCInstant pins that the keyset cursor is bound as
+// its instant in UTC, still as a time.Time. A driver can send a time.Time as
+// its wall clock with no zone (embedded Dolt's does), and the columns hold UTC
+// wall clock, so a cursor in another zone would page from the wrong position
+// there. Both orders bind the cursor twice.
+func TestKeysetCursorBindsTheUTCInstant(t *testing.T) {
+	t.Parallel()
+	plus2 := time.FixedZone("UTC+2", 2*60*60)
+	cur := time.Date(2026, 10, 17, 12, 0, 0, 0, plus2)
+	want := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+	p := 2
+	for _, tc := range []struct {
+		name   string
+		filter types.IssueFilter
+		nargs  int
+		at     []int // the cursor's positions in the bound args
+	}{
+		{"created order", types.IssueFilter{AfterCreatedAt: &cur, AfterID: "bd-42"}, 3, []int{0, 1}},
+		{"priority order", types.IssueFilter{AfterPriority: &p, AfterCreatedAt: &cur, AfterID: "bd-42"}, 5, []int{2, 3}},
+	} {
+		_, args, err := BuildIssueFilterClauses("", tc.filter, IssuesFilterTables)
+		if err != nil {
+			t.Fatalf("%s: BuildIssueFilterClauses: %v", tc.name, err)
+		}
+		if len(args) != tc.nargs {
+			t.Fatalf("%s: args = %v, want %d", tc.name, args, tc.nargs)
+		}
+		for _, i := range tc.at {
+			got, ok := args[i].(time.Time)
+			if !ok || !got.Equal(want) || got.Location() != time.UTC {
+				t.Errorf("%s: arg %d = %v (%T), want the time.Time %v", tc.name, i, args[i], args[i], want)
+			}
+		}
+	}
+}
