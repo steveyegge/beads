@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/testutil/bazeltest"
 )
@@ -440,12 +441,21 @@ func buildBDForInitTests(t *testing.T) string {
 
 // runGitForBootstrapTest runs a git subcommand in the given directory and
 // fails the test on error. Used by bootstrap and init-safety subprocess tests.
+//
+// An empty dir never inherits the test process cwd: that cwd is this package's
+// directory inside this checkout, so a cwd-resolved git write (config, init)
+// lands in the checkout's own .git — the r880 host .git/config clobber
+// (wy-qlvlmf). Callers that pass "" operate on absolute paths in args and get
+// a neutral scratch cwd instead. The env scrub keeps a leaked GIT_DIR /
+// GIT_WORK_TREE from routing the command at some other repository.
 func runGitForBootstrapTest(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := gitCommand(args...)
-	if dir != "" {
-		cmd.Dir = dir
+	if dir == "" {
+		dir = t.TempDir()
 	}
+	cmd.Dir = dir
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
@@ -462,6 +472,12 @@ func runGitForBootstrapTest(t *testing.T, dir string, args ...string) {
 // helper stdlib-only and keep it here.
 func initGitRepoAt(t *testing.T, dir string) {
 	t.Helper()
+	if dir == "" {
+		// cmd.Dir = "" inherits the test process cwd — this checkout's own
+		// package dir — so the init and configs would hit the host .git
+		// (the r880 clobber class, wy-qlvlmf).
+		t.Fatal("initGitRepoAt: empty dir would run git against the host checkout")
+	}
 	for _, args := range [][]string{
 		{"init"},
 		{"config", "user.email", "test@test.com"},
@@ -471,6 +487,7 @@ func initGitRepoAt(t *testing.T, dir string) {
 	} {
 		cmd := gitCommand(args...)
 		cmd.Dir = dir
+		cmd.Env = gitenv.ScrubRouting(os.Environ())
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %s failed: %v\n%s", args[0], err, out)
 		}

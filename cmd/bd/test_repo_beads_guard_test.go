@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/migration"
 	"github.com/steveyegge/beads/internal/testutil"
@@ -129,6 +130,15 @@ func testMainInner(m *testing.M) int {
 		git.PinNoRepositoryUnderForTesting(repoRoot)
 	}
 	beads.ResetCaches()
+
+	// Drop inherited git routing vars (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR,
+	// ...) for the whole test process. Fixture helpers in this package run
+	// `git config`/`git init` with only cmd.Dir set; a routing var leaked in
+	// from the invoking shell or a hook overrides that Dir and points every
+	// such write at a repository the suite does not own — one of the vectors
+	// behind the r880 host .git/config clobber (wy-qlvlmf). Tests that need a
+	// routing var set it per-test with t.Setenv.
+	scrubGitRoutingEnv()
 
 	// Separately bound any literal ancestor-directory walk that starts
 	// at (or under) this checkout: the pin above only defeats the
@@ -356,7 +366,16 @@ func testMainInner(m *testing.M) int {
 			guardDirs = append(guardDirs, fallbackBeadsDir)
 		}
 	}
-	if len(guardDirs) == 0 {
+
+	// The checkout's own git state is guarded alongside its .beads state: on
+	// 2026-10-16 a `go test ./cmd/bd` run from a linked worktree rewrote the
+	// host rig's shared .git/config (core.bare=true, extensions.worktreeConfig,
+	// a test remote.origin.url over the real origin) and its hooks, breaking
+	// every worktree of that clone (wy-qlvlmf, r880). Any diff here means some
+	// test ran git against this checkout instead of a fixture it owns.
+	gitStateBefore := snapshotRepoGitState(repoRoot)
+
+	if len(guardDirs) == 0 && len(gitStateBefore) == 0 {
 		return runTestsAndSweep(m)
 	}
 
@@ -417,7 +436,105 @@ func testMainInner(m *testing.M) int {
 		}
 	}
 
+	if gitDiff := diffGitState(gitStateBefore, snapshotRepoGitState(repoRoot)); gitDiff != "" {
+		fmt.Fprintf(os.Stderr, "ERROR: test suite modified this checkout's own git state "+
+			"(the wy-qlvlmf host-clobber class — a test ran git against the checkout instead of a fixture):\n%s\n", gitDiff)
+		if code == 0 {
+			code = 1
+		}
+	}
+
 	return code
+}
+
+// scrubGitRoutingEnv unsets, process-wide, every env var internal/gitenv
+// classifies as git routing (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, ...),
+// so fixture git commands are routed only by their cmd.Dir.
+func scrubGitRoutingEnv() {
+	kept := map[string]struct{}{}
+	for _, kv := range gitenv.ScrubRouting(os.Environ()) {
+		kept[kv] = struct{}{}
+	}
+	for _, kv := range os.Environ() {
+		if _, ok := kept[kv]; ok {
+			continue
+		}
+		if name, _, found := strings.Cut(kv, "="); found {
+			_ = os.Unsetenv(name)
+		}
+	}
+}
+
+// snapshotRepoGitState captures the parts of this checkout's own git state
+// that the r880 incident showed a test escape mutates: the common (shared)
+// .git/config, this worktree's config.worktree, and the common hooks dir.
+// Values are full file contents keyed by absolute path; hooks files are keyed
+// under their dir with contents too (they are small scripts). An empty map
+// means there is nothing to guard (repoRoot is not a git checkout).
+func snapshotRepoGitState(repoRoot string) map[string]string {
+	if repoRoot == "" {
+		return nil
+	}
+	out, err := gitCommand("-C", repoRoot, "rev-parse", "--git-dir", "--git-common-dir").Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	gitDir := resolveGitPath(repoRoot, strings.TrimSpace(lines[0]))
+	commonDir := resolveGitPath(repoRoot, strings.TrimSpace(lines[1]))
+	if commonDir == "" {
+		return nil
+	}
+	state := map[string]string{}
+	snapFile := func(p string) {
+		if p == "" {
+			return
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			state[p] = "<absent>"
+			return
+		}
+		state[p] = string(data)
+	}
+	snapFile(filepath.Join(commonDir, "config"))
+	if gitDir != "" && gitDir != commonDir {
+		snapFile(filepath.Join(gitDir, "config.worktree"))
+	}
+	hooksDir := filepath.Join(commonDir, "hooks")
+	_ = filepath.Walk(hooksDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil //nolint:nilerr // best-effort snapshot; a walk error just narrows what gets watched
+		}
+		snapFile(path)
+		return nil
+	})
+	return state
+}
+
+// diffGitState names every watched git-state file that changed, appeared, or
+// disappeared across the run. Contents are not echoed (configs can carry
+// remote URLs); sizes identify the change and the file itself holds the rest.
+func diffGitState(before, after map[string]string) string {
+	var out string
+	for p, b := range before {
+		a, ok := after[p]
+		if !ok {
+			a = "<absent>"
+		}
+		if a != b {
+			out += fmt.Sprintf("- %s: changed (%d bytes → %d bytes)\n", p, len(b), len(a))
+		}
+	}
+	for p, a := range after {
+		if _, ok := before[p]; !ok {
+			out += fmt.Sprintf("- %s: new file (%d bytes)\n", p, len(a))
+		}
+	}
+	return out
 }
 
 // worktreeFallbackBeadsDirDirect resolves the shared .beads directory a
