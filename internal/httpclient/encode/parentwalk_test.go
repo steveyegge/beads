@@ -221,7 +221,8 @@ func TestTheParentWalkRefusesAResidualFilter(t *testing.T) {
 	}{
 		{
 			// The canonical residual: --exclude-type appends past the derived
-			// gate and infra members, and listIssues publishes no exclude_type.
+			// gate and infra members, and the walk does not send listIssues'
+			// exclude_type.
 			name: "--exclude-type",
 			in:   textListing(issueops.ListRequest{ExcludeTypes: []string{"chore"}}),
 			row:  "P-IssueFilter.ExcludeTypes",
@@ -236,8 +237,9 @@ func TestTheParentWalkRefusesAResidualFilter(t *testing.T) {
 		},
 		{
 			// A residual with a documented parameter is still a residual when
-			// the parameter is not this operation's: listIssues publishes no
-			// priority.
+			// the walk does not send it: listIssues takes `priority` only
+			// behind issues.list.filters, and the walk encodes none of that
+			// token's members.
 			name: "--priority",
 			in:   textListing(issueops.ListRequest{Priority: intPtr(1)}),
 			row:  "P-IssueFilter.Priority",
