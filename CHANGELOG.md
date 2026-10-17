@@ -22,11 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bd blocked --flags --raw` answers the stored `is_blocked` column itself,
   without the external-dependency policy: a row blocked only by an
   unsatisfied `external:` ref reads `false` (the policy-aware `--flags`
-  reads `true`); a stale flag reads `true` either way. Local, proxied and
-  HTTP answer the same, except that over HTTP a server advertising
-  `policy.external_dependencies` answers only the policy-aware flag, so
-  `--raw` against it is refused before the dial rather than answered with
-  the decorated flag. `--raw` without `--flags` is refused.
+  reads `true`); a stale flag reads `true` either way. `--raw` is for the
+  local and proxied routes, where it reads the column directly and the two
+  answer the same. Over HTTP it is answered only by a server that does not
+  advertise `policy.external_dependencies` (whose flag is the column); a
+  server advertising it answers only the policy-aware flag, so `--raw`
+  against it is refused before the dial rather than answered with the
+  decorated flag. `--raw` without `--flags` is refused.
 - `bd blocked` works over a connected HTTP workspace. The blocked listing is
   a role, `issueops.BlockedLister` (`ListBlocked(BlockedRequest{ParentID,
   Labels, LabelsAny, ExcludeLabels}) -> BlockedResult{Items}`), on every
