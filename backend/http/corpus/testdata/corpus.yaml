@@ -379,7 +379,11 @@ shapes:
   - id: gc-blocked
     source: gc bdstore_ready_projection.go fetchReadyProjectionViaBlocked
     args: [blocked, --json]
-    pending: {slice: "S18", reason: "bd blocked hits the GetBlockedIssues stub (B3 #10)"}
+    pending: {slice: "SRV-1", reason: "bd blocked dials listBlockedIssues behind blocked.list, which the reference server does not advertise, so the client refuses at its capability preflight (pinned passing against the current server by backend/http TestE2E_BlockedOverHTTP); remove the mark when reference_server.json is upgraded"}
+  - id: gc-blocked-parent
+    source: bd blocked --parent (the molecule-scoped blocked listing)
+    args: [blocked, --json, --parent, e2e-mol]
+    pending: {slice: "SRV-1", reason: "bd blocked dials listBlockedIssues behind blocked.list, which the reference server does not advertise, so the client refuses at its capability preflight (pinned passing against the current server by backend/http TestE2E_BlockedOverHTTP); remove the mark when reference_server.json is upgraded"}
 
   # ---------------------------------------------------------------- molecules
   - id: mc-mol-current

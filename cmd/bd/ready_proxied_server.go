@@ -75,48 +75,19 @@ func runReadyProxiedServer(cmd *cobra.Command, ctx context.Context) error {
 	}
 }
 
-func runBlockedProxiedServer(cmd *cobra.Command, ctx context.Context) error {
+// proxiedBlockedLister hands back the blocked-listing surface for the
+// proxied-server provider, through the provider's OWN capability accessor:
+// the accessor is where each layer (the external-dependency decoration among
+// them) is added.
+func proxiedBlockedLister() (issueops.BlockedLister, error) {
 	if uowProvider == nil {
-		return HandleError("proxied-server UOW provider not initialized")
+		return nil, errors.New("proxied-server UOW provider not initialized")
 	}
-	uw, err := uowProvider.NewUOW(ctx)
-	if err != nil {
-		return HandleErrorRespectJSON("open unit of work: %v", err)
+	src, ok := uowProvider.(uow.BlockedListerSource)
+	if !ok {
+		return nil, fmt.Errorf("proxied-server provider %T does not offer the blocked-listing surface", uowProvider)
 	}
-	defer uw.Close(ctx)
-
-	filter := blockedFilterFromFlags(cmd)
-
-	blocked, err := uw.IssueUseCase().GetBlockedIssues(ctx, filter)
-	if err != nil {
-		return HandleErrorRespectJSON("%v", err)
-	}
-
-	if jsonOutput {
-		if blocked == nil {
-			blocked = []*types.BlockedIssue{}
-		}
-		_ = outputJSON(blocked)
-		return nil
-	}
-	if len(blocked) == 0 {
-		fmt.Printf("\n%s No blocked issues\n\n", ui.RenderPass("✨"))
-		return nil
-	}
-	fmt.Printf("\n%s Blocked issues (%d):\n\n", ui.RenderFail("🚫"), len(blocked))
-	for _, issue := range blocked {
-		fmt.Printf("[%s] %s: %s\n",
-			ui.RenderPriority(issue.Priority),
-			ui.RenderID(issue.ID), issue.Title)
-		blockedBy := issue.BlockedBy
-		if blockedBy == nil {
-			blockedBy = []string{}
-		}
-		fmt.Printf("  Blocked by %d open dependencies: %v\n",
-			issue.BlockedByCount, blockedBy)
-		fmt.Println()
-	}
-	return nil
+	return src.BlockedLister()
 }
 
 func runReadyProxiedList(ctx context.Context, uw uow.UnitOfWork, in readyInput) error {

@@ -70,6 +70,7 @@ func TestOperationIdsMatchTheServerRouteTable(t *testing.T) {
 		{OpBatchGetIssues, httpapi.OpBatchGetIssues},
 		{OpReclaimIssues, httpapi.OpReclaimIssues},
 		{OpHeartbeatIssue, httpapi.OpHeartbeatIssue},
+		{OpListBlockedIssues, httpapi.OpListBlockedIssues},
 		{OpAdvanceMolecule, httpapi.OpAdvanceMolecule},
 	}
 

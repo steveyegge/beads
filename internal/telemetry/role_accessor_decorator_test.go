@@ -94,7 +94,7 @@ func TestInstrumentedStorageDeclaresEveryRoleAccessor(t *testing.T) {
 }
 
 // roleAccessorStore is a DoltStorage whose only real methods are the
-// thirty role accessors, each answering with a distinguishable sentinel
+// thirty-one role accessors, each answering with a distinguishable sentinel
 // so a test can tell an instrumented surface from a passed-through one.
 //
 // TWO sentinels rather than one: memoryops.Memories.List and issueops.Reader.List
@@ -181,8 +181,11 @@ func (s *roleAccessorStore) LeaseReclaimer() (issueops.LeaseReclaimer, error) {
 func (s *roleAccessorStore) Heartbeater() (issueops.Heartbeater, error) {
 	return s.surface, s.err
 }
+func (s *roleAccessorStore) BlockedLister() (issueops.BlockedLister, error) {
+	return s.surface, s.err
+}
 
-// roleAccessorSentinel implements twenty-nine of the thirty roles at
+// roleAccessorSentinel implements thirty of the thirty-one roles at
 // once — every one but memoryops.Memories, whose List collides with
 // issueops.Reader.List and needs the second sentinel below.
 // Nothing calls its methods; identity is the whole point.
@@ -318,6 +321,9 @@ func (*roleAccessorSentinel) Reclaim(context.Context, issueops.ReclaimRequest) (
 func (*roleAccessorSentinel) Heartbeat(context.Context, issueops.HeartbeatRequest) (issueops.HeartbeatResult, error) {
 	return issueops.HeartbeatResult{}, nil
 }
+func (*roleAccessorSentinel) ListBlocked(context.Context, issueops.BlockedRequest) (issueops.BlockedResult, error) {
+	return issueops.BlockedResult{}, nil
+}
 
 // memoryRoleSentinel is the memory role's sentinel — see
 // memoryRoleSentinel is the remaining role's sentinel — see
@@ -396,6 +402,7 @@ func TestInstrumentedStorageInstrumentsEveryRoleAccessor(t *testing.T) {
 		{"Releaser", func() (any, error) { return wrapped.Releaser() }, sentinel},
 		{"LeaseReclaimer", func() (any, error) { return wrapped.LeaseReclaimer() }, sentinel},
 		{"Heartbeater", func() (any, error) { return wrapped.Heartbeater() }, sentinel},
+		{"BlockedLister", func() (any, error) { return wrapped.BlockedLister() }, sentinel},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			surface, err := test.got()
@@ -484,6 +491,7 @@ func TestInstrumentedStorageRoleAccessorsPropagateInnerErrors(t *testing.T) {
 		{"Releaser", func() (any, error) { return wrapped.Releaser() }},
 		{"LeaseReclaimer", func() (any, error) { return wrapped.LeaseReclaimer() }},
 		{"Heartbeater", func() (any, error) { return wrapped.Heartbeater() }},
+		{"BlockedLister", func() (any, error) { return wrapped.BlockedLister() }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			surface, err := test.got()

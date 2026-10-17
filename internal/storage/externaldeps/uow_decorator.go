@@ -148,7 +148,14 @@ func (p *uowProvider) LeaseReclaimer() (publicops.LeaseReclaimer, error) {
 // Heartbeater passes through: the external-dependency policy governs what a
 // write may point at, and a heartbeat on an existing claim points at nothing.
 func (p *uowProvider) Heartbeater() (publicops.Heartbeater, error) { return uow.NewHeartbeater(p) }
-func (p *uowProvider) Memories() (memoryops.Memories, error)       { return uow.NewMemories(p) }
+
+// BlockedLister is built over THIS provider, so its unit of work's
+// GetBlockedIssues is the decorated one above: unsatisfied external blockers
+// are named, exactly as the store decorator names them.
+func (p *uowProvider) BlockedLister() (publicops.BlockedLister, error) {
+	return uow.NewBlockedLister(p)
+}
+func (p *uowProvider) Memories() (memoryops.Memories, error) { return uow.NewMemories(p) }
 func (p *uowProvider) EventsJournalCursor() (storage.EventsJournalCursor, error) {
 	return uow.NewEventsJournalCursor(p)
 }
@@ -227,6 +234,7 @@ var (
 	_ uow.ReleaserSource                 = (*uowProvider)(nil)
 	_ uow.LeaseReclaimerSource           = (*uowProvider)(nil)
 	_ uow.HeartbeaterSource              = (*uowProvider)(nil)
+	_ uow.BlockedListerSource            = (*uowProvider)(nil)
 	_ uow.MemoriesSource                 = (*uowProvider)(nil)
 	_ uow.EventsJournalCursorSource      = (*uowProvider)(nil)
 )

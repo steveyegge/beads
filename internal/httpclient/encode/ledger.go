@@ -1113,8 +1113,16 @@ func commandRows() []Row {
 			"showIssueChildren's --json marshals the full GetDependentsWithMetadata rows, the same collectDependents shallow projection as --refs, so created_at/assignee/description come back zeroed over http. `bd children` is NOT this flag: it is a `bd list --parent` listing, served through the reader role (S6c)"),
 		row("F-mol-ready", "mol ready", "", "`bd mol ready` refuses",
 			"it is the same runMolReadyGatedCore body as `bd ready --gated`"),
-		row("F-blocked", "blocked", "", "`bd blocked` refuses",
-			"it is raw GetBlockedIssues, which is on the unsupported allowlist"),
+		{
+			ID: "F-blocked", Kind: KindRetired, Command: "blocked",
+			What:    "RETIRED — `bd blocked` is SERVED whole",
+			Why:     "it said the command refuses because \"it is raw GetBlockedIssues, which is on the unsupported allowlist\", and that is no longer so: bd serve publishes listBlockedIssues (GET /v0/beads/blocked) behind blocked.list, over the issueops.BlockedLister role every leg implements, and `bd blocked` takes that role on every route, so the http client dials the one operation and prints the server's answer. Every flag the command publishes (--parent, --label, --label-any, --exclude-label) is a parameter of that operation, so there is no refused mode left to name. Against a server that does not advertise blocked.list the role refuses before the dial, naming the token: a capability refusal, not a divergence",
+			SpecRow: "D7 (RETIRED)",
+			// The retirement's own evidence: the corpus replay and
+			// TestE2E_BlockedOverHTTP compare `bd blocked --json` over http
+			// against the same command over a local workspace.
+			PinnedBy: pinnedByS3Conformance,
+		},
 		{
 			ID: "F-count", Kind: KindRetired, Command: "count",
 			What: "RETIRED — `bd count` is SERVED whole",

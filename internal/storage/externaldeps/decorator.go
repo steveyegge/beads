@@ -576,6 +576,22 @@ func (s *Store) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) (
 	if err != nil {
 		return nil, err
 	}
+	return s.decorateBlocked(ctx, filter, base, s.inner.GetDependencyRecordsForIssues, s.inner.GetIssuesByIDs)
+}
+
+// decorateBlocked is GetBlockedIssues' decoration of an undecorated blocked
+// listing (base): unsatisfied external refs are added to each row's blockers,
+// and the sources blocked only by such refs are listed too. The two reads it
+// makes for those extra sources (their parent edges, when the filter names a
+// parent, and the rows themselves) are passed in, so the remote blocked
+// lister can make them through roles a served store answers.
+func (s *Store) decorateBlocked(
+	ctx context.Context,
+	filter types.WorkFilter,
+	base []*types.BlockedIssue,
+	dependencyRecords func(context.Context, []string) (map[string][]*types.Dependency, error),
+	issuesByIDs func(context.Context, []string) ([]*types.Issue, error),
+) ([]*types.BlockedIssue, error) {
 	state, err := s.loadBlockingState(ctx)
 	if err != nil {
 		return nil, err
@@ -605,7 +621,7 @@ func (s *Store) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) (
 	}
 	parentDeps := make(map[string][]*types.Dependency)
 	if filter.ParentID != nil && len(missingIDs) > 0 {
-		parentDeps, err = s.inner.GetDependencyRecordsForIssues(ctx, missingIDs)
+		parentDeps, err = dependencyRecords(ctx, missingIDs)
 		if err != nil {
 			return nil, fmt.Errorf("external dependencies: load blocked parent edges: %w", err)
 		}
@@ -616,7 +632,7 @@ func (s *Store) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) (
 			filteredMissingIDs = append(filteredMissingIDs, issueID)
 		}
 	}
-	issues, err := s.inner.GetIssuesByIDs(ctx, filteredMissingIDs)
+	issues, err := issuesByIDs(ctx, filteredMissingIDs)
 	if err != nil {
 		return nil, fmt.Errorf("external dependencies: load blocked sources: %w", err)
 	}

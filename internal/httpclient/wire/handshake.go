@@ -111,6 +111,11 @@ var opCapability = map[string]string{
 	// does not advertise the token, so Preflight refuses locally with a typed
 	// capability error rather than dialing a route the older server lacks.
 	OpHeartbeatIssue: "issues.heartbeat",
+	// The blocked listing, dialed by httpBlockedLister. A server that
+	// predates it does not advertise the token, so Preflight refuses locally
+	// with a typed capability error naming blocked.list rather than dialing a
+	// route the older server lacks.
+	OpListBlockedIssues: "blocked.list",
 	// The advance-a-molecule role (molecule.go) dials it when served and
 	// refuses before dialing when not; it never composes a client-side copy.
 	OpAdvanceMolecule: "issues.advanceMolecule",

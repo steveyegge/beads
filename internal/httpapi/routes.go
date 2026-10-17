@@ -534,6 +534,14 @@ var routeTable = []route{
 		handler:     (*Server).handleCountReady,
 	},
 	{
+		op:          OpListBlockedIssues,
+		method:      http.MethodGet,
+		pattern:     "/v0/beads/blocked",
+		capability:  "blocked.list",
+		implemented: true,
+		handler:     (*Server).handleListBlocked,
+	},
+	{
 		op:          OpListIssues,
 		method:      http.MethodGet,
 		pattern:     "/v0/beads/issues",

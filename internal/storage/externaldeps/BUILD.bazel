@@ -4,6 +4,7 @@ go_library(
     name = "externaldeps",
     srcs = [
         "batch_closer.go",
+        "blocked_lister.go",
         "decorator.go",
         "remote_roles.go",
         "resolver.go",
