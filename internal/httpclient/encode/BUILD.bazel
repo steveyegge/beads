@@ -4,10 +4,10 @@ go_library(
     name = "encode",
     srcs = [
         "encode.go",
-        "list_filters.go",
         "ledger.go",
         "ledger_fields.go",
         "ledger_render.go",
+        "list_filters.go",
         "list_fold.go",
         "parentwalk.go",
         "skew.go",
