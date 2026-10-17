@@ -173,6 +173,99 @@ func TestE2E_BlockedFlagsOverHTTP(t *testing.T) {
 		}
 	})
 
+	t.Run("raw is the stored column", func(t *testing.T) {
+		addr, reference := startE2EServerWithStore(t, e2eProjectID, e2eDatabase)
+		local := newEmbeddedFixture(t, bin)
+		seed(local)
+		served := newHTTPFixture(t, bin, addr)
+		seed(served)
+
+		flagsOf := func(f *remoteRolesFixture, stdin string, args ...string) map[string]bool {
+			t.Helper()
+			r := runBDStdin(t, f, stdin, append([]string{"blocked", "--flags", "--json"}, args...)...)
+			if r.code != 0 {
+				t.Fatalf("bd blocked --flags --json %v exited %d: %s %s", args, r.code, r.stdout, r.stderr)
+			}
+			titleOf := map[string]string{}
+			for title, id := range f.ids {
+				titleOf[id] = title
+			}
+			out := map[string]bool{}
+			for _, row := range parseBlockedFlags(t, r.stdout) {
+				key := row.ID
+				if title, ok := titleOf[row.ID]; ok {
+					key = title
+				}
+				out[key] = row.IsBlocked
+			}
+			return out
+		}
+
+		localRaw := flagsOf(local, flagStdin(local), "--raw")
+		servedRaw := flagsOf(served, flagStdin(served), "--raw")
+		if !reflect.DeepEqual(localRaw, servedRaw) {
+			t.Errorf("served --raw differs from local --raw:\nlocal:  %v\nserved: %v", localRaw, servedRaw)
+		}
+		lr := runBDStdin(t, local, flagStdin(local), "blocked", "--flags", "--json", "--raw")
+		sr := runBDStdin(t, served, flagStdin(served), "blocked", "--flags", "--json", "--raw")
+		if strings.Count(lr.stdout, "\n") != strings.Count(sr.stdout, "\n") {
+			t.Errorf("--raw line counts differ:\nlocal:\n%s\nserved:\n%s", lr.stdout, sr.stdout)
+		}
+
+		// child-x is blocked ONLY by an unsatisfied external ref: the policy
+		// flag says blocked, the stored column does not.
+		decorated := flagsOf(served, flagStdin(served))
+		if !decorated["child-x"] || servedRaw["child-x"] || localRaw["child-x"] {
+			t.Errorf("child-x (externally blocked only): --flags %v, --raw served %v local %v; want true, false, false",
+				decorated["child-x"], servedRaw["child-x"], localRaw["child-x"])
+		}
+		// Locally blocked rows read the same either way.
+		for _, title := range []string{"loner", "gate-parent", "gate-kid", "blocker"} {
+			if decorated[title] != servedRaw[title] {
+				t.Errorf("%s: --flags %v, --raw %v; a local blocker is the column", title, decorated[title], servedRaw[title])
+			}
+		}
+
+		// A stale flag (set, no blocker) is the column, so both read true.
+		stale := served.create("stale")
+		if err := reference.RunEventsMaintenanceTx(context.Background(), func(ctx context.Context, tx issueops.DBTX) error {
+			_, err := tx.ExecContext(ctx, "UPDATE issues SET is_blocked = 1 WHERE id = ?", stale)
+			return err
+		}); err != nil {
+			t.Fatalf("set the stale flag: %v", err)
+		}
+		if got := flagsOf(served, stale+"\n", "--raw"); !got["stale"] {
+			t.Errorf("--raw for the stale-flagged row = %v, want true", got)
+		}
+		if got := flagsOf(served, stale+"\n"); !got["stale"] {
+			t.Errorf("--flags for the stale-flagged row = %v, want true", got)
+		}
+
+		// --raw qualifies --flags only.
+		if r := runBDStdin(t, served, "", "blocked", "--json", "--raw"); r.code != 1 || !strings.Contains(r.stdout+r.stderr, "--raw") {
+			t.Errorf("bd blocked --raw without --flags: exit %d %s %s, want exit 1 naming --raw", r.code, r.stdout, r.stderr)
+		}
+
+		// A server that applies the policy answers the decorated flag and the
+		// wire cannot ask it for the column: --raw is refused there, before
+		// the annotation read, rather than answered with the policy flag.
+		proxyAddr, counter := startMaskingProxy(t, addr, func(body map[string]any) {
+			caps, _ := body["capabilities"].([]any)
+			body["capabilities"] = append(caps, "policy.external_dependencies")
+		})
+		enforced := newHTTPFixture(t, bin, proxyAddr)
+		counter.reset()
+		r := runBDStdin(t, enforced, served.ids["child-x"]+"\n", "blocked", "--flags", "--json", "--raw")
+		if r.code != 1 || !strings.Contains(r.stdout+r.stderr, "policy.external_dependencies") {
+			t.Errorf("--raw against a policy server: exit %d %s %s, want exit 1 naming the policy token", r.code, r.stdout, r.stderr)
+		}
+		for _, p := range counter.snapshot() {
+			if strings.Contains(p, "/v0/beads/dependencies/blocking") {
+				t.Errorf("a refused --raw dialed %s", p)
+			}
+		}
+	})
+
 	t.Run("older server mask", func(t *testing.T) {
 		addr := startE2EServer(t)
 		proxyAddr, counter := startMaskingProxy(t, addr, mcContextMask)

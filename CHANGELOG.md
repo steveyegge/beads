@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind `dependencies.blocking.isBlocked`, refused before the dial against a
   server that does not advertise it. The listing's filter flags are refused
   with `--flags`.
+- `bd blocked --flags --raw` answers the stored `is_blocked` column itself,
+  without the external-dependency policy: a row blocked only by an
+  unsatisfied `external:` ref reads `false` (the policy-aware `--flags`
+  reads `true`); a stale flag reads `true` either way. Local, proxied and
+  HTTP answer the same, except that over HTTP a server advertising
+  `policy.external_dependencies` answers only the policy-aware flag, so
+  `--raw` against it is refused before the dial rather than answered with
+  the decorated flag. `--raw` without `--flags` is refused.
 - `bd blocked` works over a connected HTTP workspace. The blocked listing is
   a role, `issueops.BlockedLister` (`ListBlocked(BlockedRequest{ParentID,
   Labels, LabelsAny, ExcludeLabels}) -> BlockedResult{Items}`), on every

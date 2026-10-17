@@ -109,6 +109,41 @@ func TestProxiedServerBlocked(t *testing.T) {
 		}
 	})
 
+	t.Run("flags_raw_is_the_stored_column", func(t *testing.T) {
+		t.Parallel()
+		p := newSharedProxiedProject(t, bd, "bkr")
+		ext := bdProxiedCreate(t, bd, p.dir, "Externally blocked only")
+		if _, stderr, err := bdProxiedRunBuffers(t, bd, p.dir, "dep", "add", ext.ID, "external:otherproj:cap"); err != nil {
+			t.Fatalf("dep add external: %v\n%s", err, stderr)
+		}
+		flag := func(args ...string) bool {
+			t.Helper()
+			cmd := exec.Command(bd, append([]string{"blocked", "--flags", "--json"}, args...)...)
+			cmd.Dir = p.dir
+			cmd.Env = bdProxiedEnv(p.dir)
+			cmd.Stdin = strings.NewReader(ext.ID + "\n")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("bd blocked --flags %v: %v\n%s\n%s", args, err, stdout.String(), stderr.String())
+			}
+			var rows []struct {
+				ID        string `json:"id"`
+				IsBlocked bool   `json:"is_blocked"`
+			}
+			if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &rows); err != nil || len(rows) != 1 {
+				t.Fatalf("parse %v: %v\n%s", args, err, stdout.String())
+			}
+			return rows[0].IsBlocked
+		}
+		if !flag() {
+			t.Errorf("--flags for an externally blocked row = false, want true (the policy flag)")
+		}
+		if flag("--raw") {
+			t.Errorf("--flags --raw for an externally blocked row = true, want false (the stored column)")
+		}
+	})
+
 	t.Run("empty_case", func(t *testing.T) {
 		t.Parallel()
 		p := newSharedProxiedProject(t, bd, "bk2")

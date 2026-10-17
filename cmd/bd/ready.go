@@ -391,6 +391,9 @@ var blockedCmd = &cobra.Command{
 		if flagsMode, _ := cmd.Flags().GetBool("flags"); flagsMode {
 			return runBlockedFlags(cmd, ctx, cmd.InOrStdin())
 		}
+		if cmd.Flags().Changed("raw") {
+			return HandleErrorRespectJSON("--raw qualifies --flags (the stored blocked column per id); it has no meaning for the listing")
+		}
 		lister, err := blockedLister()
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -818,6 +821,7 @@ func init() {
 	blockedCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	blockedCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	blockedCmd.Flags().StringSlice("exclude-label", []string{}, "Exclude issues that have ANY of these labels")
+	blockedCmd.Flags().Bool("raw", false, "With --flags: the stored blocked column itself, without the external-dependency policy (an unsatisfied external: blocker does not set it)")
 	blockedCmd.Flags().Bool("flags", false, "Print the blocked flag for each id read from stdin (one per line) instead of the listing; with --json, [{\"id\",\"is_blocked\"}]")
 	rootCmd.AddCommand(blockedCmd)
 }
