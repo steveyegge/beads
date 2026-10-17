@@ -51,6 +51,12 @@ func listFilterRequest(t *testing.T, member string) issueops.ListRequest {
 	default:
 		t.Fatalf("member %s: no probe value for kind %s", member, f.Kind())
 	}
+	if member == "TitleContains" {
+		// A lone TitleContains folds onto `title` (encode.FoldTitleContains)
+		// and asks only for issues.list.title; it rides title_contains only
+		// beside a TitleSearch that differs from it.
+		req.TitleSearch = "y"
+	}
 	return req
 }
 
@@ -66,7 +72,7 @@ func TestListFiltersRideListIssuesBehindTheToken(t *testing.T) {
 	for _, e := range table.Fields {
 		paramOf[e.Name] = e.Param
 	}
-	served := &apigen.ContextResponse{Capabilities: []string{"issues.list", wire.CapListFilters}}
+	served := &apigen.ContextResponse{Capabilities: []string{"issues.list", wire.CapListTitle, wire.CapListFilters}}
 	for _, member := range encode.ListFiltersMembers {
 		t.Run(member, func(t *testing.T) {
 			w := newCountingWire(`{"items":[],"has_more":false}`)

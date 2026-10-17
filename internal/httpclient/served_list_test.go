@@ -1467,11 +1467,11 @@ func TestServedReaderRefusesTheFiltersTheWireCannotCarry(t *testing.T) {
 	_, reader := servedReader(t)
 
 	// The filter members that stood here (SpecPrefix, PinnedFlag, PriorityMax,
-	// UpdatedAfter, TitleContains, ExcludeTypes) ride listIssues behind
-	// issues.list.filters now; their served answers are the Reader contract's
-	// filter cases, and their refusal against a server without the token is
-	// list_filters_test.go's. What is left is the vocabulary the wire still
-	// cannot put.
+	// UpdatedAfter, a TitleContains that differs from TitleSearch,
+	// ExcludeTypes) ride listIssues behind issues.list.filters now; their
+	// served answers are the Reader contract's filter cases, and their refusal
+	// against a server without the token is list_filters_test.go's. What is
+	// left is the vocabulary the wire still cannot put.
 	for _, test := range []struct {
 		field string
 		req   issueops.ListRequest

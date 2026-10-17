@@ -101,19 +101,6 @@ func TestE2E_ListScopeFiltersOverHTTP(t *testing.T) {
 		})
 	}
 
-	// The listing publishes one title parameter: a differing pair refuses
-	// rather than drop either half.
-	t.Run("differing title pair refuses", func(t *testing.T) {
-		args := []string{"list", "--all", "--title", "child-a", "--title-contains", "child-b", "--json"}
-		r := remote.run(nil, args...)
-		if r.code == 0 {
-			t.Fatalf("http: bd %s exited 0; one half of the pair was dropped: %s", strings.Join(args, " "), r.stdout)
-		}
-		if !strings.Contains(r.stdout+r.stderr, "TitleContains") {
-			t.Errorf("the refusal does not name TitleContains: stdout=%s stderr=%s", r.stdout, r.stderr)
-		}
-	})
-
 	t.Run("MC server mask refuses before dialing", func(t *testing.T) {
 		proxyAddr, counter := startMaskingProxy(t, addr, mcContextMask)
 		f := newHTTPFixture(t, bin, proxyAddr)
@@ -139,13 +126,17 @@ func TestE2E_ListScopeFiltersOverHTTP(t *testing.T) {
 }
 
 // listFilterShapes are the `bd list` shapes that ride the listing filters
-// behind issues.list.filters, one per corpus shape, each with the titles it
-// must answer on the seed plus seedListFilters:
+// behind issues.list.filters, each with the titles it must answer on the seed
+// plus seedListFilters. Five are corpus shapes and one pins the title pair the
+// fold leaves:
 //   - wf-session-cleanup: the session-cleanup sweep's closed-and-stale scan;
 //   - gc-polecat-closed-after: the polecat formula's "has the fix landed"
 //     check (title substring, closed after a cutoff);
 //   - list-filter-priority-range, list-filter-exclude-type-no-parent and
-//     list-filter-updated-after: one representative per remaining family.
+//     list-filter-updated-after: one representative per remaining family;
+//   - title-and-title-contains-differ (not a corpus shape): a `--title` and a
+//     `--title-contains` that differ ride `title` and `title_contains`
+//     together, and the server applies both.
 var listFilterShapes = []struct {
 	corpusID string
 	args     []string
@@ -167,6 +158,11 @@ var listFilterShapes = []struct {
 	{"list-filter-updated-after",
 		[]string{"list", "--json", "--updated-after", "2000-01-01", "--limit", "0"},
 		[]string{"child-a", "child-b", "child-x", "loner", "open task p2", "p4 row", "parent", "tmpl"}},
+	// Either substring alone answers more: "child" every child, "a" the
+	// lane tasks, parent and open task p2 too.
+	{"title-and-title-contains-differ",
+		[]string{"list", "--all", "--title", "child", "--title-contains", "a", "--json"},
+		[]string{"child-a"}},
 }
 
 // seedListFilters adds the rows the filter shapes split: two closed tasks on
