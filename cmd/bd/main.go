@@ -1952,6 +1952,11 @@ var rootCmd = &cobra.Command{
 			// preview: the store is genuinely writable underneath, so the
 			// lazy defer-wake sweep may still run (be-vbhpf).
 			ClassifiedRead: policy.readOnly && !readonlyMode && !previewMode,
+			// dc-6jaq: reused as-is (one lookup answers the whole invocation,
+			// see commandFreeze's own comment above) so the embedded store's
+			// classified-read open can gate its sweep off during a freeze
+			// (GH#7634) without a second, possibly-disagreeing marker lookup.
+			MigrationFrozen: commandFreeze.Frozen(),
 		}
 
 		// Load config to get database name and server connection settings.
