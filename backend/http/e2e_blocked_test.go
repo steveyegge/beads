@@ -32,7 +32,10 @@ func TestE2E_BlockedOverHTTP(t *testing.T) {
 		// parent, and a labelled blocked row for the filter arms.
 		blocker := f.create("blocker", "-t", "task", "-p", "1")
 		gp := f.create("gate-parent", "-t", "epic", "-p", "2")
-		kid := f.create("gate-kid", "-t", "task", "-p", "2")
+		// Its own priority: rows tied on priority and created_at fall to the
+		// id order, and ids are generated per workspace, so a tie would order
+		// the two workspaces differently.
+		kid := f.create("gate-kid", "-t", "task", "-p", "3")
 		tagged := f.create("tagged", "-t", "task", "-p", "1", "-l", "lane:a")
 		f.mustRun(nil, "dep", "add", kid, gp, "--type", "parent-child")
 		f.mustRun(nil, "dep", "add", gp, blocker)

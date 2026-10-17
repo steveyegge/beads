@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bd blocked --flags` prints the blocked flag for each id read from stdin
   (one per line; blank lines and repeats ignored), with `--json` as
   `[{"id","is_blocked"}]` in the order the ids were given, omitting an id that
-  names no row on either plane. It is the flag `bd ready` filters on, not the
+  names no row on either plane. A closed id is answered too, with its stored
+  flag (a `status <> 'closed'` SQL read of the column leaves it out). It is the flag `bd ready` filters on, not the
   listing: a row whose stored flag is set with no nameable blocker reads true
   here and is absent from `bd blocked`. It runs `issueops.BlockedFlags` on
   every route; over HTTP that is `listBlockingAnnotations` with `is_blocked`,

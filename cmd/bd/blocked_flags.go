@@ -37,7 +37,8 @@ var blockedFlagFilterFlags = []string{"parent", "label", "label-any", "exclude-l
 // the flag as it keeps the row out of `bd ready`.
 //
 // Every id that names a row on either plane is answered, in the order the ids
-// were first given; an id naming no row is omitted. Over HTTP the read is
+// were first given, a closed row included (its flag is whatever is stored);
+// an id naming no row is omitted. Over HTTP the read is
 // listBlockingAnnotations with is_blocked, behind
 // dependencies.blocking.isBlocked; a server without that token is refused
 // before the dial, naming it.
