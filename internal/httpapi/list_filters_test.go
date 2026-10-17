@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"slices"
@@ -49,7 +50,7 @@ func TestListFilterParametersMatchTheDocument(t *testing.T) {
 		t.Errorf("listFilterParams reads %v, want exactly %v", read, want)
 	}
 	if len(want) != 30 {
-		t.Errorf("issues.list.filters publishes %d parameters, want the 29 `bd list` filters plus exclude_status", len(want))
+		t.Errorf("issues.list.filters publishes %d parameters, want 30", len(want))
 	}
 
 	doc := loadSpec(t)
@@ -317,6 +318,10 @@ func TestListFilterMalformedValuesAreRefusedByName(t *testing.T) {
 		{"overdue", "yes please"},
 		{"mol_type", "squad"},
 		{"wisp_type", "Heartbeat"},
+		// Cross-vocabulary: each enum accepts its OWN list only, so a value
+		// valid for the other one is refused, not matched against nothing.
+		{"mol_type", "heartbeat"},
+		{"wisp_type", "swarm"},
 		// Present-but-empty is not absent: the role's empty pointer is a real
 		// `= ''` predicate, so reading it as absent would widen the listing.
 		{"wisp_type", ""},
@@ -366,5 +371,38 @@ func TestListFilterPinnedPairIsRefused(t *testing.T) {
 	}
 	if n := len(rec.searchFilters()); n != 0 {
 		t.Errorf("the contradictory pair reached storage %d time(s)", n)
+	}
+}
+
+// TestAnInvalidLabelRegexIsABadRequestNotAServerFault: the database compiles
+// label_regex in its own dialect and refuses a pattern it cannot compile with
+// "the given regular expression is invalid". On the operations that carry the
+// parameter that refusal is the caller's typo, a 400 on label_regex, not a 500
+// that pages as a server error. The same text on a request that sent NO regex
+// stays a server fault: the attribution is to the parameter, not the words.
+func TestAnInvalidLabelRegexIsABadRequestNotAServerFault(t *testing.T) {
+	engineErr := errors.New("search count issues: Error 1105 (HY000): the given regular expression is invalid")
+	for _, tc := range []struct {
+		name, path string
+		status     int
+	}{
+		{"listing", "/v0/beads/issues?label_regex=" + url.QueryEscape("tech-("), http.StatusBadRequest},
+		{"ready", "/v0/beads/ready?label_regex=" + url.QueryEscape("tech-("), http.StatusBadRequest},
+		{"listing without a regex", "/v0/beads/issues", http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, rec := newReadServer(t, Config{})
+			rec.err = engineErr
+			resp := ts.get(t, tc.path)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.status)
+			}
+			if tc.status != http.StatusBadRequest {
+				return
+			}
+			if body := decodeBody(t, resp); body["code"] != string(CodeInvalidArgument) || body["param"] != "label_regex" || body["reason"] != string(ReasonInvalidValue) {
+				t.Errorf("body = %v, want invalid_argument on label_regex with reason invalid_value", body)
+			}
+		})
 	}
 }

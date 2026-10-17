@@ -3460,7 +3460,7 @@ func RunReaderListFilterFamiliesNarrowToTheirRows(t *testing.T, ctx context.Cont
 
 		{"OverdueFlag keeps the open row past its due date", with(scoped(overdue, dueLater, closedOverdue, noDue), func(r *publicops.ListRequest) { r.OverdueFlag = true }), []string{overdue}},
 
-		{"ExcludeStatus under AllFlag reads the active set", with(scoped(stOpen, stProgress, stBlocked, stClosed), func(r *publicops.ListRequest) { r.ExcludeStatus = []string{"closed"} }), []string{stOpen, stProgress, stBlocked}},
+		{"ExcludeStatus under AllFlag keeps every status not named", with(scoped(stOpen, stProgress, stBlocked, stClosed), func(r *publicops.ListRequest) { r.ExcludeStatus = []string{"closed"} }), []string{stOpen, stProgress, stBlocked}},
 		{"ExcludeStatus takes repeated and comma-separated values", with(scoped(stOpen, stProgress, stBlocked, stClosed), func(r *publicops.ListRequest) { r.ExcludeStatus = []string{"blocked,in_progress", " closed "} }), []string{stOpen}},
 		{"ExcludeStatus adds to the default exclusions rather than replacing them", publicops.ListRequest{IDFilter: statusScope, ExcludeStatus: []string{"blocked"}}, []string{stOpen, stProgress}},
 		{"ExcludeStatus narrows an explicit Status", publicops.ListRequest{IDFilter: statusScope, Status: "open,blocked,closed", ExcludeStatus: []string{"blocked"}}, []string{stOpen, stClosed}},

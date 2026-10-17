@@ -482,7 +482,10 @@ paths:
             type: string
         - name: label_regex
           in: query
-          description: Regular expression matched against labels.
+          description: >-
+            Regular expression matched against labels, compiled by the
+            database in its own dialect. A pattern it cannot compile is a
+            400 `invalid_value` on this parameter.
           schema:
             type: string
         - name: priority
@@ -968,7 +971,10 @@ paths:
             type: string
         - name: label_regex
           in: query
-          description: Regular expression matched against labels.
+          description: >-
+            Regular expression matched against labels, compiled by the
+            database in its own dialect. A pattern it cannot compile is a
+            400 `invalid_value` on this parameter.
           schema:
             type: string
         - name: priority
@@ -1478,7 +1484,8 @@ paths:
           in: query
           description: >-
             Regular-expression label filter: `bd list --label-regex`,
-            with `GET /v0/beads/ready`'s spelling.
+            with `GET /v0/beads/ready`'s spelling. A pattern the database
+            cannot compile is a 400 `invalid_value` on this parameter.
 
 
             Behind the `issues.list.filters` behavior token: an older
@@ -1767,7 +1774,10 @@ paths:
             Statuses to leave out (repeat the parameter; a value may also be
             comma-separated), on top of what `status` or the default
             exclusions select; it never re-admits a row they hide. With
-            `all` it reads the active set without enumerating every status.
+            `all` there are no default exclusions, so the listing keeps
+            every status not named here (the `pinned` and `hooked`
+            statuses and custom done or frozen statuses included unless
+            named).
             Each name is validated against the workspace's statuses (built-in
             and custom), as `GET /v0/beads/issues:count` validates it: an
             unknown name is a 400 `invalid_value` on this parameter, never an

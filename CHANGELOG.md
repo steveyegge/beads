@@ -34,9 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statuses like `CountRequest.ExcludeStatus` (an unknown name is
   `ErrValidation`). `GET /v0/beads/issues` accepts it as a repeatable
   `exclude_status` under the same `issues.list.filters` token (an unknown
-  name is a `400` on `exclude_status`), so an HTTP-backed caller can read
-  only the active rows (`all` plus `exclude_status=closed`) instead of the
-  whole history. It is refused together with `ReadyFlag`, like the other
+  name is a `400` on `exclude_status`), so an HTTP-backed caller can leave
+  closed history out of an `all` listing (`all` plus
+  `exclude_status=closed` keeps every status not named, the `pinned` and
+  `hooked` statuses and custom done/frozen statuses included) instead of
+  reading the whole history. It is refused together with `ReadyFlag`, like the other
   members the ready query cannot carry. There is no `bd list` flag for it
   yet.
 
@@ -415,6 +417,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend whose timestamp column has no zone could read the offset bound's
   wall clock and compare it hours off. `bd`'s own client always sent `Z`, so
   its answers are unchanged.
+- `bd serve` answers a `label_regex` the database cannot compile with
+  `400 invalid_argument` (`invalid_value` on `label_regex`) on
+  `GET /v0/beads/issues`, `GET /v0/beads/ready` and
+  `GET /v0/beads/ready:count`, instead of `500 internal`. The pattern is
+  still compiled by the database in its own dialect; only the attribution
+  of its refusal changed.
 - `issueops.Reader.List` refuses `PinnedFlag` together with `NoPinnedFlag`
   with `ErrValidation` (`--pinned and --no-pinned are mutually exclusive`) on
   every backend; it used to let `PinnedFlag` win silently. `bd list` already

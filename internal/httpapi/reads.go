@@ -85,7 +85,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := rd.Ready(r.Context(), req)
 	if err != nil {
-		s.failReadErr(w, r, err)
+		s.failRegexReadErr(w, r, err, req.LabelRegex)
 		return
 	}
 	writeJSON(w, apigen.ReadyPage{
@@ -155,7 +155,7 @@ func (s *Server) handleCountReady(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := counter.CountReady(r.Context(), req)
 	if err != nil {
-		s.failReadErr(w, r, err)
+		s.failRegexReadErr(w, r, err, req.LabelRegex)
 		return
 	}
 	writeJSON(w, apigen.ReadyCount{Total: result.Total})
@@ -440,7 +440,7 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := rd.List(r.Context(), req)
 	if err != nil {
-		s.failReadErr(w, r, err)
+		s.failRegexReadErr(w, r, err, req.LabelRegex)
 		return
 	}
 
@@ -753,6 +753,30 @@ func (s *Server) failReadErr(w http.ResponseWriter, r *http.Request, err error) 
 		return
 	}
 	s.failErr(w, r, err)
+}
+
+// invalidRegexMessage is the SQL engine's refusal of a pattern it cannot
+// compile (Dolt, embedded and server alike: `Error 1105 (HY000): the given
+// regular expression is invalid`).
+const invalidRegexMessage = "regular expression is invalid"
+
+// failRegexReadErr is failReadErr for the operations that carry `label_regex`.
+//
+// The pattern is compiled by the DATABASE, in its own regex dialect, so the
+// handler cannot validate it up front without refusing patterns the local
+// route accepts. What it can do is attribute the database's compile refusal
+// to the parameter that caused it: a request that SENT a regex and earned the
+// engine's invalid-pattern error is the caller's typo, a 400 on label_regex,
+// not a 500 that pages as a server fault. Any other failure, or this text on
+// a request with no regex, keeps failReadErr's classification.
+func (s *Server) failRegexReadErr(w http.ResponseWriter, r *http.Request, err error, labelRegex string) {
+	if labelRegex != "" && strings.Contains(err.Error(), invalidRegexMessage) {
+		requestInfo(r.Context()).refuse("label_regex")
+		s.fail(w, r, InvalidArgument("label_regex", ReasonInvalidValue,
+			fmt.Sprintf("%q is not a regular expression the database can compile", labelRegex)))
+		return
+	}
+	s.failReadErr(w, r, err)
 }
 
 // invalidFilterParam maps a filter-construction failure back to the query

@@ -258,8 +258,8 @@ func BuildListFilter(in issueops.ListRequest, cfg ListConfig) (types.IssueFilter
 	// The caller's own exclusions (ListRequest.ExcludeStatus) are APPENDED to
 	// the defaults above, never in place of them: excluding `blocked` must not
 	// re-admit closed rows. They apply on every arm, AllFlag and an explicit
-	// Status included, which is what lets a caller read the active set
-	// (`--all --exclude-status closed`) without enumerating every status.
+	// Status included, which is what lets a caller drop closed history
+	// (AllFlag with ExcludeStatus "closed") without enumerating every status.
 	excluded, err := ParseExcludeStatus(in.ExcludeStatus, cfg.CustomStatusNames())
 	if err != nil {
 		return filter, err

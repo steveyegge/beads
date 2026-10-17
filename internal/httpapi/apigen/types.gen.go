@@ -2587,7 +2587,7 @@ type ListIssuesParams struct {
 	// Behind the `issues.list.filters` behavior token: an older server answers `unknown_parameter` for this name. A client with the handshake's capabilities cached refuses the request locally against a server that does not advertise the token, rather than paying for that round trip or answering a wider listing.
 	LabelPattern *string `form:"label_pattern,omitempty" json:"label_pattern,omitempty"`
 
-	// LabelRegex Regular-expression label filter: `bd list --label-regex`, with `GET /v0/beads/ready`'s spelling.
+	// LabelRegex Regular-expression label filter: `bd list --label-regex`, with `GET /v0/beads/ready`'s spelling. A pattern the database cannot compile is a 400 `invalid_value` on this parameter.
 	//
 	// Behind the `issues.list.filters` behavior token: an older server answers `unknown_parameter` for this name. A client with the handshake's capabilities cached refuses the request locally against a server that does not advertise the token, rather than paying for that round trip or answering a wider listing.
 	LabelRegex *string `form:"label_regex,omitempty" json:"label_regex,omitempty"`
@@ -2667,7 +2667,7 @@ type ListIssuesParams struct {
 	// Behind the `issues.list.filters` behavior token: an older server answers `unknown_parameter` for this name. A client with the handshake's capabilities cached refuses the request locally against a server that does not advertise the token, rather than paying for that round trip or answering a wider listing.
 	ExcludeType *[]string `form:"exclude_type,omitempty" json:"exclude_type,omitempty"`
 
-	// ExcludeStatus Statuses to leave out (repeat the parameter; a value may also be comma-separated), on top of what `status` or the default exclusions select; it never re-admits a row they hide. With `all` it reads the active set without enumerating every status. Each name is validated against the workspace's statuses (built-in and custom), as `GET /v0/beads/issues:count` validates it: an unknown name is a 400 `invalid_value` on this parameter, never an exclusion that excludes nothing.
+	// ExcludeStatus Statuses to leave out (repeat the parameter; a value may also be comma-separated), on top of what `status` or the default exclusions select; it never re-admits a row they hide. With `all` there are no default exclusions, so the listing keeps every status not named here (the `pinned` and `hooked` statuses and custom done or frozen statuses included unless named). Each name is validated against the workspace's statuses (built-in and custom), as `GET /v0/beads/issues:count` validates it: an unknown name is a 400 `invalid_value` on this parameter, never an exclusion that excludes nothing.
 	//
 	// Behind the `issues.list.filters` behavior token: an older server answers `unknown_parameter` for this name. A client with the handshake's capabilities cached refuses the request locally against a server that does not advertise the token, rather than paying for that round trip or answering a wider listing.
 	ExcludeStatus *[]string `form:"exclude_status,omitempty" json:"exclude_status,omitempty"`
@@ -3032,7 +3032,7 @@ type ListReadyWorkParams struct {
 	// LabelPattern Glob matched against labels.
 	LabelPattern *string `form:"label_pattern,omitempty" json:"label_pattern,omitempty"`
 
-	// LabelRegex Regular expression matched against labels.
+	// LabelRegex Regular expression matched against labels, compiled by the database in its own dialect. A pattern it cannot compile is a 400 `invalid_value` on this parameter.
 	LabelRegex *string `form:"label_regex,omitempty" json:"label_regex,omitempty"`
 
 	// Priority Exact priority (0 is a real value, not "unset").
@@ -3100,7 +3100,7 @@ type CountReadyWorkParams struct {
 	// LabelPattern Glob matched against labels.
 	LabelPattern *string `form:"label_pattern,omitempty" json:"label_pattern,omitempty"`
 
-	// LabelRegex Regular expression matched against labels.
+	// LabelRegex Regular expression matched against labels, compiled by the database in its own dialect. A pattern it cannot compile is a 400 `invalid_value` on this parameter.
 	LabelRegex *string `form:"label_regex,omitempty" json:"label_regex,omitempty"`
 
 	// Priority Exact priority (0 is a real value, not "unset").

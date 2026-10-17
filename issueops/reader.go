@@ -150,7 +150,8 @@ type ListRequest struct {
 	// workspace vocabulary (built-in plus custom statuses) exactly as
 	// CountRequest.ExcludeStatus is: an unknown name is ErrValidation rather
 	// than excluding nothing, because a silently ignored exclusion answers a
-	// wider set. With AllFlag it reads the active set without the caller
+	// wider set. With AllFlag there are no default exclusions, so the
+	// listing keeps every status not named here, without the caller
 	// having to enumerate every status it wants.
 	ExcludeStatus []string
 	// IssueType is validated against the workspace vocabulary — unlike

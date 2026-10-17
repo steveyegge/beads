@@ -60,4 +60,13 @@ func TestE2E_SearchOverHTTP(t *testing.T) {
 	if narrowed := jsonIDSet(t, r.stdout); len(narrowed) != 0 {
 		t.Errorf("bd search routed --desc-contains pool = %v, want nothing: no description contains it", narrowed)
 	}
+
+	// And it matches: a description carrying the token answers exactly that
+	// row, so the empty answer above is the filter narrowing, not a filter
+	// that matches nothing for some other reason.
+	mustRun(t, bd, "update", alsoRouted, "--description", "a lantern in the description", "--json")
+	matched := jsonIDSet(t, mustRun(t, bd, "search", "routed", "--desc-contains", "LANTERN", "--json").stdout)
+	if len(matched) != 1 || !matched[alsoRouted] {
+		t.Errorf("bd search routed --desc-contains LANTERN = %v, want exactly %s, whose description contains it", matched, alsoRouted)
+	}
 }

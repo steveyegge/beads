@@ -394,3 +394,53 @@ func TestServedReaderGetPopulatesRowVersionForAGuardedWrite(t *testing.T) {
 func TestServedReaderDoesNotMutateTheCallerRequest(t *testing.T) {
 	conformance.RunReaderDoesNotMutateTheCallerRequest(t, t.Context(), servedReaderFixture(t, "rdr"))
 }
+
+// TestServedReaderListExcludeStatusAcceptsAWorkspaceCustomStatus is the
+// served twin of the count's custom-status pin: ListRequest.ExcludeStatus is
+// validated against the SERVER workspace's own statuses (status.custom), so a
+// custom status is accepted and applied over the wire, and a name in no
+// vocabulary is still refused. A leg test rather than a conformance case
+// because ReaderFixture has no way to configure a workspace custom status.
+func TestServedReaderListExcludeStatusAcceptsAWorkspaceCustomStatus(t *testing.T) {
+	e := newServedEnv(t, "lcs")
+	ctx := t.Context()
+	if err := e.setConfig(ctx, "status.custom", "review,qa"); err != nil {
+		t.Fatalf("SetConfig(status.custom): %v", err)
+	}
+	const openID, reviewID = "lcs-open", "lcs-review"
+	for _, id := range []string{openID, reviewID} {
+		if err := e.createIssue(ctx, &types.Issue{ID: id, Title: id, Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}, "tester"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", id, err)
+		}
+	}
+	if err := e.reference.UpdateIssue(ctx, reviewID, map[string]interface{}{"status": types.Status("review")}, "tester"); err != nil {
+		t.Fatalf("UpdateIssue(%s) to review: %v", reviewID, err)
+	}
+	reader, err := e.subject.IssueReader()
+	if err != nil {
+		t.Fatalf("IssueReader(): %v", err)
+	}
+
+	scope := issueops.ListRequest{IDFilter: openID + "," + reviewID}
+	page, err := reader.List(ctx, scope)
+	if err != nil {
+		t.Fatalf("List(unfiltered): %v", err)
+	}
+	if got := pageIDs(page); len(got) != 2 {
+		t.Fatalf("List(unfiltered) = %v, want both rows (a custom status with no category is not a default exclusion)", got)
+	}
+
+	scope.ExcludeStatus = []string{"review"}
+	page, err = reader.List(ctx, scope)
+	if err != nil {
+		t.Fatalf("List(ExcludeStatus=review): %v, want the custom status accepted", err)
+	}
+	if got := pageIDs(page); len(got) != 1 || got[0] != openID {
+		t.Fatalf("List(ExcludeStatus=review) = %v, want [%s]", got, openID)
+	}
+
+	scope.ExcludeStatus = []string{"reveiw"}
+	if _, err := reader.List(ctx, scope); err == nil {
+		t.Fatal("List(ExcludeStatus=reveiw) answered instead of refusing a status in no vocabulary")
+	}
+}

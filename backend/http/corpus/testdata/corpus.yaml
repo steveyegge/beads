@@ -322,7 +322,7 @@ shapes:
     compare: ids
     pending: {slice: "SRV-1", reason: "needs issues.list.filters, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListFilterParityOverHTTP); remove the mark when reference_server.json is upgraded"}
   - id: wf-session-cleanup
-    source: workflows scripts/session_cleanup.py (list --all --include-infra --include-gates --status closed --label --closed-before --updated-before)
+    source: an order cleanup script's closed-session sweep (list --all --include-infra --include-gates --status closed --label --closed-before --updated-before)
     args: [list, --json, --all, --include-infra, --include-gates, --status, closed, --label, "lane:a", --closed-before, "2100-01-01T00:00:00Z", --updated-before, "2100-01-01T00:00:00Z", --limit, "0"]
     compare: ids
     pending: {slice: "SRV-1", reason: "needs issues.list.filters, which the reference server does not advertise, so the client refuses before dialing (pinned passing against the current server by backend/http TestE2E_ListFilterParityOverHTTP); remove the mark when reference_server.json is upgraded"}

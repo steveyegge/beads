@@ -28,12 +28,18 @@ type recordingIssues struct {
 	// index-aligned with search.
 	queries []string
 	items   []*types.IssueWithCounts
+	// err, when set, is what both reads answer with after recording the
+	// filter: the storage-side failure a handler has to classify.
+	err error
 }
 
 func (f *recordingIssues) GetReadyWorkWithCounts(_ context.Context, filter types.WorkFilter) (domain.SearchCountsPage, error) {
 	f.mu.Lock()
 	f.ready = append(f.ready, filter)
 	f.mu.Unlock()
+	if f.err != nil {
+		return domain.SearchCountsPage{}, f.err
+	}
 	return domain.SearchCountsPage{Items: f.items}, nil
 }
 
@@ -42,6 +48,9 @@ func (f *recordingIssues) SearchIssuesWithCounts(_ context.Context, query string
 	f.search = append(f.search, filter)
 	f.queries = append(f.queries, query)
 	f.mu.Unlock()
+	if f.err != nil {
+		return domain.SearchCountsPage{}, f.err
+	}
 	return domain.SearchCountsPage{Items: f.items}, nil
 }
 
