@@ -388,6 +388,9 @@ var blockedCmd = &cobra.Command{
 		// One role on every route (blockedLister). Use global jsonOutput set
 		// by PersistentPreRun (respects config.yaml + env vars).
 		ctx := rootCtx
+		if flagsMode, _ := cmd.Flags().GetBool("flags"); flagsMode {
+			return runBlockedFlags(cmd, ctx, cmd.InOrStdin())
+		}
 		lister, err := blockedLister()
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -815,6 +818,7 @@ func init() {
 	blockedCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	blockedCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	blockedCmd.Flags().StringSlice("exclude-label", []string{}, "Exclude issues that have ANY of these labels")
+	blockedCmd.Flags().Bool("flags", false, "Print the blocked flag for each id read from stdin (one per line) instead of the listing; with --json, [{\"id\",\"is_blocked\"}]")
 	rootCmd.AddCommand(blockedCmd)
 }
 

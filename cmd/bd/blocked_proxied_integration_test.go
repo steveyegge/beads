@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -78,6 +79,33 @@ func TestProxiedServerBlocked(t *testing.T) {
 		}
 		if !strings.Contains(stdout, "Blocked by 1 open dependencies") {
 			t.Errorf("expected blocker summary line, got: %s", stdout)
+		}
+	})
+
+	t.Run("flags_reads_ids_from_stdin", func(t *testing.T) {
+		t.Parallel()
+		p := newSharedProxiedProject(t, bd, "bkf")
+		blocker := bdProxiedCreate(t, bd, p.dir, "Flag blocker")
+		dependent := bdProxiedCreate(t, bd, p.dir, "Flag dependent", "--deps", "depends-on:"+blocker.ID)
+
+		cmd := exec.Command(bd, "blocked", "--flags", "--json")
+		cmd.Dir = p.dir
+		cmd.Env = bdProxiedEnv(p.dir)
+		cmd.Stdin = strings.NewReader(dependent.ID + "\n" + blocker.ID + "\nbk-no-such-row\n")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("bd blocked --flags --json: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		var rows []struct {
+			ID        string `json:"id"`
+			IsBlocked bool   `json:"is_blocked"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &rows); err != nil {
+			t.Fatalf("parse: %v\n%s", err, stdout.String())
+		}
+		if len(rows) != 2 || rows[0].ID != dependent.ID || !rows[0].IsBlocked || rows[1].ID != blocker.ID || rows[1].IsBlocked {
+			t.Errorf("rows = %+v, want [{%s true} {%s false}] (unknown id omitted)", rows, dependent.ID, blocker.ID)
 		}
 	})
 

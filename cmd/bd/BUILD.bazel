@@ -49,6 +49,7 @@ go_library(
         "backup_restore.go",
         "batch.go",
         "batch_proxied_server.go",
+        "blocked_flags.go",
         "bootstrap.go",
         "branch.go",
         "capability_registry.go",

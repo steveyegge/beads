@@ -380,6 +380,12 @@ shapes:
     source: gc bdstore_ready_projection.go fetchReadyProjectionViaBlocked
     args: [blocked, --json]
     pending: {slice: "SRV-1", reason: "bd blocked dials listBlockedIssues behind blocked.list, which the reference server does not advertise, so the client refuses at its capability preflight (pinned passing against the current server by backend/http TestE2E_BlockedOverHTTP); remove the mark when reference_server.json is upgraded"}
+  - id: gc-blocked-flags
+    source: gc bdstore_ready_projection.go readiness door (bd blocked --flags --json, ids on stdin)
+    args: [blocked, --flags, --json]
+    stdin: "e2e-mol\ne2e-mol.1\ne2e-mol.2\ne2e-no-such-row\n"
+    compare: json
+    pending: {slice: "SRV-1", reason: "bd blocked --flags reads listBlockingAnnotations is_blocked behind dependencies.blocking.isBlocked, which the reference server does not advertise, so the client refuses at its capability preflight (pinned passing against the current server by backend/http TestE2E_BlockedFlagsOverHTTP); remove the mark when reference_server.json is upgraded"}
   - id: gc-blocked-parent
     source: bd blocked --parent (the molecule-scoped blocked listing)
     args: [blocked, --json, --parent, e2e-mol]
