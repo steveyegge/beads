@@ -189,29 +189,43 @@ const cycleTracksWireGapWaiverReason = "issueops.DetectCyclesRequest.IncludeTrac
 	"parameter for it, so closing this is a new, not-yet-numbered slice rather than a missing test line"
 
 // retentionEpochNoRoleWaiverReason covers the eighteen RetentionFixture and
-// EpochFixture cases: PERMANENTLY unservable over HTTP, not merely unwired
-// yet.
+// EpochFixture cases (backend/conformance/retention_epoch_contract.go).
+// All but four of the participation-generation cases run on this leg because
+// their subject is a create or an update the client can send
+// (internal/httpclient/served_participation_generation_test.go; those four
+// stay waived under participationGenerationWireGapWaiverReason). These
+// cases are different: every hook of these two fixtures IS the operation
+// under test, and none has a form on the wire:
+//   - EpochFixture's hooks (CurrentEpoch, BumpEpoch, MintUnderEpoch,
+//     StillServes, Resolve, CurrentAddressFor, LoseVersion) are the R20 epoch
+//     operations themselves: methods on the concrete *DoltStore and
+//     *EmbeddedDoltStore over issueops' *InTx bodies, on no storage
+//     interface, no publicops role and no wire operation. Every call path
+//     into them starts in a test: the methods are called only from each
+//     store leg's own _test.go files (its EpochFixture, which the
+//     backend/conformance contracts drive, and its epoch tests), and the
+//     *InTx bodies only from those methods, from each other and from tests
+//     (the uow leg's fixture, through a test-only type assertion, and
+//     issueops' and the dolt leg's own tests). No command, role or server
+//     handler reaches them, so no client mutation touches epoch state either.
+//   - RetentionFixture's hooks (Resolve, Remove, Hold, ForceRemove, Erase,
+//     Mint) are retention operations no backend implements yet: every
+//     store leg wires them nil and its cases skip, and the wire has no
+//     removal, hold, erasure or gone/unknown resolve to bind them to.
 //
-// Both fixtures are RAW STORAGE HOOKS, not a publicops role: RetentionFixture
-// and EpochFixture (backend/conformance/retention_epoch_contract.go) carry no
-// publicops.XXX field at all, only closures like Resolve, Remove, Hold,
-// Erase, Mint, CurrentEpoch, and BumpEpoch that reach past every role
-// straight at a backend's own address/epoch/retention bookkeeping — the same
-// bookkeeping a storage engine keeps about itself, not a capability it was
-// ever going to publish to a caller. dolt, embeddeddolt, and uow all wire
-// this contract because all three ARE storage engines with that bookkeeping
-// to show; the http leg is a REMOTE CLIENT of one, with no address table,
-// epoch counter, or retention window of its own to report — there is nothing
-// behind this door for a wire operation to open onto, now or in a later
-// slice, unless some future design gives retention/epoch state its own
-// publicops role and wire surface. That would be a new role, not a missing
-// test line, which is why this is a named waiver rather than a ceiling
-// entry.
-const retentionEpochNoRoleWaiverReason = "RetentionFixture and EpochFixture carry raw address/epoch/retention " +
-	"storage hooks (Resolve, Remove, Hold, Erase, Mint, CurrentEpoch, BumpEpoch, ...) with no publicops role " +
-	"behind them; dolt, embeddeddolt and uow wire this contract because they ARE the storage engine this " +
-	"bookkeeping belongs to, and the http leg is a remote client with no such bookkeeping of its own to report " +
-	"— there is no role or wire surface for this to ever route through unless one is designed from scratch"
+// Binding the hooks to the reference store behind the served env would run
+// the epoch cases green, but as a property of that store, never of the
+// client; the store legs already pin it. The waiver stands until retention or
+// epoch state gets a publicops role and a wire operation of its own, which
+// would be a new role, not a missing test line.
+const retentionEpochNoRoleWaiverReason = "every RetentionFixture/EpochFixture hook is the operation under test and " +
+	"none has a form on the http wire: the R20 epoch operations (CurrentEpoch, BumpEpoch, MintUnderEpoch, " +
+	"StillServes, Resolve, CurrentAddressFor, LoseVersion) are concrete-store methods on no storage interface, " +
+	"publicops role or wire operation, reached only from tests (each store leg's fixture and epoch tests call the " +
+	"methods, the uow fixture calls the issueops bodies through a test-only type assertion), and the retention " +
+	"hooks (Resolve, Remove, Hold, ForceRemove, Erase, Mint) are implemented by no backend and have no wire " +
+	"removal, hold, erasure or resolve; binding them to the served env's reference store would test that store, " +
+	"not the client"
 
 // crossRecordInvariantNoRoleWaiverReason covers the seven CrossRecordInvariantFixture
 // cases, for the same shape of reason as retentionEpochNoRoleWaiverReason.
