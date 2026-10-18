@@ -126,6 +126,10 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 // PromoteFromEphemeralInTx's upsert: a wisp whose id the issues plane already
 // holds (GH#4455's dual presence, written the way a store corrupted before
 // that fix holds it) is promoted onto that existing row.
+// WispOverLegacyIssuesRowKeepsItLegacy asks it of the wisps-table half of the
+// same db.Insert (bd mol port's CreateWisp): that insert never creates an
+// issues row, so the only issues row its mint can reach is a twin that
+// already held the id.
 func TestParticipationGenerationUpsertCreate(t *testing.T) {
 	ctx := context.Background()
 	provider := newUOWRoleFixtureProvider(t, ctx, "pgu")
@@ -215,6 +219,30 @@ func TestParticipationGenerationUpsertCreate(t *testing.T) {
 			t.Fatalf("%s is still in the wisps table after its promote", id)
 		}
 		requireState(t, id, false, 0, "a promote whose upsert resolved to an existing legacy issues row is update-shaped and fenced; stamping it would promote a legacy record (R2.3)")
+	})
+	t.Run("WispOverLegacyIssuesRowKeepsItLegacy", func(t *testing.T) {
+		setFlag(t, false)
+		id := "pgu-wisp-twin"
+		upsert(t, id, "t-"+id)
+		requireState(t, id, false, 0, "a create with history off leaves the row legacy")
+		setFlag(t, true)
+		if err := RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+			_, err := uw.IssueUseCase().CreateWisp(ctx, domain.CreateIssueParams{
+				Issue: &types.Issue{
+					ID: id, Title: "wisp-" + id, IssueType: types.TypeTask, Status: types.StatusOpen, Ephemeral: true,
+				},
+				ExplicitID: id,
+			}, "actor")
+			return "wisp upsert " + id, err
+		}); err != nil {
+			t.Fatalf("wisp-creating %s over its issues row: %v", id, err)
+		}
+		if inWisps, err := fixture.InWispsTable(ctx, id); err != nil {
+			t.Fatalf("checking the wisps table for %s: %v", id, err)
+		} else if !inWisps {
+			t.Fatalf("%s is not in the wisps table after its wisp create; the case needs both planes to hold the id", id)
+		}
+		requireState(t, id, false, 0, "a wisps-table insert never creates the issues row the seam snapshots, so its mint is update-shaped and fenced; stamping that legacy twin would promote a legacy record (R2.3)")
 	})
 }
 

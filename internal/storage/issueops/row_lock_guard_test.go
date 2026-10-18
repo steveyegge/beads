@@ -144,22 +144,25 @@ var funcNameExemptions = map[string]string{
 	// recordVersionInTx (version_history.go) is the private seam both public
 	// entry points — RecordVersionInTx (update-shaped) and
 	// RecordVersionForCreateInTx (create-shaped, design §16.2b's write fence,
-	// be-h89oq) — delegate to; the two UPDATE issues statements this guard
+	// be-h89oq) — delegate to; the three UPDATE issues statements this guard
 	// would otherwise flag live here, not in either public wrapper, so the
 	// exemption is keyed to this name. It runs immediately after the mutation
 	// it is snapshotting — create.go/update.go's own writes, or domain/db's
 	// Insert/Update — and those callers have already minted a fresh row_lock
-	// in that same INSERT/UPDATE, in the same transaction. Both of
-	// recordVersionInTx's own UPDATE issues SET current_revision = ...
-	// statements (the create-shaped one also stamps participation_generation
-	// in the same statement) only advance denormalized pointers/columns to
-	// match the issue_versions row just inserted; neither touches row_lock at
-	// all (not even to carry the existing value forward) because reminting
-	// here would bump the token a second time within one transaction,
-	// invalidating the RowVersion/CAS value the primary mutation's own caller
-	// already captured and could cause a legitimate subsequent CAS check to
-	// fail as a spurious lost update.
-	"recordVersionInTx": "runs after the primary mutation already minted a fresh row_lock in the same transaction; reminting here would double-bump the token and invalidate the RowVersion/CAS value already returned to that mutation's caller — covers both the update-shaped and create-shaped (participation_generation-stamping) UPDATE statements, since both public entry points delegate to this one private seam",
+	// in that same INSERT/UPDATE, in the same transaction. Every UPDATE
+	// issues statement recordVersionInTx issues writes only bookkeeping
+	// columns: the update-shaped and create-shaped UPDATE issues SET
+	// current_revision = ... statements advance the denormalized pointer to
+	// the issue_versions row just inserted (the create-shaped one also stamps
+	// participation_generation in the same statement), and the no-history
+	// stamp sets participation_generation alone on a create-shaped row it does
+	// not version. None touches row_lock at all (not even to carry the
+	// existing value forward) because reminting here would bump the token a
+	// second time within one transaction, invalidating the RowVersion/CAS
+	// value the primary mutation's own caller already captured and could
+	// cause a legitimate subsequent CAS check to fail as a spurious lost
+	// update.
+	"recordVersionInTx": "runs after the primary mutation already minted a fresh row_lock in the same transaction; reminting here would double-bump the token and invalidate the RowVersion/CAS value already returned to that mutation's caller — covers all three of its UPDATE issues statements (the update-shaped and create-shaped current_revision advances and the no-history participation_generation stamp), since both public entry points delegate to this one private seam",
 }
 
 // TestAllIssueRowWritesStampRowLock is the load-bearing completeness guard for

@@ -95,10 +95,25 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 	// versioned history off both mint entries return before reading anything,
 	// so the answer is unused and the probe is skipped: this create costs the
 	// round trips it did before the fence.
+	//
+	// A wisps-table insert mints update-shaped without a probe. It never
+	// creates an issues row, and the seam snapshots the issues table first
+	// (GetIssueInTx), so the only issues row it can resolve is a twin that
+	// already held this id. A create-shaped mint would stamp and version that
+	// twin, and so promote a legacy record (R2.3) through an ordinary wisp
+	// write. Update-shaped, the fence leaves a legacy twin alone, and a
+	// wisp-only id mints nothing through either entry (FR-8).
+	//
+	// A twin that already participates passes the fence, so it still gets
+	// the one version main minted for it, although this write never touched
+	// it. That dual presence (GH#4455) predates the fence and is accepted
+	// here, as on main: unlike issueops' create path
+	// (checkCrossTableIDCollisionCached), this upsert does not refuse the
+	// collision.
 	existed := false
-	if issueops.VersionedHistoryEnabledFor(r.runner) {
+	if !opts.UseWispsTable && issueops.VersionedHistoryEnabledFor(r.runner) {
 		var err error
-		if existed, err = r.Exists(ctx, issue.ID, domain.IssueTableOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
+		if existed, err = r.Exists(ctx, issue.ID, domain.IssueTableOpts{}); err != nil {
 			return err
 		}
 	}
@@ -115,7 +130,7 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 	if err := issueops.RecordEventInTx(ctx, r.runner, issueops.EventCreate, issue.ID, actor); err != nil {
 		return err
 	}
-	if existed {
+	if existed || opts.UseWispsTable {
 		return issueops.RecordVersionInTx(ctx, r.runner, issue.ID, actor)
 	}
 	return issueops.RecordVersionForCreateInTx(ctx, r.runner, issue.ID, actor)

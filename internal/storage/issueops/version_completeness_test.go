@@ -185,6 +185,15 @@ var versionCreateShapedMintSites = []string{}
 // write stamps a legacy row and promotes it (R2.3). If the create-shaped
 // branch now calls the update-shaped entry, the fence reads the new row's NULL
 // as legacy, and the record is never versioned.
+//
+// One production dual-shape site lives outside this package, where this
+// guard's parse (journalscan.ParsePackage(".")) cannot list it: domain/db's
+// issueSQLRepositoryImpl.Insert. Its CreateOnly branch is create-shaped. Its
+// upsert, the create that is not CreateOnly, is create-shaped only when it
+// inserted a new issues row; it is update-shaped when the issues table
+// already held the id, and for every wisps-table insert. The uow leg's
+// TestParticipationGenerationUpsertCreate holds those upsert branches at run
+// time instead.
 var versionDualShapeMintSites = map[string]string{
 	"finishCreateIssueInTx":       "a singular create mints create-shaped when it inserted the row and update-shaped when it resolved to an existing one",
 	"CreateIssuesInTxWithContext": "a batch create's deferred mint pass is create-shaped for a row the batch inserted and update-shaped for an existing row it resolved to",
