@@ -267,6 +267,65 @@ func RunParticipationGenerationProceedsForPromotedRecord(t *testing.T, ctx conte
 	}
 }
 
+// RunParticipationGenerationFlagOffSkipsUpdateOnParticipatingRecord pins the
+// switch's off half for a record the fence would let through: created with
+// the flag on (so participation_generation is stamped), then updated after
+// the flag is turned back off, it must mint nothing. ProceedsForPromotedRecord
+// shows the fence passes such a record, so only the flag stands between this
+// update and a mint. No other case can see a writer that ignores the flag on
+// updates: every other flag-off record is legacy, and the fence stops those
+// first.
+func RunParticipationGenerationFlagOffSkipsUpdateOnParticipatingRecord(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	if err := fixture.SetFlag(ctx, true); err != nil {
+		t.Fatalf("enabling versioned history: %v", err)
+	}
+	id := fixture.IssuePrefix + "-flag-off-skip"
+	if err := fixture.Mutate(ctx, id); err != nil {
+		t.Fatalf("mutating %s: %v", id, err)
+	}
+	if gen, err := fixture.ParticipationGeneration(ctx, id); err != nil {
+		t.Fatalf("reading participation_generation for %s: %v", id, err)
+	} else if gen == nil {
+		t.Fatalf("participation_generation for %s is NULL immediately after a create with the flag on — "+
+			"this case cannot test the flag against a record the fence would have stopped anyway", id)
+	}
+
+	if err := fixture.SetFlag(ctx, false); err != nil {
+		t.Fatalf("disabling versioned history: %v", err)
+	}
+	beforeRevision, err := fixture.CurrentRevision(ctx, id)
+	if err != nil {
+		t.Fatalf("reading current_revision for %s: %v", id, err)
+	}
+	beforeCount, err := fixture.VersionRowCount(ctx, id)
+	if err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	}
+
+	if err := fixture.MutateExisting(ctx, id); err != nil {
+		t.Fatalf("mutating existing %s: %v", id, err)
+	}
+
+	afterRevision, err := fixture.CurrentRevision(ctx, id)
+	if err != nil {
+		t.Fatalf("reading current_revision for %s: %v", id, err)
+	}
+	afterCount, err := fixture.VersionRowCount(ctx, id)
+	if err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	}
+	if afterCount != beforeCount {
+		t.Errorf("version row count for %s went from %d to %d across an update-shaped mutation with the "+
+			"flag off, want unchanged: turning versioned history off stops minting for every record, "+
+			"including one that already participates", id, beforeCount, afterCount)
+	}
+	if afterRevision != beforeRevision {
+		t.Errorf("current_revision for %s went from %d to %d across the same update with the flag off, "+
+			"want unchanged", id, beforeRevision, afterRevision)
+	}
+}
+
 // RunParticipationGenerationWispPromotionBeginsHistory pins that promoting a
 // wisp onto the issues plane is CREATE-shaped in design §16.2b's sense. (This
 // is wisp promotion, PromoteFromEphemeral: not R2.3's promotion of a legacy

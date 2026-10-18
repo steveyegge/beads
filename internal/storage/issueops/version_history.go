@@ -764,8 +764,16 @@ func recordVersionAtInTx(ctx context.Context, tx DBTX, issueID, actor string, at
 		}
 		return nil
 	}
+	// The same updated_at rule for every update-shaped mint. Advancing
+	// current_revision is bookkeeping, not an edit, but on its own it fires
+	// the ON UPDATE CURRENT_TIMESTAMP clause, so a label or dependency write
+	// that never touches updated_at would move it to the wall clock only
+	// while history is on, and an import's stale-upsert check would then
+	// reject the source's next edit. History on must leave updated_at
+	// exactly where history off does (the same reason #4298 and
+	// blocked_state.go's mark/unmark templates assign it to itself).
 	if _, err := tx.ExecContext(ctx,
-		"UPDATE issues SET current_revision = ? WHERE id = ?", newRevision, issueID,
+		"UPDATE issues SET current_revision = ?, updated_at = updated_at WHERE id = ?", newRevision, issueID,
 	); err != nil {
 		return fmt.Errorf("versioned history: advance current_revision for %s: %w", issueID, err)
 	}

@@ -243,7 +243,7 @@ func TestRecordVersionAtInTxKeepsThePlaneRuleButNotTheFence(t *testing.T) {
 		mock.ExpectExec(`INSERT INTO issue_versions`).
 			WithArgs(id, int64(1), 1, sqlmock.AnyArg(), "actor", at, sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec(regexp.QuoteMeta("UPDATE issues SET current_revision = ? WHERE id = ?")).
+		mock.ExpectExec(regexp.QuoteMeta("UPDATE issues SET current_revision = ?, updated_at = updated_at WHERE id = ?")).
 			WithArgs(int64(1), id).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectRollback()

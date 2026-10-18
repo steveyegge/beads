@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bd versions <id>` lists the versions recorded for a bead, and
+  `versioned-history.enabled` turns recording on. While it is on, every
+  accepted change to a bead created while it is on, or that enters the issues
+  plane while it is on (a wisp promoted or made persistent), stores a
+  snapshot of it as a row of `issue_versions` in the same transaction. It is
+  off by default and nothing is backfilled: a bead already on the issues
+  plane when it is turned on is legacy, and editing it records nothing. A
+  recorded write leaves `updated_at` where an unrecorded one would, so
+  `bd import`'s stale check sees the same timestamps either way.
+  `bd versions --json` answers `{"versions": [...], "recording": bool}`; the
+  command still lists what was recorded after recording is turned off, and
+  proxied-server and HTTP workspaces refuse it. The setting is a row of each
+  store's `config` table (`bd config set versioned-history.enabled true`),
+  and every store reads its own when it is opened: a write routed into
+  another workspace (a prefix-routed `bd update` or `bd close`,
+  `bd create --repo`) follows the target store's row, a proxied-server
+  provider reads it when it is constructed, and a long-lived `bd serve`
+  keeps the value it read until it restarts.
+  `BD_VERSIONED_HISTORY_ENABLED=1` (or a `config.yaml` value) turns
+  recording on for every store the process opens, and never turns it off.
+  The row replicates on `bd dolt push`/`pull`, and recording is single-writer
+  only: two clones recording at once can mint the same revision and fail the
+  pull, and a write from a writer that is not recording is folded into the
+  next recorded version under that version's actor, so keep recording on for
+  every writer of a store or off for all of them. Turning it on with
+  `bd config set` first checks every issue the store would version and
+  refuses, writing nothing, while any holds a number outside the I-JSON
+  exact-integer range (magnitude above 2^53-1, however it is spelled) in its
+  metadata or in a gate's timeout (held as nanoseconds, so about 104.25
+  days), and prints the count, the ids, the field and the fix. There is no
+  override, and the check runs once; after that, a recorded write that would
+  hold such a number fails atomically. Migration 0071 adds a nullable
+  `removed_restriction` column to `issue_versions`. `bd version` now refuses
+  an argument and suggests `bd versions <arg>`, instead of printing bd's
+  build for a mistyped `bd version bd-123`.
 - `bd blocked --flags` prints the blocked flag for each id read from stdin
   (one per line; blank lines and repeats ignored), with `--json` as
   `[{"id","is_blocked"}]` in the order the ids were given, omitting an id that
@@ -1733,61 +1768,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it: `bd init` writes the witness, and an existing workspace in that state
   re-seeds it on the next command. A pre-1.0 witness, or a `.beads/dolt` that
   holds anything, is still refused.
-
-- **`versioned-history.enabled` now records for every store a write opens, and
-  each store reads its own setting.** The switch was applied where the root
-  pre-run wraps the command's own store, so a prefix-routed `bd update` or
-  `bd close`, `bd create --repo`, and the direct-mode open each built a store
-  for the target workspace that was never activated: with the setting on they
-  minted no `issue_versions` row while the command reported success. Activation
-  now happens where a store or unit-of-work provider is constructed, on the raw
-  store, and reads that store's own `config` row, so a write routed into rig B
-  follows rig B's setting and never the launching workspace's.
-  `BD_VERSIONED_HISTORY_ENABLED=1` (or a `versioned-history.enabled` value in
-  `config.yaml`) still applies to every store the process opens, and can only
-  turn recording on: `BD_VERSIONED_HISTORY_ENABLED=0` does not switch off a store
-  whose row says `true`. Proxied-server providers read the same row when they
-  are constructed. A row read that errors (as opposed to an absent row) still
-  resolves to off but is now reported under `BD_DEBUG`. The setting is
-  documented in `docs/reference/configuration.md`, including that it replicates
-  on `bd dolt push`/`pull` and is single-writer only.
-
-- **Versioned history refuses a number outside the I-JSON exact-integer range
-  however it is spelled, and turning it on checks the store first.** The
-  admission gate on a version's metadata looked only at literals that denote an
-  integer value, so `9007199254740993.5` (nearest double 2^53+2) was admitted
-  and then rounded to an integer the gate itself refuses. It now classifies each
-  literal by the binary64 nearest to it, so every spelling of a magnitude past
-  2^53-1, fractions and exponent forms included, is refused alike, and a literal
-  that overflows binary64 is refused as an out-of-range number instead of
-  failing as an invalid literal. The classification is linear in the length of
-  the literal, so an exponent such as `1e1000000` no longer builds a
-  million-digit integer inside the writer's transaction. Ordinary fractions such
-  as `0.1` are still admitted, and nothing the store could already hold is
-  admitted or refused differently. The refusal now reads "number is outside the
-  I-JSON exact-integer range (magnitude above 2^53-1)"; `ErrIntegerNotRepresentable`
-  keeps its name. With history on, a write that introduces such a number already
-  fails atomically, but a row that already holds one, written while history was
-  off, would, if it participates in history, fail every later write to it. So
-  `bd config set versioned-history.enabled true` now checks every issue the store
-  would version, the whole issue and not only its metadata, and refuses, writing
-  nothing, while any holds a number outside the range, in its metadata or in a
-  gate's timeout (held as nanoseconds, so the limit is about 104.25 days), or
-  duplicate keys in its metadata. It prints the count, the ids, the field and
-  the fix. For metadata that is one `bd update <id> --metadata ...` (or
-  `--unset-metadata`) per issue, which works with history on or off. `bd update`
-  cannot change a gate's timeout, so for that it is removing the gate, or
-  setting its `timeout_ns` column with `bd sql` (server-backed stores only),
-  while history is off. There is no override, and turning history off never runs
-  the check. The check runs once: a writer that does not record (an older bd,
-  `bd sql`, a pull from a clone that had history off) can still add such a row
-  afterwards, and, if it participates in history, the first write to it then
-  fails with the same refusal.
-  Turning it on through `BD_VERSIONED_HISTORY_ENABLED` or `config.yaml` does not
-  pass through the command, so those planes rely on the refusal at write time.
-  Dolt's JSON column collapses duplicate keys when it stores a document, so on a
-  Dolt store neither the check nor a write can see one; that refusal is a
-  defense for another backend that keeps them.
 
 - **`bd -C dir prime` now describes the target workspace instead of the launch
   directory** ([#5509](https://github.com/gastownhall/beads/issues/5509)). `-C`

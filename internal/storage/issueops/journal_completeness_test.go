@@ -203,11 +203,12 @@ var beadDMLExemptions = map[string]string{
 	// equivalents used by the uow leg — version_completeness_test.go pins the
 	// set) immediately after those callers already invoke RecordEventInTx, so the
 	// mutation itself is already journaled by the time RecordVersionInTx runs.
-	// Its own UPDATE issues SET current_revision = ? only advances a
-	// denormalized pointer to match the snapshot row it just inserted into
-	// issue_versions (not a bead table, so it can't anchor the exemption on
-	// its own) — bookkeeping for an already-journaled mutation, not a second
-	// mutation that needs its own emit.
+	// Its own UPDATE issues SET current_revision = ?, updated_at = updated_at
+	// only advances a denormalized pointer to match the snapshot row it just
+	// inserted into issue_versions (not a bead table, so it can't anchor the
+	// exemption on its own), leaving updated_at where the mutation put it —
+	// bookkeeping for an already-journaled mutation, not a second mutation
+	// that needs its own emit.
 	"RecordVersionInTx": "advances the denormalized current_revision pointer to match a snapshot just inserted into issue_versions (not a bead table); called from the same entry points that already journal the mutation via RecordEventInTx, so this is bookkeeping for an already-journaled mutation, not a second one",
 	// RecordVersionForCreateInTx is RecordVersionInTx's create-shaped sibling
 	// (design §16.2b write-fence, be-h89oq): same entry points, same

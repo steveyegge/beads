@@ -36,17 +36,18 @@ var versionCmd = &cobra.Command{
 	// and looks like the bead simply has no versions.
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) > 0 {
-			return HandleErrorRespectJSON(
-				"bd version prints bd's own version information and takes no arguments.\n"+
-					"Did you mean:  bd versions %s", args[0])
-		}
 		evt := metrics.NewCommandEvent("version")
 		defer func() {
 			if c := metrics.Global(); c != nil {
 				c.CloseEventAndAdd(evt)
 			}
 		}()
+
+		if len(args) > 0 {
+			return HandleErrorRespectJSON(
+				"bd version prints bd's own version information and takes no arguments.\n"+
+					"Did you mean:  bd versions %s", args[0])
+		}
 
 		commit := resolveCommitHash()
 		branch := resolveBranch()
