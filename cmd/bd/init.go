@@ -970,7 +970,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// before init's existing-workspace checks so even --force cannot create
 		// or rewrite state beside a source that has not been preserved.
 		if beadsDir := resolveInitBeadsDir(); beadsDir != "" {
-			if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
+			if err := guardLegacyUpgradeWorkspaceForInit(beadsDir, initServerMode); err != nil {
 				return err
 			}
 		}

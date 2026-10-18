@@ -763,6 +763,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed `bd init --server` can be retried.** A first attempt that could
+  not reach its server left an empty `.beads/dolt` and nothing on disk that
+  records the server choice, so the legacy-upgrade guard refused every retry
+  as a "legacy Dolt workspace" and no bd command could repair it. When init
+  itself selects server mode, the guard now admits exactly that root: empty,
+  with no `.local_version` witness. A pre-1.0 witness, or a `.beads/dolt` that
+  holds anything, is still refused, and commands other than `bd init` are
+  decided as before.
 - **Time-bound filters and the keyset cursor compare the same instant on every
   engine, whatever zone they are given in.** The storage filter builder binds
   every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,
