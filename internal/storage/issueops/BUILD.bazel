@@ -214,6 +214,7 @@ go_test(
     ],
     data = glob(["testdata/**"]) + [
         ":go_srcs",
+        "//internal/storage/dolt:go_srcs",
         "//internal/storage/domain/db:go_srcs",
         "//internal/storage/schema:migrations",
         "//internal/storage/versioncontrolops:go_srcs",

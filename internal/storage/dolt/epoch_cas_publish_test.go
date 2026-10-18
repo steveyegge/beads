@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	mysql "github.com/go-sql-driver/mysql"
+
 	storeops "github.com/steveyegge/beads/internal/storage/issueops"
 )
 
@@ -25,15 +27,29 @@ import (
 // this leg sends, not of Dolt. The tests after them run against a real server:
 // the first reproduces bee-ghosttrack's own probe (dolt_status after the first
 // mint), the next three apply it to the carrying bump, to a recorded loss and to
-// the read-only CurrentAddressFor, and the last two choreograph how a mint
-// behaves beside a concurrent bump and beside a concurrent loss on that server.
+// the read-only CurrentAddressFor, and the last three choreograph how a mint
+// behaves beside a concurrent bump, beside a concurrent loss, and beside another
+// transaction's mint and loss of its own address on that server.
 
 const epochPublishStoreID = "epoch-store"
 const epochPublishMintedID = "record-a"
 
 // epochPublishAddress is the address of epochPublishMintedID under epoch 1, the
-// one the fake serves as minted.
-const epochPublishAddress = "epch:11:epoch-store:8:record-a:1"
+// one the fake serves as minted. It is minted on a fake of its own rather than
+// written by hand: the fake serves a row at any address, so a hand-written one
+// would go stale unnoticed if the encoding moved
+// (TestEpochCASTestsBuildEveryAddressWithEpochAddress in issueops scans this
+// file for one).
+func epochPublishAddress() string {
+	f := newEpochFake()
+	db := sql.OpenDB(f.connector)
+	defer func() { _ = db.Close() }()
+	address, err := (&DoltStore{db: db}).MintUnderEpoch(context.Background(), epochPublishStoreID, epochPublishMintedID)
+	if err != nil {
+		panic(fmt.Sprintf("mint %s on a fresh epoch fake: %v", epochPublishMintedID, err))
+	}
+	return address
+}
 
 // epochFake is a *DoltStore's driver for the epoch methods: it serves the
 // reads the shared epoch Tx functions make, keeps the singleton's epoch moving
@@ -45,6 +61,10 @@ type epochFake struct {
 	// publishErr, when set before the call under test, fails every
 	// CALL DOLT_COMMIT: the SQL transaction is fine, only publication is not.
 	publishErr error
+	// stagedReadErr, when set, fails the staged-set read stageAndCommit makes
+	// between DOLT_ADD and DOLT_COMMIT, a failure it returns without
+	// ErrCommitIndeterminate because nothing has reached Dolt history yet.
+	stagedReadErr error
 }
 
 func newEpochFake() *epochFake {
@@ -57,6 +77,8 @@ func newEpochFake() *epochFake {
 			f.epoch.Add(1)
 		case strings.Contains(query, "DOLT_COMMIT") && f.publishErr != nil:
 			return f.publishErr
+		case strings.Contains(query, "FROM dolt_status WHERE staged") && f.stagedReadErr != nil:
+			return f.stagedReadErr
 		}
 		return nil
 	}
@@ -149,7 +171,7 @@ func epochPublishCalls() []epochPublishCall {
 			name:   "LoseVersion",
 			staged: []string{"epoch_minted_addresses"},
 			call: func(ctx context.Context, s *DoltStore) error {
-				return s.LoseVersion(ctx, epochPublishStoreID, epochPublishAddress)
+				return s.LoseVersion(ctx, epochPublishStoreID, epochPublishAddress())
 			},
 		},
 	}
@@ -251,16 +273,7 @@ func TestBumpEpochSurfacesAPublicationFailureAfterTheSQLCommit(t *testing.T) {
 
 	epoch, err := (&DoltStore{db: db}).BumpEpoch(context.Background(), epochPublishStoreID, "restore")
 
-	events := f.rec.snapshot()
-	if !slices.Contains(events, "COMMIT") || slices.Contains(events, "ROLLBACK") {
-		t.Errorf("a failed Dolt commit must not undo the bump: want the SQL transaction COMMITTED and never rolled back; events: %v", events)
-	}
-	if err == nil {
-		t.Fatalf("BumpEpoch = nil error although its Dolt commit failed: the caller would report success for a bump that is committed but unpublished; events: %v", events)
-	}
-	if !errors.Is(err, f.publishErr) {
-		t.Errorf("BumpEpoch error = %v, want it to wrap the Dolt commit failure %v", err, f.publishErr)
-	}
+	requirePublicationFailureReported(t, "BumpEpoch", f, err, f.publishErr)
 	if epoch != 2 {
 		t.Errorf("BumpEpoch returned epoch %d with the publication error, want 2: the bump applied, the error only says its Dolt commit did not", epoch)
 	}
@@ -268,8 +281,10 @@ func TestBumpEpochSurfacesAPublicationFailureAfterTheSQLCommit(t *testing.T) {
 
 // requirePublicationFailureReported checks what a writer that reports a failed
 // Dolt commit must show once its SQL transaction committed: the transaction was
-// committed and never rolled back, and the error it returned wraps the failure.
-func requirePublicationFailureReported(t *testing.T, name string, f *epochFake, err error) {
+// committed and never rolled back, and the error it returned wraps the failure
+// (cause) and ErrCommitIndeterminate, so that nothing replays a write that has
+// already applied.
+func requirePublicationFailureReported(t *testing.T, name string, f *epochFake, err, cause error) {
 	t.Helper()
 	events := f.rec.snapshot()
 	if !slices.Contains(events, "COMMIT") || slices.Contains(events, "ROLLBACK") {
@@ -278,8 +293,11 @@ func requirePublicationFailureReported(t *testing.T, name string, f *epochFake, 
 	if err == nil {
 		t.Fatalf("%s = nil error although its Dolt commit failed: the caller would report success for a write that is committed but unpublished; events: %v", name, events)
 	}
-	if !errors.Is(err, f.publishErr) {
-		t.Errorf("%s error = %v, want it to wrap the Dolt commit failure %v", name, err, f.publishErr)
+	if !errors.Is(err, cause) {
+		t.Errorf("%s error = %v, want it to wrap the Dolt commit failure %v", name, err, cause)
+	}
+	if !errors.Is(err, ErrCommitIndeterminate) {
+		t.Errorf("%s error = %v, want it to wrap ErrCommitIndeterminate: the write has applied, and a caller that takes the error for a write that did not would replay it", name, err)
 	}
 }
 
@@ -297,7 +315,7 @@ func TestBumpEpochCarryingSurfacesAPublicationFailureAfterTheSQLCommit(t *testin
 
 	epoch, err := (&DoltStore{db: db}).BumpEpochCarrying(context.Background(), epochPublishStoreID, "token-scheme-change")
 
-	requirePublicationFailureReported(t, "BumpEpochCarrying", f, err)
+	requirePublicationFailureReported(t, "BumpEpochCarrying", f, err, f.publishErr)
 	if epoch != 2 {
 		t.Errorf("BumpEpochCarrying returned epoch %d with the publication error, want 2: the bump applied, the error only says its Dolt commit did not", epoch)
 	}
@@ -313,9 +331,136 @@ func TestLoseVersionSurfacesAPublicationFailureAfterTheSQLCommit(t *testing.T) {
 	db := sql.OpenDB(f.connector)
 	defer func() { _ = db.Close() }()
 
-	err := (&DoltStore{db: db}).LoseVersion(context.Background(), epochPublishStoreID, epochPublishAddress)
+	err := (&DoltStore{db: db}).LoseVersion(context.Background(), epochPublishStoreID, epochPublishAddress())
 
-	requirePublicationFailureReported(t, "LoseVersion", f, err)
+	requirePublicationFailureReported(t, "LoseVersion", f, err, f.publishErr)
+}
+
+// TestEpochWritesMarkAFailedStagedReadIndeterminate holds the writers that
+// return a failed publication to the no-replay rule for the failure
+// stageAndCommit itself returns as a plain error: its staged-set read before
+// DOLT_COMMIT. Nothing has reached Dolt history at that point, but the write's
+// SQL commit has landed, so a bump replayed on that error would advance the
+// counter a second time. The error must say so as a failed DOLT_COMMIT does.
+func TestEpochWritesMarkAFailedStagedReadIndeterminate(t *testing.T) {
+	for _, tc := range epochPublishCalls() {
+		if tc.logsPublishFailure {
+			continue // a mint logs a failed publication and returns nil
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEpochFake()
+			f.stagedReadErr = errors.New("staged-set read failed")
+			db := sql.OpenDB(f.connector)
+			defer func() { _ = db.Close() }()
+
+			err := tc.call(context.Background(), &DoltStore{db: db})
+
+			requirePublicationFailureReported(t, tc.name, f, err, f.stagedReadErr)
+		})
+	}
+}
+
+// TestEpochWritesReturnWhatAnIndeterminateSQLCommitMayHaveApplied pins what each
+// writer hands back when its SQL commit's result is lost (ErrCommitIndeterminate,
+// which withRetryTx never retries): the commit may have landed, so a bump
+// returns the epoch it would have committed and a mint its address, as a bump
+// does when only its Dolt commit fails. The caller then reads CurrentEpoch or
+// StillServes to learn which; a zero value would read as nothing applied and
+// invite the replay the sentinel forbids.
+func TestEpochWritesReturnWhatAnIndeterminateSQLCommitMayHaveApplied(t *testing.T) {
+	ctx := context.Background()
+	open := func(t *testing.T) (*DoltStore, *epochFake) {
+		t.Helper()
+		f := newEpochFake()
+		f.connector.commitErr = func() error { return testConnectionLoss }
+		db := sql.OpenDB(f.connector)
+		t.Cleanup(func() { _ = db.Close() })
+		return &DoltStore{db: db}, f
+	}
+	requireIndeterminate := func(t *testing.T, name string, f *epochFake, err error) {
+		t.Helper()
+		if !errors.Is(err, ErrCommitIndeterminate) || !errors.Is(err, testConnectionLoss) {
+			t.Fatalf("%s = %v, want the lost commit response wrapped in ErrCommitIndeterminate", name, err)
+		}
+		if events := f.rec.snapshot(); slices.ContainsFunc(events, func(ev string) bool { return strings.Contains(ev, "DOLT_COMMIT") }) {
+			t.Errorf("%s published a SQL commit whose result was lost; events: %v", name, events)
+		}
+	}
+
+	t.Run("BumpEpoch", func(t *testing.T) {
+		s, f := open(t)
+		epoch, err := s.BumpEpoch(ctx, epochPublishStoreID, "restore")
+		requireIndeterminate(t, "BumpEpoch", f, err)
+		if epoch != 2 {
+			t.Errorf("BumpEpoch returned epoch %d with an indeterminate commit, want 2, the epoch it may have committed", epoch)
+		}
+	})
+	t.Run("BumpEpochCarrying", func(t *testing.T) {
+		s, f := open(t)
+		epoch, err := s.BumpEpochCarrying(ctx, epochPublishStoreID, "token-scheme-change")
+		requireIndeterminate(t, "BumpEpochCarrying", f, err)
+		if epoch != 2 {
+			t.Errorf("BumpEpochCarrying returned epoch %d with an indeterminate commit, want 2, the epoch it may have committed", epoch)
+		}
+	})
+	t.Run("MintUnderEpoch", func(t *testing.T) {
+		s, f := open(t)
+		address, err := s.MintUnderEpoch(ctx, epochPublishStoreID, epochPublishMintedID)
+		requireIndeterminate(t, "MintUnderEpoch", f, err)
+		if want := epochPublishAddress(); address != want {
+			t.Errorf("MintUnderEpoch returned address %q with an indeterminate commit, want %s, the address it may have committed", address, want)
+		}
+	})
+	t.Run("LoseVersion", func(t *testing.T) {
+		s, f := open(t)
+		requireIndeterminate(t, "LoseVersion", f, s.LoseVersion(ctx, epochPublishStoreID, epochPublishAddress()))
+	})
+}
+
+// TestEpochWritesReturnNothingWhenTheSQLCommitFailsDefinitely is the other side
+// of that rule: a commit error the server answered with (a typed MySQL error,
+// which withRetryTx neither retries nor marks indeterminate) means nothing
+// landed. Each body ran to the end and computed an epoch or an address, and
+// neither may come back with the error.
+func TestEpochWritesReturnNothingWhenTheSQLCommitFailsDefinitely(t *testing.T) {
+	ctx := context.Background()
+	refused := &mysql.MySQLError{Number: 1105, Message: "commit refused"}
+	open := func(t *testing.T) *DoltStore {
+		t.Helper()
+		f := newEpochFake()
+		f.connector.commitErr = func() error { return refused }
+		db := sql.OpenDB(f.connector)
+		t.Cleanup(func() { _ = db.Close() })
+		return &DoltStore{db: db}
+	}
+	requireDefinite := func(t *testing.T, name string, err error) {
+		t.Helper()
+		if !errors.Is(err, refused) || errors.Is(err, ErrCommitIndeterminate) {
+			t.Fatalf("%s = %v, want the refused commit, not marked ErrCommitIndeterminate", name, err)
+		}
+	}
+
+	t.Run("BumpEpoch", func(t *testing.T) {
+		epoch, err := open(t).BumpEpoch(ctx, epochPublishStoreID, "restore")
+		requireDefinite(t, "BumpEpoch", err)
+		if epoch != 0 {
+			t.Errorf("BumpEpoch returned epoch %d with a refused commit, want 0: nothing applied", epoch)
+		}
+	})
+	t.Run("BumpEpochCarrying", func(t *testing.T) {
+		epoch, err := open(t).BumpEpochCarrying(ctx, epochPublishStoreID, "token-scheme-change")
+		requireDefinite(t, "BumpEpochCarrying", err)
+		if epoch != 0 {
+			t.Errorf("BumpEpochCarrying returned epoch %d with a refused commit, want 0: nothing applied", epoch)
+		}
+	})
+	t.Run("MintUnderEpoch", func(t *testing.T) {
+		address, err := open(t).MintUnderEpoch(ctx, epochPublishStoreID, epochPublishMintedID)
+		requireDefinite(t, "MintUnderEpoch", err)
+		if address != "" {
+			t.Errorf("MintUnderEpoch returned address %q with a refused commit, want none: nothing applied", address)
+		}
+	})
 }
 
 // TestMintPathsKeepTheirRowsWhenPublicationFails is the other half of that
@@ -358,12 +503,13 @@ func TestCurrentAddressForWritesAndPublishesNothing(t *testing.T) {
 	db := sql.OpenDB(f.connector)
 	defer func() { _ = db.Close() }()
 
-	current, err := (&DoltStore{db: db}).CurrentAddressFor(context.Background(), epochPublishStoreID, epochPublishAddress)
+	address := epochPublishAddress()
+	current, err := (&DoltStore{db: db}).CurrentAddressFor(context.Background(), epochPublishStoreID, address)
 	if err != nil {
 		t.Fatalf("CurrentAddressFor: %v", err)
 	}
-	if current != epochPublishAddress {
-		t.Errorf("CurrentAddressFor(%s) = %s, want the address itself: the fake serves it as a Live row nothing carried", epochPublishAddress, current)
+	if current != address {
+		t.Errorf("CurrentAddressFor(%s) = %s, want the address itself: the fake serves it as a Live row nothing carried", address, current)
 	}
 
 	for _, ev := range f.rec.snapshot() {
@@ -722,5 +868,82 @@ func TestAMintAfterAConcurrentLossNeverRevivesTheLostAddress(t *testing.T) {
 	}
 	if answer.Restriction != storeops.EpochRestrictionGoneReorganization {
 		t.Errorf("Resolve(%s) = %v, want EpochRestrictionGoneReorganization: the loss is the only change to the row", address, answer.Restriction)
+	}
+}
+
+// TestAMintRacingTheMintAndLossOfItsAddressConflictsAtCommit measures what
+// upsertEpochMintedAddressInTx says about Dolt. One transaction reads before
+// the address exists; another mints the address and loses it, and both commit;
+// the first then mints the same id. Its snapshot holds no row at the address,
+// so it inserts one, and the INSERT does not fail as a duplicate key: Dolt
+// checks the key against the transaction's snapshot. The two inserts conflict at
+// COMMIT instead (Error 1213), which withRetryTx answers by running the mint
+// again, and run again against the committed row, the mint refuses the address
+// (ErrEpochAddressNotServed) rather than reviving a lost one.
+//
+// If the first transaction's INSERT fails as a duplicate key, the engine now
+// checks keys past the snapshot, and the re-read in
+// upsertEpochMintedAddressInTx answers this race instead of the commit; if the
+// commit succeeds, the engine merged the two rows, and the race needs another
+// look.
+func TestAMintRacingTheMintAndLossOfItsAddressConflictsAtCommit(t *testing.T) {
+	skipIfNoServer(t)
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	store := newMultiConnectionEpochStore(t, ctx, "epoch_mint_race")
+
+	// Seed the singleton so the first transaction's mint only reads the epoch.
+	if _, err := store.MintUnderEpoch(ctx, epochPublishStoreID, "seed"); err != nil {
+		t.Fatalf("seed mint: %v", err)
+	}
+
+	// The first transaction reads before the address exists and stays open.
+	mintTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin the first transaction: %v", err)
+	}
+	defer func() { _ = mintTx.Rollback() }()
+	if _, err := storeops.CurrentEpochInTx(ctx, mintTx, epochPublishStoreID); err != nil {
+		t.Fatalf("CurrentEpochInTx inside the first transaction: %v", err)
+	}
+
+	// Another connection mints the address and loses it while the first is open.
+	otherCtx, cancelOther := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelOther()
+	address, err := store.MintUnderEpoch(otherCtx, epochPublishStoreID, epochPublishMintedID)
+	if err != nil {
+		t.Fatalf("MintUnderEpoch beside an open transaction: %v", err)
+	}
+	if err := store.LoseVersion(otherCtx, epochPublishStoreID, address); err != nil {
+		t.Fatalf("LoseVersion beside an open transaction: %v", err)
+	}
+
+	// The first transaction mints the same id, which is the same address.
+	minted, err := storeops.MintUnderEpochInTx(ctx, mintTx, epochPublishStoreID, epochPublishMintedID)
+	if err != nil {
+		t.Fatalf("mint inside the first transaction: %v: the INSERT now sees a row committed after the transaction's snapshot, so the duplicate-key re-read answers this race, not the commit", err)
+	}
+	if minted != address {
+		t.Fatalf("mint returned %s, want the same address %s: minting the same id under the same epoch reproduces its address", minted, address)
+	}
+	err = mintTx.Commit()
+	if err == nil {
+		t.Fatalf("the first transaction committed its insert of %s over the committed, lost row: the engine merged the two inserts, and a lost address may come back", address)
+	}
+	if !isSerializationError(err) {
+		t.Fatalf("commit of the first transaction = %v, want a serialization failure (Error 1213), the conflict withRetryTx runs the mint again on", err)
+	}
+
+	// Run again, as withRetryTx runs it, the mint reads the committed row.
+	if _, err := store.MintUnderEpoch(ctx, epochPublishStoreID, epochPublishMintedID); !errors.Is(err, storeops.ErrEpochAddressNotServed) {
+		t.Errorf("mint of %s run again after the conflict = %v, want ErrEpochAddressNotServed: the committed row is lost", epochPublishMintedID, err)
+	}
+	serves, err := store.StillServes(ctx, epochPublishStoreID, address)
+	if err != nil {
+		t.Fatalf("StillServes: %v", err)
+	}
+	if serves {
+		t.Errorf("address %s is served again after a mint raced its mint and loss: no interleaving may revive a lost address", address)
 	}
 }

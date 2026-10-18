@@ -565,6 +565,7 @@
 40 37 TestEmbeddedMergeAndSettleReportsOperatorConflicts
 40 37 TestEmbeddedReaderListBriefDropsTheFreeFormTextAndNothingElse
 40 37 TestEmbeddedReaderListNaturalNumericIDSortTrimsAfterTheFetch
+40 37 TestEpochWritesReportAnUnpublishedCommitAsIndeterminate
 40 37 TestIgnoredCursorHealRespectsOverrideUnderBroaderPattern
 
 40 38 TestCreateIssues

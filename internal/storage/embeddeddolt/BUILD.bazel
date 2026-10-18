@@ -151,6 +151,7 @@ go_test(
         "dualwrite_history_contract_test.go",
         "dualwrite_participation_generation_contract_test.go",
         "edge_reader_contract_test.go",
+        "epoch_cas_publish_internal_test.go",
         "epoch_cas_status_test.go",
         "events_since_test.go",
         "expected_revision_contract_test.go",

@@ -3,6 +3,7 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	storeops "github.com/steveyegge/beads/internal/storage/issueops"
@@ -16,24 +17,23 @@ import (
 // (migration 0072).
 //
 // UNLIKE MetadataCAS, THIS ROLE HAS NO PUBLIC issueops INTERFACE: the
-// conformance contract's own six epoch hooks are bare function types (see
+// conformance contract's own seven epoch hooks are bare function types (see
 // backend/conformance.EpochFixture) — so there is no role accessor to
 // return one of, and these are direct methods on *DoltStore instead of a
-// wrapper struct, the same reasoning expected_revision_cas.go gives for
-// CompareAndSetVersion/CurrentVersion.
+// wrapper struct.
 //
-// UNLIKE CompareAndSetVersion, these also have no domain-repository
-// exposure: the unit-of-work leg reaches internal/storage/issueops's epoch
-// Tx functions directly rather than through the domain issue repository
-// (see internal/storage/uow's own epoch wiring), so nothing forces these
-// types out of issueops into the root storage package the way
-// CompareAndSetVersionPlan/Result were. Method signatures here use plain
-// types plus storeops.EpochResolveResult directly; backend/conformance's
-// own Address/EpochBumpTrigger/RetentionAnswer vocabulary is translated
-// only in this leg's contract-test file, per epoch_cas.go's package doc.
+// These also have no domain-repository exposure: the unit-of-work leg
+// reaches internal/storage/issueops's epoch Tx functions directly rather
+// than through the domain issue repository (see internal/storage/uow's own
+// epoch wiring), so nothing forces these types out of issueops into the
+// root storage package. Method signatures here use plain types plus
+// storeops.EpochResolveResult directly; backend/conformance's own
+// Address/EpochBumpTrigger/RetentionAnswer vocabulary is translated only in
+// this leg's contract-test file, per internal/storage/issueops/epoch_cas.go's
+// header.
 //
 // Method names match backend/conformance.EpochFixture's own field names
-// verbatim (CurrentVersion/CompareAndSetVersion's precedent).
+// verbatim.
 //
 // PUBLICATION ORDER. The four writers
 // commit their SQL transaction FIRST and stage and Dolt-commit afterwards,
@@ -42,6 +42,14 @@ import (
 // writers it writes every row changed in the meantime back to its old value,
 // and store_epoch and epoch_minted_addresses are append-only: a row lost that
 // way is never rewritten (the HAZARD block on that helper).
+//
+// AN ERROR RETURNED AFTER THE SQL COMMIT MUST NOT BE REPLAYED. Every error a
+// writer returns once its SQL commit has landed, or may have, wraps
+// ErrCommitIndeterminate, the storage-wide no-replay sentinel: a replayed bump
+// advances the counter a second time. A bump returns the epoch it committed, or
+// would have, with that error, and a mint its address; the caller learns which
+// by reading CurrentEpoch or StillServes, never by writing again. The embedded
+// leg does the same.
 
 // CurrentEpoch reports storeID's current epoch generation.
 //
@@ -67,8 +75,10 @@ func (s *DoltStore) CurrentEpoch(ctx context.Context, storeID string) (int, erro
 // operator-driven, and its caller (the restore trigger) must not report a
 // restore complete while the bump is committed but unpublished. In that case
 // the bump HAS applied: the epoch returned is the new one, the row is durable
-// in the working set and rides the next Dolt commit, and the caller must not
-// bump again to retry.
+// in the working set and rides the next Dolt commit, and the error wraps
+// ErrCommitIndeterminate so that nothing bumps again to retry. A SQL commit
+// whose result was lost is returned the same way, with the epoch it would have
+// committed (failedBump).
 //
 // The epoch counter is per database, not per store. storeID appears only in
 // error text; one bump advances the epoch seen through every storeID that
@@ -80,13 +90,34 @@ func (s *DoltStore) BumpEpoch(ctx context.Context, storeID, reason string) (int,
 		epoch, err = storeops.BumpEpochInTx(ctx, tx, storeID, reason)
 		return err
 	}); err != nil {
-		return 0, err
+		return failedBump(storeID, epoch, err)
 	}
 	if err := s.doltAddAndCommitPostTx(ctx, []string{"store_epoch"},
 		fmt.Sprintf("bd: bump epoch for %s (%s)", storeID, reason)); err != nil {
-		return epoch, fmt.Errorf("epoch bump for %s applied (epoch %d) but its Dolt commit failed: %w", storeID, epoch, err)
+		return epoch, unpublishedBump(storeID, epoch, err)
 	}
 	return epoch, nil
+}
+
+// failedBump is what a bump returns when its SQL transaction reports an error.
+// An error wrapping ErrCommitIndeterminate came from the commit of a body that
+// ran to completion, so the commit may have landed: the epoch that body set is
+// returned with it, and the caller reads CurrentEpoch to learn which. Any other
+// error means nothing landed.
+func failedBump(storeID string, epoch int, err error) (int, error) {
+	if errors.Is(err, ErrCommitIndeterminate) {
+		return epoch, fmt.Errorf("epoch bump for %s may have applied (epoch %d): %w", storeID, epoch, err)
+	}
+	return 0, err
+}
+
+// unpublishedBump is the error for a bump whose SQL commit landed and whose
+// Dolt commit then failed. It wraps ErrCommitIndeterminate whatever the cause:
+// doltAddAndCommitPostTx returns some failures without it (a staged-set read
+// that fails, a breaker that refuses the commit), and those causes are no more
+// replayable than the rest once the counter has moved.
+func unpublishedBump(storeID string, epoch int, err error) error {
+	return fmt.Errorf("epoch bump for %s applied (epoch %d) but its Dolt commit failed: %w: %w", storeID, epoch, err, ErrCommitIndeterminate)
 }
 
 // BumpEpochCarrying is the token-scheme-change bump: BumpEpoch, and also the
@@ -95,6 +126,7 @@ func (s *DoltStore) BumpEpoch(ctx context.Context, storeID, reason string) (int,
 // epoch_minted_addresses, so it publishes both. It surfaces a failed Dolt
 // commit exactly as BumpEpoch does, and the bump has applied in that case: the
 // epoch returned is the new one and the caller must not bump again to retry.
+// A lost SQL commit result is returned as BumpEpoch returns it (failedBump).
 //
 // The epoch counter is per database, not per store. storeID appears only in
 // error text; one bump advances the epoch seen through every storeID that
@@ -109,11 +141,11 @@ func (s *DoltStore) BumpEpochCarrying(ctx context.Context, storeID, reason strin
 		epoch, err = storeops.BumpEpochCarryingInTx(ctx, tx, storeID, reason)
 		return err
 	}); err != nil {
-		return 0, err
+		return failedBump(storeID, epoch, err)
 	}
 	if err := s.doltAddAndCommitPostTx(ctx, []string{"store_epoch", "epoch_minted_addresses"},
 		fmt.Sprintf("bd: carry addresses to epoch %d for %s (%s)", epoch, storeID, reason)); err != nil {
-		return epoch, fmt.Errorf("epoch bump for %s applied (epoch %d) but its Dolt commit failed: %w", storeID, epoch, err)
+		return epoch, unpublishedBump(storeID, epoch, err)
 	}
 	return epoch, nil
 }
@@ -124,7 +156,10 @@ func (s *DoltStore) BumpEpochCarrying(ctx context.Context, storeID, reason strin
 // runIssueOperationTxWithMessage: a Dolt commit that fails after the SQL commit
 // is logged, not returned. The mint is durable in the working set and rides the
 // next Dolt commit, and mints are frequent and automated, so failing one over a
-// missing history commit would only turn a harmless gap into caller errors.
+// missing history commit would only turn a harmless gap into caller errors. A
+// SQL commit whose result was lost is returned, wrapping
+// ErrCommitIndeterminate, together with the address the mint may have
+// committed; StillServes says whether it did.
 //
 // A mint whose transaction overlaps a BumpEpoch reads the epoch before the bump
 // and commits an address minted under the epoch the bump replaced. That address
@@ -143,6 +178,9 @@ func (s *DoltStore) MintUnderEpoch(ctx context.Context, storeID, id string) (str
 		return storeops.EpochMintDirtyTables(),
 			fmt.Sprintf("bd: mint %s under epoch for %s", id, storeID), nil
 	}); err != nil {
+		if errors.Is(err, ErrCommitIndeterminate) {
+			return address, err
+		}
 		return "", err
 	}
 	return address, nil
@@ -194,7 +232,8 @@ func (s *DoltStore) CurrentAddressFor(ctx context.Context, storeID, oldAddress s
 // address (storeops.LoseVersionInTx). It writes epoch_minted_addresses, so it
 // publishes that table, and unlike a mint it RETURNS a failed Dolt commit: a
 // loss its caller believes recorded must not be left unpublished. The loss has
-// applied in that case, and replaying it is a no-op.
+// applied in that case, and the error wraps ErrCommitIndeterminate like a
+// bump's, although replaying a loss is a no-op.
 func (s *DoltStore) LoseVersion(ctx context.Context, storeID, address string) error {
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
 		return storeops.LoseVersionInTx(ctx, tx, storeID, address)
@@ -203,7 +242,7 @@ func (s *DoltStore) LoseVersion(ctx context.Context, storeID, address string) er
 	}
 	if err := s.doltAddAndCommitPostTx(ctx, []string{"epoch_minted_addresses"},
 		fmt.Sprintf("bd: lose version %s for %s", address, storeID)); err != nil {
-		return fmt.Errorf("loss of %s for %s recorded but its Dolt commit failed: %w", address, storeID, err)
+		return fmt.Errorf("loss of %s for %s recorded but its Dolt commit failed: %w: %w", address, storeID, err, ErrCommitIndeterminate)
 	}
 	return nil
 }

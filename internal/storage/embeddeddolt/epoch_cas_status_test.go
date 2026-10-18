@@ -298,11 +298,11 @@ func TestBumpEpochCarryingNeitherCarriesNorServesARowFromAFutureEpoch(t *testing
 }
 
 // TestBumpEpochCarryingFailsAndRollsBackWhenARowAlreadyExistsAtTheNewEpoch pins
-// the one place a duplicate key is not benign. A mint tolerates losing a race
-// to an identical insert, but a row already sitting at the carry's address means
-// the epoch counter rewound. The bump must then fail and roll back whole,
-// including its increment of the counter, rather than report a carry it did not
-// make.
+// the one place a duplicate key always fails the write. A mint whose insert
+// collides with a row reads it and keeps the address when the row is served,
+// but a row already sitting at the carry's address means the epoch counter
+// rewound. The bump must then fail and roll back whole, including its increment
+// of the counter, rather than report a carry it did not make.
 func TestBumpEpochCarryingFailsAndRollsBackWhenARowAlreadyExistsAtTheNewEpoch(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 	te := newTestEnv(t, "epch")

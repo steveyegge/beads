@@ -7,6 +7,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,7 +69,102 @@ func expectEpochRead(mock sqlmock.Sqlmock, epoch int) {
 		WillReturnRows(sqlmock.NewRows([]string{"epoch"}).AddRow(epoch))
 }
 
+// expectEpochAbsent registers the read of store_epoch's singleton finding no
+// row, the state the table starts in (migration 0067). The other cases register
+// a present row, where a reader that seeds the row and one that does not run the
+// same SQL; only an absent row tells them apart.
+func expectEpochAbsent(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(epochSQLReadEpoch).
+		WithArgs([]driver.Value{}...).
+		WillReturnRows(sqlmock.NewRows([]string{"epoch"}))
+}
+
 func intPtr(v int) *int { return &v }
+
+// TestEpochReadPathsNeverSeedAnAbsentStoreEpochRow pins item B4
+// (gastownhall/beads#6664, bee-ghosttrack review 5268699223): every path that
+// only reads answers an absent store_epoch row from the epoch-1 default and
+// never inserts it. LoseVersionInTx is here too, because the epoch it reads is
+// not one it writes. Each case registers no INSERT, so a read path switched to
+// the seeding reader (ensureStoreEpochRow) runs an unexpected statement and
+// fails; the Dolt legs cannot catch that switch, because their read
+// transactions roll back.
+func TestEpochReadPathsNeverSeedAnAbsentStoreEpochRow(t *testing.T) {
+	t.Parallel()
+
+	const storeID = "absent-epoch-store"
+	root := epochAddress(storeID, "record-a", 1)
+	row := &epochTestRow{storeID: storeID, mintedID: "record-a", mintedEpoch: 1}
+	ctx := context.Background()
+
+	t.Run("CurrentEpochInTx", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectEpochAbsent(mock)
+		got, err := CurrentEpochInTx(ctx, tx, storeID)
+		if err != nil || got != 1 {
+			t.Fatalf("CurrentEpochInTx with no store_epoch row = (%d, %v), want (1, nil)", got, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("CurrentEpochInTx must only read: %v", err)
+		}
+	})
+	t.Run("StillServesInTx", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectEpochRow(mock, root, row)
+		expectEpochAbsent(mock)
+		got, err := StillServesInTx(ctx, tx, storeID, root)
+		if err != nil || !got {
+			t.Fatalf("StillServesInTx with no store_epoch row = (%v, %v), want (true, nil): an address minted at epoch 1 is served at the default epoch", got, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("StillServesInTx must only read: %v", err)
+		}
+	})
+	t.Run("ResolveEpochInTx", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectEpochRow(mock, root, row)
+		expectEpochAbsent(mock)
+		got, err := ResolveEpochInTx(ctx, tx, storeID, root)
+		if err != nil || got.Restriction != EpochRestrictionLive || got.Epoch == nil || *got.Epoch != 1 {
+			t.Fatalf("ResolveEpochInTx with no store_epoch row = (%+v, %v), want Live at epoch 1", got, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("ResolveEpochInTx must only read: %v", err)
+		}
+	})
+	t.Run("CurrentAddressForInTx", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectEpochRow(mock, root, row)
+		expectEpochAbsent(mock)
+		mock.ExpectQuery(epochSQLNewest).WithArgs(root, storeID, int64(1)).
+			WillReturnRows(sqlmock.NewRows([]string{"address"}))
+		got, err := CurrentAddressForInTx(ctx, tx, storeID, root)
+		if err != nil || got != root {
+			t.Fatalf("CurrentAddressForInTx with no store_epoch row = (%q, %v), want (%q, nil)", got, err, root)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("CurrentAddressForInTx must only read: %v", err)
+		}
+	})
+	t.Run("LoseVersionInTx", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectEpochRow(mock, root, row)
+		expectEpochAbsent(mock)
+		mock.ExpectExec(epochSQLLoseRoot).WithArgs(int64(1), root, storeID).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(epochSQLLoseCarry).WithArgs(int64(1), root, storeID).WillReturnResult(sqlmock.NewResult(0, 0))
+		if err := LoseVersionInTx(ctx, tx, storeID, root); err != nil {
+			t.Fatalf("LoseVersionInTx with no store_epoch row: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("LoseVersionInTx must write only the loss, at the default epoch 1: %v", err)
+		}
+	})
+}
 
 // TestStillServesAndResolveAnswerFromTheAddressRowAndTheEpochAlone pins the
 // whole resolver. Each case registers exactly the statements the answer may
@@ -633,30 +730,207 @@ func TestMintUnderEpochInTxInsertsOnlyAFreshRootRow(t *testing.T) {
 	})
 }
 
-// TestMintUnderEpochInTxTreatsADuplicateKeyAsABenignRace keeps the mint's
-// existing tolerance: two concurrent minters computing the same address can
-// both attempt the same INSERT, and the one that loses the race has still
-// minted the address.
-func TestMintUnderEpochInTxTreatsADuplicateKeyAsABenignRace(t *testing.T) {
+// TestMintUnderEpochInTxTrustsADuplicateKeyOnlyAsFarAsItCanReadTheRow pins
+// what a mint does when its INSERT reports a duplicate key for an address its
+// own read found absent: another transaction inserted the row, and may have
+// lost it since. The mint reads the row again and returns the address only
+// when that row is served; it refuses a row that is not served, and a row it
+// cannot read at all is a failure, never the success item B3 once assumed.
+func TestMintUnderEpochInTxTrustsADuplicateKeyOnlyAsFarAsItCanReadTheRow(t *testing.T) {
 	t.Parallel()
 
 	const storeID = "mint-race-store"
 	const currentEpoch = 5
 	address := epochAddress(storeID, "record-a", currentEpoch)
+	duplicate := errors.New("Error 1062: Duplicate entry for key 'PRIMARY'")
+
+	// expectLostInsert registers a mint whose read finds no row and whose
+	// INSERT then hits the row another transaction wrote.
+	expectLostInsert := func(mock sqlmock.Sqlmock) {
+		expectEpochRead(mock, currentEpoch)
+		expectEpochRow(mock, address, nil)
+		mock.ExpectExec(epochSQLInsertRoot).
+			WithArgs(address, storeID, "record-a", int64(currentEpoch), sqlmock.AnyArg()).
+			WillReturnError(duplicate)
+	}
+
+	t.Run("a served row is the one the mint would have inserted", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectLostInsert(mock)
+		expectEpochRow(mock, address, &epochTestRow{storeID: storeID, mintedID: "record-a", mintedEpoch: currentEpoch})
+
+		got, err := MintUnderEpochInTx(context.Background(), tx, storeID, "record-a")
+		if err != nil {
+			t.Fatalf("MintUnderEpochInTx after losing the insert to a row it then reads served: %v", err)
+		}
+		if got != address {
+			t.Errorf("MintUnderEpochInTx = %q, want %q", got, address)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("a row lost since it was inserted is refused", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectLostInsert(mock)
+		expectEpochRow(mock, address, &epochTestRow{storeID: storeID, mintedID: "record-a", mintedEpoch: currentEpoch, goneAtEpoch: currentEpoch})
+
+		got, err := MintUnderEpochInTx(context.Background(), tx, storeID, "record-a")
+		if !errors.Is(err, ErrEpochAddressNotServed) {
+			t.Fatalf("MintUnderEpochInTx = (%q, %v), want it to wrap ErrEpochAddressNotServed: the row at the address reads Gone", got, err)
+		}
+		if got != "" {
+			t.Errorf("MintUnderEpochInTx returned %q alongside the refusal, want an empty address", got)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("a row the transaction cannot read is not success", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectLostInsert(mock)
+		expectEpochRow(mock, address, nil)
+
+		got, err := MintUnderEpochInTx(context.Background(), tx, storeID, "record-a")
+		if err == nil {
+			t.Fatalf("MintUnderEpochInTx = %q, nil, want an error: nothing this transaction can read says the store serves the row another transaction inserted", got)
+		}
+		if !errors.Is(err, duplicate) {
+			t.Errorf("MintUnderEpochInTx error = %v, want it to wrap the duplicate-key error, so a caller can tell a race from a refusal", err)
+		}
+		if errors.Is(err, ErrEpochAddressNotServed) {
+			t.Errorf("MintUnderEpochInTx error = %v wraps ErrEpochAddressNotServed, want not: the row's status is unknown, not Gone", err)
+		}
+		if got != "" {
+			t.Errorf("MintUnderEpochInTx returned %q alongside the error, want an empty address", got)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("a failed re-read reports both errors", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+		expectLostInsert(mock)
+		readFailure := errors.New("read failed")
+		mock.ExpectQuery(epochSQLRow).WithArgs(address).WillReturnError(readFailure)
+
+		got, err := MintUnderEpochInTx(context.Background(), tx, storeID, "record-a")
+		if !errors.Is(err, duplicate) || !errors.Is(err, readFailure) {
+			t.Fatalf("MintUnderEpochInTx = (%q, %v), want an error wrapping both the duplicate key and the failed re-read", got, err)
+		}
+		if got != "" {
+			t.Errorf("MintUnderEpochInTx returned %q alongside the error, want an empty address", got)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+}
+
+// TestMintUnderEpochInTxRefusesAPairWhoseAddressCouldOutgrowItsColumn pins the
+// bound on epoch_minted_addresses.address, a VARCHAR(255) PRIMARY KEY: a pair
+// one byte too long is refused with ErrEpochAddressTooLong before any
+// statement runs, and the widest pair that fits is minted. The bound is the
+// address at the widest epoch the INT counter holds, so a pair that mints
+// today still fits after any number of bumps.
+func TestMintUnderEpochInTxRefusesAPairWhoseAddressCouldOutgrowItsColumn(t *testing.T) {
+	t.Parallel()
+
+	storeID := strings.Repeat("s", 115)
+	widest := strings.Repeat("i", 115)
+	if n := len(epochAddress(storeID, widest, math.MaxInt32)); n != maxEpochAddressLen {
+		t.Fatalf("the widest pair composes to %d bytes at the widest epoch, want exactly %d: the boundary below is not at the limit", n, maxEpochAddressLen)
+	}
+
+	t.Run("one byte over is refused before any statement", func(t *testing.T) {
+		t.Parallel()
+		_, mock, tx := beginMockTx(t)
+
+		got, err := MintUnderEpochInTx(context.Background(), tx, storeID, widest+"i")
+		if !errors.Is(err, ErrEpochAddressTooLong) {
+			t.Fatalf("MintUnderEpochInTx(one byte over) = (%q, %v), want it to wrap ErrEpochAddressTooLong", got, err)
+		}
+		if got != "" {
+			t.Errorf("MintUnderEpochInTx returned %q alongside the refusal, want an empty address", got)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("a refused pair must run no statement: %v", err)
+		}
+	})
+
+	t.Run("the widest pair that fits is minted", func(t *testing.T) {
+		t.Parallel()
+		// Epoch 1 is the epoch whose address is SHORTEST, so this pair passes
+		// only because the bound is charged at the widest epoch and met there.
+		address := epochAddress(storeID, widest, 1)
+		_, mock, tx := beginMockTx(t)
+		expectEpochRead(mock, 1)
+		expectEpochRow(mock, address, nil)
+		mock.ExpectExec(epochSQLInsertRoot).
+			WithArgs(address, storeID, widest, int64(1), sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		got, err := MintUnderEpochInTx(context.Background(), tx, storeID, widest)
+		if err != nil {
+			t.Fatalf("MintUnderEpochInTx(the widest pair): %v", err)
+		}
+		if got != address {
+			t.Errorf("MintUnderEpochInTx = %q, want %q", got, address)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+}
+
+// TestBumpEpochCarryingInTxCarriesTheWidestMintablePairToTheWidestEpoch is the
+// carry half of the address bound. A token-scheme change re-encodes every live
+// pair at the new epoch, so the widest pair a mint accepts, carried to the
+// widest epoch the counter holds, must produce an address the column holds;
+// the mint's bound is what guarantees it.
+func TestBumpEpochCarryingInTxCarriesTheWidestMintablePairToTheWidestEpoch(t *testing.T) {
+	t.Parallel()
+
+	storeID := strings.Repeat("s", 115)
+	widest := strings.Repeat("i", 115)
+	if err := validateEpochAddressInputs(storeID, widest); err != nil {
+		t.Fatalf("validateEpochAddressInputs(the widest pair) = %v, want nil: a mint accepts it", err)
+	}
+	root := epochAddress(storeID, widest, 1)
+	carried := epochAddress(storeID, widest, math.MaxInt32)
+	if len(carried) > maxEpochAddressLen {
+		t.Fatalf("the widest mintable pair carried to epoch %d is %d bytes, over the %d the column holds", math.MaxInt32, len(carried), maxEpochAddressLen)
+	}
 
 	_, mock, tx := beginMockTx(t)
-	expectEpochRead(mock, currentEpoch)
-	expectEpochRow(mock, address, nil)
-	mock.ExpectExec(epochSQLInsertRoot).
-		WithArgs(address, storeID, "record-a", int64(currentEpoch), sqlmock.AnyArg()).
-		WillReturnError(errors.New("Error 1062: Duplicate entry for key 'PRIMARY'"))
+	expectEpochRead(mock, math.MaxInt32-1)
+	mock.ExpectExec(`UPDATE store_epoch SET epoch = epoch \+ 1, bumped_at = \?, bumped_reason = \? WHERE id = 1`).
+		WithArgs(sqlmock.AnyArg(), "token-scheme-change").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectEpochRead(mock, math.MaxInt32)
+	mock.ExpectQuery(`SELECT address, store_id, minted_id, carried_from FROM epoch_minted_addresses WHERE gone_at_epoch IS NULL AND minted_epoch < \? ORDER BY store_id, minted_id, minted_epoch DESC`).
+		WithArgs(int64(math.MaxInt32)).
+		WillReturnRows(sqlmock.NewRows([]string{"address", "store_id", "minted_id", "carried_from"}).AddRow(root, storeID, widest, nil))
+	mock.ExpectExec(`INSERT INTO epoch_minted_addresses \(address, store_id, minted_id, minted_epoch, minted_at, carried_from\) VALUES \(\?, \?, \?, \?, \?, \?\)`).
+		WithArgs(carried, storeID, widest, int64(math.MaxInt32), sqlmock.AnyArg(), root).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	got, err := MintUnderEpochInTx(context.Background(), tx, storeID, "record-a")
+	got, err := BumpEpochCarryingInTx(context.Background(), tx, storeID, "token-scheme-change")
 	if err != nil {
-		t.Fatalf("MintUnderEpochInTx on a lost insert race: %v", err)
+		t.Fatalf("BumpEpochCarryingInTx to the widest epoch: %v", err)
 	}
-	if got != address {
-		t.Errorf("MintUnderEpochInTx = %q, want %q", got, address)
+	if got != math.MaxInt32 {
+		t.Errorf("BumpEpochCarryingInTx = %d, want %d", got, math.MaxInt32)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("the carry must insert exactly the %d-byte address of the widest pair at the widest epoch: %v", len(carried), err)
 	}
 }
 
@@ -812,15 +1086,25 @@ func handWrittenEpochAddresses(filename string, src any) ([]string, error) {
 // wrong. A hand-written address goes stale the moment the encoding moves,
 // while a test that builds it with epochAddress cannot disagree with the code
 // under test.
+//
+// The server leg's publication tests are held to the same rule (#6664 review):
+// their fake serves a row at any address, so a stale one would still pass
+// there. They cannot call epochAddress from that package, so they mint the
+// address instead.
 func TestEpochCASTestsBuildEveryAddressWithEpochAddress(t *testing.T) {
 	t.Parallel()
 
-	hits, err := handWrittenEpochAddresses("epoch_cas_test.go", nil)
-	if err != nil {
-		t.Fatalf("parse epoch_cas_test.go: %v", err)
-	}
-	for _, hit := range hits {
-		t.Errorf("%s writes an address by hand; build it with epochAddress(storeID, id, epoch)", hit)
+	for _, filename := range []string{
+		"epoch_cas_test.go",
+		filepath.Join("..", "dolt", "epoch_cas_publish_test.go"),
+	} {
+		hits, err := handWrittenEpochAddresses(filename, nil)
+		if err != nil {
+			t.Fatalf("parse %s: %v", filename, err)
+		}
+		for _, hit := range hits {
+			t.Errorf("%s writes an address by hand; build it with epochAddress(storeID, id, epoch), or mint it where epochAddress is out of reach", hit)
+		}
 	}
 }
 

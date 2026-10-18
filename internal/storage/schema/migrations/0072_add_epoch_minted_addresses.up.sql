@@ -12,7 +12,7 @@
 -- One row per minted address, not one row per id: MintUnderEpoch is
 -- deterministic in (store_id, id, epoch) -- see epochAddress() in
 -- internal/storage/issueops/epoch_cas.go -- so minting the same id again
--- under the same epoch reproduces the same address and upserts the same
+-- under the same epoch reproduces the same address and finds the same
 -- row, while a later mint of that id under a bumped epoch produces a
 -- DIFFERENT address and adds a new row alongside the old one. Old rows are
 -- kept: StillServes and Resolve answer for any address from its own row,

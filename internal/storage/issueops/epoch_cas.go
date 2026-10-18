@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -20,10 +21,10 @@ import (
 // remove, hold, force-remove, erase, or mint logic — R20 epoch reasoning is
 // evaluated entirely on its own (out of scope for this slice).
 //
-// ALL THREE LEGS SHARE THIS BODY, the same way CompareAndSetMetadataKeyInTx
-// and R16's CompareAndSetVersionInTx do: the two Dolt-backed stores wrap it
-// in their own transaction, and the unit-of-work provider reaches it through
-// its own leg-specific adapter. Each leg's own contract-test file is the
+// ALL THREE LEGS SHARE THIS BODY, the same way they share
+// CompareAndSetMetadataKeyInTx: the two Dolt-backed stores wrap it in their
+// own transaction, and the unit-of-work provider reaches it through its own
+// leg-specific adapter. Each leg's own contract-test file is the
 // translation boundary to and from backend/conformance's
 // Address/EpochBumpTrigger/RetentionAnswer vocabulary — this file knows
 // nothing about the conformance package.
@@ -114,6 +115,23 @@ var ErrEpochAddressNotServed = errors.New("epoch CAS: address exists in this sto
 // comment), but refusing it outright keeps a minted address readable by eye.
 var ErrEpochAddressSeparator = errors.New("epoch CAS: storeID or id contains \":\", epochAddress's field separator")
 
+// ErrEpochAddressTooLong means a storeID and id compose an address that
+// epoch_minted_addresses.address, a VARCHAR(255) PRIMARY KEY (migration 0072),
+// may not hold. MintUnderEpochInTx refuses such a pair before it reads or
+// writes anything, so the caller gets this error instead of a raw driver error
+// from the INSERT. The bound is charged at the widest epoch the INT counter can
+// reach, not the current one: a token-scheme change re-encodes every live pair
+// at the new epoch (BumpEpochCarryingInTx), so a pair that fit at epoch 9 must
+// still fit at epoch 10, or the carry, and with it every later scheme change,
+// would fail database-wide.
+var ErrEpochAddressTooLong = errors.New("epoch CAS: storeID and id compose an address longer than epoch_minted_addresses.address holds")
+
+// maxEpochAddressLen is the width of epoch_minted_addresses.address,
+// VARCHAR(255). The check against it counts bytes, which are never fewer than
+// the characters the column counts, so it refuses no later than the column
+// would.
+const maxEpochAddressLen = 255
+
 // epochAddress is a minted address: a deterministic token over storeID, id,
 // and the epoch current at mint time, so re-minting the same id under the
 // same epoch always reproduces the same address. storeID and id are
@@ -130,13 +148,18 @@ func epochAddress(storeID, id string, epoch int) string {
 }
 
 // validateEpochAddressInputs rejects a storeID or id containing ":" before
-// MintUnderEpochInTx mints an address from them (item B2b above).
+// MintUnderEpochInTx mints an address from them (item B2b above), and a pair
+// whose address would not fit the address column at the widest epoch
+// (ErrEpochAddressTooLong).
 func validateEpochAddressInputs(storeID, id string) error {
 	if strings.Contains(storeID, ":") {
 		return fmt.Errorf("%w: storeID %q", ErrEpochAddressSeparator, storeID)
 	}
 	if strings.Contains(id, ":") {
 		return fmt.Errorf("%w: id %q", ErrEpochAddressSeparator, id)
+	}
+	if n := len(epochAddress(storeID, id, math.MaxInt32)); n > maxEpochAddressLen {
+		return fmt.Errorf("%w: %d bytes at the widest epoch, limit %d", ErrEpochAddressTooLong, n, maxEpochAddressLen)
 	}
 	return nil
 }
@@ -261,24 +284,49 @@ func readEpochMintedAddressInTx(ctx context.Context, tx DBTX, address string) (e
 // mintedID, mintedEpoch) triple, and the old exists-branch UPDATE (which
 // had no store_id/minted_id guard) could only ever have mattered by
 // rewriting a DIFFERENT triple's row out from under it on an address
-// collision the new encoding no longer allows. The not-exists branch treats
-// a duplicate-key error from the INSERT as a benign race rather than a hard
-// failure (item B3): two concurrent minters computing the same address can
-// both attempt the same insert, and since it would insert the identical row
-// the loser would otherwise have upserted anyway, treating its
-// duplicate-key error as success is correct, not merely convenient.
+// collision the new encoding no longer allows.
+//
+// A duplicate-key error from the INSERT is NOT success. It means a row the
+// caller's read did not find: another transaction inserted it, and that
+// transaction or a later one may already have lost it, so taking the error as
+// the benign race of two minters inserting the same row (item B3) could hand
+// back an address that reads Gone. The row is read again and trusted only as
+// far as this transaction can see it: served at mintedEpoch, the mint stands,
+// because the row is the one it would have inserted; present but not served,
+// the mint fails with ErrEpochAddressNotServed, as it does when the caller's
+// own read finds such a row; not visible at all, the mint fails with the
+// duplicate-key error, and a new transaction, which reads the committed row,
+// answers it.
+//
+// On Dolt, the only supported backend, the INSERT does not hit that error for
+// a row committed after the transaction's snapshot: it checks the snapshot,
+// and the two inserts of one address conflict at COMMIT instead (Error 1213),
+// which withRetryTx answers by running the mint again against the committed
+// row (TestAMintRacingTheMintAndLossOfItsAddressConflictsAtCommit in the dolt
+// package). FOR UPDATE is a parse-only no-op there, so no locking read could
+// see further than the re-read does.
 func upsertEpochMintedAddressInTx(ctx context.Context, tx DBTX, address, storeID, mintedID string, mintedEpoch int, exists bool) error {
 	if exists {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx,
+	_, err := tx.ExecContext(ctx,
 		`INSERT INTO epoch_minted_addresses (address, store_id, minted_id, minted_epoch, minted_at) VALUES (?, ?, ?, ?, ?)`,
 		address, storeID, mintedID, mintedEpoch, time.Now().UTC(),
-	); err != nil {
-		if dberrors.IsDuplicateKey(err) {
-			return nil
-		}
+	)
+	if err == nil {
+		return nil
+	}
+	if !dberrors.IsDuplicateKey(err) {
 		return fmt.Errorf("epoch CAS: insert minted address %s: %w", address, err)
+	}
+	row, found, readErr := readEpochMintedAddressInTx(ctx, tx, address)
+	switch {
+	case readErr != nil:
+		return errors.Join(fmt.Errorf("epoch CAS: insert minted address %s: %w", address, err), readErr)
+	case !found:
+		return fmt.Errorf("epoch CAS: insert minted address %s: another transaction holds a row at it that this one cannot read, so whether the store serves it is unknown: %w", address, err)
+	case !row.served(mintedEpoch):
+		return fmt.Errorf("epoch CAS: mint %s under epoch for %s: %w: %s", mintedID, storeID, ErrEpochAddressNotServed, address)
 	}
 	return nil
 }
@@ -353,8 +401,8 @@ func BumpEpochInTx(ctx context.Context, tx DBTX, storeID, reason string) (int, e
 // revive). Lineages already lost are not read, so they are never carried, and a
 // row minted in an epoch that has not happened yet is not read either: it stays
 // not served. A row already sitting at a carry's address means the counter
-// rewound, so that is a failure of the bump, not the benign race a mint
-// tolerates.
+// rewound, so that is a failure of the bump: no re-read can settle it the way
+// a mint settles a duplicate key (upsertEpochMintedAddressInTx).
 //
 // CALLERS MUST HOLD THE WORKSPACE GATE (internal/workspacegate) EXCLUSIVELY FOR
 // THE BUMP, as a restore does. This is the one epoch operation that needs
@@ -486,7 +534,14 @@ func loseLineageInTx(ctx context.Context, tx DBTX, storeID, root string, epoch i
 // the store does not serve: a row already sitting at the computed address is
 // only possible when the lineage was minted in this epoch and lost in this same
 // epoch, and the mint then returns ErrEpochAddressNotServed instead of an
-// address that reads Gone.
+// address that reads Gone. That includes a row another transaction inserts
+// after this one read: on Dolt the two inserts conflict at COMMIT and the mint
+// runs again against the committed row, and an INSERT that reports the row as
+// a duplicate key reads it again first (upsertEpochMintedAddressInTx).
+//
+// A storeID or id containing ":" is refused (ErrEpochAddressSeparator), and so
+// is a pair whose address could outgrow the address column at some epoch
+// (ErrEpochAddressTooLong), before anything is read or written.
 func MintUnderEpochInTx(ctx context.Context, tx DBTX, storeID, id string) (string, error) {
 	if err := validateEpochAddressInputs(storeID, id); err != nil {
 		return "", fmt.Errorf("epoch CAS: mint %s under epoch for %s: %w", id, storeID, err)
