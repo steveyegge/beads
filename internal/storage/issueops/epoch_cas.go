@@ -146,10 +146,10 @@ func validateEpochAddressInputs(storeID, id string) error {
 // reports the current epoch either way. Only BumpEpochInTx and
 // MintUnderEpochInTx call this: both are about to write regardless, so
 // creating the row here is not a surprising extra side effect. Every
-// read-only path calls readStoreEpochInTx instead (gastownhall/beads#6664,
-// bee-ghosttrack review 5268699223, item B4): a write from what callers
-// reasonably expect to be a read is surprising at best, and a hard failure
-// against a genuinely read-only connection at worst.
+// read-only path calls readStoreEpochWithoutSeedingInTx instead
+// (gastownhall/beads#6664, bee-ghosttrack review 5268699223, item B4): a write
+// from what callers reasonably expect to be a read is surprising at best, and
+// a hard failure against a genuinely read-only connection at worst.
 //
 // The seed follows version_history.go's seed of the same row (gastownhall/
 // beads#6664, bee-ghosttrack review 5360880888): read first, so the INSERT
@@ -184,15 +184,17 @@ func EpochMintDirtyTables() ChangedTables {
 	return ChangedTables{"epoch_minted_addresses": true, "store_epoch": true}
 }
 
-// readStoreEpochInTx reports the current epoch without writing:
+// readStoreEpochWithoutSeedingInTx reports the current epoch without writing:
 // store_epoch's singleton row starting absent (migration 0067) and its
 // epoch being 1 are the same state, so a read-only caller can answer from
 // that default instead of initializing the row the way ensureStoreEpochRow
-// does (item B4 above). CurrentEpochInTx, StillServesInTx, ResolveEpochInTx,
-// CurrentAddressForInTx and LoseVersionInTx all read this way; only
-// BumpEpochInTx and MintUnderEpochInTx, which are about to write regardless,
-// use ensureStoreEpochRow.
-func readStoreEpochInTx(ctx context.Context, tx DBTX) (int, error) {
+// does (item B4 above). It is deliberately not version_history.go's
+// readStoreEpochInTx, which seeds the row when it is absent. CurrentEpochInTx,
+// StillServesInTx, ResolveEpochInTx, CurrentAddressForInTx and
+// LoseVersionInTx all read this way; only BumpEpochInTx and
+// MintUnderEpochInTx, which are about to write regardless, use
+// ensureStoreEpochRow.
+func readStoreEpochWithoutSeedingInTx(ctx context.Context, tx DBTX) (int, error) {
 	var epoch int
 	err := tx.QueryRowContext(ctx, `SELECT epoch FROM store_epoch WHERE id = 1`).Scan(&epoch)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -291,7 +293,7 @@ func upsertEpochMintedAddressInTx(ctx context.Context, tx DBTX, address, storeID
 // error text; one bump advances the epoch seen through every storeID that
 // shares this database.
 func CurrentEpochInTx(ctx context.Context, tx DBTX, storeID string) (int, error) {
-	epoch, err := readStoreEpochInTx(ctx, tx)
+	epoch, err := readStoreEpochWithoutSeedingInTx(ctx, tx)
 	if err != nil {
 		return 0, fmt.Errorf("epoch CAS: current epoch for %s: %w", storeID, err)
 	}
@@ -522,7 +524,7 @@ func StillServesInTx(ctx context.Context, tx DBTX, storeID, address string) (boo
 	if !found || row.storeID != storeID {
 		return false, nil
 	}
-	epoch, err := readStoreEpochInTx(ctx, tx)
+	epoch, err := readStoreEpochWithoutSeedingInTx(ctx, tx)
 	if err != nil {
 		return false, fmt.Errorf("epoch CAS: still serves %s for %s: %w", address, storeID, err)
 	}
@@ -545,7 +547,7 @@ func ResolveEpochInTx(ctx context.Context, tx DBTX, storeID, address string) (Ep
 	if !found || row.storeID != storeID {
 		return EpochResolveResult{Restriction: EpochRestrictionUnknown, ProducingStore: storeID}, nil
 	}
-	epoch, err := readStoreEpochInTx(ctx, tx)
+	epoch, err := readStoreEpochWithoutSeedingInTx(ctx, tx)
 	if err != nil {
 		return EpochResolveResult{}, fmt.Errorf("epoch CAS: resolve %s for %s: %w", address, storeID, err)
 	}
@@ -572,7 +574,7 @@ func CurrentAddressForInTx(ctx context.Context, tx DBTX, storeID, oldAddress str
 	if !found || row.storeID != storeID {
 		return "", fmt.Errorf("epoch CAS: current address for %s: %w: %s", storeID, ErrEpochAddressNotFound, oldAddress)
 	}
-	epoch, err := readStoreEpochInTx(ctx, tx)
+	epoch, err := readStoreEpochWithoutSeedingInTx(ctx, tx)
 	if err != nil {
 		return "", fmt.Errorf("epoch CAS: current address for %s: %w", storeID, err)
 	}
@@ -612,7 +614,7 @@ func LoseVersionInTx(ctx context.Context, tx DBTX, storeID, address string) erro
 	if !found || row.storeID != storeID {
 		return fmt.Errorf("epoch CAS: lose version for %s: %w: %s", storeID, ErrEpochAddressNotFound, address)
 	}
-	epoch, err := readStoreEpochInTx(ctx, tx)
+	epoch, err := readStoreEpochWithoutSeedingInTx(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("epoch CAS: lose version %s for %s: %w", address, storeID, err)
 	}
