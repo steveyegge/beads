@@ -50,6 +50,9 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("UnflaggedWispCreateMintsNothing", func(t *testing.T) {
 		conformance.RunParticipationGenerationUnflaggedWispCreateMintsNothing(t, ctx, fixture)
 	})
+	t.Run("NoHistoryIssueCreateDeclaresParticipation", func(t *testing.T) {
+		conformance.RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFence_FenceIgnoresSchemaSkewHatch pins the same
@@ -103,6 +106,9 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.CreateUnflaggedWisp == nil {
 		t.Error("ParticipationGenerationFixture.CreateUnflaggedWisp is nil")
+	}
+	if fixture.CreateNoHistoryIssue == nil {
+		t.Error("ParticipationGenerationFixture.CreateNoHistoryIssue is nil")
 	}
 	if fixture.CurrentRevision == nil {
 		t.Error("ParticipationGenerationFixture.CurrentRevision is nil")
@@ -269,6 +275,15 @@ func buildParticipationGenerationFixture(store *DoltStore, configurer storage.Ve
 			return store.CreateIssuesWithFullOptions(ctx, []*types.Issue{{
 				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen,
 				WispPlaneOverride: &wispPlane,
+			}}, "actor", storage.BatchCreateOptions{SkipPrefixValidation: true})
+		},
+		CreateNoHistoryIssue: func(ctx context.Context, id string) error {
+			// Import's promoted-no-history shape (bd-r9uce): the flag stays on
+			// the row, and the override pins it to the issues table.
+			durable := false
+			return store.CreateIssuesWithFullOptions(ctx, []*types.Issue{{
+				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen,
+				NoHistory: true, WispPlaneOverride: &durable,
 			}}, "actor", storage.BatchCreateOptions{SkipPrefixValidation: true})
 		},
 		CurrentRevision: func(ctx context.Context, id string) (int64, error) {

@@ -338,6 +338,51 @@ func TestCreateBatchParticipationGeneration(t *testing.T) {
 		}
 	})
 
+	t.Run("NoHistoryRowIsStampedUnversionedAndKeepsTheCallersUpdatedAt", func(t *testing.T) {
+		ctx := t.Context()
+		te := newTestEnv(t, "pgn")
+		te.store.SetVersionedHistoryEnabled(true)
+
+		// Import's promoted-no-history shape (bd-r9uce): a durable row whose
+		// stray no_history=true is preserved while the override pins it to the
+		// issues table. The create declares participation without minting a
+		// version, and that stamp is an UPDATE too, so it must keep the
+		// supplied updated_at the same way the minting stamp does.
+		supplied := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		ids := batchIDs("pgn", 5)
+		batch := make([]*types.Issue, 0, len(ids))
+		for _, id := range ids {
+			issue := newBatchIssue(id, "imported no-history row "+id)
+			issue.CreatedAt, issue.UpdatedAt = supplied, supplied
+			durable := false
+			issue.NoHistory, issue.WispPlaneOverride = true, &durable
+			batch = append(batch, issue)
+		}
+		if err := te.store.CreateIssues(ctx, batch, batchActor); err != nil {
+			t.Fatalf("CreateIssues of %d rows: %v", len(ids), err)
+		}
+
+		snap := snapshotBatch(t, ctx, te)
+		if !snap.epoch.Valid {
+			t.Fatalf("store_epoch has no row after the batch, so nothing stamped the %d rows", len(ids))
+		}
+		for _, id := range ids {
+			row, found := snap.row(id)
+			if !found || row.generation != (sql.NullInt64{Int64: snap.epoch.Int64, Valid: true}) {
+				t.Errorf("%s: row %v after the batch, want it on the issues plane stamped with store epoch %d",
+					id, row, snap.epoch.Int64)
+			}
+			if versions := snap.versionsOf(id); len(versions) != 0 {
+				t.Errorf("%s: issue_versions rows %v after the batch, want none for a no-history row", id, versions)
+			}
+			var got time.Time
+			te.queryScalar(t, ctx, "SELECT updated_at FROM issues WHERE id = ?", []any{id}, &got)
+			if !got.UTC().Equal(supplied) {
+				t.Errorf("%s: updated_at is %v after the batch, want the supplied %v", id, got.UTC(), supplied)
+			}
+		}
+	})
+
 	t.Run("HistoryOffLeavesNull", func(t *testing.T) {
 		const rows = 5
 		batch := createBatch(t, "pgo", rows, false, false)

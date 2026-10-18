@@ -121,16 +121,17 @@ func init() {
 		"RunLifecycleUpdateExpectedVersionSingleWinnerWithDisjointColumnsUnderConcurrency":  issuePatchFieldsNotOnUpdateWireWaiverReason,
 		"RunLifecycleUpdateExpectedVersionSingleWinnerAcrossUpdateAndCloseUnderConcurrency": issuePatchFieldsNotOnUpdateWireWaiverReason,
 
-		"RunParticipationGenerationCreateWithFlagOffLeavesLegacyNull": participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationCreateWithFlagOnStampsAValue":      participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationFenceIgnoresSchemaSkewHatch":       participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationProceedsForPromotedRecord":         participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationSkipsUpdateOnLegacyRecord":         participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationUnflaggedWispCreateMintsNothing":   participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispFlagClearMintsNothing":         participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispPersistenceMoveBeginsHistory":  participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispPromotionBeginsHistory":        participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispRootSquashMintsNothing":        participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationCreateWithFlagOffLeavesLegacyNull":         participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationCreateWithFlagOnStampsAValue":              participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationFenceIgnoresSchemaSkewHatch":               participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation": participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationProceedsForPromotedRecord":                 participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationSkipsUpdateOnLegacyRecord":                 participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationUnflaggedWispCreateMintsNothing":           participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispFlagClearMintsNothing":                 participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispPersistenceMoveBeginsHistory":          participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispPromotionBeginsHistory":                participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispRootSquashMintsNothing":                participationGenerationRawStoreWaiverReason,
 	})
 }
 

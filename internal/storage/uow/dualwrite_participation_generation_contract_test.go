@@ -51,6 +51,9 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("UnflaggedWispCreateMintsNothing", func(t *testing.T) {
 		conformance.RunParticipationGenerationUnflaggedWispCreateMintsNothing(t, ctx, fixture)
 	})
+	t.Run("NoHistoryIssueCreateDeclaresParticipation", func(t *testing.T) {
+		conformance.RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFixtureKitIsWired is this leg's half of the
@@ -89,6 +92,9 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.CreateUnflaggedWisp == nil {
 		t.Error("ParticipationGenerationFixture.CreateUnflaggedWisp is nil")
+	}
+	if fixture.CreateNoHistoryIssue == nil {
+		t.Error("ParticipationGenerationFixture.CreateNoHistoryIssue is nil")
 	}
 	if fixture.CurrentRevision == nil {
 		t.Error("ParticipationGenerationFixture.CurrentRevision is nil")
@@ -184,6 +190,13 @@ func newUOWParticipationGenerationFixture(t *testing.T, ctx context.Context, pre
 			// the row in the wisps table.
 			return kit.CreateWisp(ctx, &types.Issue{
 				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen,
+			}, "actor")
+		},
+		CreateNoHistoryIssue: func(ctx context.Context, id string) error {
+			// CreateIssue routes by the call, so the NoHistory flag rides on an
+			// issues-table row without moving it to the wisps table.
+			return kit.CreateIssue(ctx, &types.Issue{
+				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen, NoHistory: true,
 			}, "actor")
 		},
 		CurrentRevision: func(ctx context.Context, id string) (int64, error) {

@@ -78,6 +78,9 @@ type ParticipationGenerationFixture struct {
 	// closure rather than a second spelling of PromoteWisp because it mints at
 	// a different site on every leg: the guarded update's one end-of-update
 	// mint on dolt and embeddeddolt, MoveIssuePersistenceInTx's own on uow.
+	// On an issues-plane row whose flags disagree with it (see
+	// CreateNoHistoryIssue) the same update repairs the flags in place, a
+	// same-plane normalize, rather than moving the row.
 	MovePersistent func(ctx context.Context, id string) error
 	// ClearWispFlag clears the wisp id's ephemeral flag IN PLACE: the untyped
 	// UpdateIssue of {"wisp": false} bd mol squash makes on a squashed root
@@ -95,6 +98,12 @@ type ParticipationGenerationFixture struct {
 	// the batch create import runs), or on the unit-of-work leg CreateWisp,
 	// which routes by the call rather than by the flags.
 	CreateUnflaggedWisp func(ctx context.Context, id string) error
+	// CreateNoHistoryIssue creates id in the ISSUES table carrying
+	// NoHistory=true: import's promoted-no-history shape (bd-r9uce), a
+	// durable row whose stray flag is preserved while WispPlaneOverride =
+	// &false pins its plane, through the batch create import runs; or on the
+	// unit-of-work leg CreateIssue, which routes by the call.
+	CreateNoHistoryIssue func(ctx context.Context, id string) error
 	// CurrentRevision reads issues.current_revision for id.
 	CurrentRevision func(ctx context.Context, id string) (int64, error)
 	// VersionRowCount reads how many issue_versions rows exist for id.
@@ -388,6 +397,66 @@ func runWispTableRowMintsNothing(t *testing.T, ctx context.Context, fixture Part
 	if count != 0 {
 		t.Errorf("version row count for wisps-table row %s = %d after %s with the flag on, want 0: a "+
 			"wisp is never versioned (FR-8), whatever its flags say", id, count, how)
+	}
+}
+
+// RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation pins
+// that a create declares participation for every ISSUES-table row it makes
+// with the flag on, a row carrying NoHistory included. Import keeps a
+// promoted no-history wisp's durable row on the issues plane with its stray
+// no_history=true (bd-r9uce). While the row says no-history it is not
+// versioned, so the create mints nothing. But it was created with history
+// on, so it is not legacy: once bd update --persistent repairs the flag in
+// place (a same-plane normalize, update-shaped by design), the repair and
+// every update after it must mint. Left NULL by the create, the column reads
+// as legacy to the fence, and the row is never versioned at all.
+func RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	if err := fixture.SetFlag(ctx, true); err != nil {
+		t.Fatalf("enabling versioned history: %v", err)
+	}
+	id := fixture.IssuePrefix + "-no-history-create"
+	if err := fixture.CreateNoHistoryIssue(ctx, id); err != nil {
+		t.Fatalf("creating no-history issues-plane row %s: %v", id, err)
+	}
+	gen, err := fixture.ParticipationGeneration(ctx, id)
+	if err != nil {
+		t.Fatalf("reading participation_generation for %s: %v", id, err)
+	}
+	if gen == nil {
+		t.Errorf("participation_generation for %s is NULL after a create with the flag on, want a stamped "+
+			"value: the row is new on the issues plane, so the create declares participation (design "+
+			"§16.2b) even though its NoHistory flag keeps it unversioned for now", id)
+	}
+	if count, err := fixture.VersionRowCount(ctx, id); err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	} else if count != 0 {
+		t.Errorf("version row count for %s = %d after a create carrying NoHistory, want 0: a no-history "+
+			"row is not versioned while it says so", id, count)
+	}
+
+	if err := fixture.MovePersistent(ctx, id); err != nil {
+		t.Fatalf("repairing %s to persistent: %v", id, err)
+	}
+	repairedCount, err := fixture.VersionRowCount(ctx, id)
+	if err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	}
+	if repairedCount != 1 {
+		t.Errorf("version row count for %s = %d after the persistent repair, want 1: the row was created "+
+			"with the flag on, so the fence must let the repair's update-shaped mint through", id, repairedCount)
+	}
+
+	if err := fixture.MutateExisting(ctx, id); err != nil {
+		t.Fatalf("mutating existing %s: %v", id, err)
+	}
+	afterCount, err := fixture.VersionRowCount(ctx, id)
+	if err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	}
+	if afterCount != repairedCount+1 {
+		t.Errorf("version row count for %s went from %d to %d across an update-shaped mutation after the "+
+			"repair, want exactly +1", id, repairedCount, afterCount)
 	}
 }
 
