@@ -128,6 +128,7 @@
 
 100 52 TestEmbeddedSwarmConcurrent
 
+100 53 TestEmbeddedIfRevisionOrdinaryCAS
 100 53 TestEmbeddedInitSelectedExcludeRoutingStealthDecoyQuiet
 
 100 54 TestEmbeddedFormatJSONAliasMatchesJSON
