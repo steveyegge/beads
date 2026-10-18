@@ -18,6 +18,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/procid"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/identity"
@@ -111,8 +112,18 @@ func NewProxyServer(opts ProxyOpts) *proxyServer {
 	}
 }
 
+// tracef writes a lifecycle or error line to proxy.log.
 func (p *proxyServer) tracef(format string, args ...any) {
 	p.logger.Printf(format, args...)
+}
+
+// connTracef writes a per-connection line to proxy.log in debug mode
+// (BD_DEBUG) only. Every bd command opens connections through the proxy, so
+// on a busy store these lines are nearly all of proxy.log's growth.
+func (p *proxyServer) connTracef(format string, args ...any) {
+	if debug.Enabled() {
+		p.logger.Printf(format, args...)
+	}
 }
 
 func (p *proxyServer) ListenAndServe(parentCtx context.Context) error {
@@ -402,13 +413,13 @@ func (p *proxyServer) idleWatcher(ctx context.Context) error {
 		case <-tick.C:
 			if n := p.activeConns.Load(); n > 0 {
 				if !idleSince.IsZero() {
-					p.tracef("idleWatcher cleared (active=%d)", n)
+					p.connTracef("idleWatcher cleared (active=%d)", n)
 					idleSince = time.Time{}
 				}
 				continue
 			}
 			if idleSince.IsZero() {
-				p.tracef("idleWatcher armed")
+				p.connTracef("idleWatcher armed")
 				idleSince = time.Now()
 				continue
 			}
@@ -442,7 +453,7 @@ func (p *proxyServer) acceptLoop(ctx context.Context) error {
 			_ = tc.SetKeepAlive(true)
 			_ = tc.SetKeepAlivePeriod(tcpKeepAlivePeriod)
 		}
-		p.tracef("acceptLoop accepted (remote=%s)", conn.RemoteAddr())
+		p.connTracef("acceptLoop accepted (remote=%s)", conn.RemoteAddr())
 		p.stats.IncAccept()
 		p.conns.Go(func() error {
 			return p.handleConn(ctx, conn)
@@ -452,11 +463,11 @@ func (p *proxyServer) acceptLoop(ctx context.Context) error {
 
 func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 	addr := client.RemoteAddr()
-	p.tracef("handleConn(%s) start", addr)
+	p.connTracef("handleConn(%s) start", addr)
 	p.activeConns.Add(1)
 	defer func() {
 		p.activeConns.Add(-1)
-		p.tracef("handleConn(%s) end (active=%d)", addr, p.activeConns.Load())
+		p.connTracef("handleConn(%s) end (active=%d)", addr, p.activeConns.Load())
 	}()
 
 	p.stats.IncBackendDialAttempt()
@@ -472,7 +483,7 @@ func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 		_ = client.Close()
 		return err
 	}
-	p.tracef("handleConn(%s) backend dial ok", addr)
+	p.connTracef("handleConn(%s) backend dial ok", addr)
 	p.stats.IncBackendDialSuccess()
 	p.stats.IncHandledConn()
 
@@ -497,7 +508,7 @@ func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 		defer func() { _ = client.Close() }()
 		n, err := io.Copy(backend, client)
 		p.stats.AddBytesClientToBackend(n)
-		p.tracef("handleConn(%s) client→backend done (n=%d, err=%v)", addr, n, err)
+		p.connTracef("handleConn(%s) client→backend done (n=%d, err=%v)", addr, n, err)
 		return err
 	})
 	g.Go(func() error {
@@ -506,7 +517,7 @@ func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 		defer func() { _ = client.Close() }()
 		n, err := io.Copy(client, backend)
 		p.stats.AddBytesBackendToClient(n)
-		p.tracef("handleConn(%s) backend→client done (n=%d, err=%v)", addr, n, err)
+		p.connTracef("handleConn(%s) backend→client done (n=%d, err=%v)", addr, n, err)
 		// A MySQL server speaks first, so a backend that reaches EOF having
 		// sent nothing never served this connection: a front whose own
 		// target is gone, or a server at its connection limit or shutting

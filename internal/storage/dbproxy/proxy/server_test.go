@@ -8,12 +8,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/procid"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/identity"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/pidfile"
@@ -798,9 +800,10 @@ func TestProxy_LockHeld_ReturnsSentinel(t *testing.T) {
 	assertNoPidFile(t, root)
 }
 
-func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
-	t.Parallel()
-
+// runTracedProxy drives one connection through a proxy with a short idle
+// timeout, lets it expire, and returns proxy.log.
+func runTracedProxy(t *testing.T) string {
+	t.Helper()
 	ts := server.New()
 	stats := &proxy.Stats{}
 	port := freeTCPPort(t)
@@ -833,21 +836,56 @@ func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
 
 	body, err := os.ReadFile(filepath.Join(root, proxy.LogFileName))
 	require.NoError(t, err)
-	text := string(body)
+	return string(body)
+}
 
-	for _, want := range []string{
+var (
+	traceLifecycleLines = []string{
 		"acceptLoop start",
-		"acceptLoop accepted",
 		"idleWatcher start",
+		"idleWatcher expired",
+		"acceptLoop exit",
+	}
+	traceConnectionLines = []string{
+		"acceptLoop accepted",
 		"idleWatcher armed",
 		"idleWatcher cleared",
-		"idleWatcher expired",
 		"handleConn(",
 		"backend dial ok",
 		"client→backend done",
 		"backend→client done",
-		"acceptLoop exit",
-	} {
+	}
+)
+
+func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
+	if debug.Enabled() {
+		t.Skip("debug mode is on (BD_DEBUG); this test reads the default log")
+	}
+	t.Parallel()
+
+	text := runTracedProxy(t)
+	for _, want := range traceLifecycleLines {
+		assert.Contains(t, text, want, "log missing %q", want)
+	}
+	for _, unwanted := range traceConnectionLines {
+		assert.NotContains(t, text, unwanted, "per-connection line %q written outside debug mode", unwanted)
+	}
+}
+
+// Debug mode is read from BD_DEBUG once at process start, so outside it this
+// test re-runs itself in a child test process with BD_DEBUG set.
+func TestProxy_TraceLog_ConnectionEventsInDebugMode(t *testing.T) {
+	t.Parallel()
+	if !debug.Enabled() {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestProxy_TraceLog_ConnectionEventsInDebugMode$", "-test.count=1") //nolint:gosec // test binary re-exec
+		cmd.Env = append(os.Environ(), "BD_DEBUG=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "debug-mode run failed:\n%s", out)
+		return
+	}
+
+	text := runTracedProxy(t)
+	for _, want := range append(traceLifecycleLines, traceConnectionLines...) {
 		assert.Contains(t, text, want, "log missing %q", want)
 	}
 }
