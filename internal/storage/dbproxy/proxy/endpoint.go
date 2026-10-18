@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/atomicfile"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/fdhygiene"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/procid"
@@ -478,6 +479,12 @@ func forkExecChild(rootDir string, opts OpenOpts, port int, stopEpoch string, lo
 			args = append(args, "--external-keep-alive", ext.KeepAlivePeriod.String())
 		}
 	}
+
+	// proxy.lock is held here, and a live proxy holds it for its whole
+	// lifetime, so neither log has a writer yet: rotate both before the
+	// child's stdout (the backend's log) and its proxy.log are opened.
+	doltserver.MaybeRotateLogFile(filepath.Join(rootDir, LogFileName))
+	doltserver.MaybeRotateLogFile(opts.LogFilePath)
 
 	logFile, err := os.OpenFile(opts.LogFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: logFilePath is caller-derived (workspace path), not user-request input
 	if err != nil {

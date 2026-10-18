@@ -204,6 +204,35 @@ func TestMaybeRotateLog_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestMaybeRotateLogFile_RotatesNamedPath verifies the exported wrapper the
+// proxied server mode calls for proxy.log and server.log: it rotates the
+// path it is given, under the same ceiling and env override.
+func TestMaybeRotateLogFile_RotatesNamedPath(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "proxy.log")
+	small := filepath.Join(dir, "server.log")
+	writeFileSize(t, big, 2048, 'P')
+	writeFileSize(t, small, 512, 'S')
+	t.Setenv(EnvMaxLogBytes, "1024")
+
+	MaybeRotateLogFile(big)
+	MaybeRotateLogFile(small)
+	MaybeRotateLogFile(filepath.Join(dir, "missing.log"))
+
+	if _, err := os.Stat(big); !os.IsNotExist(err) {
+		t.Fatalf("expected %s rotated away, got err=%v", big, err)
+	}
+	if info := mustStat(t, big+".1"); info.Size() != 2048 {
+		t.Fatalf("rotated size = %d, want 2048", info.Size())
+	}
+	if info := mustStat(t, small); info.Size() != 512 {
+		t.Fatalf("under-ceiling log size = %d, want 512 (left alone)", info.Size())
+	}
+	if _, err := os.Stat(small + ".1"); !os.IsNotExist(err) {
+		t.Fatalf("expected no %s.1 for an under-ceiling log, got err=%v", small, err)
+	}
+}
+
 // TestMaxLogBytes_EnvOverride verifies the env-var parsing contract: valid
 // ints override the default, invalid values fall back to the default.
 func TestMaxLogBytes_EnvOverride(t *testing.T) {
