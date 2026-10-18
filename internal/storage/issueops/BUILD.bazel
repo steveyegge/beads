@@ -53,6 +53,7 @@ go_library(
         "edge_counts.go",
         "edges.go",
         "epic_closure.go",
+        "epoch_cas.go",
         "errors.go",
         "events.go",
         "execution.go",
@@ -164,6 +165,7 @@ go_test(
         "dependency_tree_test.go",
         "edge_counts_test.go",
         "edge_role_requests_test.go",
+        "epoch_cas_test.go",
         "execution_test.go",
         "filters_test.go",
         "gate_fields_test.go",
@@ -212,6 +214,7 @@ go_test(
     ],
     data = glob(["testdata/**"]) + [
         ":go_srcs",
+        "//internal/storage/dolt:go_srcs",
         "//internal/storage/domain/db:go_srcs",
         "//internal/storage/schema:migrations",
         "//internal/storage/versioncontrolops:go_srcs",
