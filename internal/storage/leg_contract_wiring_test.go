@@ -121,17 +121,10 @@ func init() {
 		"RunLifecycleUpdateExpectedVersionSingleWinnerWithDisjointColumnsUnderConcurrency":  issuePatchFieldsNotOnUpdateWireWaiverReason,
 		"RunLifecycleUpdateExpectedVersionSingleWinnerAcrossUpdateAndCloseUnderConcurrency": issuePatchFieldsNotOnUpdateWireWaiverReason,
 
-		"RunParticipationGenerationCreateWithFlagOffLeavesLegacyNull":         participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationCreateWithFlagOnStampsAValue":              participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationFenceIgnoresSchemaSkewHatch":               participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation": participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationProceedsForPromotedRecord":                 participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationSkipsUpdateOnLegacyRecord":                 participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationUnflaggedWispCreateMintsNothing":           participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispFlagClearMintsNothing":                 participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispPersistenceMoveBeginsHistory":          participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispPromotionBeginsHistory":                participationGenerationRawStoreWaiverReason,
-		"RunParticipationGenerationWispRootSquashMintsNothing":                participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation": participationGenerationWireGapWaiverReason,
+		"RunParticipationGenerationUnflaggedWispCreateMintsNothing":           participationGenerationWireGapWaiverReason,
+		"RunParticipationGenerationWispFlagClearMintsNothing":                 participationGenerationWireGapWaiverReason,
+		"RunParticipationGenerationWispRootSquashMintsNothing":                participationGenerationWireGapWaiverReason,
 	})
 }
 
@@ -345,19 +338,37 @@ const issuePatchFieldsNotOnUpdateWireWaiverReason = "PENDING, not permanent (tra
 	"closing the rest of the gap means publishing spec_id and owner on IssuePatchBody, which is a wire change " +
 	"to the write role (S4b), not something this leg's test wiring can bind around today"
 
-// participationGenerationRawStoreWaiverReason covers the
-// ParticipationGenerationFixture cases: a storage capability, not a claim the
-// HTTP client serves.
+// participationGenerationWireGapWaiverReason covers the four
+// ParticipationGenerationFixture cases whose mutation has no form on this
+// wire. The other cases run on the http leg
+// (internal/httpclient/served_participation_generation_test.go): the client
+// creates and updates, and the fixture flips the reference store's flag and
+// reads its raw columns, as served_dualwrite_history_test.go does.
 //
-// ParticipationGenerationFixture (backend/conformance/
-// dualwrite_participation_generation_contract.go) toggles the store's own
-// versioned-history write flag and reads the raw participation_generation
-// column and issue_versions rows back — the store's own write-fence
-// bookkeeping (design §16.2b), not a publicops role. The http leg is a remote
-// client with no write flag to toggle and no raw column to read; the server it
-// dials runs the fence in its own store, which the store legs already pin.
-// Keep the gap visible until a supported HTTP surface is designed and tested.
-const participationGenerationRawStoreWaiverReason = "ParticipationGeneration exercises a store write flag and raw generation column that the HTTP client does not expose"
+// Each waived case needs a mutation the client cannot send:
+//   - WispFlagClearMintsNothing clears a wisp's flag IN PLACE with the untyped
+//     UpdateIssue map {"wisp": false}. storage.UpdateIssue is on this client's
+//     unsupported allowlist (D8), and IssuePatch has no in-place flag member:
+//     its Persistence member moves the row between tables, which the
+//     wisp-arrival cases already run here.
+//   - WispRootSquashMintsNothing runs the close and that flag clear in ONE
+//     transaction. RunInTransaction is on the unsupported allowlist too, and
+//     the wire publishes no squash operation.
+//   - UnflaggedWispCreateMintsNothing creates an unflagged row in the wisps
+//     table through import's WispPlaneOverride = &true. The wire drops that
+//     member (roleIgnoredCreateIssueMembers in batchcreator.go), so an
+//     unflagged create lands in the issues table.
+//   - NoHistoryIssueCreateDeclaresParticipation has a no-history ISSUES-table
+//     create as its subject (WispPlaneOverride = &false). With that member
+//     dropped, a client create carrying no_history routes to the wisps table
+//     (TableRouting). Seeding the row through the reference store instead
+//     would make the create under test the store's own, a property of the
+//     store the server happens to share a process with, never of the client.
+const participationGenerationWireGapWaiverReason = "the mutation this case needs has no form on the http wire: " +
+	"an in-place wisp flag clear is an untyped UpdateIssue map and the squash a RunInTransaction, both on this " +
+	"client's unsupported allowlist (D8), and IssuePatch.Persistence moves the row rather than clearing the flag in " +
+	"place; an unflagged wisps-table create and a no-history issues-table create both need WispPlaneOverride, " +
+	"which the wire drops (roleIgnoredCreateIssueMembers), so the first lands in issues and the second in wisps"
 
 // TestEveryLegWiresEveryRoleContract fails when a backend leg skips a role
 // contract the conformance package exports.
