@@ -120,6 +120,14 @@ func init() {
 
 		"RunLifecycleUpdateExpectedVersionSingleWinnerWithDisjointColumnsUnderConcurrency":  issuePatchFieldsNotOnUpdateWireWaiverReason,
 		"RunLifecycleUpdateExpectedVersionSingleWinnerAcrossUpdateAndCloseUnderConcurrency": issuePatchFieldsNotOnUpdateWireWaiverReason,
+
+		"RunParticipationGenerationCreateWithFlagOffLeavesLegacyNull": participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationCreateWithFlagOnStampsAValue":      participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationFenceIgnoresSchemaSkewHatch":       participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationProceedsForPromotedRecord":         participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationSkipsUpdateOnLegacyRecord":         participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispPersistenceMoveBeginsHistory":  participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispPromotionBeginsHistory":        participationGenerationRawStoreWaiverReason,
 	})
 }
 
@@ -332,6 +340,20 @@ const issuePatchFieldsNotOnUpdateWireWaiverReason = "PENDING, not permanent (tra
 	"never happens over this wire; await_id is sent behind issues.update.gates, and " +
 	"closing the rest of the gap means publishing spec_id and owner on IssuePatchBody, which is a wire change " +
 	"to the write role (S4b), not something this leg's test wiring can bind around today"
+
+// participationGenerationRawStoreWaiverReason covers the seven
+// ParticipationGenerationFixture cases: a storage capability, not a claim the
+// HTTP client serves.
+//
+// ParticipationGenerationFixture (backend/conformance/
+// dualwrite_participation_generation_contract.go) toggles the store's own
+// versioned-history write flag and reads the raw participation_generation
+// column and issue_versions rows back — the store's own write-fence
+// bookkeeping (design §16.2b), not a publicops role. The http leg is a remote
+// client with no write flag to toggle and no raw column to read; the server it
+// dials runs the fence in its own store, which the store legs already pin.
+// Keep the gap visible until a supported HTTP surface is designed and tested.
+const participationGenerationRawStoreWaiverReason = "ParticipationGeneration exercises a store write flag and raw generation column that the HTTP client does not expose"
 
 // TestEveryLegWiresEveryRoleContract fails when a backend leg skips a role
 // contract the conformance package exports.
