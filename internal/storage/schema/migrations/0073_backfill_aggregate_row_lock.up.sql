@@ -1,4 +1,4 @@
--- Migration 0070: make every durable aggregate revision immediately usable.
+-- Migration 0073: make every durable aggregate revision immediately usable.
 -- row_lock is equality-only, so legacy zero rows may share the same non-zero
 -- backfill token; the next supported mutation remints a random token.
 -- updated_at self-assigns (the 0059 / ignored-0015 discipline) so the backfill

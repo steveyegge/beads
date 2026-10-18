@@ -67,10 +67,10 @@ func leaseTTL(ctx context.Context) time.Duration {
 // excluded: it is recomputed from other rows, is not authored issue state, and
 // bumping it would make an otherwise stable issue token depend on graph-cache
 // maintenance. The dependency mutation that caused a recompute still rewrites
-// its source aggregate's token. A heartbeat
-// REFRESH does not touch the issues row (bd-lrgn1): the lease lives in the
-// ephemeral leases table, where a racing heartbeat and reclaim contend on the
-// SAME lease row and conflict without any help. A heartbeat RE-ARM (a lease
+// its source aggregate's token. A heartbeat REFRESH does not touch the issues
+// row (bd-lrgn1): the lease lives in the ephemeral leases table, where a racing
+// heartbeat and reclaim contend on the SAME lease row and conflict without any
+// help. A heartbeat RE-ARM (a lease
 // granted to a live claim that has none) is the one deliberate remint that
 // changes no lifecycle field, and it is load-bearing: its lease INSERT shares
 // no row with a concurrent release or close, so the remint is what makes the

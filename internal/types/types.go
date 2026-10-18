@@ -92,7 +92,7 @@ type Issue struct {
 	// that triggered it still remints its source token; inbound edges remain a
 	// graph query on the target.
 	//
-	// Migration 0066 (ignored/0025 for wisps) replaces legacy 0 tokens with a
+	// Migration 0073 (ignored/0029 for wisps) replaces legacy 0 tokens with a
 	// non-zero equality sentinel; current creates stamp a fresh random token.
 	RowVersion int64 `json:"-"`
 
