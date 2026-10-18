@@ -28,6 +28,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/journalscan"
+	"github.com/steveyegge/beads/internal/testutil"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/memoryops"
 )
@@ -599,8 +600,11 @@ func TestWriteTxConn_ReclaimsOnlyASilentHolder(t *testing.T) {
 // which is all the server sees of a client that froze mid-write without closing
 // its socket. A journaled write behind it must land within the stale-holder
 // bound plus one GET_LOCK wait, and the silent session must be gone.
+//
+// It runs alone (setupSerialTestStore), so no other test's writer can hold
+// the lock it queues on.
 func TestJournalWriterLock_SilentHolderIsReclaimed(t *testing.T) {
-	store, cleanup := setupTestStore(t)
+	store, cleanup := setupSerialTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	enableJournalForTest(t, store)
@@ -662,10 +666,10 @@ func shortenStaleHolder(t *testing.T, d time.Duration) {
 // alive, the waiter must have sent no KILL, and the waiter's write must land
 // once the holder lets go.
 //
-// It runs on a database of its own: the lock name carries the database, so
-// no other test's writer can hold the lock it watches.
+// It runs alone (setupSerialTestStore), so no other test's writer can hold
+// the lock it watches.
 func TestJournalWriterLock_AgedHolderIsNotReclaimed(t *testing.T) {
-	store, cleanup := setupConcurrentTestStore(t)
+	store, cleanup := setupSerialTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	if err := store.CreateIssue(ctx, &types.Issue{ID: "bd-ah-1", Title: "ah", IssueType: types.TypeTask, Status: types.StatusOpen}, "actor"); err != nil {
@@ -874,7 +878,6 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -1161,8 +1164,11 @@ func (i *stdlibImporter) Import(path string) (*gotypes.Package, error) {
 // end: while another session holds the journal writer lock, writes
 // that record no journal event complete inside a deadline far shorter than one
 // GET_LOCK wait, and a journaled write in the same window still waits.
+//
+// It runs alone (setupSerialTestStore), so no other test's writer can hold
+// the lock it queues on.
 func TestJournalWriterLock_NonJournaledWritesSkipAHeldLock(t *testing.T) {
-	store, cleanup := setupTestStore(t)
+	store, cleanup := setupSerialTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	enableJournalForTest(t, store)
@@ -1278,6 +1284,52 @@ func openRecordingStoreOnBranch(t *testing.T, ctx context.Context, primary *Dolt
 	return store
 }
 
+// setupSerialTestStore is setupTestStore without t.Parallel, for the live
+// tests that hold or wait on the journal writer lock. The lock's name carries
+// the database, so on the shared test database every test's journaled writer
+// queues on it, and another test's holder can make a writer wait that should
+// not, or take the lock a probe expects free. Go starts the parallel tests only
+// after every sequential one has finished, so a test on this store has the
+// lock to itself.
+func setupSerialTestStore(t *testing.T) (*DoltStore, func()) {
+	t.Helper()
+	skipIfNoDolt(t)
+	acquireTestSlot()
+	t.Cleanup(releaseTestSlot)
+	if testSharedDB == "" {
+		t.Fatal("testSharedDB not set — TestMain did not initialize shared database")
+	}
+	ctx, cancel := testContext(t)
+	defer cancel()
+	tmpDir, err := os.MkdirTemp("", "dolt-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	store, err := New(ctx, &Config{
+		Path:           tmpDir,
+		CommitterName:  "test",
+		CommitterEmail: "test@example.com",
+		Database:       testSharedDB,
+		MaxOpenConns:   1, // DOLT_CHECKOUT is session-level
+	})
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+		t.Fatalf("failed to create Dolt store: %v", err)
+	}
+	_, branchCleanup := testutil.StartTestBranch(t, store.db, testSharedDB)
+	if _, err := initSchemaOnDB(ctx, store.db); err != nil {
+		branchCleanup()
+		_ = store.Close()
+		_ = os.RemoveAll(tmpDir)
+		t.Fatalf("failed to initialize branch-local ignored schema: %v", err)
+	}
+	return store, func() {
+		branchCleanup()
+		_ = store.Close()
+		_ = os.RemoveAll(tmpDir)
+	}
+}
+
 // tryJournalLock reports whether conn's session could take the journal writer
 // lock without waiting, and gives it straight back if it could.
 func tryJournalLock(t *testing.T, ctx context.Context, conn *sql.Conn, name string) bool {
@@ -1299,8 +1351,11 @@ func tryJournalLock(t *testing.T, ctx context.Context, conn *sql.Conn, name stri
 // lock (#6117). The long writer and the short one run on different stores
 // with their own pools on the same database and branch, so nothing but the
 // server-side GET_LOCK can make the short writer wait.
+//
+// It runs alone (setupSerialTestStore), so no other test's writer can hold
+// the lock it queues on.
 func TestEventsJournal_OverlappingServerWritersQueue(t *testing.T) {
-	store, cleanup := setupTestStore(t)
+	store, cleanup := setupSerialTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	second := openSecondStoreOnBranch(t, ctx, store)
@@ -1451,8 +1506,11 @@ func assertJournalFollowsHolder(t *testing.T, store *DoltStore, holderID string)
 // lock can hold back, must still be waiting half a second later. Released any
 // earlier — after BEGIN, say — the short writer commits inside the window and
 // the long one loses its commit with 1213.
+//
+// It runs alone (setupSerialTestStore), so no other test's writer can hold
+// the lock it queues on.
 func TestJournalWriterLock_RecordingRouteHoldsAcrossCommit(t *testing.T) {
-	store, cleanup := setupTestStore(t)
+	store, cleanup := setupSerialTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	second := openSecondStoreOnBranch(t, ctx, store)
@@ -1514,8 +1572,11 @@ func TestJournalWriterLock_RecordingRouteHoldsAcrossCommit(t *testing.T) {
 // snapshot follows the holder's commit: it reads the new title and commits.
 // Locked after BEGIN, its snapshot predates that commit, so it reads the old
 // title and its bd_events_seq write fails with 1213.
+//
+// It runs alone (setupSerialTestStore), so no other test's writer can hold
+// the lock it queues on.
 func TestJournalWriterLock_RecordingRouteLocksBeforeBegin(t *testing.T) {
-	store, cleanup := setupTestStore(t)
+	store, cleanup := setupSerialTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	second := openSecondStoreOnBranch(t, ctx, store)
@@ -1575,10 +1636,10 @@ func TestJournalWriterLock_RecordingRouteLocksBeforeBegin(t *testing.T) {
 // after the holder committed: a transaction begun earlier reads bd_events_seq
 // stale and fails with 1213).
 //
-// It runs on a database of its own, so a probe that finds the lock taken
+// It runs alone (setupSerialTestStore), so a probe that finds the lock taken
 // cannot be reading another test's writer.
 func TestJournalWriterLock_RawSitesQueueAndBeginAfterTheHolder(t *testing.T) {
-	store, cleanup := setupConcurrentTestStore(t)
+	store, cleanup := setupSerialTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	second := openSecondStoreOnBranch(t, ctx, store)
