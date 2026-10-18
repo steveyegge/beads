@@ -135,12 +135,16 @@
 100 55 TestEmbeddedUndefer
 
 100 56 TestEmbeddedDepNoCycleCheck
+100 56 TestEmbeddedGitDataRefRefChangeNeedsYesWithoutTerminal
 
+100 57 TestEmbeddedGitDataRefOriginProbeFollowsRef
 100 57 TestEmbeddedQueryConcurrent
 
 100 58 TestEmbeddedDepAAddRejectionsAndBulk
+100 58 TestEmbeddedGitDataRefBootstrapWiresFreshDatabaseOnRef
 
 100 59 TestEmbeddedDeferAutoWake
+100 59 TestEmbeddedGitDataRefRemoteAddPushesToRefAndBootstrapReadsIt
 
 100 60 TestEmbeddedCommentsCLI
 100 60 TestEmbeddedRoutedWriteMissDoesNotCreateTargetDatabase
