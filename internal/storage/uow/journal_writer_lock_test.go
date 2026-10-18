@@ -2,8 +2,13 @@ package uow
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"net"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +17,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
+	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/issueops"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // The proxied plumbing's half of the journal writer lock (#6117): units of
@@ -241,4 +249,120 @@ func TestJournalWriterLock_UnlockHasCleanupDeadline(t *testing.T) {
 		t.Fatalf("unlock after cancellation took %s, exceeding %s cleanup budget", elapsed, txCloseTimeout)
 	}
 	assert.Equal(t, 0, p.db.Stats().OpenConnections, "an unconfirmed release discards the session")
+}
+
+// TestJournalWriterLock_ReleasedBeforeTheRecheck pins the order on a live
+// server: a committed unit of work frees the journal writer lock before its
+// post-commit blocked recheck, so no journaled writer queues behind the
+// recheck's retries. The unit of work runs on a pool whose sessions probe the
+// lock from another session at the recheck's START TRANSACTION, the first
+// statement after the commit on the pinned session.
+func TestJournalWriterLock_ReleasedBeforeTheRecheck(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	const prefix = "jwr"
+	provider := newUOWRoleFixtureProvider(t, ctx, prefix)
+	kit := newUOWRoleFixtureKit(provider, prefix)
+	p, ok := provider.(*doltSQLProvider)
+	require.True(t, ok, "provider %T is not a *doltSQLProvider", provider)
+
+	blocker, dependent := prefix+"-blk", prefix+"-dep"
+	for _, id := range []string{blocker, dependent} {
+		require.NoError(t, kit.CreateIssue(ctx, &types.Issue{ID: id, Title: id, IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2}, "seeder"))
+	}
+	require.NoError(t, kit.AddDependency(ctx, &types.Dependency{IssueID: dependent, DependsOnID: blocker, Type: types.DepBlocks}, "seeder"))
+	requireBlocked(t, ctx, kit, dependent, true)
+
+	name := issueops.JournalWriterLockName(p.database)
+	var (
+		probed   bool
+		got      sql.NullInt64
+		probeErr error
+	)
+	probe := func() {
+		probed = true
+		conn, err := p.db.Conn(ctx)
+		if err != nil {
+			probeErr = err
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		if probeErr = conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 0)", name).Scan(&got); probeErr == nil && got.Int64 == 1 {
+			_, probeErr = conn.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", name)
+		}
+	}
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(p.serverEndpoint, "tcp:"))
+	require.NoError(t, err)
+	portNum, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	dsn := buildDSN(proxy.Endpoint{Host: host, Port: portNum}, p.database, "root", "", "")
+	pool := sql.OpenDB(recheckProbeConnector{dsn: dsn, drv: p.db.Driver(), probe: probe})
+	t.Cleanup(func() { _ = pool.Close() })
+	probing := &doltSQLProvider{defaultBranch: p.defaultBranch, db: pool, database: p.database}
+	probing.SetEventsJournalEnabled(true)
+
+	require.NoError(t, RunTx(ctx, probing, func(ctx context.Context, uw UnitOfWork) (string, error) {
+		_, err := uw.IssueUseCase().CloseIssue(ctx, blocker, domain.CloseIssueParams{Reason: "done"}, "closer")
+		return "bd: close " + blocker, err
+	}))
+
+	require.True(t, probed, "the close recorded no post-commit recheck, so nothing probed the lock")
+	require.NoError(t, probeErr)
+	assert.Equal(t, int64(1), got.Int64, "another session could not take %s during the recheck: the lock is still held", name)
+	requireBlocked(t, ctx, kit, dependent, false)
+}
+
+// recheckProbeConnector opens dsn behind a recheckProbeConn that runs probe
+// once, at the first START TRANSACTION after a COMMIT on its session.
+type recheckProbeConnector struct {
+	dsn   string
+	drv   driver.Driver
+	probe func()
+}
+
+func (c recheckProbeConnector) Connect(context.Context) (driver.Conn, error) {
+	conn, err := c.drv.Open(c.dsn)
+	if err != nil {
+		return nil, err
+	}
+	return &recheckProbeConn{Conn: conn, probe: c.probe}, nil
+}
+
+func (c recheckProbeConnector) Driver() driver.Driver { return c.drv }
+
+// recheckProbeConn keeps the optional interfaces the mysql connection
+// implements so database/sql takes the same paths it takes over a bare one.
+type recheckProbeConn struct {
+	driver.Conn
+	probe     func()
+	committed bool
+	probed    bool
+}
+
+func (c *recheckProbeConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	switch {
+	case strings.Contains(strings.ToUpper(query), "COMMIT"):
+		c.committed = true
+	case c.committed && !c.probed && strings.HasPrefix(query, "START TRANSACTION"):
+		c.probed = true
+		c.probe()
+	}
+	return c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
+}
+
+func (c *recheckProbeConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	return c.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
+}
+
+func (c *recheckProbeConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+}
+
+func (c *recheckProbeConn) Ping(ctx context.Context) error {
+	return c.Conn.(driver.Pinger).Ping(ctx)
+}
+
+func (c *recheckProbeConn) CheckNamedValue(nv *driver.NamedValue) error {
+	return c.Conn.(driver.NamedValueChecker).CheckNamedValue(nv)
 }

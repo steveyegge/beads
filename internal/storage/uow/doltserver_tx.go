@@ -34,8 +34,9 @@ type doltServerTx struct {
 	// blocked-state recheck (gastownhall/beads#6716).
 	clearRecheckScope func()
 	// unlockJournal releases the journal writer lock BeginTx took on conn (a
-	// no-op when it took none). It runs on both connection-release paths,
-	// before the connection leaves this tx.
+	// no-op when it took none). A successful commit runs it before the
+	// post-commit recheck; both connection-release paths run it too, before
+	// the connection leaves this tx.
 	unlockJournal func()
 }
 
@@ -65,11 +66,17 @@ func (t *doltServerTx) Commit(ctx context.Context, message string) error {
 	_, err = t.conn.ExecContext(ctx, stmt, args...)
 	if err == nil {
 		t.done = true
-		// The write is durable. Settle the dependents its unblocking writes
-		// recorded on a fresh snapshot before the pinned session goes back
-		// to the pool (gastownhall/beads#6716). A recheck failure is logged,
-		// never returned: the caller must not read a committed write as
-		// failed and replay it.
+		// The write is durable, so the journal writer lock has done its job:
+		// release it before the recheck, as the dolt store does, so no
+		// journaled writer queues behind the recheck's retries. A release
+		// that fails discards the session, and the recheck then fails and
+		// is reported like any other.
+		t.releaseJournalLock()
+		// Settle the dependents its unblocking writes recorded on a fresh
+		// snapshot before the pinned session goes back to the pool
+		// (gastownhall/beads#6716). A recheck failure is logged, never
+		// returned: the caller must not read a committed write as failed and
+		// replay it.
 		if t.recheckBlockedAfterCommit(ctx, issueops.TakeBlockedRecheck(t.conn)) {
 			t.releaseConn()
 		} else {
