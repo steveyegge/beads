@@ -19,23 +19,24 @@ import (
 // gone_retention / gone_erasure / gone_reorganization / unknown, never
 // live -- live is the absence of a value, not a stored one.
 
-const migration0070Up = "0070_add_removed_restriction.up.sql"
-const migration0070Down = "0070_add_removed_restriction.down.sql"
+const migration0071Up = "0071_add_removed_restriction.up.sql"
+const migration0071Down = "0071_add_removed_restriction.down.sql"
 
-// TestLatestVersionIncludesMigration0070 pins the real next free slot this
-// phase claims, superseding 0069's own version of this test. Deliberately a
-// hardcoded literal for the same reason 0067's and 0068's were: LatestVersion()
-// drifting to 70 for the wrong reason should still be caught by this test
-// failing to explain why 70 is removed-restriction-shaped, which the CLI test
-// below checks.
-func TestLatestVersionIncludesMigration0070(t *testing.T) {
-	const want = 70
+// TestLatestVersionIncludesMigration0071 pins the real next free slot this
+// phase claims, superseding 0070's own version of this test
+// (migration_0070_add_participation_generation_test.go). Deliberately a
+// hardcoded literal for the same reason 0067's, 0068's, 0069's and 0070's
+// were: LatestVersion() drifting to 71 for the wrong reason should still be
+// caught by this test failing to explain why 71 is removed-restriction-shaped,
+// which the CLI test below checks.
+func TestLatestVersionIncludesMigration0071(t *testing.T) {
+	const want = 71
 	if got := LatestVersion(); got != want {
 		t.Fatalf("LatestVersion() = %d, want %d (the migration slot claimed for issue_versions.removed_restriction)", got, want)
 	}
 }
 
-// TestMigration0070AddsRemovedRestriction is a pure-Go, DB-independent check
+// TestMigration0071AddsRemovedRestriction is a pure-Go, DB-independent check
 // of the frozen migration bytes themselves — it runs even where no `dolt`
 // binary is available.
 //
@@ -47,10 +48,10 @@ func TestLatestVersionIncludesMigration0070(t *testing.T) {
 // cliCompatibleMigrationSQL, policed by the same two guard tests
 // (TestBundleMigrationsWithPreparedALTERAreOverriddenOrJustified and
 // TestAllMigrationsSQLUsesDirectDDLForKnownCLIIncompatibilities).
-func TestMigration0070AddsRemovedRestriction(t *testing.T) {
-	upSQL, err := MigrationSQL(migration0070Up)
+func TestMigration0071AddsRemovedRestriction(t *testing.T) {
+	upSQL, err := MigrationSQL(migration0071Up)
 	if err != nil {
-		t.Fatalf("MigrationSQL(%s) error = %v, want the migration file to exist", migration0070Up, err)
+		t.Fatalf("MigrationSQL(%s) error = %v, want the migration file to exist", migration0071Up, err)
 	}
 	for _, want := range []string{
 		"ALTER TABLE issue_versions ADD COLUMN removed_restriction VARCHAR(30)",
@@ -58,21 +59,21 @@ func TestMigration0070AddsRemovedRestriction(t *testing.T) {
 		"@issue_versions_rr_needs_add",
 	} {
 		if !strings.Contains(upSQL, want) {
-			t.Errorf("0070 up migration missing %q\nfull SQL:\n%s", want, upSQL)
+			t.Errorf("0071 up migration missing %q\nfull SQL:\n%s", want, upSQL)
 		}
 	}
 	if !strings.Contains(strings.ToUpper(upSQL), "PREPARE STMT FROM @SQL") {
-		t.Error("0070 up migration must keep its guarded PREPARE block — it is what makes a raw .up.sql replay onto an already-migrated store a no-op, and Dolt accepts no unprepared conditional ADD COLUMN. Unwrapping it also invalidates cliMigration0070AddRemovedRestriction.")
+		t.Error("0071 up migration must keep its guarded PREPARE block — it is what makes a raw .up.sql replay onto an already-migrated store a no-op, and Dolt accepts no unprepared conditional ADD COLUMN. Unwrapping it also invalidates cliMigration0071AddRemovedRestriction.")
 	}
 	// The bundle override is what keeps the PREPARE above off the pre-2.3
 	// CLI path. Assert it directly rather than trusting the two schema_test
 	// assertions to stay pointed at this migration.
 	const wantDirectDDL = "ALTER TABLE issue_versions ADD COLUMN removed_restriction VARCHAR(30);"
-	if !strings.Contains(cliCompatibleMigrationSQL(migration0070Up, upSQL), wantDirectDDL) {
-		t.Errorf("0070's CLI bundle substitute missing direct DDL %q", wantDirectDDL)
+	if !strings.Contains(cliCompatibleMigrationSQL(migration0071Up, upSQL), wantDirectDDL) {
+		t.Errorf("0071's CLI bundle substitute missing direct DDL %q", wantDirectDDL)
 	}
-	if cliSubstituteAssumesWispTables(migration0070Up) {
-		t.Error("0070's CLI substitute touches only issue_versions, which has no wisps-side counterpart table — it must not be listed in cliSubstituteAssumesWispTables")
+	if cliSubstituteAssumesWispTables(migration0071Up) {
+		t.Error("0071's CLI substitute touches only issue_versions, which has no wisps-side counterpart table — it must not be listed in cliSubstituteAssumesWispTables")
 	}
 
 	// down.sql files are not part of the embedded FS (only migrations/*.up.sql
@@ -80,9 +81,9 @@ func TestMigration0070AddsRemovedRestriction(t *testing.T) {
 	// this reads straight from disk by package-relative path, matching
 	// TestMigration0067AddsVersionedBeadsSchema's / TestMigration0068AddsAttributionStatus's
 	// precedent.
-	downBytes, err := os.ReadFile("migrations/" + migration0070Down)
+	downBytes, err := os.ReadFile("migrations/" + migration0071Down)
 	if err != nil {
-		t.Fatalf("read %s: %v, want the migration file to exist", migration0070Down, err)
+		t.Fatalf("read %s: %v, want the migration file to exist", migration0071Down, err)
 	}
 	downSQL := string(downBytes)
 	for _, want := range []string{
@@ -90,7 +91,7 @@ func TestMigration0070AddsRemovedRestriction(t *testing.T) {
 		"COLUMN_NAME = 'removed_restriction'",
 	} {
 		if !strings.Contains(downSQL, want) {
-			t.Errorf("0070 down migration missing %q\nfull SQL:\n%s", want, downSQL)
+			t.Errorf("0071 down migration missing %q\nfull SQL:\n%s", want, downSQL)
 		}
 	}
 	// Only migrations/*.up.sql is embedded into the CLI fresh bundle
@@ -98,11 +99,11 @@ func TestMigration0070AddsRemovedRestriction(t *testing.T) {
 	// down migration and the guard is free — 0060's/0067's/0068's downs are
 	// the precedent.
 	if !strings.Contains(strings.ToUpper(downSQL), "PREPARE STMT FROM @SQL") {
-		t.Error("0070 down migration must guard its DROP COLUMN the way the up migration guards its ADD COLUMN, so a partially-applied or already-rolled-back workspace rolls back safely")
+		t.Error("0071 down migration must guard its DROP COLUMN the way the up migration guards its ADD COLUMN, so a partially-applied or already-rolled-back workspace rolls back safely")
 	}
 }
 
-// TestMigration0070HeaderSpellsTheVocabularyTheCodeStores pins the header's
+// TestMigration0071HeaderSpellsTheVocabularyTheCodeStores pins the header's
 // vocabulary to the constants that store, read and label the column (finding 6
 // of the #6661 review). The header is the one place a writer learns which
 // strings to store, and a writer follows it literally: it said gone-retention,
@@ -110,12 +111,12 @@ func TestMigration0070AddsRemovedRestriction(t *testing.T) {
 // recognised and rendered without a label. Deriving the expected spellings
 // from the constants keeps the two from drifting apart again.
 //
-// Pure Go, like TestMigration0070AddsRemovedRestriction: it reads the frozen
+// Pure Go, like TestMigration0071AddsRemovedRestriction: it reads the frozen
 // bytes and needs no `dolt` binary.
-func TestMigration0070HeaderSpellsTheVocabularyTheCodeStores(t *testing.T) {
-	upSQL, err := MigrationSQL(migration0070Up)
+func TestMigration0071HeaderSpellsTheVocabularyTheCodeStores(t *testing.T) {
+	upSQL, err := MigrationSQL(migration0071Up)
 	if err != nil {
-		t.Fatalf("MigrationSQL(%s) error = %v, want the migration file to exist", migration0070Up, err)
+		t.Fatalf("MigrationSQL(%s) error = %v, want the migration file to exist", migration0071Up, err)
 	}
 	for _, stored := range []issueops.AsOfRestriction{
 		issueops.AsOfRestrictionGoneRetention,
@@ -124,22 +125,22 @@ func TestMigration0070HeaderSpellsTheVocabularyTheCodeStores(t *testing.T) {
 		issueops.AsOfRestrictionUnknown,
 	} {
 		if !strings.Contains(upSQL, string(stored)) {
-			t.Errorf("0070 header never spells the stored value %q", stored)
+			t.Errorf("0071 header never spells the stored value %q", stored)
 		}
 		if hyphenated := strings.ReplaceAll(string(stored), "_", "-"); hyphenated != string(stored) && strings.Contains(upSQL, hyphenated) {
-			t.Errorf("0070 header spells %q as %q; the code stores and compares the underscore spelling, so a writer following the header stores a value that renders unlabeled", stored, hyphenated)
+			t.Errorf("0071 header spells %q as %q; the code stores and compares the underscore spelling, so a writer following the header stores a value that renders unlabeled", stored, hyphenated)
 		}
 	}
 }
 
-// TestMigration0070AddsRemovedRestrictionThroughDoltCLI applies the full
+// TestMigration0071AddsRemovedRestrictionThroughDoltCLI applies the full
 // migration bundle through a real `dolt` binary (skipped without one — see
 // testutil.RequireDoltBinary) and checks the shape acceptance criteria a
 // pure-Go SQL-text check cannot: actual column type/nullability as Dolt
 // reports it, and that the column stays NULL for a row that never sets it
 // (Live is the absence of a value) while round-tripping any of the four
 // restriction strings a row does set it to.
-func TestMigration0070AddsRemovedRestrictionThroughDoltCLI(t *testing.T) {
+func TestMigration0071AddsRemovedRestrictionThroughDoltCLI(t *testing.T) {
 	testutil.RequireDoltBinary(t)
 
 	dir := t.TempDir()

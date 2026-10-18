@@ -1,4 +1,4 @@
--- Migration 0070: R7.1 as-of read (gastownhall/beads#5898 revision 9,
+-- Migration 0071: R7.1 as-of read (gastownhall/beads#5898 revision 9,
 -- gastownhall/beads#6136); conformance suite: backend/conformance/
 -- versioned_read_contract.go.
 --
@@ -29,7 +29,7 @@
 -- for the full explanation): no MariaDB-only IF NOT EXISTS on Dolt 2.2.3's
 -- ADD COLUMN, so an INFORMATION_SCHEMA probe + PREPARE is the only
 -- replay-safe shape. Needs a CLI-bundle direct-DDL override
--- (cliMigration0070AddRemovedRestriction in cli_migrations.go), the same
+-- (cliMigration0071AddRemovedRestriction in cli_migrations.go), the same
 -- dolthub/dolt#11345 escape hatch 0067/0068 use, guarded by
 -- TestBundleMigrationsWithPreparedALTERAreOverriddenOrJustified.
 --

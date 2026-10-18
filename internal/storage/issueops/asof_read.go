@@ -36,7 +36,7 @@ import (
 // epoch_cas.go's EpochRestriction).
 //
 // removed_at / removed_reason (migration 0067, virgin and unused before this
-// slice) plus removed_restriction (migration 0070, added by this slice) are
+// slice) plus removed_restriction (migration 0071, added by this slice) are
 // the durable "this version row was removed" marker AsOfReadInTx reads.
 // R7.1 only READS them here; a future R17 (not yet implemented on this
 // branch) will be the production WRITER, via real hold/remove/erase

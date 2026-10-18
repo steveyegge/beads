@@ -33,20 +33,11 @@ import (
 const migration0070Up = "0070_add_participation_generation.up.sql"
 const migration0070Down = "0070_add_participation_generation.down.sql"
 
-// TestLatestVersionIncludesMigration0070 pins the real next free slot this
-// migration claims, superseding 0069's own version of this test
-// (LatestVersion() moved from 69 to 70 the moment this migration file was
-// added). Deliberately a hardcoded literal for the same reason 0067's,
-// 0068's, and 0069's were: LatestVersion() drifting to 70 for the wrong
-// reason (an unrelated migration landing first) should still be caught by
-// this test failing to explain why 70 is participation_generation-shaped,
-// which the CLI test below checks.
-func TestLatestVersionIncludesMigration0070(t *testing.T) {
-	const want = 70
-	if got := LatestVersion(); got != want {
-		t.Fatalf("LatestVersion() = %d, want %d (issues/wisps participation_generation migration slot claimed by be-h89oq)", got, want)
-	}
-}
+// TestLatestVersionIncludesMigration0070 (pinning LatestVersion() == 70) is
+// superseded by TestLatestVersionIncludesMigration0071
+// (migration_0071_add_removed_restriction_test.go) now that 0071 claims the
+// next free slot; only one such pin lives at a time, matching how this
+// test itself already superseded 0069's own version.
 
 // TestMigration0070AddsParticipationGeneration is the pure-Go, DB-independent
 // half of the pin, mirroring TestMigration0069WidensChangeAtAndRemovedAtPrecision's

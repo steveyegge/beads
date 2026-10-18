@@ -1,4 +1,4 @@
--- Reverse of 0070: drop issue_versions.removed_restriction.
+-- Reverse of 0071: drop issue_versions.removed_restriction.
 --
 -- Guarded on INFORMATION_SCHEMA the same way 0067/0068's downs are, so a
 -- partially-applied or already-rolled-back workspace rolls back safely.
