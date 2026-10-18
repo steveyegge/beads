@@ -3,6 +3,7 @@ package dolt
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -14,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -32,7 +34,15 @@ import (
 var (
 	matchGetLock     = regexp.QuoteMeta("SELECT GET_LOCK(?, ?)")
 	matchReleaseLock = regexp.QuoteMeta("SELECT RELEASE_LOCK(?)")
+	matchUsedLock    = regexp.QuoteMeta("SELECT IS_USED_LOCK(?)")
+	matchHolderState = regexp.QuoteMeta("SELECT COMMAND, TIME FROM information_schema.PROCESSLIST WHERE ID = ?")
 )
+
+// expectHolderGone has a timed-out GET_LOCK find no holder to reclaim: the
+// lock was released between the two statements.
+func expectHolderGone(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(matchUsedLock).WillReturnRows(sqlmock.NewRows([]string{"holder"}).AddRow(nil))
+}
 
 // newJournalLockMockStore is a server-free store over sqlmock. sqlmock fails
 // any statement it was not told to expect, so a test that sets no expectation
@@ -47,6 +57,103 @@ func newJournalLockMockStore(t *testing.T, serverMode, journal bool) (*DoltStore
 	store := &DoltStore{db: db, database: "proj_a", serverMode: serverMode}
 	store.eventsJournalEnabled.Store(journal)
 	return store, mock
+}
+
+// sqlRecorder is the statement log of a recording mock store. sqlmock checks
+// only that the statements it was told to expect arrived; one it was NOT told
+// to expect comes back as an error and is forgotten, and reclaimSilentHolder
+// swallows its errors by design. A test that must prove a statement was never
+// sent — a KILL of a live writer, a holder probe past the attempt bound —
+// asserts on this log instead, which sees every statement whatever sqlmock
+// answered.
+type sqlRecorder struct {
+	mu    sync.Mutex
+	stmts []string
+}
+
+func (r *sqlRecorder) record(query string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stmts = append(r.stmts, query)
+}
+
+// matching returns the recorded statements that start with prefix, in order.
+func (r *sqlRecorder) matching(prefix string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, stmt := range r.stmts {
+		if strings.HasPrefix(stmt, prefix) {
+			out = append(out, stmt)
+		}
+	}
+	return out
+}
+
+// recordingConnector hands database/sql the sqlmock connection for dsn behind
+// a recordingConn.
+type recordingConnector struct {
+	dsn string
+	drv driver.Driver
+	rec *sqlRecorder
+}
+
+func (c recordingConnector) Connect(context.Context) (driver.Conn, error) {
+	conn, err := c.drv.Open(c.dsn)
+	if err != nil {
+		return nil, err
+	}
+	return recordingConn{Conn: conn, rec: c.rec}, nil
+}
+
+func (c recordingConnector) Driver() driver.Driver { return c.drv }
+
+// recordingConn logs each statement before passing it to sqlmock, and keeps
+// the optional interfaces sqlmock implements so database/sql takes the same
+// paths it takes over a bare sqlmock connection.
+type recordingConn struct {
+	driver.Conn
+	rec *sqlRecorder
+}
+
+func (c recordingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.rec.record(query)
+	return c.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
+}
+
+func (c recordingConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.rec.record(query)
+	return c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
+}
+
+func (c recordingConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+}
+
+func (c recordingConn) Ping(ctx context.Context) error {
+	return c.Conn.(driver.Pinger).Ping(ctx)
+}
+
+func (c recordingConn) CheckNamedValue(nv *driver.NamedValue) error {
+	return c.Conn.(driver.NamedValueChecker).CheckNamedValue(nv)
+}
+
+// newRecordingJournalLockMockStore is newJournalLockMockStore for a journaled
+// server store whose statements are also logged in the returned recorder.
+func newRecordingJournalLockMockStore(t *testing.T) (*DoltStore, sqlmock.Sqlmock, *sqlRecorder) {
+	t.Helper()
+	dsn := "journal-lock-recording:" + t.Name()
+	mockDB, mock, err := sqlmock.NewWithDSN(dsn, sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("sqlmock.NewWithDSN: %v", err)
+	}
+	t.Cleanup(func() { _ = mockDB.Close() })
+	rec := &sqlRecorder{}
+	db := sql.OpenDB(recordingConnector{dsn: dsn, drv: mockDB.Driver(), rec: rec})
+	t.Cleanup(func() { _ = db.Close() })
+	store := &DoltStore{db: db, database: "proj_a", serverMode: true}
+	store.eventsJournalEnabled.Store(true)
+	return store, mock, rec
 }
 
 // TestWriteTxConn_NoLockOutsideJournaledServerMode pins that the journal
@@ -310,6 +417,7 @@ func TestWriteTxConn_JournalWriterLockRetriesThenGivesUp(t *testing.T) {
 	t.Run("granted on a later attempt", func(t *testing.T) {
 		store, mock := newJournalLockMockStore(t, true, true)
 		mock.ExpectQuery(matchGetLock).WillReturnRows(sqlmock.NewRows([]string{"got"}).AddRow(0))
+		expectHolderGone(mock)
 		mock.ExpectQuery(matchGetLock).WillReturnRows(sqlmock.NewRows([]string{"got"}).AddRow(nil))
 		mock.ExpectQuery(matchGetLock).WillReturnRows(sqlmock.NewRows([]string{"got"}).AddRow(1))
 		mock.ExpectExec(matchReleaseLock).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -325,9 +433,15 @@ func TestWriteTxConn_JournalWriterLockRetriesThenGivesUp(t *testing.T) {
 	})
 
 	t.Run("exhausted", func(t *testing.T) {
-		store, mock := newJournalLockMockStore(t, true, true)
+		store, mock, rec := newRecordingJournalLockMockStore(t)
+		// The last timed-out attempt probes no holder: a reclaim there would
+		// buy an attempt past the bound. The probe's refusal by sqlmock is
+		// swallowed, so the recorder, not the expectations, proves its absence.
 		for i := 0; i < issueops.JournalWriterLockAttempts; i++ {
 			mock.ExpectQuery(matchGetLock).WillReturnRows(sqlmock.NewRows([]string{"got"}).AddRow(0))
+			if i < issueops.JournalWriterLockAttempts-1 {
+				expectHolderGone(mock)
+			}
 		}
 
 		conn, release, err := store.writeTxConn(context.Background())
@@ -346,7 +460,102 @@ func TestWriteTxConn_JournalWriterLockRetriesThenGivesUp(t *testing.T) {
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatalf("lock attempts: %v", err)
 		}
+		if probes := rec.matching("SELECT IS_USED_LOCK"); len(probes) != issueops.JournalWriterLockAttempts-1 {
+			t.Errorf("%d holder probes, want %d: none after the last attempt", len(probes), issueops.JournalWriterLockAttempts-1)
+		}
 	})
+}
+
+// TestWriteTxConn_ReclaimsOnlyASilentHolder pins which holders a waiter ends
+// after a timed-out GET_LOCK: a session in Sleep past
+// issueops.JournalWriterStaleHolder is killed and the next attempt is granted;
+// one running a statement, or silent for less, is left alone and the waiter
+// keeps waiting. A KILL sqlmock was not told to expect is refused, but the
+// refusal is swallowed like any reclaim failure, so the recorder is what
+// proves no KILL was sent.
+func TestWriteTxConn_ReclaimsOnlyASilentHolder(t *testing.T) {
+	stale := int64(issueops.JournalWriterStaleHolder / time.Second)
+	for _, tc := range []struct {
+		name    string
+		command string
+		idle    int64
+		kill    bool
+	}{
+		{"silent past the bound", "Sleep", stale, true},
+		{"silent under the bound", "Sleep", stale - 1, false},
+		{"running a statement", "Query", stale * 10, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, mock, rec := newRecordingJournalLockMockStore(t)
+			mock.ExpectQuery(matchGetLock).WillReturnRows(sqlmock.NewRows([]string{"got"}).AddRow(0))
+			mock.ExpectQuery(matchUsedLock).WillReturnRows(sqlmock.NewRows([]string{"holder"}).AddRow(1279845))
+			mock.ExpectQuery(matchHolderState).WithArgs(int64(1279845)).
+				WillReturnRows(sqlmock.NewRows([]string{"command", "time"}).AddRow(tc.command, tc.idle))
+			if tc.kill {
+				mock.ExpectExec(regexp.QuoteMeta("KILL 1279845")).WillReturnResult(sqlmock.NewResult(0, 0))
+			}
+			mock.ExpectQuery(matchGetLock).WillReturnRows(sqlmock.NewRows([]string{"got"}).AddRow(1))
+			mock.ExpectExec(matchReleaseLock).WillReturnResult(sqlmock.NewResult(0, 0))
+
+			_, release, err := store.writeTxConn(context.Background())
+			if err != nil {
+				t.Fatalf("writeTxConn: %v", err)
+			}
+			release()
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("holder reclaim: %v", err)
+			}
+			var want []string
+			if tc.kill {
+				want = []string{"KILL 1279845"}
+			}
+			if kills := rec.matching("KILL"); !slices.Equal(kills, want) {
+				t.Errorf("KILL statements sent = %q, want %q", kills, want)
+			}
+		})
+	}
+}
+
+// TestJournalWriterLock_SilentHolderIsReclaimed reproduces a lost client on a
+// live server: a session takes the journal writer lock and then sends nothing,
+// which is all the server sees of a client that froze mid-write without closing
+// its socket. A journaled write behind it must land within the stale-holder
+// bound plus one GET_LOCK wait, and the silent session must be gone.
+func TestJournalWriterLock_SilentHolderIsReclaimed(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	enableJournalForTest(t, store)
+	if err := store.CreateIssue(ctx, &types.Issue{ID: "bd-sh-1", Title: "sh", IssueType: types.TypeTask, Status: types.StatusOpen}, "actor"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	stale := issueops.JournalWriterStaleHolder
+	issueops.JournalWriterStaleHolder = 2 * time.Second
+	t.Cleanup(func() { issueops.JournalWriterStaleHolder = stale })
+
+	holder := openSecondStoreOnBranch(t, ctx, store)
+	conn, err := holder.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("holder conn: %v", err)
+	}
+	defer conn.Close()
+	var got int
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 5)", issueops.JournalWriterLockName(store.database)).Scan(&got); err != nil || got != 1 {
+		t.Fatalf("hold journal writer lock: got=%d err=%v", got, err)
+	}
+
+	bound := issueops.JournalWriterStaleHolder + 2*time.Duration(issueops.JournalWriterLockWait)*time.Second
+	callCtx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	start := time.Now()
+	err = store.UpdateIssue(callCtx, "bd-sh-1", map[string]interface{}{"title": "reclaimed"}, "actor")
+	t.Logf("journaled UpdateIssue behind a silent holder: %s (err=%v)", time.Since(start), err)
+	if err != nil {
+		t.Fatalf("a silent lock holder blocked a journaled write past %s: %v", bound, err)
+	}
+	if err := conn.PingContext(ctx); err == nil {
+		t.Error("the silent holder's session survived the reclaim")
+	}
 }
 
 // TestJournalWriterLock_EveryJournalScopeTakesTheLock is the structural guard
