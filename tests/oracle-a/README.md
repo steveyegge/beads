@@ -16,9 +16,10 @@ a throwaway workspace (`bd init` + steps). For every step the harness compares
 **exit code**, **stderr**, and **JSON-aware stdout** (object key order ignored;
 array order compared as a multiset by default, as an ordered sequence for
 scenarios flagged `ordered`). Volatile values — timestamps, UUIDs, the host
-actor identity, and the `bd show --json` `"revision"` token — are normalized to
-`<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>`/`<REV>` before comparison. **Tolerated
-in-scope divergences: zero.**
+actor identity, the `bd show --json` `"revision"` token, and the run's own
+throwaway workspace path — are normalized to
+`<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>`/`<REV>`/`<WORKSPACE>` before comparison.
+**Tolerated in-scope divergences: zero.**
 
 ## Run it
 

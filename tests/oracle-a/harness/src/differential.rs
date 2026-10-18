@@ -115,11 +115,37 @@ pub fn normalize(s: &str) -> String {
     s.replace(ACTOR_EMAIL, "<EMAIL>").replace(ACTOR_NAME, "<ACTOR>")
 }
 
+/// `normalize`, after first collapsing this run's own workspace directory to
+/// `<WORKSPACE>`. Each run gets a fresh random tempdir, so any output that
+/// echoes it (e.g. the "Found existing Dolt database: <dir>/.beads/..." error a
+/// scenario's own `init` step hits) differs on every run. Only these exact path
+/// strings are replaced, longest first, so a spelling that contains another
+/// (`/private/var/...` around `/var/...`) is replaced whole.
+pub fn normalize_in_workspace(s: &str, workspace: &[String]) -> String {
+    let mut paths: Vec<&str> = workspace
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !p.is_empty())
+        .collect();
+    paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
+    let mut s = s.to_string();
+    for p in paths {
+        s = s.replace(p, "<WORKSPACE>");
+    }
+    normalize(&s)
+}
+
 /// Run a scenario against `bin` in a throwaway workspace, returning the
 /// normalized trace. Requires the binary to support `init -p <prefix> --quiet`
 /// and to honor the workspace cwd (real bd uses embedded Dolt under `.beads/`).
 pub fn run_scenario(bin: &Path, sc: &Scenario) -> std::io::Result<Trace> {
     let work = tempfile::tempdir()?;
+    // Every spelling of the workspace bd may print: the tempdir as created and
+    // its symlink-resolved form (macOS tempdirs sit under /var -> /private/var).
+    let mut workspace = vec![work.path().to_string_lossy().into_owned()];
+    if let Ok(real) = work.path().canonicalize() {
+        workspace.push(real.to_string_lossy().into_owned());
+    }
     let run = |args: &[String]| -> std::io::Result<std::process::Output> {
         // Scrub the environment to an explicit whitelist. The upstream harness
         // inherited the FULL host env, so any host BEADS_*/BD_* var
@@ -159,8 +185,8 @@ pub fn run_scenario(bin: &Path, sc: &Scenario) -> std::io::Result<Trace> {
         steps.push(StepResult {
             args: args.clone(),
             exit: out.status.code().unwrap_or(-1),
-            stdout: normalize(&String::from_utf8_lossy(&out.stdout)),
-            stderr: normalize(&String::from_utf8_lossy(&out.stderr)),
+            stdout: normalize_in_workspace(&String::from_utf8_lossy(&out.stdout), &workspace),
+            stderr: normalize_in_workspace(&String::from_utf8_lossy(&out.stderr), &workspace),
         });
     }
     Ok(Trace {
@@ -379,6 +405,34 @@ mod tests {
             &normalize(r#"{"id":"a"}"#),
             false
         ));
+    }
+
+    #[test]
+    fn normalize_in_workspace_collapses_only_this_runs_workspace() {
+        // Listed short-first: the longer spelling must still be replaced whole.
+        let ws = vec![
+            "/var/t/.tmpAbC123".to_string(),
+            "/private/var/t/.tmpAbC123".to_string(),
+        ];
+        let err = "Found existing Dolt database: /private/var/t/.tmpAbC123/.beads/embeddeddolt/c\n";
+        assert_eq!(
+            normalize_in_workspace(err, &ws),
+            "Found existing Dolt database: <WORKSPACE>/.beads/embeddeddolt/c\n"
+        );
+        // Two runs that differ only in their random workspace normalize equal.
+        let other = vec!["/var/t/.tmpXyZ789".to_string()];
+        assert_eq!(
+            normalize_in_workspace("db at /var/t/.tmpAbC123/.beads", &ws),
+            normalize_in_workspace("db at /var/t/.tmpXyZ789/.beads", &other)
+        );
+        // A path that is not this run's workspace stays literal.
+        let foreign = "db at /var/t/.tmpXyZ789/.beads";
+        assert_eq!(normalize_in_workspace(foreign, &ws), foreign);
+        // The volatile-value normalizers still apply.
+        assert_eq!(
+            normalize_in_workspace(r#"{"revision":"5"}"#, &ws),
+            r#"{"revision":"<REV>"}"#
+        );
     }
 
     #[test]
