@@ -359,6 +359,62 @@ func sortedShapeKeys(m map[string]string) []string {
 	return keys
 }
 
+// versionTestSupportMints sit outside the shape split above, explicitly: they
+// are neither create-shaped, dual-shape nor update-shaped. They are not
+// mutation entry points (versionedEntryPoints) but the seam's test-support
+// twin, exempt in versionExemptions, and they reach the shared body directly
+// rather than through either entry. Each must reach neither
+// RecordVersionForCreateInTx nor RecordVersionInTx: the unfenced mint
+// (mintUnfenced) never stamps participation_generation, so a conformance
+// fixture's controlled-timestamp mint cannot promote a legacy row, and it is
+// not gated or fenced, so routing it through the update-shaped entry would
+// silently stop the as-of fixtures from minting history-off rows.
+var versionTestSupportMints = map[string]string{
+	"RecordVersionAtInTx": "R7.1 as-of read fixtures' controlled-timestamp mint (mintUnfenced): no gate, no fence, no stamp",
+}
+
+// TestTestSupportMintsStayOutsideTheShapeSplit pins versionTestSupportMints.
+func TestTestSupportMintsStayOutsideTheShapeSplit(t *testing.T) {
+	fns, createShaped, updateShaped := versionShapedMints(t)
+	shapeListed := map[string]string{}
+	for _, entry := range versionedEntryPoints {
+		shapeListed[entry] = "versionedEntryPoints"
+	}
+	for _, entry := range versionCreateShapedEntryPoints {
+		shapeListed[entry] = "versionCreateShapedEntryPoints"
+	}
+	for _, site := range versionCreateShapedMintSites {
+		shapeListed[site] = "versionCreateShapedMintSites"
+	}
+	for entry := range versionDualShapeEntryPoints {
+		shapeListed[entry] = "versionDualShapeEntryPoints"
+	}
+	for site := range versionDualShapeMintSites {
+		shapeListed[site] = "versionDualShapeMintSites"
+	}
+	for _, name := range sortedShapeKeys(versionTestSupportMints) {
+		if versionTestSupportMints[name] == "" {
+			t.Errorf("%s has an empty test-support reason", name)
+		}
+		if _, defined := fns[name]; !defined {
+			t.Errorf("test-support mint %q not found in issueops — was it renamed? update versionTestSupportMints", name)
+			continue
+		}
+		if list, listed := shapeListed[name]; listed {
+			t.Errorf("test-support mint %q is listed in %s; it is the seam's twin, not a mutation entry point or mint site, and stays outside the shape split", name, list)
+		}
+		if createShaped[name] {
+			t.Errorf("test-support mint %q reaches RecordVersionForCreateInTx, so a fixture's mint can stamp participation_generation and promote a legacy record (R2.3)", name)
+		}
+		if updateShaped[name] {
+			t.Errorf("test-support mint %q reaches RecordVersionInTx, whose gate and fence would stop an as-of fixture from minting a history-off row", name)
+		}
+		if _, exempt := versionExemptions[name]; !exempt {
+			t.Errorf("test-support mint %q is not in versionExemptions; it is the seam's twin, not a mutation entry point", name)
+		}
+	}
+}
+
 // versionExemptions are exported functions the DML detector flags as writing a
 // work-bead table but which legitimately do NOT mint a version for the row
 // they write, each with a reason. The staleness check fails if any stops being
@@ -433,6 +489,15 @@ var versionExemptions = map[string]string{
 	// bookkeeping half of the mint, not a mutation that needs its own.
 	"RecordVersionInTx":          "the seam itself; advances current_revision to match the row it just inserted",
 	"RecordVersionForCreateInTx": "the seam's create-shaped sibling; stamps participation_generation and advances current_revision to match the row it just inserted",
+
+	// RecordVersionAtInTx (R7.1 as-of read, gastownhall/beads#5898 rev 9,
+	// gastownhall/beads#6136) shares RecordVersionInTx's body
+	// (recordVersionAtInTx) but deliberately does not call RecordVersionInTx
+	// itself — it exists precisely to bypass RecordVersionInTx's
+	// versionedHistoryEnabled gate, so an as-of-read conformance fixture can
+	// mint a version dated in the past. It is the seam too, by the same
+	// reasoning as RecordVersionInTx's own entry above.
+	"RecordVersionAtInTx": "test-support twin of RecordVersionInTx, sharing its body; the seam itself, not a caller of it — advances current_revision to match the row it just inserted",
 }
 
 // versionNeverMints pins the deliberate NOT-versioned rulings from the other

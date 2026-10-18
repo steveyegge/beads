@@ -35,6 +35,9 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("ProceedsForPromotedRecord", func(t *testing.T) {
 		conformance.RunParticipationGenerationProceedsForPromotedRecord(t, ctx, fixture)
 	})
+	t.Run("FlagOffSkipsUpdateOnParticipatingRecord", func(t *testing.T) {
+		conformance.RunParticipationGenerationFlagOffSkipsUpdateOnParticipatingRecord(t, ctx, fixture)
+	})
 	t.Run("WispPromotionBeginsHistory", func(t *testing.T) {
 		conformance.RunParticipationGenerationWispPromotionBeginsHistory(t, ctx, fixture)
 	})

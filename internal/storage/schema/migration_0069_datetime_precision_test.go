@@ -39,6 +39,12 @@ const migration0069Down = "0069_widen_issue_versions_datetime_precision.down.sql
 const migration0069ChangeAtDatetimeGuard = "@issue_versions_change_at_needs_widen"
 const migration0069RemovedAtDatetimeGuard = "@issue_versions_removed_at_needs_widen"
 
+// TestLatestVersionIncludesMigration0069 (pinning LatestVersion() == 69) is
+// superseded by TestLatestVersionIncludesMigration0070
+// (migration_0070_add_participation_generation_test.go) now that 0070 claims the
+// next free slot; only one such pin lives at a time, matching how this
+// test itself already superseded 0068's own version.
+
 // TestMigration0069WidensChangeAtAndRemovedAtPrecision is the pure-Go,
 // DB-independent half of the pin, mirroring
 // TestMigration0068AddsAttributionStatus's shape: it checks the frozen

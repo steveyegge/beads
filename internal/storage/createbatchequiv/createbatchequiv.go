@@ -92,7 +92,7 @@ func largeScenarios() []scenario {
 // recorded from the code BEFORE the batch-create fast paths existed
 // (ebe3b6bcb), so the check holds the current code — fast and per-row
 // bodies alike, including changes the fast-path switch does not gate — to
-// what that code stored, apart from two deliberate behavior changes since.
+// what that code stored, apart from three deliberate behavior changes since.
 //
 // First, the create role defaults an empty created_by to the request's actor
 // (issueops.PreparePublicCreateRequest), so apply.json's issues, wisps and
@@ -107,6 +107,17 @@ func largeScenarios() []scenario {
 // their seeded rows instead (stampParticipation), so their dependency adds,
 // closes and reopens mint as they did before the fence, and their digests
 // did not move.
+//
+// Third, the issues_updated_at digests of small, depadd, import458 and
+// import458-reject-stale were re-recorded when the update-shaped version
+// mint stopped moving updated_at. Its UPDATE of current_revision used to
+// fire the column's ON UPDATE CURRENT_TIMESTAMP, so a row minted a second
+// time read the wall clock and dropped out of the compared set. Such a row
+// now keeps the timestamp it has with versioned history off: the seeded one
+// for depadd's eq-db1 and eq-dl, whose dependency adds mint again, and the
+// import source's for the in-batch duplicates eq-n2 (small) and eq-b3 and
+// eq-b250 (both import458 scenarios). apply and waitsfor did not move: their
+// re-minted rows take the wall clock from their other writes anyway.
 const GoldenDirEnv = "CREATEBATCHEQUIV_GOLDEN_DIR"
 
 // Run seeds fresh databases, applies each scenario's batch through the fast

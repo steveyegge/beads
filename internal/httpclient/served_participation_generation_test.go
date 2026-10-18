@@ -178,6 +178,9 @@ func TestServedParticipationGenerationFence(t *testing.T) {
 	t.Run("ProceedsForPromotedRecord", func(t *testing.T) {
 		conformance.RunParticipationGenerationProceedsForPromotedRecord(t, ctx, fixture)
 	})
+	t.Run("FlagOffSkipsUpdateOnParticipatingRecord", func(t *testing.T) {
+		conformance.RunParticipationGenerationFlagOffSkipsUpdateOnParticipatingRecord(t, ctx, fixture)
+	})
 	t.Run("FenceIgnoresSchemaSkewHatch", func(t *testing.T) {
 		conformance.RunParticipationGenerationFenceIgnoresSchemaSkewHatch(t, ctx, fixture)
 	})
