@@ -97,12 +97,16 @@ type CreateIssueResult struct {
 	// Set only on the path that would otherwise have minted, so the batch
 	// mints for exactly the issues a singular create would have.
 	versionDeferred bool
-	// isNew mirrors InsertIssueIfNew's result: whether this create actually
-	// inserted a new row, as opposed to resolving to an already-existing one.
-	// The participation_generation write-fence (design §16.2b) needs this to
-	// choose RecordVersionForCreateInTx over RecordVersionInTx; the deferred
-	// batch path carries it here since the per-issue isNew local is out of
-	// scope by the time the batch mints.
+	// isNew is whether this create actually inserted a new row, as opposed
+	// to resolving to an already-existing one. On the per-row path
+	// (CreateIssueInTxWithResult) it is InsertIssueIfNew's result; a row
+	// written by deferredCreates' multi-row INSERT reaches
+	// finishCreateIssueInTx directly and is always new, since only an id
+	// absent from both planes is deferrable. The participation_generation
+	// write-fence (design §16.2b) needs this to choose
+	// RecordVersionForCreateInTx over RecordVersionInTx; a batch that defers
+	// its mint (BatchContext.DeferVersionMint) carries it here since the
+	// per-issue isNew local is out of scope by the time the batch mints.
 	isNew bool
 }
 
@@ -333,9 +337,11 @@ func CreateIssuesInTxWithResult(ctx context.Context, tx DBTX, issues []*types.Is
 }
 
 // deferredVersion carries a create's issue id and whether it was a genuinely
-// new row from the per-issue loop in CreateIssuesInTxWithContext to that
-// function's own final mint pass, since the per-issue isNew local goes out of
-// scope once CreateIssueInTxWithResult returns.
+// new row (CreateIssueResult.isNew) from the per-issue loop in
+// CreateIssuesInTxWithContext to that function's own final mint pass. The
+// loop fills it from both of its write paths: a row CreateIssueInTxWithResult
+// wrote on its own, and a row deferredCreates wrote in a multi-row INSERT and
+// finished through finishCreateIssueInTx, which is always new.
 type deferredVersion struct {
 	id    string
 	isNew bool

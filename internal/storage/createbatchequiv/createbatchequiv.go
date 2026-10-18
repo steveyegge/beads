@@ -89,13 +89,15 @@ func largeScenarios() []scenario {
 // recorded from the code BEFORE the batch-create fast paths existed
 // (ebe3b6bcb), so the check holds the current code — fast and per-row
 // bodies alike, including changes the fast-path switch does not gate — to
-// what that code stored. One deliberate behavior change since: the create
-// role defaults an empty created_by to the request's actor
+// what that code stored, apart from two deliberate behavior changes since.
+//
+// First, the create role defaults an empty created_by to the request's actor
 // (issueops.PreparePublicCreateRequest), so apply.json's issues, wisps and
 // events digests were re-recorded with every apply-created row carrying
-// created_by "apply-writer"; nothing else moved.
-// The issue_versions digests of small, depadd, waitsfor, import458 and
-// import458-reject-stale, and depadd's issues_updated_at digest, were
+// created_by "apply-writer"; nothing else in apply.json moved.
+//
+// Second, the issue_versions digests of small, depadd, waitsfor, import458
+// and import458-reject-stale, and depadd's issues_updated_at digest, were
 // re-recorded when the participation-generation fence landed, because the
 // fence does not re-mint rows that predate the stamp.
 const GoldenDirEnv = "CREATEBATCHEQUIV_GOLDEN_DIR"
