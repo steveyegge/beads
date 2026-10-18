@@ -42,6 +42,15 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("WispPersistenceMoveBeginsHistory", func(t *testing.T) {
 		conformance.RunParticipationGenerationWispPersistenceMoveBeginsHistory(t, ctx, fixture)
 	})
+	t.Run("WispFlagClearMintsNothing", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispFlagClearMintsNothing(t, ctx, fixture)
+	})
+	t.Run("WispRootSquashMintsNothing", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispRootSquashMintsNothing(t, ctx, fixture)
+	})
+	t.Run("UnflaggedWispCreateMintsNothing", func(t *testing.T) {
+		conformance.RunParticipationGenerationUnflaggedWispCreateMintsNothing(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFixtureKitIsWired is this leg's half of the
@@ -71,6 +80,15 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.MovePersistent == nil {
 		t.Error("ParticipationGenerationFixture.MovePersistent is nil")
+	}
+	if fixture.ClearWispFlag == nil {
+		t.Error("ParticipationGenerationFixture.ClearWispFlag is nil")
+	}
+	if fixture.SquashWispRoot == nil {
+		t.Error("ParticipationGenerationFixture.SquashWispRoot is nil")
+	}
+	if fixture.CreateUnflaggedWisp == nil {
+		t.Error("ParticipationGenerationFixture.CreateUnflaggedWisp is nil")
 	}
 	if fixture.CurrentRevision == nil {
 		t.Error("ParticipationGenerationFixture.CurrentRevision is nil")
@@ -141,6 +159,32 @@ func newUOWParticipationGenerationFixture(t *testing.T, ctx context.Context, pre
 				_, err := uw.IssueUseCase().ApplyUpdate(ctx, id, domain.UpdateSpec{Persistence: &persistent}, "actor")
 				return "move persistent " + id, err
 			})
+		},
+		ClearWispFlag: func(ctx context.Context, id string) error {
+			// UpdateWisp, as the molecule writer routes bd mol squash's flag
+			// clear for a row it found on the wisp plane.
+			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+				return "clear wisp flag " + id, uw.IssueUseCase().UpdateWisp(ctx, id,
+					map[string]any{"wisp": false}, "actor")
+			})
+		},
+		SquashWispRoot: func(ctx context.Context, id string) error {
+			// The proxied bd mol squash's shape: CloseWisp then UpdateWisp in
+			// the one unit of work the squash commits.
+			return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+				if _, err := uw.IssueUseCase().CloseWisp(ctx, id, domain.CloseIssueParams{Reason: "squashed"}, "actor"); err != nil {
+					return "", err
+				}
+				return "squash " + id, uw.IssueUseCase().UpdateWisp(ctx, id,
+					map[string]any{"wisp": false}, "actor")
+			})
+		},
+		CreateUnflaggedWisp: func(ctx context.Context, id string) error {
+			// CreateWisp routes by the call, so neither flag is needed to land
+			// the row in the wisps table.
+			return kit.CreateWisp(ctx, &types.Issue{
+				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen,
+			}, "actor")
 		},
 		CurrentRevision: func(ctx context.Context, id string) (int64, error) {
 			var revision int64

@@ -126,8 +126,11 @@ func init() {
 		"RunParticipationGenerationFenceIgnoresSchemaSkewHatch":       participationGenerationRawStoreWaiverReason,
 		"RunParticipationGenerationProceedsForPromotedRecord":         participationGenerationRawStoreWaiverReason,
 		"RunParticipationGenerationSkipsUpdateOnLegacyRecord":         participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationUnflaggedWispCreateMintsNothing":   participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispFlagClearMintsNothing":         participationGenerationRawStoreWaiverReason,
 		"RunParticipationGenerationWispPersistenceMoveBeginsHistory":  participationGenerationRawStoreWaiverReason,
 		"RunParticipationGenerationWispPromotionBeginsHistory":        participationGenerationRawStoreWaiverReason,
+		"RunParticipationGenerationWispRootSquashMintsNothing":        participationGenerationRawStoreWaiverReason,
 	})
 }
 
@@ -341,7 +344,7 @@ const issuePatchFieldsNotOnUpdateWireWaiverReason = "PENDING, not permanent (tra
 	"closing the rest of the gap means publishing spec_id and owner on IssuePatchBody, which is a wire change " +
 	"to the write role (S4b), not something this leg's test wiring can bind around today"
 
-// participationGenerationRawStoreWaiverReason covers the seven
+// participationGenerationRawStoreWaiverReason covers the
 // ParticipationGenerationFixture cases: a storage capability, not a claim the
 // HTTP client serves.
 //

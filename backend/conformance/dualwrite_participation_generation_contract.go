@@ -79,6 +79,22 @@ type ParticipationGenerationFixture struct {
 	// a different site on every leg: the guarded update's one end-of-update
 	// mint on dolt and embeddeddolt, MoveIssuePersistenceInTx's own on uow.
 	MovePersistent func(ctx context.Context, id string) error
+	// ClearWispFlag clears the wisp id's ephemeral flag IN PLACE: the untyped
+	// UpdateIssue of {"wisp": false} bd mol squash makes on a squashed root
+	// (UpdateWisp on the unit-of-work leg, the way its molecule writer routes
+	// it). The row stays in the wisps table, now carrying neither Ephemeral
+	// nor NoHistory.
+	ClearWispFlag func(ctx context.Context, id string) error
+	// SquashWispRoot closes the wisp id and then clears its flag as
+	// ClearWispFlag does, both in ONE transaction: the shape bd mol squash's
+	// root auto-close takes, where an error from either write aborts both.
+	SquashWispRoot func(ctx context.Context, id string) error
+	// CreateUnflaggedWisp creates id in the wisps table with neither
+	// Ephemeral nor NoHistory set: import's "wisp_plane" marker, which pins
+	// the plane whatever the flags say (WispPlaneOverride = &true, through
+	// the batch create import runs), or on the unit-of-work leg CreateWisp,
+	// which routes by the call rather than by the flags.
+	CreateUnflaggedWisp func(ctx context.Context, id string) error
 	// CurrentRevision reads issues.current_revision for id.
 	CurrentRevision func(ctx context.Context, id string) (int64, error)
 	// VersionRowCount reads how many issue_versions rows exist for id.
@@ -311,6 +327,67 @@ func runWispArrivalBeginsHistory(t *testing.T, ctx context.Context, fixture Part
 		t.Errorf("version row count for %s went from %d to %d across an update-shaped mutation after the "+
 			"wisp reached the issues plane (%s), want exactly +1: a record that arrived with the flag on is "+
 			"not legacy, so the fence must let its updates mint", id, arrivedCount, afterCount, how)
+	}
+}
+
+// RunParticipationGenerationWispFlagClearMintsNothing pins that the fence
+// decides a row's plane by the TABLE that holds it, not by the row's flags.
+// bd mol squash clears a wisp root's ephemeral flag in place, so the row
+// stays in the wisps table carrying neither Ephemeral nor NoHistory, and a
+// plane test read off those flags takes it for an issues-plane row. It is
+// not one: a wisps-table row is never versioned (FR-8) and has no issues row
+// whose participation_generation the fence could read. So the update must
+// succeed and mint nothing. Read off the flags, the fence either aborts the
+// whole update looking for an issues row that is not there, or, without the
+// fence, mints a stray version for a wisp.
+func RunParticipationGenerationWispFlagClearMintsNothing(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	runWispTableRowMintsNothing(t, ctx, fixture, "flag-clear", fixture.CreateWisp, fixture.ClearWispFlag)
+}
+
+// RunParticipationGenerationWispRootSquashMintsNothing is
+// RunParticipationGenerationWispFlagClearMintsNothing in the shape bd mol
+// squash actually runs it: the root's close and its flag clear in one
+// transaction, so a mint that fails on the cleared row takes the close down
+// with it and the squash cannot complete.
+func RunParticipationGenerationWispRootSquashMintsNothing(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	runWispTableRowMintsNothing(t, ctx, fixture, "squash", fixture.CreateWisp, fixture.SquashWispRoot)
+}
+
+// RunParticipationGenerationUnflaggedWispCreateMintsNothing pins the
+// create-shaped half of the same rule: a row CREATED in the wisps table
+// without either flag (import's "wisp_plane" marker) reaches the
+// create-shaped mint, and must come out of it with no error and no version,
+// exactly as a flagged wisp does.
+func RunParticipationGenerationUnflaggedWispCreateMintsNothing(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	runWispTableRowMintsNothing(t, ctx, fixture, "unflagged-create", fixture.CreateUnflaggedWisp)
+}
+
+// runWispTableRowMintsNothing is the body the three wisps-table cases share:
+// with the flag on, every step succeeds on id and id ends with no
+// issue_versions row.
+func runWispTableRowMintsNothing(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture, how string, steps ...func(context.Context, string) error) {
+	t.Helper()
+	if err := fixture.SetFlag(ctx, true); err != nil {
+		t.Fatalf("enabling versioned history: %v", err)
+	}
+	id := fixture.IssuePrefix + "-" + how
+	for i, step := range steps {
+		if err := step(ctx, id); err != nil {
+			t.Fatalf("step %d of %s on wisps-table row %s with the flag on: %v — a row the wisps table "+
+				"holds is never versioned (FR-8), so its mint must be a no-op, not an error that aborts "+
+				"the mutation", i+1, how, id, err)
+		}
+	}
+	count, err := fixture.VersionRowCount(ctx, id)
+	if err != nil {
+		t.Fatalf("counting version rows for %s: %v", id, err)
+	}
+	if count != 0 {
+		t.Errorf("version row count for wisps-table row %s = %d after %s with the flag on, want 0: a "+
+			"wisp is never versioned (FR-8), whatever its flags say", id, count, how)
 	}
 }
 

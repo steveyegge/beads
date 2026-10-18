@@ -210,8 +210,9 @@ func canonicalDurableState(issue any) ([]byte, error) {
 // RecordVersionInTx mints one issue_versions row for issueID and advances
 // issues.current_revision to match, as of tx (read-your-writes within the
 // same transaction). A no-op when versioned history is disabled for tx, or
-// when issueID resolves to a wisp: wisps carry current_revision for shape
-// parity only and are never versioned this phase (design FR-8). IsWisp is
+// when issueID resolves to a wisp -- a row the wisps table holds, whatever
+// its flags say: wisps carry current_revision for shape parity only and are
+// never versioned this phase (design FR-8). IsWisp is
 // Ephemeral || NoHistory, so a promoted no-history bead -- a durable
 // issues-plane row with NoHistory=true -- is also never versioned; that is
 // what no-history means, not an FR-8 wisp rule, and the write-path doc's
@@ -279,10 +280,24 @@ func recordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string, isCr
 	// bearing on this check: it downgrades CheckForwardDrift's
 	// migration-cursor refusal, a different plane than this column's real
 	// per-row data.
+	//
+	// THE TABLE THAT HOLDS THE ROW decides its plane, not its flags. IsWisp
+	// above reads Ephemeral || NoHistory, and a wisps-table row can carry
+	// neither: bd mol squash clears a wisp root's flag in place, and import's
+	// "wisp_plane" marker routes an unflagged row to wisps. Such a row passes
+	// IsWisp, but there is no issues row for it, so this read finds nothing.
+	// No issues row means nothing to version (FR-8), for an update- or a
+	// create-shaped call alike: mint nothing and let the mutation proceed,
+	// rather than abort it on sql.ErrNoRows. GetIssueInTx resolved the
+	// snapshot above, so the row exists; ErrNoRows here can only mean it is
+	// in the wisps table.
 	var participationGeneration sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
 		"SELECT participation_generation FROM issues WHERE id = ?", issueID,
 	).Scan(&participationGeneration); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
 		return fmt.Errorf("versioned history: read participation_generation for %s: %w", issueID, err)
 	}
 	if !isCreate && !participationGeneration.Valid {

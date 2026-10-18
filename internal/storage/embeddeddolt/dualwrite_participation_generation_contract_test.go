@@ -49,6 +49,15 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("WispPersistenceMoveBeginsHistory", func(t *testing.T) {
 		conformance.RunParticipationGenerationWispPersistenceMoveBeginsHistory(t, ctx, fixture)
 	})
+	t.Run("WispFlagClearMintsNothing", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispFlagClearMintsNothing(t, ctx, fixture)
+	})
+	t.Run("WispRootSquashMintsNothing", func(t *testing.T) {
+		conformance.RunParticipationGenerationWispRootSquashMintsNothing(t, ctx, fixture)
+	})
+	t.Run("UnflaggedWispCreateMintsNothing", func(t *testing.T) {
+		conformance.RunParticipationGenerationUnflaggedWispCreateMintsNothing(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFixtureKitIsWired is this leg's half of the
@@ -79,6 +88,15 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.MovePersistent == nil {
 		t.Error("ParticipationGenerationFixture.MovePersistent is nil")
+	}
+	if fixture.ClearWispFlag == nil {
+		t.Error("ParticipationGenerationFixture.ClearWispFlag is nil")
+	}
+	if fixture.SquashWispRoot == nil {
+		t.Error("ParticipationGenerationFixture.SquashWispRoot is nil")
+	}
+	if fixture.CreateUnflaggedWisp == nil {
+		t.Error("ParticipationGenerationFixture.CreateUnflaggedWisp is nil")
 	}
 	if fixture.CurrentRevision == nil {
 		t.Error("ParticipationGenerationFixture.CurrentRevision is nil")
@@ -142,6 +160,28 @@ func newEmbeddedParticipationGenerationFixture(t *testing.T, te *testEnv, prefix
 				err = fmt.Errorf("persistence move of %s reported no change", id)
 			}
 			return err
+		},
+		ClearWispFlag: func(ctx context.Context, id string) error {
+			return store.UpdateIssue(ctx, id, map[string]any{"wisp": false}, "actor")
+		},
+		SquashWispRoot: func(ctx context.Context, id string) error {
+			// bd mol squash's own shape: the root's close and its flag clear
+			// in the one transaction the squash commits.
+			return store.RunInTransaction(ctx, "squash "+id, func(tx storage.Transaction) error {
+				if err := tx.CloseIssue(ctx, id, "squashed", "actor", ""); err != nil {
+					return err
+				}
+				return tx.UpdateIssue(ctx, id, map[string]any{"wisp": false}, "actor")
+			})
+		},
+		CreateUnflaggedWisp: func(ctx context.Context, id string) error {
+			// Import's "wisp_plane" marker: the override, not the flags, puts
+			// the row in the wisps table.
+			wispPlane := true
+			return store.CreateIssuesWithFullOptions(ctx, []*types.Issue{{
+				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen,
+				WispPlaneOverride: &wispPlane,
+			}}, "actor", storage.BatchCreateOptions{SkipPrefixValidation: true})
 		},
 		CurrentRevision: func(ctx context.Context, id string) (int64, error) {
 			var revision int64
