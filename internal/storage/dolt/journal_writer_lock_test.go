@@ -25,6 +25,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/journalscan"
 	"github.com/steveyegge/beads/internal/types"
@@ -90,12 +91,31 @@ func (r *sqlRecorder) matching(prefix string) []string {
 	return out
 }
 
-// recordingConnector hands database/sql the sqlmock connection for dsn behind
-// a recordingConn.
+// sawAfter reports whether a statement starting with next was recorded after
+// the first one starting with first.
+func (r *sqlRecorder) sawAfter(first, next string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seen := false
+	for _, stmt := range r.stmts {
+		switch {
+		case !seen:
+			seen = strings.HasPrefix(stmt, first)
+		case strings.HasPrefix(stmt, next):
+			return true
+		}
+	}
+	return false
+}
+
+// recordingConnector hands database/sql the connection for dsn — sqlmock's,
+// or a live server's — behind a recordingConn. With a gate, its sessions also
+// hold their journaled commits there (see commitGate).
 type recordingConnector struct {
-	dsn string
-	drv driver.Driver
-	rec *sqlRecorder
+	dsn  string
+	drv  driver.Driver
+	rec  *sqlRecorder
+	gate *commitGate
 }
 
 func (c recordingConnector) Connect(context.Context) (driver.Conn, error) {
@@ -103,7 +123,7 @@ func (c recordingConnector) Connect(context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return recordingConn{Conn: conn, rec: c.rec}, nil
+	return recordingConn{Conn: conn, rec: c.rec, gate: c.gate, journaled: new(bool)}, nil
 }
 
 func (c recordingConnector) Driver() driver.Driver { return c.drv }
@@ -113,7 +133,11 @@ func (c recordingConnector) Driver() driver.Driver { return c.drv }
 // paths it takes over a bare sqlmock connection.
 type recordingConn struct {
 	driver.Conn
-	rec *sqlRecorder
+	rec  *sqlRecorder
+	gate *commitGate
+	// journaled is whether the session's open transaction has advanced
+	// bd_events_seq; database/sql runs one statement at a time on a session.
+	journaled *bool
 }
 
 func (c recordingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
@@ -123,11 +147,65 @@ func (c recordingConn) QueryContext(ctx context.Context, query string, args []dr
 
 func (c recordingConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	c.rec.record(query)
+	if strings.HasPrefix(query, "UPDATE bd_events_seq SET next_seq = next_seq + 1") {
+		*c.journaled = true
+	}
 	return c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
 }
 
 func (c recordingConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+	*c.journaled = false
+	tx, err := c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+	if err != nil || c.gate == nil {
+		return tx, err
+	}
+	return gatedTx{Tx: tx, conn: c}, nil
+}
+
+// gatedTx holds its COMMIT at the session's gate when the transaction has
+// advanced bd_events_seq.
+type gatedTx struct {
+	driver.Tx
+	conn recordingConn
+}
+
+func (tx gatedTx) Commit() error {
+	if *tx.conn.journaled {
+		tx.conn.gate.hold()
+	}
+	return tx.Tx.Commit()
+}
+
+// commitGate holds one journaled commit — the first COMMIT, after the gate is
+// armed, of a transaction that advanced bd_events_seq — until the test lets it
+// go, so the test can look at the server while that writer sits between its
+// journaled writes and its commit.
+type commitGate struct {
+	mu     sync.Mutex
+	held   chan struct{}
+	resume chan struct{}
+}
+
+// arm sets the gate for the next journaled commit. held is closed once that
+// commit is waiting at the gate; resume lets it go and is idempotent.
+func (g *commitGate) arm() (held <-chan struct{}, resume func()) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.held, g.resume = make(chan struct{}), make(chan struct{})
+	release := g.resume
+	return g.held, sync.OnceFunc(func() { close(release) })
+}
+
+func (g *commitGate) hold() {
+	g.mu.Lock()
+	held, resume := g.held, g.resume
+	g.held, g.resume = nil, nil
+	g.mu.Unlock()
+	if held == nil {
+		return
+	}
+	close(held)
+	<-resume
 }
 
 func (c recordingConn) Ping(ctx context.Context) error {
@@ -529,9 +607,7 @@ func TestJournalWriterLock_SilentHolderIsReclaimed(t *testing.T) {
 	if err := store.CreateIssue(ctx, &types.Issue{ID: "bd-sh-1", Title: "sh", IssueType: types.TypeTask, Status: types.StatusOpen}, "actor"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	stale := issueops.JournalWriterStaleHolder
-	issueops.JournalWriterStaleHolder = 2 * time.Second
-	t.Cleanup(func() { issueops.JournalWriterStaleHolder = stale })
+	shortenStaleHolder(t, 2*time.Second)
 
 	holder := openSecondStoreOnBranch(t, ctx, store)
 	conn, err := holder.db.Conn(ctx)
@@ -555,6 +631,109 @@ func TestJournalWriterLock_SilentHolderIsReclaimed(t *testing.T) {
 	}
 	if err := conn.PingContext(ctx); err == nil {
 		t.Error("the silent holder's session survived the reclaim")
+	}
+}
+
+// staleHolderMu serializes the live tests that shorten
+// issueops.JournalWriterStaleHolder: they run in parallel, and one's restore
+// landing inside the other's window would leave it waiting on the full bound.
+var staleHolderMu sync.Mutex
+
+// shortenStaleHolder sets issueops.JournalWriterStaleHolder to d for the rest
+// of the test.
+func shortenStaleHolder(t *testing.T, d time.Duration) {
+	t.Helper()
+	staleHolderMu.Lock()
+	stale := issueops.JournalWriterStaleHolder
+	issueops.JournalWriterStaleHolder = d
+	t.Cleanup(func() {
+		issueops.JournalWriterStaleHolder = stale
+		staleHolderMu.Unlock()
+	})
+}
+
+// TestJournalWriterLock_AgedHolderIsNotReclaimed pins what the reclaim keys
+// on: the time since the holder's last statement (PROCESSLIST TIME on a Sleep
+// row), not the age of its connection. The holder keeps the lock, sending a
+// statement every half second, until the waiter's statement log shows a
+// reclaim probe (the PROCESSLIST read after a timed-out GET_LOCK) and the
+// GET_LOCK after it, so the reclaim has looked at the holder and decided. By
+// then the holder's session is older than the stale bound. It must still be
+// alive, the waiter must have sent no KILL, and the waiter's write must land
+// once the holder lets go.
+//
+// It runs on a database of its own: the lock name carries the database, so
+// no other test's writer can hold the lock it watches.
+func TestJournalWriterLock_AgedHolderIsNotReclaimed(t *testing.T) {
+	store, cleanup := setupConcurrentTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := store.CreateIssue(ctx, &types.Issue{ID: "bd-ah-1", Title: "ah", IssueType: types.TypeTask, Status: types.StatusOpen}, "actor"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	shortenStaleHolder(t, 2*time.Second)
+	rec := &sqlRecorder{}
+	waiter := openRecordingStoreOnBranch(t, ctx, store, rec, nil)
+	enableJournalForTest(t, waiter)
+
+	holder := openSecondStoreOnBranch(t, ctx, store)
+	conn, err := holder.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("holder conn: %v", err)
+	}
+	defer conn.Close()
+	lockName := issueops.JournalWriterLockName(store.database)
+	var got int
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 5)", lockName).Scan(&got); err != nil || got != 1 {
+		t.Fatalf("hold journal writer lock: got=%d err=%v", got, err)
+	}
+	held := time.Now()
+
+	// Every wait below is bounded, and a failure lets go of the lock and
+	// drains the waiter before the stores close.
+	bound := 3 * time.Duration(issueops.JournalWriterLockWait) * time.Second
+	releaseLock := sync.OnceFunc(func() { _, _ = conn.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", lockName) })
+	done := make(chan error, 1)
+	waited := sync.OnceValue(func() error {
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(bound):
+			return fmt.Errorf("no result within %s", bound)
+		}
+	})
+	defer func() {
+		releaseLock()
+		_ = waited()
+	}()
+	go func() {
+		done <- waiter.UpdateIssue(ctx, "bd-ah-1", map[string]interface{}{"title": "after the aged holder"}, "actor")
+	}()
+
+	const probe = "SELECT COMMAND, TIME FROM information_schema.PROCESSLIST"
+	for !rec.sawAfter(probe, "SELECT GET_LOCK") {
+		if time.Since(held) > bound {
+			t.Fatalf("the waiter sent no reclaim probe and asked again within %s of the holder taking the lock", bound)
+		}
+		time.Sleep(500 * time.Millisecond)
+		if _, err := conn.ExecContext(ctx, "SELECT 1"); err != nil {
+			t.Fatalf("the holder's session was ended %s into its hold, though it was never silent for %s: %v",
+				time.Since(held).Round(time.Millisecond), issueops.JournalWriterStaleHolder, err)
+		}
+	}
+	t.Logf("reclaim probe observed %s into the hold", time.Since(held).Round(time.Millisecond))
+	if _, err := conn.ExecContext(ctx, "SELECT 1"); err != nil {
+		t.Fatalf("the reclaim probe ended a live holder whose connection was merely older than %s: %v", issueops.JournalWriterStaleHolder, err)
+	}
+	if kills := rec.matching("KILL"); len(kills) != 0 {
+		t.Errorf("the waiter sent %q at a holder that was never silent for %s", kills, issueops.JournalWriterStaleHolder)
+	}
+	releaseLock()
+	if err := waited(); err != nil {
+		t.Fatalf("journaled UpdateIssue behind a live holder: %v", err)
+	}
+	if err := conn.PingContext(ctx); err != nil {
+		t.Errorf("the holder's session did not survive the reclaim probe: %v", err)
 	}
 }
 
@@ -695,6 +874,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -1077,6 +1257,44 @@ func openSecondStoreOnBranch(t *testing.T, ctx context.Context, primary *DoltSto
 	return second
 }
 
+// openRecordingStoreOnBranch is openSecondStoreOnBranch with the store's pool
+// swapped for a single-session one behind a recordingConnector: its sessions
+// log every statement in rec and, with a gate, hold their journaled commits
+// there.
+func openRecordingStoreOnBranch(t *testing.T, ctx context.Context, primary *DoltStore, rec *sqlRecorder, gate *commitGate) *DoltStore {
+	t.Helper()
+	store := openSecondStoreOnBranch(t, ctx, primary)
+	db := sql.OpenDB(recordingConnector{dsn: store.connStr, drv: store.db.Driver(), rec: rec, gate: gate})
+	db.SetMaxOpenConns(1) // DOLT_CHECKOUT below is session-level
+	_ = store.db.Close()
+	store.db = db // closed with the store
+	var branch string
+	if err := primary.db.QueryRowContext(ctx, "SELECT active_branch()").Scan(&branch); err != nil {
+		t.Fatalf("read test branch: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", branch); err != nil {
+		t.Fatalf("check recording store out to %s: %v", branch, err)
+	}
+	return store
+}
+
+// tryJournalLock reports whether conn's session could take the journal writer
+// lock without waiting, and gives it straight back if it could.
+func tryJournalLock(t *testing.T, ctx context.Context, conn *sql.Conn, name string) bool {
+	t.Helper()
+	var got sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 0)", name).Scan(&got); err != nil {
+		t.Fatalf("try journal writer lock: %v", err)
+	}
+	if got.Valid && got.Int64 == 1 {
+		if _, err := conn.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", name); err != nil {
+			t.Fatalf("give back journal writer lock: %v", err)
+		}
+		return true
+	}
+	return false
+}
+
 // TestEventsJournal_OverlappingServerWritersQueue pins the journal writer
 // lock (#6117). The long writer and the short one run on different stores
 // with their own pools on the same database and branch, so nothing but the
@@ -1160,5 +1378,346 @@ func assertJournaledWritersQueue(t *testing.T, ctx context.Context, long, short 
 		if rows[i].seq != rows[i-1].seq+1 {
 			t.Fatalf("journal seqs not contiguous: %+v", rows)
 		}
+	}
+}
+
+// createLockOrderIssues creates one open task per id on store.
+func createLockOrderIssues(t *testing.T, ctx context.Context, store *DoltStore, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		if err := store.CreateIssue(ctx, &types.Issue{ID: id, Title: id, IssueType: types.TypeTask, Status: types.StatusOpen}, "actor"); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+}
+
+// parkJournaledHolder starts a journaled withRetryTx body on holder that
+// retitles issue id to title and records the event, and returns once the body
+// is parked inside its transaction, holding the journal writer lock. The body
+// commits when release runs; done carries the result. Callers defer release
+// so a failure does not strand the holder while the stores close.
+func parkJournaledHolder(t *testing.T, ctx context.Context, holder *DoltStore, id, title string) (release func(), done <-chan error) {
+	t.Helper()
+	inside := make(chan struct{})
+	gate := make(chan struct{})
+	release = sync.OnceFunc(func() { close(gate) })
+	result := make(chan error, 1)
+	parked := false
+	go func() {
+		result <- holder.withRetryTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, "UPDATE issues SET title = ? WHERE id = ?", title, id); err != nil {
+				return err
+			}
+			if err := issueops.RecordEventInTx(ctx, tx, issueops.EventUpdate, id, "actor"); err != nil {
+				return err
+			}
+			if !parked {
+				parked = true
+				close(inside)
+				<-gate
+			}
+			return nil
+		})
+	}()
+	select {
+	case <-inside:
+	case err := <-result:
+		t.Fatalf("journaled holder finished (err=%v) before parking inside its transaction", err)
+	}
+	return release, result
+}
+
+// assertJournalFollowsHolder checks the journal a parked holder and a writer
+// queued behind it left: the holder's row first, then at least one of the
+// writer's, the seqs contiguous. A writer whose transaction began before the
+// holder committed would have read bd_events_seq stale and lost its commit.
+func assertJournalFollowsHolder(t *testing.T, store *DoltStore, holderID string) {
+	t.Helper()
+	rows := readJournalRows(t, store)
+	if len(rows) < 2 || rows[0].id != holderID {
+		t.Fatalf("journal rows = %+v, want the holder's %s row first and the queued writer's after it", rows, holderID)
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i].seq != rows[i-1].seq+1 {
+			t.Fatalf("journal seqs not contiguous: %+v", rows)
+		}
+	}
+}
+
+// TestJournalWriterLock_RecordingRouteHoldsAcrossCommit pins that
+// runDoltTransactionRecording, the transaction behind RunInTransaction, keeps
+// the journal writer lock until it has committed. Its body does a journaled
+// write and parks; a journaled write on another store, which only the server
+// lock can hold back, must still be waiting half a second later. Released any
+// earlier — after BEGIN, say — the short writer commits inside the window and
+// the long one loses its commit with 1213.
+func TestJournalWriterLock_RecordingRouteHoldsAcrossCommit(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	second := openSecondStoreOnBranch(t, ctx, store)
+	enableJournalForTest(t, store)
+	enableJournalForTest(t, second)
+	createLockOrderIssues(t, ctx, store, "bd-rh-1", "bd-rh-2")
+
+	calls := 0
+	inside := make(chan struct{})
+	release := make(chan struct{})
+	releaseLong := sync.OnceFunc(func() { close(release) })
+	defer releaseLong()
+	longDone := make(chan error, 1)
+	go func() {
+		longDone <- store.RunInTransaction(ctx, "bd: recording route holds the journal lock", func(tx storage.Transaction) error {
+			calls++
+			if err := tx.UpdateIssue(ctx, "bd-rh-1", map[string]interface{}{"title": "long"}, "actor"); err != nil {
+				return err
+			}
+			if calls == 1 {
+				close(inside)
+				<-release
+			}
+			return nil
+		})
+	}()
+	select {
+	case <-inside:
+	case err := <-longDone:
+		t.Fatalf("recording transaction finished (err=%v) before its body parked", err)
+	}
+
+	shortDone := make(chan error, 1)
+	go func() {
+		shortDone <- second.UpdateIssue(ctx, "bd-rh-2", map[string]interface{}{"title": "short"}, "actor")
+	}()
+	select {
+	case err := <-shortDone:
+		t.Fatalf("short journaled write finished (err=%v) while a recording transaction held the journal; it must queue until that commits", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	releaseLong()
+	if err := <-longDone; err != nil {
+		t.Fatalf("recording transaction: %v", err)
+	}
+	if err := <-shortDone; err != nil {
+		t.Fatalf("short write: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("recording body ran %d times, want 1", calls)
+	}
+}
+
+// TestJournalWriterLock_RecordingRouteLocksBeforeBegin pins that
+// runDoltTransactionRecording takes the journal writer lock before it begins
+// its transaction. Another store's journaled writer holds the lock first, with
+// an uncommitted retitle; the recording transaction, started meanwhile, reads
+// that issue and does a journaled write of its own. Locked before BEGIN, its
+// snapshot follows the holder's commit: it reads the new title and commits.
+// Locked after BEGIN, its snapshot predates that commit, so it reads the old
+// title and its bd_events_seq write fails with 1213.
+func TestJournalWriterLock_RecordingRouteLocksBeforeBegin(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	second := openSecondStoreOnBranch(t, ctx, store)
+	enableJournalForTest(t, store)
+	enableJournalForTest(t, second)
+	createLockOrderIssues(t, ctx, store, "bd-rb-1", "bd-rb-2")
+	clearJournal(t, store)
+
+	releaseHolder, holderDone := parkJournaledHolder(t, ctx, second, "bd-rb-1", "held")
+	defer releaseHolder()
+
+	calls := 0
+	var seen string
+	done := make(chan error, 1)
+	go func() {
+		done <- store.RunInTransaction(ctx, "bd: recording route locks before begin", func(tx storage.Transaction) error {
+			calls++
+			issue, err := tx.GetIssue(ctx, "bd-rb-1")
+			if err != nil {
+				return err
+			}
+			seen = issue.Title
+			return tx.UpdateIssue(ctx, "bd-rb-2", map[string]interface{}{"title": "after " + issue.Title}, "actor")
+		})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("recording transaction finished (err=%v) while another journaled writer held the lock; it must queue", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	releaseHolder()
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("recording transaction behind a committed holder: %v (a 1213 means it began before the holder committed)", err)
+	}
+	if calls != 1 {
+		t.Fatalf("recording body ran %d times, want 1", calls)
+	}
+	if seen != "held" {
+		t.Fatalf("recording body read title %q, want the holder's committed %q: its snapshot predates the holder's commit", seen, "held")
+	}
+	assertJournalFollowsHolder(t, store, "bd-rb-1")
+}
+
+// TestJournalWriterLock_RawSitesQueueAndBeginAfterTheHolder pins the lock
+// order on the write paths that pin a connection with writeTxConn and run a
+// bare BeginTx/Commit on it, with no retry: wisp updates, closes and slot
+// writes, dependency removals and comments. Each site's public entry runs on a
+// store whose session holds its journaled commit at a gate, and starts while
+// another store's journaled writer is parked holding the lock. It must still
+// be waiting half a second later (it queues). Once the holder commits, the
+// entry reaches its commit holding the lock: another session cannot take it
+// until the commit has gone through, and then can (it keeps the lock to its
+// commit). It must succeed with its journal rows after the holder's (it began
+// after the holder committed: a transaction begun earlier reads bd_events_seq
+// stale and fails with 1213).
+//
+// It runs on a database of its own, so a probe that finds the lock taken
+// cannot be reading another test's writer.
+func TestJournalWriterLock_RawSitesQueueAndBeginAfterTheHolder(t *testing.T) {
+	store, cleanup := setupConcurrentTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	second := openSecondStoreOnBranch(t, ctx, store)
+	gate := &commitGate{}
+	raw := openRecordingStoreOnBranch(t, ctx, store, &sqlRecorder{}, gate)
+	enableJournalForTest(t, store)
+	enableJournalForTest(t, second)
+	enableJournalForTest(t, raw)
+	const holderID, blockerID = "bd-rs-holder", "bd-rs-blocker"
+	createLockOrderIssues(t, ctx, store, holderID, blockerID)
+	lockName := issueops.JournalWriterLockName(store.database)
+	const bound = 10 * time.Second
+
+	addBlocker := func(ctx context.Context, s *DoltStore, id string) error {
+		return s.AddDependency(ctx, &types.Dependency{IssueID: id, DependsOnID: blockerID, Type: types.DepBlocks}, "actor")
+	}
+	removeBlocker := func(ctx context.Context, s *DoltStore, id string) error {
+		return s.RemoveDependencyWithOptions(ctx, id, blockerID, "actor", storage.DependencyRemoveOptions{EmitEvent: true})
+	}
+	for i, site := range []struct {
+		name  string
+		wisp  bool
+		prep  func(ctx context.Context, s *DoltStore, id string) error
+		write func(ctx context.Context, s *DoltStore, id string) error
+	}{
+		{name: "updateWisp", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.UpdateIssue(ctx, id, map[string]interface{}{"title": "raw"}, "actor")
+		}},
+		{name: "closeWisp", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.CloseIssue(ctx, id, "done", "actor", "")
+		}},
+		{name: "mergeMetadataWisp", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.SlotSet(ctx, id, "slot", "raw", "actor")
+		}},
+		{name: "clearMetadataWisp", wisp: true,
+			prep: func(ctx context.Context, s *DoltStore, id string) error {
+				return s.SlotSet(ctx, id, "slot", "raw", "actor")
+			},
+			write: func(ctx context.Context, s *DoltStore, id string) error {
+				return s.SlotClear(ctx, id, "slot", "actor")
+			}},
+		{name: "updateWispChecked", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.UpdateIssueChecked(ctx, id, map[string]interface{}{"title": "raw"}, "actor", storage.UpdateIssueOptions{})
+		}},
+		{name: "closeWispChecked", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			_, err := s.CloseIssueChecked(ctx, id, "actor", storage.CloseIssueOptions{Reason: "done"})
+			return err
+		}},
+		{name: "deleteWisp", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.DeleteIssue(ctx, id)
+		}},
+		{name: "deleteWispBatchTx", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			_, err := s.DeleteIssues(ctx, []string{id}, false, false, false)
+			return err
+		}},
+		{name: "claimWisp", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.ClaimIssue(ctx, id, "actor")
+		}},
+		{name: "addWispDependency", wisp: true, write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.AddDependencyWithOptions(ctx, &types.Dependency{IssueID: id, DependsOnID: blockerID, Type: types.DepBlocks}, "actor", storage.DependencyAddOptions{EmitEvent: true})
+		}},
+		{name: "RemoveDependencyWithOptions wisp", wisp: true, prep: addBlocker, write: removeBlocker},
+		{name: "RemoveDependencyWithOptions issue", prep: addBlocker, write: removeBlocker},
+		{name: "AddComment", write: func(ctx context.Context, s *DoltStore, id string) error {
+			return s.AddComment(ctx, id, "actor", "raw")
+		}},
+	} {
+		t.Run(site.name, func(t *testing.T) {
+			id := fmt.Sprintf("bd-rs-%d", i)
+			if err := store.CreateIssue(ctx, &types.Issue{ID: id, Title: id, IssueType: types.TypeTask, Status: types.StatusOpen, Ephemeral: site.wisp}, "actor"); err != nil {
+				t.Fatalf("create %s: %v", id, err)
+			}
+			if site.prep != nil {
+				if err := site.prep(ctx, store, id); err != nil {
+					t.Fatalf("prepare %s: %v", id, err)
+				}
+			}
+			clearJournal(t, store)
+
+			held, resume := gate.arm()
+			releaseHolder, holderDone := parkJournaledHolder(t, ctx, second, holderID, "held by "+site.name)
+			var writeErr error
+			written := make(chan struct{})
+			// However this ends, let the holder and the gated commit go and
+			// wait, bounded, for the entry before the stores close.
+			defer func() {
+				releaseHolder()
+				resume()
+				select {
+				case <-written:
+				case <-time.After(bound):
+				}
+			}()
+			go func() {
+				defer close(written)
+				writeErr = site.write(ctx, raw, id)
+			}()
+			select {
+			case <-written:
+				t.Fatalf("%s finished (err=%v) while another journaled writer held the lock; it must queue", site.name, writeErr)
+			case <-held:
+				t.Fatalf("%s reached its journaled commit while another journaled writer held the lock; it must queue", site.name)
+			case <-time.After(500 * time.Millisecond):
+			}
+			releaseHolder()
+			if err := <-holderDone; err != nil {
+				t.Fatalf("holder: %v", err)
+			}
+
+			select {
+			case <-held:
+			case <-written:
+				t.Fatalf("%s finished (err=%v) without a journaled commit reaching the gate", site.name, writeErr)
+			case <-time.After(bound):
+				t.Fatalf("%s did not reach its journaled commit within %s of the holder committing", site.name, bound)
+			}
+			probe, err := second.db.Conn(ctx)
+			if err != nil {
+				t.Fatalf("probe conn: %v", err)
+			}
+			defer probe.Close()
+			if tryJournalLock(t, ctx, probe, lockName) {
+				t.Errorf("another session took the journal writer lock while %s sat between its journaled writes and its commit; it must keep the lock until it has committed", site.name)
+			}
+			resume()
+			select {
+			case <-written:
+			case <-time.After(bound):
+				t.Fatalf("%s did not finish within %s of its commit going ahead", site.name, bound)
+			}
+			if writeErr != nil {
+				t.Fatalf("%s behind a committed holder: %v (a 1213 means it began before the holder committed)", site.name, writeErr)
+			}
+			for deadline := time.Now().Add(bound); !tryJournalLock(t, ctx, probe, lockName); time.Sleep(50 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatalf("the journal writer lock was still held %s after %s committed", bound, site.name)
+				}
+			}
+			assertJournalFollowsHolder(t, store, holderID)
+		})
 	}
 }

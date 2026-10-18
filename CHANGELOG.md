@@ -377,6 +377,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A journal emit inside a NoJournal write transaction now fails** with
+  `issueops.ErrJournalUnlockedTx` instead of being skipped, so a journaled
+  write can no longer slip onto a transaction that does not take the journal
+  writer lock.
+
 - **Gate members are bounds-checked in the library, on every local backend.**
   `issueops.Lifecycle.Create`, `Lifecycle.Update` and `BatchApplier` (create
   and update items) now refuse, with a typed `*issueops.GateFieldError`
@@ -594,6 +599,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunBatchApplyAppliesTheDefaultPriority`.
 
 ### Fixed
+
+- **Journaled writes in server mode queue instead of aborting each other**
+  ([#6117](https://github.com/gastownhall/beads/issues/6117)). Every write
+  that records a journal event now waits for a per-database server lock
+  before its transaction begins, instead of losing its commit on
+  `bd_events_seq` with a serialization failure and replaying. A holder that
+  goes silent for 30 s (a client that froze mid-write) is reclaimed, so it
+  cannot block the other writers until the server's idle cut.
 
 - **`bd import` no longer reports a failed dependency check as a skipped
   dependency.** Import skips an edge the dependency checks refuse (a
