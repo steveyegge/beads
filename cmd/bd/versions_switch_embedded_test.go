@@ -67,6 +67,23 @@ func TestEmbeddedVersionedHistorySwitchRoundTrip(t *testing.T) {
 	// consult, everything below fails.
 	bdConfig(t, bd, dir, "set", "versioned-history.enabled", "true")
 
+	// A bead that existed before the switch was turned on never participated in
+	// history (design §16.2b: the write fence skips a legacy record), so writing
+	// to it versions nothing. That is the fence, pinned at the command level.
+	legacyID := id
+	bdRunOK(t, bd, dir, "update", legacyID, "--title", "switch round trip, edited while legacy")
+	if legacy := bdRunOK(t, bd, dir, "versions", legacyID); !strings.Contains(legacy, "No versions recorded for "+legacyID) {
+		t.Errorf("a bead created before the switch was turned on gained a version from an ordinary write; the fence must skip it. out=%s", legacy)
+	}
+
+	// The round trip itself is asserted on a bead created AFTER the switch, which
+	// participates, so its writes are versioned.
+	created = bdRunOK(t, bd, dir, "create", "switch round trip, created with history on")
+	id = extractFirstID(created, "vsw-")
+	if id == "" {
+		t.Fatalf("could not find a vsw- id in create output: %s", created)
+	}
+
 	bdRunOK(t, bd, dir, "update", id, "--title", "switch round trip, edited")
 
 	out := bdRunOK(t, bd, dir, "versions", id)

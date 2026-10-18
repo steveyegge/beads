@@ -284,14 +284,22 @@ func TestVersionedHistoryFollowsTheStoreItWritesInto(t *testing.T) {
 			t.Fatal("the launching workspace has a row; this subtest's premise is that it has none")
 		}
 
-		m.expectDelta(t, "routed update into the enabling rig", map[string]int{"vha": 1}, func() { m.routedUpdate(t, idA, "routed update a") })
-		m.expectDelta(t, "routed close into the enabling rig", map[string]int{"vha": 1}, func() { m.routedClose(t, idAClose) })
+		// The rows the writes below expect a version for are created AFTER the setting
+		// is on, so they participate in history. The seeds above were created with it
+		// off, so they are legacy and design §16.2b's write fence skips an update-shaped
+		// write to them whole: that is pinned here, at the command level.
+		idAOn, idACloseOn := m.create(t, m.rigA, "seed a, created with history on"), m.create(t, m.rigA, "seed a close, created with history on")
+		m.expectDelta(t, "routed update of a seed created before history was enabled", nil, func() { m.routedUpdate(t, idA, "routed update a, legacy seed") })
+		m.expectDelta(t, "routed close of a seed created before history was enabled", nil, func() { m.routedClose(t, idAClose) })
+
+		m.expectDelta(t, "routed update into the enabling rig", map[string]int{"vha": 1}, func() { m.routedUpdate(t, idAOn, "routed update a") })
+		m.expectDelta(t, "routed close into the enabling rig", map[string]int{"vha": 1}, func() { m.routedClose(t, idACloseOn) })
 		m.expectDelta(t, "bd create --repo into the enabling rig", map[string]int{"vha": 1}, func() { m.routedCreate(t, m.rigA, "routed create a") })
 		// A second rig that never asked stays at zero while the first records.
 		m.expectDelta(t, "routed update into a rig that never enabled history", nil, func() { m.routedUpdate(t, idB, "routed update b") })
 		m.expectDelta(t, "bd create --repo into a rig that never enabled history", nil, func() { m.routedCreate(t, m.rigB, "routed create b") })
 		m.expectDelta(t, "direct write inside the enabling rig", map[string]int{"vha": 1}, func() {
-			vhBD(t, m.bd, m.rigA.dir, nil, "update", idA, "--title", "direct a")
+			vhBD(t, m.bd, m.rigA.dir, nil, "update", idAOn, "--title", "direct a")
 		})
 	})
 
@@ -299,8 +307,10 @@ func TestVersionedHistoryFollowsTheStoreItWritesInto(t *testing.T) {
 		m.setRow(t, m.rigA, "false")
 		m.expectDelta(t, "routed update after setting the rig's row back to false", nil, func() { m.routedUpdate(t, idA, "after flip back") })
 		m.setRow(t, m.rigA, "true")
+		// Created after the setting is on again, so it participates; idA is a legacy seed.
+		idAFlip := m.create(t, m.rigA, "seed a, created after enabling again")
 		m.expectDelta(t, "routed update after enabling again, with no restart of anything", map[string]int{"vha": 1}, func() {
-			m.routedUpdate(t, idA, "after flip forward")
+			m.routedUpdate(t, idAFlip, "after flip forward")
 		})
 		m.setRow(t, m.rigA, "false")
 	})
@@ -332,10 +342,23 @@ func TestVersionedHistoryEnvIsProcessWideAndOnlyTurnsRecordingOn(t *testing.T) {
 	idA, idB := m.create(t, m.rigA, "seed a"), m.create(t, m.rigB, "seed b")
 
 	on := []string{vhEnvVar + "=1"}
+	// The rows the writes below expect a version for are created AFTER the setting is on
+	// (here, the environment), so they participate in history. The seeds above were created
+	// with it off, so they are legacy and design §16.2b's write fence skips an update-shaped
+	// write to them whole: that is pinned here, at the command level.
+	createOn := func(w vhWorkspace, title string) string {
+		out, _ := vhBD(t, m.bd, w.dir, on, "create", "--silent", title)
+		return strings.TrimSpace(out)
+	}
+	idAOn, idBOn := createOn(m.rigA, "seed a, created under the env override"), createOn(m.rigB, "seed b, created under the env override")
+	m.expectDelta(t, "routed writes to seeds created before the env override", nil, func() {
+		m.routedUpdate(t, idA, "env legacy a", on...)
+		m.routedUpdate(t, idB, "env legacy b", on...)
+	})
 	// Every store this process opens records, whatever its own row says.
 	m.expectDelta(t, "routed writes into both rigs under the env override", map[string]int{"vha": 1, "vhb": 1}, func() {
-		m.routedUpdate(t, idA, "env a", on...)
-		m.routedUpdate(t, idB, "env b", on...)
+		m.routedUpdate(t, idAOn, "env a", on...)
+		m.routedUpdate(t, idBOn, "env b", on...)
 	})
 	m.expectDelta(t, "bd create --repo under the env override", map[string]int{"vhb": 1}, func() {
 		m.routedCreate(t, m.rigB, "env create b", on...)
@@ -346,7 +369,7 @@ func TestVersionedHistoryEnvIsProcessWideAndOnlyTurnsRecordingOn(t *testing.T) {
 	m.setRow(t, m.rigA, "true")
 	off := []string{vhEnvVar + "=0"}
 	m.expectDelta(t, "env=0 over a rig whose row enables history", map[string]int{"vha": 1}, func() {
-		m.routedUpdate(t, idA, "env off a", off...)
+		m.routedUpdate(t, idAOn, "env off a", off...)
 	})
 	m.expectDelta(t, "env=0 over a rig with no row", nil, func() {
 		m.routedUpdate(t, idB, "env off b", off...)

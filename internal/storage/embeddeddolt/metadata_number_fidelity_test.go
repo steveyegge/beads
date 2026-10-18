@@ -4,6 +4,7 @@ package embeddeddolt_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,7 +74,9 @@ func embeddedDoltVersion(reported string) string {
 // less than a double can share a canonical form, which is harmless only while the store cannot
 // hold them apart. Whatever this Dolt does to numbers, it asserts in three phases that (1) with
 // history OFF the store accepts a number outside the I-JSON range and the table logs what it
-// holds, (2) with history ON a later write to such a row is refused and changes nothing, and
+// holds, (2) with history ON a later write to such a row succeeds and mints nothing while the row
+// never participated (design §16.2b's fence skips a legacy record whole, before the mint's
+// admission gate), and is refused and changes nothing once the row participates, and
 // (3) no two literals which read back as DIFFERENT numbers were both admitted with the SAME
 // canonical form, and a literal the mint refuses leaves neither an issue row nor a version row.
 func TestVersionedHistoryKeepsNumbersTheStoreDistinguishesApart(t *testing.T) {
@@ -101,7 +104,7 @@ func TestVersionedHistoryKeepsNumbersTheStoreDistinguishesApart(t *testing.T) {
 	// Phase 1: history off. What does the store hold for a number outside the range?
 	t.Logf("metadata number normalization, embedded leg, dolt %s", embeddedDoltVersion(reported))
 	configurer.SetVersionedHistoryEnabled(false)
-	var held []string
+	var held, heldLiterals []string
 	for i, lit := range metadataNumberCorpus {
 		if !metadataNumbersOutsideTheRange[lit] {
 			continue
@@ -118,26 +121,83 @@ func TestVersionedHistoryKeepsNumbersTheStoreDistinguishesApart(t *testing.T) {
 		stored, _ := storedNumberAndCanonicalMetadata(t, issue.Metadata, nil)
 		t.Logf("  history off: %-34s held as %s", lit, stored)
 		held = append(held, id)
+		heldLiterals = append(heldLiterals, lit)
 	}
 
-	// Phase 2: history on. A write to a row holding such a number is refused and changes nothing.
+	rowState := func(id string) (versions int, revision int64, generation sql.NullInt64) {
+		t.Helper()
+		if err := kit.QueryScalar(ctx, `SELECT COUNT(*) FROM issue_versions WHERE issue_id = ?`, []any{id}, &versions); err != nil {
+			t.Fatalf("counting the version rows of %s: %v", id, err)
+		}
+		if err := kit.QueryScalar(ctx, `SELECT current_revision FROM issues WHERE id = ?`, []any{id}, &revision); err != nil {
+			t.Fatalf("reading the revision of %s: %v", id, err)
+		}
+		if err := kit.QueryScalar(ctx, `SELECT participation_generation FROM issues WHERE id = ?`, []any{id}, &generation); err != nil {
+			t.Fatalf("reading the participation of %s: %v", id, err)
+		}
+		return versions, revision, generation
+	}
+
+	// Phase 2a: history on, rows that never participated. Each was made with history off, so it is
+	// a legacy record (participation_generation NULL) and design §16.2b's write fence skips an
+	// update-shaped write to it whole, before the mint's admission gate: the write succeeds,
+	// nothing is versioned, nothing is refused and the stamp stays NULL, whatever the metadata holds.
 	configurer.SetVersionedHistoryEnabled(true)
 	for _, id := range held {
+		_, revisionBefore, _ := rowState(id)
+		if err := te.store.UpdateIssue(ctx, id, map[string]any{"title": "retitled"}, "actor"); err != nil {
+			t.Errorf("updating %s, a legacy row that holds a number outside the I-JSON range, = %v, want success: the fence skips a legacy record before the mint's admission gate", id, err)
+			continue
+		}
+		after, err := te.store.GetIssue(ctx, id)
+		if err != nil || after.Title != "retitled" {
+			t.Errorf("the update of legacy row %s did not land: title %q (err %v), want %q", id, after.Title, err, "retitled")
+		}
+		versions, revision, generation := rowState(id)
+		if versions != 0 || generation.Valid || revision != revisionBefore {
+			t.Errorf("the update of legacy row %s versioned or promoted it: version rows %d (want 0), participation_generation %v (want NULL), current_revision %d -> %d (want unchanged)",
+				id, versions, generation, revisionBefore, revision)
+		}
+	}
+
+	// Phase 2b: history on, rows that participate. Each is created with history on holding an
+	// in-range stand-in, so the real create-shaped mint stamps it; the stamp is read first, because
+	// that is what makes this case about participation. History is then switched off and the row's
+	// metadata replaced through the store, which is how a row comes to hold such a number without the
+	// mint having seen it, and switched on again. The next write is refused and changes nothing.
+	for k, lit := range heldLiterals {
+		id := fmt.Sprintf("nf-part-%02d", k)
+		configurer.SetVersionedHistoryEnabled(true)
+		if err := te.store.CreateIssue(ctx, newIssue(id, "1"), "actor"); err != nil {
+			t.Fatalf("creating the participating row %s with history on: %v", id, err)
+		}
+		if _, _, generation := rowState(id); !generation.Valid {
+			t.Fatalf("%s was created with history on but participation_generation is NULL: the control failed, so this case would not be about participation", id)
+		}
+		configurer.SetVersionedHistoryEnabled(false)
+		if err := te.store.UpdateIssue(ctx, id, map[string]any{"metadata": json.RawMessage(`{"n":` + lit + `}`)}, "actor"); err != nil {
+			t.Fatalf("replacing the metadata of %s with %s while history is off: %v", id, lit, err)
+		}
+		configurer.SetVersionedHistoryEnabled(true)
 		before, err := te.store.GetIssue(ctx, id)
 		if err != nil {
 			t.Fatalf("reading %s: %v", id, err)
 		}
+		versionsBefore, revisionBefore, generationBefore := rowState(id)
 		err = te.store.UpdateIssue(ctx, id, map[string]any{"title": "retitled"}, "actor")
 		if !errors.Is(err, issueops.ErrIntegerNotRepresentable) {
-			t.Errorf("updating %s, which holds a number outside the I-JSON range, = %v, want ErrIntegerNotRepresentable", id, err)
+			t.Errorf("updating %s, a participating row that holds %s, = %v, want ErrIntegerNotRepresentable", id, lit, err)
 		}
 		after, getErr := te.store.GetIssue(ctx, id)
-		if getErr != nil || after.Title != before.Title {
-			t.Errorf("the refused update of %s left a trace: title %q -> %q (err %v)", id, before.Title, after.Title, getErr)
+		versions, revision, generation := rowState(id)
+		if getErr != nil || after.Title != before.Title || versions != versionsBefore || revision != revisionBefore || generation != generationBefore {
+			t.Errorf("the refused update of %s left a trace: title %q -> %q, version rows %d -> %d, current_revision %d -> %d, participation_generation %v -> %v (err %v)",
+				id, before.Title, after.Title, versionsBefore, versions, revisionBefore, revision, generationBefore, generation, getErr)
 		}
 	}
 
 	// Phase 3: history on, fresh rows. The property.
+	configurer.SetVersionedHistoryEnabled(true)
 	type admittedLiteral struct{ written, storedAs, canonical string }
 	var admitted []admittedLiteral
 	for i, lit := range metadataNumberCorpus {

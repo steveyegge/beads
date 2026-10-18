@@ -1768,7 +1768,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   I-JSON exact-integer range (magnitude above 2^53-1)"; `ErrIntegerNotRepresentable`
   keeps its name. With history on, a write that introduces such a number already
   fails atomically, but a row that already holds one, written while history was
-  off, would fail every later write to it. So
+  off, would, if it participates in history, fail every later write to it. So
   `bd config set versioned-history.enabled true` now checks every issue the store
   would version, the whole issue and not only its metadata, and refuses, writing
   nothing, while any holds a number outside the range, in its metadata or in a
@@ -1781,7 +1781,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while history is off. There is no override, and turning history off never runs
   the check. The check runs once: a writer that does not record (an older bd,
   `bd sql`, a pull from a clone that had history off) can still add such a row
-  afterwards, and the first write to it then fails with the same refusal.
+  afterwards, and, if it participates in history, the first write to it then
+  fails with the same refusal.
   Turning it on through `BD_VERSIONED_HISTORY_ENABLED` or `config.yaml` does not
   pass through the command, so those planes rely on the refusal at write time.
   Dolt's JSON column collapses duplicate keys when it stores a document, so on a

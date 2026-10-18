@@ -68,6 +68,12 @@ func TestRecordVersionInTxRefusesANumberOutsideTheRangeAndWritesNothing(t *testi
 			mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
 				WithArgs(id).
 				WillReturnRows(sqlmock.NewRows([]string{"label"}))
+			// design §16.2b's write fence reads participation_generation right after the
+			// snapshot. A non-NULL value is a participating row, so the mint goes on to the
+			// refusal this test pins; a NULL one would be a legacy row and mint nothing.
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT participation_generation FROM issues WHERE id = ?")).
+				WithArgs(id).
+				WillReturnRows(sqlmock.NewRows([]string{"participation_generation"}).AddRow(1))
 			mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps LIMIT 1")).
 				WillReturnRows(sqlmock.NewRows([]string{"1"}))
 			mock.ExpectQuery(`FROM dependencies WHERE issue_id IN`).
@@ -100,6 +106,47 @@ func TestRecordVersionInTxRefusesANumberOutsideTheRangeAndWritesNothing(t *testi
 				t.Fatalf("the mint read or wrote something other than the scripted reads: %v", err)
 			}
 		})
+	}
+}
+
+// A legacy row (participation_generation NULL) holding the same out-of-range number is outside
+// the mint's refusal: design §16.2b's write fence returns right after the snapshot, so the
+// admission gate never runs and RecordVersionInTx returns nil.
+//
+// The mock scripts the snapshot, the labels and the fence's read returning NULL, and nothing after
+// it. A mint that read the dependencies, the epoch or a revision, or wrote, before it decided to
+// skip would fail the call with an unexpected-statement error instead of returning nil, so this is
+// the cheapest pin of the fence's order against the gate.
+func TestRecordVersionInTxSkipsALegacyRowBeforeTheAdmissionGate(t *testing.T) {
+	const id = "bd-9"
+	_, mock, tx := beginMockTx(t)
+	defer ScopeVersionedHistoryTransaction(tx, true)()
+
+	values := issueRowValues(id, "a legacy row that carries an out-of-range number")
+	for i, col := range issueColumns() {
+		if col == "metadata" {
+			values[i] = `{"ts":1727000000000000000}`
+		}
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + IssueSelectColumns + " FROM issues " + sqlbuild.LeaseJoin("issues") + " WHERE id = ?")).
+		WithArgs(id).
+		WillReturnRows(issueRows().AddRow(values...))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+		WithArgs(id).
+		WillReturnRows(sqlmock.NewRows([]string{"label"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT participation_generation FROM issues WHERE id = ?")).
+		WithArgs(id).
+		WillReturnRows(sqlmock.NewRows([]string{"participation_generation"}).AddRow(nil))
+	mock.ExpectRollback()
+
+	if err := RecordVersionInTx(context.Background(), tx, id, "actor"); err != nil {
+		t.Fatalf("RecordVersionInTx on a legacy row = %v, want nil: the fence skips it before the admission gate", err)
+	}
+	if rbErr := tx.Rollback(); rbErr != nil {
+		t.Fatalf("rolling back the writer's transaction: %v", rbErr)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("the mint read or wrote something after the fence skipped the row: %v", err)
 	}
 }
 
@@ -194,8 +241,9 @@ func TestCheckIssueVersionableAgreesWithTheMint(t *testing.T) {
 // nothing in a clean store.
 //
 // A gate whose timeout is over 105 days is the case that motivated checking the
-// whole issue: its timeout is past 2^53-1 ns, so the mint refuses every write to
-// it, and a scan that looked only at metadata cleared the switch over it.
+// whole issue: its timeout is past 2^53-1 ns, so, if it participates in history,
+// the mint refuses every write to it, and a scan that looked only at metadata
+// cleared the switch over it.
 func TestFindUnversionableFindsWhatTheMintWouldRefuse(t *testing.T) {
 	oversize := json.RawMessage(`{"ts":1727000000000000000}`)
 	overlong := 105 * 24 * time.Hour

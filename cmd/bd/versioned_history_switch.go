@@ -54,16 +54,20 @@ const versionedHistoryRefusalListLimit = 20
 // so a write that introduces a number outside the I-JSON exact-integer range, in
 // metadata or in a gate's timeout, already fails atomically. A row that holds one
 // BEFORE the switch is turned on -- written while history was off, or by a path
-// that does not record -- would fail every later write to it. So the switch reads
-// every issue the store would version, runs the check recording runs over each
-// one (issueops.FindUnversionable: the whole issue, not its metadata alone), and
-// refuses, writing nothing, while any is refused.
+// that does not record -- would, if it participates in history, fail every later
+// write to it. So the switch reads every issue the store would version, runs the
+// check recording runs over each one (issueops.FindUnversionable: the whole
+// issue, not its metadata alone), and refuses, writing nothing, while any is
+// refused. It cannot see participation, so it checks legacy rows too: an
+// over-approximation that can only refuse more.
 //
 // That check runs once, now. A writer that does not record (an older bd, bd sql, a
 // pull from a clone that had history off) can add such a row at any time
-// afterwards, even right after the switch is on, and the first write to it then
-// fails with the same refusal, and the same fix applies. Making the check and the
-// write of the setting one transaction would narrow that window, not close it.
+// afterwards, even right after the switch is on. If the row participates in
+// history, the first write to it then fails with the same refusal, and the same fix
+// applies; a legacy row is skipped by the write fence and stays writable. Making
+// the check and the write of the setting one transaction would narrow that window,
+// not close it.
 //
 // It reads through the same role accessor `bd list` does, so the direct and the
 // proxied route both answer, and with the request that means "everything": every
@@ -122,8 +126,8 @@ func checkVersionedHistoryCanBeEnabled(ctx context.Context, key, value string) e
 // bd update, which works with history on or off, because a version is recorded
 // from the state after the write. bd update cannot change a gate's timeout, so the
 // gate is removed or its column is set with bd sql, while history is off; with
-// history on, every write to that row, a close included, is refused. bd sql needs
-// a server-backed store, which the text says.
+// history on, every write to that row, a close included, is refused if the row
+// participates in history. bd sql needs a server-backed store, which the text says.
 func unversionableIssueRefusal(found []storageissueops.UnversionableIssue) string {
 	noun, verb := "issues", "hold"
 	if len(found) == 1 {
