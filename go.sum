@@ -441,8 +441,8 @@ github.com/dolthub/eventkit v0.0.0-20260611184414-99f5693e696a h1:qNecLF0XIN1BD0
 github.com/dolthub/eventkit v0.0.0-20260611184414-99f5693e696a/go.mod h1:eHUkm69YMO2/v7bzwwYCEkd+3Xu7+KUpP7jFWAbpDlM=
 github.com/dolthub/eventsapi_schema v0.0.0-20260715220557-d9b4a1c6b4d4 h1:0mg9QEFdkkBwJMxvz1tCjHYmfG2iIC6aShj1InDq9/M=
 github.com/dolthub/eventsapi_schema v0.0.0-20260715220557-d9b4a1c6b4d4/go.mod h1:SSLraQS/jGLYFgff3vuZ+JbVUct6vyEeMzjLBqWqoyM=
-github.com/dolthub/file-locks v0.1.1 h1:8oKr20PflAVHkroB5Kq1BrtzesvKop9onekWEse1Qr8=
-github.com/dolthub/file-locks v0.1.1/go.mod h1:8B7bWbbkj76BAnD2EaNrj/6HW25iCpq4Ivzz+kA5b1w=
+github.com/dolthub/file-locks v0.1.2 h1:D0eaII+636hkk7uJu++qaUT/XqDtRTQArWBQ6vEHfJU=
+github.com/dolthub/file-locks v0.1.2/go.mod h1:8B7bWbbkj76BAnD2EaNrj/6HW25iCpq4Ivzz+kA5b1w=
 github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 h1:u3PMzfF8RkKd3lB9pZ2bfn0qEG+1Gms9599cr0REMww=
 github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2/go.mod h1:mIEZOHnFx4ZMQeawhw9rhsj+0zwQj7adVsnBX7t+eKY=
 github.com/dolthub/fslock v0.0.5 h1:QoXhBhgY1oumHE26qyE7tgmXUT8qjJwxsIzo54O/B/k=
