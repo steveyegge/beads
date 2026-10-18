@@ -503,10 +503,18 @@ func TestPRRunsGoTestsBazelSkips(t *testing.T) {
 // goTestDefaultVetFlags: the vet checks go.mod's Go toolchain gives `go test`
 // (cmd/go's defaultVetFlags), read from its source, so a Go upgrade that
 // changes them fails here until tools/nogo/analyzers.bzl follows. Under Bazel the
-// toolchain is the registered SDK (testGo).
+// toolchain is the registered SDK (testGo); under plain go test, GOTOOLCHAIN
+// keeps a newer host Go from changing the policy this test validates.
 func goTestDefaultVetFlags(t *testing.T) []string {
 	t.Helper()
-	goroot, err := exec.Command(testGo(t), "env", "GOROOT").Output()
+	root := sourceRepoRoot(t)
+	version, err := goModToolchainVersion(readPolicyFile(t, root, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(testGo(t), "env", "GOROOT")
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=go"+version)
+	goroot, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
