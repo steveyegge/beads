@@ -763,6 +763,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd init --server --external` no longer starts a Dolt server of its own.**
+  Init builds its store config by hand and turned auto-start on for every
+  server init, so an `--external` init that named no port launched a
+  repo-local `dolt sql-server`, although `--external` says the server is
+  managed outside bd. `--external` now turns auto-start off. When the
+  external server cannot be reached, init gives one message on every route
+  (host and port, socket, shared server, auto-start pinned off): it names the
+  endpoint it dialed, says that bd did not start a server, and no longer
+  advises `bd dolt start`. With no port named at all, it asks for one
+  (`--server-port` or `BEADS_DOLT_SERVER_PORT`) instead of offering a default.
 - **A failed `bd init --server` can be retried.** A first attempt that could
   not reach its server left an empty `.beads/dolt` and nothing on disk that
   records the server choice, so the legacy-upgrade guard refused every retry
