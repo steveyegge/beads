@@ -106,8 +106,10 @@ func init() {
 		"RunImporterWiresTheCrossPlaneEdgeBetweenItsRows": importerOneAccessorWaiverReason,
 		"RunImporterReportsTheCycleEdgeItDropped":         importerOneAccessorWaiverReason,
 
+		"RunACarriedAddressKeepsResolvingAcrossLaterBumps":             retentionEpochNoRoleWaiverReason,
 		"RunADestructiveOperationEnumeratesAffectedAddressesFirst":     retentionEpochNoRoleWaiverReason,
 		"RunAHoldPreventsRemovalAndReportsInRetainedBounds":            retentionEpochNoRoleWaiverReason,
+		"RunALostAddressStaysGoneAcrossASchemeChange":                  retentionEpochNoRoleWaiverReason,
 		"RunAStoreThatRemovesStateStillAnswersGoneDurably":             retentionEpochNoRoleWaiverReason,
 		"RunAStoreWithNoLineageKnowledgeAnswersUnknownNotGone":         retentionEpochNoRoleWaiverReason,
 		"RunAnAddressNeverResolvesToADifferentState":                   retentionEpochNoRoleWaiverReason,
@@ -121,6 +123,7 @@ func init() {
 		"RunRemovalNeverReassignsASurvivingAddress":                    retentionEpochNoRoleWaiverReason,
 		"RunRemovalReasonIsRetentionErasureOrReorganizationDistinctly": retentionEpochNoRoleWaiverReason,
 		"RunRemovalReportsTheSurvivingRetainedWindow":                  retentionEpochNoRoleWaiverReason,
+		"RunTokenSchemeChangeCarriesLiveAddressesAndOnlyThose":         retentionEpochNoRoleWaiverReason,
 
 		"RunAdvisoryLeaseAloneDoesNotPreventTheInvariantViolation":    crossRecordInvariantNoRoleWaiverReason,
 		"RunCrossRecordInvariantSurvivesTwoPassingPerRecordGuards":    crossRecordInvariantNoRoleWaiverReason,
@@ -185,7 +188,7 @@ const cycleTracksWireGapWaiverReason = "issueops.DetectCyclesRequest.IncludeTrac
 	"\"L-cycles-tracks\" — rather than silently answering the narrower walk); no slice through S13 adds a wire " +
 	"parameter for it, so closing this is a new, not-yet-numbered slice rather than a missing test line"
 
-// retentionEpochNoRoleWaiverReason covers the fifteen RetentionFixture and
+// retentionEpochNoRoleWaiverReason covers the eighteen RetentionFixture and
 // EpochFixture cases: PERMANENTLY unservable over HTTP, not merely unwired
 // yet.
 //
