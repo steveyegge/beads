@@ -253,7 +253,10 @@ func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) erro
 // participation (FR-8). A new issues-table row that carries NoHistory (or a
 // stray Ephemeral) is stamped but not versioned: no-history keeps it out of
 // history for now, but it was created with the flag on, so it is not
-// legacy once that flag is repaired.
+// legacy once that flag is repaired. A row the wisps table holds mints and
+// stamps nothing, whatever its flags say: it has no issues row to stamp, and
+// a wisp is never versioned (FR-8). That covers an ordinary wisp create and
+// an unflagged wisps-table row (import's "wisp_plane" marker) alike.
 func RecordVersionForCreateInTx(ctx context.Context, tx DBTX, issueID, actor string) error {
 	return recordVersionInTx(ctx, tx, issueID, actor, true)
 }
@@ -314,10 +317,11 @@ func recordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string, isCr
 		// still declares its participation. Import keeps a promoted
 		// no-history row on the issues plane exactly this way (bd-r9uce).
 		// When bd update --persistent later repairs the flag in place, that
-		// repair mints update-shaped (MoveIssuePersistenceInTx), and left
-		// NULL here the fence would read the row as legacy for good. Same
-		// source and same updated_at rule as the stamp at the end of this
-		// function.
+		// repair mints update-shaped: through the guarded update's one
+		// end-of-update mint (executeUpdate) on dolt and embeddeddolt, or
+		// MoveIssuePersistenceInTx's own on the unit-of-work path. Left NULL
+		// here, the fence would read the row as legacy for good. Same source
+		// and same updated_at rule as the stamp at the end of this function.
 		epoch, err := readStoreEpochInTx(ctx, tx)
 		if err != nil {
 			return err
