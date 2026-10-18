@@ -33,6 +33,15 @@ var neverSatisfiedTags = map[string]bool{"ignore": true, "never": true}
 const importerOneAccessorWaiverReason = "Importer has one accessor (uow.ImporterSource); " +
 	"the store legs run bd import through the raw seam and implement no Importer role"
 
+// asOfReadNoHTTPWireWaiverReason records why the R7.1 as-of read contracts
+// (backend/conformance/versioned_read_contract.go) do not run on the HTTP leg.
+// They are a storage capability, not a claim that the HTTP client serves them:
+// internal/httpclient answers AsOf with an explicit unsupported error, and the
+// wire has no store-address/instant selector and no gone/unknown refusal
+// response. Keep the gap visible until a supported HTTP surface is designed and
+// tested.
+const asOfReadNoHTTPWireWaiverReason = "HTTP AsOf is explicitly unsupported by internal/httpclient; no store-address/instant selector and refusal response is wired"
+
 // The waivers of the three legs registered here. Each is registered beside its
 // leg rather than written into one literal, so a leg registered elsewhere
 // brings its waivers the same way; see unwiredContractEntrypoints.
@@ -57,6 +66,12 @@ func init() {
 		"RunIssueOperationsCreateParentChildRecomputesWaitsForClosure":   stagingWaiverReason,
 	})
 	registerContractLegWaivers("http", map[string]string{
+		"RunAsOfReadIsCompleteOnlyForTheAnsweringStoresHoldings":              asOfReadNoHTTPWireWaiverReason,
+		"RunAsOfReadRefusesAsGoneOrUnknownNeverSubstitutingAnotherVersion":    asOfReadNoHTTPWireWaiverReason,
+		"RunAsOfReadReportsTheAddressItServed":                                asOfReadNoHTTPWireWaiverReason,
+		"RunAsOfReadReturnsTheLatestVersionAtOrBeforeTStrictlyExcludingLater": asOfReadNoHTTPWireWaiverReason,
+		"RunAsOfReadSelectorAcceptsEitherAnInstantOrAVersionAddress":          asOfReadNoHTTPWireWaiverReason,
+
 		"RunCycleDetectorIncludeTracksFindsTheMoleculeRootShape":         cycleTracksWireGapWaiverReason,
 		"RunCycleDetectorIncludeTracksIgnoresAPureTracksLoop":            cycleTracksWireGapWaiverReason,
 		"RunCycleDetectorIncludeTracksWalksEachEdgeInItsStoredDirection": cycleTracksWireGapWaiverReason,

@@ -255,6 +255,7 @@
 34 30 TestProxiedServerStatus
 34 30 TestProxiedServerTodo
 34 30 TestProxiedServerUpdate2
+34 30 TestProxiedServerVersionedHistoryServeActivatesTheProviderFromItsOwnRow
 
 34 31 TestProxiedServerCloseBeadGate
 34 31 TestProxiedServerComment
