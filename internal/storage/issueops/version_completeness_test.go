@@ -159,63 +159,90 @@ var versionedEntryPoints = []string{
 // a legacy row and so promote it, which R2.3 forbids an ordinary write.
 var versionCreateShapedMintHelper = map[string]bool{"RecordVersionForCreateInTx": true}
 
-// versionCreateShapedMintSites must each call RecordVersionForCreateInTx
-// THEMSELVES. Reaching it through a delegate is not enough at these sites:
-// executeUpdate runs its persistence move with mintVersion=false, and a batch
-// create switches finishCreateIssueInTx's own mint off at run time
-// (DeferVersionMint), so the call graph would credit each with a create-shaped
-// mint its constituents never perform.
+// versionUpdateShapedMintHelper is the update-shaped entry: it reads
+// participation_generation and mints nothing for a legacy (NULL) row.
+var versionUpdateShapedMintHelper = map[string]bool{"RecordVersionInTx": true}
+
+// versionCreateShapedMintSites are the PURE create-shaped mint sites: every
+// row each one mints for is new on the issues plane, so each must call
+// RecordVersionForCreateInTx itself and must never call RecordVersionInTx.
 var versionCreateShapedMintSites = []string{
-	"finishCreateIssueInTx",       // a singular create's first version
-	"CreateIssuesInTxWithContext", // a batch create's deferred mint pass
-	"PromoteFromEphemeralInTx",    // a wisp promoted onto the issues plane
-	"moveIssuePersistenceInTx",    // a persistence move out of the wisps table
-	"executeUpdate",               // the guarded update's EnteredIssuesPlane branch
+	"PromoteFromEphemeralInTx", // a wisp promoted onto the issues plane
 }
 
-// versionCreateShapedEntryPoints are the entry points that must reach
-// RecordVersionForCreateInTx, directly or transitively: every mint site above
-// and every entry that delegates to one. Any other versioned entry point is
-// update-shaped and must not reach it (TestUpdateShapedEntryPointsNeverMintCreateShaped).
-var versionCreateShapedEntryPoints = append([]string{
-	"CreateIssueInTx",
-	"CreateIssueInTxWithResult",
-	"CreateIssuesInTx",
-	"CreateIssuesInTxWithResult",
-	"deferredCreates.flush", // #7205's multi-row INSERT path, finished as new rows
-	"MoveIssuePersistenceInTx",
-	"ExecuteCreate",
-	"ExecuteCreateBatch",
-	"ExecuteUpdate",
-}, versionCreateShapedMintSites...)
-
-// versionMixedShapeEntryPoints compose create- and update-shaped mutations in
-// one call, so they reach both entries by design and are held to neither half
-// of the shape split.
-var versionMixedShapeEntryPoints = map[string]string{
-	"ApplyBatchInTx": "batch apply runs create items and update items in one transaction",
+// versionDualShapeMintSites choose the entry per row at run time: create-shaped
+// on the branch where the row is new on the issues plane, update-shaped on the
+// branch where it already lived there. Each branch is a common path, so each
+// site must call BOTH entries itself. Reaching either one through a delegate
+// is not enough: executeUpdate runs its persistence move with
+// mintVersion=false, and a batch create switches finishCreateIssueInTx's own
+// mint off at run time (DeferVersionMint), so the call graph would credit each
+// with mints its constituents never perform.
+//
+// A site that calls only one entry has had a branch switched to the other. If
+// the update-shaped branch now calls the create-shaped entry, an ordinary
+// write stamps a legacy row and promotes it (R2.3). If the create-shaped
+// branch now calls the update-shaped entry, the fence reads the new row's NULL
+// as legacy, and the record is never versioned.
+var versionDualShapeMintSites = map[string]string{
+	"finishCreateIssueInTx":       "a singular create mints create-shaped when it inserted the row and update-shaped when it resolved to an existing one",
+	"CreateIssuesInTxWithContext": "a batch create's deferred mint pass is create-shaped for a row the batch inserted and update-shaped for an existing row it resolved to",
+	"moveIssuePersistenceInTx":    "a move out of the wisps table is create-shaped; the same-plane normalize (bd update --persistent repairing an issues-plane row's flags in place) is update-shaped",
+	"executeUpdate":               "the guarded update's EnteredIssuesPlane branch is create-shaped; every other change it mints for is update-shaped",
 }
 
-func versionCreateShapedMints(t *testing.T) (map[string]*journalscan.FuncInfo, map[string]bool) {
+// versionCreateShapedEntryPoints are the entry points whose every mint is
+// create-shaped, so each must reach RecordVersionForCreateInTx.
+// deferredCreates.flush (#7205's multi-row INSERT path) is one: it hands
+// finishCreateIssueInTx isNew=true for every row. The call graph cannot read
+// that literal, so flush still reaches the update-shaped entry through
+// finishCreateIssueInTx, and it is held only to the create half.
+var versionCreateShapedEntryPoints = []string{
+	"PromoteFromEphemeralInTx",
+	"deferredCreates.flush",
+}
+
+// versionDualShapeEntryPoints reach both entries by design. Each delegates to
+// a dual-shape mint site, or composes create- and update-shaped mutations in
+// one call, so it must reach both and is held to neither half of the split on
+// its own. The dual-shape mint sites above pin which branch calls which entry.
+var versionDualShapeEntryPoints = map[string]string{
+	"CreateIssueInTx":             "delegates to finishCreateIssueInTx",
+	"CreateIssueInTxWithResult":   "delegates to finishCreateIssueInTx",
+	"CreateIssuesInTx":            "delegates to CreateIssuesInTxWithContext",
+	"CreateIssuesInTxWithResult":  "delegates to CreateIssuesInTxWithContext",
+	"CreateIssuesInTxWithContext": "a dual-shape mint site itself",
+	"MoveIssuePersistenceInTx":    "delegates to moveIssuePersistenceInTx with its mint on",
+	"ExecuteCreate":               "delegates to the create path, which ends in finishCreateIssueInTx",
+	"ExecuteCreateBatch":          "delegates to CreateIssuesInTxWithContext",
+	"ExecuteUpdate":               "delegates to executeUpdate",
+	"ApplyBatchInTx":              "batch apply runs create items and update items in one transaction",
+}
+
+func versionShapedMints(t *testing.T) (fns map[string]*journalscan.FuncInfo, createShaped, updateShaped map[string]bool) {
 	t.Helper()
 	fns, err := journalscan.ParsePackage(".")
 	if err != nil {
 		t.Fatalf("parse package: %v", err)
 	}
-	return fns, journalscan.Fixpoint(fns,
-		func(f *journalscan.FuncInfo) bool { return f.CallsAnyOf(versionCreateShapedMintHelper) },
-		versionMintEdges(fns))
+	edges := versionMintEdges(fns)
+	createShaped = journalscan.Fixpoint(fns,
+		func(f *journalscan.FuncInfo) bool { return f.CallsAnyOf(versionCreateShapedMintHelper) }, edges)
+	updateShaped = journalscan.Fixpoint(fns,
+		func(f *journalscan.FuncInfo) bool { return f.CallsAnyOf(versionUpdateShapedMintHelper) }, edges)
+	return fns, createShaped, updateShaped
 }
 
 // TestCreateShapedEntryPointsMintCreateShaped pins the create half of the
-// shape split: each create-shaped mint site calls RecordVersionForCreateInTx
-// itself, and every create-shaped entry point reaches it. If one of them
-// falls back to RecordVersionInTx, the fence finds the new row's
-// participation_generation NULL, skips the mint, and the record is never
-// versioned. TestEveryVersionedEntryPointMints cannot see that, because
+// shape split: each pure create-shaped mint site calls
+// RecordVersionForCreateInTx itself and never RecordVersionInTx, and every
+// pure create-shaped entry point reaches it. If one of them falls back to
+// RecordVersionInTx, the fence finds the new row's participation_generation
+// NULL, skips the mint, and the record is never versioned.
+// TestEveryVersionedEntryPointMints cannot see that, because
 // RecordVersionInTx satisfies it.
 func TestCreateShapedEntryPointsMintCreateShaped(t *testing.T) {
-	fns, createShaped := versionCreateShapedMints(t)
+	fns, createShaped, _ := versionShapedMints(t)
 	for _, site := range versionCreateShapedMintSites {
 		f, defined := fns[site]
 		if !defined {
@@ -224,6 +251,9 @@ func TestCreateShapedEntryPointsMintCreateShaped(t *testing.T) {
 		}
 		if !f.CallsAnyOf(versionCreateShapedMintHelper) {
 			t.Errorf("create-shaped mint site %q does not call RecordVersionForCreateInTx itself; the row it mints for is new on the issues plane, so an update-shaped mint there is fenced as legacy", site)
+		}
+		if f.CallsAnyOf(versionUpdateShapedMintHelper) {
+			t.Errorf("create-shaped mint site %q calls RecordVersionInTx; every row it mints for is new on the issues plane, so that mint is fenced as legacy — or, if it now also mints for an existing row, list it in versionDualShapeMintSites", site)
 		}
 	}
 	for _, entry := range versionCreateShapedEntryPoints {
@@ -237,12 +267,54 @@ func TestCreateShapedEntryPointsMintCreateShaped(t *testing.T) {
 	}
 }
 
+// TestDualShapeMintSitesCallBothEntries pins the dual-shape sites, the ones
+// the update half below has to skip. Each calls RecordVersionInTx and
+// RecordVersionForCreateInTx itself, so switching either branch to the
+// other entry fails here. Each dual-shape entry point reaches both, so a
+// delegate that stopped minting one shape is not silently skipped by the
+// update half.
+func TestDualShapeMintSitesCallBothEntries(t *testing.T) {
+	fns, createShaped, updateShaped := versionShapedMints(t)
+	for _, site := range sortedShapeKeys(versionDualShapeMintSites) {
+		if versionDualShapeMintSites[site] == "" {
+			t.Errorf("dual-shape mint site %s has an empty reason", site)
+		}
+		f, defined := fns[site]
+		if !defined {
+			t.Errorf("dual-shape mint site %q not found in issueops — was it renamed? update versionDualShapeMintSites", site)
+			continue
+		}
+		if !f.CallsAnyOf(versionCreateShapedMintHelper) {
+			t.Errorf("dual-shape mint site %q no longer calls RecordVersionForCreateInTx itself; its branch for a row new on the issues plane (%s) now fences that row as legacy, and the record is never versioned", site, versionDualShapeMintSites[site])
+		}
+		if !f.CallsAnyOf(versionUpdateShapedMintHelper) {
+			t.Errorf("dual-shape mint site %q no longer calls RecordVersionInTx itself; its branch for a row already on the issues plane (%s) now stamps participation_generation and promotes a legacy record (R2.3)", site, versionDualShapeMintSites[site])
+		}
+	}
+	for _, entry := range sortedShapeKeys(versionDualShapeEntryPoints) {
+		if versionDualShapeEntryPoints[entry] == "" {
+			t.Errorf("dual-shape entry point %s has an empty reason", entry)
+		}
+		if _, defined := fns[entry]; !defined {
+			t.Errorf("dual-shape entry point %q not found in issueops — was it renamed? update versionDualShapeEntryPoints", entry)
+			continue
+		}
+		if !createShaped[entry] {
+			t.Errorf("dual-shape entry point %q no longer reaches RecordVersionForCreateInTx — list it as update-shaped instead (remove it from versionDualShapeEntryPoints)", entry)
+		}
+		if !updateShaped[entry] {
+			t.Errorf("dual-shape entry point %q no longer reaches RecordVersionInTx — list it in versionCreateShapedEntryPoints instead", entry)
+		}
+	}
+}
+
 // TestUpdateShapedEntryPointsNeverMintCreateShaped pins the update half:
-// every versioned entry point that is neither create-shaped nor mixed must not
-// reach RecordVersionForCreateInTx, so no ordinary write of an existing row
-// can stamp it out of legacy.
+// every versioned entry point that is neither create-shaped nor dual-shape
+// must not reach RecordVersionForCreateInTx, so no ordinary write of an
+// existing row can stamp it out of legacy. The update-shaped branch inside a
+// dual-shape site is TestDualShapeMintSitesCallBothEntries's to pin.
 func TestUpdateShapedEntryPointsNeverMintCreateShaped(t *testing.T) {
-	_, createShaped := versionCreateShapedMints(t)
+	_, createShaped, _ := versionShapedMints(t)
 	create := map[string]bool{}
 	for _, entry := range versionCreateShapedEntryPoints {
 		create[entry] = true
@@ -252,25 +324,28 @@ func TestUpdateShapedEntryPointsNeverMintCreateShaped(t *testing.T) {
 		if create[entry] {
 			continue
 		}
-		if _, mixed := versionMixedShapeEntryPoints[entry]; mixed {
+		if _, dual := versionDualShapeEntryPoints[entry]; dual {
 			continue
 		}
 		checked++
 		if createShaped[entry] {
-			t.Errorf("update-shaped entry point %q reaches RecordVersionForCreateInTx, so it can stamp participation_generation on an existing row and promote a legacy record (R2.3) — mint it through RecordVersionInTx, or list it in versionCreateShapedEntryPoints if the row it mints for is new on the issues plane", entry)
+			t.Errorf("update-shaped entry point %q reaches RecordVersionForCreateInTx, so it can stamp participation_generation on an existing row and promote a legacy record (R2.3) — mint it through RecordVersionInTx, or list it in versionCreateShapedEntryPoints or versionDualShapeEntryPoints if a row it mints for is new on the issues plane", entry)
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no update-shaped entry point was checked — versionedEntryPoints or the shape lists changed; the guard is not actually running")
 	}
-	for entry, reason := range versionMixedShapeEntryPoints {
-		if reason == "" {
-			t.Errorf("%s has an empty mixed-shape reason", entry)
-		}
-		if !createShaped[entry] {
-			t.Errorf("mixed-shape entry point %q no longer reaches RecordVersionForCreateInTx — remove it from versionMixedShapeEntryPoints", entry)
-		}
+}
+
+// sortedShapeKeys returns m's keys in order, so the shape guards report in a
+// stable order.
+func sortedShapeKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+	return keys
 }
 
 // versionExemptions are exported functions the DML detector flags as writing a
