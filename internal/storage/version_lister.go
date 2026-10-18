@@ -22,6 +22,13 @@ import (
 // needs no rename when version_id lands beside it. (bee-ghosttrack, #5898
 // consumer read, 2026-09-20.)
 //
+// ChangeAgent is read from issue_versions.change_agent (migration 0067) but
+// is deliberately NOT part of the JSON shape, which is what `bd versions
+// --json` prints. Provenance V2 (gastownhall/beads#7510) replaces the ad hoc
+// agent field with an actor chain, so publishing it now would make a public
+// contract out of a field that is on its way out. The column and the field
+// stay; only the JSON key is withheld.
+//
 // It lives here rather than in issueops for the same reason HistoryEntry
 // does: issueops imports storage, so the shared row type has to sit on this
 // side of that edge.
@@ -30,7 +37,7 @@ type IssueVersion struct {
 	Revision           int64      `json:"local_revision"`
 	Epoch              int64      `json:"epoch"`
 	ChangeActor        string     `json:"change_actor"`
-	ChangeAgent        string     `json:"change_agent"`
+	ChangeAgent        string     `json:"-"`
 	ChangeMessage      string     `json:"change_message"`
 	ChangeAt           time.Time  `json:"change_at"`
 	AttributionStatus  string     `json:"attribution_status"`

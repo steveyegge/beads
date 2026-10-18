@@ -284,6 +284,42 @@ func TestVersionsJSONDoesNotCollideWithIssueRevision(t *testing.T) {
 	}
 }
 
+// TestVersionsJSONDoesNotPublishChangeAgent pins that the versions payload
+// carries no "change_agent" key, while change_actor and change_message stay.
+//
+// Provenance V2 (gastownhall/beads#7510) replaces the ad hoc agent field with
+// an actor chain, so a "change_agent" key in `bd versions --json` would become
+// a public contract for a field that is on its way out. The column (migration
+// 0067) and IssueVersion.ChangeAgent are kept; only the JSON key is withheld.
+// The value is set here so an omitempty-style regression, which would hide it
+// only when empty, still fails.
+func TestVersionsJSONDoesNotPublishChangeAgent(t *testing.T) {
+	blob, err := json.Marshal(storage.IssueVersion{
+		IssueID:       "bd-1",
+		Revision:      3,
+		ChangeActor:   "alice",
+		ChangeAgent:   "some-agent",
+		ChangeMessage: "why it changed",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var generic map[string]any
+	if err := json.Unmarshal(blob, &generic); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, published := generic["change_agent"]; published {
+		t.Errorf(`IssueVersion emits a "change_agent" key; Provenance V2 replaces that field, so it must not become part of bd versions --json. Got: %s`, blob)
+	}
+	if got := generic["change_actor"]; got != "alice" {
+		t.Errorf(`change_actor = %v, want "alice". Got: %s`, got, blob)
+	}
+	if got := generic["change_message"]; got != "why it changed" {
+		t.Errorf(`change_message = %v, want "why it changed". Got: %s`, got, blob)
+	}
+}
+
 // TestVersionsJSONIsOneObjectWhetherOrNotAnythingWasRecorded is finding 4:
 // `bd versions <id> --json` printed `null` for a store with nothing recorded
 // yet (a nil slice through outputJSON) and never said whether recording was on,
