@@ -15,7 +15,7 @@ import (
 // revision 9, #6136): a store-wide epoch generation
 // counter (store_epoch, migration 0067) plus a durable record of the
 // addresses minted under each generation (epoch_minted_addresses, migration
-// 0071), used to answer whether a previously-minted address is still served
+// 0072), used to answer whether a previously-minted address is still served
 // by the store's current epoch. It adds no RetentionFixture/R17 resolve,
 // remove, hold, force-remove, erase, or mint logic — R20 epoch reasoning is
 // evaluated entirely on its own (out of scope for this slice).

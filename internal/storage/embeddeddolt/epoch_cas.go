@@ -15,7 +15,7 @@ import (
 // epoch-transition enforcement
 // (gastownhall/beads#5898 revision 9, #6136),
 // backed by store_epoch (migration 0067) and epoch_minted_addresses
-// (migration 0071). See internal/storage/dolt/epoch_cas.go's matching
+// (migration 0072). See internal/storage/dolt/epoch_cas.go's matching
 // header comment for why these are direct methods on *EmbeddedDoltStore
 // rather than a wrapper struct or root-storage-package types.
 //

@@ -23,8 +23,8 @@ const migration0071Up = "0071_add_removed_restriction.up.sql"
 const migration0071Down = "0071_add_removed_restriction.down.sql"
 
 // TestLatestVersionIncludesMigration0071 (pinning LatestVersion() == 71) is
-// superseded by TestLatestVersionIncludesMigration0071
-// (migration_0071_add_epoch_minted_addresses_test.go) now that 0071 claims
+// superseded by TestLatestVersionIncludesMigration0072
+// (migration_0072_add_epoch_minted_addresses_test.go) now that 0072 claims
 // the next free slot -- only one such pin lives at a time, matching how this
 // test itself already superseded 0070's own version.
 

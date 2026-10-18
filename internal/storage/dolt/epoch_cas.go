@@ -13,7 +13,7 @@ import (
 // epoch-transition enforcement
 // (gastownhall/beads#5898 revision 9, #6136),
 // backed by store_epoch (migration 0067) and epoch_minted_addresses
-// (migration 0071).
+// (migration 0072).
 //
 // UNLIKE MetadataCAS, THIS ROLE HAS NO PUBLIC issueops INTERFACE: the
 // conformance contract's own six epoch hooks are bare function types (see
