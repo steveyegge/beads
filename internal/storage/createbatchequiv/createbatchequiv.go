@@ -68,8 +68,11 @@ func scenarios() []scenario {
 	return []scenario{
 		{name: "small", seed: seed, afterSeed: plantStaleBlocked("s4"), batch: batch},
 		{name: "apply", seed: seedApply, apply: applyRequest},
-		{name: "depadd", seed: seedDepAdd, afterSeed: plantParentCycle, run: runDepAdd},
-		{name: "waitsfor", seed: seedWaitsFor, run: runWaitsFor},
+		{name: "depadd", seed: seedDepAdd, afterSeed: func(t *testing.T, db *sql.DB) {
+			plantParentCycle(t, db)
+			stampParticipation(t, db)
+		}, run: runDepAdd},
+		{name: "waitsfor", seed: seedWaitsFor, afterSeed: stampParticipation, run: runWaitsFor},
 	}
 }
 
@@ -89,11 +92,21 @@ func largeScenarios() []scenario {
 // recorded from the code BEFORE the batch-create fast paths existed
 // (ebe3b6bcb), so the check holds the current code — fast and per-row
 // bodies alike, including changes the fast-path switch does not gate — to
-// what that code stored. One deliberate behavior change since: the create
-// role defaults an empty created_by to the request's actor
+// what that code stored, apart from two deliberate behavior changes since.
+//
+// First, the create role defaults an empty created_by to the request's actor
 // (issueops.PreparePublicCreateRequest), so apply.json's issues, wisps and
 // events digests were re-recorded with every apply-created row carrying
-// created_by "apply-writer"; nothing else moved.
+// created_by "apply-writer"; nothing else in apply.json moved.
+//
+// Second, the issue_versions digests of small, import458 and
+// import458-reject-stale were re-recorded when the participation-generation
+// fence (design §16.2b) landed. Their seeded rows are legacy (the seed runs
+// with versioned history off), and the batch's upserts of them no longer
+// mint; that is the fenced outcome they now pin. depadd and waitsfor stamp
+// their seeded rows instead (stampParticipation), so their dependency adds,
+// closes and reopens mint as they did before the fence, and their digests
+// did not move.
 const GoldenDirEnv = "CREATEBATCHEQUIV_GOLDEN_DIR"
 
 // Run seeds fresh databases, applies each scenario's batch through the fast
@@ -154,8 +167,13 @@ func runScenarios(t *testing.T, open Open, list []scenario) {
 			}
 			fast := applyScenario(t, open, sc, false)
 			if sc.run != nil {
-				if len(fast.Skipped) == 0 {
-					t.Fatalf("%s: run recorded nothing", sc.name)
+				// A run that mints no version row no longer exercises
+				// versioned history at all (its seeded rows went legacy, or
+				// the paths it drives stopped minting), and a digest recorded
+				// from it would pin the empty set.
+				if len(fast.Skipped) == 0 || len(fast.Tables["issue_versions"]) == 0 {
+					t.Fatalf("%s: run exercised nothing: lines=%d versions=%d", sc.name,
+						len(fast.Skipped), len(fast.Tables["issue_versions"]))
 				}
 				checkGolden(t, sc.name, fast)
 				return
@@ -370,6 +388,20 @@ func plantStaleBlocked(suffix string) func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("UPDATE issues SET is_blocked = 1 WHERE id = ?", id(suffix)); err != nil {
 			t.Fatalf("plant stale is_blocked: %v", err)
 		}
+	}
+}
+
+// stampParticipation declares every seeded issues-table row participating
+// (design §16.2b), as a create with versioned history on would have. The seed
+// runs with history off, so without it every seeded row is legacy and the
+// write fence keeps a run's dependency adds, closes and reopens on those rows
+// from minting at all. The value is store_epoch's seed, 1. Setting updated_at
+// to itself keeps the column's ON UPDATE CURRENT_TIMESTAMP from replacing the
+// seeded timestamp. Wisps are never stamped (FR-8).
+func stampParticipation(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec("UPDATE issues SET participation_generation = 1, updated_at = updated_at"); err != nil {
+		t.Fatalf("stamp participation_generation: %v", err)
 	}
 }
 

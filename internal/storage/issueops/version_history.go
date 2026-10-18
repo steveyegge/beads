@@ -21,13 +21,15 @@ import (
 // BeginTx, so enabling history on one store instance cannot turn it on for
 // any other sharing the process.
 //
-// RecordVersionInTx is the single seam both direct-SQL legs (dolt,
-// embeddeddolt) and the domain/db package (used by uow) call through, from
-// inside the same already-short-circuited functions that call
-// RecordEventInTx — every accepted mutation of an issue's durable state
-// (create, update, close, reopen, claim, release, lease reclaim, defer wake,
-// label add/remove, dependency add/remove, promote, persistence move) mints
-// exactly one row, as its LAST durable-state write; a no-op mints none. A
+// RecordVersionInTx (and its create-shaped sibling, RecordVersionForCreateInTx
+// — design §16.2b's write fence, see that function's own doc) is the single
+// seam both direct-SQL legs (dolt, embeddeddolt) and the domain/db package
+// (used by uow) call through, from inside the same already-short-circuited
+// functions that call RecordEventInTx — every accepted mutation of an
+// issue's durable state (create, update, close, reopen, claim, release,
+// lease reclaim, defer wake, label add/remove, dependency add/remove,
+// promote, persistence move) mints exactly one row, as its LAST
+// durable-state write; a no-op mints none. A
 // mutation DiscardNoopIssueUpdates has already discarded never reaches either
 // seam; the label and dependency helpers, which that filter does not cover,
 // gate on their own inserted/deleted row instead (an idempotent re-add or an
@@ -64,17 +66,20 @@ import (
 // RunDualWrite* contract cases exclude concurrent writers, so no test
 // speaks to it. Tracked as gastownhall/beads#6379 (item 4).
 //
-// MINT COST, deferred deliberately: each mint adds ~5-6 round-trips inside
+// MINT COST, deferred deliberately: each mint adds ~6-7 round-trips inside
 // the write transaction (the GetIssueInTx snapshot and its label hydration,
-// the dependency load, the store_epoch read, the MAX(revision) scan, the
-// version INSERT, the current_revision UPDATE), and the MAX(revision) scan
-// grows with an issue's history depth -- on paths that previously ran one or
-// two statements, so it lengthens write-lock hold time. Harmless while the
-// flag is off, which is every build so far. Before any phase enables it, seed
-// the next ordinal from the current_revision the snapshot above already read
-// in this transaction and retire the aggregate scan -- a natural pairing with
-// the version_id UUID swap, since that swap is what makes the ordinal stop
-// being the key. Tracked as gastownhall/beads#6379 alongside item 4.
+// the participation_generation fence read, the dependency load, the
+// store_epoch read, the MAX(revision) scan, the version INSERT, the
+// current_revision UPDATE), and the MAX(revision) scan grows with an issue's
+// history depth -- on paths that previously ran one or two statements, so it
+// lengthens write-lock hold time. Harmless while the flag is off, which is
+// every build so far. Before any phase enables it, seed the next ordinal from
+// the row's current_revision and retire the aggregate scan -- a natural
+// pairing with the version_id UUID swap, since that swap is what makes the
+// ordinal stop being the key. The snapshot does not read current_revision;
+// the fence read can select it beside participation_generation, so the seed
+// costs no extra round-trip. Tracked as gastownhall/beads#6379 alongside
+// item 4.
 
 var versionedHistoryTransactions sync.Map // map[DBTX]bool; entries live for one transaction
 
@@ -208,8 +213,9 @@ func canonicalDurableState(issue any) ([]byte, error) {
 // RecordVersionInTx mints one issue_versions row for issueID and advances
 // issues.current_revision to match, as of tx (read-your-writes within the
 // same transaction). A no-op when versioned history is disabled for tx, or
-// when issueID resolves to a wisp: wisps carry current_revision for shape
-// parity only and are never versioned this phase (design FR-8). IsWisp is
+// when issueID resolves to a wisp -- a row the wisps table holds, whatever
+// its flags say: wisps carry current_revision for shape parity only and are
+// never versioned this phase (design FR-8). IsWisp is
 // Ephemeral || NoHistory, so a promoted no-history bead -- a durable
 // issues-plane row with NoHistory=true -- is also never versioned; that is
 // what no-history means, not an FR-8 wisp rule, and the write-path doc's
@@ -223,7 +229,42 @@ func canonicalDurableState(issue any) ([]byte, error) {
 // version row's attribution — "" when the mutation path genuinely has none,
 // matching RecordEventInTx's own convention. It also drives
 // attribution_status via attributionStatusForActor.
+//
+// This is the UPDATE-shaped entry point: design §16.2b's write fence. A
+// record whose participation_generation is NULL is legacy — never
+// positively promoted — and an update-shaped mutation against it mints
+// nothing, neither half of this seam's write (no issue_versions row, no
+// current_revision bump). A record that already carries a non-NULL
+// participation_generation proceeds normally. Use RecordVersionForCreateInTx
+// for a create-shaped mutation instead: a brand-new row has no legacy state
+// to preserve, so that entry point stamps the column rather than checking
+// it.
 func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) error {
+	return recordVersionInTx(ctx, tx, issueID, actor, false)
+}
+
+// RecordVersionForCreateInTx is RecordVersionInTx's create-shaped sibling
+// (design §16.2b). The write fence does not apply to a brand-new row, so
+// instead of checking participation_generation, this stamps it — sourced
+// from store_epoch.epoch, the same source the fence reads — as part of the
+// row's first mint, whenever versioned history is enabled. A create with the
+// flag off never reaches the stamp (this whole seam no-ops while the flag is
+// off, same as RecordVersionInTx), leaving the column NULL — indistinguishable
+// from a true legacy row (FR-7). A wisp arriving on the issues plane, by
+// promotion or a persistence move out of the wisps table, mints through here
+// too: its issues row is just as new, and a wisp never declares
+// participation (FR-8). A new issues-table row that carries NoHistory (or a
+// stray Ephemeral) is stamped but not versioned: no-history keeps it out of
+// history for now, but it was created with the flag on, so it is not
+// legacy once that flag is repaired. A row the wisps table holds mints and
+// stamps nothing, whatever its flags say: it has no issues row to stamp, and
+// a wisp is never versioned (FR-8). That covers an ordinary wisp create and
+// an unflagged wisps-table row (import's "wisp_plane" marker) alike.
+func RecordVersionForCreateInTx(ctx context.Context, tx DBTX, issueID, actor string) error {
+	return recordVersionInTx(ctx, tx, issueID, actor, true)
+}
+
+func recordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string, isCreate bool) error {
 	if !versionedHistoryEnabled(tx) {
 		return nil
 	}
@@ -232,7 +273,71 @@ func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) erro
 	if err != nil {
 		return fmt.Errorf("versioned history: snapshot %s: %w", issueID, err)
 	}
+	// A flagged row (Ephemeral || NoHistory) is never versioned, so an
+	// update-shaped call has nothing to do. A create-shaped one may still
+	// have to declare participation; see the IsWisp branch below.
+	if IsWisp(issue) && !isCreate {
+		return nil
+	}
+
+	// design §16.2b write fence. Read straight off the row rather than
+	// through types.Issue: participation_generation is dual-write
+	// bookkeeping, not part of the issue's own content model, so it stays
+	// out of the durable_state snapshot canonicalDurableState marshals
+	// below. isCreate skips the check entirely (a brand-new row has no
+	// legacy state to preserve, and this same function stamps the column
+	// itself further down); an update-shaped call against a NULL (legacy)
+	// value returns here, before either half of this seam's write runs.
+	// BD_IGNORE_SCHEMA_SKEW (internal/storage/schema/schema.go) has no
+	// bearing on this check: it downgrades CheckForwardDrift's
+	// migration-cursor refusal, a different plane than this column's real
+	// per-row data.
+	//
+	// THE TABLE THAT HOLDS THE ROW decides its plane, not its flags. IsWisp
+	// reads Ephemeral || NoHistory, and a wisps-table row can carry neither:
+	// bd mol squash clears a wisp root's flag in place, and import's
+	// "wisp_plane" marker routes an unflagged row to wisps. Such a row passes
+	// IsWisp, but there is no issues row for it, so this read finds nothing.
+	// No issues row means nothing to version (FR-8), for an update- or a
+	// create-shaped call alike: mint nothing and let the mutation proceed,
+	// rather than abort it on sql.ErrNoRows. GetIssueInTx resolved the
+	// snapshot above, so the row exists; ErrNoRows here can only mean it is
+	// in the wisps table.
+	var participationGeneration sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		"SELECT participation_generation FROM issues WHERE id = ?", issueID,
+	).Scan(&participationGeneration); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("versioned history: read participation_generation for %s: %w", issueID, err)
+	}
 	if IsWisp(issue) {
+		// Only a create-shaped call gets here: an issues-table row that
+		// carries NoHistory (or a stray Ephemeral). It is not versioned while
+		// its flags say so, so this mints nothing. But it is brand new on the
+		// issues plane with the flag on, so it is not legacy, and the create
+		// still declares its participation. Import keeps a promoted
+		// no-history row on the issues plane exactly this way (bd-r9uce).
+		// When bd update --persistent later repairs the flag in place, that
+		// repair mints update-shaped: through the guarded update's one
+		// end-of-update mint (executeUpdate) on dolt and embeddeddolt, or
+		// MoveIssuePersistenceInTx's own on the unit-of-work path. Left NULL
+		// here, the fence would read the row as legacy for good. Same source
+		// and same updated_at rule as the stamp at the end of this function.
+		epoch, err := readStoreEpochInTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE issues SET participation_generation = ?, updated_at = updated_at WHERE id = ?",
+			epoch, issueID,
+		); err != nil {
+			return fmt.Errorf("versioned history: stamp participation_generation for %s: %w", issueID, err)
+		}
+		return nil
+	}
+	if !isCreate && !participationGeneration.Valid {
 		return nil
 	}
 
@@ -261,21 +366,9 @@ func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) erro
 	}
 	issue.Dependencies = deps[issueID]
 
-	// store_epoch is one shared row (id = 1) that every minting transaction
-	// reads. Read first and seed only when the row is absent, so the seed
-	// INSERT happens once per store rather than once per mint: an INSERT IGNORE
-	// on every mint put that shared row into every write transaction's
-	// footprint for nothing.
-	var epoch int
-	err = tx.QueryRowContext(ctx, "SELECT epoch FROM store_epoch WHERE id = 1").Scan(&epoch)
-	if errors.Is(err, sql.ErrNoRows) {
-		if _, seedErr := tx.ExecContext(ctx, "INSERT IGNORE INTO store_epoch (id, epoch) VALUES (1, 1)"); seedErr != nil {
-			return fmt.Errorf("versioned history: seed store epoch: %w", seedErr)
-		}
-		err = tx.QueryRowContext(ctx, "SELECT epoch FROM store_epoch WHERE id = 1").Scan(&epoch)
-	}
+	epoch, err := readStoreEpochInTx(ctx, tx)
 	if err != nil {
-		return fmt.Errorf("versioned history: read store epoch: %w", err)
+		return err
 	}
 
 	var newRevision int64
@@ -301,10 +394,49 @@ func RecordVersionInTx(ctx context.Context, tx DBTX, issueID, actor string) erro
 		return fmt.Errorf("versioned history: insert version row for %s: %w", issueID, err)
 	}
 
+	if isCreate {
+		// Stamps participation_generation in the same statement that advances
+		// current_revision — design §16.2b's "positive declaration sourced
+		// from store_epoch.epoch," minted here from the epoch already read
+		// above for this same transaction's version row. Setting updated_at to
+		// itself keeps the column's ON UPDATE CURRENT_TIMESTAMP clause from
+		// replacing the timestamp the row was created with, which an import
+		// supplies.
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE issues SET current_revision = ?, participation_generation = ?, updated_at = updated_at WHERE id = ?",
+			newRevision, epoch, issueID,
+		); err != nil {
+			return fmt.Errorf("versioned history: advance current_revision for %s: %w", issueID, err)
+		}
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE issues SET current_revision = ? WHERE id = ?", newRevision, issueID,
 	); err != nil {
 		return fmt.Errorf("versioned history: advance current_revision for %s: %w", issueID, err)
 	}
 	return nil
+}
+
+// readStoreEpochInTx reads store_epoch.epoch as of tx, the source of both a
+// version row's epoch and a participation_generation stamp.
+//
+// store_epoch is one shared row (id = 1) that every minting transaction
+// reads. Read first and seed only when the row is absent, so the seed
+// INSERT happens once per store rather than once per mint: an INSERT IGNORE
+// on every mint put that shared row into every write transaction's
+// footprint for nothing.
+func readStoreEpochInTx(ctx context.Context, tx DBTX) (int, error) {
+	var epoch int
+	err := tx.QueryRowContext(ctx, "SELECT epoch FROM store_epoch WHERE id = 1").Scan(&epoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, seedErr := tx.ExecContext(ctx, "INSERT IGNORE INTO store_epoch (id, epoch) VALUES (1, 1)"); seedErr != nil {
+			return 0, fmt.Errorf("versioned history: seed store epoch: %w", seedErr)
+		}
+		err = tx.QueryRowContext(ctx, "SELECT epoch FROM store_epoch WHERE id = 1").Scan(&epoch)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("versioned history: read store epoch: %w", err)
+	}
+	return epoch, nil
 }
