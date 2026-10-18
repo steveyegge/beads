@@ -135,6 +135,7 @@
 100 53 TestEmbeddedInitSelectedExcludeRoutingStealthDecoyQuiet
 
 100 54 TestEmbeddedFormatJSONAliasMatchesJSON
+100 54 TestEmbeddedInitAgentArtifactsGolden
 100 54 TestEmbeddedSearchConcurrent
 
 100 55 TestEmbeddedUndefer
