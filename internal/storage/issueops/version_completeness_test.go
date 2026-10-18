@@ -166,9 +166,10 @@ var versionUpdateShapedMintHelper = map[string]bool{"RecordVersionInTx": true}
 // versionCreateShapedMintSites are the PURE create-shaped mint sites: every
 // row each one mints for is new on the issues plane, so each must call
 // RecordVersionForCreateInTx itself and must never call RecordVersionInTx.
-var versionCreateShapedMintSites = []string{
-	"PromoteFromEphemeralInTx", // a wisp promoted onto the issues plane
-}
+// None is left today. PromoteFromEphemeralInTx was one until it learned that
+// the issues plane can already hold the id it promotes; it is listed in
+// versionDualShapeMintSites now.
+var versionCreateShapedMintSites = []string{}
 
 // versionDualShapeMintSites choose the entry per row at run time: create-shaped
 // on the branch where the row is new on the issues plane, update-shaped on the
@@ -189,6 +190,7 @@ var versionDualShapeMintSites = map[string]string{
 	"CreateIssuesInTxWithContext": "a batch create's deferred mint pass is create-shaped for a row the batch inserted and update-shaped for an existing row it resolved to",
 	"moveIssuePersistenceInTx":    "a move out of the wisps table is create-shaped; the same-plane normalize (bd update --persistent repairing an issues-plane row's flags in place) is update-shaped",
 	"executeUpdate":               "the guarded update's EnteredIssuesPlane branch is create-shaped; every other change it mints for is update-shaped",
+	"PromoteFromEphemeralInTx":    "a wisp promoted onto the issues plane mints create-shaped; when the issues plane already held the id (dual presence, GH#4455) the upsert resolved to that row and the mint is update-shaped",
 }
 
 // versionCreateShapedEntryPoints are the entry points whose every mint is
@@ -198,7 +200,6 @@ var versionDualShapeMintSites = map[string]string{
 // that literal, so flush still reaches the update-shaped entry through
 // finishCreateIssueInTx, and it is held only to the create half.
 var versionCreateShapedEntryPoints = []string{
-	"PromoteFromEphemeralInTx",
 	"deferredCreates.flush",
 }
 
@@ -213,6 +214,7 @@ var versionDualShapeEntryPoints = map[string]string{
 	"CreateIssuesInTxWithResult":  "delegates to CreateIssuesInTxWithContext",
 	"CreateIssuesInTxWithContext": "a dual-shape mint site itself",
 	"MoveIssuePersistenceInTx":    "delegates to moveIssuePersistenceInTx with its mint on",
+	"PromoteFromEphemeralInTx":    "a dual-shape mint site itself",
 	"ExecuteCreate":               "delegates to the create path, which ends in finishCreateIssueInTx",
 	"ExecuteCreateBatch":          "delegates to CreateIssuesInTxWithContext",
 	"ExecuteUpdate":               "delegates to executeUpdate",

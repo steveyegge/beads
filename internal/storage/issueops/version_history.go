@@ -66,17 +66,20 @@ import (
 // RunDualWrite* contract cases exclude concurrent writers, so no test
 // speaks to it. Tracked as gastownhall/beads#6379 (item 4).
 //
-// MINT COST, deferred deliberately: each mint adds ~5-6 round-trips inside
+// MINT COST, deferred deliberately: each mint adds ~6-7 round-trips inside
 // the write transaction (the GetIssueInTx snapshot and its label hydration,
-// the dependency load, the store_epoch read, the MAX(revision) scan, the
-// version INSERT, the current_revision UPDATE), and the MAX(revision) scan
-// grows with an issue's history depth -- on paths that previously ran one or
-// two statements, so it lengthens write-lock hold time. Harmless while the
-// flag is off, which is every build so far. Before any phase enables it, seed
-// the next ordinal from the current_revision the snapshot above already read
-// in this transaction and retire the aggregate scan -- a natural pairing with
-// the version_id UUID swap, since that swap is what makes the ordinal stop
-// being the key. Tracked as gastownhall/beads#6379 alongside item 4.
+// the participation_generation fence read, the dependency load, the
+// store_epoch read, the MAX(revision) scan, the version INSERT, the
+// current_revision UPDATE), and the MAX(revision) scan grows with an issue's
+// history depth -- on paths that previously ran one or two statements, so it
+// lengthens write-lock hold time. Harmless while the flag is off, which is
+// every build so far. Before any phase enables it, seed the next ordinal from
+// the row's current_revision and retire the aggregate scan -- a natural
+// pairing with the version_id UUID swap, since that swap is what makes the
+// ordinal stop being the key. The snapshot does not read current_revision;
+// the fence read can select it beside participation_generation, so the seed
+// costs no extra round-trip. Tracked as gastownhall/beads#6379 alongside
+// item 4.
 
 var versionedHistoryTransactions sync.Map // map[DBTX]bool; entries live for one transaction
 

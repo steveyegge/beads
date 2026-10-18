@@ -91,10 +91,16 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 	// insertIssueRow is an upsert (ON DUPLICATE KEY UPDATE): unlike the
 	// CreateOnly branch above, "create" here can resolve to an already-existing
 	// row. The participation_generation write-fence (design §16.2b) needs to
-	// know which, so check existence before the upsert overwrites it.
-	existed, err := r.Exists(ctx, issue.ID, domain.IssueTableOpts{UseWispsTable: opts.UseWispsTable})
-	if err != nil {
-		return err
+	// know which, so check existence before the upsert overwrites it. With
+	// versioned history off both mint entries return before reading anything,
+	// so the answer is unused and the probe is skipped: this create costs the
+	// round trips it did before the fence.
+	existed := false
+	if issueops.VersionedHistoryEnabledFor(r.runner) {
+		var err error
+		if existed, err = r.Exists(ctx, issue.ID, domain.IssueTableOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
+			return err
+		}
 	}
 	if err := insertIssueRow(ctx, r.runner, table, issue); err != nil {
 		return err

@@ -364,7 +364,10 @@ const issuePatchFieldsNotOnUpdateWireWaiverReason = "PENDING, not permanent (tra
 //     (TableRouting). Seeding the row through the reference store instead
 //     would make the create under test the store's own, a property of the
 //     store the server happens to share a process with, never of the client.
-const participationGenerationWireGapWaiverReason = "the mutation this case needs has no form on the http wire: " +
+const participationGenerationWireGapWaiverReason = "PENDING, not permanent (no slice tracks it yet; each case runs " +
+	"on this leg once the wire publishes its mutation: an in-place wisp flag clear, a squash operation, or a create " +
+	"that names its table plane the way import's WispPlaneOverride does): " +
+	"the mutation this case needs has no form on the http wire: " +
 	"an in-place wisp flag clear is an untyped UpdateIssue map and the squash a RunInTransaction, both on this " +
 	"client's unsupported allowlist (D8), and IssuePatch.Persistence moves the row rather than clearing the flag in " +
 	"place; an unflagged wisps-table create and a no-history issues-table create both need WispPlaneOverride, " +

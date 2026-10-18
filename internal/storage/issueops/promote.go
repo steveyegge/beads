@@ -53,7 +53,8 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx DBTX, id string, actor str
 	if err := PrepareIssueForInsert(issue, types.CustomStatusNames(customStatuses), customTypes); err != nil {
 		return fmt.Errorf("promote wisp to issues: %w", err)
 	}
-	if _, _, err := InsertIssueIfNew(ctx, tx, "issues", issue, storage.BatchCreateOptions{}); err != nil {
+	isNew, _, err := InsertIssueIfNew(ctx, tx, "issues", issue, storage.BatchCreateOptions{})
+	if err != nil {
 		return fmt.Errorf("promote wisp to issues: %w", err)
 	}
 
@@ -138,9 +139,17 @@ func PromoteFromEphemeralInTx(ctx context.Context, tx DBTX, id string, actor str
 	// (design §16.2b): the issues row inserted above has no
 	// participation_generation, since a wisp never declares one, and the
 	// update-shaped entry would read that NULL as legacy and skip this mint
-	// and every later one.
+	// and every later one. The exception is an id the issues plane already
+	// held (GH#4455 records such dual presence): GetIssueInTx read that row,
+	// the upsert resolved to it, and it keeps whatever participation it had,
+	// so the mint is update-shaped, as finishCreateIssueInTx's is for a create
+	// that resolved to an existing row. Stamping it would promote a legacy
+	// record (R2.3).
 	if err := RecordEventInTx(ctx, tx, EventUpdate, id, actor); err != nil {
 		return err
 	}
-	return RecordVersionForCreateInTx(ctx, tx, id, actor)
+	if isNew {
+		return RecordVersionForCreateInTx(ctx, tx, id, actor)
+	}
+	return RecordVersionInTx(ctx, tx, id, actor)
 }

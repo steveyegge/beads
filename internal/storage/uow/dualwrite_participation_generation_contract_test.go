@@ -113,9 +113,121 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 }
 
+// TestParticipationGenerationUpsertCreate pins the write fence (design
+// §16.2b) on the unit-of-work create that is not CreateOnly, the default for
+// bd batch, bd todo, tracker sync and mol port. That create's insert is an
+// upsert, so db.Insert has to tell a new row (create-shaped mint: stamp the
+// column) from an existing one the upsert resolved to (update-shaped: fenced
+// when legacy). TestParticipationGenerationFence cannot see that choice: its
+// Mutate is CreateOnly, and so is every served create (createParams), so no
+// other leg reaches this branch at all.
+//
+// PromoteOverDualPresenceKeepsLegacy asks the same question of
+// PromoteFromEphemeralInTx's upsert: a wisp whose id the issues plane already
+// holds (GH#4455's dual presence, written the way a store corrupted before
+// that fix holds it) is promoted onto that existing row.
+func TestParticipationGenerationUpsertCreate(t *testing.T) {
+	ctx := context.Background()
+	provider := newUOWRoleFixtureProvider(t, ctx, "pgu")
+	fixture := uowParticipationGenerationFixtureFor(t, provider, "pgu")
+
+	setFlag := func(t *testing.T, enabled bool) {
+		t.Helper()
+		if err := fixture.SetFlag(ctx, enabled); err != nil {
+			t.Fatalf("setting versioned history to %v: %v", enabled, err)
+		}
+	}
+	upsert := func(t *testing.T, id, title string) {
+		t.Helper()
+		if err := RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+			_, err := uw.IssueUseCase().CreateIssue(ctx, domain.CreateIssueParams{
+				Issue: &types.Issue{
+					ID: id, Title: title, IssueType: types.TypeTask, Status: types.StatusOpen,
+				},
+				ExplicitID: id,
+			}, "actor")
+			return "upsert " + id, err
+		}); err != nil {
+			t.Fatalf("upsert-creating %s: %v", id, err)
+		}
+	}
+	requireState := func(t *testing.T, id string, wantStamped bool, wantVersions int, why string) {
+		t.Helper()
+		gen, err := fixture.ParticipationGeneration(ctx, id)
+		if err != nil {
+			t.Fatalf("reading participation_generation for %s: %v", id, err)
+		}
+		if stamped := gen != nil; stamped != wantStamped {
+			t.Errorf("participation_generation for %s stamped=%v, want %v: %s", id, stamped, wantStamped, why)
+		}
+		versions, err := fixture.VersionRowCount(ctx, id)
+		if err != nil {
+			t.Fatalf("counting version rows for %s: %v", id, err)
+		}
+		if versions != wantVersions {
+			t.Errorf("version row count for %s = %d, want %d: %s", id, versions, wantVersions, why)
+		}
+	}
+
+	t.Run("NewRowIsCreateShaped", func(t *testing.T) {
+		setFlag(t, true)
+		id := "pgu-new"
+		upsert(t, id, "t-"+id)
+		requireState(t, id, true, 1, "an upsert that inserted the row is a create, so it stamps the column and begins the history")
+	})
+	t.Run("LegacyRowStaysLegacy", func(t *testing.T) {
+		setFlag(t, false)
+		id := "pgu-legacy"
+		upsert(t, id, "t-"+id)
+		requireState(t, id, false, 0, "a create with history off leaves the row legacy")
+		setFlag(t, true)
+		upsert(t, id, "resynced-"+id)
+		requireState(t, id, false, 0, "an upsert that resolved to a legacy row is update-shaped and fenced; stamping it would promote a legacy record (R2.3)")
+	})
+	t.Run("StampedRowMintsOnce", func(t *testing.T) {
+		setFlag(t, true)
+		id := "pgu-stamped"
+		upsert(t, id, "t-"+id)
+		upsert(t, id, "resynced-"+id)
+		requireState(t, id, true, 2, "an upsert that resolved to a participating row mints exactly one more version")
+	})
+	t.Run("PromoteOverDualPresenceKeepsLegacy", func(t *testing.T) {
+		setFlag(t, false)
+		id := "pgu-dual"
+		if err := fixture.Mutate(ctx, id); err != nil {
+			t.Fatalf("creating legacy %s: %v", id, err)
+		}
+		if err := RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+			_, err := uw.RawSQLUseCase().Exec(ctx,
+				"INSERT INTO wisps (id, title, status, priority, issue_type, ephemeral, created_at, updated_at) "+
+					"SELECT id, title, status, priority, issue_type, 1, created_at, updated_at FROM issues WHERE id = ?", id)
+			return "plant wisp twin " + id, err
+		}); err != nil {
+			t.Fatalf("planting a wisps-table twin of %s: %v", id, err)
+		}
+		setFlag(t, true)
+		if err := fixture.PromoteWisp(ctx, id); err != nil {
+			t.Fatalf("promoting %s: %v", id, err)
+		}
+		if inWisps, err := fixture.InWispsTable(ctx, id); err != nil {
+			t.Fatalf("checking the wisps table for %s: %v", id, err)
+		} else if inWisps {
+			t.Fatalf("%s is still in the wisps table after its promote", id)
+		}
+		requireState(t, id, false, 0, "a promote whose upsert resolved to an existing legacy issues row is update-shaped and fenced; stamping it would promote a legacy record (R2.3)")
+	})
+}
+
 func newUOWParticipationGenerationFixture(t *testing.T, ctx context.Context, prefix string) conformance.ParticipationGenerationFixture {
 	t.Helper()
-	provider := newUOWRoleFixtureProvider(t, ctx, prefix)
+	return uowParticipationGenerationFixtureFor(t, newUOWRoleFixtureProvider(t, ctx, prefix), prefix)
+}
+
+// uowParticipationGenerationFixtureFor is newUOWParticipationGenerationFixture
+// over a provider the caller already holds, for a test that also drives that
+// provider directly.
+func uowParticipationGenerationFixtureFor(t *testing.T, provider UnitOfWorkProvider, prefix string) conformance.ParticipationGenerationFixture {
+	t.Helper()
 	// Through the capability accessor's operator half, the same way
 	// newUOWVersionedHistoryProvider reaches it above — SetFlag here needs to
 	// toggle more than once per case, so this fixture keeps its own handle
