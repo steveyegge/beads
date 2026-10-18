@@ -89,11 +89,28 @@ fn uuid_regex() -> &'static regex::Regex {
     })
 }
 
-/// Replace volatile values (timestamps, host identity, random UUIDs) with stable
-/// tokens. UUIDs (e.g. comment ids) are random per run, so byte-diffing them is
-/// meaningless — collapse them like timestamps.
+fn revision_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // The `"revision": "<token>"` JSON member (types.IssueDetails.Revision, on
+        // `bd show --json` since #5535). The token is the row's row_lock, which
+        // every create and status/ownership write remints from crypto/rand
+        // (issueops.freshRowLock), so its value differs on every run. Only a
+        // NON-ZERO decimal token is collapsed: "0" (a never-stamped row) stays
+        // literal, and the member's name, presence and string type are untouched.
+        regex::Regex::new(r#"("revision"\s*:\s*")-?[1-9][0-9]*(")"#).expect("valid revision regex")
+    })
+}
+
+/// Replace volatile values (timestamps, host identity, random UUIDs, revision
+/// tokens) with stable tokens. UUIDs (e.g. comment ids) and revision tokens are
+/// random per run, so byte-diffing them is meaningless — collapse them like
+/// timestamps.
 pub fn normalize(s: &str) -> String {
-    let s = ts_regex().replace_all(s, "<TS>").into_owned();
+    let s = revision_regex()
+        .replace_all(s, "${1}<REV>${2}")
+        .into_owned();
+    let s = ts_regex().replace_all(&s, "<TS>").into_owned();
     let s = uuid_regex().replace_all(&s, "<UUID>").into_owned();
     s.replace(ACTOR_EMAIL, "<EMAIL>").replace(ACTOR_NAME, "<ACTOR>")
 }
@@ -323,6 +340,45 @@ mod tests {
         assert!(n.contains("<EMAIL>"));
         assert!(n.contains("<ACTOR>"));
         assert!(!n.contains("2026"));
+    }
+
+    #[test]
+    fn normalize_collapses_revision_tokens_and_nothing_else() {
+        // Two runs of the same `show --json`: only the minted token differs.
+        let run1 =
+            "[\n  {\n    \"id\": \"g-root\",\n    \"revision\": \"-1228122709301203494\"\n  }\n]\n";
+        let run2 =
+            "[\n  {\n    \"id\": \"g-root\",\n    \"revision\": \"5267907219149755461\"\n  }\n]\n";
+        assert_eq!(normalize(run1), normalize(run2));
+        assert!(normalize(run1).contains(r#""revision": "<REV>""#));
+        assert!(stdout_equiv(&normalize(run1), &normalize(run2), true));
+        assert_eq!(normalize(r#"{"revision":"42"}"#), r#"{"revision":"<REV>"}"#);
+
+        // Everything that is NOT a minted token keeps its literal value:
+        // "0" (a never-stamped row) must still diverge from a minted token.
+        assert_eq!(normalize(r#"{"revision":"0"}"#), r#"{"revision":"0"}"#);
+        assert!(!stdout_equiv(
+            &normalize(r#"{"revision":"0"}"#),
+            &normalize(r#"{"revision":"7"}"#),
+            false
+        ));
+        // a number-typed member (a wire-type change) is not collapsed,
+        assert_eq!(normalize(r#"{"revision":42}"#), r#"{"revision":42}"#);
+        // nor are other members whose names merely contain "revision",
+        assert_eq!(
+            normalize(r#"{"local_revision":"3"}"#),
+            r#"{"local_revision":"3"}"#
+        );
+        // nor the same text quoted inside a JSON string value.
+        let quoted = r#"{"description":"see \"revision\": \"12\""}"#;
+        assert_eq!(normalize(quoted), quoted);
+
+        // Dropping the member is still a divergence.
+        assert!(!stdout_equiv(
+            &normalize(r#"{"id":"a","revision":"9"}"#),
+            &normalize(r#"{"id":"a"}"#),
+            false
+        ));
     }
 
     #[test]

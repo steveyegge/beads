@@ -15,9 +15,10 @@ Each scenario is an ordered list of `bd` CLI argv steps run as real processes in
 a throwaway workspace (`bd init` + steps). For every step the harness compares
 **exit code**, **stderr**, and **JSON-aware stdout** (object key order ignored;
 array order compared as a multiset by default, as an ordered sequence for
-scenarios flagged `ordered`). Volatile values — timestamps, UUIDs, and the host
-actor identity — are normalized to `<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>` before
-comparison. **Tolerated in-scope divergences: zero.**
+scenarios flagged `ordered`). Volatile values — timestamps, UUIDs, the host
+actor identity, and the `bd show --json` `"revision"` token — are normalized to
+`<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>`/`<REV>` before comparison. **Tolerated
+in-scope divergences: zero.**
 
 ## Run it
 
@@ -112,7 +113,11 @@ the loop — every scenario uses embedded Dolt in its own tempdir.
 - **Anything invisible to stdout/stderr/exit diffing.** Post-commit hook firing,
   rollback-suppressed side effects, and N-commits-instead-of-one are deliberately
   NOT asserted here. Timestamp *values* are erased by `<TS>` normalization, so a
-  local-vs-UTC divergence in a timestamp value is also out of reach.
+  local-vs-UTC divergence in a timestamp value is also out of reach. Likewise a
+  non-zero `"revision"` token is erased to `<REV>` (it is reminted from
+  crypto/rand on every create and status/ownership write), so whether a write
+  remints it is not gated; the member's presence, its string type, and a
+  never-stamped `"0"` still are.
 - **The scenario environment is scrubbed, and `BEADS_TEST_MODE=1` is ungated.**
   Scenarios run with an explicit env whitelist (`PATH`/`HOME`/`TMPDIR` +
   `BEADS_TEST_MODE=1`) rather than the inherited host env, so a green certifies the
