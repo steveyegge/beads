@@ -67,8 +67,9 @@ it off where it was turned on:
 
   bd config set versioned-history.enabled false
 
-Versions are recorded from the moment recording is turned on. It does not
-backfill, so a bead edited yesterday shows nothing until it is edited again.
+Only beads created while recording is on are versioned. A bead that already
+existed when recording was turned on is legacy: editing it records nothing
+(the write fence, design §16.2b), and nothing is backfilled.
 
 Turning recording off does not hide what was already recorded — this command
 still lists it, and says that recording is currently off.
@@ -112,7 +113,7 @@ Examples:
 			return HandleErrorRespectJSON(
 				"versioned history is not being recorded on this store, and nothing was recorded earlier.\n"+
 					"Turn it on with:  bd config set %s true\n"+
-					"Recording starts from that point on; it does not backfill.",
+					"Only beads created after that are versioned: beads that already exist stay unversioned, and nothing is backfilled.",
 				versionedHistorySettingKey)
 		case errors.Is(err, errVersionsUnsupported):
 			return HandleErrorRespectJSON(
@@ -202,9 +203,14 @@ func printVersions(issueID string, outcome versionsOutcome) {
 	versions := outcome.Versions
 	if len(versions) == 0 {
 		// Recording is on (runVersions refuses otherwise) and the bead
-		// resolved, so this is the honest empty: nothing has changed yet.
-		fmt.Printf("\nNo versions recorded for %s yet.\n", issueID)
-		fmt.Println(ui.RenderMuted("A version is recorded on each accepted change from the time recording was turned on; it does not backfill."))
+		// resolved. A bead created while recording is on always has its
+		// create version, so an empty list means this bead does not
+		// participate: it is legacy (created before recording was on, or by
+		// a writer that was not recording), or it is no-history or a wisp.
+		// Under design §16.2b's write fence it will not gain versions by
+		// being edited, so this says why rather than "not yet".
+		fmt.Printf("\nNo versions recorded for %s.\n", issueID)
+		fmt.Println(ui.RenderMuted("Only beads created while recording is on are versioned. This one was created before recording was turned on (or by a writer that was not recording), or it is a no-history bead or a wisp, so editing it records nothing. Nothing is backfilled."))
 		return
 	}
 

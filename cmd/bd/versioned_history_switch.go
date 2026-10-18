@@ -33,7 +33,7 @@ const versionedHistorySettingKey = versionedhistory.ConfigKey
 // rule for writers does. Those are process-wide and can only turn recording on
 // for the writes this process makes; `bd versions` only reads, so they cannot
 // make the store record anything. Letting them answer here made a store that
-// never recorded read as one that was, and "No versions recorded yet" is the
+// never recorded read as one that was, and "No versions recorded" is the
 // empty answer this command's three outcomes exist to prevent. What other
 // clients of the store will do is what the store's row says.
 func versionedHistoryEnabled(ctx context.Context, st storage.DoltStorage) bool {
@@ -154,7 +154,7 @@ func unversionableIssueRefusal(found []storageissueops.UnversionableIssue) strin
 			inTimeout = true
 		}
 	}
-	b.WriteString("With history on, any write to one of these issues that leaves its value in place would fail. Fix each one, then run this command again.\n")
+	b.WriteString("With history on, a write to one of these issues that leaves its value in place would be refused if the issue participates in history: it was created while history was on, or it enters the issues plane while history is on (a wisp promoted or made persistent). This check cannot tell which issues participate, so it also lists legacy issues, created before history was on, whose writes would not be refused. Fix each one, then run this command again.\n")
 	if inMetadata {
 		b.WriteString("A number in metadata, one command per issue (this works with history on or off):\n")
 		b.WriteString("  bd update <id> --metadata '{\"<key>\": \"<value as a string>\"}'   replace the value; a string keeps it exact\n")
@@ -165,6 +165,6 @@ func unversionableIssueRefusal(found []storageissueops.UnversionableIssue) strin
 		b.WriteString("  bd delete <id> --force                                             remove the gate; without --force bd only previews, and removing the gate also unblocks anything it was blocking\n")
 		b.WriteString("  bd sql \"UPDATE issues SET timeout_ns = <nanoseconds> WHERE id = '<id>'\"   set the timeout; bd sql needs a server-backed store, not an embedded one\n")
 	}
-	b.WriteString("There is no override. This check runs once, now: if a writer that does not record (an older bd, bd sql, a pull from a clone that had history off) later adds such a row, the first write to it fails with the same refusal, and the same fix applies.")
+	b.WriteString("There is no override. This check runs once, now: if a writer that does not record (an older bd, bd sql, a pull from a clone that had history off) later puts such a value into an issue that participates in history, the next write to it fails with the same refusal, and the same fix applies.")
 	return b.String()
 }
