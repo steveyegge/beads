@@ -33,14 +33,29 @@ var neverSatisfiedTags = map[string]bool{"ignore": true, "never": true}
 const importerOneAccessorWaiverReason = "Importer has one accessor (uow.ImporterSource); " +
 	"the store legs run bd import through the raw seam and implement no Importer role"
 
-// asOfReadNoHTTPWireWaiverReason records why the R7.1 as-of read contracts
-// (backend/conformance/versioned_read_contract.go) do not run on the HTTP leg.
-// They are a storage capability, not a claim that the HTTP client serves them:
-// internal/httpclient answers AsOf with an explicit unsupported error, and the
-// wire has no store-address/instant selector and no gone/unknown refusal
-// response. Keep the gap visible until a supported HTTP surface is designed and
-// tested.
-const asOfReadNoHTTPWireWaiverReason = "HTTP AsOf is explicitly unsupported by internal/httpclient; no store-address/instant selector and refusal response is wired"
+// asOfReadNoHTTPWireWaiverReason covers the five R7.1 as-of read contracts
+// (backend/conformance/versioned_read_contract.go). Unlike the
+// participation-generation cases, which run on this leg because their subject
+// is a create or an update the client can send
+// (internal/httpclient/served_participation_generation_test.go), the subject
+// here is the read itself, AsOfReadFixture.Resolve, and it has no form on the
+// wire:
+//   - R7.1's read is issueops.AsOfReadInTx. No publicops role reaches it and no
+//     wire operation serves it, so there is nothing for the client to call.
+//   - The wire carries neither selector (an instant, or a previously served
+//     version address) nor the gone/unknown refusal the read answers with.
+//   - The client's only point-in-time read, storage.DoltStorage.AsOf, is a
+//     Dolt commit-ref read, not R7.1, and it is on the client's unsupported
+//     allowlist (D8: v0 publishes no history surface).
+//
+// Binding Resolve to the reference store behind the served env would run the
+// cases green, but as a property of that store, never of the client; the store
+// legs already pin it. The waiver stands until the wire publishes an as-of
+// read.
+const asOfReadNoHTTPWireWaiverReason = "the read under test has no form on the http wire: R7.1's as-of read " +
+	"(issueops.AsOfReadInTx) is reached by no publicops role and no wire operation, the wire carries neither an " +
+	"instant/version-address selector nor a gone/unknown refusal, and the client's only point-in-time read, " +
+	"DoltStorage.AsOf, is a Dolt commit-ref read on its unsupported allowlist (D8)"
 
 // The waivers of the three legs registered here. Each is registered beside its
 // leg rather than written into one literal, so a leg registered elsewhere
