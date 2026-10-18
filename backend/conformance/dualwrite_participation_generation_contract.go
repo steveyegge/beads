@@ -111,6 +111,10 @@ type ParticipationGenerationFixture struct {
 	// ParticipationGeneration reads issues.participation_generation for id,
 	// returning nil for SQL NULL.
 	ParticipationGeneration func(ctx context.Context, id string) (*int64, error)
+	// InWispsTable reports whether the wisps table holds a row for id: the
+	// precondition the wisps-table cases check, so they cannot pass on a row
+	// that a step moved to the issues table.
+	InWispsTable func(ctx context.Context, id string) (bool, error)
 }
 
 // RunParticipationGenerationCreateWithFlagOnStampsAValue pins design
@@ -375,8 +379,8 @@ func RunParticipationGenerationUnflaggedWispCreateMintsNothing(t *testing.T, ctx
 }
 
 // runWispTableRowMintsNothing is the body the three wisps-table cases share:
-// with the flag on, every step succeeds on id and id ends with no
-// issue_versions row.
+// with the flag on, every step succeeds on id, the wisps table still holds id
+// afterwards, and id ends with no issue_versions row.
 func runWispTableRowMintsNothing(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture, how string, steps ...func(context.Context, string) error) {
 	t.Helper()
 	if err := fixture.SetFlag(ctx, true); err != nil {
@@ -389,6 +393,17 @@ func runWispTableRowMintsNothing(t *testing.T, ctx context.Context, fixture Part
 				"holds is never versioned (FR-8), so its mint must be a no-op, not an error that aborts "+
 				"the mutation", i+1, how, id, err)
 		}
+	}
+	// The precondition, checked after the steps rather than assumed: a step
+	// that moved the row to the issues table would leave a NULL
+	// participation_generation there, the update-shaped mint would be fenced
+	// as legacy, and the zero count below would hold without saying anything
+	// about a wisps-table row.
+	if inWisps, err := fixture.InWispsTable(ctx, id); err != nil {
+		t.Fatalf("checking whether the wisps table holds %s: %v", id, err)
+	} else if !inWisps {
+		t.Fatalf("%s is not in the wisps table after %s — this case pins that a wisps-table row mints "+
+			"nothing, and cannot say so about a row a step moved out of that table", id, how)
 	}
 	count, err := fixture.VersionRowCount(ctx, id)
 	if err != nil {

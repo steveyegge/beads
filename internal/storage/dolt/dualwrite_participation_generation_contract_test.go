@@ -122,6 +122,9 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	if fixture.ParticipationGeneration == nil {
 		t.Error("ParticipationGenerationFixture.ParticipationGeneration is nil")
 	}
+	if fixture.InWispsTable == nil {
+		t.Error("ParticipationGenerationFixture.InWispsTable is nil")
+	}
 }
 
 func newDoltParticipationGenerationFixture(t *testing.T, prefix string) (conformance.ParticipationGenerationFixture, context.Context, func()) {
@@ -249,26 +252,28 @@ func buildParticipationGenerationFixture(store *DoltStore, configurer storage.Ve
 			return err
 		},
 		ClearWispFlag: func(ctx context.Context, id string) error {
-			// This leg's store-level wisp update runs in a transaction
-			// versioned history does not scope, so it never reaches the mint;
-			// SquashWispRoot below is the case that does on this leg.
-			return store.UpdateIssue(ctx, id, map[string]any{"wisp": false}, "actor")
+			// The flag clear alone, in the journal-enabled transaction shape
+			// (withEventsJournal), so it reaches the mint on this leg. A bare
+			// store.UpdateIssue would go through updateWisp, whose transaction
+			// versioned history never scopes, and the case would pass whatever
+			// the fence did.
+			return withEventsJournal(store, func() error {
+				return store.RunInTransaction(ctx, "clear wisp flag "+id, func(tx storage.Transaction) error {
+					return tx.UpdateIssue(ctx, id, map[string]any{"wisp": false}, "actor")
+				})
+			})
 		},
 		SquashWispRoot: func(ctx context.Context, id string) error {
 			// bd mol squash's own shape: the root's close and its flag clear
-			// in the one transaction the squash commits. With the events
-			// journal off, RunInTransaction runs wisp writes on a separate
-			// ignored-table transaction versioned history never scopes, so
-			// the squash would never reach the mint this case pins; a
-			// journal-enabled workspace pins both planes to the one regular,
-			// scoped transaction. Take that shape for this one transaction.
-			store.SetEventsJournalEnabled(true)
-			defer store.SetEventsJournalEnabled(false)
-			return store.RunInTransaction(ctx, "squash "+id, func(tx storage.Transaction) error {
-				if err := tx.CloseIssue(ctx, id, "squashed", "actor", ""); err != nil {
-					return err
-				}
-				return tx.UpdateIssue(ctx, id, map[string]any{"wisp": false}, "actor")
+			// in the one transaction the squash commits, in the
+			// journal-enabled shape that reaches the mint (withEventsJournal).
+			return withEventsJournal(store, func() error {
+				return store.RunInTransaction(ctx, "squash "+id, func(tx storage.Transaction) error {
+					if err := tx.CloseIssue(ctx, id, "squashed", "actor", ""); err != nil {
+						return err
+					}
+					return tx.UpdateIssue(ctx, id, map[string]any{"wisp": false}, "actor")
+				})
 			})
 		},
 		CreateUnflaggedWisp: func(ctx context.Context, id string) error {
@@ -312,5 +317,29 @@ func buildParticipationGenerationFixture(store *DoltStore, configurer storage.Ve
 			}
 			return &gen.Int64, nil
 		},
+		InWispsTable: func(ctx context.Context, id string) (bool, error) {
+			var rows int
+			if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wisps WHERE id = ?`, id).
+				Scan(&rows); err != nil {
+				return false, err
+			}
+			return rows > 0, nil
+		},
 	}
+}
+
+// withEventsJournal runs fn with store's events journal on and then restores
+// whatever setting the store had before, rather than assuming it was off.
+//
+// With the journal off, RunInTransaction runs wisp writes on a separate
+// ignored-table transaction that versioned history never scopes, and a lone
+// store.UpdateIssue on a wisp (updateWisp) opens a transaction it never scopes
+// either, so neither reaches the mint the wisps-table cases pin. A
+// journal-enabled workspace pins both planes to the one regular, scoped
+// transaction, which is the shape that reaches it.
+func withEventsJournal(store *DoltStore, fn func() error) error {
+	previous := store.eventsJournalEnabled.Load()
+	store.SetEventsJournalEnabled(true)
+	defer store.SetEventsJournalEnabled(previous)
+	return fn()
 }

@@ -33,8 +33,8 @@ import (
 // seed, so it goes through the reference store (the harness rule in
 // served_harness_test.go).
 //
-// ClearWispFlag, SquashWispRoot and CreateUnflaggedWisp stay nil, and the
-// cases that need them stay unwired, along with the one whose subject is a
+// ClearWispFlag, SquashWispRoot, CreateUnflaggedWisp and InWispsTable stay nil,
+// and the cases that need them stay unwired, along with the one whose subject is a
 // no-history issues-table create. None of those mutations has a form on this
 // wire; see participationGenerationWireGapWaiverReason in
 // internal/storage/leg_contract_wiring_test.go. CreateNoHistoryIssue is bound,

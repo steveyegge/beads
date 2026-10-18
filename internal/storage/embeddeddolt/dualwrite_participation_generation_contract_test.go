@@ -116,6 +116,9 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	if fixture.ParticipationGeneration == nil {
 		t.Error("ParticipationGenerationFixture.ParticipationGeneration is nil")
 	}
+	if fixture.InWispsTable == nil {
+		t.Error("ParticipationGenerationFixture.InWispsTable is nil")
+	}
 }
 
 func newEmbeddedParticipationGenerationFixture(t *testing.T, te *testEnv, prefix string) conformance.ParticipationGenerationFixture {
@@ -221,6 +224,13 @@ func newEmbeddedParticipationGenerationFixture(t *testing.T, te *testEnv, prefix
 				return nil, nil
 			}
 			return &gen.Int64, nil
+		},
+		InWispsTable: func(ctx context.Context, id string) (bool, error) {
+			var rows int
+			if err := kit.QueryScalar(ctx, "SELECT COUNT(*) FROM wisps WHERE id = ?", []any{id}, &rows); err != nil {
+				return false, err
+			}
+			return rows > 0, nil
 		},
 	}
 }
