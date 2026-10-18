@@ -150,6 +150,116 @@ func TestRecordVersionInTxSkipsALegacyRowBeforeTheAdmissionGate(t *testing.T) {
 	}
 }
 
+// TestRecordVersionAtInTxKeepsThePlaneRuleButNotTheFence pins what the
+// test-support mint (RecordVersionAtInTx, mintUnfenced) does on the paths #6943
+// gave the shared body.
+//
+//   - A row the wisps table holds, flags clear: the plane rule is not the fence,
+//     so the unfenced mint honours it like the other two kinds. The issues-table
+//     read finds nothing and the mint returns nil having written nothing, where
+//     before it would have inserted a version row no issues row points at.
+//   - An issues-table row flagged NoHistory: never versioned, and the unfenced
+//     mint never declares participation, so it returns right after the snapshot,
+//     without reading or stamping participation_generation.
+//   - A legacy row (participation_generation NULL), flags clear: the fence does
+//     not apply, so it mints, and the closing UPDATE advances current_revision
+//     alone, with no stamp.
+//
+// The mock scripts each sequence exactly, so an extra read or any write fails
+// the call with an unexpected-statement error.
+func TestRecordVersionAtInTxKeepsThePlaneRuleButNotTheFence(t *testing.T) {
+	const id = "bd-7"
+	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	issuesSnapshot := regexp.QuoteMeta("SELECT " + IssueSelectColumns + " FROM issues " + sqlbuild.LeaseJoin("issues") + " WHERE id = ?")
+	participation := regexp.QuoteMeta("SELECT participation_generation FROM issues WHERE id = ?")
+
+	t.Run("a row the wisps table holds mints nothing", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(issuesSnapshot).WithArgs(id).WillReturnRows(issueRows())
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT " + IssueSelectColumns + " FROM wisps " + sqlbuild.LeaseJoin("wisps") + " WHERE id = ?")).
+			WithArgs(id).
+			WillReturnRows(issueRows().AddRow(issueRowValues(id, "a squashed wisp root, flags clear")...))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM wisp_labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"label"}))
+		mock.ExpectQuery(participation).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"participation_generation"}))
+		mock.ExpectRollback()
+
+		if err := RecordVersionAtInTx(context.Background(), tx, id, "actor", at); err != nil {
+			t.Fatalf("RecordVersionAtInTx on a wisps-table row = %v, want nil", err)
+		}
+		if err := tx.Rollback(); err != nil {
+			t.Fatalf("rollback: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("the unfenced mint did something after finding no issues row: %v", err)
+		}
+	})
+
+	t.Run("an issues row flagged no-history is neither minted nor stamped", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		values := issueRowValues(id, "no-history, on the issues plane")
+		for i, col := range issueColumns() {
+			if col == "no_history" {
+				values[i] = int64(1)
+			}
+		}
+		mock.ExpectQuery(issuesSnapshot).WithArgs(id).WillReturnRows(issueRows().AddRow(values...))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"label"}))
+		mock.ExpectRollback()
+
+		if err := RecordVersionAtInTx(context.Background(), tx, id, "actor", at); err != nil {
+			t.Fatalf("RecordVersionAtInTx on a no-history row = %v, want nil", err)
+		}
+		if err := tx.Rollback(); err != nil {
+			t.Fatalf("rollback: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("the unfenced mint read or wrote something for a no-history row: %v", err)
+		}
+	})
+
+	t.Run("a legacy row is minted and left unstamped", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(issuesSnapshot).WithArgs(id).
+			WillReturnRows(issueRows().AddRow(issueRowValues(id, "legacy, history was off when it was made")...))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT label FROM labels WHERE issue_id = ? ORDER BY label")).
+			WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"label"}))
+		mock.ExpectQuery(participation).WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"participation_generation"}).AddRow(nil))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps LIMIT 1")).
+			WillReturnRows(sqlmock.NewRows([]string{"1"}))
+		mock.ExpectQuery(`FROM dependencies WHERE issue_id IN`).
+			WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"issue_id", "depends_on_id", "type", "created_at", "created_by", "metadata", "thread_id"}))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT epoch FROM store_epoch WHERE id = 1")).
+			WillReturnRows(sqlmock.NewRows([]string{"epoch"}).AddRow(1))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(revision), 0) + 1 FROM issue_versions WHERE issue_id = ?")).
+			WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"next"}).AddRow(1))
+		mock.ExpectExec(`INSERT INTO issue_versions`).
+			WithArgs(id, int64(1), 1, sqlmock.AnyArg(), "actor", at, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(regexp.QuoteMeta("UPDATE issues SET current_revision = ? WHERE id = ?")).
+			WithArgs(int64(1), id).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectRollback()
+
+		if err := RecordVersionAtInTx(context.Background(), tx, id, "actor", at); err != nil {
+			t.Fatalf("RecordVersionAtInTx on a legacy row = %v, want nil", err)
+		}
+		if err := tx.Rollback(); err != nil {
+			t.Fatalf("rollback: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("the unfenced mint did not mint a legacy row exactly once, unstamped: %v", err)
+		}
+	})
+}
+
 // refusalClass names what an admission verdict is, so two functions can be
 // compared for agreement without depending on their exact wording.
 func refusalClass(err error) string {
