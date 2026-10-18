@@ -61,6 +61,9 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("NoHistoryIssueCreateDeclaresParticipation", func(t *testing.T) {
 		conformance.RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation(t, ctx, fixture)
 	})
+	t.Run("LegacyNoHistoryIssueStaysLegacy", func(t *testing.T) {
+		conformance.RunParticipationGenerationLegacyNoHistoryIssueStaysLegacy(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFixtureKitIsWired is this leg's half of the

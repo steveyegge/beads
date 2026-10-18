@@ -33,11 +33,12 @@ import (
 // seed, so it goes through the reference store (the harness rule in
 // served_harness_test.go).
 //
-// ClearWispFlag, SquashWispRoot and CreateUnflaggedWisp stay nil, and so do the
-// cases that need them, along with the one whose subject is a no-history
-// issues-plane create. None of those mutations has a form on this wire; see
-// participationGenerationWireGapWaiverReason in
-// internal/storage/leg_contract_wiring_test.go.
+// ClearWispFlag, SquashWispRoot and CreateUnflaggedWisp stay nil, and the
+// cases that need them stay unwired, along with the one whose subject is a
+// no-history issues-table create. None of those mutations has a form on this
+// wire; see participationGenerationWireGapWaiverReason in
+// internal/storage/leg_contract_wiring_test.go. CreateNoHistoryIssue is bound,
+// but only as the reference-store seed of the legacy no-history case.
 //
 // The fixture gets its OWN env (newServedEnv), never the shared composition,
 // for the reason served_dualwrite_history_test.go gives: the flag is a knob on
@@ -120,6 +121,19 @@ func newServedParticipationGenerationFixture(t *testing.T, prefix string) confor
 			return promoted.CommentErr
 		},
 		MovePersistent: persistent,
+		// A SEED, not a subject: the one case wired here that uses it creates
+		// the row with the flag OFF, as the precondition for the client's
+		// update and repair. It goes through the reference store because no
+		// client create can land a no-history row in the issues table (see
+		// participationGenerationWireGapWaiverReason), which is also why the
+		// case whose subject is this create stays waived.
+		CreateNoHistoryIssue: func(ctx context.Context, id string) error {
+			durable := false
+			return env.reference.CreateIssuesWithFullOptions(ctx, []*types.Issue{{
+				ID: id, Title: "t-" + id, IssueType: types.TypeTask, Status: types.StatusOpen,
+				NoHistory: true, WispPlaneOverride: &durable,
+			}}, "actor", storage.BatchCreateOptions{SkipPrefixValidation: true})
+		},
 		CurrentRevision: func(ctx context.Context, id string) (int64, error) {
 			var revision int64
 			err := env.queryScalar(ctx, "SELECT current_revision FROM issues WHERE id = ?", []any{id}, &revision)
@@ -172,5 +186,8 @@ func TestServedParticipationGenerationFence(t *testing.T) {
 	})
 	t.Run("WispPersistenceMoveBeginsHistory", func(t *testing.T) {
 		conformance.RunParticipationGenerationWispPersistenceMoveBeginsHistory(t, ctx, fixture)
+	})
+	t.Run("LegacyNoHistoryIssueStaysLegacy", func(t *testing.T) {
+		conformance.RunParticipationGenerationLegacyNoHistoryIssueStaysLegacy(t, ctx, fixture)
 	})
 }

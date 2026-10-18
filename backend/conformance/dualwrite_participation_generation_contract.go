@@ -460,6 +460,74 @@ func RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation(t *test
 	}
 }
 
+// RunParticipationGenerationLegacyNoHistoryIssueStaysLegacy is
+// RunParticipationGenerationNoHistoryIssueCreateDeclaresParticipation's
+// negative twin, and pins R2.3: an ordinary write never promotes a legacy
+// record. The same no-history issues-table row, created while the flag was
+// OFF, is legacy. Only a create-shaped call stamps a flagged row, so once the
+// flag is on, an update-shaped mutation must leave participation_generation
+// NULL and mint nothing. So must the bd update --persistent repair that then
+// clears the flag in place: that repair is update-shaped too (a same-plane
+// normalize), so the row it leaves is an ordinary legacy row, still fenced.
+func RunParticipationGenerationLegacyNoHistoryIssueStaysLegacy(t *testing.T, ctx context.Context, fixture ParticipationGenerationFixture) {
+	t.Helper()
+	if err := fixture.SetFlag(ctx, false); err != nil {
+		t.Fatalf("disabling versioned history: %v", err)
+	}
+	id := fixture.IssuePrefix + "-no-history-legacy"
+	if err := fixture.CreateNoHistoryIssue(ctx, id); err != nil {
+		t.Fatalf("creating no-history issues-plane row %s with the flag off: %v", id, err)
+	}
+	if gen, err := fixture.ParticipationGeneration(ctx, id); err != nil {
+		t.Fatalf("reading participation_generation for %s: %v", id, err)
+	} else if gen != nil {
+		t.Fatalf("participation_generation for %s = %d before the flag was ever turned on, want NULL — "+
+			"this case cannot test that a legacy no-history row stays legacy against a row that was never "+
+			"legacy", id, *gen)
+	}
+
+	if err := fixture.SetFlag(ctx, true); err != nil {
+		t.Fatalf("enabling versioned history: %v", err)
+	}
+	beforeRevision, err := fixture.CurrentRevision(ctx, id)
+	if err != nil {
+		t.Fatalf("reading current_revision for %s: %v", id, err)
+	}
+
+	assertStillLegacy := func(after string) {
+		t.Helper()
+		if gen, err := fixture.ParticipationGeneration(ctx, id); err != nil {
+			t.Fatalf("reading participation_generation for %s: %v", id, err)
+		} else if gen != nil {
+			t.Errorf("participation_generation for %s = %d after %s with the flag on, want NULL: the row "+
+				"was created with the flag off, and an update-shaped write must not promote a legacy "+
+				"record (R2.3), whatever its no-history flag says", id, *gen, after)
+		}
+		if count, err := fixture.VersionRowCount(ctx, id); err != nil {
+			t.Fatalf("counting version rows for %s: %v", id, err)
+		} else if count != 0 {
+			t.Errorf("version row count for %s = %d after %s with the flag on, want 0: a legacy row's "+
+				"update-shaped mint is fenced (design §16.2b)", id, count, after)
+		}
+		if revision, err := fixture.CurrentRevision(ctx, id); err != nil {
+			t.Fatalf("reading current_revision for %s: %v", id, err)
+		} else if revision != beforeRevision {
+			t.Errorf("current_revision for %s went from %d to %d after %s, want unchanged: a fenced "+
+				"mint runs neither half of the seam's write", id, beforeRevision, revision, after)
+		}
+	}
+
+	if err := fixture.MutateExisting(ctx, id); err != nil {
+		t.Fatalf("mutating existing %s: %v", id, err)
+	}
+	assertStillLegacy("an update-shaped mutation")
+
+	if err := fixture.MovePersistent(ctx, id); err != nil {
+		t.Fatalf("repairing %s to persistent: %v", id, err)
+	}
+	assertStillLegacy("the persistent repair")
+}
+
 // RunParticipationGenerationFenceIgnoresSchemaSkewHatch pins design §16.2(c):
 // BD_IGNORE_SCHEMA_SKEW=1 downgrades CheckForwardDrift's refusal to a warning
 // (internal/storage/schema/schema.go), but it must have no effect on this
