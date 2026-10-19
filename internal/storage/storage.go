@@ -1122,6 +1122,23 @@ type ExternalDependencyPolicyProber interface {
 	ServerEnforcesExternalDependencyPolicy(ctx context.Context) (bool, error)
 }
 
+type livePolicyProbeKey struct{}
+
+// WithLivePolicyProbe marks ctx as carrying a claim or a close: an
+// ExternalDependencyPolicyProber asked under it must answer from the server,
+// never from a cache another process wrote. A read can tolerate a cached
+// answer for its TTL; a write guard cannot, since a stale "the server
+// enforces it" would skip the client-side refusal of externally blocked work.
+func WithLivePolicyProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, livePolicyProbeKey{}, true)
+}
+
+// LivePolicyProbe reports whether ctx was marked by WithLivePolicyProbe.
+func LivePolicyProbe(ctx context.Context) bool {
+	live, _ := ctx.Value(livePolicyProbeKey{}).(bool)
+	return live
+}
+
 // MoleculeAutoCloseProber is implemented by a DoltStorage whose closes may not
 // accept issueops.CloseRequest.AutoCloseMolecule — today exactly
 // httpclient.Store, whose server advertises it with

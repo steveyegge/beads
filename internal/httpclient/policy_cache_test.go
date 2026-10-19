@@ -8,6 +8,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
 	"github.com/steveyegge/beads/internal/httpclient/wire"
+	"github.com/steveyegge/beads/internal/storage"
 )
 
 func testPolicyCache(t *testing.T, path, projectID string, now time.Time) *policyCache {
@@ -82,6 +83,11 @@ func TestPolicyCacheRefusesEntriesItCannotTrust(t *testing.T) {
 	if _, ok := testPolicyCache(t, path, "prj_a", now.Add(-time.Second)).load(); ok {
 		t.Error("an entry written in the future was trusted")
 	}
+	otherURL := testPolicyCache(t, path, "prj_a", now)
+	otherURL.url = "https://other.example"
+	if _, ok := otherURL.load(); ok {
+		t.Error("an entry written for another server URL was trusted")
+	}
 	if _, ok := testPolicyCache(t, filepath.Join(dir, "missing.json"), "prj_a", now).load(); ok {
 		t.Error("a missing entry was trusted")
 	}
@@ -126,5 +132,28 @@ func TestNewPolicyCacheNeedsAProjectPinAndATTL(t *testing.T) {
 		if got := policyCacheTTL(); got != want {
 			t.Errorf("%s=%q: TTL %v, want %v", PolicyCacheTTLEnv, raw, got, want)
 		}
+	}
+}
+
+// TestALiveProbeSkipsThePolicyCache pins that a claim or close
+// (storage.WithLivePolicyProbe) asks the server even with a fresh entry, and
+// refreshes the entry with what the server said.
+func TestALiveProbeSkipsThePolicyCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	now := time.Now()
+	testPolicyCache(t, path, "prj_a", now).store(true)
+
+	target := Target{BaseURL: mustParseURL(t, "https://example.com"), ExpectProjectID: "prj_a"}
+	w := &fakeWire{res: &apigen.ContextResponse{}}
+	s := New(target, w, nil)
+	s.policy = testPolicyCache(t, path, "prj_a", now)
+	if enforced, err := s.ServerEnforcesExternalDependencyPolicy(storage.WithLivePolicyProbe(t.Context())); err != nil || enforced {
+		t.Fatalf("live probe = %v, %v; want the server's false despite the cached true", enforced, err)
+	}
+	if w.hits != 1 {
+		t.Fatalf("live probe dialed %d handshakes, want 1", w.hits)
+	}
+	if enforced, ok := testPolicyCache(t, path, "prj_a", now).load(); !ok || enforced {
+		t.Fatalf("cache = %v, %v; want it corrected to false", enforced, ok)
 	}
 }

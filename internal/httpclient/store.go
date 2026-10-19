@@ -99,12 +99,14 @@ var _ storage.RemoteBackendStore = (*Store)(nil)
 // a policy decision) or to "yes, so skip" (which would be the actual bug this
 // interface exists to prevent — the policy must never be silently skipped).
 //
-// A store opened from a workspace answers from the policy cache
+// A store opened from a workspace answers a read from the policy cache
 // (policy_cache.go) while it is fresh, so a short-lived command whose own
-// requests need no handshake does not dial one just for this. A handshake this
-// process already holds wins over the cache and refreshes it.
+// requests need no handshake does not dial one just for this. A claim or a
+// close (storage.WithLivePolicyProbe) always asks the server: it handshakes
+// anyway, and a stale answer must not stand down its client-side refusal. A
+// handshake this process already holds wins over the cache and refreshes it.
 func (s *Store) ServerEnforcesExternalDependencyPolicy(ctx context.Context) (bool, error) {
-	if s.cachedSnapshot() == nil {
+	if s.cachedSnapshot() == nil && !storage.LivePolicyProbe(ctx) {
 		if enforced, ok := s.policy.load(); ok {
 			return enforced, nil
 		}

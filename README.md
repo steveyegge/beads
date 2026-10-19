@@ -285,8 +285,10 @@ server URL and pinned project, in `beads/http-policy/` under the user cache
 directory, so `bd ready` does not fetch the server's context before every
 listing just to learn it. `BEADS_HTTP_POLICY_CACHE_TTL` sets that window (a
 duration such as `1m`, a number of seconds, or `off`); a server restarted
-with a different composition is seen once it passes. A workspace connected
-without a project pin is not cached.
+with a different composition is seen once it passes. Claims and closes never
+use the cached answer: they ask the server, since a stale one could skip the
+client-side refusal of externally blocked work. A workspace connected without
+a project pin is not cached.
 
 `bd search`, `bd show --current` and `bd recompute-blocked` work over HTTP
 too, each in its own way. `bd search` asks the server's listing with its text (`q`, behind the `issues.list.search` capability) and
