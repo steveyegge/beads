@@ -605,6 +605,7 @@ go_test(
         "cobra_flag_reset_test.go",
         "codex_hook_test.go",
         "command_telemetry_test.go",
+        "command_tree_golden_test.go",
         "comment_promote_embedded_test.go",
         "comment_proxied_integration_test.go",
         "comment_reserved_word_test.go",
