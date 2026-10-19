@@ -763,6 +763,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An HTTP workspace whose server cannot be reached now says which step
+  failed. A connect that is refused names the address and says nothing is
+  listening; one that times out (a filtered port, a down host) names the
+  address that never answered and how long it waited; a host name that does
+  not resolve is named as such. The error was the transport's
+  `Get "https://…/v0/beads/context": dial tcp …: i/o timeout`, which named the
+  request rather than the address.
 - **`bd link` works over a connected HTTP workspace.** It wrote through the
   store's raw `AddDependencyWithOptions`, which the HTTP client refuses, so
   every `bd link` failed there with `operation "AddDependencyWithOptions" not
