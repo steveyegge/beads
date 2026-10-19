@@ -767,9 +767,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   64 KiB or more.** Setting an undotted key (such as `actor` or `no-db`)
   rewrites the file line by line, and a line of 65,536 bytes or more ended
   that read early without an error, so the command reported success and wrote
-  back only the lines before the long one, plus the key it set. `bd config set`
-  and `set-many` now fail with `bufio.Scanner: token too long` and leave the
-  file as it was. Dotted keys and `bd config unset` were not affected.
+  back only the lines before the long one, plus the key it set. Dotted keys
+  and `bd config unset` were not affected. Setting an undotted key in such a
+  file now fails with `bufio.Scanner: token too long`. `bd config set` leaves
+  the file as it was. `set-many` stops at that key, but it has already written
+  any `config.yaml` keys listed before it, such as a dotted `sync.remote`.
 - **Time-bound filters and the keyset cursor compare the same instant on every
   engine, whatever zone they are given in.** The storage filter builder binds
   every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,
