@@ -53,6 +53,9 @@ func TestE2E_PerCommandRequestBudget(t *testing.T) {
 				args   []string
 			}{
 				{"ready", 2, []string{"ready", "--json"}},
+				// The limit hides rows, and without BD_JSON_ENVELOPE nothing
+				// prints their count: one listing, no ready:count after it.
+				{"ready --limit 1", 2, []string{"ready", "--json", "--limit", "1"}},
 				{"list", 4, []string{"list", "--json"}},
 				{"show", 1, []string{"show", target, "--json"}},
 				{"create", 2, []string{"create", "budget created", "-t", "task", "--json"}},
