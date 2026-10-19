@@ -118,14 +118,16 @@ func TestEmbeddedInitAgentArtifactsGolden(t *testing.T) {
 }
 
 // agentArtifactPaths are the Claude agent artifacts bd init and bd setup
-// claude write in a project ($PROJECT), and the two a global install writes
-// in the home directory ($HOME) instead.
+// claude write in a project ($PROJECT), and those in the home directory
+// ($HOME): the $HOME/.claude/ files a global install writes, and the
+// $HOME/CLAUDE.md an older --global run from $HOME wrote.
 var agentArtifactPaths = []string{
 	"$PROJECT/.claude/settings.json",
 	"$PROJECT/.claude/settings.local.json",
 	"$PROJECT/AGENTS.md",
 	"$PROJECT/CLAUDE.md",
 	"$HOME/.claude/settings.json",
+	"$HOME/.claude/CLAUDE.md",
 	"$HOME/CLAUDE.md",
 }
 
@@ -138,8 +140,10 @@ var agentArtifactManagedSections = []struct {
 }{
 	{golden: "managed-section-minimal.md", profile: agents.ProfileMinimal, opts: agents.RenderOpts{HasRemote: true}},
 	{golden: "managed-section-minimal-no-remote.md", profile: agents.ProfileMinimal, opts: agents.RenderOpts{}},
+	{golden: "managed-section-minimal-user.md", profile: agents.ProfileMinimal, opts: agents.UserLevelRenderOpts()},
 	{golden: "managed-section-full.md", profile: agents.ProfileFull, opts: agents.RenderOpts{HasRemote: true}},
 	{golden: "managed-section-full-no-remote.md", profile: agents.ProfileFull, opts: agents.RenderOpts{}},
+	{golden: "managed-section-full-user.md", profile: agents.ProfileFull, opts: agents.UserLevelRenderOpts()},
 }
 
 // elideAgentArtifactManagedSection replaces the body of a managed section
