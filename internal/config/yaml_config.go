@@ -908,17 +908,12 @@ func updateYamlKey(content, key, value string) (string, error) {
 		result = append(result, newLine)
 	}
 
-	// TODO: `bd config set` is knowingly left unfixed here. This flat-key path
-	// has the same bufio.Scanner + strings.Join shape that commentOutYamlKey
-	// had, so it is still exactly one newline short for any terminated
-	// document: updateYamlKey("issue_prefix: vp\ndolt.mode: server\n",
-	// "issue_prefix", "zz") returns a string with no terminator, and the
-	// key-not-found branch above is worse, emitting "x\n\nnewkey: \"v\"" for
-	// "x\n". The same one-line tail applied at commentOutYamlKey's return
-	// belongs here too; it is out of scope for a fix aimed at unset. Only this
-	// flat path is affected -- updateNestedYamlKey re-marshals through
-	// yaml.Node and is already newline-faithful.
-	return strings.Join(result, "\n"), nil
+	// Preserve the document's trailing newlines. bufio.Scanner drops the final
+	// terminator, so the join is one newline short of any terminated input. Same
+	// rule as commentOutYamlKey's return: re-attach content's own run, so a
+	// document without a trailing newline does not acquire one.
+	out := strings.Join(result, "\n")
+	return strings.TrimRight(out, "\n") + content[len(strings.TrimRight(content, "\n")):], nil
 }
 
 func updateNestedYamlKey(content, key, value string) (string, bool, error) {

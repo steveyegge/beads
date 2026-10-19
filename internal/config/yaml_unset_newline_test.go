@@ -78,6 +78,35 @@ func TestCommentOutYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 	})
 }
 
+// The set twin of the test above, on the flat single-segment path only: every
+// dotted key is handed to updateNestedYamlKey before the scanner is reached,
+// so the rows below are all single-segment keys — the shapes `bd config set`
+// writes through the same scanner + join tail that commentOutYamlKey had.
+func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
+	for _, tc := range []struct {
+		name, content, key, value, want string
+	}{
+		{"single-segment key present", "issue_prefix: vp\ndolt.mode: server\n", "issue_prefix", "zz", "issue_prefix: \"zz\"\ndolt.mode: server\n"},
+		{"commented key present", "# actor: \"\"\nother: x\n", "actor", "b", "actor: \"b\"\nother: x\n"},
+		{"key on the last line", "other: x\nactor: a\n", "actor", "b", "other: x\nactor: \"b\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := updateYamlKey(tc.content, tc.key, tc.value)
+			if err != nil {
+				t.Fatalf("updateYamlKey: %v", err)
+			}
+			if out != tc.want {
+				t.Errorf("updateYamlKey = %q, want %q", out, tc.want)
+			}
+			gotRun := out[len(strings.TrimRight(out, "\n")):]
+			wantRun := tc.content[len(strings.TrimRight(tc.content, "\n")):]
+			if gotRun != wantRun {
+				t.Errorf("trailing newline run = %q, want %q:\nin:  %q\nout: %q", gotRun, wantRun, tc.content, out)
+			}
+		})
+	}
+}
+
 // The same property through the public writer, which is what `bd config unset`
 // actually calls.
 func TestUnsetThroughTheFileKeepsTheTrailingNewline(t *testing.T) {
