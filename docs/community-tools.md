@@ -16,7 +16,7 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[perles](https://github.com/zjrosen/perles)** - Terminal UI search, dependency and kanban viewer powered by a custom BQL (Beads Query Language). Built by [@zjrosen](https://github.com/zjrosen). (Go)
 
-- **[beady-eye](https://github.com/CodeForBreakfast/beady-eye)** - Watches beads for you and your agents. It draws several projects' work as trees with each agent's live [herdr](https://herdr.dev) pane beside its bead, wakes a Claude Code agent when a bead it waits on changes, and closes `gh:pr` gates when their pull requests merge. Only `bd` is required. Built by [@GraemeF](https://github.com/GraemeF). (Rust)
+- **[beady-eye](https://github.com/CodeForBreakfast/beady-eye)** - Shows you, live, what every agent is doing across your projects, and tells agents and scripts when the beads they wait on change. Its view draws every project's work as trees, with each agent's [herdr](https://herdr.dev) pane beside its bead. A Claude Code session sleeps on a bead and wakes when it changes status or gets a comment. Only `bd` is required. Built by [@GraemeF](https://github.com/GraemeF). (Rust)
 
 - **[LazyBeads](https://github.com/lesliesrussell/lazybeads)** (`lb`) - Terminal operator console that ranks ready work, explains why each bead is ready, and claims, closes and links beads with confirmation. The TUI and `lb status --watch` follow the events journal and redraw as agents change beads; on Dolt-server workspaces it uses `bd serve`, and the `bd` CLI otherwise. Not related to the earlier lazybeads listed under Historical. Built by [@lesliesrussell](https://github.com/lesliesrussell). (Go)
 
