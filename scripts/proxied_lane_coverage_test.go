@@ -37,7 +37,7 @@ func TestProxiedGatedTestsRunInTheProxiedLane(t *testing.T) {
 	requireAutofixBash(t)
 	root := sourceRepoRoot(t)
 
-	gated, err := proxiedGatedTests(filepath.Join(root, "cmd/bd"))
+	gated, err := gatedTests(filepath.Join(root, "cmd/bd"), proxiedServerEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestProxiedGatedTestsRunInTheProxiedLane(t *testing.T) {
 		t.Fatalf("found only %d cmd/bd tests gated on %s; did the gate helpers change shape?", len(gated), proxiedServerEnv)
 	}
 
-	listed := proxiedLaneListedTests(t, root, bazelProxiedShardCount(t))
+	listed := laneListedTests(t, root, ".github/scripts/proxied-test-shard.sh", bazelProxiedShardCount(t))
 	var missing []string
 	for _, name := range gated {
 		if !listed[name] {
@@ -108,22 +108,22 @@ func TestProxiedGatedTestsDetector(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "fixture_test.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := proxiedGatedTests(dir)
+	got, err := gatedTests(dir, proxiedServerEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"TestDirect", "TestInSubtest", "TestInline", "TestMethod", "TestTransitive"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("proxiedGatedTests = %v, want %v", got, want)
+		t.Errorf("gatedTests = %v, want %v", got, want)
 	}
 }
 
-// proxiedGatedTests returns, sorted, the top-level `func TestX(t *testing.T)`
-// declarations in dir's _test.go files that reach a proxied-only gate through
-// calls (functions and methods alike, by name, closures included). Matching
+// gatedTests returns, sorted, the top-level `func TestX(t *testing.T)`
+// declarations in dir's _test.go files that reach an env-only gate (see
+// isOnlyGate) through calls (functions and methods alike, by name, closures included). Matching
 // callees by bare name over-approximates, which errs toward demanding the
 // lane run a test rather than missing one.
-func proxiedGatedTests(dir string) ([]string, error) {
+func gatedTests(dir, env string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
 	if err != nil {
 		return nil, err
@@ -152,7 +152,7 @@ func proxiedGatedTests(dir string) ([]string, error) {
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch n := n.(type) {
 				case *ast.IfStmt:
-					if isProxiedOnlyGate(n.Cond) {
+					if isOnlyGate(n.Cond, env) {
 						gated[name] = true
 					}
 				case *ast.CallExpr:
@@ -192,9 +192,9 @@ func proxiedGatedTests(dir string) ([]string, error) {
 	return out, nil
 }
 
-// isProxiedOnlyGate reports whether cond is exactly
-// os.Getenv("BEADS_TEST_PROXIED_SERVER") != "1".
-func isProxiedOnlyGate(cond ast.Expr) bool {
+// isOnlyGate reports whether cond is exactly os.Getenv(env) != "1", where env
+// is a lane's variable (BEADS_TEST_PROXIED_SERVER, BEADS_TEST_EMBEDDED_DOLT).
+func isOnlyGate(cond ast.Expr, env string) bool {
 	be, ok := cond.(*ast.BinaryExpr)
 	if !ok || be.Op != token.NEQ {
 		return false
@@ -211,12 +211,12 @@ func isProxiedOnlyGate(cond ast.Expr) bool {
 		return false
 	}
 	arg, ok := call.Args[0].(*ast.BasicLit)
-	return ok && arg.Value == strconv.Quote(proxiedServerEnv)
+	return ok && arg.Value == strconv.Quote(env)
 }
 
-// proxiedLaneListedTests runs proxied-test-shard.sh list-only for every shard
-// of the Bazel lane's split and returns every test name any shard selects.
-func proxiedLaneListedTests(t *testing.T, root string, shards int) map[string]bool {
+// laneListedTests runs a lane's shard script list-only for every shard of the
+// Bazel lane's split and returns every test name any shard selects.
+func laneListedTests(t *testing.T, root, script string, shards int) map[string]bool {
 	t.Helper()
 	outs, errs := make([][]byte, shards+1), make([]error, shards+1)
 	var wg sync.WaitGroup
@@ -224,7 +224,7 @@ func proxiedLaneListedTests(t *testing.T, root string, shards int) map[string]bo
 		wg.Add(1)
 		go func(k int) {
 			defer wg.Done()
-			cmd := exec.Command("bash", ".github/scripts/proxied-test-shard.sh", strconv.Itoa(k), strconv.Itoa(shards))
+			cmd := exec.Command("bash", script, strconv.Itoa(k), strconv.Itoa(shards))
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(), "BEADS_TEST_SHARD_LIST_ONLY=1")
 			outs[k], errs[k] = cmd.Output()
@@ -234,7 +234,7 @@ func proxiedLaneListedTests(t *testing.T, root string, shards int) map[string]bo
 	listed := map[string]bool{}
 	for k := 1; k <= shards; k++ {
 		if errs[k] != nil {
-			t.Fatalf("proxied-test-shard.sh %d %d: %v\n%s", k, shards, errs[k], outs[k])
+			t.Fatalf("%s %d %d: %v\n%s", script, k, shards, errs[k], outs[k])
 		}
 		for _, line := range strings.Split(string(outs[k]), "\n") {
 			name, ok := strings.CutPrefix(line, "  ")
