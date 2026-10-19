@@ -31,6 +31,7 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/httpclient"
+	"github.com/steveyegge/beads/internal/initprocs"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/migration"
 	"github.com/steveyegge/beads/internal/molecules"
@@ -2878,6 +2879,7 @@ func validateWorkspaceIdentity(ctx context.Context, s storage.DoltStorage, beads
 }
 
 func main() {
+	initprocs.Done()
 	// BD_NAME overrides the binary name in help text (e.g. BD_NAME=ops makes
 	// "ops --help" show "ops" instead of "bd"). Useful for multi-instance
 	// setups where wrapper scripts set BEADS_DIR for routing.

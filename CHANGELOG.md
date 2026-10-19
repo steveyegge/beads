@@ -499,6 +499,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `bd` initializes its packages with `GOMAXPROCS` capped at 4 and hands it
+  back before `main` runs anything, so the garbage collections package
+  initialization triggers do not stop the world across every CPU of a large
+  host. On a 192-CPU machine this takes about 17 ms off every bd process. An
+  explicit `GOMAXPROCS` is restored as set.
 - `bd serve` normalizes every RFC 3339 time bound on the issue listing and
   count (`created_*`, `updated_*`, `closed_*`, and the new `defer_*` and
   `due_*`) to UTC before it reaches storage. A bound carrying an offset

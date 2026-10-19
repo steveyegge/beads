@@ -222,6 +222,7 @@ release_cross_build(
         "//internal/httpclient/wire:wire",
         "//internal/httpclient:httpclient",
         "//internal/idgen:idgen",
+        "//internal/initprocs:initprocs",
         "//internal/jira:jira",
         "//internal/linear:linear",
         "//internal/lockfile:lockfile",
