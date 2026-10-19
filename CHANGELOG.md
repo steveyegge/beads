@@ -903,7 +903,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   use only the user-level files beside `~/.claude/settings.json`; a new
   `~/.claude/CLAUDE.md` holds just the section, rendered the same whichever
   project you run from, and with global or plugin hooks `--check` accepts it
-  when the project's instructions have none. If you ran `--global` before,
+  when the project's instructions have none, or names `--global` when it is
+  missing. Run from your home directory or `~/.claude`, `--check` judges the
+  user-level files; from your home directory, whose `.claude/settings.json` is
+  the global one, `--remove` removes the user-level section with the hooks.
+  If you ran `--global` before,
   re-run `bd setup claude --global` to add the section to `~/.claude/CLAUDE.md`.
   A section an earlier `--global` run left in a directory's `CLAUDE.md` stays
   there; delete it by hand if you don't want it.
