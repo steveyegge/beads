@@ -32,13 +32,16 @@ type managedSectionVariant struct {
 
 // managedSectionVariants lists every managed section bd renders: both
 // profiles, each with and without the `bd dolt push` lines that depend on a
-// configured Dolt remote. NoPush renders the no-remote bytes
+// configured Dolt remote, and each worded for a user-level file
+// (UserLevelRenderOpts). NoPush renders the no-remote bytes
 // (TestManagedSectionNoPushMatchesNoRemote), so it needs no variant of its own.
 var managedSectionVariants = []managedSectionVariant{
 	{name: "minimal", profile: ProfileMinimal, opts: RenderOpts{HasRemote: true}},
 	{name: "minimal-no-remote", profile: ProfileMinimal, opts: RenderOpts{}},
+	{name: "minimal-user", profile: ProfileMinimal, opts: UserLevelRenderOpts()},
 	{name: "full", profile: ProfileFull, opts: RenderOpts{HasRemote: true}},
 	{name: "full-no-remote", profile: ProfileFull, opts: RenderOpts{}},
+	{name: "full-user", profile: ProfileFull, opts: UserLevelRenderOpts()},
 }
 
 // TestManagedSectionGolden pins each managed section byte for byte, markers
@@ -60,8 +63,10 @@ func TestManagedSectionHashes(t *testing.T) {
 	want := map[string]string{
 		"minimal":           "6ffdf896",
 		"minimal-no-remote": "cdcea925",
+		"minimal-user":      "52c58e00",
 		"full":              "bacef91e",
 		"full-no-remote":    "9c890b20",
+		"full-user":         "0d9cad1f",
 	}
 	for _, v := range managedSectionVariants {
 		got := CurrentHashWithOpts(v.profile, v.opts)

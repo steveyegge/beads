@@ -900,11 +900,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reading `AGENTS.md` in the projects below it, and `--remove --global`
   stripped the section a project's own install had put in its `CLAUDE.md`
   while leaving that project's hooks in place. A global install and removal now
-  use only the user-level files beside `~/.claude/settings.json`; a new
+  use only the user-level files beside `~/.claude/settings.json`. A new
   `~/.claude/CLAUDE.md` holds just the section, rendered the same whichever
-  project you run from, and with global or plugin hooks `--check` accepts it
-  when the project's instructions have none, or names `--global` when it is
-  missing and the project has no `CLAUDE.md` of its own. Run from `~/.claude`,
+  project you run from. Claude Code loads that file in every project, so its
+  section, task-tracking rules included, applies only in repositories that use
+  beads. With global or plugin hooks `--check` accepts it when the project's
+  instructions have none, or names `--global` when it is missing and the
+  project has no `CLAUDE.md` of its own. Run from `~/.claude`,
   or from your home directory unless `~/CLAUDE.md` still holds a section an
   earlier run left there, `--check` judges the user-level files, and from your
   home directory it names `--global` when no hooks are installed. From your

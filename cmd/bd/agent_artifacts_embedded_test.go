@@ -140,8 +140,10 @@ var agentArtifactManagedSections = []struct {
 }{
 	{golden: "managed-section-minimal.md", profile: agents.ProfileMinimal, opts: agents.RenderOpts{HasRemote: true}},
 	{golden: "managed-section-minimal-no-remote.md", profile: agents.ProfileMinimal, opts: agents.RenderOpts{}},
+	{golden: "managed-section-minimal-user.md", profile: agents.ProfileMinimal, opts: agents.UserLevelRenderOpts()},
 	{golden: "managed-section-full.md", profile: agents.ProfileFull, opts: agents.RenderOpts{HasRemote: true}},
 	{golden: "managed-section-full-no-remote.md", profile: agents.ProfileFull, opts: agents.RenderOpts{}},
+	{golden: "managed-section-full-user.md", profile: agents.ProfileFull, opts: agents.UserLevelRenderOpts()},
 }
 
 // elideAgentArtifactManagedSection replaces the body of a managed section

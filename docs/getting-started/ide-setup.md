@@ -95,7 +95,7 @@ bd setup claude --global   # Global install: ~/.claude/settings.json + ~/.claude
 
 This installs:
 - **SessionStart hook** - Runs `bd prime --hook-json`, which wraps the workflow context in the JSON envelope Claude Code expects. SessionStart fires when a session starts, resumes, or clears, and again after context compaction — no separate compaction hook is needed.
-- **Minimal beads section in `CLAUDE.md`** - A pointer to `bd prime`, managed with hash/version markers for safe updates and `--check` freshness detection. If `CLAUDE.md` is a thin stub that imports `AGENTS.md` (an `@AGENTS.md` line of its own), the section is written to `AGENTS.md` instead, and a stale beads block left in the stub by an older bd is removed. A `--global` install writes the section to your user-level `~/.claude/CLAUDE.md`, which Claude Code loads in every project, and leaves the current directory's files alone.
+- **Minimal beads section in `CLAUDE.md`** - A pointer to `bd prime`, managed with hash/version markers for safe updates and `--check` freshness detection. If `CLAUDE.md` is a thin stub that imports `AGENTS.md` (an `@AGENTS.md` line of its own), the section is written to `AGENTS.md` instead, and a stale beads block left in the stub by an older bd is removed. A `--global` install writes the section to your user-level `~/.claude/CLAUDE.md` and leaves the current directory's files alone. Claude Code loads that file in every project, so there the section applies only in repositories that use beads.
 
 If the [beads Claude Code plugin](/integrations/claude-code-plugin) is installed, hooks are plugin-managed and `bd setup claude` skips writing them, so `bd prime` doesn't fire twice per session.
 

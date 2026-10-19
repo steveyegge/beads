@@ -66,6 +66,12 @@ func writeSettings(t *testing.T, path string, settings map[string]interface{}) {
 	}
 }
 
+// userLevelSection is the managed section a global install writes to
+// ~/.claude/CLAUDE.md.
+func userLevelSection() string {
+	return agents.RenderSectionWithOpts(agents.ProfileMinimal, agents.UserLevelRenderOpts())
+}
+
 func TestAddHookCommand(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -794,13 +800,14 @@ func TestInstallClaudeGlobalStealth(t *testing.T) {
 		t.Error("expected stealth command in settings")
 	}
 	// The managed section goes to Claude Code's user-level instructions file,
-	// beside the global settings, holding only the section: none of the
-	// project scaffolding a new project CLAUDE.md gets.
+	// beside the global settings, holding only the section, worded for a file
+	// every project loads: none of the project scaffolding a new project
+	// CLAUDE.md gets.
 	instructions, err := os.ReadFile(globalClaudeInstructionsPath(env.homeDir))
 	if err != nil {
 		t.Fatalf("expected user-level %s to be created: %v", claudeInstructionsFile, err)
 	}
-	if want := agents.RenderSectionWithOpts(agents.ProfileMinimal, agents.DefaultRenderOpts()); string(instructions) != want {
+	if want := userLevelSection(); string(instructions) != want {
 		t.Errorf("user-level %s should hold only the managed section:\ngot:\n%s\nwant:\n%s", claudeInstructionsFile, instructions, want)
 	}
 	// A global install must not touch the current directory's files.
@@ -825,7 +832,7 @@ func TestClaudeGlobalSectionIgnoresProjectConfig(t *testing.T) {
 		{"no remote", agents.RenderOpts{HasRemote: false}},
 		{"no push", agents.RenderOpts{HasRemote: true, NoPush: true}},
 	}
-	wantHash := agents.CurrentHashWithOpts(agents.ProfileMinimal, agents.DefaultRenderOpts())
+	wantHash := agents.CurrentHashWithOpts(agents.ProfileMinimal, agents.UserLevelRenderOpts())
 	orig := detectRenderOptsImpl
 	t.Cleanup(func() { detectRenderOptsImpl = orig })
 	for _, install := range configs {
@@ -856,6 +863,43 @@ func TestClaudeGlobalSectionIgnoresProjectConfig(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A section worded for a project, such as a project install run from
+// ~/.claude leaves there, is stale in the user-level file: --check names the
+// global install, which rewords the section in place and keeps the user's
+// own text.
+func TestInstallClaudeGlobalRewordsProjectSection(t *testing.T) {
+	stubDetectRenderOpts(t)
+	env, stdout, _ := newClaudeTestEnv(t)
+	if err := installClaude(env, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+	if err := os.WriteFile(globalInstructions, []byte("# Mine\n\n"+agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+		t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+	}
+	stdout.Reset()
+	if err := checkClaude(env); !errors.Is(err, errBeadsSectionStale) {
+		t.Fatalf("expected errBeadsSectionStale, got %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Run: bd setup claude --global (to update)") {
+		t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+	}
+	if err := installClaude(env, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	data, err := os.ReadFile(globalInstructions)
+	if err != nil {
+		t.Fatalf("read user-level %s: %v", claudeInstructionsFile, err)
+	}
+	if want := "# Mine\n\n" + userLevelSection(); string(data) != want {
+		t.Errorf("user-level %s after the global install:\ngot:\n%s\nwant:\n%s", claudeInstructionsFile, data, want)
+	}
+	stdout.Reset()
+	if err := checkClaude(env); err != nil {
+		t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
 	}
 }
 
@@ -1037,7 +1081,7 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
 		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
-		if err := os.WriteFile(globalInstructions, []byte(agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+		if err := os.WriteFile(globalInstructions, []byte(userLevelSection()), 0o644); err != nil {
 			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
 		}
 		if err := checkClaude(env); err != nil {
@@ -1054,7 +1098,7 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
 		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
-		if err := os.WriteFile(globalInstructions, []byte(agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+		if err := os.WriteFile(globalInstructions, []byte(userLevelSection()), 0o644); err != nil {
 			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
 		}
 		if err := os.WriteFile(filepath.Join(env.projectDir, claudeInstructionsFile), []byte("# Mine\n"), 0o644); err != nil {
@@ -1105,7 +1149,7 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
 		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
-		if err := os.WriteFile(globalInstructions, []byte(agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+		if err := os.WriteFile(globalInstructions, []byte(userLevelSection()), 0o644); err != nil {
 			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
 		}
 		if err := checkClaude(env); err != nil {
@@ -1124,7 +1168,7 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(globalClaudeInstructionsPath(env.homeDir)), 0o755); err != nil {
 			t.Fatalf("mkdir user-level dir: %v", err)
 		}
-		if err := os.WriteFile(globalClaudeInstructionsPath(env.homeDir), []byte(agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+		if err := os.WriteFile(globalClaudeInstructionsPath(env.homeDir), []byte(userLevelSection()), 0o644); err != nil {
 			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
 		}
 		if err := checkClaude(env); !errors.Is(err, errAgentsFileMissing) {
@@ -1211,6 +1255,40 @@ func TestCheckClaudeScenarios(t *testing.T) {
 			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
 		}
 	})
+
+	// The home directory and ~/.claude are recognized when reached through a
+	// symlink too (a symlinked /home, a linked checkout): sameDir compares
+	// the directories, not their path strings.
+	for _, link := range []struct {
+		name   string
+		target func(home string) string
+	}{
+		{"home", func(home string) string { return home }},
+		{"the user-level directory", func(home string) string { return filepath.Dir(globalClaudeInstructionsPath(home)) }},
+	} {
+		t.Run("global install checked from a symlink to "+link.name, func(t *testing.T) {
+			env, _, _ := newClaudeTestEnv(t)
+			if err := installClaude(env, true, false); err != nil {
+				t.Fatalf("installClaude: %v", err)
+			}
+			linkDir := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(link.target(env.homeDir), linkDir); err != nil {
+				t.Skipf("symlink: %v", err)
+			}
+			env.projectDir = linkDir
+			stdout := &bytes.Buffer{}
+			env.stdout = stdout
+			if err := checkClaude(env); err != nil {
+				t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "✓ Global hooks installed") {
+				t.Errorf("expected global hooks reported, got:\n%s", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), globalClaudeInstructionsPath(env.homeDir)+" (current)") {
+				t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+			}
+		})
+	}
 }
 
 func TestRemoveClaudeScenarios(t *testing.T) {

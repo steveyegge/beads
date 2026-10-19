@@ -150,9 +150,11 @@ func claudeAgentsEnvRedirect(env claudeEnv) (agentsEnv, bool) {
 // beads section in, with the integration whose hints name its command. A
 // global install uses the user-level ~/.claude/CLAUDE.md and leaves the
 // current directory's files alone. It renders that file with fixed options:
-// every project shares it, so it must not follow one project's config. A
-// project install uses the project's CLAUDE.md, or AGENTS.md when the bool
-// reports the claudeAgentsEnvRedirect redirect.
+// every project shares it, so it must not follow one project's config, and
+// Claude Code loads it in projects that do not use beads too, so its section
+// applies only in those that do. A project install uses the project's
+// CLAUDE.md, or AGENTS.md when the bool reports the claudeAgentsEnvRedirect
+// redirect.
 func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegration, bool) {
 	if !global {
 		ae, redirected := claudeAgentsEnvRedirect(env)
@@ -163,7 +165,7 @@ func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegra
 		stdout:      env.stdout,
 		stderr:      env.stderr,
 		sectionOnly: true,
-		renderOpts:  agents.DefaultRenderOpts,
+		renderOpts:  agents.UserLevelRenderOpts,
 	}, claudeGlobalAgentsIntegration, false
 }
 

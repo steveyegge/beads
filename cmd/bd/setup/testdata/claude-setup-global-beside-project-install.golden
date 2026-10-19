@@ -50,9 +50,8 @@ Restart Claude Code for changes to take effect.
 
 Answer tersely.
 
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6ffdf896 -->
-[managed section body: byte-identical to internal/templates/agents/testdata/managed-section-minimal.md]
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:52c58e00 -->
+[managed section body: byte-identical to internal/templates/agents/testdata/managed-section-minimal-user.md]
 <!-- END BEADS INTEGRATION -->
 --- files: created $ROOT/home/.claude/settings.json
 {
@@ -94,8 +93,6 @@ Removing Claude Code integration...
 # My preferences
 
 Answer tersely.
-
-
 --- files: modified $ROOT/home/.claude/settings.json
 {
   "hooks": {}
