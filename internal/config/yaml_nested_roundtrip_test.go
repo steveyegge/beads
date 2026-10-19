@@ -507,6 +507,14 @@ func TestUnsetRefusesShapesItCannotEdit(t *testing.T) {
 		{name: "plain scalar on the next line", seed: "dolt.mode:\n  server\n", key: "dolt.mode", want: "lines beneath it"},
 		// A CRLF blank line is a lone carriage return, not content at column 0.
 		{name: "mapping behind a CRLF blank line", seed: "backup:\r\n\r\n  enabled: false\r\n", key: "backup", want: "lines beneath it"},
+		// A value that OPENS on the key's own line and wraps onto the next — a
+		// flow collection or a quoted scalar — is the member the named shapes
+		// above cannot see: valueContinuesBelow reads the text after the colon
+		// as "the value fits on this line", so the matcher commented the key
+		// line, orphaned the remainder, and exited 0. The line-containment
+		// probe refuses the whole class, in either spelling, at any
+		// indentation the flow body chooses.
+		{name: "multi-line flow mapping, nested", seed: "sync:\n    remote: {url: a,\n        branch: b}\nnode_id: mini\n", key: "sync.remote", want: "spans more than one line"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

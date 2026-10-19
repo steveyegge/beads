@@ -1393,11 +1393,12 @@ func (w *nestedKeyWalk) step(name string, indent int) bool {
 // line commented out while the body stayed behind as a value of its own. The set
 // direction already refuses what it cannot write correctly, so unset says so too.
 //
-// This is a list of known shapes, not a decision procedure for the whole class:
-// a value that spans lines in flow or quoted style lands its body in the same
-// place and is still silent. A mapping-valued key is refused by the line
-// matcher itself (mappingValueUnsetRefusal), which also covers single-segment
-// keys this function never walks.
+// A value that opens on the key's own line and wraps onto the next — the
+// member a list of named shapes could not see — is decided by mechanism
+// instead: spansLinesUnsetRefusal re-parses the key's own line and refuses
+// when the entry does not end there. A mapping-valued key is refused by the
+// line matcher itself (mappingValueUnsetRefusal), which also covers
+// single-segment keys this function never walks.
 //
 // Only a key that is actually present can be refused: unsetting a key that was
 // never there has always been a successful no-op, and staying silent about a
@@ -1424,11 +1425,17 @@ func unsupportedUnsetShape(content, key string) error {
 			if err := blockScalarUnsetRefusal(top.Content[idx+1], key); err != nil {
 				return err
 			}
+			if err := spansLinesUnsetRefusal(content, top.Content[idx], key); err != nil {
+				return err
+			}
 		}
 	}
 
 	node := root.Content[0]
 	parents := make([]*yaml.Node, 0, len(segments))
+	// leafKey is the key node the final segment resolved to, kept alongside the
+	// value for the line-containment probe below.
+	var leafKey *yaml.Node
 	for _, segment := range segments {
 		if node.Kind != yaml.MappingNode {
 			return nil
@@ -1438,6 +1445,7 @@ func unsupportedUnsetShape(content, key string) error {
 			return nil
 		}
 		parents = append(parents, node)
+		leafKey = node.Content[idx]
 		node = node.Content[idx+1]
 	}
 
@@ -1451,7 +1459,10 @@ func unsupportedUnsetShape(content, key string) error {
 		}
 		return fmt.Errorf("cannot unset %q: %s is written in flow style ({...}), which bd cannot edit; remove the key by hand", key, where)
 	}
-	return blockScalarUnsetRefusal(node, key)
+	if err := blockScalarUnsetRefusal(node, key); err != nil {
+		return err
+	}
+	return spansLinesUnsetRefusal(content, leafKey, key)
 }
 
 // blockScalarUnsetRefusal refuses a key whose value is written as a block
@@ -1463,6 +1474,59 @@ func blockScalarUnsetRefusal(valueNode *yaml.Node, key string) error {
 		return nil
 	}
 	return fmt.Errorf("cannot unset %q: its value is a block scalar (| or >), and commenting the key out would leave the body behind as a value of its own; remove the key by hand", key)
+}
+
+// spansLinesUnsetRefusal refuses a key whose value opens on the key's own line
+// but does not end there — a flow collection or quoted scalar wrapped onto the
+// lines below (`remote: {url: a,` with `branch: b}` finishing it). Those are
+// invisible to mappingValueUnsetRefusal, which owns values that start BENEATH
+// the key line: the text after the colon is non-empty, so the matcher read it
+// as "the value fits on this line", commented the key out, and orphaned the
+// remainder in a file that no longer parsed.
+//
+// The decision is mechanical, not a longer list of shapes: a key line whose
+// value ended on it is a complete one-key document, so re-parsing that one
+// line settles whether the entry is confined to it. The probe unmarshals into
+// a yaml.Node rather than a map, so a flow collection that does fit on the
+// line (`remote: {url: a, branch: b}`) still parses and stays editable.
+//
+// One carve-out: a value that is a single alias token (`remote: *r`) cannot
+// resolve within a one-line document — the anchor lives elsewhere — yet the
+// line is complete, and unsetting an alias consumer has always commented it
+// cleanly, so it is exempt rather than refused. The token is recognized in the
+// text after the colon, not by string-matching yaml.v3's error.
+//
+// A line number the split cannot reach fails open: a file yaml.v3 cannot
+// place is not this function's to diagnose.
+func spansLinesUnsetRefusal(content string, keyNode *yaml.Node, key string) error {
+	lines := strings.Split(content, "\n")
+	i := keyNode.Line - 1
+	if i < 0 || i >= len(lines) {
+		return nil
+	}
+	var probe yaml.Node
+	if err := yaml.Unmarshal([]byte(lines[i]), &probe); err == nil {
+		return nil
+	}
+	if aliasOnlyValue(lines[i]) {
+		return nil
+	}
+	return fmt.Errorf("cannot unset %q: its value spans more than one line, and commenting the key out would orphan the lines that finish it; remove the key by hand", key)
+}
+
+// aliasOnlyValue reports whether a key line's value is nothing but one alias
+// token (`remote: *r`), once a trailing comment is dropped the same way
+// valueContinuesBelow drops one.
+func aliasOnlyValue(line string) bool {
+	_, rest, _ := strings.Cut(strings.TrimLeft(line, " \t"), ":")
+	rest = strings.TrimSpace(rest)
+	if i := strings.Index(rest, " #"); i >= 0 {
+		rest = rest[:i]
+	} else if strings.HasPrefix(rest, "#") {
+		rest = ""
+	}
+	fields := strings.Fields(rest)
+	return len(fields) == 1 && strings.HasPrefix(fields[0], "*")
 }
 
 // blockScalarIndent reports the indentation of a key whose value is a literal
