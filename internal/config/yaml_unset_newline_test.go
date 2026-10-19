@@ -269,6 +269,12 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		{"key present", "issue_prefix: vp\ndolt.mode: server\n", "issue_prefix"},
 		{"commented key present", "# actor: \"\"\nother: x\n", "actor"},
 		{"key on the last line", "other: x\nactor: a\n", "actor"},
+
+		// As on the unset side, a run of blank lines lost exactly one newline,
+		// so the output still ended in "\n" and only an exact comparison of the
+		// run can see the loss.
+		{"ends in a blank line", "actor: a\nother: x\n\n", "actor"},
+		{"ends in two blank lines", "actor: a\nother: x\n\n\n", "actor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := updateYamlKey(tc.content, tc.key, "b")
