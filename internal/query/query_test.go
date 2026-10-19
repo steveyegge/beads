@@ -1221,3 +1221,47 @@ func TestSignedUppercaseDurationUnitParseError(t *testing.T) {
 		})
 	}
 }
+
+// TestUppercaseUnitFixNoRegressions pins that rejecting uppercase units
+// changed nothing else: digit-led values that are not compact durations
+// still resolve through natural-language parsing, and non-time fields
+// still filter on the literal string. Lowercase durations (30m, 30min,
+// +30d) are already pinned by TestQueryMinutesUnitResolvesAgo and
+// TestDurationParsing.
+func TestUppercaseUnitFixNoRegressions(t *testing.T) {
+	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
+
+	t.Run("updated>5pm resolves through natural language", func(t *testing.T) {
+		result, err := EvaluateAt("updated>5pm", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(updated>5pm) error = %v", err)
+		}
+		if result.Filter.UpdatedAfter == nil {
+			t.Fatalf("EvaluateAt(updated>5pm) left UpdatedAfter unset, filter=%+v", result.Filter)
+		}
+		want := time.Date(2025, 2, 4, 17, 0, 0, 0, time.UTC)
+		if !result.Filter.UpdatedAfter.Equal(want) {
+			t.Errorf("updated>5pm = %s, want %s", result.Filter.UpdatedAfter.Format(time.RFC3339), want.Format(time.RFC3339))
+		}
+	})
+
+	t.Run("label=30M filters on the literal", func(t *testing.T) {
+		result, err := EvaluateAt("label=30M", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(label=30M) error = %v", err)
+		}
+		if len(result.Filter.Labels) != 1 || result.Filter.Labels[0] != "30M" {
+			t.Errorf("label=30M Labels = %v, want [\"30M\"]", result.Filter.Labels)
+		}
+	})
+
+	t.Run("title=30M filters on the literal", func(t *testing.T) {
+		result, err := EvaluateAt("title=30M", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(title=30M) error = %v", err)
+		}
+		if result.Filter.TitleContains != "30M" {
+			t.Errorf("title=30M TitleContains = %q, want \"30M\"", result.Filter.TitleContains)
+		}
+	})
+}
