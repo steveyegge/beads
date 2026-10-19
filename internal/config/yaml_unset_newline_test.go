@@ -63,13 +63,15 @@ func TestCommentOutYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		}
 	})
 
-	// bufio.ScanLines strips the "\r" from every line, so an unset rewrites a
-	// CRLF document to LF throughout. That is pre-existing and unchanged by the
-	// trailing-run logic, but the tail is where it is least visible: TrimRight
-	// on "\n" leaves the final "\r" behind, so the run that gets re-attached is
-	// a bare "\n" and the end of the file reads clean while every line ending
-	// above it changed. Pinned so the normalization is documented, and so a
-	// future change to it has to be deliberate.
+	// An unset rewrites a CRLF document to LF throughout: commentOutYamlKey
+	// normalizes CRLF up front, before anything measures or re-attaches a
+	// trailing run. That normalization predates the trailing-run logic, and
+	// the tail is where it is least visible — without it, TrimRight on "\n"
+	// would stop at the final "\r" and a CRLF file ending in blank lines would
+	// get back a bare "\n" — so the end of the file reads clean either way.
+	// Pinned so the normalization is documented, and so a future change to it
+	// has to be deliberate. The set-side subtest beside it pins the
+	// multi-newline runs on the same documents.
 	t.Run("CRLF is normalized to LF, trailing run included", func(t *testing.T) {
 		out, err := commentOutYamlKey("issue_prefix: vp\r\ndolt.mode: server\r\n", "dolt.mode")
 		if err != nil {
