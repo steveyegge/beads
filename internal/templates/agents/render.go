@@ -54,6 +54,13 @@ type RenderOpts struct {
 	NoPush bool
 }
 
+// omitsDoltPush reports whether rendered instructions leave out "bd dolt push":
+// no Dolt remote is configured, or the workspace is declared no-push. The
+// managed section and the AGENTS.md template around it share this rule.
+func (o RenderOpts) omitsDoltPush() bool {
+	return !o.HasRemote || o.NoPush
+}
+
 // DefaultRenderOpts returns opts that assume a remote is configured,
 // preserving backward-compatible behavior for callers that don't pass opts.
 func DefaultRenderOpts() RenderOpts {
@@ -214,7 +221,7 @@ func templateBodyWithOpts(profile Profile, opts RenderOpts) string {
 		body = strings.TrimSuffix(body, "\n<!-- END BEADS INTEGRATION -->")
 	}
 
-	if !opts.HasRemote || opts.NoPush {
+	if opts.omitsDoltPush() {
 		body = stripDoltPushReferences(body)
 	}
 
