@@ -65,12 +65,14 @@ func TestLoadServerModeFromBeadsDirCorruptMetadataReturnsError(t *testing.T) {
 }
 
 // End-to-end contract for a corrupt metadata.json, exercised through the
-// real binary: diagnostic and repair commands still run (warn-and-continue),
-// data commands fail loud instead of answering false-empty from the embedded
-// fallback, and bd init can rewrite the file — after which data commands work
-// again. Guards the scoping of the fail-loud behavior: fatal only where a
-// store is actually selected, never on the repair path itself.
-func TestCorruptMetadataDiagnosticsRunAndDataFailsLoud(t *testing.T) {
+// real binary on an embedded workspace. Since #4857 a metadata.json that
+// exists but cannot be parsed fails safe wherever a workspace is selected,
+// doctor and init included (TestDoctorRejectsCorruptMetadataBeforeSharedServerChecks
+// pins doctor's shared-server half): bd version still runs and warns, every
+// workspace command fails loud naming the file instead of answering
+// false-empty from the embedded fallback, nothing rewrites the file, and
+// restoring it brings the data back.
+func TestEmbeddedCorruptMetadataFailsLoudUntilRestored(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt tests")
 	}
@@ -78,8 +80,15 @@ func TestCorruptMetadataDiagnosticsRunAndDataFailsLoud(t *testing.T) {
 
 	bd := buildEmbeddedBD(t)
 	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "cm")
+	bdCreate(t, bd, dir, "survives the corruption")
 
-	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"dolt_mode":"serv`), 0o600); err != nil {
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	original, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("read metadata.json: %v", err)
+	}
+	corrupt := []byte(`{"dolt_mode":"serv`)
+	if err := os.WriteFile(metadataPath, corrupt, 0o600); err != nil {
 		t.Fatalf("corrupt metadata.json: %v", err)
 	}
 
@@ -91,27 +100,43 @@ func TestCorruptMetadataDiagnosticsRunAndDataFailsLoud(t *testing.T) {
 		return string(out), err
 	}
 
-	// Diagnostic / repair-path commands must keep working.
-	for _, args := range [][]string{{"version"}, {"doctor"}} {
-		if out, err := run(args...); err != nil {
-			t.Errorf("bd %s with corrupt metadata.json: want success, got %v\n%s", strings.Join(args, " "), err, out)
+	// bd version needs no workspace: it warns and runs.
+	if out, err := run("version"); err != nil || !strings.Contains(out, "metadata.json") {
+		t.Errorf("bd version with corrupt metadata.json: want success with a warning naming the file, got %v\n%s", err, out)
+	}
+
+	// Every command that selects the workspace refuses before opening or
+	// modifying storage, naming the file.
+	for _, args := range [][]string{
+		{"doctor"},
+		{"list", "--json"},
+		{"init", "--prefix", "cm", "--quiet", "--skip-hooks", "--skip-agents"},
+	} {
+		out, err := run(args...)
+		if err == nil {
+			t.Errorf("bd %s with corrupt metadata.json: want a loud failure, got success:\n%s", strings.Join(args, " "), out)
+			continue
+		}
+		for _, want := range []string{"metadata.json", "parsing config", "no storage database was opened or modified"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("bd %s with corrupt metadata.json: output missing %q:\n%s", strings.Join(args, " "), want, out)
+			}
 		}
 	}
+	if after, err := os.ReadFile(metadataPath); err != nil || string(after) != string(corrupt) {
+		t.Fatalf("a refused command rewrote metadata.json (err %v):\nbefore: %q\nafter:  %q", err, corrupt, after)
+	}
 
-	// Data commands must fail loud, naming the file — not answer false-empty.
+	// Restoring the file is the repair, and the data was never touched.
+	if err := os.WriteFile(metadataPath, original, 0o600); err != nil {
+		t.Fatalf("restore metadata.json: %v", err)
+	}
 	out, err := run("list", "--json")
-	if err == nil {
-		t.Fatalf("bd list with corrupt metadata.json: want loud failure, got success:\n%s", out)
+	if err != nil {
+		t.Fatalf("bd list after restoring metadata.json: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "metadata.json") {
-		t.Fatalf("bd list error should name metadata.json:\n%s", out)
-	}
-
-	// bd init is the documented repair path: it must run, rewrite the file,
-	// and restore data commands.
-	runBDInit(t, bd, dir, "--prefix", "cm")
-	if out, err := run("list", "--json"); err != nil {
-		t.Fatalf("bd list after bd init repair: %v\n%s", err, out)
+	if !strings.Contains(out, "survives the corruption") {
+		t.Fatalf("bd list after restoring metadata.json lost the issue created before the corruption:\n%s", out)
 	}
 }
 
