@@ -120,6 +120,7 @@
 
 100 48 TestEmbeddedDeferConcurrent
 
+100 49 TestEmbeddedCompactKeepsCommitMetadata
 100 49 TestEmbeddedInitAPushConsentAndRemoteBootstrap
 
 100 50 TestEmbeddedDiffConcurrent
