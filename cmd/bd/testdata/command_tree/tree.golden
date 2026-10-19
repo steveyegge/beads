@@ -1,6 +1,6 @@
 # bd command tree (cgo build), pinned by TestCommandTreeGolden.
 # Regenerate after an intentional CLI change:
-#   BD_UPDATE_GOLDEN=1 go test -tags gms_pure_go ./cmd/bd -run '^TestCommand(Tree|Help)Golden$'
+#   BD_UPDATE_GOLDEN=1 CGO_ENABLED=1 go test -tags gms_pure_go ./cmd/bd -run '^TestCommand(Tree|Help)Golden$'
 
 bd
   use: "bd"

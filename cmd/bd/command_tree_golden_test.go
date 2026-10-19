@@ -24,11 +24,14 @@ import (
 // The committed command-surface goldens. Regenerate after an intentional CLI
 // change, then review the diff like code:
 //
-//	BD_UPDATE_GOLDEN=1 go test -tags gms_pure_go ./cmd/bd -run '^TestCommand(Tree|Help)Golden$'
+//	BD_UPDATE_GOLDEN=1 CGO_ENABLED=1 go test -tags gms_pure_go ./cmd/bd -run '^TestCommand(Tree|Help)Golden$'
+//
+// CGO_ENABLED=1 because this file builds only with cgo: with cgo off the
+// command matches no test, exits 0 and leaves the goldens as they were.
 const (
 	commandTreeGoldenPath = "testdata/command_tree/tree.golden"
 	commandHelpGoldenDir  = "testdata/command_tree/help"
-	commandGoldenRegen    = "BD_UPDATE_GOLDEN=1 go test -tags gms_pure_go ./cmd/bd -run '^TestCommand(Tree|Help)Golden$'"
+	commandGoldenRegen    = "BD_UPDATE_GOLDEN=1 CGO_ENABLED=1 go test -tags gms_pure_go ./cmd/bd -run '^TestCommand(Tree|Help)Golden$'"
 )
 
 // commandHelpGoldenArgs is the representative set of commands whose exact
@@ -63,11 +66,17 @@ var commandHelpGoldenArgs = [][]string{
 func TestCommandTreeGolden(t *testing.T) {
 	pkgDir := enterOrdinaryWorkspaceForGolden(t)
 	primeCommandTreeForGolden()
+	flagCounts := commandFlagCounts(rootCmd)
 	got := renderCommandTreeGolden(rootCmd)
 	// A renderer that iterated a map would pass on the run that regenerated
 	// the golden and flake afterwards.
 	if again := renderCommandTreeGolden(rootCmd); again != got {
 		t.Fatalf("command tree rendering is not deterministic:\n%s", goldenLineDiff(got, again))
+	}
+	// Nor may rendering change the tree it reads: tests sharing this binary
+	// pin a command's exact flag set (TestServeFlags). See goldenLocalFlags.
+	if after := commandFlagCounts(rootCmd); after != flagCounts {
+		t.Fatalf("rendering the command tree added flags to a command's own flag set:\n%s", goldenLineDiff(flagCounts, after))
 	}
 	checkCommandGolden(t, pkgDir, commandTreeGoldenPath, got)
 }
@@ -80,6 +89,10 @@ func TestCommandTreeGolden(t *testing.T) {
 // prints.
 func TestCommandHelpGolden(t *testing.T) {
 	pkgDir := enterOrdinaryWorkspaceForGolden(t)
+	// Parsing `bd serve --help` merges the root's persistent flags into
+	// serveCmd's own flag set, which TestServeFlags pins; restoreServeGlobals
+	// re-registers that set afterwards.
+	restoreServeGlobals(t)
 
 	want := map[string]bool{}
 	for _, args := range commandHelpGoldenArgs {
@@ -119,6 +132,7 @@ func TestCommandHelpGolden(t *testing.T) {
 // store. It returns the package directory, where the goldens live.
 func enterOrdinaryWorkspaceForGolden(t *testing.T) string {
 	t.Helper()
+	isolateBeadsDirForTest(t)
 	pkgDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -203,9 +217,58 @@ func writeCommandGoldenBlock(b *strings.Builder, c *cobra.Command) {
 	for _, line := range commandGoldenFlagLines(c.PersistentFlags()) {
 		fmt.Fprintf(b, "  persistent-flag %s\n", line)
 	}
-	for _, line := range commandGoldenFlagLines(c.LocalNonPersistentFlags()) {
+	for _, line := range commandGoldenFlagLines(goldenLocalFlags(c)) {
 		fmt.Fprintf(b, "  flag %s\n", line)
 	}
+}
+
+// goldenLocalFlags returns the non-persistent flags c registers itself,
+// including any that shadow an inherited flag: the set
+// c.LocalNonPersistentFlags() reports, read without calling it. That
+// accessor, like LocalFlags and InheritedFlags, runs cobra's
+// mergePersistentFlags, which copies every inherited persistent flag into
+// c.Flags() for the rest of the process. Over the whole tree that would leave
+// `bd serve` carrying the root's --json, --db and the rest, and break
+// TestServeFlags (see TestNoSubcommandShadowsRootJSONFlag).
+//
+// c.Flags() may already hold such copies from an earlier in-process
+// execution. They are recognized by identity, the way cobra itself tells
+// them apart: an inherited flag is the nearest ancestor's own *pflag.Flag of
+// that name, and a shadowing flag is a different one.
+func goldenLocalFlags(c *cobra.Command) *pflag.FlagSet {
+	local := pflag.NewFlagSet(c.Name(), pflag.ContinueOnError)
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		if c.PersistentFlags().Lookup(f.Name) != nil {
+			return // rendered as a persistent-flag line
+		}
+		for p := c.Parent(); p != nil; p = p.Parent() {
+			if inherited := p.PersistentFlags().Lookup(f.Name); inherited != nil {
+				if inherited == f {
+					return
+				}
+				break
+			}
+		}
+		local.AddFlag(f)
+	})
+	return local
+}
+
+// commandFlagCounts renders how many flags each command's own flag set holds,
+// one line per command, read without merging anything into it.
+func commandFlagCounts(root *cobra.Command) string {
+	var b strings.Builder
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		n := 0
+		c.Flags().VisitAll(func(*pflag.Flag) { n++ })
+		fmt.Fprintf(&b, "%s %d\n", c.CommandPath(), n)
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	return b.String()
 }
 
 // writeGoldenTextBlock writes a multi-line field one source line per golden
@@ -298,6 +361,11 @@ func formatGoldenAnnotations[V string | []string](m map[string]V) string {
 // and returns its stdout with color escapes stripped. cobra keeps the parsed
 // --help value on the shared tree, so every flag is put back afterwards: a
 // later in-process `bd create ...` must not print help instead.
+//
+// internal/ui decides color once, at init, from CLICOLOR_FORCE and whether the
+// test binary's stdout is a terminal. CI never gives it one, so there the
+// strip removes nothing; it is what keeps a run from a terminal matching the
+// goldens.
 func renderCommandHelpGolden(t *testing.T, args []string) string {
 	t.Helper()
 	argv := append(append([]string(nil), args...), "--help")
