@@ -470,6 +470,15 @@ Examples:
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
+		// The confirmation line names both issues by title. Adding an edge
+		// changes neither title, so read them now, while the resolution's
+		// reads above are still fresh: over http those two lookups are then
+		// answered without a round trip, where after the write they would be
+		// two more (bts-xpw.3.14.6).
+		var fromTitle, toTitle string
+		if !jsonOutput {
+			fromTitle, toTitle = lookupTitle(fromID), lookupTitle(toID)
+		}
 		edge := issueops.DependencyEdge{IssueID: fromID, DependsOnID: toID, Type: dt}
 		if err := addDependencyEdgesDirect(opsCtx, fromStore, []issueops.DependencyEdge{edge}, false); err != nil {
 			return HandleErrorRespectJSON("%v", err)
@@ -500,7 +509,7 @@ Examples:
 		}
 
 		fmt.Printf("%s Added dependency: %s %s %s (%s)\n",
-			ui.RenderPass("✓"), formatFeedbackIDParen(fromID, lookupTitle(fromID)), depRelationFor(dt).phrase, formatFeedbackIDParen(toID, lookupTitle(toID)), dt)
+			ui.RenderPass("✓"), formatFeedbackIDParen(fromID, fromTitle), depRelationFor(dt).phrase, formatFeedbackIDParen(toID, toTitle), dt)
 		return nil
 	},
 }

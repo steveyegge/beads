@@ -270,6 +270,7 @@ func executeUpdate(ctx context.Context, tx *sql.Tx, request publicops.UpdateRequ
 			tables.Add("issues")
 		}
 	}
+	enteredIssuesPlane := false
 	if attempt.Patch.Persistence.Set {
 		current, err := GetIssueInTx(ctx, tx, attempt.IssueID)
 		if err != nil {
@@ -283,13 +284,21 @@ func executeUpdate(ctx context.Context, tx *sql.Tx, request publicops.UpdateRequ
 			changedAny = true
 			tables.Merge(moved.ChangedTables)
 		}
+		enteredIssuesPlane = moved.EnteredIssuesPlane
 	}
 	// The one mint for this guarded update, LAST: after the claim, the row
 	// write, the label and parent patches and the persistence move. Nothing
 	// changed means nothing to version (the FR-2 no-op case), and a row that
-	// moved to the wisp plane is excluded by the seam itself.
+	// moved to the wisp plane is excluded by the seam itself. A persistence
+	// move that brought a wisp onto the issues plane makes this the record's
+	// first version, so it mints create-shaped (design §16.2b), the same as
+	// MoveIssuePersistenceInTx's own mint for that move.
 	if changedAny {
-		if err := RecordVersionInTx(ctx, tx, attempt.IssueID, attempt.Actor); err != nil {
+		if enteredIssuesPlane {
+			if err := RecordVersionForCreateInTx(ctx, tx, attempt.IssueID, attempt.Actor); err != nil {
+				return publicops.UpdateResult{}, nil, err
+			}
+		} else if err := RecordVersionInTx(ctx, tx, attempt.IssueID, attempt.Actor); err != nil {
 			return publicops.UpdateResult{}, nil, err
 		}
 	}
@@ -336,7 +345,16 @@ func ExecuteClose(ctx context.Context, tx *sql.Tx, request publicops.CloseReques
 	if err != nil {
 		return publicops.CloseResult{}, nil, err
 	}
-	return publicops.CloseResult{Issue: hydrated, Changed: changed, OpenChildren: closed.OpenChildren}, tables, nil
+	result := publicops.CloseResult{Issue: hydrated, Changed: changed, OpenChildren: closed.OpenChildren}
+	if attempt.AutoCloseMolecule {
+		auto, autoTables, err := CloseCompletedMoleculeInTx(ctx, tx, attempt.IssueID, attempt.Actor, attempt.Session)
+		if err != nil {
+			return publicops.CloseResult{}, nil, err
+		}
+		tables.Merge(autoTables)
+		result.AutoClosedMolecule, result.MoleculeAutoCloseRefusal = auto.Root, auto.Refusal
+	}
+	return result, tables, nil
 }
 
 // ExecuteReopen applies a guarded reopen in tx and reports durable tables changed.

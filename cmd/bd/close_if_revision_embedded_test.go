@@ -48,9 +48,11 @@ func TestIfRevisionCloseReplaysMoleculeAutoClose(t *testing.T) {
 
 	// Re-close the already-closed final step, this time GUARDED. The idempotent
 	// guarded re-close must replay molecule auto-close and heal the
-	// stranded-open root exactly as the unguarded path does.
+	// stranded-open root exactly as the unguarded path does, and its --json
+	// report names the root it closed.
 	rev := bdShowRevision(t, bd, dir, step2.ID)
-	bdRunOK(t, bd, dir, "close", step2.ID, "--if-revision", revStr(rev), "--reason", "retry")
+	out := bdClose(t, bd, dir, step2.ID, "--if-revision", revStr(rev), "--reason", "retry", "--json")
+	requireCloseJSONReportsAutoClosedMolecule(t, out, []string{step2.ID}, root.ID)
 
 	if got := bdShow(t, bd, dir, root.ID); got.Status != types.StatusClosed {
 		t.Errorf("expected stranded-open molecule root %s healed by a guarded re-close of the final step, got %s",

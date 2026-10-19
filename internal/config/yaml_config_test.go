@@ -1,6 +1,9 @@
 package config
 
 import (
+	"bufio"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -244,6 +247,86 @@ func walkMap(m map[string]interface{}, parts []string) interface{} {
 		}
 	}
 	return cur
+}
+
+// A line of bufio.MaxScanTokenSize bytes or more stops the flat-key path's
+// line scanner partway through the document. updateYamlKey used to return the
+// lines read up to that point with a nil error, which setYamlConfigAtPath then
+// wrote over config.yaml, dropping the long line and everything after it.
+// A line one byte shorter still fits, and must get the same rewrite a short
+// document gets rather than the refusal.
+func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
+	doc := func(line string) string { return "k1: v1\n" + line + "\nk2: v2" }
+	atLimit := strings.Repeat("x", bufio.MaxScanTokenSize)
+	underLimit := strings.Repeat("x", bufio.MaxScanTokenSize-1)
+
+	tests := []struct {
+		name    string
+		content string
+		key     string
+		want    string
+		wantErr bool
+	}{
+		{name: "line of MaxScanTokenSize bytes, key present", content: doc(atLimit), key: "k1", wantErr: true},
+		{name: "line of MaxScanTokenSize bytes, key absent", content: doc(atLimit), key: "k3", wantErr: true},
+		{
+			name:    "line of MaxScanTokenSize-1 bytes, key present",
+			content: doc(underLimit),
+			key:     "k1",
+			want:    "k1: \"zz\"\n" + underLimit + "\nk2: v2",
+		},
+		{
+			name:    "line of MaxScanTokenSize-1 bytes, key absent",
+			content: doc(underLimit),
+			key:     "k3",
+			want:    doc(underLimit) + "\n\nk3: \"zz\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := updateYamlKey(tt.content, tt.key, "zz")
+			if tt.wantErr {
+				if !errors.Is(err, bufio.ErrTooLong) {
+					t.Errorf("updateYamlKey() error = %v, want %v", err, bufio.ErrTooLong)
+				}
+				if got != "" {
+					t.Errorf("updateYamlKey() returned %d bytes of the %d-byte document, want none", len(got), len(tt.content))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("updateYamlKey() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("updateYamlKey() returned %d bytes, want the %d-byte rewrite", len(got), len(tt.want))
+			}
+		})
+	}
+}
+
+// setYamlConfigAtPath is the read, rewrite, write step behind bd config set for
+// an undotted key. When updateYamlKey refuses a document with an oversize line,
+// the error has to come back before the write, so config.yaml keeps every byte
+// it had.
+func TestSetYamlConfigAtPathOversizeLineLeavesFileUntouched(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	before := "no-db: false\n# " + strings.Repeat("x", bufio.MaxScanTokenSize) + "\njson: true\n"
+	if err := os.WriteFile(configPath, []byte(before), 0o600); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	if err := setYamlConfigAtPath(configPath, "no-db", "true"); !errors.Is(err, bufio.ErrTooLong) {
+		t.Errorf("setYamlConfigAtPath() error = %v, want %v", err, bufio.ErrTooLong)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read config.yaml: %v", err)
+	}
+	if string(after) != before {
+		t.Errorf("config.yaml is %d bytes after the refused set, want the original %d bytes unchanged", len(after), len(before))
+	}
 }
 
 func TestFormatYamlValue(t *testing.T) {
@@ -879,6 +962,27 @@ func TestValidateYamlConfigValue_PrimeMaxMemories(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidateYamlConfigValue_PrimeDisabled: prime.disabled takes exactly the
+// strings viper's GetBool reads, so `bd config set` cannot store a value that
+// bd prime would silently read as false.
+func TestValidateYamlConfigValue_PrimeDisabled(t *testing.T) {
+	if !IsYamlOnlyKey("prime.disabled") {
+		t.Fatal("prime.disabled must be yaml-only: bd prime reads it through viper before any store is open")
+	}
+	for _, value := range []string{"true", "false", "TRUE", "False", "1", "0", "t", "f"} {
+		if err := validateYamlConfigValue("prime.disabled", value); err != nil {
+			t.Errorf("value %q: unexpected error %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "yes", "off", "tRuE", "2"} {
+		err := validateYamlConfigValue("prime.disabled", value)
+		want := fmt.Sprintf("prime.disabled must be true or false, got %q", value)
+		if err == nil || err.Error() != want {
+			t.Errorf("value %q: got error %v, want %q", value, err, want)
+		}
 	}
 }
 

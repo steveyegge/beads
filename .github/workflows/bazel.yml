@@ -46,11 +46,14 @@
 # only what the PR changed is built and tested on the runner, and it is
 # their only PR-time integration run (no legacy job runs it on PRs). Mode
 # local (rbe=off) still skips it. Direct runs (push to main,
-# workflow_dispatch, nightly.yml's call) gate nothing. bazel-dolt-race (the
-# dolt-server + proxied union shadow, mode remote on PRs and merge groups
-# only) cannot fail the gate either: no output, job-level continue-on-error.
-# The gate still waits for it, as for every job of the call (see its comment
-# and engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "dolt-race Shadow").
+# workflow_dispatch, nightly.yml's call) gate nothing. In mode remote the
+# dolt-server and proxied-server tiers run as one union job, bazel-dolt-race
+# (`bazel test --config=dolt-race`), whose job.status is both the
+# bazel-doltserver and the bazel-proxied output; in every other mode
+# bazel-doltserver and bazel-proxied run as before and report their own.
+# Exactly one of the two arms runs in any mode, so the gate ids
+# (BAZEL_DOLTSERVER, BAZEL_PROXIED) and bazel-gate.sh's skips are unchanged
+# (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "dolt-race Union Lane").
 #
 # Execution mode, decided once by the rbe job (every other job needs it and
 # reads its outputs; none re-derives the condition) and passed to
@@ -346,18 +349,27 @@ on:
       bazel-integration:
         description: "bazel-integration's job.status"
         value: ${{ jobs.bazel-integration.outputs.result }}
+      # Mode remote: bazel-dolt-race runs both tiers and the member jobs
+      # skip; every other mode: the reverse. One side is always empty.
       bazel-doltserver:
-        description: "bazel-doltserver's job.status"
-        value: ${{ jobs.bazel-doltserver.outputs.result }}
+        description: "the dolt-server tier's job.status: bazel-dolt-race's in mode remote, bazel-doltserver's otherwise"
+        value: ${{ jobs.bazel-dolt-race.outputs.result || jobs.bazel-doltserver.outputs.result }}
       bazel-proxied:
-        description: "bazel-proxied's job.status"
-        value: ${{ jobs.bazel-proxied.outputs.result }}
+        description: "the proxied-server tier's job.status: bazel-dolt-race's in mode remote, bazel-proxied's otherwise"
+        value: ${{ jobs.bazel-dolt-race.outputs.result || jobs.bazel-proxied.outputs.result }}
+      # Mode remote: bazel-dolt-int runs both tiers and the member jobs
+      # skip; every other mode: the reverse. One side is always empty
+      # (item 5 A2). bazel-dolt-int reports its own per-tier classification
+      # (classify_tier_results.py), not job.status: the job carries no
+      # continue-on-error, so job.status alone would read failure for both
+      # tiers on a cmd-dolt-only failure, unlike bazel-cmd-dolt's own
+      # advisory, continue-on-error nature outside mode remote.
       bazel-server-storage:
-        description: "bazel-server-storage's job.status"
-        value: ${{ jobs.bazel-server-storage.outputs.result }}
+        description: "the server-Dolt storage tier's result: bazel-dolt-int's server_storage_result in mode remote, bazel-server-storage's job.status otherwise"
+        value: ${{ jobs.bazel-dolt-int.outputs.server_storage_result || jobs.bazel-server-storage.outputs.result }}
       bazel-cmd-dolt:
-        description: "bazel-cmd-dolt's job.status (advisory unless pr.yml's BAZEL_CMD_DOLT_REQUIRED is \"true\")"
-        value: ${{ jobs.bazel-cmd-dolt.outputs.result }}
+        description: "the cmd/bd Dolt-server tier's result (advisory unless pr.yml's BAZEL_CMD_DOLT_REQUIRED is \"true\"): bazel-dolt-int's cmd_dolt_result in mode remote, bazel-cmd-dolt's job.status otherwise"
+        value: ${{ jobs.bazel-dolt-int.outputs.cmd_dolt_result || jobs.bazel-cmd-dolt.outputs.result }}
       package-mcp:
         description: "package-mcp's job.status (empty unless package-gates is 'on')"
         value: ${{ jobs.package-mcp.outputs.result }}
@@ -1360,8 +1372,8 @@ jobs:
     # scripts/ci/embedded_storage_test_durations.json -- up from an earlier,
     # smaller test surface's ~7-10k estimate) on one runner, several hours
     # per run on the pool whose job cap this track exists to relieve, and it
-    # proves nothing pr-risk.yml's embedded jobs (which do run for forks) do
-    # not.
+    # proved nothing pr-risk.yml's embedded jobs (which ran for forks before
+    # #7353 retired them) did not.
     #
     # Shard counts: storage (40): its tests are serial, so a shard's wall
     # time is the sum of its tests, and CI shards run ~1.3-1.6x the rbe-west
@@ -1491,6 +1503,25 @@ jobs:
           path: |
             bazel-testlogs/**/test.log
             bazel-testlogs/**/test.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # The served targets' per-test durations, on every run: their pinned
+      # shard manifests (backend/http/served_pinned_shards.txt from
+      # tools/bazel/pin_shards.py, the corpus parts' split) are sized from a
+      # sharded run of this lane, and the logs above are kept only on failure.
+      # test.xml only, a few KB each. Telemetry like the CI analytics upload:
+      # nothing in CI reads it, so an artifact 5xx or stall must not fail or
+      # hold the lane (scripts TestBazelEmbeddedServedTimingsUploadIsTelemetry).
+      - name: Upload served test timings
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          overwrite: true # a job re-run is the same run: replace, not 409
+          name: bazel-embedded-served-testxml
+          path: bazel-testlogs/backend/http/**/test.xml
           if-no-files-found: ignore
           retention-days: 7
 
@@ -1743,12 +1774,18 @@ jobs:
   # doctor/fix, protocol in 8 shards, testutil), each of which starts its
   # own dolt sql-server from the pinned dolt, so they execute on the remote
   # workers like any other test (locally with rbe=off).
+  # Not in mode remote: there bazel-dolt-race runs this tier together with
+  # the proxied-server tier and reports for both (item 5). In the fork
+  # modes, cache and local there is no in-flight deduplication of one
+  # client's actions and the client does the work, so a union would cost the
+  # sum of the two tiers instead of the max: this job runs there as before.
   bazel-doltserver:
     name: dolt-server lane
-    # Same runner and skip rule as bazel-test.
+    # Same runner as bazel-test; bazel-test's skip rule, plus mode remote
+    # (bazel-dolt-race's).
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    if: ${{ needs.rbe.outputs.mode != 'skip' }}
+    if: ${{ needs.rbe.outputs.mode != 'skip' && needs.rbe.outputs.mode != 'remote' }}
     timeout-minutes: 90
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -1879,7 +1916,8 @@ jobs:
   # (formerly proxied-local-smoke.yml) in a loopback-only network
   # namespace, which needs the workers' unprivileged user namespaces. A job
   # of its own, not gated by any integration switch: it runs in pr.yml's
-  # call and its gate requires it (BAZEL_PROXIED).
+  # call and its gate requires it (BAZEL_PROXIED). Fork modes only: in mode
+  # remote bazel-dolt-race runs this tier (see bazel-doltserver's comment).
   bazel-proxied:
     name: proxied-server tier
     # Remote execution only, like bazel-embedded: 30 concurrent shards, each
@@ -1889,7 +1927,7 @@ jobs:
     # retired) and pr.yml's gate requires it to have run here and passed.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' }}
     timeout-minutes: 30
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -2033,45 +2071,37 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
 
-  # Item 5, Phase 1 (scripts/bazel_dolt_race_shadow_test.go): the advisory
-  # shadow of a union lane. One `bazel test --config=dolt-race` runs the
-  # dolt-server and proxied-server tiers together (.bazelrc: exactly the
-  # union of --config=doltserver's and --config=doltserver-proxied's lines,
-  # one tag filter for both), beside bazel-doltserver and bazel-proxied, so
-  # one client per group of lanes can be compared with the two it would
-  # replace (end time, runner minutes, test counts and results) before any
-  # cutover. Each member target's test action key is unchanged, so the shadow
-  # and the member lanes share cached results; and rbe-west deduplicates
-  # identical in-flight executions (confirmed by the farm maintainer:
-  # NativeLink 1.7.1 subscribes a second identical Execute of a cacheable
-  # action to the operation already in flight), so the shadow adds no
-  # executions.
-  # Advisory: it cannot fail the gate. Job-level continue-on-error (a failed
-  # job otherwise fails the whole call, whose result pr.yml's ci-gate
-  # requires as BAZEL), no workflow_call output, no job outputs, no job in
-  # this file needs it, and no gate script or caller names it. The gate does
-  # wait for it: ci-gate needs pr.yml's bazel call, which completes only when
-  # every job in it has finished (success, failure or timeout), so a slow
-  # shadow delays the gate and the merge queue. continue-on-error does not
-  # cover a job GitHub cancels at its own timeout-minutes, which could turn
-  # the call red: every step has a timeout, and the job's exceeds their sum
-  # (TestBazelDoltRaceShadowIsAdvisory). Mode remote only, on
-  # same-repo pull requests and merge groups (mode remote on a pull_request
-  # is never a fork): no fork mode, no cache or local mode, and not on push,
-  # nightly, dispatch or bazel-farm.yml's call. Its ci-analytics LANE is
-  # dolt-race. Removing it is the rollback; nothing reads it.
+  # Item 5 (scripts/bazel_dolt_race_test.go): the dolt-server and
+  # proxied-server tiers in one `bazel test --config=dolt-race` (.bazelrc:
+  # exactly the union of --config=doltserver's and
+  # --config=doltserver-proxied's lines, one tag filter for both), mode
+  # remote only, in place of bazel-doltserver and bazel-proxied, which run
+  # in every other mode. One client waits on rbe-west for both tiers'
+  # shards at once (27 + 35 test actions, under the remote-exec config's 64
+  # jobs), so the job ends with the slower tier and saves the other's
+  # runner. Each member target's test action key is unchanged (aquery-
+  # verified), so cached results carry over both ways, and a revert of the
+  # cutover re-executes nothing. Gated: its job.status is both the
+  # bazel-doltserver and the bazel-proxied workflow_call output (a failure
+  # in either tier fails both ids, which are both required). Every step has
+  # a timeout and the job's exceeds their sum by 5 minutes while staying
+  # under the merge queue's 60-minute check timeout
+  # (TestBazelDoltRaceJobTimeouts), so a hang fails a named step instead of
+  # dropping the merge group. The member jobs' configs and the union's must
+  # stay key-identical: the mode decides which runs (TestBazelDoltRaceConfigIsMemberUnion).
+  # Its ci-analytics LANE is dolt-race.
   bazel-dolt-race:
     name: dolt-race
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.mode == 'remote' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    # At least every step's timeout-minutes plus 5 (and the test step's plus
-    # 10): a hung step then fails the job (continue-on-error) before GitHub
-    # cancels it, which continue-on-error does not cover
-    # (TestBazelDoltRaceShadowIsAdvisory). bazel-proxied's steps have no
-    # timeouts but its test step's; these bound the rest.
-    timeout-minutes: 55
-    continue-on-error: true
+    if: ${{ needs.rbe.outputs.mode == 'remote' }}
+    # At least every step's timeout-minutes plus 5, and below the merge
+    # queue's 60-minute check timeout so this job alone cannot exhaust it
+    # (TestBazelDoltRaceJobTimeouts). Not a whole-run bound: the rbe job runs
+    # first and sibling lanes have longer timeouts.
+    timeout-minutes: 56
+    outputs:
+      result: ${{ steps.result.outputs.result }}
     steps:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
@@ -2120,11 +2150,15 @@ jobs:
           fi
 
       # Both tiers' shards at once: 27 dolt-server + 35 proxied test actions,
-      # under the remote-exec config's 64 jobs. The step timeout is
-      # bazel-proxied's (the longer tier on rbe-west).
+      # under the remote-exec config's 64 jobs. No --config=sole-run: its one
+      # line (no retry on a remote cache eviction) is already in the union.
+      # Shards are expected around 55-95s on rbe-west (see bazel-proxied's
+      # test step), the proxied tier's 1200s cap included. The step timeout is
+      # >= proxied test_timeout 1200 s + about 3 min so Bazel writes TIMEOUT
+      # logs before GitHub kills the step.
       - name: bazel test //... --config=dolt-race
         id: test
-        timeout-minutes: 25
+        timeout-minutes: 23
         run: |
           set -o pipefail
           start=$(date +%s)
@@ -2138,12 +2172,11 @@ jobs:
           echo "bazel test --config=dolt-race: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
-      # The member lanes' checks over the union's BEP: bazel-proxied's (the
-      # dolt-server lane has none). check_shard_coverage ignores targets it
-      # does not list; check_testcases checks every target, so it covers the
-      # dolt-server tier too, which bazel-doltserver does not check: a
-      # dolt-server shard that runs no test turns this job red while both
-      # member lanes stay green.
+      # The member lanes' checks, once over the union's BEP: bazel-proxied's
+      # (the dolt-server lane has none). check_shard_coverage ignores targets
+      # it does not list; check_testcases checks every target, so it covers
+      # the dolt-server tier too, which bazel-doltserver does not check: a
+      # dolt-server shard that runs no test turns this job red.
       - name: Every target and shard ran tests
         if: ${{ always() && steps.test.outcome != 'skipped' }}
         timeout-minutes: 2
@@ -2201,6 +2234,17 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # Last step: the job's result as the bazel-doltserver and
+      # bazel-proxied workflow_call outputs for pr.yml's ci-gate. always()
+      # runs it after a failure, a timeout or a cancellation too.
+      - name: Record job result
+        id: result
+        if: ${{ always() }}
+        timeout-minutes: 1
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+
   # pr-risk.yml's server-Dolt storage tier, "Test (Server Dolt Conformance)"
   # and "Test (Server Dolt Full Suite N/16)", as --config=doltserver-integration:
   # the conformance and 16-shard full-suite variants of
@@ -2214,15 +2258,21 @@ jobs:
   # "off" skips it too, even though no caller passes that today (pr.yml and
   # bazel-farm.yml both pass "on") -- see the `integration` input's own
   # description.
+  # Not in mode remote: there bazel-dolt-int runs this tier together with
+  # the cmd/bd Dolt-server tier and reports for both (item 5 A2). In the
+  # fork modes and cache there is no in-flight deduplication of one client's
+  # actions, so a union would cost the sum of the two tiers instead of the
+  # max: this job runs there as before.
   bazel-server-storage:
     name: server-Dolt storage tier
     # Remote execution only, like bazel-integration: locally the tagged race
-    # build of //... alone is most of the timeout.
+    # build of //... alone is most of the timeout. Plus mode remote
+    # (bazel-dolt-int's).
     # This lane is the tier's only PR run (pr-risk.yml's legacy jobs are
     # retired) and pr.yml's gate requires it to have run here and passed.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' && inputs.integration != 'off' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.integration != 'off' }}
     timeout-minutes: 30
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -2372,7 +2422,7 @@ jobs:
   # integration-tagged cmd/bd suite (//cmd/bd:bd_dolt_server_test, 32
   # shards, the slowest tests pinned to 16 of them) against a hermetic dolt sql-server, i.e. the Dolt-gated cmd/bd
   # tests (TestCLI_*, TestInit*, the store-backed suites) that every other
-  # lane and legacy job skips with BEADS_TEST_SKIP=dolt or leaves out of its
+  # lane skips with BEADS_TEST_SKIP=dolt or leaves out of its
   # manifest; plus the differential regression suite
   # (//tests/regression:regression_test, 14 shards: the candidate
   # bd_for_tests against the catalog-pinned v0.49.6 release, formerly
@@ -2392,9 +2442,12 @@ jobs:
   # (TestBazelIntegrationExcludesBdTestOnlyWhereCmdDoltCovers).
   bazel-cmd-dolt:
     name: cmd/bd Dolt-server tier
+    # Not in mode remote: there bazel-dolt-int runs this tier together with
+    # the server-Dolt storage tier (item 5 A2). See bazel-server-storage's
+    # comment above.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    if: ${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' }}
+    if: ${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' && needs.rbe.outputs.mode != 'remote' }}
     timeout-minutes: 85
     continue-on-error: true
     outputs:
@@ -2518,6 +2571,292 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
         run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+
+  # Item 5 A2 (scripts/bazel_dolt_int_test.go): the server-Dolt storage and
+  # cmd/bd Dolt-server tiers in one `bazel test --config=dolt-int` (.bazelrc:
+  # exactly the union of --config=doltserver-integration's and
+  # --config=doltserver-cmd's lines, one tag filter for both), mode remote
+  # only, in place of bazel-server-storage and bazel-cmd-dolt, which run in
+  # every other mode (there a single client does both tiers' work without
+  # in-flight deduplication, so a union would cost the sum of the two tiers
+  # rather than the max). One client waits on rbe-west for both tiers' shards
+  # at once (17 + 46 = 63 test actions, under the remote-exec config's 64
+  # jobs), so the job ends with the slower tier and the other tier's runner
+  # is saved. cmd-dolt's Go-level -test.timeout=19m arg and its
+  # BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION env moved from --config=doltserver-cmd
+  # onto //cmd/bd:bd_dolt_server_test's and //tests/regression:regression_test's
+  # own args/env (their comments), so the union's tag filter alone decides
+  # which targets see them: without the move, server-storage's per-shard 15m
+  # Go timeout would become 19m under the union. The final argv and
+  # environment either way are identical (aquery-verified for all 4 affected
+  # targets, item 5 A2 PR), so remote action digests -- what RBE's cache keys
+  # on -- are unchanged and cached results should carry over; this is a local
+  # actionKey change for cmd-dolt's 46 actions, not a remote one (--test_env
+  # is part of the build configuration's own fingerprint, which every target
+  # under that configuration picks up, unlike a target's own env attribute),
+  # confirmed in practice by the first merge group's tests_cached ==
+  # tests_total in ci-analytics, not claimed here as already observed.
+  #
+  # Unlike dolt-race, the members have different gating categories:
+  # bazel-server-storage is plain-gated (BAZEL_SERVER_STORAGE), bazel-cmd-dolt
+  # is flag-gated and advisory (BAZEL_CMD_DOLT, continue-on-error) until
+  # pr.yml's BAZEL_CMD_DOLT_REQUIRED is "true". This job therefore carries no
+  # job-level continue-on-error: on push, nightly and dispatch nothing reads
+  # BAZEL_SERVER_STORAGE off a workflow_call output, so job-level
+  # continue-on-error (job.status reads success regardless of the test step's
+  # own result) would let a server-storage failure end such a run green,
+  # where it must stay red exactly as it does on main today. Instead only the
+  # `bazel test` step carries continue-on-error, and an always() step
+  # (tools/bazel/classify_tier_results.py) reads the BEP by target label,
+  # computes each tier's own result, and fails the job itself iff
+  # server-storage's tier failed (a cmd-dolt-only test failure leaves the job
+  # green, as bazel-cmd-dolt's own continue-on-error already does outside
+  # mode remote) or bazel's exit code was neither 0 nor 3 (a build or infra
+  # failure is not attributable to one tier, so both are marked failed and
+  # the job fails regardless). Both members' workflow_call outputs read this
+  # job's matching per-tier output first, then their own member's; a job that
+  # dies before the classify step leaves both outputs empty, which mode
+  # remote's gate (bazel-gate.sh, ci-gate.sh) already treats as skipped and
+  # fails, same as an empty bazel-server-storage/bazel-cmd-dolt result would.
+  # Every step has a timeout and the job's exceeds their sum by 5 minutes
+  # while staying under the merge queue's 60-minute check timeout
+  # (TestBazelDoltIntJobTimeouts): 58 leaves only about 2 minutes for runner
+  # pickup and the rbe job inside that 60-minute budget, so a hang that runs
+  # to this job's own timeout can drop the merge group; accepted, because
+  # such a run is red anyway and the 58-minute job timeout bounds only this
+  # job, not the whole run (as #7514's dolt-race job comment). The member
+  # jobs' configs and the union's must stay key-identical: the mode decides
+  # which runs (TestBazelDoltIntConfigIsMemberUnion). Its ci-analytics LANE
+  # is dolt-int.
+  bazel-dolt-int:
+    name: dolt-int
+    needs: rbe
+    runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' }}
+    # At least every step's timeout-minutes plus 5, and below the merge
+    # queue's 60-minute check timeout so this job alone cannot exhaust it
+    # (TestBazelDoltIntJobTimeouts). 58 leaves only about 2 minutes for
+    # runner pickup and the rbe job inside the merge queue's 60-minute check;
+    # a hang that runs to this timeout can therefore drop the group, which is
+    # accepted because such a run is red anyway and the 58-minute job timeout
+    # bounds this job, not the whole run (as #7514's dolt-race job comment).
+    timeout-minutes: 58
+    outputs:
+      server_storage_result: ${{ steps.classify.outputs.server_storage_result }}
+      cmd_dolt_result: ${{ steps.classify.outputs.cmd_dolt_result }}
+    steps:
+      # inputs.checkout-sha: see the header (empty: the event's default ref).
+      # checkout v7 refuses a fork head on pull_request_target unless opted
+      # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 5
+        with:
+          ref: ${{ inputs.checkout-sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+
+      # The remote repo contents cache, read-only, as in bazel-test.
+      - name: Remote repo contents cache (read)
+        if: ${{ needs.rbe.outputs.mode == 'remote' && needs.rbe.outputs.rrc == 'on' }}
+        timeout-minutes: 1
+        run: |
+          {
+            echo 'startup --experimental_remote_repo_contents_cache'
+            echo 'common --loading_phase_threads=64'
+          } >> .bazelrc.local
+
+      - name: Set up Bazel
+        id: bazel
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-bazel
+        env:
+          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.mode == 'remote' && secrets.RBE_WEST_EXECUTOR || '' }}
+          RBE_TLS_CERT: ${{ needs.rbe.outputs.mode == 'remote' && secrets.RBE_TLS_CERT || '' }}
+          RBE_TLS_KEY: ${{ needs.rbe.outputs.mode == 'remote' && secrets.RBE_TLS_KEY || '' }}
+          RBE_TLS_CA: ${{ needs.rbe.outputs.mode == 'remote' && secrets.RBE_TLS_CA || '' }}
+          RBE_INSTANCE: ${{ needs.rbe.outputs.mode == 'remote' && 'oss' || '' }}
+          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+          BAZEL_RRC_READ: 'true' # mode cache reads the repo contents cache through rbe-cache
+          BAZEL_FORK_REMOTE: ${{ startsWith(needs.rbe.outputs.mode, 'fork-') && 'true' || '' }}
+          RBE_FORK_TIER: ${{ needs.rbe.outputs.tier }}
+          RBE_FORK_PR: ${{ github.event.pull_request.number }}
+
+      # As in bazel-server-storage and bazel-proxied.
+      - name: No test target is marked flaky
+        timeout-minutes: 3
+        run: |
+          flaky="$(bazel query 'attr(flaky, 1, tests(//...))')"
+          if [ -n "$flaky" ]; then
+            echo "::error::flaky = True on ${flaky//$'\n'/ }: the gated lanes run each test once"
+            exit 1
+          fi
+
+      # Both tiers' shards at once: 17 server-storage + 46 cmd-dolt test
+      # actions, under the remote-exec config's 64 jobs. No --config=sole-run:
+      # its one line (no retry on a remote cache eviction) is already in the
+      # union. The step timeout is >= the union's eternal-size test_timeout
+      # cap (1200s, shared by bd_dolt_server_test and regression_test) + about
+      # 3 min so Bazel writes TIMEOUT logs before GitHub kills the step, plus
+      # the margin server-storage's own step budgets for a cold compile (its
+      # own step was 25). continue-on-error: a cmd-dolt-only test failure
+      # must not fail this step (and so the job) outright; the classify step
+      # below decides that per-tier, from this step's own exit code (written
+      # to its "rc" output) and the BEP.
+      - name: bazel test //... --config=dolt-int
+        id: test
+        timeout-minutes: 25
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          start=$(date +%s)
+          rc=0
+          bazel test //... --config=dolt-int ${BAZEL_FRESH:+"$BAZEL_FRESH"} \
+            --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
+            --execution_log_compact_file="$RUNNER_TEMP/bazel-exec.log.zst" \
+            --profile="$RUNNER_TEMP/bazel-profile.json" \
+            --experimental_build_event_upload_strategy=local \
+            2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+          echo "bazel test --config=dolt-int: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      # check_testcases split per tier (should-fix 2, PR #7535 review): a
+      # single shared step with no continue-on-error would fail this job
+      # outright on a cmd-dolt-only zero-testcase shard (e.g. TestMain dying
+      # on dolt server start under BEADS_TEST_REQUIRE_DOLT_CONTAINER=1),
+      # where main (bazel-cmd-dolt alone) stays green, and the divergence
+      # would only show up under the documented rollback to
+      # BAZEL_CMD_DOLT_REQUIRED=false. Each step is --label-scoped to its own
+      # tier (so a --label typo or a label the run did not test fails
+      # closed, not open: check_testcases.py's own --label section) and
+      # carries continue-on-error so neither can fail the job by itself; the
+      # classify step below folds each step's own outcome into that tier's
+      # result with --check, so a cmd-dolt failure here reaches
+      # cmd_dolt_result only, same as a cmd-dolt BEP test failure does.
+      - name: Every target and shard ran tests (server-storage)
+        id: check-ss
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        run: >-
+          python3 tools/bazel/check_testcases.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --label //internal/storage/dolt:dolt_server_full_test
+          --label //internal/storage/dolt:dolt_server_conformance_test
+
+      - name: Every target and shard ran tests (cmd-dolt)
+        id: check-cd
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        run: >-
+          python3 tools/bazel/check_testcases.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --label //cmd/bd:bd_dolt_server_test
+          --label //tests/regression:regression_test
+
+      # bazel-server-storage's own check (cmd-dolt has none): every
+      # full-suite shard ran exactly the tests its shard script lists, and
+      # neither it nor the conformance target only skips.
+      - name: Every listed test ran in its shard
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        timeout-minutes: 2
+        run: >-
+          python3 tools/bazel/check_shard_coverage.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --suite //internal/storage/dolt:dolt_server_full_test .github/scripts/server-storage-test-shard.sh 16
+          --whole //internal/storage/dolt:dolt_server_conformance_test
+
+      # bazel-server-storage's own check, scoped with --label to the one
+      # target it has always budgeted: cmd-dolt's bd_dolt_server_test and
+      # regression_test shards are sharded too but no job budgeted them
+      # before the union, and this script has never judged them (see its
+      # docstring).
+      - name: Shard balance
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        timeout-minutes: 2
+        run: >-
+          python3 tools/bazel/shard_budget.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --label //internal/storage/dolt:dolt_server_full_test
+
+      # failure() alone misses an ordinary test failure here: the `bazel
+      # test` step carries its own continue-on-error (must-fix 2), so a
+      # failing test does not make failure() true until the classify step
+      # (which runs after this one) exits non-zero. steps.test.outcome ==
+      # 'failure' catches that case directly (nit, PR #7535 review).
+      - name: Upload test logs
+        if: ${{ (failure() || steps.test.outcome == 'failure') && steps.test.outcome != 'skipped' }}
+        timeout-minutes: 3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          overwrite: true # a job re-run is the same run: replace, not 409
+          name: bazel-dolt-int-testlogs
+          path: |
+            bazel-testlogs/**/test.log
+            bazel-testlogs/**/test.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Same redacted summary as bazel-test's; see its comment.
+      - name: CI analytics summary
+        id: ci-analytics
+        if: "!cancelled() && steps.test.outcome != 'skipped'"
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          LANE: dolt-int
+          MODE: ${{ needs.rbe.outputs.mode }}
+          CHECK_RUN_ID: ${{ job.check_run_id }}
+          PR_HINT: ${{ github.event.pull_request.number || 0 }}
+        run: |
+          [ -f "$RUNNER_TEMP/bazel-bep.json" ] || exit 0
+          zstd --version || echo "::warning::zstd missing: no per-mnemonic data in this lane's summary"
+          python3 tools/bazel/ci_analytics_extract.py \
+            --lane "$LANE" --mode "$MODE" --check-run-id "$CHECK_RUN_ID" --pr-hint "$PR_HINT" \
+            --invocation test "$RUNNER_TEMP/bazel-bep.json" "$RUNNER_TEMP/bazel-exec.log.zst" "$RUNNER_TEMP/bazel-profile.json" \
+            --out "$RUNNER_TEMP/ci-analytics/ci-analytics.json"
+
+      - name: Upload CI analytics summary
+        if: "!cancelled() && steps.ci-analytics.outcome == 'success'"
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          overwrite: true # a job re-run is the same run: replace, not 409
+          name: ci-analytics-dolt-int-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-analytics/ci-analytics.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Last step: each tier's own result (not job.status: this job carries
+      # no continue-on-error, see the job's own comment) as the
+      # bazel-server-storage and bazel-cmd-dolt workflow_call outputs for
+      # pr.yml's ci-gate. always() runs it after a failure, a timeout or a
+      # cancellation too (steps.test.outcome stays "skipped" then, so the
+      # script's --bep file does not exist; it is only read when the test
+      # step actually ran). This step's own exit code decides job.status: it
+      # fails the job iff server-storage's tier failed, or `bazel test`'s
+      # exit code was neither 0 nor 3 (a build or infra failure, not
+      # attributable to one tier, fails both and the job).
+      - name: Classify tier results
+        id: classify
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        timeout-minutes: 1
+        env:
+          TEST_RC: ${{ steps.test.outputs.rc }}
+          CHECK_SS_OUTCOME: ${{ steps.check-ss.outcome }}
+          CHECK_CD_OUTCOME: ${{ steps.check-cd.outcome }}
+        run: >-
+          python3 tools/bazel/classify_tier_results.py
+          --bep "$RUNNER_TEMP/bazel-bep.json"
+          --rc "$TEST_RC"
+          --tier server-storage=//internal/storage/dolt:dolt_server_full_test,//internal/storage/dolt:dolt_server_conformance_test
+          --tier cmd-dolt=//cmd/bd:bd_dolt_server_test,//tests/regression:regression_test
+          --gate-tier server-storage
+          --check "server-storage=$CHECK_SS_OUTCOME"
+          --check "cmd-dolt=$CHECK_CD_OUTCOME"
+          --github-output "$GITHUB_OUTPUT"
 
   # F3: moved here from pr.yml so the gate depends on nothing but the rbe
   # job's decision (not the whole bazel call). Only pr.yml opts in (package-gates: "on");
