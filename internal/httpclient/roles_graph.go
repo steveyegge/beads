@@ -540,6 +540,19 @@ func (a httpBlockingAnnotator) AnnotateBlocking(ctx context.Context, req issueop
 	for _, id := range ids {
 		q.Add("issue_id", id)
 	}
+	if req.IncludeIsBlocked {
+		// Refused before the dial against a server that does not advertise
+		// the parameter: it would answer unknown_parameter, and an answer
+		// without the flag must never pass for "nothing is blocked".
+		served, err := a.store.servesCapability(ctx, wire.CapBlockingIsBlocked)
+		if err != nil {
+			return issueops.BlockingResult{}, err
+		}
+		if !served {
+			return issueops.BlockingResult{}, a.store.unsupportedCapability("BlockingAnnotator.AnnotateBlocking", wire.CapBlockingIsBlocked)
+		}
+		q.Set("is_blocked", "true")
+	}
 
 	var body apigen.BlockingAnnotations
 	if err := a.store.dispatch(ctx, wire.Request{

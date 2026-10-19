@@ -12,12 +12,17 @@ binaries and diffs every step:
 | **CANDIDATE** | the current working tree (HEAD + uncommitted) | the "after" |
 
 Each scenario is an ordered list of `bd` CLI argv steps run as real processes in
-a throwaway workspace (`bd init` + steps). For every step the harness compares
+a throwaway workspace (`bd init` + steps; a scenario whose first step is its own
+`bd init` starts in an empty workspace). For every step the harness compares
 **exit code**, **stderr**, and **JSON-aware stdout** (object key order ignored;
 array order compared as a multiset by default, as an ordered sequence for
-scenarios flagged `ordered`). Volatile values — timestamps, UUIDs, and the host
-actor identity — are normalized to `<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>` before
-comparison. **Tolerated in-scope divergences: zero.**
+scenarios flagged `ordered`). Volatile values — timestamps, UUIDs, the host
+actor identity, the `bd show --json` `"revision"` token (matched by member name,
+see below), the run's own throwaway workspace path, and the repository and clone
+IDs `bd init` hashes from it — are normalized to
+`<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>`/`<REV>`/`<WORKSPACE>`/`<REPO_ID>`/`<CLONE_ID>`
+before comparison.
+**Tolerated in-scope divergences: zero.**
 
 ## Run it
 
@@ -38,7 +43,9 @@ Overrides:
   deterministic scenarios covering the wider `bd` CLI surface). Much broader
   coverage, ~10–15 min. Off by default so the everyday gate stays fast.
 - `KEEP_ARTIFACTS=1` — keep the scratch build dir (binaries, goldens, scoreboard
-  output) for inspection instead of deleting it on exit.
+  output) for inspection instead of deleting it on exit. The per-divergence
+  detail is written to that run's own `oracle-a-failures.txt` there (via
+  `ORACLE_FAILURES_FILE`), never to a path shared with other runs.
 
 ## Two tiers
 
@@ -47,8 +54,9 @@ Overrides:
   enough to run on every change.
 - **Enumerated catalog** (`ORACLE_CATALOG=1`) — ~500 deterministic scenarios in
   `harness/scenarios/enumerated.json`, generated to sweep the wider CLI surface as
-  data. Non-deterministic entries (ID minting, non-reproducible init output) are
-  excluded automatically; entries already covered by the curated set are de-duped.
+  data. Non-deterministic entries (ID minting, non-reproducible init output) and
+  entries not runnable embedded-only are excluded automatically; entries already
+  covered by the curated set are de-duped.
   The in-scope predicate (below) applies identically to both tiers.
 
 ## Prerequisites
@@ -112,7 +120,21 @@ the loop — every scenario uses embedded Dolt in its own tempdir.
 - **Anything invisible to stdout/stderr/exit diffing.** Post-commit hook firing,
   rollback-suppressed side effects, and N-commits-instead-of-one are deliberately
   NOT asserted here. Timestamp *values* are erased by `<TS>` normalization, so a
-  local-vs-UTC divergence in a timestamp value is also out of reach.
+  local-vs-UTC divergence in a timestamp value is also out of reach. Likewise a
+  non-zero `"revision"` token is erased to `<REV>` (every create, update, close,
+  reopen, claim and unclaim remints it from crypto/rand), so whether a write
+  remints it is not gated; the member's presence, its string type, and a
+  never-stamped `"0"` still are. The `Repository ID`/`Clone ID` values a
+  scenario's own `bd init` prints are erased to `<REPO_ID>`/`<CLONE_ID>` too
+  (they hash the random workspace path), so how they are derived is not gated;
+  the lines and their widths still are.
+- **`<REV>` matches a member name, not a position.** The `"revision"` collapse runs
+  over the raw stdout/stderr text before any JSON parse, so it erases EVERY
+  `"revision"` member holding a non-zero decimal string — at any depth, and in
+  plain (non-JSON) text too — not only the `bd show --json` issue token. That
+  includes a user metadata key named `revision`, which the in-scope
+  `--set-metadata`/`--metadata` flags can set: a change to its value passes the
+  gate. No scenario sets one today; use another key name in any that would.
 - **The scenario environment is scrubbed, and `BEADS_TEST_MODE=1` is ungated.**
   Scenarios run with an explicit env whitelist (`PATH`/`HOME`/`TMPDIR` +
   `BEADS_TEST_MODE=1`) rather than the inherited host env, so a green certifies the

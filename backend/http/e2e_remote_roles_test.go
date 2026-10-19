@@ -160,22 +160,33 @@ func newHTTPFixture(t *testing.T, bin, addr string) *remoteRolesFixture {
 }
 
 // requestCounter is a loopback reverse proxy in front of the in-process
-// server that counts the requests a command makes, by path.
+// server that counts the requests a command makes, by path. uris records the
+// same requests with their query, for a test that tells a bare read from one
+// that asks for more of the row.
 type requestCounter struct {
 	mu    sync.Mutex
 	paths []string
+	uris  []string
 }
 
 func (c *requestCounter) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.paths = nil
+	c.uris = nil
 }
 
 func (c *requestCounter) snapshot() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.paths...)
+}
+
+// uriSnapshot is snapshot with each request's query: "GET /path?query".
+func (c *requestCounter) uriSnapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.uris...)
 }
 
 func startCountingProxy(t *testing.T, upstream string) (string, *requestCounter) {
@@ -252,6 +263,7 @@ func startMaskingProxy(t *testing.T, upstream string, mask func(map[string]any))
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		counter.mu.Lock()
 		counter.paths = append(counter.paths, r.Method+" "+r.URL.Path)
+		counter.uris = append(counter.uris, r.Method+" "+r.URL.RequestURI())
 		counter.mu.Unlock()
 		proxy.ServeHTTP(w, r)
 	})}
@@ -676,10 +688,13 @@ func TestE2E_AdvertisedExternalPolicyIsPassedThrough(t *testing.T) {
 	f.mustRun(nil, "show", id, "--json")
 	f.mustRun(nil, "update", other, "--claim", "--json")
 	// claim-next is the server's ONE atomic operation, not a client-side
-	// read-then-claim loop.
+	// read-then-claim loop. Only its own requests count: the MC handshake
+	// lacks issues.update.claim, so the claim of other above went to
+	// claimIssue by design.
+	readyClaimFrom := len(counter.snapshot())
 	f.mustRun(nil, "ready", "--claim", "--json")
 	var claimNexts, byID int
-	for _, p := range counter.snapshot() {
+	for _, p := range counter.snapshot()[readyClaimFrom:] {
 		switch {
 		case p == "POST /v0/beads/issues:claimNext":
 			claimNexts++

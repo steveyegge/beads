@@ -18,6 +18,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/steveyegge/beads/internal/timeparsing"
 )
 
 // TokenType represents the type of a lexer token.
@@ -266,24 +268,19 @@ func (l *Lexer) readNumberOrDuration(startPos int) (Token, error) {
 		sb.WriteRune(r)
 	}
 
-	// Check for duration suffix. Only commit to a duration when the suffix
-	// stands alone — if more identifier characters follow (e.g. "7day"),
-	// fall through to the identifier-fallback below.
-	if r != 0 && isDurationSuffix(r) && !isIdentChar(l.peek()) {
-		sb.WriteRune(r)
-		return Token{Type: TokenDuration, Value: sb.String(), Pos: startPos}, nil
-	}
-
-	// Multi-rune duration suffixes ("min") cannot be recognized above:
-	// isDurationSuffix classifies a single rune, and the stands-alone guard
-	// bails on the letters that follow it. Left as an identifier, "30min"
-	// would skip the evaluator's TokenDuration arm and resolve through
-	// timeparsing.ParseRelativeTime as a *future* offset — the opposite
-	// direction from the "N ago" contract 7d, 24h and 30m all honor.
+	// Check for a duration suffix. internal/timeparsing owns the compact
+	// duration grammar, so the whole lexeme is classified there rather than
+	// against a copy of its unit set kept here. A copy drifts both ways: a
+	// unit it misses ("30min") lexes as an identifier and resolves through
+	// timeparsing.ParseRelativeTime as a *future* offset, the opposite of
+	// the "N ago" contract every duration honors; a unit it adds ("30M")
+	// reaches the evaluator as a duration the grammar then rejects. When
+	// more identifier characters follow the unit ("7day", "30mins",
+	// "42d-sla"), the lexeme is not a duration and falls through to the
+	// identifier fallback below.
 	if r != 0 {
-		if word, ok := l.acceptDurationWord(); ok {
-			sb.WriteString(word)
-			return Token{Type: TokenDuration, Value: sb.String(), Pos: startPos}, nil
+		if lexeme, ok := l.acceptDuration(sb.String()); ok {
+			return Token{Type: TokenDuration, Value: lexeme, Pos: startPos}, nil
 		}
 	}
 
@@ -365,44 +362,30 @@ func isIdentChar(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.' || r == ':' || r == '/'
 }
 
-// isDurationSuffix returns true if r is a valid duration suffix.
-func isDurationSuffix(r rune) bool {
-	switch r {
-	case 'h', 'd', 'w', 'm', 'y', 'H', 'D', 'W', 'M', 'Y':
-		return true
-	default:
-		return false
-	}
-}
-
-// durationWords are the multi-rune duration suffixes of the shared
-// compact-duration grammar (internal/timeparsing). "min" is spelled out there
-// precisely because "m" means months, so the query plane has to match the whole
-// word to classify it as a duration. Lowercase only, matching that grammar.
-var durationWords = []string{"min"}
-
-// acceptDurationWord reports whether the input spells a multi-rune duration
-// suffix, starting at the rune the caller most recently read with next() and
-// standing alone. On a match it consumes the suffix and returns it; otherwise
-// the lexer position is left untouched.
-func (l *Lexer) acceptDurationWord() (string, bool) {
+// acceptDuration reports whether number, followed by the run of identifier
+// characters that starts at the rune the caller most recently read with
+// next(), is a compact duration (timeparsing.IsCompactDuration). The run is
+// taken whole, so a unit only counts when it stands alone. On a match it
+// consumes the run and returns the full lexeme; otherwise the lexer position
+// is left untouched.
+func (l *Lexer) acceptDuration(number string) (string, bool) {
 	if l.width == 0 {
 		return "", false
 	}
 	start := l.pos - l.width
-	for _, word := range durationWords {
-		if !strings.HasPrefix(l.input[start:], word) {
-			continue
+	end := start
+	for end < len(l.input) {
+		r, w := utf8.DecodeRuneInString(l.input[end:])
+		if !isIdentChar(r) {
+			break
 		}
-		end := start + len(word)
-		// More identifier characters follow ("30mins", "30minutes",
-		// "30min-sla"), so this is an identifier, not a duration.
-		if r, _ := utf8.DecodeRuneInString(l.input[end:]); isIdentChar(r) {
-			continue
-		}
-		l.pos = end
-		l.width = 1
-		return word, true
+		end += w
 	}
-	return "", false
+	lexeme := number + l.input[start:end]
+	if !timeparsing.IsCompactDuration(lexeme) {
+		return "", false
+	}
+	l.pos = end
+	l.width = 1
+	return lexeme, true
 }

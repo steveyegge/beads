@@ -1372,8 +1372,8 @@ jobs:
     # scripts/ci/embedded_storage_test_durations.json -- up from an earlier,
     # smaller test surface's ~7-10k estimate) on one runner, several hours
     # per run on the pool whose job cap this track exists to relieve, and it
-    # proves nothing pr-risk.yml's embedded jobs (which do run for forks) do
-    # not.
+    # proved nothing pr-risk.yml's embedded jobs (which ran for forks before
+    # #7353 retired them) did not.
     #
     # Shard counts: storage (40): its tests are serial, so a shard's wall
     # time is the sum of its tests, and CI shards run ~1.3-1.6x the rbe-west
@@ -2422,7 +2422,7 @@ jobs:
   # integration-tagged cmd/bd suite (//cmd/bd:bd_dolt_server_test, 32
   # shards, the slowest tests pinned to 16 of them) against a hermetic dolt sql-server, i.e. the Dolt-gated cmd/bd
   # tests (TestCLI_*, TestInit*, the store-backed suites) that every other
-  # lane and legacy job skips with BEADS_TEST_SKIP=dolt or leaves out of its
+  # lane skips with BEADS_TEST_SKIP=dolt or leaves out of its
   # manifest; plus the differential regression suite
   # (//tests/regression:regression_test, 14 shards: the candidate
   # bd_for_tests against the catalog-pinned v0.49.6 release, formerly

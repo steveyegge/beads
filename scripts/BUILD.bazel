@@ -83,6 +83,7 @@ go_test(
     # re-runs the rest of this suite too.
     env = {"BEADS_TEST_GO": "$(rlocationpath @go_sdk//:bin/go)"},
     deps = [
+        "//internal/doltversion",
         "//internal/formula",
         "//internal/testutil/bazeltest",
         "//scripts/internal/testbash",
@@ -135,6 +136,7 @@ go_test(
         "conformance_script_test.go",
         "host_tools_test.go",
         "install_dolt_test.go",
+        "oracle_a_script_test.go",
         "pr_preflight_test.go",
         "pre_push_suite_test.go",
         "pull_dolt_image_test.go",
@@ -142,6 +144,8 @@ go_test(
         "repo_helpers_test.go",
         "required_suite_test.go",
         "test_script_test.go",
+        "update_nix_vendorhash_test.go",
+        "update_nix_vendorhash_unix_test.go",
         "upgrade_smoke_loop_test.go",
     ],
     data = [
@@ -149,6 +153,7 @@ go_test(
         "//:.buildflags",
         "//:.githooks/pre-push",
         "//:.test-skip",
+        "//:tests/oracle-a/run-oracle-a.sh",
         "//internal/httpclient:repo_other_files",
         "//test/conformance:repo_go_test_srcs",
         "//test/conformance:repo_other_files",
