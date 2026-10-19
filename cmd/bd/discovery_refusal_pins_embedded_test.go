@@ -34,7 +34,12 @@ func TestEmbeddedDiscoveryPinsEnvFileReadonly(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command(bd, args...)
 		cmd.Dir = dir
-		cmd.Env = append(envWithout(bdEnv(dir), "BD_READONLY"), extraEnv...)
+		// The store-less pins' closed environment: no BD_*/BEADS_* the caller
+		// exports (BD_READONLY, BD_JSON_ENVELOPE, BD_OTEL_*, ...) reaches bd.
+		// HOME stays dir, where bd init ran.
+		cmd.Env = append(discoveryPinEnv(dir, filepath.Join(dir, "no-such-freeze-marker")),
+			"BEADS_DOLT_AUTO_START=0", "BEADS_NO_DAEMON=1")
+		cmd.Env = append(cmd.Env, extraEnv...)
 		var out, errOut bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errOut
 		if err := cmd.Run(); err != nil {
@@ -44,7 +49,7 @@ func TestEmbeddedDiscoveryPinsEnvFileReadonly(t *testing.T) {
 			}
 			exit = exitErr.ExitCode()
 		}
-		return exit, out.String(), errOut.String()
+		return exit, out.String(), discoveryPinSandboxNotice.ReplaceAllLiteralString(errOut.String(), "")
 	}
 
 	exit, stdout, stderr := run(nil, "create", "refused by .env", "--json")

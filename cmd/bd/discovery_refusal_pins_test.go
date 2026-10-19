@@ -218,10 +218,11 @@ func (f *discoveryPinFixture) yamlWorkspace(rel string, extra map[string]string)
 	return f.workspace(rel, files)
 }
 
-// baseEnv is the caller environment without any BEADS_*/BD_*
+// discoveryPinEnv is the caller environment without any BEADS_*/BD_*
 // selector or setting and without git repository-location variables, with
-// HOME isolated inside the fixture.
-func (f *discoveryPinFixture) baseEnv() []string {
+// HOME and XDG_CONFIG_HOME under home, metrics and event flush off, and the
+// migration freeze marker pointed at freezeMarker, a path that does not exist.
+func discoveryPinEnv(home, freezeMarker string) []string {
 	var env []string
 	for _, kv := range testutil.WithoutGitRepoLocationEnv(os.Environ()) {
 		key, _, _ := strings.Cut(kv, "=")
@@ -231,13 +232,12 @@ func (f *discoveryPinFixture) baseEnv() []string {
 		}
 		env = append(env, kv)
 	}
-	home := f.path("home")
 	return append(env,
 		"HOME="+home,
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
 		"BD_DISABLE_METRICS=1",
 		"BD_DISABLE_EVENT_FLUSH=1",
-		"BD_MIGRATION_FREEZE_FILE="+f.path("no-such-freeze-marker"),
+		"BD_MIGRATION_FREEZE_FILE="+freezeMarker,
 	)
 }
 
@@ -245,7 +245,7 @@ func (f *discoveryPinFixture) run(bd, cwd string, extraEnv []string, args ...str
 	f.t.Helper()
 	cmd := exec.Command(bd, args...)
 	cmd.Dir = cwd
-	cmd.Env = append(f.baseEnv(), extraEnv...)
+	cmd.Env = append(discoveryPinEnv(f.path("home"), f.path("no-such-freeze-marker")), extraEnv...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
@@ -266,13 +266,18 @@ var discoveryPinDuplicateBinaries = regexp.MustCompile(
 	`\nWarning: multiple 'bd' binaries found in PATH:\n(?:  [^\n]*\n)*` +
 		`The first one is being used\. Remove duplicates to avoid confusion\.\n`)
 
+// discoveryPinSandboxNotice matches the notice bd prints when it auto-detects
+// a sandbox, which it does when it is not allowed to signal its own process.
+var discoveryPinSandboxNotice = regexp.MustCompile(`(?m)^.*Sandbox detected, using direct mode\n`)
+
 // normalize rewrites the fixture root as $ROOT and the build's version line
 // as "bd version $VERSION". For stderr it also drops the notices that depend
 // on the caller's environment rather than on the fixture (sandbox
 // auto-detection, and bd version's duplicate binaries in PATH) and collapses
-// consecutive repeats of a line: discovery re-resolves the same redirect
-// several times per invocation and how many times it warns is not part of
-// the pin.
+// consecutive repeats of a "Warning: redirect" line: discovery re-resolves
+// the same redirect several times per invocation and how many times it warns
+// is not part of the pin. Any other repeated line, such as a doubled
+// "Error:", is kept.
 func (f *discoveryPinFixture) normalize(s string, stderr bool) string {
 	for _, form := range f.forms {
 		s = strings.ReplaceAll(s, form, "$ROOT")
@@ -282,10 +287,11 @@ func (f *discoveryPinFixture) normalize(s string, stderr bool) string {
 		return s
 	}
 	s = discoveryPinDuplicateBinaries.ReplaceAllLiteralString(s, "")
+	s = discoveryPinSandboxNotice.ReplaceAllLiteralString(s, "")
 	var b strings.Builder
 	prev := ""
 	for _, line := range strings.SplitAfter(s, "\n") {
-		if line == "" || line == prev || strings.Contains(line, "Sandbox detected, using direct mode") {
+		if line == prev && strings.HasPrefix(line, "Warning: redirect ") {
 			continue
 		}
 		b.WriteString(line)
@@ -581,14 +587,15 @@ func TestDiscoveryRefusalPinsBeadsEnvFile(t *testing.T) {
 		},
 		{
 			// checkBlockedEnvVars sees only the exported environment, and runs
-			// before any .env is loaded: a .env BD_BACKEND is not refused.
+			// before any .env is loaded: a .env BD_BACKEND is not refused, here
+			// or anywhere before discovery's own no-database refusal.
 			name: "blocked-backend-not-checked",
 			setup: func(f *discoveryPinFixture) (string, []string) {
-				return f.corruptWorkspace("p", map[string]string{".env": "BD_BACKEND=sqlite\n"}), nil
+				return f.yamlWorkspace("p", map[string]string{".env": "BD_BACKEND=sqlite\n"}), nil
 			},
 			args:   []string{"list"},
 			exit:   1,
-			stderr: pinCorruptMetadataRefusal("$ROOT/p/.beads"),
+			stderr: pinNoDatabaseRefusal,
 		},
 	})
 }
