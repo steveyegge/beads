@@ -40,7 +40,9 @@ Overrides:
   deterministic scenarios covering the wider `bd` CLI surface). Much broader
   coverage, ~10–15 min. Off by default so the everyday gate stays fast.
 - `KEEP_ARTIFACTS=1` — keep the scratch build dir (binaries, goldens, scoreboard
-  output) for inspection instead of deleting it on exit.
+  output) for inspection instead of deleting it on exit. The per-divergence
+  detail is written to that run's own `oracle-a-failures.txt` there (via
+  `ORACLE_FAILURES_FILE`), never to a path shared with other runs.
 
 ## Two tiers
 

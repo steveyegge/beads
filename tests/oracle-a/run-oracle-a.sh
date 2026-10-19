@@ -204,7 +204,11 @@ log "golden floor OK — reference produced $total_ok successful create step(s).
 # --- 5. score the candidate against the reference goldens ----------------------------
 log "scoring CANDIDATE bd against reference goldens ..."
 SCORE_OUT="$SCRATCH/scoreboard.out"
-ORACLE_CANDIDATE="$CAND_BIN" "$SCOREBOARD" | tee "$SCORE_OUT"
+# Every in-scope divergence goes to ORACLE_FAILURES_FILE, inside THIS run's
+# scratch dir. The scoreboard's default is a fixed /tmp path that all runs on the
+# host share, where a concurrent run could overwrite or swap this run's detail.
+FAIL_DETAIL="$SCRATCH/oracle-a-failures.txt"
+ORACLE_CANDIDATE="$CAND_BIN" ORACLE_FAILURES_FILE="$FAIL_DETAIL" "$SCOREBOARD" | tee "$SCORE_OUT"
 
 # --- 6. verdict from the IN-SCOPE line ------------------------------------------------
 # scoreboard prints:  "  PASS: <n>   FAIL: <m>   (<p>%)"  under the IN-SCOPE header.
@@ -221,11 +225,6 @@ elif [ "$IN_FAIL" -eq 0 ]; then
 else
   warn "RESULT: IN-SCOPE FAIL — $IN_FAIL divergence(s) vs $REF_REF (ref $REF_SHA; pass: $IN_PASS)."
   warn "Per-divergence detail:"
-  # The harness writes failures to a fixed /tmp path that concurrent runs on a
-  # shared host would clobber; copy it into this run's scratch before printing so
-  # each run owns its artifact.
-  FAIL_DETAIL="$SCRATCH/oracle-a-failures.txt"
-  cp /tmp/oracle-a-failures.txt "$FAIL_DETAIL" 2>/dev/null || FAIL_DETAIL=/tmp/oracle-a-failures.txt
   sed 's/^/  /' "$FAIL_DETAIL" >&2 2>/dev/null || true
   exit 1
 fi
