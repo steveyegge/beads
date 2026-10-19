@@ -178,6 +178,45 @@ func TestUnsetOfAnAbsentKeyLeavesACRLFFileUntouched(t *testing.T) {
 	})
 }
 
+// The user config.yaml gets the same refusals a project one does, because the
+// gate lives in commentOutYamlKey, which both callers share. A value that
+// opens on the key's line and wraps onto the next — here a double-quoted
+// node_id — used to have its first line commented and its remainder orphaned,
+// with the caller told a write happened.
+func TestUnsetUserConfigRefusesAMultiLineValue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := UserConfigYamlPath()
+	if err != nil {
+		t.Fatalf("UserConfigYamlPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const body = "node_id: \"mini\n  box\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := UnsetUserYamlConfig("node_id")
+	if err == nil {
+		t.Fatalf("unsetting a multi-line node_id reported success\n%s", body)
+	}
+	if !strings.Contains(err.Error(), "node_id") || !strings.Contains(err.Error(), "spans more than one line") {
+		t.Errorf("the error names neither the key nor the shape: %v", err)
+	}
+	if changed {
+		t.Error("a refused unset reported a write")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != body {
+		t.Errorf("a refused unset still changed the file:\n%s", after)
+	}
+}
+
 // The other direction of the same compare. Normalizing before the call is what
 // keeps the absent-key case above a no-op, but it also means each caller now
 // decides between "write" and "was not set" on content it has already rewritten
