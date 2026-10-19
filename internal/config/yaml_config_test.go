@@ -305,6 +305,30 @@ func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
 	}
 }
 
+// setYamlConfigAtPath is the read, rewrite, write step behind bd config set for
+// an undotted key. When updateYamlKey refuses a document with an oversize line,
+// the error has to come back before the write, so config.yaml keeps every byte
+// it had.
+func TestSetYamlConfigAtPathOversizeLineLeavesFileUntouched(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	before := "no-db: false\n# " + strings.Repeat("x", bufio.MaxScanTokenSize) + "\njson: true\n"
+	if err := os.WriteFile(configPath, []byte(before), 0o600); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	if err := setYamlConfigAtPath(configPath, "no-db", "true"); !errors.Is(err, bufio.ErrTooLong) {
+		t.Errorf("setYamlConfigAtPath() error = %v, want %v", err, bufio.ErrTooLong)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read config.yaml: %v", err)
+	}
+	if string(after) != before {
+		t.Errorf("config.yaml is %d bytes after the refused set, want the original %d bytes unchanged", len(after), len(before))
+	}
+}
+
 func TestFormatYamlValue(t *testing.T) {
 	tests := []struct {
 		value    string
