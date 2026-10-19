@@ -951,6 +951,19 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 	})
 
+	// From the home directory a project install would create ~/CLAUDE.md,
+	// so the hint names the global install.
+	t.Run("missing hooks checked from home", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+			t.Fatalf("expected errClaudeHooksMissing, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
 	t.Run("missing instructions", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), map[string]interface{}{

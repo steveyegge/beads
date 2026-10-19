@@ -553,7 +553,13 @@ func checkClaude(env claudeEnv) error {
 		userLevelHooks = true
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
-		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
+		if atHome {
+			// A project install here would create the ~/CLAUDE.md a global
+			// install exists to avoid.
+			_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude --global")
+		} else {
+			_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
+		}
 		return errClaudeHooksMissing
 	}
 
