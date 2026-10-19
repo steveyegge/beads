@@ -477,9 +477,19 @@ func runReadyJSONWithoutTotal(ctx context.Context, activeStore storage.DoltStora
 		return err
 	}
 	if truncated {
-		fmt.Fprintf(os.Stderr, "Showing %d ready issues; more matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.\n", len(results))
+		fmt.Fprintf(os.Stderr, "%s Use --limit 0 for all, or --limit N to raise the cap.\n", readyHiddenHint(len(results)))
 	}
 	return nil
+}
+
+// readyHiddenHint is the truncation hint for a page whose total is unknown:
+// how many rows are shown, and that the limit hid more.
+func readyHiddenHint(shown int) string {
+	noun := "issues"
+	if shown == 1 {
+		noun = "issue"
+	}
+	return fmt.Sprintf("Showing %d ready %s; more matched but were hidden by --limit.", shown, noun)
 }
 
 // readyTotal sizes the whole ready set for the request `bd ready` just listed

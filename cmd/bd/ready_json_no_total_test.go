@@ -127,3 +127,12 @@ func TestReadyJSONPrintsNoTotalOnlyWithoutTheEnvelopeOnARemoteBackend(t *testing
 		t.Error("remote backend with the envelope: want the total kept for pagination.total")
 	}
 }
+
+func TestReadyHiddenHintAgreesInNumber(t *testing.T) {
+	if got := readyHiddenHint(1); got != "Showing 1 ready issue; more matched but were hidden by --limit." {
+		t.Errorf("readyHiddenHint(1) = %q", got)
+	}
+	if got := readyHiddenHint(2); got != "Showing 2 ready issues; more matched but were hidden by --limit." {
+		t.Errorf("readyHiddenHint(2) = %q", got)
+	}
+}
