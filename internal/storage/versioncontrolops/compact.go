@@ -11,14 +11,18 @@ import (
 //  2. Checkout temp branch
 //  3. Soft-reset to initial commit (collapses old history into working set)
 //  4. Commit as single squashed base, dated like the boundary commit
-//  5. Cherry-pick each recent commit on top, restoring its date, author and message
+//  5. Cherry-pick each recent commit on top, as its original committer at its original date
 //  6. Checkout main, hard-reset to temp branch
 //  7. Delete temp branch
 //
-// A cherry-pick records the time of the replay. Without restoring the original
-// dates, every timestamp stored before the compaction (a tracker's last_sync)
-// predates the whole rewritten history, so an AS OF lookup at that timestamp
-// resolves to the initial commit and every linked issue reads as changed.
+// A cherry-pick keeps the commit's author, author date and message, but records
+// the session's committer and the time of the replay. Without the original
+// committer dates, every timestamp stored before the compaction (a tracker's
+// last_sync) predates the whole rewritten history, so a dolt_history lookup
+// filtered on commit_date at that timestamp finds only the initial commit and
+// every linked issue reads as changed. The committer is set through Dolt's
+// session variables rather than amended afterwards: an amend rewrites the
+// author too, and its --author flag rejects names containing parentheses.
 //
 // Callers should run PruneRemoteRefs and then DoltGC afterward to reclaim disk
 // space — remote-tracking refs still anchor the pre-compact chain, and GC
@@ -42,6 +46,15 @@ func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string,
 	}
 
 	branchCreated := false
+	committerSet := false
+
+	// The committer session variables outlive this function on the caller's
+	// connection; clear them whether the replay finished or not.
+	defer func() {
+		if committerSet {
+			_, _ = conn.ExecContext(ctx, "SET @@dolt_committer_name = '', @@dolt_committer_email = '', @@dolt_committer_date = ''")
+		}
+	}()
 
 	// Best-effort cleanup: if any step fails after creating the temp branch,
 	// try to return to main and delete the temp branch so future compactions
@@ -84,13 +97,14 @@ func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string,
 	// leaving compaction permanently blocked on active databases. See #3815.
 	for _, hash := range recentHashes {
 		short := hash[:min(8, len(hash))]
-		if err := execSQL(fmt.Sprintf("cherry-pick %s", short), "CALL DOLT_CHERRY_PICK('--allow-empty', ?)", hash); err != nil {
+		m := meta[hash]
+		committerSet = true
+		if err := execSQL(fmt.Sprintf("set committer %s", short),
+			"SET @@dolt_committer_name = ?, @@dolt_committer_email = ?, @@dolt_committer_date = ?",
+			m.committer, m.email, m.date); err != nil {
 			return err
 		}
-		m := meta[hash]
-		if err := execSQL(fmt.Sprintf("restore metadata %s", short),
-			"CALL DOLT_COMMIT('--amend', '--allow-empty', '-m', ?, '--date', ?, '--author', ?)",
-			m.message, m.date, m.author); err != nil {
+		if err := execSQL(fmt.Sprintf("cherry-pick %s", short), "CALL DOLT_CHERRY_PICK('--allow-empty', ?)", hash); err != nil {
 			return err
 		}
 	}
@@ -109,27 +123,27 @@ func Compact(ctx context.Context, conn DBConn, initialHash, boundaryHash string,
 }
 
 type compactCommit struct {
-	author, date, message string
+	committer, email, date string
 }
 
 // compactCommitMetadata reads every commit on the current branch with its
-// author, message and date. The date is formatted the way DOLT_COMMIT --date
-// accepts it, to the millisecond, so restoring it keeps the original order of
-// commits made within the same second.
+// committer and commit date. The date is formatted the way Dolt parses
+// dolt_committer_date, to the millisecond, so restoring it keeps the original
+// order of commits made within the same second.
 func compactCommitMetadata(ctx context.Context, conn DBConn) (map[string]compactCommit, error) {
 	rows, err := conn.QueryContext(ctx,
-		"SELECT commit_hash, committer, email, DATE_FORMAT(date, '%Y-%m-%dT%H:%i:%s.%fZ'), message FROM dolt_log")
+		"SELECT commit_hash, committer, email, DATE_FORMAT(date, '%Y-%m-%dT%H:%i:%s.%fZ') FROM dolt_log")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	meta := make(map[string]compactCommit)
 	for rows.Next() {
-		var hash, committer, email, date, message string
-		if err := rows.Scan(&hash, &committer, &email, &date, &message); err != nil {
+		var hash, committer, email, date string
+		if err := rows.Scan(&hash, &committer, &email, &date); err != nil {
 			return nil, err
 		}
-		meta[hash] = compactCommit{author: fmt.Sprintf("%s <%s>", committer, email), date: date, message: message}
+		meta[hash] = compactCommit{committer: committer, email: email, date: date}
 	}
 	return meta, rows.Err()
 }
