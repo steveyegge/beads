@@ -74,6 +74,13 @@ exports_files(
     visibility = ["//scripts:__pkg__"],
 )
 
+# //scripts:shell_scripts_test: Oracle A's runner, whose EXIT-trap removal of
+# its reference worktree oracle_a_script_test.go checks in a fixture repository.
+exports_files(
+    ["tests/oracle-a/run-oracle-a.sh"],
+    visibility = ["//scripts:__pkg__"],
+)
+
 # The nested Go modules' go.mod files, which mark where the root module ends:
 # //scripts:go_test_sources_test's scan of every _test.go file skips their
 # trees, as `go test ./...` does. (go.mod is in no Go partition below: it is
