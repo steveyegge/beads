@@ -89,6 +89,12 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		{"single-segment key present", "issue_prefix: vp\ndolt.mode: server\n", "issue_prefix", "zz", "issue_prefix: \"zz\"\ndolt.mode: server\n"},
 		{"commented key present", "# actor: \"\"\nother: x\n", "actor", "b", "actor: \"b\"\nother: x\n"},
 		{"key on the last line", "other: x\nactor: a\n", "actor", "b", "other: x\nactor: \"b\"\n"},
+
+		// The same blank-tail shapes as the unset table: the scanner drops the
+		// whole run, not just the final newline, so the rows assert the exact
+		// output rather than that SOME trailing newline survived.
+		{"ends in a blank line", "actor: a\nother: x\n\n", "actor", "b", "actor: \"b\"\nother: x\n\n"},
+		{"ends in two blank lines", "actor: a\nother: x\n\n\n", "actor", "b", "actor: \"b\"\nother: x\n\n\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := updateYamlKey(tc.content, tc.key, tc.value)
