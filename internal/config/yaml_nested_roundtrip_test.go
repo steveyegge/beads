@@ -519,6 +519,7 @@ func TestUnsetRefusesShapesItCannotEdit(t *testing.T) {
 		{name: "multi-line flow mapping closing at the key's own indentation", seed: "sync:\n  remote: {url: a,\n  branch: b}\nnode_id: mini\n", key: "sync.remote", want: "spans more than one line"},
 		{name: "multi-line flow sequence, flat spelling", seed: "types.custom: [step,\n  slot]\nnode_id: mini\n", key: "types.custom", want: "spans more than one line"},
 		{name: "multi-line double-quoted scalar", seed: "notes: \"line one\n  line two\"\nnode_id: mini\n", key: "notes", want: "spans more than one line"},
+		{name: "multi-line single-quoted scalar, flat spelling", seed: "dolt.host: '10.0.0.1\n  more'\nnode_id: mini\n", key: "dolt.host", want: "spans more than one line"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
