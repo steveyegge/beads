@@ -1615,7 +1615,7 @@ func findParentConfig(beadsDir string) (*configfile.Config, error) {
 		candidate := filepath.Join(dir, ".beads")
 		cfg, err := configfile.LoadForDiscovery(candidate)
 		if (err != nil || cfg == nil) && hasGraphFormatMarker(candidate) {
-			return nil, &unsupportedWorkspaceFormatError{beadsDir: candidate, formatMarker: true}
+			return nil, &configfile.UnsupportedWorkspaceFormatError{BeadsDir: candidate, FormatMarker: true}
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", configfile.ConfigPath(candidate), err)

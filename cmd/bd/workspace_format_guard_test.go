@@ -379,7 +379,7 @@ func TestHandleWorkspaceGuardErrorExitCodes(t *testing.T) {
 	if err := handleWorkspaceGuardError(nil); err != nil {
 		t.Fatalf("handleWorkspaceGuardError(nil) = %v", err)
 	}
-	formatErr := &unsupportedWorkspaceFormatError{beadsDir: "/w/.beads", graphMode: "link"}
+	formatErr := &configfile.UnsupportedWorkspaceFormatError{BeadsDir: "/w/.beads", GraphMode: "link"}
 	markerDir := t.TempDir()
 	writeFile(t, filepath.Join(markerDir, "graph-preview-format"), []byte("link-preview-v9\n"))
 	markerErr := checkWorkspaceFormat(nil, markerDir)
