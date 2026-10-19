@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -51,11 +52,12 @@ func gateCheckWrites(reqs []string) []string {
 }
 
 // TestServedGateCheckOverAwaitTypedGates runs `bd gate check` over HTTP, through
-// the reference proxy, against REAL await-typed gates. The reference server
-// advertises neither gate token (issues.create.gates, issues.update.gates), so
-// no create through it carries await_*: the gates are seeded straight into the
-// served store before it listens, and every outcome is read back from that
-// store:
+// the reference proxy, against REAL await-typed gates, on a server that
+// advertises neither gate token (issues.create.gates, issues.update.gates; the
+// profile is masked here, so this holds whatever reference_server.json
+// advertises). No create through it carries await_*: the gates are seeded
+// straight into the served store before it listens, and every outcome is read
+// back from that store:
 //
 //   - --dry-run writes nothing;
 //   - an expired timer closes, a pending one stays open;
@@ -141,7 +143,13 @@ func TestServedGateCheckOverAwaitTypedGates(t *testing.T) {
 		}
 	})
 
-	proxy := newReferenceProxy(t, loadReferenceProfile(t), srv.Addr())
+	// The gh:run case pins a server that cannot take an await_id patch, so the
+	// profile is held without issues.update.gates whatever
+	// reference_server.json advertises: upgrading the reference profile must
+	// not turn this case into a different test.
+	profile := loadReferenceProfile(t)
+	profile.Capabilities = slices.DeleteFunc(profile.Capabilities, func(c string) bool { return c == "issues.update.gates" })
+	proxy := newReferenceProxy(t, profile, srv.Addr())
 	reqs := &gateCheckRequestLog{next: proxy}
 	proxyAddr := startProxy(t, reqs)
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,7 +272,7 @@ func TestRemoveHookCommand(t *testing.T) {
 				},
 			},
 		}
-		removeHookCommand(hooks, "SessionStart", "bd prime")
+		removeHookCommand(io.Discard, hooks, "SessionStart", "bd prime")
 
 		entries, ok := hooks["SessionStart"].([]interface{})
 		if !ok || len(entries) != 1 {
@@ -289,7 +290,7 @@ func TestRemoveHookCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			removeHookCommand(tt.existingHooks, tt.event, tt.command)
+			removeHookCommand(io.Discard, tt.existingHooks, tt.event, tt.command)
 
 			eventHooks, ok := tt.existingHooks[tt.event].([]interface{})
 			if !ok && tt.wantRemaining > 0 {
@@ -332,7 +333,7 @@ func TestRemoveHookCommandNoNull(t *testing.T) {
 		},
 	}
 
-	removeHookCommand(hooks, "SessionStart", "bd prime")
+	removeHookCommand(io.Discard, hooks, "SessionStart", "bd prime")
 
 	// Key should be deleted, not set to null or empty array
 	if _, exists := hooks["SessionStart"]; exists {
@@ -347,6 +348,79 @@ func TestRemoveHookCommandNoNull(t *testing.T) {
 	if strings.Contains(string(data), "null") {
 		t.Errorf("JSON contains null: %s", data)
 	}
+}
+
+// bd init --quiet hands the Claude installer QuietProjectInstallOutput. When
+// the project's settings still carry the bare `bd prime` hooks an older bd
+// registered, the migration sweep's "Removed <event> hook" lines must go to
+// that output like the rest of the installer's progress: removeHookCommand
+// printed them straight to the process stdout, so a quiet init still wrote
+// them.
+func TestClaudeLegacyHookRemovalReportsThroughGivenOutput(t *testing.T) {
+	legacyHook := func() []interface{} {
+		return []interface{}{map[string]interface{}{
+			"matcher": "",
+			"hooks":   []interface{}{map[string]interface{}{"type": "command", "command": "bd prime"}},
+		}}
+	}
+	for _, tc := range []struct {
+		name string
+		path func(projectDir string) string
+	}{
+		{name: "settings.json", path: projectSettingsPath},
+		{name: "legacy settings.local.json", path: legacyProjectSettingsPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, _, _ := newClaudeTestEnv(t)
+			stubClaudeEnvProvider(t, env, nil)
+			writeSettings(t, tc.path(env.projectDir), map[string]interface{}{
+				"hooks": map[string]interface{}{"SessionStart": legacyHook(), "PreCompact": legacyHook()},
+			})
+
+			var out, errOut bytes.Buffer
+			processOut := captureProcessStdout(t, func() {
+				if err := InstallClaudeProjectTo(false, ProjectInstallOutput{Stdout: &out, Stderr: &errOut}); err != nil {
+					t.Fatalf("InstallClaudeProjectTo: %v", err)
+				}
+			})
+			if processOut != "" {
+				t.Errorf("Claude installer wrote to the process stdout instead of the given one: %q", processOut)
+			}
+			for _, want := range []string{"✓ Removed SessionStart hook\n", "✓ Removed PreCompact hook\n"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("given stdout is missing %q:\n%s", want, out.String())
+				}
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("install wrote errors: %q", errOut.String())
+			}
+		})
+	}
+}
+
+// captureProcessStdout runs fn with the process stdout sent to a temp file and
+// returns what was written there. Swapping os.Stdout is why the tests in this
+// package must not run in parallel.
+func captureProcessStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	capture, err := os.CreateTemp(t.TempDir(), "process-stdout-*")
+	if err != nil {
+		t.Fatalf("create stdout capture: %v", err)
+	}
+	orig := os.Stdout
+	os.Stdout = capture
+	func() {
+		defer func() { os.Stdout = orig }()
+		fn()
+	}()
+	if err := capture.Close(); err != nil {
+		t.Fatalf("close stdout capture: %v", err)
+	}
+	data, err := os.ReadFile(capture.Name())
+	if err != nil {
+		t.Fatalf("read stdout capture: %v", err)
+	}
+	return string(data)
 }
 
 // TestInstallClaudeCleanupNullHooks verifies that install cleans up existing null values.

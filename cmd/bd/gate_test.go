@@ -2505,3 +2505,356 @@ func TestGateCheckAwaitIDPassesOtherRefusalsThrough(t *testing.T) {
 		})
 	}
 }
+
+// fakeGateRoles is the Reader and Lifecycle `bd gate create` and
+// `bd gate add-waiter` run over. Its Update honors ExpectedVersion the way
+// every backend does, and can simulate concurrent adders: each of the first
+// `concurrent` updates finds that another writer appended its waiter (and
+// reminted the row version) after the command's read.
+type fakeGateRoles struct {
+	issueops.Lifecycle
+	issues     map[string]*types.Issue
+	creates    []issueops.CreateRequest
+	updates    []issueops.UpdateRequest
+	createErr  error
+	updateErr  error
+	concurrent []string
+}
+
+func newFakeGateRoles(issues ...*types.Issue) *fakeGateRoles {
+	f := &fakeGateRoles{issues: map[string]*types.Issue{}}
+	for _, issue := range issues {
+		f.issues[issue.ID] = issue
+	}
+	return f
+}
+
+func (f *fakeGateRoles) Ready(context.Context, issueops.ReadyRequest) (issueops.IssuePage, error) {
+	panic("unused")
+}
+
+func (f *fakeGateRoles) List(context.Context, issueops.ListRequest) (issueops.IssuePage, error) {
+	panic("unused")
+}
+
+func (f *fakeGateRoles) Get(_ context.Context, req issueops.GetRequest) (*issueops.IssueDetails, error) {
+	issue, ok := f.issues[req.ID]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	copied := *issue
+	copied.Waiters = slices.Clone(issue.Waiters)
+	return &issueops.IssueDetails{Issue: copied}, nil
+}
+
+func (f *fakeGateRoles) Create(_ context.Context, req issueops.CreateRequest) (issueops.CreateResult, error) {
+	f.creates = append(f.creates, req)
+	if f.createErr != nil {
+		return issueops.CreateResult{}, f.createErr
+	}
+	created := *req.Issue
+	created.ID = "bd-gate1"
+	created.Dependencies = []*types.Dependency{{IssueID: req.Dependencies[0].TargetID, DependsOnID: created.ID, Type: types.DepBlocks}}
+	f.issues[created.ID] = &created
+	return issueops.CreateResult{Issue: &created}, nil
+}
+
+func (f *fakeGateRoles) Update(_ context.Context, req issueops.UpdateRequest) (issueops.UpdateResult, error) {
+	f.updates = append(f.updates, req)
+	if f.updateErr != nil {
+		return issueops.UpdateResult{}, f.updateErr
+	}
+	issue := f.issues[req.IssueID]
+	if len(f.concurrent) > 0 {
+		issue.Waiters = append(issue.Waiters, f.concurrent[0])
+		issue.RowVersion++
+		f.concurrent = f.concurrent[1:]
+	}
+	if req.ExpectedVersion != nil && *req.ExpectedVersion != issue.RowVersion {
+		return issueops.UpdateResult{}, issueops.ErrVersionMismatch
+	}
+	if req.Patch.Waiters.Set {
+		issue.Waiters = slices.Clone(req.Patch.Waiters.Value)
+	}
+	issue.RowVersion++
+	return issueops.UpdateResult{Issue: issue}, nil
+}
+
+func setGateTestActor(t *testing.T) {
+	t.Helper()
+	origActor := actor
+	t.Cleanup(func() { actor = origActor })
+	actor = "test-actor"
+}
+
+// TestCreateGateIsOneCreateWithAReverseBlocksEdge: `bd gate create` is ONE
+// Lifecycle.Create carrying the gate members and the blocks edge from the
+// blocked issue to the new gate, so the gate and its edge land atomically on
+// every route (a connected HTTP workspace sends one createIssue).
+func TestCreateGateIsOneCreateWithAReverseBlocksEdge(t *testing.T) {
+	setGateTestActor(t)
+	roles := newFakeGateRoles(&types.Issue{ID: "bd-target", Title: "blocked", IssueType: types.TypeTask})
+
+	in := gateCreateInput{blocksID: "bd-target", gateType: "timer", timeout: 90 * time.Minute, reason: "cool down"}
+	gate, target, err := createGateThroughRoles(context.Background(), roles, roles, in)
+	if err != nil {
+		t.Fatalf("createGateThroughRoles: %v", err)
+	}
+	if len(roles.creates) != 1 || len(roles.updates) != 0 {
+		t.Fatalf("createGateThroughRoles made %d creates and %d updates, want exactly one create", len(roles.creates), len(roles.updates))
+	}
+	req := roles.creates[0]
+	wantDeps := []issueops.CreateDependency{{TargetID: "bd-target", Type: types.DepBlocks, Reverse: true}}
+	if !reflect.DeepEqual(req.Dependencies, wantDeps) {
+		t.Fatalf("create dependencies = %+v, want %+v", req.Dependencies, wantDeps)
+	}
+	if req.Actor != "test-actor" {
+		t.Errorf("create actor = %q, want test-actor", req.Actor)
+	}
+	if req.Issue.IssueType != "gate" || req.Issue.AwaitType != "timer" || req.Issue.Timeout != 90*time.Minute {
+		t.Errorf("created gate = type %q await_type %q timeout %s, want a 90m timer gate", req.Issue.IssueType, req.Issue.AwaitType, req.Issue.Timeout)
+	}
+	if !strings.Contains(req.Issue.Description, "cool down") {
+		t.Errorf("gate description %q does not carry the reason", req.Issue.Description)
+	}
+	if gate.ID != "bd-gate1" || target.ID != "bd-target" {
+		t.Errorf("createGateThroughRoles returned gate %q target %q", gate.ID, target.ID)
+	}
+	if gate.Dependencies != nil {
+		t.Errorf("createGateThroughRoles returned the gate with dependency records %v; bd gate create never printed them", gate.Dependencies)
+	}
+}
+
+// TestCreateGateRefusalWritesNothing: a refused create (a server that does not
+// advertise issues.create.gates) surfaces the refusal naming the token, and a
+// missing blocked issue never reaches the create.
+func TestCreateGateRefusalWritesNothing(t *testing.T) {
+	setGateTestActor(t)
+
+	t.Run("token refused", func(t *testing.T) {
+		roles := newFakeGateRoles(&types.Issue{ID: "bd-target", IssueType: types.TypeTask})
+		roles.createErr = &storage.ErrUnsupported{Op: "createIssue", Backend: "http", Capability: "issues.create.gates"}
+		_, _, err := createGateThroughRoles(context.Background(), roles, roles, gateCreateInput{blocksID: "bd-target", gateType: "timer"})
+		var unsupported *storage.ErrUnsupported
+		if !errors.As(err, &unsupported) || !strings.Contains(err.Error(), "issues.create.gates") {
+			t.Fatalf("createGateThroughRoles error = %v, want the refusal naming issues.create.gates", err)
+		}
+		if _, ok := roles.issues["bd-gate1"]; ok || len(roles.updates) != 0 {
+			t.Fatalf("a refused create wrote something")
+		}
+	})
+
+	t.Run("missing target", func(t *testing.T) {
+		roles := newFakeGateRoles()
+		_, _, err := createGateThroughRoles(context.Background(), roles, roles, gateCreateInput{blocksID: "bd-absent", gateType: "human"})
+		if err == nil || err.Error() != "issue not found: bd-absent" {
+			t.Fatalf("createGateThroughRoles error = %v, want issue not found: bd-absent", err)
+		}
+		if len(roles.creates) != 0 {
+			t.Fatalf("createGateThroughRoles created a gate for a missing target")
+		}
+	})
+}
+
+// TestAddGateWaiterIsAGuardedWholeListUpdate: the waiter list is written whole,
+// guarded by the version the read returned. A concurrent adder makes the write
+// miss; the retry re-reads (keeping the other waiter) and re-deduplicates.
+func TestAddGateWaiterIsAGuardedWholeListUpdate(t *testing.T) {
+	setGateTestActor(t)
+	origSleep := gateAddWaiterSleep
+	t.Cleanup(func() { gateAddWaiterSleep = origSleep })
+	var sleeps []time.Duration
+	gateAddWaiterSleep = func(_ context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		return nil
+	}
+	gate := func() *types.Issue {
+		return &types.Issue{ID: "bd-g", IssueType: "gate", Waiters: []string{"a"}, RowVersion: 7}
+	}
+
+	t.Run("first write", func(t *testing.T) {
+		roles := newFakeGateRoles(gate())
+		added, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if err != nil || !added {
+			t.Fatalf("addGateWaiter = %v, %v; want added", added, err)
+		}
+		if len(roles.updates) != 1 {
+			t.Fatalf("updates = %d, want 1", len(roles.updates))
+		}
+		req := roles.updates[0]
+		if req.ExpectedVersion == nil || *req.ExpectedVersion != 7 {
+			t.Errorf("update not guarded by the read's version 7: %v", req.ExpectedVersion)
+		}
+		want := issueops.IssuePatch{Waiters: issueops.Field[[]string]{Set: true, Value: []string{"a", "b"}}}
+		if !reflect.DeepEqual(req.Patch, want) {
+			t.Errorf("patch = %+v, want only the whole waiter list [a b]", req.Patch)
+		}
+	})
+
+	t.Run("concurrent adder retries", func(t *testing.T) {
+		roles := newFakeGateRoles(gate())
+		roles.concurrent = []string{"x"}
+		added, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if err != nil || !added {
+			t.Fatalf("addGateWaiter = %v, %v; want added after one retry", added, err)
+		}
+		if len(roles.updates) != 2 {
+			t.Fatalf("updates = %d, want the missed write and its retry", len(roles.updates))
+		}
+		if got := roles.issues["bd-g"].Waiters; !reflect.DeepEqual(got, []string{"a", "x", "b"}) {
+			t.Errorf("waiters = %v, want [a x b]: the concurrent waiter must survive", got)
+		}
+	})
+
+	t.Run("concurrent adder of the same waiter", func(t *testing.T) {
+		roles := newFakeGateRoles(gate())
+		roles.concurrent = []string{"b"}
+		added, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if err != nil || added {
+			t.Fatalf("addGateWaiter = %v, %v; want already registered after the re-read", added, err)
+		}
+		if got := roles.issues["bd-g"].Waiters; !reflect.DeepEqual(got, []string{"a", "b"}) {
+			t.Errorf("waiters = %v, want [a b]", got)
+		}
+	})
+
+	t.Run("already registered writes nothing", func(t *testing.T) {
+		roles := newFakeGateRoles(gate())
+		added, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "a")
+		if err != nil || added || len(roles.updates) != 0 {
+			t.Fatalf("addGateWaiter = %v, %v with %d updates; want a no-op", added, err, len(roles.updates))
+		}
+	})
+
+	t.Run("backs off between attempts", func(t *testing.T) {
+		sleeps = nil
+		roles := newFakeGateRoles(gate())
+		roles.concurrent = []string{"x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9"}
+		added, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if err != nil || !added {
+			t.Fatalf("addGateWaiter = %v, %v; want added once the nine concurrent writers are done", added, err)
+		}
+		if len(roles.updates) != 10 || len(sleeps) != 9 {
+			t.Fatalf("updates = %d, sleeps = %d; want 10 writes with a backoff before each retry", len(roles.updates), len(sleeps))
+		}
+		want := gateAddWaiterBackoffBase
+		for i, d := range sleeps {
+			if d < want/2 || d >= want {
+				t.Errorf("backoff %d = %s, want in [%s, %s)", i+1, d, want/2, want)
+			}
+			if want*2 <= gateAddWaiterBackoffCap {
+				want *= 2
+			} else {
+				want = gateAddWaiterBackoffCap
+			}
+		}
+	})
+
+	t.Run("gives up after the attempt bound", func(t *testing.T) {
+		sleeps = nil
+		roles := newFakeGateRoles(gate())
+		for i := 0; i <= gateAddWaiterMaxAttempts; i++ {
+			roles.concurrent = append(roles.concurrent, fmt.Sprintf("x%d", i))
+		}
+		_, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if !errors.Is(err, issueops.ErrVersionMismatch) {
+			t.Fatalf("addGateWaiter error = %v, want the version mismatch", err)
+		}
+		if len(roles.updates) != gateAddWaiterMaxAttempts {
+			t.Fatalf("updates = %d, want %d attempts", len(roles.updates), gateAddWaiterMaxAttempts)
+		}
+	})
+
+	t.Run("a cancelled wait stops the loop", func(t *testing.T) {
+		roles := newFakeGateRoles(gate())
+		roles.concurrent = []string{"x1", "x2"}
+		gateAddWaiterSleep = func(context.Context, time.Duration) error { return context.Canceled }
+		t.Cleanup(func() {
+			gateAddWaiterSleep = func(_ context.Context, d time.Duration) error {
+				sleeps = append(sleeps, d)
+				return nil
+			}
+		})
+		_, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if !errors.Is(err, context.Canceled) || len(roles.updates) != 1 {
+			t.Fatalf("addGateWaiter = %v after %d updates, want the cancellation after one write", err, len(roles.updates))
+		}
+	})
+
+	t.Run("refusal is not retried", func(t *testing.T) {
+		roles := newFakeGateRoles(gate())
+		roles.updateErr = &storage.ErrUnsupported{Op: "updateIssue", Backend: "http", Capability: "issues.update.gates"}
+		_, err := addGateWaiter(context.Background(), roles, roles, "bd-g", "b")
+		if err == nil || !strings.Contains(err.Error(), "issues.update.gates") || len(roles.updates) != 1 {
+			t.Fatalf("addGateWaiter error = %v after %d updates, want one refused update naming issues.update.gates", err, len(roles.updates))
+		}
+	})
+
+	t.Run("not a gate", func(t *testing.T) {
+		roles := newFakeGateRoles(&types.Issue{ID: "bd-t", IssueType: types.TypeTask})
+		_, err := addGateWaiter(context.Background(), roles, roles, "bd-t", "b")
+		if err == nil || !strings.Contains(err.Error(), "is not a gate issue") {
+			t.Fatalf("addGateWaiter error = %v, want the not-a-gate refusal", err)
+		}
+	})
+
+	t.Run("missing gate", func(t *testing.T) {
+		roles := newFakeGateRoles()
+		_, err := addGateWaiter(context.Background(), roles, roles, "bd-none", "b")
+		if err == nil || err.Error() != "gate not found: bd-none" {
+			t.Fatalf("addGateWaiter error = %v, want gate not found: bd-none", err)
+		}
+	})
+}
+
+// TestFindPendingGatesListsThroughListGates: gate discover lists the open gates
+// through issueops.ListGates (queryIssues over HTTP), never the raw storage
+// filter, and skips templates and gates that already hold a run ID.
+func TestFindPendingGatesListsThroughListGates(t *testing.T) {
+	fake := &fakeGateCheckStore{issues: []*types.Issue{
+		{ID: "bd-hint", IssueType: "gate", AwaitType: "gh:run", AwaitID: "release.yml"},
+		{ID: "bd-empty", IssueType: "gate", AwaitType: "gh:run"},
+		{ID: "bd-numeric", IssueType: "gate", AwaitType: "gh:run", AwaitID: "12345"},
+		{ID: "bd-template", IssueType: "gate", AwaitType: "gh:run", IsTemplate: true},
+		{ID: "bd-timer", IssueType: "gate", AwaitType: "timer"},
+	}}
+	gates, err := findPendingGatesWith(context.Background(), fake)
+	if err != nil {
+		t.Fatalf("findPendingGatesWith: %v", err)
+	}
+	var ids []string
+	for _, g := range gates {
+		ids = append(ids, g.ID)
+	}
+	if !reflect.DeepEqual(ids, []string{"bd-hint", "bd-empty"}) {
+		t.Fatalf("pending gates = %v, want [bd-hint bd-empty]", ids)
+	}
+	if fake.searchCalled {
+		t.Fatal("gate discover used the raw SearchIssues filter")
+	}
+	if len(fake.queries) != 1 || fake.queries[0].Expression != issueops.GateListExpression {
+		t.Fatalf("queries = %+v, want one ListGates query", fake.queries)
+	}
+	if fake.queries[0].IncludeClosed {
+		t.Fatal("gate discover listed closed gates; only open gates await a run")
+	}
+}
+
+// TestUpdateGateAwaitIDGoesThroughTheLifecycleRole: gate discover's and
+// bd close's await_id persist is the Lifecycle patch gate check makes, never
+// the legacy map-based UpdateIssue the HTTP store does not serve.
+func TestUpdateGateAwaitIDGoesThroughTheLifecycleRole(t *testing.T) {
+	origStore := store
+	t.Cleanup(func() { store = origStore })
+	setGateTestActor(t)
+	fake := &fakeGateCheckStore{}
+	store = fake
+
+	if err := updateGateAwaitID(nil, "bd-run", "4242"); err != nil {
+		t.Fatalf("updateGateAwaitID: %v", err)
+	}
+	want := issueops.IssuePatch{AwaitID: issueops.Field[string]{Set: true, Value: "4242"}}
+	if len(fake.updates) != 1 || fake.updates[0].IssueID != "bd-run" || !reflect.DeepEqual(fake.updates[0].Patch, want) {
+		t.Fatalf("updates = %+v, want one AwaitID=4242 patch on bd-run", fake.updates)
+	}
+}

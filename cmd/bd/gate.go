@@ -6,16 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/httpclient"
+	"github.com/steveyegge/beads/internal/httpclient/wire"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
+	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/issueops"
@@ -237,9 +241,6 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if usesProxiedServer() {
-			return runGateAddWaiterProxiedServer(cmd, rootCtx, args)
-		}
 		CheckReadonly("gate add-waiter")
 
 		evt := metrics.NewCommandEvent("gate-add-waiter")
@@ -251,34 +252,27 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 
 		gateID := args[0]
 		waiter := args[1]
-		ctx := rootCtx
 
-		var issue *types.Issue
-		var err error
-
-		issue, err = store.GetIssue(ctx, gateID)
+		reader, err := openIssueReader()
 		if err != nil {
-			return HandleError("gate not found: %s", gateID)
+			return HandleError("%v", err)
+		}
+		lifecycle, err := openIssueLifecycle()
+		if err != nil {
+			return HandleError("%v", err)
+		}
+		ctx, err := issueOpsContext(rootCtx)
+		if err != nil {
+			return HandleError("%v", err)
 		}
 
-		if issue.IssueType != "gate" {
-			return HandleError("%s is not a gate issue (type=%s)", gateID, issue.IssueType)
+		added, err := addGateWaiter(ctx, reader, lifecycle, gateID, waiter)
+		if err != nil {
+			return HandleError("%v", err)
 		}
-
-		for _, w := range issue.Waiters {
-			if w == waiter {
-				renderGateWaiterAlready(gateID)
-				return nil
-			}
-		}
-
-		newWaiters := append(issue.Waiters, waiter)
-
-		updates := map[string]interface{}{
-			"waiters": newWaiters,
-		}
-		if err := store.UpdateIssue(ctx, gateID, updates, currentActor()); err != nil {
-			return HandleError("updating gate: %v", err)
+		if !added {
+			renderGateWaiterAlready(gateID)
+			return nil
 		}
 
 		commandDidWrite.Store(true)
@@ -286,6 +280,211 @@ This is used by 'bd done --phase-complete' to register for gate wake notificatio
 		renderGateWaiterAdded(gateID, waiter)
 		return nil
 	},
+}
+
+// addGateWaiter's compare-and-set budget. A version miss means another writer
+// changed the gate between this command's read and its write; under a convoy
+// (a phase finishing together, every worker registering on the same gate) each
+// round of simultaneous writes has exactly one winner, so retrying at once
+// would fail all but a handful of adders. Each retry therefore waits a
+// jittered, doubling backoff first: gateAddWaiterBackoffBase, doubled per miss
+// up to gateAddWaiterBackoffCap, each wait drawn uniformly from [d/2, d) so
+// the losers of one round do not collide again in the next.
+//
+// The loop is bounded by gateAddWaiterMaxAttempts writes, not by wall time:
+// one round's latency is the server's (a loaded remote server can take
+// seconds per read and write), and a wall-clock budget would fail a convoy on
+// a slow server after only two or three rounds. Each round has a winner, so
+// the bound carries at least that many simultaneous adders; the jitter
+// spreads them further. The backoffs themselves add up to at most about 6s,
+// and a gate rewritten without pause still fails after the last attempt.
+//
+// A write lost to contention the store gave up replaying (see
+// gateAddWaiterContended) is not one quick round, so it gets a much tighter
+// bound of its own, gateAddWaiterContentionRetries. It reaches this loop only
+// after the store or bd serve has spent a whole replay budget on it (up to
+// 15s, the server-mode Dolt store's and bd serve's), and the wait after a
+// busy answer includes the server's Retry-After (5s once bd serve's budget is
+// spent). Two retries, like the HTTP client's for a busy read, hold that tail
+// to three such writes (three 15s budgets and two 5s waits: about a minute),
+// where twenty would take over six minutes. They count against
+// gateAddWaiterMaxAttempts too.
+const (
+	gateAddWaiterMaxAttempts       = 20
+	gateAddWaiterContentionRetries = 2
+	gateAddWaiterBackoffBase       = 10 * time.Millisecond
+	gateAddWaiterBackoffCap        = 400 * time.Millisecond
+)
+
+// gateAddWaiterRetryWait is the wait before retry number retry after the
+// failed write err: the jittered backoff, plus the server's Retry-After when
+// err is a busy answer that carries one. bd serve sends Retry-After on its
+// busy answers: 1s when its admission limiter is saturated, and 5s when its
+// transaction retry budget is spent, because a convoy back sooner would hold
+// slots while it waited, starving reads. It is honored as sent: the wire
+// client already bounds the header (wire.Options.MaxRetryAfter). The jitter on
+// top keeps adders that were answered busy together from retrying together.
+func gateAddWaiterRetryWait(retry int, err error) time.Duration {
+	wait := gateAddWaiterBackoff(retry)
+	var problem *wire.ProblemError
+	if errors.Is(err, wire.ErrBusy) && errors.As(err, &problem) {
+		wait += problem.RetryAfter
+	}
+	return wait
+}
+
+// gateAddWaiterBackoff is the wait before retry number retry (1-based):
+// jittered in [d/2, d) around d = base * 2^(retry-1), capped.
+func gateAddWaiterBackoff(retry int) time.Duration {
+	d := gateAddWaiterBackoffBase
+	for i := 1; i < retry && d < gateAddWaiterBackoffCap; i++ {
+		d *= 2
+	}
+	if d > gateAddWaiterBackoffCap {
+		d = gateAddWaiterBackoffCap
+	}
+	half := d / 2
+	return half + time.Duration(rand.Int64N(int64(d-half))) // #nosec G404 -- retry jitter, not a secret
+}
+
+// gateAddWaiterSleep waits d or until ctx is done. It is a variable so tests
+// can record the backoff without sleeping.
+var gateAddWaiterSleep = func(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// addGateWaiter registers waiter on the gate gateID through the Reader and
+// Lifecycle roles, so every route (local, proxied server, and a connected HTTP
+// workspace, which sends getIssue then updateIssue behind issues.update.gates)
+// runs the same steps. It reports false, writing nothing, when the waiter is
+// already registered.
+//
+// The write is a whole-value waiter list guarded by the row version the read
+// returned, so two concurrent adders cannot lose each other's waiter: the
+// second write misses its version, re-reads the list with the first waiter in
+// it, and writes again. The deduplication is this command's, not the role's;
+// the role stores the list it is given.
+func addGateWaiter(ctx context.Context, reader issueops.Reader, lifecycle issueops.Lifecycle, gateID, waiter string) (bool, error) {
+	var lastErr error
+	attempts, contended := 0, 0
+	for attempts < gateAddWaiterMaxAttempts && contended <= gateAddWaiterContentionRetries {
+		if attempts > 0 {
+			if err := gateAddWaiterSleep(ctx, gateAddWaiterRetryWait(attempts, lastErr)); err != nil {
+				return false, fmt.Errorf("updating gate: %w", err)
+			}
+		}
+		attempts++
+		details, err := reader.Get(ctx, issueops.GetRequest{ID: gateID})
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, fmt.Errorf("gate not found: %s", gateID)
+		}
+		if err != nil {
+			return false, fmt.Errorf("reading gate %s: %w", gateID, err)
+		}
+		gate := &details.Issue
+		if gate.IssueType != "gate" {
+			return false, fmt.Errorf("%s is not a gate issue (type=%s)", gateID, gate.IssueType)
+		}
+		if slices.Contains(gate.Waiters, waiter) {
+			return false, nil
+		}
+
+		waiters := append(slices.Clone(gate.Waiters), waiter)
+		version := gate.RowVersion
+		_, err = lifecycle.Update(ctx, issueops.UpdateRequest{
+			Actor:           currentActor(),
+			IssueID:         gate.ID,
+			Patch:           issueops.IssuePatch{Waiters: issueops.Field[[]string]{Set: true, Value: waiters}},
+			ExpectedVersion: &version,
+		})
+		if err == nil {
+			return true, nil
+		}
+		if !gateAddWaiterLostRound(err) {
+			return false, fmt.Errorf("updating gate: %w", err)
+		}
+		if gateAddWaiterContended(err) {
+			contended++
+		}
+		lastErr = err
+	}
+	if errors.Is(lastErr, wire.ErrBusy) && gateAddWaiterLanded(ctx, reader, gateID, waiter) {
+		return false, nil
+	}
+	return false, gateAddWaiterExhausted(gateID, attempts, contended, lastErr)
+}
+
+// gateAddWaiterLanded reports whether waiter is on the gate gateID, read once
+// after addGateWaiter's last write was answered busy. Such a write may have
+// landed (see gateAddWaiterLostRound), and every earlier round's re-read
+// would have found it, but the last write has no round left; so it gets this
+// one read, with no wait first. A failed read reports false.
+func gateAddWaiterLanded(ctx context.Context, reader issueops.Reader, gateID, waiter string) bool {
+	details, err := reader.Get(ctx, issueops.GetRequest{ID: gateID})
+	return err == nil && slices.Contains(details.Issue.Waiters, waiter)
+}
+
+// gateAddWaiterLostRound reports whether a failed guarded write is a lost
+// round the loop retries: a version miss, or a write lost to contention the
+// store gave up replaying (gateAddWaiterContended).
+//
+// Retrying is safe because of how a round is built, NOT because every busy
+// answer means nothing was written. bd serve's own busy answers are no-write,
+// but a gateway in front of the server can answer 503 after the write
+// committed, and the client maps that uncoded 503 to wire.ErrBusy too. Each
+// round re-reads the gate, deduplicates, and writes the whole list guarded by
+// the row version it read, so a write that did land is found on the re-read
+// (the waiter is already there: nothing more is written) and a stale list can
+// never overwrite a newer one. So a retry never adds a waiter twice and never
+// drops another adder's.
+//
+// Everything else is returned at once, including the classes a retry would
+// also survive but that are not contention: a refusal, a database bd serve
+// cannot reach (wire.ErrDBUnavailable), and a server fault such as an
+// indeterminate commit (wire.ErrServerFault, a 500). Those are for the caller
+// to see, not for a convoy loop to hammer.
+func gateAddWaiterLostRound(err error) bool {
+	return errors.Is(err, issueops.ErrVersionMismatch) || gateAddWaiterContended(err)
+}
+
+// gateAddWaiterContended reports whether a failed guarded write was lost to
+// contention the store gave up replaying. On the direct route that is a
+// serialization failure or deadlock, which guarantees a rollback (Dolt and
+// MySQL report 1213/1205, a SERIALIZABLE store such as Postgres SQLSTATE
+// 40001/40P01): the store's transaction envelope replays one until its budget
+// is spent and then returns it. Over HTTP it is wire.ErrBusy, which the client
+// maps from bd serve's busy answer (a refused admission, or a spent retry
+// budget) and from a 503 whose code it does not know or that has none, such as
+// a gateway's. A 503 coded db_unavailable or events_watch_saturated maps to its
+// own sentinel, not to this one.
+//
+// Dolt's 1105 "@autocommit transaction rolled back", which the direct route's
+// store also replays, is deliberately not admitted: Dolt raises it for
+// conflicts that a merge inside the transaction left behind, while a write
+// lost to a concurrent writer, the convoy's case, comes back as 1213.
+func gateAddWaiterContended(err error) bool {
+	return uow.IsSerializationError(err) || errors.Is(err, wire.ErrBusy)
+}
+
+// gateAddWaiterExhausted is addGateWaiter's error once it stops retrying:
+// after attempts writes, contended of them answered busy or lost to
+// contention, the last with lastErr. Only when none was contended did the gate
+// change under every write, so only then does the error say that; otherwise it
+// names the contention, so that the operator of a busy server is not sent
+// looking for a concurrent writer. It says no write was confirmed, not that
+// none landed, because a busy answer does not prove that nothing was written.
+func gateAddWaiterExhausted(gateID string, attempts, contended int, lastErr error) error {
+	if contended == 0 {
+		return fmt.Errorf("updating gate: %s changed on every one of %d attempts: %w", gateID, attempts, lastErr)
+	}
+	return fmt.Errorf("updating gate: no write to %s was confirmed in %d attempts (%d answered busy or lost to write contention): %w", gateID, attempts, contended, lastErr)
 }
 
 // renderGateWaiterAlready and renderGateWaiterAdded are shared by the direct
@@ -326,9 +525,6 @@ Examples:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if usesProxiedServer() {
-			return runGateCreateProxiedServer(cmd, rootCtx)
-		}
 		CheckReadonly("gate create")
 
 		evt := metrics.NewCommandEvent("gate-create")
@@ -343,37 +539,25 @@ Examples:
 			return HandleErrorRespectJSON("%v", err)
 		}
 
-		ctx := rootCtx
-
-		targetIssue, err := store.GetIssue(ctx, in.blocksID)
+		reader, err := openIssueReader()
 		if err != nil {
-			return HandleErrorRespectJSON("issue not found: %s", in.blocksID)
+			return HandleErrorRespectJSON("%v", err)
+		}
+		lifecycle, err := openIssueLifecycle()
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+		ctx, err := issueOpsContext(rootCtx)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
-		gate := buildGateIssue(in, targetIssue.ID)
-		metadata, metaErr := gateMetadataForCreate(in, targetIssue)
-		if metaErr != nil {
-			return HandleErrorRespectJSON("%v", metaErr)
-		}
-		gate.Metadata = metadata
-
-		if err := store.CreateIssue(ctx, gate, currentActor()); err != nil {
-			return HandleErrorRespectJSON("creating gate: %v", err)
+		gate, targetIssue, err := createGateThroughRoles(ctx, reader, lifecycle, in)
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
 		}
 
-		dep := &types.Dependency{
-			IssueID:     targetIssue.ID,
-			DependsOnID: gate.ID,
-			Type:        types.DepBlocks,
-		}
-		if err := store.AddDependency(ctx, dep, currentActor()); err != nil {
-			return HandleErrorRespectJSON("adding blocking dependency: %v", err)
-		}
-
-		commitMsg := fmt.Sprintf("bd: create gate %s blocking %s", gate.ID, targetIssue.ID)
-		if err := store.Commit(ctx, commitMsg); err != nil && !isDoltNothingToCommit(err) {
-			return HandleErrorRespectJSON("failed to commit: %v", err)
-		}
+		commandDidWrite.Store(true)
 
 		if jsonOutput {
 			return outputJSON(gate)
@@ -382,6 +566,48 @@ Examples:
 		renderGateCreated(gate, targetIssue, in)
 		return nil
 	},
+}
+
+// createGateThroughRoles creates the gate and its blocking edge as ONE Lifecycle.Create:
+// the gate row plus a reverse blocks dependency from the blocked issue to the
+// new gate, in one transaction and one version commit on every route. A
+// connected HTTP workspace sends it as one createIssue carrying the gate
+// members, behind issues.create.gates; a server that does not advertise that
+// token is refused before any request is sent, and nothing is written.
+//
+// It returns the created gate (without its dependency records, which
+// `bd gate create` has never printed) and the blocked issue.
+func createGateThroughRoles(ctx context.Context, reader issueops.Reader, lifecycle issueops.Lifecycle, in gateCreateInput) (*types.Issue, *types.Issue, error) {
+	details, err := reader.Get(ctx, issueops.GetRequest{ID: in.blocksID})
+	if err != nil {
+		// Every target-lookup failure has always been reported as not-found.
+		return nil, nil, fmt.Errorf("issue not found: %s", in.blocksID)
+	}
+	target := &details.Issue
+
+	gate := buildGateIssue(in, target.ID)
+	metadata, err := gateMetadataForCreate(in, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	gate.Metadata = metadata
+
+	result, err := lifecycle.Create(ctx, issueops.CreateRequest{
+		Actor: currentActor(),
+		Issue: gate,
+		Dependencies: []issueops.CreateDependency{{
+			TargetID: target.ID,
+			Type:     types.DepBlocks,
+			Reverse:  true,
+		}},
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating gate: %w", err)
+	}
+	created := result.Issue
+	created.Dependencies = nil
+	created.Comments = nil
+	return created, target, nil
 }
 
 // gateCreateInput carries `bd gate create`'s parsed flags. Both routes gather

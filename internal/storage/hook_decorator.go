@@ -160,6 +160,11 @@ func RoleFiresHooks(role any) bool {
 	// or a request.
 	case *hookLeaseReclaimer:
 		return true
+	// The heartbeater fires the update hook for a RE-ARM only
+	// (hook_heartbeater.go): rare, but a write the workspace's script runs
+	// for, so a server handed an unpeeled one is refused like the others.
+	case *hookHeartbeater:
+		return true
 	}
 	return false
 }
@@ -479,6 +484,13 @@ func (h *HookFiringStore) CompleteIssueOperationRelease(ctx context.Context, iss
 // the same pair a release moves. It re-reads the row rather than taking the
 // caller's, so a script sees the unheld issue the sweep produced.
 func (h *HookFiringStore) CompleteIssueOperationReclaim(ctx context.Context, issueID string) {
+	h.fireHookByID(ctx, hooks.EventUpdate, issueID)
+}
+
+// CompleteIssueOperationUpdateByID fires on_update for a write that names
+// its row by id (a heartbeat's re-arm), reading the row back to hand it to
+// the script.
+func (h *HookFiringStore) CompleteIssueOperationUpdateByID(ctx context.Context, issueID string) {
 	h.fireHookByID(ctx, hooks.EventUpdate, issueID)
 }
 
