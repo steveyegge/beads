@@ -170,6 +170,7 @@ filegroup(
         "//internal/storage/externaldeps:go_srcs",
         "//internal/storage/fs:go_srcs",
         "//internal/storage/git:go_srcs",
+        "//internal/storage/historyoffequiv:go_srcs",
         "//internal/storage/issueops:go_srcs",
         "//internal/storage/journalscan:go_srcs",
         "//internal/storage/kvkeys:go_srcs",
