@@ -499,6 +499,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Over an HTTP workspace, `bd ready --json` without `BD_JSON_ENVELOPE` no
+  longer sends `GET /v0/beads/ready:count` after a page the limit cut short:
+  the total only went into the stderr hint. It lists one row past the limit
+  instead, and the hint says more issues matched without saying how many
+  (the wording the proxied-server route already uses). A local store, and the
+  envelope's `pagination.total`, keep the total.
 - `bd` initializes its packages with `GOMAXPROCS` capped at 4 and hands it
   back before `main` runs anything, so the garbage collections package
   initialization triggers do not stop the world across every CPU of a large
