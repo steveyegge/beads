@@ -580,6 +580,9 @@ func TestInstallAgentsReportsMalformedMarkers(t *testing.T) {
 
 // bd setup claude treats a CLAUDE.md it cannot update as non-fatal: hooks are
 // already installed, so it warns and returns nil, leaving the file alone.
+// When CLAUDE.md is an @AGENTS.md stub, the file it cannot update is AGENTS.md,
+// and the beads block still in the stub must stay: stripping it is safe only
+// once AGENTS.md holds the current section.
 func TestInstallClaudeWarnsOnMalformedMarkers(t *testing.T) {
 	stubDetectRenderOpts(t)
 	for _, tt := range malformedMarkerContents {
@@ -598,6 +601,29 @@ func TestInstallClaudeWarnsOnMalformedMarkers(t *testing.T) {
 			}
 			if !strings.Contains(stderr.String(), "Warning: failed to update "+claudeInstructionsFile) {
 				t.Errorf("expected a non-fatal warning on stderr, got: %q", stderr.String())
+			}
+		})
+		t.Run(tt.name+" in the redirected AGENTS.md", func(t *testing.T) {
+			env, stdout, stderr := newClaudeTestEnv(t)
+			claudePath := filepath.Join(env.projectDir, claudeInstructionsFile)
+			claudeContent := staleClaudeStubWithBlock()
+			claudeSeed := seedAgentsFileWithOldMtime(t, claudePath, claudeContent)
+			agentsPath := filepath.Join(env.projectDir, "AGENTS.md")
+			agentsSeed := seedAgentsFileWithOldMtime(t, agentsPath, tt.content)
+
+			if err := installClaude(env, false, false); err != nil {
+				t.Fatalf("installClaude returned error: %v", err)
+			}
+
+			assertAgentsFileUntouched(t, agentsPath, tt.content, agentsSeed)
+			// AGENTS.md was not updated, so the stub's block is the only
+			// well-formed beads section the project has.
+			assertAgentsFileUntouched(t, claudePath, claudeContent, claudeSeed)
+			if strings.Contains(stdout.String(), "Removed stale beads block") {
+				t.Errorf("reported stripping %s although AGENTS.md was not updated:\n%s", claudeInstructionsFile, stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "Warning: failed to update AGENTS.md") {
+				t.Errorf("expected the warning to name AGENTS.md, the file that failed, got: %q", stderr.String())
 			}
 		})
 	}

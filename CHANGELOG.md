@@ -827,7 +827,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fix. A section whose END marker is missing or comes before BEGIN, which was
   also reported as updated while nothing changed, is now reported as an error:
   `bd setup factory`, `opencode` and `mux` exit 1 (`mux` before installing its
-  `.mux` hooks), while `claude` and `gemini` warn and carry on.
+  `.mux` hooks), while `claude` and `gemini` warn and carry on. When CLAUDE.md
+  is an `@AGENTS.md` stub and it is AGENTS.md that cannot be updated, `claude`
+  now names AGENTS.md in the warning and keeps the beads block left in the
+  stub, which it used to delete although AGENTS.md was never updated.
 - **Time-bound filters and the keyset cursor compare the same instant on every
   engine, whatever zone they are given in.** The storage filter builder binds
   every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,

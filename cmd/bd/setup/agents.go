@@ -274,8 +274,10 @@ func updateBeadsSection(content string) string {
 }
 
 // updateBeadsSectionWithProfile replaces the beads section with the given profile.
-// Delegates to the canonical agents.ReplaceSection. Returns an error string on
-// malformed markers (logged by callers) instead of silently appending.
+// Delegates to the canonical agents.ReplaceSection. When the section cannot be
+// replaced (no BEGIN marker, or malformed markers) it returns content unchanged
+// and reports nothing; a caller that must report that calls
+// agents.ReplaceSectionWithOpts directly, as installAgents does.
 func updateBeadsSectionWithProfile(content string, profile agents.Profile) string {
 	return updateBeadsSectionWithOpts(content, profile, agents.DefaultRenderOpts())
 }
