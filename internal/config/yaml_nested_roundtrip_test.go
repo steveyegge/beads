@@ -421,6 +421,17 @@ func TestUnsetRemovesADottedKeyInEveryShape(t *testing.T) {
 			key:       "sync.remote",
 			survivors: map[string]string{"node_id": "mini"},
 		},
+		{
+			// An alias consumer's key line (`remote: *r`) cannot re-parse as a
+			// one-line document — the anchor lives on another line — yet the
+			// line is complete and unsetting it has always worked. The
+			// anchor's own entry is untouched and still reads back through
+			// it. This row fails a span probe without the alias carve-out.
+			name:      "one-line alias consumer",
+			seed:      "sync:\n  remote: &r file:///a\nbackup:\n  remote: *r\n",
+			key:       "backup.remote",
+			survivors: map[string]string{"sync.remote": "file:///a"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
