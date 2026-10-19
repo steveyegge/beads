@@ -409,6 +409,15 @@ func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beads
 	releaseWorkspaceGates()
 	exclusive := commandNeedsExclusiveGate(cmd)
 
+	// A restore replaces the store, so strict readonly refuses it before any gate
+	// file is created or the store is opened. Nothing is held yet, so the exit
+	// skips no release. Only readonlyMode is checked: CheckReadonly also answers a
+	// migration freeze, and a frozen restore keeps its place in the chokepoint's
+	// order.
+	if exclusive && readonlyMode {
+		CheckReadonly("backup restore")
+	}
+
 	// No workspace on disk: nothing to guard, and the store-open path will
 	// produce its own (better) "no database found" error. Gating here would
 	// scatter .gate.lock files into arbitrary directories users run bd in.
