@@ -282,6 +282,9 @@ func TestEmbeddedShowBasicsAndJSON(t *testing.T) {
 		if _, ok := m["comments"]; ok {
 			t.Errorf("comments slice should be absent by default")
 		}
+		if omitted, _ := m["comments_omitted"].(bool); !omitted {
+			t.Errorf("comments_omitted: got %v, want true beside a nonzero comment_count and no rows", m["comments_omitted"])
+		}
 	})
 
 	// ===== --short =====
