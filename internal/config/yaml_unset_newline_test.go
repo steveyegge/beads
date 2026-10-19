@@ -337,4 +337,31 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 			}
 		}
 	})
+
+	// A set of a single-segment key rewrites a CRLF document to LF throughout,
+	// as an unset does. That predates the fix and is pinned here, like unset's
+	// subtest of the same name, so that changing it has to be deliberate. What
+	// the fix changes is the end: the old join dropped the terminator, so
+	// "…x\r\n" came back "…x". A set now ends the file the way an unset of the
+	// same document does.
+	t.Run("CRLF is normalized to LF, trailing run included", func(t *testing.T) {
+		for _, tc := range []struct{ content, want string }{
+			{"actor: a\r\nother: x\r\n", "actor: \"b\"\nother: x\n"},
+		} {
+			out, err := updateYamlKey(tc.content, "actor", "b")
+			if err != nil {
+				t.Fatalf("updateYamlKey(%q): %v", tc.content, err)
+			}
+			if out != tc.want {
+				t.Errorf("updateYamlKey(%q):\ngot:  %q\nwant: %q", tc.content, out, tc.want)
+			}
+			unset, err := commentOutYamlKey(tc.content, "actor")
+			if err != nil {
+				t.Fatalf("commentOutYamlKey(%q): %v", tc.content, err)
+			}
+			if got, want := out[len(strings.TrimRight(out, "\n")):], unset[len(strings.TrimRight(unset, "\n")):]; got != want {
+				t.Errorf("set and unset end %q differently: set %q, unset %q", tc.content, got, want)
+			}
+		}
+	})
 }
