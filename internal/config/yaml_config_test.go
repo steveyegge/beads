@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -245,6 +247,47 @@ func walkMap(m map[string]interface{}, parts []string) interface{} {
 		}
 	}
 	return cur
+}
+
+// A line of bufio.MaxScanTokenSize bytes or more stops the flat-key path's
+// line scanner partway through the document. updateYamlKey used to return the
+// lines read up to that point with a nil error, which setYamlConfigAtPath then
+// wrote over config.yaml, dropping the long line and everything after it.
+func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
+	doc := func(line string) string { return "k1: v1\n" + line + "\nk2: v2" }
+	atLimit := strings.Repeat("x", bufio.MaxScanTokenSize)
+
+	tests := []struct {
+		name    string
+		content string
+		key     string
+		want    string
+		wantErr bool
+	}{
+		{name: "line of MaxScanTokenSize bytes, key present", content: doc(atLimit), key: "k1", wantErr: true},
+		{name: "line of MaxScanTokenSize bytes, key absent", content: doc(atLimit), key: "k3", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := updateYamlKey(tt.content, tt.key, "zz")
+			if tt.wantErr {
+				if !errors.Is(err, bufio.ErrTooLong) {
+					t.Errorf("updateYamlKey() error = %v, want %v", err, bufio.ErrTooLong)
+				}
+				if got != "" {
+					t.Errorf("updateYamlKey() returned %d bytes of the %d-byte document, want none", len(got), len(tt.content))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("updateYamlKey() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("updateYamlKey() returned %d bytes, want the %d-byte rewrite", len(got), len(tt.want))
+			}
+		})
+	}
 }
 
 func TestFormatYamlValue(t *testing.T) {

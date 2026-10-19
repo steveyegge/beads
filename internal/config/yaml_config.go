@@ -898,6 +898,11 @@ func updateYamlKey(content, key, value string) (string, error) {
 			result = append(result, line)
 		}
 	}
+	// A line of bufio.MaxScanTokenSize bytes or more ends the scan early;
+	// returning the lines read so far would truncate config.yaml on write.
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("cannot set %q: scanning config content: %w", key, err)
+	}
 
 	if !found {
 		// Key not found - append at end
