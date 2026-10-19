@@ -143,12 +143,22 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 
 	if currentContent != "" {
 		if containsBeadsMarker(currentContent) {
-			newContent := updateBeadsSectionWithOpts(currentContent, profile, opts)
-			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
-				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+			// Like bd init's updateAgentFile: write only when the section
+			// actually changes, so a rerun leaves a current file alone.
+			newContent, changed, err := agents.ReplaceSectionWithOpts(currentContent, profile, opts)
+			switch {
+			case err != nil:
+				_, _ = fmt.Fprintf(env.stderr, "Error: failed to update beads section in %s: %v\n", env.agentsPath, err)
 				return err
+			case !changed:
+				_, _ = fmt.Fprintf(env.stdout, "✓ %s already has the current beads section\n", agentsFile)
+			default:
+				if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
+					_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+					return err
+				}
+				_, _ = fmt.Fprintf(env.stdout, "✓ Updated existing beads section in %s\n", agentsFile)
 			}
-			_, _ = fmt.Fprintf(env.stdout, "✓ Updated existing beads section in %s\n", agentsFile)
 		} else {
 			// Set the section off with one blank line, as bd init's
 			// updateAgentFile does, so that removeBeadsSection gives the
@@ -271,8 +281,10 @@ func updateBeadsSection(content string) string {
 }
 
 // updateBeadsSectionWithProfile replaces the beads section with the given profile.
-// Delegates to the canonical agents.ReplaceSection. Returns an error string on
-// malformed markers (logged by callers) instead of silently appending.
+// Delegates to the canonical agents.ReplaceSection. When the section cannot be
+// replaced (no BEGIN marker, or malformed markers) it returns content unchanged
+// and reports nothing; a caller that must report that calls
+// agents.ReplaceSectionWithOpts directly, as installAgents does.
 func updateBeadsSectionWithProfile(content string, profile agents.Profile) string {
 	return updateBeadsSectionWithOpts(content, profile, agents.DefaultRenderOpts())
 }

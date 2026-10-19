@@ -138,7 +138,7 @@ exit: 0
 Installing Claude hooks for this project...
 ✓ Hook already registered: SessionStart
 Installing Claude Code integration...
-✓ Updated existing beads section in CLAUDE.md
+✓ CLAUDE.md already has the current beads section
 
 ✓ Claude Code integration installed
   File: $PROJECT/CLAUDE.md

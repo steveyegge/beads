@@ -345,16 +345,18 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	agentsEnv, redirected := claudeAgentsEnvRedirect(env)
 	agentsSkipped := false
 	agentsEnv.skipped = &agentsSkipped
-	if err := installAgents(agentsEnv, claudeAgentsIntegration); err != nil {
+	agentsErr := installAgents(agentsEnv, claudeAgentsIntegration)
+	if agentsErr != nil {
 		// Non-fatal: hooks are already installed
-		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", claudeInstructionsFile, err)
+		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", agentsFileName(agentsEnv.agentsPath), agentsErr)
 	}
 
-	// Only strip the stale CLAUDE.md block once the redirect has actually
-	// written the replacement to AGENTS.md. If installAgents skipped injection
-	// (e.g. AGENTS.md is a symlink), stripping here would delete-before-write
-	// and leave the project with no beads section anywhere.
-	if redirected && !agentsSkipped {
+	// Only strip the stale CLAUDE.md block once AGENTS.md holds the current
+	// section (written now or already current). If installAgents skipped
+	// injection (e.g. AGENTS.md is a symlink) or failed (e.g. its markers are
+	// malformed), stripping here would delete-before-write and leave the
+	// project with no beads section anywhere.
+	if redirected && agentsErr == nil && !agentsSkipped {
 		if err := stripStaleClaudeBlock(env); err != nil {
 			// Non-fatal: the redirect itself already succeeded above
 			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to clean stale beads block from %s: %v\n", claudeInstructionsFile, err)
