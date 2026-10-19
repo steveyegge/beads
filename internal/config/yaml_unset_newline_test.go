@@ -63,13 +63,13 @@ func TestCommentOutYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		}
 	})
 
-	// bufio.ScanLines strips the "\r" from every line, so an unset rewrites a
-	// CRLF document to LF throughout. That is pre-existing and unchanged by the
-	// trailing-run logic, but the tail is where it is least visible: TrimRight
-	// on "\n" leaves the final "\r" behind, so the run that gets re-attached is
-	// a bare "\n" and the end of the file reads clean while every line ending
-	// above it changed. Pinned so the normalization is documented, and so a
-	// future change to it has to be deliberate.
+	// commentOutYamlKey normalizes CRLF to LF before anything else, so an unset
+	// rewrites a CRLF document to LF throughout. That is pre-existing and
+	// unchanged by the trailing-run logic, which measures the run after the
+	// normalization: each trailing "\r\n" comes back as one "\n", so the end of
+	// the file reads clean while every line ending above it changed. Pinned so
+	// the normalization is documented, and so a future change to it has to be
+	// deliberate.
 	t.Run("CRLF is normalized to LF, trailing run included", func(t *testing.T) {
 		out, err := commentOutYamlKey("issue_prefix: vp\r\ndolt.mode: server\r\n", "dolt.mode")
 		if err != nil {
@@ -343,10 +343,16 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 	// subtest of the same name, so that changing it has to be deliberate. What
 	// the fix changes is the end: the old join dropped the terminator, so
 	// "…x\r\n" came back "…x". A set now ends the file the way an unset of the
-	// same document does.
+	// same document does, blank lines included: both measure the trailing run
+	// after normalizing, so each trailing "\r\n" comes back as one "\n".
 	t.Run("CRLF is normalized to LF, trailing run included", func(t *testing.T) {
 		for _, tc := range []struct{ content, want string }{
 			{"actor: a\r\nother: x\r\n", "actor: \"b\"\nother: x\n"},
+			// Measured on the raw bytes, the run stops at the last "\r", so
+			// re-attaching it ends both of these in a single "\n". For the
+			// second that loses more than the base did, which ended it "…x\n\n".
+			{"actor: a\r\nother: x\r\n\r\n", "actor: \"b\"\nother: x\n\n"},
+			{"actor: a\r\nother: x\r\n\r\n\r\n", "actor: \"b\"\nother: x\n\n\n"},
 		} {
 			out, err := updateYamlKey(tc.content, "actor", "b")
 			if err != nil {

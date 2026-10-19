@@ -871,6 +871,14 @@ func updateYamlKey(content, key, value string) (string, error) {
 		}
 	}
 
+	// Normalize CRLF the way commentOutYamlKey does. The scan below already
+	// drops each line's "\r"; this makes the trailing run re-attached at the
+	// return the LF run too, so a CRLF file ending in blank lines keeps them.
+	// It sits below the nested dispatch on purpose: some updateNestedYamlKey
+	// branches carry "\r" through on untouched lines, and this fix leaves them
+	// alone.
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+
 	formattedValue := formatYamlValue(value)
 	newLine := fmt.Sprintf("%s: %s", key, formattedValue)
 
