@@ -259,6 +259,7 @@ release_cross_build(
         "//internal/storage/externaldeps:externaldeps",
         "//internal/storage/fs:fs",
         "//internal/storage/git:git",
+        "//internal/storage/historyoffequiv:historyoffequiv",
         "//internal/storage/issueops:issueops",
         "//internal/storage/journalscan:journalscan",
         "//internal/storage/kvkeys:kvkeys",
