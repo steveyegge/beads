@@ -210,7 +210,21 @@ func openProxiedServerUOWProvider(ctx context.Context, beadsDir, databaseOverrid
 	if err != nil {
 		return nil, err
 	}
-	return newSQLServerUOWProvider(ctx, beadsDir, topology, opts...)
+	// This is the one entry point that is proxied-server mode by definition;
+	// the funnel below is shared with `bd serve`'s SERVER-mode provider, which
+	// must not be told it is proxied. The distinction reaches exactly one
+	// thing: a migration-gate refusal whose remedy is `bd dolt pull` has to
+	// say where that pull can be run, because proxied mode refuses it at the
+	// front door (proxy.dolt_pull.unsupported) and server mode does not.
+	return newSQLServerUOWProvider(ctx, beadsDir, topology, proxiedProviderOptions(opts)...)
+}
+
+// proxiedProviderOptions is opts plus uow.WithProxiedServerMode(), built on a
+// fresh slice so the caller's backing array is never written even when it has
+// spare capacity. Extracted (rather than inlined at the call site) so the
+// wiring has something to unit test; see TestProxiedProviderOptions.
+func proxiedProviderOptions(opts []uow.ProviderOption) []uow.ProviderOption {
+	return append(append([]uow.ProviderOption{}, opts...), uow.WithProxiedServerMode())
 }
 
 // newSQLServerUOWProvider is the single funnel every unit-of-work provider bd
@@ -449,6 +463,7 @@ func resolveServerModeUOWTopologyWithTransportResolver(ctx context.Context, bead
 // the paths it resolves (root, log) are the same ones proxied mode uses because
 // both modes root their server at the same directory.
 func newExternalProxiedServerUOWProvider(ctx context.Context, beadsDir string, topology sqlServerUOWTopology, opts ...uow.ProviderOption) (p uow.UnitOfWorkProvider, err error) {
+	defer func() { p, err = activateVersionedHistoryProvider(ctx, p, err) }()
 	defer func() { p, err = activateEventsJournalProvider(ctx, beadsDir, p, err) }()
 	rootPath, err := resolveProxiedServerRootPath(beadsDir)
 	if err != nil {
@@ -489,6 +504,7 @@ func newExternalProxiedServerUOWProvider(ctx context.Context, beadsDir string, t
 }
 
 func newManagedProxiedServerUOWProvider(ctx context.Context, beadsDir string, topology sqlServerUOWTopology, opts ...uow.ProviderOption) (p uow.UnitOfWorkProvider, err error) {
+	defer func() { p, err = activateVersionedHistoryProvider(ctx, p, err) }()
 	defer func() { p, err = activateEventsJournalProvider(ctx, beadsDir, p, err) }()
 	// Resolve and hardened-probe the external dolt binary before spawning
 	// it: an env/sidecar override that is explicitly named but broken

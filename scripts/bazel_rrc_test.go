@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -48,8 +49,9 @@ const (
 // alone under `canary`). Not bazel-release-cross (other target platforms,
 // not seeded) nor the package gates.
 var bazelRRCReadLanes = []string{
-	"bazel-cmd-dolt", "bazel-doltserver", "bazel-embedded", "bazel-integration",
-	"bazel-proxied", "bazel-pure", "bazel-server-storage", "bazel-test",
+	"bazel-cmd-dolt", "bazel-dolt-int", "bazel-dolt-race", "bazel-doltserver",
+	"bazel-embedded", "bazel-integration", "bazel-proxied", "bazel-pure",
+	"bazel-server-storage", "bazel-test",
 }
 
 // bazelRRCReadLines: the reader's .bazelrc.local lines; both are key neutral
@@ -173,9 +175,10 @@ func TestBazelRRCModeStep(t *testing.T) {
 	}
 }
 
-// TestBazelRRCReadSteps: exactly bazelRRCReadLanes read, in mode remote only
-// (fork and local runs never: only rbe-west's trusted edge serves the
-// entries), bazel-test under canary and every one of them under on; each
+// TestBazelRRCReadSteps: exactly bazelRRCReadLanes read through these steps,
+// in mode remote only (fork modes and local never; mode cache reads through
+// setup-bazel's rc instead, behind cache-rrc-probe.sh: TestSetupBazelRCWriter),
+// bazel-test under canary and every one of them under on; each
 // writes exactly bazelRRCReadLines, never mentions uploads, and comes before
 // the job's Set up Bazel (so no Bazel server starts without it).
 func TestBazelRRCReadSteps(t *testing.T) {
@@ -241,10 +244,60 @@ func bazelRRCLaneCommands(t *testing.T, root string) []string {
 	return cmds
 }
 
+// bazelRRCEnablingJobs: bazel.yml's jobs that enable the remote repo
+// contents cache flag in any mode: a trusted reader step (mode remote) or
+// setup-bazel's BAZEL_RRC_READ opt-in (mode cache, write-bazelrc.sh), with
+// the steps that do it.
+func bazelRRCEnablingJobs(t *testing.T) map[string][]string {
+	t.Helper()
+	jobs := map[string][]string{}
+	for name, job := range readCIWorkflow(t, bazelWorkflowName).Jobs {
+		if isBazelRRCJob(name) {
+			continue // the writer and its check set the flag themselves
+		}
+		for _, s := range job.Steps {
+			if s.Name == bazelRRCReadStep {
+				jobs[name] = append(jobs[name], s.Name)
+			}
+			if s.Uses == bazelSetupBazelUses && s.Env["BAZEL_RRC_READ"] != "" {
+				jobs[name] = append(jobs[name], "setup-bazel BAZEL_RRC_READ="+s.Env["BAZEL_RRC_READ"])
+			}
+		}
+	}
+	return jobs
+}
+
+// TestBazelRRCOptInMirrorsTheTrustedReaders: setup-bazel's BAZEL_RRC_READ
+// (mode cache reads through rbe-cache) is exactly "true" on exactly the
+// trusted readers' jobs, bazelRRCReadLanes: not on every mode cache job
+// (bazel-release-cross builds for platforms rrc-lane-commands.txt does not
+// seed, and the package gates are not lanes).
+func TestBazelRRCOptInMirrorsTheTrustedReaders(t *testing.T) {
+	var optIn []string
+	for name, job := range readCIWorkflow(t, bazelWorkflowName).Jobs {
+		for _, s := range job.Steps {
+			v, ok := s.Env["BAZEL_RRC_READ"]
+			if !ok {
+				continue
+			}
+			if s.Uses != bazelSetupBazelUses || v != "true" {
+				t.Errorf("%s step %q sets BAZEL_RRC_READ=%q; only setup-bazel takes it, as \"true\"", name, s.Name, v)
+			}
+			optIn = append(optIn, name)
+		}
+	}
+	sort.Strings(optIn)
+	if !slices.Equal(optIn, bazelRRCReadLanes) {
+		t.Errorf("jobs passing BAZEL_RRC_READ %v, want the trusted readers %v", optIn, bazelRRCReadLanes)
+	}
+}
+
 // TestBazelRRCLaneCommandsCoverEveryReader: rrc-seed seeds (and rrc-verify
-// checks) what the readers fetch, so every --config a reading lane passes to
-// `bazel test` or `bazel build` has a command in rrc-lane-commands.txt, and
-// every command there is a reading lane's.
+// checks) what the readers fetch, so every job that enables the flag
+// (bazelRRCEnablingJobs: the trusted reader step or the mode cache opt-in)
+// is a reading lane, every --config it passes to `bazel test` or `bazel
+// build` has a command in rrc-lane-commands.txt, and every command there is
+// a reading lane's.
 func TestBazelRRCLaneCommandsCoverEveryReader(t *testing.T) {
 	root := sourceRepoRoot(t)
 	seeded := map[string]bool{}
@@ -263,24 +316,33 @@ func TestBazelRRCLaneCommandsCoverEveryReader(t *testing.T) {
 	invocation := regexp.MustCompile(`\bbazel (?:test|build)\b[^\n]*(?:\\\n[^\n]*)*`)
 	config := regexp.MustCompile(`--config=([a-z0-9-]+)`)
 	wf := readCIWorkflow(t, bazelWorkflowName)
-	for _, lane := range bazelRRCReadLanes {
-		for _, s := range wf.Jobs[lane].Steps {
+	enabling := bazelRRCEnablingJobs(t)
+	for job, how := range enabling {
+		if !slices.Contains(bazelRRCReadLanes, job) {
+			t.Errorf("%s enables the remote repo contents cache (%v) but is not a reading lane whose configs %s seeds", job, how, bazelRRCLaneCmds)
+		}
+		var configs []string
+		for _, s := range wf.Jobs[job].Steps {
 			for _, inv := range invocation.FindAllString(s.Run, -1) {
 				for _, m := range config.FindAllStringSubmatch(inv, -1) {
 					if m[1] != "sole-run" && m[1] != "fresh" { // test-result options, nothing fetched
-						used[m[1]] = true
+						configs = append(configs, m[1])
 					}
 				}
 			}
 		}
-	}
-	if len(used) < len(bazelRRCReadLanes) {
-		t.Fatalf("found the configs %v in %d reading lanes; the scan is broken", used, len(bazelRRCReadLanes))
-	}
-	for c := range used {
-		if !seeded[c] {
-			t.Errorf("a reading lane runs bazel with --config=%s, which %s does not seed", c, bazelRRCLaneCmds)
+		if len(configs) == 0 {
+			t.Errorf("%s enables the remote repo contents cache (%v) but no `bazel test|build --config=` is visible in its steps, so its configs cannot be checked against %s", job, how, bazelRRCLaneCmds)
 		}
+		for _, c := range configs {
+			used[c] = true
+			if !seeded[c] {
+				t.Errorf("%s enables the remote repo contents cache (%v) and runs bazel with --config=%s, which %s does not seed", job, how, c, bazelRRCLaneCmds)
+			}
+		}
+	}
+	if len(enabling) < len(bazelRRCReadLanes) || len(used) < len(bazelRRCReadLanes) {
+		t.Fatalf("found %d jobs enabling the cache and the configs %v; the scan is broken", len(enabling), used)
 	}
 	for c := range seeded {
 		if !used[c] {
@@ -294,6 +356,13 @@ func TestBazelRRCLaneCommandsCoverEveryReader(t *testing.T) {
 // flags after; `test --nobuild`'s exit 1 after a successful analysis
 // passes, a failed analysis fails, and an empty command list fails.
 func TestRRCRunLanes(t *testing.T) {
+	// rrc-run-lanes.sh runs only in bazel.yml's rrc-seed and rrc-verify jobs,
+	// on Linux runners. It reads its lane list with `mapfile`, a bash 4
+	// builtin that macOS's /bin/bash 3.2 lacks (exit 127, "mapfile: command
+	// not found"); its owner keeps it Linux-only rather than porting it.
+	if runtime.GOOS != "linux" {
+		t.Skipf("rrc-run-lanes.sh is Linux-CI-only (bazel.yml rrc-seed/rrc-verify) and uses bash 4's mapfile; GOOS=%s", runtime.GOOS)
+	}
 	root := sourceRepoRoot(t)
 	script := filepath.Join(root, bazelRRCRunLanes)
 	dir := t.TempDir()
@@ -516,6 +585,25 @@ func TestBazelRRCVerifyJob(t *testing.T) {
 	}
 	if strings.Contains(alert.Run, "${{") {
 		t.Errorf("alert step interpolates an expression into its script; pass it through env")
+	}
+	// The issue's containment: mode cache lanes see no repository
+	// variables, so the committed switches (both repositories) and
+	// rbe-cache-gate stop them. The mode remote readers read the same
+	// entries, so a mismatch sets the variable to seed (no reader, rrc-seed
+	// and this check keep running); off stops seeding and this check too.
+	for _, want := range []string{
+		"fork_rrc_read=off in both probe scripts", cacheRRCProbe, "gascity tools/rbe/cache-rrc-probe.sh",
+		"beads has no fresh-merge", "rbe-cache-gate close", "on a mismatch, set RBE_REPO_CONTENTS_CACHE to seed",
+		"set it to off only to stop seeding too", "could not check, leave the variable as it is",
+	} {
+		if !strings.Contains(alert.Run, want) {
+			t.Errorf("alert issue body lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"Stop readers first: set the repository variable", "leave RBE_REPO_CONTENTS_CACHE on"} {
+		if strings.Contains(alert.Run, bad) {
+			t.Errorf("alert issue body still says %q; a mismatch sets the variable to seed", bad)
+		}
 	}
 }
 

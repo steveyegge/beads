@@ -202,7 +202,8 @@ func (s *DoltStore) PartitionWispIDs(ctx context.Context, ids []string) (wispIDs
 }
 
 // PromoteFromEphemeral copies an issue from the wisps table to the issues table,
-// clearing the Ephemeral flag. Used by bd promote and mol squash to crystallize wisps.
+// clearing the Ephemeral flag. No bd command calls it: bd promote runs
+// issueops.Promote, whose persistence move also carries the child counter.
 //
 // Uses direct SQL inserts to bypass IsEphemeralID routing, which would otherwise
 // redirect label/dependency/event writes back to wisp tables.

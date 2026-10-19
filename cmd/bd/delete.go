@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	storeissueops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/issueops"
 )
 
@@ -123,29 +125,26 @@ Force: Delete and orphan dependents
 		// stays in the front door: issueops.DeleteRequest.IDs are exact, because
 		// resolving an ambiguous prefix and then deleting the row it hit is the
 		// one place a convenience is not.
-		routedResult, err := resolveAndGetIssueForMutation(ctx, store, issueID)
+		//
+		// Exact here too, never a leading-prefix abbreviation: an id that is
+		// gone (already deleted, a re-run script) would otherwise resolve to
+		// whichever surviving issue's id it begins, and the preview would
+		// print `bd delete <that issue> --force` as the next step.
+		routedResult, err := resolveAndGetIssueForMutationExact(ctx, store, issueID)
 		if err != nil {
+			// mc-zndi7.81: this pre-flight existence check runs before
+			// deleter.Delete() and the per-id lock fence #7244 added, so a
+			// same-token --if-revision racer that loses the fence sees the
+			// row disappear right here instead of inside the guarded write
+			// below — see reportIfRevisionTargetGone.
+			if reported, ok := reportIfRevisionTargetGone("deleting", issueID, err, ifRevision); ok {
+				return reported
+			}
 			if isNotFoundErr(err) {
-				// mc-zndi7.81: this pre-flight existence check runs before
-				// deleter.Delete() and the per-id lock fence #7244 added, so a
-				// same-token --if-revision racer that loses the fence sees the
-				// row disappear right here instead of inside the guarded
-				// write below. That is the same outcome classifyIfRevisionFailure
-				// already gives storage.ErrNotFound (mc-zndi7.73's comment on
-				// that case anticipated exactly this gap): the exact revision
-				// the caller named is gone, so report precondition_failed/
-				// ExitGuardMismatch like every other loser, not an unclassified
-				// exit 1. Passing the literal sentinel rather than err itself
-				// because classifyIfRevisionFailure matches via errors.Is, and
-				// this package's own isNotFoundErr also accepts
-				// ResolvePartialID's unwrapped "no issue found matching" text,
-				// which errors.Is would not recognize.
-				if ifRevision != nil {
-					if reported, ok := reportIfRevisionFailure("deleting", issueID, storage.ErrNotFound, ifRevision); ok {
-						return reported
-					}
-				}
 				return HandleError("issue %s not found", issueID)
+			}
+			if refusal := deleteAbbreviationRefusal(err); refusal != nil {
+				return HandleError("%v", refusal)
 			}
 			return HandleError("%v", err)
 		}
@@ -314,6 +313,34 @@ func renderSingleDeletePreview(
 	return nil
 }
 
+// deleteAbbreviationRefusal is the refusal of an id that names no issue
+// exactly but is the start of one or more: delete needs the full id, so say
+// that and name the ids it begins. It is nil for any other error.
+func deleteAbbreviationRefusal(err error) error {
+	var abbrev *utils.AbbreviatedIDError
+	if !errors.As(err, &abbrev) {
+		return nil
+	}
+	return &deleteAbbreviationError{abbrev: abbrev}
+}
+
+// deleteAbbreviationError is that refusal. To a delete, an id that is only the
+// start of other ids names no row, so the text leads with "not found" — the
+// words gascity's isBdNotFound reads as an already-gone bead — and the error
+// unwraps to storage.ErrNotFound, which lets a guarded `bd delete --cascade`
+// report it as the same lost race as any other gone target (see
+// reportIfRevisionTargetGone).
+type deleteAbbreviationError struct {
+	abbrev *utils.AbbreviatedIDError
+}
+
+func (e *deleteAbbreviationError) Error() string {
+	return fmt.Sprintf("issue %q not found: bd delete needs the full issue id, and %q is only the start of %s",
+		e.abbrev.Input, e.abbrev.Input, strings.Join(e.abbrev.Matches, ", "))
+}
+
+func (e *deleteAbbreviationError) Unwrap() []error { return []error{storage.ErrNotFound, e.abbrev} }
+
 // deleteIssue removes an issue from the database.
 func deleteIssue(ctx context.Context, issueID string) error {
 	return store.DeleteIssue(ctx, issueID)
@@ -322,9 +349,11 @@ func deleteIssue(ctx context.Context, issueID string) error {
 // deleteBatch is the multi-id and cascade path, shared by `bd delete`,
 // `bd cleanup`, `bd wisp gc` and `bd mol burn`.
 //
-// It resolves the ids the way this front door always has - prefix matching and
+// It resolves the ids in the front door - exact-id matching and
 // cross-repository routing, which issueops.DeleteRequest deliberately does not
-// do - and hands the RESOLVED ids to the role.
+// do - and hands the RESOLVED ids to the role. Never a leading-prefix
+// abbreviation: a re-run of a finished --from-file list would otherwise
+// delete every surviving issue whose id one of its ids begins.
 //
 // ifRevision is non-nil only via `bd delete`'s own --if-revision (beads#4682);
 // its other three callers always pass nil, and requireSingleIfRevisionID has
@@ -343,10 +372,12 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 	notFound := []string{}
 	var routedStore storage.DoltStorage
 	for _, id := range issueIDs {
-		result, err := resolveAndGetIssueForMutation(ctx, store, id)
+		result, err := resolveAndGetIssueForMutationExact(ctx, store, id)
 		if err != nil {
 			if isNotFoundErr(err) {
 				notFound = append(notFound, id)
+			} else if refusal := deleteAbbreviationRefusal(err); refusal != nil {
+				return refusal
 			} else {
 				return fmt.Errorf("getting issue %s: %v", id, err)
 			}
@@ -364,7 +395,15 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 		defer func() { _ = routedStore.Close() }()
 	}
 	if len(notFound) > 0 {
-		return fmt.Errorf("issues not found: %s", strings.Join(notFound, ", "))
+		// The role's own existence probe reports a missing id with this same
+		// error, and its text is the flat list every caller has always
+		// printed. What it adds is the storage.ErrNotFound sentinel, which
+		// lets the guarded `bd delete --cascade` caller's
+		// reportIfRevisionFailure report a target that a concurrent `bd
+		// delete` removed before this resolution as the same lost race as one
+		// removed inside deleter.Delete below: precondition_failed, not exit 1
+		// (see reportIfRevisionTargetGone).
+		return &issueops.NotFoundError{IDs: notFound}
 	}
 	batchStore := store
 	if routedStore != nil {

@@ -5,7 +5,9 @@ package httpclient
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage"
@@ -27,10 +29,11 @@ import (
 //
 // This pins the fix at the layer design 3.6 actually gates on: the decorator
 // must still apply client-side enforcement whenever the server's handshake
-// does not advertise wire.CapExternalDependencies. Today's OSS httpapi never
-// advertises it (confirmed below), so this also exercises the http backend's
-// GetAllDependencyRecords fallback (loadBlockingState's compatibility path)
-// against a real served server, end to end.
+// does not advertise wire.CapExternalDependencies. This harness serves raw
+// roles, not roles composed through the policy, so its httpapi truthfully
+// withholds the token (confirmed below) — the shape of an older bd serve — and
+// this also exercises the http backend's GetAllDependencyRecords fallback
+// (loadBlockingState's compatibility path) against a real served server.
 func TestServedReadyExcludesUnsatisfiedExternalDependencyWithoutServerCapability(t *testing.T) {
 	env := newServedEnv(t, "hixd")
 	ctx := t.Context()
@@ -123,12 +126,15 @@ func TestServedReadyExcludesUnsatisfiedExternalDependencyWithoutServerCapability
 
 // TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage pins,
 // against a real served server, the shape the decorator once misread: an
-// unlimited ready listing over http comes back as the server's default page
-// (the wire omits a zero limit) while its total counts the whole ready set.
-// Text-mode `bd ready` counts through CountReadyWork, which always fetches
-// unlimited, so an externally blocked issue sorted past that page stayed in
-// its count when the decorator took the zero limit for a window holding every
-// row.
+// unlimited ready listing over http used to come back as the server's default
+// page (the wire omitted a zero limit) while its total counted the whole ready
+// set. Text-mode `bd ready` counted through CountReadyWork's unlimited fetch,
+// so an externally blocked issue sorted past that page stayed in its count when
+// the decorator took the zero limit for a window holding every row. An
+// unlimited ready read now returns every row (one request bounded at the client
+// cap, unlimited_read.go), and CountReadyWork asks for one row and lets the
+// server count the rest; the count and the default page must still leave that
+// issue out.
 func TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage(t *testing.T) {
 	env := newServedEnv(t, "hixp")
 	ctx := t.Context()
@@ -164,19 +170,20 @@ func TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage(t *t
 	if err != nil {
 		t.Fatalf("BuildReadyCountFilter: %v", err)
 	}
-	// The premise this test pins: undecorated, the unlimited listing is the
-	// default page, the blocked issue is not on it, and the total counts it.
+	// The premise this test pins: undecorated, the unlimited listing holds
+	// every ready row (no longer only the server's default page), and the
+	// blocked issue sorts past where the default page ends.
 	rows, total, err := env.subject.GetReadyWorkWithCountsAndTotal(ctx, countFilter)
 	if err != nil {
 		t.Fatalf("undecorated GetReadyWorkWithCountsAndTotal over http: %v", err)
 	}
-	if len(rows) != workapi.DefaultReadyLimit || total != workapi.DefaultReadyLimit+2 {
-		t.Fatalf("undecorated unlimited listing over http = %d rows, total %d; want the %d-row default page, total %d; this test's premise no longer holds",
-			len(rows), total, workapi.DefaultReadyLimit, workapi.DefaultReadyLimit+2)
+	if len(rows) != workapi.DefaultReadyLimit+2 || total != workapi.DefaultReadyLimit+2 {
+		t.Fatalf("undecorated unlimited listing over http = %d rows, total %d; want every ready row, %d and total %d; this test's premise no longer holds",
+			len(rows), total, workapi.DefaultReadyLimit+2, workapi.DefaultReadyLimit+2)
 	}
-	for _, row := range rows {
-		if row != nil && row.Issue != nil && row.ID == blockedID {
-			t.Fatalf("%q is on the default page; this test needs it past the page", blockedID)
+	for i, row := range rows {
+		if row != nil && row.Issue != nil && row.ID == blockedID && i < workapi.DefaultReadyLimit {
+			t.Fatalf("%q is row %d, inside the default page; this test needs it past the page", blockedID, i)
 		}
 	}
 
@@ -206,8 +213,9 @@ func TestServedReadyCountExcludesAnExternallyBlockedIssuePastTheDefaultPage(t *t
 // them over legacy methods that store refuses, which failed `bd list`,
 // `bd show`, `bd dep tree`, `bd ready --claim` and `bd close` even for an issue
 // nothing blocks. And each still holds the externally blocked issue out of
-// ready work, claims and closes. The served handler here binds its roles to
-// the raw reference store, which knows nothing of the policy, so every
+// ready work, claims and closes, while the composed claim-next takes only the
+// unassigned work a local one would. The served handler here binds its roles
+// to the raw reference store, which knows nothing of the policy, so every
 // exclusion below is the client's.
 func TestServedRolesKeepTheExternalDependencyPolicy(t *testing.T) {
 	env := newServedEnv(t, "hixr")
@@ -278,6 +286,32 @@ func TestServedRolesKeepTheExternalDependencyPolicy(t *testing.T) {
 			t.Errorf("AnnotateBlocking over http: %s blocked by %v", item.ID, item.BlockedBy)
 		}
 	}
+	// The stored is_blocked column has no external term, so the server calls
+	// the blocked issue unblocked; the flag and the batch read over it must
+	// still say blocked, as Ready does.
+	flagged, err := annotator.AnnotateBlocking(ctx, issueops.BlockingRequest{IDs: []string{blockedID, freeID}, IncludeIsBlocked: true})
+	if err != nil {
+		t.Fatalf("AnnotateBlocking(IncludeIsBlocked) over http: %v", err)
+	}
+	if len(flagged.Items) != 2 {
+		t.Fatalf("AnnotateBlocking(IncludeIsBlocked) over http answered %d items, want 2", len(flagged.Items))
+	}
+	for _, item := range flagged.Items {
+		got := "absent"
+		if item.IsBlocked != nil {
+			got = strconv.FormatBool(*item.IsBlocked)
+		}
+		if want := strconv.FormatBool(item.ID == blockedID); got != want {
+			t.Errorf("AnnotateBlocking(IncludeIsBlocked) over http: %s is_blocked = %s, want %s", item.ID, got, want)
+		}
+	}
+	flags, err := decorated.IsBlockedBatch(ctx, []string{blockedID, freeID})
+	if err != nil {
+		t.Fatalf("IsBlockedBatch over http: %v", err)
+	}
+	if want := map[string]bool{blockedID: true, freeID: false}; !maps.Equal(flags, want) {
+		t.Errorf("IsBlockedBatch over http = %v, want %v", flags, want)
+	}
 
 	walker, err := decorated.TreeWalker()
 	if err != nil {
@@ -304,13 +338,49 @@ func TestServedRolesKeepTheExternalDependencyPolicy(t *testing.T) {
 	if _, err := claimer.Claim(ctx, issueops.ClaimRequest{Actor: "worker", IssueID: blockedID}); !errors.Is(err, storage.ErrCloseBlocked) {
 		t.Errorf("Claim %s over http = %v, want ErrCloseBlocked", blockedID, err)
 	}
+	// Open rows already held sort ahead of the free work, one by another actor
+	// and one by the claimant. A local claim-next (ClaimReadyIssueInTx) takes
+	// neither, with or without an assignee filter, so the composed claim must
+	// not either. A second free issue gives the filtered claim something to
+	// take once freeID is gone.
+	rivalID, mineID, laterID := env.prefix+"-rival", env.prefix+"-mine", env.prefix+"-later"
+	for _, seed := range []*types.Issue{
+		{ID: rivalID, Title: "held by another actor", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask, Assignee: "rival"},
+		{ID: mineID, Title: "held by the claimant", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask, Assignee: "worker"},
+		{ID: laterID, Title: "not blocked by anything either", Status: types.StatusOpen, Priority: 3, IssueType: types.TypeTask},
+	} {
+		if err := env.createIssue(ctx, seed, "tester"); err != nil {
+			t.Fatalf("seed %s: %v", seed.ID, err)
+		}
+	}
 	readyClaimer, err := decorated.ReadyClaimer()
 	if err != nil {
 		t.Fatalf("ReadyClaimer: %v", err)
 	}
-	next, err := readyClaimer.ClaimNext(ctx, issueops.ClaimNextRequest{Actor: "worker"})
-	if err != nil || next.Claimed == nil || next.Claimed.ID != freeID {
-		t.Fatalf("ClaimNext over http = %+v, %v; want %s", next.Claimed, err, freeID)
+	for _, claim := range []struct {
+		filter issueops.ReadyRequest
+		want   string
+	}{
+		{want: freeID},
+		{filter: issueops.ReadyRequest{Assignee: "worker"}, want: laterID},
+	} {
+		next, err := readyClaimer.ClaimNext(ctx, issueops.ClaimNextRequest{Actor: "worker", Filter: claim.filter})
+		var got string
+		if next.Claimed != nil && next.Claimed.Issue != nil {
+			got = next.Claimed.ID
+		}
+		if err != nil || got != claim.want {
+			t.Errorf("ClaimNext over http with assignee %q claimed %q, %v; want %s", claim.filter.Assignee, got, err, claim.want)
+		}
+	}
+	for id, holder := range map[string]string{rivalID: "rival", mineID: "worker"} {
+		issue, err := env.getIssue(ctx, id)
+		if err != nil || issue == nil {
+			t.Fatalf("read %s back: %v, %v", id, issue, err)
+		}
+		if issue.Status != types.StatusOpen || issue.Assignee != holder {
+			t.Errorf("after the claims %s is %s and held by %q, want open and still held by %q", id, issue.Status, issue.Assignee, holder)
+		}
 	}
 
 	closer, err := decorated.BatchCloser()
@@ -405,7 +475,8 @@ func TestServedReadyTotalIgnoresAnExternallyBlockedIssueOutsideTheFilter(t *test
 // fetches a window wider than the limit to make room for the rows it drops,
 // and the http bridge caps the rows it fetched, so the cap counted rows the
 // caller was never handed. A SQL store caps the page it delivers, and so must
-// this path.
+// this path. An unlimited read keeps the cap on its request, grown by the rows
+// the decorator may drop, and refuses in the caller's name past it.
 func TestServedReadyMaxRowsCountsTheRowsKept(t *testing.T) {
 	env := newServedEnv(t, "hixm")
 	ctx := t.Context()
@@ -440,8 +511,12 @@ func TestServedReadyMaxRowsCountsTheRowsKept(t *testing.T) {
 		{name: "cap equals the limit", limit: 2, maxRows: 2, want: free[:2]},
 		// The window holds all four rows, three of them kept.
 		{name: "cap below the limit", limit: 5, maxRows: 3, want: free},
-		// The server's default page, again all four.
+		// The request is sized by the cap grown by the blocked row: all four
+		// rows, three of them kept.
 		{name: "unlimited", limit: 0, maxRows: 3, want: free},
+		// The four rows outnumber the cap grown by the blocked row, so at
+		// least three would be kept, and the caller's cap of two fires.
+		{name: "unlimited, kept rows exceed the cap", limit: 0, maxRows: 2},
 		// The three rows kept exceed the caller's cap, which still fires.
 		{name: "kept rows exceed the cap", limit: 5, maxRows: 2},
 	} {

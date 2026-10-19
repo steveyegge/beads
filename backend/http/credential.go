@@ -12,6 +12,12 @@ import (
 // persist a secret, and must FAIL CLOSED: a configured source that errors
 // aborts the request rather than silently downgrading to an unauthenticated
 // one.
+//
+// Authorize is called once per request, not once per attempt: a read whose
+// first attempt stalls or has its connection reset is resent once with the
+// same headers, up to the client's overall timeout later. A provider whose
+// credentials are single-use or short-lived should expect that resend to draw
+// a 401, which reaches Refresh like any other.
 type CredentialProvider = httpclient.CredentialProvider
 
 const (
@@ -47,11 +53,14 @@ func NewBearerProvider(base *url.URL) *BearerProvider {
 //
 // A multi-tenant embedder (for example gc, Gas City: one process serving many
 // workspaces, called "cities") that wants a distinct credential per workspace
-// wraps that workspace's own provider in a ProvidedCredential rather than
-// calling Open directly: the registered dialer Register installs is
+// wraps that workspace's own provider in a ProvidedCredential when it opens
+// through the registry (the direct door takes the provider itself, as
+// Options.Credential): the registered dialer Register installs is
 // process-wide and cannot hold one credential per tenant, but the per-open
 // OpenWith seam can, and this is the opaque wrapper type that seam
-// recognizes. See httpclient.ResolveCredential and
+// recognizes. Either way the supplied provider is the ONLY credential the
+// open uses, and no ambient credential, CA or plaintext grant is read; see the
+// package doc's "Credentials" section. See httpclient.ResolveCredential and
 // backends.OpenOptions.Credential's own doc comment for the single-tenant
 // ambient-ladder default this exists to opt out of.
 type ProvidedCredential = httpclient.ProvidedCredential

@@ -9,6 +9,248 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bd versions <id>` lists the versions recorded for a bead, and
+  `versioned-history.enabled` turns recording on. While it is on, every
+  accepted change to a bead created while it is on, or that enters the issues
+  plane while it is on (a wisp promoted or made persistent), stores a
+  snapshot of it as a row of `issue_versions` in the same transaction. It is
+  off by default and nothing is backfilled: a bead already on the issues
+  plane when it is turned on is legacy, and editing it records nothing. A
+  recorded write leaves `updated_at` where an unrecorded one would, so
+  `bd import`'s stale check sees the same timestamps either way.
+  `bd versions --json` answers `{"versions": [...], "recording": bool}`; the
+  command still lists what was recorded after recording is turned off, and
+  proxied-server and HTTP workspaces refuse it. The setting is a row of each
+  store's `config` table (`bd config set versioned-history.enabled true`),
+  and every store reads its own when it is opened: a write routed into
+  another workspace (a prefix-routed `bd update` or `bd close`,
+  `bd create --repo`) follows the target store's row, a proxied-server
+  provider reads it when it is constructed, and a long-lived `bd serve`
+  keeps the value it read until it restarts.
+  `BD_VERSIONED_HISTORY_ENABLED=1` (or a `config.yaml` value) turns
+  recording on for every store the process opens, and never turns it off.
+  The row replicates on `bd dolt push`/`pull`, and recording is single-writer
+  only: two clones recording at once can mint the same revision and fail the
+  pull, and a write from a writer that is not recording is folded into the
+  next recorded version under that version's actor, so keep recording on for
+  every writer of a store or off for all of them. Turning it on with
+  `bd config set` first checks every issue the store would version and
+  refuses, writing nothing, while any holds a number outside the I-JSON
+  exact-integer range (magnitude above 2^53-1, however it is spelled) in its
+  metadata or in a gate's timeout (held as nanoseconds, so about 104.25
+  days), and prints the count, the ids, the field and the fix. There is no
+  override, and the check runs once; after that, a recorded write that would
+  hold such a number fails atomically. Migration 0071 adds a nullable
+  `removed_restriction` column to `issue_versions`. `bd version` now refuses
+  an argument and suggests `bd versions <arg>`, instead of printing bd's
+  build for a mistyped `bd version bd-123`.
+- `bd blocked --flags` prints the blocked flag for each id read from stdin
+  (one per line; blank lines and repeats ignored), with `--json` as
+  `[{"id","is_blocked"}]` in the order the ids were given, omitting an id that
+  names no row on either plane. A closed id is answered too, with its stored
+  flag (a `status <> 'closed'` SQL read of the column leaves it out). It is the flag `bd ready` filters on, not the
+  listing: a row whose stored flag is set with no nameable blocker reads true
+  here and is absent from `bd blocked`. It runs `issueops.BlockedFlags` on
+  every route; over HTTP that is `listBlockingAnnotations` with `is_blocked`,
+  behind `dependencies.blocking.isBlocked`, refused before the dial against a
+  server that does not advertise it. The listing's filter flags are refused
+  with `--flags`.
+- `bd blocked --flags --raw` answers the stored `is_blocked` column itself,
+  without the external-dependency policy: a row blocked only by an
+  unsatisfied `external:` ref reads `false` (the policy-aware `--flags`
+  reads `true`); a stale flag reads `true` either way. `--raw` is for the
+  local and proxied routes, where it reads the column directly and the two
+  answer the same. Over HTTP it is answered only by a server that does not
+  advertise `policy.external_dependencies` (whose flag is the column); a
+  server advertising it answers only the policy-aware flag, so `--raw`
+  against it is refused before the dial rather than answered with the
+  decorated flag. `--raw` without `--flags` is refused.
+- `bd blocked` works over a connected HTTP workspace. The blocked listing is
+  a role, `issueops.BlockedLister` (`ListBlocked(BlockedRequest{ParentID,
+  Labels, LabelsAny, ExcludeLabels}) -> BlockedResult{Items}`), on every
+  backend leg over the same body `GetBlockedIssues` runs, and `bd serve`
+  publishes it as `GET /v0/beads/blocked` (`parent`, and the repeatable
+  `label`, `label_any` and `exclude_label`), answering `{items, has_more}`
+  with `BlockedIssue` rows (the element `bd blocked --json` prints), behind
+  the new `blocked.list` capability token (additive; no wire_revision bump).
+  The listing names unsatisfied `external:` blockers wherever the
+  external-dependency policy applies: on the server when it advertises
+  `policy.external_dependencies`, else on the client, as every other policy
+  read does. The HTTP backend's `BlockedLister()` and legacy
+  `GetBlockedIssues` dial it; against a server that does not advertise the
+  token they refuse before dialing with a typed capability error naming
+  `blocked.list`, and never compose the listing from other reads. The
+  listing is unpaged: a server answer that reports `has_more` is refused
+  with the new `httpclient.TruncatedListingError` rather than returned
+  short, and an answer over the client's 32 MiB response limit is refused
+  as any oversized response is. The external-dependency decorator's legacy
+  `GetBlockedIssues` over an HTTP store now reads the extra sources through
+  the served roles (it failed on a raw multi-id read before), so callers of
+  that door no longer fail on it; commands that also make other raw reads
+  the HTTP backend does not serve (`bd ready --explain`) still refuse on
+  those. `bd
+  blocked` runs the role on every route (the proxied-server route through
+  the provider's accessor) with unchanged output: `--json` prints the same
+  rows in the same order (priority, then newest first, then id, which now
+  also breaks a tie the order used to leave to chance), and `[]`, never
+  `null`, when nothing is blocked.
+- `bd list`'s remaining filters work over a connected HTTP workspace.
+  `GET /v0/beads/issues` accepts `updated_after`/`updated_before`,
+  `closed_after`/`closed_before`, `defer_after`/`defer_before`,
+  `due_after`/`due_before`, `priority`, `priority_min`, `priority_max`,
+  `title_contains`, `desc_contains`, `notes_contains`, `external_contains`,
+  `external_ref`, `spec`, `label_pattern`, `label_regex`,
+  `empty_description`, `no_labels`, `no_parent`, a repeatable
+  `exclude_type`, `pinned`, `no_pinned`, `deferred`, `overdue`, `mol_type`
+  and `wisp_type`, behind one new capability token, `issues.list.filters`
+  (additive; no wire_revision bump; the names are `issues:count`'s where it
+  already spells the filter), and applies them through the same Reader role a
+  local `bd list` reads through. Bounds are strict and compared at
+  whole-second precision on both routes; relative and date-only values are
+  resolved on the client's clock and timezone as locally, while `--overdue`
+  compares against the server's clock. Against a server that does not
+  advertise the token the client refuses before dialing, naming
+  `issues.list.filters`, rather than sending a filter an older server rejects
+  or dropping one and answering a wider listing. The 29 corresponding
+  divergence-ledger refusal rows are removed. The default `bd list --parent`
+  tree view does not carry these filters yet: its descendant walk still
+  refuses one over HTTP rather than drop it, and `--flat` or `--json` skips
+  the walk and applies them to the parent's direct children (not its whole
+  subtree).
+- `issueops.ListRequest.ExcludeStatus`: statuses to leave out of a listing,
+  appended to the default exclusions (never re-admitting what they hide),
+  comma-separated or repeated, each validated against the workspace's
+  statuses like `CountRequest.ExcludeStatus` (an unknown name is
+  `ErrValidation`). `GET /v0/beads/issues` accepts it as a repeatable
+  `exclude_status` under the same `issues.list.filters` token (an unknown
+  name is a `400` on `exclude_status`), so an HTTP-backed caller can leave
+  closed history out of an `all` listing (`all` plus
+  `exclude_status=closed` keeps every status not named, the `pinned` and
+  `hooked` statuses and custom done/frozen statuses included) instead of
+  reading the whole history. It is refused together with `ReadyFlag`, like the other
+  members the ready query cannot carry. There is no `bd list` flag for it
+  yet.
+
+- `bd serve` publishes the gate members: `await_type`,
+  `await_id`, `timeout` (nanoseconds) and `waiters` on `POST
+  /v0/beads/issues` and on `issues:batchApply` create items, behind the new
+  `issues.create.gates` capability token, and `await_id` and `waiters` (a
+  whole-value replacement; `[]` clears) on the `patch` of `PATCH
+  /v0/beads/issues/{id}` and of `issues:batchApply` update items, behind
+  `issues.update.gates`. Additive; no wire_revision bump. The bounds are the
+  library role's, the same ones a local create or update now enforces (see
+  Changed), answered as `400 invalid_argument` with `param` naming the
+  member.
+- `issueops.IssuePatch.Waiters`: a whole-value replacement of a gate's waiter
+  list (nil or empty clears it, stored as `[]`), on `Lifecycle.Update` and on
+  `BatchApplier` update items, on every backend. `issueops.GateFieldError`
+  (`Field`, `Detail`; wraps `ErrValidation`) names the gate member a create or
+  update refused, as one of the new `issueops.GateFieldAwaitType`,
+  `GateFieldAwaitID`, `GateFieldTimeout` and `GateFieldWaiters` constants.
+- The HTTP client sends the gate members on create, update and
+  `issues:batchApply` (create and update items) to a server that advertises
+  `issues.create.gates` / `issues.update.gates`. Against an older server a
+  request naming any gate member is refused before the dial with a typed
+  capability error naming the missing token (never sent without the
+  member); a batchApply plan is checked whole, so no partial plan is sent.
+  A request naming no gate member is unaffected by either token.
+- `bd heartbeat` works over a connected HTTP workspace.
+  The lease refresh is a role, `issueops.Heartbeater`
+  (`Heartbeat(HeartbeatRequest{Actor, IssueID}) -> HeartbeatResult{IssueID,
+  Holder, HeartbeatAt, LeaseExpiresAt, Rearmed}`), on every backend leg, and
+  `bd serve` publishes it as `POST /v0/beads/issues/{id}:heartbeat` behind the
+  new `issues.heartbeat` capability token (additive; no wire_revision bump),
+  with the new `lease_not_held` (409) problem code (`reason: ephemeral` for a
+  wisp). A refresh writes ONLY the lease row: the issue's `revision` is not
+  reminted (a guarded write against the pre-heartbeat token still lands), no
+  version, event, journal entry or Dolt commit is recorded, and no hook
+  fires. `Rearmed` is true only when the heartbeat created the caller's lease
+  row (a hand-doled claim's first heartbeat). A re-arm is recorded as a
+  mutation; a refresh is not: the re-arm remints `revision`, stamps
+  `updated_at`, records a `lease_rearmed` event, a journal entry and a
+  version, makes a Dolt commit and fires `on_update` (see Fixed); the
+  reported times are whole seconds, exactly what the lease row stores. The
+  HTTP backend's `Heartbeater()` and legacy `HeartbeatIssue` dial it;
+  against a server that does not advertise the token they refuse before
+  dialing with a typed capability error naming `issues.heartbeat`, and never
+  fall back to a re-claim or a metadata stamp. A
+  busy (503) answer is replayed, because a repeat only moves the expiry later.
+  `bd heartbeat` now runs the role on every route (the proxied-server route
+  through the provider's accessor), with the same
+  `{"id","status":"heartbeat","owner"}` success output and the same exit
+  codes. Refusal TEXT on stderr changes per route: the direct routes (Dolt
+  server, embedded) gain a `lease not held: ` prefix
+  (`heartbeat X: lease not held: issue not claimable: X status closed`); the
+  proxied-server route loses its
+  `Heartbeat: db: IssueSQLRepository.HeartbeatIssue: ` prefix and reads as the
+  direct routes do; over HTTP the refusal is the problem's detail, which names
+  the state found (`it is closed`, `an ephemeral wisp`, `open and not
+  claimed`) or, for a foreign holder, the native `issue already claimed by
+  <holder>`. An id that names no row answers not-found from the role rather
+  than "not claimable" (the CLI resolves the id first, so its output is
+  unchanged), and every refusal for a caller that holds no live claim
+  (closed, released, reclaimed, moved off in_progress, or a wisp) is
+  `issueops.ErrLeaseNotHeld`, which still matches `ErrNotClaimable`.
+
+- `GET /v0/beads/dependencies/blocking` accepts `is_blocked`, behind the new
+  `dependencies.blocking.isBlocked` capability token (additive; no
+  wire_revision bump), and answers each item's stored, transitive
+  `is_blocked` flag, the column `bd ready` filters on; an item whose id names
+  no row carries none. `issueops.BlockingRequest` gains `IncludeIsBlocked` on
+  every BlockingAnnotator implementation, and `issueops.BlockedFlags` is the
+  batched read over it. The HTTP backend's `IsBlockedBatch` now serves
+  through it; against a server that does not advertise the token it still
+  refuses before dialing, now with a typed capability error naming the
+  token. An unsatisfied `external:` blocker sets the flag on every route,
+  just as it keeps the issue out of `bd ready`.
+- `bd promote` works over a connected HTTP workspace (S21b). Its one library
+  entry, `issueops.Promote(ctx, PromoteRoles{Reader, Lifecycle, Commenter},
+  PromoteRequest)`, reads the row, refuses one that is not a wisp
+  (`*issueops.NotAWispError`, the sentence `bd promote` always printed), moves
+  it with ONE `Lifecycle.Update` whose patch is `Persistence = persistent`
+  (labels, dependencies, events, comments and the child counter move with it
+  in the role's transaction), then records the promotion comment. The direct
+  and proxied-server routes run it over their own roles, so a local promote
+  now makes the same plane move `bd update --persistent` makes, honoring
+  `dolt.auto-commit`. That changes five things a script can see on those
+  routes: the workspace's `on_update` hook fires twice, once for the move and
+  once for the comment (the direct route never fired it, the proxied-server
+  route fired it once); the promotion comment is a row `bd comments` lists
+  (the direct route recorded only a `commented` event); a promoted parent
+  keeps its child counter, so its next `bd create --parent` mints the number
+  after its wisp children's instead of failing with
+  `issue already exists: <parent>.1`; a promotion records two Dolt
+  commits, `bd: promote <id>` for the move and `bd: comment <id>` for the
+  comment (an embedded workspace recorded one, `bd: promote (auto-commit)`,
+  and the proxied-server route one, `bd: promote <id>`); and a promote that
+  loses a race to a concurrent one fails with the not-a-wisp sentence instead
+  of `promoting <id>: wisp <id> not found`. A comment that cannot
+  be written leaves the promotion standing behind a warning on every route;
+  the proxied-server route used to roll the promotion back. `bd serve`
+  publishes the move as `patch.persistence` on `PATCH /v0/beads/issues/{id}`
+  behind the new `issues.update.persistence` capability (additive;
+  `wire_revision` is unchanged), which also carries `bd update --persistent`,
+  `--ephemeral` and `--no-history` over HTTP. Against a server without the
+  token the client refuses before the dial, naming it; nothing is written. A
+  move the workspace refuses (an `unversioned`-class row asked for
+  `--ephemeral` or `--no-history`, or a demotion of a row with retained
+  snapshots) matches `ErrValidation` on every route: `bd serve` answers it
+  `400 invalid_argument`, and the local refusal gains a `validation failed: `
+  prefix.
+- `bd serve` advertises the new `issues.update.claim` behavior token for what
+  `PATCH /v0/beads/issues/{id}` already served untokened: `claim` (upstream
+  #6890), resolved on both planes, so a wisp is claimable there (additive; no
+  wire_revision bump). The HTTP client now picks the claim route from the
+  handshake before dialing: with the token every claim is one updateIssue call;
+  without it a claim alone goes to `{id}:claim` (no doomed 400 first; a wisp
+  still refuses by name, W-ClaimRequest.Wisp, now naming the token), and a
+  claim beside a patch, a guard, a force override or `allow_template` is
+  refused before the dial with an unsupported error naming
+  `issues.update.claim`. Skew note: a server that serves `claim` untokened
+  (wire_revision 2 builds before this release) now gets those two refusals
+  from a new client where it used to serve them; upgrade bd serve. A template
+  claimed alone without the token is still refused, on the client's own
+  pre-read: `{id}:claim` has no template guard (bd-jkp9v3).
 - `issueops.LeaseReclaimer`, the stale-lease sweep behind `bd reclaim`, is a
   role on every leg (dolt, embedded dolt, the unit-of-work provider and the
   HTTP client), and `bd serve` publishes it as `POST /v0/beads/issues:reclaim`
@@ -32,7 +274,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   description and metadata are unchanged, and omitting the flag (or passing
   `0`) is byte-identical to today's output. JSON output is untouched;
   `--include-comments` still streams every comment there.
-
+- `GET /v0/beads/issues` accepts `no_assignee`, `title` and a repeatable `id`
+  (one id per value, at most 200), each behind its own new capability token
+  (`issues.list.noAssignee`, `issues.list.title`, `issues.list.ids`; additive,
+  no wire_revision bump; `id` and its token are bd-enterprise's contract,
+  adopted unchanged), and applies them through
+  the same Reader role a local `bd list` reads through. Over a connected HTTP
+  workspace `bd list --no-assignee`, `--title` and `--id` now work instead of
+  refusing. Against a server that does not advertise a flag's token the
+  client refuses before dialing, and the refusal names the token (every
+  capability refusal over HTTP now names its token).
+- `GET /v0/beads/issues` accepts `q`, `bd search`'s free text, behind the
+  new `issues.list.search` capability token (additive; no wire_revision
+  bump). `issueops.ListRequest` gains `Query`, with `SearchIssues`' meaning
+  (title or id contains the text, case-insensitively), on every Reader
+  implementation, and `issueops.SearchListRequest` is search's scope as a
+  request. Every `bd search` route (direct, `--proxied-server` and the HTTP
+  backend) now asks `Reader.List` with it through one flag mapping; against
+  a server that does not advertise the token the HTTP client refuses before
+  dialing with a typed capability error. Two things a script can see follow
+  from that mapping: `bd search --type` expands aliases (`feat`, `mol`,
+  `dec`, ...) and validates the type as `bd list` does, so an unknown type
+  now exits 1 where it used to answer an empty result, and `bd search
+  --json` rows carry `comments_omitted` (additive) as `bd list --json` rows
+  do.
 - `bd create --graph` now plans its batch through `issueops.BatchApplier`
   instead of the old `buildDomainGraphPlan` path, so a graph create gets the
   same atomic multi-row semantics as `bd batch apply`. A `waits-for` edge's
@@ -155,18 +420,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BEADS_HTTP_TOKEN_COMMAND=host[:port]=<command>`, then the credentials
   file, then none); both variables take only that host-scoped form, and a
   bare value is refused, since it would be sent to whatever server the
-  workspace's `http_target.json` names. The external-dependency policy
-  decorator (`internal/storage/externaldeps`) still wraps an http store, and
-  stands down only when the server's handshake advertises
-  `policy.external_dependencies` (that server has already applied the policy
-  before answering); against any other server it applies the policy
-  client-side, around the http store's own served roles. Externally blocked
-  issues drop out of `bd ready`'s page, total, and count (the v0 wire cannot
-  express an id exclusion) and out of `bd ready --claim`, `bd close` refuses
-  them without `--force`, and `bd dep tree` shows their external leaves.
+  workspace's `http_target.json` names.
+  `bd create` sends no `created_by` on any backend: the
+  create role defaults it to the request's actor (see *Changed*). The
+  external-dependency policy decorator (`internal/storage/externaldeps`)
+  still wraps an http store, and passes every ready, claim, claim-next,
+  close, blocking and tree request through untouched when the server's
+  handshake advertises `policy.external_dependencies`, which every `bd
+  serve` composed through the policy now does (see below). Only against a
+  server that does not advertise it (an older `bd serve`, or one handed raw
+  roles) does the client apply the policy itself, in role terms: ready reads
+  and the ready claim exclude the workspace-wide externally blocked set over
+  a widened window, and per-issue checks (claim, close, batch close, list
+  annotations, tree leaves) read only the named issues' edges.
   `bd close --claim-next` refuses over http before anything closes, since
   the wire's batch close cannot carry the claim; its error says to close
   without it and then run `bd ready --claim`.
+- `bd serve` advertises the conditional behavior token
+  `policy.external_dependencies` exactly when the roles or provider it
+  serves were composed through the external-dependency policy
+  (`httpapi.Config.ExternalDependencyPolicy`, which `bd serve` derives with
+  `externaldeps.Applied` / `externaldeps.AppliedToProvider`); a server handed
+  raw roles withholds it. A client that sees it hands claim-next to the
+  server as one atomic call and takes the ready count from the server,
+  instead of judging external dependencies a second time against the CLIENT
+  machine's project config.
+- `bd ping` works on an http workspace (a new `storage.Pinger`, which the
+  http store answers with its authenticated context read).
 - The public `backend/http` package (`bdhttp`) is the out-of-tree door onto
   this backend for an embedder that links beads as a library rather than
   running `cmd/bd`: `Register(Options)` adds `"http"` to the registry and
@@ -176,9 +456,191 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-tenant embedder serving many workspaces needs, where a
   process-global credential cannot stand in for one tenant's own.
   EXPERIMENTAL, pin an exact beads version.
+- Unlimited ready and query reads over the HTTP backend (`bd ready --limit
+  0`, `bd query --limit 0`, and every library read asking for no limit)
+  return every row against any server, bounded on the client by the new
+  `BEADS_HTTP_UNLIMITED_READ_CAP` (a positive integer up to 1000000; default
+  10000). The client never puts `limit=0` on the wire, which a `bd serve
+  --allow-non-loopback` refuses and which an older server answered with its
+  default page, silently capping the result: an unlimited ready or query
+  read is one request bounded at the cap plus one (one consistent snapshot).
+  Past the cap, or when a server reports more rows below the requested
+  bound, the read is refused with a typed error
+  (`httpclient.ErrUnlimitedReadCap`) naming the cap, never truncated. An
+  unlimited `bd list` is unchanged: it walks its keyset cursor a page at a
+  time and is bounded only by `--max-rows` / `BEADS_MAX_ROWS`. Unlike a
+  malformed `BEADS_MAX_ROWS`, which is ignored with a warning, a malformed
+  cap value fails every unlimited ready or query read rather than falling
+  back to the default.
+- Two molecule capability tokens on `bd serve`. `issues.close.autoCloseMolecule`
+  announces that `POST /v0/beads/issues/{id}:close` and `POST
+  /v0/beads/issues:batchClose` accept `auto_close_molecule` and answer
+  `auto_closed_molecule` and `molecule_auto_close_refusal`;
+  `issues.advanceMolecule` is the new `POST
+  /v0/beads/issues/{id}:advanceMolecule`, `bd close --continue`'s advance.
+  Both run the one library entry (`issueops.CloseRequest.AutoCloseMolecule`,
+  `issueops.MoleculeStepper`) on the server. The public `issueops` package
+  gains the molecule rules as one implementation over the BatchGetter,
+  Relations and EdgeReader roles (`MoleculeRoots`, `LoadMolecule`,
+  `AnalyzeMolecule`, `ViewMolecule`, `ReadMoleculeProgress`,
+  `ActiveMoleculeIDs`, `CompletedMolecule`, `MoleculeRootClose`); a
+  molecule's membership is the parent-child edge. Against a server that
+  does not advertise a token the HTTP client refuses a library close that
+  sets `AutoCloseMolecule`, or an advance, before dialing, with a typed
+  capability error; it never runs a client-side copy of either rule.
+- `bd close --json` reports the molecule auto-close. The entry of a close
+  that completed a molecule carries the root it closed as
+  `auto_closed_molecule`, or why the root stayed open as
+  `molecule_auto_close_refusal`, on every route; before, that refusal
+  reached only stderr. Both members are absent from every other entry, so
+  each entry still decodes as the closed issue, and the output stays an
+  array (under `closed` with `--suggest-next`, `--continue` or
+  `--claim-next`).
 
 ### Changed
 
+- `bd serve` normalizes every RFC 3339 time bound on the issue listing and
+  count (`created_*`, `updated_*`, `closed_*`, and the new `defer_*` and
+  `due_*`) to UTC before it reaches storage. A bound carrying an offset
+  (`...+02:00`) now selects exactly what its `Z` twin does; previously a
+  backend whose timestamp column has no zone could read the offset bound's
+  wall clock and compare it hours off. `bd`'s own client always sent `Z`, so
+  its answers are unchanged.
+- `bd serve` answers a `label_regex` the database cannot compile with
+  `400 invalid_argument` (`invalid_value` on `label_regex`) on
+  `GET /v0/beads/issues`, `GET /v0/beads/ready`, `GET /v0/beads/ready:count`
+  and `POST /v0/beads/issues:claimNext`, instead of `500 internal`. The pattern is
+  still compiled by the database in its own dialect; only the attribution
+  of its refusal changed.
+- `issueops.Reader.List` refuses `PinnedFlag` together with `NoPinnedFlag`
+  with `ErrValidation` (`--pinned and --no-pinned are mutually exclusive`) on
+  every backend; it used to let `PinnedFlag` win silently. `bd list` already
+  refused the pair at flag parse, so its behavior is unchanged; over HTTP the
+  pair is a `400 invalid_argument` on `no_pinned`.
+- `issueops.Reader.List` refuses `ParentID` together with `NoParent` with
+  `ErrValidation` (`--parent and --no-parent are mutually exclusive`) on
+  every backend, as `CountRequest` already did; it used to answer with only
+  the edge-less rows under the parent's dotted id, which both clauses match.
+  `bd list` already refused the pair at flag parse, so its behavior is
+  unchanged; over HTTP the pair is a `400 invalid_argument` on `no_parent`.
+
+- **`bd gate discover` skips template gates, as `bd gate check` does.** A
+  template gh:run gate is a proto that work is poured from; on the direct,
+  proxied and embedded routes `bd gate discover` used to record a discovered
+  run ID on it, which every later pour copied. It is now left alone on every
+  route. `bd gate add-waiter` on a template gate is refused by the update
+  role's template guard, where the direct, proxied and embedded routes all
+  used to write the waiter.
+- **`bd gate create` refuses a negative `--timeout` on every route**
+  (`timeout cannot be negative`); the direct, proxied and embedded routes
+  used to store it. A `--type` longer than 32 characters fails with the same
+  typed validation error instead of a raw Dolt column error.
+- **`bd gate create` and `bd gate add-waiter` follow `dolt.auto-commit`
+  like every other role write.** Under `dolt.auto-commit=off` `bd gate
+  create` no longer makes its own Dolt commit on the direct and embedded
+  routes (the proxied route already did not). The Dolt commit messages are
+  the role's: `bd: create gate X blocking Y` becomes the create's default
+  message, and `bd gate add-waiter`'s becomes the update's (`bd: update X`
+  on the direct and embedded routes, `update issue` on the proxied route).
+  On the proxied route `bd gate create` no longer journals a
+  `dependency_added` event on the blocked issue, matching the direct route
+  and `bd create --deps`.
+- **Gate members are bounds-checked in the library, on every local backend.**
+  `issueops.Lifecycle.Create`, `Lifecycle.Update` and `BatchApplier` (create
+  and update items) now refuse, with a typed `*issueops.GateFieldError`
+  wrapping `ErrValidation`: a negative `Timeout` (previously accepted and
+  stored), an `await_type` over 32 characters, an `await_id` over 255
+  characters, and a waiter list whose JSON encoding exceeds its TEXT column
+  (65535 bytes). Creates check all four; an update can change only
+  `await_id` and `waiters`, so it checks those two. The over-width values
+  previously failed with a raw Dolt driver error. There is no `await_type` vocabulary, no gate-type-only rule
+  and no waiter deduplication.
+- **Over an http workspace, a bd command answers its repeated reads of a row
+  or setting from one response.** `bd show <id> --json` makes one request
+  instead of three, text `bd show` three instead of six, and `bd update`,
+  `bd close`, `bd label add`, `bd comments` and `bd dep add` one to seven
+  fewer (port of bd-enterprise e626072b8). A one-shot command's transport
+  answers an identical `getIssue`, `getSetting` or `listSettings` GET from the
+  answer it already received, for at most 5 s from that answer. Any write the
+  command makes clears it, and only a 2xx that decoded is kept. `bd serve`,
+  `--watch` and `--follow` never memoize, and neither do library embedders.
+  Within one command a re-read no longer sees another writer's change made in
+  the meantime (ledger row `L-read-memo`); `BD_HTTP_READ_MEMO=0` turns the
+  memo off. The identity-gate preview and the real open now share one
+  transport, so a write makes one handshake. `bd list` reads its vocabulary
+  with one `listSettings`, and the hook decorator skips its post-write re-reads
+  when no hook for the event is installed.
+- **`created_by` defaults to the actor in the library, for every create
+  shape and every backend.** `PreparePublicCreateRequest`, which
+  `Lifecycle.Create`, `BatchCreator` items and batch-apply create items all
+  prepare through, now sets an empty `Issue.CreatedBy` to the request's
+  `Actor`; an explicit value is kept. The CLI (`bd create`, the state event
+  create) and the three `bd serve` create handlers no longer stamp it
+  themselves. A library caller that left `CreatedBy` empty used to store
+  `""` locally and the actor over http; both now store the actor. The raw
+  `CreateIssue` seam is unchanged: import keeps the creator its rows carry,
+  and `bd swarm`, `bd todo`, `bd gate` and the create form still stamp
+  `currentActor()` there.
+- **On an http workspace, `bd update -s closed` does not record
+  `closed_by_session`.** The update wire cannot carry it, so the CLI drops
+  it rather than refusing the close; the status change, its close-policy
+  guards and every other field in the same update still apply. A one-line
+  notice on stderr names the drop, both for an explicit `--session` and for
+  the ambient `CLAUDE_SESSION_ID` every agent under Claude Code exports, so
+  it is never silent. `bd close` (and `bd close --session`) still records
+  the session over http: its wire operation carries it. Local backends are
+  unchanged.
+- **On an http workspace, `bd reopen` sends no Provenance label.** The
+  CLI's label is the fixed `bd: reopen <id>`, which the wire cannot carry;
+  the server records its own reopen entry for the same issue and actor, so
+  the reopen no longer refuses. Local backends still record the label.
+- **Routing settings are local-only on a remote backend.** For an http
+  workspace, `routing.mode`, `routing.contributor`, `routing.default`,
+  `routing.maintainer`, `contributor.auto_route` and
+  `contributor.planning_repo` come from local config (`config.yaml` or the
+  environment) only; the server's shared settings document is not read for
+  them, because routing targets are local filesystem paths that one shared
+  document cannot name for every client. `bd create`'s routing decision, `bd
+  migrate-personal` and the missing-id lookup fallback all read the same
+  local-only answer, and none pays a settings round trip for it. Local
+  backends still fall back to the database values.
+- **The molecule auto-close runs inside the step's close, and an error in
+  it fails the close.** `bd close` of a molecule's last step closes the
+  root in the same transaction (opt-in `AutoCloseMolecule`, so an
+  orchestrator that runs its own molecule lifecycle is not doubled), and it
+  replays on an idempotent re-close. The root close is unforced, so a root
+  a direct close would refuse stays open and is reported while the step's
+  close stands: one its close policy refuses (such as a live blocker), and
+  now also one a close guard refuses (a template, a pinned root, a root
+  another actor holds). Any other failure of the root close (such as a
+  storage error) now fails the step's close with it, where the CLI used to
+  close the root afterwards and only warn.
+  Two closes that finish a molecule's last steps at the same time no
+  longer leave its root open: one of them retries and closes it. The cost
+  is that concurrent closes of steps under one open auto-closing root now
+  serialize, whether or not either finishes the molecule: each conflict is
+  retried, and a close still conflicting when its retry budget runs out
+  fails with the serialization error. A batch close reports each root once,
+  on the first item under it that closed.
+- **`bd close --continue` claims the next step for real.** The advance is
+  the `MoleculeStepper` role on every route: the assignee is set and a step
+  another agent holds is skipped, never taken (the direct and http routes
+  used to flip the status only).
+- **`bd mol current`, `bd mol progress`, `bd ready --mol` and `bd mol show`
+  read through the library's molecule entries on every route**, so
+  membership is the parent-child edge everywhere (`bd mol show` no longer
+  adds children found only by an id pattern).
+- **Against a server without the molecule tokens, `bd close` says what it
+  did not do.** If the server does not advertise
+  `issues.close.autoCloseMolecule` (an older `bd serve`, or one whose
+  orchestrator owns the molecule lifecycle), the close goes out without the
+  auto-close request. When that leaves a molecule with every step closed and
+  its root open, a notice on stderr names the root, once per root in a batch
+  and again on a re-close; a step under an ordinary epic or an unfinished
+  molecule prints nothing. If it does not advertise
+  `issues.advanceMolecule`, or the handshake that would say so fails, `bd
+  close --continue` refuses before closing anything, so the step is never
+  left closed with the next step unclaimed.
 - Every `bd` invocation used to start two git subprocesses before doing any
   work: `git rev-parse` to locate the repository and `git config user.name`
   to resolve the actor. On Linux the repository is now located in-process
@@ -269,9 +731,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds the same typed errors. `bd close` prints the same lines and exits
   as before, and `bd close --if-revision`, which skipped the guards, now
   applies them too. Two paths stay outside the guards. The raw storage
-  `CloseIssue`, which the molecule auto-close, a `close` line of `bd batch`
-  and the other closes `cmd/bd` makes outside `bd close` use, runs neither the
-  guards nor close policy on dolt, embedded or proxied; over HTTP it now sends
+  `CloseIssue`, which a `close` line of `bd batch` and the other closes
+  `cmd/bd` makes outside `bd close` use, runs neither the guards nor close
+  policy on dolt, embedded or proxied; over HTTP it now sends
   `force`, so there it also stops applying close policy, and only a template
   refuses. A status update into the done category (`bd update -s closed`, a
   `PATCH` whose `status` is done, an `update` item of `issues:batchApply`)
@@ -300,6 +762,259 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunBatchApplyAppliesTheDefaultPriority`.
 
 ### Fixed
+
+- **Time-bound filters and the keyset cursor compare the same instant on every
+  engine, whatever zone they are given in.** The storage filter builder binds
+  every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,
+  `defer_*`, `due_*`) as the UTC spelling of its instant. An engine whose
+  timestamp column carries no zone drops a literal's offset, so a `+02:00`
+  bound would have compared as that wall clock; Dolt already honored the
+  offset and `bd` resolves bounds to UTC, so no answer changes here. The
+  keyset cursor (`AfterCreatedAt`) is now bound in UTC too: embedded Dolt's
+  driver sends a `time.Time` as its wall clock with no zone, so a library
+  caller paging with a cursor in another zone was answered from the wrong
+  position there (server Dolt was unaffected).
+- **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
+  blocked only by an unsatisfied `external:` dependency.** The
+  external-dependency policy lists such a row itself, after the label query
+  has run, and it was listed whatever its labels; it is now narrowed by the
+  label filters like every other row, on every route. On the proxied-server
+  route such a row also printed with no labels; it now prints them.
+- **`bd gate add-waiter` survives contention the store gave up replaying.**
+  It retried only a version miss, so a convoy adder failed when its guarded
+  write ended in a serialization failure or deadlock the backend stopped
+  replaying (Dolt/MySQL 1213/1205, Postgres 40001/40P01), or, over HTTP, in a
+  503 busy. Those are now retried, but at most twice: each arrives only after
+  the store or `bd serve` has spent a whole replay budget on the write (up to
+  15s), so the 20-write bound a version miss gets could hold an adder for
+  minutes. Each retry waits the jittered backoff plus a busy answer's
+  Retry-After, as `bd serve` sent it. The retry is safe because every round
+  re-reads the gate, deduplicates and writes the whole list guarded by the
+  version it read: a 503 is not proof that nothing was written (a gateway can
+  answer one after the commit), and a write that did land is found on the
+  re-read, so the waiter is never added twice; when the last write allowed is
+  answered busy, one more read checks for it before the command fails. A
+  server fault (500) and an unreachable database are still returned at once,
+  and once the retries run out the error says no write was confirmed and
+  names the write contention, instead of saying the gate kept changing.
+- `bd list --title-contains X` works against an HTTP workspace. The client
+  folds it onto the listing's existing `title` parameter (the store compiles
+  both flags to the same case-insensitive substring predicate), so it needs
+  the `issues.list.title` capability, like `--title`. A `--title` and a
+  `--title-contains` that differ other than in letter case are two
+  predicates, so they ride `title` and `title_contains` together and also
+  need `issues.list.filters` (see Added), as does the `--closed-after` in
+  gascity's polecat pre-flight lookup of recently closed beads. Either flag
+  with `--parent` in the default tree view still refuses over HTTP.
+- **`bd gate create`, `bd gate add-waiter` and `bd gate discover` work over a
+  connected HTTP workspace.** They wrote through the legacy `CreateIssue`,
+  `AddDependency` and map-based `UpdateIssue`, which the HTTP store does not
+  implement, so each failed before any gate member reached the wire. They now
+  run through the library roles on every route:
+  - `bd gate create` is ONE `Lifecycle.Create` carrying the gate members and
+    a reverse `blocks` edge from the blocked issue to the new gate, so the
+    gate and its edge land atomically (one `createIssue` over HTTP, behind
+    `issues.create.gates`). The direct route used to make two writes and an
+    explicit commit; the proxied-server route now uses the same role.
+  - `bd gate add-waiter` reads the gate through `Reader.Get`, deduplicates,
+    and writes the whole waiter list through `Lifecycle.Update` guarded by
+    the row version it read. On a version mismatch it re-reads and retries
+    after a jittered, doubling backoff (10 ms up to 400 ms per wait, at most
+    20 writes), so a convoy of workers registering on one gate at once all
+    succeed. On the direct route concurrent adders used to lose
+    each other's waiters while every one exited 0; no waiter is lost now.
+    Over HTTP it needs `issues.update.gates`.
+  - `bd gate discover` lists through `issueops.ListGates` (as `bd gate check`
+    does) and records each discovered run ID through `Lifecycle.Update`, the
+    same `await_id` write `bd gate check` and `bd close` make. Over HTTP it
+    needs `issues.update.gates`. Its summary now counts only the gates whose
+    run ID was recorded, and it exits non-zero when any matched gate's write
+    failed (it used to report such a gate as updated and exit 0).
+
+  Against a server that does not advertise the token it needs, `bd gate
+  create` and `bd gate add-waiter` are refused before any write, naming the
+  token; `bd gate discover` writes nothing and reports the token as that
+  gate's error. The served corpus gains `mc-gate-create-timer`,
+  `mc-gate-check-timer-resolves`, `mc-gate-add-waiter` and
+  `mc-update-await-id` (pending until the reference server advertises the
+  gate tokens), pinned passing by `TestE2E_GatesOverHTTP`.
+- **`bd import` no longer reports a failed dependency check as a skipped
+  dependency.** Import skips an edge the dependency checks refuse (a
+  self-dependency, a cycle, or a blocker that is the issue's own ancestor or
+  descendant) and reports it on a `Skipped dependency:` line, or in
+  `skipped_dependencies` with `--json`. It did the same when the check's own
+  query failed, for example on a timeout, a dropped connection or a statement
+  the backend could not run: the SQL error became the skip reason, and on
+  Dolt, where the transaction survives a failed statement, the import
+  committed without the edge and exited 0. Such an error now fails the
+  import. Refused edges are still skipped as before.
+
+- **`bd mol bond <A> <B>` ignored prefix routing** — operand resolution now uses
+  the same routing fallback as `bd show`/`bd update`/`bd close`, so a bead that
+  lives in a routed store (a prefix-routed rig via `routes.jsonl`, or the
+  contributor planning store) resolves instead of failing with `'<id>' not found
+  as issue or formula`. Previously `bd mol bond` resolved operands
+  against the local store only, so `gt sling <bead> <rig>` — which cooks the
+  default formula and bonds it to a rig-routed bead — died at `bd mol bond` even
+  though `bd show <bead>` resolved the same ID. Resolution is write-intent: the
+  routed target opens writable and the bond commits where the bead lives. Two
+  operands that live in the same routed rig share one store handle and bond
+  normally; only a bond whose operands resolve to genuinely different databases
+  is rejected rather than written to the wrong one. As part of this change, an
+  auto-route — contributor, maintainer or default — now opens writable for the
+  commands that change an existing issue (`bd update`, `bd close`,
+  `bd comment`, `bd unclaim`, `bd dep` and the other routed mutation commands,
+  as well as `bd mol bond`), so the write commits where the issue lives: for a
+  contributor, in the planning repository, as the contributor workflow
+  documents. Every auto-route used to open read-only, so on an embedded
+  workspace these writes were refused. `bd unclaim` now opens a routed issue
+  writable, as `bd update --claim` does, and commits the release there; on an
+  embedded workspace `bd human respond` and `bd human dismiss` now record a
+  routed change as a Dolt commit in the routed repository instead of leaving it
+  uncommitted in that repository's working set. A routed
+  write, prefix or auto, never creates the target's database: an embedded
+  repository that has not been bootstrapped yet fails the write instead of
+  gaining an empty database that `bd bootstrap` would then take for the real
+  one. An auto-routed store, read or write, now opens the target's own
+  configured `dolt_database`, as a prefix route already did, even when
+  `BEADS_DOLT_SERVER_DATABASE` names the current workspace's database. An
+  auto-routed write refuses a target whose `metadata.json` is unreadable or
+  names no `dolt_database`, while a target with no `metadata.json` at all (a
+  planning repository nothing has been created in yet) opens the one embedded
+  database it holds, or its default database when it holds none or several; a
+  prefix route still requires the target's `dolt_database`. A
+  routing failure, such as an unreadable `routes.jsonl` or a
+  routed store that fails to open, is now reported as itself instead of as
+  `no issue found matching`. Same routing-parity fix as
+  [#3608](https://github.com/gastownhall/beads/issues/3608) for `bd close`.
+  Fixes [#4714](https://github.com/gastownhall/beads/issues/4714).
+
+- **`bd gate check` works over a connected HTTP workspace.** Its open-gate
+  listing built the same raw `SearchIssues` filter `bd gate list` did before
+  S20, so the HTTP backend refused the command before reading a gate and gc's
+  core `gate-sweep` order (`bd gate check --type=timer --escalate`) failed on
+  every remote scope. It now lists through `issueops.ListGates` over the
+  route's Querier (direct, proxied and remote alike). Closing a resolved gate
+  was already served. A bead gate's first sighting of its awaited bead
+  (`await_seen`, recorded when the check finds that bead, not yet closed, in
+  the gate's own store) was written through the legacy map-based
+  `UpdateIssue`, which the HTTP store does not implement, so every open bead
+  gate with an open target was an error on every sweep; it now goes through
+  the Lifecycle role's `Update` (a single-key metadata set, `issues.update` on
+  the wire), as does the gh:run discovery's `await_id` persist, which the
+  HTTP client sends to a server that advertises `issues.update.gates` (see
+  Added). Against an older server it refuses that patch before the dial, so a
+  gh:run gate with a workflow-name hint stays that gate's error, naming the
+  missing token and the server rather than a Go method.
+  The sweep also skips the gates of a persisted proto
+  (`bd cook --persist`): they are templates that every pour copies, so a
+  write to one was refused on every sweep and, in a local workspace, a
+  resolved one (an expired timer, say) was closed in the proto itself. The
+  listing's query leaves them out (`template=false`), so they take no row of
+  `--limit` and cannot crowd a live gate out of the sweep; `bd gate list`
+  still lists them. A negative `--limit` is now an error; the direct and
+  proxied routes used to read it as no limit. The served corpus gains
+  `mc-gate-check-timer`, `mc-gate-check-gh`, `gate-check-all` and a served
+  test over await-typed and template gates.
+
+- **`bd list`'s text renderings read only the listed issues' dependency
+  edges.** The tree (the default), `--deps`, `--parent`, `--format` and
+  `--watch` loaded every dependency record in the workspace
+  (`GetAllDependencyRecords`) to draw one page. Over a connected HTTP
+  workspace that is a walk of the whole workspace: every issue id, 200 per
+  request, then every id's edges, 100 per request. `bd list --limit 20`
+  against a ~3,800-issue workspace made 62 sequential requests (~5.7 s at
+  ~50 ms a round trip). Every rendering reads only edges a listed issue owns,
+  so the listing now reads exactly those through the `EdgeReader` role: one
+  request per 100 listed ids over HTTP. The same listing makes 6 requests
+  (~0.5 s), one more than `bd list --json`, and prints the same bytes. On a
+  local store a default page is as fast or faster. A listing that covers most
+  of a large store now pays batched reads (four queries per 200 listed ids)
+  instead of one scan of both edge tables, which costs more past roughly
+  1,000 listed rows: +0.07 s at 1,000 rows and +0.46 s at 4,000 on embedded
+  Dolt. A store with many wisps, whose edges the old read also scanned, is
+  faster at every page size.
+- A heartbeat can no longer resurrect a lease after a release or close. A
+  heartbeat re-arming a hand-doled claim (in_progress with no lease row) could
+  race a release or close on Dolt and leave an orphaned lease row on an open
+  or closed issue; every later heartbeat by the former holder then refreshed
+  it and answered success for a claim it no longer held. This affected every
+  Dolt route, including releases before this one. The re-arm is now recorded
+  as a mutation and remints the issue's row_lock, which every claim-ending
+  path rewrites, so it collides with a racing release or close and one side
+  is replayed against the other's result (the cost: a hand-doled claim's
+  first heartbeat changes its `revision` once). The refresh also requires, in
+  the same transaction, that the issue is still in_progress under the holder,
+  and a refusal deletes the caller's orphaned lease row, so a lease row
+  orphaned any other way never answers a heartbeat. A refresh and a refusal
+  still make no Dolt commit on any route; a re-arm commits only its own
+  tables (never `DOLT_COMMIT('-Am')`), so another writer's uncommitted
+  batch-mode edits to other tables stay uncommitted (a re-arm stages its
+  tables whole, as every other direct-route write does). On embedded Dolt, a heartbeat landing in
+  the same second as the previous one no longer re-grants the lease
+  (rewriting its `granted_at` / `granted_node`), and on every route a
+  heartbeat whose actor is a different spelling of the lease's holder
+  (`gastown.mayor` for `gastown__mayor`) refreshes the lease in place,
+  keeping its `granted_at` and granting replica, instead of re-granting it
+  under this node. For a Postgres port: the
+  refresh now reads the issue row, so under SERIALIZABLE expect more retried
+  serialization failures between a holder's own edits and its heartbeat.
+- **`bd gate list` works over a connected HTTP workspace** (S20). The
+  workspace-wide listing built a raw `SearchIssues` filter, which the HTTP
+  backend refuses, so gc's `renudge-stale-human-gates` order failed on every
+  remote scope. Every route now calls one library entry,
+  `issueops.ListGates`, which asks the Querier role (`queryIssues`, served by
+  every deployed server) for `type=gate` with closed rows hidden unless
+  `--all`: the same rows the raw filter selected, on both planes. `--limit 0`
+  is unlimited, as before. The bead-scoped form (`bd gate list <id>`) is
+  unchanged.
+- **`bd export` works over a connected HTTP workspace** (S21). It read
+  through the raw `SearchIssues` method and the bulk label, dependency and
+  comment reads, which the HTTP backend refuses, so gc's 15-minute JSONL
+  export order (`gc bd export --all`) failed on every remote scope. On a remote
+  backend the read set now comes from one library entry, `issueops.ReadExport`,
+  composed over role reads every deployed server publishes: an unlimited
+  `Reader.List` for the rows, their labels and counts, `EdgeReader.ReadEdges`
+  for the dependency records, and `Reader.Get` with comments for each row
+  that has any. The JSONL is written by the same code as on every other
+  route. Memories (`--all`, `--include-memories`) come from the served memory
+  plane (`listMemories`), not the settings listing, which withholds every
+  `kv.*` row and so exported none. A failed read fails the export, never
+  shortens it. A remote export does not yet stamp the `wisp_plane` marker,
+  because the server publishes no plane membership. So a current `bd import`
+  of a remote export puts genuine no-history wisps on the durable issues
+  plane instead of the wisps plane, and gc's JSONL archive keeps them.
+  Nothing is dropped.
+- **A silent HTTP connection no longer costs a read the full 60s.** The HTTP
+  backend client gives a read's first attempt 15s from when it is sent to get
+  its response headers (`BEADS_HTTP_RESPONSE_HEADER_TIMEOUT`: a duration, a
+  number of seconds, or `off`), then retries it once on another connection
+  with no header timer, on what is left of the same 60s request timeout. A
+  slow but healthy read still finishes if its retry's headers and body
+  together fit in that remainder (about 45s); one that needs longer now fails
+  at 60s. A read whose connection is reset is retried the same way (on Windows
+  only when the reset surfaces as an early EOF), and each retry is logged to
+  stderr with its count. The events:watch stream's connect gets neither the
+  timer nor the retry. A write is never retried; one that was sent and timed
+  out before its headers fails with a typed `wire.ResponseHeaderTimeoutError`
+  naming the server's host, because it may or may not have been applied,
+  while a dial or TLS timeout stays a plain connection error. The batch get,
+  a read on POST, is now also retried on a 503 the way a GET is.
+- **A large batch apply over HTTP no longer fails at 60s while the server
+  commits it.** `bd serve` runs an `issues:batchApply` of more than 100 items
+  (a large `bd create --graph` plan, say) under its `--large-apply-ceiling`
+  (5 minutes by default), on a context detached from the client, but the HTTP
+  backend client gave every request 60s. A large apply that took longer
+  failed client-side with a timeout while the server went on to commit it.
+  Such a request is now dialed with 6 minutes, which covers the server's
+  default ceiling plus what it may spend before (reading the request, waiting
+  for the one-wide large-apply slot) and after (writing the answer back).
+  Every other request keeps 60s. An `*http.Client` passed in through
+  `backend/http`'s `Options.HTTPClient` is raised the same way for that one
+  request when its `Timeout` is shorter than 6 minutes; one with no `Timeout`
+  stays unbounded. A server whose `--large-apply-ceiling` is raised past about
+  5m15s can still outlast the client: it does not advertise its ceiling, so
+  the client cannot learn it.
 - **An update of a template is now refused for every caller, not only
   `bd update`.** The template guard used to be a pre-read in `cmd/bd`, so an
   update through `bd serve` (`PATCH /v0/beads/issues/{id}`), an `update` item
@@ -369,6 +1084,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rollout) still stores P0, with no error on either side.
   Out-of-tree storage backends must now honor `DefaultPriority`; see the
   BREAKING (out-of-tree storage backends) entry under `### Changed`.
+- Blocked-state repair no longer lets a stale `is_blocked` bit on a parent
+  with no reason row of its own hold itself up through a parent that blocks
+  on its own child, in a malformed parent-child cycle (gastownhall/beads#7386).
+  The explained-parent walk, on both the full repair and the per-write
+  recompute, now climbs through such a parent, whose bit is inherited,
+  instead of treating it as a final unexplained ancestor; `bd doctor`'s
+  Blocked State check counts the stale bit and `--fix` clears it.
+
+- `bd show --current` over the HTTP backend no longer prints the wrong issue.
+  Its in-progress/hooked lookup used the raw `SearchIssues` method, which
+  the HTTP backend refuses; the refusal was swallowed and the command fell
+  back to the last-touched issue, exit 0. The lookup now reads through the
+  `issueops.Querier` role, and a failed read is an error on every route
+  (including `--proxied-server`), never a fallback. A miss (nothing in
+  progress or hooked, or no actor) is another matter: `--proxied-server` now
+  falls back to the last-touched issue as the direct route always has, where
+  it used to fail with `no current issue found`.
+- `bd list --type <infra type> --include-ephemeral` (and `GET
+  /v0/beads/issues` with the same parameters) now include that type's durable
+  rows — a promoted wisp, an issue retyped after it was created — beside its
+  wisps, as `--include-ephemeral` promises; the type used to narrow the read
+  to its wisps alone. `bd count --include-infra --include-ephemeral` and the
+  count endpoint count the same rows. An infra `--type` without
+  `--include-ephemeral` still reads only the wisps, and `bd search --type
+  <infra type>`, now served by the same listing, still finds that type's
+  wisps and durable rows alike.
+- `bd recompute-blocked` on a workspace connected to `bd serve` is a no-op
+  that exits 0 instead of refusing: the server maintains `is_blocked` on
+  every write and the column lives in its database. `--json` reports
+  `{"rows_corrected": 0, "maintained_by": "server"}`.
+- **The http store's `GetIssue` answers a miss with `storage.ErrNotFound`,
+  like the local stores.** It used to answer a missing (or empty) id with
+  `(nil, nil)`, which every caller written against the backend contract
+  read as a hit: `bd create --graph` refused every plan naming an explicit
+  id over http. The miss is now `not found: issue <id>`, wrapping
+  `storage.ErrNotFound` exactly as `issueops.GetIssueInTx` does; the empty
+  id never dials.
+- **`bd list`, `bd children`, `bd show --json` counts, the default `bd dep
+  tree`, `bd ready --claim` and `bd close` work on an http workspace.** The
+  external-dependency decorator rebuilt its views from storage seams the
+  http store only partly serves, so `bd list`/`bd children` refused, `bd
+  show --json` printed zero dependency and comment counts without an error,
+  and the default dep tree refused; each view now passes the server's own
+  role through (see *Added*). A missing id is a plain not-found after one
+  `getIssue`, instead of a partial-id search refusal, and `bd update
+  <absent> --claim` answers a not-found gc classifies.
+- **`bd mol wisp gc --age 0s` can miss a just-created wisp.** Dolt's
+  `DATETIME(0)` column rounds fractional seconds half-up on write rather
+  than truncating, so a wisp created in the second half of a wall-clock
+  second can read back with `updated_at` up to 0.5s in the future. The GC's
+  age check (`now.Sub(updatedAt) > ageThreshold`) then compares against a
+  negative duration and fails, even though `--age 0s`'s own contract is
+  that every wisp qualifies. `ageThreshold <= 0` now bypasses the clock
+  comparison entirely (#7236).
+- **`bd mol wisp gc` no longer deletes a fresh step because a wisp it
+  depends on is abandoned.** The GC applied `--age` only to the wisps it
+  selected directly, then deleted their dependents at any age as long as
+  they were not live work, so a step created seconds earlier went with an
+  old wisp it depended on, and raising `--age` did not help. A dependent
+  now has to meet `--age` itself, by the same rule as the wisp it depends
+  on (including the #7236 rounding fix). One that is too young is spared
+  and loses its edge to the deleted wisp: an open one is collected once it
+  ages out, a closed one is left for `--all`, `--closed` or `bd purge`,
+  since without `--all` the GC reaches a closed wisp only as the dependent
+  of an abandoned one (#5219).
+- `bd create --parent` works on the HTTP backend: the create role mints the
+  `<parent>.<n>` child id (and inherits the parent's labels) inside the
+  create on every route, instead of the CLI reserving it through a raw
+  `GetNextChildID` the HTTP backend does not serve. `bd mol current` (with
+  or without an id) and `bd mol progress` no longer answer empty or refuse
+  over http, and `bd ready --mol` step rows carry their assignee and
+  timestamps.
+- **Server-mode config writes are committed again.** On the direct SQL-server
+  route, `bd remember`, `bd forget` and `bd config set|unset|set-many` wrote
+  the `config` table but never created a Dolt commit: `maybeAutoCommit`
+  returns early off the embedded route, and plain `Commit()` excludes config
+  (GH#2455). The rows sat in the working set, where `bd dolt push` does not
+  carry them, and a dirty internal key such as `status.custom` made the next
+  `bd dolt pull` refuse until an explicit `bd dolt commit`. With
+  `dolt.auto-commit` on (the default) these writes now commit right away
+  through the scoped `CommitConfigOnly`, which stages only `config` and the
+  lookup tables projected from it, so a concurrent operation's other dirty
+  tables are never swept; `batch` and `off` defer them to `bd dolt commit`
+  like every other write. `bd remember` and `bd forget` commit only user
+  `kv.*` rows. When an internal config key is dirty (such as the
+  `issue_prefix` that `bd rename-prefix` writes), the memory is still
+  stored but not committed: the command warns on stderr with the keys named
+  and exits 0, `--json` adds `committed: false`, `commit_error` and
+  `dirty_config_keys`, and `bd dolt commit` publishes the memory with those
+  keys. v1.0.1 ([#3052](https://github.com/gastownhall/beads/pull/3052)),
+  whose commits this restores, also warned on a failed memory commit
+  instead of failing the write. `bd config unset` of a yaml-only secret key
+  also commits its delete of a credential row an older bd stored in the
+  database, so HEAD, which `bd dolt push` publishes, no longer keeps it
+  ([#4078](https://github.com/gastownhall/beads/issues/4078)).
+
 - **PRs based on `hotfix/**` branches now run full CI, not just
   cross-version historical smokes and triage labeling.** `pr.yml`,
   `pr-risk.yml`, `conformance.yml`, `cross-version-smoke.yml` and
@@ -652,6 +1463,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd context` also prints `cwd repo: git: unavailable` rather than silently
   omitting the one degraded state it exists to report.
 
+- **Server-mode `bd federation sync` and `bd federation status` work with Dolt
+  remotes that have no stored peer credentials**
+  ([#5128](https://github.com/gastownhall/beads/pull/5128), fixes
+  [#4837](https://github.com/gastownhall/beads/issues/4837)). A remote added
+  by `bd federation add-peer` without `--user` or by `bd dolt remote add` has
+  no `federation_peers` row, and every server-mode `bd federation` push, pull
+  and fetch to it failed at the credential lookup with `failed to get peer
+  credentials: not found: federation peer <name>`. A missing row now means no
+  stored credentials, as it already did in embedded mode, so the operation
+  runs with Dolt's own credential discovery: `bd federation sync` without
+  `--peer` syncs those remotes too, and `status` fetches them. Errors reading
+  or decrypting a stored row still fail. A mistyped `--peer` now fails with
+  Dolt's own unknown-remote error instead.
+
 - **`bd comment`/`bd comments add` refuse an abbreviated id and a reserved
   word instead of silently resolving one to the wrong issue**
   ([#5393](https://github.com/gastownhall/beads/pull/5393)). `bd comment list
@@ -677,6 +1502,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separately and found to already be exact-id-only by construction (its
   resolution never performed abbreviation matching in the first place) — a
   regression test now locks that in rather than leaving it undocumented.
+
+- **`bd delete` no longer resolves an id it cannot find to a different issue
+  whose id begins with it.**
+  ([#7375](https://github.com/gastownhall/beads/pull/7375)). The direct
+  (embedded and server) route resolved
+  each id with the abbreviation-tolerant resolver, so an id that was already
+  gone (a retried delete, a re-run `--from-file` list, a parent whose child
+  survives) resolved by leading-prefix match to whichever surviving issue's id
+  it begins: after `fx-t00003` was deleted, `bd delete fx-t00003` previewed
+  `fx-t000031` and printed `bd delete fx-t000031 --force` as the next step,
+  and with `--force` deleted it. `--quiet` silenced the partial-id notice, so
+  a `--force --quiet` re-run deleted issues it never named without a word.
+  `bd delete` now requires an exact id on the preview and with `--force`, as
+  `bd comment` does and as the team-server route already did; full ids, bare
+  full hashes, child ids and routed ids resolve as before. An abbreviation is
+  refused with `issue "t000" not found: bd delete needs the full issue id, and
+  "t000" is only the start of fx-t000031`, naming every id it matches; under
+  `--if-revision` it is the guard's lost race instead (`precondition_failed`,
+  exit 13), as for any other gone id. This is a user-visible change: a script
+  or habit that deletes by abbreviation now gets that error and must pass the
+  full id. Reads and other writes keep accepting abbreviations; see [Working
+  with IDs](docs/core-concepts/hash-ids.md#working-with-ids).
 
 - **A git hook beads never wrote is no longer reported as installed**
   ([#6084](https://github.com/gastownhall/beads/issues/6084)). `getHookVersion`
@@ -706,6 +1553,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   awaited bead through the same fresh-read path `bd gate check` uses on that
   route; the direct and embedded routes are unchanged
   ([#5861](https://github.com/gastownhall/beads/issues/5861) item 1).
+
+- **`bd recall`, `bd forget`, `bd remember <bare-key>`,
+  `GET /v0/beads/memories/{key}` and `DELETE /v0/beads/memories/{key}` now
+  treat an empty-valued memory as present**
+  ([#5964](https://github.com/gastownhall/beads/pull/5964), fixes
+  [#5963](https://github.com/gastownhall/beads/issues/5963)). Presence used to
+  be derived from the stored value's truthiness, so a memory written out of
+  band with an empty string was invisible even though its row existed. `bd
+  recall` printed "No memory with key" and exited 1, `bd forget` refused to
+  delete it, `bd remember <bare-key>` refused to recall it, and both HTTP
+  doors answered 404 (the DELETE leaving the row in place), while
+  `GET /v0/beads/memories` already enumerated the same row. Presence now comes from row existence on direct Dolt, embedded Dolt and
+  the proxied backend. An empty-valued memory is found, recalls as an empty
+  string, and is deleted on the first forget. Only a key with no row is a
+  miss.
 
 - **`bd doctor` no longer flags a `.local_version` that starts with `v`.** The
   canonical spelling of a Go module version — and the string a build stamped
@@ -1063,6 +1925,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section — plus the upgrade and init-safety ordering rules — now records the
   `bd dolt pull` exception instead of stating the pull is always refused.
 
+  **Proxied-server mode reaches the stop too, and is told where to run the
+  remedy.** The store-open gate on that path supplied no branch-position
+  callback, so a proxied clone that was level on schema and behind in data
+  could never be classified data-behind: it got the blunt shared-store refusal,
+  whose body is the designated-migrator recipe — `bd migrate --force` then
+  `bd dolt push` — which in this state is the wedge the stop exists to prevent.
+  It now routes to the same data-behind stop as every other topology. Because
+  `bd dolt pull` is refused at the proxied front door
+  (`proxy.dolt_pull.unsupported`), along with `bd dolt push`, the bare
+  `bd migrate` and `bd conflicts`, the guidance there names the machine the pull
+  has to run on rather than printing a command this binary rejects; the `--json`
+  option is `pull-first-on-server-host`, and `expected` carries the same
+  qualifier so a single-field reader is not handed a locally-refused command.
+  The shared-store consent step is the other way round: `bd migrate schema
+  --force` is *not* refused here — the capability registry permits the
+  two-word `migrate schema` path — so the guidance says it can be run from this
+  workspace but only after the pull lands on the server host, and the warning
+  against forcing past the stop names it alongside `BD_ALLOW_REMOTE_MIGRATE=1`
+  as the two consent surfaces this topology can still reach. Read-only proxied
+  opens print the same pull-first block instead of the shared-consent template.
+  The *Clone behind the remote* docs section the payload links to, and the
+  upgrade and init-safety ordering rules that point at it, now give the same
+  proxied-server answer.
+
   Both existing escape hatches are unchanged: `bd migrate --force` /
   `BD_ALLOW_REMOTE_MIGRATE=1` are still consulted before the smart gate, and
   `BD_SMART_GATE=0` still yields the blunt gate unconditionally (including for
@@ -1402,6 +2288,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the existing message.
 
 ### Changed
+
+- **`bd init` refuses to initialize directly in your home directory**
+  ([#4635](https://github.com/gastownhall/beads/issues/4635)). `bd init` sets
+  up the directory it runs in as a project: it runs `git init` there unless it
+  finds a repository, and installs agent files — `CLAUDE.md`, `AGENTS.md`,
+  `.gitignore`, `.claude/`, `.codex/`, `.cursor/`, `.agents/`. In your home
+  directory most of those are your agents' user-wide settings, so bd's hooks
+  ended up running in every project, and init did this silently under
+  `--non-interactive`, which engages automatically whenever stdin is not a TTY
+  (so: whenever an agent runs it). A project is virtually never the home
+  directory itself, so this now refuses with exit code `15`
+  (`ExitHomeDirRefused`; `13` and `14` already mean a lost conditional-write
+  race and a migration freeze), documented at
+  `docs/recovery/init-safety.md#init-home-refused`.
+
+  Deliberately narrow: it fires only when the working directory is *exactly*
+  your home directory, your home is not itself a git repository (tracked
+  dotfiles are unaffected, but a home that only sits inside an enclosing
+  repository, or a `GIT_DIR` inherited from the environment, does not count),
+  and you did not name a `BEADS_DIR` yourself. A subdirectory of home is an
+  ordinary project and is never refused. If you do name a `BEADS_DIR` from
+  an untracked home, init sets up only that workspace: no `git init`, no
+  agent files or `.gitignore` in your home directory, and nothing in a
+  repository your home sits inside (no hooks, `beads.role`, Dolt remote taken
+  from its origin, or bootstrap commit) unless a flag such as `--stealth` or
+  `--setup-exclude` asks for it. `--force` and
+  `--reinit-local` do not override the refusal — they bypass the local
+  data-safety guard, which is a different question from "is this the right
+  directory". The guard runs first in init's `RunE`, ahead of every path with
+  an effect, including the proxied dispatch and the store-opening
+  `--reinit-local` pre-checks.
 
 - **The managed shared Dolt server now opens its configured remotesapi
   listener** ([#6020](https://github.com/gastownhall/beads/pull/6020)).

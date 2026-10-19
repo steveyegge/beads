@@ -97,7 +97,13 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			if claimReady {
 				return HandleErrorRespectJSON("--claim cannot be combined with --mol")
 			}
-			return runMoleculeReady(cmd, molID)
+			if store == nil {
+				return HandleErrorRespectJSON("no database connection")
+			}
+			resolve := func(ctx context.Context, arg string) (string, error) {
+				return utils.ResolvePartialID(ctx, store, arg)
+			}
+			return runMoleculeReady(rootCtx, store, resolve, molID)
 		}
 
 		explain, _ := cmd.Flags().GetBool("explain")
@@ -326,29 +332,44 @@ func rejectReadyMaxRowsUnderProxiedServer(cmd *cobra.Command) error {
 	return rejectMaxRowsUnderProxiedServer(cmd)
 }
 
-// blockedFilterFromFlags builds the blocked-issue filter from blockedCmd's
-// flags. Both the direct and the proxied-server path call it, so the two
-// cannot drift as filtering flags are added.
-func blockedFilterFromFlags(cmd *cobra.Command) types.WorkFilter {
-	var filter types.WorkFilter
-	if parentID, _ := cmd.Flags().GetString("parent"); parentID != "" {
-		filter.ParentID = &parentID
-	}
-	// Normalize as every other label filter does (list_input.go:293-295,
-	// search.go:106, orphans.go:56, workapi/ready.go:56-58). These clauses
-	// match a label EXACTLY, so an untrimmed value silently under-reports:
-	// pflag's CSV split leaves the leading space in the everyday
-	// `--label 'a, b'` form, and `--label 'a,,b'` would AND in a `label = ''`
-	// clause that matches nothing at all. Without this, `--label` would not
-	// mean the same thing here as on the commands next to it -- which is the
-	// promise LabelSetClauses is documented to keep.
+// blockedRequestFromFlags builds the blocked listing's request from
+// blockedCmd's flags. Every route calls it, so the routes cannot drift as
+// filtering flags are added.
+//
+// The labels go to the role as written: the role normalizes them, as every
+// other label filter is normalized (list_input.go, search.go, orphans.go,
+// workapi/ready.go). These clauses match a label EXACTLY, so an untrimmed
+// value would silently under-report: pflag's CSV split leaves the leading
+// space in the everyday `--label 'a, b'` form, and `--label 'a,,b'` would AND
+// in an empty-label clause that matches nothing at all. Normalizing in the
+// role rather than here is what makes a served listing normalize the same way
+// for every client.
+func blockedRequestFromFlags(cmd *cobra.Command) issueops.BlockedRequest {
+	parentID, _ := cmd.Flags().GetString("parent")
 	labels, _ := cmd.Flags().GetStringSlice("label")
 	labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 	excludeLabels, _ := cmd.Flags().GetStringSlice("exclude-label")
-	filter.Labels = utils.NormalizeLabels(labels)
-	filter.LabelsAny = utils.NormalizeLabels(labelsAny)
-	filter.ExcludeLabels = utils.NormalizeLabels(excludeLabels)
-	return filter
+	return issueops.BlockedRequest{
+		ParentID:      parentID,
+		Labels:        labels,
+		LabelsAny:     labelsAny,
+		ExcludeLabels: excludeLabels,
+	}
+}
+
+// blockedLister is the blocked-listing role for the route this invocation
+// runs: the store's own BlockedLister accessor on the direct routes (dolt,
+// embedded dolt, and a registered HTTP backend, where it dials blocked.list
+// and an older server is refused before the dial naming the token), and the
+// proxied-server provider's on the proxied one.
+func blockedLister() (issueops.BlockedLister, error) {
+	if usesProxiedServer() {
+		return proxiedBlockedLister()
+	}
+	if store == nil {
+		return nil, fmt.Errorf("no storage available")
+	}
+	return store.BlockedLister()
 }
 
 var blockedCmd = &cobra.Command{
@@ -364,17 +385,24 @@ var blockedCmd = &cobra.Command{
 			}
 		}()
 
-		if usesProxiedServer() {
-			return runBlockedProxiedServer(cmd, rootCtx)
-		}
-		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
-		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
+		// One role on every route (blockedLister). Use global jsonOutput set
+		// by PersistentPreRun (respects config.yaml + env vars).
 		ctx := rootCtx
-		blockedFilter := blockedFilterFromFlags(cmd)
-		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
+		if flagsMode, _ := cmd.Flags().GetBool("flags"); flagsMode {
+			return runBlockedFlags(cmd, ctx, cmd.InOrStdin())
+		}
+		if cmd.Flags().Changed("raw") {
+			return HandleErrorRespectJSON("--raw qualifies --flags (the stored blocked column per id); it has no meaning for the listing")
+		}
+		lister, err := blockedLister()
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
+		result, err := lister.ListBlocked(ctx, blockedRequestFromFlags(cmd))
+		if err != nil {
+			return HandleErrorRespectJSON("%v", err)
+		}
+		blocked := result.Items
 		if jsonOutput {
 			if blocked == nil {
 				blocked = []*types.BlockedIssue{}
@@ -637,37 +665,32 @@ func runReadyExplain(_ *cobra.Command) error {
 	return nil
 }
 
-func runMoleculeReady(_ *cobra.Command, molIDArg string) error {
-	ctx := rootCtx
-
-	if store == nil {
-		return HandleErrorRespectJSON("no database connection")
-	}
-
-	moleculeID, err := utils.ResolvePartialID(ctx, store, molIDArg)
+// runMoleculeReady is `bd ready --mol` on every route. The molecule's nodes,
+// their readiness, the ready list and parallel groups are the library's one
+// derivation (issueops.ViewMolecule, shared with `mol current`); what is here
+// is presentation.
+func runMoleculeReady(ctx context.Context, s storage.DoltStorage, resolve func(context.Context, string) (string, error), molIDArg string) error {
+	moleculeID, err := resolve(ctx, molIDArg)
 	if err != nil {
-		return HandleErrorRespectJSON("molecule '%s' not found", molIDArg)
+		return moleculeNotResolved(molIDArg, err)
 	}
-
-	subgraph, err := loadTemplateSubgraph(ctx, store, moleculeID)
+	roles, err := currentMoleculeRoles(s)
+	if err != nil {
+		return HandleErrorRespectJSON("%v", err)
+	}
+	view, err := issueops.ViewMolecule(ctx, roles.molecule, moleculeID)
 	if err != nil {
 		return HandleErrorRespectJSON("loading molecule: %v", err)
 	}
-
-	// Get parallel analysis to find ready steps
-	analysis := analyzeMoleculeParallel(subgraph)
-
-	// Collect ready steps
+	subgraph, analysis := view.Graph, view.Analysis
 	var readySteps []*MoleculeReadyStep
-	for _, issue := range subgraph.Issues {
+	for _, issue := range view.Ready {
 		info := analysis.Steps[issue.ID]
-		if info != nil && info.IsReady {
-			readySteps = append(readySteps, &MoleculeReadyStep{
-				Issue:         issue,
-				ParallelInfo:  info,
-				ParallelGroup: info.ParallelGroup,
-			})
-		}
+		readySteps = append(readySteps, &MoleculeReadyStep{
+			Issue:         issue,
+			ParallelInfo:  info,
+			ParallelGroup: info.ParallelGroup,
+		})
 	}
 
 	if jsonOutput {
@@ -798,6 +821,8 @@ func init() {
 	blockedCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	blockedCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	blockedCmd.Flags().StringSlice("exclude-label", []string{}, "Exclude issues that have ANY of these labels")
+	blockedCmd.Flags().Bool("raw", false, "With --flags: the stored blocked column itself, without the external-dependency policy (an unsatisfied external: blocker does not set it)")
+	blockedCmd.Flags().Bool("flags", false, "Print the blocked flag for each id read from stdin (one per line) instead of the listing; with --json, [{\"id\",\"is_blocked\"}]")
 	rootCmd.AddCommand(blockedCmd)
 }
 

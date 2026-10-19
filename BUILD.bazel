@@ -246,6 +246,19 @@ exports_files(
     visibility = ["//internal/httpclient/encode:__pkg__"],
 )
 
+# --- begin go_srcs (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
+
+filegroup(
+    name = "go_srcs",
+    srcs = glob(
+        ["**/*.go"],
+        allow_empty = True,
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+# --- end go_srcs ---
+
 # --- begin repo_files (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
 
 filegroup(
@@ -300,6 +313,7 @@ filegroup(
         "//backend:repo_doc_files",
         "//backend/conformance:repo_doc_files",
         "//backend/http:repo_doc_files",
+        "//backend/http/corpus:repo_doc_files",
         "//beadserrors:repo_doc_files",
         "//cmd/bd:repo_doc_files",
         "//cmd/bd/doctor:repo_doc_files",
@@ -412,6 +426,7 @@ filegroup(
         "//internal/utils:repo_doc_files",
         "//internal/validation:repo_doc_files",
         "//internal/versioncheck:repo_doc_files",
+        "//internal/versionedhistory:repo_doc_files",
         "//internal/workapi:repo_doc_files",
         "//internal/workapi/storecounter:repo_doc_files",
         "//internal/workapi/storequerier:repo_doc_files",
@@ -533,6 +548,7 @@ filegroup(
         "//backend:repo_go_srcs",
         "//backend/conformance:repo_go_srcs",
         "//backend/http:repo_go_srcs",
+        "//backend/http/corpus:repo_go_srcs",
         "//beadserrors:repo_go_srcs",
         "//cmd/bd:repo_go_srcs",
         "//cmd/bd/doctor:repo_go_srcs",
@@ -645,6 +661,7 @@ filegroup(
         "//internal/utils:repo_go_srcs",
         "//internal/validation:repo_go_srcs",
         "//internal/versioncheck:repo_go_srcs",
+        "//internal/versionedhistory:repo_go_srcs",
         "//internal/workapi:repo_go_srcs",
         "//internal/workapi/storecounter:repo_go_srcs",
         "//internal/workapi/storequerier:repo_go_srcs",
@@ -751,6 +768,7 @@ filegroup(
         "//backend:repo_go_test_srcs",
         "//backend/conformance:repo_go_test_srcs",
         "//backend/http:repo_go_test_srcs",
+        "//backend/http/corpus:repo_go_test_srcs",
         "//beadserrors:repo_go_test_srcs",
         "//cmd/bd:repo_go_test_srcs",
         "//cmd/bd/doctor:repo_go_test_srcs",
@@ -863,6 +881,7 @@ filegroup(
         "//internal/utils:repo_go_test_srcs",
         "//internal/validation:repo_go_test_srcs",
         "//internal/versioncheck:repo_go_test_srcs",
+        "//internal/versionedhistory:repo_go_test_srcs",
         "//internal/workapi:repo_go_test_srcs",
         "//internal/workapi/storecounter:repo_go_test_srcs",
         "//internal/workapi/storequerier:repo_go_test_srcs",
@@ -978,6 +997,7 @@ filegroup(
         "//backend:repo_other_files",
         "//backend/conformance:repo_other_files",
         "//backend/http:repo_other_files",
+        "//backend/http/corpus:repo_other_files",
         "//beadserrors:repo_other_files",
         "//cmd/bd:repo_other_files",
         "//cmd/bd/doctor:repo_other_files",
@@ -1090,6 +1110,7 @@ filegroup(
         "//internal/utils:repo_other_files",
         "//internal/validation:repo_other_files",
         "//internal/versioncheck:repo_other_files",
+        "//internal/versionedhistory:repo_other_files",
         "//internal/workapi:repo_other_files",
         "//internal/workapi/storecounter:repo_other_files",
         "//internal/workapi/storequerier:repo_other_files",

@@ -19,17 +19,21 @@ const pinnedShardWrapper = "tools/bazel/go_test_pinned_shard.sh"
 // manifest, the directory holding the go_test's sources, and the rule's one
 // lane tag.
 //
-// httpclient_served_test is the embedded lane's (a retired tier's) served
-// corpus, which may not be narrowed: the wrapper runs every top-level test in
-// exactly one shard (TestPinnedShardWrapperSplit), the manifest may name only
-// real tests (TestPinnedShardManifestsNameRealTests), and the lane's
-// check_testcases.py fails a shard that ran none.
+// httpclient_served_test, http_served_test and corpus_served_test are the
+// embedded lane's (a retired tier's) served tiers, which may not be narrowed:
+// the wrapper runs every top-level test in exactly one shard
+// (TestPinnedShardWrapperSplit), the manifest may name only real tests
+// (TestPinnedShardManifestNamesAreTests), and the lane's check_testcases.py
+// fails a shard that ran none. corpus_served_test pins its corpus parts, one
+// per shard (TestCorpusPartsArePinnedOnePerShard).
 var pinnedShardTargets = []struct {
 	build, rule, manifest, pkg, tag string
 }{
 	{"cmd/bd/BUILD.bazel", "bd_dolt_server_test", "cmd/bd/dolt_server_pinned_shards.txt", "cmd/bd", "dolt-server-cmd"},
 	{"tests/regression/BUILD.bazel", "regression_test", "tests/regression/pinned_shards.txt", "tests/regression", "dolt-server-cmd"},
 	{"internal/httpclient/BUILD.bazel", "httpclient_served_test", "internal/httpclient/served_pinned_shards.txt", "internal/httpclient", "embedded"},
+	{"backend/http/BUILD.bazel", "http_served_test", "backend/http/served_pinned_shards.txt", "backend/http", "embedded"},
+	{"backend/http/corpus/BUILD.bazel", "corpus_served_test", "backend/http/corpus/served_pinned_shards.txt", "backend/http/corpus", "embedded"},
 }
 
 var pinnedLineRe = regexp.MustCompile(`^([1-9][0-9]*) (Test[A-Za-z0-9_]*)$`)
