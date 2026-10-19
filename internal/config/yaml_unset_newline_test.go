@@ -404,3 +404,36 @@ func TestUnsetOfAPresentKeyInACRLFFileReportsTheWrite(t *testing.T) {
 		assertWritten(t, path)
 	})
 }
+
+// The boundary of the fix. Every dotted key is handed to updateNestedYamlKey
+// before updateYamlKey's scanner and CRLF normalization are reached, and the
+// nested writer's line-rewriting branches deliberately carry "\r" through on
+// the lines they do not touch. So the wrapper must stay byte-identical to a
+// direct call on the same CRLF documents: it would diverge the moment the
+// normalization moved above the dispatch, silently changing what the nested
+// writer sees.
+func TestUpdateYamlKeyLeavesTheNestedPathAlone(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{"literal dotted key", "issue_prefix: vp\r\ndolt.mode: server\r\n"},
+		{"nested block", "issue_prefix: vp\r\ndolt:\r\n  mode: server\r\n"},
+		{"absent key", "issue_prefix: vp\r\n"},
+		{"comment-only document", "# just a comment\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			viaSet, err := updateYamlKey(tc.content, "dolt.mode", "embedded")
+			if err != nil {
+				t.Fatalf("updateYamlKey: %v", err)
+			}
+			direct, ok, err := updateNestedYamlKey(tc.content, "dolt.mode", "embedded")
+			if err != nil {
+				t.Fatalf("updateNestedYamlKey: %v", err)
+			}
+			if !ok {
+				t.Fatal("updateNestedYamlKey returned ok=false for a dotted key")
+			}
+			if viaSet != direct {
+				t.Errorf("updateYamlKey diverged from updateNestedYamlKey on the same document:\nvia set: %q\ndirect:  %q", viaSet, direct)
+			}
+		})
+	}
+}
