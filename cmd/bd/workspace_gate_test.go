@@ -95,6 +95,10 @@ func TestAcquireCommandWorkspaceGatesAbsentWorkspace(t *testing.T) {
 	t.Cleanup(releaseWorkspaceGates)
 
 	list := &cobra.Command{Use: "list"}
+	before := newGateTestWorkspace(t)
+	if err := acquireCommandWorkspaceGates(context.Background(), list, before); err != nil || workspaceGateHandle == nil {
+		t.Fatalf("initial command must hold a gate: %v", err)
+	}
 	missing := filepath.Join(t.TempDir(), "nope", ".beads")
 	if err := acquireCommandWorkspaceGates(context.Background(), list, missing); err != nil {
 		t.Fatalf("absent beadsDir must be silently ungated, got %v", err)
@@ -102,6 +106,36 @@ func TestAcquireCommandWorkspaceGatesAbsentWorkspace(t *testing.T) {
 	if workspaceGateHandle != nil {
 		t.Error("absent beadsDir must leave no gate handle")
 	}
+}
+
+// A process that runs more than one command (tests, embedders) must not keep
+// the previous command's SHARED hold once the next command takes its own
+// gates: otherwise the first workspace stays held, and a maintenance
+// operation there is turned away by a command that has already finished.
+func TestAcquireCommandWorkspaceGatesReleasesThePreviousCommandsHold(t *testing.T) {
+	resetGateTestEnv(t)
+	t.Cleanup(releaseWorkspaceGates)
+	list := &cobra.Command{Use: "list"}
+	ctx := context.Background()
+
+	first := newGateTestWorkspace(t)
+	if err := acquireCommandWorkspaceGates(ctx, list, first); err != nil || workspaceGateHandle == nil {
+		t.Fatalf("first command must hold a gate: %v", err)
+	}
+	second := newGateTestWorkspace(t)
+	if err := acquireCommandWorkspaceGates(ctx, list, second); err != nil || workspaceGateHandle == nil {
+		t.Fatalf("second command must hold a gate: %v", err)
+	}
+
+	gate, err := workspacegate.ForWorkspace(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := gate.Acquire(ctx, workspacegate.Exclusive, workspacegate.Options{Reason: "test maintenance"})
+	if err != nil {
+		t.Fatalf("exclusive acquire on the first command's workspace once the second command holds its own gates: %v, want success", err)
+	}
+	_ = holder.Release()
 }
 
 // holdWorkspaceGateExclusive takes beadsDir's workspace gate exclusively,
@@ -136,11 +170,15 @@ func countGateNotices(t *testing.T) *atomic.Int32 {
 func TestAcquireCommandWorkspaceGatesBlockedByExclusiveHolder(t *testing.T) {
 	resetGateTestEnv(t)
 	t.Cleanup(releaseWorkspaceGates)
+	list := &cobra.Command{Use: "list"}
+	prior := newGateTestWorkspace(t)
+	if err := acquireCommandWorkspaceGates(context.Background(), list, prior); err != nil || workspaceGateHandle == nil {
+		t.Fatalf("initial command must hold a gate: %v", err)
+	}
 	beadsDir := newGateTestWorkspace(t)
 	t.Setenv(sharedGateWaitEnv, "300ms")
 	holdWorkspaceGateExclusive(t, beadsDir)
 
-	list := &cobra.Command{Use: "list"}
 	var err error
 	start := time.Now()
 	stderr := captureStderr(t, func() {

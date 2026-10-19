@@ -398,6 +398,10 @@ func buildWorkspaceGateSet(beadsDir string, extraRoots ...string) ([]workspacega
 // workspace is selected. It stores the handle in workspaceGateHandle on
 // success; on the fail-open paths it returns nil with no handle.
 func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beadsDir string) error {
+	// A process can execute more than one command in tests and embedded uses.
+	// Never carry the preceding command's handle into an absent-workspace or
+	// failed acquisition path, where no new gate is held.
+	releaseWorkspaceGates()
 	exclusive := commandNeedsExclusiveGate(cmd)
 
 	// No workspace on disk: nothing to guard, and the store-open path will
