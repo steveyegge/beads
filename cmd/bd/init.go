@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -224,6 +225,40 @@ func shouldWriteInitStateToDB(gateway bool) bool {
 // server-owned writes.
 func shouldInitSharedGlobalDB(sharedServer, sharedServerMode, gateway bool) bool {
 	return (sharedServer || sharedServerMode) && !gateway
+}
+
+// externalServerUnreachableMessage returns the message for an --external init
+// whose server could not be dialed, or "" when err is any other failure.
+//
+// --external declares the server managed outside bd, so init starts none. The
+// store's own advice for a dead local server, "bd dolt start", would start the
+// very server --external says bd must not, and the store words this failure
+// differently per route (shared server, socket, remote host, auto-start pinned
+// off). One message serves them all: it names the endpoint that was dialed and
+// says that bd did not start a server.
+//
+// A dial to port 0 is the exception. The store leaves a zero port zero for
+// auto-start to fill in, so it means nothing named a port: the address is a
+// placeholder, not an endpoint. The message says so and how to name one, and
+// offers no default, since on a shared machine whatever listens on a default
+// port may belong to another project (GH#2098, GH#2372).
+func externalServerUnreachableMessage(err error) string {
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) || opErr.Op != "dial" {
+		return ""
+	}
+	if addr, ok := opErr.Addr.(*net.TCPAddr); ok && addr.Port == 0 {
+		return fmt.Sprintf("Error: failed to open Dolt store: %v\n\n"+
+			"--external declares the Dolt server externally managed, so bd did not start one, and no port was named for it.\n"+
+			"Name the server's port with --server-port or BEADS_DOLT_SERVER_PORT.\n", opErr)
+	}
+	endpoint := "the configured endpoint"
+	if opErr.Addr != nil {
+		endpoint = opErr.Addr.String()
+	}
+	return fmt.Sprintf("Error: failed to open Dolt store: %v\n\n"+
+		"--external declares the Dolt server at %s externally managed, so bd did not start one.\n"+
+		"Start that server, or point init at the right endpoint.\n", opErr, endpoint)
 }
 
 // warnHalfIdentifiedSubstrate reports a substrate carrying one identity marker
@@ -970,7 +1005,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// before init's existing-workspace checks so even --force cannot create
 		// or rewrite state beside a source that has not been preserved.
 		if beadsDir := resolveInitBeadsDir(); beadsDir != "" {
-			if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
+			if err := guardLegacyUpgradeWorkspaceForInit(beadsDir, initServerMode); err != nil {
 				return err
 			}
 		}
@@ -1554,7 +1589,9 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		}
 
 		// Build config. Beads always uses dolt sql-server.
-		// AutoStart is always enabled during init — we need a server to initialize the database.
+		// AutoStart is enabled during init — we need a server to initialize the database —
+		// except under --external: that server is managed outside bd, so bd must not start
+		// one of its own on the endpoint the caller named.
 		//
 		// Port resolution for init: use ONLY project-local sources (env var, port file)
 		// to prevent cross-project data leakage (GH#2336). DefaultConfig falls through
@@ -1602,7 +1639,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			ProxiedServer:          initProxiedServer,
 			CreateIfMissing:        true, // bd init is the only path that should create databases
 			OpenedByInit:           true, // shapes the identity-mismatch advice (GH#5558)
-			AutoStart:              initServerMode && os.Getenv("BEADS_DOLT_AUTO_START") != "0",
+			AutoStart:              initServerMode && !externalServer && os.Getenv("BEADS_DOLT_AUTO_START") != "0",
 			ServerTLS:              initDoltServerTLSFromEnv(),
 		}
 		if serverHost != "" {
@@ -1726,6 +1763,12 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 					printInitJoinGuidance(os.Stderr, gateErr)
 				}
 				return &exitError{Code: 1}
+			}
+			if externalServer {
+				if msg := externalServerUnreachableMessage(err); msg != "" {
+					fmt.Fprint(os.Stderr, msg)
+					return &exitError{Code: 1}
+				}
 			}
 			fmt.Fprintf(os.Stderr, "Error: failed to open Dolt store: %v\n", err)
 			return &exitError{Code: 1}

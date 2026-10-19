@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1273,6 +1274,124 @@ func TestStartupLines(t *testing.T) {
 		t.Errorf("ConnMaxIdleTime = %s, want 20s below Dolt's supported 30s wait_timeout",
 			provider.limits.ConnMaxIdleTime)
 	}
+}
+
+// TestStartupEventPublishesTheAdvertisedCapabilitiesAndSource pins the whole
+// event=startup line of a provider- or roles-backed server: its field sequence,
+// its database-source label, and a capabilities field that is the handshake's
+// list verbatim.
+//
+// TestStartupLines and TestStartupNamesTheDatabaseSource check fields by
+// substring, and neither reads capabilities at all. So a server could print one
+// list and advertise another, or a new kind of database source could relabel
+// this line, and both would stay green. The line is how an operator learns
+// what a server answers before any client connects, so it is pinned exactly:
+// changing it should take a deliberate edit to this test, not happen as a side
+// effect of adding a source.
+func TestStartupEventPublishesTheAdvertisedCapabilitiesAndSource(t *testing.T) {
+	workspace := domain.ContextInfo{RepoRoot: "/w/repo", BeadsDir: "/w/repo/.beads", Database: "beads"}
+	for _, tc := range []struct {
+		name   string
+		cfg    Config
+		source string
+	}{
+		{"provider", Config{Provider: &tunableProvider{}}, "provider"},
+		{"provider with the external-dependency policy", Config{Provider: &tunableProvider{}, ExternalDependencyPolicy: true}, "provider"},
+		{"roles", rolesConfig(Config{}), "roles"},
+		{"roles with the external-dependency policy", rolesConfig(Config{ExternalDependencyPolicy: true}), "roles"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			cfg.Mode = "server (external dolt)"
+			cfg.Workspace = workspace
+			ts := newTestServer(t, cfg)
+
+			var advertised []string
+			caps, _ := decodeBody(t, ts.get(t, "/v0/beads/context"))["capabilities"].([]any)
+			for _, c := range caps {
+				advertised = append(advertised, c.(string))
+			}
+			if len(advertised) == 0 {
+				t.Fatal("the handshake advertises no capabilities; comparing the startup line against it would pass for an empty one")
+			}
+			// The conditional token is in the list exactly when the case asks
+			// for it, so the policy rows really cover a list that differs.
+			if got := slices.Contains(advertised, CapExternalDependencies); got != cfg.ExternalDependencyPolicy {
+				t.Fatalf("handshake advertises %s = %v, want %v", CapExternalDependencies, got, cfg.ExternalDependencyPolicy)
+			}
+
+			line := findLogLine(t, ts.stderr.String(), "event=startup")
+			keys, fields := eventFields(t, line)
+			want := []struct{ key, value string }{
+				{"event", "startup"},
+				{"addr", ts.Addr()},
+				{"mode", cfg.Mode},
+				{"db", tc.source},
+				{"workspace", workspace.RepoRoot},
+				{"beads_dir", workspace.BeadsDir},
+				{"database", workspace.Database},
+				{"host_allowlist", "127.0.0.1,::1,localhost"},
+				{"capabilities", strings.Join(advertised, ",")},
+				{"auth", "none"},
+			}
+			var wantKeys []string
+			for _, w := range want {
+				wantKeys = append(wantKeys, w.key)
+				if got := fields[w.key]; got != w.value {
+					t.Errorf("startup %s = %q, want %q", w.key, got, w.value)
+				}
+			}
+			if !slices.Equal(keys, wantKeys) {
+				t.Errorf("startup fields = %v, want %v\n%s", keys, wantKeys, line)
+			}
+		})
+	}
+}
+
+// eventFields splits one event line back into its fields, in order: the
+// inverse of Server.event, where every value is a bare token or a Go-quoted
+// string (logValue). The log prefix before "event=" is dropped.
+func eventFields(t *testing.T, line string) ([]string, map[string]string) {
+	t.Helper()
+	start := strings.Index(line, "event=")
+	if start < 0 {
+		t.Fatalf("not an event line: %q", line)
+	}
+	rest := line[start:]
+	var keys []string
+	fields := map[string]string{}
+	for rest != "" {
+		key, value, ok := strings.Cut(rest, "=")
+		if !ok || key == "" || strings.ContainsAny(key, ` "`) {
+			t.Fatalf("malformed field at %q in %q", rest, line)
+		}
+		if strings.HasPrefix(value, `"`) {
+			quoted, err := strconv.QuotedPrefix(value)
+			if err != nil {
+				t.Fatalf("malformed quoted value at %q in %q: %v", value, line, err)
+			}
+			unquoted, err := strconv.Unquote(quoted)
+			if err != nil {
+				t.Fatalf("unquote %s: %v", quoted, err)
+			}
+			rest = value[len(quoted):]
+			value = unquoted
+			if rest != "" {
+				if rest[0] != ' ' {
+					t.Fatalf("field %s is not followed by a space in %q", key, line)
+				}
+				rest = rest[1:]
+			}
+		} else {
+			value, rest, _ = strings.Cut(value, " ")
+		}
+		if _, dup := fields[key]; dup {
+			t.Fatalf("field %s appears twice in %q", key, line)
+		}
+		keys = append(keys, key)
+		fields[key] = value
+	}
+	return keys, fields
 }
 
 // TestPoolLimitsUnavailableIsAnnounced: running unbounded is a decision, so it
