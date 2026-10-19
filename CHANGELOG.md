@@ -812,6 +812,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error envelope on stdout under `--json`. A batch that reads at least one of
   its ids still exits 0. Both the direct and the proxied-server routes
   changed.
+- **`bd list --format dot` prints the same graph the same way every time.**
+  Nodes are declared in id order and edges in source, target and type order.
+  They used to follow the listing order, which breaks a priority tie by
+  creation time to the second, so two equal-priority issues swapped places
+  depending on whether they were created in the same second, and the
+  proxied-server route did not pin the order of one issue's edges. `--sort`
+  and `--limit` still choose which issues are listed.
 - **`bd init --quiet` no longer prints "Removed SessionStart hook" or "Removed
   PreCompact hook"** when the project's `.claude/settings.json` (or the legacy
   `.claude/settings.local.json`) still carries the bare `bd prime` hooks an
