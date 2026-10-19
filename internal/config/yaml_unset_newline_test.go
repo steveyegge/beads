@@ -96,6 +96,7 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		// output rather than that SOME trailing newline survived.
 		{"ends in a blank line", "actor: a\nother: x\n\n", "actor", "b", "actor: \"b\"\nother: x\n\n"},
 		{"ends in two blank lines", "actor: a\nother: x\n\n\n", "actor", "b", "actor: \"b\"\nother: x\n\n\n"},
+		{"ends in a blank line, key absent", "other: x\n\n", "actor", "b", "other: x\n\nactor: \"b\"\n\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := updateYamlKey(tc.content, tc.key, tc.value)
@@ -125,6 +126,16 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		}
 		if want := "x\n\nnewkey: \"v\"\n"; out != want {
 			t.Errorf("updateYamlKey(\"x\\n\", ...) = %q, want %q", out, want)
+		}
+
+		// The existing blank line is the separator; the document's two-newline
+		// run is re-attached after the new key rather than collapsed.
+		out, err = updateYamlKey("x\n\n", "newkey", "v")
+		if err != nil {
+			t.Fatalf("updateYamlKey: %v", err)
+		}
+		if want := "x\n\nnewkey: \"v\"\n\n"; out != want {
+			t.Errorf("updateYamlKey(\"x\\n\\n\", ...) = %q, want %q", out, want)
 		}
 	})
 }
