@@ -87,8 +87,13 @@ func applyDuration(base time.Time, amount int, unit string) time.Time {
 	}
 }
 
-// isCompactDuration returns true if the string matches compact duration syntax.
-func isCompactDuration(s string) bool {
+// IsCompactDuration reports whether ParseCompactDuration accepts s: an
+// optional sign, digits, and one of the lowercase units min/h/d/w/m/y.
+// Other planes (the query lexer) classify through it instead of keeping a
+// second copy of the unit set. The units stay lowercase and case-sensitive —
+// folding case would make "30M" mean 30 months, the ambiguity "min" exists
+// to avoid.
+func IsCompactDuration(s string) bool {
 	return compactDurationRe.MatchString(s)
 }
 

@@ -182,7 +182,15 @@ func TestParseCompactDuration(t *testing.T) {
 	}
 }
 
+// TestIsCompactDuration pins the exported grammar predicate, including the
+// case policy: units are lowercase and case-sensitive, so the uppercase
+// spellings (30M, +6H, 1D, 2W, 1Y, 30MIN) are not compact durations. Other
+// planes classify through this predicate instead of keeping a copy of the
+// unit set, so its verdict must agree with ParseCompactDuration's on every
+// input.
 func TestIsCompactDuration(t *testing.T) {
+	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+
 	tests := []struct {
 		input string
 		want  bool
@@ -201,13 +209,25 @@ func TestIsCompactDuration(t *testing.T) {
 		{"6h+", false},
 		{"++1d", false},
 		{"1x", false},
+		{"30M", false},
+		{"+6H", false},
+		{"1D", false},
+		{"2W", false},
+		{"1Y", false},
+		{"30MIN", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := isCompactDuration(tt.input)
+			got := IsCompactDuration(tt.input)
 			if got != tt.want {
-				t.Errorf("isCompactDuration(%q) = %v, want %v", tt.input, got, tt.want)
+				t.Errorf("IsCompactDuration(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+			// The predicate and the parser must agree, or the planes that
+			// classify through it will hand ParseCompactDuration strings it
+			// rejects (or skip strings it takes).
+			if _, err := ParseCompactDuration(tt.input, now); (err == nil) != tt.want {
+				t.Errorf("ParseCompactDuration(%q) accepted = %v, want %v: disagrees with IsCompactDuration", tt.input, err == nil, tt.want)
 			}
 		})
 	}
