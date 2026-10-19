@@ -12,9 +12,17 @@ import (
 // the rejection inspects it (read-only) so a workspace that already holds a Dolt
 // database is told to fix the stale "backend" value rather than to export and
 // reinitialize. Pass "" only where there is genuinely no workspace directory.
+//
+// It also refuses metadata that declares a workspace format this build cannot
+// open (checkWorkspaceFormat). Command admission refuses those first, so here
+// it backs up the store-open paths that do not pass through admission, such as
+// a routed open of another repository's workspace.
 func validateConfiguredBackend(cfg *configfile.Config, beadsDir string) error {
 	if cfg == nil {
 		return nil
+	}
+	if err := checkWorkspaceFormat(cfg, beadsDir); err != nil {
+		return err
 	}
 	if backends.Registered(cfg.Backend) {
 		return nil

@@ -219,7 +219,7 @@ Examples:
 		}
 
 		if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
-			return HandleError("%v", err)
+			return handleWorkspaceGuardError(err)
 		}
 
 		// Load config from .beads/metadata.json. When the beadsDir was
@@ -234,7 +234,9 @@ Examples:
 		}
 		if cfg == nil {
 			cfg, err = findParentConfig(beadsDir)
-			if err != nil {
+			if isUnsupportedWorkspaceFormat(err) {
+				return handleWorkspaceGuardError(err)
+			} else if err != nil {
 				return HandleError("failed to load ancestor storage metadata: %v; no storage database was opened or modified; fix or restore metadata.json and retry", err)
 			}
 		}
