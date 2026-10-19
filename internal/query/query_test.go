@@ -1,6 +1,8 @@
 package query
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1098,5 +1100,51 @@ func TestMetadataPredicateEvaluation(t *testing.T) {
 	}
 	if !result.Predicate(issueClosed) {
 		t.Error("predicate should match closed issue via OR")
+	}
+}
+
+// TestQueryRejectsUppercaseDurationUnits pins the error a time-field
+// comparison reports for an uppercase compact-duration unit: the shared
+// timeparsing message quoting the value as typed ("cannot parse time
+// expression: \"30M\""), never the internal "not a compact duration" error
+// quoting the negated string ("-30M") that parseDurationAgo builds. The
+// uppercase-unit policy lives in internal/timeparsing, which owns the
+// grammar; this test only holds the query plane to it.
+func TestQueryRejectsUppercaseDurationUnits(t *testing.T) {
+	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
+
+	// The six uppercase single-rune spellings the lexer used to take, plus
+	// two mixed-case controls that were always identifiers.
+	values := []string{"30M", "30D", "30W", "30Y", "30H", "1H", "30MIN", "30Min"}
+	shapes := []struct {
+		name  string
+		build func(v string) string
+	}{
+		{"created greater", func(v string) string { return "created>" + v }},
+		{"updated less", func(v string) string { return "updated<" + v }},
+		{"closed greater-eq", func(v string) string { return "closed>=" + v }},
+		{"started less-eq", func(v string) string { return "started<=" + v }},
+		{"inside an OR", func(v string) string { return "created>" + v + " OR status=open" }},
+	}
+
+	for _, shape := range shapes {
+		for _, v := range values {
+			t.Run(shape.name+" "+v, func(t *testing.T) {
+				q := shape.build(v)
+				_, err := EvaluateAt(q, now)
+				if err == nil {
+					t.Fatalf("EvaluateAt(%q) succeeded, want error", q)
+				}
+				if !strings.Contains(err.Error(), strconv.Quote(v)) {
+					t.Errorf("EvaluateAt(%q) error = %q, want it to quote the value as typed %s", q, err, strconv.Quote(v))
+				}
+				if strings.Contains(err.Error(), "not a compact duration") {
+					t.Errorf("EvaluateAt(%q) error = %q, want timeparsing's shared message, not the internal \"not a compact duration\"", q, err)
+				}
+				if strings.Contains(err.Error(), strconv.Quote("-"+v)) {
+					t.Errorf("EvaluateAt(%q) error = %q, must not quote the negated %s the user never typed", q, err, strconv.Quote("-"+v))
+				}
+			})
+		}
 	}
 }
