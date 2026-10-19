@@ -20,6 +20,14 @@ const initProcs = 4
 
 var restore int
 
+// setProcs and setDefault are runtime.GOMAXPROCS and
+// runtime.SetDefaultGOMAXPROCS, swappable so a test can tell which one Done
+// used.
+var (
+	setProcs   = runtime.GOMAXPROCS
+	setDefault = runtime.SetDefaultGOMAXPROCS
+)
+
 func init() {
 	if runtime.GOMAXPROCS(0) > initProcs {
 		restore = runtime.GOMAXPROCS(initProcs)
@@ -36,8 +44,8 @@ func Done() {
 	n := restore
 	restore = 0
 	if _, set := syscall.Getenv("GOMAXPROCS"); set {
-		runtime.GOMAXPROCS(n)
+		setProcs(n)
 		return
 	}
-	runtime.SetDefaultGOMAXPROCS()
+	setDefault()
 }
