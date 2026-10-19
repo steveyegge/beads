@@ -371,3 +371,35 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		}
 	})
 }
+
+// The same property through the public writer, which is what `bd config set`
+// actually calls: the twin of TestUnsetThroughTheFileKeepsTheTrailingNewline.
+func TestSetThroughTheFileKeepsTheTrailingNewline(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(beadsDir, "config.yaml")
+	// The file ends in a blank line, the shape a single appended "\n" does not
+	// restore. actor is a single-segment key, so the set takes the flat path.
+	const body = "issue_prefix: vp\nactor: alice\ndolt:\n  mode: server\n\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEADS_DIR", beadsDir)
+	if err := SetYamlConfig("actor", "bob"); err != nil {
+		t.Fatalf("SetYamlConfig: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The value must have landed, or an untouched file would pass below.
+	if !strings.Contains(string(after), "actor: \"bob\"\n") {
+		t.Fatalf("set did not write the value:\n%q", string(after))
+	}
+	want := body[len(strings.TrimRight(body, "\n")):]
+	if got := string(after)[len(strings.TrimRight(string(after), "\n")):]; got != want {
+		t.Errorf("set rewrote the end of the file: trailing run %q, want %q\n%q", got, want, string(after))
+	}
+}
