@@ -171,6 +171,31 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		if want := "actor: \"b\"\nother: x\n"; out != want {
 			t.Errorf("CRLF normalization changed:\ngot:  %q\nwant: %q", out, want)
 		}
+
+		// A CRLF file ending in blank lines keeps the whole run — the same run
+		// an unset leaves on the same document, so the two verbs agree.
+		for _, tc := range []struct {
+			content, want string
+		}{
+			{"actor: a\r\nother: x\r\n\r\n", "actor: \"b\"\nother: x\n\n"},
+			{"actor: a\r\nother: x\r\n\r\n\r\n", "actor: \"b\"\nother: x\n\n\n"},
+		} {
+			out, err := updateYamlKey(tc.content, "actor", "b")
+			if err != nil {
+				t.Fatalf("updateYamlKey: %v", err)
+			}
+			if out != tc.want {
+				t.Errorf("CRLF blank-tail output = %q, want %q:\nin: %q", out, tc.want, tc.content)
+			}
+			unsetOut, err := commentOutYamlKey(tc.content, "actor")
+			if err != nil {
+				t.Fatalf("commentOutYamlKey: %v", err)
+			}
+			unsetRun := unsetOut[len(strings.TrimRight(unsetOut, "\n")):]
+			if got := out[len(strings.TrimRight(out, "\n")):]; got != unsetRun {
+				t.Errorf("set trailing run %q differs from unset's %q on the same document", got, unsetRun)
+			}
+		}
 	})
 }
 
