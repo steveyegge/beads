@@ -763,6 +763,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd query` reports an uppercase duration unit as an unparseable time, not
+  a negated internal error.** `created>30M` failed with
+  `not a compact duration: "-30M"`, naming a value nobody typed; it now fails
+  with `cannot parse time expression: "30M"`. A signed spelling
+  (`created>+30M`) stops at the parser, as `created>+30x` already did, so
+  quote one to match it as a literal (`label="+30M"`). Units remain lowercase
+  (`30min`, `6h`, `7d`, `2w`, `3m`, `1y`); help and docs already say so.
 - **Time-bound filters and the keyset cursor compare the same instant on every
   engine, whatever zone they are given in.** The storage filter builder binds
   every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,

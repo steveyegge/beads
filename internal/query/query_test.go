@@ -766,23 +766,17 @@ func TestQueryMinutesUnitResolvesAgo(t *testing.T) {
 
 // TestCompactDurationGrammarReachesQueryPlane binds this package's duration
 // grammar to the shared one in internal/timeparsing, which owns it. The lexer
-// keeps a second copy of the unit set — isDurationSuffix for single runes,
-// durationWords for whole words — and nothing outside this test holds the two
-// in sync. A unit added to the shared grammar but missed here lexes as
-// TokenIdent, skips the evaluator's TokenDuration arm, and resolves through
-// ParseRelativeTime as a *future* offset: the "30min meant 30 minutes from now"
-// inversion this PR fixed, reproduced silently for the next unit.
+// classifies a duration with timeparsing.IsCompactDuration instead of keeping
+// its own copy of the unit set; this test holds it to that. A unit the shared
+// grammar accepts but the lexer types as TokenIdent skips the evaluator's
+// TokenDuration arm and resolves through ParseRelativeTime as a *future*
+// offset: the "30min meant 30 minutes from now" inversion, reproduced silently
+// for the next unit.
 //
-// The shared pattern is unexported, so ParseCompactDuration is the oracle:
-// whatever suffix it accepts must lex as a duration here. Candidates are
-// exhaustive over lowercase ASCII up to three runes, so plausible future
-// spellings ("sec", "hr", "mo", "yr") are covered alongside today's six.
-//
-// Only this direction is asserted. The reverse — everything the lexer accepts
-// being valid in the shared grammar — is already false at base: isDurationSuffix
-// also takes "H D W M Y", which the case-sensitive pattern rejects, so
-// "created>30M" lexes as a duration and then fails in ParseCompactDuration.
-// That asymmetry predates this PR and is not what this test is for.
+// ParseCompactDuration is the oracle: whatever suffix it accepts must lex as a
+// duration here. Candidates are exhaustive over lowercase ASCII up to three
+// runes, so plausible future spellings ("sec", "hr", "mo", "yr") are covered
+// alongside today's six.
 func TestCompactDurationGrammarReachesQueryPlane(t *testing.T) {
 	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
 
@@ -829,7 +823,7 @@ func TestCompactDurationGrammarReachesQueryPlane(t *testing.T) {
 			}
 			if tokens[2].Type != TokenDuration || tokens[2].Value != value {
 				t.Errorf("timeparsing accepts %q but the query lexer typed it %v(%q), want %v(%q); "+
-					"add the unit to durationWords/isDurationSuffix or it resolves as a future offset",
+					"classify durations with timeparsing.IsCompactDuration or the unit resolves as a future offset",
 					value, tokens[2].Type, tokens[2].Value, TokenDuration, value)
 			}
 
