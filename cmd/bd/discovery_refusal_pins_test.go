@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 // Before-parity pins for workspace discovery refusals.
@@ -13,10 +15,15 @@ package main
 // review as a test diff rather than as an unexplained behavior change.
 //
 // Every case runs the real bd binary in a fresh fixture and stops before any
-// store is opened, so these need neither Dolt nor cgo. Fixture workspaces with
-// a corrupt metadata.json double as sentinels: the refusal names the
-// metadata.json it failed to parse, so the text shows which directory
-// discovery selected without opening a database.
+// store is opened, so these need no Dolt server or database. Fixture
+// workspaces with a corrupt metadata.json double as sentinels: the refusal
+// names the metadata.json it failed to parse, so the text shows which
+// directory discovery selected without opening a database.
+//
+// The pinned no-database hints are an embedded-capable bd's. A CGO_ENABLED=0
+// bd is server-only and adds "run 'bd doctor' to diagnose" to them, so this
+// file builds only with cgo, and the bd it runs (built by
+// buildBDForInitTests, or BEADS_TEST_BD_BINARY) must be a cgo build too.
 
 import (
 	"bytes"
@@ -253,11 +260,19 @@ func (f *discoveryPinFixture) run(bd, cwd string, extraEnv []string, args ...str
 
 var discoveryPinVersionLine = regexp.MustCompile(`(?m)^bd version .*$`)
 
+// discoveryPinDuplicateBinaries matches the warning bd version appends when
+// the caller's PATH holds more than one distinct bd binary.
+var discoveryPinDuplicateBinaries = regexp.MustCompile(
+	`\nWarning: multiple 'bd' binaries found in PATH:\n(?:  [^\n]*\n)*` +
+		`The first one is being used\. Remove duplicates to avoid confusion\.\n`)
+
 // normalize rewrites the fixture root as $ROOT and the build's version line
-// as "bd version $VERSION". For stderr it also drops the environment-dependent
-// sandbox auto-detection notice and collapses consecutive repeats of a line:
-// discovery re-resolves the same redirect several times per invocation and
-// how many times it warns is not part of the pin.
+// as "bd version $VERSION". For stderr it also drops the notices that depend
+// on the caller's environment rather than on the fixture (sandbox
+// auto-detection, and bd version's duplicate binaries in PATH) and collapses
+// consecutive repeats of a line: discovery re-resolves the same redirect
+// several times per invocation and how many times it warns is not part of
+// the pin.
 func (f *discoveryPinFixture) normalize(s string, stderr bool) string {
 	for _, form := range f.forms {
 		s = strings.ReplaceAll(s, form, "$ROOT")
@@ -266,6 +281,7 @@ func (f *discoveryPinFixture) normalize(s string, stderr bool) string {
 	if !stderr {
 		return s
 	}
+	s = discoveryPinDuplicateBinaries.ReplaceAllLiteralString(s, "")
 	var b strings.Builder
 	prev := ""
 	for _, line := range strings.SplitAfter(s, "\n") {
