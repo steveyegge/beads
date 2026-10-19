@@ -293,7 +293,8 @@ func TestEmbeddedShowBasicsAndJSON(t *testing.T) {
 
 	// GH#5565 / bd-u96si: direct/embedded twin of proxied
 	// show_wisp_comments_include_streams. --include-comments must stream the
-	// wisp's comments from wisp_comments.
+	// wisp's comments, the count in the same payload must agree, and
+	// comments_omitted must stay omitted.
 	t.Run("show_json_wisp_comments_include_streams", func(t *testing.T) {
 		wisp := bdCreate(t, bd, dir, "Wisp stream", "--type", "task", "--ephemeral")
 		for i := 0; i < 2; i++ {
@@ -306,6 +307,14 @@ func TestEmbeddedShowBasicsAndJSON(t *testing.T) {
 		comments, _ := m["comments"].([]interface{})
 		if len(comments) != 2 {
 			t.Fatalf("comments: got %d rows, want 2 with --include-comments: %v", len(comments), m)
+		}
+		if got, _ := m["comment_count"].(float64); got != 2 {
+			t.Errorf("comment_count: got %v, want 2 beside the 2 streamed rows", m["comment_count"])
+		}
+		// Absent, not false: the type's omitempty rule drops the flag
+		// whenever comments ride along.
+		if v, present := m["comments_omitted"]; present {
+			t.Errorf("comments_omitted should be absent under --include-comments, got %v", v)
 		}
 	})
 
