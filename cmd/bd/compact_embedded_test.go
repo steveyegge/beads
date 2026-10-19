@@ -3,6 +3,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -252,5 +253,102 @@ func TestEmbeddedCompactMisdatedChild(t *testing.T) {
 
 	if got := bdShow(t, bd, dir, issue.ID).Title; got != "edit B" {
 		t.Errorf("title after compact = %q, want %q", got, "edit B")
+	}
+}
+
+// TestEmbeddedCompactKeepsCommitMetadata checks that every replayed commit
+// keeps its committer, commit date, author and author date, including a
+// committer whose name holds parentheses (#7294).
+func TestEmbeddedCompactKeepsCommitMetadata(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "km")
+	issue := bdCreate(t, bd, dir, "Metadata bead", "--type", "task")
+
+	cfg, _ := configfile.Load(beadsDir)
+	database := ""
+	if cfg != nil {
+		database = cfg.GetDoltDatabase()
+	}
+	open := func() (*sql.Conn, func()) {
+		db, cleanup, err := embeddeddolt.OpenSQL(t.Context(), filepath.Join(beadsDir, "embeddeddolt"), database, "main")
+		if err != nil {
+			t.Fatalf("OpenSQL: %v", err)
+		}
+		conn, err := db.Conn(t.Context())
+		if err != nil {
+			t.Fatalf("db.Conn: %v", err)
+		}
+		return conn, func() {
+			conn.Close()
+			if err := cleanup(); err != nil {
+				t.Fatalf("cleanup: %v", err)
+			}
+		}
+	}
+	const logQuery = `SELECT message, committer, email, DATE_FORMAT(date, '%Y-%m-%dT%H:%i:%s.%f'),
+		author, author_email, DATE_FORMAT(author_date, '%Y-%m-%dT%H:%i:%s.%f')
+		FROM dolt_log WHERE message LIKE 'meta: %' ORDER BY commit_order`
+	snapshot := func(conn *sql.Conn) []string {
+		rows, err := conn.QueryContext(t.Context(), logQuery)
+		if err != nil {
+			t.Fatalf("read dolt_log: %v", err)
+		}
+		defer rows.Close()
+		var got []string
+		for rows.Next() {
+			var f [7]string
+			if err := rows.Scan(&f[0], &f[1], &f[2], &f[3], &f[4], &f[5], &f[6]); err != nil {
+				t.Fatalf("scan dolt_log: %v", err)
+			}
+			got = append(got, strings.Join(f[:], " | "))
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("read dolt_log: %v", err)
+		}
+		return got
+	}
+
+	// Both commits are dated in the future so --days 0 preserves them. Each has
+	// an author distinct from its committer, and dates distinct from each other.
+	conn, closeConn := open()
+	base := time.Now().Add(40 * time.Minute).UTC().Truncate(time.Second)
+	edits := []struct {
+		title, author, committer, email string
+		authored, committed             time.Time
+	}{
+		{"edit A", "Ann Author <ann@example.com>", "Jane (work)", "jane@example.com", base, base.Add(5 * time.Second)},
+		{"edit B", "Bo Author <bo@example.com>", "Kim", "kim@example.com", base.Add(time.Minute), base.Add(90 * time.Second)},
+	}
+	for _, e := range edits {
+		if _, err := conn.ExecContext(t.Context(), "SET @@dolt_committer_name = ?, @@dolt_committer_email = ?, @@dolt_committer_date = ?",
+			e.committer, e.email, e.committed.Format(time.RFC3339)); err != nil {
+			t.Fatalf("set committer for %q: %v", e.title, err)
+		}
+		if _, err := conn.ExecContext(t.Context(), "UPDATE issues SET title = ? WHERE id = ?", e.title, issue.ID); err != nil {
+			t.Fatalf("update title %q: %v", e.title, err)
+		}
+		if _, err := conn.ExecContext(t.Context(), "CALL DOLT_COMMIT('-Am', ?, '--author', ?, '--date', ?)",
+			"meta: "+e.title, e.author, e.authored.Format(time.RFC3339)); err != nil {
+			t.Fatalf("dolt commit %q: %v", e.title, err)
+		}
+	}
+	before := snapshot(conn)
+	closeConn()
+	if len(before) != len(edits) {
+		t.Fatalf("dolt_log before compact holds %d meta commits, want %d: %v", len(before), len(edits), before)
+	}
+
+	bdCompact(t, bd, dir, "--force", "--days", "0")
+
+	conn, closeConn = open()
+	after := snapshot(conn)
+	closeConn()
+	if strings.Join(after, "\n") != strings.Join(before, "\n") {
+		t.Errorf("commit metadata changed by compact\nbefore:\n%s\nafter:\n%s", strings.Join(before, "\n"), strings.Join(after, "\n"))
 	}
 }
