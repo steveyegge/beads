@@ -804,6 +804,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no `.local_version` witness. A pre-1.0 witness, or a `.beads/dolt` that
   holds anything, is still refused, and commands other than `bd init` are
   decided as before.
+- **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
+  the beads section from `CLAUDE.md` (or, with the other setup recipes, from
+  `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in
+  the `CLAUDE.md` `bd init` writes, and setup then re-added the section after
+  two more, so every remove and re-add grew the file. `--remove` now takes
+  those blank lines with the section, and setup appends a section after one
+  blank line, so removing and re-adding it toggles between the same two files.
+  A re-added section goes at the end of the file.
 - **`bd show --as-of` exits 1 when it reads no issue.** A ref the Dolt AS OF
   read does not take (an instant, a versioned-history address), a ref that
   does not exist, or an issue that did not exist at the ref was reported on
