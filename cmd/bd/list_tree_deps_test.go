@@ -102,6 +102,25 @@ func TestOrderSiblingsByDeps_ReadySetFollowsCallerCompare(t *testing.T) {
 	}
 }
 
+// TestOrderSiblingsByDeps_CycleFallbackFollowsCallerCompare pins the cycle
+// fallback to the caller's compare: neither cycle member ever reaches the
+// ready set, so the fallback alone decides. Priority and ID would put pa-x
+// first; the closed sort (newest first) puts pa-y first.
+func TestOrderSiblingsByDeps_CycleFallbackFollowsCallerCompare(t *testing.T) {
+	x := closedSibling("pa-x", 0, 2)
+	y := closedSibling("pa-y", 1, 1)
+	deps := map[string][]*types.Dependency{
+		"pa-x": {schedDep("pa-x", "pa-y")},
+		"pa-y": {schedDep("pa-y", "pa-x")},
+	}
+
+	got := idsOf(orderSiblingsByDeps([]*types.Issue{x, y}, deps, compareIssuesForTree("closed", false)))
+	want := []string{"pa-y", "pa-x"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("cycle fallback must follow the caller's compare: want %v, got %v", want, got)
+	}
+}
+
 func TestOrderSiblingsByDeps_OutOfGroupEdgeIgnored(t *testing.T) {
 	// A depends on something outside the sibling group: no reordering, no panic.
 	a := &types.Issue{ID: "pa-a", Priority: 2}
