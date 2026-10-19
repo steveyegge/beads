@@ -89,13 +89,59 @@ fn uuid_regex() -> &'static regex::Regex {
     })
 }
 
-/// Replace volatile values (timestamps, host identity, random UUIDs) with stable
-/// tokens. UUIDs (e.g. comment ids) are random per run, so byte-diffing them is
-/// meaningless — collapse them like timestamps.
+fn revision_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // The `"revision": "<token>"` JSON member (types.IssueDetails.Revision, on
+        // `bd show --json` since #5535). The token is the row's row_lock, which
+        // every create, update, close, reopen, claim and unclaim remints from
+        // crypto/rand (issueops.freshRowLock), so its value differs on every run.
+        // Only a NON-ZERO decimal token is collapsed: "0" (a never-stamped row)
+        // stays literal, and the member's name, presence and string type are
+        // untouched.
+        //
+        // The match is by member NAME over the raw text, before any JSON parse,
+        // so it collapses EVERY `"revision"` member holding such a string, at any
+        // depth and in plain (non-JSON) text too, not only the issue token. That
+        // includes a user metadata key named `revision`, which the in-scope
+        // --set-metadata/--metadata flags can set: a change to its value would
+        // pass the gate. No scenario sets one; use another key name in any that
+        // would. Pinned by normalize_collapses_revision_by_member_name_at_any_depth.
+        regex::Regex::new(r#"("revision"\s*:\s*")-?[1-9][0-9]*(")"#).expect("valid revision regex")
+    })
+}
+
+/// Replace volatile values (timestamps, host identity, random UUIDs, revision
+/// tokens) with stable tokens. UUIDs (e.g. comment ids) and revision tokens are
+/// random per run, so byte-diffing them is meaningless — collapse them like
+/// timestamps.
 pub fn normalize(s: &str) -> String {
-    let s = ts_regex().replace_all(s, "<TS>").into_owned();
+    let s = revision_regex()
+        .replace_all(s, "${1}<REV>${2}")
+        .into_owned();
+    let s = ts_regex().replace_all(&s, "<TS>").into_owned();
     let s = uuid_regex().replace_all(&s, "<UUID>").into_owned();
     s.replace(ACTOR_EMAIL, "<EMAIL>").replace(ACTOR_NAME, "<ACTOR>")
+}
+
+/// `normalize`, after first collapsing this run's own workspace directory to
+/// `<WORKSPACE>`. Each run gets a fresh random tempdir, so any output that
+/// echoes it (e.g. the "Found existing Dolt database: <dir>/.beads/..." error a
+/// scenario's own `init` step hits) differs on every run. Only these exact path
+/// strings are replaced, longest first, so a spelling that contains another
+/// (`/private/var/...` around `/var/...`) is replaced whole.
+pub fn normalize_in_workspace(s: &str, workspace: &[String]) -> String {
+    let mut paths: Vec<&str> = workspace
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !p.is_empty())
+        .collect();
+    paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
+    let mut s = s.to_string();
+    for p in paths {
+        s = s.replace(p, "<WORKSPACE>");
+    }
+    normalize(&s)
 }
 
 /// Run a scenario against `bin` in a throwaway workspace, returning the
@@ -103,6 +149,12 @@ pub fn normalize(s: &str) -> String {
 /// and to honor the workspace cwd (real bd uses embedded Dolt under `.beads/`).
 pub fn run_scenario(bin: &Path, sc: &Scenario) -> std::io::Result<Trace> {
     let work = tempfile::tempdir()?;
+    // Every spelling of the workspace bd may print: the tempdir as created and
+    // its symlink-resolved form (macOS tempdirs sit under /var -> /private/var).
+    let mut workspace = vec![work.path().to_string_lossy().into_owned()];
+    if let Ok(real) = work.path().canonicalize() {
+        workspace.push(real.to_string_lossy().into_owned());
+    }
     let run = |args: &[String]| -> std::io::Result<std::process::Output> {
         // Scrub the environment to an explicit whitelist. The upstream harness
         // inherited the FULL host env, so any host BEADS_*/BD_* var
@@ -142,8 +194,8 @@ pub fn run_scenario(bin: &Path, sc: &Scenario) -> std::io::Result<Trace> {
         steps.push(StepResult {
             args: args.clone(),
             exit: out.status.code().unwrap_or(-1),
-            stdout: normalize(&String::from_utf8_lossy(&out.stdout)),
-            stderr: normalize(&String::from_utf8_lossy(&out.stderr)),
+            stdout: normalize_in_workspace(&String::from_utf8_lossy(&out.stdout), &workspace),
+            stderr: normalize_in_workspace(&String::from_utf8_lossy(&out.stderr), &workspace),
         });
     }
     Ok(Trace {
@@ -323,6 +375,123 @@ mod tests {
         assert!(n.contains("<EMAIL>"));
         assert!(n.contains("<ACTOR>"));
         assert!(!n.contains("2026"));
+    }
+
+    #[test]
+    fn normalize_collapses_non_zero_revision_strings() {
+        // Two runs of the same `show --json`: only the minted token differs.
+        let run1 =
+            "[\n  {\n    \"id\": \"g-root\",\n    \"revision\": \"-1228122709301203494\"\n  }\n]\n";
+        let run2 =
+            "[\n  {\n    \"id\": \"g-root\",\n    \"revision\": \"5267907219149755461\"\n  }\n]\n";
+        assert_eq!(normalize(run1), normalize(run2));
+        assert!(normalize(run1).contains(r#""revision": "<REV>""#));
+        assert!(stdout_equiv(&normalize(run1), &normalize(run2), true));
+        assert_eq!(normalize(r#"{"revision":"42"}"#), r#"{"revision":"<REV>"}"#);
+
+        // Everything that is NOT a minted token keeps its literal value:
+        // "0" (a never-stamped row) must still diverge from a minted token.
+        assert_eq!(normalize(r#"{"revision":"0"}"#), r#"{"revision":"0"}"#);
+        assert!(!stdout_equiv(
+            &normalize(r#"{"revision":"0"}"#),
+            &normalize(r#"{"revision":"7"}"#),
+            false
+        ));
+        // a number-typed member (a wire-type change) is not collapsed,
+        assert_eq!(normalize(r#"{"revision":42}"#), r#"{"revision":42}"#);
+        // nor are other members whose names merely contain "revision",
+        assert_eq!(
+            normalize(r#"{"local_revision":"3"}"#),
+            r#"{"local_revision":"3"}"#
+        );
+        // nor the same text quoted inside a JSON string value.
+        let quoted = r#"{"description":"see \"revision\": \"12\""}"#;
+        assert_eq!(normalize(quoted), quoted);
+
+        // Dropping the member is still a divergence.
+        assert!(!stdout_equiv(
+            &normalize(r#"{"id":"a","revision":"9"}"#),
+            &normalize(r#"{"id":"a"}"#),
+            false
+        ));
+    }
+
+    #[test]
+    fn normalize_collapses_revision_by_member_name_at_any_depth() {
+        // The scope documented on revision_regex: the match is by member name over
+        // the raw text, not by position, so a user metadata key named "revision"
+        // is collapsed too and a change to its value is NOT a divergence.
+        let meta3 = r#"[{"id":"g-1","revision":"11","metadata":{"revision":"3"}}]"#;
+        let meta4 = r#"[{"id":"g-1","revision":"22","metadata":{"revision":"4"}}]"#;
+        assert_eq!(
+            normalize(meta3),
+            r#"[{"id":"g-1","revision":"<REV>","metadata":{"revision":"<REV>"}}]"#
+        );
+        assert!(stdout_equiv(&normalize(meta3), &normalize(meta4), false));
+        // Plain (non-JSON) text is matched as well.
+        assert_eq!(
+            normalize(r#"config "revision": "12" pinned"#),
+            r#"config "revision": "<REV>" pinned"#
+        );
+        // A metadata key with any other name keeps its value, so it still gates.
+        assert!(!stdout_equiv(
+            &normalize(r#"{"metadata":{"rev":"3"}}"#),
+            &normalize(r#"{"metadata":{"rev":"4"}}"#),
+            false
+        ));
+    }
+
+    #[test]
+    fn normalize_in_workspace_collapses_only_this_runs_workspace() {
+        // Listed short-first: the longer spelling must still be replaced whole.
+        let ws = vec![
+            "/var/t/.tmpAbC123".to_string(),
+            "/private/var/t/.tmpAbC123".to_string(),
+        ];
+        let err = "Found existing Dolt database: /private/var/t/.tmpAbC123/.beads/embeddeddolt/c\n";
+        assert_eq!(
+            normalize_in_workspace(err, &ws),
+            "Found existing Dolt database: <WORKSPACE>/.beads/embeddeddolt/c\n"
+        );
+        // Two runs that differ only in their random workspace normalize equal.
+        let other = vec!["/var/t/.tmpXyZ789".to_string()];
+        assert_eq!(
+            normalize_in_workspace("db at /var/t/.tmpAbC123/.beads", &ws),
+            normalize_in_workspace("db at /var/t/.tmpXyZ789/.beads", &other)
+        );
+        // A path that is not this run's workspace stays literal.
+        let foreign = "db at /var/t/.tmpXyZ789/.beads";
+        assert_eq!(normalize_in_workspace(foreign, &ws), foreign);
+        // The volatile-value normalizers still apply.
+        assert_eq!(
+            normalize_in_workspace(r#"{"revision":"5"}"#, &ws),
+            r#"{"revision":"<REV>"}"#
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_scenario_collapses_the_workspace_in_both_step_streams() {
+        // A stub bd that echoes its cwd on stdout and its symlink-resolved form
+        // on stderr, like the "Found existing Dolt database" error: both must
+        // reach the trace as <WORKSPACE>, so the run's random tempdir never does.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bd");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\npwd\necho \"Found existing Dolt database: $(pwd -P)/.beads/x\" >&2\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let sc = Scenario::new("wiring", "w", &[&["show", "--json"]]);
+        let trace = run_scenario(&bin, &sc).unwrap();
+        assert_eq!(trace.steps.len(), 1);
+        assert_eq!(trace.steps[0].stdout, "<WORKSPACE>\n");
+        assert_eq!(
+            trace.steps[0].stderr,
+            "Found existing Dolt database: <WORKSPACE>/.beads/x\n"
+        );
     }
 
     #[test]

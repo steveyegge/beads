@@ -129,15 +129,15 @@ func installGemini(env geminiEnv, project bool, stealth bool) error {
 		if legacy == command {
 			continue // never remove the variant we're about to add
 		}
-		removeHookCommand(hooks, "SessionStart", legacy)
-		removeHookCommand(hooks, "PreCompress", legacy)
+		removeHookCommand(env.stdout, hooks, "SessionStart", legacy)
+		removeHookCommand(env.stdout, hooks, "PreCompress", legacy)
 	}
 	// Also clear any --hook-json registration from PreCompress. Beads previously
 	// registered bd prime on PreCompress before we discovered that Gemini's
 	// PreCompress event is advisory-only and cannot inject additionalContext
 	// into the model regardless of output format. Re-running setup migrates cleanly.
-	removeHookCommand(hooks, "PreCompress", "bd prime --hook-json")
-	removeHookCommand(hooks, "PreCompress", "bd prime --stealth --hook-json")
+	removeHookCommand(env.stdout, hooks, "PreCompress", "bd prime --hook-json")
+	removeHookCommand(env.stdout, hooks, "PreCompress", "bd prime --stealth --hook-json")
 
 	if addHookCommand(hooks, "SessionStart", command) {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
@@ -246,8 +246,8 @@ func removeGemini(env geminiEnv, project bool) error {
 				"bd prime --stealth --hook-json",
 			}
 			for _, cmd := range variants {
-				removeHookCommand(hooks, "SessionStart", cmd)
-				removeHookCommand(hooks, "PreCompress", cmd)
+				removeHookCommand(env.stdout, hooks, "SessionStart", cmd)
+				removeHookCommand(env.stdout, hooks, "PreCompress", cmd)
 			}
 
 			data, err = json.MarshalIndent(settings, "", "  ")

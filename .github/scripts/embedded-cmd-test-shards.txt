@@ -123,14 +123,22 @@
 100 49 TestEmbeddedInitAPushConsentAndRemoteBootstrap
 
 100 50 TestEmbeddedDiffConcurrent
+100 50 TestEmbeddedVersionOutputShape
 
+100 51 TestEmbeddedHistoryAndShowAsOfReadDoltCommits
 100 51 TestEmbeddedInitGitBootstrapRoutingFreshQuiet
 
+100 52 TestEmbeddedConfigSetOtherKeysSkipTheVersionedHistoryScan
 100 52 TestEmbeddedSwarmConcurrent
 
+100 53 TestEmbeddedIfRevisionOrdinaryCAS
 100 53 TestEmbeddedInitSelectedExcludeRoutingStealthDecoyQuiet
 
+100 54 TestEmbeddedDiscoveryPinsEnvFileReadonly
+100 54 TestEmbeddedFormatJSONAliasMatchesJSON
+100 54 TestEmbeddedInitAgentArtifactsGolden
 100 54 TestEmbeddedSearchConcurrent
+100 54 TestEmbeddedShowAsOfFailureExitCodes
 
 100 55 TestEmbeddedUndefer
 100 55 TestEmbeddedVersionedHistorySwitchScansEveryRowNotOnePage

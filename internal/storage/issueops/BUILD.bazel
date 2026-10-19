@@ -210,6 +210,7 @@ go_test(
         "version_history_number_admission_test.go",
         "version_history_preenable_scan_test.go",
         "version_history_test.go",
+        "wake_defers_test.go",
         "wisp_routing_test.go",
     ],
     data = glob(["testdata/**"]) + [
@@ -228,6 +229,7 @@ go_test(
         "//internal/storage/journalscan",
         "//internal/storage/rowid",
         "//internal/storage/sqlbuild",
+        "//internal/storage/sqlcount",
         "//internal/types",
         "//internal/validation",
         "//issueops",

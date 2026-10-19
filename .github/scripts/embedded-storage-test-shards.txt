@@ -237,6 +237,7 @@
 40 10 TestGraphCounterContract
 40 10 TestIgnoredCursorHealRespectsOperatorOverride
 40 10 TestRunInTransactionPostCommitStageFailureIsIndeterminate
+40 10 TestVersionedHistoryOffMatchesPreStackGolden_Embedded
 40 10 TestWithPeerAuth_WarnsWhenStoredPeerSuppressesAmbientPasswordAmbient
 
 40 11 TestABumpUnderOneStoreIDMovesTheEpochSeenThroughEveryStoreID

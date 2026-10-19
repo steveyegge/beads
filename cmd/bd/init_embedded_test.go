@@ -482,6 +482,39 @@ func TestEmbeddedInitABasic(t *testing.T) {
 			t.Errorf("issue_prefix: got %q, want %q", val, "alpha")
 		}
 	})
+
+	// The project's .claude/settings.json still carries the bare `bd prime`
+	// SessionStart and PreCompact hooks an older bd registered. init's Claude
+	// install migrates them, and --quiet drops the migration's "Removed
+	// <event> hook" lines like the rest of the installers' progress.
+	t.Run("quiet_legacy_claude_hooks", func(t *testing.T) {
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+		settingsPath := filepath.Join(dir, ".claude", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("mkdir .claude: %v", err)
+		}
+		legacyHook := `[{"matcher": "", "hooks": [{"type": "command", "command": "bd prime"}]}]`
+		legacy := `{"hooks": {"SessionStart": ` + legacyHook + `, "PreCompact": ` + legacyHook + `}}`
+		if err := os.WriteFile(settingsPath, []byte(legacy), 0o644); err != nil {
+			t.Fatalf("seed settings.json: %v", err)
+		}
+		args := []string{"--prefix", "legacyhooks"}
+		if database, seeded := seededInitDatabase(args); seeded {
+			seedEmbeddedSchema(t, dir, database)
+		}
+
+		if out := runBDInit(t, bd, dir, args...); out != "" {
+			t.Errorf("bd init --quiet should print nothing, got:\n%s", out)
+		}
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("read settings.json: %v", err)
+		}
+		if got := string(data); !strings.Contains(got, `"bd prime --hook-json"`) || strings.Contains(got, `"bd prime"`) || strings.Contains(got, "PreCompact") {
+			t.Errorf("legacy hooks not migrated to the SessionStart --hook-json hook:\n%s", got)
+		}
+	})
 }
 
 func TestEmbeddedInitAForkAutoContributor(t *testing.T) {

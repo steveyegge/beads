@@ -48,6 +48,17 @@ import (
 //     so would treating an interrupted wait as fail-open.
 //   - EXCLUSIVE failures of any kind are hard errors: maintenance refuses
 //     rather than pretends.
+//   - Strict --readonly is mutation-free (effectiveRootStorePolicy), so its
+//     SHARED hold opens the gate files read-only and never creates them (see
+//     workspacegate.Options.ReadOnly). A gate file that does not exist means
+//     nothing has ever been gated there, so the command proceeds holding
+//     nothing; an existing one is held SHARED like any other command's.
+//     Residual: on a workspace that has never been gated, a strict readonly
+//     command is invisible to a maintenance operation that starts while it
+//     runs. Every other command keeps creating the files, which is what makes
+//     it visible. The gate follows the strict flag only: allowlisted reads
+//     and --dry-run/--inspect previews also open the store read-only, but
+//     they keep creating the files, so they stay visible too.
 //
 // Known residual (PR-B2 scope, documented honestly): the pre-chokepoint
 // DISCOVERY code paths (configfile.Load at main.go's early config probe and
@@ -389,6 +400,13 @@ func buildWorkspaceGateSet(beadsDir string, extraRoots ...string) ([]workspacega
 // workspace is selected. It stores the handle in workspaceGateHandle on
 // success; on the fail-open paths it returns nil with no handle.
 func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beadsDir string) error {
+	// A process can execute more than one command in tests and embedded uses.
+	// Never carry the preceding command's handle into an absent-workspace or
+	// failed acquisition path, where no new gate is held. Gates outlive the
+	// store, so close whatever store the preceding command left open before
+	// its gates drop; this command opens its own only after this point.
+	closeStoreBeforeGateRelease()
+	releaseWorkspaceGates()
 	exclusive := commandNeedsExclusiveGate(cmd)
 
 	// No workspace on disk: nothing to guard, and the store-open path will
@@ -423,6 +441,9 @@ func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beads
 		opts = workspacegate.Options{
 			Wait:                  sharedWait,
 			IgnoreQueuedExclusive: workspacegate.InheritedSharedHold(),
+			// readonlyMode is already resolved here. Strict readonly promises not to
+			// mutate the workspace, so its SHARED hold must not create gate files.
+			ReadOnly: readonlyMode,
 		}
 		if sharedWait > 0 {
 			opts.OnWait, stopNotice = delayedGateNotice()
@@ -472,7 +493,10 @@ func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beads
 		return nil
 	}
 	workspaceGateHandle = h
-	if !exclusive {
+	// A strict readonly hold on a never-gated workspace locks nothing, so it
+	// blocks no exclusive acquirer and gives a child nothing to stand behind:
+	// advertising it would let the child skip the queue for no reason.
+	if !exclusive && !h.Empty() {
 		advertiseSharedHold()
 	}
 	return nil
