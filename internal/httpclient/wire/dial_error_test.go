@@ -116,16 +116,33 @@ func TestAHostThatDoesNotResolveIsNamed(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // TestACanceledDialIsTheCallersOwn: the caller giving up mid-connect is not a
-// connect failure to explain.
+// connect failure to explain, even when what comes back is a genuine dial error
+// (here a refusal) rather than the cancellation. The round tripper hands the
+// dial error back directly, as net/http does when the dial loses the race with
+// the cancel, so the ctx.Err() guard is what keeps it from becoming a DialError.
 func TestACanceledDialIsTheCallersOwn(t *testing.T) {
 	c, cancel := context.WithCancel(context.Background())
-	client := dialFailingClient(t, "https://bd.example", func(ctx context.Context, _, _ string) (net.Conn, error) {
-		cancel()
-		<-ctx.Done()
-		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: ctx.Err()}
+	addr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 30699}
+	u, err := url.Parse("https://bd.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(u, nil, Options{
+		ResponseHeaderTimeout: testHeaderTimeout,
+		HTTPClient: &http.Client{Timeout: DefaultTimeout, Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			cancel()
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Addr: addr, Err: syscall.ECONNREFUSED}
+		})},
 	})
-	err := client.Do(c, Request{Op: OpListReadyWork, Method: http.MethodGet, Path: PathReady}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.Do(c, Request{Op: OpListReadyWork, Method: http.MethodGet, Path: PathReady}, nil)
 	var de *DialError
 	if errors.As(err, &de) {
 		t.Fatalf("a dial the caller canceled was reported as a connect failure: %v", err)
@@ -153,5 +170,54 @@ func TestADialSlowerThanTheHeaderTimeoutIsStillAConnectFailure(t *testing.T) {
 	requireDialError(t, err)
 	if dials != 1 || StallRetryCount() != before {
 		t.Errorf("dialed %d times with %d stall retries, want one dial and no retry", dials, StallRetryCount()-before)
+	}
+}
+
+// TestADialErrorKeepsTheTransportsWords: naming the failed step must not drop
+// the transport's own text, which callers classify an unreachable server by.
+// gc's availability tier (internal/dispatch transientNeedles) and gc hook's
+// store-unavailable markers match "connection refused", "dial tcp" and
+// "i/o timeout" in bd's error; a refused connect that lost those words would
+// quarantine a control bead on the first refusal instead of retrying.
+func TestADialErrorKeepsTheTransportsWords(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a Windows refusal is worded by WSAECONNREFUSED")
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	refused := dialFailingClient(t, "http://"+addr, nil).Do(ctx(t), Request{Op: OpListReadyWork, Method: http.MethodGet, Path: PathReady}, nil)
+
+	timeoutAddr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 30699}
+	timedOut := dialFailingClient(t, "https://bd.example:30699", func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Addr: timeoutAddr, Err: os.ErrDeadlineExceeded}
+	}).Do(ctx(t), Request{Op: OpListReadyWork, Method: http.MethodGet, Path: PathReady}, nil)
+
+	unresolved := dialFailingClient(t, "https://nowhere.invalid", func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "nowhere.invalid", IsNotFound: true}}
+	}).Do(ctx(t), Request{Op: OpListReadyWork, Method: http.MethodGet, Path: PathReady}, nil)
+
+	for _, tc := range []struct {
+		name string
+		err  error
+		want []string
+	}{
+		{"refused", refused, []string{"refused: nothing is listening on that port", "dial tcp " + addr, "connection refused"}},
+		{"timed out", timedOut, []string{"nothing answered", "dial tcp 192.0.2.10:30699", "i/o timeout"}},
+		{"unresolved", unresolved, []string{"cannot resolve nowhere.invalid", "dial tcp", "no such host"}},
+	} {
+		requireDialError(t, tc.err)
+		msg := tc.err.Error()
+		for _, want := range tc.want {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: error %q does not contain %q", tc.name, msg, want)
+			}
+		}
+		if strings.Contains(msg, `Get "`) {
+			t.Errorf("%s: error %q still names the request", tc.name, msg)
+		}
 	}
 }

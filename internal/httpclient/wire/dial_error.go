@@ -31,15 +31,30 @@ type DialError struct {
 func (e *DialError) Error() string {
 	switch {
 	case e.Resolve:
-		return fmt.Sprintf("%s: cannot resolve %s: %v", e.Op, e.Addr, e.cause())
+		return fmt.Sprintf("%s: cannot resolve %s: %v (%s)", e.Op, e.Addr, e.cause(), e.transportText())
 	case errors.Is(e.Err, syscall.ECONNREFUSED):
-		return fmt.Sprintf("%s: TCP connection to %s refused: nothing is listening on that port", e.Op, e.Addr)
+		return fmt.Sprintf("%s: TCP connection to %s refused: nothing is listening on that port (%s)", e.Op, e.Addr, e.transportText())
 	case isTimeout(e.Err):
-		return fmt.Sprintf("%s: no TCP connection to %s after %s: nothing answered, so a firewall may be dropping the connection or the host is down (%v)",
-			e.Op, e.Addr, e.After.Round(100*time.Millisecond), e.cause())
+		return fmt.Sprintf("%s: no TCP connection to %s after %s: nothing answered, so a firewall may be dropping the connection or the host is down (%s)",
+			e.Op, e.Addr, e.After.Round(100*time.Millisecond), e.transportText())
 	default:
-		return fmt.Sprintf("%s: TCP connection to %s failed: %v", e.Op, e.Addr, e.cause())
+		return fmt.Sprintf("%s: TCP connection to %s failed (%s)", e.Op, e.Addr, e.transportText())
 	}
+}
+
+// transportText is the transport's own account of the failed dial without the
+// request it was for: the *net.OpError's text ("dial tcp 10.0.0.1:443:
+// connect: connection refused"), or the whole error when there is none. Every
+// message keeps it, because what callers match on is that vocabulary: gc
+// classifies an unreachable store by "connection refused", "dial tcp" and
+// "i/o timeout" in bd's error text (dispatch's availability tier, gc hook's
+// store-unavailable exit), and naming the failed step must not hide it.
+func (e *DialError) transportText() string {
+	var opErr *net.OpError
+	if errors.As(e.Err, &opErr) {
+		return opErr.Error()
+	}
+	return e.Err.Error()
 }
 
 // cause is the innermost network error, without the request and address the
