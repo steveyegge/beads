@@ -1812,10 +1812,10 @@ func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
 		expected string // ignored when refused
 	}{
 		{
-			name:     "line at the scanner limit is refused, not truncated",
-			content:  "k1: v1\n" + strings.Repeat("x", bufio.MaxScanTokenSize) + "\nk2: v2",
-			key:      "k1",
-			refused:  true,
+			name:    "line at the scanner limit is refused, not truncated",
+			content: "k1: v1\n" + strings.Repeat("x", bufio.MaxScanTokenSize) + "\nk2: v2",
+			key:     "k1",
+			refused: true,
 		},
 		{
 			// One byte under the cliff the token still fits the buffer, so
