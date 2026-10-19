@@ -275,7 +275,10 @@ instead of 60s, because `bd serve` gives such a request its
 `--large-apply-ceiling` (5 minutes by default) and finishes it even after the
 client has given up. A server whose ceiling is raised past about 5m15s can
 still outlast the client. A dial or TLS timeout stays a plain connection
-error, since the server never saw the request. `off` turns off only the
+error, since the server never saw the request, and a connect that fails says
+so: it names the address that refused the connection (nothing listening) or
+never answered (a filtered port or a down host, after the dialer's 30s), or
+the host name that did not resolve. `off` turns off only the
 header timer: a reset read is still retried, and a write's timeout is still
 reported as above.
 
