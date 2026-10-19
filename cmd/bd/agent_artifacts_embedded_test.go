@@ -118,14 +118,16 @@ func TestEmbeddedInitAgentArtifactsGolden(t *testing.T) {
 }
 
 // agentArtifactPaths are the Claude agent artifacts bd init and bd setup
-// claude write in a project ($PROJECT), and the two a global install writes
-// in the home directory ($HOME) instead.
+// claude write in a project ($PROJECT), and those in the home directory
+// ($HOME): the $HOME/.claude/ files a global install writes, and the
+// $HOME/CLAUDE.md an older --global run from $HOME wrote.
 var agentArtifactPaths = []string{
 	"$PROJECT/.claude/settings.json",
 	"$PROJECT/.claude/settings.local.json",
 	"$PROJECT/AGENTS.md",
 	"$PROJECT/CLAUDE.md",
 	"$HOME/.claude/settings.json",
+	"$HOME/.claude/CLAUDE.md",
 	"$HOME/CLAUDE.md",
 }
 
