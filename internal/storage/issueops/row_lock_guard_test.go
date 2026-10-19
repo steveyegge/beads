@@ -141,19 +141,32 @@ var funcNameExemptions = map[string]string{
 	// ExpectedVersion CAS reject a row it should still recognize.
 	"resolveOneConflictRow": "whole-row `theirs` adoption: the adopted row_lock already vouches for the (identical) adopted content",
 
-	// RecordVersionInTx (version_history.go) runs immediately after the
+	// recordVersionAtInTx (version_history.go) is the shared body behind all
+	// three public entry points: RecordVersionInTx (update-shaped),
+	// RecordVersionForCreateInTx (create-shaped, design §16.2b's write fence,
+	// be-h89oq) and the R7.1 test-support twin RecordVersionAtInTx
+	// (gastownhall/beads#5898 rev 9, gastownhall/beads#6136).
+	// The three UPDATE issues statements this guard would otherwise flag live
+	// here, not in any public wrapper, so the exemption is keyed to this name.
+	// The two production entry points' callers run it immediately after the
 	// mutation it is snapshotting — create.go/update.go's own writes, or
 	// domain/db's Insert/Update — and those callers have already minted a
 	// fresh row_lock in that same INSERT/UPDATE, in the same transaction.
-	// RecordVersionInTx's own `UPDATE issues SET current_revision = ?` only
-	// advances a denormalized pointer to the issue_versions row it just
-	// inserted; it deliberately does not touch row_lock at all (not even to
-	// carry the existing value forward) because reminting here would bump the
-	// token a second time within one transaction, invalidating the
-	// RowVersion/CAS value the primary mutation's own caller already
-	// captured and could cause a legitimate subsequent CAS check to fail as a
-	// spurious lost update.
-	"RecordVersionInTx": "runs after the primary mutation already minted a fresh row_lock in the same transaction; reminting here would double-bump the token and invalidate the RowVersion/CAS value already returned to that mutation's caller",
+	// RecordVersionAtInTx's fixture-only callers likewise run it only after a
+	// bare-create has already minted the row's row_lock, never as a row's
+	// first write. Every UPDATE issues statement this function issues writes
+	// only bookkeeping columns: the update-shaped and create-shaped UPDATE
+	// issues SET current_revision = ... statements advance the denormalized
+	// pointer to the issue_versions row just inserted (the create-shaped one
+	// also stamps participation_generation in the same statement), and the
+	// no-history stamp sets participation_generation alone on a create-shaped
+	// row it does not version. None touches row_lock at all (not even to carry
+	// the existing value forward) because reminting here would bump the token
+	// a second time within one transaction, invalidating the RowVersion/CAS
+	// value the primary mutation's own caller already captured and could
+	// cause a legitimate subsequent CAS check to fail as a spurious lost
+	// update.
+	"recordVersionAtInTx": "runs after the primary mutation (or, for RecordVersionAtInTx's fixture-only callers, a bare-create) already minted a fresh row_lock in the same transaction; reminting here would double-bump the token and invalidate the RowVersion/CAS value already returned to that mutation's caller — covers all three of its UPDATE issues statements (the update-shaped and create-shaped current_revision advances and the no-history participation_generation stamp), since all three public entry points delegate to this one shared body",
 }
 
 // TestAllIssueRowWritesStampRowLock is the load-bearing completeness guard for
