@@ -763,6 +763,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd link` works over a connected HTTP workspace.** It wrote through the
+  store's raw `AddDependencyWithOptions`, which the HTTP client refuses, so
+  every `bd link` failed there with `operation "AddDependencyWithOptions" not
+  supported by the http backend`, whatever the type. It now writes through
+  the `DependencyEditor` role, the route `bd dep add` takes, on the direct
+  and HTTP routes alike (the proxied-server route is unchanged). Over HTTP
+  that is one `dependencies:add` request, so `bd link` keeps accepting any
+  non-empty type of at most 32 characters (`owned-by`, `ships-in`, ...).
+  An empty or over-long type is still refused before anything is written,
+  and an edge that already exists with another type still reports the typed
+  conflict. On a Dolt store the history commit is now the role's, like
+  `bd dep add`'s: `bd: dep add <from> <to>` in place of
+  `dependency: add <type> <from> -> <to>`.
+
 - **Strict `--readonly` no longer creates workspace gate files.** A
   `bd --readonly` command took its shared workspace gates with
   create-if-missing, so on a workspace no bd command had gated yet it left
