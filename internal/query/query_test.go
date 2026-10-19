@@ -842,6 +842,38 @@ func TestQueryRejectsUppercaseDurationUnits(t *testing.T) {
 	}
 }
 
+// TestQuerySignedUppercaseDurationUnitStopsAtTheParser pins how a signed
+// uppercase unit fails. A signed digit run has no identifier fallback (the
+// user has to quote "-3-foo"), so with "M" not a unit, "+30M" lexes as the
+// number "+30" and then the identifier "M", and the parser rejects that stray
+// token as it already rejects the "x" of "+30x". It must not reach the
+// evaluator as a duration and fail there with the internal
+// "not a compact duration" error.
+func TestQuerySignedUppercaseDurationUnitStopsAtTheParser(t *testing.T) {
+	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		query   string
+		wantErr string
+	}{
+		{"created>+30M", `unexpected token "M" at position 11 (expected end of query)`},
+		{"created>-30M", `unexpected token "M" at position 11 (expected end of query)`},
+		// Control: an unknown lowercase unit already fails this way.
+		{"created>+30x", `unexpected token "x" at position 11 (expected end of query)`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			if _, err := Parse(tt.query); err == nil || err.Error() != tt.wantErr {
+				t.Errorf("Parse(%q) error = %v, want %q", tt.query, err, tt.wantErr)
+			}
+			if _, err := EvaluateAt(tt.query, now); err == nil || err.Error() != tt.wantErr {
+				t.Errorf("EvaluateAt(%q) error = %v, want %q", tt.query, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestCompactDurationGrammarReachesQueryPlane binds this package's duration
 // grammar to the shared one in internal/timeparsing, which owns it, in both
 // directions. The lexer classifies a duration with
