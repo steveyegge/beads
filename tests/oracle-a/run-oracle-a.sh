@@ -5,9 +5,9 @@
 #   REFERENCE  bd  — built from the merge base of HEAD and origin/main (the "before")
 #   CANDIDATE  bd  — built from the current working tree      (the "after")
 # and diffs each step (exit code, stderr, JSON-aware stdout) with volatile
-# normalization (<TS>/<UUID>/<ACTOR>/<EMAIL>). ZERO in-scope divergences is the
-# gate: any in-scope FAIL means the change altered a user-visible bd behavior on
-# the covered contract surface.
+# normalization (<TS>/<UUID>/<ACTOR>/<EMAIL>/<REV>/<WORKSPACE>). ZERO in-scope
+# divergences is the gate: any in-scope FAIL means the change altered a
+# user-visible bd behavior on the covered contract surface.
 #
 # The differential is driven by the Rust conformance harness under harness/
 # (see harness/PROVENANCE.md); the harness is pointed at two Go bd binaries and
