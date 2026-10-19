@@ -110,6 +110,23 @@ func TestOrderSiblingsByDeps_ReadySetFollowsCallerCompare(t *testing.T) {
 	}
 }
 
+func TestOrderSiblingsByDeps_CycleFallbackFollowsCallerCompare(t *testing.T) {
+	// x <-> y cycle: x wins on priority and ID, but y closed more recently, so
+	// the cycle fallback under --sort closed must emit y first.
+	x := closedSibling("pa-x", 0, 2)
+	y := closedSibling("pa-y", 1, 1)
+	deps := map[string][]*types.Dependency{
+		"pa-x": {schedDep("pa-x", "pa-y")},
+		"pa-y": {schedDep("pa-y", "pa-x")},
+	}
+
+	got := idsOf(orderSiblingsByDeps([]*types.Issue{x, y}, deps, compareIssuesForTree("closed", false)))
+	want := []string{"pa-y", "pa-x"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("--sort closed cycle fallback: got %v, want %v", got, want)
+	}
+}
+
 func TestDepEdgeDisplay(t *testing.T) {
 	cases := []struct {
 		name       string
