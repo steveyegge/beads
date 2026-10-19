@@ -919,6 +919,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver sends a `time.Time` as its wall clock with no zone, so a library
   caller paging with a cursor in another zone was answered from the wrong
   position there (server Dolt was unaffected).
+- **`bd codex-hook SessionStart` no longer leaves the next prompt to prime the
+  session again.** A `PostCompact` arms a per-session refresh marker so the
+  next `UserPromptSubmit` re-injects `bd prime`. `SessionStart` injected prime
+  but left that marker in place, so a session that compacted and then resumed
+  or cleared got the same payload twice in a row. `SessionStart` now drops the
+  marker, as `bd cursor-hook` already did (#6273).
 - **`bd setup claude --global` keeps its beads section in `~/.claude/CLAUDE.md`.**
   It wrote the section into the current directory's `CLAUDE.md`: run from your
   home directory it created `~/CLAUDE.md`, which by default stops Claude Code
