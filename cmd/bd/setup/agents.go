@@ -143,12 +143,22 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 
 	if currentContent != "" {
 		if containsBeadsMarker(currentContent) {
-			newContent := updateBeadsSectionWithOpts(currentContent, profile, opts)
-			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
-				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+			// Like bd init's updateAgentFile: write only when the section
+			// actually changes, so a rerun leaves a current file alone.
+			newContent, changed, err := agents.ReplaceSectionWithOpts(currentContent, profile, opts)
+			switch {
+			case err != nil:
+				_, _ = fmt.Fprintf(env.stderr, "Error: failed to update beads section in %s: %v\n", env.agentsPath, err)
 				return err
+			case !changed:
+				_, _ = fmt.Fprintf(env.stdout, "✓ %s already has the current beads section\n", agentsFile)
+			default:
+				if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
+					_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+					return err
+				}
+				_, _ = fmt.Fprintf(env.stdout, "✓ Updated existing beads section in %s\n", agentsFile)
 			}
-			_, _ = fmt.Fprintf(env.stdout, "✓ Updated existing beads section in %s\n", agentsFile)
 		} else {
 			newContent := currentContent + "\n\n" + beadsSection
 			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
