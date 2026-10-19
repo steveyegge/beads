@@ -127,20 +127,28 @@ make install       # build and install bd to ~/.local/bin (canonical)
   executor neither. Make yours the default with a `build --config=...` line in
   the gitignored `.bazelrc.local`, or pass `BAZEL_FLAGS=...` to make.
 - Agents run tests only with `bazel test`, also while iterating on one
-  behavior: `bazel test //cmd/bd:bd_test --config=ci
-  --test_filter='^TestName$'` (a package's tests are
-  `//<dir>:<last dir element>_test`, the root package's `//:beads_test`; one
-  `--test_filter` covers every target named). Results are cached by input,
-  so re-running an unchanged target is free and the cached result is the same
-  evidence. `--config=ci` sets `BEADS_TEST_SKIP=dolt`, so Dolt-backed tests
-  skip and still pass; run them with `--test_env=BEADS_TEST_SKIP=
-  --test_env=BEADS_TEST_DOLT_SERVER=local
-  --test_env=BEADS_TEST_REQUIRE_DOLT_CONTAINER=1` or their lane in
-  engdocs/TESTING.md. Bazel runs only the test files `BUILD.bazel` lists:
-  run `make bazel-sync` after adding one. Finish with `make test`.
+  behavior:
+
+  ```bash
+  bazel test //cmd/bd:bd_test --config=ci --test_filter='^TestName$' --test_output=all
+  ```
+
+  A target also passes when the test never ran (a filter that matches
+  nothing, a skip, a file the configuration does not compile), so count a run
+  only when its log shows `--- PASS: TestName` and no `--- SKIP` for the test
+  or a `TestName/...` subtest: Go prints `--- PASS` for a test whose every
+  subtest skipped. "Check That the Test Ran" in
+  [engdocs/TESTING.md](engdocs/TESTING.md) names the tests `--config=ci` does
+  not run (Dolt-backed, `-short`-gated, integration-tagged, `TestEmbedded*`
+  and embedded-Dolt, files `BUILD.bazel` does not list) and the way into
+  each. An unchanged target returns its cached result, which is the same
+  evidence. Finish with `make test`.
 - Agents do not run `go test` (`./scripts/test.sh`, `make test-go`): CI does
   not enforce it, it skips nogo, gofmt and the guards, and agent hosts may
-  refuse it. It stays a convenience for humans working offline.
+  refuse it. It stays a convenience for humans working offline. The exception
+  is regenerating golden files (`make corpus-regen`, `make githooks-regen`,
+  `BD_UPDATE_GOLDEN=1`), which Bazel cannot do: see "Regenerating Golden
+  Files" in [engdocs/TESTING.md](engdocs/TESTING.md).
 - **Do NOT** use `go build -o bd ./cmd/bd`, `go install ./cmd/bd`, or raw
   `go run ./cmd/bd ...`: they bypass the canonical build path, leave stale
   binaries, and raw `go run` misses the `gms_pure_go` tag. Use `make install`,
