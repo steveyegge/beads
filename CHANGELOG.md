@@ -857,12 +857,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialization against the graph database, and every `metadata.json` rewrite
   (including the `config.json` to `metadata.json` migration) dropped the
   marker and the binding. Now any `graph_mode` other than `dependency`,
-  including a value bd does not recognize, makes every command that opens
-  or changes the workspace (`bd init`, `bd doctor` and `bd bootstrap`
-  included) refuse it before touching anything. The refusal names the
-  format and exits with code 16. Store-less commands such as `bd version`
-  and `bd help` still run, and `metadata.json` rewrites keep `graph_mode`
-  and the `graph_*` fields unchanged.
+  including a value bd does not recognize, makes every command that runs in
+  the workspace or names it with `--db` or `BEADS_DB` (`bd init`, `bd doctor`
+  and `bd bootstrap` included), and `bd create --repo` aimed at it, refuse it
+  before touching anything. The refusal names the format and exits with code
+  16, so installed beads git hooks refuse commits and pushes there too.
+  Commands that reach such a workspace only through a route from another
+  one, such as a routed `bd show`, fail without touching it, but not with
+  code 16. Store-less commands such as `bd version` and `bd help` still run.
+  A `metadata.json` rewrite keeps `graph_mode` and the `graph_*` fields
+  graph-preview builds write, and like those builds it omits a zero
+  `graph_schema_version` and a false `graph_ready`.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in

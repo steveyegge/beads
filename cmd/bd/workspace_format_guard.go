@@ -49,6 +49,20 @@ func checkWorkspaceFormat(cfg *configfile.Config, beadsDir string) error {
 	return &unsupportedWorkspaceFormatError{beadsDir: beadsDir, graphMode: cfg.GraphMode}
 }
 
+// checkDiscoveredWorkspaceFormat runs checkWorkspaceFormat on beadsDir's
+// metadata as LoadForDiscovery reads it, which never rewrites the workspace.
+// A path that opens or initializes a workspace without passing through command
+// admission runs it first: configfile.Load would otherwise migrate a legacy
+// config.json into metadata.json before the format check could refuse it.
+// Metadata that does not load is left to the caller's own load to report.
+func checkDiscoveredWorkspaceFormat(beadsDir string) error {
+	cfg, err := configfile.LoadForDiscovery(beadsDir)
+	if err != nil {
+		return nil
+	}
+	return checkWorkspaceFormat(cfg, beadsDir)
+}
+
 func isUnsupportedWorkspaceFormat(err error) bool {
 	var formatErr *unsupportedWorkspaceFormatError
 	return errors.As(err, &formatErr)

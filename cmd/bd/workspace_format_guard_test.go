@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -137,7 +138,9 @@ func TestWorkspaceFormatGuardAdmitsDependencyWorkspaces(t *testing.T) {
 
 // Routed writes, cross-repository reads and create --repo open another
 // workspace's store without passing through command admission, so the store
-// factories must refuse a graph workspace themselves, before any open.
+// factories must refuse a graph workspace themselves, before any open. That
+// includes one marked only by a legacy config.json, which configfile.Load
+// would migrate into metadata.json before a check of the loaded metadata ran.
 func TestStoreFactoriesRefuseGraphWorkspace(t *testing.T) {
 	pinLegacyUpgradeGuardEnv(t)
 	factories := map[string]func(context.Context, string) (storage.DoltStorage, error){
@@ -146,25 +149,82 @@ func TestStoreFactoriesRefuseGraphWorkspace(t *testing.T) {
 		"read-only":  newReadOnlyStoreFromConfig,
 		"preview":    newPreviewStoreFromConfig,
 	}
-	for name, open := range factories {
-		t.Run(name, func(t *testing.T) {
-			beadsDir := t.TempDir()
-			path := graphWorkspaceLayout{filename: "metadata.json", metadata: graphLinkWorkspaceMetadata, embedded: true}.write(t, beadsDir)
-			before := legacyUpgradeTreeDigest(t, beadsDir)
-			store, err := open(t.Context(), beadsDir)
-			if err == nil {
-				_ = store.Close()
+	for _, filename := range []string{"metadata.json", "config.json"} {
+		for name, open := range factories {
+			t.Run(filename+"/"+name, func(t *testing.T) {
+				beadsDir := t.TempDir()
+				path := graphWorkspaceLayout{filename: filename, metadata: graphLinkWorkspaceMetadata, embedded: true}.write(t, beadsDir)
+				before := legacyUpgradeTreeDigest(t, beadsDir)
+				store, err := open(t.Context(), beadsDir)
+				if err == nil {
+					_ = store.Close()
+				}
+				if !isUnsupportedWorkspaceFormat(err) {
+					t.Fatalf("%s open = %v, want unsupported workspace format refusal", name, err)
+				}
+				if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
+					t.Fatalf("%s open changed the workspace", name)
+				}
+				if got, readErr := os.ReadFile(path); readErr != nil || string(got) != graphLinkWorkspaceMetadata {
+					t.Fatalf("%s open rewrote %s: %q, %v", name, filename, got, readErr)
+				}
+			})
+		}
+	}
+}
+
+// Error framing and the bd dolt diagnostics read a workspace's metadata outside
+// the store factories: framing names the backend of an open that may have just
+// been refused, and bd dolt show and status, which admission guards already,
+// load and validate it again. None of them may migrate a graph workspace's
+// legacy config.json into metadata.json, and the diagnostics refuse it the way
+// admission does.
+func TestWorkspaceMetadataReadersLeaveGraphWorkspaceUnchanged(t *testing.T) {
+	pinLegacyUpgradeGuardEnv(t)
+	requireFormatExit := func(t *testing.T, name string, run func() error) {
+		t.Helper()
+		var err error
+		captureStderr(t, func() { err = run() })
+		if code, ok := exitCodeFromError(err); !ok || code != ExitUnsupportedWorkspaceFormat {
+			t.Fatalf("%s exit code = %d (%v), want %d", name, code, ok, ExitUnsupportedWorkspaceFormat)
+		}
+	}
+	readers := map[string]func(t *testing.T, beadsDir string){
+		"error framing": func(t *testing.T, beadsDir string) {
+			if got := backendNameForErrorFraming(beadsDir); got != configfile.BackendDolt {
+				t.Fatalf("backendNameForErrorFraming = %q, want %q", got, configfile.BackendDolt)
 			}
-			if !isUnsupportedWorkspaceFormat(err) {
-				t.Fatalf("%s open = %v, want unsupported workspace format refusal", name, err)
+		},
+		"dolt backend config": func(t *testing.T, beadsDir string) {
+			if _, err := loadDoltBackendConfig(beadsDir); !isUnsupportedWorkspaceFormat(err) {
+				t.Fatalf("loadDoltBackendConfig = %v, want unsupported workspace format refusal", err)
 			}
-			if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
-				t.Fatalf("%s open changed the workspace", name)
-			}
-			if got, readErr := os.ReadFile(path); readErr != nil || string(got) != graphLinkWorkspaceMetadata {
-				t.Fatalf("%s open rewrote metadata.json: %q, %v", name, got, readErr)
-			}
-		})
+		},
+		"dolt show": func(t *testing.T, _ string) {
+			requireFormatExit(t, "bd dolt show", func() error { return showDoltConfig(false) })
+		},
+		"dolt status": func(t *testing.T, _ string) {
+			requireFormatExit(t, "bd dolt status", func() error { return doltStatusCmd.RunE(doltStatusCmd, nil) })
+		},
+	}
+	for _, filename := range []string{"metadata.json", "config.json"} {
+		for name, read := range readers {
+			t.Run(filename+"/"+name, func(t *testing.T) {
+				beadsDir := t.TempDir()
+				// The embedded root lets workspace discovery select a
+				// workspace marked only by config.json.
+				path := graphWorkspaceLayout{filename: filename, metadata: graphLinkWorkspaceMetadata, embedded: true}.write(t, beadsDir)
+				t.Setenv("BEADS_DIR", beadsDir)
+				before := legacyUpgradeTreeDigest(t, beadsDir)
+				read(t, beadsDir)
+				if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
+					t.Fatalf("%s changed the workspace", name)
+				}
+				if got, err := os.ReadFile(path); err != nil || string(got) != graphLinkWorkspaceMetadata {
+					t.Fatalf("%s rewrote %s: %q, %v", name, filename, got, err)
+				}
+			})
+		}
 	}
 }
 

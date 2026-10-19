@@ -207,6 +207,12 @@ Examples:
 		}
 
 		if beadsDir == "" {
+			// Discovery passes over a .beads marked only by a legacy
+			// config.json. One in a format this build cannot open is refused
+			// as that, not reported as no workspace.
+			if err := checkUndiscoveredWorkspaceFormat(); err != nil {
+				return handleWorkspaceGuardError(err)
+			}
 			if jsonOutput {
 				if err := outputJSON(noWorkspaceBootstrapPayload()); err != nil {
 					return err

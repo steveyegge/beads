@@ -28,9 +28,11 @@ type Config struct {
 	GraphMode string `json:"graph_mode,omitempty"`
 
 	// Graph workspace binding, written by builds that create graph_mode
-	// workspaces. This build never reads them; they are carried unchanged so
-	// a Save round-trips them, and missing or mismatched values never
-	// authorize implicit bootstrap or migration.
+	// workspaces. This build never reads them, and missing or mismatched
+	// values never authorize implicit bootstrap or migration. A Save carries
+	// these known fields only, with the tags graph-preview builds declare: a
+	// zero graph_schema_version and a false graph_ready are omitted, as those
+	// builds omit them, and a graph_* key outside this set is not kept.
 	GraphScopeURL      string `json:"graph_scope_url,omitempty"`
 	GraphAuthorityID   string `json:"graph_authority_id,omitempty"`
 	GraphWorkspace     string `json:"graph_workspace,omitempty"`
