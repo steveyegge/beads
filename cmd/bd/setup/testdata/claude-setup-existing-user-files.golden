@@ -101,7 +101,6 @@ Restart Claude Code for changes to take effect.
 
 House rules live here.
 
-
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6ffdf896 -->
 [managed section body: byte-identical to internal/templates/agents/testdata/managed-section-minimal.md]
 <!-- END BEADS INTEGRATION -->
@@ -161,8 +160,6 @@ Removing Claude Code integration...
 # My Project
 
 House rules live here.
-
-
 
 === bd setup claude --check
 result: error: claude hooks not installed

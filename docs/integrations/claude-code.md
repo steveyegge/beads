@@ -15,12 +15,12 @@ bd setup claude
 
 This installs:
 - **SessionStart hook** - Runs `bd prime --hook-json` when a session starts. SessionStart also fires after context compaction, so the same hook refreshes context automatically.
-- **CLAUDE.md pointer** - A minimal beads section in your project's `CLAUDE.md` (skipped if `CLAUDE.md` is a symlink).
+- **CLAUDE.md pointer** - A minimal beads section in your project's `CLAUDE.md`, or with `--global` in your user-level `~/.claude/CLAUDE.md`, where it applies only in repositories that use beads (skipped if that file is a symlink).
 
 By default the hook is written to the project's `.claude/settings.json`. Variants:
 
 ```bash
-bd setup claude --global   # Install to ~/.claude/settings.json instead
+bd setup claude --global   # Install to ~/.claude/settings.json and ~/.claude/CLAUDE.md instead
 bd setup claude --stealth  # Stealth mode: flush only, no git operations
 bd setup claude --remove   # Remove the hook and the CLAUDE.md section
 ```

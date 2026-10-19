@@ -41,7 +41,6 @@ bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
 ```
 
 ## Non-Interactive Shell Commands
@@ -138,7 +137,7 @@ exit: 0
 Installing Claude hooks for this project...
 ✓ Hook already registered: SessionStart
 Installing Claude Code integration...
-✓ Updated existing beads section in CLAUDE.md
+✓ CLAUDE.md already has the current beads section
 
 ✓ Claude Code integration installed
   File: $PROJECT/CLAUDE.md
@@ -170,8 +169,6 @@ Removing Claude Code integration...
 # Project Instructions for AI Agents
 
 This file provides instructions and context for AI coding agents working on this project.
-
-
 
 ## Build & Test
 
@@ -239,8 +236,6 @@ Restart Claude Code for changes to take effect.
 
 This file provides instructions and context for AI coding agents working on this project.
 
-
-
 ## Build & Test
 
 _Add your build and test commands here_
@@ -258,7 +253,6 @@ _Add a brief overview of your project architecture_
 ## Conventions & Patterns
 
 _Add your project-specific conventions here_
-
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:cdcea925 -->
 [managed section body: byte-identical to internal/templates/agents/testdata/managed-section-minimal-no-remote.md]

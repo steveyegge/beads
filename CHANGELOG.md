@@ -499,6 +499,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Over an HTTP workspace, `bd ready --json` without `BD_JSON_ENVELOPE` no
+  longer sends `GET /v0/beads/ready:count` after a page the limit cut short:
+  the total only went into the stderr hint. It lists one row past the limit
+  instead, and the hint says more issues matched without saying how many
+  (the wording the proxied-server route already uses). A local store, and the
+  envelope's `pagination.total`, keep the total.
+- `bd` initializes its packages with `GOMAXPROCS` capped at 4 and hands it
+  back before `main` runs anything, so the garbage collections package
+  initialization triggers do not stop the world across every CPU of a large
+  host. On a 192-CPU machine this takes about 17 ms off every bd process. An
+  explicit `GOMAXPROCS` is restored as set.
 - Over an HTTP workspace, `bd ready` no longer fetches `GET /v0/beads/context`
   before its listing in every process only to learn whether the server
   enforces the external-dependency policy. The answer is kept for 5 minutes
@@ -770,6 +781,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An HTTP workspace whose server cannot be reached now says which step
+  failed. A connect that is refused names the address and says nothing is
+  listening; one that times out (a filtered port, a down host) names the
+  address that never answered and how long it waited; a host name that does
+  not resolve is named as such. The error was the transport's
+  `Get "https://…/v0/beads/context": dial tcp …: i/o timeout`, which named the
+  request rather than the address.
 - **`bd link` works over a connected HTTP workspace.** It wrote through the
   store's raw `AddDependencyWithOptions`, which the HTTP client refuses, so
   every `bd link` failed there with `operation "AddDependencyWithOptions" not
@@ -784,6 +802,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd dep add`'s: `bd: dep add <from> <to>` in place of
   `dependency: add <type> <from> -> <to>`.
 
+- **`bd query` reports an uppercase duration unit as an unparseable time, not
+  a negated internal error.** `created>30M` failed with
+  `not a compact duration: "-30M"`, naming a value nobody typed; it now fails
+  with `cannot parse time expression: "30M"`. A signed spelling
+  (`created>+30M`) stops at the parser, as `created>+30x` already did, so
+  quote one to match it as a literal (`label="+30M"`). Units remain lowercase
+  (`30min`, `6h`, `7d`, `2w`, `3m`, `1y`); help and docs already say so.
 - **Strict `--readonly` no longer creates workspace gate files.** A
   `bd --readonly` command took its shared workspace gates with
   create-if-missing, so on a workspace no bd command had gated yet it left
@@ -793,6 +818,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing gate file read-only and holds it shared as before, so a maintenance
   operation still sees it and a running one still makes it wait; when no gate
   file exists it holds nothing. Every other command still creates the files.
+- **Strict `--readonly` refuses `bd backup init`, `backup sync`,
+  `backup remove`, `backup restore` and `bd import`.** None of them checked
+  readonly mode. On a server-mode store they ran to completion under
+  `--readonly`: `backup init` and `backup remove` rewrote or emptied the
+  server's backup registry, `backup sync` wrote the backup destination,
+  `backup restore --force` replaced the store, and `import` wrote issues. On
+  an embedded store they failed with the storage layer's `store is read-only`
+  error instead, after `backup sync` had left `.beads/backup.lock` behind and
+  `backup restore` had left workspace-gate holder files. They now exit 1 with
+  the standard `Error: operation '<op>' is not allowed in read-only mode`,
+  and a restore is refused before it takes the exclusive workspace gate.
+  `bd import --dry-run` is refused too, as `bd create --dry-run` already is
+  and as a migration freeze already refuses it. `bd backup status` still runs
+  under `--readonly`.
 - **`bd init --server --external` no longer starts a Dolt server of its own.**
   Init builds its store config by hand and turned auto-start on for every
   server init, so an `--external` init that named no port launched a
@@ -811,6 +850,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no `.local_version` witness. A pre-1.0 witness, or a `.beads/dolt` that
   holds anything, is still refused, and commands other than `bd init` are
   decided as before.
+- **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
+  the beads section from `CLAUDE.md` (or, with the other setup recipes, from
+  `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in
+  the `CLAUDE.md` `bd init` writes, and setup then re-added the section after
+  two more, so every remove and re-add grew the file. `--remove` now takes
+  those blank lines with the section, and setup appends a section after one
+  blank line, so removing and re-adding it toggles between the same two files.
+  A re-added section goes at the end of the file.
+- **`bd config set` no longer truncates a `config.yaml` that has a line of
+  64 KiB or more.** Setting an undotted key (such as `actor` or `no-db`)
+  rewrites the file line by line, and a line of 65,536 bytes or more ended
+  that read early without an error, so the command reported success and wrote
+  back only the lines before the long one, plus the key it set. Dotted keys
+  and `bd config unset` were not affected. Setting an undotted key in such a
+  file now fails with `bufio.Scanner: token too long`. `bd config set` leaves
+  the file as it was. `set-many` stops at that key, but it has already written
+  any `config.yaml` keys listed before it, such as a dotted `sync.remote`.
 - **`bd show --as-of` exits 1 when it reads no issue.** A ref the Dolt AS OF
   read does not take (an instant, a versioned-history address), a ref that
   does not exist, or an issue that did not exist at the ref was reported on
@@ -819,12 +875,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error envelope on stdout under `--json`. A batch that reads at least one of
   its ids still exits 0. Both the direct and the proxied-server routes
   changed.
+- **`bd list --format dot` prints the same graph the same way every time.**
+  Nodes are declared in id order and edges in source, target and type order.
+  They used to follow the listing order, which breaks a priority tie by
+  creation time to the second, so two equal-priority issues swapped places
+  depending on whether they were created in the same second, and the
+  proxied-server route did not pin the order of one issue's edges. `--sort`
+  and `--limit` still choose which issues are listed.
 - **`bd init --quiet` no longer prints "Removed SessionStart hook" or "Removed
   PreCompact hook"** when the project's `.claude/settings.json` (or the legacy
   `.claude/settings.local.json`) still carries the bare `bd prime` hooks an
   older bd registered. The hooks are still migrated to the SessionStart
   `bd prime --hook-json` hook; the removal lines now go to the installer's own
   output, which `--quiet` discards, instead of straight to stdout.
+- **A new `AGENTS.md` from `bd init` lists `bd dolt push` in its Quick
+  Reference only when the workspace has a Dolt remote.** The managed Beads
+  section already left out its push lines when no Dolt remote is configured or
+  the workspace is `no-push`, but the Quick Reference above it still showed
+  `bd dolt push  # Push beads data to remote`. It now follows the same rule.
+  `bd init` still leaves an existing `AGENTS.md` alone outside the managed
+  section, and writes an `--agents-template` as given.
+- **`bd setup claude` no longer rewrites a CLAUDE.md whose beads section is
+  already current.** A rerun (and `bd init`, which runs it) wrote the same
+  bytes back as a new file, resetting its mode to 0644 and its mtime, and
+  reported "Updated existing beads section"; it now leaves the file alone and
+  reports the section current (the report `bd init` already gives a current
+  AGENTS.md). `bd setup factory`, `opencode`, `mux` and `gemini` share the
+  fix. A section whose END marker is missing or comes before BEGIN, which was
+  also reported as updated while nothing changed, is now reported as an error:
+  `bd setup factory`, `opencode` and `mux` exit 1 (`mux` before installing its
+  `.mux` hooks), while `claude` and `gemini` warn and carry on. When CLAUDE.md
+  is an `@AGENTS.md` stub and it is AGENTS.md that cannot be updated, `claude`
+  now names AGENTS.md in the warning and keeps the beads block left in the
+  stub, which it used to delete although AGENTS.md was never updated.
 - **Time-bound filters and the keyset cursor compare the same instant on every
   engine, whatever zone they are given in.** The storage filter builder binds
   every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,
@@ -836,6 +919,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver sends a `time.Time` as its wall clock with no zone, so a library
   caller paging with a cursor in another zone was answered from the wrong
   position there (server Dolt was unaffected).
+- **`bd setup claude --global` keeps its beads section in `~/.claude/CLAUDE.md`.**
+  It wrote the section into the current directory's `CLAUDE.md`: run from your
+  home directory it created `~/CLAUDE.md`, which by default stops Claude Code
+  reading `AGENTS.md` in the projects below it, and `--remove --global`
+  stripped the section a project's own install had put in its `CLAUDE.md`
+  while leaving that project's hooks in place. A global install and removal now
+  use only the user-level files beside `~/.claude/settings.json`. A new
+  `~/.claude/CLAUDE.md` holds just the section, rendered the same whichever
+  project you run from. Claude Code loads that file in every project, so its
+  section, task-tracking rules included, applies only in repositories that use
+  beads. With global or plugin hooks `--check` accepts it when the project's
+  instructions have none, or names `--global` when it is missing and the
+  project has no `CLAUDE.md` of its own. Run from `~/.claude`,
+  or from your home directory unless `~/CLAUDE.md` still holds a section an
+  earlier run left there, `--check` judges the user-level files, and from your
+  home directory it names `--global` when no hooks are installed. From your
+  home directory, whose `.claude/settings.json` is the global one, `--remove`
+  removes the user-level section with the hooks. If you ran `--global` before,
+  re-run `bd setup claude --global` to add the section to `~/.claude/CLAUDE.md`.
+  A section an earlier `--global` run left in a directory's `CLAUDE.md` stays
+  there; delete it by hand if you don't want it.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query

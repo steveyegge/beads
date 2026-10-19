@@ -11,7 +11,7 @@ Installing Claude Code integration...
 ✓ Created new CLAUDE.md with beads integration
 
 ✓ Claude Code integration installed
-  File: $ROOT/project/CLAUDE.md
+  File: $ROOT/home/.claude/CLAUDE.md
 No additional configuration needed!
 
 ✓ Claude Code integration installed
@@ -20,6 +20,10 @@ No additional configuration needed!
 Restart Claude Code for changes to take effect.
 --- stderr
 (empty)
+--- files: created $ROOT/home/.claude/CLAUDE.md
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:52c58e00 -->
+[managed section body: byte-identical to internal/templates/agents/testdata/managed-section-minimal-user.md]
+<!-- END BEADS INTEGRATION -->
 --- files: created $ROOT/home/.claude/settings.json
 {
   "hooks": {
@@ -36,39 +40,12 @@ Restart Claude Code for changes to take effect.
     ]
   }
 }
---- files: created $ROOT/project/CLAUDE.md
-# Project Instructions for AI Agents
-
-This file provides instructions and context for AI coding agents working on this project.
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6ffdf896 -->
-[managed section body: byte-identical to internal/templates/agents/testdata/managed-section-minimal.md]
-<!-- END BEADS INTEGRATION -->
-
-
-## Build & Test
-
-_Add your build and test commands here_
-
-```bash
-# Example:
-# npm install
-# npm test
-```
-
-## Architecture Overview
-
-_Add a brief overview of your project architecture_
-
-## Conventions & Patterns
-
-_Add your project-specific conventions here_
 
 === bd setup claude --check
 result: ok
 --- stdout
 ✓ Global hooks installed: $ROOT/home/.claude/settings.json
-✓ Claude Code integration installed: $ROOT/project/CLAUDE.md (current)
+✓ Claude Code integration installed: $ROOT/home/.claude/CLAUDE.md (current)
 --- stderr
 (empty)
 --- files: unchanged
@@ -83,34 +60,12 @@ Removing Claude Code integration...
 ✓ Claude hooks removed
 --- stderr
 (empty)
+--- files: modified $ROOT/home/.claude/CLAUDE.md
+(empty)
 --- files: modified $ROOT/home/.claude/settings.json
 {
   "hooks": {}
 }
---- files: modified $ROOT/project/CLAUDE.md
-# Project Instructions for AI Agents
-
-This file provides instructions and context for AI coding agents working on this project.
-
-
-
-## Build & Test
-
-_Add your build and test commands here_
-
-```bash
-# Example:
-# npm install
-# npm test
-```
-
-## Architecture Overview
-
-_Add a brief overview of your project architecture_
-
-## Conventions & Patterns
-
-_Add your project-specific conventions here_
 
 === bd setup claude --check
 result: error: claude hooks not installed

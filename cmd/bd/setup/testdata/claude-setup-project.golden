@@ -79,7 +79,7 @@ result: ok
 Installing Claude hooks for this project...
 ✓ Hook already registered: SessionStart
 Installing Claude Code integration...
-✓ Updated existing beads section in CLAUDE.md
+✓ CLAUDE.md already has the current beads section
 
 ✓ Claude Code integration installed
   File: $ROOT/project/CLAUDE.md
@@ -111,8 +111,6 @@ Removing Claude Code integration...
 # Project Instructions for AI Agents
 
 This file provides instructions and context for AI coding agents working on this project.
-
-
 
 ## Build & Test
 
