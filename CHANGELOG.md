@@ -863,6 +863,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   older bd registered. The hooks are still migrated to the SessionStart
   `bd prime --hook-json` hook; the removal lines now go to the installer's own
   output, which `--quiet` discards, instead of straight to stdout.
+- **A new `AGENTS.md` from `bd init` lists `bd dolt push` in its Quick
+  Reference only when the workspace has a Dolt remote.** The managed Beads
+  section already left out its push lines when no Dolt remote is configured or
+  the workspace is `no-push`, but the Quick Reference above it still showed
+  `bd dolt push  # Push beads data to remote`. It now follows the same rule.
+  `bd init` still leaves an existing `AGENTS.md` alone outside the managed
+  section, and writes an `--agents-template` as given.
 - **`bd setup claude` no longer rewrites a CLAUDE.md whose beads section is
   already current.** A rerun (and `bd init`, which runs it) wrote the same
   bytes back as a new file, resetting its mode to 0644 and its mtime, and
