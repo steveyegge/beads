@@ -515,6 +515,7 @@ func TestUnsetRefusesShapesItCannotEdit(t *testing.T) {
 		// probe refuses the whole class, in either spelling, at any
 		// indentation the flow body chooses.
 		{name: "multi-line flow mapping, nested", seed: "sync:\n    remote: {url: a,\n        branch: b}\nnode_id: mini\n", key: "sync.remote", want: "spans more than one line"},
+		{name: "multi-line flow mapping, flat spelling", seed: "sync.remote: {url: a,\n  branch: b}\nnode_id: mini\n", key: "sync.remote", want: "spans more than one line"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
