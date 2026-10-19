@@ -295,9 +295,15 @@ func (f *discoveryPinFixture) normalize(s string, stderr bool) string {
 }
 
 // TestDiscoveryRefusalPinsMissingMetadata pins discovery when no workspace,
-// or a workspace without metadata.json and without a database, is found.
+// a workspace without metadata.json and without a database, or a .beads that
+// is a regular file is found.
 func TestDiscoveryRefusalPinsMissingMetadata(t *testing.T) {
 	noBeads := func(f *discoveryPinFixture) (string, []string) { return f.project("p"), nil }
+	regularFileBeads := func(f *discoveryPinFixture) (string, []string) {
+		cwd := f.project("p")
+		f.write("p/.beads", "not a workspace\n")
+		return cwd, nil
+	}
 	runDiscoveryPinCases(t, []discoveryPinCase{
 		{
 			name:   "no-beads-dir/list",
@@ -354,6 +360,23 @@ func TestDiscoveryRefusalPinsMissingMetadata(t *testing.T) {
 			},
 			args:   []string{"where"},
 			stdout: "$ROOT/p/.beads\n",
+		},
+		{
+			// The working-directory walk selects a .beads that is a regular
+			// file, then fails to read its metadata.json (the BEADS_DIR form
+			// is in TestDiscoveryRefusalPinsExplicitBeadsDir).
+			name:   "beads-is-regular-file/list",
+			setup:  regularFileBeads,
+			args:   []string{"list"},
+			exit:   1,
+			stderr: "Error: loading config: reading config: open $ROOT/p/.beads/metadata.json: not a directory\n",
+		},
+		{
+			name:   "beads-is-regular-file/where",
+			setup:  regularFileBeads,
+			args:   []string{"where"},
+			exit:   1,
+			stderr: "Error: loading config: reading config: open $ROOT/p/.beads/metadata.json: not a directory\n",
 		},
 	})
 }
