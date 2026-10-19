@@ -1035,6 +1035,43 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 	})
 
+	// The common global case: the project has its own CLAUDE.md with no
+	// beads section, and the user-level file carries the section.
+	t.Run("global install beside project instructions without a section", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+		if err := os.WriteFile(globalInstructions, []byte(agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if err := os.WriteFile(filepath.Join(env.projectDir, claudeInstructionsFile), []byte("# Mine\n"), 0o644); err != nil {
+			t.Fatalf("write project %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+		}
+	})
+
+	// From the home directory a ~/CLAUDE.md without a section is not the
+	// file to fix: the project hint would add the section there.
+	t.Run("home instructions without a section checked from home", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		if err := os.WriteFile(filepath.Join(env.homeDir, claudeInstructionsFile), []byte("# Mine\n"), 0o644); err != nil {
+			t.Fatalf("write home %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); !errors.Is(err, errAgentsFileMissing) {
+			t.Fatalf("expected errAgentsFileMissing, got %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
 	t.Run("stale user-level section", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
