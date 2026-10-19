@@ -1817,6 +1817,23 @@ func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
 			key:      "k1",
 			refused:  true,
 		},
+		{
+			// One byte under the cliff the token still fits the buffer, so
+			// both the update and the append branches must behave exactly as
+			// they do for a short document.
+			name:     "line one byte under the limit still updates a present key",
+			content:  "k1: v1\n" + strings.Repeat("x", bufio.MaxScanTokenSize-1) + "\nk2: v2",
+			key:      "k1",
+			refused:  false,
+			expected: "k1: true\n" + strings.Repeat("x", bufio.MaxScanTokenSize-1) + "\nk2: v2",
+		},
+		{
+			name:     "line one byte under the limit still appends an absent key",
+			content:  "k1: v1\n" + strings.Repeat("x", bufio.MaxScanTokenSize-1) + "\nk2: v2",
+			key:      "k9",
+			refused:  false,
+			expected: "k1: v1\n" + strings.Repeat("x", bufio.MaxScanTokenSize-1) + "\nk2: v2\n\nk9: true",
+		},
 	}
 
 	for _, tt := range tests {
