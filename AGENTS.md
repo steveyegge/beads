@@ -126,9 +126,21 @@ make install       # build and install bd to ~/.local/bin (canonical)
   certificate `--config=remote-exec`, agent hosts whose `~/.bazelrc` names the
   executor neither. Make yours the default with a `build --config=...` line in
   the gitignored `.bazelrc.local`, or pass `BAZEL_FLAGS=...` to make.
-- `go test` (`./scripts/test.sh`, `make test-go`) is an inner-loop
-  convenience only. CI does not enforce it, and it skips nogo, gofmt and the
-  guards; finish with `make test`.
+- Agents run tests only with `bazel test`, also while iterating on one
+  behavior: `bazel test //cmd/bd:bd_test --config=ci
+  --test_filter='^TestName$'` (a package's tests are
+  `//<dir>:<last dir element>_test`, the root package's `//:beads_test`; one
+  `--test_filter` covers every target named). Results are cached by input,
+  so re-running an unchanged target is free and the cached result is the same
+  evidence. `--config=ci` sets `BEADS_TEST_SKIP=dolt`, so Dolt-backed tests
+  skip and still pass; run them with `--test_env=BEADS_TEST_SKIP=
+  --test_env=BEADS_TEST_DOLT_SERVER=local
+  --test_env=BEADS_TEST_REQUIRE_DOLT_CONTAINER=1` or their lane in
+  engdocs/TESTING.md. Bazel runs only the test files `BUILD.bazel` lists:
+  run `make bazel-sync` after adding one. Finish with `make test`.
+- Agents do not run `go test` (`./scripts/test.sh`, `make test-go`): CI does
+  not enforce it, it skips nogo, gofmt and the guards, and agent hosts may
+  refuse it. It stays a convenience for humans working offline.
 - **Do NOT** use `go build -o bd ./cmd/bd`, `go install ./cmd/bd`, or raw
   `go run ./cmd/bd ...`: they bypass the canonical build path, leave stale
   binaries, and raw `go run` misses the `gms_pure_go` tag. Use `make install`,

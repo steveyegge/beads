@@ -96,7 +96,7 @@ a unit test: use the real boundary when the defect could live there.
 | Need | Run | When |
 |---|---|---|
 | Docs-only validation | `git diff --check` and `make check-docs` | For prose-only changes; add any generated-doc or surface-specific link check the changed paths require. Do not run the full suite merely because a Markdown file changed. |
-| Focused red/green loop | `bazel test //path/to/package:package_test --config=ci --test_filter='^TestExactName$'`, or the plain-Go `./scripts/test.sh -run '^TestExactName$' ./path/to/package/...` | While writing or fixing one behavior. The `go test` loop is fine here; the Bazel targets below are the gate. |
+| Focused red/green loop | `bazel test //path/to/package:package_test --config=ci --test_filter='^TestExactName$'` | While writing or fixing one behavior. Agents use only this form; an unchanged target returns its cached result. Humans working offline may use the plain-Go `./scripts/test.sh -run '^TestExactName$' ./path/to/package/...`, which is not the gate. |
 | Affected-package confidence | `bazel test //path/to/package/... --config=ci` | After the focused test passes; include directly affected neighbors when their contract changed. |
 | Final gate | `make test` | Once after focused work on Go code is green: the whole test lane, mostly cache hits. |
 | Another lane's risk | that lane's command from the table above | When the change touches what that lane covers (integration-tagged files, the Dolt server path, embedded Dolt, pure-Go builds). |
@@ -121,11 +121,12 @@ the suite CI gates on.
 
 ## Plain `go test` (Inner Loop)
 
-`./scripts/test.sh` is the plain-Go runner behind `make test-go`. It sources
-`.buildflags`, creates an isolated test environment, applies `.test-skip`, and
-defaults to a **25m per-package** Go-test timeout. The timeout is a hang
-backstop, not a target runtime. Override it only when diagnosing a legitimate
-slow path:
+This section is for humans working offline; agents run `bazel test` (see
+"Choose the Smallest Useful Test" above). `./scripts/test.sh` is the plain-Go
+runner behind `make test-go`. It sources `.buildflags`, creates an isolated
+test environment, applies `.test-skip`, and defaults to a **25m per-package**
+Go-test timeout. The timeout is a hang backstop, not a target runtime.
+Override it only when diagnosing a legitimate slow path:
 
 ```bash
 TEST_TIMEOUT=30m ./scripts/test.sh ./cmd/bd/...
