@@ -171,8 +171,6 @@ Removing Claude Code integration...
 
 This file provides instructions and context for AI coding agents working on this project.
 
-
-
 ## Build & Test
 
 _Add your build and test commands here_
@@ -239,8 +237,6 @@ Restart Claude Code for changes to take effect.
 
 This file provides instructions and context for AI coding agents working on this project.
 
-
-
 ## Build & Test
 
 _Add your build and test commands here_
@@ -258,7 +254,6 @@ _Add a brief overview of your project architecture_
 ## Conventions & Patterns
 
 _Add your project-specific conventions here_
-
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:cdcea925 -->
 [managed section body: byte-identical to internal/templates/agents/testdata/managed-section-minimal-no-remote.md]

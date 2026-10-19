@@ -170,6 +170,93 @@ func TestInstallAgentsDefaultsToFullProfile(t *testing.T) {
 	}
 }
 
+// TestAgentsSectionRemoveReaddIsStable pins what --remove and a later setup
+// leave behind: removing the section leaves no blank-line hole, setup appends
+// it again after one blank line, and from then on each --remove and each setup
+// leaves the same bytes, however often they alternate. A file the user wrote
+// gets back what it held before setup added the section.
+func TestAgentsSectionRemoveReaddIsStable(t *testing.T) {
+	stubDetectRenderOpts(t)
+	integration := agentsIntegration{
+		name:         "TestAgent",
+		setupCommand: "bd setup testagent",
+		profile:      agents.ProfileMinimal,
+	}
+	section := agents.RenderSection(agents.ProfileMinimal)
+	scaffold := createNewAgentsFileWithProfile(agents.ProfileMinimal)
+
+	tests := []struct {
+		name        string
+		seed        string // "" means setup creates the file
+		wantRemoved string
+	}{
+		{
+			name:        "file setup created",
+			wantRemoved: strings.Replace(scaffold, section+"\n\n", "", 1),
+		},
+		{
+			name:        "user file",
+			seed:        "# My Project\n\nHouse rules live here.\n",
+			wantRemoved: "# My Project\n\nHouse rules live here.\n",
+		},
+		{
+			name:        "user file without a final newline",
+			seed:        "# My Project",
+			wantRemoved: "# My Project\n",
+		},
+		{
+			name:        "user file ending in blank lines",
+			seed:        "# My Project\n\n\n",
+			wantRemoved: "# My Project\n",
+		},
+		{
+			name:        "CRLF user file",
+			seed:        "# My Project\r\n\r\nHouse rules live here.\r\n",
+			wantRemoved: "# My Project\r\n\r\nHouse rules live here.\r\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env, _, _ := newFactoryTestEnv(t)
+			if tt.seed != "" {
+				if err := os.WriteFile(env.agentsPath, []byte(tt.seed), 0o644); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
+			step := func(name string, run func(agentsEnv, agentsIntegration) error) string {
+				t.Helper()
+				if err := run(env, integration); err != nil {
+					t.Fatalf("%s: %v", name, err)
+				}
+				data, err := os.ReadFile(env.agentsPath)
+				if err != nil {
+					t.Fatalf("read after %s: %v", name, err)
+				}
+				return string(data)
+			}
+
+			step("setup", installAgents)
+			removed := step("remove", removeAgents)
+			if removed != tt.wantRemoved {
+				t.Fatalf("after remove:\ngot:  %q\nwant: %q", removed, tt.wantRemoved)
+			}
+			readded := step("setup again", installAgents)
+			if want := removed + "\n" + section; readded != want {
+				t.Fatalf("after setup again:\ngot:  %q\nwant: %q", readded, want)
+			}
+			for cycle := 2; cycle <= 3; cycle++ {
+				if got := step("remove", removeAgents); got != removed {
+					t.Fatalf("remove #%d changed the result:\ngot:  %q\nwant: %q", cycle, got, removed)
+				}
+				if got := step("setup", installAgents); got != readded {
+					t.Fatalf("setup #%d changed the result:\ngot:  %q\nwant: %q", cycle+1, got, readded)
+				}
+			}
+		})
+	}
+}
+
 // readFileBytes is a test helper to read file content
 func readFileBytes(path string) ([]byte, error) {
 	return readFileBytesImpl(path)

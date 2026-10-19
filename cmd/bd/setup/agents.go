@@ -150,7 +150,14 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 			}
 			_, _ = fmt.Fprintf(env.stdout, "✓ Updated existing beads section in %s\n", agentsFile)
 		} else {
-			newContent := currentContent + "\n\n" + beadsSection
+			// Set the section off with one blank line, as bd init's
+			// updateAgentFile does, so that removeBeadsSection gives the
+			// file back as it was.
+			newContent := currentContent
+			if !strings.HasSuffix(newContent, "\n") {
+				newContent += "\n"
+			}
+			newContent += "\n" + beadsSection
 			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
 				return err
@@ -279,7 +286,17 @@ func updateBeadsSectionWithOpts(content string, profile agents.Profile, opts age
 	return replaced
 }
 
-// removeBeadsSection removes the beads section from content
+// removeBeadsSection removes the beads section from content together with the
+// blank lines that set it off, so removing it leaves no hole. Only line breaks
+// next to the section are dropped, never text: the text before and after it is
+// rejoined with one blank line if the section was set off by any (with none if
+// it was not), a section at the top of the file leaves no leading blank lines,
+// and one at the bottom leaves the file ending in a single line break. This
+// undoes installAgents' append, so adding the section to a file and removing it
+// gives the file back.
+//
+// A marker that shares its line with other text is cut out exactly, with the
+// line break after the END marker, and nothing around it is touched.
 func removeBeadsSection(content string) string {
 	start := findBeginMarker(content)
 	end := strings.Index(content, agentsEndMarker)
@@ -288,23 +305,31 @@ func removeBeadsSection(content string) string {
 		return content
 	}
 
-	// Remove exactly the managed section, including a single trailing newline
-	// immediately after the end marker if present. We intentionally do NOT trim
-	// surrounding whitespace or unrelated content to keep user file content intact.
-	endOfEndMarker := end + len(agentsEndMarker)
-	if endOfEndMarker < len(content) {
-		switch content[endOfEndMarker] {
-		case '\r':
-			endOfEndMarker++
-			if endOfEndMarker < len(content) && content[endOfEndMarker] == '\n' {
-				endOfEndMarker++
-			}
-		case '\n':
-			endOfEndMarker++
-		}
+	before := content[:start]
+	after := content[end+len(agentsEndMarker):]
+	head := strings.TrimRight(before, "\r\n")
+	tail := strings.TrimLeft(after, "\r\n")
+	if (head != "" && head == before) || (tail != "" && tail == after) {
+		after = strings.TrimPrefix(after, "\r")
+		return before + strings.TrimPrefix(after, "\n")
 	}
 
-	return content[:start] + content[endOfEndMarker:]
+	eol := "\n"
+	if strings.HasPrefix(before[len(head):], "\r\n") {
+		eol = "\r\n"
+	}
+	switch {
+	case head == "":
+		return tail
+	case tail == "":
+		return head + eol
+	case strings.Count(before[len(head):], "\n")+strings.Count(after[:len(after)-len(tail)], "\n") > 2:
+		// Besides the line break ending the line before the section and the
+		// one ending the END marker's line, there was a blank line.
+		return head + eol + eol + tail
+	default:
+		return head + eol + tail
+	}
 }
 
 // findBeginMarker returns the index of the BEGIN BEADS INTEGRATION marker in content,
