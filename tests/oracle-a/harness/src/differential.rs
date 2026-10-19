@@ -94,10 +94,19 @@ fn revision_regex() -> &'static regex::Regex {
     RE.get_or_init(|| {
         // The `"revision": "<token>"` JSON member (types.IssueDetails.Revision, on
         // `bd show --json` since #5535). The token is the row's row_lock, which
-        // every create and status/ownership write remints from crypto/rand
-        // (issueops.freshRowLock), so its value differs on every run. Only a
-        // NON-ZERO decimal token is collapsed: "0" (a never-stamped row) stays
-        // literal, and the member's name, presence and string type are untouched.
+        // every create, update, close, reopen, claim and unclaim remints from
+        // crypto/rand (issueops.freshRowLock), so its value differs on every run.
+        // Only a NON-ZERO decimal token is collapsed: "0" (a never-stamped row)
+        // stays literal, and the member's name, presence and string type are
+        // untouched.
+        //
+        // The match is by member NAME over the raw text, before any JSON parse,
+        // so it collapses EVERY `"revision"` member holding such a string, at any
+        // depth and in plain (non-JSON) text too, not only the issue token. That
+        // includes a user metadata key named `revision`, which the in-scope
+        // --set-metadata/--metadata flags can set: a change to its value would
+        // pass the gate. No scenario sets one; use another key name in any that
+        // would. Pinned by normalize_collapses_revision_by_member_name_at_any_depth.
         regex::Regex::new(r#"("revision"\s*:\s*")-?[1-9][0-9]*(")"#).expect("valid revision regex")
     })
 }
@@ -369,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_collapses_revision_tokens_and_nothing_else() {
+    fn normalize_collapses_non_zero_revision_strings() {
         // Two runs of the same `show --json`: only the minted token differs.
         let run1 =
             "[\n  {\n    \"id\": \"g-root\",\n    \"revision\": \"-1228122709301203494\"\n  }\n]\n";
@@ -408,6 +417,31 @@ mod tests {
     }
 
     #[test]
+    fn normalize_collapses_revision_by_member_name_at_any_depth() {
+        // The scope documented on revision_regex: the match is by member name over
+        // the raw text, not by position, so a user metadata key named "revision"
+        // is collapsed too and a change to its value is NOT a divergence.
+        let meta3 = r#"[{"id":"g-1","revision":"11","metadata":{"revision":"3"}}]"#;
+        let meta4 = r#"[{"id":"g-1","revision":"22","metadata":{"revision":"4"}}]"#;
+        assert_eq!(
+            normalize(meta3),
+            r#"[{"id":"g-1","revision":"<REV>","metadata":{"revision":"<REV>"}}]"#
+        );
+        assert!(stdout_equiv(&normalize(meta3), &normalize(meta4), false));
+        // Plain (non-JSON) text is matched as well.
+        assert_eq!(
+            normalize(r#"config "revision": "12" pinned"#),
+            r#"config "revision": "<REV>" pinned"#
+        );
+        // A metadata key with any other name keeps its value, so it still gates.
+        assert!(!stdout_equiv(
+            &normalize(r#"{"metadata":{"rev":"3"}}"#),
+            &normalize(r#"{"metadata":{"rev":"4"}}"#),
+            false
+        ));
+    }
+
+    #[test]
     fn normalize_in_workspace_collapses_only_this_runs_workspace() {
         // Listed short-first: the longer spelling must still be replaced whole.
         let ws = vec![
@@ -432,6 +466,31 @@ mod tests {
         assert_eq!(
             normalize_in_workspace(r#"{"revision":"5"}"#, &ws),
             r#"{"revision":"<REV>"}"#
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_scenario_collapses_the_workspace_in_both_step_streams() {
+        // A stub bd that echoes its cwd on stdout and its symlink-resolved form
+        // on stderr, like the "Found existing Dolt database" error: both must
+        // reach the trace as <WORKSPACE>, so the run's random tempdir never does.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bd");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\npwd\necho \"Found existing Dolt database: $(pwd -P)/.beads/x\" >&2\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let sc = Scenario::new("wiring", "w", &[&["show", "--json"]]);
+        let trace = run_scenario(&bin, &sc).unwrap();
+        assert_eq!(trace.steps.len(), 1);
+        assert_eq!(trace.steps[0].stdout, "<WORKSPACE>\n");
+        assert_eq!(
+            trace.steps[0].stderr,
+            "Found existing Dolt database: <WORKSPACE>/.beads/x\n"
         );
     }
 

@@ -16,8 +16,8 @@ a throwaway workspace (`bd init` + steps). For every step the harness compares
 **exit code**, **stderr**, and **JSON-aware stdout** (object key order ignored;
 array order compared as a multiset by default, as an ordered sequence for
 scenarios flagged `ordered`). Volatile values — timestamps, UUIDs, the host
-actor identity, the `bd show --json` `"revision"` token, and the run's own
-throwaway workspace path — are normalized to
+actor identity, the `bd show --json` `"revision"` token (matched by member name,
+see below), and the run's own throwaway workspace path — are normalized to
 `<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>`/`<REV>`/`<WORKSPACE>` before comparison.
 **Tolerated in-scope divergences: zero.**
 
@@ -115,10 +115,17 @@ the loop — every scenario uses embedded Dolt in its own tempdir.
   rollback-suppressed side effects, and N-commits-instead-of-one are deliberately
   NOT asserted here. Timestamp *values* are erased by `<TS>` normalization, so a
   local-vs-UTC divergence in a timestamp value is also out of reach. Likewise a
-  non-zero `"revision"` token is erased to `<REV>` (it is reminted from
-  crypto/rand on every create and status/ownership write), so whether a write
+  non-zero `"revision"` token is erased to `<REV>` (every create, update, close,
+  reopen, claim and unclaim remints it from crypto/rand), so whether a write
   remints it is not gated; the member's presence, its string type, and a
   never-stamped `"0"` still are.
+- **`<REV>` matches a member name, not a position.** The `"revision"` collapse runs
+  over the raw stdout/stderr text before any JSON parse, so it erases EVERY
+  `"revision"` member holding a non-zero decimal string — at any depth, and in
+  plain (non-JSON) text too — not only the `bd show --json` issue token. That
+  includes a user metadata key named `revision`, which the in-scope
+  `--set-metadata`/`--metadata` flags can set: a change to its value passes the
+  gate. No scenario sets one today; use another key name in any that would.
 - **The scenario environment is scrubbed, and `BEADS_TEST_MODE=1` is ungated.**
   Scenarios run with an explicit env whitelist (`PATH`/`HOME`/`TMPDIR` +
   `BEADS_TEST_MODE=1`) rather than the inherited host env, so a green certifies the
