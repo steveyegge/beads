@@ -7,12 +7,15 @@ import (
 	"testing"
 )
 
-// An unset must not also rewrite the end of the file. commentOutYamlKey used to
-// drop the document's trailing newline, so `bd config unset` produced a
-// no-newline-at-end-of-file change on top of the line it meant to comment out —
-// and did so even for a key the document does not contain, i.e. when nothing
-// was edited at all. A config.yaml is git-tracked, so that is a spurious line
-// in someone's review.
+// An unset or a set must not also rewrite the end of the file.
+// commentOutYamlKey used to drop the document's trailing newline, so
+// `bd config unset` produced a no-newline-at-end-of-file change on top of the
+// line it meant to comment out — and did so even for a key the document does
+// not contain, i.e. when nothing was edited at all. updateYamlKey's flat path
+// had the same bufio.Scanner + strings.Join shape, so `bd config set` of a
+// single-segment key dropped the terminator from every terminated config.yaml
+// it touched. A config.yaml is git-tracked, so that is a spurious line in
+// someone's review.
 //
 // The guarantee is scoped to LF documents. A CRLF file is still normalized to
 // LF by an unset that actually comments a key out — that predates this fix and
@@ -224,6 +227,35 @@ func TestUnsetThroughTheFileKeepsTheTrailingNewline(t *testing.T) {
 	want := body[len(strings.TrimRight(body, "\n")):]
 	if got := string(after)[len(strings.TrimRight(string(after), "\n")):]; got != want {
 		t.Errorf("unset rewrote the end of the file: trailing run %q, want %q\n%q", got, want, string(after))
+	}
+}
+
+// The set twin of the test above, through the public writer `bd config set`
+// actually calls. The key is single-segment, so the write goes down the flat
+// path this fix targets, past a nested block it must not disturb.
+func TestSetThroughTheFileKeepsTheTrailingNewline(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(beadsDir, "config.yaml")
+	// The file ends in a blank line, the shape a single appended "\n" does not
+	// restore.
+	const body = "issue_prefix: vp\nactor: alice\ndolt:\n  mode: server\n\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEADS_DIR", beadsDir)
+	if err := SetYamlConfig("actor", "bob"); err != nil {
+		t.Fatalf("SetYamlConfig: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := body[len(strings.TrimRight(body, "\n")):]
+	if got := string(after)[len(strings.TrimRight(string(after), "\n")):]; got != want {
+		t.Errorf("set rewrote the end of the file: trailing run %q, want %q\n%q", got, want, string(after))
 	}
 }
 
