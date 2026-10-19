@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,12 @@ func writeSettings(t *testing.T, path string, settings map[string]interface{}) {
 	if err := atomicWriteFile(path, data); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
+}
+
+// userLevelSection is the managed section a global install writes to
+// ~/.claude/CLAUDE.md.
+func userLevelSection() string {
+	return agents.RenderSectionWithOpts(agents.ProfileMinimal, agents.UserLevelRenderOpts())
 }
 
 func TestAddHookCommand(t *testing.T) {
@@ -271,7 +278,7 @@ func TestRemoveHookCommand(t *testing.T) {
 				},
 			},
 		}
-		removeHookCommand(hooks, "SessionStart", "bd prime")
+		removeHookCommand(io.Discard, hooks, "SessionStart", "bd prime")
 
 		entries, ok := hooks["SessionStart"].([]interface{})
 		if !ok || len(entries) != 1 {
@@ -289,7 +296,7 @@ func TestRemoveHookCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			removeHookCommand(tt.existingHooks, tt.event, tt.command)
+			removeHookCommand(io.Discard, tt.existingHooks, tt.event, tt.command)
 
 			eventHooks, ok := tt.existingHooks[tt.event].([]interface{})
 			if !ok && tt.wantRemaining > 0 {
@@ -332,7 +339,7 @@ func TestRemoveHookCommandNoNull(t *testing.T) {
 		},
 	}
 
-	removeHookCommand(hooks, "SessionStart", "bd prime")
+	removeHookCommand(io.Discard, hooks, "SessionStart", "bd prime")
 
 	// Key should be deleted, not set to null or empty array
 	if _, exists := hooks["SessionStart"]; exists {
@@ -347,6 +354,79 @@ func TestRemoveHookCommandNoNull(t *testing.T) {
 	if strings.Contains(string(data), "null") {
 		t.Errorf("JSON contains null: %s", data)
 	}
+}
+
+// bd init --quiet hands the Claude installer QuietProjectInstallOutput. When
+// the project's settings still carry the bare `bd prime` hooks an older bd
+// registered, the migration sweep's "Removed <event> hook" lines must go to
+// that output like the rest of the installer's progress: removeHookCommand
+// printed them straight to the process stdout, so a quiet init still wrote
+// them.
+func TestClaudeLegacyHookRemovalReportsThroughGivenOutput(t *testing.T) {
+	legacyHook := func() []interface{} {
+		return []interface{}{map[string]interface{}{
+			"matcher": "",
+			"hooks":   []interface{}{map[string]interface{}{"type": "command", "command": "bd prime"}},
+		}}
+	}
+	for _, tc := range []struct {
+		name string
+		path func(projectDir string) string
+	}{
+		{name: "settings.json", path: projectSettingsPath},
+		{name: "legacy settings.local.json", path: legacyProjectSettingsPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, _, _ := newClaudeTestEnv(t)
+			stubClaudeEnvProvider(t, env, nil)
+			writeSettings(t, tc.path(env.projectDir), map[string]interface{}{
+				"hooks": map[string]interface{}{"SessionStart": legacyHook(), "PreCompact": legacyHook()},
+			})
+
+			var out, errOut bytes.Buffer
+			processOut := captureProcessStdout(t, func() {
+				if err := InstallClaudeProjectTo(false, ProjectInstallOutput{Stdout: &out, Stderr: &errOut}); err != nil {
+					t.Fatalf("InstallClaudeProjectTo: %v", err)
+				}
+			})
+			if processOut != "" {
+				t.Errorf("Claude installer wrote to the process stdout instead of the given one: %q", processOut)
+			}
+			for _, want := range []string{"✓ Removed SessionStart hook\n", "✓ Removed PreCompact hook\n"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("given stdout is missing %q:\n%s", want, out.String())
+				}
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("install wrote errors: %q", errOut.String())
+			}
+		})
+	}
+}
+
+// captureProcessStdout runs fn with the process stdout sent to a temp file and
+// returns what was written there. Swapping os.Stdout is why the tests in this
+// package must not run in parallel.
+func captureProcessStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	capture, err := os.CreateTemp(t.TempDir(), "process-stdout-*")
+	if err != nil {
+		t.Fatalf("create stdout capture: %v", err)
+	}
+	orig := os.Stdout
+	os.Stdout = capture
+	func() {
+		defer func() { os.Stdout = orig }()
+		fn()
+	}()
+	if err := capture.Close(); err != nil {
+		t.Fatalf("close stdout capture: %v", err)
+	}
+	data, err := os.ReadFile(capture.Name())
+	if err != nil {
+		t.Fatalf("read stdout capture: %v", err)
+	}
+	return string(data)
 }
 
 // TestInstallClaudeCleanupNullHooks verifies that install cleans up existing null values.
@@ -719,12 +799,107 @@ func TestInstallClaudeGlobalStealth(t *testing.T) {
 	if !strings.Contains(string(data), "bd prime --stealth") {
 		t.Error("expected stealth command in settings")
 	}
-	instructionsPath := filepath.Join(env.projectDir, claudeInstructionsFile)
-	if _, err := os.Stat(instructionsPath); err != nil {
-		t.Fatalf("expected %s to be created: %v", claudeInstructionsFile, err)
+	// The managed section goes to Claude Code's user-level instructions file,
+	// beside the global settings, holding only the section, worded for a file
+	// every project loads: none of the project scaffolding a new project
+	// CLAUDE.md gets.
+	instructions, err := os.ReadFile(globalClaudeInstructionsPath(env.homeDir))
+	if err != nil {
+		t.Fatalf("expected user-level %s to be created: %v", claudeInstructionsFile, err)
+	}
+	if want := userLevelSection(); string(instructions) != want {
+		t.Errorf("user-level %s should hold only the managed section:\ngot:\n%s\nwant:\n%s", claudeInstructionsFile, instructions, want)
+	}
+	// A global install must not touch the current directory's files.
+	if _, err := os.Stat(filepath.Join(env.projectDir, claudeInstructionsFile)); !os.IsNotExist(err) {
+		t.Errorf("global install should not create the project's %s (stat err: %v)", claudeInstructionsFile, err)
 	}
 	if !strings.Contains(stdout.String(), "globally") {
 		t.Error("expected global installation message")
+	}
+}
+
+// The user-level ~/.claude/CLAUDE.md is shared by every project, so a global
+// install renders and checks it the same way whatever beads config the
+// current directory has: otherwise --check from one project calls the section
+// another project wrote stale, and following its hint flips it back.
+func TestClaudeGlobalSectionIgnoresProjectConfig(t *testing.T) {
+	configs := []struct {
+		name string
+		opts agents.RenderOpts
+	}{
+		{"remote", agents.RenderOpts{HasRemote: true}},
+		{"no remote", agents.RenderOpts{HasRemote: false}},
+		{"no push", agents.RenderOpts{HasRemote: true, NoPush: true}},
+	}
+	wantHash := agents.CurrentHashWithOpts(agents.ProfileMinimal, agents.UserLevelRenderOpts())
+	orig := detectRenderOptsImpl
+	t.Cleanup(func() { detectRenderOptsImpl = orig })
+	for _, install := range configs {
+		for _, check := range configs {
+			t.Run(install.name+" install, "+check.name+" check", func(t *testing.T) {
+				env, stdout, _ := newClaudeTestEnv(t)
+				installOpts := install.opts
+				detectRenderOptsImpl = func() agents.RenderOpts { return installOpts }
+				if err := installClaude(env, true, false); err != nil {
+					t.Fatalf("installClaude: %v", err)
+				}
+				globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+				data, err := os.ReadFile(globalInstructions)
+				if err != nil {
+					t.Fatalf("read user-level %s: %v", claudeInstructionsFile, err)
+				}
+				if !strings.Contains(string(data), "hash:"+wantHash) {
+					t.Errorf("expected hash %s regardless of project config, got:\n%s", wantHash, data)
+				}
+				checkOpts := check.opts
+				detectRenderOptsImpl = func() agents.RenderOpts { return checkOpts }
+				stdout.Reset()
+				if err := checkClaude(env); err != nil {
+					t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+				}
+				if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+					t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+				}
+			})
+		}
+	}
+}
+
+// A section worded for a project, such as a project install run from
+// ~/.claude leaves there, is stale in the user-level file: --check names the
+// global install, which rewords the section in place and keeps the user's
+// own text.
+func TestInstallClaudeGlobalRewordsProjectSection(t *testing.T) {
+	stubDetectRenderOpts(t)
+	env, stdout, _ := newClaudeTestEnv(t)
+	if err := installClaude(env, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+	if err := os.WriteFile(globalInstructions, []byte("# Mine\n\n"+agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+		t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+	}
+	stdout.Reset()
+	if err := checkClaude(env); !errors.Is(err, errBeadsSectionStale) {
+		t.Fatalf("expected errBeadsSectionStale, got %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Run: bd setup claude --global (to update)") {
+		t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+	}
+	if err := installClaude(env, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	data, err := os.ReadFile(globalInstructions)
+	if err != nil {
+		t.Fatalf("read user-level %s: %v", claudeInstructionsFile, err)
+	}
+	if want := "# Mine\n\n" + userLevelSection(); string(data) != want {
+		t.Errorf("user-level %s after the global install:\ngot:\n%s\nwant:\n%s", claudeInstructionsFile, data, want)
+	}
+	stdout.Reset()
+	if err := checkClaude(env); err != nil {
+		t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
 	}
 }
 
@@ -820,6 +995,19 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 	})
 
+	// From the home directory a project install would create ~/CLAUDE.md,
+	// so the hint names the global install.
+	t.Run("missing hooks checked from home", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+			t.Fatalf("expected errClaudeHooksMissing, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
 	t.Run("missing instructions", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), map[string]interface{}{
@@ -840,10 +1028,298 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		if !strings.Contains(stdout.String(), claudeInstructionsFile+" not found") {
 			t.Fatalf("expected missing %s message, got: %s", claudeInstructionsFile, stdout.String())
 		}
+		// With global hooks and no instructions file in the project, the
+		// missing section is the user-level one the global install writes.
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
 	})
+
+	// A project CLAUDE.md without a section is still reported as the
+	// project's: adding the section there is one way to finish the setup.
+	t.Run("project instructions without a section", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), map[string]interface{}{
+			"hooks": map[string]interface{}{
+				"SessionStart": []interface{}{
+					map[string]interface{}{
+						"matcher": "",
+						"hooks": []interface{}{
+							map[string]interface{}{"type": "command", "command": "bd prime --hook-json"},
+						},
+					},
+				},
+			},
+		})
+		if err := os.WriteFile(filepath.Join(env.projectDir, claudeInstructionsFile), []byte("# Mine\n"), 0o644); err != nil {
+			t.Fatalf("write project %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); !errors.Is(err, errBeadsSectionMissing) {
+			t.Fatalf("expected errBeadsSectionMissing, got %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude (to add beads section)") {
+			t.Errorf("expected the project setup hint, got:\n%s", stdout.String())
+		}
+	})
+
+	primeHookSettings := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"SessionStart": []interface{}{
+				map[string]interface{}{
+					"matcher": "",
+					"hooks": []interface{}{
+						map[string]interface{}{"type": "command", "command": "bd prime --hook-json"},
+					},
+				},
+			},
+		},
+	}
+
+	// A global install is checked from any directory: with no beads section
+	// in the project, the one in ~/.claude/CLAUDE.md is the one Claude loads.
+	t.Run("global install from another directory", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+		if err := os.WriteFile(globalInstructions, []byte(userLevelSection()), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+		}
+	})
+
+	// The common global case: the project has its own CLAUDE.md with no
+	// beads section, and the user-level file carries the section.
+	t.Run("global install beside project instructions without a section", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+		if err := os.WriteFile(globalInstructions, []byte(userLevelSection()), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if err := os.WriteFile(filepath.Join(env.projectDir, claudeInstructionsFile), []byte("# Mine\n"), 0o644); err != nil {
+			t.Fatalf("write project %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+		}
+	})
+
+	// From the home directory a ~/CLAUDE.md without a section is not the
+	// file to fix: the project hint would add the section there.
+	t.Run("home instructions without a section checked from home", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		if err := os.WriteFile(filepath.Join(env.homeDir, claudeInstructionsFile), []byte("# Mine\n"), 0o644); err != nil {
+			t.Fatalf("write home %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); !errors.Is(err, errAgentsFileMissing) {
+			t.Fatalf("expected errAgentsFileMissing, got %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("stale user-level section", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		stale := "<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:00000000 -->\nOld.\n<!-- END BEADS INTEGRATION -->\n"
+		if err := os.WriteFile(globalClaudeInstructionsPath(env.homeDir), []byte(stale), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); !errors.Is(err, errBeadsSectionStale) {
+			t.Fatalf("expected errBeadsSectionStale, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global (to update)") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
+	// The plugin's hooks are user-level too, so --global can supply the section.
+	t.Run("plugin hooks with user-level section", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+		if err := os.WriteFile(globalInstructions, []byte(userLevelSection()), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+		}
+	})
+
+	// A project install is judged on the project's file alone: the
+	// user-level section does not stand in for a missing project one.
+	t.Run("project hooks ignore the user-level section", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, projectSettingsPath(env.projectDir), primeHookSettings)
+		if err := os.MkdirAll(filepath.Dir(globalClaudeInstructionsPath(env.homeDir)), 0o755); err != nil {
+			t.Fatalf("mkdir user-level dir: %v", err)
+		}
+		if err := os.WriteFile(globalClaudeInstructionsPath(env.homeDir), []byte(userLevelSection()), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); !errors.Is(err, errAgentsFileMissing) {
+			t.Fatalf("expected errAgentsFileMissing, got %v\n%s", err, stdout.String())
+		}
+	})
+
+	// With global hooks the project's own section still wins over the
+	// user-level one, as project hooks win over global ones.
+	t.Run("project section preferred", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		stale := "<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:00000000 -->\nOld.\n<!-- END BEADS INTEGRATION -->\n"
+		if err := os.WriteFile(globalClaudeInstructionsPath(env.homeDir), []byte(stale), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		projectInstructions := filepath.Join(env.projectDir, claudeInstructionsFile)
+		if err := os.WriteFile(projectInstructions, []byte(agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
+			t.Fatalf("write project %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), projectInstructions+" (current)") {
+			t.Errorf("expected the project file reported, got:\n%s", stdout.String())
+		}
+	})
+
+	// From the home directory the project's settings are the global ones and
+	// its CLAUDE.md is ~/CLAUDE.md, so a global install must still be judged
+	// on the user-level files.
+	t.Run("global install checked from home", func(t *testing.T) {
+		env, _, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		stdout := &bytes.Buffer{}
+		env.stdout = stdout
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Global hooks installed") {
+			t.Errorf("expected global hooks reported, got:\n%s", stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalClaudeInstructionsPath(env.homeDir)+" (current)") {
+			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+		}
+	})
+
+	// The project hint would create ~/CLAUDE.md from the home directory.
+	t.Run("missing section checked from home", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		writeSettings(t, globalSettingsPath(env.homeDir), primeHookSettings)
+		if err := checkClaude(env); !errors.Is(err, errAgentsFileMissing) {
+			t.Fatalf("expected errAgentsFileMissing, got %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Global hooks installed") {
+			t.Errorf("expected global hooks reported, got:\n%s", stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
+	// From ~/.claude the project's CLAUDE.md is the user-level file: it is
+	// judged with the fixed global render options, not this directory's.
+	t.Run("global install checked from the user-level directory", func(t *testing.T) {
+		env, _, _ := newClaudeTestEnv(t)
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		orig := detectRenderOptsImpl
+		t.Cleanup(func() { detectRenderOptsImpl = orig })
+		detectRenderOptsImpl = func() agents.RenderOpts { return agents.RenderOpts{HasRemote: false} }
+		env.projectDir = filepath.Dir(globalClaudeInstructionsPath(env.homeDir))
+		stdout := &bytes.Buffer{}
+		env.stdout = stdout
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalClaudeInstructionsPath(env.homeDir)+" (current)") {
+			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+		}
+	})
+
+	// The home directory and ~/.claude are recognized when reached through a
+	// symlink too (a symlinked /home, a linked checkout): sameDir compares
+	// the directories, not their path strings.
+	for _, link := range []struct {
+		name   string
+		target func(home string) string
+	}{
+		{"home", func(home string) string { return home }},
+		{"the user-level directory", func(home string) string { return filepath.Dir(globalClaudeInstructionsPath(home)) }},
+	} {
+		t.Run("global install checked from a symlink to "+link.name, func(t *testing.T) {
+			env, _, _ := newClaudeTestEnv(t)
+			if err := installClaude(env, true, false); err != nil {
+				t.Fatalf("installClaude: %v", err)
+			}
+			linkDir := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(link.target(env.homeDir), linkDir); err != nil {
+				t.Skipf("symlink: %v", err)
+			}
+			env.projectDir = linkDir
+			stdout := &bytes.Buffer{}
+			env.stdout = stdout
+			if err := checkClaude(env); err != nil {
+				t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "✓ Global hooks installed") {
+				t.Errorf("expected global hooks reported, got:\n%s", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), globalClaudeInstructionsPath(env.homeDir)+" (current)") {
+				t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+			}
+		})
+	}
 }
 
 func TestRemoveClaudeScenarios(t *testing.T) {
+	// From the home directory a project removal removes the global hooks,
+	// whose settings file is the same, so it removes their user-level
+	// section too.
+	t.Run("remove from home", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		if err := removeClaude(env, false); err != nil {
+			t.Fatalf("removeClaude: %v", err)
+		}
+		data, err := os.ReadFile(globalSettingsPath(env.homeDir))
+		if err != nil {
+			t.Fatalf("read global settings: %v", err)
+		}
+		if strings.Contains(string(data), "bd prime") {
+			t.Error("expected bd prime hooks removed")
+		}
+		instructions, err := os.ReadFile(globalClaudeInstructionsPath(env.homeDir))
+		if err != nil {
+			t.Fatalf("read user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if containsBeadsMarker(string(instructions)) {
+			t.Errorf("expected the user-level section removed, got:\n%s\nstdout:\n%s", instructions, stdout.String())
+		}
+	})
+
 	t.Run("remove global hooks", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		path := globalSettingsPath(env.homeDir)
@@ -860,9 +1336,16 @@ func TestRemoveClaudeScenarios(t *testing.T) {
 				},
 			},
 		})
-		instructionsPath := filepath.Join(env.projectDir, claudeInstructionsFile)
-		if err := os.WriteFile(instructionsPath, []byte(agents.RenderSection(agents.ProfileMinimal)), 0o644); err != nil {
-			t.Fatalf("seed %s: %v", claudeInstructionsFile, err)
+		section := agents.RenderSection(agents.ProfileMinimal)
+		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+		if err := os.WriteFile(globalInstructions, []byte("# Mine\n\n"+section), 0o644); err != nil {
+			t.Fatalf("seed user-level %s: %v", claudeInstructionsFile, err)
+		}
+		// The project's own section, as bd init leaves it, belongs to the
+		// project install: a global removal must leave it alone.
+		projectInstructions := filepath.Join(env.projectDir, claudeInstructionsFile)
+		if err := os.WriteFile(projectInstructions, []byte(section), 0o644); err != nil {
+			t.Fatalf("seed project %s: %v", claudeInstructionsFile, err)
 		}
 		// global=true → remove from global settings
 		if err := removeClaude(env, true); err != nil {
@@ -875,12 +1358,19 @@ func TestRemoveClaudeScenarios(t *testing.T) {
 		if strings.Contains(string(data), "bd prime") {
 			t.Error("expected bd prime hooks removed")
 		}
-		instructions, err := os.ReadFile(instructionsPath)
+		instructions, err := os.ReadFile(globalInstructions)
 		if err != nil {
-			t.Fatalf("read %s: %v", claudeInstructionsFile, err)
+			t.Fatalf("read user-level %s: %v", claudeInstructionsFile, err)
 		}
-		if strings.Contains(string(instructions), "BEGIN BEADS INTEGRATION") {
-			t.Fatalf("expected beads section removed from %s", claudeInstructionsFile)
+		if strings.Contains(string(instructions), "BEGIN BEADS INTEGRATION") || !strings.HasPrefix(string(instructions), "# Mine\n") {
+			t.Errorf("expected only the beads section removed from user-level %s, got:\n%s", claudeInstructionsFile, instructions)
+		}
+		project, err := os.ReadFile(projectInstructions)
+		if err != nil {
+			t.Fatalf("read project %s: %v", claudeInstructionsFile, err)
+		}
+		if string(project) != section {
+			t.Errorf("global removal changed the project's %s:\n%s", claudeInstructionsFile, project)
 		}
 		if !strings.Contains(stdout.String(), "hooks removed") {
 			t.Error("expected success message")

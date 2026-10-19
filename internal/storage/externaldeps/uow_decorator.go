@@ -144,6 +144,17 @@ func (p *uowProvider) Releaser() (publicops.Releaser, error)       { return uow.
 func (p *uowProvider) LeaseReclaimer() (publicops.LeaseReclaimer, error) {
 	return uow.NewLeaseReclaimer(p)
 }
+
+// Heartbeater passes through: the external-dependency policy governs what a
+// write may point at, and a heartbeat on an existing claim points at nothing.
+func (p *uowProvider) Heartbeater() (publicops.Heartbeater, error) { return uow.NewHeartbeater(p) }
+
+// BlockedLister is built over THIS provider, so its unit of work's
+// GetBlockedIssues is the decorated one above: unsatisfied external blockers
+// are named, exactly as the store decorator names them.
+func (p *uowProvider) BlockedLister() (publicops.BlockedLister, error) {
+	return uow.NewBlockedLister(p)
+}
 func (p *uowProvider) Memories() (memoryops.Memories, error) { return uow.NewMemories(p) }
 func (p *uowProvider) EventsJournalCursor() (storage.EventsJournalCursor, error) {
 	return uow.NewEventsJournalCursor(p)
@@ -222,6 +233,8 @@ var (
 	_ uow.MetadataCASSource              = (*uowProvider)(nil)
 	_ uow.ReleaserSource                 = (*uowProvider)(nil)
 	_ uow.LeaseReclaimerSource           = (*uowProvider)(nil)
+	_ uow.HeartbeaterSource              = (*uowProvider)(nil)
+	_ uow.BlockedListerSource            = (*uowProvider)(nil)
 	_ uow.MemoriesSource                 = (*uowProvider)(nil)
 	_ uow.EventsJournalCursorSource      = (*uowProvider)(nil)
 )
@@ -345,20 +358,18 @@ func (u *issueUseCase) GetBlockedIssues(ctx context.Context, filter types.WorkFi
 			parentDeps[id] = append(parentDeps[id], deps...)
 		}
 	}
-	issues, err := u.IssueUseCase.GetIssuesByIDs(ctx, missing)
+	// GetMany reads both planes with labels hydrated, as the store decorator's
+	// reads do; GetIssuesByIDs here would leave Labels empty, so the label
+	// filter below could not judge these rows and they would print unlabelled.
+	issues, err := getManyChunked(ctx, u.IssueUseCase, missing)
 	if err != nil {
 		return nil, fmt.Errorf("external dependencies: load blocked sources: %w", err)
 	}
-	wisps, err := u.IssueUseCase.GetWispsByIDs(ctx, missing)
-	if err != nil {
-		return nil, fmt.Errorf("external dependencies: load blocked wisp sources: %w", err)
-	}
-	issues = append(issues, wisps...)
 	for _, issue := range issues {
 		if issue == nil || issue.Status == types.StatusClosed || issue.Status == types.StatusPinned {
 			continue
 		}
-		if !matchesParentFilter(issue.ID, filter.ParentID, parentDeps) {
+		if !matchesParentFilter(issue.ID, filter.ParentID, parentDeps) || !matchesLabelFilter(issue.Labels, filter) {
 			continue
 		}
 		refs := slices.Clone(state.refsByIssue[issue.ID])
@@ -449,6 +460,41 @@ func (u *issueUseCase) guardExternalClose(ctx context.Context, id string, force 
 type dependencyUseCase struct {
 	domain.DependencyUseCase
 	policy *Store
+}
+
+// IsBlockedBatch keeps the external blocker invariant on the stored column,
+// as the store decorator's IsBlockedBatch does: an id with an unsatisfied
+// external blocker is blocked whatever the column says. The served is_blocked
+// flag is this read on bd serve's unit-of-work arm, so it decides by the
+// edges and resolver GetReadyWork excludes by, read through the same unit of
+// work. Unlike Ready it resolves only the refs of the ids the column
+// answered: a client asks in chunks, and no chunk may reopen every foreign
+// project the workspace names. An id naming no row stays absent.
+func (u *dependencyUseCase) IsBlockedBatch(ctx context.Context, ids []string) (map[string]bool, error) {
+	blocked, err := u.DependencyUseCase.IsBlockedBatch(ctx, ids)
+	if err != nil || len(blocked) == 0 {
+		return blocked, err
+	}
+	records, err := u.GetExternalBlockingDependencyRecords(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("external dependencies: %w", err)
+	}
+	answered := make(map[string][]*types.Dependency, len(blocked))
+	for id := range blocked {
+		if deps, ok := records[id]; ok {
+			answered[id] = deps
+		}
+	}
+	state, err := u.policy.blockingStateFromRecords(ctx, answered)
+	if err != nil {
+		return nil, fmt.Errorf("external dependencies: %w", err)
+	}
+	for id := range blocked {
+		if len(state.refsByIssue[id]) > 0 {
+			blocked[id] = true
+		}
+	}
+	return blocked, nil
 }
 
 func (u *dependencyUseCase) GetDependencyTree(ctx context.Context, rootID string, opts domain.DepTreeOpts) ([]*types.TreeNode, error) {

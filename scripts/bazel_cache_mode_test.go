@@ -227,9 +227,9 @@ func TestBazelCacheModeReachesTheRC(t *testing.T) {
 				// no longer forwards the app secrets either, so there is no
 				// audience left for pre-warming in fork-ro or fork-rw (see
 				// bazel.yml's comment on the job).
-				// Nor does a shadow lane (bazelShadowLanes): mode remote on
-				// same-repo PRs and merge groups only.
-				case strings.HasPrefix(mode, "fork-") && !runs && !bazelPackageJobs[name] && !(name == bazelRBEPrewarmJobName && strings.HasPrefix(mode, "fork-")) && bazelShadowLanes[name] == "":
+				// Nor does a union lane (bazelUnionLanes): mode remote only,
+				// its members run in the fork modes.
+				case strings.HasPrefix(mode, "fork-") && !runs && !bazelPackageJobs[name] && !(name == bazelRBEPrewarmJobName && strings.HasPrefix(mode, "fork-")) && bazelUnionLanes[name] == nil:
 					t.Errorf("%s does not run in mode %s (every lane runs remotely)", name, mode)
 				case mode == "cache" && (name == bazelIntegJobName || name == bazelCmdDoltJobName) && !runs:
 					t.Errorf("%s does not run in mode cache", name)
@@ -289,13 +289,17 @@ func TestBazelCacheModeReachesTheRC(t *testing.T) {
 				if bazelPackageJobs[lane] {
 					continue
 				}
-				if !ran[lane] {
+				// A union lane's run reports for its members
+				// (bazel_dolt_race_test.go).
+				if !ran[lane] && !ran[bazelUnionOf(lane)] {
 					wantSkips = append(wantSkips, id)
 				}
 			}
-			// Flag-gated lanes' skips are accepted whatever the flag says.
+			// Flag-gated lanes' skips are accepted whatever the flag says,
+			// unless their union lane ran instead (bazel-dolt-int, for
+			// bazel-cmd-dolt, in mode remote: item 5 A2).
 			for lane, g := range bazelFlagGatedLanes {
-				if !ran[lane] {
+				if !ran[lane] && !ran[bazelUnionOf(lane)] {
 					wantSkips = append(wantSkips, g.id)
 				}
 			}

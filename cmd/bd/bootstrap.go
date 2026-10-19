@@ -274,7 +274,11 @@ Examples:
 		}
 
 		if err := executeBootstrapPlan(plan, cfg, nonInteractive); err != nil {
-			return HandleError("Bootstrap failed: %v", err)
+			// The error can carry sync.remote verbatim, credentials and all:
+			// sanitizeURL passes through a URL net/url cannot parse (a
+			// password with an unencoded "#" or "?"), and Dolt's "invalid
+			// remote url:" repeats it. Scrub it where it is printed.
+			return HandleError("Bootstrap failed: %s", scrubURLCredentials(err.Error()))
 		}
 		return nil
 	},
@@ -1656,14 +1660,21 @@ func isGitCodeRepoURL(rawURL string) bool {
 
 // urlHostname extracts the lowercase hostname from a URL without importing
 // net/url. Handles scheme://[user@]host[:port]/path and SCP git@host:path.
+//
+// The host part is cut out before userinfo is stripped through its last "@",
+// so an "@" in a path, query or fragment never selects the host (mc-gcmer).
+// For a scheme URL the host part is the authority, which ends at the first
+// "/", "?" or "#" — the host net/url, and so Dolt, would dial. For SCP it is
+// everything before the first ":", unless a "/" comes first, which makes it a
+// local path (the split doltremote.FromGitURL makes).
 func urlHostname(rawURL string) string {
 	if sep := strings.Index(rawURL, "://"); sep >= 0 {
 		rest := rawURL[sep+3:]
-		if at := strings.Index(rest, "@"); at >= 0 {
-			rest = rest[at+1:]
+		if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+			rest = rest[:end]
 		}
-		if slash := strings.Index(rest, "/"); slash >= 0 {
-			rest = rest[:slash]
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			rest = rest[at+1:]
 		}
 		if colon := strings.Index(rest, ":"); colon >= 0 {
 			rest = rest[:colon]
@@ -1671,10 +1682,9 @@ func urlHostname(rawURL string) string {
 		return strings.ToLower(rest)
 	}
 	// SCP-style: git@github.com:org/repo
-	if at := strings.Index(rawURL, "@"); at >= 0 {
-		rest := rawURL[at+1:]
-		if colon := strings.Index(rest, ":"); colon >= 0 {
-			return strings.ToLower(rest[:colon])
+	if colon := strings.Index(rawURL, ":"); colon >= 0 && !strings.Contains(rawURL[:colon], "/") {
+		if at := strings.LastIndex(rawURL[:colon], "@"); at >= 0 {
+			return strings.ToLower(rawURL[at+1 : colon])
 		}
 	}
 	return ""

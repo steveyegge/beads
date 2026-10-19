@@ -84,6 +84,8 @@ func (g *httpBatchGetter) GetMany(ctx context.Context, req issueops.GetManyReque
 		Body: apigen.BatchGetIssuesRequest{
 			Ids: append([]string(nil), req.IDs...),
 		},
+		// A read on POST: safe to replay after a stall or a 503, as a GET is.
+		Idempotent: true,
 	}, &body); err != nil {
 		return issueops.GetManyResult{}, err
 	}
