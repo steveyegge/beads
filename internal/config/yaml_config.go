@@ -899,6 +899,15 @@ func updateYamlKey(content, key, value string) (string, error) {
 		}
 	}
 
+	// Scan returns false on a hard error too — a line of bufio.MaxScanTokenSize
+	// or more stops the loop mid-document — and the loop above cannot tell
+	// that from EOF. Refuse here instead of joining the lines read so far:
+	// setYamlConfigAtPath would write the truncated document back over
+	// config.yaml with a nil error.
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("cannot set %q: scanning config content: %w", key, err)
+	}
+
 	if !found {
 		// Key not found - append at end
 		// Add blank line before if content doesn't end with one

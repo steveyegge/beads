@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1791,5 +1793,53 @@ func TestCheckSecretKeyGitSafety_RoutedCheckout(t *testing.T) {
 func TestDoltRemotesAPIPortIsUserGlobal(t *testing.T) {
 	if !IsUserGlobalKey("dolt.remotesapi-port") {
 		t.Fatal("dolt.remotesapi-port must be machine-global; a project config cannot vary one shared server")
+	}
+}
+
+// updateYamlKey reads its document through a bufio.Scanner with the default
+// token cap, so a line of bufio.MaxScanTokenSize (64 KiB) or more makes Scan
+// return false mid-document. The scan loop cannot tell that from EOF: without
+// consulting scanner.Err() it joins the lines it managed to read and returns
+// them with a nil error, and setYamlConfigAtPath then writes the truncated
+// document back over config.yaml. These rows pin the refusal at the cliff and
+// the ordinary rewrite one byte under it, so the guard cannot fire early.
+func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		key      string
+		refused  bool
+		expected string // ignored when refused
+	}{
+		{
+			name:     "line at the scanner limit is refused, not truncated",
+			content:  "k1: v1\n" + strings.Repeat("x", bufio.MaxScanTokenSize) + "\nk2: v2",
+			key:      "k1",
+			refused:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := updateYamlKey(tt.content, tt.key, "true")
+			if tt.refused {
+				if err == nil {
+					t.Fatalf("updateYamlKey() = %q, want a refusal: the oversize line silently truncated the document", got)
+				}
+				if !errors.Is(err, bufio.ErrTooLong) {
+					t.Errorf("updateYamlKey() error = %v, want one wrapping bufio.ErrTooLong", err)
+				}
+				if got != "" {
+					t.Errorf("updateYamlKey() = %q on refusal, want empty", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("updateYamlKey() error = %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("updateYamlKey() =\n%q\nwant:\n%q", got, tt.expected)
+			}
+		})
 	}
 }
