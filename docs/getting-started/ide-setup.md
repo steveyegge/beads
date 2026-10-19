@@ -90,12 +90,12 @@ The recommended approach for Claude Code:
 
 ```bash
 bd setup claude            # Project install: .claude/settings.json
-bd setup claude --global   # Global install: ~/.claude/settings.json
+bd setup claude --global   # Global install: ~/.claude/settings.json + ~/.claude/CLAUDE.md
 ```
 
 This installs:
 - **SessionStart hook** - Runs `bd prime --hook-json`, which wraps the workflow context in the JSON envelope Claude Code expects. SessionStart fires when a session starts, resumes, or clears, and again after context compaction — no separate compaction hook is needed.
-- **Minimal beads section in `CLAUDE.md`** - A pointer to `bd prime`, managed with hash/version markers for safe updates and `--check` freshness detection. If `CLAUDE.md` is a thin stub that imports `AGENTS.md` (an `@AGENTS.md` line of its own), the section is written to `AGENTS.md` instead, and a stale beads block left in the stub by an older bd is removed.
+- **Minimal beads section in `CLAUDE.md`** - A pointer to `bd prime`, managed with hash/version markers for safe updates and `--check` freshness detection. If `CLAUDE.md` is a thin stub that imports `AGENTS.md` (an `@AGENTS.md` line of its own), the section is written to `AGENTS.md` instead, and a stale beads block left in the stub by an older bd is removed. A `--global` install writes the section to your user-level `~/.claude/CLAUDE.md`, which Claude Code loads in every project, and leaves the current directory's files alone.
 
 If the [beads Claude Code plugin](/integrations/claude-code-plugin) is installed, hooks are plugin-managed and `bd setup claude` skips writing them, so `bd prime` doesn't fire twice per session.
 
@@ -111,7 +111,7 @@ If the [beads Claude Code plugin](/integrations/claude-code-plugin) is installed
 |------|-------------|
 | `--check` | Check both hooks and the managed `CLAUDE.md` beads section |
 | `--remove` | Remove beads hooks and the managed `CLAUDE.md` beads section |
-| `--global` | Install to `~/.claude/settings.json` instead of the project |
+| `--global` | Install to `~/.claude/settings.json` and `~/.claude/CLAUDE.md` instead of the project |
 | `--stealth` | Use `bd prime --stealth --hook-json` (flush only, no git operations) — useful in CI/CD where git operations might fail |
 
 Restart Claude Code after installation for the hooks to take effect.

@@ -34,6 +34,10 @@ type agentsEnv struct {
 	stdout     io.Writer
 	stderr     io.Writer
 	skipped    *bool
+	// sectionOnly creates a missing or empty file holding only the managed
+	// section, without the project scaffolding createNewAgentsFileWithOpts
+	// adds. For user-level files, which apply to every project.
+	sectionOnly bool
 }
 
 type agentsIntegration struct {
@@ -176,6 +180,9 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 		}
 	} else {
 		newContent := createNewAgentsFileWithOpts(profile, opts)
+		if env.sectionOnly {
+			newContent = beadsSection
+		}
 		if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
 			return err

@@ -894,6 +894,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver sends a `time.Time` as its wall clock with no zone, so a library
   caller paging with a cursor in another zone was answered from the wrong
   position there (server Dolt was unaffected).
+- **`bd setup claude --global` keeps its beads section in `~/.claude/CLAUDE.md`.**
+  It wrote the section into the current directory's `CLAUDE.md`: run from your
+  home directory it created `~/CLAUDE.md`, which by default stops Claude Code
+  reading `AGENTS.md` in the projects below it, and `--remove --global`
+  stripped the section a project's own install had put in its `CLAUDE.md`
+  while leaving that project's hooks in place. A global install and removal now
+  use only the user-level files beside `~/.claude/settings.json`; a new
+  `~/.claude/CLAUDE.md` holds just the section, and with global or plugin hooks
+  `--check` accepts it when the project's instructions have none. A section an
+  earlier `--global` run left in a directory's `CLAUDE.md` stays there; delete
+  it by hand if you don't want it.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query

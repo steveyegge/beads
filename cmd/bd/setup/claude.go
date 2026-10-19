@@ -27,6 +27,14 @@ var claudeAgentsIntegration = agentsIntegration{
 	profile:      agents.ProfileMinimal,
 }
 
+// claudeGlobalAgentsIntegration is claudeAgentsIntegration for the user-level
+// instructions file, so its hints name the command that maintains that file.
+var claudeGlobalAgentsIntegration = agentsIntegration{
+	name:         "Claude Code",
+	setupCommand: "bd setup claude --global",
+	profile:      agents.ProfileMinimal,
+}
+
 type claudeEnv struct {
 	stdout     io.Writer
 	stderr     io.Writer
@@ -69,6 +77,13 @@ func legacyProjectSettingsPath(base string) string {
 
 func globalSettingsPath(home string) string {
 	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// globalClaudeInstructionsPath is Claude Code's user-level instructions file,
+// which it loads in every project. A global install keeps its managed beads
+// section there, beside the ~/.claude/settings.json its hook goes in.
+func globalClaudeInstructionsPath(home string) string {
+	return filepath.Join(home, ".claude", claudeInstructionsFile)
 }
 
 // marshalSettings renders a Claude settings map as two-space-indented JSON
@@ -129,6 +144,47 @@ func claudeAgentsEnvRedirect(env claudeEnv) (agentsEnv, bool) {
 		stdout:     env.stdout,
 		stderr:     env.stderr,
 	}, false
+}
+
+// claudeInstructionsEnv resolves the file an install or removal manages the
+// beads section in, with the integration whose hints name its command. A
+// global install uses the user-level ~/.claude/CLAUDE.md and leaves the
+// current directory's files alone; a project install uses the project's
+// CLAUDE.md, or AGENTS.md when the bool reports the claudeAgentsEnvRedirect
+// redirect.
+func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegration, bool) {
+	if !global {
+		ae, redirected := claudeAgentsEnvRedirect(env)
+		return ae, claudeAgentsIntegration, redirected
+	}
+	return agentsEnv{
+		agentsPath:  globalClaudeInstructionsPath(env.homeDir),
+		stdout:      env.stdout,
+		stderr:      env.stderr,
+		sectionOnly: true,
+	}, claudeGlobalAgentsIntegration, false
+}
+
+// claudeCheckAgentsEnv picks the instructions file --check reports on: the
+// project's, unless the hooks are user-level (a global install's, or the
+// plugin's) and the project's file has no beads section. Then it is the
+// ~/.claude/CLAUDE.md a global install writes, if that has one: Claude Code
+// loads it alongside the project's own instructions. A project install is
+// still judged on the project's file alone.
+func claudeCheckAgentsEnv(env claudeEnv, userLevelHooks bool) (agentsEnv, agentsIntegration) {
+	projectEnv := claudeAgentsEnv(env)
+	if userLevelHooks && !claudeFileHasBeadsSection(env, projectEnv.agentsPath) {
+		globalEnv, globalIntegration, _ := claudeInstructionsEnv(env, true)
+		if claudeFileHasBeadsSection(env, globalEnv.agentsPath) {
+			return globalEnv, globalIntegration
+		}
+	}
+	return projectEnv, claudeAgentsIntegration
+}
+
+func claudeFileHasBeadsSection(env claudeEnv, path string) bool {
+	data, err := env.readFile(path)
+	return err == nil && containsBeadsMarker(string(data))
 }
 
 // stripStaleClaudeBlock removes a beads-managed block left behind in CLAUDE.md
@@ -342,10 +398,10 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 
 	// Install minimal beads section in CLAUDE.md.
 	// Hooks handle the heavy lifting via bd prime; CLAUDE.md just needs a pointer.
-	agentsEnv, redirected := claudeAgentsEnvRedirect(env)
+	agentsEnv, integration, redirected := claudeInstructionsEnv(env, global)
 	agentsSkipped := false
 	agentsEnv.skipped = &agentsSkipped
-	agentsErr := installAgents(agentsEnv, claudeAgentsIntegration)
+	agentsErr := installAgents(agentsEnv, integration)
 	if agentsErr != nil {
 		// Non-fatal: hooks are already installed
 		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", agentsFileName(agentsEnv.agentsPath), agentsErr)
@@ -447,24 +503,28 @@ func checkClaude(env claudeEnv) error {
 	globalSettings := globalSettingsPath(env.homeDir)
 	legacySettings := legacyProjectSettingsPath(env.projectDir)
 
+	userLevelHooks := false
 	switch {
 	case hasBeadsHooks(projectSettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed: %s\n", projectSettings)
 	case hasBeadsHooks(globalSettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Global hooks installed: %s\n", globalSettings)
+		userLevelHooks = true
 	case hasBeadsHooks(legacySettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", legacySettings)
 		_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
 	case hasBeadsPlugin(env):
 		// GH#3192: Plugin provides hooks via plugin.json — no project-level hooks needed
 		_, _ = fmt.Fprintln(env.stdout, "✓ Hooks provided by beads plugin (plugin-managed)")
+		userLevelHooks = true
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
 		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
 		return errClaudeHooksMissing
 	}
 
-	return checkAgents(claudeAgentsEnv(env), claudeAgentsIntegration)
+	agentsEnv, integration := claudeCheckAgentsEnv(env, userLevelHooks)
+	return checkAgents(agentsEnv, integration)
 }
 
 func RemoveClaude(global bool) error {
@@ -536,7 +596,7 @@ func removeClaude(env claudeEnv, global bool) error {
 		}
 	}
 
-	agentsEnv, redirected := claudeAgentsEnvRedirect(env)
+	agentsEnv, integration, redirected := claudeInstructionsEnv(env, global)
 	if redirected {
 		// When redirected, AGENTS.md carries the project-authoritative shared
 		// beads section (created by `bd init` or another agent's setup), not a
@@ -547,7 +607,7 @@ func removeClaude(env claudeEnv, global bool) error {
 			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to clean stale beads block from %s: %v\n", claudeInstructionsFile, err)
 		}
 	} else {
-		if err := removeAgents(agentsEnv, claudeAgentsIntegration); err != nil {
+		if err := removeAgents(agentsEnv, integration); err != nil {
 			// Non-fatal
 			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", claudeInstructionsFile, err)
 		}

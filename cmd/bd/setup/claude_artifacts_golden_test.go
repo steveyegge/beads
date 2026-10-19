@@ -35,6 +35,7 @@ import (
 // claudeArtifactPaths are the files bd setup claude can create, change or
 // delete, relative to the root holding the test's project and home dirs.
 var claudeArtifactPaths = []string{
+	"home/.claude/CLAUDE.md",
 	"home/.claude/settings.json",
 	"project/.claude/settings.json",
 	"project/.claude/settings.local.json",
@@ -220,6 +221,24 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 		},
 		{
 			name: "global",
+			steps: []claudeArtifactStep{
+				claudeInstallStep(true, false),
+				claudeCheckStep(),
+				claudeRemoveStep(true),
+				claudeCheckStep(),
+			},
+		},
+		{
+			// A global install and removal run inside a project that has its
+			// own install, as bd init leaves it: the global steps use the
+			// user-level files under home/.claude only, and the project's
+			// hooks and section stay in place and current throughout.
+			name: "global-beside-project-install",
+			seed: map[string]string{
+				"home/.claude/CLAUDE.md":        "# My preferences\n\nAnswer tersely.\n",
+				"project/.claude/settings.json": installedSettings,
+				"project/CLAUDE.md":             "# My Project\n\n" + agents.RenderSectionWithOpts(agents.ProfileMinimal, agents.DefaultRenderOpts()),
+			},
 			steps: []claudeArtifactStep{
 				claudeInstallStep(true, false),
 				claudeCheckStep(),
