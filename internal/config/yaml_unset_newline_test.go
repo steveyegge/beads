@@ -323,4 +323,18 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 			}
 		}
 	})
+
+	// A document that genuinely has no trailing newline keeps not having one:
+	// the rule is "preserve", not "always append". One input per branch.
+	t.Run("absent trailing newline is not invented", func(t *testing.T) {
+		for _, content := range []string{"actor: a\nother: x", "other: x"} {
+			out, err := updateYamlKey(content, "actor", "b")
+			if err != nil {
+				t.Fatalf("updateYamlKey(%q): %v", content, err)
+			}
+			if strings.HasSuffix(out, "\n") {
+				t.Errorf("a trailing newline was invented for a document that had none: %q -> %q", content, out)
+			}
+		}
+	})
 }
