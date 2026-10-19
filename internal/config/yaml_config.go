@@ -918,7 +918,13 @@ func updateYamlKey(content, key, value string) (string, error) {
 	// belongs here too; it is out of scope for a fix aimed at unset. Only this
 	// flat path is affected -- updateNestedYamlKey re-marshals through
 	// yaml.Node and is already newline-faithful.
-	return strings.Join(result, "\n"), nil
+
+	// Preserve the document's trailing newlines. bufio.Scanner drops the final
+	// terminator, so the join is one newline short of any terminated input. Same
+	// rule as commentOutYamlKey's return: re-attach content's own run, so a
+	// document without a trailing newline does not acquire one.
+	out := strings.Join(result, "\n")
+	return strings.TrimRight(out, "\n") + content[len(strings.TrimRight(content, "\n")):], nil
 }
 
 func updateNestedYamlKey(content, key, value string) (string, bool, error) {

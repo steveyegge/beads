@@ -7,17 +7,20 @@ import (
 	"testing"
 )
 
-// An unset must not also rewrite the end of the file. commentOutYamlKey used to
-// drop the document's trailing newline, so `bd config unset` produced a
-// no-newline-at-end-of-file change on top of the line it meant to comment out —
-// and did so even for a key the document does not contain, i.e. when nothing
-// was edited at all. A config.yaml is git-tracked, so that is a spurious line
-// in someone's review.
+// Neither an unset nor a set may also rewrite the end of the file.
+// commentOutYamlKey and updateYamlKey's flat-key path both used to drop the
+// document's trailing newline, so `bd config unset` and `bd config set` each
+// produced a no-newline-at-end-of-file change on top of the line they meant to
+// edit — and unset did so even for a key the document does not contain, i.e.
+// when nothing was edited at all. A config.yaml is git-tracked, so that is a
+// spurious line in someone's review. The unset tests come first; the set tests
+// follow them, starting at TestUpdateYamlKeyPreservesTheTrailingNewline.
 //
 // The guarantee is scoped to LF documents. A CRLF file is still normalized to
-// LF by an unset that actually comments a key out — that predates this fix and
-// is pinned below as known-and-accepted rather than quietly claimed away. An
-// unset that changes nothing no longer rewrites the file at all; see
+// LF by an unset that actually comments a key out, and by any set of a
+// single-segment key — that predates both fixes and is pinned below as
+// known-and-accepted rather than quietly claimed away. An unset that changes
+// nothing no longer rewrites the file at all; see
 // TestUnsetOfAnAbsentKeyLeavesACRLFFileUntouched.
 func TestCommentOutYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 	for _, tc := range []struct {
@@ -249,5 +252,45 @@ func TestUnsetOfAPresentKeyInACRLFFileReportsTheWrite(t *testing.T) {
 			t.Error("UnsetUserYamlConfig() changed = false for a key the file contains")
 		}
 		assertWritten(t, path)
+	})
+}
+
+// The set twin of TestCommentOutYamlKeyPreservesTheTrailingNewline.
+// updateYamlKey's flat-key path read the document with bufio.Scanner and joined
+// the lines back with "\n" — the shape commentOutYamlKey used to have — so it
+// came back exactly one newline short of any terminated document. Every key
+// here is a single segment, because only those reach that path: updateYamlKey
+// hands every dotted key to updateNestedYamlKey, a different writer, so a
+// dotted-key row would pass without running the code under test at all.
+func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
+	for _, tc := range []struct {
+		name, content, key string
+	}{
+		{"key present", "issue_prefix: vp\ndolt.mode: server\n", "issue_prefix"},
+		{"commented key present", "# actor: \"\"\nother: x\n", "actor"},
+		{"key on the last line", "other: x\nactor: a\n", "actor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := updateYamlKey(tc.content, tc.key, "b")
+			if err != nil {
+				t.Fatalf("updateYamlKey: %v", err)
+			}
+			want := tc.content[len(strings.TrimRight(tc.content, "\n")):]
+			if got := out[len(strings.TrimRight(out, "\n")):]; got != want {
+				t.Errorf("trailing newline run = %q, want %q:\nin:  %q\nout: %q", got, want, tc.content, out)
+			}
+		})
+	}
+
+	// The in-place branch replaces the one value and leaves every other byte,
+	// the terminator included, as it was.
+	t.Run("key present: only the value changes", func(t *testing.T) {
+		out, err := updateYamlKey("issue_prefix: vp\ndolt.mode: server\n", "issue_prefix", "zz")
+		if err != nil {
+			t.Fatalf("updateYamlKey: %v", err)
+		}
+		if want := "issue_prefix: \"zz\"\ndolt.mode: server\n"; out != want {
+			t.Errorf("updateYamlKey:\ngot:  %q\nwant: %q", out, want)
+		}
 	})
 }
