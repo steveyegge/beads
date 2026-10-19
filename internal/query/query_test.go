@@ -843,37 +843,71 @@ func TestQueryRejectsUppercaseDurationUnits(t *testing.T) {
 }
 
 // TestCompactDurationGrammarReachesQueryPlane binds this package's duration
-// grammar to the shared one in internal/timeparsing, which owns it. The lexer
-// classifies a duration with timeparsing.IsCompactDuration instead of keeping
-// its own copy of the unit set; this test holds it to that. A unit the shared
-// grammar accepts but the lexer types as TokenIdent skips the evaluator's
-// TokenDuration arm and resolves through ParseRelativeTime as a *future*
-// offset: the "30min meant 30 minutes from now" inversion, reproduced silently
-// for the next unit.
+// grammar to the shared one in internal/timeparsing, which owns it, in both
+// directions. The lexer classifies a duration with
+// timeparsing.IsCompactDuration instead of keeping its own copy of the unit
+// set; this test holds it to that. A unit the shared grammar accepts but the
+// lexer types as TokenIdent skips the evaluator's TokenDuration arm and
+// resolves through ParseRelativeTime as a *future* offset: the "30min meant 30
+// minutes from now" inversion, reproduced silently for the next unit. A suffix
+// the shared grammar rejects but the lexer types as TokenDuration reaches
+// ParseCompactDuration in the evaluator and fails with that parser's internal
+// error about a negated value the user never typed: while the lexer took
+// "H D W M Y", "created>30M" failed with `not a compact duration: "-30M"`.
 //
-// ParseCompactDuration is the oracle: whatever suffix it accepts must lex as a
-// duration here. Candidates are exhaustive over lowercase ASCII up to three
-// runes, so plausible future spellings ("sec", "hr", "mo", "yr") are covered
-// alongside today's six.
+// ParseCompactDuration is the oracle: a suffix must lex as a duration here if
+// and only if it accepts it. Candidates are exhaustive over one- and
+// two-letter ASCII in either case and three-letter lowercase ASCII, plus every
+// case spelling of an accepted three-letter unit, so plausible future
+// spellings ("sec", "hr", "mo", "yr") are covered alongside today's six and
+// their uppercase forms.
 func TestCompactDurationGrammarReachesQueryPlane(t *testing.T) {
 	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
 
-	const letters = "abcdefghijklmnopqrstuvwxyz"
+	accepts := func(unit string) bool {
+		_, err := timeparsing.ParseCompactDuration("1"+unit, now)
+		return err == nil
+	}
+
+	const lower = "abcdefghijklmnopqrstuvwxyz"
+	const letters = lower + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	var candidates []string
 	for _, a := range letters {
 		candidates = append(candidates, string(a))
 		for _, b := range letters {
 			candidates = append(candidates, string(a)+string(b))
-			for _, c := range letters {
-				candidates = append(candidates, string(a)+string(b)+string(c))
+		}
+	}
+	for _, a := range lower {
+		for _, b := range lower {
+			for _, c := range lower {
+				unit := string(a) + string(b) + string(c)
+				candidates = append(candidates, unit)
+				if !accepts(unit) {
+					continue
+				}
+				// The lowercase sweep reaches only this spelling of an
+				// accepted three-letter unit; add the others ("MIN", "Min", ...).
+				for mask := 1; mask < 1<<len(unit); mask++ {
+					var spelling strings.Builder
+					for i := 0; i < len(unit); i++ {
+						if mask&(1<<i) != 0 {
+							spelling.WriteString(strings.ToUpper(unit[i : i+1]))
+						} else {
+							spelling.WriteByte(unit[i])
+						}
+					}
+					candidates = append(candidates, spelling.String())
+				}
 			}
 		}
 	}
 
-	var accepted []string
+	var accepted, rejected []string
 	isAccepted := make(map[string]bool)
 	for _, unit := range candidates {
-		if _, err := timeparsing.ParseCompactDuration("1"+unit, now); err != nil {
+		if !accepts(unit) {
+			rejected = append(rejected, unit)
 			continue
 		}
 		accepted = append(accepted, unit)
@@ -916,6 +950,29 @@ func TestCompactDurationGrammarReachesQueryPlane(t *testing.T) {
 				t.Errorf("EvaluateAt(label=%s) Labels = %v, want [%q]", value, result.Filter.Labels, value)
 			}
 		})
+	}
+
+	// The reverse direction is one sweep with one report rather than a
+	// subtest per suffix: there are over 20,000 of them.
+	var typedDuration []string
+	for _, unit := range rejected {
+		value := "1" + unit
+		tokens, err := NewLexer("updated>" + value).Tokenize()
+		if err != nil {
+			t.Errorf("Tokenize(updated>%s) error = %v", value, err)
+			continue
+		}
+		for _, tok := range tokens {
+			if tok.Type == TokenDuration {
+				typedDuration = append(typedDuration, unit)
+				break
+			}
+		}
+	}
+	if len(typedDuration) > 0 {
+		t.Errorf("timeparsing rejects these suffixes but the query lexer typed them %v: %v; "+
+			"classify durations with timeparsing.IsCompactDuration or the evaluator fails on them "+
+			"with an internal error", TokenDuration, typedDuration)
 	}
 }
 
