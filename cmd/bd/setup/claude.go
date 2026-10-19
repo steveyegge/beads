@@ -289,11 +289,11 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		if legacy == command {
 			continue
 		}
-		removeHookCommand(hooks, "SessionStart", legacy)
-		removeHookCommand(hooks, "PreCompact", legacy)
+		removeHookCommand(env.stdout, hooks, "SessionStart", legacy)
+		removeHookCommand(env.stdout, hooks, "PreCompact", legacy)
 	}
-	removeHookCommand(hooks, "PreCompact", "bd prime --hook-json")
-	removeHookCommand(hooks, "PreCompact", "bd prime --stealth --hook-json")
+	removeHookCommand(env.stdout, hooks, "PreCompact", "bd prime --hook-json")
+	removeHookCommand(env.stdout, hooks, "PreCompact", "bd prime --stealth --hook-json")
 
 	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
 	// so project-level hooks don't fire bd prime twice per session.
@@ -326,8 +326,8 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 				if json.Unmarshal(legacyData, &legacySettings) == nil {
 					if legacyHooks, ok := legacySettings["hooks"].(map[string]interface{}); ok {
 						for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
-							removeHookCommand(legacyHooks, "SessionStart", v)
-							removeHookCommand(legacyHooks, "PreCompact", v)
+							removeHookCommand(env.stdout, legacyHooks, "SessionStart", v)
+							removeHookCommand(env.stdout, legacyHooks, "PreCompact", v)
 						}
 						if migrated, marshalErr := marshalSettings(legacySettings); marshalErr == nil {
 							if writeErr := writeSettingsIfChanged(env, legacyPath, migrated); writeErr == nil {
@@ -498,8 +498,8 @@ func removeClaude(env claudeEnv, global bool) error {
 			_, _ = fmt.Fprintln(env.stdout, "No hooks found")
 		} else {
 			for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
-				removeHookCommand(hooks, "SessionStart", v)
-				removeHookCommand(hooks, "PreCompact", v)
+				removeHookCommand(env.stdout, hooks, "SessionStart", v)
+				removeHookCommand(env.stdout, hooks, "PreCompact", v)
 			}
 
 			data, err = marshalSettings(settings)
@@ -523,8 +523,8 @@ func removeClaude(env claudeEnv, global bool) error {
 			if json.Unmarshal(legacyData, &legacySettings) == nil {
 				if legacyHooks, ok := legacySettings["hooks"].(map[string]interface{}); ok {
 					for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
-						removeHookCommand(legacyHooks, "SessionStart", v)
-						removeHookCommand(legacyHooks, "PreCompact", v)
+						removeHookCommand(env.stdout, legacyHooks, "SessionStart", v)
+						removeHookCommand(env.stdout, legacyHooks, "PreCompact", v)
 					}
 					if migrated, marshalErr := marshalSettings(legacySettings); marshalErr == nil {
 						_ = writeSettingsIfChanged(env, legacyPath, migrated)
@@ -605,8 +605,10 @@ func addHookCommand(hooks map[string]interface{}, event, command string) bool {
 // removeHookCommand removes a specific command from an event's hook entries.
 // Only the matching command object is removed; sibling commands in the same
 // hook entry are preserved. A hook entry is dropped only when its command list
-// becomes empty after filtering.
-func removeHookCommand(hooks map[string]interface{}, event, command string) {
+// becomes empty after filtering. Each removal is reported to w, the caller's
+// stdout: bd init --quiet hands the installers a discarding writer, so a
+// print to the process stdout here would escape it.
+func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command string) {
 	eventHooks, ok := hooks[event].([]interface{})
 	if !ok {
 		return
@@ -644,7 +646,7 @@ func removeHookCommand(hooks map[string]interface{}, event, command string) {
 		}
 
 		if removed {
-			fmt.Printf("✓ Removed %s hook\n", event)
+			_, _ = fmt.Fprintf(w, "✓ Removed %s hook\n", event)
 		}
 
 		// Drop the hook entry only when it has no commands left.

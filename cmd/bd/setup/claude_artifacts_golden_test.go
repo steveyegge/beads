@@ -356,10 +356,9 @@ func TestClaudePluginManifestHookEvents(t *testing.T) {
 }
 
 // runClaudeArtifactStep runs one step with env.stdout and the process stdout
-// sent to the same file, so the transcript keeps the order a user sees: the
-// hook helpers (addHookCommand, removeHookCommand) print with fmt.Printf
-// rather than to env.stdout. Swapping os.Stdout is why these tests must not
-// run in parallel.
+// sent to the same file, so the transcript keeps the order a user sees:
+// addHookCommand prints with fmt.Printf rather than to env.stdout. Swapping
+// os.Stdout is why these tests must not run in parallel.
 func runClaudeArtifactStep(t *testing.T, env claudeEnv, run func(claudeEnv) error) (stdout, stderr string, err error) {
 	t.Helper()
 	capture, createErr := os.CreateTemp(t.TempDir(), "stdout-*")
