@@ -12,13 +12,16 @@ binaries and diffs every step:
 | **CANDIDATE** | the current working tree (HEAD + uncommitted) | the "after" |
 
 Each scenario is an ordered list of `bd` CLI argv steps run as real processes in
-a throwaway workspace (`bd init` + steps). For every step the harness compares
+a throwaway workspace (`bd init` + steps; a scenario whose first step is its own
+`bd init` starts in an empty workspace). For every step the harness compares
 **exit code**, **stderr**, and **JSON-aware stdout** (object key order ignored;
 array order compared as a multiset by default, as an ordered sequence for
 scenarios flagged `ordered`). Volatile values — timestamps, UUIDs, the host
 actor identity, the `bd show --json` `"revision"` token (matched by member name,
-see below), and the run's own throwaway workspace path — are normalized to
-`<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>`/`<REV>`/`<WORKSPACE>` before comparison.
+see below), the run's own throwaway workspace path, and the repository and clone
+IDs `bd init` hashes from it — are normalized to
+`<TS>`/`<UUID>`/`<ACTOR>`/`<EMAIL>`/`<REV>`/`<WORKSPACE>`/`<REPO_ID>`/`<CLONE_ID>`
+before comparison.
 **Tolerated in-scope divergences: zero.**
 
 ## Run it
@@ -51,8 +54,9 @@ Overrides:
   enough to run on every change.
 - **Enumerated catalog** (`ORACLE_CATALOG=1`) — ~500 deterministic scenarios in
   `harness/scenarios/enumerated.json`, generated to sweep the wider CLI surface as
-  data. Non-deterministic entries (ID minting, non-reproducible init output) are
-  excluded automatically; entries already covered by the curated set are de-duped.
+  data. Non-deterministic entries (ID minting, non-reproducible init output) and
+  entries not runnable embedded-only are excluded automatically; entries already
+  covered by the curated set are de-duped.
   The in-scope predicate (below) applies identically to both tiers.
 
 ## Prerequisites
@@ -120,7 +124,10 @@ the loop — every scenario uses embedded Dolt in its own tempdir.
   non-zero `"revision"` token is erased to `<REV>` (every create, update, close,
   reopen, claim and unclaim remints it from crypto/rand), so whether a write
   remints it is not gated; the member's presence, its string type, and a
-  never-stamped `"0"` still are.
+  never-stamped `"0"` still are. The `Repository ID`/`Clone ID` values a
+  scenario's own `bd init` prints are erased to `<REPO_ID>`/`<CLONE_ID>` too
+  (they hash the random workspace path), so how they are derived is not gated;
+  the lines and their widths still are.
 - **`<REV>` matches a member name, not a position.** The `"revision"` collapse runs
   over the raw stdout/stderr text before any JSON parse, so it erases EVERY
   `"revision"` member holding a non-zero decimal string — at any depth, and in
