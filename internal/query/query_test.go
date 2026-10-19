@@ -1196,3 +1196,28 @@ func TestQueryRejectsUppercaseDurationUnits(t *testing.T) {
 		}
 	}
 }
+
+// TestSignedUppercaseDurationUnitParseError pins where a signed uppercase
+// unit fails: at parse time, like every other signed unknown suffix
+// (+30x), with the parser's "unexpected token" error — not at evaluation
+// with "not a compact duration". A signed lexeme has no identifier
+// fallback, so the unit arrives as its own token after the number.
+func TestSignedUppercaseDurationUnitParseError(t *testing.T) {
+	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
+
+	queries := []string{"created>+30M", "created>-30M", "created>+30x"}
+	for _, q := range queries {
+		t.Run(q, func(t *testing.T) {
+			wantErr := "unexpected token \"M\" at position 11 (expected end of query)"
+			if strings.HasSuffix(q, "x") {
+				wantErr = "unexpected token \"x\" at position 11 (expected end of query)"
+			}
+			if _, err := Parse(q); err == nil || err.Error() != wantErr {
+				t.Errorf("Parse(%q) error = %v, want %q", q, err, wantErr)
+			}
+			if _, err := EvaluateAt(q, now); err == nil || err.Error() != wantErr {
+				t.Errorf("EvaluateAt(%q) error = %v, want %q", q, err, wantErr)
+			}
+		})
+	}
+}
