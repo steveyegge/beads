@@ -138,6 +138,27 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 			t.Errorf("updateYamlKey(\"x\\n\\n\", ...) = %q, want %q", out, want)
 		}
 	})
+
+	// The rule is preserve, not always-append: a document written without a
+	// final newline keeps not having one, on both the update and append arms.
+	t.Run("absent trailing newline is not invented", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, content, key string
+		}{
+			{"key present", "actor: a\nother: x", "actor"},
+			{"key absent, appended", "other: x", "actor"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				out, err := updateYamlKey(tc.content, tc.key, "b")
+				if err != nil {
+					t.Fatalf("updateYamlKey: %v", err)
+				}
+				if strings.HasSuffix(out, "\n") {
+					t.Errorf("a trailing newline was invented for a document that had none: %q", out)
+				}
+			})
+		}
+	})
 }
 
 // The same property through the public writer, which is what `bd config unset`
