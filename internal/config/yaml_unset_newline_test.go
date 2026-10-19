@@ -403,3 +403,34 @@ func TestSetThroughTheFileKeepsTheTrailingNewline(t *testing.T) {
 		t.Errorf("set rewrote the end of the file: trailing run %q, want %q\n%q", got, want, string(after))
 	}
 }
+
+// updateYamlKey hands every dotted key to updateNestedYamlKey before it
+// normalizes CRLF, and has to keep doing so: replaceFlatKeyLine and
+// appendNestedYamlKey carry "\r" through on the lines they leave alone (the
+// literal dotted key and the comment-only document below), and normalizing
+// above the dispatch would silently change what they write. The other two rows
+// are re-marshalled to LF either way. This pins the boundary, not those
+// outputs: whatever the nested writer makes of a CRLF document, a set of a
+// dotted key returns exactly that.
+func TestUpdateYamlKeyLeavesTheNestedPathAlone(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{"literal dotted key", "issue_prefix: vp\r\ndolt.mode: server\r\n"},
+		{"nested block", "issue_prefix: vp\r\ndolt:\r\n  mode: server\r\n"},
+		{"key absent", "issue_prefix: vp\r\n"},
+		{"comment-only document", "# dolt.mode: server\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want, ok, err := updateNestedYamlKey(tc.content, "dolt.mode", "embedded")
+			if err != nil || !ok {
+				t.Fatalf("updateNestedYamlKey: ok=%v err=%v; nothing to compare against", ok, err)
+			}
+			got, err := updateYamlKey(tc.content, "dolt.mode", "embedded")
+			if err != nil {
+				t.Fatalf("updateYamlKey: %v", err)
+			}
+			if got != want {
+				t.Errorf("updateYamlKey and updateNestedYamlKey differ on %q:\nset:    %q\nnested: %q", tc.content, got, want)
+			}
+		})
+	}
+}
