@@ -253,9 +253,12 @@ func walkMap(m map[string]interface{}, parts []string) interface{} {
 // line scanner partway through the document. updateYamlKey used to return the
 // lines read up to that point with a nil error, which setYamlConfigAtPath then
 // wrote over config.yaml, dropping the long line and everything after it.
+// A line one byte shorter still fits, and must get the same rewrite a short
+// document gets rather than the refusal.
 func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
 	doc := func(line string) string { return "k1: v1\n" + line + "\nk2: v2" }
 	atLimit := strings.Repeat("x", bufio.MaxScanTokenSize)
+	underLimit := strings.Repeat("x", bufio.MaxScanTokenSize-1)
 
 	tests := []struct {
 		name    string
@@ -266,6 +269,18 @@ func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
 	}{
 		{name: "line of MaxScanTokenSize bytes, key present", content: doc(atLimit), key: "k1", wantErr: true},
 		{name: "line of MaxScanTokenSize bytes, key absent", content: doc(atLimit), key: "k3", wantErr: true},
+		{
+			name:    "line of MaxScanTokenSize-1 bytes, key present",
+			content: doc(underLimit),
+			key:     "k1",
+			want:    "k1: \"zz\"\n" + underLimit + "\nk2: v2",
+		},
+		{
+			name:    "line of MaxScanTokenSize-1 bytes, key absent",
+			content: doc(underLimit),
+			key:     "k3",
+			want:    doc(underLimit) + "\n\nk3: \"zz\"",
+		},
 	}
 
 	for _, tt := range tests {
