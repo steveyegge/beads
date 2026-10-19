@@ -149,7 +149,8 @@ func claudeAgentsEnvRedirect(env claudeEnv) (agentsEnv, bool) {
 // claudeInstructionsEnv resolves the file an install or removal manages the
 // beads section in, with the integration whose hints name its command. A
 // global install uses the user-level ~/.claude/CLAUDE.md and leaves the
-// current directory's files alone; a project install uses the project's
+// current directory's files alone; it renders with fixed options, since that
+// file is shared by every project and must not follow one project's config; a project install uses the project's
 // CLAUDE.md, or AGENTS.md when the bool reports the claudeAgentsEnvRedirect
 // redirect.
 func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegration, bool) {
@@ -162,6 +163,7 @@ func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegra
 		stdout:      env.stdout,
 		stderr:      env.stderr,
 		sectionOnly: true,
+		renderOpts:  agents.DefaultRenderOpts,
 	}, claudeGlobalAgentsIntegration, false
 }
 
@@ -169,8 +171,10 @@ func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegra
 // project's, unless the hooks are user-level (a global install's, or the
 // plugin's) and the project's file has no beads section. Then it is the
 // ~/.claude/CLAUDE.md a global install writes, if that has one: Claude Code
-// loads it alongside the project's own instructions. A project install is
-// still judged on the project's file alone.
+// loads it alongside the project's own instructions. A project install
+// with project hooks is still judged on the project's file alone; one whose
+// hooks the plugin manages has no project hooks, so it is treated as
+// user-level.
 func claudeCheckAgentsEnv(env claudeEnv, userLevelHooks bool) (agentsEnv, agentsIntegration) {
 	projectEnv := claudeAgentsEnv(env)
 	if userLevelHooks && !claudeFileHasBeadsSection(env, projectEnv.agentsPath) {

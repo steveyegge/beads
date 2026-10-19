@@ -813,6 +813,53 @@ func TestInstallClaudeGlobalStealth(t *testing.T) {
 	}
 }
 
+// The user-level ~/.claude/CLAUDE.md is shared by every project, so a global
+// install renders and checks it the same way whatever beads config the
+// current directory has: otherwise --check from one project calls the section
+// another project wrote stale, and following its hint flips it back.
+func TestClaudeGlobalSectionIgnoresProjectConfig(t *testing.T) {
+	configs := []struct {
+		name string
+		opts agents.RenderOpts
+	}{
+		{"remote", agents.RenderOpts{HasRemote: true}},
+		{"no remote", agents.RenderOpts{HasRemote: false}},
+		{"no push", agents.RenderOpts{HasRemote: true, NoPush: true}},
+	}
+	wantHash := agents.CurrentHashWithOpts(agents.ProfileMinimal, agents.DefaultRenderOpts())
+	orig := detectRenderOptsImpl
+	t.Cleanup(func() { detectRenderOptsImpl = orig })
+	for _, install := range configs {
+		for _, check := range configs {
+			t.Run(install.name+" install, "+check.name+" check", func(t *testing.T) {
+				env, stdout, _ := newClaudeTestEnv(t)
+				installOpts := install.opts
+				detectRenderOptsImpl = func() agents.RenderOpts { return installOpts }
+				if err := installClaude(env, true, false); err != nil {
+					t.Fatalf("installClaude: %v", err)
+				}
+				globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+				data, err := os.ReadFile(globalInstructions)
+				if err != nil {
+					t.Fatalf("read user-level %s: %v", claudeInstructionsFile, err)
+				}
+				if !strings.Contains(string(data), "hash:"+wantHash) {
+					t.Errorf("expected hash %s regardless of project config, got:\n%s", wantHash, data)
+				}
+				checkOpts := check.opts
+				detectRenderOptsImpl = func() agents.RenderOpts { return checkOpts }
+				stdout.Reset()
+				if err := checkClaude(env); err != nil {
+					t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+				}
+				if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+					t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+				}
+			})
+		}
+	}
+}
+
 func TestInstallClaudeErrors(t *testing.T) {
 	t.Run("invalid json", func(t *testing.T) {
 		env, _, stderr := newClaudeTestEnv(t)
@@ -924,6 +971,12 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 		if !strings.Contains(stdout.String(), claudeInstructionsFile+" not found") {
 			t.Fatalf("expected missing %s message, got: %s", claudeInstructionsFile, stdout.String())
+		}
+		// With no beads section in either file, --check falls back to the
+		// project's file and suggests a project install, as before the
+		// user-level target existed.
+		if !strings.Contains(stdout.String(), "Run: bd setup claude\n") {
+			t.Errorf("expected the project setup hint, got:\n%s", stdout.String())
 		}
 	})
 

@@ -38,6 +38,17 @@ type agentsEnv struct {
 	// section, without the project scaffolding createNewAgentsFileWithOpts
 	// adds. For user-level files, which apply to every project.
 	sectionOnly bool
+	// renderOpts, when set, fixes the render options instead of detecting
+	// them from the current directory's beads config. For user-level files,
+	// which every project shares, so install and --check agree everywhere.
+	renderOpts func() agents.RenderOpts
+}
+
+func (env agentsEnv) resolveRenderOpts() agents.RenderOpts {
+	if env.renderOpts != nil {
+		return env.renderOpts()
+	}
+	return detectRenderOpts()
 }
 
 type agentsIntegration struct {
@@ -121,7 +132,7 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	profile := resolveProfile(integration)
-	opts := detectRenderOpts()
+	opts := env.resolveRenderOpts()
 
 	var currentContent string
 	data, err := os.ReadFile(env.agentsPath) // #nosec G304 -- env.agentsPath is trusted setup destination
@@ -241,7 +252,7 @@ func checkAgents(env agentsEnv, integration agentsIntegration) error {
 		checkProfile = agents.ProfileFull
 	}
 
-	currentHash := agents.CurrentHashWithOpts(checkProfile, detectRenderOpts())
+	currentHash := agents.CurrentHashWithOpts(checkProfile, env.resolveRenderOpts())
 	if meta != nil && meta.Hash == currentHash && existingProf == checkProfile {
 		_, _ = fmt.Fprintf(env.stdout, "✓ %s integration installed: %s (current)\n", integration.name, env.agentsPath)
 		return nil
