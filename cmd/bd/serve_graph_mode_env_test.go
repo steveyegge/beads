@@ -132,10 +132,13 @@ func serveInProcessSnapshot(t *testing.T, dir, beadsDir string) serveSnapshot {
 	t.Helper()
 	stopStderr := captureStderrText(t)
 	addr, done := startServeInProcess(t, dir, beadsDir)
-	// A clean run has cleared rootCancel by the time it returns, so this only
-	// acts when a failure below left the server running.
+	// Stops a server that a failure below left running. Keyed on whether done
+	// has been read, not on rootCancel: a run that returns an error skips
+	// PersistentPostRunE and leaves rootCancel set, and waiting on done again
+	// after reading its only result would hang the test binary.
+	drained := false
 	t.Cleanup(func() {
-		if rootCancel != nil {
+		if !drained && rootCancel != nil {
 			rootCancel()
 			<-done
 		}
@@ -145,7 +148,9 @@ func serveInProcessSnapshot(t *testing.T, dir, beadsDir string) serveSnapshot {
 		t.Fatal("the root command published no cancel function; nothing here can stop the server")
 	}
 	rootCancel()
-	if err := <-done; err != nil {
+	err := <-done
+	drained = true
+	if err != nil {
 		t.Fatalf("bd serve returned %v, want a clean shutdown", err)
 	}
 	log := stopStderr()
