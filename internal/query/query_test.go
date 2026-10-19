@@ -1,6 +1,9 @@
 package query
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -794,6 +797,48 @@ func TestQueryMinutesUnitResolvesAgo(t *testing.T) {
 				t.Errorf("EvaluateAt(%q) = %s, want %s", tt.query, got.Format(time.RFC3339), tt.want.Format(time.RFC3339))
 			}
 		})
+	}
+}
+
+// TestQueryRejectsUppercaseDurationUnits pins how an uppercase duration unit
+// fails on a time field. Units are lowercase in the shared grammar, so "30M"
+// is not a duration: it reaches ParseRelativeTime as typed, fails there, and
+// the error quotes what the user wrote. It must never be the internal
+// "not a compact duration" error, which quoted the negated "-30M" the
+// evaluator builds for a duration token. "30MIN" and "30Min" always took the
+// ParseRelativeTime path; they are controls for the expected error.
+func TestQueryRejectsUppercaseDurationUnits(t *testing.T) {
+	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
+
+	values := []string{"30M", "30D", "30W", "30Y", "30H", "1H", "30MIN", "30Min"}
+	shapes := []string{
+		"created>%s",
+		"updated<%s",
+		"closed>=%s",
+		"started<=%s",
+		"created>%s OR status=open",
+	}
+
+	for _, value := range values {
+		for _, shape := range shapes {
+			query := fmt.Sprintf(shape, value)
+			t.Run(query, func(t *testing.T) {
+				_, err := EvaluateAt(query, now)
+				if err == nil {
+					t.Fatalf("EvaluateAt(%q) succeeded, want an unparseable-time error", query)
+				}
+				msg := err.Error()
+				if want := "cannot parse time expression: " + strconv.Quote(value); !strings.Contains(msg, want) {
+					t.Errorf("EvaluateAt(%q) error = %q, want it to contain %q", query, msg, want)
+				}
+				if strings.Contains(msg, "not a compact duration") {
+					t.Errorf("EvaluateAt(%q) error = %q, want no internal compact-duration error", query, msg)
+				}
+				if negated := strconv.Quote("-" + value); strings.Contains(msg, negated) {
+					t.Errorf("EvaluateAt(%q) error = %q quotes %s, a value the user never typed", query, msg, negated)
+				}
+			})
+		}
 	}
 }
 
