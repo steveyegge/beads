@@ -269,6 +269,7 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		{"key present", "issue_prefix: vp\ndolt.mode: server\n", "issue_prefix"},
 		{"commented key present", "# actor: \"\"\nother: x\n", "actor"},
 		{"key on the last line", "other: x\nactor: a\n", "actor"},
+		{"key absent, appended", "issue_prefix: vp\n", "actor"},
 
 		// As on the unset side, a run of blank lines lost exactly one newline,
 		// so the output still ended in "\n" and only an exact comparison of the
@@ -297,6 +298,24 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		}
 		if want := "issue_prefix: \"zz\"\ndolt.mode: server\n"; out != want {
 			t.Errorf("updateYamlKey:\ngot:  %q\nwant: %q", out, want)
+		}
+	})
+
+	// The appended branch makes an absent key the new last line, which is where
+	// the old join left it unterminated: "x\n" came back "x\n\nnewkey: \"v\"".
+	// The blank separator before the new line stays as it was; the document's
+	// own trailing run now follows the new line.
+	t.Run("appended key: separator kept, terminator restored", func(t *testing.T) {
+		for _, tc := range []struct{ content, want string }{
+			{"x\n", "x\n\nnewkey: \"v\"\n"},
+		} {
+			out, err := updateYamlKey(tc.content, "newkey", "v")
+			if err != nil {
+				t.Fatalf("updateYamlKey(%q): %v", tc.content, err)
+			}
+			if out != tc.want {
+				t.Errorf("updateYamlKey(%q):\ngot:  %q\nwant: %q", tc.content, out, tc.want)
+			}
 		}
 	})
 }
