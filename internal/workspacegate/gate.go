@@ -381,6 +381,11 @@ type Handle struct {
 // Mode reports how this handle was acquired.
 func (h *Handle) Mode() Mode { return h.mode }
 
+// Empty reports whether the acquisition locked nothing: a ReadOnly shared
+// acquisition of a gate file that does not exist (see Options.ReadOnly). An
+// empty handle blocks no acquirer. Release does not change the answer.
+func (h *Handle) Empty() bool { return h == nil || h.f == nil }
+
 // Release drops the lock and closes the file handle. For exclusive
 // handles it also best-effort removes the holder-info sidecar. The gate
 // file itself is intentionally never removed: deleting a lock file that
@@ -732,6 +737,21 @@ func InheritedSharedHold() bool {
 // them in reverse acquisition order.
 type MultiHandle struct {
 	handles []*Handle
+}
+
+// Empty reports whether the acquisition locked no gate at all: every gate in
+// the set was a ReadOnly acquisition of a gate file that does not exist (see
+// Handle.Empty).
+func (m *MultiHandle) Empty() bool {
+	if m == nil {
+		return true
+	}
+	for _, h := range m.handles {
+		if !h.Empty() {
+			return false
+		}
+	}
+	return true
 }
 
 // Release drops every held gate in reverse order. Idempotent.

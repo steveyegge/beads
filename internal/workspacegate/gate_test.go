@@ -458,6 +458,48 @@ func TestAcquireAllReadOnlySkipsAbsentGates(t *testing.T) {
 	}
 }
 
+// Empty separates a ReadOnly acquisition that locked nothing from a real
+// hold: callers use it to decide whether there is a hold to tell anyone about.
+// One gate file that exists makes the whole set a real hold.
+func TestEmptyReportsWhetherAnythingIsLocked(t *testing.T) {
+	never, _ := testGate(t) // never gated: its file stays absent
+	used, _ := testGate(t)  // gated once, below
+	readOnly := Options{ReadOnly: true}
+
+	if !(*Handle)(nil).Empty() || !(*MultiHandle)(nil).Empty() {
+		t.Fatal("a nil handle must report Empty")
+	}
+	absent, err := AcquireAll(context.Background(), Shared, readOnly, never, used)
+	if err != nil {
+		t.Fatalf("ReadOnly AcquireAll over two absent gates: %v", err)
+	}
+	if !absent.Empty() {
+		t.Fatal("ReadOnly AcquireAll over two absent gates reported a hold, want Empty")
+	}
+	_ = absent.Release()
+
+	h0 := mustAcquire(t, used, Shared, Options{})
+	if h0.Empty() {
+		t.Fatal("a plain shared acquisition reported Empty")
+	}
+	_ = h0.Release()
+	if h0.Empty() {
+		t.Fatal("Release changed Empty; it reports the acquisition, not the current state")
+	}
+
+	partial, err := AcquireAll(context.Background(), Shared, readOnly, never, used)
+	if err != nil {
+		t.Fatalf("ReadOnly AcquireAll over an absent and an existing gate: %v", err)
+	}
+	defer partial.Release()
+	if partial.Empty() {
+		t.Fatal("ReadOnly AcquireAll holding the existing gate reported Empty")
+	}
+	if _, err := os.Lstat(never.Path()); !os.IsNotExist(err) {
+		t.Fatalf("the absent gate %s must stay absent (stat err: %v)", never.Path(), err)
+	}
+}
+
 // A cancelled context must surface as the context error even in
 // fail-fast mode (Wait == 0), so callers can tell shutdown from
 // contention.
