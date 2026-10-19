@@ -93,9 +93,14 @@ restore_if_build_churned() {
 # --- cleanup: always remove the reference worktree; drop scratch unless asked to keep -
 cleanup() {
   local rc=$?
-  if git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | grep -qF "$REF_SRC"; then
-    git -C "$REPO_ROOT" worktree remove --force "$REF_SRC" 2>/dev/null || true
-  fi
+  # Unconditional, which also makes it idempotent: `git worktree remove`
+  # resolves $REF_SRC itself and fails harmlessly when nothing is registered
+  # there (never added, or already removed). Do not gate it on
+  # `git worktree list --porcelain | grep -q`: grep -q exits on the first match
+  # and SIGPIPEs git, so under pipefail a large listing reads as "not
+  # registered"; and git lists the resolved path, which a $TMPDIR with a
+  # trailing slash or a symlink (both macOS defaults) never matches.
+  git -C "$REPO_ROOT" worktree remove --force "$REF_SRC" 2>/dev/null || true
   # Undo build churn to go.mod/go.sum WITHOUT destroying pre-existing user edits:
   # restore the pre-run snapshot bytes, and only when the build changed the file.
   restore_if_build_churned "$GOMOD_SNAP" "$REPO_ROOT/go.mod"
