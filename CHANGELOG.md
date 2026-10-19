@@ -510,6 +510,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialization triggers do not stop the world across every CPU of a large
   host. On a 192-CPU machine this takes about 17 ms off every bd process. An
   explicit `GOMAXPROCS` is restored as set.
+- Over an HTTP workspace, `bd ready` no longer fetches `GET /v0/beads/context`
+  before its listing in every process only to learn whether the server
+  enforces the external-dependency policy. The answer is kept for 5 minutes
+  per server URL and pinned project under the user cache directory
+  (`BEADS_HTTP_POLICY_CACHE_TTL`, a duration, a number of seconds, or `off`),
+  and a handshake the process already holds still wins. Claims and closes
+  always ask the server.
 - `bd serve` normalizes every RFC 3339 time bound on the issue listing and
   count (`created_*`, `updated_*`, `closed_*`, and the new `defer_*` and
   `due_*`) to UTC before it reaches storage. A bound carrying an offset
