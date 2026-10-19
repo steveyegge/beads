@@ -804,14 +804,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no `.local_version` witness. A pre-1.0 witness, or a `.beads/dolt` that
   holds anything, is still refused, and commands other than `bd init` are
   decided as before.
-- **`bd show --as-of` exits 1 when it reads no issue.** A ref the Dolt AS OF
-  read does not take (an instant, a versioned-history address), a ref that
-  does not exist, or an issue that did not exist at the ref was reported on
-  stderr while the command exited 0 with nothing on stdout, even under
-  `--json`. It now ends the way plain `bd show` does: exit 1, with the JSON
-  error envelope on stdout under `--json`. A batch that reads at least one of
-  its ids still exits 0. Both the direct and the proxied-server routes
-  changed.
+- **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
+  the beads section from `CLAUDE.md` (or, with the other setup recipes, from
+  `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in
+  the `CLAUDE.md` `bd init` writes, and setup then re-added the section after
+  two more, so every remove and re-add grew the file. `--remove` now takes
+  those blank lines with the section, and setup appends a section after one
+  blank line, so removing and re-adding it toggles between the same two files.
+  A re-added section goes at the end of the file.
 - **`bd config set` no longer truncates a `config.yaml` that has a line of
   64 KiB or more.** Setting an undotted key (such as `actor` or `no-db`)
   rewrites the file line by line, and a line of 65,536 bytes or more ended
@@ -821,6 +821,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file now fails with `bufio.Scanner: token too long`. `bd config set` leaves
   the file as it was. `set-many` stops at that key, but it has already written
   any `config.yaml` keys listed before it, such as a dotted `sync.remote`.
+- **`bd show --as-of` exits 1 when it reads no issue.** A ref the Dolt AS OF
+  read does not take (an instant, a versioned-history address), a ref that
+  does not exist, or an issue that did not exist at the ref was reported on
+  stderr while the command exited 0 with nothing on stdout, even under
+  `--json`. It now ends the way plain `bd show` does: exit 1, with the JSON
+  error envelope on stdout under `--json`. A batch that reads at least one of
+  its ids still exits 0. Both the direct and the proxied-server routes
+  changed.
 - **`bd init --quiet` no longer prints "Removed SessionStart hook" or "Removed
   PreCompact hook"** when the project's `.claude/settings.json` (or the legacy
   `.claude/settings.local.json`) still carries the bare `bd prime` hooks an
