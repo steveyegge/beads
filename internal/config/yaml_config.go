@@ -862,6 +862,13 @@ func findProjectBeadsDir() string {
 // updateYamlKey updates a key in yaml content, handling commented-out keys.
 // If the key exists (commented or not), it updates it in place.
 // If the key doesn't exist, it appends it at the end.
+//
+// A dotted key is written by updateNestedYamlKey, and its result is returned
+// as is (TestUpdateYamlKeyLeavesTheNestedPathAlone pins that boundary). A
+// single-segment key is edited line by line: a CRLF document comes back LF,
+// and the end of the file is kept. An edit in place leaves the trailing
+// newline run as it was; an appended key is the new last line, terminated
+// only if the file was.
 func updateYamlKey(content, key, value string) (string, error) {
 	if strings.Contains(key, ".") {
 		if updated, ok, err := updateNestedYamlKey(content, key, value); err != nil {
@@ -914,6 +921,19 @@ func updateYamlKey(content, key, value string) (string, error) {
 			result = append(result, "")
 		}
 		result = append(result, newLine)
+
+		// The file's trailing blank lines were scanned as empty tokens, so they
+		// already sit ahead of the new line and separate it, and the join is one
+		// newline short: the terminator bufio.Scanner dropped. Re-attaching
+		// content's whole run, as the return below does for an edit in place,
+		// would repeat them after the key: "x\n\n" would come back
+		// "x\n\nnewkey: \"v\"\n\n", not "x\n\nnewkey: \"v\"\n". A document
+		// without a trailing newline still does not acquire one.
+		out := strings.Join(result, "\n")
+		if strings.HasSuffix(content, "\n") {
+			out += "\n"
+		}
+		return out, nil
 	}
 
 	// Preserve the document's trailing newlines. bufio.Scanner drops the final

@@ -273,10 +273,12 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 
 		// As on the unset side, a run of blank lines lost exactly one newline,
 		// so the output still ended in "\n" and only an exact comparison of the
-		// run can see the loss.
+		// run can see the loss. An absent key appended to a file that ends like
+		// this is not a row here: its blank lines end up ahead of the new key,
+		// so the run after the key is not the file's run. The appended-key
+		// subtest below pins those outputs exactly.
 		{"ends in a blank line", "actor: a\nother: x\n\n", "actor"},
 		{"ends in two blank lines", "actor: a\nother: x\n\n\n", "actor"},
-		{"ends in a blank line, key absent", "issue_prefix: vp\nother: x\n\n", "actor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := updateYamlKey(tc.content, tc.key, "b")
@@ -304,15 +306,21 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 
 	// The appended branch makes an absent key the new last line, which is where
 	// the old join left it unterminated: "x\n" came back "x\n\nnewkey: \"v\"".
-	// The blank separator before the new line stays as it was; the document's
-	// own trailing run now follows the new line.
+	// The set adds that one line and nothing else: a blank line before it only
+	// when the file does not already end in one, and a terminator after it when
+	// the file had one.
 	t.Run("appended key: separator kept, terminator restored", func(t *testing.T) {
 		for _, tc := range []struct{ content, want string }{
 			{"x\n", "x\n\nnewkey: \"v\"\n"},
-			// The trailing blank line already separates, so no second one is
-			// added, and the document's run of two follows the new key. Restoring
-			// a single "\n" instead would end this one newline short again.
-			{"x\n\n", "x\n\nnewkey: \"v\"\n\n"},
+			// A trailing blank line already separates, so no second one is added,
+			// and the file's blank lines stay ahead of the new key instead of
+			// being repeated after it: the file comes back whole, followed by one
+			// terminated line. Re-attaching the file's own run here would end it
+			// "x\n\nnewkey: \"v\"\n\n", a blank line nobody asked for.
+			{"x\n\n", "x\n\nnewkey: \"v\"\n"},
+			{"x\n\n\n", "x\n\n\nnewkey: \"v\"\n"},
+			// The same append on a CRLF file, which comes back LF throughout.
+			{"x\r\n\r\n", "x\n\nnewkey: \"v\"\n"},
 		} {
 			out, err := updateYamlKey(tc.content, "newkey", "v")
 			if err != nil {
@@ -401,6 +409,32 @@ func TestSetThroughTheFileKeepsTheTrailingNewline(t *testing.T) {
 	want := body[len(strings.TrimRight(body, "\n")):]
 	if got := string(after)[len(strings.TrimRight(string(after), "\n")):]; got != want {
 		t.Errorf("set rewrote the end of the file: trailing run %q, want %q\n%q", got, want, string(after))
+	}
+}
+
+// The appended branch through the same writer. The file already ends in a
+// blank line, which separates the new key, so the set adds exactly one line:
+// the change a hand edit would make, and all someone reviewing it should see.
+func TestSetOfAnAbsentKeyThroughTheFileAddsOneLine(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(beadsDir, "config.yaml")
+	const body = "issue_prefix: vp\nactor: alice\n\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEADS_DIR", beadsDir)
+	if err := SetYamlConfig("no-push", "true"); err != nil {
+		t.Fatalf("SetYamlConfig: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := body + "no-push: true\n"; string(after) != want {
+		t.Errorf("set of an absent key:\ngot:  %q\nwant: %q", string(after), want)
 	}
 }
 
