@@ -410,6 +410,17 @@ func TestUnsetRemovesADottedKeyInEveryShape(t *testing.T) {
 			key:       "dolt.host",
 			survivors: map[string]string{"other.dolt.host": "should-survive"},
 		},
+		{
+			// A flow collection that fits on the key's own line is a complete
+			// entry and comments out as cleanly as a quoted scalar. This is
+			// the over-refusal guard for the span probe: a version that
+			// probed with map[string]string instead of yaml.Node would
+			// refuse this row.
+			name:      "single-line flow leaf",
+			seed:      "sync:\n  remote: {url: a, branch: b}\nnode_id: mini\n",
+			key:       "sync.remote",
+			survivors: map[string]string{"node_id": "mini"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
