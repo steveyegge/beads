@@ -1860,3 +1860,35 @@ func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
 		})
 	}
 }
+
+// The refusal must hold at the writer too: setYamlConfigAtPath trusts
+// updateYamlKey's nil error and writes the result back over the file, which
+// is how the truncated document reached disk. With the guard it returns the
+// error before os.WriteFile, leaving the bytes exactly as they were.
+func TestSetYamlConfigAtPathOversizeLineLeavesFileUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "k1: v1\n" + strings.Repeat("x", bufio.MaxScanTokenSize) + "\nk2: v2"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+
+	err = setYamlConfigAtPath(path, "k1", "true")
+	if err == nil {
+		t.Fatal("setYamlConfigAtPath() = nil error, want a refusal for the oversize line")
+	}
+	if !errors.Is(err, bufio.ErrTooLong) {
+		t.Errorf("setYamlConfigAtPath() error = %v, want one wrapping bufio.ErrTooLong", err)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("re-read config.yaml: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("config.yaml was rewritten despite the refusal:\nafter =\n%q\nbefore =\n%q", after, before)
+	}
+}
