@@ -714,6 +714,8 @@ go_test(
         "dependency_hierarchy_embedded_test.go",
         "diff_embedded_test.go",
         "directory_flag_test.go",
+        "discovery_refusal_pins_embedded_test.go",
+        "discovery_refusal_pins_test.go",
         "doctor_backend_guard_test.go",
         "doctor_check_gate_test.go",
         "doctor_context_test.go",
