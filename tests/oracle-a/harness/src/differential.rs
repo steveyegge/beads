@@ -21,7 +21,9 @@ pub const ACTOR_NAME: &str = "CI Bot";
 pub const ACTOR_EMAIL: &str = "ci@beads.test";
 
 /// A scenario: a prefix to `bd init` with, and an ordered list of argv steps
-/// (each run after init in the same workspace).
+/// (each run after init in the same workspace). A scenario whose first step is
+/// its own `init` owns initialization: it starts in an empty workspace and
+/// `prefix` is unused (see `Scenario::owns_init`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Scenario {
     pub name: String,
@@ -52,6 +54,21 @@ impl Scenario {
     pub fn ordered(mut self) -> Self {
         self.ordered = true;
         self
+    }
+
+    /// True when the first step is the scenario's own `bd init`. The runner then
+    /// skips its `init -p <prefix> --quiet`, so that step initializes an empty
+    /// workspace instead of hitting "already initialized". Only the first step
+    /// counts: an `init` later in a scenario is a re-init by design. The match is
+    /// on the first token, like the scoreboard's in-scope predicate, so a first
+    /// step with leading global flags (`-q init ...`) is not recognized; and a
+    /// first-step init that creates no workspace (`init --help`, or one that
+    /// fails flag validation) leaves any later steps in an empty workspace.
+    pub fn owns_init(&self) -> bool {
+        self.steps
+            .first()
+            .and_then(|step| step.first())
+            .is_some_and(|cmd| cmd == "init")
     }
 }
 
@@ -111,13 +128,38 @@ fn revision_regex() -> &'static regex::Regex {
     })
 }
 
+fn repo_id_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // `bd init`'s "Repository ID: <8 hex>" line (cmd/bd/init.go). With no
+        // origin remote the id hashes the repo root path, so it changes with the
+        // run's random workspace. Only that label at that width is collapsed.
+        regex::Regex::new(r"(Repository ID: )[0-9a-f]{8}\b").expect("valid repository id regex")
+    })
+}
+
+fn clone_id_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // `bd init`'s "Clone ID: <16 hex>" line: a hash of the hostname and the
+        // repo root path, so it too changes with the run's random workspace.
+        regex::Regex::new(r"(Clone ID: )[0-9a-f]{16}\b").expect("valid clone id regex")
+    })
+}
+
 /// Replace volatile values (timestamps, host identity, random UUIDs, revision
-/// tokens) with stable tokens. UUIDs (e.g. comment ids) and revision tokens are
-/// random per run, so byte-diffing them is meaningless — collapse them like
-/// timestamps.
+/// tokens, `bd init` fingerprints) with stable tokens. UUIDs (e.g. comment ids)
+/// and revision tokens are random per run, so byte-diffing them is meaningless —
+/// collapse them like timestamps.
 pub fn normalize(s: &str) -> String {
     let s = revision_regex()
         .replace_all(s, "${1}<REV>${2}")
+        .into_owned();
+    let s = repo_id_regex()
+        .replace_all(&s, "${1}<REPO_ID>")
+        .into_owned();
+    let s = clone_id_regex()
+        .replace_all(&s, "${1}<CLONE_ID>")
         .into_owned();
     let s = ts_regex().replace_all(&s, "<TS>").into_owned();
     let s = uuid_regex().replace_all(&s, "<UUID>").into_owned();
@@ -126,9 +168,9 @@ pub fn normalize(s: &str) -> String {
 
 /// `normalize`, after first collapsing this run's own workspace directory to
 /// `<WORKSPACE>`. Each run gets a fresh random tempdir, so any output that
-/// echoes it (e.g. the "Found existing Dolt database: <dir>/.beads/..." error a
-/// scenario's own `init` step hits) differs on every run. Only these exact path
-/// strings are replaced, longest first, so a spelling that contains another
+/// echoes it (e.g. the `File: <dir>/CLAUDE.md` lines a scenario's own `init`
+/// step prints) differs on every run. Only these exact path strings are
+/// replaced, longest first, so a spelling that contains another
 /// (`/private/var/...` around `/var/...`) is replaced whole.
 pub fn normalize_in_workspace(s: &str, workspace: &[String]) -> String {
     let mut paths: Vec<&str> = workspace
@@ -142,6 +184,21 @@ pub fn normalize_in_workspace(s: &str, workspace: &[String]) -> String {
         s = s.replace(p, "<WORKSPACE>");
     }
     normalize(&s)
+}
+
+/// The argv of the harness's own `init -p <prefix> --quiet`, run before the
+/// scenario's steps, or `None` when the scenario owns its init: running both
+/// made that first step a double init that failed "already initialized"
+/// (unless the step's flag validation failed first).
+fn harness_init(sc: &Scenario) -> Option<Vec<String>> {
+    (!sc.owns_init()).then(|| {
+        vec![
+            "init".to_string(),
+            "-p".to_string(),
+            sc.prefix.clone(),
+            "--quiet".to_string(),
+        ]
+    })
 }
 
 /// Run a scenario against `bin` in a throwaway workspace, returning the
@@ -179,14 +236,23 @@ pub fn run_scenario(bin: &Path, sc: &Scenario) -> std::io::Result<Trace> {
         cmd.output()
     };
 
-    // init (output discarded; banners are not part of the contract)
-    let init = vec![
-        "init".to_string(),
-        "-p".to_string(),
-        sc.prefix.clone(),
-        "--quiet".to_string(),
-    ];
-    run(&init)?;
+    run_steps(sc, &workspace, run)
+}
+
+/// The scenario's command sequence: the harness's own init when the scenario
+/// does not own one (see `harness_init`), then each step, normalized against
+/// `workspace`. `run` executes one argv; it is a parameter so the wiring can be
+/// tested without spawning a process.
+fn run_steps(
+    sc: &Scenario,
+    workspace: &[String],
+    mut run: impl FnMut(&[String]) -> std::io::Result<std::process::Output>,
+) -> std::io::Result<Trace> {
+    // init (output discarded; banners are not part of the contract), unless the
+    // scenario's first step is its own init.
+    if let Some(init) = harness_init(sc) {
+        run(&init)?;
+    }
 
     let mut steps = Vec::with_capacity(sc.steps.len());
     for args in &sc.steps {
@@ -194,8 +260,8 @@ pub fn run_scenario(bin: &Path, sc: &Scenario) -> std::io::Result<Trace> {
         steps.push(StepResult {
             args: args.clone(),
             exit: out.status.code().unwrap_or(-1),
-            stdout: normalize_in_workspace(&String::from_utf8_lossy(&out.stdout), &workspace),
-            stderr: normalize_in_workspace(&String::from_utf8_lossy(&out.stderr), &workspace),
+            stdout: normalize_in_workspace(&String::from_utf8_lossy(&out.stdout), workspace),
+            stderr: normalize_in_workspace(&String::from_utf8_lossy(&out.stderr), workspace),
         });
     }
     Ok(Trace {
@@ -491,6 +557,95 @@ mod tests {
         assert_eq!(
             trace.steps[0].stderr,
             "Found existing Dolt database: <WORKSPACE>/.beads/x\n"
+        );
+    }
+
+    #[test]
+    fn owns_init_only_when_the_first_step_is_init() {
+        let owns = |steps: &[&[&str]]| Scenario::new("t", "x", steps).owns_init();
+        assert!(owns(&[
+            &["init", "--prefix", "x", "--non-interactive"],
+            &["list"]
+        ]));
+        assert!(owns(&[&["init"]]));
+        assert!(!owns(&[&["list", "--json"]]));
+        assert!(!owns(&[&["create", "A"], &["init", "--prefix", "x"]]));
+        assert!(!owns(&[&["config", "get", "init"]]));
+        assert!(!owns(&[]));
+        assert!(!owns(&[&[]]));
+    }
+
+    #[test]
+    fn normalize_collapses_init_fingerprints_and_nothing_else() {
+        // Two runs of the same `bd init`: only the path-derived ids differ.
+        let run1 = "  Repository ID: e992de87\n  Clone ID: f549016337e74819\n";
+        let run2 = "  Repository ID: fd0fa98d\n  Clone ID: f4cd421d9411fa0f\n";
+        assert_eq!(normalize(run1), normalize(run2));
+        assert_eq!(
+            normalize(run1),
+            "  Repository ID: <REPO_ID>\n  Clone ID: <CLONE_ID>\n"
+        );
+        // A width change still diverges: neither id is collapsed at another width,
+        let long = "  Repository ID: e992de87e992de87\n  Clone ID: f549016337e7\n";
+        assert_eq!(normalize(long), long);
+        let wide_clone = "  Clone ID: f549016337e74819ab\n";
+        assert_eq!(normalize(wide_clone), wide_clone);
+        // nor is the same hex under any other label.
+        let other = "  Project ID: e992de87\n  clone id: f549016337e74819\n";
+        assert_eq!(normalize(other), other);
+    }
+
+    #[test]
+    fn harness_init_is_skipped_only_for_a_scenario_whose_first_step_is_init() {
+        let init = |steps: &[&[&str]]| harness_init(&Scenario::new("t", "x", steps));
+        let pre_init = Some(vec![
+            "init".to_string(),
+            "-p".to_string(),
+            "x".to_string(),
+            "--quiet".to_string(),
+        ]);
+        // A scenario that owns its init starts from an empty workspace, so its
+        // init runs for real instead of hitting "already initialized".
+        assert_eq!(init(&[&["init", "--prefix", "x"], &["list"]]), None);
+        // Every other scenario still gets the harness's own init first...
+        assert_eq!(init(&[&["list"]]), pre_init);
+        // ...including one whose init comes later: that init is a re-init.
+        assert_eq!(init(&[&["list"], &["init", "--prefix", "x"]]), pre_init);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_steps_runs_the_harness_init_only_when_the_scenario_does_not_own_it() {
+        use std::os::unix::process::ExitStatusExt;
+        // Record every argv run_scenario would execute; no process is spawned.
+        let argvs = |steps: &[&[&str]]| {
+            let mut seen: Vec<Vec<String>> = Vec::new();
+            let trace = run_steps(&Scenario::new("t", "x", steps), &[], |args| {
+                seen.push(args.to_vec());
+                Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                })
+            })
+            .unwrap();
+            // The harness init is not part of the trace.
+            assert_eq!(trace.steps.len(), steps.len());
+            seen
+        };
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let pre_init = v(&["init", "-p", "x", "--quiet"]);
+        // A scenario that owns its init: only its own steps run.
+        assert_eq!(
+            argvs(&[&["init", "--prefix", "x"], &["list"]]),
+            vec![v(&["init", "--prefix", "x"]), v(&["list"])]
+        );
+        // No init step: the harness init runs first.
+        assert_eq!(argvs(&[&["list"]]), vec![pre_init.clone(), v(&["list"])]);
+        // A later init is a re-init after the harness init.
+        assert_eq!(
+            argvs(&[&["list"], &["init", "--prefix", "x"]]),
+            vec![pre_init, v(&["list"]), v(&["init", "--prefix", "x"])]
         );
     }
 
