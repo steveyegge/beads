@@ -2783,7 +2783,7 @@ func isBootstrapPreviewErr(err error) bool {
 // Extracted from the gate's default arm so both halves are directly testable
 // without standing up a forward-drifted workspace; the wire itself is pinned on
 // the embedded tier by
-// TestIdentityGateRendersSchemaSkewFromForwardDriftedWorkspace.
+// TestEmbeddedIdentityGateRendersSchemaSkewFromForwardDriftedWorkspace.
 func refuseUnverifiablePreviewOpen(previewErr error) error {
 	if handleFreshCloneError(previewErr) {
 		return SilentExit()
