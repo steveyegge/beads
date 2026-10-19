@@ -159,6 +159,19 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 			})
 		}
 	})
+
+	// The set-side twin of unset's CRLF pin: updateYamlKey normalizes CRLF
+	// after the nested dispatch, the rule commentOutYamlKey applies up front,
+	// so a CRLF document comes back LF throughout, trailing run included.
+	t.Run("CRLF is normalized to LF, trailing run included", func(t *testing.T) {
+		out, err := updateYamlKey("actor: a\r\nother: x\r\n", "actor", "b")
+		if err != nil {
+			t.Fatalf("updateYamlKey: %v", err)
+		}
+		if want := "actor: \"b\"\nother: x\n"; out != want {
+			t.Errorf("CRLF normalization changed:\ngot:  %q\nwant: %q", out, want)
+		}
+	})
 }
 
 // The same property through the public writer, which is what `bd config unset`
