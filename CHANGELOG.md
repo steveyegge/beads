@@ -763,6 +763,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd query` reports an uppercase duration unit as an unparseable time, not
+  a negated internal error.** The query lexer kept its own copy of the
+  compact-duration unit set and that copy was wider than the grammar's owner
+  in `internal/timeparsing`: it also accepted uppercase `H D W M Y`, so
+  `created>30M` lexed as a duration and then died at evaluation with
+  `not a compact duration: "-30M"` — an internal-sounding message quoting a
+  negated string the user never typed. The lexer now classifies through the
+  exported `timeparsing.IsCompactDuration` with no copy of the unit set, so
+  the two planes cannot drift apart again (the same drift class once made
+  `30min` resolve as a future offset). An uppercase unit now reports
+  `cannot parse time expression: "30M"` with the value as typed, and a
+  signed one (`created>+30M`) fails at parse time like every other unknown
+  suffix. Units remain lowercase (`30min`, `6h`, `7d`, `2w`, `3m`, `1y`);
+  help and docs already say so, and `label=30M` / `title=30M` still filter
+  on the literal.
 - **Time-bound filters and the keyset cursor compare the same instant on every
   engine, whatever zone they are given in.** The storage filter builder binds
   every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,
