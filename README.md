@@ -279,6 +279,15 @@ error, since the server never saw the request. `off` turns off only the
 header timer: a reset read is still retried, and a write's timeout is still
 reported as above.
 
+Whether the server applies bd's external-dependency policy itself (the
+`policy.external_dependencies` capability) is remembered for 5 minutes per
+server URL and pinned project, in `beads/http-policy/` under the user cache
+directory, so `bd ready` does not fetch the server's context before every
+listing just to learn it. `BEADS_HTTP_POLICY_CACHE_TTL` sets that window (a
+duration such as `1m`, a number of seconds, or `off`); a server restarted
+with a different composition is seen once it passes. A workspace connected
+without a project pin is not cached.
+
 `bd search`, `bd show --current` and `bd recompute-blocked` work over HTTP
 too, each in its own way. `bd search` asks the server's listing with its text (`q`, behind the `issues.list.search` capability) and
 refuses before dialing against a server that does not advertise it. `bd list
