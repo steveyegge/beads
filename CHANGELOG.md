@@ -777,6 +777,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd dep add`'s: `bd: dep add <from> <to>` in place of
   `dependency: add <type> <from> -> <to>`.
 
+- **`bd query` reports an uppercase duration unit as an unparseable time, not
+  a negated internal error.** `created>30M` failed with
+  `not a compact duration: "-30M"`, naming a value nobody typed; it now fails
+  with `cannot parse time expression: "30M"`. A signed spelling
+  (`created>+30M`) stops at the parser, as `created>+30x` already did, so
+  quote one to match it as a literal (`label="+30M"`). Units remain lowercase
+  (`30min`, `6h`, `7d`, `2w`, `3m`, `1y`); help and docs already say so.
 - **Strict `--readonly` no longer creates workspace gate files.** A
   `bd --readonly` command took its shared workspace gates with
   create-if-missing, so on a workspace no bd command had gated yet it left
