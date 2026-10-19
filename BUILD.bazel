@@ -260,6 +260,7 @@ filegroup(
     srcs = glob(
         ["**/*.go"],
         allow_empty = True,
+        exclude = ["bazel-*/**"],
     ),
     visibility = ["//:__subpackages__"],
 )
