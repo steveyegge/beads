@@ -1,8 +1,10 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
@@ -68,6 +70,35 @@ func TestOrderSiblingsByDeps_CycleFallsBackWithoutDropping(t *testing.T) {
 	got := idsOf(orderSiblingsByDeps([]*types.Issue{b, a}, deps, compareIssuesByPriority))
 	if len(got) != 2 || indexOf(got, "pa-a") < 0 || indexOf(got, "pa-b") < 0 {
 		t.Fatalf("cycle must preserve all nodes, got %v", got)
+	}
+}
+
+// closedSibling builds a sibling whose ClosedAt is hoursAgo hours before now,
+// so compareIssuesForTree("closed", false) — the comparator `bd list --tree
+// --deps --sort closed` actually passes — orders them newest-closed-first
+// independently of priority and ID.
+func closedSibling(id string, priority, hoursAgo int) *types.Issue {
+	closed := time.Now().Add(-time.Duration(hoursAgo) * time.Hour)
+	return &types.Issue{ID: id, Status: types.StatusClosed, Priority: priority, IssueType: types.TypeTask, ClosedAt: &closed}
+}
+
+// TestOrderSiblingsByDeps_ReadySetFollowsCallerCompare pins the ready-set sorts
+// (initial and after a pop unblocks a dependent) to the caller's compare, which
+// production fills with a sort-derived comparator, not compareIssuesByPriority.
+// Closed newest-to-oldest is b,u,a,v; priority order is v,a,u,b — disjoint, so
+// only the closed sort yields [u,a,b,v]. The exact order matters: dropping the
+// re-sort after b is freed only swaps b and v.
+func TestOrderSiblingsByDeps_ReadySetFollowsCallerCompare(t *testing.T) {
+	a := closedSibling("pa-a", 1, 3)
+	b := closedSibling("pa-b", 3, 1)
+	u := closedSibling("pa-u", 2, 2)
+	v := closedSibling("pa-v", 0, 4)
+	deps := map[string][]*types.Dependency{"pa-b": {schedDep("pa-b", "pa-a")}}
+
+	got := idsOf(orderSiblingsByDeps([]*types.Issue{b, a, v, u}, deps, compareIssuesForTree("closed", false)))
+	want := []string{"pa-u", "pa-a", "pa-b", "pa-v"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ready set must follow the caller's compare (dependency first, closed-newest ties): want %v, got %v", want, got)
 	}
 }
 
