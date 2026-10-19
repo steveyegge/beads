@@ -177,6 +177,39 @@ func TestLexer(t *testing.T) {
 			expected: []TokenType{TokenIdent, TokenEquals, TokenIdent, TokenEOF},
 			values:   []string{"label", "=", "30MIN", ""},
 		},
+		// Units are lowercase in the shared grammar, so an uppercase one is
+		// not a duration: it reaches the evaluator as typed and fails there as
+		// an unparseable time instead of as a negated compact duration.
+		{
+			name:     "uppercase months unit stays an identifier",
+			input:    "updated>30M",
+			expected: []TokenType{TokenIdent, TokenGreater, TokenIdent, TokenEOF},
+			values:   []string{"updated", ">", "30M", ""},
+		},
+		{
+			name:     "uppercase hours unit stays an identifier",
+			input:    "updated>30H",
+			expected: []TokenType{TokenIdent, TokenGreater, TokenIdent, TokenEOF},
+			values:   []string{"updated", ">", "30H", ""},
+		},
+		{
+			name:     "uppercase days unit on a non-time field stays an identifier",
+			input:    "label=30D",
+			expected: []TokenType{TokenIdent, TokenEquals, TokenIdent, TokenEOF},
+			values:   []string{"label", "=", "30D", ""},
+		},
+		{
+			name:     "lowercase months unit is a duration",
+			input:    "updated>30m",
+			expected: []TokenType{TokenIdent, TokenGreater, TokenDuration, TokenEOF},
+			values:   []string{"updated", ">", "30m", ""},
+		},
+		{
+			name:     "signed lowercase days unit is a duration",
+			input:    "updated>+30d",
+			expected: []TokenType{TokenIdent, TokenGreater, TokenDuration, TokenEOF},
+			values:   []string{"updated", ">", "+30d", ""},
+		},
 	}
 
 	for _, tt := range tests {
