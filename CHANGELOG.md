@@ -763,6 +763,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd config set` now errors instead of silently truncating `config.yaml`
+  when the file holds a line of 64 KiB (`bufio.MaxScanTokenSize`) or more.
+  The flat-key update path read the document through a `bufio.Scanner` that
+  stopped at the oversize line, joined what it had read, and reported
+  success, so the shortened file was written back over the original; the set
+  now fails with `bufio.ErrTooLong` wrapped in a `cannot set` error and
+  leaves the file byte-identical.
 - **Time-bound filters and the keyset cursor compare the same instant on every
   engine, whatever zone they are given in.** The storage filter builder binds
   every time bound (`created_*`, `updated_*`, `closed_*`, `started_*`,
