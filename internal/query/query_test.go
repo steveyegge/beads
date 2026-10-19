@@ -874,6 +874,67 @@ func TestQuerySignedUppercaseDurationUnitStopsAtTheParser(t *testing.T) {
 	}
 }
 
+// TestQueryKeepsLowercaseUnitsAndLiteralValues pins, at a fixed now, what
+// rejecting uppercase units leaves alone: a signed lowercase unit still
+// resolves as N ago, a natural-language time still resolves through
+// ParseRelativeTime, and on a non-time field "30M" is still the literal string
+// it always was. TestQueryMinutesUnitResolvesAgo pins created>30m (30 months
+// ago) and created>30min (30 minutes ago).
+func TestQueryKeepsLowercaseUnitsAndLiteralValues(t *testing.T) {
+	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
+
+	bounds := []struct {
+		query string
+		want  time.Time
+		bound func(*types.IssueFilter) *time.Time
+	}{
+		{
+			query: "created>+30d",
+			want:  now.AddDate(0, 0, -30),
+			bound: func(f *types.IssueFilter) *time.Time { return f.CreatedAfter },
+		},
+		{
+			query: "updated>5pm",
+			want:  time.Date(2025, 2, 4, 17, 0, 0, 0, time.UTC),
+			bound: func(f *types.IssueFilter) *time.Time { return f.UpdatedAfter },
+		},
+	}
+	for _, tt := range bounds {
+		t.Run(tt.query, func(t *testing.T) {
+			result, err := EvaluateAt(tt.query, now)
+			if err != nil {
+				t.Fatalf("EvaluateAt(%q) error = %v", tt.query, err)
+			}
+			got := tt.bound(&result.Filter)
+			if got == nil {
+				t.Fatalf("EvaluateAt(%q) left the time bound unset, filter=%+v", tt.query, result.Filter)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("EvaluateAt(%q) = %s, want %s", tt.query, got.Format(time.RFC3339), tt.want.Format(time.RFC3339))
+			}
+		})
+	}
+
+	t.Run("label=30M", func(t *testing.T) {
+		result, err := EvaluateAt("label=30M", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(label=30M) error = %v", err)
+		}
+		if len(result.Filter.Labels) != 1 || result.Filter.Labels[0] != "30M" {
+			t.Errorf("EvaluateAt(label=30M) Labels = %v, want [%q]", result.Filter.Labels, "30M")
+		}
+	})
+	t.Run("title=30M", func(t *testing.T) {
+		result, err := EvaluateAt("title=30M", now)
+		if err != nil {
+			t.Fatalf("EvaluateAt(title=30M) error = %v", err)
+		}
+		if result.Filter.TitleContains != "30M" {
+			t.Errorf("EvaluateAt(title=30M) TitleContains = %q, want %q", result.Filter.TitleContains, "30M")
+		}
+	})
+}
+
 // TestCompactDurationGrammarReachesQueryPlane binds this package's duration
 // grammar to the shared one in internal/timeparsing, which owns it, in both
 // directions. The lexer classifies a duration with
