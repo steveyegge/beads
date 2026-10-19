@@ -89,6 +89,7 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		{"single-segment key present", "issue_prefix: vp\ndolt.mode: server\n", "issue_prefix", "zz", "issue_prefix: \"zz\"\ndolt.mode: server\n"},
 		{"commented key present", "# actor: \"\"\nother: x\n", "actor", "b", "actor: \"b\"\nother: x\n"},
 		{"key on the last line", "other: x\nactor: a\n", "actor", "b", "other: x\nactor: \"b\"\n"},
+		{"key absent, appended", "other: x\n", "actor", "b", "other: x\n\nactor: \"b\"\n"},
 
 		// The same blank-tail shapes as the unset table: the scanner drops the
 		// whole run, not just the final newline, so the rows assert the exact
@@ -111,6 +112,21 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 			}
 		})
 	}
+
+	// The append branch is where the loss was worst: the new key line became
+	// the last line, so it landed unterminated, and the blank line the branch
+	// adds as a separator came out of the run the scanner had already eaten.
+	// Pin the exact shape: separator kept, the document's own terminator
+	// re-attached after the new key.
+	t.Run("appended key: separator kept, terminator restored", func(t *testing.T) {
+		out, err := updateYamlKey("x\n", "newkey", "v")
+		if err != nil {
+			t.Fatalf("updateYamlKey: %v", err)
+		}
+		if want := "x\n\nnewkey: \"v\"\n"; out != want {
+			t.Errorf("updateYamlKey(\"x\\n\", ...) = %q, want %q", out, want)
+		}
+	})
 }
 
 // The same property through the public writer, which is what `bd config unset`
