@@ -29,13 +29,15 @@ func bdShowRaw(t *testing.T, bd, dir string, args ...string) string {
 	return string(out)
 }
 
-// bdShowDetails runs "bd show --json" and parses the IssueDetails.
-// Retries on flock contention.
-func bdShowDetails(t *testing.T, bd, dir, id string) map[string]interface{} {
+// bdShowDetails runs "bd show --json" (plus any extra flags, e.g.
+// --include-comments) and parses the IssueDetails. Retries on flock
+// contention.
+func bdShowDetails(t *testing.T, bd, dir, id string, extra ...string) map[string]interface{} {
 	t.Helper()
-	out, err := bdRunWithFlockRetry(t, bd, dir, "show", id, "--json")
+	fullArgs := append([]string{"show", id, "--json"}, extra...)
+	out, err := bdRunWithFlockRetry(t, bd, dir, fullArgs...)
 	if err != nil {
-		t.Fatalf("bd show %s --json failed: %v\n%s", id, err, out)
+		t.Fatalf("bd show %s failed: %v\n%s", strings.Join(fullArgs[1:], " "), err, out)
 	}
 	// JSON output may be wrapped in an array
 	s := strings.TrimSpace(string(out))
@@ -286,6 +288,24 @@ func TestEmbeddedShowBasicsAndJSON(t *testing.T) {
 		// the #6709 fix unlocks, so pin it beside the count.
 		if omitted, _ := m["comments_omitted"].(bool); !omitted {
 			t.Errorf("comments_omitted: got %v, want true beside a nonzero comment_count and no rows", m["comments_omitted"])
+		}
+	})
+
+	// GH#5565 / bd-u96si: direct/embedded twin of proxied
+	// show_wisp_comments_include_streams. --include-comments must stream the
+	// wisp's comments from wisp_comments.
+	t.Run("show_json_wisp_comments_include_streams", func(t *testing.T) {
+		wisp := bdCreate(t, bd, dir, "Wisp stream", "--type", "task", "--ephemeral")
+		for i := 0; i < 2; i++ {
+			if out, err := bdRunWithFlockRetry(t, bd, dir, "comments", "add", wisp.ID, fmt.Sprintf("wisp stream %d", i)); err != nil {
+				t.Fatalf("bd comments add failed: %v\n%s", err, out)
+			}
+		}
+
+		m := bdShowDetails(t, bd, dir, wisp.ID, "--include-comments")
+		comments, _ := m["comments"].([]interface{})
+		if len(comments) != 2 {
+			t.Fatalf("comments: got %d rows, want 2 with --include-comments: %v", len(comments), m)
 		}
 	})
 
