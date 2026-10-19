@@ -177,6 +177,24 @@ func TestLexer(t *testing.T) {
 			expected: []TokenType{TokenIdent, TokenEquals, TokenIdent, TokenEOF},
 			values:   []string{"label", "=", "30MIN", ""},
 		},
+		{
+			name:     "uppercase month unit stays an identifier",
+			input:    "updated>30M",
+			expected: []TokenType{TokenIdent, TokenGreater, TokenIdent, TokenEOF},
+			values:   []string{"updated", ">", "30M", ""},
+		},
+		{
+			name:     "uppercase hour unit stays an identifier",
+			input:    "updated>30H",
+			expected: []TokenType{TokenIdent, TokenGreater, TokenIdent, TokenEOF},
+			values:   []string{"updated", ">", "30H", ""},
+		},
+		{
+			name:     "uppercase day unit on a non-time field stays an identifier",
+			input:    "label=30D",
+			expected: []TokenType{TokenIdent, TokenEquals, TokenIdent, TokenEOF},
+			values:   []string{"label", "=", "30D", ""},
+		},
 	}
 
 	for _, tt := range tests {
