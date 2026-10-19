@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/timeparsing"
@@ -786,40 +787,82 @@ func TestQueryMinutesUnitResolvesAgo(t *testing.T) {
 
 // TestCompactDurationGrammarReachesQueryPlane binds this package's duration
 // grammar to the shared one in internal/timeparsing, which owns it: the lexer
-// classifies through timeparsing.IsCompactDuration instead of keeping a
-// second copy of the unit set, so the two cannot drift apart silently. A unit
-// accepted by the shared grammar but not lexed as a duration here would skip
-// the evaluator's TokenDuration arm and resolve through ParseRelativeTime as
-// a *future* offset: the "30min meant 30 minutes from now" inversion this PR
-// fixed, reproduced silently for the next unit.
+// classifies through timeparsing.IsCompactDuration, with no second copy of
+// the unit set to drift. This test is the two-way tripwire against bringing
+// a copy back. Forward: a unit the shared grammar accepts but the lexer
+// misses would lex as TokenIdent, skip the evaluator's TokenDuration arm,
+// and resolve through ParseRelativeTime as a *future* offset — the "30min
+// meant 30 minutes from now" inversion PR #6629 fixed. Reverse: a unit the
+// lexer takes but the shared grammar rejects dies in ParseCompactDuration
+// with the internal "not a compact duration" error — the uppercase-unit
+// bug this change fixed.
 //
 // The shared pattern is unexported, so ParseCompactDuration is the oracle:
-// whatever suffix it accepts must lex as a duration here. Candidates are
-// exhaustive over lowercase ASCII up to three runes, so plausible future
-// spellings ("sec", "hr", "mo", "yr") are covered alongside today's six.
+// a value must lex as TokenDuration, with the text as typed, exactly when
+// the parser accepts it. Candidates are exhaustive over one- and two-letter
+// suffixes in either case and three-letter lowercase suffixes, plus every
+// case spelling of the accepted three-letter words, so plausible future
+// spellings ("sec", "hr", "mo", "yr") and the uppercase set that used to
+// drift ("H D W M Y") are all covered.
 func TestCompactDurationGrammarReachesQueryPlane(t *testing.T) {
 	now := time.Date(2025, 2, 4, 12, 0, 0, 0, time.UTC)
 
-	const letters = "abcdefghijklmnopqrstuvwxyz"
+	const lower = "abcdefghijklmnopqrstuvwxyz"
+	const bothCases = lower + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+	seen := make(map[string]bool)
 	var candidates []string
-	for _, a := range letters {
-		candidates = append(candidates, string(a))
-		for _, b := range letters {
-			candidates = append(candidates, string(a)+string(b))
-			for _, c := range letters {
-				candidates = append(candidates, string(a)+string(b)+string(c))
+	add := func(suffix string) {
+		if !seen[suffix] {
+			seen[suffix] = true
+			candidates = append(candidates, suffix)
+		}
+	}
+	for _, a := range bothCases {
+		add(string(a))
+		for _, b := range bothCases {
+			add(string(a) + string(b))
+		}
+	}
+	for _, a := range lower {
+		for _, b := range lower {
+			for _, c := range lower {
+				add(string(a) + string(b) + string(c))
 			}
 		}
 	}
 
-	var accepted []string
+	// Every case spelling of the accepted three-letter words ("min" today):
+	// the biconditional must reject the mixed-case spellings too.
+	var acceptedWords []string
+	for _, unit := range candidates {
+		if len(unit) == 3 {
+			if _, err := timeparsing.ParseCompactDuration("1"+unit, now); err == nil {
+				acceptedWords = append(acceptedWords, unit)
+			}
+		}
+	}
+	for _, word := range acceptedWords {
+		var spellings []string
+		for bits := 0; bits < 1<<len(word); bits++ {
+			spelling := []byte(word)
+			for i := range spelling {
+				if bits&(1<<i) != 0 {
+					spelling[i] = byte(unicode.ToUpper(rune(spelling[i])))
+				}
+			}
+			spellings = append(spellings, string(spelling))
+		}
+		for _, spelling := range spellings {
+			add(spelling)
+		}
+	}
+
 	isAccepted := make(map[string]bool)
 	for _, unit := range candidates {
-		if _, err := timeparsing.ParseCompactDuration("1"+unit, now); err != nil {
-			continue
+		if _, err := timeparsing.ParseCompactDuration("1"+unit, now); err == nil {
+			isAccepted[unit] = true
 		}
-		accepted = append(accepted, unit)
-		isAccepted[unit] = true
 	}
 
 	// Guard the oracle itself: if ParseCompactDuration stopped accepting the
@@ -830,7 +873,7 @@ func TestCompactDurationGrammarReachesQueryPlane(t *testing.T) {
 		}
 	}
 
-	for _, unit := range accepted {
+	for _, unit := range candidates {
 		t.Run(unit, func(t *testing.T) {
 			value := "1" + unit
 
@@ -841,10 +884,15 @@ func TestCompactDurationGrammarReachesQueryPlane(t *testing.T) {
 			if len(tokens) < 3 {
 				t.Fatalf("Tokenize(updated>%s) produced %d tokens, want at least 3", value, len(tokens))
 			}
-			if tokens[2].Type != TokenDuration || tokens[2].Value != value {
-				t.Errorf("timeparsing accepts %q but the query lexer typed it %v(%q), want %v(%q); "+
-					"the lexer classifies through timeparsing.IsCompactDuration, so it must have stopped consulting it",
-					value, tokens[2].Type, tokens[2].Value, TokenDuration, value)
+			lexedAsDuration := tokens[2].Type == TokenDuration && tokens[2].Value == value
+			if lexedAsDuration != isAccepted[unit] {
+				t.Errorf("updated>%s: the lexer typed the value %v(%q) but ParseCompactDuration accepts it = %v; "+
+					"the two must agree — the lexer classifies through timeparsing.IsCompactDuration, so it must have stopped consulting it",
+					value, tokens[2].Type, tokens[2].Value, isAccepted[unit])
+			}
+
+			if !isAccepted[unit] {
+				return
 			}
 
 			// Widening the duration grammar must not change non-time fields:
