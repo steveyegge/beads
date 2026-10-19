@@ -276,6 +276,7 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 		// run can see the loss.
 		{"ends in a blank line", "actor: a\nother: x\n\n", "actor"},
 		{"ends in two blank lines", "actor: a\nother: x\n\n\n", "actor"},
+		{"ends in a blank line, key absent", "issue_prefix: vp\nother: x\n\n", "actor"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := updateYamlKey(tc.content, tc.key, "b")
@@ -308,6 +309,10 @@ func TestUpdateYamlKeyPreservesTheTrailingNewline(t *testing.T) {
 	t.Run("appended key: separator kept, terminator restored", func(t *testing.T) {
 		for _, tc := range []struct{ content, want string }{
 			{"x\n", "x\n\nnewkey: \"v\"\n"},
+			// The trailing blank line already separates, so no second one is
+			// added, and the document's run of two follows the new key. Restoring
+			// a single "\n" instead would end this one newline short again.
+			{"x\n\n", "x\n\nnewkey: \"v\"\n\n"},
 		} {
 			out, err := updateYamlKey(tc.content, "newkey", "v")
 			if err != nil {
