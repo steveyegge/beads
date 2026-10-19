@@ -48,6 +48,15 @@ import (
 //     so would treating an interrupted wait as fail-open.
 //   - EXCLUSIVE failures of any kind are hard errors: maintenance refuses
 //     rather than pretends.
+//   - Strict --readonly is mutation-free (effectiveRootStorePolicy), so its
+//     SHARED hold opens the gate files read-only and never creates them (see
+//     workspacegate.Options.ReadOnly). A gate file that does not exist means
+//     nothing has ever been gated there, so the command proceeds holding
+//     nothing; an existing one is held SHARED like any other command's.
+//     Residual: on a workspace that has never been gated, a strict readonly
+//     command is invisible to a maintenance operation that starts while it
+//     runs. Every other command keeps creating the files, which is what makes
+//     it visible.
 //
 // Known residual (PR-B2 scope, documented honestly): the pre-chokepoint
 // DISCOVERY code paths (configfile.Load at main.go's early config probe and
@@ -423,6 +432,9 @@ func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beads
 		opts = workspacegate.Options{
 			Wait:                  sharedWait,
 			IgnoreQueuedExclusive: workspacegate.InheritedSharedHold(),
+			// readonlyMode is already resolved here. Strict readonly promises not to
+			// mutate the workspace, so its SHARED hold must not create gate files.
+			ReadOnly: readonlyMode,
 		}
 		if sharedWait > 0 {
 			opts.OnWait, stopNotice = delayedGateNotice()
