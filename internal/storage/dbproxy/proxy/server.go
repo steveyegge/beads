@@ -46,6 +46,12 @@ type ProxyOpts struct {
 	// against it; tests use Snapshot() to assert. Production code should
 	// leave this nil.
 	Stats *Stats
+	// TraceConnections writes the per-connection trace lines (accept,
+	// handleConn start/end, backend dial ok, copy done) to proxy.log. Every
+	// bd command opens connections through the proxy, so these lines are
+	// off by default; db-proxy-child sets this from BD_DEBUG. Lifecycle and
+	// error lines are always written.
+	TraceConnections bool
 }
 
 type proxyServer struct {
@@ -55,6 +61,8 @@ type proxyServer struct {
 	server      server.DatabaseServer
 	stats       *Stats
 	stopEpoch   string
+
+	traceConnections bool
 
 	// reportUpstreamOutage answers a connection whose upstream is not
 	// serving with a MySQL error instead of a bare close; see
@@ -106,6 +114,8 @@ func NewProxyServer(opts ProxyOpts) *proxyServer {
 		server:      opts.Server,
 		stats:       opts.Stats,
 		stopEpoch:   opts.StopEpoch,
+
+		traceConnections: opts.TraceConnections,
 
 		reportUpstreamOutage: reportsUpstreamOutage(opts.Server),
 	}
