@@ -993,7 +993,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removal now use only the user-level files beside `~/.gemini/settings.json`. A
   new `~/.gemini/GEMINI.md` holds just the section, rendered the same whichever
   project you run from; Gemini CLI loads it in every project, so the section
-  applies only in repositories that use beads. With global hooks `--check` accepts the user-level section when the
+  applies only in repositories that use beads. In an existing file the section
+  goes ahead of the `## Gemini Added Memories` section that Gemini CLI
+  releases up to v0.43 keep there, so memories they save later stay outside
+  it. With global hooks `--check` accepts the user-level section when the
   project's `GEMINI.md` has none, and its hints for a project's `GEMINI.md`
   name `bd setup gemini --project`. From your home directory
   `--project --remove` also removes the user-level section. If you ran

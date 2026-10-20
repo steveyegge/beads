@@ -220,6 +220,64 @@ func TestInstallGemini_GlobalKeepsUserLevelContent(t *testing.T) {
 	}
 }
 
+// legacyGeminiSaveMemory adds fact to content the way Gemini CLI's
+// save_memory tool did through v0.43: at the end of the "## Gemini Added
+// Memories" section, which it takes to run to the next "## " heading.
+func legacyGeminiSaveMemory(content, fact string) string {
+	item := "- " + fact
+	idx := strings.Index(content, geminiMemoriesHeading)
+	if idx < 0 {
+		return strings.TrimRight(content, "\n") + "\n\n" + geminiMemoriesHeading + "\n" + item + "\n"
+	}
+	start := idx + len(geminiMemoriesHeading)
+	end := strings.Index(content[start:], "\n## ")
+	if end < 0 {
+		end = len(content)
+	} else {
+		end += start
+	}
+	section := strings.TrimRight(content[start:end], " \t\r\n") + "\n" + item
+	return strings.TrimRight(strings.TrimRight(content[:start], " \t\r\n")+"\n"+strings.TrimLeft(section, " \t\r\n")+"\n"+content[end:], " \t\r\n") + "\n"
+}
+
+// Gemini CLI keeps its saved memories in ~/.gemini/GEMINI.md too. The beads
+// section goes ahead of them, so a memory saved later lands outside it and
+// survives --remove, which gives the user's text back as it was.
+func TestInstallGemini_GlobalSectionStaysClearOfGeminiMemories(t *testing.T) {
+	for _, seed := range []string{
+		geminiMemoriesHeading + "\n- I prefer tabs.\n",
+		"# Prefs\n\nBe terse.\n\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n",
+		"# Prefs\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n",
+	} {
+		env, _, _ := newGeminiTestEnv(t)
+		globalInstructions := geminiGlobalInstructionsPath(env.homeDir)
+		writeGeminiFile(t, globalInstructions, seed)
+		if err := installGemini(env, false, false); err != nil {
+			t.Fatalf("installGemini: %v", err)
+		}
+		data, err := os.ReadFile(globalInstructions)
+		if err != nil {
+			t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+		}
+		content := string(data)
+		if strings.Index(content, "<!-- END BEADS INTEGRATION -->") > strings.Index(content, geminiMemoriesHeading) {
+			t.Errorf("beads section should precede Gemini's memories:\n%s", content)
+		}
+		withMemory := legacyGeminiSaveMemory(content, "My cat is named Miso.")
+		writeGeminiFile(t, globalInstructions, withMemory)
+		if err := removeGemini(env, false); err != nil {
+			t.Fatalf("removeGemini: %v", err)
+		}
+		data, err = os.ReadFile(globalInstructions)
+		if err != nil {
+			t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+		}
+		if want := legacyGeminiSaveMemory(seed, "My cat is named Miso."); string(data) != want {
+			t.Errorf("after a saved memory and --remove:\ngot:\n%q\nwant:\n%q", data, want)
+		}
+	}
+}
+
 // The user-level ~/.gemini/GEMINI.md is shared by every project, so a global
 // install renders and checks it the same way whatever beads config the
 // current directory has: otherwise --check from one project calls the section

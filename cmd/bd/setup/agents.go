@@ -42,6 +42,11 @@ type agentsEnv struct {
 	// them from the current directory's beads config. For user-level files,
 	// which every project shares, so install and --check agree everywhere.
 	renderOpts func() agents.RenderOpts
+	// insertBefore, when set, adds the section to an existing file ahead of
+	// the first line starting with it instead of at the end. For a file whose
+	// owner appends to a section of its own up to the next "## " heading,
+	// which would otherwise be the managed section's.
+	insertBefore string
 }
 
 func (env agentsEnv) resolveRenderOpts() agents.RenderOpts {
@@ -175,14 +180,7 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 				_, _ = fmt.Fprintf(env.stdout, "✓ Updated existing beads section in %s\n", agentsFile)
 			}
 		} else {
-			// Set the section off with one blank line, as bd init's
-			// updateAgentFile does, so that removeBeadsSection gives the
-			// file back as it was.
-			newContent := currentContent
-			if !strings.HasSuffix(newContent, "\n") {
-				newContent += "\n"
-			}
-			newContent += "\n" + beadsSection
+			newContent := addBeadsSection(currentContent, beadsSection, env.insertBefore)
 			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
 				return err
@@ -290,6 +288,29 @@ func removeAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 	_, _ = fmt.Fprintf(env.stdout, "✓ Removed beads section from %s\n", agentsFile)
 	return nil
+}
+
+// addBeadsSection adds section to content that has none. It goes at the end,
+// set off with one blank line as bd init's updateAgentFile does, so that
+// removeBeadsSection gives the file back as it was. When before is set and
+// content contains it, the section goes ahead of the line holding its first
+// occurrence instead, followed by a blank line when one precedes it, which
+// removeBeadsSection also undoes.
+func addBeadsSection(content, section, before string) string {
+	if before != "" {
+		if at := strings.Index(content, before); at >= 0 {
+			at = strings.LastIndexByte(content[:at], '\n') + 1
+			sep := "\n"
+			if at > 0 && !strings.HasSuffix(content[:at], "\n\n") {
+				sep = ""
+			}
+			return content[:at] + section + sep + content[at:]
+		}
+	}
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return content + "\n" + section
 }
 
 // updateBeadsSection replaces the beads section in existing content using the full profile.

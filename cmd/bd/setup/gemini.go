@@ -19,6 +19,11 @@ var (
 
 const geminiInstructionsFile = "GEMINI.md"
 
+// geminiMemoriesHeading opens the section Gemini CLI's save_memory tool
+// (through v0.43) keeps in ~/.gemini/GEMINI.md. It adds each memory at the
+// end of that section, which it takes to run to the next "## " heading.
+const geminiMemoriesHeading = "## Gemini Added Memories"
+
 // geminiAgentsIntegration is the beads section in the user-level
 // ~/.gemini/GEMINI.md, which the default, global install maintains.
 var geminiAgentsIntegration = agentsIntegration{
@@ -104,6 +109,10 @@ func geminiInstructionsEnv(env geminiEnv, project bool) (agentsEnv, agentsIntegr
 		stderr:      env.stderr,
 		sectionOnly: true,
 		renderOpts:  agents.UserLevelRenderOpts,
+		// Below Gemini CLI's memories the section's own "## " heading would
+		// end them, and memories added there would land inside the section,
+		// where an update or --remove deletes them.
+		insertBefore: geminiMemoriesHeading,
 	}, geminiAgentsIntegration
 }
 
