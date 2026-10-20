@@ -373,6 +373,11 @@ var createCmd = &cobra.Command{
 		}
 
 		if dryRun && parentID == "" {
+			// The preview opens no target, but it refuses a local one in a
+			// format this build cannot open, as the create it previews would.
+			if err := checkRepoTargetFormat(repoPath); err != nil {
+				return handleWorkspaceGuardError(err)
+			}
 			return renderDryRun()
 		}
 
@@ -402,6 +407,9 @@ var createCmd = &cobra.Command{
 				// flag value can be ambiguous.
 				allowCreate := !isAmbiguousRepoTarget(cmd.Flags().Changed("repo"), repoOverride)
 				if err := ensureBeadsDirForPath(rootCtx, targetBeadsDir, store, allowCreate); err != nil {
+					if isUnsupportedWorkspaceFormat(err) {
+						return handleWorkspaceGuardError(err)
+					}
 					return HandleError("failed to initialize target repo: %v", err)
 				}
 
@@ -446,8 +454,11 @@ var createCmd = &cobra.Command{
 			defer func() { _ = parentLookupStore.Close() }()
 		}
 
-		var inheritedLabels []string
+		noInheritLabels, _ := cmd.Flags().GetBool("no-inherit-labels")
+		inheritParentLabels := parentID != "" && !noInheritLabels
 		if parentID != "" {
+			// A fail-fast with the message this command has always printed;
+			// the create role refuses a missing parent on its own as well.
 			ctx := rootCtx
 			_, err := parentLookupStore.GetIssue(ctx, parentID)
 			if err != nil {
@@ -456,16 +467,20 @@ var createCmd = &cobra.Command{
 				}
 				return HandleError("failed to check parent issue: %v", err)
 			}
-
-			noInheritLabels, _ := cmd.Flags().GetBool("no-inherit-labels")
-			if !noInheritLabels {
-				inheritedLabels, _ = parentLookupStore.GetLabels(ctx, parentID)
-			}
 		}
 
-		labels = mergeCreateLabels(labels, inheritedLabels)
-
 		if dryRun {
+			// The preview shows what the create role would inherit; the real
+			// create asks the role to inherit (CreateRequest.InheritLabelsFromParent)
+			// inside its own transaction. A failed read is reported, never
+			// previewed as "no labels".
+			if inheritParentLabels {
+				inherited, err := parentLookupStore.GetLabels(rootCtx, parentID)
+				if err != nil {
+					return HandleError("failed to read the labels of parent %s: %v", parentID, err)
+				}
+				labels = mergeCreateLabels(labels, inherited)
+			}
 			return renderDryRun()
 		}
 
@@ -482,14 +497,12 @@ var createCmd = &cobra.Command{
 		}
 
 		createCtx := rootCtx
-		if parentID != "" {
-			childID, err := store.GetNextChildID(rootCtx, parentID)
-			if err != nil {
-				return HandleError("%v", err)
-			}
-			explicitID = childID
-			createCtx = storage.WithReservedChildCounter(createCtx, parentID, childID)
-		}
+		// The --parent child id is minted by the Lifecycle role, on every
+		// backend and route: a create with a ParentID and no id of its own is
+		// <parent>.<n>, minted inside the create's own transaction (conformance
+		// RunIssueOperationsCreateUnderAParentMintsTheNextChildID, served leg
+		// included), and the role stages the advanced counter itself. An
+		// explicit --id never reaches here with a parent (refused above).
 
 		if explicitID != "" {
 			_, err := validation.ValidateIDFormat(explicitID)
@@ -568,21 +581,20 @@ var createCmd = &cobra.Command{
 		if err != nil {
 			return HandleErrorRespectJSON("%v", err)
 		}
-		// Label inheritance stays CLI-side (mergeCreateLabels above) because the
-		// dry-run preview needs it too; asking the facade to inherit as well
-		// would append the parent's labels a second time.
+		// The parent's labels are the role's to inherit, inside the create.
 		if priorityDefault {
 			issue.Priority = 0
 		}
 		result, err := ops.Create(opsCtx, issueops.CreateRequest{
-			Actor:           currentActor(),
-			Issue:           issue,
-			ParentID:        parentID,
-			Dependencies:    createDependencyRequests(depSpecs),
-			WaitsFor:        waitsForRequest(waitsForSpec),
-			ForceIDPrefix:   forceCreate,
-			IDPrefix:        createIDPrefixOverride(),
-			DefaultPriority: priorityDefault,
+			Actor:                   currentActor(),
+			Issue:                   issue,
+			ParentID:                parentID,
+			InheritLabelsFromParent: inheritParentLabels,
+			Dependencies:            createDependencyRequests(depSpecs),
+			WaitsFor:                waitsForRequest(waitsForSpec),
+			ForceIDPrefix:           forceCreate,
+			IDPrefix:                createIDPrefixOverride(),
+			DefaultPriority:         priorityDefault,
 		})
 		if err != nil {
 			// RULING R1: an occupied --id is a refusal, not a silent full-row
@@ -965,8 +977,12 @@ func init() {
 }
 
 // handleCreateTargetStoreError preserves the existing text path for ordinary
-// store failures while rendering capability refusals as typed JSON when asked.
+// store failures while rendering capability refusals as typed JSON when asked,
+// and a target in a format this build cannot open as the workspace refusal.
 func handleCreateTargetStoreError(err error, targetPath, fallbackFormat string) error {
+	if isUnsupportedWorkspaceFormat(err) {
+		return handleWorkspaceGuardError(err)
+	}
 	var capErr *ProxyCapabilityError
 	if !errors.As(err, &capErr) {
 		return HandleError(fallbackFormat, err)
@@ -1016,6 +1032,12 @@ func openDryRunTargetStore(ctx context.Context, repoPath string) (storage.DoltSt
 
 	targetPath := routing.ExpandPath(repoPath)
 	beadsDir := filepath.Join(targetPath, ".beads")
+	// A target in a format this build cannot open is refused as that, even
+	// one marked only by a legacy config.json, which the check below would
+	// report as not initialized.
+	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	metadataPath := filepath.Join(beadsDir, "metadata.json")
 	if _, err := os.Stat(metadataPath); err != nil {
 		if os.IsNotExist(err) {
@@ -1029,6 +1051,17 @@ func openDryRunTargetStore(ctx context.Context, repoPath string) (storage.DoltSt
 		return nil, fmt.Errorf("failed to open target store for dry-run: %w", err)
 	}
 	return store, nil
+}
+
+// checkRepoTargetFormat refuses a local create target in a format this build
+// cannot open, reading its metadata without opening or migrating it. The
+// command's own workspace (".") has passed admission already, and a remote
+// target has no local metadata to read, so both pass.
+func checkRepoTargetFormat(repoPath string) error {
+	if repoPath == "." || remotecache.IsRemoteURL(repoPath) {
+		return nil
+	}
+	return checkDiscoveredWorkspaceFormat(filepath.Join(routing.ExpandPath(repoPath), ".beads"))
 }
 
 // isAmbiguousRepoTarget reports whether an explicit --repo value is a
@@ -1050,6 +1083,14 @@ func isAmbiguousRepoTarget(repoFlagChanged bool, repoOverride string) bool {
 func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore storage.DoltStorage, allowCreate bool) error {
 	beadsDir := filepath.Join(targetPath, ".beads")
 	metadataPath := filepath.Join(beadsDir, "metadata.json")
+
+	// A target in a format this build cannot open is refused before anything
+	// below: one marked only by a legacy config.json has no metadata.json, so
+	// it would otherwise be initialized here and lose its marker to the
+	// metadata.json written beside it.
+	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return err
+	}
 
 	// Check if beads directory already exists with a Dolt database.
 	// metadata.json is the canonical marker for an initialized beads dir.

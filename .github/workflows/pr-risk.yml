@@ -24,8 +24,8 @@ env:
 # The legacy Go test tiers this workflow used to run (embedded Dolt storage,
 # conformance and cmd shards; proxied-server cmd shards; server-Dolt storage
 # and full suite) are pr.yml's Bazel lanes on rbe-west now: `embedded Dolt
-# tier`, `proxied-server tier` and `server-Dolt storage tier` (bazel.yml),
-# which pr.yml's `CI Gate / Required` requires to have run remotely and
+# tier`, `proxied-server tier` (`dolt-race`, with the dolt-server lane, in
+# mode remote) and `server-Dolt storage tier` (bazel.yml), which pr.yml's `CI Gate / Required` requires to have run remotely and
 # passed on every pull_request and merge group, fork and Dependabot PRs
 # included (ga-96smfk.22). What remains is the Nix packaging check, which no
 # Bazel target can stand in for: it builds the package Nix users install.
