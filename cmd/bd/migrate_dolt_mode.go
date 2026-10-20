@@ -1257,7 +1257,8 @@ func proxiedLogAssets(beadsDir string) ([]string, error) {
 	if isCustomLog {
 		return nil, nil
 	}
-	return []string{logPath}, nil
+	// The proxy start rotates an oversized server.log to its single .1 slot.
+	return []string{logPath, logPath + ".1"}, nil
 }
 
 func removeMigrateAssets(paths []string) []error {
