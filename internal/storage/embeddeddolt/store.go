@@ -1196,6 +1196,20 @@ func (s *EmbeddedDoltStore) ListVersions(ctx context.Context, issueID string) ([
 	return result, err
 }
 
+// ParticipatingIssueIDs implements storage.HistoryParticipation: which of ids
+// name an issues-table row whose participation_generation is set.
+func (s *EmbeddedDoltStore) ParticipatingIssueIDs(ctx context.Context, ids []string) (map[string]struct{}, error) {
+	var participating map[string]struct{}
+	err := s.withConn(ctx, false, func(tx *sql.Tx) error {
+		var err error
+		participating, err = issueops.ParticipatingIssueIDsInTx(ctx, tx, ids)
+		return err
+	})
+	return participating, err
+}
+
+var _ storage.HistoryParticipation = (*EmbeddedDoltStore)(nil)
+
 func (s *EmbeddedDoltStore) AsOf(ctx context.Context, issueID string, ref string) (*types.Issue, error) {
 	var result *types.Issue
 	err := s.withConn(ctx, false, func(tx *sql.Tx) error {

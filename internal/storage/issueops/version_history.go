@@ -115,18 +115,21 @@ import (
 // row, and so no content token, comes of it. A create-shaped mint never meets a
 // legacy row (its call site has just inserted the row), so it runs the gate
 // whenever it mints; a new row flagged no-history is stamped but not minted, so
-// nothing is canonicalized for it. The switch's check cannot see participation,
-// so it checks legacy rows too: an over-approximation that can only refuse more.
+// nothing is canonicalized for it. So the switch's check keeps only the rows that
+// participate (ParticipatingIssueIDsInTx): a legacy row blocks no write, so it does
+// not block the switch either. Where the store cannot say which rows participate, the
+// check keeps legacy rows too, an over-approximation that can only refuse more.
 //
 // That check ran once, at that moment. Nothing keeps a writer that does not mint
 // from adding such a row afterwards, even right after the switch is on; if the
 // row participates, the first write to it then fails with the same refusal, and
 // the same fix applies. Making the check and the write of the setting one
 // transaction would narrow that window, not close it. Turning history on through
-// the environment or config.yaml does not pass through that command at all; for
-// those planes this refusal is the control on the rows that participate, and
-// finding the rows ahead of time is a bd doctor check (gastownhall/beads#6379
-// item 3).
+// the environment or config.yaml does not pass through that command at all, and
+// nothing scans when a store is opened either (those planes are read on every open
+// of every process); for those planes this refusal is the control on the rows that
+// participate, and finding the rows ahead of time is a bd doctor check
+// (gastownhall/beads#6379 item 3).
 //
 // Duplicate keys are the exception to "the case to plan for". A Dolt JSON column
 // collapses duplicate keys when it stores a document, so on a Dolt store neither
