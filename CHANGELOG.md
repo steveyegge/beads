@@ -790,6 +790,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd count --type <infra type>` now counts the type's ephemeral rows, the
+  same rows `bd list --type <infra type>` shows, instead of only its durable
+  rows; every count route reads the workspace's `types.infra` for a typed
+  count (#6258).
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a
   record, so in a quiet workspace a follower whose parent died without
