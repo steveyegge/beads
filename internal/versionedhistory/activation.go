@@ -25,6 +25,18 @@
 // --repo` or the direct-mode open builds for another one -- which then recorded no
 // history while the command reported success. See
 // cmd/bd/versioned_history_construction_test.go for the structural guard.
+//
+// ACTIVATING IS NOT READING. The factories run for every store a command opens,
+// `bd list` and `bd show` included, and most of those never write. A plumbing
+// that can take the row as a read to make later (storage.VersionedHistoryDeferrer:
+// the dolt store, the embedded store and the unit-of-work provider) is handed
+// it, and reads the row inside its first write transaction, before that
+// transaction's body runs: one SELECT in a transaction it opened anyway, and none
+// at all for a plumbing that only reads. Reading it at activation cost every
+// open a transaction of its own -- on the embedded store an engine open, three
+// statements and a rollback -- to learn, almost always, that history was off.
+// The process-wide planes need no read and are applied at once; a plumbing that
+// can only take an answer is read eagerly, as before.
 package versionedhistory
 
 import (
@@ -235,11 +247,12 @@ func EnabledForStore(ctx context.Context, st storage.DoltStorage) bool {
 // The read opens one unit of work, asks for one config row, and rolls it back: a
 // pooled connection, START TRANSACTION, a SELECT, a ROLLBACK. It starts no server
 // and creates no schema (the provider constructors have already opened the pool and
-// run initSchema by the time this is called) and commits nothing. That is the whole
-// cost of "each provider answers for its own database", and it is why this is read
-// at construction, once, rather than falling back to viper alone: a provider that
-// silently ignored the row would record nothing for a workspace that asked, while
-// every command reported success.
+// run initSchema by the time this is called) and commits nothing. It is the eager
+// read, for a provider that cannot take the read later; bd's own provider can
+// (storage.VersionedHistoryDeferrer) and makes the same SELECT inside its first
+// unit of work instead. Either way the row is read rather than falling back to
+// viper alone: a provider that silently ignored the row would record nothing for a
+// workspace that asked, while every command reported success.
 //
 // The same failure policy as StoreSetting applies, including the recover.
 func ProviderSetting(ctx context.Context, p uow.UnitOfWorkProvider) (enabled bool) {
@@ -301,10 +314,15 @@ func EnabledForProvider(ctx context.Context, p uow.UnitOfWorkProvider) bool {
 // A failed open passes through untouched, so the typed-nil store never reaches the
 // activation. A store that cannot version at all is returned as-is without its
 // settings plane being read: there is nothing to activate, and the factories run for
-// every command that opens a store.
+// every command that opens a store. A store that can read its own row later
+// (storage.VersionedHistoryDeferrer) is not read here either: it is handed the
+// read, and makes it in its first write (see the package doc).
 func ActivateStore(ctx context.Context, s storage.DoltStorage, err error) (storage.DoltStorage, error) {
 	if err != nil || s == nil {
 		return s, err
+	}
+	if deferRowRead(s) {
+		return s, nil
 	}
 	Apply(s, EnabledForStore(ctx, s))
 	return s, nil
@@ -318,8 +336,65 @@ func ActivateProvider(ctx context.Context, p uow.UnitOfWorkProvider, err error) 
 	if err != nil || p == nil {
 		return p, err
 	}
+	if deferRowRead(p) {
+		return p, nil
+	}
 	Apply(p, EnabledForProvider(ctx, p))
 	return p, nil
+}
+
+// deferRowRead hands the store-plane read to a plumbing that can make it inside
+// its own first write (storage.VersionedHistoryDeferrer), and reports whether it
+// did. It does not when the process-wide plane has already answered on: that
+// answer needs no read, and Apply turns the plumbing on at once, as it always
+// has. A plumbing that is a VersionedHistoryConfigurer and nothing more is read
+// eagerly by the caller, exactly as before.
+//
+// The recover is StoreSetting's, for the same shape: a deferrer whose method
+// panics (a typed nil) falls back to the eager read, whose own recover answers
+// off.
+func deferRowRead(target any) (deferred bool) {
+	if config.GetBool(ConfigKey) {
+		return false
+	}
+	deferrer, ok := target.(storage.VersionedHistoryDeferrer)
+	if !ok {
+		return false
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			deferred = false
+		}
+	}()
+	deferrer.DeferVersionedHistory(rowSetting)
+	return true
+}
+
+// rowSetting is the deferred form of StoreSetting and ProviderSetting: the same
+// row, parsed the same way, read through the transaction a plumbing's first
+// write runs in. It is the one storage.VersionedHistoryResolver every deferring
+// plumbing is handed.
+//
+// The failure policy is theirs, with one difference a deferred read needs. An
+// absent row is off and silent. A read that errors is off and diagnosed at
+// debug level, but it is not an ANSWER: the error goes back to the plumbing,
+// which records nothing for that write and asks again at the next one. A read
+// at construction failed once per open; a read inside a write fails with that
+// write, and a long-lived process must not stay off for its whole life because
+// one request was canceled mid-read. A panic is answered off, as StoreSetting's
+// recover answers it, and settles the switch.
+func rowSetting(ctx context.Context, readConfig func(ctx context.Context, key string) (string, error)) (enabled bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			enabled, err = false, nil
+		}
+	}()
+	raw, err := readConfig(ctx, ConfigKey)
+	if err != nil {
+		debug.Logf("versioned history: %s left off for this write: reading the setting failed: %v\n", ConfigKey, err)
+		return false, err
+	}
+	return parseSettingBool(raw), nil
 }
 
 // Apply binds a resolved answer to one plumbing -- a store or a unit-of-work

@@ -381,7 +381,7 @@ func (s *DoltStore) doltAddAndCommitInTx(ctx context.Context, tx *sql.Tx, tables
 	if issueops.VersionCommitDeferred(ctx) {
 		return nil
 	}
-	for _, table := range s.withVersionedHistoryTables(tables) {
+	for _, table := range s.withVersionedHistoryTables(ctx, tx, tables) {
 		if err := schema.DrainCall(ctx, tx, "CALL DOLT_ADD(?)", table); err != nil {
 			return fmt.Errorf("dolt add %s: %w", table, err)
 		}
