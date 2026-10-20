@@ -22,6 +22,11 @@
 // restart. Implementing true runtime rotation would require either
 // (a) a streaming goroutine owning the pipe, or (b) copy-truncate, which
 // races with the child's append writes. Both are out of scope for this fix.
+//
+// Proxied-server mode applies the same startup rename to .beads/dolt/proxy.log
+// and the proxied server.log through MaybeRotateLogFile, called from
+// dbproxy/proxy's forkExecChild (under proxy.lock, before the child's stdout
+// fd is opened) and ListenAndServe (before proxy.log is opened).
 
 package doltserver
 
