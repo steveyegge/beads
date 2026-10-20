@@ -42,14 +42,11 @@ func guardLegacyUpgradeWorkspaceForInit(beadsDir string, initSelectsServer bool)
 	if beadsDir == "" {
 		return nil
 	}
-	cfg, err := configfile.LoadForDiscovery(beadsDir)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
 	// This guard admits only the ordinary Issue store. A workspace in another
 	// format is refused before any legacy classification, which could
 	// otherwise admit it, or report it as a legacy store to migrate.
-	if err := checkWorkspaceFormat(cfg, beadsDir); err != nil {
+	cfg, err := loadAndCheckWorkspaceFormat(beadsDir)
+	if err != nil {
 		return err
 	}
 	if isHistoricalSQLiteWorkspace(beadsDir, cfg) {
