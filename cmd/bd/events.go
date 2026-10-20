@@ -319,6 +319,12 @@ func runEventsTail(ctx context.Context, since int64, limit int, follow bool) err
 
 	last, err := emit(since)
 	if err != nil {
+		// A follower stopped while a read is in flight (Ctrl-C, or stdin EOF
+		// under --exit-on-stdin-eof) sees that read fail with the cancellation.
+		// The stop is still a clean interruption, as it is between polls.
+		if follow && ctx.Err() != nil {
+			return nil
+		}
 		return reportEventsTruncated(err, false)
 	}
 	if !follow {
@@ -335,6 +341,9 @@ func runEventsTail(ctx context.Context, since int64, limit int, follow bool) err
 			return nil
 		case <-ticker.C:
 			if last, err = emit(last); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return reportEventsTruncated(err, true)
 			}
 		}

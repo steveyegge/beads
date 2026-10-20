@@ -61,8 +61,8 @@ func TestEventsTailExitOnStdinEOFRequiresFollow(t *testing.T) {
 
 // TestEmbeddedEventsTailFollowExitsOnStdinEOF pins #7086's lifecycle
 // contract end to end: with --exit-on-stdin-eof, a quiet follower stays up
-// while its caller-owned stdin is open and exits 0 once it closes, without
-// waiting for a journal record to fail a stdout write.
+// while its caller-owned stdin is open and exits 0 once it closes, whenever
+// the EOF lands, without waiting for a journal record to fail a stdout write.
 func TestEmbeddedEventsTailFollowExitsOnStdinEOF(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -70,9 +70,10 @@ func TestEmbeddedEventsTailFollowExitsOnStdinEOF(t *testing.T) {
 
 	bd := buildEmbeddedBD(t)
 	dir, _, _ := bdInit(t, bd, "--prefix", "eof", "--skip-hooks", "--skip-agents")
+	env := append(bdEnv(dir), "BD_EVENTS_JOURNAL=1")
 	follow := exec.Command(bd, "events", "tail", "--since", "0", "--follow", "--exit-on-stdin-eof")
 	follow.Dir = dir
-	follow.Env = append(bdEnv(dir), "BD_EVENTS_JOURNAL=1")
+	follow.Env = env
 	stdin, err := follow.StdinPipe()
 	if err != nil {
 		t.Fatalf("stdin pipe: %v", err)
@@ -108,6 +109,18 @@ func TestEmbeddedEventsTailFollowExitsOnStdinEOF(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("follower remained alive after stdin EOF\nstderr:\n%s", stderr.String())
+	}
+
+	// The EOF can land while a read is in flight: here stdin is the null
+	// device, so it is at EOF before the first read finishes, as when the
+	// parent dies during bd's startup. That stop must be just as clean.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	early := exec.CommandContext(ctx, bd, "events", "tail", "--since", "0", "--follow", "--exit-on-stdin-eof")
+	early.Dir = dir
+	early.Env = env
+	if out, err := early.CombinedOutput(); err != nil {
+		t.Fatalf("follower whose stdin was at EOF from the start: %v\n%s", err, out)
 	}
 }
 
