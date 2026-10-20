@@ -855,7 +855,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		if initProxiedServer {
 			if beadsDir := resolveInitBeadsDir(); beadsDir != "" {
 				if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
-					return err
+					return handleWorkspaceGuardError(err)
 				}
 			}
 			if err := runInitProxiedServer(cmd, rootCtx, initProxiedServerInput{
@@ -1006,7 +1006,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// or rewrite state beside a source that has not been preserved.
 		if beadsDir := resolveInitBeadsDir(); beadsDir != "" {
 			if err := guardLegacyUpgradeWorkspaceForInit(beadsDir, initServerMode); err != nil {
-				return err
+				return handleWorkspaceGuardError(err)
 			}
 		}
 

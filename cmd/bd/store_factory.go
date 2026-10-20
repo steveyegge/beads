@@ -180,6 +180,9 @@ func newExistingDoltStoreFromConfig(ctx context.Context, beadsDir string) (stora
 func openDoltStoreFromConfig(ctx context.Context, beadsDir string, requireExisting bool) (s storage.DoltStorage, err error) {
 	defer func() { s, err = activateVersionedHistoryStore(ctx, s, err) }()
 	defer func() { s, err = activateEventsJournalStore(beadsDir, s, err) }()
+	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
 		// A present-but-unloadable metadata.json must not degrade to the
@@ -299,6 +302,9 @@ func newPreviewStoreFromConfig(ctx context.Context, beadsDir string) (storage.Do
 // OpenNonMutating hook on backends.Backend, which this function would call
 // instead, is the follow-up that closes the exception.
 func openNonMutatingStoreFromConfig(ctx context.Context, beadsDir string, preview bool) (storage.DoltStorage, error) {
+	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
 		// Same contract as newDoltStoreFromConfig: a present-but-unloadable

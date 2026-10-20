@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
@@ -196,5 +197,49 @@ func TestNocgoFactoriesHonorSharedServer(t *testing.T) {
 				t.Fatalf("%s did not dial the shared server at the pinned port %s; got: %v", name, nocgoSharedServerPort, err)
 			}
 		})
+	}
+}
+
+// TestNocgoStoreFactoriesRefuseGraphWorkspace is the !cgo half of
+// TestStoreFactoriesRefuseGraphWorkspace. The CGO_ENABLED=0 binaries
+// .goreleaser.yml ships open routed, cross-repository and create --repo
+// targets through their own copies of these factories, so each must refuse a
+// graph workspace before its configfile.Load, which would otherwise migrate
+// one marked only by a legacy config.json into metadata.json first. It runs in
+// CI only because bazel.yml's PURE_CMD_BD_TESTS allowlists it by name.
+func TestNocgoStoreFactoriesRefuseGraphWorkspace(t *testing.T) {
+	isolateSharedServerSignals(t)
+	pinLegacyUpgradeGuardEnv(t)
+	const metadata = `{"backend":"dolt","graph_mode":"link"}`
+	factories := map[string]func(context.Context, string) (storage.DoltStorage, error){
+		"read-write": newDoltStoreFromConfig,
+		"routed":     newExistingDoltStoreFromConfig,
+		"read-only":  newReadOnlyStoreFromConfig,
+		"preview":    newPreviewStoreFromConfig,
+	}
+	for _, filename := range []string{"metadata.json", "config.json"} {
+		for name, open := range factories {
+			t.Run(filename+"/"+name, func(t *testing.T) {
+				beadsDir := t.TempDir()
+				path := filepath.Join(beadsDir, filename)
+				if err := os.WriteFile(path, []byte(metadata), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				store, err := open(t.Context(), beadsDir)
+				if err == nil {
+					_ = store.Close()
+				}
+				if !isUnsupportedWorkspaceFormat(err) {
+					t.Fatalf("%s open = %v, want unsupported workspace format refusal", name, err)
+				}
+				if got, readErr := os.ReadFile(path); readErr != nil || string(got) != metadata {
+					t.Fatalf("%s open rewrote %s: %q, %v", name, filename, got, readErr)
+				}
+				entries, readErr := os.ReadDir(beadsDir)
+				if readErr != nil || len(entries) != 1 {
+					t.Fatalf("%s open left %d entries in the workspace, want only %s (%v)", name, len(entries), filename, readErr)
+				}
+			})
+		}
 	}
 }

@@ -19,10 +19,12 @@ import (
 )
 
 // guardLegacyUpgradeWorkspace rejects the reviewed pre-Dolt and legacy-Dolt
-// workspace shapes before command setup can track a version, migrate metadata,
-// or construct a store. It intentionally classifies only metadata, regular
-// SQLite files, and the bounded local version witness; storage internals stay
-// behind the driver boundary.
+// workspace shapes, and workspaces whose metadata declares a format this build
+// cannot open (checkWorkspaceFormat), before command setup can track a version,
+// migrate metadata, or construct a store. It intentionally classifies only
+// metadata, regular SQLite files, and the bounded local version witness;
+// storage internals stay behind the driver boundary. Render its refusals with
+// handleWorkspaceGuardError.
 func guardLegacyUpgradeWorkspace(beadsDir string) error {
 	return guardLegacyUpgradeWorkspaceForInit(beadsDir, false)
 }
@@ -43,6 +45,12 @@ func guardLegacyUpgradeWorkspaceForInit(beadsDir string, initSelectsServer bool)
 	cfg, err := configfile.LoadForDiscovery(beadsDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
+	}
+	// This guard admits only the ordinary Issue store. A workspace in another
+	// format is refused before any legacy classification, which could
+	// otherwise admit it, or report it as a legacy store to migrate.
+	if err := checkWorkspaceFormat(cfg, beadsDir); err != nil {
+		return err
 	}
 	if isHistoricalSQLiteWorkspace(beadsDir, cfg) {
 		return legacyUpgradeRefusal("historical SQLite workspace")
@@ -271,9 +279,34 @@ func onlyLegacySQLiteEntries(beadsDir string, entries []os.DirEntry, databaseNam
 // excludes vc.db, so this bounded fallback runs only after that discovery found
 // no current workspace.
 func guardUndiscoveredLegacyWorkspace() error {
+	for _, beadsDir := range undiscoveredWorkspaceCandidates() {
+		if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkUndiscoveredWorkspaceFormat refuses a workspace in a format this build
+// cannot open (checkWorkspaceFormat) that discovery passed over, such as one
+// marked only by a legacy config.json, and nothing else. It reads metadata
+// without migrating it.
+func checkUndiscoveredWorkspaceFormat() error {
+	for _, beadsDir := range undiscoveredWorkspaceCandidates() {
+		if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// undiscoveredWorkspaceCandidates lists, nearest first, the .beads directories
+// the undiscovered-workspace checks read: the one BEADS_DIR names or, without
+// it, each .beads from the working directory up to the repository root and
+// below BEADS_CEILING_DIRECTORIES.
+func undiscoveredWorkspaceCandidates() []string {
 	if explicit := os.Getenv("BEADS_DIR"); explicit != "" {
-		beadsDir := beads.FollowRedirect(utils.CanonicalizePath(explicit))
-		return guardLegacyUpgradeWorkspace(beadsDir)
+		return []string{beads.FollowRedirect(utils.CanonicalizePath(explicit))}
 	}
 
 	cwd, err := os.Getwd()
@@ -283,19 +316,18 @@ func guardUndiscoveredLegacyWorkspace() error {
 	dir := utils.CanonicalizePath(cwd)
 	boundary := utils.CanonicalizePath(git.GetRepoRoot())
 	bound := ceiling.For(dir)
+	var candidates []string
 	for {
 		if bound.Excludes(dir) {
-			return nil
+			return candidates
 		}
-		if err := guardLegacyUpgradeWorkspace(filepath.Join(dir, ".beads")); err != nil {
-			return err
-		}
+		candidates = append(candidates, filepath.Join(dir, ".beads"))
 		if boundary != "" && utils.PathsEqual(dir, boundary) {
-			return nil
+			return candidates
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return nil
+			return candidates
 		}
 		dir = parent
 	}

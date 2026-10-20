@@ -373,6 +373,11 @@ var createCmd = &cobra.Command{
 		}
 
 		if dryRun && parentID == "" {
+			// The preview opens no target, but it refuses a local one in a
+			// format this build cannot open, as the create it previews would.
+			if err := checkRepoTargetFormat(repoPath); err != nil {
+				return handleWorkspaceGuardError(err)
+			}
 			return renderDryRun()
 		}
 
@@ -402,6 +407,9 @@ var createCmd = &cobra.Command{
 				// flag value can be ambiguous.
 				allowCreate := !isAmbiguousRepoTarget(cmd.Flags().Changed("repo"), repoOverride)
 				if err := ensureBeadsDirForPath(rootCtx, targetBeadsDir, store, allowCreate); err != nil {
+					if isUnsupportedWorkspaceFormat(err) {
+						return handleWorkspaceGuardError(err)
+					}
 					return HandleError("failed to initialize target repo: %v", err)
 				}
 
@@ -969,8 +977,12 @@ func init() {
 }
 
 // handleCreateTargetStoreError preserves the existing text path for ordinary
-// store failures while rendering capability refusals as typed JSON when asked.
+// store failures while rendering capability refusals as typed JSON when asked,
+// and a target in a format this build cannot open as the workspace refusal.
 func handleCreateTargetStoreError(err error, targetPath, fallbackFormat string) error {
+	if isUnsupportedWorkspaceFormat(err) {
+		return handleWorkspaceGuardError(err)
+	}
 	var capErr *ProxyCapabilityError
 	if !errors.As(err, &capErr) {
 		return HandleError(fallbackFormat, err)
@@ -1020,6 +1032,12 @@ func openDryRunTargetStore(ctx context.Context, repoPath string) (storage.DoltSt
 
 	targetPath := routing.ExpandPath(repoPath)
 	beadsDir := filepath.Join(targetPath, ".beads")
+	// A target in a format this build cannot open is refused as that, even
+	// one marked only by a legacy config.json, which the check below would
+	// report as not initialized.
+	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	metadataPath := filepath.Join(beadsDir, "metadata.json")
 	if _, err := os.Stat(metadataPath); err != nil {
 		if os.IsNotExist(err) {
@@ -1033,6 +1051,17 @@ func openDryRunTargetStore(ctx context.Context, repoPath string) (storage.DoltSt
 		return nil, fmt.Errorf("failed to open target store for dry-run: %w", err)
 	}
 	return store, nil
+}
+
+// checkRepoTargetFormat refuses a local create target in a format this build
+// cannot open, reading its metadata without opening or migrating it. The
+// command's own workspace (".") has passed admission already, and a remote
+// target has no local metadata to read, so both pass.
+func checkRepoTargetFormat(repoPath string) error {
+	if repoPath == "." || remotecache.IsRemoteURL(repoPath) {
+		return nil
+	}
+	return checkDiscoveredWorkspaceFormat(filepath.Join(routing.ExpandPath(repoPath), ".beads"))
 }
 
 // isAmbiguousRepoTarget reports whether an explicit --repo value is a
@@ -1054,6 +1083,14 @@ func isAmbiguousRepoTarget(repoFlagChanged bool, repoOverride string) bool {
 func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore storage.DoltStorage, allowCreate bool) error {
 	beadsDir := filepath.Join(targetPath, ".beads")
 	metadataPath := filepath.Join(beadsDir, "metadata.json")
+
+	// A target in a format this build cannot open is refused before anything
+	// below: one marked only by a legacy config.json has no metadata.json, so
+	// it would otherwise be initialized here and lose its marker to the
+	// metadata.json written beside it.
+	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return err
+	}
 
 	// Check if beads directory already exists with a Dolt database.
 	// metadata.json is the canonical marker for an initialized beads dir.
