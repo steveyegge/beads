@@ -206,9 +206,9 @@ func (s *DoltServer) DSN(_ context.Context, database, user, password string) str
 
 func (s *DoltServer) doltConfigure(ctx context.Context) error {
 	// execwin.Hide on every spawn below: this method runs inside
-	// bd db-proxy-child, which is started with DETACHED_PROCESS and so has no
-	// console. Without CREATE_NO_WINDOW each of these console applications
-	// would allocate a visible console on Windows. See internal/execwin.
+	// bd db-proxy-child, and whenever that has no console to share, each of
+	// these console applications would otherwise allocate a visible console
+	// on Windows. See internal/execwin.
 	probe := execwin.Hide(exec.CommandContext(ctx, s.doltBinExec, "config", "--global", "--get", "user.name"))
 	if out, err := probe.Output(); err == nil && strings.TrimSpace(string(out)) != "" {
 		return nil

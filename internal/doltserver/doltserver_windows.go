@@ -27,18 +27,24 @@ const processListHint = `tasklist /FI "IMAGENAME eq dolt.exe"`
 // procAttrDetached returns SysProcAttr to detach a child process so it survives
 // parent exit. On Windows, CREATE_NEW_PROCESS_GROUP is the analog of Unix Setpgid.
 //
-// DETACHED_PROCESS is required alongside it, and is not merely cosmetic.
+// CREATE_NO_WINDOW is required alongside it, and is not merely cosmetic.
 // CREATE_NEW_PROCESS_GROUP alone does NOT stop a console-subsystem child from
-// getting a console: if the spawning bd has no console of its own (an MCP
-// server, or a detached proxy child), the system allocates a brand new one for
+// getting a visible console: if the spawning bd has no console of its own (an
+// MCP server, or the proxy child), the system allocates a brand new one for
 // dolt, which Windows Terminal then shows as a real window when it is the
-// registered default terminal. DETACHED_PROCESS says the child gets no console
-// at all, which is correct here because the server's stdout/stderr are already
-// redirected to a log file. This matches the sibling spawner at
+// registered default terminal. CREATE_NO_WINDOW gives dolt its own console that
+// is never displayed, and that console is not the parent's, so the server
+// still survives the parent exiting.
+//
+// DETACHED_PROCESS looks equivalent but is wrong for dolt: it leaves the server
+// with no console at all, and dolt runs `uname -s/-r/-m` on every start. Each
+// of those console children then gets a fresh visible console — three Windows
+// Terminal windows per server start — whereas a hidden console is inherited.
+// This matches the sibling spawner at
 // internal/storage/dbproxy/proxy/endpoint_windows.go.
 func procAttrDetached() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
-		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
+		CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP,
 	}
 }
 

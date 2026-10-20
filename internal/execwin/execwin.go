@@ -9,9 +9,9 @@
 // handed to Windows Terminal and a real terminal window appears on the user's
 // desktop.
 //
-// beads hits this on its most common path: bd db-proxy-child is deliberately
-// spawned with DETACHED_PROCESS (see dbproxy/proxy/endpoint_windows.go), so it
-// has no console, and every dolt command it then runs would pop a window. For
+// beads hits this whenever bd itself has no console (an MCP server, an agent
+// harness with redirected stdio): every dolt command it then runs would pop a
+// window. For
 // short-lived commands the window is worse than cosmetic: the child exits
 // before Windows Terminal finishes attaching to the pseudoconsole, so the
 // handoff pipe is already closed and Windows Terminal reports
@@ -36,8 +36,8 @@ import "os/exec"
 //
 // It is intended for short-lived commands whose output the caller captures. For
 // a long-lived child that must outlive its parent, use that package's own
-// detached SysProcAttr instead — those need DETACHED_PROCESS, and the Unix side
-// needs Setsid/Setpgid, which is not something this helper models.
+// detached SysProcAttr instead — those add CREATE_NEW_PROCESS_GROUP, and the
+// Unix side needs Setsid/Setpgid, which is not something this helper models.
 //
 // Hide never overwrites a SysProcAttr the caller already set, so it is safe to
 // call on a command that has been configured elsewhere. A nil cmd is returned
