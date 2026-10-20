@@ -182,7 +182,7 @@ func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegra
 // plugin manages has no project hooks, so it is treated as user-level.
 func claudeCheckAgentsEnv(env claudeEnv, userLevelHooks bool) (agentsEnv, agentsIntegration) {
 	globalEnv, globalIntegration, _ := claudeInstructionsEnv(env, true)
-	if sameDir(env.projectDir, filepath.Dir(globalEnv.agentsPath)) {
+	if claudeProjectIsUserLevelDir(env) {
 		return globalEnv, globalIntegration
 	}
 	projectEnv := claudeAgentsEnv(env)
@@ -202,6 +202,12 @@ func claudeCheckAgentsEnv(env claudeEnv, userLevelHooks bool) (agentsEnv, agents
 // directory, where the project's .claude/settings.json is the global one.
 func claudeProjectIsHome(env claudeEnv) bool {
 	return sameDir(env.projectDir, env.homeDir)
+}
+
+// claudeProjectIsUserLevelDir reports whether the current directory is
+// ~/.claude, where the project's CLAUDE.md is the user-level one.
+func claudeProjectIsUserLevelDir(env claudeEnv) bool {
+	return sameDir(env.projectDir, filepath.Dir(globalClaudeInstructionsPath(env.homeDir)))
 }
 
 // sameDir reports whether a and b are the same directory, following
@@ -555,9 +561,11 @@ func checkClaude(env claudeEnv) error {
 		userLevelHooks = true
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
-		if atHome {
-			// A project install here would create the ~/CLAUDE.md a global
-			// install exists to avoid.
+		if atHome || claudeProjectIsUserLevelDir(env) {
+			// A project install from $HOME would create the ~/CLAUDE.md a
+			// global install exists to avoid; one from ~/.claude would put
+			// the project wording, and scaffolding, in the user-level
+			// ~/.claude/CLAUDE.md.
 			_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude --global")
 		} else {
 			_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")

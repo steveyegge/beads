@@ -1008,6 +1008,22 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 	})
 
+	// From ~/.claude a project install would write project scaffolding into
+	// the user-level ~/.claude/CLAUDE.md, so the hint names the global install.
+	t.Run("missing hooks checked from the user-level directory", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = filepath.Dir(globalClaudeInstructionsPath(env.homeDir))
+		if err := os.MkdirAll(env.projectDir, 0o755); err != nil {
+			t.Fatalf("mkdir user-level dir: %v", err)
+		}
+		if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+			t.Fatalf("expected errClaudeHooksMissing, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
 	t.Run("missing instructions", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), map[string]interface{}{
@@ -1317,6 +1333,13 @@ func TestRemoveClaudeScenarios(t *testing.T) {
 		}
 		if containsBeadsMarker(string(instructions)) {
 			t.Errorf("expected the user-level section removed, got:\n%s\nstdout:\n%s", instructions, stdout.String())
+		}
+		// It acts on two instructions files, ~/CLAUDE.md and then
+		// ~/.claude/CLAUDE.md; each removal names its own.
+		for _, path := range []string{filepath.Join(env.homeDir, claudeInstructionsFile), globalClaudeInstructionsPath(env.homeDir)} {
+			if !strings.Contains(stdout.String(), "Removing Claude Code integration from "+path+"...\n") {
+				t.Errorf("expected the removal from %s named, got:\n%s", path, stdout.String())
+			}
 		}
 	})
 

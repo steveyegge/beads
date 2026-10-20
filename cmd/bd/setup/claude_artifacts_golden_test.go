@@ -37,6 +37,7 @@ import (
 var claudeArtifactPaths = []string{
 	"home/.claude/CLAUDE.md",
 	"home/.claude/settings.json",
+	"home/CLAUDE.md",
 	"project/.claude/settings.json",
 	"project/.claude/settings.local.json",
 	"project/AGENTS.md",
@@ -198,7 +199,10 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 `
 
 	scenarios := []struct {
-		name  string
+		name string
+		// dir is the directory bd runs in, relative to the root; empty
+		// means project.
+		dir   string
 		seed  map[string]string
 		steps []claudeArtifactStep
 	}{
@@ -224,6 +228,35 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 		{
 			name: "global",
 			steps: []claudeArtifactStep{
+				claudeInstallStep(true, false),
+				claudeCheckStep(),
+				claudeRemoveStep(true),
+				claudeCheckStep(),
+			},
+		},
+		{
+			// Run from the home directory, whose .claude/settings.json is
+			// the global one: --check reports the global install's hooks as
+			// global, and --remove takes the hooks and both instructions
+			// files' sections, naming each file.
+			name: "global-from-home",
+			dir:  "home",
+			steps: []claudeArtifactStep{
+				claudeInstallStep(true, false),
+				claudeCheckStep(),
+				claudeRemoveStep(false),
+				claudeCheckStep(),
+			},
+		},
+		{
+			// Run from ~/.claude, whose CLAUDE.md is the user-level file:
+			// with no hooks --check names the global install, since a
+			// project install there would write project scaffolding into
+			// ~/.claude/CLAUDE.md.
+			name: "global-from-user-level-dir",
+			dir:  "home/.claude",
+			steps: []claudeArtifactStep{
+				claudeCheckStep(),
 				claudeInstallStep(true, false),
 				claudeCheckStep(),
 				claudeRemoveStep(true),
@@ -313,6 +346,12 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 		t.Run(sc.name, func(t *testing.T) {
 			env, _, _ := newClaudeTestEnv(t)
 			root := filepath.Dir(env.projectDir)
+			if sc.dir != "" {
+				env.projectDir = filepath.Join(root, filepath.FromSlash(sc.dir))
+				if err := os.MkdirAll(env.projectDir, 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", sc.dir, err)
+				}
+			}
 			for rel, content := range sc.seed {
 				path := filepath.Join(root, filepath.FromSlash(rel))
 				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
