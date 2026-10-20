@@ -29,7 +29,10 @@ const (
 // hides closed, pinned, template and gate rows; a default `bd count` hides
 // none of them and answers for every durable row that matches. Sharing
 // ListRequest would have made the two questions look interchangeable at the
-// call site while their answers differed by every one of those exclusions.
+// call site while their answers differed by every one of those exclusions —
+// with one qualifier added by GH#6258: a type the workspace calls infra answers
+// from the wisps tier, narrowed to its ephemeral rows, the same rows a
+// listing of that type shows (see IssueType).
 //
 // THERE IS NO Limit AND NO Offset, deliberately. A count is a cardinality:
 // bounding the scan would answer "how many of the first N" and there is no
@@ -69,8 +72,13 @@ type CountRequest struct {
 	// IssueType restricts the type, with the same match-nothing-rather-than-fail
 	// treatment Status gets and no alias expansion at all.
 	//
-	// It has a SECOND effect under IncludeInfra: an infra type routes the count
-	// to the ephemeral tier. See that field.
+	// It has a SECOND effect: a type the workspace calls infra reads the
+	// wisps tier, narrowed to that type's EPHEMERAL rows, exactly the rows
+	// `bd list --type <infra>` lists — unless IncludeEphemeral is set, which
+	// lifts the narrowing and counts the type's durable rows too. That is the
+	// plane decision count and list share (GH#6258); before it, the routing
+	// applied only under IncludeInfra, so a plain typed count of an infra
+	// type answered 0 where the listing returned rows.
 	IssueType string
 	// Assignee restricts to one actor's rows; NoAssignee restricts to rows with
 	// none. Setting both is not refused — they are handed to the filter as
@@ -167,6 +175,8 @@ type CountRequest struct {
 	//   - an IssueType the workspace calls infra routes the count to the
 	//     ephemeral tier instead of the durable one — unless IncludeEphemeral
 	//     is also set, which lifts that routing, as it does for a listing.
+	//     That routing is the plane decision count and list share (GH#6258):
+	//     it applies to a named infra type with or without this flag.
 	//
 	// The infra vocabulary is the WORKSPACE's, read from configuration inside
 	// the implementation. A caller does not supply it and cannot: that is the
@@ -174,7 +184,10 @@ type CountRequest struct {
 	//
 	// Unset — and with IncludeEphemeral also unset — the count is durable-plane
 	// only and applies none of those four: the historical `bd count` answer,
-	// kept exactly so a scripted caller reads the same number it read yesterday.
+	// kept exactly so a scripted caller reads the same number it read
+	// yesterday. The one exception is a named infra IssueType, which reads
+	// the wisps tier narrowed to its ephemeral rows, as a listing of that
+	// type does (see IssueType).
 	IncludeInfra bool
 
 	// IncludeEphemeral admits the EPHEMERAL PLANE — the wisps TABLE — and
@@ -198,12 +211,16 @@ type CountRequest struct {
 	// that with three changes beyond the plane.
 	//
 	// Beside IncludeInfra it does one thing more, the same thing it does to a
-	// listing: it lifts the fourth change's routing of an infra IssueType, so
-	// the durable rows of that type (a promoted wisp, a retyped issue) are
-	// counted along with its wisps rather than instead of them.
+	// listing: it lifts the routing of an infra IssueType, so the durable rows
+	// of that type (a promoted wisp, a retyped issue) are counted along with
+	// its wisps rather than instead of them. That lifting holds with or
+	// without IncludeInfra (GH#6258): the routing itself no longer needs the
+	// flag, so this is the one way to count an infra type's durable rows.
 	//
 	// Unset — and with IncludeInfra also unset — the count is durable-plane
-	// only: the historical answer, unchanged.
+	// only: the historical answer, unchanged — except that a named infra
+	// IssueType still reads the plane, narrowed to its ephemeral rows
+	// (see IssueType).
 	IncludeEphemeral bool
 }
 
