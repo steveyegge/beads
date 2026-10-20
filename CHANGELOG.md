@@ -781,6 +781,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A workspace with no resolvable Dolt port no longer reports an
+  unreachable server at `127.0.0.1:0`.** When auto-start cannot run (for
+  example `dolt.auto-start: false`, a server managed outside bd) and nothing
+  supplies a port, the open now fails with "no Dolt server port resolved",
+  naming the missing `.beads/dolt-server.port` and the other port sources.
+  It no longer suggests `bd dolt start`. That advice started a second server
+  over a new, empty `.beads/dolt`, a phantom database that shadowed the real
+  one. With `dolt.auto-start: false`, `bd dolt start` now refuses to create a
+  new, empty data directory; `--force` overrides it.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the
