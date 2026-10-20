@@ -9,10 +9,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -20,20 +18,29 @@ import (
 // openMigrationPlanningStore opens the personal planning workspace's store for
 // the copy phase below.
 //
-// It is a factory rather than an inline dolt.New because the store it returns
-// is WRITTEN THROUGH: the migration creates every issue in the planning
-// workspace and then deletes them from the project. Those are ordinary bead
-// mutations in another workspace, so they belong in that workspace's events
-// journal if it has one enabled — and the setting is read from there, not from
-// the workspace bd was launched in. The same goes for its issue-version history,
-// which the store's own settings row decides.
-func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string) (s storage.DoltStorage, err error) {
-	defer func() { s, err = activateVersionedHistoryStore(ctx, s, err) }()
-	defer func() { s, err = activateEventsJournalStore(planningBeadsDir, s, err) }()
-	return dolt.New(ctx, &dolt.Config{
-		Path:     doltserver.ResolveDoltDir(planningBeadsDir),
-		BeadsDir: planningBeadsDir,
-	})
+// The planning repo is the contributor auto-route target, so it opens the way a
+// write auto-routed there does (openAutoRoutedStore): its own metadata.json
+// picks the backend, the mode and the database, and the database is pinned
+// against a launching workspace's BEADS_DOLT_SERVER_DATABASE
+// (autoRouteTargetDatabase, openRoutedTargetStore). An embedded planning
+// workspace with no database is refused, not given one. A bare dolt.New here
+// used to dial a SQL server for every planning workspace, under the default
+// database name.
+//
+// The store it returns is WRITTEN THROUGH: the migration creates every issue in
+// the planning workspace and then deletes them from the project. Those are
+// ordinary bead mutations in another workspace, so they belong in that
+// workspace's events journal if it has one enabled — and the setting is read
+// from there, not from the workspace bd was launched in. The same goes for its
+// issue-version history, which the store's own settings row decides. The
+// routed-write factory (newExistingDoltStoreFromConfig) activates the planning
+// workspace's events journal and issue-version history on the store it opens.
+func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string) (storage.DoltStorage, error) {
+	database, err := autoRouteTargetDatabase(planningBeadsDir, true)
+	if err != nil {
+		return nil, err
+	}
+	return openRoutedTargetStore(ctx, planningBeadsDir, database, true)
 }
 
 var migratePersonalCmd = &cobra.Command{

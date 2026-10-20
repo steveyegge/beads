@@ -828,6 +828,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server, a server bd started (its pid file beside the port file), a server
   bd manages, an external workspace whose port no setting names, and a remote
   host keep their advice.
+- **`bd migrate-personal` opens the planning repo the way that repo is
+  configured.** It opened the planning store as a Dolt SQL server under the
+  default database name, ignoring the planning repo's `metadata.json`. An
+  embedded planning repo failed with `Dolt server unreachable at
+  127.0.0.1:0`, and a server-mode one with `database "beads" not found`,
+  after printing `no database name configured; falling back to default
+  "beads"`. It now opens the planning repo the way a write auto-routed there
+  does: its own mode, server settings and database, pinned against the
+  launching workspace's `BEADS_DOLT_SERVER_DATABASE`. A planning repo with no
+  database, or whose `metadata.json` has no `dolt_database`, is refused
+  before anything moves.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the

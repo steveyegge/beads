@@ -57,6 +57,7 @@
 100 16 TestEmbeddedMemoryConcurrent
 
 100 17 TestEmbeddedEventsTailFollowExitsOnStdinEOF
+100 17 TestEmbeddedMigratePersonal_planningDatabaseIgnoresLauncherOverride
 100 17 TestEmbeddedReopen
 
 100 18 TestEmbeddedLabelPropagateRename

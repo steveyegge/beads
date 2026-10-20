@@ -4,12 +4,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -46,6 +51,54 @@ func setupContributorRouting(t *testing.T, bd, dir string) string {
 	return planningDir
 }
 
+// migratePersonalPlanningDatabase is the database setupContributorRouting's
+// "bd init --prefix pl" gives the planning repo.
+const migratePersonalPlanningDatabase = "pl"
+
+// requireMigratePersonal runs "bd migrate-personal --yes" in dir with bdEnv plus
+// extraEnv, fails the test if it errors, and returns its combined output. It
+// also rejects the two symptoms of opening the planning store as a SQL server
+// under the default database name: a dial to an unreachable server and the
+// default-database fallback warning.
+func requireMigratePersonal(t *testing.T, bd, dir string, extraEnv ...string) string {
+	t.Helper()
+	cmd := exec.Command(bd, "migrate-personal", "--yes")
+	cmd.Dir = dir
+	cmd.Env = append(bdEnv(dir), extraEnv...)
+	outBytes, err := cmd.CombinedOutput()
+	out := string(outBytes)
+	if err != nil {
+		t.Fatalf("bd migrate-personal --yes failed: %v\noutput:\n%s", err, out)
+	}
+	for _, symptom := range []string{"Dolt server unreachable", "no database name configured"} {
+		if strings.Contains(out, symptom) {
+			t.Errorf("bd migrate-personal --yes output contains %q:\n%s", symptom, out)
+		}
+	}
+	return out
+}
+
+// requireMovedToPlanning asserts issueID now lives in the planning repo's own
+// database (and that no other database was created there) and is gone from
+// the project database.
+func requireMovedToPlanning(t *testing.T, projectBeadsDir, projectDB, planningDir, issueID, title string) {
+	t.Helper()
+	planningBeadsDir := filepath.Join(planningDir, ".beads")
+	if got, want := embeddeddolt.Databases(planningBeadsDir), []string{migratePersonalPlanningDatabase}; !slices.Equal(got, want) {
+		t.Errorf("planning repo databases = %v, want %v", got, want)
+	}
+	moved, err := openStore(t, planningBeadsDir, migratePersonalPlanningDatabase).GetIssue(t.Context(), issueID)
+	if err != nil {
+		t.Fatalf("issue %s not in the planning database %q: %v", issueID, migratePersonalPlanningDatabase, err)
+	}
+	if moved.Title != title {
+		t.Errorf("planning issue %s title = %q, want %q", issueID, moved.Title, title)
+	}
+	if _, err := openStore(t, projectBeadsDir, projectDB).GetIssue(t.Context(), issueID); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("issue %s still in the project database %q: err = %v, want storage.ErrNotFound", issueID, projectDB, err)
+	}
+}
+
 // TestEmbeddedMigratePersonal_noopWhenEmpty verifies that migrate-personal with no
 // matching issues exits 0 and reports nothing to migrate.
 func TestEmbeddedMigratePersonal_noopWhenEmpty(t *testing.T) {
@@ -71,8 +124,13 @@ func TestEmbeddedMigratePersonal_noopWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestEmbeddedMigratePersonal_movesIssues verifies that migrate-personal moves issues
-// matching the current git identity to the planning repo.
+// TestEmbeddedMigratePersonal_movesIssues verifies that migrate-personal moves
+// issues created by the current identity into the planning repo's own database
+// and leaves everyone else's issues in the project.
+//
+// The personal issue is created WITHOUT --actor, so its created_by is the same
+// getActorWithGit identity migrate-personal resolves in the same directory and
+// environment.
 func TestEmbeddedMigratePersonal_movesIssues(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -80,47 +138,55 @@ func TestEmbeddedMigratePersonal_movesIssues(t *testing.T) {
 	t.Parallel()
 
 	bd := buildEmbeddedBD(t)
-	dir, _, _ := bdInit(t, bd, "--prefix", "mpm")
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpm")
 	planningDir := setupContributorRouting(t, bd, dir)
 
-	// Create issues with the git identity (getActorWithGit will use git user.name).
-	gitName, _ := gitCommand("config", "--global", "user.name").Output()
-	actor := strings.TrimSpace(string(gitName))
-	if actor == "" {
-		actor = "Test"
-	}
+	personal := bdCreate(t, bd, dir, "Personal planning issue")
+	team := bdCreate(t, bd, dir, "Team issue", "--actor", "other-person")
 
-	bdCreate(t, bd, dir, "Personal planning issue", "--actor", actor)
-	bdCreate(t, bd, dir, "Team issue", "--actor", "other-person")
-
-	out, err := bdMigratePersonal(t, bd, dir, "--yes")
-	if err != nil {
-		// Skip if Dolt server unavailable for planning dir or actor mismatch.
-		lout := strings.ToLower(out)
-		if strings.Contains(lout, "routing.contributor") ||
-			strings.Contains(lout, "no personal") ||
-			strings.Contains(lout, "dolt") ||
-			strings.Contains(lout, "cannot connect") ||
-			strings.Contains(lout, "server") {
-			t.Logf("migrate-personal: %v — output: %s", err, out)
-			t.Skip("skipping: Dolt unavailable for planning dir or no actor match")
-		}
-		t.Fatalf("bd migrate-personal failed: %v\noutput:\n%s", err, out)
+	out := requireMigratePersonal(t, bd, dir)
+	if !strings.Contains(out, "Moved 1 issue") {
+		t.Errorf("migrate-personal output does not report moving 1 issue:\n%s", out)
 	}
+	requireMovedToPlanning(t, beadsDir, "mpm", planningDir, personal.ID, "Personal planning issue")
 
-	// After migration, the team issue should remain in project db.
-	issues := bdListJSON(t, bd, dir)
-	for _, iss := range issues {
-		if iss.Title == "Team issue" {
-			// Good — team issue stayed.
-			return
-		}
+	// The team issue stays in the project and is not copied to planning.
+	if got, err := openStore(t, beadsDir, "mpm").GetIssue(t.Context(), team.ID); err != nil {
+		t.Errorf("team issue %s missing from the project after migrate-personal: %v", team.ID, err)
+	} else if got.Title != "Team issue" {
+		t.Errorf("project issue %s title = %q, want %q", team.ID, got.Title, "Team issue")
 	}
-	_ = planningDir
+	planningBeadsDir := filepath.Join(planningDir, ".beads")
+	if _, err := openStore(t, planningBeadsDir, migratePersonalPlanningDatabase).GetIssue(t.Context(), team.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("team issue %s in the planning database: err = %v, want storage.ErrNotFound", team.ID, err)
+	}
 }
 
-// TestEmbeddedMigratePersonal_abortOnNoConfirm verifies that without --yes, the command
-// prompts and aborts when stdin signals no confirmation (EOF).
+// TestEmbeddedMigratePersonal_planningDatabaseIgnoresLauncherOverride verifies
+// that the planning database comes from the planning repo, not the launcher.
+// BEADS_DOLT_SERVER_DATABASE names the launching workspace's database (set by
+// the user, or by preserveRedirectSourceDatabase after a redirect) and must not
+// choose the planning database: honoring it here would create a project-named
+// database inside the planning repo that no bd command run there reads.
+func TestEmbeddedMigratePersonal_planningDatabaseIgnoresLauncherOverride(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpo")
+	planningDir := setupContributorRouting(t, bd, dir)
+
+	personal := bdCreate(t, bd, dir, "Personal issue under a launcher override")
+
+	requireMigratePersonal(t, bd, dir, "BEADS_DOLT_SERVER_DATABASE=mpo")
+	requireMovedToPlanning(t, beadsDir, "mpo", planningDir, personal.ID, "Personal issue under a launcher override")
+}
+
+// TestEmbeddedMigratePersonal_abortOnNoConfirm verifies that without --yes the
+// command prompts, and answering n aborts with nothing moved. (An empty answer,
+// closed stdin included, takes the default Y and moves.)
 func TestEmbeddedMigratePersonal_abortOnNoConfirm(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -128,37 +194,29 @@ func TestEmbeddedMigratePersonal_abortOnNoConfirm(t *testing.T) {
 	t.Parallel()
 
 	bd := buildEmbeddedBD(t)
-	dir, _, _ := bdInit(t, bd, "--prefix", "mpa")
-	setupContributorRouting(t, bd, dir)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpa")
+	planningDir := setupContributorRouting(t, bd, dir)
 
-	// Create an issue owned by current git user.
-	gitName, _ := gitCommand("config", "--global", "user.name").Output()
-	actor := strings.TrimSpace(string(gitName))
-	if actor == "" {
-		actor = "Test"
-	}
-	bdCreate(t, bd, dir, "Personal issue for abort test", "--actor", actor)
+	issue := bdCreate(t, bd, dir, "Personal issue for abort test")
 
-	// Run migrate-personal without --yes and with closed stdin (simulates EOF / no confirmation).
 	cmd := exec.Command(bd, "migrate-personal")
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
-	cmd.Stdin = strings.NewReader("") // EOF immediately
-	out, _ := cmd.CombinedOutput()
-
-	// Issue should still be in project db (not moved).
-	issues := bdListJSON(t, bd, dir)
-	var found *types.IssueWithCounts
-	for _, iss := range issues {
-		if iss.Title == "Personal issue for abort test" {
-			found = iss
-			break
-		}
+	cmd.Stdin = strings.NewReader("n\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bd migrate-personal (answer n) failed: %v\noutput:\n%s", err, out)
 	}
-	_ = out
-	if found == nil {
-		// Issue may have been migrated if the command doesn't prompt when no matching issues found.
-		t.Logf("note: abort test — issue may not have been found by migrate-personal")
+	if !strings.Contains(string(out), "Aborted") {
+		t.Errorf("bd migrate-personal (answer n) did not abort:\n%s", out)
+	}
+
+	if _, err := openStore(t, beadsDir, "mpa").GetIssue(t.Context(), issue.ID); err != nil {
+		t.Errorf("issue %s left the project after an aborted migrate-personal: %v", issue.ID, err)
+	}
+	planningBeadsDir := filepath.Join(planningDir, ".beads")
+	if _, err := openStore(t, planningBeadsDir, migratePersonalPlanningDatabase).GetIssue(t.Context(), issue.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("issue %s in the planning database after an aborted migrate-personal: err = %v, want storage.ErrNotFound", issue.ID, err)
 	}
 }
 
@@ -175,49 +233,32 @@ func TestEmbeddedMigratePersonal_preservesComments(t *testing.T) {
 	t.Parallel()
 
 	bd := buildEmbeddedBD(t)
-	dir, _, _ := bdInit(t, bd, "--prefix", "mpc")
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpc")
 	planningDir := setupContributorRouting(t, bd, dir)
 
-	gitName, _ := gitCommand("config", "--global", "user.name").Output()
-	actor := strings.TrimSpace(string(gitName))
-	if actor == "" {
-		actor = "Test"
-	}
-
-	issue := bdCreate(t, bd, dir, "Personal issue with a comment", "--actor", actor)
+	issue := bdCreate(t, bd, dir, "Personal issue with a comment")
 	const commentText = "migrate-personal-must-preserve-this-comment"
 	bdComment(t, bd, dir, issue.ID, commentText)
 
-	out, err := bdMigratePersonal(t, bd, dir, "--yes")
-	if err != nil {
-		lout := strings.ToLower(out)
-		if strings.Contains(lout, "routing.contributor") ||
-			strings.Contains(lout, "no personal") ||
-			strings.Contains(lout, "dolt") ||
-			strings.Contains(lout, "cannot connect") ||
-			strings.Contains(lout, "server") {
-			t.Logf("migrate-personal: %v — output: %s", err, out)
-			t.Skip("skipping: Dolt unavailable for planning dir or no actor match")
-		}
-		t.Fatalf("bd migrate-personal failed: %v\noutput:\n%s", err, out)
-	}
+	requireMigratePersonal(t, bd, dir)
+	requireMovedToPlanning(t, beadsDir, "mpc", planningDir, issue.ID, "Personal issue with a comment")
 
 	// The comment must survive in the planning repo as a structured comment that
-	// `bd comments list` returns.
+	// `bd comments <id>` returns.
 	got := bdCommentList(t, bd, planningDir, issue.ID)
 	if !strings.Contains(got, commentText) {
-		t.Errorf("migrated issue %s lost its comment in the planning repo %s.\ncomments list output:\n%s",
+		t.Errorf("migrated issue %s lost its comment in the planning repo %s.\nbd comments output:\n%s",
 			issue.ID, planningDir, got)
 	}
 }
 
 // TestEmbeddedCopyIssueRelations_preservesCommentWithTimestamp is the in-process proof
-// for the maphew review of PR #4023 (be-e2nb). The full migrate-personal command
-// can't run in the embedded harness because its planning store uses the
-// server-based Dolt store, so this drives the helper directly against two
-// embedded stores: a comment must land in the destination as a structured row
-// (returned by GetIssueComments) preserving its original timestamp, not be lost
-// as an event-style AddComment entry.
+// for the maphew review of PR #4023 (be-e2nb). The end-to-end command is covered
+// by TestEmbeddedMigratePersonal_preservesComments; this drives the helper
+// directly against two embedded stores to pin what the CLI output cannot show:
+// a comment must land in the destination as a structured row (returned by
+// GetIssueComments) preserving its original timestamp, not be lost as an
+// event-style AddComment entry.
 func TestEmbeddedCopyIssueRelations_preservesCommentWithTimestamp(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
