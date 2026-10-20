@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,7 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
-// TestEventsTailReportsTruncationToTheCLI is the end-to-end guard for the
+// TestEmbeddedEventsTailReportsTruncationToTheCLI is the end-to-end guard for the
 // retention boundary as a consumer actually meets it: through the binary, not
 // through the store API.
 //
@@ -27,7 +26,7 @@ import (
 // that; this one fails if either path regresses. It also proves the whole
 // config chain end to end: BD_EVENTS_JOURNAL turns the journal on, and the two
 // BD_EVENTS_JOURNAL_RETAIN_* floors reach the prune.
-func TestEventsTailReportsTruncationToTheCLI(t *testing.T) {
+func TestEmbeddedEventsTailReportsTruncationToTheCLI(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -109,7 +108,7 @@ func TestEventsTailReportsTruncationToTheCLI(t *testing.T) {
 	}
 }
 
-// TestEventsTailFollowReportsTruncationOnTheStream covers the OTHER read call
+// TestEmbeddedEventsTailFollowReportsTruncationOnTheStream covers the OTHER read call
 // site: the --follow poll, which the one-shot test above cannot reach.
 //
 // A follower is the consumer most exposed to a prune — it is the one sitting
@@ -120,7 +119,7 @@ func TestEventsTailReportsTruncationToTheCLI(t *testing.T) {
 // it interrupts. The consumer on the other end is a line reader; a
 // pretty-printed multi-line object in the middle of its input is unparseable,
 // and it would see the stream stop with garbage after the last good record.
-func TestEventsTailFollowReportsTruncationOnTheStream(t *testing.T) {
+func TestEmbeddedEventsTailFollowReportsTruncationOnTheStream(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -163,7 +162,7 @@ func TestEventsTailFollowReportsTruncationOnTheStream(t *testing.T) {
 	follow := exec.Command(bd, "events", "tail", "--since", "0", "--limit", "1", "--follow", "--json")
 	follow.Dir = dir
 	follow.Env = env
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr syncBuffer
 	follow.Stdout = &stdout
 	follow.Stderr = &stderr
 	if err := follow.Start(); err != nil {
@@ -226,11 +225,11 @@ func TestEventsTailFollowReportsTruncationOnTheStream(t *testing.T) {
 	}
 }
 
-// TestEventsPruneHonorsRetainRowsFloorFromConfig proves the shipped defaults
+// TestEmbeddedEventsPruneHonorsRetainRowsFloorFromConfig proves the shipped defaults
 // reach the CLI: a `prune --before <huge>` on a workspace that configured no
 // floors of its own must be stopped by the built-in retain-rows floor rather
 // than deleting the whole journal and stranding its consumer.
-func TestEventsPruneHonorsRetainRowsFloorFromConfig(t *testing.T) {
+func TestEmbeddedEventsPruneHonorsRetainRowsFloorFromConfig(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}

@@ -4571,18 +4571,20 @@ func TestBazelEmbeddedJobRunsEmbeddedTier(t *testing.T) {
 // group, only the split (core gets slower again).
 var conformanceCoreSlowGroups = []string{"ReadyCountsPageChunking", "Portable"}
 
-// bazel-pure replaces pr.yml's check-cmd-bd-puregeo-tests job: the same pure
+// bazel-pure replaces pr.yml's check-cmd-bd-puregeo-tests job: its pure
 // cmd/bd test selector, the same pure build set, and the js/wasm hook test
 // under the same exact-count guard.
 // bazel.yml's pure-Go and js/wasm lane is the only run of the CGO_ENABLED=0
 // portability boundaries pr.yml's retired check-cmd-bd-puregeo-tests job
 // owned (ga-96smfk.22): the same -short cmd/bd subset, the same cmd/bd and
 // test-binary builds, and the exact js/wasm refusal contract with its count
-// guard. The selectors below are that job's, frozen.
+// guard. The selectors below are that job's, frozen, except that the cmd/bd
+// subset also runs TestNocgoStoreFactoriesRefuseGraphWorkspace, the only run
+// of the CGO_ENABLED=0 store factories' graph_mode refusal.
 func TestBazelPureJobMirrorsPureGoJob(t *testing.T) {
 	job := readCIWorkflow(t, bazelWorkflowName).job(t, bazelPureJobName)
 
-	const pureCmdBDTests = "^Test(Help|CheckRemoteSafety|FormatDestroyToken|ShouldWireInitRemote|ExtractPrefix|IsNumericID|GetWorktreeGitDir|DriftItemStatuses|RunDriftChecks|IsServerProbablyRunning|CheckHooksDriftNotGitRepo|CheckServerDriftNoBeadsDir|CheckRemoteDriftNoBeadsDir|NocgoFactoriesHonorSharedServer|NocgoNewDoltStoreFromConfig_ErrorSuggestsCorrectFlag|NocgoNewReadOnlyStoreFromConfig_ErrorSuggestsCorrectFlag)"
+	const pureCmdBDTests = "^Test(Help|CheckRemoteSafety|FormatDestroyToken|ShouldWireInitRemote|ExtractPrefix|IsNumericID|GetWorktreeGitDir|DriftItemStatuses|RunDriftChecks|IsServerProbablyRunning|CheckHooksDriftNotGitRepo|CheckServerDriftNoBeadsDir|CheckRemoteDriftNoBeadsDir|NocgoFactoriesHonorSharedServer|NocgoNewDoltStoreFromConfig_ErrorSuggestsCorrectFlag|NocgoNewReadOnlyStoreFromConfig_ErrorSuggestsCorrectFlag|NocgoStoreFactoriesRefuseGraphWorkspace)"
 	if job.Env["PURE_CMD_BD_TESTS"] != pureCmdBDTests {
 		t.Errorf("%s PURE_CMD_BD_TESTS = %q, want the pure cmd/bd -run selector %q", bazelPureJobName, job.Env["PURE_CMD_BD_TESTS"], pureCmdBDTests)
 	}

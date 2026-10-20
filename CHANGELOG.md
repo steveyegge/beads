@@ -850,6 +850,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no `.local_version` witness. A pre-1.0 witness, or a `.beads/dolt` that
   holds anything, is still refused, and commands other than `bd init` are
   decided as before.
+- **A graph-mode workspace is refused instead of opened as an Issue store.**
+  Graph-preview builds mark their workspaces with `"graph_mode": "link"` and
+  `graph_*` binding fields in `metadata.json`, beside an ordinary Dolt
+  backend. bd opened such a workspace as an Issue store and ran Issue schema
+  initialization against the graph database, and every `metadata.json` rewrite
+  (including the `config.json` to `metadata.json` migration) dropped the
+  marker and the binding. Now any `graph_mode` other than `dependency`,
+  including a value bd does not recognize, makes every command that runs in
+  the workspace or names it with `--db` or `BEADS_DB` (`bd init`, `bd doctor`
+  and `bd bootstrap` included), and `bd create --repo` aimed at it, refuse it
+  before touching anything. The refusal names the format and exits with code
+  16, so installed beads git hooks refuse commits and pushes there too.
+  Commands that reach such a workspace only through a route from another
+  one, such as a routed `bd show`, fail without touching it, but not with
+  code 16. Store-less commands such as `bd version` and `bd help` still run.
+  A `metadata.json` rewrite keeps `graph_mode` and the `graph_*` fields
+  graph-preview builds write, and like those builds it omits a zero
+  `graph_schema_version` and a false `graph_ready`.
+- **A graph workspace without `graph_mode` in its metadata is refused too.**
+  Graph-preview builds write a `.beads/graph-preview-format` marker before
+  `metadata.json`. bd ignored it. When an older bd had rewritten
+  `metadata.json` without `graph_mode`, bd opened the graph database by its
+  recorded name and ran Issue schema initialization against it; when
+  `metadata.json` was never written or was lost, bd fell back to the default
+  database name and created an Issue database inside the graph workspace, and
+  `bd init` initialized an Issue workspace there. A `.beads` holding that
+  marker, whatever it contains and whatever its metadata says (absent,
+  stripped, unparseable or an explicit `dependency`), is now refused wherever
+  a `graph_mode` workspace is: commands run in it or naming it with `--db` or
+  `BEADS_DB`, `bd create --repo` aimed at it, and `bd bootstrap` in a
+  workspace below it that would take its metadata exit with code 16 and a
+  hint to restore `metadata.json`, and routed and cross-repository opens fail
+  without opening its database.
+- **The Go library's opens refuse a graph workspace too.**
+  `beads.OpenBestAvailable`, `OpenBestAvailableWith`, `OpenFromConfig` and
+  `OpenGated` opened a workspace whose `metadata.json` declares a
+  `graph_mode` other than `dependency`, or whose `.beads` holds the
+  `graph-preview-format` marker, as an Issue store and ran Issue schema
+  migrations into the graph database. They now
+  return `*beads.UnsupportedWorkspaceFormatError` (match it with `errors.As`)
+  before opening, creating or changing anything, the same refusal the CLI
+  exits 16 with.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in
