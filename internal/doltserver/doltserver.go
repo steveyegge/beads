@@ -1277,9 +1277,17 @@ func EnsureRunningDetailed(beadsDir string) (port int, startedByUs bool, err err
 		}
 		// A named port declares the server external: "bd dolt start" would
 		// start bd's own server on it instead of the one that belongs there.
-		if setting := ExternalPortSetting(beadsDir, cfg.PortSource); setting != "" {
+		// The legacy BEADS_DOLT_PORT is not in portSources, though the store
+		// dials it (applyConfigDefaults); name it the same way here.
+		port, source := cfg.Port, cfg.PortSource
+		if source == PortSourceUnset {
+			if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BEADS_DOLT_PORT"))); err == nil && p > 0 {
+				port, source = p, PortSourceEnv
+			}
+		}
+		if advice := UnreachableEndpointAdvice(beadsDir, cfg.Host, port, source); advice != "" {
 			return 0, false, &externallyManagedError{fmt.Sprintf("Dolt server is not running on port %d.\n\n%s",
-				cfg.Port, ExternallyManagedAdvice(setting, net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))))}
+				port, advice)}
 		}
 		return 0, false, &externallyManagedError{fmt.Sprintf("Dolt server is not running on port %d, and auto-start is suppressed "+
 			"because the server is externally managed (dolt.auto-start: false or explicit port configured).\n\n"+

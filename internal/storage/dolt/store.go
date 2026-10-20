@@ -2460,16 +2460,13 @@ func externallyManagedPortHint(cfg *Config, beadsDir, addr string) string {
 	if cfg.ServerSocket != "" || isExternalServerHost(cfg.ServerHost) {
 		return ""
 	}
-	setting := doltserver.ExternalPortSetting(beadsDir, cfg.ServerPortSource)
-	if setting == "" {
-		return ""
-	}
-	if cfg.OpenedByInit && cfg.ServerPortSource == doltserver.PortSourceCallerExplicit {
+	decl := doltserver.ExternalPortSetting(beadsDir, cfg.ServerPortSource, cfg.ServerPort)
+	if decl.NamesEndpoint && cfg.OpenedByInit && cfg.ServerPortSource == doltserver.PortSourceCallerExplicit {
 		// bd init's only caller-explicit port is its --server-port flag,
 		// which it promotes into BEADS_DOLT_SERVER_PORT: name what was typed.
-		setting = "--server-port"
+		decl.Setting = "--server-port"
 	}
-	return doltserver.ExternallyManagedAdvice(setting, addr)
+	return decl.Advice(addr)
 }
 
 func persistResolvedPortFile(cfg *Config, beadsDir string) error {

@@ -77,13 +77,20 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 		source       doltserver.PortSource
 		openedByInit bool
 		setting      string
+		otherPort    bool // metadataPort names a port other than the one dialed
 	}{
-		{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_SERVER_PORT", false, doltserver.PortSourceEnv, false, "BEADS_DOLT_SERVER_PORT"},
-		{"legacy BEADS_DOLT_PORT", "BEADS_DOLT_PORT", false, doltserver.PortSourceEnv, false, "BEADS_DOLT_PORT"},
-		{"metadata.json dolt_server_port", "", true, doltserver.PortSourceMetadataJSON, false, "metadata.json"},
+		{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_SERVER_PORT", false, doltserver.PortSourceEnv, false, "BEADS_DOLT_SERVER_PORT", false},
+		{"legacy BEADS_DOLT_PORT", "BEADS_DOLT_PORT", false, doltserver.PortSourceEnv, false, "BEADS_DOLT_PORT", false},
+		{"metadata.json dolt_server_port", "", true, doltserver.PortSourceMetadataJSON, false, "metadata.json", false},
 		// bd init promotes --server-port into BEADS_DOLT_SERVER_PORT and
 		// passes the port itself as caller-explicit.
-		{"bd init --server-port", "BEADS_DOLT_SERVER_PORT", false, doltserver.PortSourceCallerExplicit, true, "--server-port"},
+		{"bd init --server-port", "BEADS_DOLT_SERVER_PORT", false, doltserver.PortSourceCallerExplicit, true, "--server-port", false},
+		// `bd dolt set port N --update-config` writes the port to both
+		// config.yaml and metadata.json; config.yaml ranks first.
+		{"config.yaml port equal to dolt_server_port", "", true, doltserver.PortSourceConfigYaml, false, "metadata.json", false},
+		// The metadata port still makes the workspace external, but does not
+		// name the endpoint that was dialed.
+		{"config.yaml port other than dolt_server_port", "", true, doltserver.PortSourceConfigYaml, false, "metadata.json", true},
 	}
 	for _, autoStart := range []bool{false, true} {
 		for _, tc := range cases {
@@ -97,6 +104,9 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 				metadataPort := 0
 				if tc.metadataPort {
 					metadataPort = port
+				}
+				if tc.otherPort {
+					metadataPort = deadLoopbackPort(t)
 				}
 				beadsDir := externalPortAdviceWorkspace(t, metadataPort)
 				cfg := &Config{
@@ -115,10 +125,11 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 					t.Fatalf("open of the dead endpoint %s succeeded", addr)
 				}
 				msg := err.Error()
-				for _, want := range []string{
-					tc.setting + " declares the Dolt server at " + addr + " externally managed",
-					"did not start",
-				} {
+				declared := tc.setting + " declares the Dolt server at " + addr + " externally managed"
+				if tc.otherPort {
+					declared = tc.setting + " declares this workspace's Dolt server externally managed, so bd did not start one at " + addr
+				}
+				for _, want := range []string{declared, "did not start"} {
 					if !strings.Contains(msg, want) {
 						t.Errorf("error does not contain %q:\n%s", want, msg)
 					}

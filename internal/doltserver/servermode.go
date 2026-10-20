@@ -3,6 +3,7 @@ package doltserver
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -197,44 +198,97 @@ type externallyManagedError struct{ msg string }
 func (e *externallyManagedError) Error() string        { return e.msg }
 func (e *externallyManagedError) Is(target error) bool { return target == ErrExternallyManaged }
 
-// ExternalPortSetting names the setting that declares beadsDir's Dolt server
-// externally managed by naming the port bd dials, or returns "" when no such
-// setting does. The settings are BEADS_DOLT_SERVER_PORT and the legacy
-// BEADS_DOLT_PORT (ResolveServerMode check 2c, #5934) and metadata.json's
-// dolt_server_port (check 4, GH#2554). source is where the dialed port came
-// from: a port from bd's own port file, a config.yaml dolt.port or the
-// shared-server default was not named by one of them, and shared-server mode
-// is excluded outright, since `bd dolt start` is how bd starts that server.
-func ExternalPortSetting(beadsDir string, source PortSource) string {
+// ExternalPortDeclaration is the setting that declares a workspace's Dolt
+// server externally managed (ServerModeExternal) by naming a port for it, as
+// found by ExternalPortSetting. The zero value means no such setting does.
+type ExternalPortDeclaration struct {
+	// Setting names the declaring setting for the operator:
+	// "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT", or
+	// "dolt_server_port in <metadata.json path>".
+	Setting string
+	// NamesEndpoint reports whether Setting's value is the port bd dialed. It
+	// is false when a higher-ranked source (config.yaml dolt.port, the dolt
+	// data directory's listener.port) chose a different port than the
+	// metadata.json dolt_server_port that makes the workspace external.
+	NamesEndpoint bool
+}
+
+// ExternalPortSetting finds the setting that declares beadsDir's Dolt server
+// externally managed by naming a port, for a dial of port resolved from
+// source; the zero ExternalPortDeclaration when no such setting does. The
+// settings are BEADS_DOLT_SERVER_PORT and the legacy BEADS_DOLT_PORT
+// (ResolveServerMode check 2c, #5934), each only when its value is the dialed
+// port, and metadata.json's dolt_server_port (check 4, GH#2554), which
+// declares the server external whichever source chose the port, so it is
+// reported beside a config.yaml or listener.port port too (`bd dolt set port N
+// --update-config` writes both). Excluded: shared-server mode, since `bd dolt
+// start` is how bd starts that server; a port from bd's own port file, which
+// records a server bd started; and the shared-server and remote-host
+// defaults. A port of 0 matches any named value.
+func ExternalPortSetting(beadsDir string, source PortSource, port int) ExternalPortDeclaration {
+	switch source {
+	case PortSourceUnset, PortSourcePortFile, PortSourceSharedServerDefault, PortSourceExternalHostDefault:
+		return ExternalPortDeclaration{}
+	}
 	if IsSharedServerMode() || ResolveServerMode(beadsDir) != ServerModeExternal {
-		return ""
+		return ExternalPortDeclaration{}
 	}
 	if source == PortSourceEnv || source == PortSourceCallerExplicit {
 		for _, name := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
-			if p, err := strconv.Atoi(os.Getenv(name)); err == nil && p > 0 {
-				return name
+			if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && p > 0 && (port == 0 || p == port) {
+				return ExternalPortDeclaration{Setting: name, NamesEndpoint: true}
 			}
 		}
 	}
-	if source == PortSourceMetadataJSON || source == PortSourceCallerExplicit {
-		metadataPath := configfile.ConfigPath(beadsDir)
-		if _, err := os.Stat(metadataPath); err == nil {
-			if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.DoltServerPort > 0 {
-				return "dolt_server_port in " + metadataPath
-			}
-		}
+	metadataPath := configfile.ConfigPath(beadsDir)
+	if _, err := os.Stat(metadataPath); err != nil {
+		return ExternalPortDeclaration{}
 	}
-	return ""
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil || cfg.DoltServerPort <= 0 {
+		return ExternalPortDeclaration{}
+	}
+	return ExternalPortDeclaration{
+		Setting:       "dolt_server_port in " + metadataPath,
+		NamesEndpoint: port == 0 || cfg.DoltServerPort == port,
+	}
+}
+
+// Advice is the advice for an unreachable Dolt server at endpoint that d
+// declares externally managed, or "" for the zero declaration. It says bd did
+// not start a server, in the words `bd init --external` uses (#7674), and
+// does not suggest `bd dolt start`: that command would start a server of bd's
+// own over .beads/dolt on the same port, a different database that hides the
+// real one and takes the port the real server needs.
+func (d ExternalPortDeclaration) Advice(endpoint string) string {
+	switch {
+	case d.Setting == "":
+		return ""
+	case d.NamesEndpoint:
+		return ExternallyManagedAdvice(d.Setting, endpoint)
+	default:
+		return fmt.Sprintf("%s declares this workspace's Dolt server externally managed, so bd did not start one at %s.\n"+
+			"Start that server, or point bd at the right endpoint. Removing dolt_server_port lets bd manage the server.",
+			d.Setting, endpoint)
+	}
 }
 
 // ExternallyManagedAdvice is the advice for a Dolt server at endpoint that bd
-// could not reach and that setting declares externally managed. It names the
-// endpoint and says bd did not start a server, in the words `bd init
-// --external` uses (#7674), and does not suggest `bd dolt start`: that command
-// would start a server of bd's own over .beads/dolt on the same port, a
-// different database that hides the real one and takes the port the real
-// server needs.
+// could not reach and that setting, by naming endpoint's port, declares
+// externally managed. See ExternalPortDeclaration.Advice.
 func ExternallyManagedAdvice(setting, endpoint string) string {
 	return fmt.Sprintf("%s declares the Dolt server at %s externally managed, so bd did not start one.\n"+
 		"Start that server, or point bd at the right endpoint.", setting, endpoint)
+}
+
+// UnreachableEndpointAdvice is the advice for a TCP dial of host:port, the
+// port resolved from source, that found no server: the externally managed
+// advice when a setting declares the workspace's server so (see
+// ExternalPortSetting), or "" when the caller's own advice stands. A host off
+// this machine is left to the caller, which has remote-host advice of its own.
+func UnreachableEndpointAdvice(beadsDir, host string, port int, source PortSource) string {
+	if !configfile.IsLocalHostString(host) {
+		return ""
+	}
+	return ExternalPortSetting(beadsDir, source, port).Advice(net.JoinHostPort(host, strconv.Itoa(port)))
 }
