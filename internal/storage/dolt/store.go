@@ -2106,6 +2106,9 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			if breaker != nil {
 				breaker.RecordFailure()
 			}
+			if err := unresolvedServerPortError(cfg, resolvedBeadsDir); err != nil {
+				return nil, err
+			}
 			var hint string
 			if cfg.ServerSocket != "" {
 				hint = fmt.Sprintf("The Dolt server is not listening on socket %s.\n"+
@@ -2396,6 +2399,31 @@ func initializeServerCircuitBreaker(cfg *Config) *circuitBreaker {
 // not cfg.ReadOnly: ordinary classified-read commands (bd show, bd list, ...)
 // also set cfg.ReadOnly but must still be able to auto-start a stopped
 // managed server, per dolt_autostart_lifecycle_integration_test.go.
+// unresolvedServerPortError reports a TCP open that never had a port to dial.
+// Port 0 means "not yet resolved", and only auto-start resolves it (it
+// allocates one). With auto-start out of the picture, dialing 127.0.0.1:0
+// and calling the result "unreachable" misdiagnoses a missing endpoint as a
+// dead server. Worse, the "bd dolt start" advice that came with it
+// initializes a new, empty database in .beads/dolt for a workspace whose real
+// database is served by something else: an empty phantom that shadows the
+// real one. Returns nil whenever a port or socket was resolved.
+func unresolvedServerPortError(cfg *Config, beadsDir string) error {
+	if cfg.ServerSocket != "" || cfg.ServerPort != 0 {
+		return nil
+	}
+	portFile := filepath.Join(beadsDir, doltserver.PortFileName)
+	return fmt.Errorf("no Dolt server port resolved for %s: there is no address to connect to\n\n"+
+		"Nothing supplied a port: %s is missing, and neither BEADS_DOLT_SERVER_PORT,\n"+
+		"dolt.port in config.yaml nor dolt_server_port in metadata.json is set.\n"+
+		"bd allocates a port only when it auto-starts a server, which it may not do here\n"+
+		"(for example dolt.auto-start: false, i.e. the server is managed outside bd). Have\n"+
+		"that manager publish its port again (for example, write it to %s), or set one of\n"+
+		"the above.\n\n"+
+		"Starting a repo-local server is not a fix: it would serve a new, empty database\n"+
+		"in place of the one this workspace uses.",
+		beadsDir, portFile, portFile)
+}
+
 func serverOpenCanAutoStart(cfg *Config) bool {
 	return !cfg.DisableAutoStart && cfg.AutoStart && cfg.Path != "" &&
 		cfg.ServerSocket == "" && isLocalHost(cfg.ServerHost)

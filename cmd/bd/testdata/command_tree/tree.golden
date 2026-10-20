@@ -2156,6 +2156,13 @@ bd dolt start
     | lifecycle and starts it on demand, so a server started here would be a second,
     | unsupervised one over the same data directory. Use 'bd dolt status' to see what
     | is running and 'bd dolt stop' to shut it down.
+    |
+    | With dolt.auto-start: false the server is managed outside bd, so a start that
+    | would create a new, empty data directory is refused: when bd has lost that
+    | server's port, a local start does not reconnect to it, it serves an empty
+    | database in place of the real one. Restore the endpoint instead, or pass
+    | --force to create a fresh local database anyway.
+  flag --force type=bool default="false" usage="Start even if that creates a new, empty data directory in a workspace with dolt.auto-start: false"
 
 bd dolt status
   use: "status"
