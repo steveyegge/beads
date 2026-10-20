@@ -2551,7 +2551,9 @@ paths:
 
 
         A count is DURABLE-PLANE ONLY unless `include_infra` or
-        `include_ephemeral` is set. The wisps tier — ephemeral wisps and the
+        `include_ephemeral` is set, or `type` names a type this workspace calls
+        infra (which reads that type's ephemeral rows, as
+        `GET /v0/beads/issues` does). The wisps tier — ephemeral wisps and the
         `no_history` beads that are durable work stored in that tier — is not
         counted by default. `include_ephemeral` admits that tier and changes
         nothing else; `include_infra` admits it too but changes FOUR things at
@@ -2590,8 +2592,9 @@ paths:
             `GET /v0/beads/ready`'s `type`, which expands aliases.
 
 
-            It has a SECOND effect under `include_infra`: a type this workspace
-            calls infra routes the count to the ephemeral tier, unless
+            It has a SECOND effect: a type this workspace calls infra routes the
+            count to its ephemeral rows in the wisps tier, as
+            `GET /v0/beads/issues` does for the same type, unless
             `include_ephemeral` is also set. See that parameter.
           schema:
             type: string
@@ -2781,9 +2784,9 @@ paths:
             the named type — one silent undercount traded for another.
 
 
-            Beside `include_infra` it also lifts the fourth change's routing of
-            an infra `type`, so that type's durable rows are counted along with
-            its ephemeral ones rather than instead of them.
+            With or without `include_infra` it also lifts the routing of an
+            infra `type` to its ephemeral rows, so that type's durable rows are
+            counted along with its ephemeral ones rather than instead of them.
           schema:
             type: boolean
             default: false
@@ -2808,7 +2811,8 @@ paths:
             and a `type` this workspace calls infra ROUTES the count to the
             ephemeral tier instead of the durable one — unless
             `include_ephemeral` is also set, which keeps the durable tier as
-            well, as `GET /v0/beads/issues` does.
+            well, as `GET /v0/beads/issues` does. That last one holds without
+            `include_infra` too: it is how `type` reads an infra type.
 
 
             The infra vocabulary is the WORKSPACE's, read from its configuration
@@ -2817,9 +2821,8 @@ paths:
 
 
             Unset — and with `include_ephemeral` also unset — the count is
-            durable-plane only and applies none of the four: the historical
-            `bd count` answer, kept exactly so a scripted caller reads the same
-            number it read yesterday.
+            durable-plane only and applies none of the first three; an infra
+            `type` still reads its ephemeral rows.
           schema:
             type: boolean
             default: false

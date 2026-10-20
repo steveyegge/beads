@@ -2872,7 +2872,7 @@ type CountIssuesParams struct {
 
 	// Type One issue type, with `status`'s match-nothing-rather-than-fail treatment and NO shorthand alias expansion at all — unlike `GET /v0/beads/ready`'s `type`, which expands aliases.
 	//
-	// It has a SECOND effect under `include_infra`: a type this workspace calls infra routes the count to the ephemeral tier, unless `include_ephemeral` is also set. See that parameter.
+	// It has a SECOND effect: a type this workspace calls infra routes the count to its ephemeral rows in the wisps tier, as `GET /v0/beads/issues` does for the same type, unless `include_ephemeral` is also set. See that parameter.
 	Type *string `form:"type,omitempty" json:"type,omitempty"`
 
 	// Assignee Only issues assigned to this actor. Sending it beside `no_assignee` is not refused: the two are handed to the filter as written and answer with the empty intersection, which is `0`.
@@ -2942,7 +2942,7 @@ type CountIssuesParams struct {
 	//
 	// It exists because there was no way to ask for that one thing. The write path routes on STORAGE CLASS, not type, so a `no_history` bead lives in the wisps table while remaining ordinary durable work. Reaching it needed `include_infra`, which also drops template rows of the named type — one silent undercount traded for another.
 	//
-	// Beside `include_infra` it also lifts the fourth change's routing of an infra `type`, so that type's durable rows are counted along with its ephemeral ones rather than instead of them.
+	// With or without `include_infra` it also lifts the routing of an infra `type` to its ephemeral rows, so that type's durable rows are counted along with its ephemeral ones rather than instead of them.
 	IncludeEphemeral *bool `form:"include_ephemeral,omitempty" json:"include_ephemeral,omitempty"`
 
 	// HasMetadataKey Only issues carrying this top-level metadata key.
@@ -2950,11 +2950,11 @@ type CountIssuesParams struct {
 
 	// IncludeInfra Count the cardinality of `bd list --include-infra --all` instead of the durable plane. IT CHANGES FOUR THINGS AT ONCE, and they are listed rather than summarized because a caller reading "include infra" would expect one:
 	//
-	// the ephemeral wisps tier is MERGED IN, picking up both wisps and the `no_history` beads that are durable work stored in that tier; template molecules are EXCLUDED, which a default count includes; gate beads are EXCLUDED unless `type=gate` asks for them by name; and a `type` this workspace calls infra ROUTES the count to the ephemeral tier instead of the durable one — unless `include_ephemeral` is also set, which keeps the durable tier as well, as `GET /v0/beads/issues` does.
+	// the ephemeral wisps tier is MERGED IN, picking up both wisps and the `no_history` beads that are durable work stored in that tier; template molecules are EXCLUDED, which a default count includes; gate beads are EXCLUDED unless `type=gate` asks for them by name; and a `type` this workspace calls infra ROUTES the count to the ephemeral tier instead of the durable one — unless `include_ephemeral` is also set, which keeps the durable tier as well, as `GET /v0/beads/issues` does. That last one holds without `include_infra` too: it is how `type` reads an infra type.
 	//
 	// The infra vocabulary is the WORKSPACE's, read from its configuration inside the role. A caller does not supply it and cannot — that config load is what this role exists to keep off both front doors.
 	//
-	// Unset — and with `include_ephemeral` also unset — the count is durable-plane only and applies none of the four: the historical `bd count` answer, kept exactly so a scripted caller reads the same number it read yesterday.
+	// Unset — and with `include_ephemeral` also unset — the count is durable-plane only and applies none of the first three; an infra `type` still reads its ephemeral rows.
 	IncludeInfra *bool `form:"include_infra,omitempty" json:"include_infra,omitempty"`
 
 	// Parent Restrict to one issue's children through one predicate with two arms: a parent-child dependency edge onto `parent`, OR — for an issue carrying no parent-child edge at all — a dotted-id prefix match (`parent.anything`). NEITHER ARM WALKS. The edge arm stops at one level, so a grandchild with an edge of its own is not counted, while the prefix arm reaches every edge-less dotted id at any depth (`X.1.1` as well as `X.1`). It is the same predicate `GET /v0/beads/issues`'s own `parent` applies, so `bd count --parent X` agrees in cardinality with `bd list --parent X --flat --all` (or `--json`) for the shared part of the predicate — NOT with a bare `bd list --parent X --all`, whose default tree mode walks every descendant reachable through either arm (grandchildren and below) by re-querying this same predicate once per level client-side (cmd/bd/list_show_filter_modes.go). `--flat` and `--json` both skip that walk and return this field's answer directly.
