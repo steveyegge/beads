@@ -32,6 +32,18 @@ func ValidateCountGroup(group issueops.CountGroup) (string, error) {
 	return column, nil
 }
 
+// CountNeedsConfig reports whether BuildCountFilter reads its ListConfig for
+// this request, so a caller loads it exactly when the builder needs it.
+//
+// This lives beside the builder rather than in a caller for the reason SQLLimit
+// does (list.go): the load condition and the builder are two halves of one
+// decision, and splitting a decision across a library and its callers is how
+// the two halves drift — both #7199's ExcludeStatus gap and #6258's typed-count
+// gap were a caller guessing a narrower trigger set than the builder needed.
+func CountNeedsConfig(in issueops.CountRequest) bool {
+	return in.IncludeInfra || in.IssueType != "" || len(in.ExcludeStatus) > 0
+}
+
 // BuildCountFilter turns a count request into the storage-level filter: the
 // single definition of what `bd count` means, which every implementation of
 // issueops.Counter builds through.
@@ -49,8 +61,9 @@ func ValidateCountGroup(group issueops.CountGroup) (string, error) {
 // cfg supplies the workspace's infra vocabulary and its custom status names.
 // It is read under IncludeInfra, whenever IssueType is set (the plane decision
 // names infra types through the workspace's set) AND whenever ExcludeStatus is
-// non-empty (the exclusion is validated against the workspace's statuses), so
-// a caller must load it in all three cases; a zero ListConfig falls back to
+// non-empty (the exclusion is validated against the workspace's statuses).
+// CountNeedsConfig is that trigger set as a predicate, so a caller loads the
+// config exactly when the builder reads it; a zero ListConfig falls back to
 // the default infra set and the built-in statuses only.
 func BuildCountFilter(in issueops.CountRequest, cfg ListConfig) (types.IssueFilter, error) {
 	filter := types.IssueFilter{
