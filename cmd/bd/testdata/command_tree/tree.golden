@@ -6558,7 +6558,7 @@ bd setup
     | Use 'bd setup <recipe> --remove' to uninstall.
   flag --add type=string default="" usage="Add a custom recipe with given name"
   flag --check type=bool default="false" usage="Check if integration is installed"
-  flag --global type=bool default="false" usage="Install globally (claude/codex/cursor/mux; writes to ~/.claude/settings.json, $CODEX_HOME/AGENTS.md or ~/.codex/AGENTS.md, ~/.cursor/hooks.json, or ~/.mux/AGENTS.md)"
+  flag --global type=bool default="false" usage="Install globally (claude/codex/cursor/mux; writes to ~/.claude/settings.json and ~/.claude/CLAUDE.md, $CODEX_HOME/AGENTS.md or ~/.codex/AGENTS.md, ~/.cursor/hooks.json, or ~/.mux/AGENTS.md)"
   flag --list type=bool default="false" usage="List all available recipes"
   flag --output -o type=string default="" usage="Write template to custom path"
   flag --print type=bool default="false" usage="Print the template to stdout"
