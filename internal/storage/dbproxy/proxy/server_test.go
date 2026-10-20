@@ -798,6 +798,66 @@ func TestProxy_LockHeld_ReturnsSentinel(t *testing.T) {
 	assertNoPidFile(t, root)
 }
 
+// TestProxy_TraceLog_ConnectionEventsWhenTracing pins the opt-in contract:
+// with ProxyOpts.TraceConnections set (what db-proxy-child derives from a
+// non-empty BD_DEBUG), proxy.log carries the per-connection lines as well as
+// the lifecycle lines. In-process on purpose: the wire is the opts flag, so
+// the test does not need to re-exec the binary against process-start BD_DEBUG.
+func TestProxy_TraceLog_ConnectionEventsWhenTracing(t *testing.T) {
+	t.Parallel()
+
+	ts := server.New()
+	stats := &proxy.Stats{}
+	port := freeTCPPort(t)
+	root := t.TempDir()
+
+	const idle = 2 * time.Second
+	const tickSlack = 1200 * time.Millisecond
+	h := runProxy(t, proxy.ProxyOpts{
+		RootDir: root, Port: port,
+		IdleTimeout:      idle,
+		TraceConnections: true,
+		Server:           ts, Stats: stats,
+	})
+	waitListening(t, root, listenWait)
+
+	time.Sleep(tickSlack)
+
+	conn := dialProxy(t, port)
+	_, err := conn.Write([]byte("ping"))
+	require.NoError(t, err)
+	buf := make([]byte, 4)
+	_, err = io.ReadFull(conn, buf)
+	require.NoError(t, err)
+	require.Equal(t, "ping", string(buf))
+
+	time.Sleep(tickSlack)
+
+	require.NoError(t, conn.Close())
+
+	require.NoError(t, h.waitErr(t, 3*idle))
+
+	body, err := os.ReadFile(filepath.Join(root, proxy.LogFileName))
+	require.NoError(t, err)
+	text := string(body)
+
+	for _, want := range []string{
+		"acceptLoop start",
+		"acceptLoop accepted",
+		"idleWatcher start",
+		"idleWatcher armed",
+		"idleWatcher cleared",
+		"idleWatcher expired",
+		"handleConn(",
+		"backend dial ok",
+		"client→backend done",
+		"backend→client done",
+		"acceptLoop exit",
+	} {
+		assert.Contains(t, text, want, "log missing %q", want)
+	}
+}
+
 // TestProxy_TraceLog_NoPerConnectionLinesByDefault pins the default
 // proxy.log contract (#7527): the six per-connection trace lines are the
 // bulk of proxy.log's growth and are written only when
