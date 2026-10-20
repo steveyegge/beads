@@ -52,6 +52,18 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("WispPersistenceMoveBeginsHistory", func(t *testing.T) {
 		conformance.RunParticipationGenerationWispPersistenceMoveBeginsHistory(t, ctx, fixture)
 	})
+	t.Run("DemotedLegacyRowStaysLegacyAcrossPromotion", func(t *testing.T) {
+		conformance.RunParticipationGenerationDemotedLegacyRowStaysLegacyAcrossPromotion(t, ctx, fixture)
+	})
+	t.Run("DemotedLegacyRowStaysLegacyAcrossPersistenceMove", func(t *testing.T) {
+		conformance.RunParticipationGenerationDemotedLegacyRowStaysLegacyAcrossPersistenceMove(t, ctx, fixture)
+	})
+	t.Run("DemotedParticipatingRowKeepsItsHistoryAcrossPromotion", func(t *testing.T) {
+		conformance.RunParticipationGenerationDemotedParticipatingRowKeepsItsHistoryAcrossPromotion(t, ctx, fixture)
+	})
+	t.Run("DemotedParticipatingRowKeepsItsHistoryAcrossPersistenceMove", func(t *testing.T) {
+		conformance.RunParticipationGenerationDemotedParticipatingRowKeepsItsHistoryAcrossPersistenceMove(t, ctx, fixture)
+	})
 	t.Run("WispFlagClearMintsNothing", func(t *testing.T) {
 		conformance.RunParticipationGenerationWispFlagClearMintsNothing(t, ctx, fixture)
 	})
@@ -98,6 +110,9 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	if fixture.MovePersistent == nil {
 		t.Error("ParticipationGenerationFixture.MovePersistent is nil")
 	}
+	if fixture.MoveEphemeral == nil {
+		t.Error("ParticipationGenerationFixture.MoveEphemeral is nil")
+	}
 	if fixture.ClearWispFlag == nil {
 		t.Error("ParticipationGenerationFixture.ClearWispFlag is nil")
 	}
@@ -135,6 +150,19 @@ func newEmbeddedParticipationGenerationFixture(t *testing.T, te *testEnv, prefix
 	}
 
 	kit := newEmbeddedRoleFixtureKit(te, prefix)
+	movePersistence := func(ctx context.Context, id string, mode publicops.PersistenceMode) error {
+		ops, err := embeddeddolt.NewIssueOperations(store)
+		if err != nil {
+			return err
+		}
+		result, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "actor", IssueID: id, Patch: publicops.IssuePatch{
+			Persistence: publicops.Field[publicops.PersistenceMode]{Set: true, Value: mode},
+		}})
+		if err == nil && !result.Changed {
+			err = fmt.Errorf("persistence move of %s to %s reported no change", id, mode)
+		}
+		return err
+	}
 	return conformance.ParticipationGenerationFixture{
 		IssuePrefix: prefix,
 		SetFlag: func(ctx context.Context, enabled bool) error {
@@ -164,17 +192,11 @@ func newEmbeddedParticipationGenerationFixture(t *testing.T, te *testEnv, prefix
 			// The guarded update bd update --persistent runs, so the move
 			// takes the update's one end-of-update mint rather than
 			// MoveIssuePersistenceInTx's own.
-			ops, err := embeddeddolt.NewIssueOperations(store)
-			if err != nil {
-				return err
-			}
-			result, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "actor", IssueID: id, Patch: publicops.IssuePatch{
-				Persistence: publicops.Field[publicops.PersistenceMode]{Set: true, Value: publicops.PersistenceModePersistent},
-			}})
-			if err == nil && !result.Changed {
-				err = fmt.Errorf("persistence move of %s reported no change", id)
-			}
-			return err
+			return movePersistence(ctx, id, publicops.PersistenceModePersistent)
+		},
+		MoveEphemeral: func(ctx context.Context, id string) error {
+			// The guarded update bd update --ephemeral runs.
+			return movePersistence(ctx, id, publicops.PersistenceModeEphemeral)
 		},
 		ClearWispFlag: func(ctx context.Context, id string) error {
 			return store.UpdateIssue(ctx, id, map[string]any{"wisp": false}, "actor")

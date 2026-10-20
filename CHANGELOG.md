@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plane while it is on (a wisp promoted or made persistent), stores a
   snapshot of it as a row of `issue_versions` in the same transaction. It is
   off by default and nothing is backfilled: a bead already on the issues
-  plane when it is turned on is legacy, and editing it records nothing. A
+  plane when it is turned on is legacy, and editing it records nothing, nor
+  does making it a wisp and then persistent again while recording is on (a
+  bead that participates keeps its history across that round trip). A
   recorded write leaves `updated_at` where an unrecorded one would, so
   `bd import`'s stale check sees the same timestamps either way.
   `bd versions --json` answers `{"versions": [...], "recording": bool}`; the
