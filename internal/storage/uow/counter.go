@@ -85,14 +85,16 @@ func (c *counter) CountByGroup(ctx context.Context, req publicops.CountByGroupRe
 }
 
 // countFilter builds the storage filter from the unit of work the call already
-// holds, loading configuration only when IncludeInfra or ExcludeStatus can
-// read it — the same two decisions the store-backed body makes, through the
-// same builder. ExcludeStatus needs the workspace's custom status names so
-// BuildCountFilter's validation does not refuse a status the workspace itself
-// defines (PR #7199 review).
+// holds, loading configuration only when workapi.CountNeedsConfig says the
+// builder reads it — IncludeInfra, a named IssueType, or a non-empty
+// ExcludeStatus — the same decision the store-backed body makes, through the
+// same builder. IncludeInfra and IssueType need the infra vocabulary (an infra
+// type reads its ephemeral rows, GH#6258); ExcludeStatus needs the workspace's
+// custom status names so BuildCountFilter's validation does not refuse a
+// status the workspace itself defines (PR #7199 review).
 func countFilter(ctx context.Context, uw UnitOfWork, req publicops.CountRequest) (types.IssueFilter, error) {
 	var cfg workapi.ListConfig
-	if req.IncludeInfra || len(req.ExcludeStatus) > 0 {
+	if workapi.CountNeedsConfig(req) {
 		loaded, err := workapi.LoadUOWListConfig(ctx, uw)
 		if err != nil {
 			return types.IssueFilter{}, err
