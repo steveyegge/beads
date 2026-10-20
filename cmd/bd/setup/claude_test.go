@@ -1160,6 +1160,86 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 	})
 
+	// Claude Code runs a plugin enabled in a project's settings (project
+	// scope) or settings.local.json (local scope) in that project only, so
+	// its hooks are the project's: the hint names a project install, not
+	// --global, whose hook another project would not get from the plugin.
+	for _, scope := range []struct {
+		name     string
+		settings func(env claudeEnv) string
+	}{
+		{"project", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }},
+		{"local", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }},
+	} {
+		t.Run(scope.name+" plugin without instructions names the project install", func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			writeSettings(t, scope.settings(env), settingsWithPlugin())
+			if err := checkClaude(env); !errors.Is(err, errAgentsFileMissing) {
+				t.Fatalf("expected errAgentsFileMissing, got %v\n%s", err, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "plugin-managed") {
+				t.Errorf("expected the plugin-managed hooks line, got:\n%s", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "Run: bd setup claude\n") {
+				t.Errorf("expected the project setup hint, got:\n%s", stdout.String())
+			}
+		})
+
+		// As with project hooks, the user-level section does not stand in
+		// for the project's missing one.
+		t.Run(scope.name+" plugin ignores the user-level section", func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			writeSettings(t, scope.settings(env), settingsWithPlugin())
+			if err := os.WriteFile(filepath.Join(env.projectDir, claudeInstructionsFile), []byte("# Mine\n"), 0o644); err != nil {
+				t.Fatalf("write project %s: %v", claudeInstructionsFile, err)
+			}
+			if err := os.MkdirAll(filepath.Dir(globalClaudeInstructionsPath(env.homeDir)), 0o755); err != nil {
+				t.Fatalf("mkdir user-level dir: %v", err)
+			}
+			if err := os.WriteFile(globalClaudeInstructionsPath(env.homeDir), []byte(userLevelSection()), 0o644); err != nil {
+				t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+			}
+			if err := checkClaude(env); !errors.Is(err, errBeadsSectionMissing) {
+				t.Fatalf("expected errBeadsSectionMissing, got %v\n%s", err, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "Run: bd setup claude (to add beads section)") {
+				t.Errorf("expected the project setup hint, got:\n%s", stdout.String())
+			}
+		})
+	}
+
+	// A plugin enabled in the user settings runs in every project, so its
+	// hooks stay user-level even when the project enables it too.
+	t.Run("user and project plugin with user-level section", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		writeSettings(t, projectSettingsPath(env.projectDir), settingsWithPlugin())
+		globalInstructions := globalClaudeInstructionsPath(env.homeDir)
+		if err := os.WriteFile(globalInstructions, []byte(userLevelSection()), 0o644); err != nil {
+			t.Fatalf("write user-level %s: %v", claudeInstructionsFile, err)
+		}
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("checkClaude: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+			t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+		}
+	})
+
+	// From the home directory the project's settings are the user-level
+	// ones, so a plugin there keeps the --global hint.
+	t.Run("plugin checked from home names the global install", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		writeSettings(t, legacyProjectSettingsPath(env.homeDir), settingsWithPlugin())
+		if err := checkClaude(env); !errors.Is(err, errAgentsFileMissing) {
+			t.Fatalf("expected errAgentsFileMissing, got %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
 	// A project install is judged on the project's file alone: the
 	// user-level section does not stand in for a missing project one.
 	t.Run("project hooks ignore the user-level section", func(t *testing.T) {
@@ -1461,7 +1541,7 @@ func TestHasBeadsPlugin(t *testing.T) {
 	t.Run("plugin in project settings", func(t *testing.T) {
 		env, _, _ := newClaudeTestEnv(t)
 		writeSettings(t, projectSettingsPath(env.projectDir), settingsWithPlugin())
-		if !hasBeadsPlugin(env) {
+		if !hasBeadsPlugin(env, false) {
 			t.Error("expected plugin to be detected in project settings")
 		}
 	})
@@ -1469,8 +1549,23 @@ func TestHasBeadsPlugin(t *testing.T) {
 	t.Run("plugin in global settings", func(t *testing.T) {
 		env, _, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
-		if !hasBeadsPlugin(env) {
+		if !hasBeadsPlugin(env, false) {
 			t.Error("expected plugin to be detected in global settings")
+		}
+	})
+
+	// A global install counts only the user settings: Claude Code runs a
+	// plugin enabled in a project's settings in that project only.
+	t.Run("global counts only the user settings", func(t *testing.T) {
+		env, _, _ := newClaudeTestEnv(t)
+		writeSettings(t, projectSettingsPath(env.projectDir), settingsWithPlugin())
+		writeSettings(t, legacyProjectSettingsPath(env.projectDir), settingsWithPlugin())
+		if hasBeadsPlugin(env, true) {
+			t.Error("plugin enabled in project and local settings should not count for a global install")
+		}
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		if !hasBeadsPlugin(env, true) {
+			t.Error("expected plugin in user settings to count for a global install")
 		}
 	})
 
@@ -1481,14 +1576,14 @@ func TestHasBeadsPlugin(t *testing.T) {
 				"beads@beads-marketplace": false,
 			},
 		})
-		if hasBeadsPlugin(env) {
+		if hasBeadsPlugin(env, false) {
 			t.Error("disabled plugin should not be detected")
 		}
 	})
 
 	t.Run("no plugin", func(t *testing.T) {
 		env, _, _ := newClaudeTestEnv(t)
-		if hasBeadsPlugin(env) {
+		if hasBeadsPlugin(env, false) {
 			t.Error("expected no plugin detected")
 		}
 	})
@@ -1503,7 +1598,7 @@ func TestHasBeadsPlugin(t *testing.T) {
 				"design-to-beads@xexr-marketplace": true,
 			},
 		})
-		if hasBeadsPlugin(env) {
+		if hasBeadsPlugin(env, false) {
 			t.Error("design-to-beads should not be detected as the beads plugin")
 		}
 	})
@@ -1518,7 +1613,7 @@ func TestHasBeadsPlugin(t *testing.T) {
 				"beads@beads-marketplace":          true,
 			},
 		})
-		if !hasBeadsPlugin(env) {
+		if !hasBeadsPlugin(env, false) {
 			t.Error("real beads@beads-marketplace should be detected even alongside a decoy")
 		}
 	})
@@ -1565,6 +1660,57 @@ func TestInstallClaudeSkipsHooksWhenPluginPresent(t *testing.T) {
 	instructionsPath := filepath.Join(env.projectDir, claudeInstructionsFile)
 	if _, err := os.Stat(instructionsPath); err != nil {
 		t.Errorf("CLAUDE.md should still be installed even with plugin: %v", err)
+	}
+}
+
+// TestInstallClaudeGlobalPluginScope pins which plugin enablements make a
+// global install leave its hook to the plugin. A global install's hook is for
+// every project, and Claude Code runs a plugin enabled in a project's
+// .claude/settings.json or .claude/settings.local.json in that project only,
+// so only ~/.claude/settings.json counts.
+func TestInstallClaudeGlobalPluginScope(t *testing.T) {
+	stubDetectRenderOpts(t)
+
+	cases := []struct {
+		name       string
+		settings   func(env claudeEnv) string
+		global     bool
+		wantPlugin bool
+	}{
+		{"global install, project plugin", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, true, false},
+		{"global install, local plugin", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, true, false},
+		{"global install, user plugin", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, true, true},
+		// GH#3192: a project install still counts every scope.
+		{"project install, project plugin", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, false, true},
+		{"project install, local plugin", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, false, true},
+		{"project install, user plugin", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			writeSettings(t, tc.settings(env), settingsWithPlugin())
+			if err := installClaude(env, tc.global, false); err != nil {
+				t.Fatalf("installClaude: %v", err)
+			}
+			out := stdout.String()
+			if got := strings.Contains(out, "plugin-managed"); got != tc.wantPlugin {
+				t.Errorf("plugin-managed reported = %v, want %v:\n%s", got, tc.wantPlugin, out)
+			}
+			if got := strings.Contains(out, "Registered SessionStart hook"); got == tc.wantPlugin {
+				t.Errorf("SessionStart hook registered = %v, want %v:\n%s", got, !tc.wantPlugin, out)
+			}
+			target := projectSettingsPath(env.projectDir)
+			if tc.global {
+				target = globalSettingsPath(env.homeDir)
+			}
+			data, err := env.readFile(target)
+			if err != nil {
+				t.Fatalf("read %s: %v", target, err)
+			}
+			if got := strings.Contains(string(data), "bd prime --hook-json"); got == tc.wantPlugin {
+				t.Errorf("%s has the bd prime hook = %v, want %v:\n%s", target, got, !tc.wantPlugin, data)
+			}
+		})
 	}
 }
 

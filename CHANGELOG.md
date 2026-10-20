@@ -985,9 +985,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.claude/CLAUDE.md` holds just the section, rendered the same whichever
   project you run from. Claude Code loads that file in every project, so its
   section, task-tracking rules included, applies only in repositories that use
-  beads. With global or plugin hooks `--check` accepts it when the project's
-  instructions have none, or names `--global` when it is missing and the
-  project has no `CLAUDE.md` of its own. Run from `~/.claude`,
+  beads. With global hooks, or a plugin enabled in `~/.claude/settings.json`,
+  `--check` accepts it when the project's instructions have none, or names
+  `--global` when it is missing and the project has no `CLAUDE.md` of its own.
+  Run from `~/.claude`,
   or from your home directory unless `~/CLAUDE.md` still holds a section an
   earlier run left there, `--check` judges the user-level files, and from your
   home directory it names `--global` when no hooks are installed. From your
@@ -1022,6 +1023,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd setup gemini` before, re-run it to add the section to
   `~/.gemini/GEMINI.md`. A section an earlier run left in a directory's
   `GEMINI.md` stays there; delete it by hand if you don't want it.
+- **`bd setup claude --global` installs its hook when the beads plugin is
+  enabled only in the current project.** It skipped the hook whenever the
+  current directory's `.claude/settings.json` or `.claude/settings.local.json`
+  enabled the plugin, which left every other project without one. Claude Code
+  runs a plugin enabled in a project's settings in that project only, so a
+  global install now leaves the hooks to the plugin only when
+  `~/.claude/settings.json` enables it. `--check` likewise treats the hooks of
+  a plugin enabled only in the project's settings as the project's: it judges
+  the project's own `CLAUDE.md`, as it does with project hooks, and names
+  `bd setup claude` rather than `--global` when that file is missing. In a
+  project that enables the plugin, a global install's hook and the plugin's
+  both run `bd prime`.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query
