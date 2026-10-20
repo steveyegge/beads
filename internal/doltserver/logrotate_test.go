@@ -250,6 +250,77 @@ func TestMaybeRotateLogFile_RotatesNamedPath(t *testing.T) {
 	}
 }
 
+// TestMaybeRotateLogFile_SkipsOrFailsSoftly covers the best-effort contract:
+// a missing or sub-threshold file is left alone, a ceiling <= 0 disables
+// rotation, and a failing rename is only debug-logged — the caller never
+// sees an error and the proxy still starts and serves.
+func TestMaybeRotateLogFile_SkipsOrFailsSoftly(t *testing.T) {
+	t.Run("missing file is a no-op", func(t *testing.T) {
+		dir := t.TempDir()
+		primary := filepath.Join(dir, "server.log")
+		t.Setenv(EnvMaxLogBytes, "1024")
+
+		MaybeRotateLogFile(primary)
+
+		if _, err := os.Stat(primary + ".1"); !os.IsNotExist(err) {
+			t.Fatalf("expected no .1 file, got err=%v", err)
+		}
+	})
+
+	t.Run("sub-threshold file is left in place", func(t *testing.T) {
+		dir := t.TempDir()
+		primary := filepath.Join(dir, "server.log")
+		writeFileSize(t, primary, 100, 'B')
+		t.Setenv(EnvMaxLogBytes, "1024")
+
+		MaybeRotateLogFile(primary)
+
+		if info := mustStat(t, primary); info.Size() != 100 {
+			t.Fatalf("sub-threshold primary changed: size = %d, want 100", info.Size())
+		}
+		if _, err := os.Stat(primary + ".1"); !os.IsNotExist(err) {
+			t.Fatalf("expected no .1 file, got err=%v", err)
+		}
+	})
+
+	t.Run("ceiling <= 0 disables rotation", func(t *testing.T) {
+		dir := t.TempDir()
+		primary := filepath.Join(dir, "server.log")
+		writeFileSize(t, primary, 4096, 'Z')
+		t.Setenv(EnvMaxLogBytes, "0")
+
+		MaybeRotateLogFile(primary)
+
+		if info := mustStat(t, primary); info.Size() != 4096 {
+			t.Fatalf("oversized primary rotated despite ceiling <= 0: size = %d", info.Size())
+		}
+	})
+
+	t.Run("rename failure is only debug-logged", func(t *testing.T) {
+		dir := t.TempDir()
+		primary := filepath.Join(dir, "server.log")
+		rotated := primary + ".1"
+		writeFileSize(t, primary, 4096, 'A')
+		t.Setenv(EnvMaxLogBytes, "1024")
+		// A non-empty directory at the rename target makes os.Rename fail.
+		setup := func(err error) {
+			if err != nil {
+				t.Fatalf("setting up failing rename: %v", err)
+			}
+		}
+		setup(os.Mkdir(rotated, 0o700))
+		setup(os.WriteFile(filepath.Join(rotated, "keep"), []byte("x"), 0o600))
+
+		// Must not panic and must not remove the primary: running with an
+		// oversized log is better than refusing to start.
+		MaybeRotateLogFile(primary)
+
+		if info := mustStat(t, primary); info.Size() != 4096 {
+			t.Fatalf("primary disturbed after failed rename: size = %d, want 4096", info.Size())
+		}
+	})
+}
+
 // TestMaxLogBytes_EnvOverride verifies the env-var parsing contract: valid
 // ints override the default, invalid values fall back to the default.
 func TestMaxLogBytes_EnvOverride(t *testing.T) {
