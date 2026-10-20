@@ -57,8 +57,9 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 		GoVersion: runtime.Version(),
 	}
 
-	// Resolve server config (handles standalone ephemeral ports)
-	dsCfg := doltserver.DefaultConfig(beadsDir)
+	// Resolve server config (handles standalone ephemeral ports and the
+	// legacy BEADS_DOLT_PORT the store dials)
+	dsCfg := doltserver.DialConfig(beadsDir)
 
 	// Check server status
 	doltDir := getDatabasePath(beadsDir)

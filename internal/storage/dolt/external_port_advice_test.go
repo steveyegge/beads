@@ -107,6 +107,9 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 				}
 				if tc.otherPort {
 					metadataPort = deadLoopbackPort(t)
+					for metadataPort == port {
+						metadataPort = deadLoopbackPort(t)
+					}
 				}
 				beadsDir := externalPortAdviceWorkspace(t, metadataPort)
 				cfg := &Config{

@@ -1046,6 +1046,22 @@ func DefaultConfig(beadsDir string) *Config {
 	return defaultConfigForMode(beadsDir, IsSharedServerMode(), resolveServerPortFromActiveSources)
 }
 
+// DialConfig is DefaultConfig for a client that dials the server without
+// opening the store (`bd dolt test`, `bd dolt clean-databases`, `bd doctor
+// --perf`, EnsureRunning's externally managed refusal). When no port source
+// gives a port, it falls back to the legacy BEADS_DOLT_PORT, which is not in
+// portSources but which the store dials (applyConfigDefaults), so these
+// clients dial and name that endpoint instead of 127.0.0.1:0.
+func DialConfig(beadsDir string) *Config {
+	cfg := DefaultConfig(beadsDir)
+	if cfg.PortSource == PortSourceUnset {
+		if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BEADS_DOLT_PORT"))); err == nil && p > 0 {
+			cfg.Port, cfg.PortSource = p, PortSourceEnv
+		}
+	}
+	return cfg
+}
+
 // DefaultConfigForMode resolves server configuration for an already-classified
 // target. Diagnostics use this when inspecting a workspace other than the
 // active one so process-global mode cannot change its data/state/port paths.
@@ -1264,7 +1280,7 @@ func EnsureRunningDetailed(beadsDir string) (port int, startedByUs bool, err err
 	// it would conflict with the external one.
 	mode := ResolveServerMode(beadsDir)
 	if mode == ServerModeExternal {
-		cfg := DefaultConfig(beadsDir)
+		cfg := DialConfig(beadsDir)
 		if host, ok := externalNonLocalhostHost(beadsDir); ok {
 			// Configured for a non-localhost external server:
 			// "bd dolt start" is not the right advice (GH#3518).
@@ -1277,17 +1293,11 @@ func EnsureRunningDetailed(beadsDir string) (port int, startedByUs bool, err err
 		}
 		// A named port declares the server external: "bd dolt start" would
 		// start bd's own server on it instead of the one that belongs there.
-		// The legacy BEADS_DOLT_PORT is not in portSources, though the store
-		// dials it (applyConfigDefaults); name it the same way here.
-		port, source := cfg.Port, cfg.PortSource
-		if source == PortSourceUnset {
-			if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BEADS_DOLT_PORT"))); err == nil && p > 0 {
-				port, source = p, PortSourceEnv
-			}
-		}
-		if advice := UnreachableEndpointAdvice(beadsDir, cfg.Host, port, source); advice != "" {
+		// DialConfig names the legacy BEADS_DOLT_PORT the way the store
+		// dials it.
+		if advice := UnreachableEndpointAdvice(beadsDir, cfg.Host, cfg.Port, cfg.PortSource); advice != "" {
 			return 0, false, &externallyManagedError{fmt.Sprintf("Dolt server is not running on port %d.\n\n%s",
-				port, advice)}
+				cfg.Port, advice)}
 		}
 		return 0, false, &externallyManagedError{fmt.Sprintf("Dolt server is not running on port %d, and auto-start is suppressed "+
 			"because the server is externally managed (dolt.auto-start: false or explicit port configured).\n\n"+

@@ -816,9 +816,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   externally managed, and says bd did not start one. That includes
   `bd dolt test`, `bd dolt clean-databases` and `bd doctor --perf`, and a
   workspace whose `config.yaml` `dolt.port` chose the port beside a
-  `dolt_server_port` (what `bd dolt set port N --update-config` writes). A
-  shared server, a port from bd's own port file, and a server bd manages keep
-  their advice.
+  `dolt_server_port` (what `bd dolt set port N --update-config` writes). With
+  only the legacy `BEADS_DOLT_PORT` set, those three diagnostics now dial its
+  port, as every other command does, instead of `127.0.0.1:0`. A shared
+  server, a port from bd's own port file, and a server bd manages keep their
+  advice.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the

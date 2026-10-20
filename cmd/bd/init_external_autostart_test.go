@@ -362,7 +362,11 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 			}
 		}, "metadata.json declares the Dolt server at"},
 		{"config.yaml dolt.port other than dolt_server_port", func(t *testing.T, f *externalInitFixture, port int) {
-			beadsDir := namedPortWorkspace(t, f, freeLoopbackPort(t))
+			metadataPort := freeLoopbackPort(t)
+			for metadataPort == port {
+				metadataPort = freeLoopbackPort(t)
+			}
+			beadsDir := namedPortWorkspace(t, f, metadataPort)
 			yaml := fmt.Sprintf("dolt:\n  port: %d\n", port)
 			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
 				t.Fatal(err)
@@ -391,28 +395,32 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 
 // TestNamedPortServerDiagnosticsAdvice covers the commands that dial the
 // server themselves instead of opening the store: they report a dead
-// named-port endpoint with the same advice, not `bd dolt start`.
+// named-port endpoint with the same advice, not `bd dolt start`. The legacy
+// BEADS_DOLT_PORT alone must make them dial its port, as the store does,
+// rather than 127.0.0.1:0.
 func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
-	for _, args := range [][]string{
-		{"dolt", "test"},
-		{"dolt", "clean-databases", "--dry-run"},
-		{"doctor", "--perf"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			f := newExternalInitFixture(t)
-			port := freeLoopbackPort(t)
-			ep := tcpEndpoint(port)
-			namedPortWorkspace(t, f, 0)
-			f.env = append(f.env, "BEADS_DOLT_SERVER_PORT="+strconv.Itoa(port))
+	for _, envName := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+		for _, args := range [][]string{
+			{"dolt", "test"},
+			{"dolt", "clean-databases", "--dry-run"},
+			{"doctor", "--perf"},
+		} {
+			t.Run(envName+"/"+strings.Join(args, " "), func(t *testing.T) {
+				f := newExternalInitFixture(t)
+				port := freeLoopbackPort(t)
+				ep := tcpEndpoint(port)
+				namedPortWorkspace(t, f, 0)
+				f.env = append(f.env, envName+"="+strconv.Itoa(port))
 
-			res := f.run("", args...)
+				res := f.run("", args...)
 
-			requireNoLaunch(t, res)
-			requireExternalUnreachableMessage(t, res.output, ep.addr)
-			if !strings.Contains(res.output, "BEADS_DOLT_SERVER_PORT declares") {
-				t.Errorf("output does not name BEADS_DOLT_SERVER_PORT:\n%s", res.output)
-			}
-		})
+				requireNoLaunch(t, res)
+				requireExternalUnreachableMessage(t, res.output, ep.addr)
+				if !strings.Contains(res.output, envName+" declares") {
+					t.Errorf("output does not name %s:\n%s", envName, res.output)
+				}
+			})
+		}
 	}
 }
 

@@ -1300,8 +1300,7 @@ func isLocalHost(host string) bool {
 // user-relevant signals.
 func runExternalDoltStatus(beadsDir string, cfg *configfile.Config) {
 	host := cfg.GetDoltServerHost()
-	dc := doltserver.DefaultConfig(beadsDir)
-	port := dc.Port
+	port := doltserver.DefaultConfig(beadsDir).Port
 	user := cfg.GetDoltServerUser()
 	database := cfg.GetDoltDatabase()
 	tls := cfg.GetDoltServerTLS()
@@ -2286,7 +2285,7 @@ func testDoltConnection() error {
 	}
 
 	host := cfg.GetDoltServerHost()
-	dc := doltserver.DefaultConfig(beadsDir)
+	dc := doltserver.DialConfig(beadsDir)
 	port := dc.Port
 	addr := fmt.Sprintf("%s:%d", host, port)
 
@@ -2459,7 +2458,7 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 	}
 
 	host := cfg.GetDoltServerHost()
-	dc := doltserver.DefaultConfig(beadsDir)
+	dc := doltserver.DialConfig(beadsDir)
 	port := dc.Port
 	user := cfg.GetDoltServerUser()
 	password := os.Getenv("BEADS_DOLT_PASSWORD")

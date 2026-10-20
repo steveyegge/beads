@@ -2094,6 +2094,38 @@ func TestResolveServerMode_EnvPortImpliesExternal(t *testing.T) {
 	}
 }
 
+// TestDialConfig_LegacyPortEnv pins DialConfig's fallback to the legacy
+// BEADS_DOLT_PORT, which the store dials but portSources does not read: with
+// no other source the diagnostics would dial (and advise about) port 0.
+func TestDialConfig_LegacyPortEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		serverPort string
+		legacyPort string
+		wantPort   int
+		wantSource PortSource
+	}{
+		{"neither", "", "", 0, PortSourceUnset},
+		{"legacy only", "", "13307", 13307, PortSourceEnv},
+		{"BEADS_DOLT_SERVER_PORT wins", "13400", "13307", 13400, PortSourceEnv},
+		{"legacy invalid", "", "not-a-port", 0, PortSourceUnset},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+			t.Setenv("BEADS_DOLT_SERVER_MODE", "")
+			t.Setenv("BEADS_DOLT_SERVER_PORT", tc.serverPort)
+			t.Setenv("BEADS_DOLT_PORT", tc.legacyPort)
+			config.ResetForTesting()
+
+			cfg := DialConfig(t.TempDir())
+			if cfg.Port != tc.wantPort || cfg.PortSource != tc.wantSource {
+				t.Errorf("DialConfig = port %d source %v, want port %d source %v",
+					cfg.Port, cfg.PortSource, tc.wantPort, tc.wantSource)
+			}
+		})
+	}
+}
+
 func TestServerMode_String(t *testing.T) {
 	tests := []struct {
 		mode ServerMode
