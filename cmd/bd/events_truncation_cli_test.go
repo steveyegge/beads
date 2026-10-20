@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -60,7 +59,11 @@ func TestEventsTailExitOnStdinEOFRequiresFollow(t *testing.T) {
 	}
 }
 
-func TestEventsTailFollowExitsOnStdinEOF(t *testing.T) {
+// TestEmbeddedEventsTailFollowExitsOnStdinEOF pins #7086's lifecycle
+// contract end to end: with --exit-on-stdin-eof, a quiet follower stays up
+// while its caller-owned stdin is open and exits 0 once it closes, without
+// waiting for a journal record to fail a stdout write.
+func TestEmbeddedEventsTailFollowExitsOnStdinEOF(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -74,7 +77,7 @@ func TestEventsTailFollowExitsOnStdinEOF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stdin pipe: %v", err)
 	}
-	var stderr bytes.Buffer
+	var stderr syncBuffer
 	follow.Stderr = &stderr
 	if err := follow.Start(); err != nil {
 		t.Fatalf("start follower: %v", err)
@@ -104,7 +107,7 @@ func TestEventsTailFollowExitsOnStdinEOF(t *testing.T) {
 			t.Fatalf("follower exit after stdin EOF: %v\nstderr:\n%s", err, stderr.String())
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("follower remained alive after stdin EOF")
+		t.Fatalf("follower remained alive after stdin EOF\nstderr:\n%s", stderr.String())
 	}
 }
 
