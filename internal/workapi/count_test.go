@@ -461,6 +461,33 @@ func TestValidateCountGroupClosesTheDimensionSet(t *testing.T) {
 	}
 }
 
+// TestCountNeedsConfig pins the one trigger set both counters share for the
+// config load: a request loads the workspace's ListConfig exactly when the
+// builder reads it — IncludeInfra (the infra vocabulary), a named IssueType
+// (the plane decision reads the workspace's infra set, GH#6258), or a
+// non-empty ExcludeStatus (custom status validation, PR #7199). A bare count
+// and IncludeEphemeral alone still skip the load: the plane bit itself needs
+// no vocabulary.
+func TestCountNeedsConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		req  issueops.CountRequest
+		want bool
+	}{
+		{"bare request", issueops.CountRequest{}, false},
+		{"include-ephemeral alone", issueops.CountRequest{IncludeEphemeral: true}, false},
+		{"include-infra", issueops.CountRequest{IncludeInfra: true}, true},
+		{"a named type", issueops.CountRequest{IssueType: "task"}, true},
+		{"exclude-status", issueops.CountRequest{ExcludeStatus: []string{"closed"}}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CountNeedsConfig(tt.req); got != tt.want {
+				t.Errorf("CountNeedsConfig(%+v) = %v, want %v", tt.req, got, tt.want)
+			}
+		})
+	}
+}
+
 func countPtrStr[T any](p *T) string {
 	if p == nil {
 		return "<nil>"
