@@ -781,6 +781,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A proxied-server store's logs no longer grow without bound.** The proxy
+  wrote about six lines to `.beads/dolt/proxy.log` for every connection it
+  served, and nothing rotated that file or the dolt server's `server.log`
+  beside it. The per-connection lines are now written only in debug mode
+  (`BD_DEBUG`); lifecycle and error lines stay. Both logs are rotated when the
+  proxy starts, by the rule the embedded server's `dolt-server.log` already
+  follows: renamed to `.1` above 50 MB, one generation,
+  `BEADS_DOLT_LOG_MAX_BYTES` overrides the ceiling (#7527).
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the
