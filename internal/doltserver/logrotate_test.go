@@ -232,3 +232,57 @@ func TestMaxLogBytes_EnvOverride(t *testing.T) {
 		}
 	})
 }
+
+// TestMaybeRotateLogFile_SkipsAndNeverFails covers the best-effort contract
+// the proxied-mode callers rely on: a missing file, a file at or under the
+// ceiling, a disabled ceiling, and a failed rename all leave the primary in
+// place and never surface to the caller, so the proxy still starts.
+func TestMaybeRotateLogFile_SkipsAndNeverFails(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		t.Setenv(EnvMaxLogBytes, "1024")
+		primary := filepath.Join(t.TempDir(), "proxy.log")
+		MaybeRotateLogFile(primary)
+		if _, err := os.Stat(primary + ".1"); !os.IsNotExist(err) {
+			t.Fatalf("expected no .1 file, got err=%v", err)
+		}
+	})
+	t.Run("at threshold", func(t *testing.T) {
+		t.Setenv(EnvMaxLogBytes, "1024")
+		primary := filepath.Join(t.TempDir(), "server.log")
+		writeFileSize(t, primary, 1024, 'U')
+		MaybeRotateLogFile(primary)
+		if info := mustStat(t, primary); info.Size() != 1024 {
+			t.Fatalf("primary size = %d, want 1024", info.Size())
+		}
+		if _, err := os.Stat(primary + ".1"); !os.IsNotExist(err) {
+			t.Fatalf("expected no .1 file, got err=%v", err)
+		}
+	})
+	for _, v := range []string{"0", "-1"} {
+		t.Run("disabled "+v, func(t *testing.T) {
+			t.Setenv(EnvMaxLogBytes, v)
+			primary := filepath.Join(t.TempDir(), "server.log")
+			writeFileSize(t, primary, 4096, 'D')
+			MaybeRotateLogFile(primary)
+			if info := mustStat(t, primary); info.Size() != 4096 {
+				t.Fatalf("primary size = %d, want 4096", info.Size())
+			}
+		})
+	}
+	t.Run("rename fails", func(t *testing.T) {
+		t.Setenv(EnvMaxLogBytes, "1024")
+		primary := filepath.Join(t.TempDir(), "proxy.log")
+		writeFileSize(t, primary, 4096, 'F')
+		// A non-empty directory at the .1 slot makes os.Rename fail.
+		if err := os.MkdirAll(filepath.Join(primary+".1", "keep"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		MaybeRotateLogFile(primary) // must not panic or block
+		if info := mustStat(t, primary); info.Size() != 4096 {
+			t.Fatalf("primary size = %d, want 4096", info.Size())
+		}
+		if info := mustStat(t, primary+".1"); !info.IsDir() {
+			t.Fatal(".1 slot was replaced")
+		}
+	})
+}
