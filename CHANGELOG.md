@@ -905,6 +905,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom types in that repository's `config.yaml`, as before. It also no
   longer migrates an ordinary additional repository's legacy `config.json`
   when there is no Dolt database there to read.
+- **Activating the HTTP backend refuses a graph workspace too.**
+  `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
+  `metadata.json` declares a `graph_mode` other than `dependency`, or whose
+  `.beads` holds the `graph-preview-format` marker: they wrote the http
+  sidecar and `.gitignore`, set the `metadata.json` backend to `http` and
+  migrated a legacy `config.json`, and `Connect` handshook with the server
+  first. They now return `*bdhttp.UnsupportedWorkspaceFormatError` (the type
+  `beads.UnsupportedWorkspaceFormatError` names) before writing anything, and
+  `Connect` before it dials. `bd connect` in a linked git worktree with no
+  `.beads` of its own attaches the main checkout's `.beads`, and attached a
+  graph workspace there that only the marker or a legacy `config.json`
+  declares (refused without `--force`, it still migrated that `config.json`);
+  it now exits 16 there too, without dialing or writing.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in
