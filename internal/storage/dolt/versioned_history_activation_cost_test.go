@@ -13,8 +13,10 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/sqlcount"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/versionedhistory"
 )
 
@@ -185,5 +187,109 @@ func TestStagingAnswersADeferredSwitch(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestDeferredActivationRecordsFromTheFirstWriteOnServer is the server-leg
+// semantics half of the pins above: a server-mode store whose own row says on,
+// activated without a read and then read from, records the very first write it
+// makes, whichever write funnel that write goes through, and leaves what it
+// minted committed. With no row it records nothing.
+func TestDeferredActivationRecordsFromTheFirstWriteOnServer(t *testing.T) {
+	newIssue := func(title string) *types.Issue {
+		return &types.Issue{Title: title, Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	}
+	for _, tc := range []struct {
+		name string
+		row  string
+		// setup runs before activation and leaves the switch off; it
+		// returns the first write to make after activation.
+		setup func(ctx context.Context, t *testing.T, store *DoltStore) func() error
+		want  bool
+	}{
+		{
+			name: "CreateIssue", row: "true", want: true,
+			setup: func(ctx context.Context, t *testing.T, store *DoltStore) func() error {
+				return func() error { return store.CreateIssue(ctx, newIssue("first write"), "tester") }
+			},
+		},
+		{
+			name: "CreateIssue no row", want: false,
+			setup: func(ctx context.Context, t *testing.T, store *DoltStore) func() error {
+				return func() error { return store.CreateIssue(ctx, newIssue("first write"), "tester") }
+			},
+		},
+		{
+			name: "RunInTransaction", row: "true", want: true,
+			setup: func(ctx context.Context, t *testing.T, store *DoltStore) func() error {
+				return func() error {
+					return store.RunInTransaction(ctx, "first write", func(tx storage.Transaction) error {
+						return tx.CreateIssue(ctx, newIssue("first write"), "tester")
+					})
+				}
+			},
+		},
+		{
+			name: "RemoveDependency", row: "true", want: true,
+			setup: func(ctx context.Context, t *testing.T, store *DoltStore) func() error {
+				// A dependency removal mints only for issues already in
+				// history, so these are recorded, and the switch is then put
+				// back off for activation to defer.
+				store.SetVersionedHistoryEnabled(true)
+				defer store.SetVersionedHistoryEnabled(false)
+				a, b := newIssue("a"), newIssue("b")
+				for _, issue := range []*types.Issue{a, b} {
+					if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				dep := &types.Dependency{IssueID: a.ID, DependsOnID: b.ID, Type: types.DepBlocks}
+				if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+					t.Fatal(err)
+				}
+				return func() error { return store.RemoveDependency(ctx, a.ID, b.ID, "tester") }
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, cleanup := setupTestStore(t)
+			defer cleanup()
+			ctx, cancel := testContext(t)
+			defer cancel()
+
+			if tc.row != "" {
+				if err := store.SetConfig(ctx, versionedhistory.ConfigKey, tc.row); err != nil {
+					t.Fatal(err)
+				}
+			}
+			firstWrite := tc.setup(ctx, t, store)
+			var before int
+			if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issue_versions").Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := versionedhistory.ActivateStore(ctx, store, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err != nil {
+				t.Fatal(err)
+			}
+			if store.versionedHistory.Enabled() {
+				t.Fatal("a read answered the deferred switch")
+			}
+			if err := firstWrite(); err != nil {
+				t.Fatal(err)
+			}
+			if got := store.versionedHistory.Enabled(); got != tc.want {
+				t.Errorf("after the first write the switch says %v, want %v", got, tc.want)
+			}
+			var after int
+			if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM issue_versions").Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if minted := after > before; minted != tc.want {
+				t.Errorf("the first write minted %d version row(s); want minted=%v", after-before, tc.want)
+			}
+			requireCleanTables(ctx, t, store, "issue_versions", "store_epoch", "issues")
+		})
 	}
 }

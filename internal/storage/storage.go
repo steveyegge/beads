@@ -995,9 +995,11 @@ type VersionedHistoryConfigurer interface {
 // answer now (internal/versionedhistory's ActivateStore and
 // ActivateProvider).
 //
-// It calls resolve inside the first write transaction it begins, before that
-// transaction's body runs, and then behaves exactly as if
-// SetVersionedHistoryEnabled(answer) had been called when it was opened.
+// It calls resolve inside the first write transaction it begins (a
+// unit-of-work provider: its first unit of work, read or write), before that
+// transaction's body runs, and then behaves as if
+// SetVersionedHistoryEnabled(answer) had been called at that point. The answer
+// is the row as that transaction reads it, not as it stood at open.
 // Until then it records nothing, which is all a plumbing that has not written
 // can have recorded. Asked this way, a plumbing that never writes never reads
 // the row, and one that does pays one statement inside a transaction it

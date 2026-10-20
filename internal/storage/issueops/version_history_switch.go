@@ -44,16 +44,18 @@ type VersionedHistorySwitch struct {
 func (s *VersionedHistorySwitch) Set(enabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Publish the answer before clearing the pending flag: a writer on the
+	// lock-free path that sees hasPending false must also see this answer.
+	s.enabled.Store(enabled)
 	s.pending = nil
 	s.hasPending.Store(false)
-	s.enabled.Store(enabled)
 }
 
 // Defer leaves the switch for resolve to answer at the next write. It is
 // DeferVersionedHistory. An enabled switch is left alone: a deferred read can
 // only turn recording on, the same rule Apply follows. A switch that already
-// answered off is re-armed, which is what reading the row again at every open
-// did before: a second open of a cached embedded store re-reads it.
+// answered off is re-armed, so a repeated ActivateStore on one instance reads
+// the row again, as it did when activation read the row eagerly.
 func (s *VersionedHistorySwitch) Defer(resolve storage.VersionedHistoryResolver) {
 	if resolve == nil {
 		return
@@ -84,6 +86,14 @@ func (s *VersionedHistorySwitch) Enabled() bool {
 // canceled context, a dropped connection). Settling off instead would let one
 // interrupted request switch recording off for the rest of a long-lived
 // process (bd serve) while the row says on.
+//
+// The mutex is held across the first resolver's round trip and does not
+// watch ctx: other first writers wait on it while holding their own open
+// transaction or pinned connection, and their deadlines cannot cancel the
+// wait. That is accepted: it happens only for the first resolution per
+// instance, the wait is bounded by that read's own ctx and driver timeouts,
+// and it cannot deadlock because every caller reads through a transaction or
+// connection it already holds.
 func (s *VersionedHistorySwitch) ResolveIn(ctx context.Context, q DBTX) bool {
 	if !s.hasPending.Load() {
 		return s.enabled.Load()
@@ -99,10 +109,14 @@ func (s *VersionedHistorySwitch) ResolveIn(ctx context.Context, q DBTX) bool {
 	if err != nil {
 		return s.enabled.Load()
 	}
-	s.pending = nil
-	s.hasPending.Store(false)
+	// Publish the answer before clearing hasPending. In the other order a
+	// writer arriving between the two stores takes the lock-free path, reads
+	// hasPending false and then the old enabled false, and is scoped off
+	// while the row says on: a write that mints no version.
 	if on {
 		s.enabled.Store(true)
 	}
+	s.pending = nil
+	s.hasPending.Store(false)
 	return s.enabled.Load()
 }

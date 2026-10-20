@@ -169,4 +169,75 @@ func TestVersionedHistorySwitchConcurrentWritersReadOnce(t *testing.T) {
 	}
 }
 
+// TestVersionedHistorySwitchNoOffWindowWhileAnswering pins the publication
+// order in ResolveIn and Set: a writer on the lock-free path must never see
+// the pending flag cleared before the answer is published. Each trial starts
+// eight writers against a switch that answers on; the ones arriving while
+// another is answering take the lock-free path, and any false there is a
+// write scoped off while the row says on.
+func TestVersionedHistorySwitchNoOffWindowWhileAnswering(t *testing.T) {
+	alwaysOn := func(context.Context, func(context.Context, string) (string, error)) (bool, error) {
+		return true, nil
+	}
+	ctx := context.Background()
+	const trials = 20000 // about 0.2s
+	var offs atomic.Int64
+	for trial := 0; trial < trials; trial++ {
+		var sw VersionedHistorySwitch
+		sw.Defer(alwaysOn)
+		var gate, done sync.WaitGroup
+		gate.Add(1)
+		for g := 0; g < 8; g++ {
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				gate.Wait()
+				for i := 0; i < 50; i++ {
+					if !sw.ResolveIn(ctx, nil) {
+						offs.Add(1)
+					}
+				}
+			}()
+		}
+		gate.Done()
+		done.Wait()
+	}
+	if n := offs.Load(); n != 0 {
+		t.Fatalf("%d ResolveIn call(s) answered off from a switch whose row says on", n)
+	}
+
+	// Set(true) on a pending switch must publish the same way.
+	for trial := 0; trial < trials/10; trial++ {
+		var sw VersionedHistorySwitch
+		sw.Defer(alwaysOn)
+		var gate, done sync.WaitGroup
+		gate.Add(1)
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			gate.Wait()
+			sw.Set(true)
+		}()
+		for g := 0; g < 4; g++ {
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				gate.Wait()
+				for i := 0; i < 50; i++ {
+					// The fast path's two loads, in its order: once
+					// hasPending is clear, enabled must be the answer.
+					if !sw.hasPending.Load() && !sw.enabled.Load() {
+						offs.Add(1)
+					}
+				}
+			}()
+		}
+		gate.Done()
+		done.Wait()
+	}
+	if n := offs.Load(); n != 0 {
+		t.Fatalf("%d observation(s) of a cleared pending flag before Set published on", n)
+	}
+}
+
 func switchRow(s string) *string { return &s }
