@@ -2971,7 +2971,7 @@ jobs:
 
       - name: Install uv
         if: ${{ steps.detect.outputs.mcp_package == 'true' }}
-        run: python -m pip install uv==0.11.16
+        run: python -m pip install uv==0.13.4
 
       - name: Run MCP package gate
         if: ${{ steps.detect.outputs.mcp_package == 'true' }}
