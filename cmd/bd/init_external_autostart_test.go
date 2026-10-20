@@ -36,6 +36,7 @@ type externalInitFixture struct {
 	home     string
 	shimDir  string
 	launches string
+	env      []string // extra environment for every run, after the isolation above
 }
 
 type externalInitResult struct {
@@ -75,6 +76,7 @@ func (f *externalInitFixture) run(autoStart string, args ...string) externalInit
 	if autoStart != "" {
 		env = append(env, "BEADS_DOLT_AUTO_START="+autoStart)
 	}
+	env = append(env, f.env...)
 	out, err := runExternalServerBD(f.t, f.repoDir, env, args...)
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) {
@@ -262,6 +264,95 @@ func TestInitServerExternalNoPortStartsNoServer(t *testing.T) {
 	}
 	if strings.Contains(res.output, "bd dolt start") {
 		t.Errorf("output advises `bd dolt start`:\n%s", res.output)
+	}
+}
+
+// TestInitServerNamedPortDeadEndpointStartsNoServer is the same boundary
+// without --external: a port named with --server-port or
+// BEADS_DOLT_SERVER_PORT declares the server external on its own (rule 2c,
+// #5934), so init starts none, and its failure must say so instead of
+// advising the `bd dolt start` that would start one. Init leaves auto-start on
+// here, so the store reaches EnsureRunning, which refuses rather than starts.
+func TestInitServerNamedPortDeadEndpointStartsNoServer(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		viaEnv     bool
+		declaredBy string
+	}{
+		{"--server-port", false, "--server-port declares"},
+		{"BEADS_DOLT_SERVER_PORT", true, "BEADS_DOLT_SERVER_PORT declares"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newExternalInitFixture(t)
+			port := freeLoopbackPort(t)
+			ep := tcpEndpoint(port)
+			args := []string{"init", "--quiet", "--server", "--prefix", "x", "--skip-hooks", "--skip-agents"}
+			if tc.viaEnv {
+				f.env = append(f.env, "BEADS_DOLT_SERVER_PORT="+strconv.Itoa(port))
+			} else {
+				args = append(args, ep.flags...)
+			}
+
+			res := f.run("", args...)
+
+			if !res.failed {
+				t.Errorf("bd init succeeded against a dead endpoint %s:\n%s", ep.addr, res.output)
+			}
+			requireNoLaunch(t, res)
+			requireExternalUnreachableMessage(t, res.output, ep.addr)
+			if !strings.Contains(res.output, tc.declaredBy) {
+				t.Errorf("output does not contain %q:\n%s", tc.declaredBy, res.output)
+			}
+			requireNothingListening(t, ep.network, ep.addr)
+		})
+	}
+}
+
+// TestNamedPortServerUnreachableAdvice covers every other command: an
+// ordinary command against a workspace whose named port (the environment, or
+// metadata.json's dolt_server_port) declares its server externally managed
+// starts no server and gives the same advice, naming the endpoint it dialed.
+func TestNamedPortServerUnreachableAdvice(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		viaEnv     bool
+		declaredBy string
+	}{
+		{"BEADS_DOLT_SERVER_PORT", true, "BEADS_DOLT_SERVER_PORT declares"},
+		{"metadata.json dolt_server_port", false, "metadata.json declares"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newExternalInitFixture(t)
+			port := freeLoopbackPort(t)
+			ep := tcpEndpoint(port)
+			beadsDir := filepath.Join(f.repoDir, ".beads")
+			if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			meta := configfile.DefaultConfig()
+			meta.Backend = configfile.BackendDolt
+			meta.DoltMode = configfile.DoltModeServer
+			meta.DoltDatabase = "named_port"
+			if tc.viaEnv {
+				f.env = append(f.env, "BEADS_DOLT_SERVER_PORT="+strconv.Itoa(port))
+			} else {
+				meta.DoltServerPort = port
+			}
+			if err := meta.Save(beadsDir); err != nil {
+				t.Fatal(err)
+			}
+
+			res := f.run("", "list")
+
+			if !res.failed {
+				t.Errorf("bd list succeeded against a dead endpoint %s:\n%s", ep.addr, res.output)
+			}
+			requireNoLaunch(t, res)
+			requireExternalUnreachableMessage(t, res.output, ep.addr)
+			if !strings.Contains(res.output, tc.declaredBy) {
+				t.Errorf("output does not contain %q:\n%s", tc.declaredBy, res.output)
+			}
+		})
 	}
 }
 

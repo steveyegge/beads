@@ -1268,18 +1268,24 @@ func EnsureRunningDetailed(beadsDir string) (port int, startedByUs bool, err err
 		if host, ok := externalNonLocalhostHost(beadsDir); ok {
 			// Configured for a non-localhost external server:
 			// "bd dolt start" is not the right advice (GH#3518).
-			return 0, false, fmt.Errorf("Dolt server at %s:%d is unreachable, and bd will not "+
+			return 0, false, &externallyManagedError{fmt.Sprintf("Dolt server at %s:%d is unreachable, and bd will not "+
 				"start a local server because an external one is configured.\n\n"+
 				"Verify the external server is running and reachable from this host:\n"+
 				"  nc -zv %s %d  # or curl %s:%d for an HTTP-style check\n"+
 				"  bd dolt status   # detailed external-server check",
-				host, cfg.Port, host, cfg.Port, host, cfg.Port)
+				host, cfg.Port, host, cfg.Port, host, cfg.Port)}
 		}
-		return 0, false, fmt.Errorf("Dolt server is not running on port %d, and auto-start is suppressed "+
+		// A named port declares the server external: "bd dolt start" would
+		// start bd's own server on it instead of the one that belongs there.
+		if setting := ExternalPortSetting(beadsDir, cfg.PortSource); setting != "" {
+			return 0, false, &externallyManagedError{fmt.Sprintf("Dolt server is not running on port %d.\n\n%s",
+				cfg.Port, ExternallyManagedAdvice(setting, net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))))}
+		}
+		return 0, false, &externallyManagedError{fmt.Sprintf("Dolt server is not running on port %d, and auto-start is suppressed "+
 			"because the server is externally managed (dolt.auto-start: false or explicit port configured).\n\n"+
 			"Start the external server, or enable auto-start to allow bd to manage the server.\n"+
 			"  To start manually: bd dolt start\n"+
-			"  To check status: bd dolt status", cfg.Port)
+			"  To check status: bd dolt status", cfg.Port)}
 	}
 
 	// Defense-in-depth: if dolt.auto-start is explicitly disabled in

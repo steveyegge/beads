@@ -1,8 +1,10 @@
 package doltserver
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
@@ -180,4 +182,59 @@ func resolveServerMode(beadsDir string, sharedMode, honorPortEnv bool) ServerMod
 
 	// 5. Default: beads owns the server
 	return ServerModeOwned
+}
+
+// ErrExternallyManaged matches EnsureRunning's refusal to start a server for a
+// workspace whose server is externally managed (ServerModeExternal). The
+// refusal is not a failed start: bd never tried, so a caller that reports it
+// as one ("auto-start failed") misdescribes it.
+var ErrExternallyManaged = errors.New("dolt server is externally managed; bd does not start it")
+
+// externallyManagedError is EnsureRunning's refusal: its own text, matching
+// ErrExternallyManaged.
+type externallyManagedError struct{ msg string }
+
+func (e *externallyManagedError) Error() string        { return e.msg }
+func (e *externallyManagedError) Is(target error) bool { return target == ErrExternallyManaged }
+
+// ExternalPortSetting names the setting that declares beadsDir's Dolt server
+// externally managed by naming the port bd dials, or returns "" when no such
+// setting does. The settings are BEADS_DOLT_SERVER_PORT and the legacy
+// BEADS_DOLT_PORT (ResolveServerMode check 2c, #5934) and metadata.json's
+// dolt_server_port (check 4, GH#2554). source is where the dialed port came
+// from: a port from bd's own port file, a config.yaml dolt.port or the
+// shared-server default was not named by one of them, and shared-server mode
+// is excluded outright, since `bd dolt start` is how bd starts that server.
+func ExternalPortSetting(beadsDir string, source PortSource) string {
+	if IsSharedServerMode() || ResolveServerMode(beadsDir) != ServerModeExternal {
+		return ""
+	}
+	if source == PortSourceEnv || source == PortSourceCallerExplicit {
+		for _, name := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+			if p, err := strconv.Atoi(os.Getenv(name)); err == nil && p > 0 {
+				return name
+			}
+		}
+	}
+	if source == PortSourceMetadataJSON || source == PortSourceCallerExplicit {
+		metadataPath := configfile.ConfigPath(beadsDir)
+		if _, err := os.Stat(metadataPath); err == nil {
+			if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.DoltServerPort > 0 {
+				return "dolt_server_port in " + metadataPath
+			}
+		}
+	}
+	return ""
+}
+
+// ExternallyManagedAdvice is the advice for a Dolt server at endpoint that bd
+// could not reach and that setting declares externally managed. It names the
+// endpoint and says bd did not start a server, in the words `bd init
+// --external` uses (#7674), and does not suggest `bd dolt start`: that command
+// would start a server of bd's own over .beads/dolt on the same port, a
+// different database that hides the real one and takes the port the real
+// server needs.
+func ExternallyManagedAdvice(setting, endpoint string) string {
+	return fmt.Sprintf("%s declares the Dolt server at %s externally managed, so bd did not start one.\n"+
+		"Start that server, or point bd at the right endpoint.", setting, endpoint)
 }
