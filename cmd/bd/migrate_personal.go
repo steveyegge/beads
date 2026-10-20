@@ -3,29 +3,42 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // openMigrationPlanningStore opens the personal planning workspace's store for
 // the copy phase below.
 //
-// The planning repo is the contributor auto-route target, so it opens the way a
-// write auto-routed there does (openAutoRoutedStore): its own metadata.json
-// picks the backend, the mode and the database, and the database is pinned
-// against a launching workspace's BEADS_DOLT_SERVER_DATABASE
-// (autoRouteTargetDatabase, openRoutedTargetStore). An embedded planning
-// workspace with no database is refused, not given one. A bare dolt.New here
-// used to dial a SQL server for every planning workspace, under the default
-// database name.
+// A planning repo that has a .beads directory but no metadata.json is first
+// initialized the way a routed bd create initializes it (ensureBeadsDirForPath,
+// with the project store supplying the prefix). Contributor setup leaves exactly
+// that shape: runContributorWizard creates an empty .beads, and
+// autoConfigureForkContributor a database with no metadata.json and no
+// issue_prefix. migrate-personal's own error text sends users to those setups,
+// so their repos must be migratable into. A repo that already has a
+// metadata.json (a clone not yet bootstrapped, say) is left as it is.
+//
+// The planning repo is the contributor auto-route target, so it then opens the
+// way a write auto-routed there does (openAutoRoutedStore): its own
+// metadata.json picks the backend, the mode and the database, and the database
+// is pinned against a launching workspace's BEADS_DOLT_SERVER_DATABASE
+// (autoRouteTargetDatabase, openRoutedTargetStore). A metadata.json that names
+// no dolt_database, or an embedded planning workspace with no database, is
+// refused, not given one. A bare dolt.New here used to dial a SQL server for
+// every planning workspace, under the default database name.
 //
 // The store it returns is WRITTEN THROUGH: the migration creates every issue in
 // the planning workspace and then deletes them from the project. Those are
@@ -35,12 +48,41 @@ import (
 // issue-version history, which the store's own settings row decides. The
 // routed-write factory (newExistingDoltStoreFromConfig) activates the planning
 // workspace's events journal and issue-version history on the store it opens.
-func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string) (storage.DoltStorage, error) {
+func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string, projectStore storage.DoltStorage) (storage.DoltStorage, error) {
+	if err := ensureBeadsDirForPath(ctx, filepath.Dir(planningBeadsDir), projectStore, true); err != nil {
+		return nil, fmt.Errorf("initialize planning repo: %w", err)
+	}
 	database, err := autoRouteTargetDatabase(planningBeadsDir, true)
 	if err != nil {
 		return nil, err
 	}
 	return openRoutedTargetStore(ctx, planningBeadsDir, database, true)
+}
+
+// refuseSelfPlanningRepo refuses a planning repo that is the project workspace
+// itself (routing.contributor set to the project's path, or to ".", the value
+// routing.maintainer and routing.default default to). The migration copies each
+// issue into the planning store and then deletes it from the project; when both
+// are the same database the copy is a no-op and the delete removes the only
+// copy. The planning .beads directory (after any redirect) is compared with the
+// project's, and the two metadata.json project_id values when both are set.
+func refuseSelfPlanningRepo(planningPath, planningBeadsDir, projectBeadsDir string) error {
+	if projectBeadsDir == "" {
+		return nil
+	}
+	planning := utils.CanonicalizePath(beads.FollowRedirect(planningBeadsDir))
+	project := utils.CanonicalizePath(beads.FollowRedirect(projectBeadsDir))
+	same := planning == project
+	if !same {
+		planningCfg, perr := configfile.Load(planning)
+		projectCfg, qerr := configfile.Load(project)
+		same = perr == nil && qerr == nil && planningCfg != nil && projectCfg != nil &&
+			planningCfg.ProjectID != "" && planningCfg.ProjectID == projectCfg.ProjectID
+	}
+	if same {
+		return fmt.Errorf("planning repo %s is this project's own workspace; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningPath)
+	}
+	return nil
 }
 
 var migratePersonalCmd = &cobra.Command{
@@ -122,6 +164,9 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(planningBeadsDir); os.IsNotExist(err) {
 		return fmt.Errorf("planning repo at %s has no .beads directory; initialize it first with 'bd init'", planningPath)
 	}
+	if err := refuseSelfPlanningRepo(planningPath, planningBeadsDir, resolveCommandBeadsDir(dbPath)); err != nil {
+		return err
+	}
 
 	fmt.Printf("Move to planning repo: %s\n\n", ui.RenderAccent(planningPath))
 
@@ -148,7 +193,7 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	// the copy below creates and deletes real beads in it, so it takes the
 	// planning workspace's own events-journal setting — not the launching
 	// workspace's. See openMigrationPlanningStore.
-	planningStore, err := openMigrationPlanningStore(ctx, planningBeadsDir)
+	planningStore, err := openMigrationPlanningStore(ctx, planningBeadsDir, store)
 	if err != nil {
 		return fmt.Errorf("failed to open planning store at %s: %w", planningPath, err)
 	}
@@ -160,6 +205,21 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	// so a partial copy can never be mistaken for success and lose data
 	// (maphew review, be-e2nb).
 	//
+	// Phase 0: refuse when any issue ID is already in the planning DB. A create
+	// can upsert onto an existing row, and the rollback below would then delete
+	// a row this migration did not create; if the planning store were somehow
+	// the project's own database (refuseSelfPlanningRepo is the first guard),
+	// phase 2 would delete the only copy.
+	for _, issue := range personal {
+		_, err := planningStore.GetIssue(ctx, issue.ID)
+		switch {
+		case err == nil:
+			return fmt.Errorf("issue %s already exists in the planning repo %s; nothing was moved", issue.ID, planningPath)
+		case !errors.Is(err, storage.ErrNotFound):
+			return fmt.Errorf("failed to check the planning DB for %s: %w", issue.ID, err)
+		}
+	}
+
 	// Phase 1a: create every issue row first, so same-prefix dependencies
 	// between two migrated issues resolve in phase 1b regardless of copy order.
 	var created []string

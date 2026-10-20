@@ -836,9 +836,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after printing `no database name configured; falling back to default
   "beads"`. It now opens the planning repo the way a write auto-routed there
   does: its own mode, server settings and database, pinned against the
-  launching workspace's `BEADS_DOLT_SERVER_DATABASE`. A planning repo with no
-  database, or whose `metadata.json` has no `dolt_database`, is refused
-  before anything moves.
+  launching workspace's `BEADS_DOLT_SERVER_DATABASE`. A planning repo that
+  contributor setup left with no `metadata.json` (the empty `.beads` from
+  `bd init --contributor`, or the database fork setup creates) is first
+  initialized the way a routed `bd create` initializes it. A planning repo
+  whose `metadata.json` has no `dolt_database`, or whose database has not been
+  bootstrapped, is refused before anything moves. So is a planning repo that
+  is the project's own workspace (for example `routing.contributor: .`),
+  which used to delete the issues while reporting them moved once the open
+  succeeded. An issue ID already present in the planning repo is also
+  refused rather than overwritten.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the

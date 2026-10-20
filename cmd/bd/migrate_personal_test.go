@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -312,5 +313,202 @@ func TestEmbeddedCopyIssueRelations_preservesCommentWithTimestamp(t *testing.T) 
 	}
 	if !got[0].CreatedAt.Equal(origTS) {
 		t.Errorf("comment created_at = %v, want preserved %v (original timestamp dropped)", got[0].CreatedAt, origTS)
+	}
+}
+
+// requireMigratePersonalRefused runs "bd migrate-personal --yes" in dir,
+// expecting it to fail with output containing want and to report no move. It
+// returns the combined output.
+func requireMigratePersonalRefused(t *testing.T, bd, dir, want string) string {
+	t.Helper()
+	out, err := bdMigratePersonal(t, bd, dir, "--yes")
+	if err == nil {
+		t.Fatalf("bd migrate-personal --yes succeeded, want it refused:\n%s", out)
+	}
+	if !strings.Contains(out, want) {
+		t.Errorf("bd migrate-personal --yes output does not contain %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "Moved") {
+		t.Errorf("bd migrate-personal --yes reported a move while refusing:\n%s", out)
+	}
+	return out
+}
+
+// requireStillInProject asserts issueID is still in the project database.
+func requireStillInProject(t *testing.T, projectBeadsDir, projectDB, issueID string) {
+	t.Helper()
+	if _, err := openStore(t, projectBeadsDir, projectDB).GetIssue(t.Context(), issueID); err != nil {
+		t.Errorf("issue %s left the project database %q after a refused migrate-personal: %v", issueID, projectDB, err)
+	}
+}
+
+// TestEmbeddedMigratePersonal_refusesPlanningRepoThatIsTheProject verifies that
+// a planning repo resolving to the project's own workspace is refused before
+// anything moves. Copying an issue onto itself and then deleting it from the
+// project deletes the only copy while reporting it moved.
+func TestEmbeddedMigratePersonal_refusesPlanningRepoThatIsTheProject(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	for _, tc := range []struct {
+		name   string
+		prefix string
+		value  func(dir string) string
+	}{
+		{"project path", "mps", func(dir string) string { return dir }},
+		{"dot", "mpd", func(string) string { return "." }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, beadsDir, _ := bdInit(t, bd, "--prefix", tc.prefix)
+			if out, err := bdRunWithFlockRetry(t, bd, dir, "config", "set", "routing.contributor", tc.value(dir)); err != nil {
+				t.Fatalf("bd config set routing.contributor: %v\n%s", err, out)
+			}
+			personal := bdCreate(t, bd, dir, "Self-routed personal issue")
+
+			requireMigratePersonalRefused(t, bd, dir, "is this project's own workspace")
+			requireStillInProject(t, beadsDir, tc.prefix, personal.ID)
+		})
+	}
+}
+
+// TestEmbeddedMigratePersonal_refusesMetadataWithoutDoltDatabase verifies that
+// a planning repo whose metadata.json names no dolt_database is refused before
+// anything moves, and that no database is created in it: the launcher's
+// database name would otherwise choose one.
+func TestEmbeddedMigratePersonal_refusesMetadataWithoutDoltDatabase(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpx")
+	planningDir := setupContributorRouting(t, bd, dir)
+	planningBeadsDir := filepath.Join(planningDir, ".beads")
+
+	metadataPath := filepath.Join(planningBeadsDir, "metadata.json")
+	raw, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("read planning metadata.json: %v", err)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		t.Fatalf("parse planning metadata.json: %v", err)
+	}
+	delete(meta, "dolt_database")
+	raw, err = json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("encode planning metadata.json: %v", err)
+	}
+	if err := os.WriteFile(metadataPath, raw, 0o600); err != nil {
+		t.Fatalf("write planning metadata.json: %v", err)
+	}
+	databasesBefore := embeddeddolt.Databases(planningBeadsDir)
+
+	personal := bdCreate(t, bd, dir, "Personal issue for a nameless planning repo")
+
+	requireMigratePersonalRefused(t, bd, dir, "has no dolt_database field")
+	requireStillInProject(t, beadsDir, "mpx", personal.ID)
+	if got := embeddeddolt.Databases(planningBeadsDir); !slices.Equal(got, databasesBefore) {
+		t.Errorf("planning repo databases = %v after a refused migrate-personal, want unchanged %v", got, databasesBefore)
+	}
+}
+
+// TestEmbeddedMigratePersonal_initializesContributorPlanningRepos verifies that
+// the planning repos contributor setup leaves behind are initialized the way a
+// routed bd create initializes them, and then migrated into: the wizard's empty
+// .beads (runContributorWizard), and fork setup's database with no
+// metadata.json and no issue_prefix (autoConfigureForkContributor).
+func TestEmbeddedMigratePersonal_initializesContributorPlanningRepos(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	for _, tc := range []struct {
+		name   string
+		prefix string
+		// setup shapes planningBeadsDir, which exists and is empty.
+		setup func(t *testing.T, planningBeadsDir string)
+	}{
+		{"wizard empty beads dir", "mpw", func(*testing.T, string) {}},
+		{"fork setup database without metadata", "mpf", func(t *testing.T, planningBeadsDir string) {
+			s, err := embeddeddolt.Open(t.Context(), planningBeadsDir, "beads", "main")
+			if err != nil {
+				t.Fatalf("create the fork-setup planning database: %v", err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatalf("close the fork-setup planning database: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, beadsDir, _ := bdInit(t, bd, "--prefix", tc.prefix)
+			planningDir := t.TempDir()
+			planningBeadsDir := filepath.Join(planningDir, ".beads")
+			if err := os.MkdirAll(planningBeadsDir, 0o750); err != nil {
+				t.Fatalf("create planning .beads: %v", err)
+			}
+			tc.setup(t, planningBeadsDir)
+			if out, err := bdRunWithFlockRetry(t, bd, dir, "config", "set", "routing.contributor", planningDir); err != nil {
+				t.Fatalf("bd config set routing.contributor: %v\n%s", err, out)
+			}
+			personal := bdCreate(t, bd, dir, "Personal issue for a contributor planning repo")
+
+			out := requireMigratePersonal(t, bd, dir)
+			if !strings.Contains(out, "Moved 1 issue") {
+				t.Errorf("migrate-personal output does not report moving 1 issue:\n%s", out)
+			}
+			database, err := loadDoltDatabase(planningBeadsDir)
+			if err != nil {
+				t.Fatalf("planning metadata.json after migrate-personal: %v", err)
+			}
+			if database != tc.prefix {
+				t.Errorf("planning metadata.json dolt_database = %q, want %q (the project prefix, as a routed bd create writes)", database, tc.prefix)
+			}
+			moved, err := openStore(t, planningBeadsDir, tc.prefix).GetIssue(t.Context(), personal.ID)
+			if err != nil {
+				t.Fatalf("issue %s not in the planning database %q: %v", personal.ID, tc.prefix, err)
+			}
+			if moved.Title != "Personal issue for a contributor planning repo" {
+				t.Errorf("planning issue %s title = %q", personal.ID, moved.Title)
+			}
+			if _, err := openStore(t, beadsDir, tc.prefix).GetIssue(t.Context(), personal.ID); !errors.Is(err, storage.ErrNotFound) {
+				t.Errorf("issue %s still in the project database: err = %v, want storage.ErrNotFound", personal.ID, err)
+			}
+		})
+	}
+}
+
+// TestEmbeddedMigratePersonal_refusesPlanningRepoWithoutDatabase verifies that
+// a planning repo whose metadata.json names a database that has not been
+// bootstrapped yet (a clone, say) is refused before anything moves, and is not
+// given a database: a migration is not the place to create one.
+func TestEmbeddedMigratePersonal_refusesPlanningRepoWithoutDatabase(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpb")
+	planningDir := setupContributorRouting(t, bd, dir)
+	planningBeadsDir := filepath.Join(planningDir, ".beads")
+	if err := os.RemoveAll(filepath.Join(planningBeadsDir, "embeddeddolt")); err != nil {
+		t.Fatalf("remove the planning database: %v", err)
+	}
+
+	personal := bdCreate(t, bd, dir, "Personal issue for an unbootstrapped planning repo")
+
+	requireMigratePersonalRefused(t, bd, dir, "no embedded database")
+	requireStillInProject(t, beadsDir, "mpb", personal.ID)
+	if got := embeddeddolt.Databases(planningBeadsDir); len(got) != 0 {
+		t.Errorf("planning repo databases = %v after a refused migrate-personal, want none", got)
 	}
 }
