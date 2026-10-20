@@ -115,6 +115,7 @@ var YamlOnlyKeys = map[string]bool{
 	"dolt.max-conns":          true, // Connection pool size override (default 10, GH#3140)
 	"dolt.pool-read-timeout":  true, // Pool per-I/O read deadline override (default 10s, bd-vz0y9)
 	"dolt.pool-write-timeout": true, // Pool per-I/O write deadline override (default 10s, bd-vz0y9)
+	"dolt.dial-timeout":       true, // Fail-fast server dial budget override (default 500ms, ga-g8lsb4)
 	"dolt.debug":              true, // Debug-mode dolt sql-server: --loglevel=debug + --prof cpu
 
 	// Secrets: tokens and API keys must NOT be stored in the Dolt database
