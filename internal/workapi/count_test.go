@@ -467,3 +467,28 @@ func countPtrStr[T any](p *T) string {
 	}
 	return "&" + reflect.ValueOf(*p).String()
 }
+
+// TestCountNeedsConfig pins the one trigger set both Counter bodies
+// (storecounter and uow) load the workspace configuration on. A named
+// IssueType is a trigger because an infra type reads its ephemeral rows and
+// "infra" is the workspace's types.infra (GH#6258); IncludeEphemeral alone is
+// not, because admitting the plane reads no configuration.
+func TestCountNeedsConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		req  issueops.CountRequest
+		want bool
+	}{
+		{"bare", issueops.CountRequest{}, false},
+		{"include-ephemeral alone", issueops.CountRequest{IncludeEphemeral: true}, false},
+		{"include-infra", issueops.CountRequest{IncludeInfra: true}, true},
+		{"issue type", issueops.CountRequest{IssueType: "task"}, true},
+		{"exclude status", issueops.CountRequest{ExcludeStatus: []string{"closed"}}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CountNeedsConfig(tt.req); got != tt.want {
+				t.Errorf("CountNeedsConfig(%+v) = %v, want %v", tt.req, got, tt.want)
+			}
+		})
+	}
+}

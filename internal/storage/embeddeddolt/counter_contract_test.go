@@ -4,6 +4,8 @@ package embeddeddolt_test
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
@@ -234,5 +236,130 @@ func TestReaderListExcludeStatusAcceptsAWorkspaceCustomStatus(t *testing.T) {
 	scope.ExcludeStatus = []string{"reveiw"}
 	if _, err := reader.List(ctx, scope); !errors.Is(err, publicops.ErrValidation) {
 		t.Fatalf("List(ExcludeStatus=reveiw) = %v, want ErrValidation", err)
+	}
+}
+
+// TestCounterInfraTypeCountMatchesList pins GH#6258 on the store-backed
+// Counter: `bd count --type <infra type>` must answer from the plane `bd list
+// --type <infra type>` reads — the type's ephemeral rows — and must judge
+// "infra" by the workspace's types.infra, not the built-in names. A leg-level
+// test, not a conformance case, because CounterFixture cannot configure a
+// workspace infra set, and it owns its environment because types.custom and
+// types.infra are workspace-global.
+//
+// types.infra=robot drops agent from the infra set, so a builder-only fix that
+// never loads the configuration fails twice here: robot stays durable-only
+// (1, against a list of 2) and agent is narrowed to ephemeral rows it has none
+// of (0, against a list of 1).
+//
+// The listing runs with AllFlag and IncludeTemplates so the comparison is the
+// PLANE only; a count and a listing still differ on closed and template rows
+// by design (issueops.CountRequest).
+func TestCounterInfraTypeCountMatchesList(t *testing.T) {
+	skipUnlessEmbeddedDolt(t)
+	te := newTestEnv(t, "cntinf")
+	ctx := t.Context()
+
+	if err := te.store.SetConfig(ctx, "types.custom", "robot,agent"); err != nil {
+		t.Fatalf("SetConfig(types.custom): %v", err)
+	}
+	if err := te.store.SetConfig(ctx, "types.infra", "robot"); err != nil {
+		t.Fatalf("SetConfig(types.infra): %v", err)
+	}
+
+	const (
+		wispA     = "cntinf-robot-wisp-a"
+		wispB     = "cntinf-robot-wisp-b"
+		retyped   = "cntinf-robot-durable"
+		agentRow  = "cntinf-agent"
+		robotType = types.IssueType("robot")
+	)
+	for _, issue := range []*types.Issue{
+		{ID: wispA, Title: wispA, Status: types.StatusOpen, Priority: 2, IssueType: robotType, Ephemeral: true},
+		{ID: wispB, Title: wispB, Status: types.StatusOpen, Priority: 2, IssueType: robotType, Ephemeral: true},
+		{ID: retyped, Title: retyped, Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: agentRow, Title: agentRow, Status: types.StatusOpen, Priority: 2, IssueType: types.IssueType("agent")},
+	} {
+		if err := te.store.CreateIssue(ctx, issue, "tester"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", issue.ID, err)
+		}
+	}
+	// Retyping after create keeps the row durable: create-time infra routing
+	// does not run on update.
+	if err := te.store.UpdateIssue(ctx, retyped, map[string]interface{}{
+		"issue_type": "robot",
+	}, "tester"); err != nil {
+		t.Fatalf("UpdateIssue(%s) to robot: %v", retyped, err)
+	}
+
+	counter, err := te.store.Counter()
+	if err != nil {
+		t.Fatalf("Counter(): %v", err)
+	}
+	reader, err := te.store.IssueReader()
+	if err != nil {
+		t.Fatalf("IssueReader(): %v", err)
+	}
+	ids := strings.Join([]string{wispA, wispB, retyped, agentRow}, ",")
+
+	for _, tt := range []struct {
+		issueType                      string
+		includeEphemeral, includeInfra bool
+		want                           int64
+	}{
+		{"robot", false, false, 2},
+		{"robot", true, false, 3},
+		{"robot", false, true, 2},
+		{"robot", true, true, 3},
+		{"agent", false, false, 1},
+		{"agent", true, false, 1},
+		{"agent", false, true, 1},
+		{"agent", true, true, 1},
+	} {
+		name := fmt.Sprintf("type=%s/include-ephemeral=%v/include-infra=%v",
+			tt.issueType, tt.includeEphemeral, tt.includeInfra)
+		t.Run(name, func(t *testing.T) {
+			req := publicops.CountRequest{
+				IDFilter: ids, IssueType: tt.issueType,
+				IncludeEphemeral: tt.includeEphemeral, IncludeInfra: tt.includeInfra,
+			}
+			got, err := counter.Count(ctx, req)
+			if err != nil {
+				t.Fatalf("Count: %v", err)
+			}
+			page, err := reader.List(ctx, publicops.ListRequest{
+				IDFilter: ids, IssueType: tt.issueType,
+				IncludeEphemeral: tt.includeEphemeral, IncludeInfra: tt.includeInfra,
+				AllFlag: true, IncludeTemplates: true,
+			})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if got.Total != int64(len(page.Items)) {
+				t.Errorf("Count = %d, len(List) = %d: count and list read different planes", got.Total, len(page.Items))
+			}
+			if got.Total != tt.want {
+				t.Errorf("Count = %d, want %d", got.Total, tt.want)
+			}
+			grouped, err := counter.CountByGroup(ctx, publicops.CountByGroupRequest{
+				Filter: req, GroupBy: publicops.CountGroupStatus,
+			})
+			if err != nil {
+				t.Fatalf("CountByGroup: %v", err)
+			}
+			if grouped.Total != got.Total {
+				t.Errorf("CountByGroup.Total = %d, want the scalar %d", grouped.Total, got.Total)
+			}
+		})
+	}
+
+	// An untyped count stays on the durable plane: the retyped robot and the
+	// agent, never the robot wisps.
+	untyped, err := counter.Count(ctx, publicops.CountRequest{IDFilter: ids})
+	if err != nil {
+		t.Fatalf("Count(untyped): %v", err)
+	}
+	if untyped.Total != 2 {
+		t.Errorf("Count(untyped) = %d, want 2", untyped.Total)
 	}
 }

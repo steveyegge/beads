@@ -48,8 +48,8 @@ func ValidateCountGroup(group issueops.CountGroup) (string, error) {
 // It is read under IncludeInfra, whenever IssueType is set (an infra type
 // reads its ephemeral rows), and whenever ExcludeStatus is non-empty (the
 // exclusion is validated against the workspace's statuses), so a caller must
-// load it in each case; a zero ListConfig falls back to the default infra set
-// and the built-in statuses only.
+// load it in each case — CountNeedsConfig answers exactly that; a zero
+// ListConfig falls back to the default infra set and the built-in statuses only.
 func BuildCountFilter(in issueops.CountRequest, cfg ListConfig) (types.IssueFilter, error) {
 	filter := types.IssueFilter{
 		TitleSearch:         in.TitleSearch,
@@ -157,6 +157,17 @@ func BuildCountFilter(in issueops.CountRequest, cfg ListConfig) (types.IssueFilt
 	}
 	applyPlane(&filter, in.IssueType, in.IncludeEphemeral, in.IncludeInfra, cfg)
 	return filter, nil
+}
+
+// CountNeedsConfig reports whether BuildCountFilter reads its ListConfig for
+// this request, so a caller loads it exactly when the builder needs it.
+//
+// It lives beside the builder, as SQLLimit does beside BuildListFilter, because
+// it is the second half of one decision: the condition copied into each caller
+// is how both the ExcludeStatus gap (PR #7199) and the infra-type gap
+// (GH#6258) happened.
+func CountNeedsConfig(in issueops.CountRequest) bool {
+	return in.IncludeInfra || in.IssueType != "" || len(in.ExcludeStatus) > 0
 }
 
 // applyCountIncludeInfra applies the type exclusions of `bd list
