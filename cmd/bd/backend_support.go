@@ -17,7 +17,11 @@ import (
 // open (checkWorkspaceFormat). Command admission refuses those first, and the
 // store factories check before their migrating configfile.Load
 // (checkDiscoveredWorkspaceFormat), so here it backs up any other caller that
-// validates metadata it loaded itself.
+// validates metadata it loaded itself. It returns early for a nil cfg, so that
+// backstop covers the graph format marker only when metadata was loaded; a
+// caller that may have none must check beadsDir with
+// checkDiscoveredWorkspaceFormat or command admission first, as every caller
+// does today.
 func validateConfiguredBackend(cfg *configfile.Config, beadsDir string) error {
 	if cfg == nil {
 		return nil

@@ -868,6 +868,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A `metadata.json` rewrite keeps `graph_mode` and the `graph_*` fields
   graph-preview builds write, and like those builds it omits a zero
   `graph_schema_version` and a false `graph_ready`.
+- **A graph workspace without `graph_mode` in its metadata is refused too.**
+  Graph-preview builds write a `.beads/graph-preview-format` marker before
+  `metadata.json`. bd ignored it. When an older bd had rewritten
+  `metadata.json` without `graph_mode`, bd opened the graph database by its
+  recorded name and ran Issue schema initialization against it; when
+  `metadata.json` was never written or was lost, bd fell back to the default
+  database name and created an Issue database inside the graph workspace, and
+  `bd init` initialized an Issue workspace there. A `.beads` holding that
+  marker, whatever it contains and whatever its metadata says (absent,
+  stripped, unparseable or an explicit `dependency`), is now refused wherever
+  a `graph_mode` workspace is: commands run in it or naming it with `--db` or
+  `BEADS_DB`, `bd create --repo` aimed at it, and `bd bootstrap` in a
+  workspace below it that would take its metadata exit with code 16 and a
+  hint to restore `metadata.json`, and routed and cross-repository opens fail
+  without opening its database.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in

@@ -14,29 +14,43 @@ import (
 	"time"
 )
 
-// graphModeAdmissionFixture is a workspace whose metadata declares a
-// graph_mode this build does not open.
+// graphModeAdmissionFixture is a workspace whose metadata or format marker
+// declares a format this build does not open.
 type graphModeAdmissionFixture struct {
-	name     string
+	name string
+	// filename is the metadata file; "" lays down no metadata.
 	filename string
-	mode     string
 	metadata string
-	// embedded adds what a real graph workspace holds beside its metadata:
-	// the embedded Dolt root of its graph database and the format sentinel
-	// graph-preview builds write. Without the guard, an ordinary bd opens
-	// that database as an Issue store and migrates it.
+	// embedded adds the embedded Dolt root of a graph database. Without the
+	// guard, an ordinary bd opens that database as an Issue store and
+	// migrates it.
 	embedded bool
+	// marker adds the graph-preview-format sentinel graph-preview builds
+	// write before metadata.json.
+	marker bool
+	// refusal lists what the refusal must mention besides "this bd build
+	// does not support": the declared format and the start of its hint.
+	refusal []string
 }
 
-// write lays the fixture down under beadsDir and returns the metadata path.
+// write lays the fixture down under beadsDir and returns the metadata path,
+// or "" when the fixture has no metadata.
 func (f graphModeAdmissionFixture) write(t *testing.T, beadsDir string) string {
 	t.Helper()
-	path := filepath.Join(beadsDir, f.filename)
-	writeFile(t, path, []byte(f.metadata))
+	if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := ""
+	if f.filename != "" {
+		path = filepath.Join(beadsDir, f.filename)
+		writeFile(t, path, []byte(f.metadata))
+	}
 	if f.embedded {
 		if err := os.MkdirAll(filepath.Join(beadsDir, "embeddeddolt", "beads_graph_0123456789abcdef0123456789abcdef", ".dolt"), 0o700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if f.marker {
 		writeFile(t, filepath.Join(beadsDir, "graph-preview-format"), []byte("link-preview-v9\n"))
 	}
 	if err := os.Chmod(beadsDir, 0o700); err != nil {
@@ -46,19 +60,48 @@ func (f graphModeAdmissionFixture) write(t *testing.T, beadsDir string) string {
 }
 
 func graphModeAdmissionFixtures() []graphModeAdmissionFixture {
+	graphModeRefusal := func(mode string) []string {
+		return []string{"graph_mode", mode, "use a bd build that supports graph_mode"}
+	}
 	var fixtures []graphModeAdmissionFixture
 	fixtures = append(fixtures, graphModeAdmissionFixture{
-		name: "metadata.json/link/embedded", filename: "metadata.json", mode: "link",
-		metadata: graphLinkWorkspaceMetadata, embedded: true,
+		name: "metadata.json/link/embedded", filename: "metadata.json",
+		metadata: graphLinkWorkspaceMetadata, embedded: true, marker: true,
+		refusal: graphModeRefusal("link"),
 	})
 	for _, filename := range []string{"metadata.json", "config.json"} {
 		for _, mode := range []string{"link", "future-format"} {
 			fixtures = append(fixtures, graphModeAdmissionFixture{
-				name: filename + "/" + mode + "/server", filename: filename, mode: mode,
+				name: filename + "/" + mode + "/server", filename: filename,
 				metadata: `{"backend":"dolt","dolt_mode":"server","graph_mode":"` + mode + `"}`,
+				refusal:  graphModeRefusal(mode),
 			})
 		}
 	}
+	// Only the format marker declares these: graph init stopped before
+	// metadata.json, metadata.json was lost, or a bd that predates
+	// graph_mode rewrote it without the field.
+	markerRefusal := []string{"graph-preview-format", "restore metadata.json"}
+	fixtures = append(fixtures,
+		graphModeAdmissionFixture{
+			name: "marker/only", marker: true,
+			refusal: markerRefusal,
+		},
+		graphModeAdmissionFixture{
+			name: "marker/metadata-lost/embedded", embedded: true, marker: true,
+			refusal: markerRefusal,
+		},
+		graphModeAdmissionFixture{
+			name: "marker/metadata-stripped/embedded", filename: "metadata.json",
+			metadata: graphStrippedWorkspaceMetadata, embedded: true, marker: true,
+			refusal: markerRefusal,
+		},
+		graphModeAdmissionFixture{
+			name: "marker/dependency/server", filename: "metadata.json",
+			metadata: `{"backend":"dolt","dolt_mode":"server","graph_mode":"dependency"}`, marker: true,
+			refusal: markerRefusal,
+		},
+	)
 	return fixtures
 }
 
@@ -73,7 +116,11 @@ func runGraphModeAdmissionBD(t *testing.T, bd, repoDir string, args ...string) (
 // added to bd's environment.
 func runGraphModeAdmissionBDEnv(t *testing.T, bd, dir string, env []string, args ...string) (string, int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// A refused run takes well under a second. An unrefused one (what these
+	// tests catch) goes on to create or open a database, which under load
+	// can approach 10s; the bound leaves room for it to fail on the
+	// assertion that names the regression rather than on the timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bd, args...)
 	cmd.Dir = dir
@@ -111,7 +158,7 @@ func requireGraphModeRefusal(t *testing.T, fixture graphModeAdmissionFixture, ar
 	}
 	// --json renders the refusal as a JSON error, which escapes the quotes
 	// around the mode, so match its parts.
-	for _, want := range []string{"graph_mode", fixture.mode, "this bd build does not support", "use a bd build that supports graph_mode"} {
+	for _, want := range append([]string{"this bd build does not support"}, fixture.refusal...) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("bd %s refusal does not mention %q:\n%s", strings.Join(args, " "), want, output)
 		}
@@ -131,13 +178,18 @@ func TestGraphModeCLIRefusesLegacyStoreWithoutWorkspaceEffects(t *testing.T) {
 		{"dolt", "start"},
 		{"doctor", "--json"},
 		{"bootstrap", "--dry-run", "--yes"},
+		{"init", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents"},
 		{"init", "--force", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents"},
 		// What the installed git hooks run; their shim passes exit 16 on.
 		{"hooks", "run", "pre-commit"},
 	}
 	for _, fixture := range graphModeAdmissionFixtures() {
 		for _, args := range commands {
-			t.Run(fixture.name+"/"+args[0], func(t *testing.T) {
+			name := args[0]
+			if name == "init" && args[1] == "--force" {
+				name = "init-force"
+			}
+			t.Run(fixture.name+"/"+name, func(t *testing.T) {
 				repoDir := t.TempDir()
 				initGitRepoAt(t, repoDir)
 				beadsDir := filepath.Join(repoDir, ".beads")
@@ -149,8 +201,10 @@ func TestGraphModeCLIRefusesLegacyStoreWithoutWorkspaceEffects(t *testing.T) {
 				if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
 					t.Fatalf("refused bd %s changed the workspace\n%s", strings.Join(args, " "), output)
 				}
-				if got, err := os.ReadFile(metadataPath); err != nil || string(got) != fixture.metadata {
-					t.Fatalf("refused bd %s rewrote %s: %q, %v", strings.Join(args, " "), fixture.filename, got, err)
+				if metadataPath != "" {
+					if got, err := os.ReadFile(metadataPath); err != nil || string(got) != fixture.metadata {
+						t.Fatalf("refused bd %s rewrote %s: %q, %v", strings.Join(args, " "), fixture.filename, got, err)
+					}
 				}
 			})
 		}
@@ -160,7 +214,8 @@ func TestGraphModeCLIRefusesLegacyStoreWithoutWorkspaceEffects(t *testing.T) {
 // Commands also reach a workspace they do not run in: create --repo, from
 // another workspace or from none and as a dry run, --db and BEADS_DB,
 // init --proxied-server, and bootstrap in a workspace with no metadata of its
-// own, which takes the nearest ancestor's. Each must refuse a graph workspace
+// own, which takes the nearest ancestor's (and refuses a graph ancestor even
+// when only its format marker declares it, rather than skip past it). Each must refuse a graph workspace
 // the same way, before resolving it migrates a legacy config.json or anything
 // opens its store.
 func TestGraphModeOutsideEntryPointsRefuseWithoutWorkspaceEffects(t *testing.T) {
@@ -216,10 +271,12 @@ func TestGraphModeOutsideEntryPointsRefuseWithoutWorkspaceEffects(t *testing.T) 
 				output, code := runGraphModeAdmissionBDEnv(t, bd, dir, env, args...)
 				requireGraphModeRefusal(t, fixture, args, output, code)
 				if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
-					t.Fatalf("refused bd %s changed the workspace\n%s", strings.Join(args, " "), output)
+					t.Fatalf("bd %s changed the graph workspace\n%s", strings.Join(args, " "), output)
 				}
-				if got, err := os.ReadFile(metadataPath); err != nil || string(got) != fixture.metadata {
-					t.Fatalf("refused bd %s rewrote %s: %q, %v", strings.Join(args, " "), fixture.filename, got, err)
+				if metadataPath != "" {
+					if got, err := os.ReadFile(metadataPath); err != nil || string(got) != fixture.metadata {
+						t.Fatalf("refused bd %s rewrote %s: %q, %v", strings.Join(args, " "), fixture.filename, got, err)
+					}
 				}
 			})
 		}
@@ -230,30 +287,40 @@ func TestGraphModeOutsideEntryPointsRefuseWithoutWorkspaceEffects(t *testing.T) 
 // refuses, and leave it untouched.
 func TestGraphModeWorkspaceAdmitsStorelessCommands(t *testing.T) {
 	bd := buildBDUnderTest(t)
-	fixture := graphModeAdmissionFixtures()[0]
-	for _, args := range [][]string{
-		{"version"},
-		{"--version"},
-		{"help"},
-		{"completion", "bash"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			repoDir := t.TempDir()
-			initGitRepoAt(t, repoDir)
-			beadsDir := filepath.Join(repoDir, ".beads")
-			fixture.write(t, beadsDir)
-			before := legacyUpgradeTreeDigest(t, beadsDir)
+	var fixtures []graphModeAdmissionFixture
+	for _, fixture := range graphModeAdmissionFixtures() {
+		if fixture.name == "metadata.json/link/embedded" || fixture.name == "marker/only" {
+			fixtures = append(fixtures, fixture)
+		}
+	}
+	if len(fixtures) != 2 {
+		t.Fatalf("store-less fixtures = %d, want 2", len(fixtures))
+	}
+	for _, fixture := range fixtures {
+		for _, args := range [][]string{
+			{"version"},
+			{"--version"},
+			{"help"},
+			{"completion", "bash"},
+		} {
+			t.Run(fixture.name+"/"+strings.Join(args, " "), func(t *testing.T) {
+				repoDir := t.TempDir()
+				initGitRepoAt(t, repoDir)
+				beadsDir := filepath.Join(repoDir, ".beads")
+				fixture.write(t, beadsDir)
+				before := legacyUpgradeTreeDigest(t, beadsDir)
 
-			output, code := runGraphModeAdmissionBD(t, bd, repoDir, args...)
-			if code != 0 {
-				t.Fatalf("bd %s exit = %d, want 0\n%s", strings.Join(args, " "), code, output)
-			}
-			if strings.Contains(output, "graph_mode") {
-				t.Fatalf("store-less bd %s reported the workspace format:\n%s", strings.Join(args, " "), output)
-			}
-			if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
-				t.Fatalf("bd %s changed the workspace", strings.Join(args, " "))
-			}
-		})
+				output, code := runGraphModeAdmissionBD(t, bd, repoDir, args...)
+				if code != 0 {
+					t.Fatalf("bd %s exit = %d, want 0\n%s", strings.Join(args, " "), code, output)
+				}
+				if strings.Contains(output, "this bd build does not support") {
+					t.Fatalf("store-less bd %s reported the workspace format:\n%s", strings.Join(args, " "), output)
+				}
+				if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
+					t.Fatalf("bd %s changed the workspace", strings.Join(args, " "))
+				}
+			})
+		}
 	}
 }
