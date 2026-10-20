@@ -798,7 +798,15 @@ func TestProxy_LockHeld_ReturnsSentinel(t *testing.T) {
 	assertNoPidFile(t, root)
 }
 
-func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
+// TestProxy_TraceLog_NoPerConnectionLinesByDefault pins the default
+// proxy.log contract (#7527): the six per-connection trace lines are the
+// bulk of proxy.log's growth and are written only when
+// ProxyOpts.TraceConnections is set (db-proxy-child wires it from BD_DEBUG).
+// Lifecycle and idle-watcher lines still appear by default.
+func TestProxy_TraceLog_NoPerConnectionLinesByDefault(t *testing.T) {
+	if os.Getenv("BD_DEBUG") != "" {
+		t.Skip("BD_DEBUG set: per-connection lines are expected")
+	}
 	t.Parallel()
 
 	ts := server.New()
@@ -807,15 +815,12 @@ func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
 	root := t.TempDir()
 
 	const idle = 2 * time.Second
-	const tickSlack = 1200 * time.Millisecond
 	h := runProxy(t, proxy.ProxyOpts{
 		RootDir: root, Port: port,
 		IdleTimeout: idle,
 		Server:      ts, Stats: stats,
 	})
 	waitListening(t, root, listenWait)
-
-	time.Sleep(tickSlack)
 
 	conn := dialProxy(t, port)
 	_, err := conn.Write([]byte("ping"))
@@ -824,9 +829,6 @@ func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
 	_, err = io.ReadFull(conn, buf)
 	require.NoError(t, err)
 	require.Equal(t, "ping", string(buf))
-
-	time.Sleep(tickSlack)
-
 	require.NoError(t, conn.Close())
 
 	require.NoError(t, h.waitErr(t, 3*idle))
@@ -837,17 +839,19 @@ func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
 
 	for _, want := range []string{
 		"acceptLoop start",
-		"acceptLoop accepted",
+		"acceptLoop exit",
 		"idleWatcher start",
-		"idleWatcher armed",
-		"idleWatcher cleared",
 		"idleWatcher expired",
+	} {
+		assert.Contains(t, text, want, "log missing %q", want)
+	}
+	for _, unwanted := range []string{
+		"acceptLoop accepted",
 		"handleConn(",
 		"backend dial ok",
 		"client→backend done",
 		"backend→client done",
-		"acceptLoop exit",
 	} {
-		assert.Contains(t, text, want, "log missing %q", want)
+		assert.NotContains(t, text, unwanted, "default proxy.log has per-connection line %q", unwanted)
 	}
 }
