@@ -19,15 +19,17 @@ package scripts_test
 // closed." (gastownhall/beads#6076, fixed by gastownhall/beads#6077.)
 //
 // bd reaches that state on its ordinary paths, which is why this is a policy
-// and not a one-off fix. bd db-proxy-child is deliberately spawned with
-// DETACHED_PROCESS (internal/storage/dbproxy/proxy/endpoint_windows.go), so it
-// has no console; every console child it then starts would pop a window. The
-// detached sql-server internal/doltserver starts has the same problem, and so
-// does any probe run from inside a detached child. A spawn site is therefore
-// not wrong because of WHICH tool it runs -- dolt, git, powershell, netstat, or
-// a path held in a variable -- but because of WHERE it runs, so unlike the
-// host-tool policy beside this file the scan is deliberately name-agnostic: no
-// tool name earns an exemption.
+// and not a one-off fix. bd itself often has no console (an MCP server, an
+// agent harness with redirected stdio), and every console child it then
+// starts would pop a window; so would anything below a child that was given no
+// console. That is why the long-lived children -- bd db-proxy-child and the
+// dolt sql-servers -- get CREATE_NO_WINDOW rather than DETACHED_PROCESS: a
+// hidden console is inherited by their own children (dolt runs `uname` on
+// every start), while no console makes each of them open one. A spawn site is
+// therefore not wrong because of WHICH tool it runs -- dolt, git, powershell,
+// netstat, or a path held in a variable -- but because of WHERE it runs, so
+// unlike the host-tool policy beside this file the scan is deliberately
+// name-agnostic: no tool name earns an exemption.
 //
 // Scope: the non-test .go files of the packages that spawn from a context which
 // may have no console -- internal/doltserver, internal/doltversion and
@@ -48,9 +50,10 @@ package scripts_test
 //     (internal/execwin) that ORs in CREATE_NO_WINDOW on Windows and is a
 //     strict no-op elsewhere; or
 //   - its enclosing function assigns SysProcAttr on some command, which is how
-//     the long-lived children state their flags explicitly (DETACHED_PROCESS
-//     for the proxy child and the managed sql-server, procAttrDetached for the
-//     shared server); or
+//     the long-lived children state their flags explicitly (CREATE_NO_WINDOW
+//     with CREATE_NEW_PROCESS_GROUP for the proxy child, the managed
+//     sql-server and the shared server; each has a Windows test pinning that
+//     it is not DETACHED_PROCESS); or
 //   - it is in consoleSpawnAllowlist below, each entry naming the reason the
 //     two rules above cannot see.
 //
