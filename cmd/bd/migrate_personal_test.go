@@ -512,3 +512,85 @@ func TestEmbeddedMigratePersonal_refusesPlanningRepoWithoutDatabase(t *testing.T
 		t.Errorf("planning repo databases = %v after a refused migrate-personal, want none", got)
 	}
 }
+
+// TestEmbeddedMigratePersonal_refusesIssueAlreadyInPlanningRepo verifies that
+// an issue ID that already exists in the planning repo is refused before
+// anything moves. Without the refusal the copy upserts onto the planning repo's
+// row, overwriting it, and the project's copy is then deleted.
+func TestEmbeddedMigratePersonal_refusesIssueAlreadyInPlanningRepo(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpc")
+	planningDir := setupContributorRouting(t, bd, dir)
+
+	personal := bdCreate(t, bd, dir, "Project personal version")
+	const planningTitle = "Planning repo ORIGINAL row"
+	bdCreate(t, bd, planningDir, planningTitle, "--id", personal.ID, "--force")
+
+	requireMigratePersonalRefused(t, bd, dir, "already exists in the planning repo")
+	requireStillInProject(t, beadsDir, "mpc", personal.ID)
+	planningBeadsDir := filepath.Join(planningDir, ".beads")
+	kept, err := openStore(t, planningBeadsDir, migratePersonalPlanningDatabase).GetIssue(t.Context(), personal.ID)
+	if err != nil {
+		t.Fatalf("planning repo's own issue %s gone after a refused migrate-personal: %v", personal.ID, err)
+	}
+	if kept.Title != planningTitle {
+		t.Errorf("planning issue %s title = %q after a refused migrate-personal, want unchanged %q", personal.ID, kept.Title, planningTitle)
+	}
+}
+
+// TestEmbeddedMigratePersonal_abortLeavesLegacyPlanningConfig verifies that an
+// aborted run does not rewrite a planning repo that still has a legacy
+// config.json: the self-routing check runs before the prompt and must read the
+// workspace without migrating its metadata.
+func TestEmbeddedMigratePersonal_abortLeavesLegacyPlanningConfig(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpl")
+	planningDir := t.TempDir()
+	planningBeadsDir := filepath.Join(planningDir, ".beads")
+	if err := os.MkdirAll(planningBeadsDir, 0o750); err != nil {
+		t.Fatalf("create planning .beads: %v", err)
+	}
+	legacyPath := filepath.Join(planningBeadsDir, "config.json")
+	legacy := []byte(`{"database":"beads.db"}`)
+	if err := os.WriteFile(legacyPath, legacy, 0o600); err != nil {
+		t.Fatalf("write legacy planning config.json: %v", err)
+	}
+	if out, err := bdRunWithFlockRetry(t, bd, dir, "config", "set", "routing.contributor", planningDir); err != nil {
+		t.Fatalf("bd config set routing.contributor: %v\n%s", err, out)
+	}
+	personal := bdCreate(t, bd, dir, "Personal issue for a legacy planning repo")
+
+	cmd := exec.Command(bd, "migrate-personal")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	cmd.Stdin = strings.NewReader("n\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bd migrate-personal (answer n) failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Aborted") {
+		t.Errorf("bd migrate-personal (answer n) did not abort:\n%s", out)
+	}
+
+	got, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("legacy planning config.json gone after an aborted migrate-personal: %v", err)
+	}
+	if string(got) != string(legacy) {
+		t.Errorf("legacy planning config.json = %s after an aborted migrate-personal, want unchanged %s", got, legacy)
+	}
+	if _, err := os.Stat(filepath.Join(planningBeadsDir, "metadata.json")); !os.IsNotExist(err) {
+		t.Errorf("planning metadata.json written by an aborted migrate-personal: stat err = %v, want not exist", err)
+	}
+	requireStillInProject(t, beadsDir, "mpl", personal.ID)
+}

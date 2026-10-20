@@ -74,8 +74,12 @@ func refuseSelfPlanningRepo(planningPath, planningBeadsDir, projectBeadsDir stri
 	project := utils.CanonicalizePath(beads.FollowRedirect(projectBeadsDir))
 	same := planning == project
 	if !same {
-		planningCfg, perr := configfile.Load(planning)
-		projectCfg, qerr := configfile.Load(project)
+		// LoadForDiscovery, not Load: Load migrates a legacy config.json to
+		// metadata.json, and this check runs before the confirmation prompt
+		// and before any format admission, so it must not rewrite either
+		// workspace.
+		planningCfg, perr := configfile.LoadForDiscovery(planning)
+		projectCfg, qerr := configfile.LoadForDiscovery(project)
 		same = perr == nil && qerr == nil && planningCfg != nil && projectCfg != nil &&
 			planningCfg.ProjectID != "" && planningCfg.ProjectID == projectCfg.ProjectID
 	}
@@ -199,12 +203,6 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = planningStore.Close() }()
 
-	// Phase 1: Copy everything to the planning DB before touching the project
-	// DB. The copy is all-or-error — any failed step rolls back the planning-DB
-	// rows we created and aborts without deleting anything from the project DB,
-	// so a partial copy can never be mistaken for success and lose data
-	// (maphew review, be-e2nb).
-	//
 	// Phase 0: refuse when any issue ID is already in the planning DB. A create
 	// can upsert onto an existing row, and the rollback below would then delete
 	// a row this migration did not create; if the planning store were somehow
@@ -220,6 +218,12 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Phase 1: Copy everything to the planning DB before touching the project
+	// DB. The copy is all-or-error — any failed step rolls back the planning-DB
+	// rows we created and aborts without deleting anything from the project DB,
+	// so a partial copy can never be mistaken for success and lose data
+	// (maphew review, be-e2nb).
+	//
 	// Phase 1a: create every issue row first, so same-prefix dependencies
 	// between two migrated issues resolve in phase 1b regardless of copy order.
 	var created []string

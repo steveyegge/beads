@@ -842,10 +842,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialized the way a routed `bd create` initializes it. A planning repo
   whose `metadata.json` has no `dolt_database`, or whose database has not been
   bootstrapped, is refused before anything moves. So is a planning repo that
-  is the project's own workspace (for example `routing.contributor: .`),
-  which used to delete the issues while reporting them moved once the open
-  succeeded. An issue ID already present in the planning repo is also
-  refused rather than overwritten.
+  is the project's own workspace (for example `routing.contributor: .`).
+  In server mode, when the planning open resolved to the project's own
+  database (`dolt_database` "beads", or `BEADS_DOLT_SERVER_DATABASE` naming
+  it), that used to delete the issues while reporting them moved. An issue
+  ID already present in the planning repo is also refused rather than
+  overwritten.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the

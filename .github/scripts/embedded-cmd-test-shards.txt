@@ -55,6 +55,7 @@
 100 15 TestEmbeddedPurgeWispsPlaneRetention
 
 100 16 TestEmbeddedMemoryConcurrent
+100 16 TestEmbeddedMigratePersonal_refusesIssueAlreadyInPlanningRepo
 
 100 17 TestEmbeddedEventsTailFollowExitsOnStdinEOF
 100 17 TestEmbeddedMigratePersonal_planningDatabaseIgnoresLauncherOverride
@@ -226,6 +227,7 @@
 100 58 TestEmbeddedDepAAddRejectionsAndBulk
 100 58 TestEmbeddedDoctorUnsupportedProse
 100 58 TestEmbeddedIfRevisionCascadeDelete
+100 58 TestEmbeddedMigratePersonal_abortLeavesLegacyPlanningConfig
 100 58 TestEmbeddedVersionedHistorySwitchRefusesAnUnrecordableGateTimeout
 
 100 59 TestEmbeddedDeferAutoWake
