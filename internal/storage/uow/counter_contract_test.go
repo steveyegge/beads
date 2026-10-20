@@ -2,6 +2,7 @@ package uow
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/steveyegge/beads/backend/conformance"
@@ -204,5 +205,153 @@ func TestCounterExcludeStatusAcceptsAWorkspaceCustomStatusWithoutIncludeInfra(t 
 	}
 	if result.Total != 1 {
 		t.Fatalf("Count(exclude-status=review).Total = %d, want 1", result.Total)
+	}
+}
+
+// TestCounterInfraTypeCountMatchesList pins GH#6258 end to end on the
+// unit-of-work leg — the body behind proxied and served counts. The embedded
+// leg's twin (embeddeddolt/counter_contract_test.go) carries the full
+// commentary; this one proves the same facts through countFilter's config
+// load: with types.infra=robot, a plain typed count must recognize "robot" as
+// infra (workapi.CountNeedsConfig) and count the same rows the reader lists
+// for that type, through both Count and CountByGroup.
+//
+// Its own provider, like the ExcludeStatus test above: types.custom and
+// types.infra are workspace-global, so they must not leak into the suite
+// sharing newUOWCounterFixture's one database.
+func TestCounterInfraTypeCountMatchesList(t *testing.T) {
+	ctx := context.Background()
+	provider := newUOWRoleFixtureProvider(t, ctx, "cntinf")
+
+	if err := RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+		if err := uw.ConfigUseCase().SetConfig(ctx, "types.custom", "robot,agent"); err != nil {
+			return "", err
+		}
+		return "set types.infra", uw.ConfigUseCase().SetConfig(ctx, "types.infra", "robot")
+	}); err != nil {
+		t.Fatalf("SetConfig(types): %v", err)
+	}
+
+	// Two robot wisps (the plane a listing of an infra type reads), one durable
+	// task retyped to robot after creation (update does not run create-time
+	// routing), and one durable agent (not infra in this workspace).
+	seed := func(wisp bool, id string, issueType types.IssueType) error {
+		return RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+			issue := &types.Issue{
+				ID: id, Title: id, Status: types.StatusOpen, Priority: 2, IssueType: issueType,
+				Ephemeral: wisp,
+			}
+			params := domain.CreateIssueParams{Issue: issue, ExplicitID: id, CreateOnly: true}
+			var err error
+			if wisp {
+				_, err = uw.IssueUseCase().CreateWisp(ctx, params, "tester")
+			} else {
+				_, err = uw.IssueUseCase().CreateIssue(ctx, params, "tester")
+			}
+			return "seed " + id, err
+		})
+	}
+	for _, w := range []struct {
+		id        string
+		issueType types.IssueType
+		wisp      bool
+	}{
+		{"cntinf-r1", "robot", true},
+		{"cntinf-r2", "robot", true},
+		{"cntinf-r3", types.TypeTask, false},
+		{"cntinf-a1", "agent", false},
+	} {
+		if err := seed(w.wisp, w.id, w.issueType); err != nil {
+			t.Fatalf("seed(%s): %v", w.id, err)
+		}
+	}
+	if err := RunTx(ctx, provider, func(ctx context.Context, uw UnitOfWork) (string, error) {
+		return "retype to robot", uw.IssueUseCase().UpdateIssue(ctx, "cntinf-r3", map[string]any{
+			"issue_type": "robot",
+		}, "tester")
+	}); err != nil {
+		t.Fatalf("UpdateIssue(cntinf-r3) to robot: %v", err)
+	}
+
+	source, ok := provider.(CounterSource)
+	if !ok {
+		t.Fatalf("provider %T does not offer the Counter accessor", provider)
+	}
+	counter, err := source.Counter()
+	if err != nil {
+		t.Fatalf("Counter(): %v", err)
+	}
+	readerSource, ok := provider.(IssueReaderSource)
+	if !ok {
+		t.Fatalf("provider %T does not offer the IssueReader accessor", provider)
+	}
+	reader, err := readerSource.IssueReader()
+	if err != nil {
+		t.Fatalf("IssueReader(): %v", err)
+	}
+
+	const scope = "cntinf-r1,cntinf-r2,cntinf-r3,cntinf-a1"
+	for _, tt := range []struct {
+		issueType string
+		ephemeral bool
+		infra     bool
+		want      int64
+	}{
+		{"robot", false, false, 2},
+		{"robot", true, false, 3},
+		{"robot", false, true, 2},
+		{"robot", true, true, 3},
+		{"agent", false, false, 1},
+		{"agent", true, false, 1},
+		{"agent", false, true, 1},
+		{"agent", true, true, 1},
+	} {
+		name := fmt.Sprintf("%s/ephemeral=%v/infra=%v", tt.issueType, tt.ephemeral, tt.infra)
+		t.Run(name, func(t *testing.T) {
+			countReq := publicops.CountRequest{
+				IssueType: tt.issueType, IncludeEphemeral: tt.ephemeral, IncludeInfra: tt.infra, IDFilter: scope,
+			}
+			result, err := counter.Count(ctx, countReq)
+			if err != nil {
+				t.Fatalf("Count(%s): %v", name, err)
+			}
+			page, err := reader.List(ctx, publicops.ListRequest{
+				IssueType: tt.issueType, IncludeEphemeral: tt.ephemeral, IncludeInfra: tt.infra,
+				AllFlag: true, IncludeTemplates: true, IDFilter: scope,
+			})
+			if err != nil {
+				t.Fatalf("List(%s): %v", name, err)
+			}
+			if result.Total != int64(len(page.Items)) {
+				t.Errorf("Count(%s) = %d, len(List(%s)) = %d, want equal",
+					name, result.Total, name, len(page.Items))
+			}
+			if result.Total != tt.want {
+				t.Errorf("Count(%s) = %d, want %d", name, result.Total, tt.want)
+			}
+
+			grouped, err := counter.CountByGroup(ctx, publicops.CountByGroupRequest{
+				Filter: countReq, GroupBy: publicops.CountGroupStatus,
+			})
+			if err != nil {
+				t.Fatalf("CountByGroup(%s): %v", name, err)
+			}
+			if grouped.Total != result.Total {
+				t.Errorf("CountByGroup(%s).Total = %d, want the scalar %d", name, grouped.Total, result.Total)
+			}
+			if grouped.Total != int64(len(page.Items)) {
+				t.Errorf("CountByGroup(%s).Total = %d, want len(List(%s)) = %d", name, grouped.Total, name, len(page.Items))
+			}
+		})
+	}
+
+	// The untyped count keeps its durable-plane answer: the retyped robot and
+	// the durable agent.
+	untyped, err := counter.Count(ctx, publicops.CountRequest{IDFilter: scope})
+	if err != nil {
+		t.Fatalf("Count(untyped): %v", err)
+	}
+	if untyped.Total != 2 {
+		t.Errorf("Count(untyped) = %d, want 2 (the durable rows only)", untyped.Total)
 	}
 }
