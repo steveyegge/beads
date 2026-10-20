@@ -854,3 +854,66 @@ func TestProxy_TraceLog_ConnectionEventsWhenTracing(t *testing.T) {
 		assert.Contains(t, text, want, "log missing %q", want)
 	}
 }
+
+// bd-pdwxc6 / #7527: by default proxy.log gets lifecycle lines only. The
+// per-connection lines are written once per client connection, and every bd
+// command opens connections through the proxy, so they grew proxy.log without
+// bound. A backend dial failure still logs by default; see
+// TestProxy_BackendDialFailureHasStableDiagnosticAndNoFallbackFiles.
+func TestProxy_TraceLog_NoPerConnectionLinesByDefault(t *testing.T) {
+	t.Parallel()
+
+	ts := server.New()
+	stats := &proxy.Stats{}
+	port := freeTCPPort(t)
+	root := t.TempDir()
+
+	const idle = 2 * time.Second
+	const tickSlack = 1200 * time.Millisecond
+	h := runProxy(t, proxy.ProxyOpts{
+		RootDir: root, Port: port,
+		IdleTimeout: idle,
+		Server:      ts, Stats: stats,
+	})
+	waitListening(t, root, listenWait)
+
+	time.Sleep(tickSlack)
+
+	conn := dialProxy(t, port)
+	_, err := conn.Write([]byte("ping"))
+	require.NoError(t, err)
+	buf := make([]byte, 4)
+	_, err = io.ReadFull(conn, buf)
+	require.NoError(t, err)
+	require.Equal(t, "ping", string(buf))
+
+	time.Sleep(tickSlack)
+
+	require.NoError(t, conn.Close())
+
+	require.NoError(t, h.waitErr(t, 3*idle))
+
+	body, err := os.ReadFile(filepath.Join(root, proxy.LogFileName))
+	require.NoError(t, err)
+	text := string(body)
+
+	for _, want := range []string{
+		"acceptLoop start",
+		"idleWatcher start",
+		"idleWatcher armed",
+		"idleWatcher cleared",
+		"idleWatcher expired",
+		"acceptLoop exit",
+	} {
+		assert.Contains(t, text, want, "log missing %q", want)
+	}
+	for _, unwanted := range []string{
+		"acceptLoop accepted",
+		"handleConn(",
+		"backend dial ok",
+		"client→backend done",
+		"backend→client done",
+	} {
+		assert.NotContains(t, text, unwanted, "default proxy.log has per-connection line %q", unwanted)
+	}
+}
