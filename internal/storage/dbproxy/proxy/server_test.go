@@ -798,7 +798,9 @@ func TestProxy_LockHeld_ReturnsSentinel(t *testing.T) {
 	assertNoPidFile(t, root)
 }
 
-func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
+// TraceConnections (what db-proxy-child sets under BD_DEBUG) adds the
+// per-connection lines to the lifecycle lines.
+func TestProxy_TraceLog_ConnectionEventsWhenTracing(t *testing.T) {
 	t.Parallel()
 
 	ts := server.New()
@@ -812,6 +814,7 @@ func TestProxy_TraceLog_LifecycleEvents(t *testing.T) {
 		RootDir: root, Port: port,
 		IdleTimeout: idle,
 		Server:      ts, Stats: stats,
+		TraceConnections: true,
 	})
 	waitListening(t, root, listenWait)
 

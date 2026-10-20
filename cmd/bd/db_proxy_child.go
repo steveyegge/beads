@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/server"
 )
@@ -66,6 +67,9 @@ not intended to be invoked directly by users.`,
 			IdleTimeout: dbProxyChildIdleTimeout,
 			Server:      srv,
 			StopEpoch:   dbProxyChildStopEpoch,
+			// The child inherits BD_DEBUG from the spawning bd; its
+			// PersistentPreRun is a no-op, so --verbose never reaches it.
+			TraceConnections: debug.Enabled(),
 		})
 		if err := p.ListenAndServe(cmd.Context()); err != nil {
 			if errors.Is(err, proxy.ErrLockHeld) {
