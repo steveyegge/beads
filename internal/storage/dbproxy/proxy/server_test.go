@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/procid"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/identity"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/pidfile"
@@ -856,6 +857,55 @@ func TestProxy_TraceLog_ConnectionEventsWhenTracing(t *testing.T) {
 	} {
 		assert.Contains(t, text, want, "log missing %q", want)
 	}
+}
+
+// waitProxyLogLine polls proxy.log until it contains needle, failing the
+// test at the deadline.
+func waitProxyLogLine(t *testing.T, path, needle string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		body, err := os.ReadFile(path)
+		if err == nil && bytes.Contains(body, []byte(needle)) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s did not contain %q within %s", path, needle, timeout)
+}
+
+// TestProxy_RotatesOversizedProxyLog pins the ListenAndServe rotation call:
+// an oversized proxy.log is renamed to proxy.log.1 before the proxy opens
+// the file, so new lines go to a fresh primary (#7527).
+func TestProxy_RotatesOversizedProxyLog(t *testing.T) {
+	// Not parallel: t.Setenv(BEADS_DOLT_LOG_MAX_BYTES).
+	t.Setenv(doltserver.EnvMaxLogBytes, "1024")
+	ts := server.New()
+	stats := &proxy.Stats{}
+	port := freeTCPPort(t)
+	root := t.TempDir()
+
+	proxyLog := filepath.Join(root, proxy.LogFileName)
+	oversized := bytes.Repeat([]byte("old-proxy-log-marker\n"), 200) // 4.2 KB > 1024
+	require.NoError(t, os.WriteFile(proxyLog, oversized, 0o600))
+
+	h := runProxy(t, proxy.ProxyOpts{
+		RootDir: root, Port: port,
+		IdleTimeout: 2 * time.Second,
+		Server:      ts, Stats: stats,
+	})
+	waitListening(t, root, listenWait)
+	waitProxyLogLine(t, proxyLog, "acceptLoop start", listenWait)
+	h.Cancel()
+
+	rotated, err := os.ReadFile(proxyLog + ".1")
+	require.NoError(t, err, "oversized proxy.log should have been rotated to proxy.log.1")
+	assert.Contains(t, string(rotated), "old-proxy-log-marker")
+
+	body, err := os.ReadFile(proxyLog)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "old-proxy-log-marker", "new lines must go to a fresh primary")
+	assert.Contains(t, string(body), "acceptLoop start")
 }
 
 // TestProxy_TraceLog_NoPerConnectionLinesByDefault pins the default

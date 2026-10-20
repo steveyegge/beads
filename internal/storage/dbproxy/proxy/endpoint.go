@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/atomicfile"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/fdhygiene"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/procid"
@@ -477,6 +478,17 @@ func forkExecChild(rootDir string, opts OpenOpts, port int, stopEpoch string, lo
 		if ext.KeepAlivePeriod != 0 {
 			args = append(args, "--external-keep-alive", ext.KeepAlivePeriod.String())
 		}
+	}
+
+	// Rotate both proxied logs while proxy.lock is still held and before
+	// either file is opened: the previous proxy has released the lock, so
+	// no writer can be racing the rename. Best effort — a rotation failure
+	// must not block the spawn; the caller opens the unrotated file anyway.
+	// This mirrors the startup rotation embedded mode applies to
+	// dolt-server.log (#7527).
+	doltserver.MaybeRotateLogFile(filepath.Join(rootDir, LogFileName))
+	if opts.LogFilePath != "" {
+		doltserver.MaybeRotateLogFile(opts.LogFilePath)
 	}
 
 	logFile, err := os.OpenFile(opts.LogFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: logFilePath is caller-derived (workspace path), not user-request input

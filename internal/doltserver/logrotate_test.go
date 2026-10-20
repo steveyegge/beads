@@ -204,6 +204,52 @@ func TestMaybeRotateLog_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestMaybeRotateLogFile_RotatesNamedPath covers the exported wrapper that
+// proxied mode applies to proxy.log and server.log: an arbitrary path (not
+// just logPath(beadsDir)), the BEADS_DOLT_LOG_MAX_BYTES ceiling, rename to
+// .1 clobbering any existing .1, and a fresh primary for new writes.
+func TestMaybeRotateLogFile_RotatesNamedPath(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "proxy.log")
+	t.Setenv(EnvMaxLogBytes, "1024")
+
+	// A prior .1 from an earlier cycle must be clobbered by the rename.
+	writeFileSize(t, primary+".1", 300, 'X')
+	writeFileSize(t, primary, 4096, 'A')
+
+	MaybeRotateLogFile(primary)
+
+	if _, err := os.Stat(primary); !os.IsNotExist(err) {
+		t.Fatalf("expected primary rotated away, got err=%v", err)
+	}
+	data, err := os.ReadFile(primary + ".1")
+	if err != nil {
+		t.Fatalf("reading rotated: %v", err)
+	}
+	if len(data) != 4096 || data[0] != 'A' {
+		t.Fatalf("rotated = %d bytes starting %q, want 4096 of 'A' (old .1 clobbered)", len(data), data[0])
+	}
+
+	// A fresh primary is what new lines go to.
+	f, err := os.OpenFile(primary, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("recreating primary: %v", err)
+	}
+	if _, err := f.WriteString("new-line\n"); err != nil {
+		t.Fatalf("writing fresh primary: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing fresh primary: %v", err)
+	}
+	fresh, err := os.ReadFile(primary)
+	if err != nil {
+		t.Fatalf("reading fresh primary: %v", err)
+	}
+	if string(fresh) != "new-line\n" {
+		t.Fatalf("fresh primary = %q, want only the new line", fresh)
+	}
+}
+
 // TestMaxLogBytes_EnvOverride verifies the env-var parsing contract: valid
 // ints override the default, invalid values fall back to the default.
 func TestMaxLogBytes_EnvOverride(t *testing.T) {

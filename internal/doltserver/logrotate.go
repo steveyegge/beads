@@ -22,6 +22,12 @@
 // restart. Implementing true runtime rotation would require either
 // (a) a streaming goroutine owning the pipe, or (b) copy-truncate, which
 // races with the child's append writes. Both are out of scope for this fix.
+//
+// Proxied mode applies the same startup rename to .beads/dolt/proxy.log and
+// the dolt child's server.log: forkExecChild (proxy/endpoint.go) calls
+// MaybeRotateLogFile for both while proxy.lock is held and before either
+// file is opened, and ListenAndServe (proxy/server.go) calls it for
+// proxy.log immediately before opening that file itself.
 
 package doltserver
 
@@ -100,12 +106,16 @@ func rotateLogIfOversized(primary string, maxBytes int64) (bool, error) {
 	return true, nil
 }
 
-// maybeRotateLog is the convenience wrapper used by Start(). It rotates the
-// dolt-server log if it is oversized and emits a debug message on both
-// rotation and error paths. It never returns an error — rotation is
-// best-effort and must not block server startup.
-func maybeRotateLog(beadsDir string) {
-	primary := logPath(beadsDir)
+// MaybeRotateLogFile applies the startup rotation policy to an arbitrary log
+// path: when the file is strictly larger than the effective ceiling
+// (BEADS_DOLT_LOG_MAX_BYTES, default DefaultMaxLogBytes), it is renamed to
+// <path>.1, overwriting any existing .1, so the caller's subsequent open
+// creates a fresh primary. Embedded Start() uses this for dolt-server.log;
+// proxied mode uses it for proxy.log and server.log. It is best-effort and
+// never returns an error: rotation failures are debug-logged and the caller
+// proceeds with the unrotated file, because running with an oversized log is
+// better than refusing to start.
+func MaybeRotateLogFile(primary string) {
 	max := maxLogBytes()
 	rotated, err := rotateLogIfOversized(primary, max)
 	if err != nil {
@@ -115,4 +125,11 @@ func maybeRotateLog(beadsDir string) {
 	if rotated {
 		debug.Logf("doltserver: rotated %s -> %s (exceeded %d bytes)", primary, rotatedLogPath(primary), max)
 	}
+}
+
+// maybeRotateLog is the convenience wrapper used by embedded Start(). It
+// rotates the dolt-server log if it is oversized; all failures are handled
+// (and debug-logged) by MaybeRotateLogFile.
+func maybeRotateLog(beadsDir string) {
+	MaybeRotateLogFile(logPath(beadsDir))
 }
