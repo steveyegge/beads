@@ -801,6 +801,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ctrl-C while a poll is reading now exits 0 too, instead of failing with
   `reading events journal: context canceled`.
 
+- **A Dolt server whose port is named for it is no longer met with
+  `bd dolt start` advice when it is down.** A port named by
+  `BEADS_DOLT_SERVER_PORT` (or the legacy `BEADS_DOLT_PORT`), by
+  `dolt_server_port` in `metadata.json`, or by `bd init --server-port`
+  declares the server externally managed, so bd never starts one there. Yet
+  every command that could not reach it advised `bd dolt start`, and
+  `bd init` without `--external` printed that advice twice, after an
+  "auto-start failed" for a start it never attempted. `bd dolt start` starts a
+  bd-owned server over `.beads/dolt` on that very port: a different, usually
+  empty database that shadows the real one and holds the port the real server
+  needs. For a server on this machine, every command now gives the message
+  `bd init --external` gives: it
+  names the endpoint it dialed and the setting that declares the server
+  externally managed, and says bd did not start one. That includes
+  `bd dolt test`, `bd dolt clean-databases` and `bd doctor --perf`, and a
+  workspace whose `config.yaml` `dolt.port` chose the port beside a
+  `dolt_server_port` (what `bd dolt set port N --update-config` writes) or
+  beside a `BEADS_DOLT_PORT` that names the same port. It also holds after a
+  command has reached the server once: bd records that port in its port file,
+  which outranks `dolt_server_port`, but only a port file with bd's pid file
+  beside it marks a server bd started. When
+  only the legacy `BEADS_DOLT_PORT` names a port, those three commands and
+  `bd doctor --server` now dial its port, as commands that open the store
+  do, instead of `127.0.0.1:0` or a port left in bd's port file. A shared
+  server, a server bd started (its pid file beside the port file), a server
+  bd manages, an external workspace whose port no setting names, and a remote
+  host keep their advice.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the

@@ -57,8 +57,9 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 		GoVersion: runtime.Version(),
 	}
 
-	// Resolve server config (handles standalone ephemeral ports)
-	dsCfg := doltserver.DefaultConfig(beadsDir)
+	// Resolve server config (handles standalone ephemeral ports and the
+	// legacy BEADS_DOLT_PORT the store dials)
+	dsCfg := doltserver.DialConfig(beadsDir)
 
 	// Check server status
 	doltDir := getDatabasePath(beadsDir)
@@ -69,10 +70,14 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 		metrics.ServerStatus = "not running"
 	}
 
-	// Determine the database name from configuration
+	// Determine the database name and the configured server host. dsCfg.Host
+	// is always 127.0.0.1, so the unreachable advice below must be gated on
+	// the configured host: a remote server keeps the generic advice.
 	dbName := configfile.DefaultDoltDatabase
+	configuredHost := (&configfile.Config{}).GetDoltServerHost()
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
 		dbName = cfg.GetDoltDatabase()
+		configuredHost = cfg.GetDoltServerHost()
 	}
 
 	// Start profiling if requested
@@ -88,6 +93,13 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 
 	// Connect and run diagnostics via server
 	if !serverRunning {
+		advice := ""
+		if configfile.IsLocalHostString(configuredHost) {
+			advice = doltserver.UnreachableEndpointAdvice(beadsDir, dsCfg.Host, dsCfg.Port, dsCfg.PortSource)
+		}
+		if advice != "" {
+			return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d.\n%s", dsCfg.Host, dsCfg.Port, advice)
+		}
 		return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d; start it with 'bd dolt start'", dsCfg.Host, dsCfg.Port)
 	}
 
