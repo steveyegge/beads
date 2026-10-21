@@ -1218,12 +1218,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   current directory's `.claude/settings.json` or `.claude/settings.local.json`
   enabled the plugin, which left every other project without one. Claude Code
   runs a plugin enabled in a project's settings in that project only, so a
-  global install now leaves the hooks to the plugin only when
-  `~/.claude/settings.json` enables it. `--check` likewise treats the hooks of
-  a plugin enabled only in the project's settings as the project's: it judges
-  the project's own `CLAUDE.md`, as it does with project hooks, and names
-  `bd setup claude` rather than `--global` when that file is missing. In a
-  project that enables the plugin, a global install's hook and the plugin's
+  global install now leaves the hooks to the plugin only when managed settings
+  or `~/.claude/settings.json` enable it. `--check` likewise treats the hooks
+  of a plugin enabled only in the project's settings as the project's: it
+  judges the project's own `CLAUDE.md`, as it does with project hooks, and
+  names `bd setup claude` rather than `--global` when that file is missing. In
+  a project that enables the plugin, a global install's hook and the plugin's
   both run `bd prime`. If you ran `bd setup claude --global` from such a
   project before, re-run it to add the hook your other projects are missing.
 - **`bd setup claude` reads the beads plugin's setting the way Claude Code
