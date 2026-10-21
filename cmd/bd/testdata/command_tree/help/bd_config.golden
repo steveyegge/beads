@@ -11,6 +11,7 @@ Common namespaces:
   - gitlab.*          GitLab integration settings
   - ado.*             Azure DevOps integration settings
   - notion.*          Notion integration settings
+  - fizzy.*           Fizzy integration settings
   - custom.*          Custom integration settings
   - status.*          Issue status configuration
   - claim.*           Claim arbitration settings (pool-aware claiming)
