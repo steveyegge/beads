@@ -1200,7 +1200,7 @@ func writeServerModeWorkspace(t *testing.T, beadsDir string) {
 // own config.yaml selects Dolt server mode (the shape gc provisions, or a
 // non-local dolt.host with no dolt.mode), with or without an embedded database
 // beside it, one holding several databases, and a SQLite-era one that bd's own
-// admission refuses.
+// admission refuses. bd create --dry-run refuses each of them as well.
 func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt create tests")
@@ -1357,24 +1357,27 @@ func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 			tc.setup(t, beadsDir)
 			before := planningDirListing(t, beadsDir)
 
-			cmd := exec.Command(bd, "create", "--silent", "Routed into a target it must not initialize", "--repo", targetDir)
-			cmd.Dir = dir
-			cmd.Env = bdEnv(dir)
-			stdout, stderr, err := runCommandBuffers(t, cmd)
-			var exitErr *exec.ExitError
-			if !errors.As(err, &exitErr) {
-				t.Fatalf("bd create --repo %s = %v, want a refusal\nstdout:\n%s\nstderr:\n%s", targetDir, err, stdout.String(), stderr.String())
-			}
-			if !strings.Contains(stderr.String(), tc.want) {
-				t.Errorf("bd create --repo stderr does not contain %q:\n%s", tc.want, stderr.String())
-			}
-			if tc.wantStderr != nil {
-				if want := tc.wantStderr(targetDir); stderr.String() != want || exitErr.ExitCode() != 1 {
-					t.Errorf("bd create --repo exit %d, stderr:\n%s\nwant exit 1, stderr exactly:\n%s", exitErr.ExitCode(), stderr.String(), want)
+			// The dry-run preview refuses what the create it previews refuses.
+			for _, mode := range []string{"--dry-run", "--silent"} {
+				cmd := exec.Command(bd, "create", mode, "Routed into a target it must not initialize", "--repo", targetDir)
+				cmd.Dir = dir
+				cmd.Env = bdEnv(dir)
+				stdout, stderr, err := runCommandBuffers(t, cmd)
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) {
+					t.Fatalf("bd create %s --repo %s = %v, want a refusal\nstdout:\n%s\nstderr:\n%s", mode, targetDir, err, stdout.String(), stderr.String())
 				}
-			}
-			if after := planningDirListing(t, beadsDir); !slices.Equal(after, before) {
-				t.Errorf("target .beads after a refused create = %v, want unchanged %v", after, before)
+				if !strings.Contains(stderr.String(), tc.want) {
+					t.Errorf("bd create %s --repo stderr does not contain %q:\n%s", mode, tc.want, stderr.String())
+				}
+				if tc.wantStderr != nil {
+					if want := tc.wantStderr(targetDir); stderr.String() != want || exitErr.ExitCode() != 1 {
+						t.Errorf("bd create %s --repo exit %d, stderr:\n%s\nwant exit 1, stderr exactly:\n%s", mode, exitErr.ExitCode(), stderr.String(), want)
+					}
+				}
+				if after := planningDirListing(t, beadsDir); !slices.Equal(after, before) {
+					t.Errorf("target .beads after a refused create %s = %v, want unchanged %v", mode, after, before)
+				}
 			}
 		})
 	}

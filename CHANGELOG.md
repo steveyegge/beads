@@ -824,7 +824,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and one holding several databases are refused before anything is written;
   for a server-mode repository, run `bd init --database <name>` there
   (`bd init --server --database <name>` when only `dolt.host` selects server
-  mode), naming the server database it uses, then rerun. `bd migrate-personal`
+  mode), naming the server database it uses, then rerun. `bd create
+  --dry-run` refuses the same repositories. `bd migrate-personal`
   initializes the planning repo by the same rule, so it now also refuses a
   server-mode planning repo instead of moving issues into a new embedded
   database there.

@@ -375,9 +375,15 @@ var createCmd = &cobra.Command{
 
 		if dryRun && parentID == "" {
 			// The preview opens no target, but it refuses a local one in a
-			// format this build cannot open, as the create it previews would.
+			// format this build cannot open, as the create it previews would,
+			// and one with no metadata.json the create would refuse to
+			// initialize (refuseUninitializableTarget). Neither check writes.
 			if err := checkRepoTargetFormat(repoPath); err != nil {
 				return handleWorkspaceGuardError(err)
+			}
+			allowCreate := !isAmbiguousRepoTarget(cmd.Flags().Changed("repo"), repoOverride)
+			if targetBeadsDir, err := checkRepoTargetInitializable(repoPath, allowCreate); err != nil {
+				return handleRepoTargetInitError(targetBeadsDir, err)
 			}
 			return renderDryRun()
 		}
@@ -408,15 +414,7 @@ var createCmd = &cobra.Command{
 				// flag value can be ambiguous.
 				allowCreate := !isAmbiguousRepoTarget(cmd.Flags().Changed("repo"), repoOverride)
 				if err := ensureBeadsDirForPath(rootCtx, targetBeadsDir, store, allowCreate); err != nil {
-					if isUnsupportedWorkspaceFormat(err) {
-						return handleWorkspaceGuardError(err)
-					}
-					if isLegacyUpgradeRefusal(err) {
-						// bd's own admission refusal of the target, named,
-						// as bd renders it there: nothing was initialized.
-						return handleWorkspaceGuardError(fmt.Errorf("target repo %s: %w", targetBeadsDir, err))
-					}
-					return HandleError("failed to initialize target repo: %v", err)
+					return handleRepoTargetInitError(targetBeadsDir, err)
 				}
 
 				targetBeadsDirPath := filepath.Join(targetBeadsDir, ".beads")
@@ -1068,6 +1066,39 @@ func checkRepoTargetFormat(repoPath string) error {
 		return nil
 	}
 	return checkDiscoveredWorkspaceFormat(filepath.Join(routing.ExpandPath(repoPath), ".beads"))
+}
+
+// checkRepoTargetInitializable runs, for a local create target whose .beads
+// has no metadata.json, the refusals ensureBeadsDirForPath applies before it
+// writes anything (refuseUninitializableTarget), so a dry-run preview refuses
+// what the create it previews would. It writes nothing. A target with a
+// metadata.json, the command's own workspace, a remote target, and a target
+// the create would not initialize at all (allowCreate false) pass. It returns
+// the target path for handleRepoTargetInitError.
+func checkRepoTargetInitializable(repoPath string, allowCreate bool) (string, error) {
+	if repoPath == "." || remotecache.IsRemoteURL(repoPath) || !allowCreate {
+		return "", nil
+	}
+	targetPath := routing.ExpandPath(repoPath)
+	beadsDir := filepath.Join(targetPath, ".beads")
+	if _, err := os.Stat(filepath.Join(beadsDir, "metadata.json")); err == nil {
+		return targetPath, nil
+	}
+	return targetPath, refuseUninitializableTarget(beadsDir)
+}
+
+// handleRepoTargetInitError renders a create target's initialization failure
+// (ensureBeadsDirForPath, or the preview's checkRepoTargetInitializable).
+func handleRepoTargetInitError(targetPath string, err error) error {
+	if isUnsupportedWorkspaceFormat(err) {
+		return handleWorkspaceGuardError(err)
+	}
+	if isLegacyUpgradeRefusal(err) {
+		// bd's own admission refusal of the target, named, as bd renders it
+		// there: nothing was initialized.
+		return handleWorkspaceGuardError(fmt.Errorf("target repo %s: %w", targetPath, err))
+	}
+	return HandleError("failed to initialize target repo: %v", err)
 }
 
 // isAmbiguousRepoTarget reports whether an explicit --repo value is a
