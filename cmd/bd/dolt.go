@@ -799,7 +799,16 @@ required. Use this command for explicit control or diagnostics.
 Not available in proxied-server mode: there the proxy owns its dolt backend's
 lifecycle and starts it on demand, so a server started here would be a second,
 unsupervised one over the same data directory. Use 'bd dolt status' to see what
-is running and 'bd dolt stop' to shut it down.`,
+is running and 'bd dolt stop' to shut it down.
+
+When dolt.auto-start is off (the server is managed outside bd) and the
+workspace's data directory holds no Dolt database, this command refuses to
+start: with no database there, it would run dolt init on an empty directory
+and publish a port that resolves every later bd command to an empty phantom
+database instead of the real managed server. --force overrides the refusal
+and starts a new, empty database anyway. A start over an existing database,
+over a live server bd already tracks, or in an auto-start workspace is
+unchanged.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
@@ -1880,6 +1889,7 @@ func isTimeoutError(err error) bool {
 
 func init() {
 	doltSetCmd.Flags().Bool("update-config", false, "Also write to config.yaml for team-wide defaults")
+	doltStartCmd.Flags().Bool("force", false, "Start even when dolt.auto-start is off and this would create a new, empty Dolt database")
 	doltStopCmd.Flags().Bool("force", false, "Force stop (proxied recovery still requires a bd/dolt executable match)")
 	doltPushCmd.Flags().Bool("force", false, "Force push (overwrite remote changes)")
 	doltPushCmd.Flags().String("remote", "", "Push to a specific named remote instead of the default")

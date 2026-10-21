@@ -205,4 +205,11 @@ func TestExternallyManagedFreshStartRefusal(t *testing.T) {
 		err := externallyManagedFreshStartRefusal(serverDir, true, false)
 		refusalChecks(t, err, serverDir)
 	})
+
+	t.Run("force skips the refusal", func(t *testing.T) {
+		serverDir := freshServerDir(t, nil)
+		if err := externallyManagedFreshStartRefusal(serverDir, true, true); err != nil {
+			t.Fatalf("--force must skip the refusal, got: %v", err)
+		}
+	})
 }

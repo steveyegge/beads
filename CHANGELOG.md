@@ -781,6 +781,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Externally-managed Dolt servers are no longer misreported or shadowed**
+  (bd-7pkvvd, [#7729](https://github.com/gastownhall/beads/pull/7729)). When
+  no port source resolves an address for a server-mode workspace whose server
+  is managed outside bd (`dolt.auto-start: false`) and has not published its
+  port, commands no longer dial `127.0.0.1:0` and report "Dolt server
+  unreachable" with `bd dolt start` advice; they now say no server port
+  resolved, list the port sources in priority order, and name the port file
+  to republish. And `bd dolt start` in such a workspace refuses to create a
+  new, empty Dolt database over a data dir that holds none — previously it ran
+  `dolt init`, launched an unsupervised sql-server, and published its port, so
+  every later bd command resolved to an empty phantom database instead of the
+  real one. A start over an existing database, over a live server bd already
+  tracks, or in an auto-start workspace is unchanged; `--force` overrides the
+  refusal.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the
