@@ -571,7 +571,7 @@ func TestEmbeddedInitAForkAutoContributor(t *testing.T) {
 
 		// Regression: autoConfigureForkContributor must initialize the planning
 		// Dolt schema, not just create the .beads directory. (bd migrate-personal
-		// no longer depends on this database; it initializes its own.)
+		// adopts this database as the planning repo's own.)
 		planningEmbeddedDir := filepath.Join(planningDir, ".beads", "embeddeddolt")
 		if _, err := os.Stat(planningEmbeddedDir); err != nil {
 			t.Errorf("planning embeddeddolt dir missing (planning store not pre-initialized): %v", err)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,6 +16,9 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
+	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -23,21 +28,25 @@ import (
 // the copy phase below.
 //
 // A planning repo that has a .beads directory but no metadata.json is first
-// initialized the way a routed bd create initializes it (ensureBeadsDirForPath,
-// with the project store supplying the prefix). Contributor setup leaves exactly
-// that shape: runContributorWizard creates an empty .beads, and
+// given one (initializePlanningRepo). Contributor setup leaves exactly that
+// shape: runContributorWizard creates an empty .beads, and
 // autoConfigureForkContributor a database with no metadata.json and no
 // issue_prefix. migrate-personal's own error text sends users to those setups,
-// so their repos must be migratable into. A repo that already has a
-// metadata.json (a clone not yet bootstrapped, say) is left as it is.
+// so their repos must be migratable into. An empty .beads is initialized the
+// way a routed bd create initializes it (ensureBeadsDirForPath, with the
+// project store supplying the prefix). One that already holds a database keeps
+// it (adoptPlanningDatabase): a new database beside it would hide whatever it
+// holds. A repo that already has a metadata.json (a clone not yet
+// bootstrapped, say) is left as it is.
 //
-// Any other metadata-less .beads is initialized the same way, as a routed
-// bd create would initialize it, with two exceptions that are refused before
-// anything is written (refuseUninitializablePlanningRepo): a redirect stub,
-// whose new database would land inside the stub where bd run in the planning
-// repo never looks, and any workspace bd's own command admission refuses there
+// Any other metadata-less .beads is initialized the same way, except the shapes
+// refused before anything is written (refuseUninitializablePlanningRepo): any
+// workspace bd's own command admission refuses there
 // (guardLegacyUpgradeWorkspace), such as a SQLite-era repo, whose data a fresh
-// database beside it would hide.
+// database beside it would hide, and one holding several databases, where
+// nothing records which one bd uses. A redirect stub is refused whether or not
+// it has a metadata.json of its own: bd run in the planning repo follows the
+// redirect, so it never reads a database inside the stub.
 //
 // The planning repo is the contributor auto-route target, so it then opens the
 // way a write auto-routed there does (openAutoRoutedStore): its own
@@ -48,6 +57,14 @@ import (
 // refused, not given one. A bare dolt.New here used to dial a SQL server for
 // every planning workspace, under the default database name.
 //
+// When the migration commits its writes in the planning store
+// (commitsPlanningWrites), that store's working set must hold nothing else: an
+// embedded commit is DOLT_COMMIT('-Am'), which would publish anything already
+// uncommitted there under the migration's message. The initialization above
+// is committed first, in a commit of its own (settlePlanningWorkingSet), and a
+// working set that still holds changes is refused
+// (refuseUncommittedPlanningChanges), before anything is copied.
+//
 // The store it returns is WRITTEN THROUGH: the migration creates every issue in
 // the planning workspace and then deletes them from the project. Those are
 // ordinary bead mutations in another workspace, so they belong in that
@@ -56,34 +73,200 @@ import (
 // issue-version history, which the store's own settings row decides. The
 // routed-write factory (newExistingDoltStoreFromConfig) activates the planning
 // workspace's events journal and issue-version history on the store it opens.
-func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string, projectStore storage.DoltStorage) (storage.DoltStorage, error) {
+func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string, projectStore storage.DoltStorage, actor string) (storage.DoltStorage, error) {
 	if err := refuseUninitializablePlanningRepo(planningBeadsDir); err != nil {
 		return nil, err
 	}
-	if err := ensureBeadsDirForPath(ctx, filepath.Dir(planningBeadsDir), projectStore, true); err != nil {
+	initialized, err := initializePlanningRepo(ctx, planningBeadsDir, projectStore)
+	if err != nil {
 		return nil, fmt.Errorf("initialize planning repo: %w", err)
 	}
 	database, err := autoRouteTargetDatabase(planningBeadsDir, true)
 	if err != nil {
 		return nil, err
 	}
-	return openRoutedTargetStore(ctx, planningBeadsDir, database, true)
+	planningStore, err := openRoutedTargetStore(ctx, planningBeadsDir, database, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := settlePlanningWorkingSet(ctx, planningStore, filepath.Dir(planningBeadsDir), initialized, actor); err != nil {
+		_ = planningStore.Close()
+		return nil, err
+	}
+	return planningStore, nil
 }
 
-// refuseUninitializablePlanningRepo refuses a planning .beads with no
-// metadata.json that openMigrationPlanningStore must not initialize: a redirect
-// stub, and a workspace guardLegacyUpgradeWorkspace refuses. Every other
-// metadata-less .beads is left to ensureBeadsDirForPath. It writes nothing. A
-// .beads that has a metadata.json is left to the open, which refuses what it
-// cannot use.
+// settlePlanningWorkingSet readies the opened planning store for the copy. The
+// initialization this run wrote, when initializePlanningRepo reports one, is
+// committed first under a message of its own (commitPlanningWrites): the
+// database is new, or adoptPlanningDatabase found its working set clean, so the
+// commit takes nothing else, and a refusal below or in phase 0 leaves no
+// change of this run for the planning repo's next commit to publish. A working
+// set that still holds changes is then refused
+// (refuseUncommittedPlanningChanges).
+func settlePlanningWorkingSet(ctx context.Context, planningStore storage.DoltStorage, planningRepo string, initialized bool, actor string) error {
+	if initialized {
+		message := formatDoltAutoCommitMessage("migrate-personal: initialize planning repo", actor, nil)
+		if err := commitPlanningWrites(ctx, planningStore, message); err != nil {
+			return fmt.Errorf("failed to commit the planning repo's initialization: %w", err)
+		}
+	}
+	return refuseUncommittedPlanningChanges(ctx, planningStore, planningRepo)
+}
+
+// refuseUncommittedPlanningChanges refuses a planning store whose working set
+// already holds changes when the migration commits its writes there
+// (commitsPlanningWrites). An embedded commit is DOLT_COMMIT('-Am'): it would
+// publish them under the migration's message and actor, and bd dolt push would
+// carry them, whether they are writes the planning repo's own dolt.auto-commit
+// batch or off deferred or changes the user means to discard. Dolt-ignored
+// tables, such as wisps, are not in the working-set status, and the commit
+// leaves them out too. It writes nothing.
+func refuseUncommittedPlanningChanges(ctx context.Context, planningStore storage.DoltStorage, planningRepo string) error {
+	commits, err := commitsPlanningWrites(planningStore)
+	if err != nil || !commits {
+		return err
+	}
+	status, err := planningStore.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to read the planning repo's uncommitted changes: %w", err)
+	}
+	var tables []string
+	for _, entry := range slices.Concat(status.Staged, status.Unstaged) {
+		tables = append(tables, entry.Table)
+	}
+	if len(tables) == 0 {
+		return nil
+	}
+	slices.Sort(tables)
+	return fmt.Errorf("planning repo %s has uncommitted changes (%s), which migrate-personal's commit would publish; commit them there with `bd dolt commit`, then rerun; nothing was moved", planningRepo, strings.Join(slices.Compact(tables), ", "))
+}
+
+// refuseUninitializablePlanningRepo refuses a planning .beads that
+// openMigrationPlanningStore must not open or initialize: a redirect stub, with
+// or without a metadata.json of its own, and, when it has no metadata.json, a
+// workspace guardLegacyUpgradeWorkspace refuses or one holding several
+// databases. Every other metadata-less .beads is left to
+// initializePlanningRepo. It writes nothing. A .beads that has a metadata.json
+// is left to the open, which refuses what it cannot use.
 func refuseUninitializablePlanningRepo(planningBeadsDir string) error {
+	if redirect := beads.ResolveRedirect(planningBeadsDir); utils.CanonicalizePath(redirect.TargetDir) != utils.CanonicalizePath(planningBeadsDir) {
+		return redirectedPlanningRepoError(planningBeadsDir, redirect.TargetDir, redirect.SourceDatabase)
+	}
 	if _, err := os.Stat(filepath.Join(planningBeadsDir, "metadata.json")); err == nil {
 		return nil
 	}
-	if target := beads.FollowRedirect(planningBeadsDir); utils.CanonicalizePath(target) != utils.CanonicalizePath(planningBeadsDir) {
-		return fmt.Errorf("planning repo %s redirects to %s; set routing.contributor to that repository instead", filepath.Dir(planningBeadsDir), filepath.Dir(target))
+	if err := guardLegacyUpgradeWorkspace(planningBeadsDir); err != nil {
+		return err
 	}
-	return guardLegacyUpgradeWorkspace(planningBeadsDir)
+	// With no metadata.json, bd names the database it opens in the planning
+	// repo after BEADS_DOLT_SERVER_DATABASE when that is set and the default
+	// database otherwise, so among several nothing records which one holds
+	// the planning issues.
+	if databases := embeddeddolt.Databases(planningBeadsDir); len(databases) > 1 {
+		return fmt.Errorf("planning repo %s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", filepath.Dir(planningBeadsDir), strings.Join(databases, ", "))
+	}
+	return nil
+}
+
+// redirectedPlanningRepoError refuses a planning .beads that redirects to
+// target. bd run in the planning repo opens target under stubDatabase, the
+// dolt_database the stub's own metadata.json names, when it names one
+// (preserveRedirectSourceDatabase), while a migration into target opens
+// target's own (autoRouteTargetDatabase). The refusal therefore points
+// routing.contributor at target only when the two agree; otherwise it names
+// the database bd uses there, which routing.contributor cannot select.
+func redirectedPlanningRepoError(planningBeadsDir, target, stubDatabase string) error {
+	planningRepo, targetRepo := filepath.Dir(planningBeadsDir), filepath.Dir(target)
+	if stubDatabase != "" {
+		if targetDatabase, err := autoRouteTargetDatabase(target, true); err != nil || targetDatabase != stubDatabase {
+			return fmt.Errorf("planning repo %s redirects to %s, where bd uses the database %q that the planning repo names; routing.contributor cannot select that database (set to %s, it selects that repository's own)", planningRepo, targetRepo, stubDatabase, targetRepo)
+		}
+	}
+	return fmt.Errorf("planning repo %s redirects to %s; set routing.contributor to that repository instead", planningRepo, targetRepo)
+}
+
+// initializePlanningRepo gives a planning .beads that refuseUninitializablePlanningRepo
+// admitted a metadata.json when it has none, and reports whether it had none.
+// One that already holds a database keeps it (adoptPlanningDatabase); an empty
+// one is initialized the way a routed bd create initializes it
+// (ensureBeadsDirForPath), which leaves a .beads that has a metadata.json as it
+// is.
+func initializePlanningRepo(ctx context.Context, planningBeadsDir string, projectStore storage.DoltStorage) (bool, error) {
+	_, statErr := os.Stat(filepath.Join(planningBeadsDir, "metadata.json"))
+	if statErr != nil {
+		if databases := embeddeddolt.Databases(planningBeadsDir); len(databases) == 1 {
+			return true, adoptPlanningDatabase(ctx, planningBeadsDir, databases[0], projectStore)
+		}
+	}
+	return statErr != nil, ensureBeadsDirForPath(ctx, filepath.Dir(planningBeadsDir), projectStore, true)
+}
+
+// adoptPlanningDatabase writes the metadata.json a routed bd create writes
+// (ensureBeadsDirForPath) for a planning .beads that has none but already
+// holds one embedded database, naming that database instead of creating one
+// named after the project prefix beside it. It is the database fork setup
+// creates (autoConfigureForkContributor), and the one a routed open uses until
+// a metadata.json names another (autoRouteTargetDatabase); a new database
+// beside it would hide whatever it holds, from bd run in the planning repo and
+// from the migration's own phase 0. The database keeps its issue_prefix and
+// project identity (planningDatabaseSettings). A database whose working set
+// already holds changes is refused first, with nothing written
+// (refuseUncommittedPlanningChanges): the initialization commit
+// (settlePlanningWorkingSet) would publish them.
+func adoptPlanningDatabase(ctx context.Context, planningBeadsDir, database string, projectStore storage.DoltStorage) error {
+	planningStore, err := newDoltStore(ctx, &dolt.Config{BeadsDir: planningBeadsDir, Database: database})
+	if err != nil {
+		return fmt.Errorf("failed to open planning database %q: %w", database, err)
+	}
+	var projectID string
+	err = refuseUncommittedPlanningChanges(ctx, planningStore, filepath.Dir(planningBeadsDir))
+	if err == nil {
+		projectID, err = planningDatabaseSettings(ctx, planningStore, projectStore)
+	}
+	if closeErr := planningStore.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendDolt
+	cfg.DoltDatabase = database
+	cfg.DoltMode = configfile.DoltModeEmbedded
+	cfg.ProjectID = projectID
+	if err := cfg.Save(planningBeadsDir); err != nil {
+		return fmt.Errorf("failed to write metadata.json: %w", err)
+	}
+	return nil
+}
+
+// planningDatabaseSettings gives an adopted planning database the project's
+// issue_prefix when it has none, as ensureBeadsDirForPath gives the database it
+// creates (a routed bd create into it needs one), and returns the project_id
+// its metadata.json is to carry: the database's own _project_id when it has
+// one, which bd's workspace identity check compares that field with
+// (validateWorkspaceIdentity), else a new one.
+func planningDatabaseSettings(ctx context.Context, planningStore, projectStore storage.DoltStorage) (string, error) {
+	prefix, err := planningStore.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		return "", fmt.Errorf("failed to read the planning database's issue_prefix: %w", err)
+	}
+	if prefix == "" {
+		if projectPrefix, err := projectStore.GetConfig(ctx, "issue_prefix"); err == nil && projectPrefix != "" {
+			if err := planningStore.SetConfig(ctx, "issue_prefix", projectPrefix); err != nil {
+				return "", fmt.Errorf("failed to set prefix in planning store: %w", err)
+			}
+		}
+	}
+	projectID, err := planningStore.GetMetadata(ctx, "_project_id")
+	if err != nil {
+		return "", fmt.Errorf("failed to read the planning database's project identity: %w", err)
+	}
+	if projectID == "" {
+		projectID = configfile.GenerateProjectID()
+	}
+	return projectID, nil
 }
 
 // refuseSelfPlanningRepo refuses a planning repo that is the project workspace
@@ -201,104 +384,38 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Move to planning repo: %s\n\n", ui.RenderAccent(planningPath))
 
-	// Prompt for confirmation
-	if !migratePersonalYes {
-		fmt.Printf("Move %d issues? [Y/n]: ", len(personal))
-		reader := bufio.NewReader(os.Stdin)
-		response, err := readLineWithContext(ctx, reader, os.Stdin)
-		if err != nil {
-			if isCanceled(err) {
-				fmt.Fprintln(os.Stderr, "Aborted.")
-				return nil
-			}
-			response = ""
-		}
-		response = strings.TrimSpace(strings.ToLower(response))
-		if response == "n" || response == "no" {
-			fmt.Println("Aborted — no changes made.")
-			return nil
-		}
+	if !migratePersonalYes && !confirmMigratePersonal(ctx, len(personal)) {
+		return nil
 	}
 
 	// Open planning store (writable). This is a SECOND workspace's store, and
 	// the copy below creates and deletes real beads in it, so it takes the
 	// planning workspace's own events-journal setting — not the launching
 	// workspace's. See openMigrationPlanningStore.
-	planningStore, err := openMigrationPlanningStore(ctx, planningBeadsDir, store)
+	planningStore, err := openMigrationPlanningStore(ctx, planningBeadsDir, store, identity)
 	if err != nil {
-		if isUnsupportedWorkspaceFormat(err) {
-			// Same rendering as bd's own admission refusal: the Error and
-			// Hint lines and exit 16. Silence cobra for this invocation (the
-			// migrationFreezeGate pattern) so the exitError does not add
-			// "Error: exit code 16" and a usage dump after the hint.
-			cmd.SilenceErrors = true
-			cmd.SilenceUsage = true
-			return handleWorkspaceGuardError(err)
-		}
-		return fmt.Errorf("failed to open planning store at %s: %w", planningPath, err)
+		return planningOpenError(cmd, planningPath, err)
 	}
 	defer func() { _ = planningStore.Close() }()
 
-	// Phase 0: refuse when any issue ID is already in the planning DB. A create
-	// can upsert onto an existing row, and the rollback below would then delete
-	// a row this migration did not create; if the planning store were somehow
-	// the project's own database (refuseSelfPlanningRepo is the first guard),
-	// phase 2 would delete the only copy.
-	for _, issue := range personal {
-		_, err := planningStore.GetIssue(ctx, issue.ID)
-		switch {
-		case err == nil:
-			if issue.SourceRepo != "" && issue.SourceRepo != "." {
-				// A mirror hydrated by bd repo sync, not a personal issue.
-				return fmt.Errorf("issue %s already exists in the planning repo %s; the project copy was imported from %s by 'bd repo sync' (remove those copies with 'bd repo remove %s', then rerun); nothing was moved", issue.ID, planningPath, issue.SourceRepo, issue.SourceRepo)
-			}
-			return fmt.Errorf("issue %s already exists in the planning repo %s; nothing was moved", issue.ID, planningPath)
-		case !errors.Is(err, storage.ErrNotFound):
-			return fmt.Errorf("failed to check the planning DB for %s: %w", issue.ID, err)
-		}
+	if err := refuseIssuesAlreadyInPlanning(ctx, planningStore, personal, planningPath); err != nil {
+		return err
 	}
 
-	// Phase 1: Copy everything to the planning DB before touching the project
-	// DB. The copy is all-or-error — any failed step rolls back the planning-DB
-	// rows we created and aborts without deleting anything from the project DB,
-	// so a partial copy can never be mistaken for success and lose data
-	// (maphew review, be-e2nb).
-	//
-	// Phase 1a: create every issue row first, so same-prefix dependencies
-	// between two migrated issues resolve in phase 1b regardless of copy order.
-	var created []string
-	rollback := func() {
-		if len(created) > 0 {
-			_, _ = planningStore.DeleteIssues(ctx, created, false, false, false)
-		}
-	}
-	for _, issue := range personal {
-		if err := planningStore.CreateIssue(ctx, issue, identity); err != nil {
-			rollback()
-			return fmt.Errorf("failed to copy issue %s to planning DB: %w", issue.ID, err)
-		}
-		created = append(created, issue.ID)
+	// Phase 1: copy everything to the planning DB, and commit it there, before
+	// touching the project DB.
+	ids, err := copyIssuesToPlanning(ctx, store, planningStore, personal, identity)
+	if err != nil {
+		return err
 	}
 
-	// Phase 1b: copy labels, dependency records, and comments for every issue.
-	for _, issue := range personal {
-		if err := copyIssueRelations(ctx, store, planningStore, issue, identity); err != nil {
-			rollback()
-			return fmt.Errorf("failed to copy %s to planning DB: %w", issue.ID, err)
-		}
+	// Phase 2: delete them all from the project DB.
+	if err := deleteMovedIssues(ctx, store, ids, planningPath); err != nil {
+		return err
 	}
-
-	// Phase 2: Delete all from project DB in a single transaction. The planning
-	// copy is complete at this point. If the delete fails, the planning repo
-	// already holds the good copy and the project DB is untouched, so we tell
-	// the user to resolve the duplicate rather than silently losing data.
-	ids := make([]string, len(personal))
-	for i, issue := range personal {
-		ids[i] = issue.ID
-	}
-	if _, err := store.DeleteIssues(ctx, ids, false, false, false); err != nil {
-		return fmt.Errorf("issues copied to planning repo %s but deleting them from the project DB failed; resolve the duplicate manually: %w", planningPath, err)
-	}
+	// In embedded mode the post-run auto-commit commits the delete, as the
+	// dolt.auto-commit policy allows.
+	commandDidWrite.Store(true)
 
 	fmt.Printf("\n%s Moved %d %s to %s\n",
 		ui.RenderPass("✓"),
@@ -308,9 +425,200 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// confirmMigratePersonal asks whether to move n issues and reports whether to
+// go ahead. An empty answer, closed stdin included, takes the default Y; n or
+// no, or a canceled read, aborts with nothing moved.
+func confirmMigratePersonal(ctx context.Context, n int) bool {
+	fmt.Printf("Move %d issues? [Y/n]: ", n)
+	reader := bufio.NewReader(os.Stdin)
+	response, err := readLineWithContext(ctx, reader, os.Stdin)
+	if err != nil {
+		if isCanceled(err) {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return false
+		}
+		response = ""
+	}
+	response = strings.TrimSpace(strings.ToLower(response))
+	if response == "n" || response == "no" {
+		fmt.Println("Aborted — no changes made.")
+		return false
+	}
+	return true
+}
+
+// planningOpenError renders a failed openMigrationPlanningStore. A planning
+// repo bd's own command admission refuses (an unsupported format, a legacy
+// store) is rendered as that refusal is, naming the planning repo: the Error
+// line, plus the Hint line and exit 16 for a format. Nothing was opened, so it
+// carries no "failed to open planning store" prefix, and cobra is silenced for
+// this invocation (the migrationFreezeGate pattern), so neither "Error: exit
+// code N" nor a usage dump follows it.
+func planningOpenError(cmd *cobra.Command, planningPath string, err error) error {
+	if !isUnsupportedWorkspaceFormat(err) && !isLegacyUpgradeRefusal(err) {
+		return fmt.Errorf("failed to open planning store at %s: %w", planningPath, err)
+	}
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	return handleWorkspaceGuardError(fmt.Errorf("planning repo %s: %w", planningPath, err))
+}
+
+// refuseIssuesAlreadyInPlanning is phase 0 of runMigratePersonal: it refuses
+// when any issue ID is already in the planning DB. A create can upsert onto an
+// existing row, and copyIssuesToPlanning's rollback would then delete a row
+// this migration did not create; if the planning store were somehow the
+// project's own database (refuseSelfPlanningRepo is the first guard), phase 2
+// would delete the only copy.
+func refuseIssuesAlreadyInPlanning(ctx context.Context, planningStore storage.DoltStorage, personal []*types.Issue, planningPath string) error {
+	for _, issue := range personal {
+		_, err := planningStore.GetIssue(ctx, issue.ID)
+		switch {
+		case err == nil:
+			if isPlanningRepoMirror(issue, planningPath) {
+				return repoSyncMirrorRefusal(issue, planningPath, runtime.GOOS)
+			}
+			return fmt.Errorf("issue %s already exists in the planning repo %s; nothing was moved", issue.ID, planningPath)
+		case !errors.Is(err, storage.ErrNotFound):
+			return fmt.Errorf("failed to check the planning DB for %s: %w", issue.ID, err)
+		}
+	}
+	return nil
+}
+
+// isPlanningRepoMirror reports whether issue's source_repo names the planning
+// repo itself: a copy bd repo sync hydrated from it, which contributor setup
+// arranges by adding the planning repo to repos.additional. Only then does
+// the phase-0 refusal name bd repo remove, which deletes every issue carrying
+// that source_repo; a copy from any other repository gets the plain refusal.
+func isPlanningRepoMirror(issue *types.Issue, planningPath string) bool {
+	if issue.SourceRepo == "" || issue.SourceRepo == "." {
+		return false
+	}
+	return utils.CanonicalizePath(routing.ExpandPath(issue.SourceRepo)) == utils.CanonicalizePath(planningPath)
+}
+
+// repoSyncMirrorRefusal is the phase-0 refusal for a project copy that bd repo
+// sync imported from the planning repo (isPlanningRepoMirror). It names the
+// commands that remove those copies and turn their hydration back on, with
+// the recorded source_repo quoted for a shell on goos (shellQuotedPathFor), so
+// each runs as printed.
+func repoSyncMirrorRefusal(issue *types.Issue, planningPath, goos string) error {
+	repo := shellQuotedPathFor(goos, issue.SourceRepo)
+	return fmt.Errorf("issue %s already exists in the planning repo %s; the project copy was imported from %s by `bd repo sync` (remove those copies with `bd repo remove %s`, then rerun, and run `bd repo add %s` again if you want them hydrated); nothing was moved",
+		issue.ID, planningPath, issue.SourceRepo, repo, repo)
+}
+
+// shellQuotedPathFor quotes path for a command a user pastes into a shell on
+// goos. A POSIX shell takes it in single quotes (doltutil.ShellQuote), which
+// keep $, backticks and backslashes literal. cmd.exe and PowerShell take no
+// single quotes and do not unescape backslashes, so on Windows the path goes
+// in plain double quotes, a character no Windows path contains.
+func shellQuotedPathFor(goos, path string) string {
+	if goos == "windows" {
+		return `"` + path + `"`
+	}
+	return doltutil.ShellQuote(path)
+}
+
+// copyIssuesToPlanning is phase 1 of runMigratePersonal: it copies every
+// personal issue from src to the planning store dst and returns their IDs. The
+// copy is all-or-error — any failed step rolls back the planning-DB rows it
+// created and returns the error before anything is deleted from the project
+// DB, so a partial copy can never be mistaken for success and lose data
+// (maphew review, be-e2nb). A rollback that fails is reported with the error.
+//
+// Phase 1a creates every issue row first, so same-prefix dependencies between
+// two migrated issues resolve in phase 1b regardless of copy order. Phase 1b
+// copies labels, dependency records, and comments for every issue. The copy is
+// then committed in the planning repo (commitPlanningWrites): the post-run
+// auto-commit commits only the project's store, and the planning history must
+// hold the copy before the project's delete is committed. A commit whose
+// outcome is unknown (storage.ErrCommitIndeterminate) is not rolled back: it
+// may have landed, and an uncommitted delete of its rows would undo it at the
+// planning repo's next commit. The copy is left for bd dolt commit to settle.
+func copyIssuesToPlanning(ctx context.Context, src, dst storage.DoltStorage, personal []*types.Issue, actor string) ([]string, error) {
+	var created []string
+	rollback := func(err error) ([]string, error) {
+		if len(created) == 0 {
+			return nil, err
+		}
+		if _, rollbackErr := dst.DeleteIssues(ctx, created, false, false, false); rollbackErr != nil {
+			return nil, fmt.Errorf("%w; rolling the copy back failed too, so the planning DB still holds %s: %w", err, strings.Join(created, ", "), rollbackErr)
+		}
+		return nil, err
+	}
+	for _, issue := range personal {
+		if err := dst.CreateIssue(ctx, issue, actor); err != nil {
+			return rollback(fmt.Errorf("failed to copy issue %s to planning DB: %w", issue.ID, err))
+		}
+		created = append(created, issue.ID)
+	}
+	for _, issue := range personal {
+		if err := copyIssueRelations(ctx, src, dst, issue, actor); err != nil {
+			return rollback(fmt.Errorf("failed to copy %s to planning DB: %w", issue.ID, err))
+		}
+	}
+	err := commitPlanningWrites(ctx, dst, formatDoltAutoCommitMessage("migrate-personal", actor, created))
+	switch {
+	case errors.Is(err, storage.ErrCommitIndeterminate):
+		return nil, fmt.Errorf("committing the copy in the planning repo may have failed: %w; the copy is left there and nothing was deleted from the project DB, so run `bd dolt commit` in the planning repo, then resolve the duplicate manually", err)
+	case err != nil:
+		return rollback(fmt.Errorf("failed to commit the copy in the planning repo: %w", err))
+	}
+	return created, nil
+}
+
+// commitsPlanningWrites reports whether the migration commits its writes in
+// the planning store dst itself (commitPlanningWrites): dst is embedded, whose
+// writes stay in its working set until a commit, and the command's
+// dolt.auto-commit policy is on. It asks the planning store for its backend,
+// not the command for its mode (commitPendingIfEmbedded): the planning repo
+// opens with its own (openMigrationPlanningStore), so a server-mode project
+// can move issues into an embedded planning repo. A server-mode planning store
+// commits each write itself, and a commit here would sweep another writer's
+// working set into it.
+func commitsPlanningWrites(dst storage.DoltStorage) (bool, error) {
+	if !isEmbeddedStore(dst) {
+		return false, nil
+	}
+	mode, err := getDoltAutoCommitMode()
+	return mode == doltAutoCommitOn, err
+}
+
+// commitPlanningWrites commits the working set of the planning store dst under
+// message when commitsPlanningWrites says the migration commits there.
+func commitPlanningWrites(ctx context.Context, dst storage.DoltStorage, message string) error {
+	commits, err := commitsPlanningWrites(dst)
+	if err != nil || !commits {
+		return err
+	}
+	return maybeAutoCommitStore(ctx, dst, doltAutoCommitParams{MessageOverride: message})
+}
+
+// deleteMovedIssues is phase 2 of runMigratePersonal: it deletes the moved
+// issues from the project DB in a single transaction, under the command's
+// dolt.auto-commit policy (issueOpsContext), as bd delete does. Both halves of
+// the move then follow it: with on, a server-mode project commits the delete
+// as it runs and phase 1 commits the copy; with batch or off, the delete stays
+// in the working set, as phase 1 leaves the copy in an embedded planning store
+// (commitsPlanningWrites). The planning copy is complete at this point. If the
+// delete fails, the planning repo already holds the good copy and the project
+// DB is untouched, so the user is told to resolve the duplicate rather than
+// silently losing data.
+func deleteMovedIssues(ctx context.Context, projectStore storage.DoltStorage, ids []string, planningPath string) error {
+	opsCtx, err := issueOpsContext(ctx)
+	if err == nil {
+		_, err = projectStore.DeleteIssues(opsCtx, ids, false, false, false)
+	}
+	if err != nil {
+		return fmt.Errorf("issues copied to planning repo %s but deleting them from the project DB failed; resolve the duplicate manually: %w", planningPath, err)
+	}
+	return nil
+}
+
 // copyIssueRelations copies the labels, dependency records, and comments for a
 // single issue from src to dst. The issue row itself must already exist in dst
-// (created in phase 1a of runMigratePersonal). Every step — including the reads
+// (created in phase 1a, copyIssuesToPlanning). Every step — including the reads
 // from src — is fatal on error so the caller can abort the migration before any
 // source data is deleted; a partial copy must never be mistaken for success
 // (maphew review, be-e2nb).
