@@ -284,30 +284,48 @@ func planningDatabaseSettings(ctx context.Context, planningStore, projectStore s
 
 // refuseSelfPlanningRepo refuses a planning repo that is the project workspace
 // itself (routing.contributor set to the project's path, or to ".", the value
-// routing.maintainer and routing.default default to). The migration copies each
-// issue into the planning store and then deletes it from the project; when both
-// are the same database the copy is a no-op and the delete removes the only
-// copy. The planning .beads directory (after any redirect) is compared with the
-// project's, and the two metadata.json project_id values when both are set.
+// routing.maintainer and routing.default default to), or a clone of it. The
+// migration copies each issue into the planning store and then deletes it from
+// the project; when both are the same database the copy is a no-op and the
+// delete removes the only copy.
+//
+// The planning .beads directory (after any redirect) is compared with the
+// project's. The same directory is the project's own workspace unless the
+// planning repo is a redirect stub that names a database of its own, other
+// than the one the project's store uses there: a rig beside the project under
+// a shared root (beads.ResolveRedirect). That stub is a different database,
+// and refuseUninitializablePlanningRepo refuses it as the redirect it is.
+// Two directories whose metadata.json carry the same project_id are one
+// project's workspaces, a clone sharing the git-tracked metadata.json: a
+// separate planning repository has an identity of its own.
 func refuseSelfPlanningRepo(planningPath, planningBeadsDir, projectBeadsDir string) error {
 	if projectBeadsDir == "" {
 		return nil
 	}
-	planning := utils.CanonicalizePath(beads.FollowRedirect(planningBeadsDir))
+	redirect := beads.ResolveRedirect(planningBeadsDir)
+	planning := utils.CanonicalizePath(redirect.TargetDir)
 	project := utils.CanonicalizePath(beads.FollowRedirect(projectBeadsDir))
-	same := planning == project
-	if !same {
-		// LoadForDiscovery, not Load: Load migrates a legacy config.json to
-		// metadata.json, and this check runs before the confirmation prompt
-		// and before any format admission, so it must not rewrite either
-		// workspace.
-		planningCfg, perr := configfile.LoadForDiscovery(planning)
-		projectCfg, qerr := configfile.LoadForDiscovery(project)
-		same = perr == nil && qerr == nil && planningCfg != nil && projectCfg != nil &&
-			planningCfg.ProjectID != "" && planningCfg.ProjectID == projectCfg.ProjectID
-	}
-	if same {
+	// LoadForDiscovery, not Load: Load migrates a legacy config.json to
+	// metadata.json, and this check runs before the confirmation prompt and
+	// before any format admission, so it must not rewrite either workspace.
+	projectCfg, qerr := configfile.LoadForDiscovery(project)
+	if planning == project {
+		// The database the project's store opened: BEADS_DOLT_SERVER_DATABASE,
+		// which preserveRedirectSourceDatabase sets for a launch through a
+		// redirect, outranks the shared metadata.json (GetDoltDatabase).
+		projectDatabase := configfile.DefaultConfig().GetDoltDatabase()
+		if qerr == nil && projectCfg != nil {
+			projectDatabase = projectCfg.GetDoltDatabase()
+		}
+		if redirect.WasRedirected && redirect.SourceDatabase != "" && redirect.SourceDatabase != projectDatabase {
+			return nil
+		}
 		return fmt.Errorf("planning repo %s is this project's own workspace; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningPath)
+	}
+	planningCfg, perr := configfile.LoadForDiscovery(planning)
+	if perr == nil && qerr == nil && planningCfg != nil && projectCfg != nil &&
+		planningCfg.ProjectID != "" && planningCfg.ProjectID == projectCfg.ProjectID {
+		return fmt.Errorf("planning repo %s has this project's project_id (%s), so it is a clone of this project's workspace, not a separate planning repository; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningPath, planningCfg.ProjectID)
 	}
 	return nil
 }

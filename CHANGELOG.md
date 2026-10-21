@@ -877,11 +877,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is refused too, with or without a `metadata.json` of its own (point
   `routing.contributor` at the redirect target, unless the planning repo
   names a database of its own there, which `routing.contributor` cannot
-  select). A planning repo in a format this build cannot open exits 16 with
+  select; a rig beside the project under a shared root is such a planning
+  repo). A planning repo in a format this build cannot open exits 16 with
   a hint, as `bd` does in that repo. A planning repo whose `metadata.json`
   has no `dolt_database`, or whose database has not been bootstrapped, is
   refused before anything moves. So is a planning repo that is the project's
-  own workspace (for example `routing.contributor: .`). In server mode, when
+  own workspace (for example `routing.contributor: .`), or a clone of it,
+  which carries the project's `project_id`. In server mode, when
   the planning open resolved to the project's own database (`dolt_database`
   "beads", or `BEADS_DOLT_SERVER_DATABASE` naming it), that used to delete
   the issues while reporting them moved. An issue ID already present in the

@@ -616,6 +616,146 @@ func TestEmbeddedMigratePersonal_refusesPlanningRepoThatIsTheProject(t *testing.
 	}
 }
 
+// TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect verifies that a
+// planning repo that is a rig beside the project under a shared root, where
+// both redirect to one .beads and each names a database of its own, is refused
+// as the redirect stub it is, naming the database bd uses there, and not as
+// the project's own workspace: the two rigs are different databases.
+func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	_, townBeadsDir, _ := bdInit(t, bd, "--prefix", "hq")
+	// The project rig's database, beside the shared root's own.
+	s, err := embeddeddolt.Open(t.Context(), townBeadsDir, "rga", "main")
+	if err != nil {
+		t.Fatalf("create the project rig's database: %v", err)
+	}
+	err = s.SetConfig(t.Context(), "issue_prefix", "rga")
+	if closeErr := s.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatalf("set the project rig's issue_prefix: %v", err)
+	}
+	// rig returns a repository whose .beads redirects to the shared root and
+	// names database there.
+	rig := func(database string) string {
+		dir := t.TempDir()
+		initGitRepoAt(t, dir)
+		beadsDir := filepath.Join(dir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+			t.Fatalf("create rig .beads: %v", err)
+		}
+		cfg := configfile.DefaultConfig()
+		cfg.Backend = configfile.BackendDolt
+		cfg.DoltMode = configfile.DoltModeEmbedded
+		cfg.DoltDatabase = database
+		if err := cfg.Save(beadsDir); err != nil {
+			t.Fatalf("write rig metadata.json: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, "redirect"), []byte(townBeadsDir+"\n"), 0o600); err != nil {
+			t.Fatalf("write rig redirect: %v", err)
+		}
+		return dir
+	}
+	project, planning := rig("rga"), rig("rgb")
+	if out, err := bdRunWithFlockRetry(t, bd, project, "config", "set", "routing.contributor", planning); err != nil {
+		t.Fatalf("bd config set routing.contributor: %v\n%s", err, out)
+	}
+	personal := bdCreate(t, bd, project, "Personal issue in a shared-root rig")
+
+	out := requireMigratePersonalRefused(t, bd, project, `, where bd uses the database "rgb" that the planning repo names; routing.contributor cannot select that database`)
+	if strings.Contains(out, "this project's own workspace") {
+		t.Errorf("a rig beside the project under a shared root was refused as the project's own workspace:\n%s", out)
+	}
+	requireStillInProject(t, townBeadsDir, "rga", personal.ID)
+}
+
+// TestRefuseSelfPlanningRepo pins which planning repos refuseSelfPlanningRepo
+// refuses. One whose .beads, after any redirect, is the project's is the
+// project's own workspace, unless it is a redirect stub naming a database
+// other than the one the project's store uses there: a rig beside the
+// project under a shared root, which refuseUninitializablePlanningRepo
+// refuses as a redirect instead. A separate directory carrying the project's
+// project_id is a clone of the project, and is refused as one.
+func TestRefuseSelfPlanningRepo(t *testing.T) {
+	root := t.TempDir()
+	// workspace writes a .beads under root/name whose metadata.json names
+	// database and projectID, redirecting to target when it is set.
+	workspace := func(name, database, projectID, target string) string {
+		beadsDir := filepath.Join(root, name, ".beads")
+		if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+			t.Fatalf("create %s: %v", beadsDir, err)
+		}
+		cfg := configfile.DefaultConfig()
+		cfg.Backend = configfile.BackendDolt
+		cfg.DoltMode = configfile.DoltModeServer
+		cfg.DoltDatabase = database
+		cfg.ProjectID = projectID
+		if err := cfg.Save(beadsDir); err != nil {
+			t.Fatalf("write %s metadata.json: %v", name, err)
+		}
+		if target != "" {
+			if err := os.WriteFile(filepath.Join(beadsDir, "redirect"), []byte(target+"\n"), 0o600); err != nil {
+				t.Fatalf("write %s redirect: %v", name, err)
+			}
+		}
+		return beadsDir
+	}
+	// A shared root whose rigs redirect to its .beads and each name a
+	// database of their own (preserveRedirectSourceDatabase), and a plain
+	// project with stubs redirecting to it.
+	town := workspace("town", "hq", "town-id", "")
+	project := workspace("project", "proj", "project-id", "")
+	for _, tc := range []struct {
+		name string
+		// projectBeadsDir is the project's .beads as the command resolved
+		// it, and launchDatabase the BEADS_DOLT_SERVER_DATABASE it opened
+		// its store under ("" for none).
+		projectBeadsDir, launchDatabase string
+		planningBeadsDir                string
+		want                            string
+	}{
+		{name: "the project itself", projectBeadsDir: project, planningBeadsDir: project,
+			want: "is this project's own workspace"},
+		{name: "a stub naming no database", projectBeadsDir: project,
+			planningBeadsDir: workspace("stub", "", "", project), want: "is this project's own workspace"},
+		{name: "a stub naming the project's database", projectBeadsDir: project,
+			planningBeadsDir: workspace("worktree", "proj", "", project), want: "is this project's own workspace"},
+		{name: "a stub naming a database of its own", projectBeadsDir: project,
+			planningBeadsDir: workspace("rig", "rig", "", project)},
+		{name: "the project's own rig under a shared root", projectBeadsDir: town, launchDatabase: "rga",
+			planningBeadsDir: workspace("rigA", "rga", "", town), want: "is this project's own workspace"},
+		{name: "a rig beside the project under a shared root", projectBeadsDir: town, launchDatabase: "rga",
+			planningBeadsDir: workspace("rigB", "rgb", "", town)},
+		// "." run at the shared root while BEADS_DOLT_SERVER_DATABASE selects
+		// a rig's database: a planning repo that is no stub is where the
+		// project's store is, so it stays refused.
+		{name: "the shared root itself", projectBeadsDir: town, launchDatabase: "rga",
+			planningBeadsDir: town, want: "is this project's own workspace"},
+		{name: "a clone carrying the project's project_id", projectBeadsDir: project,
+			planningBeadsDir: workspace("clone", "proj", "project-id", ""),
+			want:             "has this project's project_id (project-id), so it is a clone of this project's workspace"},
+		{name: "a separate planning repository", projectBeadsDir: project,
+			planningBeadsDir: workspace("planning", "pl", "planning-id", "")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BEADS_DOLT_SERVER_DATABASE", tc.launchDatabase)
+			err := refuseSelfPlanningRepo(filepath.Dir(tc.planningBeadsDir), tc.planningBeadsDir, tc.projectBeadsDir)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Errorf("refuseSelfPlanningRepo = %v, want nil", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Errorf("refuseSelfPlanningRepo = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestEmbeddedMigratePersonal_refusesMetadataWithoutDoltDatabase verifies that
 // a planning repo whose metadata.json names no dolt_database is refused before
 // anything moves, and that no database is created in it: the launcher's
