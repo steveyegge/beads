@@ -1103,6 +1103,36 @@ needs = ["review"]
 	})
 }
 
+// TestCookFormulaToSubgraph_BareGateStepType pins that a step declared
+// type = "gate" without a [steps.gate] block stays a single wait-only gate
+// bead: no companion, no await fields, no extra blocks edge (GH#3316).
+func TestCookFormulaToSubgraph_BareGateStepType(t *testing.T) {
+	sg := cookGateFormulaTOML(t, "bare-gate", `formula = "bare-gate"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "hold"
+title = "Hold for sign-off"
+type = "gate"
+`)
+	if len(sg.Issues) != 2 {
+		t.Fatalf("issues = %v, want root + hold", allIssueIDs(sg))
+	}
+	hold := sg.IssueMap["bare-gate.hold"]
+	if hold == nil || hold.IssueType != types.TypeGate {
+		t.Fatalf("hold = %+v, want a gate bead", hold)
+	}
+	if hold.AwaitType != "" || hold.AwaitID != "" || hold.Timeout != 0 {
+		t.Errorf("hold await fields = (%q, %q, %v), want empty", hold.AwaitType, hold.AwaitID, hold.Timeout)
+	}
+	for _, d := range sg.Dependencies {
+		if d.Type == types.DepBlocks {
+			t.Errorf("unexpected blocks edge %s -> %s", d.IssueID, d.DependsOnID)
+		}
+	}
+}
+
 // TestCollectStepsGateDirection pins GH#3316 (bd-4nndgi) at the
 // collectSteps level: for a step declared type = "gate" the task is the
 // preparation work for its companion gate, so the task blocks the gate.
