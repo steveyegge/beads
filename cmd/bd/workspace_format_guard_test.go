@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,11 +30,26 @@ const graphLinkWorkspaceMetadata = `{
   "project_id": "0123456789abcdef0123456789abcdef"
 }`
 
+// graphStrippedWorkspaceMetadata is graphLinkWorkspaceMetadata as a bd that
+// predates graph_mode leaves it after any Save: the graph_* keys are gone, and
+// the database name still selects the graph database.
+const graphStrippedWorkspaceMetadata = `{
+  "database": "",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "beads_graph_0123456789abcdef0123456789abcdef",
+  "project_id": "0123456789abcdef0123456789abcdef"
+}`
+
 // graphWorkspaceLayout is a .beads directory whose metadata declares a
 // graph_mode, plus whatever else the case lays down beside it.
 type graphWorkspaceLayout struct {
+	// filename is the metadata file; "" lays down no metadata.
 	filename string
 	metadata string
+	// marker adds the graph-preview-format sentinel graph-preview builds
+	// write before metadata.json.
+	marker bool
 	// embedded adds the embedded Dolt root a graph database lives in.
 	embedded bool
 	// doltRoot adds a .beads/dolt root without a version witness, which
@@ -44,11 +60,18 @@ type graphWorkspaceLayout struct {
 	sqlite bool
 }
 
-// write lays the layout down under beadsDir and returns the metadata path.
+// write lays the layout down under beadsDir and returns the metadata path, or
+// "" when the layout has no metadata.
 func (l graphWorkspaceLayout) write(t *testing.T, beadsDir string) string {
 	t.Helper()
-	path := filepath.Join(beadsDir, l.filename)
-	writeFile(t, path, []byte(l.metadata))
+	path := ""
+	if l.filename != "" {
+		path = filepath.Join(beadsDir, l.filename)
+		writeFile(t, path, []byte(l.metadata))
+	}
+	if l.marker {
+		writeFile(t, filepath.Join(beadsDir, "graph-preview-format"), []byte("link-preview-v9\n"))
+	}
 	if l.embedded {
 		if err := os.MkdirAll(filepath.Join(beadsDir, "embeddeddolt", "beads_graph_0123456789abcdef0123456789abcdef", ".dolt"), 0o700); err != nil {
 			t.Fatal(err)
@@ -116,6 +139,114 @@ func TestWorkspaceFormatGuardRefusesGraphWorkspaces(t *testing.T) {
 	}
 }
 
+// A graph workspace whose metadata does not declare graph_mode is still
+// refused by its format marker: graph-preview builds write the marker before
+// metadata.json, and a bd that predates graph_mode drops the field on Save.
+func TestWorkspaceFormatGuardRefusesFormatMarker(t *testing.T) {
+	pinLegacyUpgradeGuardEnv(t)
+	tests := []struct {
+		name   string
+		layout graphWorkspaceLayout
+	}{
+		// Graph init interrupted after the marker, before metadata.json.
+		{name: "marker only", layout: graphWorkspaceLayout{marker: true}},
+		{name: "metadata lost", layout: graphWorkspaceLayout{marker: true, embedded: true}},
+		{name: "metadata stripped", layout: graphWorkspaceLayout{filename: "metadata.json", metadata: graphStrippedWorkspaceMetadata, marker: true, embedded: true}},
+		{name: "legacy config.json stripped", layout: graphWorkspaceLayout{filename: "config.json", metadata: graphStrippedWorkspaceMetadata, marker: true, embedded: true}},
+		{name: "server metadata stripped", layout: graphWorkspaceLayout{filename: "metadata.json", metadata: `{"backend":"dolt","dolt_mode":"server"}`, marker: true}},
+		{name: "explicit dependency", layout: graphWorkspaceLayout{filename: "metadata.json", metadata: `{"backend":"dolt","graph_mode":"dependency"}`, marker: true, embedded: true}},
+		// Metadata that does not parse (a conflicted merge, a truncated
+		// write) cannot outrank the marker.
+		{name: "unparseable metadata", layout: graphWorkspaceLayout{filename: "metadata.json", metadata: `{"backend":"dolt",`, marker: true, embedded: true}},
+		// Without the format check first, this is reported as a legacy
+		// Dolt workspace to migrate.
+		{name: "marker over legacy dolt root", layout: graphWorkspaceLayout{marker: true, doltRoot: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			beadsDir := t.TempDir()
+			path := tt.layout.write(t, beadsDir)
+			before := legacyUpgradeTreeDigest(t, beadsDir)
+
+			err := guardLegacyUpgradeWorkspace(beadsDir)
+			if !isUnsupportedWorkspaceFormat(err) {
+				t.Fatalf("guardLegacyUpgradeWorkspace() = %v, want unsupported workspace format refusal", err)
+			}
+			for _, want := range []string{beadsDir, "graph-preview-format", "this bd build does not support", "no storage database was opened or modified"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("refusal %q does not mention %q", err, want)
+				}
+			}
+			if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
+				t.Fatalf("guard changed the workspace")
+			}
+			if path != "" {
+				if got, readErr := os.ReadFile(path); readErr != nil || string(got) != tt.layout.metadata {
+					t.Fatalf("guard rewrote %s: %q, %v", tt.layout.filename, got, readErr)
+				}
+			}
+		})
+	}
+	// The marker's presence is the signal, not its content.
+	for _, content := range []string{"", "link-preview-v5\n", "not a generation"} {
+		t.Run("content "+strconv.Quote(content), func(t *testing.T) {
+			beadsDir := t.TempDir()
+			writeFile(t, filepath.Join(beadsDir, "graph-preview-format"), []byte(content))
+			if err := guardLegacyUpgradeWorkspace(beadsDir); !isUnsupportedWorkspaceFormat(err) {
+				t.Fatalf("guardLegacyUpgradeWorkspace() = %v, want unsupported workspace format refusal", err)
+			}
+		})
+	}
+}
+
+// With no workspace directory there is no marker to look for: an empty
+// beadsDir must not probe the working directory.
+func TestWorkspaceFormatCheckWithoutWorkspaceDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeFile(t, "graph-preview-format", []byte("link-preview-v9\n"))
+	if err := checkWorkspaceFormat(nil, ""); err != nil {
+		t.Fatalf("checkWorkspaceFormat(nil, \"\") = %v, want nil", err)
+	}
+	if err := validateConfiguredBackend(&configfile.Config{Backend: configfile.BackendDolt}, ""); err != nil {
+		t.Fatalf("validateConfiguredBackend(dolt, \"\") = %v, want nil", err)
+	}
+}
+
+// Bootstrap in a workspace with no metadata of its own takes its nearest
+// ancestor's. An ancestor declared a graph workspace only by its format marker
+// is refused like one declaring graph_mode: neither skipped for a more distant
+// workspace or the defaults, nor reported as a metadata load failure.
+func TestFindParentConfigRefusesMarkedAncestor(t *testing.T) {
+	pinLegacyUpgradeGuardEnv(t)
+	for name, layout := range map[string]graphWorkspaceLayout{
+		"marker only":                  {marker: true},
+		"marker, metadata unparseable": {filename: "metadata.json", metadata: `{"backend":`, marker: true, embedded: true},
+		"marker, metadata stripped":    {filename: "metadata.json", metadata: graphStrippedWorkspaceMetadata, marker: true, embedded: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outer := t.TempDir()
+			// An ordinary workspace further up must not be selected instead.
+			writeFile(t, filepath.Join(outer, ".beads", "metadata.json"), []byte(`{"backend":"dolt","dolt_database":"outer"}`))
+			graphDir := filepath.Join(outer, "graph")
+			graphBeadsDir := filepath.Join(graphDir, ".beads")
+			layout.write(t, graphBeadsDir)
+			before := legacyUpgradeTreeDigest(t, graphBeadsDir)
+			t.Setenv("HOME", outer)
+
+			cfg, err := findParentConfig(filepath.Join(graphDir, "inner", ".beads"))
+			if !isUnsupportedWorkspaceFormat(err) {
+				t.Fatalf("findParentConfig() = %+v, %v, want unsupported workspace format refusal", cfg, err)
+			}
+			if !strings.Contains(err.Error(), "graph-preview-format") {
+				t.Fatalf("refusal %q does not name the marker", err)
+			}
+			if after := legacyUpgradeTreeDigest(t, graphBeadsDir); after != before {
+				t.Fatal("findParentConfig changed the graph workspace")
+			}
+		})
+	}
+}
+
 func TestWorkspaceFormatGuardAdmitsDependencyWorkspaces(t *testing.T) {
 	pinLegacyUpgradeGuardEnv(t)
 	for _, metadata := range []string{
@@ -140,7 +271,9 @@ func TestWorkspaceFormatGuardAdmitsDependencyWorkspaces(t *testing.T) {
 // workspace's store without passing through command admission, so the store
 // factories must refuse a graph workspace themselves, before any open. That
 // includes one marked only by a legacy config.json, which configfile.Load
-// would migrate into metadata.json before a check of the loaded metadata ran.
+// would migrate into metadata.json before a check of the loaded metadata ran,
+// and one declared only by the graph format marker, whose metadata is
+// stripped, lost or unparseable.
 func TestStoreFactoriesRefuseGraphWorkspace(t *testing.T) {
 	pinLegacyUpgradeGuardEnv(t)
 	factories := map[string]func(context.Context, string) (storage.DoltStorage, error){
@@ -149,11 +282,23 @@ func TestStoreFactoriesRefuseGraphWorkspace(t *testing.T) {
 		"read-only":  newReadOnlyStoreFromConfig,
 		"preview":    newPreviewStoreFromConfig,
 	}
-	for _, filename := range []string{"metadata.json", "config.json"} {
+	layouts := map[string]graphWorkspaceLayout{
+		"metadata.json graph_mode link": {filename: "metadata.json", metadata: graphLinkWorkspaceMetadata, embedded: true},
+		"config.json graph_mode link":   {filename: "config.json", metadata: graphLinkWorkspaceMetadata, embedded: true},
+		"marker, metadata stripped":     {filename: "metadata.json", metadata: graphStrippedWorkspaceMetadata, marker: true, embedded: true},
+		// No metadata at all: the factories must not fall back to the
+		// default database before looking for the marker.
+		"marker, metadata lost": {marker: true, embedded: true},
+		// Metadata that does not parse beside the marker: the marker alone
+		// declares the format, so this is refused as that, not reported as
+		// a metadata load failure.
+		"marker, metadata unparseable": {filename: "metadata.json", metadata: `{"backend":`, marker: true, embedded: true},
+	}
+	for layoutName, layout := range layouts {
 		for name, open := range factories {
-			t.Run(filename+"/"+name, func(t *testing.T) {
+			t.Run(layoutName+"/"+name, func(t *testing.T) {
 				beadsDir := t.TempDir()
-				path := graphWorkspaceLayout{filename: filename, metadata: graphLinkWorkspaceMetadata, embedded: true}.write(t, beadsDir)
+				path := layout.write(t, beadsDir)
 				before := legacyUpgradeTreeDigest(t, beadsDir)
 				store, err := open(t.Context(), beadsDir)
 				if err == nil {
@@ -165,8 +310,10 @@ func TestStoreFactoriesRefuseGraphWorkspace(t *testing.T) {
 				if after := legacyUpgradeTreeDigest(t, beadsDir); after != before {
 					t.Fatalf("%s open changed the workspace", name)
 				}
-				if got, readErr := os.ReadFile(path); readErr != nil || string(got) != graphLinkWorkspaceMetadata {
-					t.Fatalf("%s open rewrote %s: %q, %v", name, filename, got, readErr)
+				if path != "" {
+					if got, readErr := os.ReadFile(path); readErr != nil || string(got) != layout.metadata {
+						t.Fatalf("%s open rewrote %s: %q, %v", name, layout.filename, got, readErr)
+					}
 				}
 			})
 		}
@@ -232,13 +379,20 @@ func TestHandleWorkspaceGuardErrorExitCodes(t *testing.T) {
 	if err := handleWorkspaceGuardError(nil); err != nil {
 		t.Fatalf("handleWorkspaceGuardError(nil) = %v", err)
 	}
-	formatErr := &unsupportedWorkspaceFormatError{beadsDir: "/w/.beads", graphMode: "link"}
+	formatErr := &configfile.UnsupportedWorkspaceFormatError{BeadsDir: "/w/.beads", GraphMode: "link"}
+	markerDir := t.TempDir()
+	writeFile(t, filepath.Join(markerDir, "graph-preview-format"), []byte("link-preview-v9\n"))
+	markerErr := checkWorkspaceFormat(nil, markerDir)
+	if markerErr == nil {
+		t.Fatalf("checkWorkspaceFormat(no metadata, format marker) = nil, want a refusal")
+	}
 	tests := []struct {
 		name string
 		err  error
 		want int
 	}{
 		{name: "unsupported format", err: formatErr, want: ExitUnsupportedWorkspaceFormat},
+		{name: "format marker", err: markerErr, want: ExitUnsupportedWorkspaceFormat},
 		{name: "legacy refusal", err: legacyUpgradeRefusal("legacy Dolt workspace"), want: 1},
 	}
 	for _, tt := range tests {
@@ -255,5 +409,48 @@ func TestHandleWorkspaceGuardErrorExitCodes(t *testing.T) {
 	}
 	if ExitUnsupportedWorkspaceFormat != 16 {
 		t.Fatalf("ExitUnsupportedWorkspaceFormat = %d; it is a stable scripting contract", ExitUnsupportedWorkspaceFormat)
+	}
+}
+
+// A create target without metadata.json is refused when it declares a graph
+// format, and is otherwise left to the auto-initialization path as before,
+// even when its legacy config.json cannot be parsed.
+func TestEnsureBeadsDirForPathChecksWorkspaceFormat(t *testing.T) {
+	malformedConfig := `{"backend":"dolt",`
+	for _, tc := range []struct {
+		name       string
+		marker     bool
+		wantFormat bool
+	}{
+		{name: "malformed config.json", marker: false, wantFormat: false},
+		{name: "malformed config.json beside the marker", marker: true, wantFormat: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			beadsDir := filepath.Join(targetDir, ".beads")
+			if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(beadsDir, "config.json"), []byte(malformedConfig), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.marker {
+				if err := os.WriteFile(filepath.Join(beadsDir, "graph-preview-format"), []byte("1\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// allowCreate=false stops just after the format check, before
+			// anything is created, so the result shows which branch ran.
+			err := ensureBeadsDirForPath(context.Background(), targetDir, nil, false)
+			if err == nil {
+				t.Fatal("ensureBeadsDirForPath() = nil, want an error")
+			}
+			if got := isUnsupportedWorkspaceFormat(err); got != tc.wantFormat {
+				t.Fatalf("ensureBeadsDirForPath() = %v, unsupported format = %v, want %v", err, got, tc.wantFormat)
+			}
+			if !tc.wantFormat && !strings.Contains(err.Error(), "no beads workspace found") {
+				t.Fatalf("ensureBeadsDirForPath() = %v, want the not-auto-created refusal", err)
+			}
+		})
 	}
 }

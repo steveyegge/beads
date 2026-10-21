@@ -1085,9 +1085,9 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 	metadataPath := filepath.Join(beadsDir, "metadata.json")
 
 	// A target in a format this build cannot open is refused before anything
-	// below: one marked only by a legacy config.json has no metadata.json, so
-	// it would otherwise be initialized here and lose its marker to the
-	// metadata.json written beside it.
+	// below: one marked only by a legacy config.json or by the graph format
+	// marker file has no metadata.json, so it would otherwise be initialized
+	// here, with an Issue database and a metadata.json written beside it.
 	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
 		return err
 	}

@@ -22,11 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command still lists what was recorded after recording is turned off, and
   proxied-server and HTTP workspaces refuse it. The setting is a row of each
   store's `config` table (`bd config set versioned-history.enabled true`),
-  and every store reads its own when it is opened: a write routed into
-  another workspace (a prefix-routed `bd update` or `bd close`,
-  `bd create --repo`) follows the target store's row, a proxied-server
-  provider reads it when it is constructed, and a long-lived `bd serve`
-  keeps the value it read until it restarts.
+  and every store reads its own in its first write (a store that only reads
+  never reads it, and a write whose read fails fails with it, changing
+  nothing): a write routed into another workspace (a prefix-routed
+  `bd update` or `bd close`, `bd create --repo`) follows the target store's
+  row, a proxied-server provider reads it in its first unit of work, and a
+  long-lived `bd serve` keeps the value it read until it restarts.
   `BD_VERSIONED_HISTORY_ENABLED=1` (or a `config.yaml` value) turns
   recording on for every store the process opens, and never turns it off.
   The row replicates on `bd dolt push`/`pull`, and recording is single-writer
@@ -879,6 +880,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A `metadata.json` rewrite keeps `graph_mode` and the `graph_*` fields
   graph-preview builds write, and like those builds it omits a zero
   `graph_schema_version` and a false `graph_ready`.
+- **A graph workspace without `graph_mode` in its metadata is refused too.**
+  Graph-preview builds write a `.beads/graph-preview-format` marker before
+  `metadata.json`. bd ignored it. When an older bd had rewritten
+  `metadata.json` without `graph_mode`, bd opened the graph database by its
+  recorded name and ran Issue schema initialization against it; when
+  `metadata.json` was never written or was lost, bd fell back to the default
+  database name and created an Issue database inside the graph workspace, and
+  `bd init` initialized an Issue workspace there. A `.beads` holding that
+  marker, whatever it contains and whatever its metadata says (absent,
+  stripped, unparseable or an explicit `dependency`), is now refused wherever
+  a `graph_mode` workspace is: commands run in it or naming it with `--db` or
+  `BEADS_DB`, `bd create --repo` aimed at it, and `bd bootstrap` in a
+  workspace below it that would take its metadata exit with code 16 and a
+  hint to restore `metadata.json`, and routed and cross-repository opens fail
+  without opening its database.
+- **The Go library's opens refuse a graph workspace too.**
+  `beads.OpenBestAvailable`, `OpenBestAvailableWith`, `OpenFromConfig` and
+  `OpenGated` opened a workspace whose `metadata.json` declares a
+  `graph_mode` other than `dependency`, or whose `.beads` holds the
+  `graph-preview-format` marker, as an Issue store and ran Issue schema
+  migrations into the graph database. They now
+  return `*beads.UnsupportedWorkspaceFormatError` (match it with `errors.As`)
+  before opening, creating or changing anything, the same refusal the CLI
+  exits 16 with.
+- **`bd doctor` no longer rewrites a graph workspace listed in
+  `repos.additional`.** Its multi-repo types check read each additional
+  repository's metadata with the loader that migrates a legacy `config.json`
+  into `metadata.json`. A graph workspace whose metadata was still a
+  `config.json` (marked by `graph_mode` in it, or by the
+  `graph-preview-format` marker beside it) therefore lost that file, and with
+  it any `graph_*` key bd does not know, to a new `metadata.json` before the
+  store open refused the workspace. The check now reads that metadata without
+  migrating it and skips the database of a workspace in a format this build
+  cannot open, leaving the workspace byte-identical; it still lists the
+  custom types in that repository's `config.yaml`, as before. It also no
+  longer migrates an ordinary additional repository's legacy `config.json`
+  when there is no Dolt database there to read.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in

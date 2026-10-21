@@ -54,10 +54,11 @@ func activateVersionedHistoryStore(ctx context.Context, s storage.DoltStorage, e
 // through instead of a DoltStorage.
 //
 // A provider has no DoltStorage to ask for a settings plane, so its row is read
-// through a unit of work at construction (versionedhistory.ProviderSetting): one
-// pooled connection, one SELECT, rolled back. The provider constructors have
-// already opened the pool and run their schema setup by then, so the read starts
-// no server and creates nothing.
+// with SQL of its own: bd's provider is handed the read and makes it inside its
+// first unit of work (storage.VersionedHistoryDeferrer), one SELECT after that
+// unit's START TRANSACTION. The provider constructors have already opened the
+// pool and run their schema setup, so the read starts no server and creates
+// nothing.
 func activateVersionedHistoryProvider(ctx context.Context, p uow.UnitOfWorkProvider, err error) (uow.UnitOfWorkProvider, error) {
 	return versionedhistory.ActivateProvider(ctx, p, err)
 }
