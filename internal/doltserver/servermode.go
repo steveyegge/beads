@@ -293,13 +293,21 @@ func ExternallyManagedAdvice(setting, endpoint string) string {
 }
 
 // UnreachableEndpointAdvice is the advice for a TCP dial of host:port, the
-// port resolved from source, that found no server: the externally managed
-// advice when a setting declares the workspace's server so (see
-// ExternalPortSetting), or "" when the caller's own advice stands. A host off
-// this machine also gets "", so the caller's own advice stands for it too.
+// port resolved from source, that found no server, or "" when the caller's own
+// advice stands. A host off this machine gets the remote-host advice
+// (GH#3518): bd starts no server there, and `bd dolt start` refuses a remote
+// host. A host on this machine gets the externally managed advice when a
+// setting declares the workspace's server so (see ExternalPortSetting).
 func UnreachableEndpointAdvice(beadsDir, host string, port int, source PortSource) string {
 	if !configfile.IsLocalHostString(host) {
-		return ""
+		return remoteServerAdvice(host, port)
 	}
 	return ExternalPortSetting(beadsDir, source, port).Advice(net.JoinHostPort(host, strconv.Itoa(port)))
+}
+
+// remoteServerAdvice is the advice for a Dolt server at host:port on another
+// machine that bd could not reach, in the words the store uses for one.
+func remoteServerAdvice(host string, port int) string {
+	return fmt.Sprintf("Verify the external server is running and reachable from this host:\n"+
+		"  nc -zv %s %d  # or curl %s:%d for an HTTP-style check", host, port, host, port)
 }

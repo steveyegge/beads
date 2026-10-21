@@ -57,27 +57,24 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 		GoVersion: runtime.Version(),
 	}
 
-	// Resolve server config (handles standalone ephemeral ports and the
-	// legacy BEADS_DOLT_PORT the store dials)
+	// Dial the endpoint the store dials: the configured host (DialConfig's
+	// Host is always 127.0.0.1), on DialConfig's port, which handles
+	// standalone ephemeral ports and the legacy BEADS_DOLT_PORT.
 	dsCfg := doltserver.DialConfig(beadsDir)
+	dbName := configfile.DefaultDoltDatabase
+	host := (&configfile.Config{}).GetDoltServerHost()
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
+		dbName = cfg.GetDoltDatabase()
+		host = cfg.GetDoltServerHost()
+	}
 
 	// Check server status
 	doltDir := getDatabasePath(beadsDir)
-	serverRunning := isDoltServerRunning(dsCfg.Host, dsCfg.Port)
+	serverRunning := isDoltServerRunning(host, dsCfg.Port)
 	if serverRunning {
 		metrics.ServerStatus = "running"
 	} else {
 		metrics.ServerStatus = "not running"
-	}
-
-	// Determine the database name and the configured server host. dsCfg.Host
-	// is always 127.0.0.1, so the unreachable advice below must be gated on
-	// the configured host: a remote server keeps the generic advice.
-	dbName := configfile.DefaultDoltDatabase
-	configuredHost := (&configfile.Config{}).GetDoltServerHost()
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		dbName = cfg.GetDoltDatabase()
-		configuredHost = cfg.GetDoltServerHost()
 	}
 
 	// Start profiling if requested
@@ -93,17 +90,13 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 
 	// Connect and run diagnostics via server
 	if !serverRunning {
-		advice := ""
-		if configfile.IsLocalHostString(configuredHost) {
-			advice = doltserver.UnreachableEndpointAdvice(beadsDir, dsCfg.Host, dsCfg.Port, dsCfg.PortSource)
+		if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dsCfg.Port, dsCfg.PortSource); advice != "" {
+			return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d.\n%s", host, dsCfg.Port, advice)
 		}
-		if advice != "" {
-			return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d.\n%s", dsCfg.Host, dsCfg.Port, advice)
-		}
-		return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d; start it with 'bd dolt start'", dsCfg.Host, dsCfg.Port)
+		return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d; start it with 'bd dolt start'", host, dsCfg.Port)
 	}
 
-	if err := runDoltServerDiagnostics(metrics, dsCfg.Host, dsCfg.Port, dbName, beadsDir); err != nil {
+	if err := runDoltServerDiagnostics(metrics, host, dsCfg.Port, dbName, beadsDir); err != nil {
 		return metrics, fmt.Errorf("server diagnostics failed: %w", err)
 	}
 

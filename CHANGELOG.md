@@ -841,8 +841,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd doctor --server` now dial its port, as commands that open the store
   do, instead of `127.0.0.1:0` or a port left in bd's port file. A shared
   server, a server bd started (its pid file beside the port file), a server
-  bd manages, an external workspace whose port no setting names, and a remote
-  host keep their advice.
+  bd manages, and an external workspace whose port no setting names keep
+  their advice.
 - **For a Dolt server on another machine, the legacy `BEADS_DOLT_PORT` no
   longer overrides a configured port.** It replaced the port that
   `config.yaml` `dolt.port`, the data directory's `listener.port` or
@@ -851,6 +851,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong server. A padded value counted too. It now fills in only a port that
   no setting names, and is read untrimmed, as for a local server.
   `BEADS_DOLT_SERVER_PORT` still overrides a configured port.
+- **`bd doctor --perf` checks a remote Dolt server on its host, and the
+  server diagnostics stop advising `bd dolt start` for one.**
+  `bd doctor --perf` probed `127.0.0.1` instead of the configured host, so it
+  reported a reachable remote server as not running; it now measures the
+  server the store uses. When nothing answers on a remote host,
+  `bd doctor --perf`, `bd dolt test` and `bd dolt clean-databases` say how to
+  check the server there (`nc -zv <host> <port>`) instead of advising
+  `bd dolt start`, which refuses a remote host.
 - **`bd migrate-personal` opens the planning repo the way that repo is
   configured.** It opened the planning store as a Dolt SQL server under the
   default database name, ignoring the planning repo's `metadata.json`. An

@@ -2543,9 +2543,10 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 }
 
 // unreachableServerAdvice is what to do about a Dolt server at host and dc's
-// port that did not answer: the externally managed advice when a setting
-// naming the port declares the server so (bd starts no server there, and
-// `bd dolt start` would start its own on that port), else `bd dolt start`.
+// port that did not answer: the remote-host advice for a host on another
+// machine (`bd dolt start` refuses one), the externally managed advice when a
+// setting naming the port declares the server so (bd starts no server there,
+// and `bd dolt start` would start its own on that port), else `bd dolt start`.
 func unreachableServerAdvice(beadsDir, host string, dc *doltserver.Config) string {
 	if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dc.Port, dc.PortSource); advice != "" {
 		return advice

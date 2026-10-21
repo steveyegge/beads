@@ -424,8 +424,8 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 // BEADS_DOLT_PORT must make them dial its port, as the store does, rather
 // than 127.0.0.1:0 when it is alone, or a port-file port left over beside it.
 // A config.yaml dolt.port outranks it for the dial, as in the store, and the
-// advice still names it when both name the same port. A remote host keeps the
-// command's own advice.
+// advice still names it when both name the same port. A remote host gets the
+// remote-host advice.
 func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 	diagnostics := [][]string{
 		{"dolt", "test"},
@@ -447,22 +447,42 @@ func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 			runNamedPortDiagnostic(t, "BEADS_DOLT_PORT", "config.yaml", args)
 		})
 	}
-	t.Run("remote host/doctor --perf", func(t *testing.T) {
-		f := newExternalInitFixture(t)
-		namedPortWorkspace(t, f, 0)
-		f.env = append(f.env, "BEADS_DOLT_SERVER_HOST=db.invalid",
-			"BEADS_DOLT_SERVER_PORT="+strconv.Itoa(freeLoopbackPort(t)))
+	for _, args := range diagnostics {
+		t.Run("remote host/"+strings.Join(args, " "), func(t *testing.T) {
+			runRemoteHostDiagnostic(t, args)
+		})
+	}
+}
 
-		res := f.run("", "doctor", "--perf")
+// runRemoteHostDiagnostic runs one diagnostic against a server on another
+// machine whose port BEADS_DOLT_SERVER_PORT names. It must dial that host, not
+// 127.0.0.1, and give the remote-host advice: not `bd dolt start`, which
+// refuses a remote host, and not the local externally managed advice.
+func runRemoteHostDiagnostic(t *testing.T, args []string) {
+	t.Helper()
+	f := newExternalInitFixture(t)
+	port := freeLoopbackPort(t)
+	namedPortWorkspace(t, f, 0)
+	f.env = append(f.env, "BEADS_DOLT_SERVER_HOST=db.invalid", "BEADS_DOLT_SERVER_PORT="+strconv.Itoa(port))
 
-		requireNoLaunch(t, res)
-		if !res.failed {
-			t.Errorf("bd doctor --perf succeeded with no server:\n%s", res.output)
+	res := f.run("", args...)
+
+	requireNoLaunch(t, res)
+	if !res.failed {
+		t.Errorf("bd %s succeeded with no server:\n%s", strings.Join(args, " "), res.output)
+	}
+	for _, want := range []string{net.JoinHostPort("db.invalid", strconv.Itoa(port)), fmt.Sprintf("nc -zv db.invalid %d", port)} {
+		if !strings.Contains(res.output, want) {
+			t.Errorf("output does not contain %q:\n%s", want, res.output)
 		}
-		if strings.Contains(res.output, "externally managed") {
-			t.Errorf("output gives the local externally managed advice for a remote host:\n%s", res.output)
+	}
+	// The loopback endpoint, not "127.0.0.1" alone: a resolver on 127.0.0.1
+	// can appear in the failed lookup of db.invalid.
+	for _, banned := range []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), "bd dolt start", "externally managed"} {
+		if strings.Contains(res.output, banned) {
+			t.Errorf("output contains %q:\n%s", banned, res.output)
 		}
-	})
+	}
 }
 
 // runNamedPortDiagnostic runs one diagnostic against a dead port named by

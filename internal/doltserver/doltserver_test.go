@@ -3448,16 +3448,23 @@ func TestExternalPortDeclarationAdvice(t *testing.T) {
 	}
 }
 
-// TestUnreachableEndpointAdviceLeavesRemoteHosts pins that a host off this
-// machine keeps its caller's own advice: it is not bd's to start either way,
-// and the remote-host advice (GH#3518) says how to check it.
-func TestUnreachableEndpointAdviceLeavesRemoteHosts(t *testing.T) {
+// TestUnreachableEndpointAdviceRemoteHost pins the advice for a host off this
+// machine: how to check the server there (GH#3518), whatever declares it, and
+// never `bd dolt start`, which refuses a remote host, or the local externally
+// managed advice. A host on this machine keeps the externally managed advice.
+func TestUnreachableEndpointAdviceRemoteHost(t *testing.T) {
 	namedPortRefusalEnv(t)
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "13322")
 	config.ResetForTesting()
 	dir := namedPortServerWorkspace(t, 0)
-	if got := UnreachableEndpointAdvice(dir, "db.example.com", 13322, PortSourceEnv); got != "" {
-		t.Errorf("remote host advice = %q, want none", got)
+	remote := UnreachableEndpointAdvice(dir, "db.example.com", 13322, PortSourceEnv)
+	if !strings.Contains(remote, "nc -zv db.example.com 13322") {
+		t.Errorf("remote host advice = %q, want the remote-host advice for db.example.com:13322", remote)
+	}
+	for _, banned := range []string{"bd dolt start", "externally managed"} {
+		if strings.Contains(remote, banned) {
+			t.Errorf("remote host advice contains %q:\n%s", banned, remote)
+		}
 	}
 	if got := UnreachableEndpointAdvice(dir, "127.0.0.1", 13322, PortSourceEnv); !strings.Contains(got, "BEADS_DOLT_SERVER_PORT declares") {
 		t.Errorf("local host advice = %q, want the externally managed advice", got)
