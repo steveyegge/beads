@@ -810,8 +810,10 @@ func TestControlFilePathsIncludesSecretAndQuarantines(t *testing.T) {
 	root := t.TempDir()
 	proxyStale := pidfile.Path(root, PIDFileName) + ".stale-100"
 	backendStale := pidfile.Path(root, server.PIDFileName) + ".stale-200"
+	rotatedLog := filepath.Join(root, LogFileName+".1")
 	require.NoError(t, os.WriteFile(proxyStale, []byte("proxy"), 0o600))
 	require.NoError(t, os.WriteFile(backendStale, []byte("backend"), 0o600))
+	require.NoError(t, os.WriteFile(rotatedLog, []byte("rotated"), 0o600))
 	_, err := identity.WriteSecret(root)
 	require.NoError(t, err)
 
@@ -819,11 +821,15 @@ func TestControlFilePathsIncludesSecretAndQuarantines(t *testing.T) {
 	assert.Contains(t, paths, filepath.Join(root, identity.SecretFileName))
 	assert.Contains(t, paths, proxyStale)
 	assert.Contains(t, paths, backendStale)
+	// The single rotated generation retires with its primary (#7527).
+	assert.Contains(t, paths, filepath.Join(root, LogFileName))
+	assert.Contains(t, paths, rotatedLog)
 
 	assert.Empty(t, PurgeControlFiles(root))
 	assert.NoFileExists(t, filepath.Join(root, identity.SecretFileName))
 	assert.NoFileExists(t, proxyStale)
 	assert.NoFileExists(t, backendStale)
+	assert.NoFileExists(t, rotatedLog)
 }
 
 // N-process cold-start convergence remains intentionally deferred to the

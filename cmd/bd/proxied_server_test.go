@@ -1177,6 +1177,31 @@ func TestResolveProxiedServerConfigPath_FollowsCustomRoot(t *testing.T) {
 	})
 }
 
+// TestProxiedLogAssetsIncludesDefaultRotatedLog pins the proxied→server
+// migration cleanup list: the default server.log retires together with its
+// rotated .1 generation (#7527), while a custom log path still yields no
+// assets, as before.
+func TestProxiedLogAssetsIncludesDefaultRotatedLog(t *testing.T) {
+	t.Run("default path list includes the rotated .1", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "")
+		t.Setenv("BEADS_PROXIED_SERVER_ROOT_PATH", "")
+		bd := t.TempDir()
+
+		assets, err := proxiedLogAssets(bd)
+		require.NoError(t, err)
+		assert.Equal(t, []string{proxiedServerLogPath(bd), proxiedServerLogPath(bd) + ".1"}, assets)
+	})
+
+	t.Run("custom log path still yields no assets", func(t *testing.T) {
+		t.Setenv("BEADS_PROXIED_SERVER_LOG", "/var/log/beads/server.log")
+		bd := t.TempDir()
+
+		assets, err := proxiedLogAssets(bd)
+		require.NoError(t, err)
+		assert.Empty(t, assets)
+	})
+}
+
 // TestResolveProxiedServerLogPath_FollowsCustomRoot mirrors the config
 // cascade test for the log resolver.
 func TestResolveProxiedServerLogPath_FollowsCustomRoot(t *testing.T) {

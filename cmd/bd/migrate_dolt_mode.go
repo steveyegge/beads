@@ -1257,7 +1257,9 @@ func proxiedLogAssets(beadsDir string) ([]string, error) {
 	if isCustomLog {
 		return nil, nil
 	}
-	return []string{logPath}, nil
+	// The rotated .1 generation retires with its primary: proxied-mode
+	// startup rotation (#7527) keeps exactly one.
+	return []string{logPath, logPath + ".1"}, nil
 }
 
 func removeMigrateAssets(paths []string) []error {

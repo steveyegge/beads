@@ -781,6 +781,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Proxied-server mode no longer grows `.beads/dolt/proxy.log` without
+  bound. The proxy wrote about six trace lines to it for every connection
+  it served, and every `bd` command opens connections through it; those
+  per-connection lines now require `BD_DEBUG` in the proxy child's
+  environment (its lifecycle and error lines are unchanged), and both
+  `proxy.log` and the dolt child's `server.log` are rotated at proxy start
+  with the rule embedded mode already applies to `dolt-server.log`: over
+  `BEADS_DOLT_LOG_MAX_BYTES` (default 50 MB) the file is renamed to `.1`,
+  one generation is kept. The rotated `.1` files retire with the other
+  proxy control files on `bd dolt purge-control-files` and with the default
+  `server.log` on a proxied→server migration; a custom log path is still
+  left alone. `server.log` still grows while the dolt child runs (~2.8 KB/s
+  observed), because the child owns that descriptor; quieting the generated
+  config's `log_level` is tracked separately in #7527.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the
