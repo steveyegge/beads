@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -528,6 +529,36 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 				if after := planningDirListing(t, beadsDir); !slices.Equal(after, before) {
 					t.Errorf(".beads after a refused initialization = %v, want unchanged %v", after, before)
 				}
+			}
+		})
+	}
+}
+
+// TestRefuseUninitializablePlanningRepoChecksFormatFirst verifies that a
+// metadata-less planning .beads in a format this build cannot open is refused
+// as that format, before its config.yaml is read: a server-mode or unreadable
+// config beside the graph format marker gets the format refusal, not the
+// server-mode or unreadable-config one.
+func TestRefuseUninitializablePlanningRepoChecksFormatFirst(t *testing.T) {
+	for name, configYAML := range map[string]string{
+		"server mode":       "dolt:\n  mode: server\n",
+		"remote dolt.host":  "dolt:\n  host: db.example.com\n",
+		"unreadable config": "dolt: [unterminated\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			beadsDir := filepath.Join(t.TempDir(), ".beads")
+			if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			for file, content := range map[string]string{"config.yaml": configYAML, configfile.GraphFormatMarkerFile: ""} {
+				if err := os.WriteFile(filepath.Join(beadsDir, file), []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := refuseUninitializablePlanningRepo(beadsDir)
+			var formatErr *configfile.UnsupportedWorkspaceFormatError
+			if !errors.As(err, &formatErr) || !formatErr.FormatMarker {
+				t.Fatalf("refuseUninitializablePlanningRepo() = %v, want the graph format marker refusal", err)
 			}
 		})
 	}

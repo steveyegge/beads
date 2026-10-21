@@ -1220,8 +1220,16 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 //   - one holding several embedded databases: nothing records which one
 //     holds the issues (bd run there opens the default database).
 //
-// A .beads holding one embedded database is left to adoptTargetDatabase.
+// A .beads holding one embedded database is left to adoptTargetDatabase. A
+// .beads in a format this build cannot open is refused as that first, as bd's
+// admission refuses it (checkDiscoveredWorkspaceFormat).
 func refuseUninitializableTarget(beadsDir string) error {
+	// A workspace in a format this build cannot open is refused as that,
+	// before its config is read: the format fence's refusal (and its exit
+	// code) does not depend on the mode the config selects.
+	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return err
+	}
 	repo := filepath.Dir(beadsDir)
 	mode, _, err := config.WorkspaceYamlSettingWithLocal(beadsDir, "dolt.mode")
 	if err != nil {

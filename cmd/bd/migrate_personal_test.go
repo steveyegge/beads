@@ -1504,8 +1504,10 @@ func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.
 		want   string
 		// setup shapes planningBeadsDir, which exists and is empty.
 		setup func(t *testing.T, planningBeadsDir string)
-		// wantStderr, when set, is the refusal's whole stderr, which exits 1.
+		// wantStderr, when set, is the refusal's whole stderr, which exits
+		// wantCode, or 1 when wantCode is 0.
 		wantStderr func(planningDir string) string
+		wantCode   int
 	}{
 		{name: "redirect stub", prefix: "mps", want: "; set routing.contributor to that repository instead", setup: writeRedirect},
 		{name: "redirect stub with metadata", prefix: "mpr", want: "; set routing.contributor to that repository instead", setup: func(t *testing.T, planningBeadsDir string) {
@@ -1549,6 +1551,18 @@ func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.
 			writeServerModeWorkspace(t, planningBeadsDir)
 			createDatabase(t, planningBeadsDir, "beads", "")
 		}},
+		// A planning repo in a format this build cannot open is refused as
+		// that, exactly as bd's own admission refuses it, whatever mode its
+		// config selects: the format fence runs before the config is read.
+		{name: "graph format marker beside a server-mode config.yaml", prefix: "mpf", want: "graph-preview-format", setup: func(t *testing.T, planningBeadsDir string) {
+			writeServerModeWorkspace(t, planningBeadsDir)
+			if err := os.WriteFile(filepath.Join(planningBeadsDir, configfile.GraphFormatMarkerFile), nil, 0o600); err != nil {
+				t.Fatalf("write planning graph format marker: %v", err)
+			}
+		}, wantStderr: func(planningDir string) string {
+			formatErr := &configfile.UnsupportedWorkspaceFormatError{BeadsDir: filepath.Join(planningDir, ".beads"), FormatMarker: true}
+			return "Error: " + formatErr.Error() + "\nHint: " + formatErr.Hint() + "\n"
+		}, wantCode: ExitUnsupportedWorkspaceFormat},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1573,9 +1587,13 @@ func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.
 			}
 			requireInNoPlanningDatabase(t, planningBeadsDir, personal.ID)
 			if tc.wantStderr != nil {
+				wantCode := tc.wantCode
+				if wantCode == 0 {
+					wantCode = 1
+				}
 				stderr, code := migratePersonalStderr(t, bd, dir)
-				if want := tc.wantStderr(planningDir); stderr != want || code != 1 {
-					t.Errorf("bd migrate-personal --yes exit %d, stderr:\n%s\nwant exit 1, stderr exactly:\n%s", code, stderr, want)
+				if want := tc.wantStderr(planningDir); stderr != want || code != wantCode {
+					t.Errorf("bd migrate-personal --yes exit %d, stderr:\n%s\nwant exit %d, stderr exactly:\n%s", code, stderr, wantCode, want)
 				}
 			}
 		})
