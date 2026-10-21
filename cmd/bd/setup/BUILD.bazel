@@ -25,6 +25,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//internal/config",
+        "//internal/git",
         "//internal/recipes",
         "//internal/templates",
         "//internal/templates/agents",

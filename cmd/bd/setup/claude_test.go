@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -1373,6 +1374,21 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 	})
 
+	// A project that turns off a plugin the user settings enable runs no
+	// plugin hook, so --check names the project install (Claude Code's
+	// settings precedence: local over project over user).
+	t.Run("plugin turned off here names the project install", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		writeSettings(t, legacyProjectSettingsPath(env.projectDir), settingsWithPluginSetTo(false))
+		if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+			t.Fatalf("expected errClaudeHooksMissing, got %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Run: bd setup claude\n") {
+			t.Errorf("expected the project setup hint, got:\n%s", stdout.String())
+		}
+	})
+
 	// The home directory and ~/.claude are recognized when reached through a
 	// symlink too (a symlinked /home, a linked checkout): sameDir compares
 	// the directories, not their path strings.
@@ -1891,9 +1907,15 @@ func TestClaudeWrappersReturnError(t *testing.T) {
 
 // settingsWithPlugin returns settings data with the beads plugin enabled.
 func settingsWithPlugin() map[string]interface{} {
+	return settingsWithPluginSetTo(true)
+}
+
+// settingsWithPluginSetTo is a settings file whose enabledPlugins sets the
+// beads plugin to enabled, as `claude plugin enable` / `disable` writes it.
+func settingsWithPluginSetTo(enabled bool) map[string]interface{} {
 	return map[string]interface{}{
 		"enabledPlugins": map[string]interface{}{
-			"beads@beads-marketplace": true,
+			"beads@beads-marketplace": enabled,
 		},
 	}
 }
@@ -1978,6 +2000,130 @@ func TestHasBeadsPlugin(t *testing.T) {
 			t.Error("real beads@beads-marketplace should be detected even alongside a decoy")
 		}
 	})
+
+	// Claude Code resolves each enabledPlugins id from the highest-precedence
+	// settings file that sets it: managed, then local, then project, then
+	// user. A narrower scope's false turns off a plugin a broader one enables.
+	t.Run("precedence", func(t *testing.T) {
+		local := func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }
+		project := func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }
+		user := func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }
+		managed := func(env claudeEnv) string { return filepath.Join(env.managedDir, "managed-settings.json") }
+		managedDropIn := func(env claudeEnv) string {
+			return filepath.Join(env.managedDir, "managed-settings.d", "20-plugins.json")
+		}
+		type setting struct {
+			path    func(claudeEnv) string
+			enabled bool
+		}
+		cases := []struct {
+			name        string
+			settings    []setting
+			wantProject bool
+			wantGlobal  bool
+		}{
+			{"local false turns off a user plugin", []setting{{user, true}, {local, false}}, false, true},
+			{"project false turns off a user plugin", []setting{{user, true}, {project, false}}, false, true},
+			{"local true turns on a plugin the project turns off", []setting{{project, false}, {local, true}}, true, false},
+			{"user false does not turn off a project plugin", []setting{{project, true}, {user, false}}, true, false},
+			{"managed false blocks a user plugin", []setting{{user, true}, {managed, false}}, false, false},
+			{"managed true force-enables a plugin local turns off", []setting{{local, false}, {managed, true}}, true, true},
+			{"a managed drop-in overrides managed-settings.json", []setting{{managed, true}, {managedDropIn, false}, {user, true}}, false, false},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				env, _, _ := newClaudeTestEnv(t)
+				env.managedDir = filepath.Join(t.TempDir(), "managed")
+				for _, s := range tc.settings {
+					writeSettings(t, s.path(env), settingsWithPluginSetTo(s.enabled))
+				}
+				if got := hasBeadsPlugin(env, false); got != tc.wantProject {
+					t.Errorf("project hasBeadsPlugin = %v, want %v", got, tc.wantProject)
+				}
+				if got := hasBeadsPlugin(env, true); got != tc.wantGlobal {
+					t.Errorf("global hasBeadsPlugin = %v, want %v", got, tc.wantGlobal)
+				}
+			})
+		}
+	})
+
+	// Each id resolves on its own: turning off one marketplace's beads
+	// plugin leaves another's enabled.
+	t.Run("ids resolve independently", func(t *testing.T) {
+		env, _, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		writeSettings(t, legacyProjectSettingsPath(env.projectDir), map[string]interface{}{
+			"enabledPlugins": map[string]interface{}{"beads@another-marketplace": false},
+		})
+		if !hasBeadsPlugin(env, false) {
+			t.Error("beads@beads-marketplace should stay enabled when only beads@another-marketplace is turned off")
+		}
+	})
+
+	// Since v2.1.211 Claude Code keeps the local settings at the repository
+	// root (the main checkout's root in a linked worktree) and still reads
+	// one an older version left in the starting directory; the root's wins.
+	t.Run("local settings at the repository root", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			rootLocal *bool
+			dirLocal  *bool
+			want      bool
+		}{
+			{"root enables", boolPtr(true), nil, true},
+			{"root turns off a user plugin", boolPtr(false), nil, false},
+			{"root wins over the starting directory", boolPtr(false), boolPtr(true), false},
+			{"starting directory still read", nil, boolPtr(false), false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				env, _, _ := newClaudeTestEnv(t)
+				env.localSettingsRoot = env.projectDir
+				env.projectDir = filepath.Join(env.localSettingsRoot, "sub")
+				if err := os.MkdirAll(env.projectDir, 0o755); err != nil {
+					t.Fatalf("mkdir sub: %v", err)
+				}
+				if tc.rootLocal == nil || *tc.rootLocal == false {
+					writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+				}
+				if tc.rootLocal != nil {
+					writeSettings(t, legacyProjectSettingsPath(env.localSettingsRoot), settingsWithPluginSetTo(*tc.rootLocal))
+				}
+				if tc.dirLocal != nil {
+					writeSettings(t, legacyProjectSettingsPath(env.projectDir), settingsWithPluginSetTo(*tc.dirLocal))
+				}
+				if got := hasBeadsPlugin(env, false); got != tc.want {
+					t.Errorf("hasBeadsPlugin = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	})
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// TestDirWithin pins the check that keeps claudeLocalSettingsRoot from using
+// a git context cached for another directory: a directory is within the
+// root itself, its subdirectories and a symlink into it, and nothing else.
+func TestDirWithin(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	other := t.TempDir()
+	if !dirWithin(root, root) || !dirWithin(sub, root) {
+		t.Error("the root and its subdirectories should be within the root")
+	}
+	if dirWithin(other, root) || dirWithin(root, sub) {
+		t.Error("a sibling or a parent should not be within the root")
+	}
+	link := filepath.Join(other, "link")
+	if err := os.Symlink(sub, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	if !dirWithin(link, root) {
+		t.Error("a symlink to a subdirectory should be within the root")
+	}
 }
 
 func TestInstallClaudeSkipsHooksWhenPluginPresent(t *testing.T) {
@@ -2064,8 +2210,10 @@ func TestInstallClaudeGlobalPluginScope(t *testing.T) {
 			if tc.global {
 				target = globalSettingsPath(env.homeDir)
 			}
+			// An install that leaves the hooks to the plugin creates no
+			// settings file of its own.
 			data, err := env.readFile(target)
-			if err != nil {
+			if err != nil && !(tc.wantPlugin && os.IsNotExist(err)) {
 				t.Fatalf("read %s: %v", target, err)
 			}
 			if got := strings.Contains(string(data), "bd prime --hook-json"); got == tc.wantPlugin {
@@ -2073,6 +2221,111 @@ func TestInstallClaudeGlobalPluginScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInstallClaudePluginPrecedence pins a project install where settings
+// files disagree about the beads plugin. Claude Code takes each plugin's
+// setting from the highest-precedence file that names it (local, then
+// project, then user), so a project that turns off a plugin the user
+// settings enable gets the hook, and --check, which named the plugin, now
+// names the project install first.
+func TestInstallClaudePluginPrecedence(t *testing.T) {
+	stubDetectRenderOpts(t)
+
+	user := func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }
+	project := func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }
+	local := func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }
+	type setting struct {
+		path    func(claudeEnv) string
+		enabled bool
+	}
+	cases := []struct {
+		name     string
+		settings []setting
+		wantHook bool
+	}{
+		{"user plugin turned off in the local settings", []setting{{user, true}, {local, false}}, true},
+		{"user plugin turned off in the project settings", []setting{{user, true}, {project, false}}, true},
+		{"project plugin turned off in the local settings", []setting{{project, true}, {local, false}}, true},
+		{"user plugin left on", []setting{{user, true}, {project, true}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			for _, s := range tc.settings {
+				writeSettings(t, s.path(env), settingsWithPluginSetTo(s.enabled))
+			}
+			// Before the install --check names the project install exactly
+			// where the plugin is off for this project.
+			err := checkClaude(env)
+			if got := errors.Is(err, errClaudeHooksMissing); got != tc.wantHook {
+				t.Fatalf("--check reported missing hooks = %v (err %v), want %v:\n%s", got, err, tc.wantHook, stdout.String())
+			}
+			stdout.Reset()
+			if err := installClaude(env, false, false); err != nil {
+				t.Fatalf("installClaude: %v", err)
+			}
+			data, err := os.ReadFile(projectSettingsPath(env.projectDir))
+			if err != nil {
+				t.Fatalf("read project settings: %v", err)
+			}
+			if got := strings.Contains(string(data), "bd prime --hook-json"); got != tc.wantHook {
+				t.Errorf("project settings have the bd prime hook = %v, want %v:\n%s\n%s", got, tc.wantHook, data, stdout.String())
+			}
+			stdout.Reset()
+			if err := checkClaude(env); err != nil {
+				t.Fatalf("checkClaude after install: %v\n%s", err, stdout.String())
+			}
+		})
+	}
+}
+
+// TestInstallClaudePluginManagedLeavesSettingsAlone pins that an install
+// which leaves the hooks to the plugin writes no hook, so it adds no empty
+// "hooks" object to a settings file and creates none.
+func TestInstallClaudePluginManagedLeavesSettingsAlone(t *testing.T) {
+	stubDetectRenderOpts(t)
+	const pluginSettings = "{\n  \"enabledPlugins\": {\n    \"beads@beads-marketplace\": true\n  }\n}\n"
+
+	for _, global := range []bool{false, true} {
+		t.Run(fmt.Sprintf("global=%v settings keep their bytes", global), func(t *testing.T) {
+			env, _, _ := newClaudeTestEnv(t)
+			path := projectSettingsPath(env.projectDir)
+			if global {
+				path = globalSettingsPath(env.homeDir)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(pluginSettings), 0o644); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			if err := installClaude(env, global, false); err != nil {
+				t.Fatalf("installClaude: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if string(data) != pluginSettings {
+				t.Errorf("%s changed:\n%s", path, data)
+			}
+		})
+	}
+
+	t.Run("no settings file created", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		if err := installClaude(env, false, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		if _, err := os.Stat(projectSettingsPath(env.projectDir)); !os.IsNotExist(err) {
+			t.Errorf("project settings created (stat err %v)", err)
+		}
+		if strings.Contains(stdout.String(), "Settings: ") {
+			t.Errorf("summary names a settings file the install did not write:\n%s", stdout.String())
+		}
+	})
 }
 
 func TestInstallClaudeWritesHooksWithoutPlugin(t *testing.T) {

@@ -8,9 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/templates/agents"
 )
 
@@ -40,9 +42,17 @@ type claudeEnv struct {
 	stderr     io.Writer
 	homeDir    string
 	projectDir string
-	ensureDir  func(string, os.FileMode) error
-	readFile   func(string) ([]byte, error)
-	writeFile  func(string, []byte) error
+	// managedDir is the system directory Claude Code reads file-based
+	// managed settings from; "" reads none.
+	managedDir string
+	// localSettingsRoot is the directory whose .claude/settings.local.json Claude Code
+	// reads as the local settings of a session started in projectDir (see
+	// claudeLocalSettingsRoot); "" when Claude Code keeps that file beside
+	// projectDir's .claude/settings.json.
+	localSettingsRoot string
+	ensureDir         func(string, os.FileMode) error
+	readFile          func(string) ([]byte, error)
+	writeFile         func(string, []byte) error
 }
 
 func defaultClaudeEnv() (claudeEnv, error) {
@@ -55,16 +65,75 @@ func defaultClaudeEnv() (claudeEnv, error) {
 		return claudeEnv{}, fmt.Errorf("working directory: %w", err)
 	}
 	return claudeEnv{
-		stdout:     os.Stdout,
-		stderr:     os.Stderr,
-		homeDir:    home,
-		projectDir: workDir,
-		ensureDir:  EnsureDir,
-		readFile:   os.ReadFile,
+		stdout:            os.Stdout,
+		stderr:            os.Stderr,
+		homeDir:           home,
+		projectDir:        workDir,
+		managedDir:        claudeManagedSettingsDir(),
+		localSettingsRoot: claudeLocalSettingsRoot(home, workDir),
+		ensureDir:         EnsureDir,
+		readFile:          os.ReadFile,
 		writeFile: func(path string, data []byte) error {
 			return atomicWriteFile(path, data)
 		},
 	}, nil
+}
+
+// claudeManagedSettingsDir is the system directory that holds Claude Code's
+// file-based managed settings, managed-settings.json and managed-settings.d/.
+func claudeManagedSettingsDir() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "/Library/Application Support/ClaudeCode"
+	case "windows":
+		return `C:\Program Files\ClaudeCode`
+	default:
+		return "/etc/claude-code"
+	}
+}
+
+// claudeLocalSettingsRoot returns the directory whose
+// .claude/settings.local.json Claude Code (v2.1.211 and later) reads as the
+// local settings of a session started in workDir: the git repository's root,
+// or the main checkout's root in a linked worktree. It is "" where Claude
+// Code keeps that file beside .claude/settings.json instead: outside a git
+// repository, on Windows, and when the root is the home directory. Claude
+// Code also keeps it there when another user owns the root, its .git or its
+// .claude; git refuses such a repository unless safe.directory allows it, and
+// bd does not check further. It is "" too when the process's cached git
+// context is not workDir's repository.
+func claudeLocalSettingsRoot(home, workDir string) string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	repoRoot := git.GetRepoRoot()
+	if repoRoot == "" || !dirWithin(workDir, repoRoot) {
+		return ""
+	}
+	root, err := git.GetMainRepoRoot()
+	if err != nil || root == "" || sameDir(root, home) {
+		return ""
+	}
+	return root
+}
+
+// dirWithin reports whether dir is root or lies below it, comparing
+// directories rather than path strings, as sameDir does. It resolves dir's
+// symlinks first, so a link into the root counts as within it.
+func dirWithin(dir, root string) bool {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	for d := filepath.Clean(dir); ; {
+		if sameDir(d, root) {
+			return true
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return false
+		}
+		d = parent
+	}
 }
 
 func projectSettingsPath(base string) string {
@@ -350,17 +419,18 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	}
 
 	settings := make(map[string]interface{})
+	settingsExisted := false
 	if data, err := env.readFile(settingsPath); err == nil {
+		settingsExisted = true
 		if err := json.Unmarshal(data, &settings); err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
 			return err
 		}
 	}
 
-	hooks, ok := settings["hooks"].(map[string]interface{})
-	if !ok {
+	hooks, hadHooks := settings["hooks"].(map[string]interface{})
+	if !hadHooks {
 		hooks = make(map[string]interface{})
-		settings["hooks"] = hooks
 	}
 
 	// GH#955: Clean up any null values left by previous buggy removal
@@ -393,24 +463,29 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 
 	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
 	// so project-level hooks don't fire bd prime twice per session.
-	pluginManaged := hasBeadsPlugin(env, global)
-	if pluginManaged {
-		_, _ = fmt.Fprintln(env.stdout, "✓ Beads plugin detected — hooks are plugin-managed, skipping")
-	} else {
-		if addHookCommand(hooks, "SessionStart", command) {
-			_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
+	if plugin := beadsPlugin(env, global); plugin.enabled {
+		_, _ = fmt.Fprintf(env.stdout, "✓ Beads plugin enabled in %s — hooks are plugin-managed, skipping\n", plugin.path)
+	} else if addHookCommand(hooks, "SessionStart", command) {
+		_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
+	}
+
+	// An install that leaves the hooks to the plugin adds no empty "hooks"
+	// object, and creates no settings file with nothing in it.
+	if hadHooks || len(hooks) > 0 {
+		settings["hooks"] = hooks
+	}
+	hasSettingsFile := settingsExisted || len(settings) > 0
+	if hasSettingsFile {
+		data, err := marshalSettings(settings)
+		if err != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
+			return err
 		}
-	}
 
-	data, err := marshalSettings(settings)
-	if err != nil {
-		_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
-		return err
-	}
-
-	if err := writeSettingsIfChanged(env, settingsPath, data); err != nil {
-		_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
-		return err
+		if err := writeSettingsIfChanged(env, settingsPath, data); err != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
+			return err
+		}
 	}
 
 	// Migrate legacy hooks: remove beads hooks from settings.local.json if present
@@ -465,7 +540,9 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	} else {
 		_, _ = fmt.Fprintln(env.stdout, "\n✓ Claude Code integration installed")
 	}
-	_, _ = fmt.Fprintf(env.stdout, "  Settings: %s\n", settingsPath)
+	if hasSettingsFile {
+		_, _ = fmt.Fprintf(env.stdout, "  Settings: %s\n", settingsPath)
+	}
 	_, _ = fmt.Fprintln(env.stdout, "\nRestart Claude Code for changes to take effect.")
 	return nil
 }
@@ -546,6 +623,7 @@ func checkClaude(env claudeEnv) error {
 	// From the home directory the project's settings are the global ones,
 	// so hooks there are user-level and reported as global.
 	atHome := claudeProjectIsHome(env)
+	plugin := beadsPlugin(env, false)
 	userLevelHooks := false
 	switch {
 	case !atHome && hasBeadsHooks(projectSettings):
@@ -556,9 +634,9 @@ func checkClaude(env claudeEnv) error {
 	case hasBeadsHooks(legacySettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", legacySettings)
 		_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
-	case hasBeadsPlugin(env, false):
+	case plugin.enabled:
 		// GH#3192: Plugin provides hooks via plugin.json — no project-level hooks needed
-		_, _ = fmt.Fprintln(env.stdout, "✓ Hooks provided by beads plugin (plugin-managed)")
+		_, _ = fmt.Fprintf(env.stdout, "✓ Hooks provided by beads plugin (plugin-managed): %s\n", plugin.path)
 		// Its hooks are user-level only when the user settings enable it (or,
 		// as above, from the home directory): enabled in this project's
 		// settings alone, they run here only.
@@ -855,52 +933,122 @@ func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command
 // hasBeadsPlugin reports whether the beads Claude Code plugin is enabled where
 // its hooks would cover an install. The plugin declares its own SessionStart
 // hooks in plugin.json, so the hooks an install writes would duplicate them.
-// Claude Code records the plugin in the settings file of its install scope:
-// ~/.claude/settings.json (user scope) runs it in every project; a project's
-// .claude/settings.json (project scope) or .claude/settings.local.json (local
-// scope) runs it in that project only. A project install counts all three; a
-// global install, whose hooks are for every project, counts only the user
-// settings.
 func hasBeadsPlugin(env claudeEnv, global bool) bool {
-	paths := []string{globalSettingsPath(env.homeDir)}
-	if !global {
-		paths = append(paths, projectSettingsPath(env.projectDir), legacyProjectSettingsPath(env.projectDir))
-	}
-	for _, p := range paths {
-		if checkBeadsPluginInFile(env.readFile, p) {
-			return true
-		}
-	}
-	return false
+	return beadsPlugin(env, global).enabled
 }
 
-// checkBeadsPluginInFile checks if the beads plugin is enabled in a single settings file.
-func checkBeadsPluginInFile(readFile func(string) ([]byte, error), path string) bool {
+// beadsPluginState is the beads plugin's enablement as Claude Code resolves it.
+type beadsPluginState struct {
+	enabled bool
+	// path is the settings file that decided it: the one that enabled it,
+	// or, when it is not enabled, the first that turned it off ("" when no
+	// file names it).
+	path string
+}
+
+// beadsPlugin resolves the beads plugin's enablement for an install. Claude
+// Code reads enabledPlugins from managed settings, the local
+// .claude/settings.local.json, the project's .claude/settings.json and the
+// user's ~/.claude/settings.json, in that order of precedence. A project
+// install resolves all four, as a session started in the project does. A
+// global install's hook is for every project, and Claude Code runs a plugin
+// that a project's own settings enable in that project only, so it resolves
+// the managed and user settings alone.
+func beadsPlugin(env claudeEnv, global bool) beadsPluginState {
+	return resolveBeadsPlugin(env.readFile, claudePluginSettingsPaths(env, global))
+}
+
+// claudePluginSettingsPaths returns the settings files beadsPlugin resolves,
+// highest precedence first. The local settings are the repository root's
+// (see claudeLocalSettingsRoot), then one an older Claude Code kept in the
+// starting directory, which it still reads below the root's.
+func claudePluginSettingsPaths(env claudeEnv, global bool) []string {
+	paths := claudeManagedSettingsPaths(env.managedDir)
+	if !global {
+		if env.localSettingsRoot != "" && !sameDir(env.localSettingsRoot, env.projectDir) {
+			paths = append(paths, legacyProjectSettingsPath(env.localSettingsRoot))
+		}
+		paths = append(paths, legacyProjectSettingsPath(env.projectDir), projectSettingsPath(env.projectDir))
+	}
+	return append(paths, globalSettingsPath(env.homeDir))
+}
+
+// claudeManagedSettingsPaths returns the file-based managed settings in dir,
+// highest precedence first. Claude Code merges managed-settings.json, then
+// each *.json in managed-settings.d in name order, skipping dot files, and a
+// later file's value replaces an earlier one's. Managed settings Claude Code
+// gets from its servers or an MDM profile rank above these files and are
+// not visible here.
+func claudeManagedSettingsPaths(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	var paths []string
+	dropIns := filepath.Join(dir, "managed-settings.d")
+	if entries, err := os.ReadDir(dropIns); err == nil {
+		for i := len(entries) - 1; i >= 0; i-- {
+			name := entries[i].Name()
+			if entries[i].IsDir() || strings.HasPrefix(name, ".") || filepath.Ext(name) != ".json" {
+				continue
+			}
+			paths = append(paths, filepath.Join(dropIns, name))
+		}
+	}
+	return append(paths, filepath.Join(dir, "managed-settings.json"))
+}
+
+// resolveBeadsPlugin resolves the beads plugin across settings files given
+// highest precedence first, as Claude Code resolves enabledPlugins: each
+// plugin id is decided by the first file that sets it to true or false, and a
+// file that does not name it, is missing or does not parse leaves it to the
+// next. The plugin is enabled when any of its ids resolves to true.
+func resolveBeadsPlugin(readFile func(string) ([]byte, error), paths []string) beadsPluginState {
+	decided := map[string]bool{}
+	var state beadsPluginState
+	for _, path := range paths {
+		for id, enabled := range beadsPluginEntries(readFile, path) {
+			if _, ok := decided[id]; ok {
+				continue
+			}
+			decided[id] = enabled
+			switch {
+			case enabled && !state.enabled:
+				state = beadsPluginState{enabled: true, path: path}
+			case !enabled && state.path == "":
+				state.path = path
+			}
+		}
+	}
+	return state
+}
+
+// beadsPluginEntries returns the beads plugin ids a settings file's
+// enabledPlugins sets, with their values.
+func beadsPluginEntries(readFile func(string) ([]byte, error), path string) map[string]bool {
 	data, err := readFile(path)
 	if err != nil {
-		return false
+		return nil
 	}
 	var settings map[string]interface{}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return false
+		return nil
 	}
 	enabledPlugins, ok := settings["enabledPlugins"].(map[string]interface{})
 	if !ok {
-		return false
+		return nil
 	}
-	for key, value := range enabledPlugins {
+	entries := map[string]bool{}
+	for id, value := range enabledPlugins {
 		// enabledPlugins keys are "<pluginName>@<marketplace>". Match the
 		// plugin-name segment exactly: a substring test (GH#4244) mistakes any
 		// "*beads*" plugin (e.g. design-to-beads) for the beads hook plugin and
 		// wrongly skips the SessionStart hook write.
-		name, _, _ := strings.Cut(strings.ToLower(key), "@")
-		if name == "beads" {
-			if enabled, ok := value.(bool); ok && enabled {
-				return true
-			}
+		name, _, _ := strings.Cut(strings.ToLower(id), "@")
+		if enabled, ok := value.(bool); ok && name == "beads" {
+			entries[id] = enabled
 		}
 	}
-	return false
+	return entries
 }
 
 // hasBeadsHooks checks if a settings file has bd prime hooks

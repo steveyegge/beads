@@ -1225,6 +1225,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd setup claude` rather than `--global` when that file is missing. In a
   project that enables the plugin, a global install's hook and the plugin's
   both run `bd prime`.
+- **`bd setup claude` reads the beads plugin's setting the way Claude Code
+  does.** It skipped its hook whenever `~/.claude/settings.json`, the
+  project's `.claude/settings.json` or `.claude/settings.local.json` enabled
+  the plugin, even when a more specific one turned it off, so a project that
+  opts out of a plugin your user settings enable got neither the plugin's
+  hook nor bd's, and `--check` reported the hooks as plugin-managed. It now
+  takes the plugin's setting from the first settings file that names it, in
+  Claude Code's order: managed settings (`managed-settings.json` and
+  `managed-settings.d/`), `.claude/settings.local.json` (at the repository
+  root, or the main checkout's root in a linked worktree, where Claude Code
+  v2.1.211 and later keeps it, then one left in the current directory), the
+  project's `.claude/settings.json`, then `~/.claude/settings.json`. An
+  install that leaves the hooks to the plugin names the file that enables it,
+  no longer adds an empty `"hooks": {}` to a settings file, and no longer
+  creates an empty `.claude/settings.json`, which `bd init` then committed.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query
