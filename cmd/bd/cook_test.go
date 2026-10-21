@@ -842,6 +842,78 @@ func TestCookFormulaToSubgraph_GateParentChild(t *testing.T) {
 	}
 }
 
+// cookGateFormulaTOML cooks a TOML formula through the same load, resolve,
+// control-flow and cook path pour uses (resolveAndCookFormulaWithVars).
+func cookGateFormulaTOML(t *testing.T, name, src string) *TemplateSubgraph {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, name+".formula.toml"), []byte(src), 0o600); err != nil {
+		t.Fatalf("write formula: %v", err)
+	}
+	sg, err := resolveAndCookFormulaWithVars(name, []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("cook %q: %v", name, err)
+	}
+	return sg
+}
+
+// blocksEdgesFrom returns the DepBlocks targets of issueID in subgraph order.
+func blocksEdgesFrom(sg *TemplateSubgraph, issueID string) []string {
+	var out []string
+	for _, d := range sg.Dependencies {
+		if d.IssueID == issueID && d.Type == types.DepBlocks {
+			out = append(out, d.DependsOnID)
+		}
+	}
+	return out
+}
+
+// TestCookFormulaToSubgraph_EntryGateWiring pins the entry-gate form that
+// GH#3316 leaves unchanged: a [steps.gate] on a step that is not declared
+// type = "gate" spawns a companion that blocks the step.
+func TestCookFormulaToSubgraph_EntryGateWiring(t *testing.T) {
+	gates := map[string]string{
+		"human":  `{ type = "human" }`,
+		"gh:run": `{ type = "gh:run", id = "ci", repo = "acme/widgets" }`,
+		"timer":  `{ type = "timer", timeout = "1h" }`,
+	}
+	stepTypes := map[string]string{
+		"untyped":        "",
+		"task":           `type = "task"`,
+		"noncanonical-G": `type = "Gate"`,
+	}
+	for gateName, gateSrc := range gates {
+		for typeName, typeLine := range stepTypes {
+			t.Run(gateName+"/"+typeName, func(t *testing.T) {
+				src := `formula = "entry-gate"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "wait"
+title = "Wait then work"
+` + typeLine + `
+gate = ` + gateSrc + "\n"
+				sg := cookGateFormulaTOML(t, "entry-gate", src)
+				stepID, gateID := "entry-gate.wait", "entry-gate.gate-wait"
+				gate := sg.IssueMap[gateID]
+				if gate == nil || gate.IssueType != types.TypeGate {
+					t.Fatalf("companion %s missing or not a gate: %+v (issues %v)", gateID, gate, allIssueIDs(sg))
+				}
+				if gate.AwaitType != gateName {
+					t.Errorf("companion AwaitType = %q, want %q", gate.AwaitType, gateName)
+				}
+				if got := blocksEdgesFrom(sg, stepID); len(got) != 1 || got[0] != gateID {
+					t.Errorf("step blocks edges = %v, want [%s]", got, gateID)
+				}
+				if got := blocksEdgesFrom(sg, gateID); len(got) != 0 {
+					t.Errorf("companion must not block on the step; got blocks edges %v", got)
+				}
+			})
+		}
+	}
+}
+
 // =============================================================================
 // Standalone Expansion Tests (bd-qzb)
 // =============================================================================
