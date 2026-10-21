@@ -3,12 +3,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -181,5 +183,68 @@ waits_for = "all-children"
 	// waiter must unblock.
 	if !readyIDs(t, bd, dir)[waiterID] {
 		t.Fatalf("waiter %s did not become ready after its childless spawner %s closed", waiterID, spawnerID)
+	}
+}
+
+// TestCookFormulaPersist_GateWiring checks the companion-gate edges that
+// bd cook --persist writes (cookFormula), the DB twin of the in-memory
+// TestCookFormulaToSubgraph_EntryGateWiring (GH#3316).
+func TestCookFormulaPersist_GateWiring(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t, filepath.Join(t.TempDir(), "test.db"))
+
+	blocksTargets := func(t *testing.T, issueID string) []string {
+		t.Helper()
+		recs, err := store.GetDependencyRecords(ctx, issueID)
+		if err != nil {
+			t.Fatalf("GetDependencyRecords(%s): %v", issueID, err)
+		}
+		var out []string
+		for _, d := range recs {
+			if d.Type == types.DepBlocks {
+				out = append(out, d.DependsOnID)
+			}
+		}
+		return out
+	}
+
+	cook := func(t *testing.T, protoID, src string) {
+		t.Helper()
+		f, err := formula.NewParser().ParseTOML([]byte(src))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := cookFormula(ctx, store, f, protoID); err != nil {
+			t.Fatalf("cookFormula(%s): %v", protoID, err)
+		}
+	}
+
+	for name, gateSrc := range map[string]string{
+		"human":  `{ type = "human" }`,
+		"gh-run": `{ type = "gh:run", id = "ci" }`,
+		"timer":  `{ type = "timer", timeout = "1h" }`,
+	} {
+		t.Run("entry/"+name, func(t *testing.T) {
+			protoID := "test-entry-" + name
+			cook(t, protoID, `formula = "entry"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "wait"
+title = "Wait then work"
+gate = `+gateSrc+"\n")
+			stepID, gateID := protoID+".wait", protoID+".gate-wait"
+			gate, err := store.GetIssue(ctx, gateID)
+			if err != nil || gate == nil || gate.IssueType != types.TypeGate {
+				t.Fatalf("companion %s: issue=%+v err=%v", gateID, gate, err)
+			}
+			if got := blocksTargets(t, stepID); len(got) != 1 || got[0] != gateID {
+				t.Errorf("step blocks edges = %v, want [%s]", got, gateID)
+			}
+			if got := blocksTargets(t, gateID); len(got) != 0 {
+				t.Errorf("companion must not block on the step; got %v", got)
+			}
+		})
 	}
 }
