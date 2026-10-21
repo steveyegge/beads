@@ -27,6 +27,14 @@ var claudeAgentsIntegration = agentsIntegration{
 	profile:      agents.ProfileMinimal,
 }
 
+// claudeGlobalAgentsIntegration is claudeAgentsIntegration for the user-level
+// instructions file, so its hints name the command that maintains that file.
+var claudeGlobalAgentsIntegration = agentsIntegration{
+	name:         "Claude Code",
+	setupCommand: "bd setup claude --global",
+	profile:      agents.ProfileMinimal,
+}
+
 type claudeEnv struct {
 	stdout     io.Writer
 	stderr     io.Writer
@@ -69,6 +77,13 @@ func legacyProjectSettingsPath(base string) string {
 
 func globalSettingsPath(home string) string {
 	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// globalClaudeInstructionsPath is Claude Code's user-level instructions file,
+// which it loads in every project. A global install keeps its managed beads
+// section there, beside the ~/.claude/settings.json its hook goes in.
+func globalClaudeInstructionsPath(home string) string {
+	return filepath.Join(home, ".claude", claudeInstructionsFile)
 }
 
 // marshalSettings renders a Claude settings map as two-space-indented JSON
@@ -129,6 +144,87 @@ func claudeAgentsEnvRedirect(env claudeEnv) (agentsEnv, bool) {
 		stdout:     env.stdout,
 		stderr:     env.stderr,
 	}, false
+}
+
+// claudeInstructionsEnv resolves the file an install or removal manages the
+// beads section in, with the integration whose hints name its command. A
+// global install uses the user-level ~/.claude/CLAUDE.md and leaves the
+// current directory's files alone. It renders that file with fixed options:
+// every project shares it, so it must not follow one project's config, and
+// Claude Code loads it in projects that do not use beads too, so its section
+// applies only in those that do. A project install uses the project's
+// CLAUDE.md, or AGENTS.md when the bool reports the claudeAgentsEnvRedirect
+// redirect.
+func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegration, bool) {
+	if !global {
+		ae, redirected := claudeAgentsEnvRedirect(env)
+		return ae, claudeAgentsIntegration, redirected
+	}
+	return agentsEnv{
+		agentsPath:  globalClaudeInstructionsPath(env.homeDir),
+		stdout:      env.stdout,
+		stderr:      env.stderr,
+		sectionOnly: true,
+		renderOpts:  agents.UserLevelRenderOpts,
+	}, claudeGlobalAgentsIntegration, false
+}
+
+// claudeCheckAgentsEnv picks the instructions file --check reports on. Run
+// from ~/.claude, the project's CLAUDE.md is the user-level file, so it is
+// judged as one. Otherwise it is the project's file, unless the hooks are
+// user-level (a global install's, or those of a plugin enabled in the user
+// settings) and the project's file has no beads section. Then it is the
+// ~/.claude/CLAUDE.md a global install writes, which Claude Code loads
+// alongside the project's own instructions, if that has a section, if the
+// project's file does not exist, or if the project is the home directory:
+// there a project install's hint would create the ~/CLAUDE.md a global install
+// exists to avoid. A project install with project hooks, or with the plugin
+// enabled only in the project's settings, is judged on the project's file
+// alone.
+func claudeCheckAgentsEnv(env claudeEnv, userLevelHooks bool) (agentsEnv, agentsIntegration) {
+	globalEnv, globalIntegration, _ := claudeInstructionsEnv(env, true)
+	if claudeProjectIsUserLevelDir(env) {
+		return globalEnv, globalIntegration
+	}
+	projectEnv := claudeAgentsEnv(env)
+	if !userLevelHooks || claudeFileHasBeadsSection(env, projectEnv.agentsPath) {
+		return projectEnv, claudeAgentsIntegration
+	}
+	if claudeFileHasBeadsSection(env, globalEnv.agentsPath) || claudeProjectIsHome(env) {
+		return globalEnv, globalIntegration
+	}
+	if _, err := env.readFile(projectEnv.agentsPath); err != nil {
+		return globalEnv, globalIntegration
+	}
+	return projectEnv, claudeAgentsIntegration
+}
+
+// claudeProjectIsHome reports whether the current directory is the home
+// directory, where the project's .claude/settings.json is the global one.
+func claudeProjectIsHome(env claudeEnv) bool {
+	return sameDir(env.projectDir, env.homeDir)
+}
+
+// claudeProjectIsUserLevelDir reports whether the current directory is
+// ~/.claude, where the project's CLAUDE.md is the user-level one.
+func claudeProjectIsUserLevelDir(env claudeEnv) bool {
+	return sameDir(env.projectDir, filepath.Dir(globalClaudeInstructionsPath(env.homeDir)))
+}
+
+// sameDir reports whether a and b are the same directory, following
+// symlinks; it compares cleaned paths when either cannot be stat'd.
+func sameDir(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	if errA == nil && errB == nil {
+		return os.SameFile(ai, bi)
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func claudeFileHasBeadsSection(env claudeEnv, path string) bool {
+	data, err := env.readFile(path)
+	return err == nil && containsBeadsMarker(string(data))
 }
 
 // stripStaleClaudeBlock removes a beads-managed block left behind in CLAUDE.md
@@ -297,7 +393,7 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 
 	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
 	// so project-level hooks don't fire bd prime twice per session.
-	pluginManaged := hasBeadsPlugin(env)
+	pluginManaged := hasBeadsPlugin(env, global)
 	if pluginManaged {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Beads plugin detected — hooks are plugin-managed, skipping")
 	} else {
@@ -342,10 +438,10 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 
 	// Install minimal beads section in CLAUDE.md.
 	// Hooks handle the heavy lifting via bd prime; CLAUDE.md just needs a pointer.
-	agentsEnv, redirected := claudeAgentsEnvRedirect(env)
+	agentsEnv, integration, redirected := claudeInstructionsEnv(env, global)
 	agentsSkipped := false
 	agentsEnv.skipped = &agentsSkipped
-	agentsErr := installAgents(agentsEnv, claudeAgentsIntegration)
+	agentsErr := installAgents(agentsEnv, integration)
 	if agentsErr != nil {
 		// Non-fatal: hooks are already installed
 		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", agentsFileName(agentsEnv.agentsPath), agentsErr)
@@ -447,24 +543,42 @@ func checkClaude(env claudeEnv) error {
 	globalSettings := globalSettingsPath(env.homeDir)
 	legacySettings := legacyProjectSettingsPath(env.projectDir)
 
+	// From the home directory the project's settings are the global ones,
+	// so hooks there are user-level and reported as global.
+	atHome := claudeProjectIsHome(env)
+	userLevelHooks := false
 	switch {
-	case hasBeadsHooks(projectSettings):
+	case !atHome && hasBeadsHooks(projectSettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed: %s\n", projectSettings)
 	case hasBeadsHooks(globalSettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Global hooks installed: %s\n", globalSettings)
+		userLevelHooks = true
 	case hasBeadsHooks(legacySettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", legacySettings)
 		_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
-	case hasBeadsPlugin(env):
+	case hasBeadsPlugin(env, false):
 		// GH#3192: Plugin provides hooks via plugin.json — no project-level hooks needed
 		_, _ = fmt.Fprintln(env.stdout, "✓ Hooks provided by beads plugin (plugin-managed)")
+		// Its hooks are user-level only when the user settings enable it (or,
+		// as above, from the home directory): enabled in this project's
+		// settings alone, they run here only.
+		userLevelHooks = atHome || hasBeadsPlugin(env, true)
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
-		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
+		if atHome || claudeProjectIsUserLevelDir(env) {
+			// A project install from $HOME would create the ~/CLAUDE.md a
+			// global install exists to avoid; one from ~/.claude would put
+			// the project wording, and scaffolding, in the user-level
+			// ~/.claude/CLAUDE.md.
+			_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude --global")
+		} else {
+			_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
+		}
 		return errClaudeHooksMissing
 	}
 
-	return checkAgents(claudeAgentsEnv(env), claudeAgentsIntegration)
+	agentsEnv, integration := claudeCheckAgentsEnv(env, userLevelHooks)
+	return checkAgents(agentsEnv, integration)
 }
 
 func RemoveClaude(global bool) error {
@@ -485,58 +599,32 @@ func removeClaude(env claudeEnv, global bool) error {
 		_, _ = fmt.Fprintln(env.stdout, "Removing Claude hooks from project...")
 	}
 
-	data, err := env.readFile(settingsPath)
-	if err != nil {
-		_, _ = fmt.Fprintln(env.stdout, "No settings file found")
-	} else {
-		var settings map[string]interface{}
-		if err := json.Unmarshal(data, &settings); err != nil {
-			_, _ = fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
-			return err
-		}
-
-		hooks, ok := settings["hooks"].(map[string]interface{})
-		if !ok {
-			_, _ = fmt.Fprintln(env.stdout, "No hooks found")
-		} else {
-			for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
-				removeHookCommand(env.stdout, hooks, "SessionStart", v)
-				removeHookCommand(env.stdout, hooks, "PreCompact", v)
-			}
-
-			data, err = marshalSettings(settings)
-			if err != nil {
-				_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
-				return err
-			}
-
-			if err := writeSettingsIfChanged(env, settingsPath, data); err != nil {
-				_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
-				return err
-			}
-		}
+	if err := removeClaudeHooks(env, settingsPath); err != nil {
+		return err
 	}
 
 	// Also clean legacy settings.local.json when removing project hooks
 	if !global {
-		legacyPath := legacyProjectSettingsPath(env.projectDir)
-		if legacyData, readErr := env.readFile(legacyPath); readErr == nil {
-			var legacySettings map[string]interface{}
-			if json.Unmarshal(legacyData, &legacySettings) == nil {
-				if legacyHooks, ok := legacySettings["hooks"].(map[string]interface{}); ok {
-					for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
-						removeHookCommand(env.stdout, legacyHooks, "SessionStart", v)
-						removeHookCommand(env.stdout, legacyHooks, "PreCompact", v)
-					}
-					if migrated, marshalErr := marshalSettings(legacySettings); marshalErr == nil {
-						_ = writeSettingsIfChanged(env, legacyPath, migrated)
-					}
-				}
-			}
+		removeLegacyClaudeHooks(env)
+	}
+
+	// From ~/.claude the project's CLAUDE.md is the user-level one, so the
+	// removal below takes a global install's section; remove that install's
+	// hooks from the global settings too, first, so a settings file that
+	// cannot be read or does not parse stops the removal with the section
+	// still in place.
+	userLevelDir := !global && claudeProjectIsUserLevelDir(env)
+	if userLevelDir {
+		_, _ = fmt.Fprintln(env.stdout, "Removing Claude hooks globally...")
+		if err := removeClaudeHooks(env, globalSettingsPath(env.homeDir)); err != nil {
+			return err
 		}
 	}
 
-	agentsEnv, redirected := claudeAgentsEnvRedirect(env)
+	// From ~/.claude the file is resolved as a global removal, and --check
+	// there, resolve it, so an @AGENTS.md line in it never takes the redirect
+	// below, whose failed cleanup is only a warning.
+	agentsEnv, integration, redirected := claudeInstructionsEnv(env, global || userLevelDir)
 	if redirected {
 		// When redirected, AGENTS.md carries the project-authoritative shared
 		// beads section (created by `bd init` or another agent's setup), not a
@@ -546,15 +634,107 @@ func removeClaude(env claudeEnv, global bool) error {
 		if err := stripStaleClaudeBlock(env); err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to clean stale beads block from %s: %v\n", claudeInstructionsFile, err)
 		}
-	} else {
-		if err := removeAgents(agentsEnv, claudeAgentsIntegration); err != nil {
+	} else if err := removeAgents(agentsEnv, integration); err != nil {
+		// From ~/.claude the pass above has removed the global hooks, so a
+		// section left in place is half an install: fail rather than warn
+		// and report success.
+		if userLevelDir {
+			return err
+		}
+		// Non-fatal
+		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", claudeInstructionsFile, err)
+	}
+
+	// From the home directory a project removal has just removed the global
+	// hooks, since the settings files are the same; remove the user-level
+	// section a global install paired with them too.
+	if !global && claudeProjectIsHome(env) {
+		globalEnv, globalIntegration, _ := claudeInstructionsEnv(env, true)
+		if err := removeAgents(globalEnv, globalIntegration); err != nil {
 			// Non-fatal
-			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", claudeInstructionsFile, err)
+			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", globalEnv.agentsPath, err)
 		}
 	}
 
 	_, _ = fmt.Fprintln(env.stdout, "✓ Claude hooks removed")
 	return nil
+}
+
+// removeClaudeHooks removes the bd prime hooks from the settings file at
+// settingsPath, keeping every other setting. It writes the file only when it
+// removed a hook: a file with none keeps its bytes and mode, and a symlinked
+// one is not refused. A missing file, or one with no hooks, is reported; one
+// that cannot be read or does not parse is an error.
+func removeClaudeHooks(env claudeEnv, settingsPath string) error {
+	data, err := env.readFile(settingsPath)
+	if os.IsNotExist(err) {
+		_, _ = fmt.Fprintf(env.stdout, "No settings file found at %s\n", settingsPath)
+		return nil
+	} else if err != nil {
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to read %s: %v\n", settingsPath, err)
+		return err
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to parse %s: %v\n", settingsPath, err)
+		return err
+	}
+
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		_, _ = fmt.Fprintf(env.stdout, "No hooks found in %s\n", settingsPath)
+		return nil
+	}
+	if !removeBdPrimeHooks(env.stdout, hooks) {
+		return nil
+	}
+
+	data, err = marshalSettings(settings)
+	if err != nil {
+		_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
+		return err
+	}
+	if err := writeSettingsIfChanged(env, settingsPath, data); err != nil {
+		_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
+		return err
+	}
+	return nil
+}
+
+// removeLegacyClaudeHooks removes the bd prime hooks older installs left in
+// the project's .claude/settings.local.json. Like removeClaudeHooks it writes
+// the file only when it removed a hook. It is best effort: a file that is
+// missing, does not parse or cannot be written is left as it is.
+func removeLegacyClaudeHooks(env claudeEnv) {
+	legacyPath := legacyProjectSettingsPath(env.projectDir)
+	legacyData, err := env.readFile(legacyPath)
+	if err != nil {
+		return
+	}
+	var legacySettings map[string]interface{}
+	if json.Unmarshal(legacyData, &legacySettings) != nil {
+		return
+	}
+	legacyHooks, ok := legacySettings["hooks"].(map[string]interface{})
+	if !ok || !removeBdPrimeHooks(env.stdout, legacyHooks) {
+		return
+	}
+	if migrated, err := marshalSettings(legacySettings); err == nil {
+		_ = writeSettingsIfChanged(env, legacyPath, migrated)
+	}
+}
+
+// removeBdPrimeHooks removes every bd prime variant from the SessionStart and
+// PreCompact hooks, reporting each removal to w. It reports whether it
+// removed any.
+func removeBdPrimeHooks(w io.Writer, hooks map[string]interface{}) bool {
+	removed := false
+	for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
+		// The call goes before ||, so an earlier removal never skips one.
+		removed = removeHookCommand(w, hooks, "SessionStart", v) || removed
+		removed = removeHookCommand(w, hooks, "PreCompact", v) || removed
+	}
+	return removed
 }
 
 // addHookCommand adds a hook command to an event if not already present
@@ -609,15 +789,17 @@ func addHookCommand(hooks map[string]interface{}, event, command string) bool {
 // hook entry are preserved. A hook entry is dropped only when its command list
 // becomes empty after filtering. Each removal is reported to w, the caller's
 // stdout: bd init --quiet hands the installers a discarding writer, so a
-// print to the process stdout here would escape it.
-func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command string) {
+// print to the process stdout here would escape it. It reports whether it
+// removed the command from any entry.
+func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command string) bool {
 	eventHooks, ok := hooks[event].([]interface{})
 	if !ok {
-		return
+		return false
 	}
 
 	// Initialize as empty slice (not nil) to avoid JSON null serialization.
 	filtered := make([]interface{}, 0, len(eventHooks))
+	removedAny := false
 	for _, hook := range eventHooks {
 		hookMap, ok := hook.(map[string]interface{})
 		if !ok {
@@ -648,6 +830,7 @@ func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command
 		}
 
 		if removed {
+			removedAny = true
 			_, _ = fmt.Fprintf(w, "✓ Removed %s hook\n", event)
 		}
 
@@ -666,16 +849,22 @@ func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command
 	} else {
 		hooks[event] = filtered
 	}
+	return removedAny
 }
 
-// hasBeadsPlugin checks if the beads Claude Code plugin is enabled in any
-// settings file. The plugin declares its own SessionStart hooks in plugin.json,
-// so project-level hooks from bd setup claude would duplicate them.
-func hasBeadsPlugin(env claudeEnv) bool {
-	paths := []string{
-		projectSettingsPath(env.projectDir),
-		globalSettingsPath(env.homeDir),
-		legacyProjectSettingsPath(env.projectDir),
+// hasBeadsPlugin reports whether the beads Claude Code plugin is enabled where
+// its hooks would cover an install. The plugin declares its own SessionStart
+// hooks in plugin.json, so the hooks an install writes would duplicate them.
+// Claude Code records the plugin in the settings file of its install scope:
+// ~/.claude/settings.json (user scope) runs it in every project; a project's
+// .claude/settings.json (project scope) or .claude/settings.local.json (local
+// scope) runs it in that project only. A project install counts all three; a
+// global install, whose hooks are for every project, counts only the user
+// settings.
+func hasBeadsPlugin(env claudeEnv, global bool) bool {
+	paths := []string{globalSettingsPath(env.homeDir)}
+	if !global {
+		paths = append(paths, projectSettingsPath(env.projectDir), legacyProjectSettingsPath(env.projectDir))
 	}
 	for _, p := range paths {
 		if checkBeadsPluginInFile(env.readFile, p) {

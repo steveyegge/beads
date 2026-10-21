@@ -178,6 +178,7 @@ go_test(
     name = "go_test_sources_test",
     srcs = [
         "bazel_skip_allowlist_test.go",
+        "embedded_lane_coverage_test.go",
         "embedded_shard_count_test.go",
         "host_tools_test.go",
         "managed_local_lane_test.go",

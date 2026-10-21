@@ -34,6 +34,29 @@ type agentsEnv struct {
 	stdout     io.Writer
 	stderr     io.Writer
 	skipped    *bool
+	// sectionOnly creates a missing or empty file holding only the managed
+	// section, without the project scaffolding createNewAgentsFileWithOpts
+	// adds. For user-level files, which apply to every project.
+	sectionOnly bool
+	// renderOpts, when set, fixes the render options instead of detecting
+	// them from the current directory's beads config. For user-level files,
+	// which every project shares, so install and --check agree everywhere.
+	renderOpts func() agents.RenderOpts
+	// insertBefore, when set, keeps the section in an existing file ahead of
+	// the line holding the first occurrence of this text, where Gemini CLI's
+	// indexOf finds its memories heading: a new section is added there
+	// instead of at the end, and one below it is stale and moved there. For
+	// a file whose owner finds its own section that way and appends to it up
+	// to the next "## " heading, which below it would be the managed
+	// section's.
+	insertBefore string
+}
+
+func (env agentsEnv) resolveRenderOpts() agents.RenderOpts {
+	if env.renderOpts != nil {
+		return env.renderOpts()
+	}
+	return detectRenderOpts()
 }
 
 type agentsIntegration struct {
@@ -117,7 +140,7 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	profile := resolveProfile(integration)
-	opts := detectRenderOpts()
+	opts := env.resolveRenderOpts()
 
 	var currentContent string
 	data, err := os.ReadFile(env.agentsPath) // #nosec G304 -- env.agentsPath is trusted setup destination
@@ -142,6 +165,12 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	beadsSection := agents.RenderSectionWithOpts(profile, opts)
 
 	if currentContent != "" {
+		if lifted, ok := liftBeadsSectionBelow(currentContent, env.insertBefore); ok {
+			// Updated where it stands, the section would go on collecting
+			// what the file's owner adds below insertBefore.
+			currentContent = lifted
+			_, _ = fmt.Fprintf(env.stdout, "  ℹ Moving the beads section ahead of %q\n", env.insertBefore)
+		}
 		if containsBeadsMarker(currentContent) {
 			// Like bd init's updateAgentFile: write only when the section
 			// actually changes, so a rerun leaves a current file alone.
@@ -160,14 +189,7 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 				_, _ = fmt.Fprintf(env.stdout, "✓ Updated existing beads section in %s\n", agentsFile)
 			}
 		} else {
-			// Set the section off with one blank line, as bd init's
-			// updateAgentFile does, so that removeBeadsSection gives the
-			// file back as it was.
-			newContent := currentContent
-			if !strings.HasSuffix(newContent, "\n") {
-				newContent += "\n"
-			}
-			newContent += "\n" + beadsSection
+			newContent := addBeadsSection(currentContent, beadsSection, env.insertBefore)
 			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
 				return err
@@ -176,6 +198,9 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 		}
 	} else {
 		newContent := createNewAgentsFileWithOpts(profile, opts)
+		if env.sectionOnly {
+			newContent = beadsSection
+		}
 		if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
 			return err
@@ -234,8 +259,11 @@ func checkAgents(env agentsEnv, integration agentsIntegration) error {
 		checkProfile = agents.ProfileFull
 	}
 
-	currentHash := agents.CurrentHashWithOpts(checkProfile, detectRenderOpts())
-	if meta != nil && meta.Hash == currentHash && existingProf == checkProfile {
+	currentHash := agents.CurrentHashWithOpts(checkProfile, env.resolveRenderOpts())
+	// A section an install would move (liftBeadsSectionBelow) is stale where
+	// it stands, however current its text.
+	_, below := liftBeadsSectionBelow(content, env.insertBefore)
+	if meta != nil && meta.Hash == currentHash && existingProf == checkProfile && !below {
 		_, _ = fmt.Fprintf(env.stdout, "✓ %s integration installed: %s (current)\n", integration.name, env.agentsPath)
 		return nil
 	}
@@ -247,7 +275,7 @@ func checkAgents(env agentsEnv, integration agentsIntegration) error {
 }
 
 func removeAgents(env agentsEnv, integration agentsIntegration) error {
-	_, _ = fmt.Fprintf(env.stdout, "Removing %s integration...\n", integration.name)
+	_, _ = fmt.Fprintf(env.stdout, "Removing %s integration from %s...\n", integration.name, env.agentsPath)
 	agentsFile := agentsFileName(env.agentsPath)
 	data, err := os.ReadFile(env.agentsPath)
 	if os.IsNotExist(err) {
@@ -264,7 +292,10 @@ func removeAgents(env agentsEnv, integration agentsIntegration) error {
 		return nil
 	}
 
-	newContent := removeBeadsSection(content)
+	newContent, lifted := liftBeadsSectionBelow(content, env.insertBefore)
+	if !lifted {
+		newContent = removeBeadsSection(content)
+	}
 
 	if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
@@ -272,6 +303,55 @@ func removeAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 	_, _ = fmt.Fprintf(env.stdout, "✓ Removed beads section from %s\n", agentsFile)
 	return nil
+}
+
+// addBeadsSection adds section to content that has none. It goes at the end,
+// set off with one blank line as bd init's updateAgentFile does, so that
+// removeBeadsSection gives the file back as it was. When before is set and
+// content contains it, the section goes ahead of the line holding its first
+// occurrence instead, followed by a blank line when one precedes it, which
+// removeBeadsSection also undoes.
+func addBeadsSection(content, section, before string) string {
+	if before != "" {
+		if at := strings.Index(content, before); at >= 0 {
+			at = strings.LastIndexByte(content[:at], '\n') + 1
+			sep := "\n"
+			if at > 0 && !strings.HasSuffix(content[:at], "\n\n") {
+				sep = ""
+			}
+			return content[:at] + section + sep + content[at:]
+		}
+	}
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return content + "\n" + section
+}
+
+// liftBeadsSectionBelow takes the beads section out of content, as
+// removeBeadsSection does, when it sits below the line holding the first
+// occurrence of before, and reports whether it did. Below it, the section's
+// first "## " heading, which every beads section opens with, ends the owner's
+// section that before starts, so the owner's entries land inside the section,
+// between its BEGIN marker's line and that heading. They are not the
+// section's own, so they stay where they are. A BEGIN marker that shares its
+// line with other text is left alone.
+func liftBeadsSectionBelow(content, before string) (string, bool) {
+	at := strings.Index(content, before)
+	start := findBeginMarker(content)
+	end := strings.Index(content, agentsEndMarker)
+	if before == "" || at < 0 || start < at || end < start || !strings.HasSuffix(content[:start], "\n") {
+		return content, false
+	}
+	section := content[start:end]
+	body := strings.IndexByte(section, '\n') + 1
+	entries := 0
+	if body > 0 && !strings.HasPrefix(section[body:], "## ") {
+		entries = strings.Index(section[body:], "\n## ") + 1
+	}
+	// Put the entries ahead of the BEGIN marker's line, outside the section.
+	content = content[:start] + section[body:body+entries] + section[:body] + content[start+body+entries:]
+	return removeBeadsSection(content), true
 }
 
 // updateBeadsSection replaces the beads section in existing content using the full profile.

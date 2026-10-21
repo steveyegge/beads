@@ -381,6 +381,7 @@ go_library(
         "where.go",
         "wisp.go",
         "wisp_proxied_server.go",
+        "workspace_format_guard.go",
         "workspace_gate.go",
         "worktree.go",
         "worktree_cmd.go",
@@ -421,6 +422,7 @@ go_library(
         "//internal/httpapi",
         "//internal/httpclient",
         "//internal/httpclient/wire",
+        "//internal/initprocs",
         "//internal/jira",
         "//internal/linear",
         "//internal/lockfile",
@@ -759,6 +761,7 @@ go_test(
         "dolt_remote_add_test.go",
         "dolt_remote_adopt_test.go",
         "dolt_remote_json_test.go",
+        "dolt_remote_origin_guard_embedded_test.go",
         "dolt_remote_origin_guard_test.go",
         "dolt_remote_remove_proxied_integration_test.go",
         "dolt_remote_reset_data_embedded_test.go",
@@ -841,6 +844,8 @@ go_test(
         "graph_apply_thread_spawner_embedded_test.go",
         "graph_embedded_test.go",
         "graph_export_test.go",
+        "graph_mode_admission_e2e_test.go",
+        "graph_mode_dependency_embedded_test.go",
         "graph_proxied_integration_test.go",
         "graph_test.go",
         "graph_visual_test.go",
@@ -893,6 +898,7 @@ go_test(
         "info_kv_exclusion_test.go",
         "info_proxied_integration_test.go",
         "info_test.go",
+        "init_agent_test.go",
         "init_cancel_e2e_test.go",
         "init_commit_test.go",
         "init_embedded_test.go",
@@ -1100,6 +1106,7 @@ go_test(
         "ready_embedded_test.go",
         "ready_explain_ids_test.go",
         "ready_input_test.go",
+        "ready_json_no_total_test.go",
         "ready_max_rows_proxied_test.go",
         "ready_max_rows_test.go",
         "ready_proxied_integration_test.go",
@@ -1322,6 +1329,7 @@ go_test(
         "wisp_gc_purge_closed_embedded_test.go",
         "wisp_proxied_integration_test.go",
         "wisp_test.go",
+        "workspace_format_guard_test.go",
         "workspace_gate_test.go",
         "workspace_identity_test.go",
         "worktree_cmd_test.go",
@@ -1378,6 +1386,7 @@ go_test(
         "//internal/httpclient",
         "//internal/httpclient/encode",
         "//internal/httpclient/wire",
+        "//internal/initprocs",
         "//internal/linear",
         "//internal/metrics",
         "//internal/migration",
@@ -1482,7 +1491,7 @@ go_test(
 )
 
 # bd_embedded_test and bd_embedded_part2_test run the TestEmbedded* functions
-# of *_embedded_test.go between them: the manifest's 100-shard block
+# of cmd/bd's _test.go files between them: the manifest's 100-shard block
 # (duration-balanced; see scripts/ci/embedded_cmd_test_durations.json) is
 # more than Bazel's 50-shard cap per rule, so bd_embedded_test runs its
 # shards 1-50 and bd_embedded_part2_test its shards 51-100
