@@ -2674,7 +2674,8 @@ func TestInstallClaudePersonalPluginKeepsSharedLegacyHook(t *testing.T) {
 
 // TestInstallClaudePluginManagedLeavesSettingsAlone pins that an install
 // which leaves the hooks to the plugin writes no hook, so it adds no empty
-// "hooks" object to a settings file and creates none.
+// "hooks" object to a settings file and creates none, nor the .claude
+// directory one would go in.
 func TestInstallClaudePluginManagedLeavesSettingsAlone(t *testing.T) {
 	stubDetectRenderOpts(t)
 	const pluginSettings = "{\n  \"enabledPlugins\": {\n    \"beads@beads-marketplace\": true\n  }\n}\n"
@@ -2714,8 +2715,28 @@ func TestInstallClaudePluginManagedLeavesSettingsAlone(t *testing.T) {
 		if _, err := os.Stat(projectSettingsPath(env.projectDir)); !os.IsNotExist(err) {
 			t.Errorf("project settings created (stat err %v)", err)
 		}
+		if _, err := os.Stat(filepath.Dir(projectSettingsPath(env.projectDir))); !os.IsNotExist(err) {
+			t.Errorf("empty .claude directory created (stat err %v)", err)
+		}
 		if strings.Contains(stdout.String(), "Settings: ") {
 			t.Errorf("summary names a settings file the install did not write:\n%s", stdout.String())
+		}
+	})
+
+	// A global install still creates ~/.claude when no file there enables
+	// the plugin, because its CLAUDE.md section goes there.
+	t.Run("global install creates the user-level directory for CLAUDE.md", func(t *testing.T) {
+		env, stdout, stderr := newClaudeTestEnv(t)
+		env.managedDir = filepath.Join(t.TempDir(), "managed")
+		writeSettings(t, filepath.Join(env.managedDir, "managed-settings.json"), settingsWithPlugin())
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		if _, err := os.Stat(globalClaudeInstructionsPath(env.homeDir)); err != nil {
+			t.Errorf("user-level CLAUDE.md not written: %v\n%s\n%s", err, stdout.String(), stderr.String())
+		}
+		if _, err := os.Stat(globalSettingsPath(env.homeDir)); !os.IsNotExist(err) {
+			t.Errorf("user settings created (stat err %v)", err)
 		}
 	})
 }

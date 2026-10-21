@@ -413,9 +413,14 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		_, _ = fmt.Fprintln(env.stdout, "Installing Claude hooks for this project...")
 	}
 
-	if err := env.ensureDir(filepath.Dir(settingsPath), 0o755); err != nil {
-		_, _ = fmt.Fprintf(env.stderr, "Error: %v\n", err)
-		return err
+	// ~/.claude also holds the user-level CLAUDE.md a global install writes
+	// below, whether or not it writes a hook. A project install creates
+	// .claude only to write a settings file there.
+	if global {
+		if err := env.ensureDir(filepath.Dir(settingsPath), 0o755); err != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: %v\n", err)
+			return err
+		}
 	}
 
 	settings := make(map[string]interface{})
@@ -494,6 +499,10 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		data, err := marshalSettings(settings)
 		if err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
+			return err
+		}
+		if err := env.ensureDir(filepath.Dir(settingsPath), 0o755); err != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: %v\n", err)
 			return err
 		}
 
