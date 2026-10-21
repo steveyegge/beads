@@ -2481,8 +2481,9 @@ func TestInstallClaudeGlobalReportsPluginOffHere(t *testing.T) {
 // TestWarnIfPrimeRunsTwiceNamesARemedy pins the remedy line under the
 // double-run warning: drop a global hook only once the user settings enable
 // the plugin, keep a shared project hook teammates need when only this
-// user's settings enable it, and never suggest turning off a plugin that
-// managed settings enable.
+// user's settings enable it, drop it when the shared settings enable the
+// plugin for everyone, whichever file decided it for this user, and never
+// suggest turning off a plugin that managed settings enable.
 func TestWarnIfPrimeRunsTwiceNamesARemedy(t *testing.T) {
 	user := func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }
 	project := func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }
@@ -2492,26 +2493,34 @@ func TestWarnIfPrimeRunsTwiceNamesARemedy(t *testing.T) {
 		name         string
 		plugin, hook func(claudeEnv) string
 		want         func(env claudeEnv) string
+		// projectToo also enables the plugin in the project's settings.
+		projectToo bool
 	}{
 		{"global hook, project plugin", project, user, func(env claudeEnv) string {
 			return "turn the plugin off in " + local(env) + ", or enable it in " + user(env) +
 				" and run bd setup claude --remove --global, then bd setup claude --global"
-		}},
+		}, false},
 		{"global hook, user plugin", user, user, func(claudeEnv) string {
 			return "run bd setup claude --remove --global, then bd setup claude --global"
-		}},
+		}, false},
 		{"shared project hook, personal plugin", user, project, func(env claudeEnv) string {
 			return "turn the plugin off in " + local(env)
-		}},
+		}, false},
 		{"shared project hook, shared plugin", project, project, func(env claudeEnv) string {
-			return "remove the bd prime hook from " + project(env) + ", or turn the plugin off in " + local(env)
-		}},
+			return "remove the bd prime hook from " + project(env)
+		}, false},
+		{"shared project hook, local and project plugin", local, project, func(env claudeEnv) string {
+			return "remove the bd prime hook from " + project(env)
+		}, true},
+		{"local hook, project plugin", project, local, func(env claudeEnv) string {
+			return "remove the bd prime hook from " + local(env) + ", or turn the plugin off in " + local(env)
+		}, false},
 		{"local hook, local plugin", local, local, func(env claudeEnv) string {
 			return "remove the bd prime hook from " + local(env) + ", or turn the plugin off in " + local(env)
-		}},
+		}, false},
 		{"project hook, managed plugin", managed, project, func(env claudeEnv) string {
 			return "remove the bd prime hook from " + project(env)
-		}},
+		}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2521,6 +2530,13 @@ func TestWarnIfPrimeRunsTwiceNamesARemedy(t *testing.T) {
 			if tc.plugin(env) != tc.hook(env) {
 				writeSettings(t, tc.plugin(env), settings)
 				settings = map[string]interface{}{}
+			}
+			if tc.projectToo {
+				if tc.hook(env) == project(env) {
+					settings = settingsWithPlugin()
+				} else {
+					writeSettings(t, project(env), settingsWithPlugin())
+				}
 			}
 			hooks := map[string]interface{}{}
 			addHookCommand(hooks, "SessionStart", "bd prime --hook-json")
@@ -2600,10 +2616,11 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 // install does with an older bare bd prime hook in the shared
 // .claude/settings.json when the beads plugin is enabled. Enabled in a
 // shared file (the project's own or managed settings), the plugin runs for
-// everyone, so the old hook is dropped. Enabled in a personal file (the
-// user's settings or a local one), teammates without the plugin still need
-// a hook from the shared file, so the install replaces the old hook with the
-// current one and reports the double run this leaves for this user.
+// everyone, so the old hook is dropped, even when a personal file enables it
+// for this user too. Enabled only in a personal file (the user's settings
+// or a local one), teammates without the plugin still need a hook from the
+// shared file, so the install replaces the old hook with the current one and
+// reports the double run this leaves for this user.
 func TestInstallClaudePersonalPluginKeepsSharedLegacyHook(t *testing.T) {
 	stubDetectRenderOpts(t)
 
@@ -2611,14 +2628,17 @@ func TestInstallClaudePersonalPluginKeepsSharedLegacyHook(t *testing.T) {
 		name     string
 		plugin   func(env *claudeEnv) string
 		wantHook bool
+		// sharedToo also enables the plugin in the shared settings.
+		sharedToo bool
 	}{
-		{"user settings", func(env *claudeEnv) string { return globalSettingsPath(env.homeDir) }, true},
-		{"local settings", func(env *claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, true},
+		{"user settings", func(env *claudeEnv) string { return globalSettingsPath(env.homeDir) }, true, false},
+		{"local settings", func(env *claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, true, false},
 		{"local settings at the repository root", func(env *claudeEnv) string {
 			env.localSettingsRoot = filepath.Dir(env.projectDir)
 			return legacyProjectSettingsPath(env.localSettingsRoot)
-		}, true},
-		{"managed settings", func(env *claudeEnv) string { return filepath.Join(env.managedDir, "managed-settings.json") }, false},
+		}, true, false},
+		{"managed settings", func(env *claudeEnv) string { return filepath.Join(env.managedDir, "managed-settings.json") }, false, false},
+		{"local and project settings", func(env *claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2626,6 +2646,10 @@ func TestInstallClaudePersonalPluginKeepsSharedLegacyHook(t *testing.T) {
 			env.managedDir = filepath.Join(t.TempDir(), "managed")
 			shared := projectSettingsPath(env.projectDir)
 			legacy := map[string]interface{}{"hooks": map[string]interface{}{}}
+			if tc.sharedToo {
+				legacy = settingsWithPlugin()
+				legacy["hooks"] = map[string]interface{}{}
+			}
 			addHookCommand(legacy["hooks"].(map[string]interface{}), "SessionStart", "bd prime")
 			writeSettings(t, shared, legacy)
 			writeSettings(t, tc.plugin(&env), settingsWithPlugin())

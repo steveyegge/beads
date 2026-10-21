@@ -472,8 +472,14 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
 	// so project-level hooks don't fire bd prime twice per session.
 	plugin := beadsPlugin(env, global)
+	// Whether teammates get the plugin is decided by the settings they
+	// share, not by the file that decided it for this user.
+	var shared beadsPluginState
+	if !global {
+		shared = sharedBeadsPlugin(env)
+	}
 	switch {
-	case plugin.enabled && !global && sweptSessionStart && !claudeSettingsAreShared(env, plugin.path):
+	case plugin.enabled && !global && sweptSessionStart && !shared.enabled:
 		// The plugin is enabled for this user alone, and the shared project
 		// settings had an older bd prime hook that teammates without the
 		// plugin rely on. Replace it rather than drop it; the double run
@@ -705,34 +711,37 @@ func warnIfPrimeRunsTwice(env claudeEnv) {
 		if hasBeadsHooks(path) {
 			_, _ = fmt.Fprintln(env.stdout, "⚠ bd prime runs twice per session here")
 			_, _ = fmt.Fprintf(env.stdout, "  Both the beads plugin (enabled in %s) and the hook in %s run it\n", plugin.path, path)
-			_, _ = fmt.Fprintf(env.stdout, "  To run it once: %s\n", primeTwiceRemedy(env, plugin, path))
+			_, _ = fmt.Fprintf(env.stdout, "  To run it once: %s\n", primeTwiceRemedy(env, path))
 			return
 		}
 	}
 }
 
 // primeTwiceRemedy is how to make bd prime run once where both the beads
-// plugin (enabled in plugin.path) and the hook in hookPath run it. A global
-// hook is for every project, so it goes only once the user settings enable
-// the plugin; a shared project hook stays for teammates without the plugin
-// when only this user's settings enable it; and managed settings cannot be
-// overridden, so the plugin is turned off only where they do not enable it.
-func primeTwiceRemedy(env claudeEnv, plugin beadsPluginState, hookPath string) string {
+// plugin and the hook in hookPath run it. A global hook is for every
+// project, so it goes only once the user settings enable the plugin. Whether a shared project hook may go is decided by the shared
+// settings: when they enable the plugin it runs for every teammate, so the
+// hook goes, and when they do not, teammates without the plugin rely on the
+// hook, so this user turns the plugin off instead. Managed settings cannot
+// be overridden, so the plugin is turned off only where they do not enable
+// it.
+func primeTwiceRemedy(env claudeEnv, hookPath string) string {
 	localRoot := env.projectDir
 	if env.localSettingsRoot != "" {
 		localRoot = env.localSettingsRoot
 	}
 	turnOff := "turn the plugin off in " + legacyProjectSettingsPath(localRoot)
-	managed := plugin.path != projectSettingsPath(env.projectDir) && claudeSettingsAreShared(env, plugin.path)
+	project := projectSettingsPath(env.projectDir)
+	shared := sharedBeadsPlugin(env)
 	switch {
 	case hookPath == globalSettingsPath(env.homeDir) && hasBeadsPlugin(env, true):
 		return "run bd setup claude --remove --global, then bd setup claude --global"
 	case hookPath == globalSettingsPath(env.homeDir):
 		return turnOff + ", or enable it in " + globalSettingsPath(env.homeDir) +
 			" and run bd setup claude --remove --global, then bd setup claude --global"
-	case managed:
+	case shared.enabled && (hookPath == project || shared.path != project):
 		return "remove the bd prime hook from " + hookPath
-	case hookPath == projectSettingsPath(env.projectDir) && !claudeSettingsAreShared(env, plugin.path):
+	case hookPath == project:
 		return turnOff
 	default:
 		return "remove the bd prime hook from " + hookPath + ", or " + turnOff
@@ -1086,20 +1095,12 @@ func claudePluginSettingsPaths(env claudeEnv, global bool) []string {
 	return append(paths, globalSettingsPath(env.homeDir))
 }
 
-// claudeSettingsAreShared reports whether a settings file applies to
-// everyone who works in the project: its shared .claude/settings.json or a
-// managed settings file. The user's ~/.claude/settings.json and the local
-// .claude/settings.local.json files are personal.
-func claudeSettingsAreShared(env claudeEnv, path string) bool {
-	if path == projectSettingsPath(env.projectDir) {
-		return true
-	}
-	for _, managed := range claudeManagedSettingsPaths(env.managedDir) {
-		if path == managed {
-			return true
-		}
-	}
-	return false
+// sharedBeadsPlugin resolves the beads plugin from the settings everyone
+// who works in the project shares: the managed settings and the project's
+// .claude/settings.json. The user's ~/.claude/settings.json and the local
+// .claude/settings.local.json files are personal, so they are left out.
+func sharedBeadsPlugin(env claudeEnv) beadsPluginState {
+	return resolveBeadsPlugin(env.readFile, append(claudeManagedSettingsPaths(env.managedDir), projectSettingsPath(env.projectDir)))
 }
 
 // claudeManagedSettingsPaths returns the file-based managed settings in dir,
