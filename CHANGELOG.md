@@ -1250,12 +1250,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings enable the plugin, a project install no longer deletes an older
   bare `bd prime` hook from the shared `.claude/settings.json`, which
   teammates without the plugin rely on; it replaces it with the current hook.
-  When the shared settings (managed settings or the project's
-  `.claude/settings.json`) enable the plugin and only your
+  When the project's `.claude/settings.json` enables the plugin and only your
   `.claude/settings.local.json` turns it off, a project install adds no hook
   to the shared file, where every teammate with the plugin would run
-  `bd prime` twice; it, `--global` and `--check` instead name how to run
-  `bd prime` for yourself.
+  `bd prime` twice, and keeps a `bd prime` hook in your
+  `.claude/settings.local.json` instead of migrating it there. It names the
+  hook that already runs `bd prime` for you; when none does, it, `--global`
+  and `--check` name how to run `bd prime` for yourself.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query
