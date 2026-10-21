@@ -72,6 +72,9 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("LegacyNoHistoryIssueStaysLegacy", func(t *testing.T) {
 		conformance.RunParticipationGenerationLegacyNoHistoryIssueStaysLegacy(t, ctx, fixture)
 	})
+	t.Run("ReadReportsExactlyTheParticipatingRows", func(t *testing.T) {
+		conformance.RunParticipationGenerationReadReportsExactlyTheParticipatingRows(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFixtureKitIsWired is this leg's half of the
@@ -128,6 +131,9 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.InWispsTable == nil {
 		t.Error("ParticipationGenerationFixture.InWispsTable is nil")
+	}
+	if fixture.ParticipatingIssueIDs == nil {
+		t.Error("ParticipationGenerationFixture.ParticipatingIssueIDs is nil")
 	}
 }
 
@@ -406,6 +412,13 @@ func uowParticipationGenerationFixtureFor(t *testing.T, provider UnitOfWorkProvi
 				return false, err
 			}
 			return rows > 0, nil
+		},
+		// The unit-of-work route's participation read: one read-only unit of
+		// work and its IssueUseCase, the way cmd/bd's pre-enable scan asks.
+		ParticipatingIssueIDs: func(ctx context.Context, ids []string) (map[string]struct{}, error) {
+			return RunTxRead(ctx, provider, func(ctx context.Context, uw UnitOfWork) (map[string]struct{}, error) {
+				return uw.IssueUseCase().ParticipatingIssueIDs(ctx, ids)
+			})
 		},
 	}
 }

@@ -37,13 +37,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pull, and a write from a writer that is not recording is folded into the
   next recorded version under that version's actor, so keep recording on for
   every writer of a store or off for all of them. Turning it on with
-  `bd config set` first checks every issue the store would version and
+  `bd config set` first checks every issue the store would version (one
+  created, or brought onto the issues plane, while recording was on) and
   refuses, writing nothing, while any holds a number outside the I-JSON
   exact-integer range (magnitude above 2^53-1, however it is spelled) in its
   metadata or in a gate's timeout (held as nanoseconds, so about 104.25
-  days), and prints the count, the ids, the field and the fix. There is no
-  override, and the check runs once; after that, a recorded write that would
-  hold such a number fails atomically. Migration 0071 adds a nullable
+  days), and prints the count, the ids, the field and the fix. A legacy bead
+  is not versioned while recording stays on, so what it holds blocks nothing:
+  a store that has never recorded, where every bead is legacy, is not
+  refused. There is no override, and the check runs once; after that, a
+  recorded write that would hold such a number fails atomically. Turning
+  recording on through `BD_VERSIONED_HISTORY_ENABLED` or `config.yaml`
+  checks nothing ahead of time, at open or anywhere else: such a write is
+  refused when it is made. Migration 0071 adds a nullable
   `removed_restriction` column to `issue_versions`. `bd version` now refuses
   an argument and suggests `bd versions <arg>`, instead of printing bd's
   build for a mistyped `bd version bd-123`.

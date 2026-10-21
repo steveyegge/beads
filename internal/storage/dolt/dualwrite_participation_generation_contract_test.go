@@ -71,6 +71,9 @@ func TestParticipationGenerationFence(t *testing.T) {
 	t.Run("LegacyNoHistoryIssueStaysLegacy", func(t *testing.T) {
 		conformance.RunParticipationGenerationLegacyNoHistoryIssueStaysLegacy(t, ctx, fixture)
 	})
+	t.Run("ReadReportsExactlyTheParticipatingRows", func(t *testing.T) {
+		conformance.RunParticipationGenerationReadReportsExactlyTheParticipatingRows(t, ctx, fixture)
+	})
 }
 
 // TestParticipationGenerationFence_FenceIgnoresSchemaSkewHatch pins the same
@@ -142,6 +145,9 @@ func TestParticipationGenerationFixtureKitIsWired(t *testing.T) {
 	}
 	if fixture.InWispsTable == nil {
 		t.Error("ParticipationGenerationFixture.InWispsTable is nil")
+	}
+	if fixture.ParticipatingIssueIDs == nil {
+		t.Error("ParticipationGenerationFixture.ParticipatingIssueIDs is nil")
 	}
 }
 
@@ -349,6 +355,15 @@ func buildParticipationGenerationFixture(store *DoltStore, configurer storage.Ve
 				return false, err
 			}
 			return rows > 0, nil
+		},
+		// Through the capability assertion cmd/bd makes on the unwrapped store,
+		// never the concrete method set.
+		ParticipatingIssueIDs: func(ctx context.Context, ids []string) (map[string]struct{}, error) {
+			participation, ok := any(store).(storage.HistoryParticipation)
+			if !ok {
+				return nil, fmt.Errorf("%T does not implement storage.HistoryParticipation", store)
+			}
+			return participation.ParticipatingIssueIDs(ctx, ids)
 		},
 	}
 }
