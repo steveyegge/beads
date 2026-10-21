@@ -105,6 +105,34 @@ func muxGlobalAgentsPath() (string, error) {
 	return filepath.Join(home, ".mux", "AGENTS.md"), nil
 }
 
+// muxGlobalAgentsEnv returns env set up for the global layer's file,
+// ~/.mux/AGENTS.md, which Mux loads in every workspace. It is rendered with
+// fixed options: every project shares it, so it must not follow one
+// project's beads config, and Mux loads it in workspaces that do not use
+// beads too, so its section applies only in those that do. A new file holds
+// just the section, without the project scaffolding.
+func muxGlobalAgentsEnv(env agentsEnv, globalPath string) agentsEnv {
+	env.agentsPath = globalPath
+	env.sectionOnly = true
+	env.renderOpts = agents.UserLevelRenderOpts
+	return env
+}
+
+// muxLayerEnv returns the env and integration that manage a layer's file.
+// The global layer's file is managed as the global layer whichever layer
+// names it: run from the home directory, the workspace layer's .mux/AGENTS.md
+// is ~/.mux/AGENTS.md, and run from ~/.mux, so is the root AGENTS.md.
+// Otherwise one run would write that file one way and then the other, and
+// --check would always find one of the two stale.
+func muxLayerEnv(env agentsEnv, integration agentsIntegration) (agentsEnv, agentsIntegration) {
+	globalPath, err := muxGlobalAgentsPath()
+	if err != nil || filepath.Base(env.agentsPath) != filepath.Base(globalPath) ||
+		!sameDir(filepath.Dir(env.agentsPath), filepath.Dir(globalPath)) {
+		return env, integration
+	}
+	return muxGlobalAgentsEnv(env, globalPath), muxGlobalIntegration
+}
+
 func writeMuxHook(path, content string, mode os.FileMode) error {
 	if err := atomicWriteFile(path, []byte(content)); err != nil {
 		return err
@@ -211,7 +239,7 @@ func InstallMux(project bool, global bool) error {
 func installMux(env agentsEnv, project bool, global bool) error {
 	rootSkipped := false
 	env.skipped = &rootSkipped
-	if err := installAgents(env, muxIntegration); err != nil {
+	if err := installAgents(muxLayerEnv(env, muxIntegration)); err != nil {
 		return err
 	}
 	if err := installMuxProjectHooks(env); err != nil {
@@ -231,7 +259,7 @@ func installMux(env agentsEnv, project bool, global bool) error {
 		projectEnv.agentsPath = projectPath
 		projectSkipped := false
 		projectEnv.skipped = &projectSkipped
-		if err := installAgents(projectEnv, muxProjectIntegration); err != nil {
+		if err := installAgents(muxLayerEnv(projectEnv, muxProjectIntegration)); err != nil {
 			return err
 		}
 		if projectSkipped {
@@ -251,8 +279,7 @@ func installMux(env agentsEnv, project bool, global bool) error {
 		return err
 	}
 
-	globalEnv := env
-	globalEnv.agentsPath = globalPath
+	globalEnv := muxGlobalAgentsEnv(env, globalPath)
 	globalSkipped := false
 	globalEnv.skipped = &globalSkipped
 	if err := installAgents(globalEnv, muxGlobalIntegration); err != nil {
@@ -272,7 +299,7 @@ func CheckMux(project bool, global bool) error {
 }
 
 func checkMux(env agentsEnv, project bool, global bool) error {
-	if err := checkAgents(env, muxIntegration); err != nil {
+	if err := checkAgents(muxLayerEnv(env, muxIntegration)); err != nil {
 		return err
 	}
 	if err := checkMuxProjectHooks(env); err != nil {
@@ -282,7 +309,7 @@ func checkMux(env agentsEnv, project bool, global bool) error {
 	if project {
 		projectEnv := env
 		projectEnv.agentsPath = muxProjectAgentsPath(env.agentsPath)
-		if err := checkAgents(projectEnv, muxProjectIntegration); err != nil {
+		if err := checkAgents(muxLayerEnv(projectEnv, muxProjectIntegration)); err != nil {
 			return err
 		}
 	}
@@ -295,9 +322,7 @@ func checkMux(env agentsEnv, project bool, global bool) error {
 	if err != nil {
 		return err
 	}
-	globalEnv := env
-	globalEnv.agentsPath = globalPath
-	return checkAgents(globalEnv, muxGlobalIntegration)
+	return checkAgents(muxGlobalAgentsEnv(env, globalPath), muxGlobalIntegration)
 }
 
 // RemoveMux removes Mux integration.

@@ -28,7 +28,7 @@ Project setup writes `.mux/AGENTS.md` and installs Mux hook files under `.mux/`:
 - `.mux/tool_post`
 - `.mux/tool_env`
 
-Global setup writes `~/.mux/AGENTS.md`.
+Global setup writes the section to `~/.mux/AGENTS.md`. Mux loads that file in every workspace, so there the section applies only in repositories that use beads, and a new file holds only the section.
 
 ## Remove
 
