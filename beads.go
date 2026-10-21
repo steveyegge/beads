@@ -99,6 +99,18 @@ func configuredBackendUnavailable(backend, beadsDir string, cfg *configfile.Conf
 	}
 }
 
+// UnsupportedWorkspaceFormatError is returned by OpenBestAvailable,
+// OpenBestAvailableWith, OpenFromConfig and OpenGated when the workspace
+// declares a data model this build cannot open: a metadata.json graph_mode
+// other than "dependency", such as the "link" workspaces graph-preview builds
+// of bd write, or the .beads/graph-preview-format marker those builds write
+// beside it (FormatMarker), whatever the metadata says. Nothing was opened,
+// created or modified. Match it with errors.As to read BeadsDir, GraphMode and
+// FormatMarker; the bd CLI refuses the same workspaces with exit code 16.
+// Aliased here because internal/configfile is unimportable outside this
+// module.
+type UnsupportedWorkspaceFormatError = configfile.UnsupportedWorkspaceFormatError
+
 // Transaction provides atomic multi-operation support within a database transaction.
 // Use Storage.RunInTransaction() to obtain a Transaction instance.
 type Transaction = beads.Transaction
@@ -369,6 +381,9 @@ func Open(ctx context.Context, dbPath string) (Storage, error) {
 // name configuration.
 // beadsDir is the path to the .beads directory.
 func OpenFromConfig(ctx context.Context, beadsDir string) (Storage, error) {
+	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{CreateIfMissing: true})
 }
 
@@ -403,6 +418,11 @@ func OpenFromConfig(ctx context.Context, beadsDir string) (Storage, error) {
 // operation holds one exclusively; zero means fail fast. A busy gate is
 // reported as ErrGateBusy (match with errors.Is).
 func OpenGated(ctx context.Context, beadsDir string, wait time.Duration) (Storage, error) {
+	// Before the gates: taking them creates gate files in and beside a
+	// workspace this build must leave untouched.
+	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	wsGate, err := workspacegate.ForWorkspace(beadsDir)
 	if err != nil {
 		return nil, err

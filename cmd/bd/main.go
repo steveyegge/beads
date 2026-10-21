@@ -31,6 +31,7 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/httpclient"
+	"github.com/steveyegge/beads/internal/initprocs"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/migration"
 	"github.com/steveyegge/beads/internal/molecules"
@@ -1578,6 +1579,9 @@ var rootCmd = &cobra.Command{
 				}
 			}
 			if err := guardLegacyNoStoreCommand(cmd, beadsDir); err != nil {
+				if isUnsupportedWorkspaceFormat(err) {
+					return handleWorkspaceGuardError(err)
+				}
 				isMigrationCommand := false
 				for current := cmd; current != nil; current = current.Parent() {
 					if current.Name() == "migrate" {
@@ -1637,7 +1641,7 @@ var rootCmd = &cobra.Command{
 				prepareSelectedCommandContext(bd, true)
 				refreshBoundCommandConfig(cmd)
 				if guardErr := guardLegacyUpgradeWorkspace(bd); guardErr != nil {
-					return HandleError("%v", guardErr)
+					return handleWorkspaceGuardError(guardErr)
 				}
 				cfg, cfgErr := configfile.LoadForDiscovery(bd)
 				if cfgErr != nil || cfg != nil && (cfg.IsDoltProxiedServerMode() ||
@@ -1658,7 +1662,7 @@ var rootCmd = &cobra.Command{
 					dbPath = bd
 				}
 			} else if guardErr := guardUndiscoveredLegacyWorkspace(); guardErr != nil {
-				return HandleError("%v", guardErr)
+				return handleWorkspaceGuardError(guardErr)
 			}
 		}
 
@@ -1743,7 +1747,7 @@ var rootCmd = &cobra.Command{
 		prepareSelectedCommandContext(beadsDir, true)
 		refreshBoundCommandConfig(cmd)
 		if guardErr := guardLegacyUpgradeWorkspace(beadsDir); guardErr != nil {
-			return HandleError("%v", guardErr)
+			return handleWorkspaceGuardError(guardErr)
 		}
 
 		// Workspace operation gate: every command that reaches this point
@@ -2782,7 +2786,7 @@ func isBootstrapPreviewErr(err error) bool {
 // Extracted from the gate's default arm so both halves are directly testable
 // without standing up a forward-drifted workspace; the wire itself is pinned on
 // the embedded tier by
-// TestIdentityGateRendersSchemaSkewFromForwardDriftedWorkspace.
+// TestEmbeddedIdentityGateRendersSchemaSkewFromForwardDriftedWorkspace.
 func refuseUnverifiablePreviewOpen(previewErr error) error {
 	if handleFreshCloneError(previewErr) {
 		return SilentExit()
@@ -2878,6 +2882,7 @@ func validateWorkspaceIdentity(ctx context.Context, s storage.DoltStorage, beads
 }
 
 func main() {
+	initprocs.Done()
 	// BD_NAME overrides the binary name in help text (e.g. BD_NAME=ops makes
 	// "ops --help" show "ops" instead of "bd"). Useful for multi-instance
 	// setups where wrapper scripts set BEADS_DIR for routing.

@@ -560,6 +560,9 @@ const (
 	// depth, a cycle policy and a node shape of its own.
 	OpGetDependencyTree = "getDependencyTree"
 	OpCountReadyWork    = "countReadyWork"
+	// OpListBlockedIssues lists the blocked issues with the blockers bd names
+	// for each, behind issueops.BlockedLister: what `bd blocked` prints.
+	OpListBlockedIssues = "listBlockedIssues"
 	OpQueryIssues       = "queryIssues"
 	// OpCountIssues sizes a set the ISSUE listing describes, behind
 	// issueops.Counter. It is a sibling of countReadyWork rather than a mode of
@@ -829,6 +832,10 @@ var operationCodes = map[string][]Code{
 	// and can refuse them the same way. limit=0's mode-dependent refusal has no
 	// analog here because there is no limit to pass.
 	OpCountReadyWork: {CodeInvalidArgument, CodeUnauthenticated, CodeBusy, CodeDBUnavailable, CodeInternal},
+	// The blocked listing has no page, so no cursor or unlimited-read refusal,
+	// and no 404: nothing blocked is an empty list. Its 400s are the
+	// transport's (an unknown parameter, a repeated `parent`).
+	OpListBlockedIssues: {CodeInvalidArgument, CodeUnauthenticated, CodeBusy, CodeDBUnavailable, CodeInternal},
 	// A cardinality has no page, so there is no cursor or unlimited-read
 	// refusal. It has no 404 either: a predicate matching nothing is 0.
 	//

@@ -862,6 +862,13 @@ func findProjectBeadsDir() string {
 // updateYamlKey updates a key in yaml content, handling commented-out keys.
 // If the key exists (commented or not), it updates it in place.
 // If the key doesn't exist, it appends it at the end.
+//
+// A dotted key is written by updateNestedYamlKey, and its result is returned
+// as is (TestUpdateYamlKeyLeavesTheNestedPathAlone pins that boundary). A
+// single-segment key is edited line by line: a CRLF document comes back LF,
+// and the end of the file is kept. An edit in place leaves the trailing
+// newline run as it was; an appended key is the new last line, terminated
+// only if the file was.
 func updateYamlKey(content, key, value string) (string, error) {
 	if strings.Contains(key, ".") {
 		if updated, ok, err := updateNestedYamlKey(content, key, value); err != nil {
@@ -870,6 +877,14 @@ func updateYamlKey(content, key, value string) (string, error) {
 			return updated, nil
 		}
 	}
+
+	// Normalize CRLF the way commentOutYamlKey does. The scan below already
+	// drops each line's "\r"; this makes the trailing run re-attached at the
+	// return the LF run too, so a CRLF file ending in blank lines keeps them.
+	// It sits below the nested dispatch on purpose: some updateNestedYamlKey
+	// branches carry "\r" through on untouched lines, and this fix leaves them
+	// alone.
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 
 	formattedValue := formatYamlValue(value)
 	newLine := fmt.Sprintf("%s: %s", key, formattedValue)
@@ -898,6 +913,11 @@ func updateYamlKey(content, key, value string) (string, error) {
 			result = append(result, line)
 		}
 	}
+	// A line of bufio.MaxScanTokenSize bytes or more ends the scan early;
+	// returning the lines read so far would truncate config.yaml on write.
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("cannot set %q: scanning config content: %w", key, err)
+	}
 
 	if !found {
 		// Key not found - append at end
@@ -906,19 +926,27 @@ func updateYamlKey(content, key, value string) (string, error) {
 			result = append(result, "")
 		}
 		result = append(result, newLine)
+
+		// The file's trailing blank lines were scanned as empty tokens, so they
+		// already sit ahead of the new line and separate it, and the join is one
+		// newline short: the terminator bufio.Scanner dropped. Re-attaching
+		// content's whole run, as the return below does for an edit in place,
+		// would repeat them after the key: "x\n\n" would come back
+		// "x\n\nnewkey: \"v\"\n\n", not "x\n\nnewkey: \"v\"\n". A document
+		// without a trailing newline still does not acquire one.
+		out := strings.Join(result, "\n")
+		if strings.HasSuffix(content, "\n") {
+			out += "\n"
+		}
+		return out, nil
 	}
 
-	// TODO: `bd config set` is knowingly left unfixed here. This flat-key path
-	// has the same bufio.Scanner + strings.Join shape that commentOutYamlKey
-	// had, so it is still exactly one newline short for any terminated
-	// document: updateYamlKey("issue_prefix: vp\ndolt.mode: server\n",
-	// "issue_prefix", "zz") returns a string with no terminator, and the
-	// key-not-found branch above is worse, emitting "x\n\nnewkey: \"v\"" for
-	// "x\n". The same one-line tail applied at commentOutYamlKey's return
-	// belongs here too; it is out of scope for a fix aimed at unset. Only this
-	// flat path is affected -- updateNestedYamlKey re-marshals through
-	// yaml.Node and is already newline-faithful.
-	return strings.Join(result, "\n"), nil
+	// Preserve the document's trailing newlines. bufio.Scanner drops the final
+	// terminator, so the join is one newline short of any terminated input. Same
+	// rule as commentOutYamlKey's return: re-attach content's own run, so a
+	// document without a trailing newline does not acquire one.
+	out := strings.Join(result, "\n")
+	return strings.TrimRight(out, "\n") + content[len(strings.TrimRight(content, "\n")):], nil
 }
 
 func updateNestedYamlKey(content, key, value string) (string, bool, error) {

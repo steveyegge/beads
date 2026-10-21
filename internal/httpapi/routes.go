@@ -157,6 +157,26 @@ const (
 	CapIssuesListTitle      = "issues.list.title"
 )
 
+// CapIssuesListFilters is the behavior capability that advertises the rest of
+// `bd list`'s filter vocabulary on GET /v0/beads/issues (reads.go
+// listFilterParams, spec OpListIssues): the updated/closed/defer/due bounds,
+// the priority range, the text and external-ref matches, the label
+// pattern/regex, the spec prefix, the empty-description, no-labels, no-parent,
+// pinned-flag, deferred and overdue predicates, the type and status exclusions
+// and the mol/wisp types. Each is carried as the issueops.ListRequest member
+// `bd list` sets and applied by the same Reader role (workapi.BuildListFilter)
+// the local route reads through; the handler builds no filter.
+//
+// ONE token for the set, unlike the per-parameter list tokens above: these
+// members land in one build and no server will ever carry a subset, so a split
+// would mint about twenty tokens with no cutover distinction between them.
+//
+// The client refuses a request carrying any of them locally against a server
+// that does not advertise this token, with ErrUnsupported naming it: an older
+// server answers the parameter with `unknown_parameter`, and dropping one would
+// answer a WIDER listing than asked for.
+const CapIssuesListFilters = "issues.list.filters"
+
 // CapListIDs is the behavior capability that advertises the repeatable `id`
 // filter on listIssues (issueops.ListRequest.IDFilter; `bd list --id`). It
 // rides beside `issues.list` for the reason CapIssuesListSort does: the
@@ -286,10 +306,12 @@ const CapIssuesCreateGates = "issues.create.gates"
 const CapIssuesUpdateGates = "issues.update.gates"
 
 // CapExternalDependencies is the CONDITIONAL behavior capability announcing
-// that this server's ready, claim, claim-next, close, blocking-annotation and
-// dependency-tree operations already apply bd's external-dependency policy
-// (an issue blocked by an unsatisfied `external:<project>:<capability>`
-// dependency is not ready, not claimable and not closable without force). A
+// that this server's ready, blocked-listing, claim, claim-next, close,
+// blocking-annotation and dependency-tree operations already apply bd's
+// external-dependency policy (an issue blocked by an unsatisfied
+// `external:<project>:<capability>` dependency is not ready, not claimable and
+// not closable without force, and the blocked listing lists it with that
+// dependency among its blockers). A
 // client that sees it must pass those operations through untouched: running
 // the policy again on the client would judge it against the CLIENT machine's
 // project configuration and would turn the server's atomic claim-next into a
@@ -532,6 +554,14 @@ var routeTable = []route{
 		capability:  "ready.count",
 		implemented: true,
 		handler:     (*Server).handleCountReady,
+	},
+	{
+		op:          OpListBlockedIssues,
+		method:      http.MethodGet,
+		pattern:     "/v0/beads/blocked",
+		capability:  "blocked.list",
+		implemented: true,
+		handler:     (*Server).handleListBlocked,
 	},
 	{
 		op:          OpListIssues,
@@ -1103,7 +1133,7 @@ var behaviorCapabilities = []string{
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
 	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked, CapIssuesUpdateClaim,
-	CapIssuesCreateGates, CapIssuesUpdateGates,
+	CapIssuesCreateGates, CapIssuesUpdateGates, CapIssuesListFilters,
 }
 
 // Capabilities lists what this build advertises in ContextResponse.capabilities:

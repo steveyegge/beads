@@ -32,6 +32,11 @@ func OpenBestAvailable(ctx context.Context, beadsDir string) (Storage, error) {
 // rationale; behavior here is identical except that embedded Dolt is
 // unavailable without CGO.
 func OpenBestAvailableWith(ctx context.Context, beadsDir string, opts OpenOptions) (Storage, error) {
+	// Before Load, which can migrate a legacy config.json, and before any
+	// backend is chosen, as the CLI store factories do.
+	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading storage metadata: %w", err)

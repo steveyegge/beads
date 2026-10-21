@@ -46,9 +46,9 @@ func setupContributorRouting(t *testing.T, bd, dir string) string {
 	return planningDir
 }
 
-// TestMigratePersonal_noopWhenEmpty verifies that migrate-personal with no
+// TestEmbeddedMigratePersonal_noopWhenEmpty verifies that migrate-personal with no
 // matching issues exits 0 and reports nothing to migrate.
-func TestMigratePersonal_noopWhenEmpty(t *testing.T) {
+func TestEmbeddedMigratePersonal_noopWhenEmpty(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -71,9 +71,9 @@ func TestMigratePersonal_noopWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestMigratePersonal_movesIssues verifies that migrate-personal moves issues
+// TestEmbeddedMigratePersonal_movesIssues verifies that migrate-personal moves issues
 // matching the current git identity to the planning repo.
-func TestMigratePersonal_movesIssues(t *testing.T) {
+func TestEmbeddedMigratePersonal_movesIssues(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -119,9 +119,9 @@ func TestMigratePersonal_movesIssues(t *testing.T) {
 	_ = planningDir
 }
 
-// TestMigratePersonal_abortOnNoConfirm verifies that without --yes, the command
+// TestEmbeddedMigratePersonal_abortOnNoConfirm verifies that without --yes, the command
 // prompts and aborts when stdin signals no confirmation (EOF).
-func TestMigratePersonal_abortOnNoConfirm(t *testing.T) {
+func TestEmbeddedMigratePersonal_abortOnNoConfirm(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -162,13 +162,13 @@ func TestMigratePersonal_abortOnNoConfirm(t *testing.T) {
 	}
 }
 
-// TestMigratePersonal_preservesComments is a regression test for the maphew
+// TestEmbeddedMigratePersonal_preservesComments is a regression test for the maphew
 // review of PR #4023 (be-e2nb): migrate-personal must copy comments as
 // structured rows (ImportIssueComment) so they survive in the planning repo.
 // The pre-fix code used AddComment, which records an event-style entry that
 // GetIssueComments never returns — silently dropping the migrated issue's
 // comments.
-func TestMigratePersonal_preservesComments(t *testing.T) {
+func TestEmbeddedMigratePersonal_preservesComments(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -211,14 +211,14 @@ func TestMigratePersonal_preservesComments(t *testing.T) {
 	}
 }
 
-// TestCopyIssueRelations_preservesCommentWithTimestamp is the in-process proof
+// TestEmbeddedCopyIssueRelations_preservesCommentWithTimestamp is the in-process proof
 // for the maphew review of PR #4023 (be-e2nb). The full migrate-personal command
 // can't run in the embedded harness because its planning store uses the
 // server-based Dolt store, so this drives the helper directly against two
 // embedded stores: a comment must land in the destination as a structured row
 // (returned by GetIssueComments) preserving its original timestamp, not be lost
 // as an event-style AddComment entry.
-func TestCopyIssueRelations_preservesCommentWithTimestamp(t *testing.T) {
+func TestEmbeddedCopyIssueRelations_preservesCommentWithTimestamp(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}

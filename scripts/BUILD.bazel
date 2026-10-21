@@ -136,6 +136,7 @@ go_test(
         "conformance_script_test.go",
         "host_tools_test.go",
         "install_dolt_test.go",
+        "oracle_a_script_test.go",
         "pr_preflight_test.go",
         "pre_push_suite_test.go",
         "pull_dolt_image_test.go",
@@ -152,6 +153,7 @@ go_test(
         "//:.buildflags",
         "//:.githooks/pre-push",
         "//:.test-skip",
+        "//:tests/oracle-a/run-oracle-a.sh",
         "//internal/httpclient:repo_other_files",
         "//test/conformance:repo_go_test_srcs",
         "//test/conformance:repo_other_files",
@@ -176,6 +178,7 @@ go_test(
     name = "go_test_sources_test",
     srcs = [
         "bazel_skip_allowlist_test.go",
+        "embedded_lane_coverage_test.go",
         "embedded_shard_count_test.go",
         "host_tools_test.go",
         "managed_local_lane_test.go",
