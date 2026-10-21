@@ -241,8 +241,8 @@ func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegra
 // claudeCheckAgentsEnv picks the instructions file --check reports on. Run
 // from ~/.claude, the project's CLAUDE.md is the user-level file, so it is
 // judged as one. Otherwise it is the project's file, unless the hooks are
-// user-level (a global install's, or those of a plugin enabled in the user
-// settings) and the project's file has no beads section. Then it is the
+// user-level (a global install's, or those of a plugin enabled in the managed
+// or user settings) and the project's file has no beads section. Then it is the
 // ~/.claude/CLAUDE.md a global install writes, which Claude Code loads
 // alongside the project's own instructions, if that has a section, if the
 // project's file does not exist, or if the project is the home directory:
@@ -677,9 +677,9 @@ func checkClaude(env claudeEnv) error {
 	case plugin.enabled:
 		// GH#3192: Plugin provides hooks via plugin.json — no project-level hooks needed
 		_, _ = fmt.Fprintf(env.stdout, "✓ Hooks provided by beads plugin (plugin-managed): %s\n", plugin.path)
-		// Its hooks are user-level only when the user settings enable it (or,
-		// as above, from the home directory): enabled in this project's
-		// settings alone, they run here only.
+		// Its hooks are user-level only when the managed or user settings
+		// enable it (or, as above, from the home directory): enabled in this
+		// project's settings alone, they run here only.
 		userLevelHooks = atHome || hasBeadsPlugin(env, true)
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
