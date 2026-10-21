@@ -100,6 +100,12 @@ Examples:
 		// marker or a legacy config.json declares, and connect still attaches
 		// it. Refuse it here, before the handshake dials and before
 		// configfile.Load migrates that config.json.
+		//
+		// --clear is refused too, even for an attach a bd without this check
+		// made: it rewrites metadata.json, which this build does not do to a
+		// workspace in a format it cannot open. Such an attach is undone by
+		// hand: delete .beads/http_target.json and restore metadata.json's
+		// "backend".
 		if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
 			return handleWorkspaceGuardError(err)
 		}
@@ -298,8 +304,14 @@ Examples:
 		// backend this workspace selected before, and which a future
 		// `bd connect --clear` switching back to that backend (dolt) still
 		// needs intact.
+		//
+		// Attach re-checks the format, so a refusal from it here is a
+		// workspace that turned graph after connect's own check, in practice
+		// while the handshake was in flight: render it as that check does,
+		// with the hint and exit 16. Any other error keeps HandleError's
+		// rendering.
 		if err := bdhttp.Attach(beadsDir, target); err != nil {
-			return HandleError("%v", err)
+			return handleWorkspaceGuardError(err)
 		}
 
 		if jsonOutput {

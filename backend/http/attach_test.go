@@ -226,15 +226,27 @@ var activationDoors = map[string]func(t *testing.T, beadsDir string, server *rec
 	},
 }
 
-// TestAttachAndConnectRefuseAGraphWorkspace is this backend's half of the
-// graph workspace fence. Activation writes the sidecar, .gitignore and
+// workspaceWriters are the public calls that write this backend's files into
+// a workspace: the activationDoors, and SaveTarget, which writes the sidecar
+// alone and so cannot select the backend, but still writes the workspace.
+func workspaceWriters() map[string]func(t *testing.T, beadsDir string, server *recordingServer) error {
+	writers := maps.Clone(activationDoors)
+	writers["SaveTarget"] = func(t *testing.T, beadsDir string, server *recordingServer) error {
+		return bdhttp.SaveTarget(beadsDir, server.target(t))
+	}
+	return writers
+}
+
+// TestAttachConnectAndSaveTargetRefuseAGraphWorkspace is this backend's half
+// of the graph workspace fence. Activation writes the sidecar, .gitignore and
 // metadata.json's backend selection, and its metadata read migrates a legacy
 // config.json, so a workspace whose metadata or graph-preview-format marker
 // declares a format this build cannot open is refused before any of that, as
-// every open and `bd connect` refuse it. Connect refuses before it dials: a
-// handshake for a workspace it will not attach would only hand the server a
-// credential.
-func TestAttachAndConnectRefuseAGraphWorkspace(t *testing.T) {
+// every open and `bd connect` refuse it; SaveTarget, which an embedder can
+// call alone, refuses it before writing the sidecar. Connect refuses before
+// it dials: a handshake for a workspace it will not attach would only hand
+// the server a credential.
+func TestAttachConnectAndSaveTargetRefuseAGraphWorkspace(t *testing.T) {
 	hermeticEnv(t)
 	const marker = "link-preview-v9\n"
 	layouts := []struct {
@@ -270,7 +282,7 @@ func TestAttachAndConnectRefuseAGraphWorkspace(t *testing.T) {
 		}},
 	}
 	for _, layout := range layouts {
-		for name, activate := range activationDoors {
+		for name, activate := range workspaceWriters() {
 			t.Run(layout.name+"/"+name, func(t *testing.T) {
 				root := t.TempDir()
 				beadsDir := filepath.Join(root, ".beads")
