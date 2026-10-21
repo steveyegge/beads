@@ -996,10 +996,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies only in repositories that use beads. In an existing file the section
   goes ahead of the `## Gemini Added Memories` section that Gemini CLI
   releases up to v0.43 keep there, so memories they save later stay outside
-  it. With global hooks `--check` accepts the user-level section when the
-  project's `GEMINI.md` has none, and its hints for a project's `GEMINI.md`
-  name `bd setup gemini --project`. From your home directory
-  `--project --remove` also removes the user-level section. If you ran
+  it. `--check` reports a section already below that heading as stale, an
+  install moves it ahead of the heading, and the move, like `--remove`,
+  keeps the memories saved inside it. With global hooks `--check` accepts
+  the user-level section when the project's `GEMINI.md` has none, and its
+  hints for a project's `GEMINI.md` name `bd setup gemini --project`. From
+  your home directory, whose `.gemini/settings.json` is the global one, and
+  from `~/.gemini`, `--project` is the global install: it adds and removes
+  the hook in `~/.gemini/settings.json` and the user-level section together,
+  and `--check` judges that section, not one in `~/GEMINI.md`. If you ran
   `bd setup gemini` before, re-run it to add the section to
   `~/.gemini/GEMINI.md`. A section an earlier run left in a directory's
   `GEMINI.md` stays there; delete it by hand if you don't want it.

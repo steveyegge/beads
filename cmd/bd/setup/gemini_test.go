@@ -111,6 +111,21 @@ func writeGeminiFile(t *testing.T, path, content string) {
 	}
 }
 
+// geminiUserLevelInstalls are the installs that manage the user-level
+// ~/.gemini/GEMINI.md: the global one, run from a project, and a project one
+// run from the home directory or from ~/.gemini.
+var geminiUserLevelInstalls = []struct {
+	name    string
+	project bool
+	dir     func(env geminiEnv) string
+}{
+	{"global install", false, func(env geminiEnv) string { return env.projectDir }},
+	{"project install from home", true, func(env geminiEnv) string { return env.homeDir }},
+	{"project install from ~/.gemini", true, func(env geminiEnv) string {
+		return filepath.Dir(geminiGlobalInstructionsPath(env.homeDir))
+	}},
+}
+
 func TestInstallGemini_Global(t *testing.T) {
 	env, stdout, _ := newGeminiTestEnv(t)
 
@@ -244,36 +259,171 @@ func legacyGeminiSaveMemory(content, fact string) string {
 // section goes ahead of them, so a memory saved later lands outside it and
 // survives --remove, which gives the user's text back as it was.
 func TestInstallGemini_GlobalSectionStaysClearOfGeminiMemories(t *testing.T) {
-	for _, seed := range []string{
-		geminiMemoriesHeading + "\n- I prefer tabs.\n",
-		"# Prefs\n\nBe terse.\n\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n",
-		"# Prefs\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n",
+	for _, seed := range []struct{ name, text string }{
+		{"memories only", geminiMemoriesHeading + "\n- I prefer tabs.\n"},
+		{"memories after text", "# Prefs\n\nBe terse.\n\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n"},
+		{"memories right after a line", "# Prefs\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n"},
+		// Gemini CLI's memories start at the heading's first occurrence, even
+		// one in prose, so the section goes ahead of the line holding that.
+		{"heading mentioned first", "Gemini keeps a " + geminiMemoriesHeading + " list.\n\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n"},
 	} {
-		env, _, _ := newGeminiTestEnv(t)
-		globalInstructions := geminiGlobalInstructionsPath(env.homeDir)
-		writeGeminiFile(t, globalInstructions, seed)
-		if err := installGemini(env, false, false); err != nil {
-			t.Fatalf("installGemini: %v", err)
+		for _, install := range geminiUserLevelInstalls {
+			t.Run(seed.name+", "+install.name, func(t *testing.T) {
+				env, _, _ := newGeminiTestEnv(t)
+				env.projectDir = install.dir(env)
+				globalInstructions := geminiGlobalInstructionsPath(env.homeDir)
+				writeGeminiFile(t, globalInstructions, seed.text)
+				if err := installGemini(env, install.project, false); err != nil {
+					t.Fatalf("installGemini: %v", err)
+				}
+				data, err := os.ReadFile(globalInstructions)
+				if err != nil {
+					t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+				}
+				content := string(data)
+				if strings.Index(content, "<!-- END BEADS INTEGRATION -->") > strings.Index(content, geminiMemoriesHeading) {
+					t.Errorf("beads section should precede Gemini's memories:\n%s", content)
+				}
+				withMemory := legacyGeminiSaveMemory(content, "My cat is named Miso.")
+				writeGeminiFile(t, globalInstructions, withMemory)
+				if err := removeGemini(env, install.project); err != nil {
+					t.Fatalf("removeGemini: %v", err)
+				}
+				data, err = os.ReadFile(globalInstructions)
+				if err != nil {
+					t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+				}
+				if want := legacyGeminiSaveMemory(seed.text, "My cat is named Miso."); string(data) != want {
+					t.Errorf("after a saved memory and --remove:\ngot:\n%q\nwant:\n%q", data, want)
+				}
+			})
 		}
-		data, err := os.ReadFile(globalInstructions)
-		if err != nil {
-			t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+	}
+}
+
+// A section that already sits below Gemini CLI's memories, as a project
+// install run from ~/.gemini used to leave it, ends them, so the memories
+// saved after that land inside it. An install moves it ahead of them, and
+// neither that nor --remove drops the memories it caught.
+func TestInstallGemini_SectionBelowGeminiMemories(t *testing.T) {
+	memories := "# Prefs\n\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n"
+	for _, below := range []struct{ name, section string }{
+		{"current section", geminiUserLevelSection()},
+		{"project-worded section", agents.RenderSection(agents.ProfileMinimal)},
+	} {
+		caught := legacyGeminiSaveMemory(memories+"\n"+below.section, "My cat is named Miso.")
+		if strings.Index(caught, "My cat") < strings.Index(caught, "BEGIN BEADS INTEGRATION") {
+			t.Fatalf("expected the memory saved inside the section:\n%s", caught)
 		}
-		content := string(data)
-		if strings.Index(content, "<!-- END BEADS INTEGRATION -->") > strings.Index(content, geminiMemoriesHeading) {
-			t.Errorf("beads section should precede Gemini's memories:\n%s", content)
+		for _, install := range geminiUserLevelInstalls {
+			t.Run(below.name+", "+install.name, func(t *testing.T) {
+				env, stdout, _ := newGeminiTestEnv(t)
+				env.projectDir = install.dir(env)
+				globalInstructions := geminiGlobalInstructionsPath(env.homeDir)
+				writeGeminiFile(t, globalInstructions, caught)
+				if err := installGemini(env, install.project, false); err != nil {
+					t.Fatalf("installGemini: %v", err)
+				}
+				data, err := os.ReadFile(globalInstructions)
+				if err != nil {
+					t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+				}
+				want := "# Prefs\n\n" + geminiUserLevelSection() + "\n" + geminiMemoriesHeading + "\n- I prefer tabs.\n\n- My cat is named Miso.\n"
+				if string(data) != want {
+					t.Fatalf("user-level %s after install:\ngot:\n%q\nwant:\n%q\nstdout:\n%s", geminiInstructionsFile, data, want, stdout.String())
+				}
+				if !strings.Contains(stdout.String(), "Moving the beads section ahead of") {
+					t.Errorf("expected the move reported, got:\n%s", stdout.String())
+				}
+				writeGeminiFile(t, globalInstructions, legacyGeminiSaveMemory(want, "My dog is named Pip."))
+				if err := removeGemini(env, install.project); err != nil {
+					t.Fatalf("removeGemini: %v", err)
+				}
+				data, err = os.ReadFile(globalInstructions)
+				if err != nil {
+					t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+				}
+				if want := memories + "\n- My cat is named Miso.\n- My dog is named Pip.\n"; string(data) != want {
+					t.Errorf("user-level %s after --remove:\ngot:\n%q\nwant:\n%q", geminiInstructionsFile, data, want)
+				}
+			})
 		}
-		withMemory := legacyGeminiSaveMemory(content, "My cat is named Miso.")
-		writeGeminiFile(t, globalInstructions, withMemory)
-		if err := removeGemini(env, false); err != nil {
-			t.Fatalf("removeGemini: %v", err)
-		}
-		data, err = os.ReadFile(globalInstructions)
-		if err != nil {
-			t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
-		}
-		if want := legacyGeminiSaveMemory(seed, "My cat is named Miso."); string(data) != want {
-			t.Errorf("after a saved memory and --remove:\ngot:\n%q\nwant:\n%q", data, want)
+		t.Run(below.name+", removed", func(t *testing.T) {
+			env, _, _ := newGeminiTestEnv(t)
+			globalInstructions := geminiGlobalInstructionsPath(env.homeDir)
+			writeGeminiFile(t, globalInstructions, caught)
+			if err := removeGemini(env, false); err != nil {
+				t.Fatalf("removeGemini: %v", err)
+			}
+			data, err := os.ReadFile(globalInstructions)
+			if err != nil {
+				t.Fatalf("read user-level %s: %v", geminiInstructionsFile, err)
+			}
+			if want := memories + "\n- My cat is named Miso.\n"; string(data) != want {
+				t.Errorf("user-level %s after --remove:\ngot:\n%q\nwant:\n%q", geminiInstructionsFile, data, want)
+			}
+		})
+	}
+}
+
+// From the home directory, whose .gemini/settings.json is the global one, and
+// from ~/.gemini, whose GEMINI.md is the user-level one, a project install is
+// the global install: it registers the hook in ~/.gemini/settings.json and in
+// no other settings file, and writes the user-level section alone, without
+// the scaffolding of a new project GEMINI.md and not in ~/GEMINI.md. So
+// --check from any of those directories judges that pair, and a removal from
+// any of them removes the hook and the section together.
+func TestGeminiUserLevelInstalls(t *testing.T) {
+	for _, install := range geminiUserLevelInstalls {
+		for _, removal := range geminiUserLevelInstalls {
+			t.Run(install.name+", removed as the "+removal.name, func(t *testing.T) {
+				env, stdout, _ := newGeminiTestEnv(t)
+				installDir, removalDir := install.dir(env), removal.dir(env)
+				env.projectDir = installDir
+				if err := installGemini(env, install.project, false); err != nil {
+					t.Fatalf("installGemini: %v", err)
+				}
+				if !strings.Contains(stdout.String(), "Installing Gemini CLI hooks globally") {
+					t.Errorf("expected the global install reported, got:\n%s", stdout.String())
+				}
+				globalSettings := geminiGlobalSettingsPath(env.homeDir)
+				if !hasCurrentGeminiHooks(globalSettings) {
+					t.Errorf("expected the hook in %s", globalSettings)
+				}
+				if projectSettings := geminiProjectSettingsPath(installDir); projectSettings != globalSettings {
+					if _, err := os.Stat(projectSettings); !os.IsNotExist(err) {
+						t.Errorf("expected no %s (stat err: %v)", projectSettings, err)
+					}
+				}
+				globalInstructions := geminiGlobalInstructionsPath(env.homeDir)
+				if data, err := os.ReadFile(globalInstructions); err != nil || string(data) != geminiUserLevelSection() {
+					t.Errorf("expected only the user-level section in %s, got %q (err %v)", globalInstructions, data, err)
+				}
+				if _, err := os.Stat(filepath.Join(env.homeDir, geminiInstructionsFile)); !os.IsNotExist(err) {
+					t.Errorf("expected no ~/%s (stat err: %v)", geminiInstructionsFile, err)
+				}
+				env.projectDir = removalDir
+				stdout.Reset()
+				if err := checkGemini(env); err != nil {
+					t.Fatalf("checkGemini: %v\n%s", err, stdout.String())
+				}
+				if !strings.Contains(stdout.String(), globalInstructions+" (current)") {
+					t.Errorf("expected the user-level file reported current, got:\n%s", stdout.String())
+				}
+				stdout.Reset()
+				if err := removeGemini(env, removal.project); err != nil {
+					t.Fatalf("removeGemini: %v", err)
+				}
+				if !strings.Contains(stdout.String(), "Removing Gemini CLI hooks globally") {
+					t.Errorf("expected the global removal reported, got:\n%s", stdout.String())
+				}
+				if hasGeminiBeadsHooks(globalSettings) {
+					t.Errorf("expected the hook removed from %s", globalSettings)
+				}
+				if data, err := os.ReadFile(globalInstructions); err != nil || containsBeadsMarker(string(data)) {
+					t.Errorf("expected the user-level section removed, got %q (err %v)", data, err)
+				}
+			})
 		}
 	}
 }
@@ -671,6 +821,37 @@ func TestCheckGeminiScenarios(t *testing.T) {
 		}
 	})
 
+	// Nor is a ~/GEMINI.md with a section, such as an earlier global install
+	// run from home left: from home --check judges the user-level file, so it
+	// does not pass before a global install has written that.
+	for _, userLevel := range []struct {
+		name    string
+		content string
+		want    error
+		output  func(env geminiEnv) string
+	}{
+		{"stale", stale, errBeadsSectionStale, func(env geminiEnv) string {
+			return geminiGlobalInstructionsPath(env.homeDir) + "\n  Run: bd setup gemini (to update)"
+		}},
+		{"missing", "", errAgentsFileMissing, func(geminiEnv) string { return "Run: bd setup gemini\n" }},
+	} {
+		t.Run("home section with a "+userLevel.name+" user-level one checked from home", func(t *testing.T) {
+			env, stdout, _ := newGeminiTestEnv(t)
+			env.projectDir = env.homeDir
+			writeGeminiSettings(t, geminiGlobalSettingsPath(env.homeDir), geminiPrimeHookSettings())
+			writeGeminiFile(t, filepath.Join(env.homeDir, geminiInstructionsFile), agents.RenderSectionWithOpts(agents.ProfileMinimal, detectRenderOpts()))
+			if userLevel.content != "" {
+				writeGeminiFile(t, geminiGlobalInstructionsPath(env.homeDir), userLevel.content)
+			}
+			if err := checkGemini(env); !errors.Is(err, userLevel.want) {
+				t.Fatalf("expected %v, got %v\n%s", userLevel.want, err, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), userLevel.output(env)) {
+				t.Errorf("expected the user-level file and the global setup hint, got:\n%s", stdout.String())
+			}
+		})
+	}
+
 	t.Run("stale user-level section", func(t *testing.T) {
 		env, stdout, _ := newGeminiTestEnv(t)
 		writeGeminiSettings(t, geminiGlobalSettingsPath(env.homeDir), geminiPrimeHookSettings())
@@ -680,6 +861,29 @@ func TestCheckGeminiScenarios(t *testing.T) {
 		}
 		if !strings.Contains(stdout.String(), "Run: bd setup gemini (to update)") {
 			t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+		}
+	})
+
+	// A section below Gemini CLI's memories goes on catching the memories
+	// saved after it, so it is stale however current its text: the hint
+	// names the install, which moves it ahead of them.
+	t.Run("current user-level section below Gemini's memories", func(t *testing.T) {
+		env, stdout, _ := newGeminiTestEnv(t)
+		writeGeminiSettings(t, geminiGlobalSettingsPath(env.homeDir), geminiPrimeHookSettings())
+		globalInstructions := geminiGlobalInstructionsPath(env.homeDir)
+		writeGeminiFile(t, globalInstructions, geminiMemoriesHeading+"\n- I prefer tabs.\n\n"+geminiUserLevelSection())
+		if err := checkGemini(env); !errors.Is(err, errBeadsSectionStale) {
+			t.Fatalf("expected errBeadsSectionStale, got %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), globalInstructions+"\n  Run: bd setup gemini (to update)") {
+			t.Errorf("expected the user-level file and the global setup hint, got:\n%s", stdout.String())
+		}
+		if err := installGemini(env, false, false); err != nil {
+			t.Fatalf("installGemini: %v", err)
+		}
+		stdout.Reset()
+		if err := checkGemini(env); err != nil {
+			t.Fatalf("checkGemini after the install: %v\n%s", err, stdout.String())
 		}
 	})
 

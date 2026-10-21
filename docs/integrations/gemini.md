@@ -16,6 +16,8 @@ By default, setup installs global hooks in `~/.gemini/settings.json` and a Beads
 bd setup gemini --project
 ```
 
+Run from your home directory or from `~/.gemini`, `--project` is the global install: it uses `~/.gemini/settings.json` and `~/.gemini/GEMINI.md`, and does not create `~/GEMINI.md`.
+
 The hook runs `bd prime --hook-json` so Gemini receives compact Beads workflow context at session start. The `GEMINI.md` section is a short pointer to `bd prime`. In an existing `~/.gemini/GEMINI.md` your text is kept, and the section goes ahead of the `## Gemini Added Memories` section older Gemini CLI releases keep there, so memories they save stay outside it.
 
 ## Stealth Mode

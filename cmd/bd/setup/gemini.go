@@ -94,9 +94,10 @@ func geminiGlobalInstructionsPath(home string) string {
 // ~/.claude/CLAUDE.md, it renders that file with fixed options: every project
 // shares it, so it must not follow one project's config, and Gemini CLI loads
 // it in projects that do not use beads too, so its section applies only in
-// those that do. A project install uses the project's GEMINI.md.
+// those that do. A project install uses the project's GEMINI.md, except where
+// it is the global install (geminiProjectIsUserLevel).
 func geminiInstructionsEnv(env geminiEnv, project bool) (agentsEnv, agentsIntegration) {
-	if project {
+	if project && !geminiProjectIsUserLevel(env) {
 		return agentsEnv{
 			agentsPath: filepath.Join(env.projectDir, geminiInstructionsFile),
 			stdout:     env.stdout,
@@ -117,24 +118,20 @@ func geminiInstructionsEnv(env geminiEnv, project bool) (agentsEnv, agentsIntegr
 }
 
 // geminiCheckAgentsEnv picks the instructions file --check reports on, as
-// claudeCheckAgentsEnv does for Claude Code. Run from ~/.gemini, the
-// project's GEMINI.md is the user-level file, so it is judged as one.
-// Otherwise it is the project's file, unless the hooks are global and the
-// project's file has no beads section. Then it is the ~/.gemini/GEMINI.md a
-// global install writes, which Gemini CLI loads alongside the project's own
-// context files, if that has a section, if the project's file does not exist,
-// or if the project is the home directory, where a project install would
-// create ~/GEMINI.md. A project install is judged on the project's file alone.
+// claudeCheckAgentsEnv does for Claude Code. It is the file a project install
+// here manages, which from the home directory and ~/.gemini is the
+// user-level one, unless the hooks are global and that file has no beads
+// section. Then it is the ~/.gemini/GEMINI.md a global install writes, which
+// Gemini CLI loads alongside the project's own context files, if that has a
+// section or if the project's file does not exist. A project install is
+// judged on the project's file alone.
 func geminiCheckAgentsEnv(env geminiEnv, globalHooks bool) (agentsEnv, agentsIntegration) {
-	globalEnv, globalIntegration := geminiInstructionsEnv(env, false)
-	if sameDir(env.projectDir, filepath.Dir(globalEnv.agentsPath)) {
-		return globalEnv, globalIntegration
-	}
 	projectEnv, projectIntegration := geminiInstructionsEnv(env, true)
 	if !globalHooks || geminiFileHasBeadsSection(env, projectEnv.agentsPath) {
 		return projectEnv, projectIntegration
 	}
-	if geminiFileHasBeadsSection(env, globalEnv.agentsPath) || geminiProjectIsHome(env) {
+	globalEnv, globalIntegration := geminiInstructionsEnv(env, false)
+	if geminiFileHasBeadsSection(env, globalEnv.agentsPath) {
 		return globalEnv, globalIntegration
 	}
 	if _, err := env.readFile(projectEnv.agentsPath); err != nil {
@@ -143,10 +140,14 @@ func geminiCheckAgentsEnv(env geminiEnv, globalHooks bool) (agentsEnv, agentsInt
 	return projectEnv, projectIntegration
 }
 
-// geminiProjectIsHome reports whether the current directory is the home
-// directory, where the project's .gemini/settings.json is the global one.
-func geminiProjectIsHome(env geminiEnv) bool {
-	return sameDir(env.projectDir, env.homeDir)
+// geminiProjectIsUserLevel reports whether a project install from the current
+// directory is the global install: from the home directory, whose
+// .gemini/settings.json is the global one, so that its GEMINI.md is not the
+// ~/GEMINI.md a global install exists to avoid, and from ~/.gemini, whose
+// GEMINI.md is the user-level one.
+func geminiProjectIsUserLevel(env geminiEnv) bool {
+	return sameDir(env.projectDir, env.homeDir) ||
+		sameDir(env.projectDir, filepath.Dir(geminiGlobalInstructionsPath(env.homeDir)))
 }
 
 func geminiFileHasBeadsSection(env geminiEnv, path string) bool {
@@ -163,6 +164,12 @@ func InstallGemini(project bool, stealth bool) error {
 }
 
 func installGemini(env geminiEnv, project bool, stealth bool) error {
+	// From the home directory and ~/.gemini a project install is the global
+	// install (geminiProjectIsUserLevel): it manages the user-level section,
+	// so its hook goes in the global settings file beside that, not in
+	// ~/.gemini/.gemini/settings.json.
+	project = project && !geminiProjectIsUserLevel(env)
+
 	var settingsPath string
 	if project {
 		settingsPath = geminiProjectSettingsPath(env.projectDir)
@@ -298,6 +305,11 @@ func RemoveGemini(project bool) error {
 }
 
 func removeGemini(env geminiEnv, project bool) error {
+	// From the home directory and ~/.gemini a project removal is the global
+	// removal, as installGemini makes the install there: it removes the
+	// global hooks and the user-level section paired with them.
+	project = project && !geminiProjectIsUserLevel(env)
+
 	var settingsPath string
 	if project {
 		settingsPath = geminiProjectSettingsPath(env.projectDir)
@@ -353,17 +365,6 @@ func removeGemini(env geminiEnv, project bool) error {
 	if err := removeAgents(agentsEnv, integration); err != nil {
 		// Non-fatal
 		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", geminiInstructionsFile, err)
-	}
-
-	// From the home directory a project removal has just removed the global
-	// hooks, since the settings files are the same; remove the user-level
-	// section a global install paired with them too.
-	if project && geminiProjectIsHome(env) {
-		globalEnv, globalIntegration := geminiInstructionsEnv(env, false)
-		if err := removeAgents(globalEnv, globalIntegration); err != nil {
-			// Non-fatal
-			_, _ = fmt.Fprintf(env.stderr, "Warning: failed to update %s: %v\n", globalEnv.agentsPath, err)
-		}
 	}
 
 	_, _ = fmt.Fprintln(env.stdout, "✓ Gemini CLI hooks removed")

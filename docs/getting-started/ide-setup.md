@@ -24,7 +24,7 @@ bd setup claude --remove    # Uninstall
 |--------|---------------|---------|
 | `claude` | `.claude/settings.json` + `CLAUDE.md` section (or `~/.claude/settings.json` + `~/.claude/CLAUDE.md` with `--global`) | [Claude Code](/integrations/claude-code) |
 | `cursor` | `.cursor/rules/beads.mdc` + `.agents/skills/beads/` + `.cursor/hooks.json` (with `--global`: `~/.cursor/hooks.json` + `~/.agents/skills/beads/`, no rules file) | [Cursor](/integrations/cursor) |
-| `gemini` | `~/.gemini/settings.json` + `~/.gemini/GEMINI.md` section (or `.gemini/settings.json` + `GEMINI.md` section with `--project`) | [Gemini CLI](/integrations/gemini) |
+| `gemini` | `~/.gemini/settings.json` + `~/.gemini/GEMINI.md` section (or `.gemini/settings.json` + `GEMINI.md` section with `--project`, except from `~` or `~/.gemini`) | [Gemini CLI](/integrations/gemini) |
 | `copilot` | `.copilot-plugin/plugin.json` + `.github/copilot-instructions.md` | [Copilot CLI](/integrations/copilot-cli) |
 | `codex` | `.agents/skills/beads/` + `AGENTS.md` section + `.codex/` hooks (with `--global`: `~/.agents/skills/beads/` + `$CODEX_HOME` or `~/.codex`) | [Codex](/integrations/codex) |
 | `factory` | `AGENTS.md` section | [Factory.ai Droid](/integrations/factory) |
@@ -178,7 +178,7 @@ bd setup gemini            # Global install: ~/.gemini/settings.json + ~/.gemini
 bd setup gemini --project  # Project install: .gemini/settings.json + GEMINI.md
 ```
 
-This installs a SessionStart hook running `bd prime --hook-json` — Gemini requires hook stdout to be valid JSON, and `--hook-json` wraps the markdown in the required envelope — plus a minimal beads section in your user-level `~/.gemini/GEMINI.md` (in the project's `GEMINI.md` with `--project`). Gemini CLI loads the user-level file in every project, so there the section applies only in repositories that use beads, and a global install leaves the current directory's files alone. `--stealth` works the same as for Claude Code; `--check` and `--remove` cover both the hooks and the managed `GEMINI.md` section.
+This installs a SessionStart hook running `bd prime --hook-json` — Gemini requires hook stdout to be valid JSON, and `--hook-json` wraps the markdown in the required envelope — plus a minimal beads section in your user-level `~/.gemini/GEMINI.md` (in the project's `GEMINI.md` with `--project`). Gemini CLI loads the user-level file in every project, so there the section applies only in repositories that use beads, and a global install leaves the current directory's files alone. Run from your home directory or from `~/.gemini`, `--project` is the global install: it uses `~/.gemini/settings.json` and `~/.gemini/GEMINI.md`, and does not create `~/GEMINI.md`. `--stealth` works the same as for Claude Code; `--check` and `--remove` cover both the hooks and the managed `GEMINI.md` section.
 
 **Verify:**
 ```bash

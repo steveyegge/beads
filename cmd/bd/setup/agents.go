@@ -42,10 +42,13 @@ type agentsEnv struct {
 	// them from the current directory's beads config. For user-level files,
 	// which every project shares, so install and --check agree everywhere.
 	renderOpts func() agents.RenderOpts
-	// insertBefore, when set, adds the section to an existing file ahead of
-	// the first line starting with it instead of at the end. For a file whose
-	// owner appends to a section of its own up to the next "## " heading,
-	// which would otherwise be the managed section's.
+	// insertBefore, when set, keeps the section in an existing file ahead of
+	// the line holding the first occurrence of this text, where Gemini CLI's
+	// indexOf finds its memories heading: a new section is added there
+	// instead of at the end, and one below it is stale and moved there. For
+	// a file whose owner finds its own section that way and appends to it up
+	// to the next "## " heading, which below it would be the managed
+	// section's.
 	insertBefore string
 }
 
@@ -162,6 +165,12 @@ func installAgents(env agentsEnv, integration agentsIntegration) error {
 	beadsSection := agents.RenderSectionWithOpts(profile, opts)
 
 	if currentContent != "" {
+		if lifted, ok := liftBeadsSectionBelow(currentContent, env.insertBefore); ok {
+			// Updated where it stands, the section would go on collecting
+			// what the file's owner adds below insertBefore.
+			currentContent = lifted
+			_, _ = fmt.Fprintf(env.stdout, "  ℹ Moving the beads section ahead of %q\n", env.insertBefore)
+		}
 		if containsBeadsMarker(currentContent) {
 			// Like bd init's updateAgentFile: write only when the section
 			// actually changes, so a rerun leaves a current file alone.
@@ -251,7 +260,10 @@ func checkAgents(env agentsEnv, integration agentsIntegration) error {
 	}
 
 	currentHash := agents.CurrentHashWithOpts(checkProfile, env.resolveRenderOpts())
-	if meta != nil && meta.Hash == currentHash && existingProf == checkProfile {
+	// A section an install would move (liftBeadsSectionBelow) is stale where
+	// it stands, however current its text.
+	_, below := liftBeadsSectionBelow(content, env.insertBefore)
+	if meta != nil && meta.Hash == currentHash && existingProf == checkProfile && !below {
 		_, _ = fmt.Fprintf(env.stdout, "✓ %s integration installed: %s (current)\n", integration.name, env.agentsPath)
 		return nil
 	}
@@ -280,7 +292,10 @@ func removeAgents(env agentsEnv, integration agentsIntegration) error {
 		return nil
 	}
 
-	newContent := removeBeadsSection(content)
+	newContent, lifted := liftBeadsSectionBelow(content, env.insertBefore)
+	if !lifted {
+		newContent = removeBeadsSection(content)
+	}
 
 	if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
@@ -311,6 +326,32 @@ func addBeadsSection(content, section, before string) string {
 		content += "\n"
 	}
 	return content + "\n" + section
+}
+
+// liftBeadsSectionBelow takes the beads section out of content, as
+// removeBeadsSection does, when it sits below the line holding the first
+// occurrence of before, and reports whether it did. Below it, the section's
+// first "## " heading, which every beads section opens with, ends the owner's
+// section that before starts, so the owner's entries land inside the section,
+// between its BEGIN marker's line and that heading. They are not the
+// section's own, so they stay where they are. A BEGIN marker that shares its
+// line with other text is left alone.
+func liftBeadsSectionBelow(content, before string) (string, bool) {
+	at := strings.Index(content, before)
+	start := findBeginMarker(content)
+	end := strings.Index(content, agentsEndMarker)
+	if before == "" || at < 0 || start < at || end < start || !strings.HasSuffix(content[:start], "\n") {
+		return content, false
+	}
+	section := content[start:end]
+	body := strings.IndexByte(section, '\n') + 1
+	entries := 0
+	if body > 0 && !strings.HasPrefix(section[body:], "## ") {
+		entries = strings.Index(section[body:], "\n## ") + 1
+	}
+	// Put the entries ahead of the BEGIN marker's line, outside the section.
+	content = content[:start] + section[body:body+entries] + section[:body] + content[start+body+entries:]
+	return removeBeadsSection(content), true
 }
 
 // updateBeadsSection replaces the beads section in existing content using the full profile.
