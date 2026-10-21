@@ -247,6 +247,29 @@ func TestExternallyManagedFreshStartRefusal(t *testing.T) {
 		}
 	})
 
+	t.Run("allows an auto-start workspace", func(t *testing.T) {
+		serverDir := freshServerDir(t, nil)
+		if err := externallyManagedFreshStartRefusal(serverDir, false, false); err != nil {
+			t.Errorf("an auto-start workspace is never refused, got: %v", err)
+		}
+	})
+
+	t.Run("allows an unreadable data dir", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads through mode 0000, so this row cannot be set up")
+		}
+		serverDir := freshServerDir(t, func(t *testing.T, beadsDir string) {
+			if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0o000); err != nil {
+				t.Fatal(err)
+			}
+		})
+		// An unreadable data dir cannot be proven fresh, so the start is
+		// allowed rather than refused (HasDoltDatabase fails closed).
+		if err := externallyManagedFreshStartRefusal(serverDir, true, false); err != nil {
+			t.Errorf("an unreadable data dir must not be refused, got: %v", err)
+		}
+	})
+
 	t.Run("force skips the refusal", func(t *testing.T) {
 		serverDir := freshServerDir(t, nil)
 		if err := externallyManagedFreshStartRefusal(serverDir, true, true); err != nil {
