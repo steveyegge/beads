@@ -2156,6 +2156,14 @@ bd dolt start
     | lifecycle and starts it on demand, so a server started here would be a second,
     | unsupervised one over the same data directory. Use 'bd dolt status' to see what
     | is running and 'bd dolt stop' to shut it down.
+    |
+    | With dolt.auto-start: false the server is expected to be managed outside bd, so
+    | a start that would create a new, empty Dolt database (the data directory is
+    | missing, empty, or holds no database) is refused before anything is written:
+    | it would publish its port and shadow the managed server's database. Starting
+    | over existing data, or adopting a server bd already tracks, is unaffected. Use
+    | --force to create the new database anyway.
+  flag --force type=bool default="false" usage="Start even when dolt.auto-start is off and this would create a new, empty Dolt database"
 
 bd dolt status
   use: "status"
