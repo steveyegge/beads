@@ -262,5 +262,8 @@ gate = `+gateSrc+"\n")
 		if got := blocksTargets(t, taskID); len(got) != 1 || got[0] != protoID+".prep" {
 			t.Errorf("task blocks edges = %v, want only [%s.prep]", got, protoID)
 		}
+		if got := blocksTargets(t, protoID+".execute"); len(got) != 1 || got[0] != gateID {
+			t.Errorf("execute blocks edges = %v, want [%s]", got, gateID)
+		}
 	})
 }

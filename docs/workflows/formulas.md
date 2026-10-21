@@ -107,9 +107,23 @@ title = "Deploy {{version}} to {{environment}}"
 ## Step Types
 
 A step's `type` sets the issue type of the bead it creates: `task`
-(default), `bug`, `feature`, `epic`, or `chore`. Any other value falls back
-to `task`. Human sign-offs and async waits are expressed with a
-`[steps.gate]` block, not a step type — see [Gates](/workflows/gates).
+(default), `bug`, `feature`, `epic`, `chore`, `gate`, or a custom type
+registered in `types.custom`. At `bd mol pour` and `bd cook --persist`, a
+type that is neither built in nor registered falls back to `task` with a
+warning.
+
+`type = "gate"` has two forms:
+
+- **With a `[steps.gate]` block** (an exit-gate): the step becomes a `task`
+  bead holding the preparation work, plus a companion `gate` bead that the
+  task blocks. Other steps that reference the step id wait on the companion,
+  so they run only after the gate is resolved.
+- **Without a `[steps.gate]` block**: the step becomes a single `gate` bead
+  with no await condition. It is hidden from `bd ready` and is resolved by
+  hand.
+
+Async waits and sign-offs are expressed with a `[steps.gate]` block — see
+[Gates](#gates) and [Gates in formulas](/workflows/gates#gates-in-formulas).
 
 ## Dependencies
 
@@ -145,22 +159,36 @@ needs = ["test-unit", "test-integration"]  # Waits for both
 
 ## Gates
 
-Add gates for async coordination:
+Add gates for async coordination. A `[steps.gate]` on an ordinary step is an
+entry-gate: the step waits for the gate before it can start.
+
+```toml
+[[steps]]
+id = "deploy"
+title = "Deploy to production"
+
+[steps.gate]
+type = "timer"
+timeout = "1h"    # deploy waits until bd gate check closes the timer, 1h after pour
+```
+
+On a step declared `type = "gate"` it is an exit-gate: the step is the
+preparation work, and the gate opens for its decision once that work is
+done. Steps that reference it wait for the gate to be resolved.
 
 ```toml
 [[steps]]
 id = "approval"
-title = "Manager approval"
-type = "human"
+title = "Prepare the release for manager approval"
+type = "gate"
 
 [steps.gate]
 type = "human"
-approvers = ["manager"]
 
 [[steps]]
 id = "deploy"
 title = "Deploy to production"
-needs = ["approval"]
+needs = ["approval"]   # waits for bd gate resolve on the approval gate
 ```
 
 ## Aspects (Cross-cutting)

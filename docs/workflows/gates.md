@@ -89,9 +89,21 @@ topology. Two limitations to expect, both tracked in
 ## Gates in formulas
 
 A formula step declares a gate with a `[steps.gate]` block. When the formula
-is instantiated, bd creates the gate issue and wires it as a blocker of that
-step. The schema has five fields: `type`, `id`, `await_id`, `timeout`, and
-`repo`.
+is instantiated, bd creates a companion gate issue `<parent>.gate-<step>`
+next to the step. The schema has five fields: `type`, `id`, `await_id`,
+`timeout`, and `repo`.
+
+How the companion is wired depends on the step's own `type`:
+
+- **Entry-gate** (any step not declared `type = "gate"`): the gate blocks the
+  step. The step's work starts after the gate resolves.
+- **Exit-gate** (a step declared `type = "gate"`): the step becomes a `task`
+  that blocks the gate. The task is the preparation work; once it closes,
+  the gate waits for its condition. A step that lists this step in
+  `depends_on`, `needs`, or `waits_for` waits on the gate, not on the task.
+
+Under either form, a `timer` gate's timeout and `gh:*` gate checks count
+from when the molecule is poured, not from when the gate's blockers close.
 
 This is the release gate from beads' own release formula — the step that
 waits for the GitHub release workflow:
@@ -138,15 +150,21 @@ ignores the local checkout's branch unless `--branch` is passed explicitly;
 an auto-detected local branch has no relationship to the target repo's
 branches.
 
-A human sign-off gate:
+A human sign-off gate, as an exit-gate whose task prepares the decision:
 
 ```toml
 [[steps]]
 id = "approve-deploy"
-title = "Human approves the deploy"
+title = "Prepare the deploy for human approval"
+type = "gate"
 
 [steps.gate]
 type = "human"
+
+[[steps]]
+id = "deploy"
+title = "Deploy"
+needs = ["approve-deploy"]   # waits for bd gate resolve on the approval gate
 ```
 
 And a cooling-off timer:
