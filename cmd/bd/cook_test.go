@@ -983,6 +983,124 @@ func TestCookFormulaToSubgraph_GateTypedStep(t *testing.T) {
 			t.Errorf("task blocks edges = %v, want only its declared depends_on [%s]", got, prepID)
 		}
 	})
+
+	// AC-3: references to a gate-typed step resolve to its companion.
+	t.Run("references_resolve_to_companion", func(t *testing.T) {
+		// Built in Go, not TOML: formula validation rejects "gate-s" as an
+		// unknown step id, but cookFormulaToSubgraph callers can still pass
+		// it, and it must not produce a duplicate edge.
+		f := &formula.Formula{
+			Formula: "gate-refs",
+			Version: 1,
+			Type:    formula.TypeWorkflow,
+			Steps: []*formula.Step{
+				{ID: "s", Title: "Prep for approval", Type: "gate", Gate: &formula.Gate{Type: "human"}},
+				{ID: "by-depends-on", Title: "depends_on", DependsOn: []string{"s"}},
+				{ID: "by-needs", Title: "needs", Needs: []string{"s"}},
+				{ID: "by-both-ids", Title: "depends_on step and gate key", DependsOn: []string{"s", "gate-s"}},
+				{ID: "unrelated", Title: "No reference"},
+			},
+		}
+		sg, err := cookFormulaToSubgraph(f, "gate-refs")
+		if err != nil {
+			t.Fatalf("cookFormulaToSubgraph: %v", err)
+		}
+		gateID := "gate-refs.gate-s"
+		for _, dependent := range []string{"by-depends-on", "by-needs", "by-both-ids"} {
+			if got := blocksEdgesFrom(sg, "gate-refs."+dependent); len(got) != 1 || got[0] != gateID {
+				t.Errorf("%s blocks edges = %v, want exactly [%s]", dependent, got, gateID)
+			}
+		}
+		if got := blocksEdgesFrom(sg, "gate-refs.unrelated"); len(got) != 0 {
+			t.Errorf("unrelated blocks edges = %v, want none", got)
+		}
+		var blockersOfGate []string
+		for _, d := range sg.Dependencies {
+			if d.DependsOnID == gateID && d.Type == types.DepBlocks {
+				blockersOfGate = append(blockersOfGate, d.IssueID)
+			}
+		}
+		if len(blockersOfGate) != 3 {
+			t.Errorf("issues blocked by the companion = %v, want the three referencing steps", blockersOfGate)
+		}
+	})
+
+	t.Run("issue_repro_downstream", func(t *testing.T) {
+		sg := cookGateFormulaTOML(t, "gate-repro", gateTypedReproTOML)
+		if got := blocksEdgesFrom(sg, "gate-repro.execute"); len(got) != 1 || got[0] != "gate-repro.gate-agree" {
+			t.Errorf("execute blocks edges = %v, want [gate-repro.gate-agree]", got)
+		}
+	})
+
+	t.Run("child_step_referenced_by_sibling", func(t *testing.T) {
+		sg := cookGateFormulaTOML(t, "gate-child", `formula = "gate-child"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "phase"
+title = "Phase"
+
+[[steps.children]]
+id = "review"
+title = "Prep review"
+type = "gate"
+gate = { type = "human" }
+
+[[steps.children]]
+id = "apply"
+title = "Apply"
+needs = ["review"]
+`)
+		taskID, gateID := "gate-child.phase.review", "gate-child.phase.gate-review"
+		if sg.IssueMap[gateID] == nil {
+			t.Fatalf("companion %s missing; issues %v", gateID, allIssueIDs(sg))
+		}
+		if got := blocksEdgesFrom(sg, gateID); len(got) != 1 || got[0] != taskID {
+			t.Errorf("companion blocks edges = %v, want [%s]", got, taskID)
+		}
+		if got := blocksEdgesFrom(sg, "gate-child.phase.apply"); len(got) != 1 || got[0] != gateID {
+			t.Errorf("apply blocks edges = %v, want [%s]", got, gateID)
+		}
+	})
+
+	t.Run("loop_body_step", func(t *testing.T) {
+		sg := cookGateFormulaTOML(t, "gate-loop", `formula = "gate-loop"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "round"
+title = "Rounds"
+
+[steps.loop]
+count = 2
+
+[[steps.loop.body]]
+id = "review"
+title = "Prep review"
+type = "gate"
+gate = { type = "human" }
+
+[[steps.loop.body]]
+id = "apply"
+title = "Apply"
+needs = ["review"]
+`)
+		for _, iter := range []string{"iter1", "iter2"} {
+			taskID := "gate-loop.round." + iter + ".review"
+			gateID := "gate-loop.gate-round." + iter + ".review"
+			if sg.IssueMap[gateID] == nil {
+				t.Fatalf("companion %s missing; issues %v", gateID, allIssueIDs(sg))
+			}
+			if got := blocksEdgesFrom(sg, gateID); len(got) != 1 || got[0] != taskID {
+				t.Errorf("companion blocks edges = %v, want [%s]", got, taskID)
+			}
+			if got := blocksEdgesFrom(sg, "gate-loop.round."+iter+".apply"); len(got) != 1 || got[0] != gateID {
+				t.Errorf("%s apply blocks edges = %v, want [%s]; deps %v", iter, got, gateID, allDeps(sg))
+			}
+		}
+	})
 }
 
 // TestCollectStepsGateDirection pins GH#3316 (bd-4nndgi) at the
