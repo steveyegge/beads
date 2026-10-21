@@ -543,6 +543,54 @@ func TestEmbeddedMigratePersonal_refusesIssueAlreadyInPlanningRepo(t *testing.T)
 	}
 }
 
+// TestEmbeddedMigratePersonal_repoSyncMirrorHint verifies the phase-0 refusal
+// for a project copy that bd repo sync imported from the planning repo: the
+// error names bd repo remove, and once the mirror is removed a rerun moves the
+// remaining personal issue.
+func TestEmbeddedMigratePersonal_repoSyncMirrorHint(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mps")
+	planningDir := setupContributorRouting(t, bd, dir)
+
+	const personalTitle = "Personal issue beside a repo sync mirror"
+	personal := bdCreate(t, bd, dir, personalTitle)
+
+	// The mirror counts as personal only when its creator is the project's git
+	// identity; the planning repo's own HOME gives it a different one.
+	const planningTitle = "Planning issue mirrored by repo sync"
+	planningIssue := bdCreate(t, bd, planningDir, planningTitle, "--actor", personal.CreatedBy)
+	if out, err := bdRunWithFlockRetry(t, bd, planningDir, "export", "-o", filepath.Join(".beads", "issues.jsonl")); err != nil {
+		t.Fatalf("bd export in the planning repo: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{{"repo", "add", planningDir}, {"repo", "sync"}} {
+		if out, err := bdRunWithFlockRetry(t, bd, dir, args...); err != nil {
+			t.Fatalf("bd %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	requireStillInProject(t, beadsDir, "mps", planningIssue.ID)
+
+	requireMigratePersonalRefused(t, bd, dir, "by 'bd repo sync' (remove those copies with 'bd repo remove "+planningDir+"', then rerun); nothing was moved")
+	requireStillInProject(t, beadsDir, "mps", personal.ID)
+
+	if out, err := bdRunWithFlockRetry(t, bd, dir, "repo", "remove", planningDir); err != nil {
+		t.Fatalf("bd repo remove: %v\n%s", err, out)
+	}
+	requireMigratePersonal(t, bd, dir)
+	requireMovedToPlanning(t, beadsDir, "mps", planningDir, personal.ID, personalTitle)
+	kept, err := openStore(t, filepath.Join(planningDir, ".beads"), migratePersonalPlanningDatabase).GetIssue(t.Context(), planningIssue.ID)
+	if err != nil {
+		t.Fatalf("planning repo's own issue %s gone after migrate-personal: %v", planningIssue.ID, err)
+	}
+	if kept.Title != planningTitle {
+		t.Errorf("planning issue %s title = %q, want unchanged %q", planningIssue.ID, kept.Title, planningTitle)
+	}
+}
+
 // TestEmbeddedMigratePersonal_abortLeavesLegacyPlanningConfig verifies that an
 // aborted run does not rewrite a planning repo that still has a legacy
 // config.json: the self-routing check runs before the prompt and must read the
