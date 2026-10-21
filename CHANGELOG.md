@@ -839,15 +839,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launching workspace's `BEADS_DOLT_SERVER_DATABASE`. A planning repo that
   contributor setup left with no `metadata.json` (the empty `.beads` from
   `bd init --contributor`, or the database fork setup creates) is first
-  initialized the way a routed `bd create` initializes it. A planning repo
-  whose `metadata.json` has no `dolt_database`, or whose database has not been
-  bootstrapped, is refused before anything moves. So is a planning repo that
+  initialized the way a routed `bd create` initializes it, as is any other
+  planning `.beads` with no `metadata.json`, with two exceptions that are
+  refused before anything is written: a redirect stub (point
+  `routing.contributor` at the redirect target) and a workspace `bd` itself
+  refuses, such as a SQLite-era repo. A planning repo in a format this
+  build cannot open exits 16 with a hint, as `bd` does in that repo. A planning
+  repo whose `metadata.json` has no `dolt_database`, or whose database has not
+  been bootstrapped, is refused before anything moves. So is a planning repo that
   is the project's own workspace (for example `routing.contributor: .`).
   In server mode, when the planning open resolved to the project's own
   database (`dolt_database` "beads", or `BEADS_DOLT_SERVER_DATABASE` naming
   it), that used to delete the issues while reporting them moved. An issue
   ID already present in the planning repo is also refused rather than
-  overwritten.
+  overwritten; when the project copy is a `bd repo sync` mirror, the error
+  names `bd repo remove`.
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the

@@ -594,3 +594,137 @@ func TestEmbeddedMigratePersonal_abortLeavesLegacyPlanningConfig(t *testing.T) {
 	}
 	requireStillInProject(t, beadsDir, "mpl", personal.ID)
 }
+
+// planningDirListing returns the names of every entry under beadsDir, relative
+// to it, so a refused run can be checked for having written nothing there.
+func planningDirListing(t *testing.T, beadsDir string) []string {
+	t.Helper()
+	var names []string
+	err := filepath.WalkDir(beadsDir, func(path string, _ os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(beadsDir, path)
+		if err != nil {
+			return err
+		}
+		names = append(names, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("list %s: %v", beadsDir, err)
+	}
+	return names
+}
+
+// TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos verifies that
+// a metadata-less planning .beads that is not a contributor-setup shape is
+// refused before anything moves, and is not initialized: a redirect stub (its
+// new database would sit inside the stub, where bd run in the planning repo
+// never looks), and a SQLite-era repo that bd's own admission refuses (a fresh
+// database beside it would hide its data and silence that refusal).
+func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	for _, tc := range []struct {
+		name   string
+		prefix string
+		want   string
+		// setup shapes planningBeadsDir, which exists and is empty.
+		setup func(t *testing.T, planningBeadsDir string)
+	}{
+		{"redirect stub", "mps", "redirects to", func(t *testing.T, planningBeadsDir string) {
+			target := t.TempDir()
+			initCmd := exec.Command(bd, "init", "--prefix", "pl", "--quiet")
+			initCmd.Dir = target
+			initCmd.Env = bdEnv(target)
+			if out, err := initCmd.CombinedOutput(); err != nil {
+				t.Fatalf("bd init redirect target: %v\n%s", err, out)
+			}
+			if err := os.WriteFile(filepath.Join(planningBeadsDir, "redirect"), []byte(filepath.Join(target, ".beads")+"\n"), 0o600); err != nil {
+				t.Fatalf("write planning redirect: %v", err)
+			}
+		}},
+		{"sqlite-era repo", "mpq", "historical SQLite workspace", func(t *testing.T, planningBeadsDir string) {
+			if err := os.WriteFile(filepath.Join(planningBeadsDir, "config.json"), []byte(`{"database":"beads.db"}`), 0o600); err != nil {
+				t.Fatalf("write legacy planning config.json: %v", err)
+			}
+			db := append([]byte("SQLite format 3\x00"), make([]byte, 4080)...)
+			if err := os.WriteFile(filepath.Join(planningBeadsDir, "beads.db"), db, 0o600); err != nil {
+				t.Fatalf("write legacy planning beads.db: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, beadsDir, _ := bdInit(t, bd, "--prefix", tc.prefix)
+			planningDir := t.TempDir()
+			planningBeadsDir := filepath.Join(planningDir, ".beads")
+			if err := os.MkdirAll(planningBeadsDir, 0o750); err != nil {
+				t.Fatalf("create planning .beads: %v", err)
+			}
+			tc.setup(t, planningBeadsDir)
+			if out, err := bdRunWithFlockRetry(t, bd, dir, "config", "set", "routing.contributor", planningDir); err != nil {
+				t.Fatalf("bd config set routing.contributor: %v\n%s", err, out)
+			}
+			personal := bdCreate(t, bd, dir, "Personal issue for an uninitializable planning repo")
+			before := planningDirListing(t, planningBeadsDir)
+
+			requireMigratePersonalRefused(t, bd, dir, tc.want)
+			requireStillInProject(t, beadsDir, tc.prefix, personal.ID)
+			if after := planningDirListing(t, planningBeadsDir); !slices.Equal(after, before) {
+				t.Errorf("planning .beads after a refused migrate-personal = %v, want unchanged %v", after, before)
+			}
+		})
+	}
+}
+
+// TestEmbeddedMigratePersonal_unsupportedPlanningFormatExit16 verifies that a
+// planning repo in a format this build cannot open is refused the way bd's own
+// admission refuses it: exit ExitUnsupportedWorkspaceFormat, with the hint.
+func TestEmbeddedMigratePersonal_unsupportedPlanningFormatExit16(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	dir, beadsDir, _ := bdInit(t, bd, "--prefix", "mpg")
+	planningDir := setupContributorRouting(t, bd, dir)
+	metadataPath := filepath.Join(planningDir, ".beads", "metadata.json")
+	raw, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("read planning metadata.json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse planning metadata.json: %v", err)
+	}
+	doc["graph_mode"] = "graph"
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("encode planning metadata.json: %v", err)
+	}
+	if err := os.WriteFile(metadataPath, raw, 0o600); err != nil {
+		t.Fatalf("write planning metadata.json: %v", err)
+	}
+	personal := bdCreate(t, bd, dir, "Personal issue for a graph-format planning repo")
+
+	out := requireMigratePersonalRefused(t, bd, dir, "use a bd build that supports graph_mode")
+	if strings.Contains(out, "initialize planning repo") {
+		t.Errorf("format refusal carries the initialize prefix:\n%s", out)
+	}
+	cmd := exec.Command(bd, "migrate-personal", "--yes")
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	err = cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != ExitUnsupportedWorkspaceFormat {
+		t.Errorf("bd migrate-personal --yes err = %v, want exit %d", err, ExitUnsupportedWorkspaceFormat)
+	}
+	requireStillInProject(t, beadsDir, "mpg", personal.ID)
+}

@@ -52,6 +52,7 @@
 
 100 14 TestEmbeddedReopenConcurrent
 
+100 15 TestEmbeddedMigratePersonal_unsupportedPlanningFormatExit16
 100 15 TestEmbeddedPurgeWispsPlaneRetention
 
 100 16 TestEmbeddedMemoryConcurrent
@@ -75,6 +76,7 @@
 
 100 22 TestEmbeddedCount
 100 22 TestEmbeddedIfRevisionCloseReplaysMoleculeAutoClose
+100 22 TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos
 
 100 23 TestEmbeddedCountConcurrent
 100 23 TestEmbeddedExportExcludeOwner_flag

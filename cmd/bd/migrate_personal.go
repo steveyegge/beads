@@ -31,6 +31,14 @@ import (
 // so their repos must be migratable into. A repo that already has a
 // metadata.json (a clone not yet bootstrapped, say) is left as it is.
 //
+// Any other metadata-less .beads is initialized the same way, as a routed
+// bd create would initialize it, with two exceptions that are refused before
+// anything is written (refuseUninitializablePlanningRepo): a redirect stub,
+// whose new database would land inside the stub where bd run in the planning
+// repo never looks, and any workspace bd's own command admission refuses there
+// (guardLegacyUpgradeWorkspace), such as a SQLite-era repo, whose data a fresh
+// database beside it would hide.
+//
 // The planning repo is the contributor auto-route target, so it then opens the
 // way a write auto-routed there does (openAutoRoutedStore): its own
 // metadata.json picks the backend, the mode and the database, and the database
@@ -49,6 +57,9 @@ import (
 // routed-write factory (newExistingDoltStoreFromConfig) activates the planning
 // workspace's events journal and issue-version history on the store it opens.
 func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string, projectStore storage.DoltStorage) (storage.DoltStorage, error) {
+	if err := refuseUninitializablePlanningRepo(planningBeadsDir); err != nil {
+		return nil, err
+	}
 	if err := ensureBeadsDirForPath(ctx, filepath.Dir(planningBeadsDir), projectStore, true); err != nil {
 		return nil, fmt.Errorf("initialize planning repo: %w", err)
 	}
@@ -57,6 +68,22 @@ func openMigrationPlanningStore(ctx context.Context, planningBeadsDir string, pr
 		return nil, err
 	}
 	return openRoutedTargetStore(ctx, planningBeadsDir, database, true)
+}
+
+// refuseUninitializablePlanningRepo refuses a planning .beads with no
+// metadata.json that openMigrationPlanningStore must not initialize: a redirect
+// stub, and a workspace guardLegacyUpgradeWorkspace refuses. Every other
+// metadata-less .beads is left to ensureBeadsDirForPath. It writes nothing. A
+// .beads that has a metadata.json is left to the open, which refuses what it
+// cannot use.
+func refuseUninitializablePlanningRepo(planningBeadsDir string) error {
+	if _, err := os.Stat(filepath.Join(planningBeadsDir, "metadata.json")); err == nil {
+		return nil
+	}
+	if target := beads.FollowRedirect(planningBeadsDir); utils.CanonicalizePath(target) != utils.CanonicalizePath(planningBeadsDir) {
+		return fmt.Errorf("planning repo %s redirects to %s; set routing.contributor to that repository instead", filepath.Dir(planningBeadsDir), filepath.Dir(target))
+	}
+	return guardLegacyUpgradeWorkspace(planningBeadsDir)
 }
 
 // refuseSelfPlanningRepo refuses a planning repo that is the project workspace
@@ -199,6 +226,10 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	// workspace's. See openMigrationPlanningStore.
 	planningStore, err := openMigrationPlanningStore(ctx, planningBeadsDir, store)
 	if err != nil {
+		if isUnsupportedWorkspaceFormat(err) {
+			// Same rendering as bd's own admission refusal: hint and exit 16.
+			return handleWorkspaceGuardError(err)
+		}
 		return fmt.Errorf("failed to open planning store at %s: %w", planningPath, err)
 	}
 	defer func() { _ = planningStore.Close() }()
@@ -212,6 +243,10 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 		_, err := planningStore.GetIssue(ctx, issue.ID)
 		switch {
 		case err == nil:
+			if issue.SourceRepo != "" && issue.SourceRepo != "." {
+				// A mirror hydrated by bd repo sync, not a personal issue.
+				return fmt.Errorf("issue %s already exists in the planning repo %s; the project copy was imported from %s by 'bd repo sync' (remove those copies with 'bd repo remove %s', then rerun); nothing was moved", issue.ID, planningPath, issue.SourceRepo, issue.SourceRepo)
+			}
 			return fmt.Errorf("issue %s already exists in the planning repo %s; nothing was moved", issue.ID, planningPath)
 		case !errors.Is(err, storage.ErrNotFound):
 			return fmt.Errorf("failed to check the planning DB for %s: %w", issue.ID, err)
