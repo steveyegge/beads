@@ -2405,3 +2405,76 @@ func TestExternallyManagedFreshStartRefusalForce(t *testing.T) {
 		t.Fatalf("--force must skip the refusal, got: %v", err)
 	}
 }
+
+// TestExternallyManagedFreshStartAllowsExistingDatabase pins AC-6: with
+// auto-start off, a data dir that already holds a database, or a live server
+// bd already tracks, is started or adopted as today.
+func TestExternallyManagedFreshStartAllowsExistingDatabase(t *testing.T) {
+	mkdir := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, serverDir, doltDir string)
+	}{
+		{name: "database at the data dir root", setup: func(t *testing.T, _, doltDir string) {
+			mkdir(t, filepath.Join(doltDir, ".dolt"))
+		}},
+		{name: "database in an immediate child", setup: func(t *testing.T, _, doltDir string) {
+			mkdir(t, filepath.Join(doltDir, "beads", ".dolt"))
+		}},
+		{name: "live server bd tracks", setup: func(t *testing.T, serverDir, _ string) {
+			if err := os.WriteFile(filepath.Join(serverDir, doltserver.PortFileName), []byte("54329\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(serverDir, doltserver.PIDFileName), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unreadable data dir", setup: func(t *testing.T, _, doltDir string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads any directory")
+			}
+			mkdir(t, doltDir)
+			if err := os.Chmod(doltDir, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(doltDir, 0o700) })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateFreshStartEnv(t)
+			serverDir := t.TempDir()
+			tc.setup(t, serverDir, filepath.Join(serverDir, "dolt"))
+			if err := externallyManagedFreshStartRefusal(serverDir, true, false); err != nil {
+				t.Fatalf("start over existing state must not be refused, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestDoltStartOverExistingDatabaseWhenAutoStartOff drives AC-6 through the
+// binary: an existing database reaches doltserver.Start without --force.
+func TestDoltStartOverExistingDatabaseWhenAutoStartOff(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	root, beadsDir, env := externallyManagedStartWorkspace(t, "false")
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt", ".dolt"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A current-era version witness keeps the legacy-upgrade guard from
+	// reading the existing data dir as a pre-1.0 workspace.
+	if err := os.WriteFile(filepath.Join(beadsDir, localVersionFile), []byte("1.2.2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runBDDoltStart(t, bd, root, env)
+	if err == nil {
+		t.Fatalf("bd dolt start succeeded without a dolt binary:\n%s", out)
+	}
+	if !strings.Contains(out, "dolt is not installed") || strings.Contains(out, "--force") {
+		t.Errorf("start over an existing database did not reach doltserver.Start:\n%s", out)
+	}
+}
