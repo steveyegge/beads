@@ -106,11 +106,18 @@ func openDoltConn(beadsDir string) (*doltConn, error) {
 // tombstones ("postgres", "mysql", "sqlite") are returned verbatim so callers
 // can label them without opening anything.
 // hq-3446fc.17: Use dolt.GetBackendFromConfig for consistent backend detection.
+//
+// It reads the metadata with configfile.Load, which migrates a legacy
+// config.json into metadata.json, so pass only the workspace doctor runs in,
+// which command admission has checked. Read a .beads that admission never saw,
+// such as a nested one the Classic Artifacts walk reaches, with
+// configfile.LoadAndCheckWorkspaceFormat instead.
 func GetBackend(beadsDir string) string {
 	return dolt.GetBackendFromConfig(beadsDir)
 }
 
-// IsDoltBackend returns true if the configured backend is Dolt.
+// IsDoltBackend returns true if the configured backend is Dolt. It goes through
+// GetBackend and so migrates a legacy config.json; the same caveat applies.
 func IsDoltBackend(beadsDir string) bool {
 	return GetBackend(beadsDir) == configfile.BackendDolt
 }

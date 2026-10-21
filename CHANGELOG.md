@@ -1027,6 +1027,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom types in that repository's `config.yaml`, as before. It also no
   longer migrates an ordinary additional repository's legacy `config.json`
   when there is no Dolt database there to read.
+- **`bd doctor` no longer rewrites or empties nested graph workspaces.**
+  Its Classic Artifacts check walks every `.beads` directory under the
+  repository, those of nested repositories and worktrees included, which
+  command admission never checks. Both the scan (plain `bd doctor` and
+  `bd doctor --check=artifacts`) and the cleanup (`bd doctor --fix` and
+  `bd doctor --check=artifacts --clean`) read each one's metadata with the
+  loader that migrates a legacy `config.json` into `metadata.json`, so a
+  nested workspace whose metadata was still a `config.json` lost that file,
+  and any key bd does not know (a graph workspace's `graph_*` binding among
+  them), to a new `metadata.json`. The cleanup also treated a graph
+  workspace's files as artifacts: in a location that should hold only a
+  redirect, such as `polecats/*/.beads` or `.git/beads-worktrees/*/.beads`,
+  it removed the `graph-preview-format` marker and the `dolt` directory, and,
+  without a `redirect` file, the metadata too. The check now reads that
+  metadata without migrating it, and it neither reports nor removes anything
+  in a `.beads` whose format this build cannot open (a `graph_mode` other
+  than `dependency`, or the `graph-preview-format` marker), which it leaves
+  byte-identical. One side effect: in a redirect-only location, a legacy
+  `config.json` beside a `redirect` is now reported and removed as cruft
+  like any other file there. It used to be migrated into a `metadata.json`
+  that the cleanup kept, though bd's redirect handling never read it.
 - **Activating the HTTP backend refuses a graph workspace too.**
   `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
   `metadata.json` declares a `graph_mode` other than `dependency`, or whose

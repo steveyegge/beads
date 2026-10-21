@@ -1,9 +1,14 @@
 package doctor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 func TestCheckClassicArtifacts_NoArtifacts(t *testing.T) {
@@ -398,5 +403,145 @@ func TestCheckClassicArtifacts_WithArtifacts(t *testing.T) {
 	}
 	if check.Name != "Classic Artifacts" {
 		t.Errorf("expected name 'Classic Artifacts', got %q", check.Name)
+	}
+}
+
+// writeArtifactTree creates each entry under dir: a name ending in "/" is an
+// empty directory, anything else a file holding its value.
+func writeArtifactTree(t *testing.T, dir string, entries map[string]string) {
+	t.Helper()
+	for name, content := range entries {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if strings.HasSuffix(name, "/") {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestScanForArtifacts_SkipsUnsupportedWorkspaceFormat pins that the Classic
+// Artifacts scan, which plain bd doctor and bd doctor --check=artifacts run,
+// leaves a .beads directory in a format this build cannot open byte-identical
+// and reports nothing in it. The scan walks every .beads under the path,
+// including those of nested repositories and worktrees, which command
+// admission never checks, and IsDoltBackend classified each one with the
+// migrating configfile.Load: a graph workspace's legacy config.json became a
+// metadata.json without the graph_* keys this build does not know. Each
+// layout also holds artifacts, and the redirect-expected ones cruft, that the
+// scan would otherwise report; the admitted workspace at the root is still
+// scanned.
+func TestScanForArtifacts_SkipsUnsupportedWorkspaceFormat(t *testing.T) {
+	const graphMetadata = `{"database":"beads.db","backend":"dolt","graph_mode":"%s","graph_future_binding":"keep-me"}`
+	const strippedMetadata = `{"database":"beads.db","backend":"dolt"}`
+	layouts := []struct {
+		name  string
+		dir   string // the workspace's .beads, relative to the scanned root
+		files map[string]string
+	}{
+		{name: "graph_mode in legacy config.json", dir: "sub/.beads", files: map[string]string{"config.json": fmt.Sprintf(graphMetadata, configfile.GraphModeLink)}},
+		{name: "future graph_mode in legacy config.json", dir: "sub/.beads", files: map[string]string{"config.json": fmt.Sprintf(graphMetadata, "future-format")}},
+		{name: "marker beside legacy config.json", dir: "sub/.beads", files: map[string]string{"config.json": strippedMetadata, configfile.GraphFormatMarkerFile: "link-preview-v9\n"}},
+		{name: "graph_mode in metadata.json", dir: "sub/.beads", files: map[string]string{configfile.ConfigFileName: fmt.Sprintf(graphMetadata, configfile.GraphModeLink)}},
+		{name: "marker in a polecat worktree", dir: "polecats/p1/.beads", files: map[string]string{"redirect": "../../mayor/rig/.beads\n", configfile.GraphFormatMarkerFile: "link-preview-v9\n", "extra.txt": "cruft"}},
+		{name: "graph_mode in a beads worktree", dir: ".git/beads-worktrees/wt/.beads", files: map[string]string{"config.json": fmt.Sprintf(graphMetadata, configfile.GraphModeLink), "extra.txt": "cruft"}},
+	}
+	for _, layout := range layouts {
+		for _, entry := range []string{"ScanForArtifacts", "CheckClassicArtifacts"} {
+			t.Run(layout.name+"/"+entry, func(t *testing.T) {
+				root := t.TempDir()
+				rootWAL := filepath.Join(root, ".beads", "beads.db-wal")
+				writeArtifactTree(t, filepath.Dir(rootWAL), map[string]string{"beads.db-wal": "wal"})
+				beadsDir := filepath.Join(root, filepath.FromSlash(layout.dir))
+				entries := map[string]string{
+					"dolt/":                    "",
+					"beads.db-wal":             "wal",
+					"beads.backup-20260204.db": "backup",
+				}
+				for name, content := range layout.files {
+					entries[name] = content
+				}
+				writeArtifactTree(t, beadsDir, entries)
+				want := snapshotBeadsDir(t, beadsDir)
+
+				if entry == "ScanForArtifacts" {
+					report, err := ScanForArtifacts(root)
+					if err != nil {
+						t.Fatalf("ScanForArtifacts: %v", err)
+					}
+					var paths []string
+					for _, findings := range [][]ArtifactFinding{report.SQLiteArtifacts, report.CruftBeadsDirs, report.RedirectIssues} {
+						for _, f := range findings {
+							paths = append(paths, f.Path)
+						}
+					}
+					if !reflect.DeepEqual(paths, []string{rootWAL}) {
+						t.Fatalf("ScanForArtifacts findings = %q, want only the root workspace's %s", paths, rootWAL)
+					}
+				} else {
+					check := CheckClassicArtifacts(root)
+					if check.Status != StatusWarning || check.Message != "1 SQLite artifact(s)" {
+						t.Fatalf("CheckClassicArtifacts = %s %q, want warning %q for the root workspace only", check.Status, check.Message, "1 SQLite artifact(s)")
+					}
+				}
+				if got := snapshotBeadsDir(t, beadsDir); !reflect.DeepEqual(got, want) {
+					t.Fatalf("%s changed %s:\n got %q\nwant %q", entry, layout.dir, got, want)
+				}
+			})
+		}
+	}
+}
+
+// TestScanForArtifacts_DoesNotMigrateLegacyConfig pins that the scan reads a
+// nested workspace's legacy config.json without migrating it into
+// metadata.json, and still classifies that workspace by what it says: SQLite
+// files are artifacts only when its backend is Dolt.
+func TestScanForArtifacts_DoesNotMigrateLegacyConfig(t *testing.T) {
+	cases := []struct {
+		name   string
+		legacy string
+		want   []string // reported artifacts, relative to the nested .beads
+	}{
+		{name: "dolt backend", legacy: `{"database":"beads.db","backend":"dolt","future_key":"keep-me"}`, want: []string{"beads.db-wal"}},
+		{name: "sqlite backend", legacy: `{"database":"beads.db","backend":"sqlite","future_key":"keep-me"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			beadsDir := filepath.Join(root, "sub", ".beads")
+			writeArtifactTree(t, beadsDir, map[string]string{
+				"config.json":  tc.legacy,
+				"beads.db-wal": "wal",
+			})
+
+			report, err := ScanForArtifacts(root)
+			if err != nil {
+				t.Fatalf("ScanForArtifacts: %v", err)
+			}
+			var got []string
+			for _, f := range report.SQLiteArtifacts {
+				rel, err := filepath.Rel(beadsDir, f.Path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, filepath.ToSlash(rel))
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("SQLite artifacts = %q, want %q", got, tc.want)
+			}
+			if data, err := os.ReadFile(filepath.Join(beadsDir, "config.json")); err != nil || string(data) != tc.legacy {
+				t.Fatalf("config.json = %q (read err %v), want it unchanged: %q", data, err, tc.legacy)
+			}
+			if _, err := os.Stat(filepath.Join(beadsDir, configfile.ConfigFileName)); !os.IsNotExist(err) {
+				t.Fatalf("ScanForArtifacts wrote %s (stat err %v)", configfile.ConfigFileName, err)
+			}
+		})
 	}
 }

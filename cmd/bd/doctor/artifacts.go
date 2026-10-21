@@ -1,10 +1,13 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 // ArtifactFinding represents a single detected artifact that may need cleanup.
@@ -169,15 +172,30 @@ func scanGitWorktreeArtifacts(gitDir string, report *ArtifactReport) {
 }
 
 // scanBeadsDir checks a single .beads directory for artifacts.
+//
+// The walk reaches the .beads directories of nested repositories, sub-projects
+// and worktrees, and command admission checked only the workspace doctor runs
+// in. So beadsDir's metadata is read as discovery reads it, without migrating
+// a legacy config.json into metadata.json, and a workspace in a format this
+// build cannot open is not scanned: configfile.Load would rewrite that
+// config.json, dropping keys it does not know, and its files are not this
+// build's to report for removal.
 func scanBeadsDir(beadsDir string, report *ArtifactReport) {
+	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	var formatErr *configfile.UnsupportedWorkspaceFormatError
+	if errors.As(err, &formatErr) {
+		return
+	}
+
 	// Check if this should be a redirect-only directory
 	isRedirectExpected := isRedirectExpectedDir(beadsDir)
 
 	// Check if it has a redirect file
 	hasRedirect := hasRedirectFile(beadsDir)
 
-	// 1. Check for SQLite artifacts
-	scanSQLiteArtifacts(beadsDir, report)
+	// 1. Check for SQLite artifacts. Metadata that is absent or does not
+	// load leaves cfg nil, which selects the default Dolt backend.
+	scanSQLiteArtifacts(beadsDir, cfg, report)
 
 	// 2. Check for cruft .beads directories (should be redirect-only)
 	if isRedirectExpected {
@@ -252,10 +270,11 @@ func hasRedirectFile(beadsDir string) bool {
 }
 
 // scanSQLiteArtifacts checks for leftover SQLite database files.
-// Only flags SQLite files as artifacts if Dolt is the active backend.
-// If SQLite is still the active backend, beads.db is the live database.
-func scanSQLiteArtifacts(beadsDir string, report *ArtifactReport) {
-	if !IsDoltBackend(beadsDir) {
+// Only flags SQLite files as artifacts if Dolt is the active backend in cfg,
+// beadsDir's metadata (nil when it has none). If SQLite is still the active
+// backend, beads.db is the live database.
+func scanSQLiteArtifacts(beadsDir string, cfg *configfile.Config, report *ArtifactReport) {
+	if cfg.GetBackend() != configfile.BackendDolt {
 		return
 	}
 
