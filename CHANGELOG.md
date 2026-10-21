@@ -1139,7 +1139,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and with `--global` it then found no `~/.mux/AGENTS.md` and left the global
   section in `~/.xum/AGENTS.md`, still exiting 0. It now removes `.mux` only
   when it is a real directory that the hooks it just removed left empty; a
-  link, or on Windows a junction, stays.
+  link, or on Windows a junction, stays. Run from `~/.mux`, setup and
+  `--check` now also name the hooks an earlier bd installed in `~/.mux/.mux`,
+  which Mux does not load, and how to remove them.
 - **`bd setup claude --global` keeps its beads section in `~/.claude/CLAUDE.md`.**
   It wrote the section into the current directory's `CLAUDE.md`: run from your
   home directory it created `~/CLAUDE.md`, which by default stops Claude Code

@@ -521,7 +521,8 @@ func TestMuxLayerAtGlobalPathIsGlobalLayer(t *testing.T) {
 // after a --global install from a project, setup there installs no hooks
 // and, with --project, no workspace layer, and remove there clears what an
 // older bd installed in ~/.mux/.mux, along with the global layer's section,
-// which setup there installs.
+// which setup there installs. Setup and --check there name the hooks an
+// older bd installed in ~/.mux/.mux, and only those.
 func TestMuxRunFromMuxHomeHasNoWorkspaceHooks(t *testing.T) {
 	stubDetectRenderOpts(t)
 	homeDir := stubMuxHome(t)
@@ -558,10 +559,35 @@ func TestMuxRunFromMuxHomeHasNoWorkspaceHooks(t *testing.T) {
 		if n := strings.Count(stdout.String(), muxNoWorkspaceLayerNote+"\n"); n != want {
 			t.Errorf("project=%v: expected the skipped workspace layer noted %d times, got %d:\n%s", project, want, n, stdout.String())
 		}
+		if strings.Contains(stdout.String(), muxNestedHooksNote) {
+			t.Errorf("project=%v: noted hooks in %s, which has none:\n%s", project, nested, stdout.String())
+		}
 	}
 
+	// Hooks an older bd installed in ~/.mux/.mux: setup and --check there
+	// name them, and the cleanup, and leave them where they are.
 	if err := installMuxProjectHooks(env); err != nil {
 		t.Fatalf("installing an older bd's hooks: %v", err)
+	}
+	initPath, toolPostPath, toolEnvPath := muxProjectHookPaths(env.agentsPath)
+	note := muxNestedHooksNote + strings.Join([]string{initPath, toolPostPath, toolEnvPath}, ", ") + "\n"
+	stdout.Reset()
+	if err := checkMux(env, false, false); err != nil {
+		t.Fatalf("checkMux from ~/.mux with an older bd's hooks: %v\n%s", err, stdout.String())
+	}
+	if err := installMux(env, false, false); err != nil {
+		t.Fatalf("installMux from ~/.mux with an older bd's hooks: %v\n%s", err, stdout.String())
+	}
+	if n := strings.Count(stdout.String(), note); n != 2 {
+		t.Errorf("expected --check and setup each to name the older bd's hooks, got %d notes:\n%s", n, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "bd setup mux --remove") {
+		t.Errorf("expected the note to name the --remove cleanup:\n%s", stdout.String())
+	}
+	for _, path := range []string{initPath, toolPostPath, toolEnvPath} {
+		if got := readMuxFile(t, path); !strings.Contains(got, muxHookMarkerBegin) {
+			t.Errorf("setup from ~/.mux should leave the older bd's hook %s alone, got:\n%s", path, got)
+		}
 	}
 	stdout.Reset()
 	if err := removeMux(env, false, false); err != nil {
@@ -587,6 +613,17 @@ func TestMuxRunFromMuxHomeHasNoWorkspaceHooks(t *testing.T) {
 	}
 	if got := readMuxFile(t, nestedAgents); containsBeadsMarker(got) {
 		t.Errorf("remove --project from ~/.mux should remove the section from %s, left:\n%s", nestedAgents, got)
+	}
+
+	// A hook of the user's own there is not one bd installed: setup does not
+	// name it.
+	writeMuxFile(t, initPath, "#!/bin/sh\necho mine\n")
+	stdout.Reset()
+	if err := installMux(env, false, false); err != nil {
+		t.Fatalf("installMux from ~/.mux with a custom hook: %v\n%s", err, stdout.String())
+	}
+	if strings.Contains(stdout.String(), muxNestedHooksNote) {
+		t.Errorf("setup from ~/.mux named a hook bd did not install:\n%s", stdout.String())
 	}
 }
 
