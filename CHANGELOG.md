@@ -814,7 +814,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdin, and closing its end, or dying, stops the follower on every OS.
   Without the flag stdin is ignored, as before. A follower stopped with
   Ctrl-C while a poll is reading now exits 0 too, instead of failing with
-  `reading events journal: context canceled`.
+  `reading events journal: context canceled`. A stop never hides a
+  truncation: when the read it lands on has already found the checkpoint
+  pruned, the follower still reports `events_journal_truncated` and exits 1.
 
 - **A Dolt server whose port is named for it is no longer met with
   `bd dolt start` advice when it is down.** A port named by

@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,6 +58,130 @@ func TestEventsTailExitOnStdinEOFRequiresFollow(t *testing.T) {
 	})
 	if err := cmd.RunE(cmd, nil); err == nil {
 		t.Fatal("RunE succeeded, want --exit-on-stdin-eof to require --follow")
+	}
+}
+
+// stopOnReadStore is a DoltStorage stand-in for runEventsTail's follower:
+// each ReadEventsJournal call runs the next scripted read, so a test can land
+// the follower's stop (Ctrl-C, or stdin EOF under --exit-on-stdin-eof) on a
+// chosen read. It embeds a nil DoltStorage for the type and implements only
+// the journal accessor that journalAccessor asserts for.
+type stopOnReadStore struct {
+	storage.DoltStorage
+	reads []func(context.Context) ([]storage.EventsJournalRow, error)
+	calls int
+}
+
+func (s *stopOnReadStore) ReadEventsJournal(ctx context.Context, _ int64, _ int) ([]storage.EventsJournalRow, error) {
+	if s.calls >= len(s.reads) {
+		return nil, fmt.Errorf("unscripted journal read %d", s.calls+1)
+	}
+	read := s.reads[s.calls]
+	s.calls++
+	return read(ctx)
+}
+
+func (s *stopOnReadStore) PruneEventsJournal(context.Context, int64, int, int) (int64, error) {
+	return 0, errors.New("stopOnReadStore does not prune")
+}
+
+// TestEventsTailFollowStopMidRead pins how a follower classifies a read that
+// fails on the same turn as its stop, in both of runEventsTail's read sites:
+// the catch-up read and the poll. A read the stop canceled is a clean stop,
+// exit 0, however the cancellation surfaces. A truncation the read had
+// already found is not a stop: the consumer still gets the report and a
+// non-zero exit, because a clean exit would tell it the stream had no gap.
+// A read that fails while the follower is still running is no stop at all.
+func TestEventsTailFollowStopMidRead(t *testing.T) {
+	t.Setenv("BD_EVENTS_JOURNAL", "1") // no disabled-journal notice
+	oldStore, oldJSON, oldProxied := store, jsonOutput, proxiedServerMode
+	t.Cleanup(func() { store, jsonOutput, proxiedServerMode = oldStore, oldJSON, oldProxied })
+	jsonOutput, proxiedServerMode = true, false
+
+	truncated := &storage.EventsJournalTruncatedError{Since: 0, Floor: 4, Head: 5}
+	canceled := func(ctx context.Context) error { return fmt.Errorf("journal: read since 0: %w", ctx.Err()) }
+	for _, tc := range []struct {
+		name string
+		// poll lands the stop on the first poll; otherwise on the catch-up read.
+		poll bool
+		// readErr is what the read the stop landed on returns.
+		readErr func(ctx context.Context) error
+		// live leaves the follower running: the read fails on its own, with
+		// no stop, so it is a real failure rather than a clean stop.
+		live          bool
+		wantTruncated bool
+	}{
+		{name: "catch-up read canceled", readErr: canceled},
+		// A canceled read can also surface without the context error: the
+		// transaction was rolled back under it.
+		{name: "catch-up read rolled back", readErr: func(context.Context) error {
+			return errors.Join(errors.New("journal: read since 0: driver: bad connection"), sql.ErrTxDone)
+		}},
+		{name: "catch-up read truncated", readErr: func(context.Context) error { return truncated }, wantTruncated: true},
+		{name: "poll canceled", poll: true, readErr: canceled},
+		{name: "poll truncated", poll: true, wantTruncated: true, readErr: func(context.Context) error {
+			return errors.Join(truncated, sql.ErrTxDone)
+		}},
+		{name: "poll fails without a stop", poll: true, live: true, readErr: func(context.Context) error {
+			return errors.New("journal: read since 0: driver: bad connection")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			fake := &stopOnReadStore{}
+			if tc.poll {
+				// The catch-up read finds nothing new.
+				fake.reads = append(fake.reads, func(context.Context) ([]storage.EventsJournalRow, error) { return nil, nil })
+			}
+			fake.reads = append(fake.reads, func(ctx context.Context) ([]storage.EventsJournalRow, error) {
+				if !tc.live {
+					cancel()
+				}
+				return nil, tc.readErr(ctx)
+			})
+			store = fake
+
+			var err error
+			out := captureStdout(t, func() error {
+				err = runEventsTail(ctx, 0, 0, true)
+				return nil
+			})
+			if fake.calls != len(fake.reads) {
+				t.Fatalf("follower made %d journal read(s), want %d", fake.calls, len(fake.reads))
+			}
+			if tc.live {
+				if code, ok := exitCodeFromError(err); !ok || code != 1 {
+					t.Fatalf("runEventsTail = %v, want exit 1: a read that fails with no stop is not a clean stop\nstdout:\n%s", err, out)
+				}
+				if !strings.Contains(out, "reading events journal") {
+					t.Errorf("stdout does not report the failed read\nstdout:\n%s", out)
+				}
+				return
+			}
+			if !tc.wantTruncated {
+				if err != nil {
+					t.Fatalf("runEventsTail = %v, want nil: a read the stop canceled is a clean stop\nstdout:\n%s", err, out)
+				}
+				return
+			}
+			if code, ok := exitCodeFromError(err); !ok || code != 1 {
+				t.Fatalf("runEventsTail = %v, want exit 1: a truncation found on the stop's turn must still fail the follower\nstdout:\n%s", err, out)
+			}
+			var last struct {
+				Code  string `json:"code"`
+				Floor int64  `json:"floor"`
+			}
+			for dec := json.NewDecoder(strings.NewReader(out)); dec.More(); {
+				if decErr := dec.Decode(&last); decErr != nil {
+					t.Fatalf("stdout is not JSON: %v\n%s", decErr, out)
+				}
+			}
+			if last.Code != storage.EventsJournalTruncatedCode || last.Floor != truncated.Floor {
+				t.Errorf("last stdout object = %+v, want the %s report with floor %d\nstdout:\n%s",
+					last, storage.EventsJournalTruncatedCode, truncated.Floor, out)
+			}
+		})
 	}
 }
 

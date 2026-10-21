@@ -298,6 +298,22 @@ func noticeEventsJournalDisabled(beadsDir string) {
 		eventsjournal.ConfigKey)
 }
 
+// stoppedMidRead reports whether a follower's failed read is only its stop
+// (Ctrl-C, or stdin EOF under --exit-on-stdin-eof) landing while the read was
+// in flight: a clean interruption, as a stop between polls is. It keys on ctx
+// rather than on err because the canceled read can surface as a joined
+// "transaction has already been committed or rolled back" or a driver-wrapped
+// error instead of context.Canceled.
+//
+// A truncation is never just the stop. A read that got far enough to find its
+// checkpoint pruned has an answer for the consumer, so it is reported even
+// when the stop landed on the same turn: exiting 0 without it would tell the
+// consumer the stream had no gap.
+func stoppedMidRead(ctx context.Context, err error) bool {
+	var trunc *storage.EventsJournalTruncatedError
+	return ctx.Err() != nil && !errors.As(err, &trunc)
+}
+
 func runEventsTail(ctx context.Context, since int64, limit int, follow bool) error {
 	noticeEventsJournalDisabled(beads.FindBeadsDir())
 	enc := json.NewEncoder(os.Stdout)
@@ -319,10 +335,7 @@ func runEventsTail(ctx context.Context, since int64, limit int, follow bool) err
 
 	last, err := emit(since)
 	if err != nil {
-		// A follower stopped while a read is in flight (Ctrl-C, or stdin EOF
-		// under --exit-on-stdin-eof) sees that read fail with the cancellation.
-		// The stop is still a clean interruption, as it is between polls.
-		if follow && ctx.Err() != nil {
+		if follow && stoppedMidRead(ctx, err) {
 			return nil
 		}
 		return reportEventsTruncated(err, false)
@@ -341,7 +354,7 @@ func runEventsTail(ctx context.Context, since int64, limit int, follow bool) err
 			return nil
 		case <-ticker.C:
 			if last, err = emit(last); err != nil {
-				if ctx.Err() != nil {
+				if stoppedMidRead(ctx, err) {
 					return nil
 				}
 				return reportEventsTruncated(err, true)
