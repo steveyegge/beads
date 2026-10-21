@@ -327,6 +327,15 @@ func namedPortWorkspace(t *testing.T, f *externalInitFixture, metadataPort int) 
 	return beadsDir
 }
 
+// namedPortConfigYaml writes beadsDir's config.yaml with port as dolt.port.
+func namedPortConfigYaml(t *testing.T, beadsDir string, port int) {
+	t.Helper()
+	yaml := fmt.Sprintf("dolt:\n  port: %d\n", port)
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestNamedPortServerUnreachableAdvice covers every other command: an
 // ordinary command against a workspace whose named port (the environment, or
 // metadata.json's dolt_server_port) declares its server externally managed
@@ -347,6 +356,19 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 		{"metadata.json dolt_server_port", func(t *testing.T, f *externalInitFixture, port int) {
 			namedPortWorkspace(t, f, port)
 		}, "metadata.json declares the Dolt server at"},
+		// Every successful command records the port it reached in bd's port
+		// file, which then outranks dolt_server_port. It writes no pid file:
+		// the server is still the one dolt_server_port declares.
+		{"metadata.json dolt_server_port beside the port file an open wrote", func(t *testing.T, f *externalInitFixture, port int) {
+			beadsDir := namedPortWorkspace(t, f, port)
+			if err := os.WriteFile(filepath.Join(beadsDir, "dolt-server.port"), []byte(strconv.Itoa(port)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// This package runs bd in test mode, which takes a port-file
+			// port for a production server and dials port 1 instead.
+			// BEADS_TEST_SERVER=1 is that heuristic's opt-out.
+			f.env = append(f.env, "BEADS_TEST_SERVER=1")
+		}, "metadata.json declares the Dolt server at"},
 		{"bd dolt set port --update-config", func(t *testing.T, f *externalInitFixture, port int) {
 			beadsDir := namedPortWorkspace(t, f, 0)
 			// --update-config writes dolt.port only into a config.yaml that exists.
@@ -366,12 +388,15 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 			for metadataPort == port {
 				metadataPort = freeLoopbackPort(t)
 			}
-			beadsDir := namedPortWorkspace(t, f, metadataPort)
-			yaml := fmt.Sprintf("dolt:\n  port: %d\n", port)
-			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			namedPortConfigYaml(t, namedPortWorkspace(t, f, metadataPort), port)
 		}, "metadata.json declares this workspace's Dolt server externally managed, so bd did not start one at"},
+		// config.yaml's dolt.port outranks the legacy BEADS_DOLT_PORT for the
+		// dial, and the env var naming the same port still declares the server
+		// external.
+		{"config.yaml dolt.port equal to BEADS_DOLT_PORT", func(t *testing.T, f *externalInitFixture, port int) {
+			namedPortConfigYaml(t, namedPortWorkspace(t, f, 0), port)
+			f.env = append(f.env, "BEADS_DOLT_PORT="+strconv.Itoa(port))
+		}, "BEADS_DOLT_PORT declares the Dolt server at"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newExternalInitFixture(t)
@@ -398,7 +423,9 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 // named-port endpoint with the same advice, not `bd dolt start`. The legacy
 // BEADS_DOLT_PORT must make them dial its port, as the store does, rather
 // than 127.0.0.1:0 when it is alone, or a port-file port left over beside it.
-// A remote host keeps the command's own advice.
+// A config.yaml dolt.port outranks it for the dial, as in the store, and the
+// advice still names it when both name the same port. A remote host keeps the
+// command's own advice.
 func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 	diagnostics := [][]string{
 		{"dolt", "test"},
@@ -408,13 +435,16 @@ func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 	for _, envName := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
 		for _, args := range diagnostics {
 			t.Run(envName+"/"+strings.Join(args, " "), func(t *testing.T) {
-				runNamedPortDiagnostic(t, envName, false, args)
+				runNamedPortDiagnostic(t, envName, "", args)
 			})
 		}
 	}
 	for _, args := range diagnostics {
 		t.Run("BEADS_DOLT_PORT beside a port file/"+strings.Join(args, " "), func(t *testing.T) {
-			runNamedPortDiagnostic(t, "BEADS_DOLT_PORT", true, args)
+			runNamedPortDiagnostic(t, "BEADS_DOLT_PORT", "a port file", args)
+		})
+		t.Run("BEADS_DOLT_PORT equal to config.yaml dolt.port/"+strings.Join(args, " "), func(t *testing.T) {
+			runNamedPortDiagnostic(t, "BEADS_DOLT_PORT", "config.yaml", args)
 		})
 	}
 	t.Run("remote host/doctor --perf", func(t *testing.T) {
@@ -436,16 +466,19 @@ func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 }
 
 // runNamedPortDiagnostic runs one diagnostic against a dead port named by
-// envName and checks it dials that port and names envName. withPortFile
-// leaves bd's port file behind on another dead port, which the named port
-// must outrank.
-func runNamedPortDiagnostic(t *testing.T, envName string, withPortFile bool, args []string) {
+// envName and checks it dials that port and names envName. beside adds
+// another port source first: "a port file" leaves bd's port file behind on
+// another dead port, which the named port must outrank; "config.yaml" names
+// the same port as dolt.port, which outranks the legacy env var for the dial.
+func runNamedPortDiagnostic(t *testing.T, envName, beside string, args []string) {
 	t.Helper()
 	f := newExternalInitFixture(t)
 	port := freeLoopbackPort(t)
 	ep := tcpEndpoint(port)
 	beadsDir := namedPortWorkspace(t, f, 0)
-	if withPortFile {
+	switch beside {
+	case "":
+	case "a port file":
 		stale := freeLoopbackPort(t)
 		for stale == port {
 			stale = freeLoopbackPort(t)
@@ -453,6 +486,10 @@ func runNamedPortDiagnostic(t *testing.T, envName string, withPortFile bool, arg
 		if err := os.WriteFile(filepath.Join(beadsDir, "dolt-server.port"), []byte(strconv.Itoa(stale)), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	case "config.yaml":
+		namedPortConfigYaml(t, beadsDir, port)
+	default:
+		t.Fatalf("unknown port source %q", beside)
 	}
 	f.env = append(f.env, envName+"="+strconv.Itoa(port))
 

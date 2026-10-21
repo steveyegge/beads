@@ -2469,6 +2469,10 @@ func externallyManagedPortHint(cfg *Config, beadsDir, addr string) string {
 	return decl.Advice(addr)
 }
 
+// persistResolvedPortFile records the port a successful local open reached in
+// bd's port file. It writes no pid file, so the record does not make the
+// server bd's own: doltserver.ExternalPortSetting still names the setting
+// that declared the port when a later open finds the server down.
 func persistResolvedPortFile(cfg *Config, beadsDir string) error {
 	if cfg.DisableAutoStart || !shouldPersistResolvedPortFile() {
 		return nil

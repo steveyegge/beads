@@ -208,8 +208,9 @@ type ExternalPortDeclaration struct {
 	Setting string
 	// NamesEndpoint reports whether Setting's value is the port bd dialed. It
 	// is false when a higher-ranked source (config.yaml dolt.port, the dolt
-	// data directory's listener.port) chose a different port than the
-	// metadata.json dolt_server_port that makes the workspace external.
+	// data directory's listener.port, a port file with no pid file beside it)
+	// chose a different port than the metadata.json dolt_server_port that
+	// makes the workspace external.
 	NamesEndpoint bool
 }
 
@@ -218,26 +219,36 @@ type ExternalPortDeclaration struct {
 // source; the zero ExternalPortDeclaration when no such setting does. The
 // settings are BEADS_DOLT_SERVER_PORT and the legacy BEADS_DOLT_PORT
 // (ResolveServerMode check 2c, #5934), each only when its value is the dialed
-// port, and metadata.json's dolt_server_port (check 4, GH#2554), which
-// declares the server external whichever source chose the port, so it is
-// reported beside a config.yaml or listener.port port too (`bd dolt set port N
-// --update-config` writes both). Excluded: shared-server mode, since `bd dolt
-// start` is how bd starts that server; a port from bd's own port file, which
-// records a server bd started; and the shared-server and remote-host
-// defaults. A port of 0 matches any named value.
+// port, whichever source chose that port: a config.yaml dolt.port or
+// listener.port outranks the legacy BEADS_DOLT_PORT for the dial, and an env
+// var naming the same port still declares the server external. Then
+// metadata.json's dolt_server_port (check 4, GH#2554), which declares the
+// server external whichever source chose the port, so it is reported beside a
+// config.yaml or listener.port port too (`bd dolt set port N --update-config`
+// writes both). Excluded: shared-server mode, since `bd dolt start` is how bd
+// starts that server; a port from bd's port file with bd's pid file beside it,
+// which records a server bd started; and the shared-server and remote-host
+// defaults. A port file with no pid file beside it records only the port an
+// earlier open reached (the store writes one after a successful local open),
+// and it outranks listener.port, config.yaml and dolt_server_port for the
+// dial, so its port is matched against the settings like any other. A port of
+// 0 matches any named value. The env vars are parsed as the store and check
+// 2c parse them, untrimmed, so a value neither of them reads is never named.
 func ExternalPortSetting(beadsDir string, source PortSource, port int) ExternalPortDeclaration {
 	switch source {
-	case PortSourceUnset, PortSourcePortFile, PortSourceSharedServerDefault, PortSourceExternalHostDefault:
+	case PortSourceUnset, PortSourceSharedServerDefault, PortSourceExternalHostDefault:
 		return ExternalPortDeclaration{}
+	case PortSourcePortFile:
+		if _, err := os.Stat(pidPath(beadsDir)); err == nil {
+			return ExternalPortDeclaration{}
+		}
 	}
 	if IsSharedServerMode() || ResolveServerMode(beadsDir) != ServerModeExternal {
 		return ExternalPortDeclaration{}
 	}
-	if source == PortSourceEnv || source == PortSourceCallerExplicit {
-		for _, name := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
-			if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && p > 0 && (port == 0 || p == port) {
-				return ExternalPortDeclaration{Setting: name, NamesEndpoint: true}
-			}
+	for _, name := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+		if p, err := strconv.Atoi(os.Getenv(name)); err == nil && p > 0 && (port == 0 || p == port) {
+			return ExternalPortDeclaration{Setting: name, NamesEndpoint: true}
 		}
 	}
 	metadataPath := configfile.ConfigPath(beadsDir)

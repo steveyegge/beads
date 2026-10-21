@@ -2098,7 +2098,9 @@ func TestResolveServerMode_EnvPortImpliesExternal(t *testing.T) {
 // BEADS_DOLT_PORT, which the store dials but portSources does not read: it
 // replaces a missing or port-file port (the store's applyConfigDefaults rule),
 // so the diagnostics do not dial (and advise about) port 0 or a leftover
-// port-file port, and it leaves an authoritative metadata.json port alone.
+// port-file port, and it leaves an authoritative metadata.json port alone. It
+// is parsed untrimmed, as applyConfigDefaults parses it, so a padded value the
+// store does not dial is not dialed here either.
 func TestDialConfig_LegacyPortEnv(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -2113,6 +2115,8 @@ func TestDialConfig_LegacyPortEnv(t *testing.T) {
 		{name: "legacy only", legacyPort: "13307", wantPort: 13307, wantSource: PortSourceEnv},
 		{name: "BEADS_DOLT_SERVER_PORT wins", serverPort: "13400", legacyPort: "13307", wantPort: 13400, wantSource: PortSourceEnv},
 		{name: "legacy invalid", legacyPort: "not-a-port", wantSource: PortSourceUnset},
+		{name: "legacy padded", legacyPort: " 13307\n", wantSource: PortSourceUnset},
+		{name: "legacy padded beside a port file", legacyPort: " 13307\n", portFile: 14444, wantPort: 14444, wantSource: PortSourcePortFile},
 		{name: "legacy over port file", legacyPort: "13307", portFile: 14444, wantPort: 13307, wantSource: PortSourceEnv},
 		{name: "port file without legacy", portFile: 14444, wantPort: 14444, wantSource: PortSourcePortFile},
 		{name: "metadata over legacy", legacyPort: "13307", metadataPort: 15555, wantPort: 15555, wantSource: PortSourceMetadataJSON},
@@ -3223,14 +3227,18 @@ func TestEnsureRunningRefusesNamedPortServerWithoutDoltStart(t *testing.T) {
 	const port = 13317
 	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	for _, tc := range []struct {
-		name    string
-		env     bool
-		setting string
+		name     string
+		env      bool
+		setting  string
+		portFile bool
 	}{
-		{"BEADS_DOLT_SERVER_PORT", true, "BEADS_DOLT_SERVER_PORT"},
+		{"BEADS_DOLT_SERVER_PORT", true, "BEADS_DOLT_SERVER_PORT", false},
 		// Not in portSources, so DefaultConfig leaves the port unset.
-		{"BEADS_DOLT_PORT", true, "BEADS_DOLT_PORT"},
-		{"metadata.json dolt_server_port", false, "dolt_server_port in "},
+		{"BEADS_DOLT_PORT", true, "BEADS_DOLT_PORT", false},
+		{"metadata.json dolt_server_port", false, "dolt_server_port in ", false},
+		// The port file a successful open wrote outranks dolt_server_port,
+		// and IsRunning leaves it alone, since no pid file stands beside it.
+		{"metadata.json dolt_server_port beside the port file an open wrote", false, "dolt_server_port in ", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			namedPortRefusalEnv(t)
@@ -3240,6 +3248,11 @@ func TestEnsureRunningRefusesNamedPortServerWithoutDoltStart(t *testing.T) {
 				metadataPort = 0
 			}
 			dir := namedPortServerWorkspace(t, metadataPort)
+			if tc.portFile {
+				if err := writePortFile(dir, port); err != nil {
+					t.Fatal(err)
+				}
+			}
 
 			_, startedByUs, err := EnsureRunningDetailed(dir)
 			if err == nil || startedByUs {
@@ -3307,7 +3320,18 @@ func TestExternalPortSetting(t *testing.T) {
 		{"config.yaml port equal to the metadata port", "", 0, port, false, PortSourceConfigYaml, "dolt_server_port in ", true},
 		{"config.yaml port other than the metadata port", "", 0, other, false, PortSourceConfigYaml, "dolt_server_port in ", false},
 		{"listener.port other than the metadata port", "", 0, other, false, PortSourceDoltConfigYaml, "dolt_server_port in ", false},
-		{"port file beside a metadata port", "", 0, port, false, PortSourcePortFile, "", false},
+		// An authoritative config.yaml or listener.port outranks the legacy
+		// BEADS_DOLT_PORT for the dial, and the env var naming the same port
+		// still declares the server external.
+		{"config.yaml port equal to the legacy env port", "BEADS_DOLT_PORT", port, 0, false, PortSourceConfigYaml, "BEADS_DOLT_PORT", true},
+		{"listener.port equal to the legacy env port", "BEADS_DOLT_PORT", port, 0, false, PortSourceDoltConfigYaml, "BEADS_DOLT_PORT", true},
+		{"config.yaml port other than the legacy env port", "BEADS_DOLT_PORT", other, 0, false, PortSourceConfigYaml, "", false},
+		// A successful open records the port it reached in bd's port file,
+		// which outranks dolt_server_port for the dial. With no pid file of
+		// bd's beside it (none here), it is not a server bd started.
+		{"port file equal to the legacy env port", "BEADS_DOLT_PORT", port, 0, false, PortSourcePortFile, "BEADS_DOLT_PORT", true},
+		{"port file beside a metadata port", "", 0, port, false, PortSourcePortFile, "dolt_server_port in ", true},
+		{"port file other than the metadata port", "", 0, other, false, PortSourcePortFile, "dolt_server_port in ", false},
 		{"config.yaml port without a metadata port", "", 0, 0, false, PortSourceConfigYaml, "", false},
 		{"shared server", "BEADS_DOLT_SERVER_PORT", port, 0, true, PortSourceEnv, "", false},
 		{"owned workspace", "", 0, 0, false, PortSourcePortFile, "", false},
@@ -3326,6 +3350,74 @@ func TestExternalPortSetting(t *testing.T) {
 			got := ExternalPortSetting(dir, tc.source, port)
 			if tc.want == "" && got.Setting != "" || !strings.HasPrefix(got.Setting, tc.want) || got.NamesEndpoint != tc.names {
 				t.Errorf("ExternalPortSetting = %+v, want setting %q, names endpoint %v", got, tc.want, tc.names)
+			}
+		})
+	}
+}
+
+// TestExternalPortSettingLeavesServersBdStarted pins the port file's
+// exclusion: `bd dolt start` writes bd's pid file beside the port file, and
+// the server on that port is bd's own (`bd dolt set port N`, then `bd dolt
+// start`), so no setting is named even when one names the same port, and the
+// caller keeps its `bd dolt start` advice. The pid file is what marks it: the
+// same port file without one is only the record a successful open leaves.
+func TestExternalPortSettingLeavesServersBdStarted(t *testing.T) {
+	const port = 13323
+	for _, tc := range []struct {
+		name         string
+		envName      string
+		metadataPort int
+		want         string
+	}{
+		{"metadata port", "", port, "dolt_server_port in "},
+		{"legacy env port", "BEADS_DOLT_PORT", 0, "BEADS_DOLT_PORT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			if tc.envName != "" {
+				t.Setenv(tc.envName, strconv.Itoa(port))
+			}
+			config.ResetForTesting()
+			dir := namedPortServerWorkspace(t, tc.metadataPort)
+			if err := writePortFile(dir, port); err != nil {
+				t.Fatal(err)
+			}
+			// The server bd started is gone; its pid file stays until
+			// IsRunning or `bd dolt stop` clears both files.
+			if err := os.WriteFile(pidPath(dir), []byte("99999999"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := ExternalPortSetting(dir, PortSourcePortFile, port); got != (ExternalPortDeclaration{}) {
+				t.Errorf("ExternalPortSetting beside bd's pid file = %+v, want none", got)
+			}
+
+			if err := os.Remove(pidPath(dir)); err != nil {
+				t.Fatal(err)
+			}
+			got := ExternalPortSetting(dir, PortSourcePortFile, port)
+			if !strings.HasPrefix(got.Setting, tc.want) || !got.NamesEndpoint {
+				t.Errorf("ExternalPortSetting without bd's pid file = %+v, want setting %q naming the endpoint", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExternalPortSettingReadsEnvAsTheStore pins that the env vars are parsed
+// as the store dials them and check 2c reads them, untrimmed: a padded value
+// declares nothing and is dialed by nothing, so it is never named, and the
+// metadata port that does declare the server is.
+func TestExternalPortSettingReadsEnvAsTheStore(t *testing.T) {
+	const port = 13324
+	for _, name := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+		t.Run(name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			t.Setenv(name, " "+strconv.Itoa(port)+"\n")
+			config.ResetForTesting()
+			dir := namedPortServerWorkspace(t, port)
+
+			got := ExternalPortSetting(dir, PortSourceMetadataJSON, port)
+			if !strings.HasPrefix(got.Setting, "dolt_server_port in ") || !got.NamesEndpoint {
+				t.Errorf("ExternalPortSetting = %+v, want dolt_server_port naming the endpoint", got)
 			}
 		})
 	}

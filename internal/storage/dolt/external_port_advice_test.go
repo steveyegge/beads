@@ -91,11 +91,27 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 		// The metadata port still makes the workspace external, but does not
 		// name the endpoint that was dialed.
 		{"config.yaml port other than dolt_server_port", "", true, doltserver.PortSourceConfigYaml, false, "metadata.json", true},
+		// An authoritative config.yaml or listener.port outranks the legacy
+		// BEADS_DOLT_PORT for the dial (applyConfigDefaults); the env var
+		// naming the same port still declares the server external.
+		{"config.yaml port equal to BEADS_DOLT_PORT", "BEADS_DOLT_PORT", false, doltserver.PortSourceConfigYaml, false, "BEADS_DOLT_PORT", false},
+		{"listener.port equal to BEADS_DOLT_PORT", "BEADS_DOLT_PORT", false, doltserver.PortSourceDoltConfigYaml, false, "BEADS_DOLT_PORT", false},
+		// A successful open records the port it reached in bd's port file,
+		// which outranks dolt_server_port. No pid file of bd's stands beside
+		// it, so it is not a server bd started.
+		{"port file equal to dolt_server_port", "", true, doltserver.PortSourcePortFile, false, "metadata.json", false},
+		{"port file other than dolt_server_port", "", true, doltserver.PortSourcePortFile, false, "metadata.json", true},
 	}
-	for _, autoStart := range []bool{false, true} {
+	// "disabled" is auto-start off with dolt.auto-start pinned off too, the
+	// shape a gc-managed city exports: the named advice must win over the
+	// auto-start-disabled hint, whose remedy is `bd dolt start`.
+	for _, autoStart := range []string{"false", "true", "disabled"} {
 		for _, tc := range cases {
-			t.Run(tc.name+"/auto-start="+strconv.FormatBool(autoStart), func(t *testing.T) {
+			t.Run(tc.name+"/auto-start="+autoStart, func(t *testing.T) {
 				externalPortAdviceEnv(t)
+				if autoStart == "disabled" {
+					t.Setenv("BEADS_DOLT_AUTO_START", "0")
+				}
 				port := deadLoopbackPort(t)
 				addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 				if tc.envName != "" {
@@ -119,7 +135,7 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 					ServerHost:       "127.0.0.1",
 					ServerPort:       port,
 					ServerPortSource: tc.source,
-					AutoStart:        autoStart,
+					AutoStart:        autoStart == "true",
 					OpenedByInit:     tc.openedByInit,
 				}
 
@@ -137,7 +153,7 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 						t.Errorf("error does not contain %q:\n%s", want, msg)
 					}
 				}
-				for _, banned := range []string{"bd dolt start", "auto-start failed"} {
+				for _, banned := range []string{"bd dolt start", "auto-start failed", "auto-start is disabled"} {
 					if strings.Contains(msg, banned) {
 						t.Errorf("error contains %q:\n%s", banned, msg)
 					}
@@ -156,23 +172,35 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 
 // TestNewServerModeUnreachableAdviceOutsideNamedPorts pins the controls: an
 // endpoint whose port no such setting names keeps its own advice, `bd dolt
-// start` included, because bd may own that server. A port from bd's own port
-// file (beside a deprecated metadata port that outranks nothing), the
-// shared-server port, and a bd-owned workspace with auto-start turned off.
+// start` included, because bd may own that server. A server bd started (its
+// pid file beside the port file), even on the port dolt_server_port names
+// (`bd dolt set port N`, then `bd dolt start`), the shared-server port, and a
+// bd-owned workspace with auto-start turned off.
 func TestNewServerModeUnreachableAdviceOutsideNamedPorts(t *testing.T) {
 	cases := []struct {
 		name         string
-		setup        func(t *testing.T, port int)
-		metadataPort bool
+		setup        func(t *testing.T, beadsDir string, port int)
+		metadataPort bool // dolt_server_port names the dialed port
 		source       doltserver.PortSource
 		want         string
 	}{
-		{"port file beside a metadata port", nil, true, doltserver.PortSourcePortFile, "The Dolt server may not be running"},
-		{"shared server", func(t *testing.T, port int) {
+		{"bd's pid and port files beside dolt_server_port", func(t *testing.T, beadsDir string, port int) {
+			// The server bd started is gone; its state files stay until
+			// IsRunning or `bd dolt stop` clears them.
+			for name, data := range map[string]string{
+				doltserver.PortFileName: strconv.Itoa(port),
+				doltserver.PIDFileName:  "99999999",
+			} {
+				if err := os.WriteFile(filepath.Join(beadsDir, name), []byte(data), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}, true, doltserver.PortSourcePortFile, "The Dolt server may not be running"},
+		{"shared server", func(t *testing.T, _ string, port int) {
 			t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
 			t.Setenv("BEADS_DOLT_SERVER_PORT", strconv.Itoa(port))
 		}, false, doltserver.PortSourceEnv, "The Dolt server may not be running"},
-		{"owned, auto-start off", func(t *testing.T, _ int) {
+		{"owned, auto-start off", func(t *testing.T, _ string, _ int) {
 			t.Setenv("BEADS_DOLT_AUTO_START", "0")
 		}, false, doltserver.PortSourcePortFile, "auto-start is disabled"},
 	}
@@ -180,14 +208,12 @@ func TestNewServerModeUnreachableAdviceOutsideNamedPorts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			externalPortAdviceEnv(t)
 			port := deadLoopbackPort(t)
-			if tc.setup != nil {
-				tc.setup(t, port)
-			}
 			metadataPort := 0
 			if tc.metadataPort {
-				metadataPort = deadLoopbackPort(t)
+				metadataPort = port
 			}
 			beadsDir := externalPortAdviceWorkspace(t, metadataPort)
+			tc.setup(t, beadsDir, port)
 			cfg := &Config{
 				Path:             filepath.Join(beadsDir, "dolt"),
 				BeadsDir:         beadsDir,
@@ -211,5 +237,103 @@ func TestNewServerModeUnreachableAdviceOutsideNamedPorts(t *testing.T) {
 				t.Errorf("error calls a server bd may own externally managed:\n%s", msg)
 			}
 		})
+	}
+}
+
+// cliServerConfig builds the config cmd/bd opens beadsDir's store with: the
+// port resolved through ApplyResolvedServerPort and the auto-start policy
+// through ApplyCLIAutoStart.
+func cliServerConfig(beadsDir string) *Config {
+	cfg := &Config{
+		Path:       filepath.Join(beadsDir, "dolt"),
+		BeadsDir:   beadsDir,
+		Database:   "advice",
+		ServerHost: "127.0.0.1",
+	}
+	ApplyResolvedServerPort(beadsDir, cfg)
+	ApplyCLIAutoStart(beadsDir, cfg)
+	return cfg
+}
+
+// TestNewServerModeNamedPortAdviceAfterASuccessfulOpen runs the sequence the
+// port-file cases above take apart. A successful open of a dolt_server_port
+// workspace records the port it reached in bd's port file
+// (persistResolvedPortFile), so the next command resolves its port from that
+// file, which outranks dolt_server_port, and then finds the server down. The
+// advice must still name dolt_server_port, not `bd dolt start`: no pid file of
+// bd's stands beside that port file, so it is not a server bd started.
+func TestNewServerModeNamedPortAdviceAfterASuccessfulOpen(t *testing.T) {
+	// "0" is the gc-city shape: dolt.auto-start pinned off as well.
+	for _, autoStart := range []string{"", "0"} {
+		t.Run("BEADS_DOLT_AUTO_START="+autoStart, func(t *testing.T) {
+			externalPortAdviceEnv(t)
+			t.Setenv("BEADS_DOLT_AUTO_START", autoStart)
+			port := deadLoopbackPort(t)
+			addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+			beadsDir := externalPortAdviceWorkspace(t, port)
+
+			opened := cliServerConfig(beadsDir)
+			if opened.ServerPort != port || opened.ServerPortSource != doltserver.PortSourceMetadataJSON || opened.AutoStart {
+				t.Fatalf("first open = port %d from %s, auto-start %v; want port %d from metadata.json, auto-start off",
+					opened.ServerPort, opened.ServerPortSource, opened.AutoStart, port)
+			}
+			// What newServerMode does once that open succeeds.
+			if err := persistResolvedPortFile(opened, beadsDir); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg := cliServerConfig(beadsDir)
+			if cfg.ServerPort != port || cfg.ServerPortSource != doltserver.PortSourcePortFile {
+				t.Fatalf("next open = port %d from %s, want port %d from the port file the first open wrote",
+					cfg.ServerPort, cfg.ServerPortSource, port)
+			}
+			_, err := newServerMode(context.Background(), cfg)
+			if err == nil {
+				t.Fatalf("open of the dead endpoint %s succeeded", addr)
+			}
+			msg := err.Error()
+			for _, want := range []string{"metadata.json declares the Dolt server at " + addr + " externally managed", "did not start"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("error does not contain %q:\n%s", want, msg)
+				}
+			}
+			for _, banned := range []string{"bd dolt start", "auto-start is disabled"} {
+				if strings.Contains(msg, banned) {
+					t.Errorf("error contains %q:\n%s", banned, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestDialConfigDialsTheStorePort pins doltserver.DialConfig, the port the
+// diagnostics and EnsureRunning's refusal dial and name, to the port the
+// store's open dials for the same legacy BEADS_DOLT_PORT: valid, padded or
+// invalid, with or without a port file for it to replace.
+func TestDialConfigDialsTheStorePort(t *testing.T) {
+	for _, legacy := range []string{"13307", " 13307\n", "not-a-port"} {
+		for _, portFile := range []bool{false, true} {
+			t.Run(strconv.Quote(legacy)+"/port file "+strconv.FormatBool(portFile), func(t *testing.T) {
+				externalPortAdviceEnv(t)
+				// Test mode rewrites an unset or production port to 1.
+				t.Setenv("BEADS_TEST_MODE", "")
+				t.Setenv("BEADS_DOLT_PORT", legacy)
+				beadsDir := externalPortAdviceWorkspace(t, 0)
+				if portFile {
+					if err := os.WriteFile(filepath.Join(beadsDir, doltserver.PortFileName), []byte("14444"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				store := &Config{BeadsDir: beadsDir, Database: "advice"}
+				ApplyResolvedServerPort(beadsDir, store)
+				applyConfigDefaults(store)
+				dial := doltserver.DialConfig(beadsDir)
+				if dial.Port != store.ServerPort || dial.PortSource != store.ServerPortSource {
+					t.Errorf("DialConfig = port %d from %s, store dials port %d from %s",
+						dial.Port, dial.PortSource, store.ServerPort, store.ServerPortSource)
+				}
+			})
+		}
 	}
 }

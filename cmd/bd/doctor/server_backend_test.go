@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
@@ -47,6 +48,65 @@ func TestRunServerHealthChecksDialsLegacyPortEnv(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 
+	result := RunServerHealthChecks(legacyPortServerWorkspace(t, port))
+	want := "Cannot connect to " + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	for _, check := range result.Checks {
+		if check.Name == "Server Reachable" && check.Message == want {
+			return
+		}
+	}
+	t.Fatalf("server-health checks = %#v, want a %q check", result.Checks, want)
+}
+
+// TestRunServerHealthChecksVersionCheckDialsLegacyPortEnv is the live half:
+// with something listening on the legacy BEADS_DOLT_PORT, the reachability
+// check passes, and the version check must dial that same port, not port 0.
+// The listener speaks no MySQL, so the version check fails, but only after it
+// connected.
+func TestRunServerHealthChecksVersionCheckDialsLegacyPortEnv(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	var accepted atomic.Int32
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			_ = conn.Close()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	result := RunServerHealthChecks(legacyPortServerWorkspace(t, port))
+
+	reached, versionChecked := false, false
+	for _, check := range result.Checks {
+		switch check.Name {
+		case "Server Reachable":
+			reached = check.Status == StatusOK
+		case "Dolt Version":
+			versionChecked = true
+		}
+	}
+	if !reached || !versionChecked {
+		t.Fatalf("server-health checks = %#v, want a passing reachability check and a version check", result.Checks)
+	}
+	// The reachability probe is one connection; the version check makes the
+	// second.
+	if n := accepted.Load(); n < 2 {
+		t.Errorf("the listener on BEADS_DOLT_PORT %d accepted %d connection(s), so the version check dialed another port", port, n)
+	}
+}
+
+// legacyPortServerWorkspace makes a Dolt server-mode workspace whose only port
+// setting is the legacy BEADS_DOLT_PORT, set to port, and returns its root.
+func legacyPortServerWorkspace(t *testing.T, port int) string {
+	t.Helper()
 	for _, name := range []string{"BEADS_DOLT_SHARED_SERVER", "BEADS_DOLT_SERVER_MODE", "BEADS_DOLT_SERVER_PORT",
 		"BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_SOCKET"} {
 		t.Setenv(name, "")
@@ -62,13 +122,5 @@ func TestRunServerHealthChecksDialsLegacyPortEnv(t *testing.T) {
 	if err := (&configfile.Config{Backend: configfile.BackendDolt, DoltMode: configfile.DoltModeServer}).Save(beadsDir); err != nil {
 		t.Fatalf("save Dolt server config: %v", err)
 	}
-
-	result := RunServerHealthChecks(tmpDir)
-	want := "Cannot connect to " + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	for _, check := range result.Checks {
-		if check.Name == "Server Reachable" && check.Message == want {
-			return
-		}
-	}
-	t.Fatalf("server-health checks = %#v, want a %q check", result.Checks, want)
+	return tmpDir
 }
