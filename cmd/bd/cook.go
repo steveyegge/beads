@@ -469,9 +469,12 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	idMapping := make(map[string]string)
 	collectSteps(f.Steps, protoID, idMapping, issueMap, &issues, &deps, nil) // nil = keep labels on issues
 
-	// Collect dependencies from depends_on using the idMapping built above
+	// Collect dependencies from depends_on using the idMapping built above.
+	// References to a compound exit-gate step id resolve to its companion
+	// gate bead so dependents wait on the gate resolving (GH#3316).
+	refMapping := exitGateRefMapping(f.Steps, idMapping)
 	for _, step := range f.Steps {
-		collectDependencies(step, idMapping, &deps)
+		collectDependencies(step, idMapping, refMapping, &deps)
 	}
 
 	return &TemplateSubgraph{
@@ -1021,9 +1024,12 @@ func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula,
 		labels = append(labels, struct{ issueID, label string }{issueID, label})
 	})
 
-	// Collect dependencies from depends_on
+	// Collect dependencies from depends_on. References to a compound
+	// exit-gate step id resolve to its companion gate bead so dependents
+	// wait on the gate resolving (GH#3316).
+	refMapping := exitGateRefMapping(f.Steps, idMapping)
 	for _, step := range f.Steps {
-		collectDependencies(step, idMapping, &deps)
+		collectDependencies(step, idMapping, refMapping, &deps)
 	}
 
 	// Create issues, labels, and dependencies in a single atomic transaction.
@@ -1069,10 +1075,51 @@ func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula,
 	}, nil
 }
 
+// exitGateRefMapping clones idMapping, retargeting each compound exit-gate
+// step's id (GH#3316) to its companion gate bead: `idMapping["gate-"+id]`.
+// Dependency *targets* named for the step then resolve to the companion, so
+// dependents wait on the gate resolving instead of on the prep task closing.
+// Children are walked recursively; loop-expanded body steps are already
+// rewritten in place by ApplyControlFlow, so they appear in steps and
+// retarget with the same lookup.
+func exitGateRefMapping(steps []*formula.Step, idMapping map[string]string) map[string]string {
+	ref := make(map[string]string, len(idMapping))
+	for k, v := range idMapping {
+		ref[k] = v
+	}
+	var walk func(steps []*formula.Step)
+	walk = func(steps []*formula.Step) {
+		for _, step := range steps {
+			if isExitGateStep(step) {
+				if gateID, ok := idMapping["gate-"+step.ID]; ok {
+					ref[step.ID] = gateID
+				}
+			}
+			if len(step.Children) > 0 {
+				walk(step.Children)
+			}
+		}
+	}
+	walk(steps)
+	return ref
+}
+
 // collectDependencies collects blocking dependencies from depends_on, needs, and waits_for fields.
 // This is the shared implementation used by both DB-persisted and in-memory subgraph cooking.
-func collectDependencies(step *formula.Step, idMapping map[string]string, deps *[]*types.Dependency) {
+//
+// idMapping resolves the dependent's own step id (the edge source stays the
+// step bead, prep bead for a compound exit-gate step). refMapping resolves
+// dependency *targets* (depends_on / needs / waits_for spawners): after the
+// GH#3316 flip a reference to an exit-gate step must land on its companion
+// gate. A nil refMapping means no retargeting — targets use idMapping.
+func collectDependencies(step *formula.Step, idMapping map[string]string, refMapping map[string]string, deps *[]*types.Dependency) {
 	issueID := idMapping[step.ID]
+
+	// Target lookups go through refMapping when present.
+	targets := refMapping
+	if targets == nil {
+		targets = idMapping
+	}
 
 	// Pre-compute the waits_for spawner so we can dedupe against depends_on
 	// and needs below. When waits_for has no explicit `from:`, it infers its
@@ -1101,7 +1148,12 @@ func collectDependencies(step *formula.Step, idMapping map[string]string, deps *
 	// (GH#3783 review gap).
 	var waitsForCollapsedBlocks bool
 
-	// Process depends_on field
+	// Process depends_on field. A resolved target that already emitted a
+	// blocks edge for this dependent is skipped: two spellings of the same
+	// target (an exit-gate step id and its gate-<id> companion key both
+	// resolving to the companion, GH#3316) must not emit the duplicate
+	// (source, target, type) row storage rejects.
+	emittedBlocks := make(map[string]bool)
 	for _, depID := range step.DependsOn {
 		if depID == waitsForSpawnerStepID {
 			// This target is also the waits_for spawner; the DepWaitsFor edge
@@ -1109,10 +1161,14 @@ func collectDependencies(step *formula.Step, idMapping map[string]string, deps *
 			waitsForCollapsedBlocks = true
 			continue
 		}
-		depIssueID, ok := idMapping[depID]
+		depIssueID, ok := targets[depID]
 		if !ok {
 			continue // Will be caught during validation
 		}
+		if emittedBlocks[depIssueID] {
+			continue // Duplicate edge for an already-emitted target
+		}
+		emittedBlocks[depIssueID] = true
 
 		*deps = append(*deps, &types.Dependency{
 			IssueID:     issueID,
@@ -1129,10 +1185,14 @@ func collectDependencies(step *formula.Step, idMapping map[string]string, deps *
 			waitsForCollapsedBlocks = true
 			continue
 		}
-		needIssueID, ok := idMapping[needID]
+		needIssueID, ok := targets[needID]
 		if !ok {
 			continue // Will be caught during validation
 		}
+		if emittedBlocks[needIssueID] {
+			continue // Duplicate edge for an already-emitted target
+		}
+		emittedBlocks[needIssueID] = true
 
 		*deps = append(*deps, &types.Dependency{
 			IssueID:     issueID,
@@ -1143,7 +1203,7 @@ func collectDependencies(step *formula.Step, idMapping map[string]string, deps *
 
 	// Process waits_for field - fanout gate dependency
 	if waitsForSpec != nil && waitsForSpawnerStepID != "" {
-		if spawnerIssueID, ok := idMapping[waitsForSpawnerStepID]; ok {
+		if spawnerIssueID, ok := targets[waitsForSpawnerStepID]; ok {
 			// Spawner identity is the depends_on_id; metadata carries
 			// the gate. A collapsed needs/depends_on edge additionally marks
 			// also_blocks so the gate blocks while the spawner itself is
@@ -1163,7 +1223,7 @@ func collectDependencies(step *formula.Step, idMapping map[string]string, deps *
 
 	// Recursively handle children
 	for _, child := range step.Children {
-		collectDependencies(child, idMapping, deps)
+		collectDependencies(child, idMapping, targets, deps)
 	}
 }
 

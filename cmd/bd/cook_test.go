@@ -1047,6 +1047,169 @@ func TestCookFormulaToSubgraph_GateTypedStep(t *testing.T) {
 	})
 }
 
+// TestCookFormulaToSubgraph_GateTypedReferences covers how references to a
+// compound exit-gate step resolve after the GH#3316 flip: depends_on / needs
+// / waits_for targets named for the step must land on its companion gate so
+// downstream work waits for the gate to resolve, not for the prep task to
+// close. Duplicate references to both spellings of the same target must
+// still emit exactly one edge (storage rejects the duplicated row).
+func TestCookFormulaToSubgraph_GateTypedReferences(t *testing.T) {
+	cook := func(t *testing.T, mutate func(f *formula.Formula)) *TemplateSubgraph {
+		t.Helper()
+		f := gateTypedRepro()
+		if mutate != nil {
+			mutate(f)
+		}
+		sg, err := cookFormulaToSubgraph(f, "mol-gate-refs")
+		if err != nil {
+			t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+		}
+		return sg
+	}
+
+	const (
+		prepID   = "mol-gate-refs.prep"
+		gateID   = "mol-gate-refs.gate-agree" // the companion gate bead
+		agreeID  = "mol-gate-refs.agree"
+		depID    = "mol-gate-refs.execute"
+	)
+
+	t.Run("depends_on retargets to the companion", func(t *testing.T) {
+		sg := cook(t, nil)
+		targets := blocksDepTargets(sg, depID)
+		if len(targets) != 1 || targets[0] != gateID {
+			t.Errorf("execute blocks-edge targets = %v, want exactly [%s]", targets, gateID)
+		}
+	})
+
+	t.Run("needs retargets to the companion", func(t *testing.T) {
+		sg := cook(t, func(f *formula.Formula) {
+			f.Steps[2].DependsOn = nil
+			f.Steps[2].Needs = []string{"agree"}
+		})
+		targets := blocksDepTargets(sg, depID)
+		if len(targets) != 1 || targets[0] != gateID {
+			t.Errorf("execute blocks-edge targets = %v, want exactly [%s]", targets, gateID)
+		}
+	})
+
+	t.Run("duplicate step and gate references emit one edge", func(t *testing.T) {
+		sg := cook(t, func(f *formula.Formula) {
+			f.Steps[2].DependsOn = []string{"agree", "gate-agree"}
+		})
+		targets := blocksDepTargets(sg, depID)
+		if len(targets) != 1 || targets[0] != gateID {
+			t.Errorf("execute blocks-edge targets = %v, want exactly [%s] (aliases must not duplicate)", targets, gateID)
+		}
+	})
+
+	t.Run("non-referencing steps get no edge to the companion", func(t *testing.T) {
+		sg := cook(t, nil)
+		if hasBlocksDepOn(sg, prepID, gateID) {
+			t.Errorf("prep must not block on %s; deps: %v", gateID, depIDs(sg))
+		}
+		if hasBlocksDepOn(sg, prepID, agreeID) {
+			t.Errorf("prep must not block on %s; deps: %v", agreeID, depIDs(sg))
+		}
+	})
+
+	t.Run("child exit-gate step retargets for siblings", func(t *testing.T) {
+		sg := cook(t, func(f *formula.Formula) {
+			f.Steps = []*formula.Step{
+				{
+					ID:    "container",
+					Title: "Container",
+					Children: []*formula.Step{
+						{
+							ID:    "agree",
+							Title: "Human approves",
+							Type:  "gate",
+							Gate:  &formula.Gate{Type: "human"},
+						},
+					},
+				},
+				{ID: "execute", Title: "Do the thing", DependsOn: []string{"agree"}},
+			}
+		})
+		targets := blocksDepTargets(sg, "mol-gate-refs.execute")
+		// Child gate ids nest: <parent>.<step>.gate-<childstep>.
+		childGate := "mol-gate-refs.container.gate-agree"
+		if len(targets) != 1 || targets[0] != "mol-gate-refs.container.gate-agree" {
+			t.Errorf("execute blocks-edge targets = %v, want exactly [%s]", targets, childGate)
+		}
+	})
+
+	t.Run("loop body exit-gate retargets expanded references", func(t *testing.T) {
+		f := &formula.Formula{
+			Formula:     "mol-loop-exit",
+			Description: "loop-expanded exit gate",
+			Version:     1,
+			Type:        formula.TypeWorkflow,
+			Steps: []*formula.Step{
+				{
+					ID:    "process",
+					Title: "Process targets",
+					Loop: &formula.LoopSpec{
+						Count: 1,
+						Body: []*formula.Step{
+							{ID: "work", Title: "Work {{item}}"},
+							{
+								ID:        "approve",
+								Title:     "Human approves",
+								Type:      "gate",
+								DependsOn: []string{"work"},
+								Gate:      &formula.Gate{Type: "human"},
+							},
+							{ID: "ship", Title: "Ship {{item}}", DependsOn: []string{"approve"}},
+						},
+					},
+				},
+			},
+		}
+		expanded, err := formula.ApplyControlFlow(f.Steps, nil)
+		if err != nil {
+			t.Fatalf("ApplyControlFlow failed: %v", err)
+		}
+		f.Steps = expanded
+		sg, err := cookFormulaToSubgraph(f, "mol-loop-exit")
+		if err != nil {
+			t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+		}
+
+		// Loop body steps carry expanded ids (process.iter1.<id>); the
+		// reference to the body's exit gate must resolve to the expanded
+		// companion (proto.gate-process.iter1.approve), not the task bead.
+		shipID := "mol-loop-exit.process.iter1.ship"
+		wantGate := "mol-loop-exit.gate-process.iter1.approve"
+		if !hasIssueID(sg, shipID) || !hasIssueID(sg, wantGate) {
+			t.Fatalf("missing %s or %s; issues: %v", shipID, wantGate, subgraphIssueIDs(sg))
+		}
+		targets := blocksDepTargets(sg, shipID)
+		if len(targets) != 1 || targets[0] != wantGate {
+			t.Errorf("ship blocks-edge targets = %v, want exactly [%s]", targets, wantGate)
+		}
+	})
+
+	t.Run("capitalized Gate type is not an exit gate", func(t *testing.T) {
+		sg := cook(t, func(f *formula.Formula) {
+			f.Steps[1].Type = "Gate"
+		})
+		// Un-aliased declared type: keeps the entry-gate wiring (and
+		// flattenUnregisteredIssueTypes degrades the unregistered type at
+		// pour / cook --persist).
+		if !hasBlocksDepOn(sg, agreeID, gateID) {
+			t.Errorf("entry-gate wiring must hold for type = %q; deps: %v", "Gate", depIDs(sg))
+		}
+		if hasBlocksDepOn(sg, gateID, agreeID) {
+			t.Errorf("companion must not block on the step for a non-exit-gate step; deps: %v", depIDs(sg))
+		}
+		targets := blocksDepTargets(sg, depID)
+		if len(targets) != 1 || targets[0] != agreeID {
+			t.Errorf("execute blocks-edge targets = %v, want exactly [%s] (step bead: unregistered types do not retarget)", targets, agreeID)
+		}
+	})
+}
+
 // hasBlocksDepOn reports whether sg carries a blocks edge from -> to.
 func hasBlocksDepOn(sg *TemplateSubgraph, from, to string) bool {
 	for _, dep := range sg.Dependencies {
@@ -1055,6 +1218,41 @@ func hasBlocksDepOn(sg *TemplateSubgraph, from, to string) bool {
 		}
 	}
 	return false
+}
+
+// blocksDepTargets returns the blocks-edge targets cooked for from, so
+// callers can assert both the resolved target and that exactly one edge
+// was emitted (storage rejects duplicate (source, target, type) rows).
+func blocksDepTargets(sg *TemplateSubgraph, from string) []string {
+	var out []string
+	for _, dep := range sg.Dependencies {
+		if dep.IssueID == from && dep.Type == types.DepBlocks {
+			out = append(out, dep.DependsOnID)
+		}
+	}
+	return out
+}
+
+// gateTypedRepro is the GH#3316 issue repro: prep -> compound exit gate
+// (type = "gate" + human [steps.gate]) -> dependent.
+func gateTypedRepro() *formula.Formula {
+	return &formula.Formula{
+		Formula:     "mol-gate-refs",
+		Description: "GH#3316 reference retargeting",
+		Version:     1,
+		Type:        formula.TypeWorkflow,
+		Steps: []*formula.Step{
+			{ID: "prep", Title: "Prep evidence"},
+			{
+				ID:        "agree",
+				Title:     "Human approves",
+				Type:      "gate",
+				DependsOn: []string{"prep"},
+				Gate:      &formula.Gate{Type: "human"},
+			},
+			{ID: "execute", Title: "Do the thing", DependsOn: []string{"agree"}},
+		},
+	}
 }
 
 // TestCookFormulaToSubgraph_GateParentChild tests that gate is a child of the parent
