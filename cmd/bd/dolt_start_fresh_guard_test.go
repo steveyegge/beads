@@ -4,10 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/doltserver"
 )
 
 // bd-7pkvvd (PR #7729): with dolt.auto-start off, `bd dolt start` must refuse
@@ -204,6 +206,45 @@ func TestExternallyManagedFreshStartRefusal(t *testing.T) {
 		})
 		err := externallyManagedFreshStartRefusal(serverDir, true, false)
 		refusalChecks(t, err, serverDir)
+	})
+
+	t.Run("allows a data dir with a root .dolt", func(t *testing.T) {
+		serverDir := freshServerDir(t, func(t *testing.T, beadsDir string) {
+			if err := os.MkdirAll(filepath.Join(beadsDir, "dolt", ".dolt"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if err := externallyManagedFreshStartRefusal(serverDir, true, false); err != nil {
+			t.Errorf("a start over an existing database must not be refused, got: %v", err)
+		}
+	})
+
+	t.Run("allows a data dir with a child database", func(t *testing.T) {
+		serverDir := freshServerDir(t, func(t *testing.T, beadsDir string) {
+			if err := os.MkdirAll(filepath.Join(beadsDir, "dolt", "mydb", ".dolt"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if err := externallyManagedFreshStartRefusal(serverDir, true, false); err != nil {
+			t.Errorf("a start over a database in an immediate child must not be refused, got: %v", err)
+		}
+	})
+
+	t.Run("allows a live server bd already tracks", func(t *testing.T) {
+		serverDir := freshServerDir(t, func(t *testing.T, beadsDir string) {
+			if err := os.WriteFile(filepath.Join(beadsDir, doltserver.PortFileName), []byte("42424\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(beadsDir, doltserver.PIDFileName), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		})
+		// The data dir is absent: adopting the tracked live server is the
+		// only thing keeping this start from being fresh (its data may live
+		// elsewhere via dolt_data_dir).
+		if err := externallyManagedFreshStartRefusal(serverDir, true, false); err != nil {
+			t.Errorf("adopting a live server bd already tracks must not be refused, got: %v", err)
+		}
 	})
 
 	t.Run("force skips the refusal", func(t *testing.T) {
