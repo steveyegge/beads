@@ -798,6 +798,99 @@ func TestCookFormulaToSubgraph_GateDependencies(t *testing.T) {
 	}
 }
 
+func subgraphIssueIDs(sg *TemplateSubgraph) []string {
+	out := make([]string, 0, len(sg.Issues))
+	for _, i := range sg.Issues {
+		out = append(out, i.ID)
+	}
+	return out
+}
+
+func depIDs(sg *TemplateSubgraph) []string {
+	out := make([]string, 0, len(sg.Dependencies))
+	for _, d := range sg.Dependencies {
+		out = append(out, d.IssueID+" -> "+d.DependsOnID+" ("+string(d.Type)+")")
+	}
+	return out
+}
+
+// TestCookFormulaToSubgraph_GateEntryForms pins the entry-gate wiring for a
+// [steps.gate] block on a step that is *not* declared `type = "gate"`
+// (GH#3316): the companion gate bead blocks its step, and never the reverse.
+// The exit-gate rework for compound `type = "gate"` steps (human, gh:run,
+// timer companions alike) must leave every one of these forms untouched.
+// Both cook paths share collectSteps, so the in-memory subgraph checked here
+// is the same wiring `bd cook --persist` and `bd mol pour` write.
+func TestCookFormulaToSubgraph_GateEntryForms(t *testing.T) {
+	for _, gate := range []*formula.Gate{
+		{Type: "human", Timeout: "24h"},
+		{Type: "gh:run", ID: "ci-workflow"},
+		{Type: "timer", AwaitID: "soak-30m", Timeout: "30m"},
+	} {
+		gate := gate
+		t.Run(gate.Type, func(t *testing.T) {
+			f := &formula.Formula{
+				Formula:     "mol-entry-gate",
+				Description: "Test entry-gate wiring per gate type",
+				Version:     1,
+				Type:        formula.TypeWorkflow,
+				Steps: []*formula.Step{
+					{ID: "work", Title: "Blocked work", Gate: gate},
+				},
+			}
+
+			subgraph, err := cookFormulaToSubgraph(f, "mol-entry-gate")
+			if err != nil {
+				t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+			}
+
+			stepID := "mol-entry-gate.work"
+			gateID := "mol-entry-gate.gate-work"
+
+			var stepIssue, gateIssue *types.Issue
+			for _, issue := range subgraph.Issues {
+				switch issue.ID {
+				case stepID:
+					stepIssue = issue
+				case gateID:
+					gateIssue = issue
+				}
+			}
+			if stepIssue == nil {
+				t.Fatalf("step issue %q not found; issues: %v", stepID, subgraphIssueIDs(subgraph))
+			}
+			if gateIssue == nil {
+				t.Fatalf("companion gate issue %q not found; issues: %v", gateID, subgraphIssueIDs(subgraph))
+			}
+			if gateIssue.IssueType != types.TypeGate {
+				t.Errorf("companion %s type = %q, want %q", gateID, gateIssue.IssueType, types.TypeGate)
+			}
+			if gateIssue.AwaitType != gate.Type {
+				t.Errorf("companion %s await_type = %q, want %q", gateID, gateIssue.AwaitType, gate.Type)
+			}
+
+			var stepBlockedByGate, gateBlockedByStep bool
+			for _, dep := range subgraph.Dependencies {
+				if dep.Type != types.DepBlocks {
+					continue
+				}
+				if dep.IssueID == stepID && dep.DependsOnID == gateID {
+					stepBlockedByGate = true
+				}
+				if dep.IssueID == gateID && dep.DependsOnID == stepID {
+					gateBlockedByStep = true
+				}
+			}
+			if !stepBlockedByGate {
+				t.Errorf("step %s must block on its companion gate %s; deps: %v", stepID, gateID, depIDs(subgraph))
+			}
+			if gateBlockedByStep {
+				t.Errorf("companion gate %s must not block on its own step %s (inverted edge); deps: %v", gateID, stepID, depIDs(subgraph))
+			}
+		})
+	}
+}
+
 // TestCookFormulaToSubgraph_GateParentChild tests that gate is a child of the parent
 func TestCookFormulaToSubgraph_GateParentChild(t *testing.T) {
 	f := &formula.Formula{
