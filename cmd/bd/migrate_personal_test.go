@@ -575,6 +575,16 @@ func requireMigratePersonalRefused(t *testing.T, bd, dir, want string) string {
 	return out
 }
 
+// requireCleanPlanningRefusal asserts that out carries the refusal of
+// planningDir as its own Error line, not prefixed as a failed planning-store
+// open: nothing failed to open.
+func requireCleanPlanningRefusal(t *testing.T, out, planningDir string) {
+	t.Helper()
+	if strings.Contains(out, "failed to open planning store") || !strings.Contains(out, "Error: planning repo "+planningDir) {
+		t.Errorf("bd migrate-personal --yes output does not refuse with an Error line starting %q:\n%s", "Error: planning repo "+planningDir, out)
+	}
+}
+
 // requireStillInProject asserts issueID is still in the project database.
 func requireStillInProject(t *testing.T, projectBeadsDir, projectDB, issueID string) {
 	t.Helper()
@@ -672,6 +682,7 @@ func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
 	if strings.Contains(out, "this project's own workspace") {
 		t.Errorf("a rig beside the project under a shared root was refused as the project's own workspace:\n%s", out)
 	}
+	requireCleanPlanningRefusal(t, out, planning)
 	requireStillInProject(t, townBeadsDir, "rga", personal.ID)
 }
 
@@ -1539,7 +1550,8 @@ func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.
 			personal := bdCreate(t, bd, dir, "Personal issue for an uninitializable planning repo")
 			before := planningDirListing(t, planningBeadsDir)
 
-			requireMigratePersonalRefused(t, bd, dir, tc.want)
+			out := requireMigratePersonalRefused(t, bd, dir, tc.want)
+			requireCleanPlanningRefusal(t, out, planningDir)
 			requireStillInProject(t, beadsDir, tc.prefix, personal.ID)
 			if after := planningDirListing(t, planningBeadsDir); !slices.Equal(after, before) {
 				t.Errorf("planning .beads after a refused migrate-personal = %v, want unchanged %v", after, before)
