@@ -270,10 +270,13 @@ func migrationSidecarsEquivalent(beadsDir string, a, b *configfile.ProxiedServer
 	if a == nil || b == nil {
 		return a == b
 	}
+	// Compare effective idle timeouts: a journal written by an older bd records
+	// a defaulted timeout as the zero sentinel, which Load now resolves.
 	return a.ResolvedRootPath(beadsDir) == b.ResolvedRootPath(beadsDir) &&
 		a.ResolvedConfigPath(beadsDir) == b.ResolvedConfigPath(beadsDir) &&
 		a.ResolvedLogPath(beadsDir) == b.ResolvedLogPath(beadsDir) &&
-		a.Port == b.Port && a.IdleTimeout == b.IdleTimeout &&
+		a.Port == b.Port &&
+		configfile.EffectiveProxyIdleTimeout(a.IdleTimeout) == configfile.EffectiveProxyIdleTimeout(b.IdleTimeout) &&
 		reflect.DeepEqual(a.External, b.External)
 }
 
@@ -836,6 +839,12 @@ func runMigrateToProxiedServer(dryRun bool, idleTimeout time.Duration, shared bo
 		}
 	}
 	if j.Phase == migrateTargetConfigured {
+		// A journal written by an older bd records a defaulted timeout as the
+		// zero sentinel, which Load now resolves. Resolve the plan the same way
+		// Save does on the uninterrupted path so the comparison below holds.
+		if j.Sidecar != nil {
+			j.Sidecar.IdleTimeout = configfile.EffectiveProxyIdleTimeout(j.Sidecar.IdleTimeout)
+		}
 		if info, e := configfile.LoadProxiedServerClientInfo(beadsDir); e != nil {
 			return HandleError("migration sidecar is unreadable: %v", e)
 		} else if info == nil && j.Sidecar != nil {
@@ -1257,7 +1266,8 @@ func proxiedLogAssets(beadsDir string) ([]string, error) {
 	if isCustomLog {
 		return nil, nil
 	}
-	return []string{logPath}, nil
+	// The proxy start rotates an oversized server.log to its single .1 slot.
+	return []string{logPath, logPath + ".1"}, nil
 }
 
 func removeMigrateAssets(paths []string) []error {

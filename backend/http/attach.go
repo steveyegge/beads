@@ -49,10 +49,24 @@ import (
 // is the store's own), so a caller that used to hand-assemble the pair
 // (`bd connect`'s own connectCmd.RunE, test/embedder's linkage proof) can call
 // this instead and stay correct across a future change to either file's shape.
+//
+// Attach refuses a workspace in a format this build cannot open — a
+// metadata.json graph_mode other than "dependency", or the
+// .beads/graph-preview-format marker — with *UnsupportedWorkspaceFormatError,
+// the refusal every open and `bd connect` give it, and writes nothing.
 func Attach(beadsDir string, target Target) error {
+	// Before Load, which migrates a legacy config.json into metadata.json.
+	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return err
+	}
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", configfile.ConfigFileName, err)
+	}
+	// Again on what Load returned, which a writer could have changed since
+	// the check above; the Dolt constructors re-check theirs the same way.
+	if err := configfile.CheckWorkspaceFormat(cfg, beadsDir); err != nil {
+		return err
 	}
 	if cfg == nil {
 		cfg = configfile.DefaultConfig()
@@ -118,7 +132,13 @@ func Attach(beadsDir string, target Target) error {
 // already-attached workspace, or refusing to switch a workspace from a
 // different backend — those stay the command's own job; Connect's contract
 // is exactly "handshake, then attach".
+//
+// A workspace Attach would refuse for its format is refused before the
+// handshake, as `bd connect` refuses it, so Connect dials nothing for it.
 func Connect(ctx context.Context, beadsDir string, target Target, opts Options) (*ServerSnapshot, error) {
+	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+		return nil, err
+	}
 	snapshot, err := Handshake(ctx, target, opts)
 	if err != nil {
 		return nil, err

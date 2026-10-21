@@ -8,6 +8,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	storageissueops "github.com/steveyegge/beads/internal/storage/issueops"
+	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/versionedhistory"
 	"github.com/steveyegge/beads/issueops"
@@ -58,8 +59,20 @@ const versionedHistoryRefusalListLimit = 20
 // write to it. So the switch reads every issue the store would version, runs the
 // check recording runs over each one (issueops.FindUnversionable: the whole
 // issue, not its metadata alone), and refuses, writing nothing, while any is
-// refused. It cannot see participation, so it checks legacy rows too: an
-// over-approximation that can only refuse more.
+// refused.
+//
+// Only a row that participates can be refused, so the scan asks the store which of
+// the offenders participate (their participation_generation is set) and keeps only
+// those. Design §16.2b's write fence skips a legacy row, one created while history
+// was off or by a writer that does not record, before the mint looks at it, so a
+// value it holds blocks no write and must not block the switch: on a store that has
+// never recorded every row is legacy, and the scan passes whatever they hold.
+// Participation is not on types.Issue, so it is a second read (participatingIssueIDs),
+// of the offenders alone. A backend that serves the listing but cannot answer that read
+// (one registered through backends.Lookup) keeps every offender, an over-approximation
+// that can only refuse more, and the refusal says it could not tell. (Over HTTP the
+// listing itself is refused today, ListRequest.IncludeAllTypes having no form on the v0
+// wire, so the switch cannot be turned on from an HTTP client at all.)
 //
 // That check runs once, now. A writer that does not record (an older bd, bd sql, a
 // pull from a clone that had history off) can add such a row at any time
@@ -85,8 +98,14 @@ const versionedHistoryRefusalListLimit = 20
 // key, before the batch is validated. The proxied route reads through its provider.
 //
 // The environment and config.yaml planes do not pass through these commands, so
-// they are not checked here; for those, recording's own refusal at write time is
-// the control.
+// they are not checked here, and they are deliberately not checked when a store is
+// opened either. Those planes are read by every bd process on every open, so a scan
+// there would read every participating row on every command, a refusal there would
+// also stop the `bd update` that fixes the row, and a warning would print on every
+// invocation. Recording's own refusal at write time is the control on those planes,
+// and it is exact: the mint refuses the writes to exactly the rows this scan would
+// name, in the writer's own transaction, naming the issue, the field and the value,
+// and the fix the switch's refusal prints applies to them.
 func checkVersionedHistoryCanBeEnabled(ctx context.Context, key, value string) error {
 	if key != versionedHistorySettingKey || !versionedhistory.ValueEnables(value) {
 		return nil
@@ -111,16 +130,69 @@ func checkVersionedHistoryCanBeEnabled(ctx context.Context, key, value string) e
 	for _, item := range page.Items {
 		rows = append(rows, item.Issue)
 	}
-	if found := storageissueops.FindUnversionable(rows); len(found) > 0 {
-		return errors.New(unversionableIssueRefusal(found))
+	found := storageissueops.FindUnversionable(rows)
+	if len(found) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(found))
+	for _, f := range found {
+		ids = append(ids, f.ID)
+	}
+	participating, known, err := participatingIssueIDs(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("cannot check the store's issues before turning versioned history on: %w", err)
+	}
+	if known {
+		kept := found[:0]
+		for _, f := range found {
+			if _, ok := participating[f.ID]; ok {
+				kept = append(kept, f)
+			}
+		}
+		found = kept
+	}
+	if len(found) > 0 {
+		return errors.New(unversionableIssueRefusal(found, known))
 	}
 	return nil
+}
+
+// participatingIssueIDs asks the route this invocation is on which of ids
+// participate in versioned history. known is false when the route cannot tell, and
+// the caller then keeps every id.
+//
+// The proxied route answers through a unit of work's IssueUseCase, which every
+// decorator of the provider passes through; the direct route through the concrete
+// store's storage.HistoryParticipation, peeled out of the decorator chain the way
+// `bd versions` finds its VersionLister. Each runs issueops.ParticipatingIssueIDsInTx.
+func participatingIssueIDs(ctx context.Context, ids []string) (participating map[string]struct{}, known bool, err error) {
+	if usesProxiedServer() {
+		if uowProvider == nil {
+			return nil, false, errors.New("proxied-server UOW provider not initialized")
+		}
+		participating, err = uow.RunTxRead(ctx, uowProvider, func(ctx context.Context, uw uow.UnitOfWork) (map[string]struct{}, error) {
+			return uw.IssueUseCase().ParticipatingIssueIDs(ctx, ids)
+		})
+		return participating, err == nil, err
+	}
+	if store == nil {
+		return nil, false, nil
+	}
+	reader, ok := storage.UnwrapStore(store).(storage.HistoryParticipation)
+	if !ok {
+		return nil, false, nil
+	}
+	participating, err = reader.ParticipatingIssueIDs(ctx, ids)
+	return participating, err == nil, err
 }
 
 // unversionableIssueRefusal is the text of the refusal: how many issues, which
 // (the first versionedHistoryRefusalListLimit), what is wrong with each and the
 // field it is in, and the fix for each kind of field that is wrong. It says there
-// is no override because there is none.
+// is no override because there is none. participationKnown says whether the store
+// told the scan which issues participate: when it did, every issue listed does, and
+// the text says legacy issues were left out; when it could not, the list may hold
+// legacy issues too, and the text says that.
 //
 // The fix depends on the field. A number in metadata is replaced or removed with
 // bd update, which works with history on or off, because a version is recorded
@@ -128,7 +200,7 @@ func checkVersionedHistoryCanBeEnabled(ctx context.Context, key, value string) e
 // gate is removed or its column is set with bd sql, while history is off; with
 // history on, every write to that row, a close included, is refused if the row
 // participates in history. bd sql needs a server-backed store, which the text says.
-func unversionableIssueRefusal(found []storageissueops.UnversionableIssue) string {
+func unversionableIssueRefusal(found []storageissueops.UnversionableIssue, participationKnown bool) string {
 	noun, verb := "issues", "hold"
 	if len(found) == 1 {
 		noun, verb = "issue", "holds"
@@ -154,7 +226,11 @@ func unversionableIssueRefusal(found []storageissueops.UnversionableIssue) strin
 			inTimeout = true
 		}
 	}
-	b.WriteString("With history on, a write to one of these issues that leaves its value in place would be refused if the issue participates in history: it was created while history was on, or it enters the issues plane while history is on (a wisp promoted or made persistent). This check cannot tell which issues participate, so it also lists legacy issues, created before history was on, whose writes would not be refused. Fix each one, then run this command again.\n")
+	if participationKnown {
+		b.WriteString("Every issue listed participates in history: it was created while history was on, or it entered the issues plane while history was on (a wisp promoted or made persistent). With history on, a write to one of them that leaves its value in place would be refused. A legacy issue, created while history was off or by a writer that does not record, is not versioned while recording stays on, so a value it holds blocks nothing and this check does not list it. Fix each one, then run this command again.\n")
+	} else {
+		b.WriteString("With history on, a write to one of these issues that leaves its value in place would be refused if the issue participates in history: it was created while history was on, or it entered the issues plane while history was on (a wisp promoted or made persistent). This store cannot tell the check which issues participate, so it also lists legacy issues, created while history was off or by a writer that does not record, whose writes would not be refused. Fix each one, then run this command again.\n")
+	}
 	if inMetadata {
 		b.WriteString("A number in metadata, one command per issue (this works with history on or off):\n")
 		b.WriteString("  bd update <id> --metadata '{\"<key>\": \"<value as a string>\"}'   replace the value; a string keeps it exact\n")

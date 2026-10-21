@@ -1,8 +1,11 @@
 package issueops
 
 import (
+	"context"
 	"errors"
+	"fmt"
 
+	"github.com/steveyegge/beads/internal/storage/sqlbuild"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -28,12 +31,14 @@ type UnversionableIssue struct {
 //
 // It skips the rows the mint never versions by IsWisp: ephemeral and no-history
 // rows are never versioned, so a value they hold can never abort a write. It
-// cannot skip legacy rows, because participation is not on types.Issue, so on a
-// store with the write fence (design §16.2b) it is a deliberate
-// over-approximation: the mint skips a legacy row whatever it holds, and this
-// still refuses over it, which is the safe direction because it can only refuse
-// more. It does no I/O; the caller loads the rows, which is what lets one
-// function serve the direct store and the proxied route.
+// cannot skip legacy rows itself, because participation is not on types.Issue:
+// what it returns is the set of rows the mint WOULD refuse if they participate.
+// The switch narrows that set with ParticipatingIssueIDsInTx, because design
+// §16.2b's write fence skips a legacy row whatever it holds, so only a row that
+// participates can make a write fail. A caller that cannot read participation
+// keeps the whole set, which is an over-approximation in the safe direction: it
+// can only refuse more. It does no I/O; the caller loads the rows, which is what
+// lets one function serve the direct store and the proxied route.
 func FindUnversionable(issues []*types.Issue) []UnversionableIssue {
 	var found []UnversionableIssue
 	for _, issue := range issues {
@@ -50,4 +55,64 @@ func FindUnversionable(issues []*types.Issue) []UnversionableIssue {
 		}
 	}
 	return found
+}
+
+// ParticipatingIssueIDsInTx returns the subset of ids that name an issues-table
+// row whose participation_generation is set: the rows whose participation the
+// write fence reads (design §16.2b). Combined with FindUnversionable's IsWisp
+// filter (a no-history row on the issues table can carry participation, but the
+// mint skips it), they are exactly the rows an update-shaped mint versions, and so
+// the only rows a value they hold can make every later write fail for. A legacy row (participation_generation NULL) and a wisps-table row are
+// absent, because the fence or the plane rule makes the mint skip them whatever
+// they hold, and so is an id that names no row.
+//
+// It reads the column the fence reads, from the table the fence reads it from,
+// and nothing else, and it runs whether or not history is on for tx: the switch
+// asks before it turns history on. It is the pre-enable scan's second read
+// (FindUnversionable gives it the ids), so it is asked about the offenders alone,
+// which in a clean store is no query at all. The ids are deduplicated and read in
+// batches of queryBatchSize.
+func ParticipatingIssueIDsInTx(ctx context.Context, tx DBTX, ids []string) (map[string]struct{}, error) {
+	participating := make(map[string]struct{})
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	for start := 0; start < len(unique); start += queryBatchSize {
+		end := min(start+queryBatchSize, len(unique))
+		if err := participatingIssueIDBatchInTx(ctx, tx, unique[start:end], participating); err != nil {
+			return nil, err
+		}
+	}
+	return participating, nil
+}
+
+func participatingIssueIDBatchInTx(ctx context.Context, tx DBTX, batch []string, participating map[string]struct{}) error {
+	placeholders, args := sqlbuild.InPlaceholders(batch)
+	//nolint:gosec // G202: placeholders is only "?" markers; every id is a bound argument
+	rows, err := tx.QueryContext(ctx,
+		"SELECT id FROM issues WHERE participation_generation IS NOT NULL AND id IN ("+placeholders+")", args...)
+	if err != nil {
+		return fmt.Errorf("versioned history: read participation_generation: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("versioned history: scan participation_generation: %w", err)
+		}
+		participating[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("versioned history: read participation_generation: %w", err)
+	}
+	return nil
 }

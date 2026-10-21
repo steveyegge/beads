@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -2229,5 +2231,346 @@ func TestDoltShowConfigSourcesRendersPortSourceLabels(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("printDoltShowConfigSources missing line %q in:\n%s", want, out)
 		}
+	}
+}
+
+// externallyManagedStartWorkspace builds a server-mode workspace whose server
+// is managed outside bd (dolt.auto-start: false) and has lost its port file.
+// The returned env runs bd against it with an empty PATH, so a start that gets
+// past the guard stops at doltserver.Start's dolt lookup instead of launching
+// a real server.
+func externallyManagedStartWorkspace(t *testing.T, autoStart string) (root, beadsDir string, env []string) {
+	t.Helper()
+	root = t.TempDir()
+	beadsDir = filepath.Join(root, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+		t.Fatalf("create .beads: %v", err)
+	}
+	if err := (&configfile.Config{Backend: configfile.BackendDolt, DoltMode: configfile.DoltModeServer, DoltDatabase: "phantom_guard"}).Save(beadsDir); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt.auto-start: "+autoStart+"\n"), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+	env = append(removedBackendTestEnv(beadsDir), "BD_DISABLE_METRICS=1", "DO_NOT_TRACK=1", "PATH="+t.TempDir())
+	if autoStart == "false" {
+		env = append(env, "BEADS_DOLT_AUTO_START=0")
+	}
+	return root, beadsDir, env
+}
+
+func runBDDoltStart(t *testing.T, bd, root string, env []string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(bd, append([]string{"dolt", "start"}, args...)...)
+	cmd.Dir = root
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestDoltStartRefusesFreshDataDirWhenAutoStartOff drives `bd dolt start`
+// through the binary: with auto-start off and no database to serve, it must
+// refuse before writing anything rather than init a phantom database.
+func TestDoltStartRefusesFreshDataDirWhenAutoStartOff(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	for _, tc := range []struct {
+		name   string
+		create bool
+	}{
+		{name: "missing data dir"},
+		{name: "empty data dir", create: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, beadsDir, env := externallyManagedStartWorkspace(t, "false")
+			doltDir := filepath.Join(beadsDir, "dolt")
+			if tc.create {
+				if err := os.Mkdir(doltDir, 0o700); err != nil {
+					t.Fatalf("create data dir: %v", err)
+				}
+			}
+
+			out, err := runBDDoltStart(t, bd, root, env)
+			if err == nil {
+				t.Fatalf("bd dolt start succeeded over a fresh data dir:\n%s", out)
+			}
+			for _, want := range []string{doltDir, "--force"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("refusal does not name %q:\n%s", want, out)
+				}
+			}
+			for _, bad := range []string{"auto-start is disabled", "dolt is not installed"} {
+				if strings.Contains(out, bad) {
+					t.Errorf("output contains %q; the guard did not refuse first:\n%s", bad, out)
+				}
+			}
+			for _, name := range []string{doltserver.PortFileName, doltserver.PIDFileName} {
+				if _, statErr := os.Stat(filepath.Join(beadsDir, name)); !os.IsNotExist(statErr) {
+					t.Errorf("refused start created %s (stat error: %v)", name, statErr)
+				}
+			}
+			if !tc.create {
+				if _, statErr := os.Stat(doltDir); !os.IsNotExist(statErr) {
+					t.Errorf("refused start created the data dir %s (stat error: %v)", doltDir, statErr)
+				}
+			} else if entries, readErr := os.ReadDir(doltDir); readErr != nil || len(entries) != 0 {
+				t.Errorf("refused start wrote into the empty data dir: entries=%v err=%v", entries, readErr)
+			}
+		})
+	}
+}
+
+// isolateFreshStartEnv keeps the data-dir resolution in
+// externallyManagedFreshStartRefusal on serverDir/dolt: no shared-server
+// mode and no data-dir override.
+func isolateFreshStartEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+	t.Setenv("BEADS_DOLT_DATA_DIR", "")
+}
+
+func TestExternallyManagedFreshStartRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, doltDir string)
+	}{
+		{name: "missing data dir", setup: func(*testing.T, string) {}},
+		{name: "empty data dir", setup: func(t *testing.T, doltDir string) {
+			if err := os.MkdirAll(doltDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "stray files only", setup: func(t *testing.T, doltDir string) {
+			for _, dir := range []string{".doltcfg", "notadb"} {
+				if err := os.MkdirAll(filepath.Join(doltDir, dir), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, file := range []string{".bd-dolt-ok", "config.yaml"} {
+				if err := os.WriteFile(filepath.Join(doltDir, file), []byte("x\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateFreshStartEnv(t)
+			serverDir := t.TempDir()
+			doltDir := filepath.Join(serverDir, "dolt")
+			tc.setup(t, doltDir)
+			_, statErr := os.Stat(doltDir)
+			existed := statErr == nil
+
+			err := externallyManagedFreshStartRefusal(serverDir, true, false)
+			if err == nil {
+				t.Fatal("expected a refusal for a start that would create a new database")
+			}
+			msg := err.Error()
+			for _, want := range []string{doltDir, "--force", filepath.Join(serverDir, doltserver.PortFileName)} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("refusal does not name %q:\n%s", want, msg)
+				}
+			}
+			if strings.Contains(msg, "auto-start is disabled") {
+				t.Errorf("refusal reuses the banner gc bd rewrites:\n%s", msg)
+			}
+			if _, statErr := os.Stat(doltDir); !existed && !os.IsNotExist(statErr) {
+				t.Errorf("refusal created the data dir %s (stat error: %v)", doltDir, statErr)
+			}
+		})
+	}
+}
+
+// TestDoltStartForceSkipsFreshDataDirRefusal pins AC-5: --force skips the
+// refusal and enters doltserver.Start, which here stops at its dolt lookup
+// because the test runs bd with an empty PATH.
+func TestDoltStartForceSkipsFreshDataDirRefusal(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	root, beadsDir, env := externallyManagedStartWorkspace(t, "false")
+
+	out, err := runBDDoltStart(t, bd, root, env, "--force")
+	if err == nil {
+		t.Fatalf("bd dolt start --force succeeded without a dolt binary:\n%s", out)
+	}
+	if !strings.Contains(out, "dolt is not installed") {
+		t.Errorf("--force did not reach doltserver.Start:\n%s", out)
+	}
+	if strings.Contains(out, "unknown flag") || strings.Contains(out, filepath.Join(beadsDir, "dolt")) {
+		t.Errorf("--force was rejected or still refused:\n%s", out)
+	}
+}
+
+func TestExternallyManagedFreshStartRefusalForce(t *testing.T) {
+	isolateFreshStartEnv(t)
+	serverDir := t.TempDir()
+	if err := externallyManagedFreshStartRefusal(serverDir, true, true); err != nil {
+		t.Fatalf("--force must skip the refusal, got: %v", err)
+	}
+}
+
+// trackServerForTest writes the state files bd keeps for a server it started:
+// port 54329 in the port file, and pid in the PID file.
+func trackServerForTest(t *testing.T, serverDir string, pid int) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(serverDir, doltserver.PortFileName), []byte("54329\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, doltserver.PIDFileName), []byte(fmt.Sprintf("%d\n", pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startStandInDoltServer starts a process that ps lists as a dolt sql-server,
+// which is all doltserver's identity check reads, and returns its PID. It is
+// killed when the test ends.
+func startStandInDoltServer(t *testing.T) int {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script; on Windows the identity check looks for dolt.exe")
+	}
+	script := filepath.Join(t.TempDir(), "dolt")
+	if err := os.WriteFile(script, []byte("while :; do sleep 1; done\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", script, "sql-server")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start the stand-in dolt sql-server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd.Process.Pid
+}
+
+// TestExternallyManagedFreshStartRefusesRecycledTrackedPID: a port file beside
+// a live PID that is not a dolt sql-server (the recorded server died and
+// another process took its PID) is no tracked server. Start's IsRunning would
+// delete both state files and init the data dir, so the start is refused, and
+// the guard itself leaves the state files in place.
+func TestExternallyManagedFreshStartRefusesRecycledTrackedPID(t *testing.T) {
+	isolateFreshStartEnv(t)
+	serverDir := t.TempDir()
+	trackServerForTest(t, serverDir, os.Getpid())
+
+	if err := externallyManagedFreshStartRefusal(serverDir, true, false); err == nil {
+		t.Fatal("a live PID that is not a dolt sql-server must not exempt the start from the refusal")
+	}
+	for _, name := range []string{doltserver.PortFileName, doltserver.PIDFileName} {
+		if _, err := os.Stat(filepath.Join(serverDir, name)); err != nil {
+			t.Errorf("the refusal removed %s: %v", name, err)
+		}
+	}
+}
+
+// TestDoltStartRefusesRecycledTrackedPIDWhenAutoStartOff drives the same case
+// through the binary: stale state files naming a live process that is not a
+// dolt sql-server do not get the start past the refusal into
+// doltserver.Start, which would remove them and init the data dir.
+func TestDoltStartRefusesRecycledTrackedPIDWhenAutoStartOff(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	root, beadsDir, env := externallyManagedStartWorkspace(t, "false")
+	trackServerForTest(t, beadsDir, os.Getpid())
+
+	out, err := runBDDoltStart(t, bd, root, env)
+	if err == nil {
+		t.Fatalf("bd dolt start succeeded over stale state files:\n%s", out)
+	}
+	if !strings.Contains(out, "--force") || strings.Contains(out, "dolt is not installed") {
+		t.Errorf("stale state files got the start past the refusal:\n%s", out)
+	}
+	for _, name := range []string{doltserver.PortFileName, doltserver.PIDFileName} {
+		if _, statErr := os.Stat(filepath.Join(beadsDir, name)); statErr != nil {
+			t.Errorf("refused start removed %s: %v", name, statErr)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(beadsDir, "dolt")); !os.IsNotExist(statErr) {
+		t.Errorf("refused start created the data dir (stat error: %v)", statErr)
+	}
+}
+
+// TestExternallyManagedFreshStartAllowsExistingDatabase pins AC-6: with
+// auto-start off, a data dir that already holds a database, or a running dolt
+// sql-server bd already tracks, is started or adopted as today.
+func TestExternallyManagedFreshStartAllowsExistingDatabase(t *testing.T) {
+	mkdir := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, serverDir, doltDir string)
+	}{
+		{name: "database at the data dir root", setup: func(t *testing.T, _, doltDir string) {
+			mkdir(t, filepath.Join(doltDir, ".dolt"))
+		}},
+		{name: "database in an immediate child", setup: func(t *testing.T, _, doltDir string) {
+			mkdir(t, filepath.Join(doltDir, "beads", ".dolt"))
+		}},
+		{name: "running server bd tracks", setup: func(t *testing.T, serverDir, _ string) {
+			trackServerForTest(t, serverDir, startStandInDoltServer(t))
+		}},
+		{name: "unreadable data dir", setup: func(t *testing.T, _, doltDir string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads any directory")
+			}
+			mkdir(t, doltDir)
+			if err := os.Chmod(doltDir, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(doltDir, 0o700) })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateFreshStartEnv(t)
+			serverDir := t.TempDir()
+			tc.setup(t, serverDir, filepath.Join(serverDir, "dolt"))
+			if err := externallyManagedFreshStartRefusal(serverDir, true, false); err != nil {
+				t.Fatalf("start over existing state must not be refused, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestDoltStartOverExistingDatabaseWhenAutoStartOff drives AC-6 through the
+// binary: an existing database reaches doltserver.Start without --force.
+func TestDoltStartOverExistingDatabaseWhenAutoStartOff(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	root, beadsDir, env := externallyManagedStartWorkspace(t, "false")
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt", ".dolt"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A current-era version witness keeps the legacy-upgrade guard from
+	// reading the existing data dir as a pre-1.0 workspace.
+	if err := os.WriteFile(filepath.Join(beadsDir, localVersionFile), []byte("1.2.2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runBDDoltStart(t, bd, root, env)
+	if err == nil {
+		t.Fatalf("bd dolt start succeeded without a dolt binary:\n%s", out)
+	}
+	if !strings.Contains(out, "dolt is not installed") || strings.Contains(out, "--force") {
+		t.Errorf("start over an existing database did not reach doltserver.Start:\n%s", out)
+	}
+}
+
+// TestDoltStartWithAutoStartOnIsUnchanged pins AC-7: with auto-start on, a
+// missing data dir is no reason to refuse; the start enters doltserver.Start.
+func TestDoltStartWithAutoStartOnIsUnchanged(t *testing.T) {
+	isolateFreshStartEnv(t)
+	if err := externallyManagedFreshStartRefusal(t.TempDir(), false, false); err != nil {
+		t.Fatalf("auto-start on must not refuse, got: %v", err)
+	}
+
+	bd := buildBDForInitTests(t)
+	root, _, env := externallyManagedStartWorkspace(t, "true")
+	out, err := runBDDoltStart(t, bd, root, env)
+	if err == nil {
+		t.Fatalf("bd dolt start succeeded without a dolt binary:\n%s", out)
+	}
+	if !strings.Contains(out, "dolt is not installed") || strings.Contains(out, "--force") {
+		t.Errorf("auto-start-on start did not reach doltserver.Start:\n%s", out)
 	}
 }

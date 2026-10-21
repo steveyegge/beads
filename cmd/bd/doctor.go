@@ -220,7 +220,7 @@ Examples:
 		if err := validateDoctorWorkspaceBackend(absPath); isLegacyUpgradeRefusal(err) {
 			return printLegacyUpgradeDiagnostic(err)
 		} else if err != nil {
-			return HandleError("%v", err)
+			return handleWorkspaceGuardError(err)
 		}
 
 		if doctorFix && isOrchestratorRoot(absPath) {
