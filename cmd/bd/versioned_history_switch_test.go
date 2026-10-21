@@ -12,6 +12,8 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/issueops"
 )
@@ -248,6 +250,133 @@ func TestVersionedHistorySwitchScanNamesOnlyRowsThatParticipate(t *testing.T) {
 		err := enable()
 		if err == nil || !strings.Contains(err.Error(), "cannot check the store's issues before turning versioned history on") {
 			t.Fatalf("a failed participation read answered %v, want the refusal that says the check could not run", err)
+		}
+	})
+}
+
+// participationScanProvider serves a participationScanStore to the proxied route:
+// the scan's listings through the provider's issue reader, and the participation
+// read through a unit of work's IssueUseCase, which is the only way that route
+// reaches it. Every other method of the unit of work and the use case promotes from
+// a nil interface and panics if called, so the check cannot write through either.
+type participationScanProvider struct{ st *participationScanStore }
+
+var (
+	_ uow.UnitOfWorkProvider = participationScanProvider{}
+	_ uow.IssueReaderSource  = participationScanProvider{}
+)
+
+func (p participationScanProvider) IssueReader() (issueops.Reader, error) {
+	return p.st.IssueReader()
+}
+
+func (p participationScanProvider) NewUOW(context.Context) (uow.UnitOfWork, error) {
+	return participationScanUOW{st: p.st}, nil
+}
+
+func (p participationScanProvider) Close(context.Context) error { return nil }
+
+type participationScanUOW struct {
+	uow.UnitOfWork
+	st *participationScanStore
+}
+
+func (u participationScanUOW) Close(context.Context) {}
+
+func (u participationScanUOW) IssueUseCase() domain.IssueUseCase {
+	return participationScanIssues{st: u.st}
+}
+
+type participationScanIssues struct {
+	domain.IssueUseCase
+	st *participationScanStore
+}
+
+func (uc participationScanIssues) ParticipatingIssueIDs(ctx context.Context, ids []string) (map[string]struct{}, error) {
+	return uc.st.ParticipatingIssueIDs(ctx, ids)
+}
+
+// scanRoute installs st as the store the scan reads on one route: the direct route
+// reads it as the command's store, the proxied route only through
+// participationScanProvider, with no store at all.
+type scanRoute struct {
+	name    string
+	install func(t *testing.T, st *participationScanStore)
+}
+
+func scanRoutes() []scanRoute {
+	install := func(t *testing.T, st storage.DoltStorage, provider uow.UnitOfWorkProvider, proxied bool) {
+		t.Helper()
+		oldStore, oldProvider, oldProxied := store, uowProvider, proxiedServerMode
+		store, uowProvider, proxiedServerMode = st, provider, proxied
+		t.Cleanup(func() { store, uowProvider, proxiedServerMode = oldStore, oldProvider, oldProxied })
+	}
+	return []scanRoute{
+		{"direct", func(t *testing.T, st *participationScanStore) { install(t, st, nil, false) }},
+		{"proxied", func(t *testing.T, st *participationScanStore) {
+			install(t, nil, participationScanProvider{st: st}, true)
+		}},
+	}
+}
+
+// TestVersionedHistorySwitchProxiedRouteReadsParticipationThroughTheProvider is the
+// proxied twin of the participation half of
+// TestVersionedHistorySwitchScanNamesOnlyRowsThatParticipate. On that route the scan
+// asks a unit of work's IssueUseCase which offenders participate, and the answer has
+// the same two failure modes the direct route's has: a read that fails, and no
+// provider to read through. Each must refuse with the refusal that says the check
+// could not run. A read that came back as "cannot tell" instead would refuse with a
+// different list, naming legacy rows the mint never refuses a write to, and a read
+// that came back empty would clear the switch over every participating offender.
+func TestVersionedHistorySwitchProxiedRouteReadsParticipationThroughTheProvider(t *testing.T) {
+	big := json.RawMessage(`{"ts":1727000000000000000}`)
+	legacy := &types.Issue{ID: "vp-legacy", Metadata: big}
+	participating := &types.Issue{ID: "vp-part", Metadata: big}
+	gate := &types.Issue{ID: "vp-gate", IssueType: types.TypeGate, Timeout: 2600 * time.Hour}
+	rows := []*types.Issue{legacy, participating, gate}
+	inStore := map[string]bool{participating.ID: true, gate.ID: true}
+	proxied := scanRoutes()[1]
+	enable := func() error {
+		return checkVersionedHistoryCanBeEnabled(context.Background(), versionedHistorySettingKey, "true")
+	}
+
+	t.Run("names the participating offenders and not the legacy one", func(t *testing.T) {
+		st := &participationScanStore{scanStore: scanStore{rows: rows}, participating: inStore}
+		proxied.install(t, st)
+		err := enable()
+		if err == nil {
+			t.Fatal("the switch was allowed over a participating row a version could not record")
+		}
+		out := err.Error()
+		if !strings.Contains(out, participating.ID) || !strings.Contains(out, gate.ID) || strings.Contains(out, legacy.ID) {
+			t.Errorf("the refusal does not name exactly the participating offenders %s and %s:\n%s", participating.ID, gate.ID, out)
+		}
+		if !strings.Contains(out, "2 issues") || strings.Contains(out, "cannot tell") {
+			t.Errorf("the refusal does not count the participating offenders alone:\n%s", out)
+		}
+		if want := [][]string{{legacy.ID, participating.ID, gate.ID}}; !reflect.DeepEqual(st.asked, want) {
+			t.Errorf("the provider was asked about %v, want the offenders alone, once: %v", st.asked, want)
+		}
+	})
+
+	t.Run("refuses when the participation read fails", func(t *testing.T) {
+		st := &participationScanStore{scanStore: scanStore{rows: rows}, err: errors.New("unknown column 'participation_generation'")}
+		proxied.install(t, st)
+		err := enable()
+		if err == nil || !strings.Contains(err.Error(), "cannot check the store's issues before turning versioned history on") {
+			t.Fatalf("a failed participation read on the proxied route answered %v, want the refusal that says the check could not run", err)
+		}
+		if len(st.asked) != 1 {
+			t.Errorf("the provider was asked %d time(s), want once: the refusal must come from the read that failed", len(st.asked))
+		}
+	})
+
+	t.Run("refuses without a provider", func(t *testing.T) {
+		proxied.install(t, &participationScanStore{scanStore: scanStore{rows: rows}, participating: inStore})
+		uowProvider = nil
+		got, known, err := participatingIssueIDs(context.Background(), []string{legacy.ID})
+		if err == nil || known || got != nil {
+			t.Fatalf("participatingIssueIDs with no provider = %v, %v, %v; want an error, so the switch refuses rather than passing or keeping every offender", got, known, err)
 		}
 	})
 }
