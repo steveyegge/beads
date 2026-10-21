@@ -187,6 +187,35 @@ func TestNewServerModeUnresolvedPort(t *testing.T) {
 		assertNotContainsAny(t, err.Error(), unresolvedForbidden)
 	})
 
+	t.Run("auto-start on still reaches ensure-running", func(t *testing.T) {
+		t.Setenv("BEADS_TEST_MODE", "1")
+		t.Setenv("BEADS_DOLT_AUTO_START", "")
+		beadsDir := t.TempDir()
+		calls := new(int)
+		orig := ensureRunningDetailed
+		t.Cleanup(func() { ensureRunningDetailed = orig })
+		ensureRunningDetailed = func(string) (int, bool, error) {
+			*calls++
+			return 0, false, fmt.Errorf("stub: auto-start refused")
+		}
+		cfg := &Config{Database: "test_unresolved_autostart", BeadsDir: beadsDir,
+			Path: filepath.Join(beadsDir, "dolt"), ServerHost: "127.0.0.1",
+			ServerPort: 0, AutoStart: true}
+		_, err := newServerMode(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected an error from the stubbed auto-start")
+		}
+		if *calls != 1 {
+			t.Fatalf("ensureRunningDetailed called %d times, want 1", *calls)
+		}
+		if !strings.Contains(err.Error(), "auto-start failed") {
+			t.Fatalf("expected the auto-start-failed error, got: %v", err)
+		}
+		if strings.Contains(err.Error(), "no Dolt server port resolved") {
+			t.Fatalf("an auto-start-capable open must not report the unresolved-port error: %v", err)
+		}
+	})
+
 	t.Run("closed local port with auto-start off keeps today's error", func(t *testing.T) {
 		t.Setenv("BEADS_TEST_MODE", "1")
 		t.Setenv("BEADS_DOLT_AUTO_START", "0")
