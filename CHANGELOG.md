@@ -790,6 +790,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd count --type <infra type>` now counts the type's ephemeral rows, from
+  the same plane and with the same ephemeral narrowing as
+  `bd list --type <infra type>`, instead of only its durable rows;
+  `--include-ephemeral` counts the durable rows as well. An untyped count is
+  unchanged, so by default that type's `bd count --by-type` bucket still
+  counts only its durable rows: the bucket and `--type` now count different
+  rows, and only `--include-ephemeral` makes them agree, both then counting
+  both planes. Every count route reads the workspace's `types.infra` for a
+  typed count, so a count with `--type` (any type) now fails when that
+  configuration cannot be read (#6258).
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a
   record, so in a quiet workspace a follower whose parent died without
