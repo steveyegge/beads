@@ -843,6 +843,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server, a server bd started (its pid file beside the port file), a server
   bd manages, an external workspace whose port no setting names, and a remote
   host keep their advice.
+- **For a Dolt server on another machine, the legacy `BEADS_DOLT_PORT` no
+  longer overrides a configured port.** It replaced the port that
+  `config.yaml` `dolt.port`, the data directory's `listener.port` or
+  `metadata.json` `dolt_server_port` named, although since #5835 it does not
+  for a server on this machine, so an ambient value could send bd to the
+  wrong server. A padded value counted too. It now fills in only a port that
+  no setting names, and is read untrimmed, as for a local server.
+  `BEADS_DOLT_SERVER_PORT` still overrides a configured port.
 - **`bd migrate-personal` opens the planning repo the way that repo is
   configured.** It opened the planning store as a Dolt SQL server under the
   default database name, ignoring the planning repo's `metadata.json`. An

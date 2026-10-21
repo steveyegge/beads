@@ -3463,3 +3463,107 @@ func TestUnreachableEndpointAdviceLeavesRemoteHosts(t *testing.T) {
 		t.Errorf("local host advice = %q, want the externally managed advice", got)
 	}
 }
+
+// TestDefaultConfigRemoteHostLegacyPortEnv pins the legacy BEADS_DOLT_PORT
+// for a server on another machine to the rule DialConfig and the store's
+// applyConfigDefaults apply for a local one (#5835): parsed untrimmed, it
+// fills a port no authoritative source resolved, and never replaces
+// config.yaml dolt.port, the data directory's listener.port or metadata.json
+// dolt_server_port. bd's port file records a local server, so it is dropped
+// first and never decides the port either way. The store dials what
+// DefaultConfig resolves for a remote host, so DialConfig must agree.
+func TestDefaultConfigRemoteHostLegacyPortEnv(t *testing.T) {
+	const legacy, authoritative, portFile = 13307, 15555, 14444
+	for _, tc := range []struct {
+		name       string
+		serverPort string
+		legacyPort string
+		setup      func(t *testing.T, beadsDir string)
+		wantPort   int
+		wantSource PortSource
+	}{
+		{name: "legacy only", legacyPort: strconv.Itoa(legacy), wantPort: legacy, wantSource: PortSourceEnv},
+		{name: "legacy padded", legacyPort: " " + strconv.Itoa(legacy) + "\n",
+			wantPort: configfile.DefaultDoltServerPort, wantSource: PortSourceExternalHostDefault},
+		{name: "metadata dolt_server_port over legacy", legacyPort: strconv.Itoa(legacy),
+			setup:    func(t *testing.T, beadsDir string) { writeRemoteMetadataPort(t, beadsDir, authoritative) },
+			wantPort: authoritative, wantSource: PortSourceMetadataJSON},
+		{name: "metadata dolt_server_port over padded legacy", legacyPort: " " + strconv.Itoa(legacy),
+			setup:    func(t *testing.T, beadsDir string) { writeRemoteMetadataPort(t, beadsDir, authoritative) },
+			wantPort: authoritative, wantSource: PortSourceMetadataJSON},
+		{name: "listener.port over legacy", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, beadsDir string) {
+				doltDir := filepath.Join(beadsDir, "dolt")
+				if err := os.MkdirAll(doltDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				yaml := fmt.Sprintf("listener:\n  port: %d\n", authoritative)
+				if err := os.WriteFile(filepath.Join(doltDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPort: authoritative, wantSource: PortSourceDoltConfigYaml},
+		{name: "config.yaml dolt.port over legacy", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, _ string) {
+				configDir := t.TempDir()
+				yaml := fmt.Sprintf("dolt.port: %d\n", authoritative)
+				if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("BEADS_DIR", configDir)
+				if err := config.Initialize(); err != nil {
+					t.Fatalf("config.Initialize: %v", err)
+				}
+			},
+			wantPort: authoritative, wantSource: PortSourceConfigYaml},
+		{name: "legacy over a port file", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, beadsDir string) {
+				if err := writePortFile(beadsDir, portFile); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPort: legacy, wantSource: PortSourceEnv},
+		{name: "metadata dolt_server_port behind a port file over legacy", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, beadsDir string) {
+				writeRemoteMetadataPort(t, beadsDir, authoritative)
+				if err := writePortFile(beadsDir, portFile); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPort: authoritative, wantSource: PortSourceMetadataJSON},
+		{name: "BEADS_DOLT_SERVER_PORT over legacy", serverPort: "13400", legacyPort: strconv.Itoa(legacy),
+			setup:    func(t *testing.T, beadsDir string) { writeRemoteMetadataPort(t, beadsDir, authoritative) },
+			wantPort: 13400, wantSource: PortSourceEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			t.Setenv("BEADS_DOLT_SERVER_HOST", "db.example.com")
+			t.Setenv("BEADS_DOLT_SERVER_PORT", tc.serverPort)
+			t.Setenv("BEADS_DOLT_PORT", tc.legacyPort)
+			beadsDir := t.TempDir()
+			if tc.setup != nil {
+				tc.setup(t, beadsDir)
+			}
+
+			for _, got := range []struct {
+				name string
+				cfg  *Config
+			}{{"DefaultConfig", DefaultConfig(beadsDir)}, {"DialConfig", DialConfig(beadsDir)}} {
+				if got.cfg.Port != tc.wantPort || got.cfg.PortSource != tc.wantSource {
+					t.Errorf("%s = port %d from %q, want port %d from %q",
+						got.name, got.cfg.Port, got.cfg.PortSource, tc.wantPort, tc.wantSource)
+				}
+			}
+		})
+	}
+}
+
+// writeRemoteMetadataPort writes a server-mode metadata.json naming port as
+// dolt_server_port.
+func writeRemoteMetadataPort(t *testing.T, beadsDir string, port int) {
+	t.Helper()
+	meta := fmt.Sprintf(`{"backend":"dolt","dolt_mode":"server","dolt_server_port":%d}`, port)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

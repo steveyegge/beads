@@ -337,3 +337,33 @@ func TestDialConfigDialsTheStorePort(t *testing.T) {
 		}
 	}
 }
+
+// TestRemoteHostStoreDialsTheAuthoritativePort pins the store's dial of a
+// server on another machine to #5835's rule for a local one: metadata.json's
+// dolt_server_port outranks the legacy BEADS_DOLT_PORT, valid or padded, and
+// DialConfig, which the diagnostics dial, reports the same port.
+func TestRemoteHostStoreDialsTheAuthoritativePort(t *testing.T) {
+	const metadataPort = 15555
+	for _, legacy := range []string{"13307", " 13307\n"} {
+		t.Run(strconv.Quote(legacy), func(t *testing.T) {
+			externalPortAdviceEnv(t)
+			// Test mode rewrites an unset or production port to 1.
+			t.Setenv("BEADS_TEST_MODE", "")
+			t.Setenv("BEADS_DOLT_SERVER_HOST", "db.example.com")
+			t.Setenv("BEADS_DOLT_PORT", legacy)
+			beadsDir := externalPortAdviceWorkspace(t, metadataPort)
+
+			store := &Config{BeadsDir: beadsDir, Database: "advice"}
+			ApplyResolvedServerPort(beadsDir, store)
+			applyConfigDefaults(store)
+			if store.ServerHost != "db.example.com" || store.ServerPort != metadataPort || store.ServerPortSource != doltserver.PortSourceMetadataJSON {
+				t.Errorf("store dials %s:%d from %s, want db.example.com:%d from %s",
+					store.ServerHost, store.ServerPort, store.ServerPortSource, metadataPort, doltserver.PortSourceMetadataJSON)
+			}
+			if dial := doltserver.DialConfig(beadsDir); dial.Port != store.ServerPort || dial.PortSource != store.ServerPortSource {
+				t.Errorf("DialConfig = port %d from %s, store dials port %d from %s",
+					dial.Port, dial.PortSource, store.ServerPort, store.ServerPortSource)
+			}
+		})
+	}
+}
