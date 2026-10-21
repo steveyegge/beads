@@ -247,8 +247,17 @@ func TestDiscoverChildTypesLeavesGraphWorkspaceUnchanged(t *testing.T) {
 // TestDiscoverChildTypesLeavesLegacyConfigUnopenedUnchanged pins that type
 // discovery reads an additional repo's legacy config.json without migrating
 // it: only the store open itself may migrate it, so a child with no Dolt
-// database for discovery to open keeps its config.json.
+// database for discovery to open keeps its config.json. A child whose
+// database is present is opened, and reading its types needs a Dolt server;
+// that path is outside this unit pin.
 func TestDiscoverChildTypesLeavesLegacyConfigUnopenedUnchanged(t *testing.T) {
+	// An ambient BEADS_DOLT_DATA_DIR naming an existing directory would make
+	// the database look present, and the open would migrate config.json.
+	t.Setenv("BEADS_DOLT_DATA_DIR", "")
+	// If discovery reached the open anyway, it must fail fast rather than
+	// reach the suite's shared test server.
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "1")
 	repo := t.TempDir()
 	beadsDir := filepath.Join(repo, ".beads")
 	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
