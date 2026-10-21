@@ -2,6 +2,8 @@ package dolt
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -183,5 +185,69 @@ func TestNewServerModeUnresolvedPort(t *testing.T) {
 			t.Fatalf("expected the unresolved-port error, got: %v", err)
 		}
 		assertNotContainsAny(t, err.Error(), unresolvedForbidden)
+	})
+
+	t.Run("closed local port with auto-start off keeps today's error", func(t *testing.T) {
+		t.Setenv("BEADS_TEST_MODE", "1")
+		t.Setenv("BEADS_DOLT_AUTO_START", "0")
+		ln, dialErr := net.Listen("tcp", "127.0.0.1:0")
+		if dialErr != nil {
+			t.Fatal(dialErr)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		cfg := &Config{Database: "test_unresolved_closed_port", BeadsDir: t.TempDir(),
+			ServerHost: "127.0.0.1", ServerPort: port, AutoStart: false}
+		_, err := newServerMode(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected a connection error for a closed port")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, fmt.Sprintf("Dolt server unreachable at 127.0.0.1:%d", port)) {
+			t.Errorf("expected today's unreachable error, got: %s", msg)
+		}
+		if !strings.Contains(msg, "Dolt server auto-start is disabled (dolt.auto-start: false).") {
+			t.Errorf("expected today's auto-start-disabled hint, got: %s", msg)
+		}
+		if strings.Contains(msg, "no Dolt server port resolved") {
+			t.Errorf("a resolved port must not report the unresolved-port error: %s", msg)
+		}
+	})
+
+	t.Run("missing socket with auto-start off keeps today's hint", func(t *testing.T) {
+		t.Setenv("BEADS_TEST_MODE", "1")
+		t.Setenv("BEADS_DOLT_AUTO_START", "0")
+		cfg := &Config{Database: "test_unresolved_socket", BeadsDir: t.TempDir(),
+			ServerSocket: filepath.Join(t.TempDir(), "missing.sock"),
+			ServerHost:   "127.0.0.1", ServerPort: 0, AutoStart: false}
+		_, err := newServerMode(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected a socket connection error")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "The Dolt server is not listening on socket") {
+			t.Errorf("expected today's socket hint, got: %s", msg)
+		}
+		if strings.Contains(msg, "no Dolt server port resolved") {
+			t.Errorf("a configured socket must not report the unresolved-port error: %s", msg)
+		}
+	})
+
+	t.Run("remote host with a resolved port keeps today's hint", func(t *testing.T) {
+		t.Setenv("BEADS_TEST_MODE", "1")
+		t.Setenv("BEADS_DOLT_AUTO_START", "0")
+		cfg := &Config{Database: "test_unresolved_remote", BeadsDir: t.TempDir(),
+			ServerHost: "192.0.2.1", ServerPort: 1, AutoStart: false}
+		_, err := newServerMode(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected a connection error for the remote host")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "Verify the external server is running") {
+			t.Errorf("expected today's external-server hint (GH#3518), got: %s", msg)
+		}
+		if strings.Contains(msg, "no Dolt server port resolved") {
+			t.Errorf("a resolved remote port must not report the unresolved-port error: %s", msg)
+		}
 	})
 }
