@@ -550,6 +550,12 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 			if pulledIDs != nil {
 				pulledIDs[existing.ID] = true
 			}
+			// The remote now holds the pulled content, not the content of the
+			// last push. Without this, a local change back to the last pushed
+			// content matches the stored hash and the push skips it.
+			pulled := *conv.Issue
+			pulled.ID = existing.ID
+			e.recordPushHash(ctx, &pulled, ref)
 		} else {
 			// Create new issue
 			conv.Issue.ExternalRef = strPtr(ref)
@@ -564,6 +570,7 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 			if pulledIDs != nil {
 				pulledIDs[conv.Issue.ID] = true
 			}
+			e.recordPushHash(ctx, conv.Issue, ref)
 		}
 	}
 
