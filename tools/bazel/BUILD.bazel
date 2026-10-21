@@ -202,6 +202,7 @@ release_cross_build(
         "//internal/eventsjournal:eventsjournal",
         "//internal/execenv:execenv",
         "//internal/fdhygiene:fdhygiene",
+        "//internal/fizzy:fizzy",
         "//internal/formula/cmd/schemagen:schemagen",
         "//internal/formula/schemagen:schemagen",
         "//internal/formula:formula",
