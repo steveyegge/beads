@@ -781,6 +781,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd dolt start` no longer creates a phantom database when auto-start is
+  off.** With `dolt.auto-start: false` the server is managed outside bd. A
+  start over a data directory that is missing, empty, or holds no Dolt
+  database ran `dolt init`, launched a second, unsupervised server and
+  published its port, so later commands resolved to that empty database and
+  shadowed the real one. Such a start is now refused before anything is
+  written; `--force` overrides the refusal. A start over existing data, a
+  server bd already tracks, and auto-start workspaces are unchanged.
+  (bd-7pkvvd, [#7729](https://github.com/gastownhall/beads/pull/7729))
 - **An unresolved Dolt server port is reported as such.** When no socket and
   no port source resolved a port (for example a lost `.beads/dolt-server.port`
   in a workspace with `dolt.auto-start: false`), bd dialed `127.0.0.1:0` and
