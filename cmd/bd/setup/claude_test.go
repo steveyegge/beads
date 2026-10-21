@@ -2831,6 +2831,47 @@ func TestInstallClaudeOffForYouNamesTheHookThatRuns(t *testing.T) {
 	}
 }
 
+// TestInstallClaudeFromHomeTreatsSettingsAsPersonal pins a project install
+// from the home directory, where the project's .claude/settings.json is the
+// user's own: with the plugin enabled there and turned off in
+// ~/.claude/settings.local.json, nothing is shared with teammates, so the
+// install registers the hook, and --check, which names the change that
+// makes bd prime run here rather than a global install that would leave
+// the hooks to the plugin, then passes.
+func TestInstallClaudeFromHomeTreatsSettingsAsPersonal(t *testing.T) {
+	stubDetectRenderOpts(t)
+	env, stdout, _ := newClaudeTestEnv(t)
+	env.projectDir = env.homeDir
+	writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+	local := legacyProjectSettingsPath(env.homeDir)
+	writeSettings(t, local, settingsWithPluginSetTo(false))
+
+	if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+		t.Fatalf("--check should report missing hooks, got %v:\n%s", err, stdout.String())
+	}
+	if want := "  To run bd prime here: enable the plugin in " + local + "\n"; !strings.Contains(stdout.String(), want) {
+		t.Errorf("want %q, got:\n%s", want, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Run: bd setup claude --global") || strings.Contains(stdout.String(), "off for you") {
+		t.Errorf("--check from home named a remedy that changes nothing there:\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	if strings.Contains(stdout.String(), "off for you") {
+		t.Errorf("install from home treated the user settings as shared:\n%s", stdout.String())
+	}
+	if !hasBeadsHooks(globalSettingsPath(env.homeDir)) {
+		t.Errorf("install from home registered no hook:\n%s", stdout.String())
+	}
+	stdout.Reset()
+	if err := checkClaude(env); err != nil {
+		t.Fatalf("--check after the install: %v\n%s", err, stdout.String())
+	}
+}
+
 // TestInstallClaudePersonalPluginKeepsSharedLegacyHook pins what a project
 // install does with an older bare bd prime hook in the shared
 // .claude/settings.json when the beads plugin is enabled. Enabled in a

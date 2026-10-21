@@ -473,14 +473,16 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	// so project-level hooks don't fire bd prime twice per session.
 	plugin := beadsPlugin(env, global)
 	// Whether teammates get the plugin is decided by the settings they
-	// share, not by the file that decided it for this user.
+	// share, not by the file that decided it for this user. From the home
+	// directory or ~/.claude the project's settings are the user's own.
+	sharedProject := !global && !claudeProjectIsHome(env) && !claudeProjectIsUserLevelDir(env)
 	var shared beadsPluginState
-	if !global {
+	if sharedProject {
 		shared = sharedBeadsPlugin(env)
 	}
 	offForYou := false
 	switch {
-	case plugin.enabled && !global && sweptSessionStart && !shared.enabled:
+	case plugin.enabled && sharedProject && sweptSessionStart && !shared.enabled:
 		// The plugin is enabled for this user alone, and the shared project
 		// settings had an older bd prime hook that teammates without the
 		// plugin rely on. Replace it rather than drop it; the double run
@@ -674,6 +676,7 @@ func checkClaude(env claudeEnv) error {
 	// From the home directory the project's settings are the global ones,
 	// so hooks there are user-level and reported as global.
 	atHome := claudeProjectIsHome(env)
+	userLevelDir := atHome || claudeProjectIsUserLevelDir(env)
 	plugin := beadsPlugin(env, false)
 	userLevelHooks := false
 	switch {
@@ -686,7 +689,7 @@ func checkClaude(env claudeEnv) error {
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", legacySettings)
 		// A project install keeps the hook when the plugin is off for
 		// this user alone.
-		if plugin.enabled || atHome || claudeProjectIsUserLevelDir(env) || !sharedBeadsPlugin(env).enabled {
+		if plugin.enabled || userLevelDir || !sharedBeadsPlugin(env).enabled {
 			_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
 		}
 	case plugin.enabled:
@@ -698,13 +701,17 @@ func checkClaude(env claudeEnv) error {
 		userLevelHooks = atHome || hasBeadsPlugin(env, true)
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
-		if shared := sharedBeadsPlugin(env); shared.enabled && !atHome && !claudeProjectIsUserLevelDir(env) {
+		if shared := sharedBeadsPlugin(env); shared.enabled && !userLevelDir {
 			// A project install would not add a hook to the shared
 			// settings that enable the plugin for everyone.
 			reportPluginOffForYou(env, plugin, shared, "  ")
 			return errClaudeHooksMissing
 		}
-		if atHome || claudeProjectIsUserLevelDir(env) {
+		if userLevelDir && beadsPlugin(env, true).enabled {
+			// A global install would leave the hooks to the plugin the
+			// managed or user settings enable, which settings here turn off.
+			_, _ = fmt.Fprintf(env.stdout, "  To run bd prime here: enable the plugin in %s\n", plugin.path)
+		} else if userLevelDir {
 			// A project install from $HOME would create the ~/CLAUDE.md a
 			// global install exists to avoid; one from ~/.claude would put
 			// the project wording, and scaffolding, in the user-level
