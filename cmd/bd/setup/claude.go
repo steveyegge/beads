@@ -527,6 +527,9 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	}
 
 	warnIfPrimeRunsTwice(env)
+	if global && plugin.enabled {
+		warnIfPluginOffHere(env)
+	}
 
 	// Install minimal beads section in CLAUDE.md.
 	// Hooks handle the heavy lifting via bd prime; CLAUDE.md just needs a pointer.
@@ -689,17 +692,46 @@ func warnIfPrimeRunsTwice(env claudeEnv) {
 	if !plugin.enabled {
 		return
 	}
-	paths := []string{projectSettingsPath(env.projectDir), globalSettingsPath(env.homeDir), legacyProjectSettingsPath(env.projectDir)}
-	if env.localSettingsRoot != "" && !sameDir(env.localSettingsRoot, env.projectDir) {
-		paths = append(paths, legacyProjectSettingsPath(env.localSettingsRoot))
-	}
-	for _, path := range paths {
+	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
 		if hasBeadsHooks(path) {
 			_, _ = fmt.Fprintln(env.stdout, "⚠ bd prime runs twice per session here")
 			_, _ = fmt.Fprintf(env.stdout, "  Both the beads plugin (enabled in %s) and the hook in %s run it\n", plugin.path, path)
 			return
 		}
 	}
+}
+
+// warnIfPluginOffHere reports a global install that left the hooks to a
+// beads plugin the user settings enable, run from a project whose own
+// settings turn it off. Neither the plugin's hook nor a global one runs
+// there, so that project needs its own install. From the home directory or
+// ~/.claude a project install is the global one, so it is not suggested.
+func warnIfPluginOffHere(env claudeEnv) {
+	if claudeProjectIsHome(env) || claudeProjectIsUserLevelDir(env) {
+		return
+	}
+	here := beadsPlugin(env, false)
+	if here.enabled {
+		return
+	}
+	for _, path := range claudeProjectHookPaths(env) {
+		if hasBeadsHooks(path) {
+			return
+		}
+	}
+	_, _ = fmt.Fprintf(env.stdout, "⚠ The beads plugin is off in this project (%s), so no hook runs bd prime here\n", here.path)
+	_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
+}
+
+// claudeProjectHookPaths returns the project's settings files Claude Code
+// loads hooks from in this directory: .claude/settings.json, the local
+// settings beside it and the local settings at the repository root.
+func claudeProjectHookPaths(env claudeEnv) []string {
+	paths := []string{projectSettingsPath(env.projectDir), legacyProjectSettingsPath(env.projectDir)}
+	if env.localSettingsRoot != "" && !sameDir(env.localSettingsRoot, env.projectDir) {
+		paths = append(paths, legacyProjectSettingsPath(env.localSettingsRoot))
+	}
+	return paths
 }
 
 func RemoveClaude(global bool) error {

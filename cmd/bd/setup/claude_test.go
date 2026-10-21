@@ -2413,6 +2413,71 @@ func TestInstallClaudeGlobalFromHomeReportsDoubleRun(t *testing.T) {
 	}
 }
 
+// TestInstallClaudeGlobalReportsPluginOffHere pins the zero-run mirror of
+// the double run: a global install that leaves the hooks to a plugin the
+// user settings enable, run from a project whose own settings turn it off,
+// leaves that project with no hook, and says so with the command that fixes
+// it. Once the project has its own hook, or the plugin is on here, or the
+// install runs from the home directory, it says nothing.
+func TestInstallClaudeGlobalReportsPluginOffHere(t *testing.T) {
+	stubDetectRenderOpts(t)
+	const warning = "⚠ The beads plugin is off in this project ("
+
+	t.Run("project turns the plugin off", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		local := legacyProjectSettingsPath(env.projectDir)
+		writeSettings(t, local, settingsWithPluginSetTo(false))
+
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude --global: %v", err)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, warning+local+"), so no hook runs bd prime here\n  Run: bd setup claude\n") {
+			t.Errorf("expected the plugin-off warning naming %s:\n%s", local, out)
+		}
+		stdout.Reset()
+		if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+			t.Fatalf("--check should report missing hooks, got %v:\n%s", err, stdout.String())
+		}
+
+		if err := installClaude(env, false, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		stdout.Reset()
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude --global again: %v", err)
+		}
+		if strings.Contains(stdout.String(), warning) {
+			t.Errorf("warned although the project now has its own hook:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("plugin on here", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude --global: %v", err)
+		}
+		if strings.Contains(stdout.String(), warning) {
+			t.Errorf("warned although the plugin runs here:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("from the home directory", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		writeSettings(t, legacyProjectSettingsPath(env.homeDir), settingsWithPluginSetTo(false))
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude --global: %v", err)
+		}
+		if strings.Contains(stdout.String(), warning) {
+			t.Errorf("suggested a project install from the home directory:\n%s", stdout.String())
+		}
+	})
+}
+
 // TestInstallClaudePluginPrecedence pins a project install where settings
 // files disagree about the beads plugin. Claude Code takes each plugin's
 // setting from the highest-precedence file that names it (local, then

@@ -1243,10 +1243,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates an empty `.claude/settings.json`, which `bd init` then committed.
   `bd setup claude`, `--global` and `--check` now warn when `bd prime` runs
   twice per session in the current directory, as it does in a project whose
-  own settings enable the plugin once a global hook is installed. When only
-  your own settings enable the plugin, a project install no longer deletes an
-  older bare `bd prime` hook from the shared `.claude/settings.json`, which
-  teammates without the plugin rely on; it replaces it with the current hook.
+  own settings enable the plugin once a global hook is installed. A
+  `--global` install that leaves the hooks to the plugin, run from a project
+  whose own settings turn it off, now warns that no hook runs `bd prime`
+  there and names `bd setup claude`. When only your own settings enable the
+  plugin, a project install no longer deletes an older bare `bd prime` hook
+  from the shared `.claude/settings.json`, which teammates without the plugin
+  rely on; it replaces it with the current hook.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query
