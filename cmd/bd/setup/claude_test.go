@@ -1436,6 +1436,28 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		{"home", func(home string) string { return home }},
 		{"the user-level directory", func(home string) string { return filepath.Dir(globalClaudeInstructionsPath(home)) }},
 	} {
+		// With no hooks installed, the hint names the global install there
+		// too: a project install would write a project's files into the
+		// user-level directory, or create ~/CLAUDE.md.
+		t.Run("missing hooks checked from a symlink to "+link.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			target := link.target(env.homeDir)
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", target, err)
+			}
+			linkDir := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(target, linkDir); err != nil {
+				t.Skipf("symlink: %v", err)
+			}
+			env.projectDir = linkDir
+			if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+				t.Fatalf("expected errClaudeHooksMissing, got %v\n%s", err, stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+				t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+			}
+		})
+
 		t.Run("global install checked from a symlink to "+link.name, func(t *testing.T) {
 			env, _, _ := newClaudeTestEnv(t)
 			if err := installClaude(env, true, false); err != nil {
