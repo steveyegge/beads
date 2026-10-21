@@ -1007,6 +1007,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver sends a `time.Time` as its wall clock with no zone, so a library
   caller paging with a cursor in another zone was answered from the wrong
   position there (server Dolt was unaffected).
+- **`bd setup mux --global` words its section in `~/.mux/AGENTS.md` for
+  repositories that use beads.** Mux loads that file in every workspace, but
+  the global install wrote it the way it writes a project's `AGENTS.md`: a new
+  file got the project scaffolding ("Project Instructions for AI Agents" and
+  placeholder sections), the section said that this project uses bd for all
+  issue tracking, and it followed the current directory's beads config, so
+  `--check --global` run from a project with a different Dolt remote or
+  `no-push` setting called it stale, and following its hint flipped it back.
+  The global section is now rendered the same from every project, a new file
+  holds just the section, and the section, task-tracking rules included,
+  applies only in repositories that use beads. The workspace layer run from
+  your home directory, and the root layer run from `~/.mux`, name that same
+  file and now manage it as the global layer too. Run from `~/.mux`, setup no
+  longer installs workspace hooks, or with `--project` a workspace
+  `AGENTS.md`, in `~/.mux/.mux`, which Mux does not load, and `--check` no
+  longer asks for them. `bd setup mux --remove` run there deletes the hooks an
+  earlier run installed, and with them the global section, since there the
+  root `AGENTS.md` is the global file: re-run `bd setup mux --global`
+  afterwards, or delete `~/.mux/.mux` by hand instead. `--check --global`
+  reports a section an earlier run wrote as stale; re-run
+  `bd setup mux --global` to reword it in place. Project scaffolding an earlier
+  run put around it stays; delete it by hand if you don't want it.
 - **`bd setup claude --global` keeps its beads section in `~/.claude/CLAUDE.md`.**
   It wrote the section into the current directory's `CLAUDE.md`: run from your
   home directory it created `~/CLAUDE.md`, which by default stops Claude Code
