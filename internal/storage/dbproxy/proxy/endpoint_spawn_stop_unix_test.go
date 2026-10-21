@@ -111,17 +111,22 @@ func TestShutdownWaitsForLiveStarterPastConfirmDeadline(t *testing.T) {
 // bd-pdwxc6 / #7527: forkExecChild rotates an oversized server.log and
 // proxy.log while proxy.lock is held and before it opens the child's stdout
 // fd, so the new child writes to a fresh primary. A file at or under the
-// ceiling is left in place.
+// ceiling is left in place, and so is a server log bd does not own
+// (RotateLogFile unset): an operator's log outside rootDir keeps growing in
+// place and their own .1 survives.
 func TestForkExecChild_RotatesOversizedLogs(t *testing.T) {
 	t.Setenv(doltserver.EnvMaxLogBytes, "1024")
+	const operatorGeneration = "operator generation\n"
 	for _, tc := range []struct {
 		name                        string
+		customLog                   bool
 		serverSize, proxySize       int
 		serverRotated, proxyRotated bool
 	}{
 		{name: "both oversized", serverSize: 4096, proxySize: 4096, serverRotated: true, proxyRotated: true},
 		{name: "only server oversized", serverSize: 4096, proxySize: 1024, serverRotated: true},
 		{name: "only proxy oversized", serverSize: 1024, proxySize: 4096, proxyRotated: true},
+		{name: "oversized custom server log", customLog: true, serverSize: 4096, proxySize: 4096, proxyRotated: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -132,6 +137,10 @@ func TestForkExecChild_RotatesOversizedLogs(t *testing.T) {
 			t.Cleanup(func() { ResolveExecutable = previous })
 
 			serverLog := filepath.Join(root, "server.log")
+			if tc.customLog {
+				serverLog = filepath.Join(t.TempDir(), "operator.log")
+				require.NoError(t, os.WriteFile(serverLog+".1", []byte(operatorGeneration), 0o600))
+			}
 			proxyLog := filepath.Join(root, LogFileName)
 			oldServer := strings.Repeat("S", tc.serverSize-len("old-server\n")) + "old-server\n"
 			oldProxy := strings.Repeat("P", tc.proxySize-len("old-proxy\n")) + "old-proxy\n"
@@ -142,6 +151,7 @@ func TestForkExecChild_RotatesOversizedLogs(t *testing.T) {
 			require.NoError(t, err)
 			opts := externalOpenOpts(root)
 			opts.LogFilePath = serverLog
+			opts.RotateLogFile = !tc.customLog
 			child, err := forkExecChild(root, opts, opts.Port, "", lock)
 			require.NoError(t, err)
 			select {
@@ -159,8 +169,14 @@ func TestForkExecChild_RotatesOversizedLogs(t *testing.T) {
 				assert.Equal(t, oldServer, string(rotated))
 				assert.Equal(t, "child-stdout\n", string(serverBody), "child stdout must go to a fresh server.log")
 			} else {
-				assert.NoFileExists(t, serverLog+".1")
 				assert.Equal(t, oldServer+"child-stdout\n", string(serverBody))
+				if tc.customLog {
+					generation, err := os.ReadFile(serverLog + ".1")
+					require.NoError(t, err)
+					assert.Equal(t, operatorGeneration, string(generation), "the operator's own .1 must survive")
+				} else {
+					assert.NoFileExists(t, serverLog+".1")
+				}
 			}
 
 			if tc.proxyRotated {

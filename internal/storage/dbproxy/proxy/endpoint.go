@@ -68,6 +68,13 @@ type OpenOpts struct {
 	Database       string
 	Port           int
 	External       configfile.ExternalDoltConfig
+
+	// RotateLogFile lets the proxy start rotate an oversized LogFilePath
+	// (internal/doltserver.MaybeRotateLogFile). Set it only for a log bd
+	// owns: proxy.lock guards rootDir, not an operator's log elsewhere,
+	// which another workspace's live proxy may still be writing.
+	// rootDir/proxy.log is always rotated.
+	RotateLogFile bool
 }
 
 const (
@@ -483,8 +490,10 @@ func forkExecChild(rootDir string, opts OpenOpts, port int, stopEpoch string, lo
 	// Startup-only rotation (internal/doltserver/logrotate.go) of both logs.
 	// proxy.lock is held, so the previous proxy has exited and nothing has
 	// either file open; this must stay before the OpenFile below, or the
-	// child's stdout would follow the renamed inode to <log>.1.
-	if opts.LogFilePath != "" {
+	// child's stdout would follow the renamed inode to <log>.1. The lock
+	// says nothing about a server log bd does not own, so that one is
+	// rotated only on RotateLogFile.
+	if opts.RotateLogFile {
 		doltserver.MaybeRotateLogFile(opts.LogFilePath)
 	}
 	doltserver.MaybeRotateLogFile(filepath.Join(rootDir, LogFileName))
