@@ -24,7 +24,7 @@ bd setup claude --remove    # Uninstall
 |--------|---------------|---------|
 | `claude` | `.claude/settings.json` + `CLAUDE.md` section (or `~/.claude/settings.json` + `~/.claude/CLAUDE.md` with `--global`) | [Claude Code](/integrations/claude-code) |
 | `cursor` | `.cursor/rules/beads.mdc` + `.agents/skills/beads/` + `.cursor/hooks.json` (with `--global`: `~/.cursor/hooks.json` + `~/.agents/skills/beads/`, no rules file) | [Cursor](/integrations/cursor) |
-| `gemini` | `~/.gemini/settings.json` (or `.gemini/settings.json` with `--project`) + `GEMINI.md` section | [Gemini CLI](/integrations/gemini) |
+| `gemini` | `~/.gemini/settings.json` + `~/.gemini/GEMINI.md` section (or `.gemini/settings.json` + `GEMINI.md` section with `--project`, except from `~` or `~/.gemini`) | [Gemini CLI](/integrations/gemini) |
 | `copilot` | `.copilot-plugin/plugin.json` + `.github/copilot-instructions.md` | [Copilot CLI](/integrations/copilot-cli) |
 | `codex` | `.agents/skills/beads/` + `AGENTS.md` section + `.codex/` hooks (with `--global`: `~/.agents/skills/beads/` + `$CODEX_HOME` or `~/.codex`) | [Codex](/integrations/codex) |
 | `factory` | `AGENTS.md` section | [Factory.ai Droid](/integrations/factory) |
@@ -78,7 +78,7 @@ BD_AGENT_PROFILE=team-maintainer bd prime
 
 ### Managed Sections
 
-`bd setup factory`, `bd setup mux`, and `bd setup opencode` append a beads section to `AGENTS.md`, wrapped in `BEGIN/END BEADS INTEGRATION` HTML-comment markers. The begin marker carries version, profile, and hash metadata (e.g. `<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:19cc25d9 -->`) so `--check` can report `missing`, `stale`, or `current`; legacy markers without metadata are auto-upgraded on the next install or update. Re-running setup updates the existing section in place (idempotent), and `--remove` deletes only the managed section and the blank lines that set it off — the rest of your `AGENTS.md` is untouched. Running setup again after `--remove` appends the section to the end of the file after one blank line, so removing and re-adding it toggles between the same two files. The section `bd setup claude` and `bd setup gemini` manage in `CLAUDE.md` and `GEMINI.md` behaves the same way.
+`bd setup factory`, `bd setup mux`, and `bd setup opencode` append a beads section to `AGENTS.md`, wrapped in `BEGIN/END BEADS INTEGRATION` HTML-comment markers. The begin marker carries version, profile, and hash metadata (e.g. `<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:19cc25d9 -->`) so `--check` can report `missing`, `stale`, or `current`; legacy markers without metadata are auto-upgraded on the next install or update. Re-running setup updates the existing section in place (idempotent), and `--remove` deletes only the managed section and the blank lines that set it off — the rest of your `AGENTS.md` is untouched. Running setup again after `--remove` appends the section to the end of the file after one blank line, so removing and re-adding it toggles between the same two files. The section `bd setup claude` and `bd setup gemini` manage in `CLAUDE.md` and `GEMINI.md` behaves the same way, except that in `~/.gemini/GEMINI.md` it goes ahead of the `## Gemini Added Memories` section older Gemini CLI releases keep there, so memories they save stay outside it.
 
 `bd setup codex` uses its own marker pair (`BEGIN/END BEADS CODEX SETUP`). Running it alongside `bd setup factory` or `bd setup mux` against the same `AGENTS.md` leaves two managed sections side by side; each recipe's `--check` inspects only its own section, and each `--remove` removes only its own section.
 
@@ -174,11 +174,11 @@ See [Cursor](/integrations/cursor) for details.
 ## Gemini CLI
 
 ```bash
-bd setup gemini            # Global hooks in ~/.gemini/settings.json
-bd setup gemini --project  # Project hooks in .gemini/settings.json
+bd setup gemini            # Global install: ~/.gemini/settings.json + ~/.gemini/GEMINI.md
+bd setup gemini --project  # Project install: .gemini/settings.json + GEMINI.md
 ```
 
-This installs a SessionStart hook running `bd prime --hook-json` — Gemini requires hook stdout to be valid JSON, and `--hook-json` wraps the markdown in the required envelope — plus a minimal beads section in `GEMINI.md`. `--stealth` works the same as for Claude Code; `--check` and `--remove` cover both the hooks and the managed `GEMINI.md` section.
+This installs a SessionStart hook running `bd prime --hook-json` — Gemini requires hook stdout to be valid JSON, and `--hook-json` wraps the markdown in the required envelope — plus a minimal beads section in your user-level `~/.gemini/GEMINI.md` (in the project's `GEMINI.md` with `--project`). Gemini CLI loads the user-level file in every project, so there the section applies only in repositories that use beads, and a global install leaves the current directory's files alone. Run from your home directory or from `~/.gemini`, `--project` is the global install: it uses `~/.gemini/settings.json` and `~/.gemini/GEMINI.md`, and does not create `~/GEMINI.md`. `--stealth` works the same as for Claude Code; `--check` and `--remove` cover both the hooks and the managed `GEMINI.md` section.
 
 **Verify:**
 ```bash
