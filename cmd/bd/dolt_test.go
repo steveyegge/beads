@@ -2478,3 +2478,22 @@ func TestDoltStartOverExistingDatabaseWhenAutoStartOff(t *testing.T) {
 		t.Errorf("start over an existing database did not reach doltserver.Start:\n%s", out)
 	}
 }
+
+// TestDoltStartWithAutoStartOnIsUnchanged pins AC-7: with auto-start on, a
+// missing data dir is no reason to refuse; the start enters doltserver.Start.
+func TestDoltStartWithAutoStartOnIsUnchanged(t *testing.T) {
+	isolateFreshStartEnv(t)
+	if err := externallyManagedFreshStartRefusal(t.TempDir(), false, false); err != nil {
+		t.Fatalf("auto-start on must not refuse, got: %v", err)
+	}
+
+	bd := buildBDForInitTests(t)
+	root, _, env := externallyManagedStartWorkspace(t, "true")
+	out, err := runBDDoltStart(t, bd, root, env)
+	if err == nil {
+		t.Fatalf("bd dolt start succeeded without a dolt binary:\n%s", out)
+	}
+	if !strings.Contains(out, "dolt is not installed") || strings.Contains(out, "--force") {
+		t.Errorf("auto-start-on start did not reach doltserver.Start:\n%s", out)
+	}
+}
