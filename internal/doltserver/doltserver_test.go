@@ -2094,6 +2094,61 @@ func TestResolveServerMode_EnvPortImpliesExternal(t *testing.T) {
 	}
 }
 
+// TestDialConfig_LegacyPortEnv pins DialConfig's handling of the legacy
+// BEADS_DOLT_PORT, which the store dials but portSources does not read: it
+// replaces a missing or port-file port (the store's applyConfigDefaults rule),
+// so the diagnostics do not dial (and advise about) port 0 or a leftover
+// port-file port, and it leaves an authoritative metadata.json port alone. It
+// is parsed untrimmed, as applyConfigDefaults parses it, so a padded value the
+// store does not dial is not dialed here either.
+func TestDialConfig_LegacyPortEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		serverPort   string
+		legacyPort   string
+		portFile     int
+		metadataPort int
+		wantPort     int
+		wantSource   PortSource
+	}{
+		{name: "neither", wantSource: PortSourceUnset},
+		{name: "legacy only", legacyPort: "13307", wantPort: 13307, wantSource: PortSourceEnv},
+		{name: "BEADS_DOLT_SERVER_PORT wins", serverPort: "13400", legacyPort: "13307", wantPort: 13400, wantSource: PortSourceEnv},
+		{name: "legacy invalid", legacyPort: "not-a-port", wantSource: PortSourceUnset},
+		{name: "legacy padded", legacyPort: " 13307\n", wantSource: PortSourceUnset},
+		{name: "legacy padded beside a port file", legacyPort: " 13307\n", portFile: 14444, wantPort: 14444, wantSource: PortSourcePortFile},
+		{name: "legacy over port file", legacyPort: "13307", portFile: 14444, wantPort: 13307, wantSource: PortSourceEnv},
+		{name: "port file without legacy", portFile: 14444, wantPort: 14444, wantSource: PortSourcePortFile},
+		{name: "metadata over legacy", legacyPort: "13307", metadataPort: 15555, wantPort: 15555, wantSource: PortSourceMetadataJSON},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
+			t.Setenv("BEADS_DOLT_SERVER_MODE", "")
+			t.Setenv("BEADS_DOLT_SERVER_PORT", tc.serverPort)
+			t.Setenv("BEADS_DOLT_PORT", tc.legacyPort)
+			config.ResetForTesting()
+
+			beadsDir := t.TempDir()
+			if tc.portFile > 0 {
+				if err := writePortFile(beadsDir, tc.portFile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.metadataPort > 0 {
+				meta := fmt.Sprintf(`{"backend":"dolt","dolt_mode":"server","dolt_server_port":%d}`, tc.metadataPort)
+				if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := DialConfig(beadsDir)
+			if cfg.Port != tc.wantPort || cfg.PortSource != tc.wantSource {
+				t.Errorf("DialConfig = port %d source %v, want port %d source %v",
+					cfg.Port, cfg.PortSource, tc.wantPort, tc.wantSource)
+			}
+		})
+	}
+}
+
 func TestServerMode_String(t *testing.T) {
 	tests := []struct {
 		mode ServerMode
@@ -3127,5 +3182,284 @@ func TestUseDatabaseStatement(t *testing.T) {
 				t.Errorf("useDatabaseStatement(%q) = %q, want %q", tt.dbName, got, tt.want)
 			}
 		})
+	}
+}
+
+// namedPortRefusalEnv clears every setting that classifies a workspace's
+// server, so each case names exactly the one it is about.
+func namedPortRefusalEnv(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("BEADS_SHARED_SERVER_DIR", filepath.Join(home, "shared-server"))
+	for _, name := range []string{
+		"BEADS_DOLT_SERVER_MODE", "BEADS_DOLT_SHARED_SERVER", "BEADS_DOLT_SERVER_HOST",
+		"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT", "BEADS_DOLT_AUTO_START",
+	} {
+		t.Setenv(name, "")
+	}
+	config.ResetForTesting()
+	t.Cleanup(config.ResetForTesting)
+}
+
+func namedPortServerWorkspace(t *testing.T, metadataPort int) string {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendDolt
+	cfg.DoltMode = configfile.DoltModeServer
+	cfg.DoltServerPort = metadataPort
+	if err := cfg.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestEnsureRunningRefusesNamedPortServerWithoutDoltStart pins
+// EnsureRunning's refusal for a server whose named port declares it
+// externally managed (BEADS_DOLT_SERVER_PORT, the legacy BEADS_DOLT_PORT, or
+// metadata.json dolt_server_port): it names the endpoint and the setting, says
+// bd did not start a server, and does not advise `bd dolt start`, which would
+// start bd's own server on that port. It is a refusal, not a failed start, and says so
+// through ErrExternallyManaged.
+func TestEnsureRunningRefusesNamedPortServerWithoutDoltStart(t *testing.T) {
+	const port = 13317
+	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	for _, tc := range []struct {
+		name     string
+		env      bool
+		setting  string
+		portFile bool
+	}{
+		{"BEADS_DOLT_SERVER_PORT", true, "BEADS_DOLT_SERVER_PORT", false},
+		// Not in portSources, so DefaultConfig leaves the port unset.
+		{"BEADS_DOLT_PORT", true, "BEADS_DOLT_PORT", false},
+		{"metadata.json dolt_server_port", false, "dolt_server_port in ", false},
+		// The port file a successful open wrote outranks dolt_server_port,
+		// and IsRunning leaves it alone, since no pid file stands beside it.
+		{"metadata.json dolt_server_port beside the port file an open wrote", false, "dolt_server_port in ", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			metadataPort := port
+			if tc.env {
+				t.Setenv(tc.setting, strconv.Itoa(port))
+				metadataPort = 0
+			}
+			dir := namedPortServerWorkspace(t, metadataPort)
+			if tc.portFile {
+				if err := writePortFile(dir, port); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			_, startedByUs, err := EnsureRunningDetailed(dir)
+			if err == nil || startedByUs {
+				t.Fatalf("EnsureRunningDetailed = (startedByUs %v, err %v), want a refusal", startedByUs, err)
+			}
+			if !errors.Is(err, ErrExternallyManaged) {
+				t.Errorf("refusal does not match ErrExternallyManaged: %v", err)
+			}
+			msg := err.Error()
+			for _, want := range []string{tc.setting, "declares the Dolt server at " + endpoint + " externally managed", "did not start"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("refusal does not contain %q:\n%s", want, msg)
+				}
+			}
+			if strings.Contains(msg, "bd dolt start") {
+				t.Errorf("refusal advises `bd dolt start`:\n%s", msg)
+			}
+		})
+	}
+}
+
+// TestEnsureRunningSharedServerRefusalKeepsDoltStart is the control: a shared
+// server is external to the workspace but is bd's own, started with
+// `bd dolt start`, so its refusal keeps that advice.
+func TestEnsureRunningSharedServerRefusalKeepsDoltStart(t *testing.T) {
+	namedPortRefusalEnv(t)
+	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "13318")
+	config.ResetForTesting()
+	dir := namedPortServerWorkspace(t, 0)
+
+	_, _, err := EnsureRunningDetailed(dir)
+	if err == nil {
+		t.Fatal("EnsureRunningDetailed started a shared server in a test")
+	}
+	if !errors.Is(err, ErrExternallyManaged) {
+		t.Errorf("refusal does not match ErrExternallyManaged: %v", err)
+	}
+	if !strings.Contains(err.Error(), "bd dolt start") {
+		t.Errorf("shared-server refusal lost its `bd dolt start` advice:\n%v", err)
+	}
+}
+
+// TestExternalPortSetting pins which setting is named for which dialed port,
+// and whether its value is that port.
+func TestExternalPortSetting(t *testing.T) {
+	const port, other = 13319, 13320
+	for _, tc := range []struct {
+		name         string
+		envName      string
+		envPort      int
+		metadataPort int
+		shared       bool
+		source       PortSource
+		want         string
+		names        bool
+	}{
+		{"env port", "BEADS_DOLT_SERVER_PORT", port, 0, false, PortSourceEnv, "BEADS_DOLT_SERVER_PORT", true},
+		{"legacy env port", "BEADS_DOLT_PORT", port, 0, false, PortSourceEnv, "BEADS_DOLT_PORT", true},
+		{"env port passed by the caller", "BEADS_DOLT_SERVER_PORT", port, 0, false, PortSourceCallerExplicit, "BEADS_DOLT_SERVER_PORT", true},
+		{"env port other than the caller's", "BEADS_DOLT_SERVER_PORT", other, 0, false, PortSourceCallerExplicit, "", false},
+		{"metadata port", "", 0, port, false, PortSourceMetadataJSON, "dolt_server_port in ", true},
+		// `bd dolt set port N --update-config` writes both files, and
+		// config.yaml outranks metadata.json in portSources.
+		{"config.yaml port equal to the metadata port", "", 0, port, false, PortSourceConfigYaml, "dolt_server_port in ", true},
+		{"config.yaml port other than the metadata port", "", 0, other, false, PortSourceConfigYaml, "dolt_server_port in ", false},
+		{"listener.port other than the metadata port", "", 0, other, false, PortSourceDoltConfigYaml, "dolt_server_port in ", false},
+		// An authoritative config.yaml or listener.port outranks the legacy
+		// BEADS_DOLT_PORT for the dial, and the env var naming the same port
+		// still declares the server external.
+		{"config.yaml port equal to the legacy env port", "BEADS_DOLT_PORT", port, 0, false, PortSourceConfigYaml, "BEADS_DOLT_PORT", true},
+		{"listener.port equal to the legacy env port", "BEADS_DOLT_PORT", port, 0, false, PortSourceDoltConfigYaml, "BEADS_DOLT_PORT", true},
+		{"config.yaml port other than the legacy env port", "BEADS_DOLT_PORT", other, 0, false, PortSourceConfigYaml, "", false},
+		// A successful open records the port it reached in bd's port file,
+		// which outranks dolt_server_port for the dial. With no pid file of
+		// bd's beside it (none here), it is not a server bd started.
+		{"port file equal to the legacy env port", "BEADS_DOLT_PORT", port, 0, false, PortSourcePortFile, "BEADS_DOLT_PORT", true},
+		{"port file beside a metadata port", "", 0, port, false, PortSourcePortFile, "dolt_server_port in ", true},
+		{"port file other than the metadata port", "", 0, other, false, PortSourcePortFile, "dolt_server_port in ", false},
+		{"config.yaml port without a metadata port", "", 0, 0, false, PortSourceConfigYaml, "", false},
+		{"shared server", "BEADS_DOLT_SERVER_PORT", port, 0, true, PortSourceEnv, "", false},
+		{"owned workspace", "", 0, 0, false, PortSourcePortFile, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			if tc.envName != "" {
+				t.Setenv(tc.envName, strconv.Itoa(tc.envPort))
+			}
+			if tc.shared {
+				t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+			}
+			config.ResetForTesting()
+			dir := namedPortServerWorkspace(t, tc.metadataPort)
+
+			got := ExternalPortSetting(dir, tc.source, port)
+			if tc.want == "" && got.Setting != "" || !strings.HasPrefix(got.Setting, tc.want) || got.NamesEndpoint != tc.names {
+				t.Errorf("ExternalPortSetting = %+v, want setting %q, names endpoint %v", got, tc.want, tc.names)
+			}
+		})
+	}
+}
+
+// TestExternalPortSettingLeavesServersBdStarted pins the port file's
+// exclusion: `bd dolt start` writes bd's pid file beside the port file, and
+// the server on that port is bd's own (`bd dolt set port N`, then `bd dolt
+// start`), so no setting is named even when one names the same port, and the
+// caller keeps its `bd dolt start` advice. The pid file is what marks it: the
+// same port file without one is only the record a successful open leaves.
+func TestExternalPortSettingLeavesServersBdStarted(t *testing.T) {
+	const port = 13323
+	for _, tc := range []struct {
+		name         string
+		envName      string
+		metadataPort int
+		want         string
+	}{
+		{"metadata port", "", port, "dolt_server_port in "},
+		{"legacy env port", "BEADS_DOLT_PORT", 0, "BEADS_DOLT_PORT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			if tc.envName != "" {
+				t.Setenv(tc.envName, strconv.Itoa(port))
+			}
+			config.ResetForTesting()
+			dir := namedPortServerWorkspace(t, tc.metadataPort)
+			if err := writePortFile(dir, port); err != nil {
+				t.Fatal(err)
+			}
+			// The server bd started is gone; its pid file stays until
+			// IsRunning or `bd dolt stop` clears both files.
+			if err := os.WriteFile(pidPath(dir), []byte("99999999"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := ExternalPortSetting(dir, PortSourcePortFile, port); got != (ExternalPortDeclaration{}) {
+				t.Errorf("ExternalPortSetting beside bd's pid file = %+v, want none", got)
+			}
+
+			if err := os.Remove(pidPath(dir)); err != nil {
+				t.Fatal(err)
+			}
+			got := ExternalPortSetting(dir, PortSourcePortFile, port)
+			if !strings.HasPrefix(got.Setting, tc.want) || !got.NamesEndpoint {
+				t.Errorf("ExternalPortSetting without bd's pid file = %+v, want setting %q naming the endpoint", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExternalPortSettingReadsEnvAsTheStore pins that the env vars are parsed
+// as the store dials them and check 2c reads them, untrimmed: a padded value
+// declares nothing and is dialed by nothing, so it is never named, and the
+// metadata port that does declare the server is.
+func TestExternalPortSettingReadsEnvAsTheStore(t *testing.T) {
+	const port = 13324
+	for _, name := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+		t.Run(name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			t.Setenv(name, " "+strconv.Itoa(port)+"\n")
+			config.ResetForTesting()
+			dir := namedPortServerWorkspace(t, port)
+
+			got := ExternalPortSetting(dir, PortSourceMetadataJSON, port)
+			if !strings.HasPrefix(got.Setting, "dolt_server_port in ") || !got.NamesEndpoint {
+				t.Errorf("ExternalPortSetting = %+v, want dolt_server_port naming the endpoint", got)
+			}
+		})
+	}
+}
+
+// TestExternalPortDeclarationAdvice pins both wordings: a setting whose value
+// is the dialed port names the endpoint as the server it declares external;
+// one that does not (a metadata port beside a config.yaml port) only declares
+// the workspace's server external, and does not claim the endpoint. Neither
+// advises `bd dolt start`.
+func TestExternalPortDeclarationAdvice(t *testing.T) {
+	const endpoint = "127.0.0.1:13321"
+	if got := (ExternalPortDeclaration{}).Advice(endpoint); got != "" {
+		t.Errorf("zero declaration advice = %q, want none", got)
+	}
+	named := ExternalPortDeclaration{Setting: "BEADS_DOLT_SERVER_PORT", NamesEndpoint: true}.Advice(endpoint)
+	other := ExternalPortDeclaration{Setting: "dolt_server_port in m.json"}.Advice(endpoint)
+	for _, tc := range []struct{ got, want string }{
+		{named, "BEADS_DOLT_SERVER_PORT declares the Dolt server at " + endpoint + " externally managed, so bd did not start one."},
+		{other, "dolt_server_port in m.json declares this workspace's Dolt server externally managed, so bd did not start one at " + endpoint + "."},
+	} {
+		if !strings.Contains(tc.got, tc.want) {
+			t.Errorf("advice does not contain %q:\n%s", tc.want, tc.got)
+		}
+		if strings.Contains(tc.got, "bd dolt start") {
+			t.Errorf("advice advises `bd dolt start`:\n%s", tc.got)
+		}
+	}
+}
+
+// TestUnreachableEndpointAdviceLeavesRemoteHosts pins that a host off this
+// machine keeps its caller's own advice: it is not bd's to start either way,
+// and the remote-host advice (GH#3518) says how to check it.
+func TestUnreachableEndpointAdviceLeavesRemoteHosts(t *testing.T) {
+	namedPortRefusalEnv(t)
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "13322")
+	config.ResetForTesting()
+	dir := namedPortServerWorkspace(t, 0)
+	if got := UnreachableEndpointAdvice(dir, "db.example.com", 13322, PortSourceEnv); got != "" {
+		t.Errorf("remote host advice = %q, want none", got)
+	}
+	if got := UnreachableEndpointAdvice(dir, "127.0.0.1", 13322, PortSourceEnv); !strings.Contains(got, "BEADS_DOLT_SERVER_PORT declares") {
+		t.Errorf("local host advice = %q, want the externally managed advice", got)
 	}
 }

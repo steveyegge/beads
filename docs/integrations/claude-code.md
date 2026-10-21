@@ -25,7 +25,7 @@ bd setup claude --stealth  # Stealth mode: flush only, no git operations
 bd setup claude --remove   # Remove the hook and the CLAUDE.md section
 ```
 
-If the [beads plugin](/integrations/claude-code-plugin) is enabled, `bd setup claude` skips writing hooks - the plugin provides its own, and duplicates would run `bd prime` twice per session.
+If the [beads plugin](/integrations/claude-code-plugin) is enabled, `bd setup claude` skips writing hooks - the plugin provides its own, and duplicates would run `bd prime` twice per session. `--global` skips them only when the plugin is enabled in your user settings (`~/.claude/settings.json`): a plugin enabled in a project's `.claude/settings.json` or `.claude/settings.local.json` runs in that project only.
 
 ### Manual Setup
 

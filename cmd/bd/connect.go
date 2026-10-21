@@ -94,6 +94,15 @@ Examples:
 		if beadsDir == "" {
 			return HandleError("cannot resolve a workspace directory for connect (set BEADS_DIR, or run from inside a writable directory)")
 		}
+		// Admission checked the workspace discovery found, which is not always
+		// this one: in a linked worktree with no .beads of its own, discovery
+		// passes over a main-checkout .beads that only the graph format
+		// marker or a legacy config.json declares, and connect still attaches
+		// it. Refuse it here, before the handshake dials and before
+		// configfile.Load migrates that config.json.
+		if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+			return handleWorkspaceGuardError(err)
+		}
 
 		if connectClear {
 			if len(args) != 0 {
