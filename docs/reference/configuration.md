@@ -405,7 +405,7 @@ Claiming reads this key from the database only. A `claim.pools` value in `config
 
 ### Versioned Issue History
 
-While `versioned-history.enabled` is on, every accepted change to an issue that participates in history (one created while it is on, or that enters the issues plane while it is on: a wisp promoted or made persistent) stores a snapshot of it as a row of `issue_versions`, in the same transaction, and `bd versions <id>` lists them. It is off by default, and it does not backfill: an issue already on the issues plane when it was turned on is legacy, and editing it records nothing (the write fence, design §16.2b).
+While `versioned-history.enabled` is on, every accepted change to an issue that participates in history (one created while it is on, or that enters the issues plane while it is on: a wisp promoted or made persistent) stores a snapshot of it as a row of `issue_versions`, in the same transaction, and `bd versions <id>` lists them. It is off by default, and it does not backfill: an issue already on the issues plane when it was turned on is legacy, and editing it records nothing (the write fence, design §16.2b). Making an issue a wisp and then persistent again while it is on (`bd update --ephemeral`, then `bd update --persistent` or `bd promote`) does not change that: a legacy issue stays legacy, and one that participates keeps its history. The issue carries its participation only while recording is on, so one made a wisp while recording was off comes back as any wisp does.
 
 ```bash
 bd config set versioned-history.enabled true    # turn it on
