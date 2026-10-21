@@ -115,10 +115,14 @@ import (
 // row, and so no content token, comes of it. A create-shaped mint never meets a
 // legacy row (its call site has just inserted the row), so it runs the gate
 // whenever it mints; a new row flagged no-history is stamped but not minted, so
-// nothing is canonicalized for it. So the switch's check keeps only the rows that
-// participate (ParticipatingIssueIDsInTx): a legacy row blocks no write, so it does
-// not block the switch either. Where the store cannot say which rows participate, the
-// check keeps legacy rows too, an over-approximation that can only refuse more.
+// nothing is canonicalized for it. So a legacy row blocks no write to itself, and
+// the switch's check keeps the rows that participate (ParticipatingIssueIDsInTx)
+// and, of the legacy rows, only the templates: `bd mol pour` and `bd mol bond`
+// copy a proto's metadata and gate timeouts into every row they create, that
+// create-shaped mint runs the gate, and bd update, the in-place fix, refuses a
+// template. It warns of the other legacy issues of a proto, which can be fixed in
+// place. Where the store cannot say which rows participate, the check keeps legacy
+// rows too, an over-approximation that can only refuse more.
 //
 // That check ran once, at that moment. Nothing keeps a writer that does not mint
 // from adding such a row afterwards, even right after the switch is on; if the
