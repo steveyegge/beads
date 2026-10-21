@@ -190,7 +190,7 @@ func redirectedPlanningRepoError(planningBeadsDir, target, stubDatabase string) 
 	planningRepo, targetRepo := filepath.Dir(planningBeadsDir), filepath.Dir(target)
 	if stubDatabase != "" {
 		if targetDatabase, err := autoRouteTargetDatabase(target, true); err != nil || targetDatabase != stubDatabase {
-			return refusePlanningRepo("planning repo %s redirects to %s, where bd uses the database %q that the planning repo names; routing.contributor cannot select that database (set to %s, it selects that repository's own)", planningRepo, targetRepo, stubDatabase, targetRepo)
+			return refusePlanningRepo("planning repo %s redirects to %s, where bd uses the database %q that the planning repo names; routing.contributor cannot select that database (set to %s, it selects that repository's own); set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningRepo, targetRepo, stubDatabase, targetRepo)
 		}
 	}
 	return refusePlanningRepo("planning repo %s redirects to %s; set routing.contributor to that repository instead", planningRepo, targetRepo)
@@ -294,7 +294,7 @@ func planningDatabaseSettings(ctx context.Context, planningStore, projectStore s
 // planning repo is a redirect stub that names a database of its own, other
 // than the one the project's store uses there: a rig beside the project under
 // a shared root (beads.ResolveRedirect). That stub is a different database,
-// and refuseUninitializablePlanningRepo refuses it as the redirect it is.
+// and is refused as the redirect it is (redirectedPlanningRepoError).
 // Two directories whose metadata.json carry the same project_id are one
 // project's workspaces, a clone sharing the git-tracked metadata.json: a
 // separate planning repository has an identity of its own.
@@ -318,7 +318,9 @@ func refuseSelfPlanningRepo(planningPath, planningBeadsDir, projectBeadsDir stri
 			projectDatabase = projectCfg.GetDoltDatabase()
 		}
 		if redirect.WasRedirected && redirect.SourceDatabase != "" && redirect.SourceDatabase != projectDatabase {
-			return nil
+			// Refused here, before the confirmation prompt, rather than by
+			// refuseUninitializablePlanningRepo after it.
+			return redirectedPlanningRepoError(planningBeadsDir, redirect.TargetDir, redirect.SourceDatabase)
 		}
 		return fmt.Errorf("planning repo %s is this project's own workspace; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningPath)
 	}

@@ -683,6 +683,10 @@ func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
 		t.Errorf("a rig beside the project under a shared root was refused as the project's own workspace:\n%s", out)
 	}
 	requireCleanPlanningRefusal(t, out, planning)
+	// Refused before the confirmation prompt, which follows this line.
+	if strings.Contains(out, "Move to planning repo") {
+		t.Errorf("a rig beside the project under a shared root was refused after the confirmation prompt:\n%s", out)
+	}
 	requireStillInProject(t, townBeadsDir, "rga", personal.ID)
 }
 
@@ -690,8 +694,8 @@ func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
 // refuses. One whose .beads, after any redirect, is the project's is the
 // project's own workspace, unless it is a redirect stub naming a database
 // other than the one the project's store uses there: a rig beside the
-// project under a shared root, which refuseUninitializablePlanningRepo
-// refuses as a redirect instead. A separate directory carrying the project's
+// project under a shared root, which it refuses as a redirect instead. A
+// separate directory carrying the project's
 // project_id is a clone of the project, and is refused as one.
 func TestRefuseSelfPlanningRepo(t *testing.T) {
 	root := t.TempDir()
@@ -738,11 +742,13 @@ func TestRefuseSelfPlanningRepo(t *testing.T) {
 		{name: "a stub naming the project's database", projectBeadsDir: project,
 			planningBeadsDir: workspace("worktree", "proj", "", project), want: "is this project's own workspace"},
 		{name: "a stub naming a database of its own", projectBeadsDir: project,
-			planningBeadsDir: workspace("rig", "rig", "", project)},
+			planningBeadsDir: workspace("rig", "rig", "", project),
+			want:             `where bd uses the database "rig" that the planning repo names; routing.contributor cannot select that database`},
 		{name: "the project's own rig under a shared root", projectBeadsDir: town, launchDatabase: "rga",
 			planningBeadsDir: workspace("rigA", "rga", "", town), want: "is this project's own workspace"},
 		{name: "a rig beside the project under a shared root", projectBeadsDir: town, launchDatabase: "rga",
-			planningBeadsDir: workspace("rigB", "rgb", "", town)},
+			planningBeadsDir: workspace("rigB", "rgb", "", town),
+			want:             `where bd uses the database "rgb" that the planning repo names; routing.contributor cannot select that database`},
 		// "." run at the shared root while BEADS_DOLT_SERVER_DATABASE selects
 		// a rig's database: a planning repo that is no stub is where the
 		// project's store is, so it stays refused.
