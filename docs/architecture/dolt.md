@@ -208,9 +208,10 @@ Configure the connection with flags or environment variables:
 Setting it — or the legacy `BEADS_DOLT_PORT` — makes `ResolveServerMode`
 classify the workspace as an externally-managed server, so bd will not
 auto-start a server for it: if nothing is listening on that port you get
-`auto-start is suppressed because the server is externally managed` rather
-than a server started on it. Use these vars to point bd at a server you
-already run; they are not a way to choose the port of a bd-owned server. A
+`BEADS_DOLT_SERVER_PORT declares the Dolt server at 127.0.0.1:<port>
+externally managed, so bd did not start one` rather than a server started on
+it. Use these vars to point bd at a server you already run; they are not a way
+to choose the port of a bd-owned server. A
 `dolt_mode: proxied-server` workspace is exempt — it reaches its server
 through the proxy, so an ambient port does not describe its lifecycle — and
 a shared-server workspace is already classified external on its own.

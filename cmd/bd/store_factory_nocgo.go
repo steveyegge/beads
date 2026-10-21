@@ -22,6 +22,12 @@ func isEmbeddedMode() bool {
 	return false
 }
 
+// isEmbeddedStore reports whether st is an embedded Dolt store, which a
+// non-CGO build never opens.
+func isEmbeddedStore(storage.DoltStorage) bool {
+	return false
+}
+
 func usesProxiedServer() bool {
 	if shouldUseGlobals() {
 		return proxiedServerMode

@@ -182,6 +182,9 @@ func TestGraphModeCLIRefusesLegacyStoreWithoutWorkspaceEffects(t *testing.T) {
 		{"init", "--force", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents"},
 		// What the installed git hooks run; their shim passes exit 16 on.
 		{"hooks", "run", "pre-commit"},
+		// Nothing listens on the url: a connect that got as far as its
+		// handshake fails there instead.
+		{"connect", "http://127.0.0.1:1"},
 	}
 	for _, fixture := range graphModeAdmissionFixtures() {
 		for _, args := range commands {
@@ -213,11 +216,12 @@ func TestGraphModeCLIRefusesLegacyStoreWithoutWorkspaceEffects(t *testing.T) {
 
 // Commands also reach a workspace they do not run in: create --repo, from
 // another workspace or from none and as a dry run, --db and BEADS_DB,
-// init --proxied-server, and bootstrap in a workspace with no metadata of its
+// init --proxied-server, bootstrap in a workspace with no metadata of its
 // own, which takes the nearest ancestor's (and refuses a graph ancestor even
-// when only its format marker declares it, rather than skip past it). Each must refuse a graph workspace
-// the same way, before resolving it migrates a legacy config.json or anything
-// opens its store.
+// when only its format marker declares it, rather than skip past it), and
+// connect in a linked worktree, which attaches the main checkout's .beads.
+// Each must refuse a graph workspace the same way, before resolving it
+// migrates a legacy config.json or anything opens its store.
 func TestGraphModeOutsideEntryPointsRefuseWithoutWorkspaceEffects(t *testing.T) {
 	bd := buildBDUnderTest(t)
 	sourceDir, _, _ := bdInit(t, bd, "--prefix", "src")
@@ -257,6 +261,17 @@ func TestGraphModeOutsideEntryPointsRefuseWithoutWorkspaceEffects(t *testing.T) 
 			initGitRepoAt(t, innerDir)
 			return innerDir, nil, []string{"bootstrap", "--dry-run", "--yes"}
 		}},
+		// connect writes to the .beads it resolves itself, which from a
+		// linked worktree with none of its own is the main checkout's, even
+		// where discovery passes over it (a marker or a legacy config.json
+		// alone). Nothing listens on the url, so a connect that got as far as
+		// its handshake fails there instead.
+		{"connect from a linked worktree", func(t *testing.T, repoDir string) (string, []string, []string) {
+			return graphModeLinkedWorktree(t, repoDir), nil, []string{"connect", "http://127.0.0.1:1"}
+		}},
+		{"connect --clear from a linked worktree", func(t *testing.T, repoDir string) (string, []string, []string) {
+			return graphModeLinkedWorktree(t, repoDir), nil, []string{"connect", "--clear"}
+		}},
 	}
 	for _, fixture := range graphModeAdmissionFixtures() {
 		for _, entry := range entries {
@@ -281,6 +296,17 @@ func TestGraphModeOutsideEntryPointsRefuseWithoutWorkspaceEffects(t *testing.T) 
 			})
 		}
 	}
+}
+
+// graphModeLinkedWorktree commits once in repoDir and adds a linked worktree
+// of it. The worktree has no .beads of its own: the workspace fixture under
+// repoDir is not committed.
+func graphModeLinkedWorktree(t *testing.T, repoDir string) string {
+	t.Helper()
+	worktreeDir := filepath.Join(t.TempDir(), "worktree")
+	runGitForWorktreeTest(t, repoDir, "commit", "--allow-empty", "--quiet", "-m", "init")
+	runGitForWorktreeTest(t, repoDir, "worktree", "add", "--quiet", "--detach", worktreeDir)
+	return worktreeDir
 }
 
 // Commands that never open a store keep working in a workspace this build
