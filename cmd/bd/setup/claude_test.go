@@ -2478,6 +2478,64 @@ func TestInstallClaudeGlobalReportsPluginOffHere(t *testing.T) {
 	})
 }
 
+// TestWarnIfPrimeRunsTwiceNamesARemedy pins the remedy line under the
+// double-run warning: drop a global hook only once the user settings enable
+// the plugin, keep a shared project hook teammates need when only this
+// user's settings enable it, and never suggest turning off a plugin that
+// managed settings enable.
+func TestWarnIfPrimeRunsTwiceNamesARemedy(t *testing.T) {
+	user := func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }
+	project := func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }
+	local := func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }
+	managed := func(env claudeEnv) string { return filepath.Join(env.managedDir, "managed-settings.json") }
+	cases := []struct {
+		name         string
+		plugin, hook func(claudeEnv) string
+		want         func(env claudeEnv) string
+	}{
+		{"global hook, project plugin", project, user, func(env claudeEnv) string {
+			return "turn the plugin off in " + local(env) + ", or enable it in " + user(env) +
+				" and run bd setup claude --remove --global, then bd setup claude --global"
+		}},
+		{"global hook, user plugin", user, user, func(claudeEnv) string {
+			return "run bd setup claude --remove --global, then bd setup claude --global"
+		}},
+		{"shared project hook, personal plugin", user, project, func(env claudeEnv) string {
+			return "turn the plugin off in " + local(env)
+		}},
+		{"shared project hook, shared plugin", project, project, func(env claudeEnv) string {
+			return "remove the bd prime hook from " + project(env) + ", or turn the plugin off in " + local(env)
+		}},
+		{"local hook, local plugin", local, local, func(env claudeEnv) string {
+			return "remove the bd prime hook from " + local(env) + ", or turn the plugin off in " + local(env)
+		}},
+		{"project hook, managed plugin", managed, project, func(env claudeEnv) string {
+			return "remove the bd prime hook from " + project(env)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			env.managedDir = filepath.Join(t.TempDir(), "managed")
+			settings := settingsWithPlugin()
+			if tc.plugin(env) != tc.hook(env) {
+				writeSettings(t, tc.plugin(env), settings)
+				settings = map[string]interface{}{}
+			}
+			hooks := map[string]interface{}{}
+			addHookCommand(hooks, "SessionStart", "bd prime --hook-json")
+			settings["hooks"] = hooks
+			writeSettings(t, tc.hook(env), settings)
+
+			warnIfPrimeRunsTwice(env)
+			want := "  To run it once: " + tc.want(env) + "\n"
+			if !strings.Contains(stdout.String(), want) {
+				t.Errorf("want remedy %q, got:\n%s", want, stdout.String())
+			}
+		})
+	}
+}
+
 // TestInstallClaudePluginPrecedence pins a project install where settings
 // files disagree about the beads plugin. Claude Code takes each plugin's
 // setting from the highest-precedence file that names it (local, then

@@ -696,8 +696,37 @@ func warnIfPrimeRunsTwice(env claudeEnv) {
 		if hasBeadsHooks(path) {
 			_, _ = fmt.Fprintln(env.stdout, "⚠ bd prime runs twice per session here")
 			_, _ = fmt.Fprintf(env.stdout, "  Both the beads plugin (enabled in %s) and the hook in %s run it\n", plugin.path, path)
+			_, _ = fmt.Fprintf(env.stdout, "  To run it once: %s\n", primeTwiceRemedy(env, plugin, path))
 			return
 		}
+	}
+}
+
+// primeTwiceRemedy is how to make bd prime run once where both the beads
+// plugin (enabled in plugin.path) and the hook in hookPath run it. A global
+// hook is for every project, so it goes only once the user settings enable
+// the plugin; a shared project hook stays for teammates without the plugin
+// when only this user's settings enable it; and managed settings cannot be
+// overridden, so the plugin is turned off only where they do not enable it.
+func primeTwiceRemedy(env claudeEnv, plugin beadsPluginState, hookPath string) string {
+	localRoot := env.projectDir
+	if env.localSettingsRoot != "" {
+		localRoot = env.localSettingsRoot
+	}
+	turnOff := "turn the plugin off in " + legacyProjectSettingsPath(localRoot)
+	managed := plugin.path != projectSettingsPath(env.projectDir) && claudeSettingsAreShared(env, plugin.path)
+	switch {
+	case hookPath == globalSettingsPath(env.homeDir) && hasBeadsPlugin(env, true):
+		return "run bd setup claude --remove --global, then bd setup claude --global"
+	case hookPath == globalSettingsPath(env.homeDir):
+		return turnOff + ", or enable it in " + globalSettingsPath(env.homeDir) +
+			" and run bd setup claude --remove --global, then bd setup claude --global"
+	case managed:
+		return "remove the bd prime hook from " + hookPath
+	case hookPath == projectSettingsPath(env.projectDir) && !claudeSettingsAreShared(env, plugin.path):
+		return turnOff
+	default:
+		return "remove the bd prime hook from " + hookPath + ", or " + turnOff
 	}
 }
 

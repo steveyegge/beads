@@ -1230,10 +1230,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does.** It skipped its hook whenever `~/.claude/settings.json`, the
   project's `.claude/settings.json` or `.claude/settings.local.json` enabled
   the plugin, even when a more specific one turned it off, so a project that
-  opts out of a plugin your user settings enable got neither the plugin's
-  hook nor bd's, and `--check` reported the hooks as plugin-managed. It now
-  takes the plugin's setting from the first settings file that names it, in
-  Claude Code's order: managed settings (`managed-settings.json` and
+  opts out of a plugin your user settings enable got neither the plugin's hook
+  nor bd's, and `--check` reported the hooks as plugin-managed. It now takes
+  the plugin's setting from the first settings file that names it, in Claude
+  Code's order: managed settings (`managed-settings.json` and
   `managed-settings.d/`), `.claude/settings.local.json` (at the repository
   root, or the main checkout's root in a linked worktree, where Claude Code
   v2.1.211 and later keeps it, then one left in the current directory), the
@@ -1243,13 +1243,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates an empty `.claude/settings.json`, which `bd init` then committed.
   `bd setup claude`, `--global` and `--check` now warn when `bd prime` runs
   twice per session in the current directory, as it does in a project whose
-  own settings enable the plugin once a global hook is installed. A
-  `--global` install that leaves the hooks to the plugin, run from a project
-  whose own settings turn it off, now warns that no hook runs `bd prime`
-  there and names `bd setup claude`. When only your own settings enable the
-  plugin, a project install no longer deletes an older bare `bd prime` hook
-  from the shared `.claude/settings.json`, which teammates without the plugin
-  rely on; it replaces it with the current hook.
+  own settings enable the plugin once a global hook is installed, and say how
+  to run it once. A `--global` install that leaves the hooks to the plugin,
+  run from a project whose own settings turn it off, now warns that no hook
+  runs `bd prime` there and names `bd setup claude`. When only your own
+  settings enable the plugin, a project install no longer deletes an older
+  bare `bd prime` hook from the shared `.claude/settings.json`, which
+  teammates without the plugin rely on; it replaces it with the current hook.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query
