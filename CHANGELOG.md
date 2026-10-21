@@ -1224,7 +1224,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the project's own `CLAUDE.md`, as it does with project hooks, and names
   `bd setup claude` rather than `--global` when that file is missing. In a
   project that enables the plugin, a global install's hook and the plugin's
-  both run `bd prime`.
+  both run `bd prime`. If you ran `bd setup claude --global` from such a
+  project before, re-run it to add the hook your other projects are missing.
 - **`bd setup claude` reads the beads plugin's setting the way Claude Code
   does.** It skipped its hook whenever `~/.claude/settings.json`, the
   project's `.claude/settings.json` or `.claude/settings.local.json` enabled
@@ -1240,6 +1241,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install that leaves the hooks to the plugin names the file that enables it,
   no longer adds an empty `"hooks": {}` to a settings file, and no longer
   creates an empty `.claude/settings.json`, which `bd init` then committed.
+  `bd setup claude`, `--global` and `--check` now warn when `bd prime` runs
+  twice per session in the current directory, as it does in a project whose
+  own settings enable the plugin once a global hook is installed.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query

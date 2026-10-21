@@ -1389,6 +1389,43 @@ func TestCheckClaudeScenarios(t *testing.T) {
 		}
 	})
 
+	// Claude Code runs the plugin's hook beside a settings file's bd prime
+	// hook, so --check reports the double run wherever both apply.
+	for _, tc := range []struct {
+		name      string
+		plugin    func(env claudeEnv) string
+		hooks     func(env claudeEnv) string
+		pluginOff func(env claudeEnv) string
+		wantTwice bool
+	}{
+		{"global hooks beside a project plugin", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, nil, true},
+		{"project hooks beside a user plugin", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, nil, true},
+		{"global hooks beside a user plugin turned off here", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			settings := map[string]map[string]interface{}{}
+			add := func(path string, key string, value interface{}) {
+				if settings[path] == nil {
+					settings[path] = map[string]interface{}{}
+				}
+				settings[path][key] = value
+			}
+			add(tc.plugin(env), "enabledPlugins", map[string]interface{}{"beads@beads-marketplace": true})
+			add(tc.hooks(env), "hooks", primeHookSettings["hooks"])
+			if tc.pluginOff != nil {
+				add(tc.pluginOff(env), "enabledPlugins", map[string]interface{}{"beads@beads-marketplace": false})
+			}
+			for path, content := range settings {
+				writeSettings(t, path, content)
+			}
+			_ = checkClaude(env)
+			if got := strings.Contains(stdout.String(), "⚠ bd prime runs twice per session here"); got != tc.wantTwice {
+				t.Errorf("double run reported = %v, want %v:\n%s", got, tc.wantTwice, stdout.String())
+			}
+		})
+	}
+
 	// The home directory and ~/.claude are recognized when reached through a
 	// symlink too (a symlinked /home, a linked checkout): sameDir compares
 	// the directories, not their path strings.
@@ -2183,14 +2220,17 @@ func TestInstallClaudeGlobalPluginScope(t *testing.T) {
 		settings   func(env claudeEnv) string
 		global     bool
 		wantPlugin bool
+		// wantTwice: the plugin's hook and the one the install wrote both
+		// run in this project, and the install says so.
+		wantTwice bool
 	}{
-		{"global install, project plugin", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, true, false},
-		{"global install, local plugin", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, true, false},
-		{"global install, user plugin", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, true, true},
+		{"global install, project plugin", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, true, false, true},
+		{"global install, local plugin", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, true, false, true},
+		{"global install, user plugin", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, true, true, false},
 		// GH#3192: a project install still counts every scope.
-		{"project install, project plugin", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, false, true},
-		{"project install, local plugin", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, false, true},
-		{"project install, user plugin", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, false, true},
+		{"project install, project plugin", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }, false, true, false},
+		{"project install, local plugin", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, false, true, false},
+		{"project install, user plugin", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }, false, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2206,6 +2246,9 @@ func TestInstallClaudeGlobalPluginScope(t *testing.T) {
 			if got := strings.Contains(out, "Registered SessionStart hook"); got == tc.wantPlugin {
 				t.Errorf("SessionStart hook registered = %v, want %v:\n%s", got, !tc.wantPlugin, out)
 			}
+			if got := strings.Contains(out, "⚠ bd prime runs twice per session here"); got != tc.wantTwice {
+				t.Errorf("double run reported = %v, want %v:\n%s", got, tc.wantTwice, out)
+			}
 			target := projectSettingsPath(env.projectDir)
 			if tc.global {
 				target = globalSettingsPath(env.homeDir)
@@ -2220,6 +2263,39 @@ func TestInstallClaudeGlobalPluginScope(t *testing.T) {
 				t.Errorf("%s has the bd prime hook = %v, want %v:\n%s", target, got, !tc.wantPlugin, data)
 			}
 		})
+	}
+}
+
+// TestInstallClaudeGlobalFromHomeReportsDoubleRun pins the $HOME case: with
+// the plugin enabled only in ~/.claude/settings.local.json, --check names the
+// global install (a project install there would create ~/CLAUDE.md), and the
+// global hook it registers runs beside the plugin's in $HOME sessions, which
+// the install and the next --check report.
+func TestInstallClaudeGlobalFromHomeReportsDoubleRun(t *testing.T) {
+	stubDetectRenderOpts(t)
+	env, stdout, _ := newClaudeTestEnv(t)
+	env.projectDir = env.homeDir
+	writeSettings(t, legacyProjectSettingsPath(env.homeDir), settingsWithPlugin())
+
+	if err := checkClaude(env); err == nil {
+		t.Fatalf("--check before the install should fail:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Run: bd setup claude --global\n") {
+		t.Errorf("expected the global setup hint, got:\n%s", stdout.String())
+	}
+	stdout.Reset()
+	if err := installClaude(env, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "⚠ bd prime runs twice per session here") {
+		t.Errorf("global install from home should report the double run:\n%s", stdout.String())
+	}
+	stdout.Reset()
+	if err := checkClaude(env); err != nil {
+		t.Fatalf("checkClaude after install: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "⚠ bd prime runs twice per session here") {
+		t.Errorf("--check from home should report the double run:\n%s", stdout.String())
 	}
 }
 
@@ -2275,6 +2351,9 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 			stdout.Reset()
 			if err := checkClaude(env); err != nil {
 				t.Fatalf("checkClaude after install: %v\n%s", err, stdout.String())
+			}
+			if strings.Contains(stdout.String(), "runs twice") {
+				t.Errorf("--check reported a double run after the install:\n%s", stdout.String())
 			}
 		})
 	}

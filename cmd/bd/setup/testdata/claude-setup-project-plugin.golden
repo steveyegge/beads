@@ -77,6 +77,8 @@ result: ok
 --- stdout
 Installing Claude hooks globally...
 ✓ Registered SessionStart hook
+⚠ bd prime runs twice per session here
+  Both the beads plugin (enabled in $ROOT/project/.claude/settings.json) and the hook in $ROOT/home/.claude/settings.json run it
 Installing Claude Code integration...
 ✓ Created new CLAUDE.md with beads integration
 
@@ -115,6 +117,8 @@ Restart Claude Code for changes to take effect.
 result: ok
 --- stdout
 ✓ Global hooks installed: $ROOT/home/.claude/settings.json
+⚠ bd prime runs twice per session here
+  Both the beads plugin (enabled in $ROOT/project/.claude/settings.json) and the hook in $ROOT/home/.claude/settings.json run it
 ✓ Claude Code integration installed: $ROOT/project/CLAUDE.md (current)
 --- stderr
 (empty)

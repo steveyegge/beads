@@ -511,6 +511,8 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		}
 	}
 
+	warnIfPrimeRunsTwice(env)
+
 	// Install minimal beads section in CLAUDE.md.
 	// Hooks handle the heavy lifting via bd prime; CLAUDE.md just needs a pointer.
 	agentsEnv, integration, redirected := claudeInstructionsEnv(env, global)
@@ -655,8 +657,34 @@ func checkClaude(env claudeEnv) error {
 		return errClaudeHooksMissing
 	}
 
+	warnIfPrimeRunsTwice(env)
+
 	agentsEnv, integration := claudeCheckAgentsEnv(env, userLevelHooks)
 	return checkAgents(agentsEnv, integration)
+}
+
+// warnIfPrimeRunsTwice reports a bd prime hook in a settings file Claude
+// Code loads in this directory while the beads plugin is enabled here too.
+// Claude Code runs a plugin's hook beside a settings file's, even an
+// identical one, so bd prime runs twice per session (GH#3192). A global
+// install from a project whose own settings enable the plugin leaves it so:
+// its hook is for every other project, where the plugin does not run.
+func warnIfPrimeRunsTwice(env claudeEnv) {
+	plugin := beadsPlugin(env, false)
+	if !plugin.enabled {
+		return
+	}
+	paths := []string{projectSettingsPath(env.projectDir), globalSettingsPath(env.homeDir), legacyProjectSettingsPath(env.projectDir)}
+	if env.localSettingsRoot != "" && !sameDir(env.localSettingsRoot, env.projectDir) {
+		paths = append(paths, legacyProjectSettingsPath(env.localSettingsRoot))
+	}
+	for _, path := range paths {
+		if hasBeadsHooks(path) {
+			_, _ = fmt.Fprintln(env.stdout, "⚠ bd prime runs twice per session here")
+			_, _ = fmt.Fprintf(env.stdout, "  Both the beads plugin (enabled in %s) and the hook in %s run it\n", plugin.path, path)
+			return
+		}
+	}
 }
 
 func RemoveClaude(global bool) error {
