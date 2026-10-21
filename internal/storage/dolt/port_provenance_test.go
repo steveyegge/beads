@@ -3,6 +3,7 @@ package dolt
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -738,5 +739,81 @@ func TestNewServerModeUnresolvedPort(t *testing.T) {
 		cfg := &Config{Database: "test_unresolved_port", BeadsDir: beadsDir, ServerHost: "127.0.0.1", AutoStart: false}
 		_, err := newServerMode(context.Background(), cfg)
 		assertUnresolvedPortError(t, err, beadsDir, false)
+	})
+}
+
+// TestNewServerModeResolvedAddressDialFailureUnchanged pins AC-2: with
+// auto-start off, an address that did resolve (a port, a socket, or a remote
+// host with a port) keeps today's dial error and hint. Only an unresolved
+// port gets the new error.
+func TestNewServerModeResolvedAddressDialFailureUnchanged(t *testing.T) {
+	closedPort := func(t *testing.T) int {
+		t.Helper()
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		return port
+	}
+	offCfg := func(t *testing.T) (*Config, string) {
+		t.Helper()
+		isolateUnresolvedPortEnv(t)
+		t.Setenv("BEADS_DOLT_AUTO_START", "0")
+		beadsDir := t.TempDir()
+		return &Config{Database: "test_resolved_dial", BeadsDir: beadsDir, Path: filepath.Join(beadsDir, "dolt"), ServerHost: "127.0.0.1", AutoStart: false}, beadsDir
+	}
+
+	t.Run("local port", func(t *testing.T) {
+		cfg, _ := offCfg(t)
+		cfg.ServerPort = closedPort(t)
+		_, err := newServerMode(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected a dial error for a closed port")
+		}
+		msg := err.Error()
+		if want := fmt.Sprintf("Dolt server unreachable at 127.0.0.1:%d: ", cfg.ServerPort); !strings.HasPrefix(msg, want) {
+			t.Errorf("error does not start with %q:\n%s", want, msg)
+		}
+		if want := "\n\nDolt server auto-start is disabled (dolt.auto-start: false).\nStart the server manually:\n  bd dolt start"; !strings.HasSuffix(msg, want) {
+			t.Errorf("error does not end with today's hint %q:\n%s", want, msg)
+		}
+	})
+
+	t.Run("socket without port", func(t *testing.T) {
+		cfg, _ := offCfg(t)
+		cfg.ServerSocket = filepath.Join(t.TempDir(), "missing.sock")
+		_, err := newServerMode(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected a dial error for a missing socket")
+		}
+		msg := err.Error()
+		if want := "Dolt server unreachable at " + cfg.ServerSocket + ": "; !strings.HasPrefix(msg, want) {
+			t.Errorf("error does not start with %q:\n%s", want, msg)
+		}
+		if !strings.Contains(msg, "The Dolt server is not listening on socket "+cfg.ServerSocket) {
+			t.Errorf("error lacks today's socket hint:\n%s", msg)
+		}
+		if strings.Contains(msg, "no Dolt server port resolved") {
+			t.Errorf("a configured socket must not get the unresolved-port error:\n%s", msg)
+		}
+	})
+
+	t.Run("remote host with port", func(t *testing.T) {
+		cfg, _ := offCfg(t)
+		cfg.ServerHost = "192.0.2.1" // TEST-NET-1: never routable
+		cfg.ServerPort = 3307
+		_, err := newServerMode(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected a dial error for an unroutable remote host")
+		}
+		msg := err.Error()
+		if want := "Dolt server unreachable at 192.0.2.1:3307: "; !strings.HasPrefix(msg, want) {
+			t.Errorf("error does not start with %q:\n%s", want, msg)
+		}
+		if !strings.Contains(msg, "Configured Dolt server at 192.0.2.1:3307 is unreachable.\nVerify the external server is running") {
+			t.Errorf("error lacks today's external-host hint (GH#3518):\n%s", msg)
+		}
 	})
 }
