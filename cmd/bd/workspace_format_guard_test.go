@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -450,6 +451,59 @@ func TestEnsureBeadsDirForPathChecksWorkspaceFormat(t *testing.T) {
 			}
 			if !tc.wantFormat && !strings.Contains(err.Error(), "no beads workspace found") {
 				t.Fatalf("ensureBeadsDirForPath() = %v, want the not-auto-created refusal", err)
+			}
+		})
+	}
+}
+
+// A create target whose .beads has no metadata.json is refused, with nothing
+// written, when initializing it would hide what bd run there already reads:
+// bd's own admission refuses it, or it holds several databases.
+func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
+	writeFiles := func(t *testing.T, beadsDir string, files map[string]string) {
+		t.Helper()
+		for name, content := range files {
+			path := filepath.Join(beadsDir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// databaseMarker is the file embeddeddolt.Databases looks for to count an
+	// embedded database.
+	databaseMarker := func(database string) string {
+		return filepath.Join("embeddeddolt", database, ".dolt", "noms", "manifest")
+	}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		want  string // "" = not refused
+	}{
+		{name: "several databases", files: map[string]string{databaseMarker("beads"): "x", databaseMarker("other"): "x"}, want: "holds several databases (beads, other)"},
+		{name: "sqlite-era repo", files: map[string]string{"config.json": `{"database":"beads.db"}`, "beads.db": "SQLite format 3\x00" + strings.Repeat("\x00", 4080)}, want: "historical SQLite workspace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			beadsDir := filepath.Join(targetDir, ".beads")
+			writeFiles(t, beadsDir, tc.files)
+			before := planningDirListing(t, beadsDir)
+
+			// A nil source store initializes nothing past these refusals,
+			// so a target that is not refused is left with no metadata.json.
+			err := ensureBeadsDirForPath(context.Background(), targetDir, nil, true)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("ensureBeadsDirForPath() = %v, want nil", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Fatalf("ensureBeadsDirForPath() = %v, want a refusal containing %q", err, tc.want)
+			}
+			if tc.want != "" {
+				if after := planningDirListing(t, beadsDir); !slices.Equal(after, before) {
+					t.Errorf(".beads after a refused initialization = %v, want unchanged %v", after, before)
+				}
 			}
 		})
 	}

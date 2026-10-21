@@ -329,9 +329,10 @@ func autoConfigureForkContributor(ctx context.Context, store storage.DoltStorage
 			return fmt.Errorf("failed to create .beads in planning repo: %w", err)
 		}
 		// Initialize a planning Dolt schema so the repo has a store on disk
-		// before first use. bd migrate-personal adopts this database, writing
-		// the metadata.json that names it, rather than creating another
-		// beside it.
+		// before first use. The first routed bd create, and bd
+		// migrate-personal, adopt this database, writing the metadata.json
+		// that names it, rather than creating another beside it
+		// (ensureBeadsDirForPath).
 		// Non-fatal: no-CGO and server-mode builds skip this silently; the schema
 		// initializes on first use once a Dolt server is running for that path.
 		if planningStore, storeErr := newDoltStoreFromConfig(ctx, planningBeadsDir); storeErr == nil {

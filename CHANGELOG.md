@@ -804,6 +804,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd init --proxied-server-log-path`) is not rotated. Purging the proxy's
   control files and a proxied→server migration remove the `.1` files with
   the primaries (#7527).
+- **A routed `bd create` no longer hides what a repository without
+  `metadata.json` already holds.** The first `bd create` routed into such a
+  repository (by `routing.contributor`, `routing.default` or an absolute
+  `--repo`) gave it a new database named after the source project's prefix
+  and a `metadata.json` naming it, and that file decides what `bd` opens
+  there from then on. In the planning repo `bd init` sets up on a fork, that
+  put a second database beside the one setup created, and whatever that one
+  held no longer showed in `bd` run there. A SQLite-era repository,
+  which `bd` refuses to open, got a fresh Dolt database beside its data that
+  silenced the refusal. Now a repository that holds one embedded database
+  keeps it, with its issue prefix (or the source's, when it has none) and its
+  project identity, and the issue is created there. A repository `bd`
+  refuses (such as a SQLite-era repo) and one holding several databases are
+  refused before anything is written. `bd migrate-personal` initializes the
+  planning repo by the same rule.
 - **`bd doctor` says when its multi-repo types check skips a database.** For
   a `repos.additional` repository in a format this build cannot open (a
   `graph_mode` other than `dependency`, or the `graph-preview-format`

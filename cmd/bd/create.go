@@ -21,6 +21,7 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -409,6 +410,11 @@ var createCmd = &cobra.Command{
 				if err := ensureBeadsDirForPath(rootCtx, targetBeadsDir, store, allowCreate); err != nil {
 					if isUnsupportedWorkspaceFormat(err) {
 						return handleWorkspaceGuardError(err)
+					}
+					if isLegacyUpgradeRefusal(err) {
+						// bd's own admission refusal of the target, named,
+						// as bd renders it there: nothing was initialized.
+						return handleWorkspaceGuardError(fmt.Errorf("target repo %s: %w", targetBeadsDir, err))
 					}
 					return HandleError("failed to initialize target repo: %v", err)
 				}
@@ -1075,8 +1081,21 @@ func isAmbiguousRepoTarget(repoFlagChanged bool, repoOverride string) bool {
 }
 
 // ensureBeadsDirForPath ensures a beads directory exists at the target path.
-// If the .beads directory doesn't exist, it creates it and initializes with
-// the same prefix as the source store (T010, T012: prefix inheritance).
+// A .beads that already has a metadata.json is left as it is. Otherwise the
+// metadata.json written here decides what bd opens in the target from then on
+// (it outranks the target's config.yaml), so it must name what the .beads
+// already holds rather than hide it:
+//
+//   - a .beads refuseUninitializableTarget refuses (one bd's own admission
+//     refuses, one holding several databases) is refused, with nothing
+//     written;
+//   - one that holds exactly one embedded database keeps it
+//     (adoptTargetDatabase), the database fork setup creates among them;
+//   - any other is given a new database with the same prefix as the source
+//     store (T010, T012: prefix inheritance).
+//
+// bd migrate-personal applies the same rule to the planning repo
+// (refuseUninitializablePlanningRepo, initializePlanningRepo).
 //
 // When allowCreate is false, a target with no existing workspace is refused
 // instead of fabricated — see isAmbiguousRepoTarget.
@@ -1100,6 +1119,13 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 
 	if !allowCreate {
 		return fmt.Errorf("no beads workspace found at %s and --repo's value is a relative/bare path, so it won't be auto-created here (this is likely not the target you intended). Pass an absolute or \"~/\"-prefixed --repo path to an existing workspace instead", targetPath)
+	}
+
+	if err := refuseUninitializableTarget(beadsDir); err != nil {
+		return err
+	}
+	if databases := embeddeddolt.Databases(beadsDir); len(databases) == 1 {
+		return adoptTargetDatabase(ctx, beadsDir, databases[0], sourceStore, nil)
 	}
 
 	// Create .beads directory
@@ -1136,16 +1162,76 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 
 			// Write metadata.json so newDoltStoreFromConfig can find the
 			// correct database name on subsequent opens (GH#2988).
-			cfg := configfile.DefaultConfig()
-			cfg.Backend = configfile.BackendDolt
-			cfg.DoltDatabase = dbName
-			cfg.DoltMode = configfile.DoltModeEmbedded
-			cfg.ProjectID = configfile.GenerateProjectID()
-			if err := cfg.Save(beadsDir); err != nil {
-				return fmt.Errorf("failed to write metadata.json: %w", err)
-			}
+			return saveEmbeddedTargetMetadata(beadsDir, dbName, configfile.GenerateProjectID())
 		}
 	}
 
+	return nil
+}
+
+// refuseUninitializableTarget refuses a .beads with no metadata.json that
+// ensureBeadsDirForPath must not initialize, because bd run in that repository
+// already reads something there that the metadata.json it writes would hide.
+// It writes nothing. Refused are:
+//
+//   - one bd's own command admission refuses (guardLegacyUpgradeWorkspace),
+//     such as a SQLite-era repo: a fresh database beside it would hide its
+//     data and silence that refusal;
+//   - one holding several embedded databases: nothing records which one
+//     holds the issues (bd run there opens the default database).
+//
+// A .beads holding one embedded database is left to adoptTargetDatabase.
+func refuseUninitializableTarget(beadsDir string) error {
+	if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
+		return err
+	}
+	if databases := embeddeddolt.Databases(beadsDir); len(databases) > 1 {
+		return fmt.Errorf("%s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", filepath.Dir(beadsDir), strings.Join(databases, ", "))
+	}
+	return nil
+}
+
+// adoptTargetDatabase gives a .beads with no metadata.json that holds one
+// embedded database, database, the metadata.json that names it, instead of
+// creating a database named after the source prefix beside it, which would
+// hide whatever it holds. It is the database fork setup creates
+// (autoConfigureForkContributor), and the one an auto-routed open uses until
+// a metadata.json names another (autoRouteTargetDatabase). The database keeps
+// its issue_prefix, or takes sourceStore's when it has none, and its project
+// identity (planningDatabaseSettings). check, when set, inspects the opened
+// database before anything is written and refuses the adoption by returning
+// an error.
+func adoptTargetDatabase(ctx context.Context, beadsDir, database string, sourceStore storage.DoltStorage, check func(storage.DoltStorage) error) error {
+	target, err := newDoltStore(ctx, &dolt.Config{BeadsDir: beadsDir, Database: database})
+	if err != nil {
+		return fmt.Errorf("failed to open %s's database %q: %w", filepath.Dir(beadsDir), database, err)
+	}
+	if check != nil {
+		err = check(target)
+	}
+	var projectID string
+	if err == nil {
+		projectID, err = planningDatabaseSettings(ctx, target, sourceStore)
+	}
+	if closeErr := target.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return saveEmbeddedTargetMetadata(beadsDir, database, projectID)
+}
+
+// saveEmbeddedTargetMetadata writes the metadata.json ensureBeadsDirForPath
+// gives a target: an embedded Dolt workspace using database under projectID.
+func saveEmbeddedTargetMetadata(beadsDir, database, projectID string) error {
+	cfg := configfile.DefaultConfig()
+	cfg.Backend = configfile.BackendDolt
+	cfg.DoltDatabase = database
+	cfg.DoltMode = configfile.DoltModeEmbedded
+	cfg.ProjectID = projectID
+	if err := cfg.Save(beadsDir); err != nil {
+		return fmt.Errorf("failed to write metadata.json: %w", err)
+	}
 	return nil
 }
