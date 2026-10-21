@@ -3,6 +3,7 @@ package dolt
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -148,12 +149,26 @@ func TestNewServerModeExternallyManagedPortAdvice(t *testing.T) {
 				if tc.otherPort {
 					declared = tc.setting + " declares this workspace's Dolt server externally managed, so bd did not start one at " + addr
 				}
-				for _, want := range []string{declared, "did not start"} {
+				wants := []string{declared, "did not start"}
+				absent := []string{"bd dolt start", "auto-start failed", "auto-start is disabled"}
+				switch {
+				case tc.otherPort && tc.source == doltserver.PortSourcePortFile:
+					// The port file outranks dolt_server_port: it is what to
+					// remove, and removing dolt_server_port would not change
+					// the port bd dials.
+					wants = append(wants, fmt.Sprintf("bd took that port from %s, which records the port an earlier command reached and outranks dolt_server_port (%d)",
+						filepath.Join(beadsDir, doltserver.PortFileName), metadataPort))
+					absent = append(absent, "Removing dolt_server_port")
+				case tc.otherPort:
+					// Nothing else declares the server externally managed.
+					wants = append(wants, "Removing dolt_server_port lets bd manage the server.")
+				}
+				for _, want := range wants {
 					if !strings.Contains(msg, want) {
 						t.Errorf("error does not contain %q:\n%s", want, msg)
 					}
 				}
-				for _, banned := range []string{"bd dolt start", "auto-start failed", "auto-start is disabled"} {
+				for _, banned := range absent {
 					if strings.Contains(msg, banned) {
 						t.Errorf("error contains %q:\n%s", banned, msg)
 					}

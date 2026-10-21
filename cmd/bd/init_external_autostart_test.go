@@ -416,6 +416,49 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 			}
 		})
 	}
+	// `bd dolt set port N` rewrites dolt_server_port and leaves the port file
+	// an earlier command wrote, which outranks it, so bd still dials the old
+	// port. The advice names that file as where the port came from and says
+	// to remove it, not dolt_server_port, whose removal would not move the dial.
+	t.Run("bd dolt set port beside the port file an open wrote", func(t *testing.T) {
+		f := newExternalInitFixture(t)
+		port := freeLoopbackPort(t)
+		moved := freeLoopbackPort(t)
+		for moved == port {
+			moved = freeLoopbackPort(t)
+		}
+		ep := tcpEndpoint(port)
+		beadsDir := namedPortWorkspace(t, f, port)
+		if err := os.WriteFile(filepath.Join(beadsDir, "dolt-server.port"), []byte(strconv.Itoa(port)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// Test mode takes a port-file port for a production server and dials
+		// port 1 instead; BEADS_TEST_SERVER=1 is that heuristic's opt-out.
+		f.env = append(f.env, "BEADS_TEST_SERVER=1")
+		if res := f.run("", "dolt", "set", "port", strconv.Itoa(moved)); res.failed {
+			t.Fatalf("bd dolt set port failed:\n%s", res.output)
+		}
+
+		res := f.run("", "list")
+
+		if !res.failed {
+			t.Errorf("bd list succeeded against a dead endpoint %s:\n%s", ep.addr, res.output)
+		}
+		requireNoLaunch(t, res)
+		requireExternalUnreachableMessage(t, res.output, ep.addr)
+		for _, want := range []string{
+			"metadata.json declares this workspace's Dolt server externally managed, so bd did not start one at " + ep.addr,
+			fmt.Sprintf("dolt-server.port, which records the port an earlier command reached and outranks dolt_server_port (%d). "+
+				"Start that server, or remove that file.", moved),
+		} {
+			if !strings.Contains(res.output, want) {
+				t.Errorf("output does not contain %q:\n%s", want, res.output)
+			}
+		}
+		if strings.Contains(res.output, "Removing dolt_server_port") {
+			t.Errorf("output suggests removing dolt_server_port, which does not move the dial off the port file:\n%s", res.output)
+		}
+	})
 }
 
 // TestNamedPortServerDiagnosticsAdvice covers the commands that dial the

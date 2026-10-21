@@ -859,6 +859,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd doctor --perf`, `bd dolt test` and `bd dolt clean-databases` say how to
   check the server there (`nc -zv <host> <port>`) instead of advising
   `bd dolt start`, which refuses a remote host.
+- **When bd's port file chose the port, the unreachable-server advice names
+  that file.** A command that reaches the server records its port in
+  `.beads/dolt-server.port`, which outranks `dolt_server_port`, and
+  `bd dolt set port N` leaves that file alone, so bd kept dialing the old
+  port. The advice blamed `dolt_server_port` and suggested removing it, which
+  would not change the port bd dials. It now says bd took the port from that
+  file, which outranks `dolt_server_port` (N), and to start that server or
+  remove the file. Elsewhere the advice says removing `dolt_server_port` lets
+  bd manage the server only when nothing else, such as
+  `BEADS_DOLT_SERVER_MODE=1` or a port variable naming another port, declares
+  the server externally managed.
 - **`bd migrate-personal` opens the planning repo the way that repo is
   configured.** It opened the planning store as a Dolt SQL server under the
   default database name, ignoring the planning repo's `metadata.json`. An

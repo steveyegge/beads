@@ -3574,3 +3574,71 @@ func writeRemoteMetadataPort(t *testing.T, beadsDir string, port int) {
 		t.Fatal(err)
 	}
 }
+
+// TestExternalPortSettingNamesThePortFile pins the declaration for a port
+// that bd's port file chose over a dolt_server_port naming another one, the
+// shape `bd dolt set port N` leaves after a successful open recorded the old
+// port: it carries the file and the declared port, and its advice names them
+// and does not suggest removing dolt_server_port, which would not stop bd
+// dialing the file's port.
+func TestExternalPortSettingNamesThePortFile(t *testing.T) {
+	const dialed, declared = 13325, 13326
+	namedPortRefusalEnv(t)
+	dir := namedPortServerWorkspace(t, declared)
+
+	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(dialed))
+	advice := ExternalPortSetting(dir, PortSourcePortFile, dialed).Advice(endpoint)
+	for _, want := range []string{
+		"dolt_server_port in " + configfile.ConfigPath(dir) + " declares this workspace's Dolt server externally managed, so bd did not start one at " + endpoint + ".",
+		fmt.Sprintf("bd took that port from %s, which records the port an earlier command reached and outranks dolt_server_port (%d). "+
+			"Start that server, or remove that file.", portPath(dir), declared),
+	} {
+		if !strings.Contains(advice, want) {
+			t.Errorf("advice does not contain %q:\n%s", want, advice)
+		}
+	}
+	for _, banned := range []string{"Removing dolt_server_port", "bd dolt start"} {
+		if strings.Contains(advice, banned) {
+			t.Errorf("advice contains %q:\n%s", banned, advice)
+		}
+	}
+
+	// A port file that agrees with dolt_server_port is not worth naming.
+	same := ExternalPortSetting(dir, PortSourcePortFile, declared).Advice(net.JoinHostPort("127.0.0.1", strconv.Itoa(declared)))
+	if strings.Contains(same, PortFileName) {
+		t.Errorf("advice for a port file naming dolt_server_port's own port names the file:\n%s", same)
+	}
+}
+
+// TestExternalPortSettingSoleDeclaration pins when the advice for a
+// dolt_server_port that does not name the dialed port says removing it lets
+// bd manage the server: only when nothing else declares the server externally
+// managed.
+func TestExternalPortSettingSoleDeclaration(t *testing.T) {
+	const dialed, declared, other = 13327, 13328, 13329
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		sole bool
+	}{
+		{"dolt_server_port alone", nil, true},
+		{"BEADS_DOLT_SERVER_MODE=1", map[string]string{"BEADS_DOLT_SERVER_MODE": "1"}, false},
+		{"BEADS_DOLT_PORT naming another port", map[string]string{"BEADS_DOLT_PORT": strconv.Itoa(other)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			dir := namedPortServerWorkspace(t, declared)
+
+			advice := ExternalPortSetting(dir, PortSourceConfigYaml, dialed).Advice(net.JoinHostPort("127.0.0.1", strconv.Itoa(dialed)))
+			if !strings.Contains(advice, "declares this workspace's Dolt server externally managed") {
+				t.Fatalf("advice is not the dolt_server_port advice:\n%s", advice)
+			}
+			if got := strings.Contains(advice, "Removing dolt_server_port lets bd manage the server."); got != tc.sole {
+				t.Errorf("advice says removing dolt_server_port lets bd manage the server: %v, want %v:\n%s", got, tc.sole, advice)
+			}
+		})
+	}
+}
