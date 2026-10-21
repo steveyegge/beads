@@ -221,33 +221,51 @@ func checkMuxProjectHooks(env agentsEnv) error {
 	return errMuxHooksMissing
 }
 
-func removeManagedMuxHook(env agentsEnv, path string) error {
+// removeManagedMuxHook removes the hook at path if it carries bd's marker,
+// and reports whether it did.
+func removeManagedMuxHook(env agentsEnv, path string) (bool, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- generated internal paths only
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !strings.Contains(string(data), muxHookMarkerBegin) {
 		_, _ = fmt.Fprintf(env.stdout, "ℹ Kept existing custom hook: %s\n", path)
-		return nil
+		return false, nil
 	}
 	if err := os.Remove(path); err != nil {
-		return err
+		return false, err
 	}
 	_, _ = fmt.Fprintf(env.stdout, "✓ Removed Mux hook: %s\n", path)
-	return nil
+	return true, nil
 }
 
+// removeMuxProjectHooks removes the hooks bd installed in the .mux directory
+// of the directory bd runs in, and then that directory if they were all it
+// held. It removes no directory it took no hook from, and never a .mux that
+// is a symlink, or on Windows a junction: removing one unlinks it, whatever
+// its target holds. Run from the home directory, that .mux is ~/.mux, which
+// Xum's migration replaces with a link to ~/.xum.
 func removeMuxProjectHooks(env agentsEnv) error {
 	initPath, toolPostPath, toolEnvPath := muxProjectHookPaths(env.agentsPath)
+	removed := false
 	for _, path := range []string{initPath, toolPostPath, toolEnvPath} {
-		if err := removeManagedMuxHook(env, path); err != nil {
+		ok, err := removeManagedMuxHook(env, path)
+		if err != nil {
 			return err
 		}
+		removed = removed || ok
 	}
-	_ = os.Remove(muxProjectDir(env.agentsPath))
+	if !removed {
+		return nil
+	}
+	// Lstat, not Stat: a link to a directory, or a junction, is no directory.
+	dir := muxProjectDir(env.agentsPath)
+	if info, err := os.Lstat(dir); err == nil && info.IsDir() {
+		_ = os.Remove(dir) // removes it only if it is empty
+	}
 	return nil
 }
 

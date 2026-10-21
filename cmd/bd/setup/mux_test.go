@@ -622,3 +622,82 @@ func TestRemoveMuxGlobalRemovesGlobalLayerSection(t *testing.T) {
 		})
 	}
 }
+
+// Remove takes bd's hooks out of a .mux directory and then removes the
+// directory if they were all it held, but it never removes a .mux that is a
+// symlink, since that unlinks it whatever its target holds, nor a directory
+// it took no hook from. Run from the home directory that .mux is ~/.mux,
+// which Xum's migration replaces with a link to ~/.xum; with --global, the
+// global section in the link's target goes too.
+func TestRemoveMuxKeepsMuxDirItDidNotEmpty(t *testing.T) {
+	stubDetectRenderOpts(t)
+	for _, tt := range []struct {
+		name    string
+		global  bool
+		home    bool // bd runs in the home directory, else in a workspace
+		link    bool // .mux is a symlink to a directory beside it
+		install bool // set up first, with --global from the home directory
+	}{
+		{name: "~/.mux linked to ~/.xum, from home", home: true, link: true, install: true},
+		{name: "~/.mux linked to ~/.xum, from home with --global", home: true, link: true, install: true, global: true},
+		{name: "~/.mux linked to ~/.xum, from home, nothing installed", home: true, link: true},
+		{name: "a workspace's .mux linked to a directory holding only bd's hooks", link: true, install: true},
+		{name: "a workspace's .mux bd installed no hooks in"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := stubMuxHome(t)
+			dir := home
+			if !tt.home {
+				dir = t.TempDir()
+			}
+			muxDir := filepath.Join(dir, ".mux")
+			target := muxDir
+			if tt.link {
+				target = filepath.Join(dir, ".xum")
+			}
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", target, err)
+			}
+			if tt.link {
+				if err := os.Symlink(target, muxDir); err != nil {
+					t.Skipf("symlink: %v", err)
+				}
+			}
+			// The CLI names the agents file with a bare name, relative to
+			// where bd runs.
+			t.Chdir(dir)
+			stdout := &bytes.Buffer{}
+			env := agentsEnv{agentsPath: "AGENTS.md", stdout: stdout, stderr: &bytes.Buffer{}}
+			if tt.install {
+				if err := installMux(env, false, tt.home); err != nil {
+					t.Fatalf("installMux: %v\n%s", err, stdout.String())
+				}
+			}
+
+			stdout.Reset()
+			if err := removeMux(env, false, tt.global); err != nil {
+				t.Fatalf("removeMux: %v\n%s", err, stdout.String())
+			}
+			info, err := os.Lstat(muxDir)
+			if err != nil {
+				t.Fatalf("remove should keep %s, lstat err = %v\n%s", muxDir, err, stdout.String())
+			}
+			if got := info.Mode()&os.ModeSymlink != 0; got != tt.link {
+				t.Errorf("%s is a symlink = %v, want %v", muxDir, got, tt.link)
+			}
+			for _, hook := range []string{"init", "tool_post", "tool_env"} {
+				path := filepath.Join(target, hook)
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Errorf("remove should remove the hook %s, lstat err = %v", path, err)
+				}
+			}
+			if tt.home && tt.install {
+				// The global section is in the link's target, ~/.xum/AGENTS.md.
+				got := readMuxFile(t, filepath.Join(target, "AGENTS.md"))
+				if containsBeadsMarker(got) == tt.global {
+					t.Errorf("global section in %s after remove (global=%v):\n%s", target, tt.global, got)
+				}
+			}
+		})
+	}
+}
