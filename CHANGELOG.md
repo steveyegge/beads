@@ -867,8 +867,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than rolled back, and the error names the issues now in both
   repositories. A planning repo that contributor setup left with no
   `metadata.json` is first given one: the empty `.beads` from
-  `bd init --contributor` is initialized the way a routed `bd create` initializes it, and the database fork setup
-  creates is kept, along with
+  `bd init --contributor` is initialized the way a routed `bd create`
+  initializes it, and the database fork setup creates is kept, along with
   anything already in it, rather than hidden behind a new one. Any other
   planning `.beads` with no `metadata.json` is handled the same way, except
   that a workspace `bd` itself refuses, such as a SQLite-era repo, is refused
@@ -889,8 +889,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the issues while reporting them moved. An issue ID already present in the
   planning repo is also refused rather than overwritten; when the project
   copy is a `bd repo sync` mirror of the planning repo, the error names
-  `bd repo remove`. Its errors no longer end in the usage block, and a
-  refusal is no longer prefixed `failed to open planning store`.
+  `bd repo remove`. Its errors no longer end in the usage block, and the
+  redirect, several-databases and uncommitted-changes refusals are no
+  longer prefixed `failed to open planning store`.
 - **`bd dolt start` no longer creates a phantom database when auto-start is
   off.** With `dolt.auto-start: false` the server is managed outside bd. A
   start over a data directory that is missing, empty, or holds no Dolt
