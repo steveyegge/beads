@@ -19,17 +19,35 @@ import (
 )
 
 // guardLegacyUpgradeWorkspace rejects the reviewed pre-Dolt and legacy-Dolt
-// workspace shapes before command setup can track a version, migrate metadata,
-// or construct a store. It intentionally classifies only metadata, regular
-// SQLite files, and the bounded local version witness; storage internals stay
-// behind the driver boundary.
+// workspace shapes, and workspaces whose metadata declares a format this build
+// cannot open (checkWorkspaceFormat), before command setup can track a version,
+// migrate metadata, or construct a store. It intentionally classifies only
+// metadata, regular SQLite files, and the bounded local version witness;
+// storage internals stay behind the driver boundary. Render its refusals with
+// handleWorkspaceGuardError.
 func guardLegacyUpgradeWorkspace(beadsDir string) error {
+	return guardLegacyUpgradeWorkspaceForInit(beadsDir, false)
+}
+
+// guardLegacyUpgradeWorkspaceForInit is guardLegacyUpgradeWorkspace for a caller
+// that has already resolved server intent from a source the workspace does not
+// yet record: `bd init --server`, whose flag is the only place that choice lives
+// until init has written it. The guard cannot see the flag, so initSelectsServer
+// carries it in. It is consulted for exactly one thing, the empty-root admission
+// below, and is deliberately not folded into the workspace's own server mode:
+// that would also move a non-empty root with an unreadable witness onto the
+// warn-and-open arm, and an embedded repository beside a non-empty .beads/dolt
+// onto the refusing one.
+func guardLegacyUpgradeWorkspaceForInit(beadsDir string, initSelectsServer bool) error {
 	if beadsDir == "" {
 		return nil
 	}
-	cfg, err := configfile.LoadForDiscovery(beadsDir)
+	// This guard admits only the ordinary Issue store. A workspace in another
+	// format is refused before any legacy classification, which could
+	// otherwise admit it, or report it as a legacy store to migrate.
+	cfg, err := loadAndCheckWorkspaceFormat(beadsDir)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
 	if isHistoricalSQLiteWorkspace(beadsDir, cfg) {
 		return legacyUpgradeRefusal("historical SQLite workspace")
@@ -73,6 +91,15 @@ func guardLegacyUpgradeWorkspace(beadsDir string) error {
 		// selecting server mode would have moved shared-server workspaces bd
 		// admits today onto the refusing arm: the mode changed, the evidence
 		// did not.
+		return nil
+	}
+	if initSelectsServer && !present && isEmptyDirectory(filepath.Join(beadsDir, "dolt")) {
+		// Init has already chosen a server, so this is the empty root the
+		// serverMode arm below admits for a workspace that records the choice: it
+		// holds no Dolt data a legacy release could have left, and bd makes it
+		// itself on use, so a retry after a first attempt that could not reach a
+		// server finds exactly this. A present witness, a root holding any entry,
+		// and every caller that does not pass the flag are decided as before.
 		return nil
 	}
 	if serverMode {
@@ -249,9 +276,34 @@ func onlyLegacySQLiteEntries(beadsDir string, entries []os.DirEntry, databaseNam
 // excludes vc.db, so this bounded fallback runs only after that discovery found
 // no current workspace.
 func guardUndiscoveredLegacyWorkspace() error {
+	for _, beadsDir := range undiscoveredWorkspaceCandidates() {
+		if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkUndiscoveredWorkspaceFormat refuses a workspace in a format this build
+// cannot open (checkWorkspaceFormat) that discovery passed over, such as one
+// marked only by a legacy config.json, and nothing else. It reads metadata
+// without migrating it.
+func checkUndiscoveredWorkspaceFormat() error {
+	for _, beadsDir := range undiscoveredWorkspaceCandidates() {
+		if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// undiscoveredWorkspaceCandidates lists, nearest first, the .beads directories
+// the undiscovered-workspace checks read: the one BEADS_DIR names or, without
+// it, each .beads from the working directory up to the repository root and
+// below BEADS_CEILING_DIRECTORIES.
+func undiscoveredWorkspaceCandidates() []string {
 	if explicit := os.Getenv("BEADS_DIR"); explicit != "" {
-		beadsDir := beads.FollowRedirect(utils.CanonicalizePath(explicit))
-		return guardLegacyUpgradeWorkspace(beadsDir)
+		return []string{beads.FollowRedirect(utils.CanonicalizePath(explicit))}
 	}
 
 	cwd, err := os.Getwd()
@@ -261,19 +313,18 @@ func guardUndiscoveredLegacyWorkspace() error {
 	dir := utils.CanonicalizePath(cwd)
 	boundary := utils.CanonicalizePath(git.GetRepoRoot())
 	bound := ceiling.For(dir)
+	var candidates []string
 	for {
 		if bound.Excludes(dir) {
-			return nil
+			return candidates
 		}
-		if err := guardLegacyUpgradeWorkspace(filepath.Join(dir, ".beads")); err != nil {
-			return err
-		}
+		candidates = append(candidates, filepath.Join(dir, ".beads"))
 		if boundary != "" && utils.PathsEqual(dir, boundary) {
-			return nil
+			return candidates
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return nil
+			return candidates
 		}
 		dir = parent
 	}

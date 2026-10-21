@@ -84,7 +84,38 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 		if err := issueops.RecordEventInTx(ctx, r.runner, issueops.EventCreate, issue.ID, actor); err != nil {
 			return err
 		}
-		return issueops.RecordVersionInTx(ctx, r.runner, issue.ID, actor)
+		// EnsureIssueIDAvailableInTx above already refused a collision, so this
+		// strict insert is unconditionally a new row.
+		return issueops.RecordVersionForCreateInTx(ctx, r.runner, issue.ID, actor)
+	}
+	// insertIssueRow is an upsert (ON DUPLICATE KEY UPDATE): unlike the
+	// CreateOnly branch above, "create" here can resolve to an already-existing
+	// row. The participation_generation write-fence (design §16.2b) needs to
+	// know which, so check existence before the upsert overwrites it. With
+	// versioned history off both mint entries return before reading anything,
+	// so the answer is unused and the probe is skipped: this create costs the
+	// round trips it did before the fence.
+	//
+	// A wisps-table insert mints update-shaped without a probe. It never
+	// creates an issues row, and the seam snapshots the issues table first
+	// (GetIssueInTx), so the only issues row it can resolve is a twin that
+	// already held this id. A create-shaped mint would stamp and version that
+	// twin, and so promote a legacy record (R2.3) through an ordinary wisp
+	// write. Update-shaped, the fence leaves a legacy twin alone, and a
+	// wisp-only id mints nothing through either entry (FR-8).
+	//
+	// A twin that already participates passes the fence, so it still gets
+	// the one version main minted for it, although this write never touched
+	// it. That dual presence (GH#4455) predates the fence and is accepted
+	// here, as on main: unlike issueops' create path
+	// (checkCrossTableIDCollisionCached), this upsert does not refuse the
+	// collision.
+	existed := false
+	if !opts.UseWispsTable && issueops.VersionedHistoryEnabledFor(r.runner) {
+		var err error
+		if existed, err = r.Exists(ctx, issue.ID, domain.IssueTableOpts{}); err != nil {
+			return err
+		}
 	}
 	if err := insertIssueRow(ctx, r.runner, table, issue); err != nil {
 		return err
@@ -99,7 +130,10 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 	if err := issueops.RecordEventInTx(ctx, r.runner, issueops.EventCreate, issue.ID, actor); err != nil {
 		return err
 	}
-	return issueops.RecordVersionInTx(ctx, r.runner, issue.ID, actor)
+	if existed || opts.UseWispsTable {
+		return issueops.RecordVersionInTx(ctx, r.runner, issue.ID, actor)
+	}
+	return issueops.RecordVersionForCreateInTx(ctx, r.runner, issue.ID, actor)
 }
 
 func (r *issueSQLRepositoryImpl) InsertBatch(ctx context.Context, issues []*types.Issue, actor string, opts domain.InsertIssueOpts) error {
@@ -1287,9 +1321,14 @@ func (r *issueSQLRepositoryImpl) UnclaimIssueIfAssignee(ctx context.Context, id,
 // (time.Now().UTC()), same TTL resolution (issueops.LeaseTTL), and the same
 // only-current-owner classification (storage.ErrAlreadyClaimed /
 // ErrNotClaimable) — so classic `bd reclaim` staleness semantics see proxied
-// heartbeats identically. Deliberately NO Dolt commit: the leases table is
-// dolt_ignored (bd-lrgn1), and the cmd layer commits this transaction with
-// uow.RunTxEphemeral (plain SQL COMMIT, nothing in dolt_log).
+// heartbeats identically. Deliberately NO Dolt commit here: a refresh writes
+// only the dolt_ignored leases table (bd-lrgn1). A re-arm is recorded as a
+// mutation (versioned rows), so a caller must commit this unit of work with
+// a message, as the Heartbeater role's uow leg does (uow.RunTxScoped). A
+// refusal is returned as an error, so the caller's unit of work rolls back
+// and the orphaned-lease delete the refusal made is not kept on this door
+// (no production caller reaches it; the role's leg commits refusals, and the
+// live-claim predicate keeps an orphan from ever answering a refresh).
 func (r *issueSQLRepositoryImpl) HeartbeatIssue(ctx context.Context, id, actor string) error {
 	if issueops.IsActiveWispInTx(ctx, r.runner, id) {
 		return fmt.Errorf("db: IssueSQLRepository.HeartbeatIssue: %w: %s is ephemeral", storage.ErrNotClaimable, id)
@@ -1322,6 +1361,13 @@ func (r *issueSQLRepositoryImpl) ReclaimExpiredLeases(ctx context.Context, older
 		return nil, fmt.Errorf("db: IssueSQLRepository.ReclaimExpiredLeases: %w", err)
 	}
 	return out, nil
+}
+
+// RenewLease runs the shared heartbeat body directly on r.runner, Reclaim's
+// bare-passthrough shape: validation, the wisp refusal and the typed
+// refusals all happen inside issueops.ExecuteHeartbeatInTx.
+func (r *issueSQLRepositoryImpl) RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error) {
+	return issueops.ExecuteHeartbeatInTx(ctx, r.runner, request)
 }
 
 // Reclaim runs the shared sweep body directly on r.runner, matching GetMany's

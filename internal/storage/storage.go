@@ -387,6 +387,22 @@ type Storage interface {
 	// assignee and status per reverted row, which is on_update, the same
 	// event Releaser fires. See hook_lease_reclaimer.go.
 	LeaseReclaimer() (issueops.LeaseReclaimer, error)
+	// Heartbeater returns the lease-refresh surface for this store: push the
+	// lease the caller holds on one issue forward by the store's TTL.
+	//
+	// It is a WRITE role and its hook decorator WRAPS: a refresh writes only
+	// the ephemeral lease row and fires nothing, but a re-arm (a live claim
+	// with no lease row, HeartbeatResult.Rearmed) is recorded as a mutation
+	// and fires on_update once. That is why RoleFiresHooks answers true for
+	// it, and a server must take it off a peeled store. See
+	// hook_heartbeater.go.
+	Heartbeater() (issueops.Heartbeater, error)
+	// BlockedLister returns the blocked-listing surface for this store: what
+	// `bd blocked` prints. It is a READ role and its hook decorator passes it
+	// through (hook_blocked_lister.go); the external-dependency decorator
+	// overrides it so the listing names unsatisfied external blockers, as its
+	// GetBlockedIssues does.
+	BlockedLister() (issueops.BlockedLister, error)
 
 	// MoleculeStepper returns the advance-a-molecule surface for this store:
 	// find a molecule's next ready step after one closed and, on request,
@@ -1104,6 +1120,23 @@ type Pinger interface {
 // is remote.
 type ExternalDependencyPolicyProber interface {
 	ServerEnforcesExternalDependencyPolicy(ctx context.Context) (bool, error)
+}
+
+type livePolicyProbeKey struct{}
+
+// WithLivePolicyProbe marks ctx as carrying a claim or a close: an
+// ExternalDependencyPolicyProber asked under it must answer from the server,
+// never from a cache another process wrote. A read can tolerate a cached
+// answer for its TTL; a write guard cannot, since a stale "the server
+// enforces it" would skip the client-side refusal of externally blocked work.
+func WithLivePolicyProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, livePolicyProbeKey{}, true)
+}
+
+// LivePolicyProbe reports whether ctx was marked by WithLivePolicyProbe.
+func LivePolicyProbe(ctx context.Context) bool {
+	live, _ := ctx.Value(livePolicyProbeKey{}).(bool)
+	return live
 }
 
 // MoleculeAutoCloseProber is implemented by a DoltStorage whose closes may not

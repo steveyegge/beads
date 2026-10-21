@@ -112,10 +112,10 @@ type Options struct {
 	// arrived is never cut off by it. Such a request that hits it, or whose
 	// connection is reset, is retried once on another connection, with no
 	// header timer and only what is left of the overall Timeout, counted from
-	// when the first attempt was sent. A write is never
-	// retried and is bounded by the overall Timeout alone (bd serve answers a
-	// write after it commits). A written request whose headers do not come
-	// back in time fails with *ResponseHeaderTimeoutError.
+	// when the first attempt was sent. A write that is not Request.Idempotent
+	// is never retried and is bounded by the overall Timeout alone (bd serve
+	// answers a write after it commits). A written request whose headers do
+	// not come back in time fails with *ResponseHeaderTimeoutError.
 	ResponseHeaderTimeout time.Duration
 	// OnStallRetry, when set, is told about every such retry. The process-wide
 	// count is StallRetryCount either way.
@@ -276,7 +276,9 @@ type Request struct {
 	Actor string
 	// Idempotent marks a read carried on a non-GET method (a POST batch get)
 	// as safe to replay, the way a GET is (see Replayable). Never set it on a
-	// write.
+	// write whose replay could double-apply. The one write that sets it is the
+	// lease heartbeat (heartbeatIssue): a repeat only moves the expiry later,
+	// and a replay after the lease is gone fails the holder fence.
 	Idempotent bool
 	// Timeout, when positive, RAISES the client's per-request ceiling for this
 	// one request — never lowers it, and never bounds a client whose
@@ -576,6 +578,7 @@ func (c *Client) roundTripOnce(ctx context.Context, r Request, u *url.URL, stamp
 		attemptCtx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 	}
+	started := time.Now()
 	attemptCtx, ht := startHeaderTimer(attemptCtx, headerTimeout)
 	defer ht.done()
 	req := stamped.Clone(attemptCtx)
@@ -610,6 +613,9 @@ func (c *Client) roundTripOnce(ctx context.Context, r Request, u *url.URL, stamp
 		if wroteAt, ok := ht.written(); ok && ctx.Err() == nil && isTimeout(err) {
 			hte := &ResponseHeaderTimeoutError{Op: r.Op, Method: r.Method, Host: u.Host, After: time.Since(wroteAt), Attempts: 1, Replayable: r.Replayable(), Err: err}
 			return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: hte}
+		}
+		if de := dialFailure(r.Op, u.Host, err, time.Since(started)); de != nil && ctx.Err() == nil {
+			return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: de}
 		}
 		return nil, &ConnectError{Op: r.Op, ServerURL: c.base.Redacted(), Err: err}
 	}
