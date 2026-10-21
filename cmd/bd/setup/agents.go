@@ -275,7 +275,7 @@ func checkAgents(env agentsEnv, integration agentsIntegration) error {
 }
 
 func removeAgents(env agentsEnv, integration agentsIntegration) error {
-	_, _ = fmt.Fprintf(env.stdout, "Removing %s integration...\n", integration.name)
+	_, _ = fmt.Fprintf(env.stdout, "Removing %s integration from %s...\n", integration.name, env.agentsPath)
 	agentsFile := agentsFileName(env.agentsPath)
 	data, err := os.ReadFile(env.agentsPath)
 	if os.IsNotExist(err) {
