@@ -139,28 +139,119 @@ func TestActivateStoreSendsNoStatementsToAHistoryOffServerStore(t *testing.T) {
 	}
 }
 
-// TestDeferredSwitchReadErrorIsRetriedByTheNextWrite: a write whose switch read
-// fails is scoped off, and the next write reads again.
-func TestDeferredSwitchReadErrorIsRetriedByTheNextWrite(t *testing.T) {
+// errVHReadLost is a switch read that lost its connection, which withRetryTx
+// classifies as retryable.
+var errVHReadLost = errors.New("connection reset by peer")
+
+// TestDeferredSwitchReadErrorFailsTheWrite: a write whose switch read fails is
+// rolled back before its body runs, and the next write reads the row again and
+// is the one scoped on. Running the body scoped off instead would commit a
+// create with no participation stamp, the legacy mark that a later recording
+// write skips for good.
+func TestDeferredSwitchReadErrorFailsTheWrite(t *testing.T) {
 	store, mock, _ := vhCountedStore(t)
 	if _, err := versionedhistory.ActivateStore(context.Background(), store, nil); err != nil {
 		t.Fatal(err)
 	}
 	mock.ExpectBegin()
-	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnError(errors.New("connection reset"))
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnError(errVHReadLost)
+	mock.ExpectRollback()
+	err := store.withWriteTx(context.Background(), func(*sql.Tx) error {
+		t.Error("the body of a write whose switch read failed ran")
+		return nil
+	})
+	if !errors.Is(err, errVHReadLost) {
+		t.Fatalf("withWriteTx = %v, want the switch read's error", err)
+	}
+	if store.versionedHistory.Enabled() {
+		t.Fatal("a failed switch read answered the switch")
+	}
+	if !vhWrite(t, store, mock, vhRow("true", true)) {
+		t.Error("the write after a failed switch read did not read the row again")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDeferredSwitchReadErrorIsRetriedByTheWritesOwnRetry: withRetryTx replays
+// a write whose switch read lost its connection, and the replay reads the row
+// again, in a transaction that can still mint. The body runs once, scoped on.
+func TestDeferredSwitchReadErrorIsRetriedByTheWritesOwnRetry(t *testing.T) {
+	store, mock, _ := vhCountedStore(t)
+	if _, err := versionedhistory.ActivateStore(context.Background(), store, nil); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnError(errVHReadLost)
+	mock.ExpectRollback()
+	mock.ExpectBegin()
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnRows(vhRow("true", true))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE vh_probe SET n = n + 1")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	if err := store.withWriteTx(context.Background(), func(tx *sql.Tx) error {
-		if issueops.VersionedHistoryEnabledFor(tx) {
-			t.Error("a write whose switch read failed was scoped on")
-		}
+	var bodies int
+	var scoped bool
+	if err := store.withRetryTx(context.Background(), func(tx *sql.Tx) error {
+		bodies++
+		scoped = issueops.VersionedHistoryEnabledFor(tx)
 		_, err := tx.ExecContext(context.Background(), "UPDATE vh_probe SET n = n + 1")
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !vhWrite(t, store, mock, vhRow("true", true)) {
-		t.Error("the write after a failed switch read did not read the row again")
+	if bodies != 1 || !scoped {
+		t.Errorf("the body ran %d time(s), scoped %v; want once, scoped on by the retry's read", bodies, scoped)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDeferredSwitchReadErrorFailsADoltTransaction: runDoltTransaction's
+// regular transaction answers the switch the same way. A failed read rolls it
+// back before the callback runs, and the next operation reads the row again.
+func TestDeferredSwitchReadErrorFailsADoltTransaction(t *testing.T) {
+	store, mock, _ := vhCountedStore(t)
+	// The journal pins both planes to the regular transaction, so the operation
+	// borrows no connection for the ignored tables; the switch is answered on
+	// the regular transaction either way.
+	store.SetEventsJournalEnabled(true)
+	if _, err := versionedhistory.ActivateStore(context.Background(), store, nil); err != nil {
+		t.Fatal(err)
+	}
+	expectOperation := func() {
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT active_branch()")).
+			WillReturnRows(sqlmock.NewRows([]string{"active_branch()"}).AddRow("main"))
+		mock.ExpectBegin()
+	}
+
+	expectOperation()
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnError(errVHReadLost)
+	mock.ExpectRollback()
+	err := store.runDoltTransaction(context.Background(), "vh probe", func(storage.Transaction) error {
+		t.Error("the callback of an operation whose switch read failed ran")
+		return nil
+	})
+	if !errors.Is(err, errVHReadLost) {
+		t.Fatalf("runDoltTransaction = %v, want the switch read's error", err)
+	}
+
+	// The callback's own error rolls the second operation back, so its scope is
+	// all it shows.
+	expectOperation()
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnRows(vhRow("true", true))
+	mock.ExpectRollback()
+	errProbe := errors.New("probe done")
+	var scoped bool
+	err = store.runDoltTransaction(context.Background(), "vh probe", func(tx storage.Transaction) error {
+		scoped = issueops.VersionedHistoryEnabledFor(tx.(*doltTransaction).regularTx)
+		return errProbe
+	})
+	if !errors.Is(err, errProbe) {
+		t.Fatalf("runDoltTransaction = %v, want the callback's error", err)
+	}
+	if !scoped {
+		t.Error("the operation after a failed switch read did not read the row again")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -184,6 +275,28 @@ func TestStagingAnswersADeferredSwitch(t *testing.T) {
 	}
 	if again := store.withVersionedHistoryTables(context.Background(), store.db, []string{"events"}); !slices.Equal(again, got) {
 		t.Errorf("second staging list %v != first %v", again, got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStagingLeavesASwitchWhoseReadFailedPending: a staging list whose switch
+// read fails is returned as it was, instead of failing the write it stages. A
+// switch still pending at staging belongs to a write that ran unscoped and so
+// minted nothing. The read stays pending for the next caller.
+func TestStagingLeavesASwitchWhoseReadFailedPending(t *testing.T) {
+	store, mock, _ := vhCountedStore(t)
+	if _, err := versionedhistory.ActivateStore(context.Background(), store, nil); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnError(errVHReadLost)
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnRows(vhRow("true", true))
+	if got := store.withVersionedHistoryTables(context.Background(), store.db, []string{"events"}); !slices.Equal(got, []string{"events"}) {
+		t.Errorf("staging list over a failed switch read = %v, want [events] as given", got)
+	}
+	if got := store.withVersionedHistoryTables(context.Background(), store.db, []string{"events"}); !slices.Contains(got, "issue_versions") {
+		t.Errorf("the staging list after a failed switch read is %v: the row was not read again", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

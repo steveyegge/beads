@@ -1322,7 +1322,10 @@ func (s *DoltStore) commitWriteTxOn(ctx context.Context, beginner txBeginner, fn
 	}
 	clearJournalScope := s.scopeEventsJournalTransaction(tx)
 	defer clearJournalScope()
-	clearVersionScope := s.scopeVersionedHistoryTransaction(ctx, tx)
+	clearVersionScope, err := s.scopeVersionedHistoryTransaction(ctx, tx)
+	if err != nil {
+		return issueops.BlockedRecheck{}, errors.Join(err, tx.Rollback())
+	}
 	defer clearVersionScope()
 	clearRecheckScope := issueops.ScopeBlockedRecheckTransaction(tx)
 	defer clearRecheckScope()
@@ -1445,9 +1448,15 @@ func (s *DoltStore) DeferVersionedHistory(resolve storage.VersionedHistoryResolv
 // scopeVersionedHistoryTransaction binds the switch to a WRITE transaction,
 // answering a pending switch through tx first. Every write transaction that can
 // mint is scoped here or in runDoltTransaction, so the row is read inside the
-// first of them and never by a read.
-func (s *DoltStore) scopeVersionedHistoryTransaction(ctx context.Context, tx *sql.Tx) func() {
-	return issueops.ScopeVersionedHistoryTransaction(tx, s.versionedHistory.ResolveIn(ctx, tx))
+// first of them and never by a read. When that read fails it binds nothing and
+// returns the error, and the caller rolls tx back before its body runs
+// (issueops.VersionedHistorySwitch.ResolveIn).
+func (s *DoltStore) scopeVersionedHistoryTransaction(ctx context.Context, tx *sql.Tx) (func(), error) {
+	enabled, err := s.versionedHistory.ResolveIn(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return issueops.ScopeVersionedHistoryTransaction(tx, enabled), nil
 }
 
 // withVersionedHistoryTables appends the tables the versioned-history seam
@@ -1463,9 +1472,14 @@ func (s *DoltStore) scopeVersionedHistoryTransaction(ctx context.Context, tx *sq
 //
 // It answers a pending switch through q, the transaction or connection the
 // caller stages on: a write that ran in a transaction this store did not scope
-// (AddComment's) reaches a staging list before any scope site has asked.
+// (AddComment's) reaches a staging list before any scope site has asked. A
+// read that fails here leaves the list as it is and the switch pending,
+// instead of failing the write being staged. A switch still pending at staging
+// was not answered by that write: a scoped write that reaches its staging has
+// answered it, since a scope whose read fails fails its write. So the write
+// ran unscoped and minted nothing for the version tables to carry.
 func (s *DoltStore) withVersionedHistoryTables(ctx context.Context, q issueops.DBTX, tables []string) []string {
-	if !s.versionedHistory.ResolveIn(ctx, q) {
+	if enabled, err := s.versionedHistory.ResolveIn(ctx, q); err != nil || !enabled {
 		return tables
 	}
 	staged := slices.Clone(tables)

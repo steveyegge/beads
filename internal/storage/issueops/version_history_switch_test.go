@@ -65,8 +65,8 @@ func TestVersionedHistorySwitchReadsTheRowOnceThroughTheFirstWrite(t *testing.T)
 		}
 		mock.ExpectQuery(switchConfigRead).WithArgs(switchTestKey).WillReturnRows(rows)
 		for i := 0; i < 3; i++ {
-			if got := sw.ResolveIn(context.Background(), q); got != tc.want {
-				t.Fatalf("row %v: ResolveIn #%d = %v, want %v", tc.row, i+1, got, tc.want)
+			if got, err := sw.ResolveIn(context.Background(), q); err != nil || got != tc.want {
+				t.Fatalf("row %v: ResolveIn #%d = (%v, %v), want (%v, nil)", tc.row, i+1, got, err, tc.want)
 			}
 		}
 		if calls.Load() != 1 {
@@ -81,20 +81,25 @@ func TestVersionedHistorySwitchReadsTheRowOnceThroughTheFirstWrite(t *testing.T)
 	}
 }
 
-// TestVersionedHistorySwitchAReadErrorIsNotAnAnswer: a failed read answers off
-// for that write and leaves the read pending, so the next write asks again.
+// TestVersionedHistorySwitchAReadErrorIsNotAnAnswer: a failed read is handed
+// back for the write to fail on, not answered off, and leaves the read pending,
+// so the next write asks again.
 func TestVersionedHistorySwitchAReadErrorIsNotAnAnswer(t *testing.T) {
 	q, mock := switchMock(t)
 	var calls atomic.Int64
 	var sw VersionedHistorySwitch
 	sw.Defer(switchResolver(&calls))
-	mock.ExpectQuery(switchConfigRead).WithArgs(switchTestKey).WillReturnError(errors.New("context canceled"))
+	readErr := errors.New("context canceled")
+	mock.ExpectQuery(switchConfigRead).WithArgs(switchTestKey).WillReturnError(readErr)
 	mock.ExpectQuery(switchConfigRead).WithArgs(switchTestKey).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("true"))
-	if sw.ResolveIn(context.Background(), q) {
-		t.Fatal("a write whose read failed was scoped on")
+	if on, err := sw.ResolveIn(context.Background(), q); !errors.Is(err, readErr) || on {
+		t.Fatalf("ResolveIn over a failed read = (%v, %v), want (false, the read's error) for the write to fail on", on, err)
 	}
-	if !sw.ResolveIn(context.Background(), q) {
-		t.Fatal("the write after a failed read did not read the row again")
+	if sw.Enabled() {
+		t.Fatal("a failed read answered the switch on")
+	}
+	if on, err := sw.ResolveIn(context.Background(), q); err != nil || !on {
+		t.Fatalf("the write after a failed read = (%v, %v), want (true, nil) from reading the row again", on, err)
 	}
 	if calls.Load() != 2 {
 		t.Errorf("resolver called %d times, want 2", calls.Load())
@@ -114,14 +119,14 @@ func TestVersionedHistorySwitchOnlyEverTurnsOn(t *testing.T) {
 	var on VersionedHistorySwitch
 	on.Set(true)
 	on.Defer(switchResolver(&calls))
-	if !on.ResolveIn(context.Background(), q) || calls.Load() != 0 {
+	if enabled, err := on.ResolveIn(context.Background(), q); err != nil || !enabled || calls.Load() != 0 {
 		t.Errorf("Defer on an enabled switch: on=%v, %d read(s); want on with no read", on.Enabled(), calls.Load())
 	}
 
 	var set VersionedHistorySwitch
 	set.Defer(switchResolver(&calls))
 	set.Set(false)
-	if set.ResolveIn(context.Background(), q) || calls.Load() != 0 {
+	if enabled, err := set.ResolveIn(context.Background(), q); err != nil || enabled || calls.Load() != 0 {
 		t.Errorf("Set after Defer: on=%v, %d read(s); want off with no read", set.Enabled(), calls.Load())
 	}
 
@@ -129,12 +134,12 @@ func TestVersionedHistorySwitchOnlyEverTurnsOn(t *testing.T) {
 	mock.ExpectQuery(switchConfigRead).WithArgs(switchTestKey).WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	mock.ExpectQuery(switchConfigRead).WithArgs(switchTestKey).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("true"))
 	rearmed.Defer(switchResolver(&calls))
-	if rearmed.ResolveIn(context.Background(), q) {
-		t.Fatal("absent row resolved on")
+	if enabled, err := rearmed.ResolveIn(context.Background(), q); err != nil || enabled {
+		t.Fatalf("absent row resolved (%v, %v), want (false, nil)", enabled, err)
 	}
 	rearmed.Defer(switchResolver(&calls))
-	if !rearmed.ResolveIn(context.Background(), q) {
-		t.Fatal("a switch that answered off was not re-armed by a second Defer")
+	if enabled, err := rearmed.ResolveIn(context.Background(), q); err != nil || !enabled {
+		t.Fatalf("a switch that answered off was not re-armed by a second Defer: (%v, %v)", enabled, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err)
@@ -155,7 +160,7 @@ func TestVersionedHistorySwitchConcurrentWritersReadOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !sw.ResolveIn(context.Background(), q) {
+			if enabled, err := sw.ResolveIn(context.Background(), q); err != nil || !enabled {
 				offs.Add(1)
 			}
 		}()
@@ -193,7 +198,7 @@ func TestVersionedHistorySwitchNoOffWindowWhileAnswering(t *testing.T) {
 				defer done.Done()
 				gate.Wait()
 				for i := 0; i < 50; i++ {
-					if !sw.ResolveIn(ctx, nil) {
+					if enabled, err := sw.ResolveIn(ctx, nil); err != nil || !enabled {
 						offs.Add(1)
 					}
 				}

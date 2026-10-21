@@ -1006,10 +1006,11 @@ type VersionedHistoryConfigurer interface {
 // opened anyway, rather than a transaction (on the embedded store, an engine
 // open) of its own at every open.
 //
-// A resolve that returns an error has not answered: that transaction records
-// nothing and the next write asks again. Like Apply, DeferVersionedHistory
-// never turns an enabled instance off; SetVersionedHistoryEnabled after it
-// replaces the pending read.
+// A resolve that returns an error has not answered: the transaction it ran in
+// fails with that error before its body runs, so it writes nothing, and the
+// next write asks again. Like Apply, DeferVersionedHistory never turns an
+// enabled instance off; SetVersionedHistoryEnabled after it replaces the
+// pending read.
 type VersionedHistoryDeferrer interface {
 	VersionedHistoryConfigurer
 	DeferVersionedHistory(resolve VersionedHistoryResolver)

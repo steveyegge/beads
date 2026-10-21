@@ -249,8 +249,17 @@ func (s *DoltStore) runDoltTransactionRecording(ctx context.Context, commitMsg s
 	// CLI transact wrappers — commits durably while minting no version row, so
 	// the bead has no creation version and the first later mutation that does
 	// run scoped is minted as revision 1: the history then asserts that the
-	// update IS the creation.
-	clearVersionScope := issueops.ScopeVersionedHistoryTransaction(regularTx, s.versionedHistory.ResolveIn(ctx, regularTx))
+	// update IS the creation. A switch read that fails here fails the operation
+	// before fn runs, for the same reason (VersionedHistorySwitch.ResolveIn).
+	versioned, err := s.versionedHistory.ResolveIn(ctx, regularTx)
+	if err != nil {
+		_ = regularTx.Rollback()
+		if !journalEnabled {
+			_ = ignoredTx.Rollback()
+		}
+		return issueops.BlockedRecheck{}, err
+	}
+	clearVersionScope := issueops.ScopeVersionedHistoryTransaction(regularTx, versioned)
 	defer clearVersionScope()
 	// Unblocking writes record their dependents on whichever transaction they
 	// ran in: the regular one, or the ignored one wisps use when the journal

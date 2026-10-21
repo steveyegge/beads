@@ -111,15 +111,24 @@ func TestActivateProviderSendsNoStatementsToAHistoryOffProvider(t *testing.T) {
 	}
 }
 
-func TestDeferredProviderReadErrorIsRetriedByTheNextUnitOfWork(t *testing.T) {
+// TestDeferredProviderReadErrorFailsTheUnitOfWork: a unit of work whose switch
+// read fails does not begin. Its transaction is rolled back and its session
+// released, so it can write nothing scoped off, and the next unit of work reads
+// the row again.
+func TestDeferredProviderReadErrorFailsTheUnitOfWork(t *testing.T) {
 	p, mock, _ := vhCountedProvider(t)
 	if _, err := versionedhistory.ActivateProvider(context.Background(), p, nil); err != nil {
 		t.Fatal(err)
 	}
-	if vhUnit(t, p, mock, func() {
-		mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnError(errors.New("connection reset"))
-	}) {
-		t.Error("a unit of work whose switch read failed was scoped on")
+	readErr := errors.New("connection reset")
+	mock.ExpectExec(regexp.QuoteMeta("START TRANSACTION;")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnError(readErr)
+	mock.ExpectExec(regexp.QuoteMeta("ROLLBACK;")).WillReturnResult(sqlmock.NewResult(0, 0))
+	if uw, err := p.NewUOW(context.Background()); !errors.Is(err, readErr) {
+		if uw != nil {
+			uw.Close(context.Background())
+		}
+		t.Fatalf("NewUOW = %v, want the switch read's error", err)
 	}
 	if !vhUnit(t, p, mock, func() {
 		mock.ExpectQuery(vhConfigRead).WithArgs(versionedhistory.ConfigKey).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("true"))

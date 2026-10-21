@@ -17,7 +17,8 @@ import (
 // It is on, off, or PENDING: handed a storage.VersionedHistoryResolver that
 // has not answered yet. Enabled reports the answer so far, false while
 // pending. ResolveIn is what a write transaction asks: it answers a pending
-// switch through that transaction, once, before the transaction's body runs.
+// switch through that transaction, once, before the transaction's body runs,
+// or fails that transaction when the read does.
 //
 // THE ANSWER ONLY EVER MOVES FROM OFF TO ON, outside tests (Set(false) is the
 // conformance fixtures' cleanup). That is what keeps the deferred read inside
@@ -81,11 +82,14 @@ func (s *VersionedHistorySwitch) Enabled() bool {
 // through q if the read is still pending. Concurrent writers wait for the
 // first one's read rather than each making their own.
 //
-// A read that fails leaves the switch pending and answers off for this write,
-// whose own statements are failing for the same reason more often than not (a
-// canceled context, a dropped connection). Settling off instead would let one
-// interrupted request switch recording off for the rest of a long-lived
-// process (bd serve) while the row says on.
+// A read that fails is not an answer: ResolveIn returns its error and leaves
+// the switch pending, and the caller fails its write before the body runs, so
+// the write's retry, or the next write, reads the row again. Running the body
+// scoped off instead fails open: a create commits with no participation stamp,
+// which is the legacy mark, and once a later write turns recording on the
+// write fence skips that issue for good (RecordVersionForCreateInTx).
+// Settling off would let one interrupted request switch recording off for the
+// rest of a long-lived process (bd serve) while the row says on.
 //
 // The mutex is held across the first resolver's round trip and does not
 // watch ctx: other first writers wait on it while holding their own open
@@ -94,20 +98,20 @@ func (s *VersionedHistorySwitch) Enabled() bool {
 // instance, the wait is bounded by that read's own ctx and driver timeouts,
 // and it cannot deadlock because every caller reads through a transaction or
 // connection it already holds.
-func (s *VersionedHistorySwitch) ResolveIn(ctx context.Context, q DBTX) bool {
+func (s *VersionedHistorySwitch) ResolveIn(ctx context.Context, q DBTX) (bool, error) {
 	if !s.hasPending.Load() {
-		return s.enabled.Load()
+		return s.enabled.Load(), nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending == nil {
-		return s.enabled.Load()
+		return s.enabled.Load(), nil
 	}
 	on, err := s.pending(ctx, func(ctx context.Context, key string) (string, error) {
 		return GetConfigInTx(ctx, q, key)
 	})
 	if err != nil {
-		return s.enabled.Load()
+		return false, err
 	}
 	// Publish the answer before clearing hasPending. In the other order a
 	// writer arriving between the two stores takes the lock-free path, reads
@@ -118,5 +122,5 @@ func (s *VersionedHistorySwitch) ResolveIn(ctx context.Context, q DBTX) bool {
 	}
 	s.pending = nil
 	s.hasPending.Store(false)
-	return s.enabled.Load()
+	return s.enabled.Load(), nil
 }

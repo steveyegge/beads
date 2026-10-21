@@ -4,6 +4,7 @@ package embeddeddolt_test
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -88,6 +89,43 @@ func TestEmbeddedDeferredActivationRecordsFromTheFirstWrite(t *testing.T) {
 				t.Errorf("the first write minted %d version row(s), want %d", n, tc.want)
 			}
 		})
+	}
+}
+
+// TestEmbeddedDeferredSwitchReadErrorFailsTheWrite: a write whose switch read
+// fails writes nothing, rather than committing a create with no participation
+// stamp, and the next write asks again and records.
+func TestEmbeddedDeferredSwitchReadErrorFailsTheWrite(t *testing.T) {
+	skipUnlessEmbeddedDolt(t)
+	te := newTestEnv(t, "vhf")
+	ctx := t.Context()
+	readErr := errors.New("switch read lost")
+	var calls atomic.Int64
+	te.store.DeferVersionedHistory(func(ctx context.Context, readConfig func(context.Context, string) (string, error)) (bool, error) {
+		if calls.Add(1) == 1 {
+			return false, readErr
+		}
+		return true, nil
+	})
+	first := &types.Issue{Title: "first write", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	if err := te.store.CreateIssue(ctx, first, "tester"); !errors.Is(err, readErr) {
+		t.Fatalf("CreateIssue = %v, want the switch read's error", err)
+	}
+	var n int
+	te.queryScalar(t, ctx, "SELECT COUNT(*) FROM issues", nil, &n)
+	if n != 0 {
+		t.Fatalf("a write whose switch read failed left %d issue(s) behind", n)
+	}
+	second := &types.Issue{Title: "second write", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	if err := te.store.CreateIssue(ctx, second, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("the switch was asked %d time(s) over the two writes, want 2", calls.Load())
+	}
+	te.queryScalar(t, ctx, "SELECT COUNT(*) FROM issue_versions WHERE issue_id = ?", []any{second.ID}, &n)
+	if n != 1 {
+		t.Errorf("the write after a failed switch read minted %d version row(s), want 1", n)
 	}
 }
 

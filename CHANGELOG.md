@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proxied-server and HTTP workspaces refuse it. The setting is a row of each
   store's `config` table (`bd config set versioned-history.enabled true`),
   and every store reads its own in its first write (a store that only reads
-  never reads it): a write routed into another workspace (a prefix-routed
+  never reads it, and a write whose read fails fails with it, changing
+  nothing): a write routed into another workspace (a prefix-routed
   `bd update` or `bd close`, `bd create --repo`) follows the target store's
   row, a proxied-server provider reads it in its first unit of work, and a
   long-lived `bd serve` keeps the value it read until it restarts.

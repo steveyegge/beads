@@ -488,10 +488,14 @@ func (s *EmbeddedDoltStore) commitConn(ctx context.Context, commit bool, fn func
 	defer clearJournalScope()
 	// Only a transaction that commits answers a pending switch: a read rolls
 	// back whatever it does, so the row is read inside the first write and
-	// costs a read-only command nothing.
+	// costs a read-only command nothing. A write whose read fails is rolled
+	// back before fn runs (issueops.VersionedHistorySwitch.ResolveIn).
 	versioned := s.versionedHistory.Enabled()
 	if commit {
-		versioned = s.versionedHistory.ResolveIn(ctx, tx)
+		if versioned, err = s.versionedHistory.ResolveIn(ctx, tx); err != nil {
+			err = errors.Join(err, tx.Rollback())
+			return
+		}
 	}
 	clearVersionScope := issueops.ScopeVersionedHistoryTransaction(tx, versioned)
 	defer clearVersionScope()
