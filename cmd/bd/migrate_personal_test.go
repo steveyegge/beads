@@ -835,15 +835,24 @@ func TestEmbeddedMigratePersonal_initializesContributorPlanningRepos(t *testing.
 // anything moves. The move's embedded commit is DOLT_COMMIT('-Am'), which would
 // publish them under migrate-personal's message. The refusal is the Error line
 // alone, and names its remedy, bd dolt commit in the planning repo, after
-// which a rerun moves the issue. A fork-setup database with no metadata.json
-// is refused before its adoption writes anything: no issue_prefix and no
-// metadata.json.
+// which a rerun moves the issue. A database with no metadata.json is refused
+// before its adoption writes anything: no issue_prefix and no metadata.json.
+// When that database is not the default one, bd run in the planning repo
+// opens the default one instead, so the remedy first gives the repo a
+// metadata.json naming it.
 func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
 	t.Parallel()
 
+	requireNoMetadata := func(t *testing.T, planningBeadsDir string) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(planningBeadsDir, "metadata.json")); !os.IsNotExist(err) {
+			t.Errorf("planning metadata.json written by a refused migrate-personal: stat err = %v, want not exist", err)
+		}
+	}
+	const commitRemedy = "commit them there with `bd dolt commit`, then rerun; nothing was moved"
 	bd := buildEmbeddedBD(t)
 	for _, tc := range []struct {
 		name   string
@@ -851,11 +860,16 @@ func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T)
 		// planningRepo returns a planning repo whose working set holds a
 		// change, and the database that holds it.
 		planningRepo func(t *testing.T, dir string) (planningDir, database string)
+		// remedy is the end of the refusal; nameDatabase is whether it first
+		// asks for a metadata.json naming the database, which the test then
+		// writes before running bd dolt commit.
+		remedy       string
+		nameDatabase bool
 		// check, when set, makes the case's own assertions after the refusal.
 		check func(t *testing.T, planningBeadsDir string)
 	}{
 		{
-			name: "initialized planning repo", prefix: "mpu",
+			name: "initialized planning repo", prefix: "mpu", remedy: commitRemedy,
 			planningRepo: func(t *testing.T, dir string) (string, string) {
 				planningDir := setupContributorRouting(t, bd, dir)
 				// A write the planning repo's own dolt.auto-commit left
@@ -865,7 +879,22 @@ func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T)
 			},
 		},
 		{
-			name: "fork setup database", prefix: "mpe",
+			// The shape an ensureBeadsDirForPath interrupted before it saved
+			// metadata.json leaves, or a hand-removed metadata.json.
+			name: "database not named beads without metadata", prefix: "mpn", nameDatabase: true,
+			remedy: `bd run there opens the database "pl" only once a metadata.json names it, so give it a .beads/metadata.json whose dolt_database is "pl", ` + commitRemedy,
+			planningRepo: func(t *testing.T, dir string) (string, string) {
+				planningDir := setupContributorRouting(t, bd, dir)
+				bdCreate(t, bd, planningDir, "Planning issue left uncommitted", "--dolt-auto-commit", "off")
+				if err := os.Remove(filepath.Join(planningDir, ".beads", "metadata.json")); err != nil {
+					t.Fatalf("remove planning metadata.json: %v", err)
+				}
+				return planningDir, migratePersonalPlanningDatabase
+			},
+			check: requireNoMetadata,
+		},
+		{
+			name: "fork setup database", prefix: "mpe", remedy: commitRemedy,
 			planningRepo: func(t *testing.T, dir string) (string, string) {
 				planningDir := t.TempDir()
 				planningBeadsDir := filepath.Join(planningDir, ".beads")
@@ -890,9 +919,7 @@ func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T)
 				return planningDir, "beads"
 			},
 			check: func(t *testing.T, planningBeadsDir string) {
-				if _, err := os.Stat(filepath.Join(planningBeadsDir, "metadata.json")); !os.IsNotExist(err) {
-					t.Errorf("planning metadata.json written by a refused migrate-personal: stat err = %v, want not exist", err)
-				}
+				requireNoMetadata(t, planningBeadsDir)
 				if prefix, err := openStore(t, planningBeadsDir, "beads").GetConfig(t.Context(), "issue_prefix"); err != nil || prefix != "" {
 					t.Errorf("planning database issue_prefix = %q (err %v) after a refused migrate-personal, want it unset", prefix, err)
 				}
@@ -914,8 +941,8 @@ func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T)
 			// The refusal is the Error line alone: no "failed to open planning
 			// store" prefix, since nothing failed to open.
 			out := requireMigratePersonalRefused(t, bd, dir, "Error: planning repo "+planningDir+" has uncommitted changes (")
-			if remedy := "commit them there with `bd dolt commit`, then rerun; nothing was moved"; !strings.Contains(out, remedy) {
-				t.Errorf("bd migrate-personal --yes output does not name the remedy %q:\n%s", remedy, out)
+			if !strings.Contains(out, tc.remedy) {
+				t.Errorf("bd migrate-personal --yes output does not name the remedy %q:\n%s", tc.remedy, out)
 			}
 			requireStillInProject(t, beadsDir, tc.prefix, personal.ID)
 			requireInNoPlanningDatabase(t, planningBeadsDir, personal.ID)
@@ -926,6 +953,16 @@ func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T)
 				tc.check(t, planningBeadsDir)
 			}
 
+			// The remedy, as the refusal prints it.
+			if tc.nameDatabase {
+				raw, err := json.Marshal(map[string]string{"dolt_database": database})
+				if err != nil {
+					t.Fatalf("encode planning metadata.json: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(planningBeadsDir, "metadata.json"), raw, 0o600); err != nil {
+					t.Fatalf("write planning metadata.json: %v", err)
+				}
+			}
 			if out, err := bdRunWithFlockRetry(t, bd, planningDir, "dolt", "commit"); err != nil {
 				t.Fatalf("bd dolt commit in the planning repo: %v\n%s", err, out)
 			}

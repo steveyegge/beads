@@ -111,7 +111,7 @@ func settlePlanningWorkingSet(ctx context.Context, planningStore storage.DoltSto
 			return fmt.Errorf("failed to commit the planning repo's initialization: %w", err)
 		}
 	}
-	return refuseUncommittedPlanningChanges(ctx, planningStore, planningRepo)
+	return refuseUncommittedPlanningChanges(ctx, planningStore, planningRepo, "")
 }
 
 // refuseUncommittedPlanningChanges refuses a planning store whose working set
@@ -122,7 +122,13 @@ func settlePlanningWorkingSet(ctx context.Context, planningStore storage.DoltSto
 // batch or off deferred or changes the user means to discard. Dolt-ignored
 // tables, such as wisps, are not in the working-set status, and the commit
 // leaves them out too. It writes nothing.
-func refuseUncommittedPlanningChanges(ctx context.Context, planningStore storage.DoltStorage, planningRepo string) error {
+//
+// The remedy it names is bd dolt commit in the planning repo. unnamedDatabase
+// is set when the store is a database no metadata.json names yet and that is
+// not the default database (adoptPlanningDatabase): bd run in the planning
+// repo then opens the default database, so bd dolt commit reaches this one
+// only once a metadata.json names it, and the remedy says so.
+func refuseUncommittedPlanningChanges(ctx context.Context, planningStore storage.DoltStorage, planningRepo, unnamedDatabase string) error {
 	commits, err := commitsPlanningWrites(planningStore)
 	if err != nil || !commits {
 		return err
@@ -139,7 +145,11 @@ func refuseUncommittedPlanningChanges(ctx context.Context, planningStore storage
 		return nil
 	}
 	slices.Sort(tables)
-	return refusePlanningRepo("planning repo %s has uncommitted changes (%s), which migrate-personal's commit would publish; commit them there with `bd dolt commit`, then rerun; nothing was moved", planningRepo, strings.Join(slices.Compact(tables), ", "))
+	remedy := "commit them there with `bd dolt commit`, then rerun"
+	if unnamedDatabase != "" {
+		remedy = fmt.Sprintf("bd run there opens the database %[1]q only once a metadata.json names it, so give it a .beads/metadata.json whose dolt_database is %[1]q, commit them there with `bd dolt commit`, then rerun", unnamedDatabase)
+	}
+	return refusePlanningRepo("planning repo %s has uncommitted changes (%s), which migrate-personal's commit would publish; %s; nothing was moved", planningRepo, strings.Join(slices.Compact(tables), ", "), remedy)
 }
 
 // refuseUninitializablePlanningRepo refuses a planning .beads that
@@ -159,10 +169,10 @@ func refuseUninitializablePlanningRepo(planningBeadsDir string) error {
 	if err := guardLegacyUpgradeWorkspace(planningBeadsDir); err != nil {
 		return err
 	}
-	// With no metadata.json, bd names the database it opens in the planning
-	// repo after BEADS_DOLT_SERVER_DATABASE when that is set and the default
-	// database otherwise, so among several nothing records which one holds
-	// the planning issues.
+	// With no metadata.json, bd run in the planning repo opens the default
+	// database (an embedded open there does not consult
+	// BEADS_DOLT_SERVER_DATABASE), so among several nothing records which one
+	// holds the planning issues.
 	if databases := embeddeddolt.Databases(planningBeadsDir); len(databases) > 1 {
 		return refusePlanningRepo("planning repo %s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", filepath.Dir(planningBeadsDir), strings.Join(databases, ", "))
 	}
@@ -219,8 +229,11 @@ func adoptPlanningDatabase(ctx context.Context, planningBeadsDir, database strin
 	if err != nil {
 		return fmt.Errorf("failed to open planning database %q: %w", database, err)
 	}
-	var projectID string
-	err = refuseUncommittedPlanningChanges(ctx, planningStore, filepath.Dir(planningBeadsDir))
+	var projectID, unnamed string
+	if database != configfile.DefaultDoltDatabase {
+		unnamed = database
+	}
+	err = refuseUncommittedPlanningChanges(ctx, planningStore, filepath.Dir(planningBeadsDir), unnamed)
 	if err == nil {
 		projectID, err = planningDatabaseSettings(ctx, planningStore, projectStore)
 	}
