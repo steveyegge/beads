@@ -790,6 +790,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A pull now refreshes the stored push hash of a tracker.** After a pull
+  changed an issue, a local change back to the content of the last push
+  matched the stale hash, and the push skipped the issue. The remote kept the
+  pulled content. Trackers with a `ContentHash` push hook (GitHub) were
+  affected.
+
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a
   record, so in a quiet workspace a follower whose parent died without
