@@ -110,7 +110,10 @@ func TestEmbeddedCorruptMetadataFailsLoudUntilRestored(t *testing.T) {
 	if err != nil {
 		t.Errorf("bd version with corrupt metadata.json: want success, got %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
-	warning := firstLineWithPrefix(stderr, "warning: ")
+	// The warning is found by its own prefix, not as the first warning:
+	// bdEnv passes on the caller's BD_OTEL_* variables, and telemetry warns
+	// about a legacy one before the workspace is bound.
+	warning := firstLineWithPrefix(stderr, "warning: load ")
 	for _, want := range []string{"metadata.json", "parsing config:", "no storage database was opened or modified"} {
 		if !strings.Contains(warning, want) {
 			t.Errorf("bd version with corrupt metadata.json: warning %q missing %q\nstderr:\n%s", warning, want, stderr)
