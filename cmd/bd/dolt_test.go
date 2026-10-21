@@ -2378,3 +2378,30 @@ func TestExternallyManagedFreshStartRefusal(t *testing.T) {
 		})
 	}
 }
+
+// TestDoltStartForceSkipsFreshDataDirRefusal pins AC-5: --force skips the
+// refusal and enters doltserver.Start, which here stops at its dolt lookup
+// because the test runs bd with an empty PATH.
+func TestDoltStartForceSkipsFreshDataDirRefusal(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	root, beadsDir, env := externallyManagedStartWorkspace(t, "false")
+
+	out, err := runBDDoltStart(t, bd, root, env, "--force")
+	if err == nil {
+		t.Fatalf("bd dolt start --force succeeded without a dolt binary:\n%s", out)
+	}
+	if !strings.Contains(out, "dolt is not installed") {
+		t.Errorf("--force did not reach doltserver.Start:\n%s", out)
+	}
+	if strings.Contains(out, "unknown flag") || strings.Contains(out, filepath.Join(beadsDir, "dolt")) {
+		t.Errorf("--force was rejected or still refused:\n%s", out)
+	}
+}
+
+func TestExternallyManagedFreshStartRefusalForce(t *testing.T) {
+	isolateFreshStartEnv(t)
+	serverDir := t.TempDir()
+	if err := externallyManagedFreshStartRefusal(serverDir, true, true); err != nil {
+		t.Fatalf("--force must skip the refusal, got: %v", err)
+	}
+}
