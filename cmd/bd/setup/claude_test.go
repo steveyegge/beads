@@ -2632,7 +2632,7 @@ func TestWarnIfPrimeRunsTwiceNamesARemedy(t *testing.T) {
 			return "remove the bd prime hook from " + project(env)
 		}, true},
 		{"local hook, project plugin", project, local, func(env claudeEnv) string {
-			return "remove the bd prime hook from " + local(env) + ", or turn the plugin off in " + local(env)
+			return "remove the bd prime hook from " + local(env)
 		}, false},
 		{"local hook, local plugin", local, local, func(env claudeEnv) string {
 			return "remove the bd prime hook from " + local(env) + ", or turn the plugin off in " + local(env)
@@ -2761,6 +2761,71 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 			}
 			if strings.Contains(stdout.String(), "runs twice") {
 				t.Errorf("--check reported a double run after the install:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
+// TestInstallClaudeOffForYouNamesTheHookThatRuns pins a project install
+// where only this user's local settings turn off a plugin the shared
+// project settings enable, and a hook already runs bd prime here: a global
+// hook, a shared project hook a teammate committed, or a hook in this
+// user's own .claude/settings.local.json. The install names that hook
+// instead of warning that none runs, keeps the local hook (it cannot move
+// to the shared file), and --check agrees without suggesting a migration.
+func TestInstallClaudeOffForYouNamesTheHookThatRuns(t *testing.T) {
+	stubDetectRenderOpts(t)
+	cases := []struct {
+		name string
+		hook func(claudeEnv) string
+	}{
+		{"global hook", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }},
+		{"shared project hook", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }},
+		{"local hook", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			project := projectSettingsPath(env.projectDir)
+			local := legacyProjectSettingsPath(env.projectDir)
+			files := map[string]map[string]interface{}{
+				project: settingsWithPlugin(),
+				local:   settingsWithPluginSetTo(false),
+			}
+			hookFile := tc.hook(env)
+			if files[hookFile] == nil {
+				files[hookFile] = map[string]interface{}{}
+			}
+			hooks := map[string]interface{}{}
+			addHookCommand(hooks, "SessionStart", "bd prime --hook-json")
+			files[hookFile]["hooks"] = hooks
+			for path, settings := range files {
+				writeSettings(t, path, settings)
+			}
+
+			if err := installClaude(env, false, false); err != nil {
+				t.Fatalf("installClaude: %v", err)
+			}
+			out := stdout.String()
+			want := "✓ The beads plugin is off for you (" + local + "); bd prime runs here from the hook in " + hookFile + "\n"
+			if !strings.Contains(out, want) {
+				t.Errorf("want %q, got:\n%s", want, out)
+			}
+			for _, unwanted := range []string{"⚠", "To run bd prime here", "Migrated hooks", "Removed SessionStart hook"} {
+				if strings.Contains(out, unwanted) {
+					t.Errorf("install printed %q:\n%s", unwanted, out)
+				}
+			}
+			if !hasBeadsHooks(hookFile) {
+				t.Errorf("the hook in %s is gone:\n%s", hookFile, out)
+			}
+
+			stdout.Reset()
+			if err := checkClaude(env); err != nil {
+				t.Fatalf("--check: %v\n%s", err, stdout.String())
+			}
+			if strings.Contains(stdout.String(), "migrate") || strings.Contains(stdout.String(), "runs twice") {
+				t.Errorf("--check should report the hook alone:\n%s", stdout.String())
 			}
 		})
 	}

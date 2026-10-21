@@ -478,6 +478,7 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	if !global {
 		shared = sharedBeadsPlugin(env)
 	}
+	offForYou := false
 	switch {
 	case plugin.enabled && !global && sweptSessionStart && !shared.enabled:
 		// The plugin is enabled for this user alone, and the shared project
@@ -492,8 +493,9 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	case shared.enabled:
 		// Only this user's own settings turn off a plugin the shared
 		// settings enable. A hook in the shared file would make every
-		// teammate with the plugin run bd prime twice (GH#3192).
-		reportPluginOffForYou(env, plugin, shared, "⚠ ")
+		// teammate with the plugin run bd prime twice (GH#3192), so none
+		// is added; this is reported below, once the settings are written.
+		offForYou = true
 	default:
 		if addHookCommand(hooks, "SessionStart", command) {
 			_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
@@ -523,8 +525,10 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		}
 	}
 
-	// Migrate legacy hooks: remove beads hooks from settings.local.json if present
-	if !global {
+	// Migrate legacy hooks: remove beads hooks from settings.local.json if
+	// present. When the plugin is off for this user alone the hook cannot
+	// move to the shared file, so it stays.
+	if !global && !offForYou {
 		legacyPath := legacyProjectSettingsPath(env.projectDir)
 		if hasBeadsHooks(legacyPath) {
 			if legacyData, readErr := env.readFile(legacyPath); readErr == nil {
@@ -546,6 +550,13 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		}
 	}
 
+	if offForYou {
+		if path := primeHookHere(env); path != "" {
+			_, _ = fmt.Fprintf(env.stdout, "✓ The beads plugin is off for you (%s); bd prime runs here from the hook in %s\n", plugin.path, path)
+		} else {
+			reportPluginOffForYou(env, plugin, shared, "⚠ ")
+		}
+	}
 	warnIfPrimeRunsTwice(env)
 	if global && plugin.enabled {
 		warnIfPluginOffHere(env)
@@ -673,7 +684,11 @@ func checkClaude(env claudeEnv) error {
 		userLevelHooks = true
 	case hasBeadsHooks(legacySettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", legacySettings)
-		_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
+		// A project install keeps the hook when the plugin is off for
+		// this user alone.
+		if plugin.enabled || atHome || claudeProjectIsUserLevelDir(env) || !sharedBeadsPlugin(env).enabled {
+			_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
+		}
 	case plugin.enabled:
 		// GH#3192: Plugin provides hooks via plugin.json — no project-level hooks needed
 		_, _ = fmt.Fprintf(env.stdout, "✓ Hooks provided by beads plugin (plugin-managed): %s\n", plugin.path)
@@ -730,12 +745,12 @@ func warnIfPrimeRunsTwice(env claudeEnv) {
 
 // primeTwiceRemedy is how to make bd prime run once where both the beads
 // plugin and the hook in hookPath run it. A global hook is for every
-// project, so it goes only once the user settings enable the plugin. Whether a shared project hook may go is decided by the shared
-// settings: when they enable the plugin it runs for every teammate, so the
-// hook goes, and when they do not, teammates without the plugin rely on the
-// hook, so this user turns the plugin off instead. Managed settings cannot
-// be overridden, so the plugin is turned off only where they do not enable
-// it.
+// project, so it goes only once the user settings enable the plugin.
+// Whether a project hook may go is decided by the shared (managed and
+// project) settings: when they enable the plugin it runs for every
+// teammate, so the hook goes, wherever it is, and when they do not,
+// teammates without the plugin rely on a shared hook, so this user turns
+// the plugin off instead.
 func primeTwiceRemedy(env claudeEnv, hookPath string) string {
 	localRoot := env.projectDir
 	if env.localSettingsRoot != "" {
@@ -750,7 +765,7 @@ func primeTwiceRemedy(env claudeEnv, hookPath string) string {
 	case hookPath == globalSettingsPath(env.homeDir):
 		return turnOff + ", or enable it in " + globalSettingsPath(env.homeDir) +
 			" and run bd setup claude --remove --global, then bd setup claude --global"
-	case shared.enabled && (hookPath == project || shared.path != project):
+	case shared.enabled:
 		return "remove the bd prime hook from " + hookPath
 	case hookPath == project:
 		return turnOff
@@ -788,10 +803,8 @@ func warnIfPluginOffHere(env claudeEnv) {
 	if here.enabled {
 		return
 	}
-	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
-		if hasBeadsHooks(path) {
-			return
-		}
+	if primeHookHere(env) != "" {
+		return
 	}
 	if shared := sharedBeadsPlugin(env); shared.enabled {
 		reportPluginOffForYou(env, here, shared, "⚠ ")
@@ -799,6 +812,18 @@ func warnIfPluginOffHere(env claudeEnv) {
 	}
 	_, _ = fmt.Fprintf(env.stdout, "⚠ The beads plugin is off in this project (%s), so no hook runs bd prime here\n", here.path)
 	_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
+}
+
+// primeHookHere returns the first settings file Claude Code loads in this
+// directory that has a bd prime hook: a project file or the global one. It
+// returns "" when none has.
+func primeHookHere(env claudeEnv) string {
+	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
+		if hasBeadsHooks(path) {
+			return path
+		}
+	}
+	return ""
 }
 
 // claudeProjectHookPaths returns the project's settings files Claude Code
