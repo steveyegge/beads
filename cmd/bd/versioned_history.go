@@ -11,10 +11,10 @@ import (
 // Versioned-history activation, applied in the SAME place events-journal
 // activation is (see the note at the top of events_journal.go): the factories
 // that construct a store or a unit-of-work provider -- store_factory.go,
-// store_factory_nocgo.go, uow_factory.go, the personal-migration planning store,
-// and bd doctor's repair handlers through the same shared package. Every
-// plumbing bd opens goes through one of those, so a routed write cannot acquire a
-// store that silently records no history.
+// store_factory_nocgo.go, uow_factory.go, and bd doctor's repair handlers
+// through the same shared package. Every plumbing bd opens goes through one of
+// those, so a routed write cannot acquire a store that silently records no
+// history.
 //
 // It did not start there. It was first applied in wireStorageDecorators, which
 // the root pre-run calls on the ONE store a command opens for its own workspace.
