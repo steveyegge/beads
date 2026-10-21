@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -1101,6 +1102,59 @@ needs = ["review"]
 			}
 		}
 	})
+
+	// AC-6: the companion carries the gate's await fields and repo selector;
+	// the task keeps the step's own metadata.
+	for _, gateType := range []string{"gh:run", "gh:pr"} {
+		t.Run("github_gate_fields/"+gateType, func(t *testing.T) {
+			sg := cookGateFormulaTOML(t, "gate-gh", `formula = "gate-gh"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "release"
+title = "Cut the release"
+type = "gate"
+
+[steps.metadata]
+owner = "release-team"
+
+[steps.gate]
+type = "`+gateType+`"
+id = "release.yml"
+timeout = "30m"
+repo = "acme/widgets"
+`)
+			taskID, gateID := "gate-gh.release", "gate-gh.gate-release"
+			var gates []string
+			for _, i := range sg.Issues {
+				if i.IssueType == types.TypeGate {
+					gates = append(gates, i.ID)
+				}
+			}
+			if len(gates) != 1 || gates[0] != gateID {
+				t.Fatalf("gate issues = %v, want exactly [%s]", gates, gateID)
+			}
+			gate, task := sg.IssueMap[gateID], sg.IssueMap[taskID]
+			if gate.AwaitType != gateType || gate.AwaitID != "release.yml" || gate.Timeout != 30*time.Minute {
+				t.Errorf("companion await = (%q, %q, %v), want (%q, release.yml, 30m)", gate.AwaitType, gate.AwaitID, gate.Timeout, gateType)
+			}
+			var gateMeta map[string]string
+			if err := json.Unmarshal(gate.Metadata, &gateMeta); err != nil || gateMeta["repo"] != "acme/widgets" {
+				t.Errorf("companion metadata = %s (err %v), want repo acme/widgets", gate.Metadata, err)
+			}
+			if task.AwaitType != "" || task.AwaitID != "" || task.Timeout != 0 {
+				t.Errorf("task await = (%q, %q, %v), want empty", task.AwaitType, task.AwaitID, task.Timeout)
+			}
+			var taskMeta map[string]any
+			if err := json.Unmarshal(task.Metadata, &taskMeta); err != nil || taskMeta["owner"] != "release-team" {
+				t.Errorf("task metadata = %s (err %v), want owner release-team", task.Metadata, err)
+			}
+			if _, ok := taskMeta["repo"]; ok {
+				t.Errorf("task metadata = %s, repo belongs on the companion", task.Metadata)
+			}
+		})
+	}
 }
 
 // TestCookFormulaToSubgraph_BareGateStepType pins that a step declared
