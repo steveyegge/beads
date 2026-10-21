@@ -799,7 +799,14 @@ required. Use this command for explicit control or diagnostics.
 Not available in proxied-server mode: there the proxy owns its dolt backend's
 lifecycle and starts it on demand, so a server started here would be a second,
 unsupervised one over the same data directory. Use 'bd dolt status' to see what
-is running and 'bd dolt stop' to shut it down.`,
+is running and 'bd dolt stop' to shut it down.
+
+With dolt.auto-start: false the server is expected to be managed outside bd, so
+a start that would create a new, empty Dolt database (the data directory is
+missing, empty, or holds no database) is refused before anything is written:
+it would publish its port and shadow the managed server's database. Starting
+over existing data, or adopting a server bd already tracks, is unaffected. Use
+--force to create the new database anyway.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		beadsDir := selectedDoltBeadsDir()
 		if beadsDir == "" {
@@ -840,6 +847,10 @@ is running and 'bd dolt stop' to shut it down.`,
 			return HandleError("the configured Dolt server host is remote (%s); 'bd dolt start' only manages a local server.\nStart the server on that host, or clear dolt_server_host / dolt.host / BEADS_DOLT_SERVER_HOST to run one locally", host)
 		}
 		serverDir := doltserver.ResolveServerDir(beadsDir)
+		force, _ := cmd.Flags().GetBool("force")
+		if err := externallyManagedFreshStartRefusal(serverDir, doltserver.IsAutoStartDisabled(), force); err != nil {
+			return HandleError("%v", err)
+		}
 
 		state, err := doltserver.Start(serverDir)
 		if err != nil {
@@ -863,6 +874,43 @@ is running and 'bd dolt stop' to shut it down.`,
 		}
 		return nil
 	},
+}
+
+// externallyManagedFreshStartRefusal refuses a `bd dolt start` that would mint
+// a phantom database (bd-7pkvvd). With auto-start off the workspace's server
+// is managed outside bd and reached through its published port; when that
+// port is lost, starting here would `dolt init` an empty data dir and publish
+// a new port, so later commands silently resolve to the empty database
+// instead of the real one. A data dir that already holds a database, or a
+// running dolt sql-server bd already tracks, is a start or adopt bd can do
+// safely.
+//
+// Read-only: it resolves the data dir with DoltDirPath (ResolveDoltDir
+// creates the shared-server tree) and checks the tracked server with
+// IsTrackedServerRunning (IsRunning deletes state files and can stop a
+// server). A tracked PID that is alive but not a dolt sql-server, such as a
+// PID recycled after a reboot, is refused: Start would delete both state
+// files and init the data dir.
+func externallyManagedFreshStartRefusal(serverDir string, autoStartDisabled, force bool) error {
+	if force || !autoStartDisabled {
+		return nil
+	}
+	doltDir := doltserver.DoltDirPath(serverDir)
+	if doltserver.HasDoltDatabase(doltDir) {
+		return nil
+	}
+	if doltserver.IsTrackedServerRunning(serverDir) {
+		return nil
+	}
+	portFile := filepath.Join(serverDir, doltserver.PortFileName)
+	return fmt.Errorf("refusing to start a Dolt server: %s holds no Dolt database\n\n"+
+		"dolt.auto-start is off, so this workspace's server is expected to be managed outside bd. "+
+		"Starting one here would run 'dolt init' to create a new, empty database and publish its port in %s; "+
+		"later bd commands would then use that empty database instead of the managed one.\n\n"+
+		"If the managed server is running, publish its port again (normally by writing %s), "+
+		"or pin it with BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml.\n"+
+		"To create a new, empty database here anyway: bd dolt start --force",
+		doltDir, portFile, portFile)
 }
 
 var doltStopCmd = &cobra.Command{
@@ -1871,6 +1919,7 @@ func isTimeoutError(err error) bool {
 
 func init() {
 	doltSetCmd.Flags().Bool("update-config", false, "Also write to config.yaml for team-wide defaults")
+	doltStartCmd.Flags().Bool("force", false, "Start even when dolt.auto-start is off and this would create a new, empty Dolt database")
 	doltStopCmd.Flags().Bool("force", false, "Force stop (proxied recovery still requires a bd/dolt executable match)")
 	doltPushCmd.Flags().Bool("force", false, "Force push (overwrite remote changes)")
 	doltPushCmd.Flags().String("remote", "", "Push to a specific named remote instead of the default")
@@ -2285,7 +2334,8 @@ func testDoltConnection() error {
 	}
 
 	host := cfg.GetDoltServerHost()
-	port := doltserver.DefaultConfig(beadsDir).Port
+	dc := doltserver.DialConfig(beadsDir)
+	port := dc.Port
 	addr := fmt.Sprintf("%s:%d", host, port)
 
 	if jsonOutput {
@@ -2309,7 +2359,7 @@ func testDoltConnection() error {
 		fmt.Printf("%s\n", ui.RenderPass("✓ Connection successful"))
 	} else {
 		fmt.Printf("%s\n", ui.RenderWarn("✗ Connection failed"))
-		fmt.Println("\nStart the server with: bd dolt start")
+		fmt.Println("\n" + unreachableServerAdvice(beadsDir, host, dc))
 		return SilentExit()
 	}
 
@@ -2457,7 +2507,8 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 	}
 
 	host := cfg.GetDoltServerHost()
-	port := doltserver.DefaultConfig(beadsDir).Port
+	dc := doltserver.DialConfig(beadsDir)
+	port := dc.Port
 	user := cfg.GetDoltServerUser()
 	password := os.Getenv("BEADS_DOLT_PASSWORD")
 
@@ -2484,11 +2535,22 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		fmt.Fprintf(os.Stderr, "Error: cannot reach Dolt server at %s:%d: %v\n", host, port, err)
-		fmt.Fprintln(os.Stderr, "Start the server with: bd dolt start")
+		fmt.Fprintln(os.Stderr, unreachableServerAdvice(beadsDir, host, dc))
 		return nil, nil, SilentExit()
 	}
 
 	return db, func() { _ = db.Close() }, nil
+}
+
+// unreachableServerAdvice is what to do about a Dolt server at host and dc's
+// port that did not answer: the externally managed advice when a setting
+// naming the port declares the server so (bd starts no server there, and
+// `bd dolt start` would start its own on that port), else `bd dolt start`.
+func unreachableServerAdvice(beadsDir, host string, dc *doltserver.Config) string {
+	if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dc.Port, dc.PortSource); advice != "" {
+		return advice
+	}
+	return "Start the server with: bd dolt start"
 }
 
 // doltServerPidFile returns the path to the PID file for the managed dolt server.

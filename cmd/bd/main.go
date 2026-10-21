@@ -857,10 +857,11 @@ func prepareSelectedCommandContext(beadsDir string, loadEnv bool) {
 	}
 	config.CheckBeadsDirPermissions(beadsDir)
 	if err := loadServerModeFromBeadsDir(beadsDir); err != nil {
-		// Warn, don't fatal: this context also serves no-DB commands —
-		// doctor, init, bootstrap, config — which are exactly the repair
-		// paths for a corrupt metadata.json. Data commands stay protected
-		// by the hard error at store init and in the store factories.
+		// Warn, don't fatal: the commands workspace admission exempts,
+		// such as bd version and help, still run. Admission
+		// (guardLegacyUpgradeWorkspace) then refuses every other command,
+		// doctor, init and bootstrap included, and the store factories
+		// refuse too, so the repair is fixing or restoring the file by hand.
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 }
@@ -1559,10 +1560,11 @@ var rootCmd = &cobra.Command{
 			if os.Getenv("BEADS_DIR") == "" {
 				loadEnvironment()
 				if err := loadServerModeFromConfig(); err != nil {
-					// Warn, don't fatal: skipsStoreInit commands (doctor,
-					// init, bootstrap, version, ...) never select a store,
-					// and several of them are the repair path for the very
-					// corruption being reported.
+					// Warn, don't fatal, as prepareSelectedCommandContext
+					// does: the commands admission exempts still run, and
+					// admission refuses the rest (guardLegacyNoStoreCommand
+					// below; doctor, init and bootstrap run the guard
+					// themselves).
 					fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 				}
 			}
@@ -2753,8 +2755,14 @@ func flushBatchCommitOnShutdown() {
 // run, not a workspace problem. It must stay narrow: any other previewErr
 // (unreachable server, bad config, ...) has to refuse rather than silently
 // wave the real, mutating open through (be-3bt2e).
+//
+// So it matches the embedded store's own no-database error, and only when the
+// cause is a missing data dir — not any ENOENT. A dial to a configured unix
+// socket whose server is down satisfies errors.Is(err, os.ErrNotExist) too,
+// as does a data dir missing an internal file, and neither is a first run
+// (bd-wlygc).
 func isBootstrapPreviewErr(err error) bool {
-	return errors.Is(err, os.ErrNotExist)
+	return errors.Is(err, embeddeddolt.ErrNoEmbeddedDatabase) && errors.Is(err, os.ErrNotExist)
 }
 
 // refuseUnverifiablePreviewOpen renders the identity gate's refusal when the

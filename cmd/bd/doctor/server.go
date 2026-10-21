@@ -83,9 +83,10 @@ func RunServerHealthChecks(path string) ServerHealthResult {
 
 	// Server mode is configured - run health checks
 	host := cfg.GetDoltServerHost()
-	// Use doltserver.DefaultConfig for port resolution (env > port file > config.yaml).
+	// Use doltserver.DialConfig for port resolution (env > port file >
+	// config.yaml, plus the legacy BEADS_DOLT_PORT the store dials).
 	// Port 0 means server not yet started — report that clearly.
-	port := doltserver.DefaultConfig(beadsDir).Port
+	port := doltserver.DialConfig(beadsDir).Port
 	if port == 0 {
 		result.Checks = append(result.Checks, DoctorCheck{
 			Name:     "Server port",
@@ -286,7 +287,7 @@ func checkServerReachable(host string, port int) DoctorCheck {
 // Returns the DoctorCheck and an open database connection (caller must close)
 func checkDoltVersion(cfg *configfile.Config, beadsDir string) (DoctorCheck, *sql.DB) {
 	host := cfg.GetDoltServerHost()
-	port := doltserver.DefaultConfig(beadsDir).Port
+	port := doltserver.DialConfig(beadsDir).Port
 	user := cfg.GetDoltServerUser()
 
 	// Resolve password the same way the CRUD path does: BEADS_DOLT_PASSWORD env

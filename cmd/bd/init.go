@@ -228,7 +228,8 @@ func shouldInitSharedGlobalDB(sharedServer, sharedServerMode, gateway bool) bool
 }
 
 // externalServerUnreachableMessage returns the message for an --external init
-// whose server could not be dialed, or "" when err is any other failure.
+// whose server could not be dialed or had no port named, or "" when err is any
+// other failure.
 //
 // --external declares the server managed outside bd, so init starts none. The
 // store's own advice for a dead local server, "bd dolt start", would start the
@@ -237,20 +238,25 @@ func shouldInitSharedGlobalDB(sharedServer, sharedServerMode, gateway bool) bool
 // off). One message serves them all: it names the endpoint that was dialed and
 // says that bd did not start a server.
 //
-// A dial to port 0 is the exception. The store leaves a zero port zero for
-// auto-start to fill in, so it means nothing named a port: the address is a
-// placeholder, not an endpoint. The message says so and how to name one, and
+// An init that names no port is the exception. The store leaves a zero port
+// zero for auto-start to fill in, and an open that will not start a server
+// (--external) fails with dolt.ErrUnresolvedServerPort instead of dialing; a
+// dial to port 0 means the same, since the address is a placeholder, not an
+// endpoint. The message says no port was named and how to name one, and
 // offers no default, since on a shared machine whatever listens on a default
 // port may belong to another project (GH#2098, GH#2372).
 func externalServerUnreachableMessage(err error) string {
+	const noPortNamed = "--external declares the Dolt server externally managed, so bd did not start one, and no port was named for it.\n" +
+		"Name the server's port with --server-port or BEADS_DOLT_SERVER_PORT.\n"
+	if errors.Is(err, dolt.ErrUnresolvedServerPort) {
+		return fmt.Sprintf("Error: failed to open Dolt store: %v\n\n%s", dolt.ErrUnresolvedServerPort, noPortNamed)
+	}
 	var opErr *net.OpError
 	if !errors.As(err, &opErr) || opErr.Op != "dial" {
 		return ""
 	}
 	if addr, ok := opErr.Addr.(*net.TCPAddr); ok && addr.Port == 0 {
-		return fmt.Sprintf("Error: failed to open Dolt store: %v\n\n"+
-			"--external declares the Dolt server externally managed, so bd did not start one, and no port was named for it.\n"+
-			"Name the server's port with --server-port or BEADS_DOLT_SERVER_PORT.\n", opErr)
+		return fmt.Sprintf("Error: failed to open Dolt store: %v\n\n%s", opErr, noPortNamed)
 	}
 	endpoint := "the configured endpoint"
 	if opErr.Addr != nil {
@@ -1638,7 +1644,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			ServerMode:             initServerMode,
 			ProxiedServer:          initProxiedServer,
 			CreateIfMissing:        true, // bd init is the only path that should create databases
-			OpenedByInit:           true, // shapes the identity-mismatch advice (GH#5558)
+			OpenedByInit:           true, // shapes advice only: identity mismatch (GH#5558) and the externally managed endpoint's --server-port
 			AutoStart:              initServerMode && !externalServer && os.Getenv("BEADS_DOLT_AUTO_START") != "0",
 			ServerTLS:              initDoltServerTLSFromEnv(),
 		}

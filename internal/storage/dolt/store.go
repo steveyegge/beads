@@ -309,6 +309,7 @@ var _ storage.SchemaMigrator = (*DoltStore)(nil)
 var _ storage.ExternalRefHistoryQuerier = (*DoltStore)(nil)
 var _ storage.EventsJournalConfigurer = (*DoltStore)(nil)
 var _ storage.VersionedHistoryConfigurer = (*DoltStore)(nil)
+var _ storage.VersionedHistoryDeferrer = (*DoltStore)(nil)
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
@@ -320,17 +321,19 @@ type DoltStore struct {
 	// eventsJournalEnabled activates the durable events journal for THIS store
 	// instance only (storage.EventsJournalConfigurer); never process-global.
 	eventsJournalEnabled atomic.Bool
-	// versionedHistoryEnabled activates dual-write issue-version history for
-	// THIS store instance only (storage.VersionedHistoryConfigurer); never
-	// process-global.
-	versionedHistoryEnabled atomic.Bool
-	connStr                 string       // Connection string for reconnection
-	cfg                     *Config      // Config this store was opened with (rebuildPoolAfterMigration)
-	serverEndpoint          string       // Exact endpoint bound to bootstrap reset authority
-	mu                      sync.RWMutex // Protects concurrent access
-	readOnly                bool         // True if opened in read-only mode
-	classifiedRead          bool         // True if readOnly came from command classification (GH#804), not strict --readonly/preview/foreign-project; still eligible for the defer-wake sweep (be-vbhpf)
-	credentialKey           []byte       // Random encryption key for federation credentials
+	// versionedHistory activates dual-write issue-version history for THIS
+	// store instance only (storage.VersionedHistoryConfigurer); never
+	// process-global. Activation usually leaves it pending
+	// (storage.VersionedHistoryDeferrer): the row is read by the first write
+	// transaction, so a store that only reads never reads it.
+	versionedHistory issueops.VersionedHistorySwitch
+	connStr          string       // Connection string for reconnection
+	cfg              *Config      // Config this store was opened with (rebuildPoolAfterMigration)
+	serverEndpoint   string       // Exact endpoint bound to bootstrap reset authority
+	mu               sync.RWMutex // Protects concurrent access
+	readOnly         bool         // True if opened in read-only mode
+	classifiedRead   bool         // True if readOnly came from command classification (GH#804), not strict --readonly/preview/foreign-project; still eligible for the defer-wake sweep (be-vbhpf)
+	credentialKey    []byte       // Random encryption key for federation credentials
 
 	// localActiveDatabaseDir is the exact active database directory when this
 	// store instance has authoritative local filesystem access. It is resolved
@@ -456,8 +459,10 @@ type Config struct {
 	// creation of shadow databases on the wrong server.
 	CreateIfMissing bool
 
-	// OpenedByInit marks the open `bd init` makes. It only shapes the advice in
-	// a project-identity mismatch error (GH#5558), never whether the check runs.
+	// OpenedByInit marks the open `bd init` makes. It only shapes advice, never
+	// whether a check runs: a project-identity mismatch error's (GH#5558), and
+	// the setting an externally managed endpoint's advice names (init's
+	// caller-explicit port is its --server-port flag).
 	// It is a field of its own because CreateIfMissing does not identify init:
 	// the library API (beads.OpenFromConfig, beads.OpenGated), `bd doctor --fix`
 	// and `bd bootstrap` open with CreateIfMissing too, and must not be told to
@@ -1319,7 +1324,10 @@ func (s *DoltStore) commitWriteTxOn(ctx context.Context, beginner txBeginner, fn
 	}
 	clearJournalScope := s.scopeEventsJournalTransaction(tx)
 	defer clearJournalScope()
-	clearVersionScope := s.scopeVersionedHistoryTransaction(tx)
+	clearVersionScope, err := s.scopeVersionedHistoryTransaction(ctx, tx)
+	if err != nil {
+		return issueops.BlockedRecheck{}, errors.Join(err, tx.Rollback())
+	}
 	defer clearVersionScope()
 	clearRecheckScope := issueops.ScopeBlockedRecheckTransaction(tx)
 	defer clearRecheckScope()
@@ -1430,11 +1438,27 @@ func (s *DoltStore) scopeEventsJournalTransaction(tx *sql.Tx) func() {
 // SetVersionedHistoryEnabled activates dual-write issue-version history for
 // this store instance only.
 func (s *DoltStore) SetVersionedHistoryEnabled(enabled bool) {
-	s.versionedHistoryEnabled.Store(enabled)
+	s.versionedHistory.Set(enabled)
 }
 
-func (s *DoltStore) scopeVersionedHistoryTransaction(tx *sql.Tx) func() {
-	return issueops.ScopeVersionedHistoryTransaction(tx, s.versionedHistoryEnabled.Load())
+// DeferVersionedHistory leaves this store's switch to resolve, read by the
+// first write transaction (storage.VersionedHistoryDeferrer).
+func (s *DoltStore) DeferVersionedHistory(resolve storage.VersionedHistoryResolver) {
+	s.versionedHistory.Defer(resolve)
+}
+
+// scopeVersionedHistoryTransaction binds the switch to a WRITE transaction,
+// answering a pending switch through tx first. Every write transaction that can
+// mint is scoped here or in runDoltTransaction, so the row is read inside the
+// first of them and never by a read. When that read fails it binds nothing and
+// returns the error, and the caller rolls tx back before its body runs
+// (issueops.VersionedHistorySwitch.ResolveIn).
+func (s *DoltStore) scopeVersionedHistoryTransaction(ctx context.Context, tx *sql.Tx) (func(), error) {
+	enabled, err := s.versionedHistory.ResolveIn(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return issueops.ScopeVersionedHistoryTransaction(tx, enabled), nil
 }
 
 // withVersionedHistoryTables appends the tables the versioned-history seam
@@ -1447,8 +1471,17 @@ func (s *DoltStore) scopeVersionedHistoryTransaction(tx *sql.Tx) func() {
 //
 // Staging a table that turns out to be clean is free: DOLT_ADD stages nothing
 // and both helpers already skip the commit on an empty staged set.
-func (s *DoltStore) withVersionedHistoryTables(tables []string) []string {
-	if !s.versionedHistoryEnabled.Load() {
+//
+// It answers a pending switch through q, the transaction or connection the
+// caller stages on: a write that ran in a transaction this store did not scope
+// (AddComment's) reaches a staging list before any scope site has asked. A
+// read that fails here leaves the list as it is and the switch pending,
+// instead of failing the write being staged. A switch still pending at staging
+// was not answered by that write: a scoped write that reaches its staging has
+// answered it, since a scope whose read fails fails its write. So the write
+// ran unscoped and minted nothing for the version tables to carry.
+func (s *DoltStore) withVersionedHistoryTables(ctx context.Context, q issueops.DBTX, tables []string) []string {
+	if enabled, err := s.versionedHistory.ResolveIn(ctx, q); err != nil || !enabled {
 		return tables
 	}
 	staged := slices.Clone(tables)
@@ -1973,6 +2006,17 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// the DSN built in openServerConnection agree on the transport.
 	cfg.ServerSocket = ResolveSocketTransport(cfg.ServerSocket, cfg.ServerHost, cfg.ServerPort, 500*time.Millisecond)
 
+	// Port 0 means "not yet resolved", and only auto-start resolves it. An
+	// open that will not start a server must not dial 127.0.0.1:0 and then
+	// report an outage: the server may be healthy and bd simply has no
+	// address for it (bd-7pkvvd). IsAutoStartDisabled is checked as well as
+	// serverOpenCanAutoStart because it also accepts spellings such as
+	// "false" that resolveAutoStart does not.
+	if cfg.ServerSocket == "" && cfg.ServerPort <= 0 &&
+		(!serverOpenCanAutoStart(cfg) || doltserver.IsAutoStartDisabled()) {
+		return nil, unresolvedServerPortError(cfg, resolvedBeadsDir, serverDir)
+	}
+
 	// Fail-fast connectivity check before MySQL protocol initialization.
 	// This gives an immediate, clear error if the Dolt server isn't running,
 	// rather than waiting for MySQL driver timeouts.
@@ -2012,6 +2056,16 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			}
 			port, startedByUs, startErr := ensureRunningDetailed(resolvedBeadsDir)
 			if startErr != nil {
+				// EnsureRunning refused, rather than failed, to start a
+				// server bd does not manage. When a named port is what
+				// declares it so, report the failed dial the way an open
+				// that cannot auto-start does (below): "auto-start failed"
+				// and "bd dolt start" describe a start bd must not make.
+				if errors.Is(startErr, doltserver.ErrExternallyManaged) {
+					if hint := externallyManagedPortHint(cfg, resolvedBeadsDir, addr); hint != "" {
+						return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\n%s", addr, dialErr, hint)
+					}
+				}
 				return nil, fmt.Errorf("Dolt server unreachable at %s and auto-start failed: %w\n\n"+
 					"To start manually: bd dolt start\n"+
 					"To disable auto-start: set dolt.auto-start: false in .beads/config.yaml",
@@ -2124,6 +2178,14 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 					cfg.ServerHost, cfg.ServerPort,
 					cfg.ServerHost, cfg.ServerPort,
 					cfg.ServerHost, cfg.ServerPort)
+			} else if named := externallyManagedPortHint(cfg, resolvedBeadsDir, addr); named != "" {
+				// A named port declares the server externally managed
+				// (BEADS_DOLT_SERVER_PORT, dolt_server_port), which is
+				// why auto-start is off here: "bd dolt start" would start
+				// bd's own server on that port, not the one that belongs
+				// there. Checked before the auto-start-disabled hint,
+				// whose remedy is that same command.
+				hint = named
 			} else if !cfg.AutoStart && doltserver.IsAutoStartDisabled() {
 				hint = "Dolt server auto-start is disabled (dolt.auto-start: false).\n" +
 					"Start the server manually:\n  bd dolt start"
@@ -2401,6 +2463,84 @@ func serverOpenCanAutoStart(cfg *Config) bool {
 		cfg.ServerSocket == "" && isLocalHost(cfg.ServerHost)
 }
 
+// ErrUnresolvedServerPort is wrapped by the error an open returns when it has
+// no server address and will not start a server (see
+// unresolvedServerPortError). A caller with its own advice for that case,
+// such as `bd init --external` asking for --server-port, tests for it with
+// errors.Is.
+var ErrUnresolvedServerPort = errors.New("no Dolt server port resolved")
+
+// unresolvedServerPortError explains an open that has no server address: no
+// socket, and no port source resolved a port. It returns nil when cfg has
+// either, and otherwise an error wrapping ErrUnresolvedServerPort. serverDir
+// is ResolveServerDir(beadsDir), so the port file it names is the
+// shared-server one in shared mode.
+//
+// The text never says "unreachable" or names 127.0.0.1:0 (nothing was
+// dialed), and it suggests `bd dolt start` only when bd manages the server:
+// for a server managed elsewhere that command inits an empty database and
+// publishes its port, shadowing the real one.
+func unresolvedServerPortError(cfg *Config, beadsDir, serverDir string) error {
+	if cfg.ServerSocket != "" || cfg.ServerPort > 0 {
+		return nil
+	}
+	portFile := filepath.Join(serverDir, doltserver.PortFileName)
+	portFileState := "no usable port"
+	if _, err := os.Stat(portFile); os.IsNotExist(err) {
+		portFileState = "missing"
+	}
+
+	var b strings.Builder
+	b.WriteString("None of these port sources has a value:\n")
+	for i, label := range doltserver.PortSourceLabels() {
+		fmt.Fprintf(&b, "  %d. %s", i+1, label)
+		if strings.Contains(label, doltserver.PortFileName) {
+			fmt.Fprintf(&b, ": %s (%s)", portFile, portFileState)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	const pinPort = "BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml"
+	switch {
+	case isExternalServerHost(cfg.ServerHost):
+		fmt.Fprintf(&b, "bd does not manage the Dolt server at %s; pin its port with %s.", cfg.ServerHost, pinPort)
+	case doltserver.IsAutoStartDisabled() || !cfg.AutoStart:
+		if doltserver.IsAutoStartDisabled() {
+			b.WriteString("dolt.auto-start is off, so bd does not start this workspace's Dolt server.\n")
+		} else {
+			b.WriteString("This workspace's Dolt server is externally managed, so bd does not start it.\n")
+		}
+		fmt.Fprintf(&b, "Whatever manages the server must publish its port again (normally by writing %s), "+
+			"or pin the port with %s.", portFile, pinPort)
+	default:
+		b.WriteString("This command does not start a Dolt server. Run a bd command that can start one, " +
+			"or start it with:\n  bd dolt start")
+	}
+	return fmt.Errorf("%w for %s\n\n%s", ErrUnresolvedServerPort, beadsDir, b.String())
+}
+
+// externallyManagedPortHint is the advice for an unreachable TCP endpoint on
+// this machine whose port is named by a setting that declares its server
+// externally managed (doltserver.ExternalPortSetting), or "" for any other
+// endpoint, which keeps its own advice. addr is the endpoint that was dialed.
+func externallyManagedPortHint(cfg *Config, beadsDir, addr string) string {
+	if cfg.ServerSocket != "" || isExternalServerHost(cfg.ServerHost) {
+		return ""
+	}
+	decl := doltserver.ExternalPortSetting(beadsDir, cfg.ServerPortSource, cfg.ServerPort)
+	if decl.NamesEndpoint && cfg.OpenedByInit && cfg.ServerPortSource == doltserver.PortSourceCallerExplicit {
+		// bd init's only caller-explicit port is its --server-port flag,
+		// which it promotes into BEADS_DOLT_SERVER_PORT: name what was typed.
+		decl.Setting = "--server-port"
+	}
+	return decl.Advice(addr)
+}
+
+// persistResolvedPortFile records the port a successful local open reached in
+// bd's port file. It writes no pid file, so the record does not make the
+// server bd's own: doltserver.ExternalPortSetting still names the setting
+// that declared the port when a later open finds the server down.
 func persistResolvedPortFile(cfg *Config, beadsDir string) error {
 	if cfg.DisableAutoStart || !shouldPersistResolvedPortFile() {
 		return nil
@@ -3982,9 +4122,6 @@ func (s *DoltStore) stageAndCommit(ctx context.Context, tables []string, commitM
 	if issueops.VersionCommitDeferred(ctx) {
 		return nil
 	}
-	if !opts.configPlane {
-		tables = s.withVersionedHistoryTables(tables)
-	}
 	return s.withCircuitWrite(ctx, func(ctx context.Context) error {
 		conn, err := s.db.Conn(ctx)
 		if err != nil {
@@ -3992,6 +4129,11 @@ func (s *DoltStore) stageAndCommit(ctx context.Context, tables []string, commitM
 				fmt.Errorf("acquire connection after SQL mutation: %w: %w", err, ErrCommitIndeterminate))
 		}
 		defer conn.Close()
+
+		tables := tables
+		if !opts.configPlane {
+			tables = s.withVersionedHistoryTables(ctx, conn, tables)
+		}
 
 		if opts.screen != nil {
 			if err := opts.screen(ctx, conn, false); err != nil {

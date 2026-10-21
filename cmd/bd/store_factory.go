@@ -37,6 +37,15 @@ func isEmbeddedMode() bool {
 	return !usesSQLServer()
 }
 
+// isEmbeddedStore reports whether st is an embedded Dolt store. Unlike
+// isEmbeddedMode it answers for the store, not the command: a store opened in
+// another workspace takes that workspace's backend (openDoltStoreFromConfig),
+// so a server-mode command can hold an embedded one.
+func isEmbeddedStore(st storage.DoltStorage) bool {
+	_, ok := storage.UnwrapStore(st).(*embeddeddolt.EmbeddedDoltStore)
+	return ok
+}
+
 func usesProxiedServer() bool {
 	if shouldUseGlobals() {
 		return proxiedServerMode
