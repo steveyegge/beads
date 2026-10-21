@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/types"
@@ -733,7 +734,8 @@ func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.
 
 // TestEmbeddedMigratePersonal_unsupportedPlanningFormatExit16 verifies that a
 // planning repo in a format this build cannot open is refused the way bd's own
-// admission refuses it: exit ExitUnsupportedWorkspaceFormat, with the hint.
+// admission refuses it: exit ExitUnsupportedWorkspaceFormat, with only the
+// Error and Hint lines on stderr.
 func TestEmbeddedMigratePersonal_unsupportedPlanningFormatExit16(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -769,10 +771,22 @@ func TestEmbeddedMigratePersonal_unsupportedPlanningFormatExit16(t *testing.T) {
 	cmd := exec.Command(bd, "migrate-personal", "--yes")
 	cmd.Dir = dir
 	cmd.Env = bdEnv(dir)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	err = cmd.Run()
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != ExitUnsupportedWorkspaceFormat {
 		t.Errorf("bd migrate-personal --yes err = %v, want exit %d", err, ExitUnsupportedWorkspaceFormat)
+	}
+	// stderr is exactly bd's own admission refusal: the Error and Hint lines,
+	// with no "Error: exit code 16" placeholder from cobra and no usage dump.
+	formatErr := &configfile.UnsupportedWorkspaceFormatError{
+		BeadsDir:  filepath.Join(planningDir, ".beads"),
+		GraphMode: "graph",
+	}
+	wantStderr := "Error: " + formatErr.Error() + "\nHint: " + formatErr.Hint() + "\n"
+	if got := stderr.String(); got != wantStderr {
+		t.Errorf("bd migrate-personal --yes stderr:\n%s\nwant exactly:\n%s", got, wantStderr)
 	}
 	requireStillInProject(t, beadsDir, "mpg", personal.ID)
 }

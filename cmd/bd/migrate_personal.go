@@ -227,7 +227,12 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	planningStore, err := openMigrationPlanningStore(ctx, planningBeadsDir, store)
 	if err != nil {
 		if isUnsupportedWorkspaceFormat(err) {
-			// Same rendering as bd's own admission refusal: hint and exit 16.
+			// Same rendering as bd's own admission refusal: the Error and
+			// Hint lines and exit 16. Silence cobra for this invocation (the
+			// migrationFreezeGate pattern) so the exitError does not add
+			// "Error: exit code 16" and a usage dump after the hint.
+			cmd.SilenceErrors = true
+			cmd.SilenceUsage = true
 			return handleWorkspaceGuardError(err)
 		}
 		return fmt.Errorf("failed to open planning store at %s: %w", planningPath, err)
