@@ -22,11 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command still lists what was recorded after recording is turned off, and
   proxied-server and HTTP workspaces refuse it. The setting is a row of each
   store's `config` table (`bd config set versioned-history.enabled true`),
-  and every store reads its own when it is opened: a write routed into
-  another workspace (a prefix-routed `bd update` or `bd close`,
-  `bd create --repo`) follows the target store's row, a proxied-server
-  provider reads it when it is constructed, and a long-lived `bd serve`
-  keeps the value it read until it restarts.
+  and every store reads its own in its first write (a store that only reads
+  never reads it, and a write whose read fails fails with it, changing
+  nothing): a write routed into another workspace (a prefix-routed
+  `bd update` or `bd close`, `bd create --repo`) follows the target store's
+  row, a proxied-server provider reads it in its first unit of work, and a
+  long-lived `bd serve` keeps the value it read until it restarts.
   `BD_VERSIONED_HISTORY_ENABLED=1` (or a `config.yaml` value) turns
   recording on for every store the process opens, and never turns it off.
   The row replicates on `bd dolt push`/`pull`, and recording is single-writer

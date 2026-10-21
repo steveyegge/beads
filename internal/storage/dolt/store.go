@@ -309,6 +309,7 @@ var _ storage.SchemaMigrator = (*DoltStore)(nil)
 var _ storage.ExternalRefHistoryQuerier = (*DoltStore)(nil)
 var _ storage.EventsJournalConfigurer = (*DoltStore)(nil)
 var _ storage.VersionedHistoryConfigurer = (*DoltStore)(nil)
+var _ storage.VersionedHistoryDeferrer = (*DoltStore)(nil)
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
@@ -320,17 +321,19 @@ type DoltStore struct {
 	// eventsJournalEnabled activates the durable events journal for THIS store
 	// instance only (storage.EventsJournalConfigurer); never process-global.
 	eventsJournalEnabled atomic.Bool
-	// versionedHistoryEnabled activates dual-write issue-version history for
-	// THIS store instance only (storage.VersionedHistoryConfigurer); never
-	// process-global.
-	versionedHistoryEnabled atomic.Bool
-	connStr                 string       // Connection string for reconnection
-	cfg                     *Config      // Config this store was opened with (rebuildPoolAfterMigration)
-	serverEndpoint          string       // Exact endpoint bound to bootstrap reset authority
-	mu                      sync.RWMutex // Protects concurrent access
-	readOnly                bool         // True if opened in read-only mode
-	classifiedRead          bool         // True if readOnly came from command classification (GH#804), not strict --readonly/preview/foreign-project; still eligible for the defer-wake sweep (be-vbhpf)
-	credentialKey           []byte       // Random encryption key for federation credentials
+	// versionedHistory activates dual-write issue-version history for THIS
+	// store instance only (storage.VersionedHistoryConfigurer); never
+	// process-global. Activation usually leaves it pending
+	// (storage.VersionedHistoryDeferrer): the row is read by the first write
+	// transaction, so a store that only reads never reads it.
+	versionedHistory issueops.VersionedHistorySwitch
+	connStr          string       // Connection string for reconnection
+	cfg              *Config      // Config this store was opened with (rebuildPoolAfterMigration)
+	serverEndpoint   string       // Exact endpoint bound to bootstrap reset authority
+	mu               sync.RWMutex // Protects concurrent access
+	readOnly         bool         // True if opened in read-only mode
+	classifiedRead   bool         // True if readOnly came from command classification (GH#804), not strict --readonly/preview/foreign-project; still eligible for the defer-wake sweep (be-vbhpf)
+	credentialKey    []byte       // Random encryption key for federation credentials
 
 	// localActiveDatabaseDir is the exact active database directory when this
 	// store instance has authoritative local filesystem access. It is resolved
@@ -1319,7 +1322,10 @@ func (s *DoltStore) commitWriteTxOn(ctx context.Context, beginner txBeginner, fn
 	}
 	clearJournalScope := s.scopeEventsJournalTransaction(tx)
 	defer clearJournalScope()
-	clearVersionScope := s.scopeVersionedHistoryTransaction(tx)
+	clearVersionScope, err := s.scopeVersionedHistoryTransaction(ctx, tx)
+	if err != nil {
+		return issueops.BlockedRecheck{}, errors.Join(err, tx.Rollback())
+	}
 	defer clearVersionScope()
 	clearRecheckScope := issueops.ScopeBlockedRecheckTransaction(tx)
 	defer clearRecheckScope()
@@ -1430,11 +1436,27 @@ func (s *DoltStore) scopeEventsJournalTransaction(tx *sql.Tx) func() {
 // SetVersionedHistoryEnabled activates dual-write issue-version history for
 // this store instance only.
 func (s *DoltStore) SetVersionedHistoryEnabled(enabled bool) {
-	s.versionedHistoryEnabled.Store(enabled)
+	s.versionedHistory.Set(enabled)
 }
 
-func (s *DoltStore) scopeVersionedHistoryTransaction(tx *sql.Tx) func() {
-	return issueops.ScopeVersionedHistoryTransaction(tx, s.versionedHistoryEnabled.Load())
+// DeferVersionedHistory leaves this store's switch to resolve, read by the
+// first write transaction (storage.VersionedHistoryDeferrer).
+func (s *DoltStore) DeferVersionedHistory(resolve storage.VersionedHistoryResolver) {
+	s.versionedHistory.Defer(resolve)
+}
+
+// scopeVersionedHistoryTransaction binds the switch to a WRITE transaction,
+// answering a pending switch through tx first. Every write transaction that can
+// mint is scoped here or in runDoltTransaction, so the row is read inside the
+// first of them and never by a read. When that read fails it binds nothing and
+// returns the error, and the caller rolls tx back before its body runs
+// (issueops.VersionedHistorySwitch.ResolveIn).
+func (s *DoltStore) scopeVersionedHistoryTransaction(ctx context.Context, tx *sql.Tx) (func(), error) {
+	enabled, err := s.versionedHistory.ResolveIn(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return issueops.ScopeVersionedHistoryTransaction(tx, enabled), nil
 }
 
 // withVersionedHistoryTables appends the tables the versioned-history seam
@@ -1447,8 +1469,17 @@ func (s *DoltStore) scopeVersionedHistoryTransaction(tx *sql.Tx) func() {
 //
 // Staging a table that turns out to be clean is free: DOLT_ADD stages nothing
 // and both helpers already skip the commit on an empty staged set.
-func (s *DoltStore) withVersionedHistoryTables(tables []string) []string {
-	if !s.versionedHistoryEnabled.Load() {
+//
+// It answers a pending switch through q, the transaction or connection the
+// caller stages on: a write that ran in a transaction this store did not scope
+// (AddComment's) reaches a staging list before any scope site has asked. A
+// read that fails here leaves the list as it is and the switch pending,
+// instead of failing the write being staged. A switch still pending at staging
+// was not answered by that write: a scoped write that reaches its staging has
+// answered it, since a scope whose read fails fails its write. So the write
+// ran unscoped and minted nothing for the version tables to carry.
+func (s *DoltStore) withVersionedHistoryTables(ctx context.Context, q issueops.DBTX, tables []string) []string {
+	if enabled, err := s.versionedHistory.ResolveIn(ctx, q); err != nil || !enabled {
 		return tables
 	}
 	staged := slices.Clone(tables)
@@ -3982,9 +4013,6 @@ func (s *DoltStore) stageAndCommit(ctx context.Context, tables []string, commitM
 	if issueops.VersionCommitDeferred(ctx) {
 		return nil
 	}
-	if !opts.configPlane {
-		tables = s.withVersionedHistoryTables(tables)
-	}
 	return s.withCircuitWrite(ctx, func(ctx context.Context) error {
 		conn, err := s.db.Conn(ctx)
 		if err != nil {
@@ -3992,6 +4020,11 @@ func (s *DoltStore) stageAndCommit(ctx context.Context, tables []string, commitM
 				fmt.Errorf("acquire connection after SQL mutation: %w: %w", err, ErrCommitIndeterminate))
 		}
 		defer conn.Close()
+
+		tables := tables
+		if !opts.configPlane {
+			tables = s.withVersionedHistoryTables(ctx, conn, tables)
+		}
 
 		if opts.screen != nil {
 			if err := opts.screen(ctx, conn, false); err != nil {

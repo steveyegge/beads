@@ -274,6 +274,11 @@ func TestNotifyingProviderAnswersTheWholeProviderSurface(t *testing.T) {
 		"BeginTx": "TxProvider hands out a bare transaction with no unit of work around it, so " +
 			"there is nothing to buffer and nothing to drain: the wrapper deliberately does not " +
 			"offer it, and only this package's own NewUOW asks a provider for one",
+		"DeferVersionedHistory": "asked of the RAW provider by versionedhistory.ActivateProvider in the " +
+			"factories, before any wrapper exists; a wrapper cannot answer it honestly, because forwarding " +
+			"to an inner provider that can only take SetVersionedHistoryEnabled would drop the activation. " +
+			"A wrapped provider is activated through the forwarded SetVersionedHistoryEnabled instead, " +
+			"by the eager read",
 		"initSchema":             "unexported provider setup, not a capability any caller can reach",
 		"initSchemaAttempt":      initBranch,
 		"verifyTeamServerSchema": initBranch,

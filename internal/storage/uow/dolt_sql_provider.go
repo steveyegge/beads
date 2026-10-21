@@ -62,9 +62,10 @@ type doltSQLProvider struct {
 	// eventsJournalEnabled activates the durable events journal for THIS
 	// provider instance only. See SetEventsJournalEnabled.
 	eventsJournalEnabled atomic.Bool
-	// versionedHistoryEnabled activates dual-write issue-version history for
-	// THIS provider instance only. See SetVersionedHistoryEnabled.
-	versionedHistoryEnabled atomic.Bool
+	// versionedHistory activates dual-write issue-version history for THIS
+	// provider instance only. See SetVersionedHistoryEnabled and
+	// DeferVersionedHistory.
+	versionedHistory issueops.VersionedHistorySwitch
 }
 
 // SetEventsJournalEnabled activates the durable events journal for every unit
@@ -85,7 +86,17 @@ func (p *doltSQLProvider) SetEventsJournalEnabled(enabled bool) {
 // every unit of work this provider begins from now on. Per instance, never
 // process-global — see SetEventsJournalEnabled.
 func (p *doltSQLProvider) SetVersionedHistoryEnabled(enabled bool) {
-	p.versionedHistoryEnabled.Store(enabled)
+	p.versionedHistory.Set(enabled)
+}
+
+// DeferVersionedHistory leaves this provider's switch to resolve
+// (storage.VersionedHistoryDeferrer). BeginTx answers it inside the first
+// unit of work, after START TRANSACTION: one SELECT on a session that is
+// pinned anyway, rather than a unit of work of its own at construction. A
+// unit of work does not say whether it will write, so that first one may be a
+// read.
+func (p *doltSQLProvider) DeferVersionedHistory(resolve storage.VersionedHistoryResolver) {
+	p.versionedHistory.Defer(resolve)
 }
 
 type bootstrapPreparationError struct {
@@ -184,6 +195,7 @@ var (
 	_ TxProvider                         = (*doltSQLProvider)(nil)
 	_ storage.EventsJournalConfigurer    = (*doltSQLProvider)(nil)
 	_ storage.VersionedHistoryConfigurer = (*doltSQLProvider)(nil)
+	_ storage.VersionedHistoryDeferrer   = (*doltSQLProvider)(nil)
 )
 
 func (p *doltSQLProvider) NewUOW(ctx context.Context) (UnitOfWork, error) {
@@ -211,6 +223,14 @@ func (p *doltSQLProvider) BeginTx(ctx context.Context) (Tx, error) {
 		return nil, fmt.Errorf("uow: failed to start transaction: %w", err)
 	}
 
+	// A pending versioned-history switch is answered inside this transaction.
+	// When that read fails the unit of work does not begin: it would otherwise
+	// run scoped off (issueops.VersionedHistorySwitch.ResolveIn).
+	versioned, err := p.versionedHistory.ResolveIn(ctx, conn)
+	if err != nil {
+		return nil, (&doltServerTx{conn: conn}).closeOpenTxAfterFailure(ctx, fmt.Errorf("uow: %w", err))
+	}
+
 	// Bind journal and versioned-history activation to the connection this unit
 	// of work is pinned to, AFTER START TRANSACTION so the seq allocation's
 	// UPDATE and the SELECT that must observe it are inside one transaction on
@@ -221,7 +241,7 @@ func (p *doltSQLProvider) BeginTx(ctx context.Context) (Tx, error) {
 	return &doltServerTx{
 		conn:              conn,
 		clearJournalScope: issueops.ScopeEventsJournalTransaction(conn, p.eventsJournalEnabled.Load()),
-		clearVersionScope: issueops.ScopeVersionedHistoryTransaction(conn, p.versionedHistoryEnabled.Load()),
+		clearVersionScope: issueops.ScopeVersionedHistoryTransaction(conn, versioned),
 		clearRecheckScope: issueops.ScopeBlockedRecheckTransaction(conn),
 	}, nil
 }
