@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/templates/agents"
 )
 
@@ -2182,6 +2185,95 @@ func TestDirWithin(t *testing.T) {
 	}
 	if !dirWithin(link, root) {
 		t.Error("a symlink to a subdirectory should be within the root")
+	}
+}
+
+// TestClaudeLocalSettingsRoot pins where claudeLocalSettingsRoot finds the
+// local settings Claude Code reads for a session: the repository root from a
+// subdirectory, the main checkout's root from a linked worktree, nowhere
+// when that root is the home directory, and nowhere when the cached git
+// context belongs to another repository than the working directory.
+func TestClaudeLocalSettingsRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code keeps settings.local.json beside settings.json on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	for _, name := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"} {
+		t.Setenv(name, "")
+		_ = os.Unsetenv(name)
+	}
+	t.Cleanup(git.ResetCaches)
+
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	// Keep a repository above the temp directory out of the outside rows.
+	t.Setenv("GIT_CEILING_DIRECTORIES", tmp)
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "maintenance.auto=false", "-c", "gc.auto=0",
+			"-c", "user.name=bd", "-c", "user.email=bd@example.com", "-c", "init.defaultBranch=main"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	newRepo := func(dir string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		runGit(dir, "init", "-q")
+		runGit(dir, "commit", "-q", "--allow-empty", "-m", "init")
+	}
+
+	home := filepath.Join(tmp, "home")
+	main := filepath.Join(tmp, "main")
+	wt := filepath.Join(tmp, "wt")
+	newRepo(home)
+	newRepo(main)
+	runGit(main, "worktree", "add", "-q", "--detach", wt)
+	if err := os.MkdirAll(filepath.Join(wt, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	outside := filepath.Join(tmp, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		// cachedIn is where the git context is cached; workDir is the
+		// directory claudeLocalSettingsRoot is asked about.
+		cachedIn, workDir string
+		want              string
+	}{
+		{"repository root", main, main, main},
+		{"subdirectory of the main checkout", filepath.Join(main, "sub"), filepath.Join(main, "sub"), main},
+		{"linked worktree", wt, wt, main},
+		{"subdirectory of a linked worktree", filepath.Join(wt, "sub"), filepath.Join(wt, "sub"), main},
+		{"repository root is the home directory", filepath.Join(home, "sub"), filepath.Join(home, "sub"), ""},
+		{"outside any repository", outside, outside, ""},
+		{"git context cached for another repository", main, outside, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(tc.cachedIn)
+			git.ResetCaches()
+			got := claudeLocalSettingsRoot(home, tc.workDir)
+			if tc.want == "" {
+				if got != "" {
+					t.Errorf("claudeLocalSettingsRoot(%s) = %q, want \"\"", tc.workDir, got)
+				}
+				return
+			}
+			if got == "" || !sameDir(got, tc.want) {
+				t.Errorf("claudeLocalSettingsRoot(%s) = %q, want %q", tc.workDir, got, tc.want)
+			}
+		})
 	}
 }
 
