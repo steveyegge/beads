@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/atomicfile"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/fdhygiene"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/procid"
@@ -478,6 +479,15 @@ func forkExecChild(rootDir string, opts OpenOpts, port int, stopEpoch string, lo
 			args = append(args, "--external-keep-alive", ext.KeepAlivePeriod.String())
 		}
 	}
+
+	// Startup-only rotation (internal/doltserver/logrotate.go) of both logs.
+	// proxy.lock is held, so the previous proxy has exited and nothing has
+	// either file open; this must stay before the OpenFile below, or the
+	// child's stdout would follow the renamed inode to <log>.1.
+	if opts.LogFilePath != "" {
+		doltserver.MaybeRotateLogFile(opts.LogFilePath)
+	}
+	doltserver.MaybeRotateLogFile(filepath.Join(rootDir, LogFileName))
 
 	logFile, err := os.OpenFile(opts.LogFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: logFilePath is caller-derived (workspace path), not user-request input
 	if err != nil {

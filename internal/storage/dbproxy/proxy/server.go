@@ -18,6 +18,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/procid"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/identity"
@@ -170,6 +171,9 @@ func (p *proxyServer) ListenAndServe(parentCtx context.Context) error {
 	}
 
 	logPath := filepath.Join(p.rootDir, LogFileName)
+	// forkExecChild already rotated it for a spawned proxy; this covers
+	// in-process callers and is a no-op on the fresh file otherwise.
+	doltserver.MaybeRotateLogFile(logPath)
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- logPath is derived from operator-supplied config, not untrusted request input
 	if err != nil {
 		return fmt.Errorf("open proxy log %q: %w", logPath, err)

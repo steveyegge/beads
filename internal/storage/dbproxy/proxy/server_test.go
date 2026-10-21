@@ -10,10 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/procid"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/identity"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/pidfile"
@@ -916,4 +918,98 @@ func TestProxy_TraceLog_NoPerConnectionLinesByDefault(t *testing.T) {
 	} {
 		assert.NotContains(t, text, unwanted, "default proxy.log has per-connection line %q", unwanted)
 	}
+}
+
+// bd-pdwxc6 / #7527: ListenAndServe rotates an oversized proxy.log to
+// proxy.log.1 (overwriting an older .1) before opening it, so new lines go to
+// a fresh primary.
+func TestProxy_RotatesOversizedProxyLog(t *testing.T) {
+	t.Setenv(doltserver.EnvMaxLogBytes, "1024")
+	root := t.TempDir()
+	logPath := filepath.Join(root, proxy.LogFileName)
+	old := strings.Repeat("x", 4096) + "old-proxy-marker\n"
+	require.NoError(t, os.WriteFile(logPath, []byte(old), 0o600))
+	require.NoError(t, os.WriteFile(logPath+".1", []byte("older generation\n"), 0o600))
+
+	h := runProxy(t, proxy.ProxyOpts{
+		RootDir: root, Port: freeTCPPort(t),
+		IdleTimeout: proxy.IdleTimeoutNever,
+		Server:      server.New(), Stats: &proxy.Stats{},
+	})
+	waitListening(t, root, listenWait)
+	waitForLogLine(t, logPath, "acceptLoop start")
+	h.Cancel()
+	require.NoError(t, h.waitErr(t, shutdownWait))
+
+	rotated, err := os.ReadFile(logPath + ".1")
+	require.NoError(t, err)
+	assert.Equal(t, old, string(rotated))
+	body, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "old-proxy-marker")
+	assert.Contains(t, string(body), "acceptLoop start")
+}
+
+// bd-pdwxc6 / #7527 (AC-4): a proxy.log at the ceiling is left in place, and
+// a rotation whose rename fails does not stop the proxy from serving.
+func TestProxy_ServesWhenProxyLogNotRotated(t *testing.T) {
+	t.Setenv(doltserver.EnvMaxLogBytes, "1024")
+	for _, tc := range []struct {
+		name   string
+		size   int
+		failMv bool
+	}{
+		{name: "at threshold", size: 1024},
+		{name: "rename fails", size: 4096, failMv: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			logPath := filepath.Join(root, proxy.LogFileName)
+			old := strings.Repeat("x", tc.size-len("old-proxy-marker\n")) + "old-proxy-marker\n"
+			require.NoError(t, os.WriteFile(logPath, []byte(old), 0o600))
+			if tc.failMv {
+				// A non-empty directory at the .1 slot makes the rename fail.
+				require.NoError(t, os.MkdirAll(filepath.Join(logPath+".1", "keep"), 0o700))
+			}
+
+			port := freeTCPPort(t)
+			h := runProxy(t, proxy.ProxyOpts{
+				RootDir: root, Port: port,
+				IdleTimeout: proxy.IdleTimeoutNever,
+				Server:      server.New(), Stats: &proxy.Stats{},
+			})
+			waitListening(t, root, listenWait)
+
+			conn := dialProxy(t, port)
+			_, err := conn.Write([]byte("ping"))
+			require.NoError(t, err)
+			buf := make([]byte, 4)
+			_, err = io.ReadFull(conn, buf)
+			require.NoError(t, err)
+			require.Equal(t, "ping", string(buf))
+			require.NoError(t, conn.Close())
+			waitForLogLine(t, logPath, "acceptLoop start")
+			h.Cancel()
+			require.NoError(t, h.waitErr(t, shutdownWait))
+
+			body, err := os.ReadFile(logPath)
+			require.NoError(t, err)
+			assert.True(t, strings.HasPrefix(string(body), old), "proxy.log must keep its old contents and be appended to")
+			if !tc.failMv {
+				assert.NoFileExists(t, logPath+".1")
+			}
+		})
+	}
+}
+
+func waitForLogLine(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(listenWait)
+	for time.Now().Before(deadline) {
+		if body, err := os.ReadFile(path); err == nil && strings.Contains(string(body), want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s never contained %q", path, want)
 }

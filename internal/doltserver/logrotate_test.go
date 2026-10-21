@@ -286,3 +286,26 @@ func TestMaybeRotateLogFile_SkipsAndNeverFails(t *testing.T) {
 		}
 	})
 }
+
+// TestMaybeRotateLogFile_RotatesNamedPath verifies the exported wrapper
+// rotates an arbitrary path (proxied mode's proxy.log / server.log), not only
+// dolt-server.log, and overwrites an existing .1.
+func TestMaybeRotateLogFile_RotatesNamedPath(t *testing.T) {
+	t.Setenv(EnvMaxLogBytes, "1024")
+	primary := filepath.Join(t.TempDir(), "proxy.log")
+	writeFileSize(t, primary, 4096, 'N')
+	writeFileSize(t, primary+".1", 10, 'O')
+
+	MaybeRotateLogFile(primary)
+
+	if _, err := os.Stat(primary); !os.IsNotExist(err) {
+		t.Fatalf("expected primary rotated away, got err=%v", err)
+	}
+	got, err := os.ReadFile(primary + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, bytes.Repeat([]byte{'N'}, 4096)) {
+		t.Fatalf(".1 holds %d bytes, want the 4096-byte primary", len(got))
+	}
+}
