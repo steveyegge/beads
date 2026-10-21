@@ -918,18 +918,28 @@ func resolveCloseTarget(ctx context.Context, localStore storage.DoltStorage, sha
 	if !isNotFoundErr(err) {
 		return nil, fmt.Errorf("resolving ID %s: %w", id, err)
 	}
+	// The first routed tier that refuses the id answers instead of the
+	// not-found below (isRoutedResolutionRefusal). The refusal is checked
+	// before isRoutingFailure, which it would also satisfy, so the shared
+	// auto-routed store still gets its chance.
+	var refusal error
 	// Write-intent: a prefix-routed target opens writable so the close
 	// commits on the target head (#4141).
 	r, err = resolveViaPrefixRoutingWithAccess(ctx, id, true, false)
 	if err == nil {
 		return r, nil
 	}
-	if isRoutingFailure(err) {
+	if isRoutedResolutionRefusal(err) {
+		refusal = err
+	} else if isRoutingFailure(err) {
 		return nil, fmt.Errorf("resolving ID %s: %w", id, err)
 	}
 	r, err = shared.resolve(ctx, id)
 	if err == nil {
 		return r, nil
+	}
+	if refusal != nil {
+		return nil, fmt.Errorf("resolving ID %s: %w", id, refusal)
 	}
 	if isRoutingFailure(err) {
 		return nil, fmt.Errorf("resolving ID %s: %w", id, err)
