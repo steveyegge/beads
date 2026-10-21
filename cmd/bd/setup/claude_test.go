@@ -2487,6 +2487,30 @@ func TestInstallClaudeGlobalReportsPluginOffHere(t *testing.T) {
 		}
 	})
 
+	// Only this user's local settings turn off a plugin the shared project
+	// settings enable: a project install would put a hook in the shared
+	// file that teammates with the plugin would run twice, so the warning
+	// names turning the plugin back on instead.
+	t.Run("only the local settings turn off a project plugin", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
+		writeSettings(t, projectSettingsPath(env.projectDir), settingsWithPlugin())
+		local := legacyProjectSettingsPath(env.projectDir)
+		writeSettings(t, local, settingsWithPluginSetTo(false))
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude --global: %v", err)
+		}
+		out := stdout.String()
+		if strings.Contains(out, "Run: bd setup claude\n") {
+			t.Errorf("suggested a project install that would write the shared settings:\n%s", out)
+		}
+		want := "⚠ The beads plugin is off for you (" + local + ") but on for everyone in " + projectSettingsPath(env.projectDir) +
+			", so bd adds no hook there: teammates with the plugin would run bd prime twice\n  To run bd prime here: enable the plugin in " + local + "\n"
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q, got:\n%s", want, out)
+		}
+	})
+
 	t.Run("plugin on here", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
@@ -2591,7 +2615,10 @@ func TestWarnIfPrimeRunsTwiceNamesARemedy(t *testing.T) {
 // setting from the highest-precedence file that names it (local, then
 // project, then user), so a project that turns off a plugin the user
 // settings enable gets the hook, and --check, which named the plugin, now
-// names the project install first.
+// names the project install first. When only this user's local settings
+// turn off a plugin the shared project settings enable, the install adds no
+// hook to the shared file, where teammates with the plugin would run bd
+// prime twice, and both it and --check say how this user can run it here.
 func TestInstallClaudePluginPrecedence(t *testing.T) {
 	stubDetectRenderOpts(t)
 
@@ -2606,11 +2633,19 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 		name     string
 		settings []setting
 		wantHook bool
+		// offForYou is the remedy named when only this user's settings turn
+		// the plugin off; "" when they do not.
+		offForYou func(claudeEnv) string
 	}{
-		{"user plugin turned off in the local settings", []setting{{user, true}, {local, false}}, true},
-		{"user plugin turned off in the project settings", []setting{{user, true}, {project, false}}, true},
-		{"project plugin turned off in the local settings", []setting{{project, true}, {local, false}}, true},
-		{"user plugin left on", []setting{{user, true}, {project, true}}, false},
+		{"user plugin turned off in the local settings", []setting{{user, true}, {local, false}}, true, nil},
+		{"user plugin turned off in the project settings", []setting{{user, true}, {project, false}}, true, nil},
+		{"project plugin turned off in the local settings", []setting{{project, true}, {local, false}}, false, func(env claudeEnv) string {
+			return "enable the plugin in " + local(env) + ", or run bd setup claude --global"
+		}},
+		{"project and user plugin turned off in the local settings", []setting{{user, true}, {project, true}, {local, false}}, false, func(env claudeEnv) string {
+			return "enable the plugin in " + local(env)
+		}},
+		{"user plugin left on", []setting{{user, true}, {project, true}}, false, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2618,11 +2653,23 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 			for _, s := range tc.settings {
 				writeSettings(t, s.path(env), settingsWithPluginSetTo(s.enabled))
 			}
-			// Before the install --check names the project install exactly
-			// where the plugin is off for this project.
+			// Before the install --check reports missing hooks exactly where
+			// the plugin is off for this user, and names the project install
+			// unless the shared settings enable the plugin.
+			wantMissing := tc.wantHook || tc.offForYou != nil
 			err := checkClaude(env)
-			if got := errors.Is(err, errClaudeHooksMissing); got != tc.wantHook {
-				t.Fatalf("--check reported missing hooks = %v (err %v), want %v:\n%s", got, err, tc.wantHook, stdout.String())
+			if got := errors.Is(err, errClaudeHooksMissing); got != wantMissing {
+				t.Fatalf("--check reported missing hooks = %v (err %v), want %v:\n%s", got, err, wantMissing, stdout.String())
+			}
+			if got := strings.Contains(stdout.String(), "  Run: bd setup claude\n"); got != tc.wantHook {
+				t.Errorf("--check named the project install = %v, want %v:\n%s", got, tc.wantHook, stdout.String())
+			}
+			if tc.offForYou != nil {
+				want := "  The beads plugin is off for you (" + local(env) + ") but on for everyone in " + project(env) +
+					", so bd adds no hook there: teammates with the plugin would run bd prime twice\n  To run bd prime here: " + tc.offForYou(env) + "\n"
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("--check should name this user's remedy %q:\n%s", want, stdout.String())
+				}
 			}
 			stdout.Reset()
 			if err := installClaude(env, false, false); err != nil {
@@ -2635,8 +2682,20 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 			if got := strings.Contains(string(data), "bd prime --hook-json"); got != tc.wantHook {
 				t.Errorf("project settings have the bd prime hook = %v, want %v:\n%s\n%s", got, tc.wantHook, data, stdout.String())
 			}
+			if tc.offForYou != nil {
+				want := "⚠ The beads plugin is off for you (" + local(env) + ") but on for everyone in " + project(env) +
+					", so bd adds no hook there: teammates with the plugin would run bd prime twice\n  To run bd prime here: " + tc.offForYou(env) + "\n"
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("the install should say why it added no hook, %q:\n%s", want, stdout.String())
+				}
+			}
 			stdout.Reset()
-			if err := checkClaude(env); err != nil {
+			err = checkClaude(env)
+			if tc.offForYou != nil {
+				if !errors.Is(err, errClaudeHooksMissing) {
+					t.Fatalf("checkClaude after install should still report missing hooks, got %v\n%s", err, stdout.String())
+				}
+			} else if err != nil {
 				t.Fatalf("checkClaude after install: %v\n%s", err, stdout.String())
 			}
 			if strings.Contains(stdout.String(), "runs twice") {
