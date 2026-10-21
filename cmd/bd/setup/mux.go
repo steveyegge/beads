@@ -118,16 +118,38 @@ func muxGlobalAgentsEnv(env agentsEnv, globalPath string) agentsEnv {
 	return env
 }
 
+// muxInGlobalDir reports whether path is in ~/.mux, the global layer's
+// directory. Run from there, bd runs in no workspace: its hooks would land in
+// ~/.mux/.mux, which Mux does not load.
+func muxInGlobalDir(path string) bool {
+	globalPath, err := muxGlobalAgentsPath()
+	return err == nil && sameDir(filepath.Dir(path), filepath.Dir(globalPath))
+}
+
+// muxNoWorkspaceLayerNote is what setup and --check print for the workspace
+// layer when bd runs from ~/.mux (installMuxProject).
+const muxNoWorkspaceLayerNote = "ℹ Mux workspace layer skipped: ~/.mux is not a workspace, and Mux does not load ~/.mux/.mux/AGENTS.md"
+
+// muxGlobalLayerFile reports whether path is the global layer's file,
+// ~/.mux/AGENTS.md, and returns that file's path: run from the home
+// directory, the workspace layer's .mux/AGENTS.md is, and run from ~/.mux,
+// so is the root AGENTS.md.
+func muxGlobalLayerFile(path string) (string, bool) {
+	globalPath, err := muxGlobalAgentsPath()
+	if err != nil || filepath.Base(path) != filepath.Base(globalPath) || !muxInGlobalDir(path) {
+		return "", false
+	}
+	return globalPath, true
+}
+
 // muxLayerEnv returns the env and integration that manage a layer's file.
 // The global layer's file is managed as the global layer whichever layer
-// names it: run from the home directory, the workspace layer's .mux/AGENTS.md
-// is ~/.mux/AGENTS.md, and run from ~/.mux, so is the root AGENTS.md.
-// Otherwise one run would write that file one way and then the other, and
-// --check would always find one of the two stale.
+// names it (muxGlobalLayerFile). Otherwise one run would write that file one
+// way and then the other, and --check would always find one of the two
+// stale.
 func muxLayerEnv(env agentsEnv, integration agentsIntegration) (agentsEnv, agentsIntegration) {
-	globalPath, err := muxGlobalAgentsPath()
-	if err != nil || filepath.Base(env.agentsPath) != filepath.Base(globalPath) ||
-		!sameDir(filepath.Dir(env.agentsPath), filepath.Dir(globalPath)) {
+	globalPath, ok := muxGlobalLayerFile(env.agentsPath)
+	if !ok {
 		return env, integration
 	}
 	return muxGlobalAgentsEnv(env, globalPath), muxGlobalIntegration
@@ -236,34 +258,62 @@ func InstallMux(project bool, global bool) error {
 	return installMux(muxEnvProvider(), project, global)
 }
 
-func installMux(env agentsEnv, project bool, global bool) error {
-	rootSkipped := false
-	env.skipped = &rootSkipped
+// installMuxRoot installs the root layer: its agents file and the hooks of
+// the workspace bd runs in. Run from ~/.mux, bd runs in no workspace
+// (muxInGlobalDir), so it installs no hooks, whatever the agents file is
+// named; a root AGENTS.md there is the global layer's file (muxLayerEnv).
+func installMuxRoot(env agentsEnv) error {
+	skipped := false
+	env.skipped = &skipped
 	if err := installAgents(muxLayerEnv(env, muxIntegration)); err != nil {
 		return err
+	}
+	if muxInGlobalDir(env.agentsPath) {
+		return nil
 	}
 	if err := installMuxProjectHooks(env); err != nil {
 		return err
 	}
-	if rootSkipped {
+	if skipped {
 		_, _ = fmt.Fprintf(env.stdout, "✓ Mux hooks installed; managed section skipped for symlinked %s\n", env.agentsPath)
+	}
+	return nil
+}
+
+// installMuxProject installs the workspace layer's .mux/AGENTS.md. Run from
+// ~/.mux, bd runs in no workspace (installMuxRoot), so it installs none: the
+// file would be ~/.mux/.mux/AGENTS.md, which Mux does not load.
+func installMuxProject(env agentsEnv) error {
+	if muxInGlobalDir(env.agentsPath) {
+		_, _ = fmt.Fprintln(env.stdout, muxNoWorkspaceLayerNote)
+		return nil
+	}
+	projectPath := muxProjectAgentsPath(env.agentsPath)
+	if err := EnsureDir(filepath.Dir(projectPath), 0o755); err != nil {
+		return err
+	}
+
+	projectEnv := env
+	projectEnv.agentsPath = projectPath
+	projectSkipped := false
+	projectEnv.skipped = &projectSkipped
+	if err := installAgents(muxLayerEnv(projectEnv, muxProjectIntegration)); err != nil {
+		return err
+	}
+	if projectSkipped {
+		_, _ = fmt.Fprintf(env.stdout, "✓ Mux project hooks installed; managed section skipped for symlinked %s\n", projectPath)
+	}
+	return nil
+}
+
+func installMux(env agentsEnv, project bool, global bool) error {
+	if err := installMuxRoot(env); err != nil {
+		return err
 	}
 
 	if project {
-		projectPath := muxProjectAgentsPath(env.agentsPath)
-		if err := EnsureDir(filepath.Dir(projectPath), 0o755); err != nil {
+		if err := installMuxProject(env); err != nil {
 			return err
-		}
-
-		projectEnv := env
-		projectEnv.agentsPath = projectPath
-		projectSkipped := false
-		projectEnv.skipped = &projectSkipped
-		if err := installAgents(muxLayerEnv(projectEnv, muxProjectIntegration)); err != nil {
-			return err
-		}
-		if projectSkipped {
-			_, _ = fmt.Fprintf(env.stdout, "✓ Mux project hooks installed; managed section skipped for symlinked %s\n", projectPath)
 		}
 	}
 
@@ -298,18 +348,37 @@ func CheckMux(project bool, global bool) error {
 	return checkMux(muxEnvProvider(), project, global)
 }
 
-func checkMux(env agentsEnv, project bool, global bool) error {
+// checkMuxRoot checks the root layer: its agents file and, unless bd runs
+// in ~/.mux (installMuxRoot), the workspace's hooks.
+func checkMuxRoot(env agentsEnv) error {
 	if err := checkAgents(muxLayerEnv(env, muxIntegration)); err != nil {
 		return err
 	}
-	if err := checkMuxProjectHooks(env); err != nil {
+	if muxInGlobalDir(env.agentsPath) {
+		return nil
+	}
+	return checkMuxProjectHooks(env)
+}
+
+// checkMuxProject checks the workspace layer's .mux/AGENTS.md, unless bd
+// runs in ~/.mux (installMuxProject).
+func checkMuxProject(env agentsEnv) error {
+	if muxInGlobalDir(env.agentsPath) {
+		_, _ = fmt.Fprintln(env.stdout, muxNoWorkspaceLayerNote)
+		return nil
+	}
+	projectEnv := env
+	projectEnv.agentsPath = muxProjectAgentsPath(env.agentsPath)
+	return checkAgents(muxLayerEnv(projectEnv, muxProjectIntegration))
+}
+
+func checkMux(env agentsEnv, project bool, global bool) error {
+	if err := checkMuxRoot(env); err != nil {
 		return err
 	}
 
 	if project {
-		projectEnv := env
-		projectEnv.agentsPath = muxProjectAgentsPath(env.agentsPath)
-		if err := checkAgents(muxLayerEnv(projectEnv, muxProjectIntegration)); err != nil {
+		if err := checkMuxProject(env); err != nil {
 			return err
 		}
 	}
@@ -333,17 +402,24 @@ func RemoveMux(project bool, global bool) error {
 }
 
 func removeMux(env agentsEnv, project bool, global bool) error {
-	if err := removeAgents(env, muxIntegration); err != nil {
+	// Run from ~/.mux, the root AGENTS.md is the global layer's file, so this
+	// removes the global layer's section, as setup there installs it, and
+	// reports it as the global layer (muxLayerEnv).
+	if err := removeAgents(muxLayerEnv(env, muxIntegration)); err != nil {
 		return err
 	}
+	// Run from ~/.mux this clears the hooks an older bd installed in
+	// ~/.mux/.mux; installMuxRoot installs none there.
 	if err := removeMuxProjectHooks(env); err != nil {
 		return err
 	}
 
+	// Run from ~/.mux this removes the section an older bd installed in
+	// ~/.mux/.mux/AGENTS.md; installMuxProject installs none there.
 	if project {
 		projectEnv := env
 		projectEnv.agentsPath = muxProjectAgentsPath(env.agentsPath)
-		if err := removeAgents(projectEnv, muxProjectIntegration); err != nil {
+		if err := removeAgents(muxLayerEnv(projectEnv, muxProjectIntegration)); err != nil {
 			return err
 		}
 	}
