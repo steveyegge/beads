@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -142,5 +143,35 @@ func TestNewServerMode_NoSocketDoesNotProbe(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Errorf("expected no probes without a configured socket, got %v", *calls)
+	}
+}
+
+// bd-7pkvvd (PR #7729): with no resolved port (port 0, no socket) and auto-start
+// disabled, the open must report the unresolved port, not a dial to
+// 127.0.0.1:0 with "bd dolt start" advice (which creates a phantom DB).
+func TestNewServerMode_UnresolvedPortReportsMissingPortFile(t *testing.T) {
+	t.Setenv("BEADS_TEST_MODE", "1")
+	t.Setenv("BEADS_DOLT_AUTO_START", "0")
+	beadsDir := t.TempDir()
+	cfg := &Config{
+		Database:   "test_unresolved_port",
+		BeadsDir:   beadsDir,
+		ServerHost: "127.0.0.1",
+		ServerPort: 0,
+		AutoStart:  false,
+	}
+
+	_, err := newServerMode(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected an error for an unresolved server port")
+	}
+	msg := err.Error()
+	for _, bad := range []string{"127.0.0.1:0", "bd dolt start", "unreachable"} {
+		if strings.Contains(msg, bad) {
+			t.Errorf("error for unresolved port contains %q:\n%s", bad, msg)
+		}
+	}
+	if !strings.Contains(msg, "dolt-server.port") {
+		t.Errorf("error for unresolved port does not name dolt-server.port:\n%s", msg)
 	}
 }

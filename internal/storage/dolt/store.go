@@ -1973,6 +1973,22 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// the DSN built in openServerConnection agree on the transport.
 	cfg.ServerSocket = ResolveSocketTransport(cfg.ServerSocket, cfg.ServerHost, cfg.ServerPort, 500*time.Millisecond)
 
+	// Port 0 with no socket means "not yet resolved" — only auto-start ever
+	// fills it in. When this open will not start a server (auto-start
+	// disabled, strict --readonly, a Config with no Path), dialing
+	// 127.0.0.1:0 misreports a healthy externally-managed server as an
+	// outage and recommends `bd dolt start`, which would mint a phantom
+	// database over an empty data dir (bd-7pkvvd / PR #7729). Report the
+	// unresolved port instead. The IsAutoStartDisabled() term uses the
+	// same predicate as the CLI half and as EnsureRunningDetailed's
+	// defense branch, and covers the BEADS_DOLT_AUTO_START=false spelling
+	// resolveAutoStart ignores, which would otherwise IsRunning-stop a
+	// PID-tracked server before refusing.
+	if cfg.ServerSocket == "" && cfg.ServerPort <= 0 &&
+		(!serverOpenCanAutoStart(cfg) || doltserver.IsAutoStartDisabled()) {
+		return nil, unresolvedServerPortError(cfg, resolvedBeadsDir, serverDir)
+	}
+
 	// Fail-fast connectivity check before MySQL protocol initialization.
 	// This gives an immediate, clear error if the Dolt server isn't running,
 	// rather than waiting for MySQL driver timeouts.
