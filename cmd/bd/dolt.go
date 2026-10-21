@@ -841,6 +841,15 @@ is running and 'bd dolt stop' to shut it down.`,
 		}
 		serverDir := doltserver.ResolveServerDir(beadsDir)
 
+		// With auto-start off and no Dolt database at the resolved data dir,
+		// Start would mint a new, empty database and publish its port,
+		// shadowing the externally-managed server (bd-7pkvvd / PR #7729).
+		// Read-only: refuses before anything is written. --force overrides.
+		force, _ := cmd.Flags().GetBool("force")
+		if err := externallyManagedFreshStartRefusal(serverDir, doltserver.IsAutoStartDisabled(), force); err != nil {
+			return HandleError("%v", err)
+		}
+
 		state, err := doltserver.Start(serverDir)
 		if err != nil {
 			if strings.Contains(err.Error(), "already running") {

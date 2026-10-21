@@ -632,9 +632,10 @@ func ReadPortFile(beadsDir string) int {
 // One setting does suppress it: `dolt.auto-start: false` (or
 // BEADS_DOLT_AUTO_START=0) fails serverOpenCanAutoStart and IsAutoStartDisabled,
 // so a timed-out open errors instead of adopting. That closes the incidental
-// route only — `bd dolt start` never consults either check, so the deliberate
-// route above stays open. It is the one mitigation an operator has while #6123
-// is open.
+// route only — `bd dolt start` now consults IsAutoStartDisabled, but only to
+// refuse creating a *new* database over a data dir that holds none; adopting
+// a live server over existing data stays open. It is the one mitigation an
+// operator has while #6123 is open.
 //
 // Closing it means recording adoption distinctly from launch (skip the write on
 // the adopt branch, or mark it so this helper declines it), which is a behavior
@@ -2416,6 +2417,35 @@ func ensureDoltInit(doltDir string) error {
 	_ = MarkDoltDirCompatible(doltDir)
 
 	return nil
+}
+
+// HasDoltDatabase reports whether doltDir already holds a Dolt database: a
+// .dolt directory at its root, or in any immediate child directory (the two
+// layouts `dolt sql-server` serves — a bare repository root and a directory
+// of named databases). Read-only: it never creates anything and never writes
+// the .bd-dolt-ok marker, so `bd dolt start` can ask "would this start mint a
+// new database?" before anything is written (bd-7pkvvd / PR #7729).
+//
+// A missing doltDir is the one answer of "false" that carries certainty; any
+// other read error answers true ("cannot prove this start is fresh"), the
+// same fail direction as isEmptyDirectory in cmd/bd's legacy-upgrade guard.
+func HasDoltDatabase(doltDir string) bool {
+	if _, err := os.Stat(filepath.Join(doltDir, ".dolt")); err == nil {
+		return true
+	} else if !os.IsNotExist(err) {
+		return true // unreadable: cannot prove this start is fresh
+	}
+	entries, err := os.ReadDir(doltDir)
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	for _, entry := range entries {
+		// os.Stat follows symlinks, so a linked database directory counts too.
+		if _, err := os.Stat(filepath.Join(doltDir, entry.Name(), ".dolt")); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // RecoverPreV56DoltDir removes and reinitializes a dolt database that was
