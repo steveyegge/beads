@@ -749,9 +749,10 @@ func primeTwiceRemedy(env claudeEnv, hookPath string) string {
 }
 
 // warnIfPluginOffHere reports a global install that left the hooks to a
-// beads plugin the user settings enable, run from a project whose own
-// settings turn it off. Neither the plugin's hook nor a global one runs
-// there, so that project needs its own install. From the home directory or
+// beads plugin the managed or user settings enable, run from a project whose
+// own settings turn it off. Unless a project hook or an older global one
+// runs bd prime there, that project needs its own install. From the home
+// directory or
 // ~/.claude a project install is the global one, so it is not suggested.
 func warnIfPluginOffHere(env claudeEnv) {
 	if claudeProjectIsHome(env) || claudeProjectIsUserLevelDir(env) {
@@ -761,7 +762,7 @@ func warnIfPluginOffHere(env claudeEnv) {
 	if here.enabled {
 		return
 	}
-	for _, path := range claudeProjectHookPaths(env) {
+	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
 		if hasBeadsHooks(path) {
 			return
 		}

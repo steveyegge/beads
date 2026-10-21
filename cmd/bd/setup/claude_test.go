@@ -2453,6 +2453,40 @@ func TestInstallClaudeGlobalReportsPluginOffHere(t *testing.T) {
 		}
 	})
 
+	// A global hook installed before the user settings enabled the plugin
+	// still runs bd prime in a project that turns the plugin off.
+	t.Run("global hook already installed", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude --global without the plugin: %v", err)
+		}
+		data, err := os.ReadFile(globalSettingsPath(env.homeDir))
+		if err != nil {
+			t.Fatalf("read global settings: %v", err)
+		}
+		global := map[string]interface{}{}
+		if err := json.Unmarshal(data, &global); err != nil {
+			t.Fatalf("parse global settings: %v", err)
+		}
+		global["enabledPlugins"] = settingsWithPlugin()["enabledPlugins"]
+		writeSettings(t, globalSettingsPath(env.homeDir), global)
+		writeSettings(t, legacyProjectSettingsPath(env.projectDir), settingsWithPluginSetTo(false))
+		stdout.Reset()
+		if err := installClaude(env, true, false); err != nil {
+			t.Fatalf("installClaude --global: %v", err)
+		}
+		if strings.Contains(stdout.String(), warning) || strings.Contains(stdout.String(), "Run: bd setup claude\n") {
+			t.Errorf("warned although the global hook runs bd prime here:\n%s", stdout.String())
+		}
+		stdout.Reset()
+		if err := checkClaude(env); err != nil {
+			t.Fatalf("--check: %v\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "✓ Global hooks installed: "+globalSettingsPath(env.homeDir)) {
+			t.Errorf("--check should report the global hook:\n%s", stdout.String())
+		}
+	})
+
 	t.Run("plugin on here", func(t *testing.T) {
 		env, stdout, _ := newClaudeTestEnv(t)
 		writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
