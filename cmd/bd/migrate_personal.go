@@ -222,35 +222,6 @@ func adoptPlanningDatabase(ctx context.Context, planningBeadsDir, database strin
 	})
 }
 
-// planningDatabaseSettings gives an adopted database (adoptTargetDatabase) the
-// project's issue_prefix when it has none and a project store is given, as
-// ensureBeadsDirForPath gives the database it creates (a routed bd create into
-// it needs one), and returns the project_id
-// its metadata.json is to carry: the database's own _project_id when it has
-// one, which bd's workspace identity check compares that field with
-// (validateWorkspaceIdentity), else a new one.
-func planningDatabaseSettings(ctx context.Context, planningStore, projectStore storage.DoltStorage) (string, error) {
-	prefix, err := planningStore.GetConfig(ctx, "issue_prefix")
-	if err != nil {
-		return "", fmt.Errorf("failed to read the planning database's issue_prefix: %w", err)
-	}
-	if prefix == "" && projectStore != nil {
-		if projectPrefix, err := projectStore.GetConfig(ctx, "issue_prefix"); err == nil && projectPrefix != "" {
-			if err := planningStore.SetConfig(ctx, "issue_prefix", projectPrefix); err != nil {
-				return "", fmt.Errorf("failed to set prefix in planning store: %w", err)
-			}
-		}
-	}
-	projectID, err := planningStore.GetMetadata(ctx, "_project_id")
-	if err != nil {
-		return "", fmt.Errorf("failed to read the planning database's project identity: %w", err)
-	}
-	if projectID == "" {
-		projectID = configfile.GenerateProjectID()
-	}
-	return projectID, nil
-}
-
 // refuseSelfPlanningRepo refuses a planning repo that is the project workspace
 // itself (routing.contributor set to the project's path, or to ".", the value
 // routing.maintainer and routing.default default to), or a clone of it. The

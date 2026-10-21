@@ -1258,7 +1258,7 @@ func refuseUninitializableTarget(beadsDir string) error {
 // (autoConfigureForkContributor), and the one an auto-routed open uses until
 // a metadata.json names another (autoRouteTargetDatabase). The database keeps
 // its issue_prefix, or takes sourceStore's when it has none, and its project
-// identity (planningDatabaseSettings). check, when set, inspects the opened
+// identity (adoptedDatabaseSettings). check, when set, inspects the opened
 // database before anything is written and refuses the adoption by returning
 // an error.
 func adoptTargetDatabase(ctx context.Context, beadsDir, database string, sourceStore storage.DoltStorage, check func(storage.DoltStorage) error) error {
@@ -1271,7 +1271,7 @@ func adoptTargetDatabase(ctx context.Context, beadsDir, database string, sourceS
 	}
 	var projectID string
 	if err == nil {
-		projectID, err = planningDatabaseSettings(ctx, target, sourceStore)
+		projectID, err = adoptedDatabaseSettings(ctx, target, sourceStore)
 	}
 	if closeErr := target.Close(); err == nil {
 		err = closeErr
@@ -1280,6 +1280,34 @@ func adoptTargetDatabase(ctx context.Context, beadsDir, database string, sourceS
 		return err
 	}
 	return saveEmbeddedTargetMetadata(beadsDir, database, projectID)
+}
+
+// adoptedDatabaseSettings gives a database adoptTargetDatabase adopts
+// sourceStore's issue_prefix when it has none and a source store is given, as
+// ensureBeadsDirForPath gives the database it creates (a routed bd create into
+// it needs one), and returns the project_id its metadata.json is to carry: the
+// database's own _project_id when it has one, which bd's workspace identity
+// check compares that field with (validateWorkspaceIdentity), else a new one.
+func adoptedDatabaseSettings(ctx context.Context, target, sourceStore storage.DoltStorage) (string, error) {
+	prefix, err := target.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		return "", fmt.Errorf("failed to read the target database's issue_prefix: %w", err)
+	}
+	if prefix == "" && sourceStore != nil {
+		if sourcePrefix, err := sourceStore.GetConfig(ctx, "issue_prefix"); err == nil && sourcePrefix != "" {
+			if err := target.SetConfig(ctx, "issue_prefix", sourcePrefix); err != nil {
+				return "", fmt.Errorf("failed to set prefix in the target database: %w", err)
+			}
+		}
+	}
+	projectID, err := target.GetMetadata(ctx, "_project_id")
+	if err != nil {
+		return "", fmt.Errorf("failed to read the target database's project identity: %w", err)
+	}
+	if projectID == "" {
+		projectID = configfile.GenerateProjectID()
+	}
+	return projectID, nil
 }
 
 // saveEmbeddedTargetMetadata writes the metadata.json ensureBeadsDirForPath
