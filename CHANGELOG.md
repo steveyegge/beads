@@ -784,6 +784,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd events tail --follow` can stop when its parent goes away.** A
+  follower noticed that its reader was gone only when it next wrote a
+  record, so in a quiet workspace a follower whose parent died without
+  stopping it kept polling the journal until the next write. With
+  `--exit-on-stdin-eof` (accepted only with `--follow`) it exits 0 as soon
+  as its stdin closes, whenever that happens: the parent passes a pipe as
+  stdin, and closing its end, or dying, stops the follower on every OS.
+  Without the flag stdin is ignored, as before. A follower stopped with
+  Ctrl-C while a poll is reading now exits 0 too, instead of failing with
+  `reading events journal: context canceled`.
+
 - An HTTP workspace whose server cannot be reached now says which step
   failed. A connect that is refused names the address and says nothing is
   listening; one that times out (a filtered port, a down host) names the
