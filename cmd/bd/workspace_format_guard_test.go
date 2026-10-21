@@ -458,7 +458,12 @@ func TestEnsureBeadsDirForPathChecksWorkspaceFormat(t *testing.T) {
 
 // A create target whose .beads has no metadata.json is refused, with nothing
 // written, when initializing it would hide what bd run there already reads:
-// bd's own admission refuses it, or it holds several databases.
+// its own config selects Dolt server mode (config.local.yaml beside
+// config.yaml outranks it; a lone config.local.yaml is not read, as bd's own
+// config merge does not read one), its config cannot be read, bd's own
+// admission refuses it, or it holds several databases. Server mode is decided
+// first, from the target's own config, so a server workspace bd's admission
+// would misread as legacy from the launcher's mode gets the server refusal.
 func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 	writeFiles := func(t *testing.T, beadsDir string, files map[string]string) {
 		t.Helper()
@@ -482,6 +487,13 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 		files map[string]string
 		want  string // "" = not refused
 	}{
+		{name: "server mode in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n"}, want: "selects Dolt server mode"},
+		{name: "server mode in dotted config.yaml", files: map[string]string{"config.yaml": "dolt.mode: SERVER\n"}, want: "selects Dolt server mode"},
+		{name: "server mode in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n", "config.local.yaml": "dolt:\n  mode: server\n"}, want: "selects Dolt server mode"},
+		{name: "lone config.local.yaml", files: map[string]string{"config.local.yaml": "dolt:\n  mode: server\n"}},
+		{name: "embedded mode in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n"}},
+		{name: "unreadable config.yaml", files: map[string]string{"config.yaml": "dolt: [unterminated\n"}, want: "dolt.mode cannot be read"},
+		{name: "server mode beside a legacy dolt root", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n", "dolt/leftover": "x"}, want: "selects Dolt server mode"},
 		{name: "several databases", files: map[string]string{databaseMarker("beads"): "x", databaseMarker("other"): "x"}, want: "holds several databases (beads, other)"},
 		{name: "sqlite-era repo", files: map[string]string{"config.json": `{"database":"beads.db"}`, "beads.db": "SQLite format 3\x00" + strings.Repeat("\x00", 4080)}, want: "historical SQLite workspace"},
 	} {

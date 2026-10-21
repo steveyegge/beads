@@ -40,8 +40,10 @@ import (
 // bootstrapped, say) is left as it is.
 //
 // The shapes that rule refuses are refused before anything is written
-// (refuseUninitializablePlanningRepo, refuseUninitializableTarget): any
-// workspace bd's own command admission refuses there (guardLegacyUpgradeWorkspace), such as a SQLite-era repo,
+// (refuseUninitializablePlanningRepo, refuseUninitializableTarget): a planning
+// repo whose own config selects Dolt server mode, whose server data an
+// embedded metadata.json would hide; any workspace bd's own command admission
+// refuses there (guardLegacyUpgradeWorkspace), such as a SQLite-era repo,
 // whose data a fresh database beside it would hide; and one holding several
 // databases, where nothing records which one bd uses. A redirect stub is
 // refused whether or not it has a metadata.json of its own: bd run in the
@@ -156,7 +158,8 @@ func refuseUncommittedPlanningChanges(ctx context.Context, planningStore storage
 // openMigrationPlanningStore must not open or initialize: a redirect stub, with
 // or without a metadata.json of its own, and, when it has no metadata.json,
 // one a routed bd create would not initialize either (refuseUninitializableTarget:
-// bd's own admission refuses it, or it holds several databases). Every other metadata-less .beads is left to
+// its own config selects Dolt server mode, bd's own admission refuses it, or
+// it holds several databases). Every other metadata-less .beads is left to
 // initializePlanningRepo. It writes nothing. A .beads that has a metadata.json
 // is left to the open, which refuses what it cannot use.
 func refuseUninitializablePlanningRepo(planningBeadsDir string) error {

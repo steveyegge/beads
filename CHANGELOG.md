@@ -811,14 +811,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a `metadata.json` naming it, and that file decides what `bd` opens
   there from then on. In the planning repo `bd init` sets up on a fork, that
   put a second database beside the one setup created, and whatever that one
-  held no longer showed in `bd` run there. A SQLite-era repository,
+  held no longer showed in `bd` run there. A repository whose own
+  `config.yaml` selects Dolt server mode with no `metadata.json` (the shape gc
+  provisions) became an embedded one: `metadata.json` outranks `config.yaml`,
+  so `bd` there stopped reaching its server data. A SQLite-era repository,
   which `bd` refuses to open, got a fresh Dolt database beside its data that
   silenced the refusal. Now a repository that holds one embedded database
   keeps it, with its issue prefix (or the source's, when it has none) and its
-  project identity, and the issue is created there. A repository `bd`
-  refuses (such as a SQLite-era repo) and one holding several databases are
-  refused before anything is written. `bd migrate-personal` initializes the
-  planning repo by the same rule.
+  project identity, and the issue is created there. A repository whose own
+  config selects server mode, one `bd` refuses (such as a SQLite-era repo)
+  and one holding several databases are refused before anything is written;
+  for a server-mode repository, run `bd init --database <name>` there,
+  naming the server database it uses, then rerun. `bd migrate-personal`
+  initializes the planning repo by the same rule, so it now also refuses a
+  server-mode planning repo instead of moving issues into a new embedded
+  database there.
 - **`bd doctor` says when its multi-repo types check skips a database.** For
   a `repos.additional` repository in a format this build cannot open (a
   `graph_mode` other than `dependency`, or the `graph-preview-format`

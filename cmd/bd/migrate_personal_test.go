@@ -1540,6 +1540,15 @@ func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.
 			createDatabase(t, planningBeadsDir, "beads", "")
 			createDatabase(t, planningBeadsDir, "other", "")
 		}},
+		// bd run in a planning repo whose own config.yaml selects server mode
+		// opens its server database; an embedded metadata.json written there
+		// would outrank that file and hide it, as would adopting a stale
+		// embedded database beside it.
+		{name: "server mode in its config.yaml", prefix: "mpj", want: "selects Dolt server mode", setup: writeServerModeWorkspace},
+		{name: "server mode beside a stale embedded database", prefix: "mpz", want: "selects Dolt server mode", setup: func(t *testing.T, planningBeadsDir string) {
+			writeServerModeWorkspace(t, planningBeadsDir)
+			createDatabase(t, planningBeadsDir, "beads", "")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

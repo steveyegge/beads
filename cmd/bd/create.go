@@ -1086,9 +1086,9 @@ func isAmbiguousRepoTarget(repoFlagChanged bool, repoOverride string) bool {
 // (it outranks the target's config.yaml), so it must name what the .beads
 // already holds rather than hide it:
 //
-//   - a .beads refuseUninitializableTarget refuses (one bd's own admission
-//     refuses, one holding several databases) is refused, with nothing
-//     written;
+//   - a .beads refuseUninitializableTarget refuses (one whose own config selects
+//     Dolt server mode, one bd's own admission refuses, one holding several
+//     databases) is refused, with nothing written;
 //   - one that holds exactly one embedded database keeps it
 //     (adoptTargetDatabase), the database fork setup creates among them;
 //   - any other is given a new database with the same prefix as the source
@@ -1174,6 +1174,13 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 // already reads something there that the metadata.json it writes would hide.
 // It writes nothing. Refused are:
 //
+//   - one whose own config.yaml (or the config.local.yaml beside it) selects
+//     Dolt server mode, the shape gc provisions: bd there opens its server
+//     database, and a metadata.json pinning dolt_mode "embedded" outranks
+//     that file. A config it cannot read is refused too, since it may say
+//     the same. This runs before bd's admission below, which resolves the
+//     mode of a workspace that is not the bound target from the launching
+//     workspace's config (workspaceSelectsServerMode);
 //   - one bd's own command admission refuses (guardLegacyUpgradeWorkspace),
 //     such as a SQLite-era repo: a fresh database beside it would hide its
 //     data and silence that refusal;
@@ -1182,11 +1189,19 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 //
 // A .beads holding one embedded database is left to adoptTargetDatabase.
 func refuseUninitializableTarget(beadsDir string) error {
+	repo := filepath.Dir(beadsDir)
+	mode, _, err := config.WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.mode")
+	if err != nil {
+		return fmt.Errorf("%s has no metadata.json and its dolt.mode cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, err)
+	}
+	if strings.EqualFold(mode, configfile.DoltModeServer) {
+		return fmt.Errorf("%s has no metadata.json and its own config selects Dolt server mode (dolt.mode: server); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --database <name>` there, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, configfile.DefaultDoltDatabase)
+	}
 	if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
 		return err
 	}
 	if databases := embeddeddolt.Databases(beadsDir); len(databases) > 1 {
-		return fmt.Errorf("%s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", filepath.Dir(beadsDir), strings.Join(databases, ", "))
+		return fmt.Errorf("%s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", repo, strings.Join(databases, ", "))
 	}
 	return nil
 }
