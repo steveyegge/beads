@@ -451,11 +451,14 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	// the SessionStart JSON envelope; SessionStart also fires after compaction
 	// with source=compact, so PreCompact no longer needs a bd prime hook.
 	legacyBareVariants := []string{"bd prime", "bd prime --stealth"}
+	sweptSessionStart := false
 	for _, legacy := range legacyBareVariants {
 		if legacy == command {
 			continue
 		}
-		removeHookCommand(env.stdout, hooks, "SessionStart", legacy)
+		if removeHookCommand(env.stdout, hooks, "SessionStart", legacy) {
+			sweptSessionStart = true
+		}
 		removeHookCommand(env.stdout, hooks, "PreCompact", legacy)
 	}
 	removeHookCommand(env.stdout, hooks, "PreCompact", "bd prime --hook-json")
@@ -463,10 +466,22 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 
 	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
 	// so project-level hooks don't fire bd prime twice per session.
-	if plugin := beadsPlugin(env, global); plugin.enabled {
+	plugin := beadsPlugin(env, global)
+	switch {
+	case plugin.enabled && !global && sweptSessionStart && !claudeSettingsAreShared(env, plugin.path):
+		// The plugin is enabled for this user alone, and the shared project
+		// settings had an older bd prime hook that teammates without the
+		// plugin rely on. Replace it rather than drop it; the double run
+		// this leaves for this user is reported below.
+		if addHookCommand(hooks, "SessionStart", command) {
+			_, _ = fmt.Fprintf(env.stdout, "✓ Registered SessionStart hook in place of the old one: the beads plugin is enabled only in %s, and teammates without it still need the hook\n", plugin.path)
+		}
+	case plugin.enabled:
 		_, _ = fmt.Fprintf(env.stdout, "✓ Beads plugin enabled in %s — hooks are plugin-managed, skipping\n", plugin.path)
-	} else if addHookCommand(hooks, "SessionStart", command) {
-		_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
+	default:
+		if addHookCommand(hooks, "SessionStart", command) {
+			_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
+		}
 	}
 
 	// An install that leaves the hooks to the plugin adds no empty "hooks"
@@ -999,6 +1014,22 @@ func claudePluginSettingsPaths(env claudeEnv, global bool) []string {
 		paths = append(paths, legacyProjectSettingsPath(env.projectDir), projectSettingsPath(env.projectDir))
 	}
 	return append(paths, globalSettingsPath(env.homeDir))
+}
+
+// claudeSettingsAreShared reports whether a settings file applies to
+// everyone who works in the project: its shared .claude/settings.json or a
+// managed settings file. The user's ~/.claude/settings.json and the local
+// .claude/settings.local.json files are personal.
+func claudeSettingsAreShared(env claudeEnv, path string) bool {
+	if path == projectSettingsPath(env.projectDir) {
+		return true
+	}
+	for _, managed := range claudeManagedSettingsPaths(env.managedDir) {
+		if path == managed {
+			return true
+		}
+	}
+	return false
 }
 
 // claudeManagedSettingsPaths returns the file-based managed settings in dir,

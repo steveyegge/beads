@@ -2473,6 +2473,82 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 	}
 }
 
+// TestInstallClaudePersonalPluginKeepsSharedLegacyHook pins what a project
+// install does with an older bare bd prime hook in the shared
+// .claude/settings.json when the beads plugin is enabled. Enabled in a
+// shared file (the project's own or managed settings), the plugin runs for
+// everyone, so the old hook is dropped. Enabled in a personal file (the
+// user's settings or a local one), teammates without the plugin still need
+// a hook from the shared file, so the install replaces the old hook with the
+// current one and reports the double run this leaves for this user.
+func TestInstallClaudePersonalPluginKeepsSharedLegacyHook(t *testing.T) {
+	stubDetectRenderOpts(t)
+
+	cases := []struct {
+		name     string
+		plugin   func(env *claudeEnv) string
+		wantHook bool
+	}{
+		{"user settings", func(env *claudeEnv) string { return globalSettingsPath(env.homeDir) }, true},
+		{"local settings", func(env *claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }, true},
+		{"local settings at the repository root", func(env *claudeEnv) string {
+			env.localSettingsRoot = filepath.Dir(env.projectDir)
+			return legacyProjectSettingsPath(env.localSettingsRoot)
+		}, true},
+		{"managed settings", func(env *claudeEnv) string { return filepath.Join(env.managedDir, "managed-settings.json") }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			env.managedDir = filepath.Join(t.TempDir(), "managed")
+			shared := projectSettingsPath(env.projectDir)
+			legacy := map[string]interface{}{"hooks": map[string]interface{}{}}
+			addHookCommand(legacy["hooks"].(map[string]interface{}), "SessionStart", "bd prime")
+			writeSettings(t, shared, legacy)
+			writeSettings(t, tc.plugin(&env), settingsWithPlugin())
+
+			if err := installClaude(env, false, false); err != nil {
+				t.Fatalf("installClaude: %v", err)
+			}
+			out := stdout.String()
+			data, err := os.ReadFile(shared)
+			if err != nil {
+				t.Fatalf("read shared settings: %v", err)
+			}
+			if strings.Contains(string(data), `"bd prime"`) {
+				t.Errorf("the old bare hook stayed in %s:\n%s", shared, data)
+			}
+			if got := strings.Contains(string(data), "bd prime --hook-json"); got != tc.wantHook {
+				t.Errorf("%s has the current hook = %v, want %v:\n%s\n%s", shared, got, tc.wantHook, data, out)
+			}
+			if got := strings.Contains(out, "plugin-managed, skipping"); got == tc.wantHook {
+				t.Errorf("plugin-managed skip reported = %v, want %v:\n%s", got, !tc.wantHook, out)
+			}
+			if got := strings.Contains(out, "⚠ bd prime runs twice per session here"); got != tc.wantHook {
+				t.Errorf("double run reported = %v, want %v:\n%s", got, tc.wantHook, out)
+			}
+		})
+	}
+
+	t.Run("project settings", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		settings := settingsWithPlugin()
+		settings["hooks"] = map[string]interface{}{}
+		addHookCommand(settings["hooks"].(map[string]interface{}), "SessionStart", "bd prime")
+		writeSettings(t, projectSettingsPath(env.projectDir), settings)
+		if err := installClaude(env, false, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		data, err := os.ReadFile(projectSettingsPath(env.projectDir))
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if strings.Contains(string(data), "bd prime") {
+			t.Errorf("a plugin the shared settings enable should replace the old hook, not sit beside a new one:\n%s\n%s", data, stdout.String())
+		}
+	})
+}
+
 // TestInstallClaudePluginManagedLeavesSettingsAlone pins that an install
 // which leaves the hooks to the plugin writes no hook, so it adds no empty
 // "hooks" object to a settings file and creates none.
