@@ -118,6 +118,27 @@ func TestFormulaPrimitiveExamples(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "gate-typed",
+			assert: func(t *testing.T, sg *TemplateSubgraph) {
+				gate := findGate(sg)
+				if gate == nil || gate.ID != "gate-typed.gate-approve" {
+					t.Fatalf("companion gate = %+v, want gate-typed.gate-approve; issues: %v", gate, allIssueIDs(sg))
+				}
+				if gate.AwaitType != "human" {
+					t.Errorf("gate.AwaitType = %q, want %q", gate.AwaitType, "human")
+				}
+				if task := sg.IssueMap["gate-typed.approve"]; task == nil || task.IssueType != types.TypeTask {
+					t.Errorf("approve step = %+v, want a task bead", task)
+				}
+				if !hasBlockingDep(sg, gate.ID, "gate-typed.approve") {
+					t.Errorf("gate %s must block on the approve task; deps: %v", gate.ID, allDeps(sg))
+				}
+				if hasBlockingDep(sg, "gate-typed.approve", gate.ID) {
+					t.Errorf("approve task must not block on its own gate; deps: %v", allDeps(sg))
+				}
+			},
+		},
 	}
 
 	registered := map[string]bool{}
