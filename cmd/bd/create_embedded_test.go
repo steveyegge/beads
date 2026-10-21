@@ -1197,9 +1197,10 @@ func writeServerModeWorkspace(t *testing.T, beadsDir string) {
 // keeps what it holds, its issue_prefix (given the source's when it has none,
 // as fork setup leaves it) and its project identity. A target that bd run
 // there would open some other way is refused and left as it was: one whose
-// own config.yaml selects Dolt server mode (the shape gc provisions), with or
-// without an embedded database beside it, one holding several databases, and
-// a SQLite-era one that bd's own admission refuses.
+// own config.yaml selects Dolt server mode (the shape gc provisions, or a
+// non-local dolt.host with no dolt.mode), with or without an embedded database
+// beside it, one holding several databases, and a SQLite-era one that bd's own
+// admission refuses.
 func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt create tests")
@@ -1314,6 +1315,11 @@ func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 		{name: "refuses server mode beside an embedded database", want: "selects Dolt server mode", setup: func(t *testing.T, beadsDir string) {
 			writeServerModeWorkspace(t, beadsDir)
 			createForkSetupPlanningDatabase(t, beadsDir, nil)
+		}},
+		{name: "refuses server mode selected by a remote dolt.host", want: "selects Dolt server mode (dolt.host: db.example.com)", setup: func(t *testing.T, beadsDir string) {
+			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt:\n  host: db.example.com\n  port: 3307\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{name: "refuses several databases", want: "holds several databases (beads, other)", setup: func(t *testing.T, beadsDir string) {
 			createForkSetupPlanningDatabase(t, beadsDir, nil)

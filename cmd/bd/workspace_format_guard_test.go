@@ -458,9 +458,11 @@ func TestEnsureBeadsDirForPathChecksWorkspaceFormat(t *testing.T) {
 
 // A create target whose .beads has no metadata.json is refused, with nothing
 // written, when initializing it would hide what bd run there already reads:
-// its own config selects Dolt server mode (config.local.yaml beside
-// config.yaml outranks it; a lone config.local.yaml is not read, as bd's own
-// config merge does not read one), its config cannot be read, bd's own
+// its own config selects Dolt server mode, by dolt.mode or, with no dolt.mode,
+// by a non-local dolt.host (config.local.yaml beside config.yaml outranks it;
+// a lone config.local.yaml is not read, as bd's own config merge does not read
+// one), its config cannot be read (a section whose children are all commented
+// out reads as unset, as bd reads it), bd's own
 // admission refuses it, or it holds several databases. Server mode is decided
 // first, from the target's own config, so a server workspace bd's admission
 // would misread as legacy from the launcher's mode gets the server refusal.
@@ -493,6 +495,13 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 		{name: "lone config.local.yaml", files: map[string]string{"config.local.yaml": "dolt:\n  mode: server\n"}},
 		{name: "embedded mode in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n"}},
 		{name: "unreadable config.yaml", files: map[string]string{"config.yaml": "dolt: [unterminated\n"}, want: "dolt.mode cannot be read"},
+		{name: "commented-out dolt section", files: map[string]string{"config.yaml": "dolt:\n  # mode: server\n"}},
+		{name: "remote dolt.host in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: 3307\n"}, want: "selects Dolt server mode (dolt.host: db.example.com)"},
+		{name: "remote dolt.host in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n", "config.local.yaml": "dolt:\n  host: 10.0.0.5\n"}, want: "bd init --server --database"},
+		{name: "local dolt.host 127.0.0.1", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n"}},
+		{name: "local dolt.host localhost", files: map[string]string{"config.yaml": "dolt.host: localhost\n"}},
+		{name: "remote dolt.host under embedded mode", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n  host: db.example.com\n"}},
+		{name: "unreadable dolt.host", files: map[string]string{"config.yaml": "dolt:\n  host: [a, b]\n"}, want: "dolt.host cannot be read"},
 		{name: "server mode beside a legacy dolt root", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n", "dolt/leftover": "x"}, want: "selects Dolt server mode"},
 		{name: "several databases", files: map[string]string{databaseMarker("beads"): "x", databaseMarker("other"): "x"}, want: "holds several databases (beads, other)"},
 		{name: "sqlite-era repo", files: map[string]string{"config.json": `{"database":"beads.db"}`, "beads.db": "SQLite format 3\x00" + strings.Repeat("\x00", 4080)}, want: "historical SQLite workspace"},

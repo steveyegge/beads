@@ -1175,10 +1175,12 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 // It writes nothing. Refused are:
 //
 //   - one whose own config.yaml (or the config.local.yaml beside it) selects
-//     Dolt server mode, the shape gc provisions: bd there opens its server
+//     Dolt server mode, by dolt.mode: server (the shape gc provisions) or, with
+//     no dolt.mode, by a non-local dolt.host: bd there opens its server
 //     database, and a metadata.json pinning dolt_mode "embedded" outranks
 //     that file. A config it cannot read is refused too, since it may say
-//     the same. This runs before bd's admission below, which resolves the
+//     the same; a null left by commenting a key out reads as unset, as bd
+//     reads it there. This runs before bd's admission below, which resolves the
 //     mode of a workspace that is not the bound target from the launching
 //     workspace's config (workspaceSelectsServerMode);
 //   - one bd's own command admission refuses (guardLegacyUpgradeWorkspace),
@@ -1190,12 +1192,24 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 // A .beads holding one embedded database is left to adoptTargetDatabase.
 func refuseUninitializableTarget(beadsDir string) error {
 	repo := filepath.Dir(beadsDir)
-	mode, _, err := config.WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.mode")
+	mode, _, err := config.WorkspaceYamlSettingWithLocal(beadsDir, "dolt.mode")
 	if err != nil {
 		return fmt.Errorf("%s has no metadata.json and its dolt.mode cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, err)
 	}
 	if strings.EqualFold(mode, configfile.DoltModeServer) {
 		return fmt.Errorf("%s has no metadata.json and its own config selects Dolt server mode (dolt.mode: server); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --database <name>` there, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, configfile.DefaultDoltDatabase)
+	}
+	if mode == "" {
+		// With no dolt.mode, a non-local dolt.host selects server mode there
+		// too (HostImpliesServerMode's config.yaml tier), and the dolt_mode the
+		// metadata.json below pins switches that inference off.
+		host, _, err := config.WorkspaceYamlSettingWithLocal(beadsDir, "dolt.host")
+		if err != nil {
+			return fmt.Errorf("%s has no metadata.json and its dolt.host cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, err)
+		}
+		if !configfile.IsLocalHostString(host) {
+			return fmt.Errorf("%s has no metadata.json and its own config selects Dolt server mode (dolt.host: %s); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server --database <name>` there, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, host, configfile.DefaultDoltDatabase)
+		}
 	}
 	if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
 		return err
