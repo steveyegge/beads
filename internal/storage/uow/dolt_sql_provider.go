@@ -161,6 +161,11 @@ type providerOptions struct {
 	// same command works, and saying otherwise would be the same class of
 	// wrong guidance in the other direction.
 	proxiedServerMode bool
+	// rotateServerLog lets the proxy start rotate the server log
+	// (proxy.OpenOpts.RotateLogFile). Only the caller knows whether bd owns
+	// that file: bd sets it for its default server.log, never for a log path
+	// the operator chose.
+	rotateServerLog bool
 }
 
 // WithPreview opens the provider for a non-mutating preview command.
@@ -178,6 +183,12 @@ func WithReadOnly() ProviderOption {
 // depends on it, and only the proxied CLI open may set it.
 func WithProxiedServerMode() ProviderOption {
 	return func(o *providerOptions) { o.proxiedServerMode = true }
+}
+
+// WithServerLogRotation lets the proxy start rotate an oversized server log.
+// See providerOptions.rotateServerLog: pass it only for a log bd owns.
+func WithServerLogRotation() ProviderOption {
+	return func(o *providerOptions) { o.rotateServerLog = true }
 }
 
 func applyProviderOptions(opts []ProviderOption) providerOptions {
