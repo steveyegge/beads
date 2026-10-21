@@ -1973,6 +1973,17 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// the DSN built in openServerConnection agree on the transport.
 	cfg.ServerSocket = ResolveSocketTransport(cfg.ServerSocket, cfg.ServerHost, cfg.ServerPort, 500*time.Millisecond)
 
+	// Port 0 means "not yet resolved", and only auto-start resolves it. An
+	// open that will not start a server must not dial 127.0.0.1:0 and then
+	// report an outage: the server may be healthy and bd simply has no
+	// address for it (bd-7pkvvd). IsAutoStartDisabled is checked as well as
+	// serverOpenCanAutoStart because it also accepts spellings such as
+	// "false" that resolveAutoStart does not.
+	if cfg.ServerSocket == "" && cfg.ServerPort <= 0 &&
+		(!serverOpenCanAutoStart(cfg) || doltserver.IsAutoStartDisabled()) {
+		return nil, unresolvedServerPortError(cfg, resolvedBeadsDir, serverDir)
+	}
+
 	// Fail-fast connectivity check before MySQL protocol initialization.
 	// This gives an immediate, clear error if the Dolt server isn't running,
 	// rather than waiting for MySQL driver timeouts.
@@ -2399,6 +2410,56 @@ func initializeServerCircuitBreaker(cfg *Config) *circuitBreaker {
 func serverOpenCanAutoStart(cfg *Config) bool {
 	return !cfg.DisableAutoStart && cfg.AutoStart && cfg.Path != "" &&
 		cfg.ServerSocket == "" && isLocalHost(cfg.ServerHost)
+}
+
+// unresolvedServerPortError explains an open that has no server address: no
+// socket, and no port source resolved a port. It returns nil when cfg has
+// either. serverDir is ResolveServerDir(beadsDir), so the port file it names
+// is the shared-server one in shared mode.
+//
+// The text never says "unreachable" or names 127.0.0.1:0 (nothing was
+// dialed), and it suggests `bd dolt start` only when bd manages the server:
+// for a server managed elsewhere that command inits an empty database and
+// publishes its port, shadowing the real one.
+func unresolvedServerPortError(cfg *Config, beadsDir, serverDir string) error {
+	if cfg.ServerSocket != "" || cfg.ServerPort > 0 {
+		return nil
+	}
+	portFile := filepath.Join(serverDir, doltserver.PortFileName)
+	portFileState := "no usable port"
+	if _, err := os.Stat(portFile); os.IsNotExist(err) {
+		portFileState = "missing"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "no Dolt server port resolved for %s\n\n", beadsDir)
+	b.WriteString("None of these port sources has a value:\n")
+	for i, label := range doltserver.PortSourceLabels() {
+		fmt.Fprintf(&b, "  %d. %s", i+1, label)
+		if strings.Contains(label, doltserver.PortFileName) {
+			fmt.Fprintf(&b, ": %s (%s)", portFile, portFileState)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	const pinPort = "BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml"
+	switch {
+	case isExternalServerHost(cfg.ServerHost):
+		fmt.Fprintf(&b, "bd does not manage the Dolt server at %s; pin its port with %s.", cfg.ServerHost, pinPort)
+	case doltserver.IsAutoStartDisabled() || !cfg.AutoStart:
+		if doltserver.IsAutoStartDisabled() {
+			b.WriteString("dolt.auto-start is off, so bd does not start this workspace's Dolt server.\n")
+		} else {
+			b.WriteString("This workspace's Dolt server is externally managed, so bd does not start it.\n")
+		}
+		fmt.Fprintf(&b, "Whatever manages the server must publish its port again (normally by writing %s), "+
+			"or pin the port with %s.", portFile, pinPort)
+	default:
+		b.WriteString("This command does not start a Dolt server. Run a bd command that can start one, " +
+			"or start it with:\n  bd dolt start")
+	}
+	return errors.New(b.String())
 }
 
 func persistResolvedPortFile(cfg *Config, beadsDir string) error {
