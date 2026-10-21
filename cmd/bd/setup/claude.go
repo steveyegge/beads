@@ -172,14 +172,15 @@ func claudeInstructionsEnv(env claudeEnv, global bool) (agentsEnv, agentsIntegra
 // claudeCheckAgentsEnv picks the instructions file --check reports on. Run
 // from ~/.claude, the project's CLAUDE.md is the user-level file, so it is
 // judged as one. Otherwise it is the project's file, unless the hooks are
-// user-level (a global install's, or the plugin's) and the project's file has
-// no beads section. Then it is the ~/.claude/CLAUDE.md a global install
-// writes, which Claude Code loads alongside the project's own instructions,
-// if that has a section, if the project's file does not exist, or if the
-// project is the home directory: there a project install's hint would create
-// the ~/CLAUDE.md a global install exists to avoid. A project install with
-// project hooks is judged on the project's file alone; one whose hooks the
-// plugin manages has no project hooks, so it is treated as user-level.
+// user-level (a global install's, or those of a plugin enabled in the user
+// settings) and the project's file has no beads section. Then it is the
+// ~/.claude/CLAUDE.md a global install writes, which Claude Code loads
+// alongside the project's own instructions, if that has a section, if the
+// project's file does not exist, or if the project is the home directory:
+// there a project install's hint would create the ~/CLAUDE.md a global install
+// exists to avoid. A project install with project hooks, or with the plugin
+// enabled only in the project's settings, is judged on the project's file
+// alone.
 func claudeCheckAgentsEnv(env claudeEnv, userLevelHooks bool) (agentsEnv, agentsIntegration) {
 	globalEnv, globalIntegration, _ := claudeInstructionsEnv(env, true)
 	if sameDir(env.projectDir, filepath.Dir(globalEnv.agentsPath)) {
@@ -386,7 +387,7 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 
 	// GH#3192: Skip writing hooks if the beads plugin is already providing them,
 	// so project-level hooks don't fire bd prime twice per session.
-	pluginManaged := hasBeadsPlugin(env)
+	pluginManaged := hasBeadsPlugin(env, global)
 	if pluginManaged {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Beads plugin detected — hooks are plugin-managed, skipping")
 	} else {
@@ -549,10 +550,13 @@ func checkClaude(env claudeEnv) error {
 	case hasBeadsHooks(legacySettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", legacySettings)
 		_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
-	case hasBeadsPlugin(env):
+	case hasBeadsPlugin(env, false):
 		// GH#3192: Plugin provides hooks via plugin.json — no project-level hooks needed
 		_, _ = fmt.Fprintln(env.stdout, "✓ Hooks provided by beads plugin (plugin-managed)")
-		userLevelHooks = true
+		// Its hooks are user-level only when the user settings enable it (or,
+		// as above, from the home directory): enabled in this project's
+		// settings alone, they run here only.
+		userLevelHooks = atHome || hasBeadsPlugin(env, true)
 	default:
 		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
 		if atHome {
@@ -781,14 +785,19 @@ func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command
 	}
 }
 
-// hasBeadsPlugin checks if the beads Claude Code plugin is enabled in any
-// settings file. The plugin declares its own SessionStart hooks in plugin.json,
-// so project-level hooks from bd setup claude would duplicate them.
-func hasBeadsPlugin(env claudeEnv) bool {
-	paths := []string{
-		projectSettingsPath(env.projectDir),
-		globalSettingsPath(env.homeDir),
-		legacyProjectSettingsPath(env.projectDir),
+// hasBeadsPlugin reports whether the beads Claude Code plugin is enabled where
+// its hooks would cover an install. The plugin declares its own SessionStart
+// hooks in plugin.json, so the hooks an install writes would duplicate them.
+// Claude Code records the plugin in the settings file of its install scope:
+// ~/.claude/settings.json (user scope) runs it in every project; a project's
+// .claude/settings.json (project scope) or .claude/settings.local.json (local
+// scope) runs it in that project only. A project install counts all three; a
+// global install, whose hooks are for every project, counts only the user
+// settings.
+func hasBeadsPlugin(env claudeEnv, global bool) bool {
+	paths := []string{globalSettingsPath(env.homeDir)}
+	if !global {
+		paths = append(paths, projectSettingsPath(env.projectDir), legacyProjectSettingsPath(env.projectDir))
 	}
 	for _, p := range paths {
 		if checkBeadsPluginInFile(env.readFile, p) {

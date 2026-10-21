@@ -179,6 +179,15 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 }
 `
 
+	// The entry Claude Code writes to a project's .claude/settings.json for
+	// a project-scope install of the beads plugin.
+	projectPluginSettings := `{
+  "enabledPlugins": {
+    "beads@beads-marketplace": true
+  }
+}
+`
+
 	// The settings.json a current install writes.
 	installedSettings := `{
   "hooks": {
@@ -304,6 +313,23 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 				claudeInstallStep(false, false),
 				claudeCheckStep(),
 				claudeRemoveStep(false),
+				claudeCheckStep(),
+			},
+		},
+		{
+			// The beads plugin enabled in the project's settings only: its
+			// hooks run in this project alone, so a project install leaves
+			// them to the plugin, --check judges the project's CLAUDE.md, and
+			// a global install still writes its hook for every other project.
+			name: "project-plugin",
+			seed: map[string]string{
+				"project/.claude/settings.json": projectPluginSettings,
+			},
+			steps: []claudeArtifactStep{
+				claudeCheckStep(),
+				claudeInstallStep(false, false),
+				claudeCheckStep(),
+				claudeInstallStep(true, false),
 				claudeCheckStep(),
 			},
 		},
