@@ -2277,6 +2277,59 @@ func TestClaudeLocalSettingsRoot(t *testing.T) {
 	}
 }
 
+// TestDefaultClaudeEnv pins that the environment the commands run with reads
+// the managed settings and the local settings at the repository root, so a
+// session started in a subdirectory resolves the plugin as Claude Code does.
+func TestDefaultClaudeEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code keeps settings.local.json beside settings.json on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	for _, name := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"} {
+		t.Setenv(name, "")
+		_ = os.Unsetenv(name)
+	}
+	t.Cleanup(git.ResetCaches)
+
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	t.Setenv("GIT_CEILING_DIRECTORIES", tmp)
+	home := filepath.Join(tmp, "home")
+	repo := filepath.Join(tmp, "repo")
+	sub := filepath.Join(repo, "sub")
+	for _, dir := range []string{home, sub} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	t.Setenv("HOME", home)
+	t.Chdir(sub)
+	git.ResetCaches()
+
+	env, err := defaultClaudeEnv()
+	if err != nil {
+		t.Fatalf("defaultClaudeEnv: %v", err)
+	}
+	if env.homeDir != home || !sameDir(env.projectDir, sub) {
+		t.Errorf("homeDir, projectDir = %q, %q, want %q, %q", env.homeDir, env.projectDir, home, sub)
+	}
+	if env.localSettingsRoot == "" || !sameDir(env.localSettingsRoot, repo) {
+		t.Errorf("localSettingsRoot = %q, want the repository root %q", env.localSettingsRoot, repo)
+	}
+	if env.managedDir == "" || env.managedDir != claudeManagedSettingsDir() {
+		t.Errorf("managedDir = %q, want %q", env.managedDir, claudeManagedSettingsDir())
+	}
+}
+
 func TestInstallClaudeSkipsHooksWhenPluginPresent(t *testing.T) {
 	env, stdout, _ := newClaudeTestEnv(t)
 
