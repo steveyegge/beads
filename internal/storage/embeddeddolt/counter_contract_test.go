@@ -303,6 +303,15 @@ func TestCounterInfraTypeCountMatchesList(t *testing.T) {
 			if grouped.Total != result.Total {
 				t.Errorf("CountByGroup(%s).Total = %d, want the scalar %d", name, grouped.Total, result.Total)
 			}
+			// Total re-runs the scalar count, so only the buckets read the
+			// grouped query. Status buckets are disjoint: their sum is exact.
+			var bucketSum int64
+			for _, n := range grouped.Groups {
+				bucketSum += int64(n)
+			}
+			if bucketSum != tt.want {
+				t.Errorf("CountByGroup(%s) buckets %v sum to %d, want %d", name, grouped.Groups, bucketSum, tt.want)
+			}
 		})
 	}
 
@@ -316,6 +325,45 @@ func TestCounterInfraTypeCountMatchesList(t *testing.T) {
 	}
 	if untyped.Total != 2 {
 		t.Errorf("Count(untyped) = %d, want 2 (the durable rows only)", untyped.Total)
+	}
+
+	// So an infra type's --by-type bucket is NOT its typed count, and this
+	// pins that split rather than leaving it implicit: the grouping is an
+	// untyped count, so by default robot's bucket is the retyped durable robot
+	// alone, while the typed count reads the two robot wisps. Only
+	// IncludeEphemeral makes the two agree, both then counting both planes;
+	// IncludeInfra admits the wisps tier to the bucket and keeps the typed
+	// count's narrowing.
+	for _, tt := range []struct {
+		ephemeral  bool
+		infra      bool
+		wantBucket int
+		wantTyped  int64
+	}{
+		{false, false, 1, 2},
+		{true, false, 3, 3},
+		{false, true, 3, 2},
+	} {
+		name := fmt.Sprintf("by-type/ephemeral=%v/infra=%v", tt.ephemeral, tt.infra)
+		t.Run(name, func(t *testing.T) {
+			byType, err := counter.CountByGroup(ctx, publicops.CountByGroupRequest{
+				Filter:  publicops.CountRequest{IncludeEphemeral: tt.ephemeral, IncludeInfra: tt.infra, IDFilter: scope},
+				GroupBy: publicops.CountGroupType,
+			})
+			if err != nil {
+				t.Fatalf("CountByGroup(%s): %v", name, err)
+			}
+			typed, err := counter.Count(ctx, publicops.CountRequest{
+				IssueType: "robot", IncludeEphemeral: tt.ephemeral, IncludeInfra: tt.infra, IDFilter: scope,
+			})
+			if err != nil {
+				t.Fatalf("Count(robot, %s): %v", name, err)
+			}
+			if got := byType.Groups["robot"]; got != tt.wantBucket || typed.Total != tt.wantTyped {
+				t.Errorf("%s: robot bucket = %d (groups %v), --type robot = %d; want %d and %d",
+					name, got, byType.Groups, typed.Total, tt.wantBucket, tt.wantTyped)
+			}
+		})
 	}
 }
 

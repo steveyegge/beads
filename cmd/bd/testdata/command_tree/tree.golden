@@ -1283,6 +1283,12 @@ bd count
     | By default, returns the total count of issues matching the filters.
     | Use --by-* flags to group counts by different attributes.
     |
+    | By default a count reads durable rows only, but --type naming an infra
+    | type (types.infra; agent, role and message unless configured) counts
+    | only that type's ephemeral rows, as 'bd list --type' does. An infra
+    | type's --by-type bucket and its --type count are therefore different
+    | rows; with --include-ephemeral both count durable and ephemeral rows.
+    |
     | Examples:
     |   bd count                          # Count all issues
     |   bd count --status open            # Count open issues

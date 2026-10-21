@@ -82,6 +82,15 @@ type CountRequest struct {
 	// (GH#6258); before it, the routing applied only under IncludeInfra, so a
 	// plain typed count of an infra type answered 0 where the listing returned
 	// rows.
+	//
+	// The narrowing belongs to a count that NAMES the type, so it never
+	// reaches a bucket. A CountByGroup by CountGroupType with this field empty
+	// is an untyped count: by default it reads the durable plane, so an infra
+	// type's bucket counts that type's durable rows while a count naming the
+	// type counts its ephemeral ones. Those are different rows. Only
+	// IncludeEphemeral makes the two agree, both then counting both planes in
+	// full; IncludeInfra admits the wisps tier to the bucket but keeps this
+	// field's narrowing.
 	IssueType string
 	// Assignee restricts to one actor's rows; NoAssignee restricts to rows with
 	// none. Setting both is not refused — they are handed to the filter as
@@ -246,6 +255,13 @@ type CountByGroupRequest struct {
 	// anonymously: a grouped count is a scalar count plus a dimension, and
 	// spelling the dimension beside the whole filter says that, where promoted
 	// fields would have made GroupBy look like one more predicate.
+	//
+	// A bucket is therefore a share of Filter's set, NOT the scalar count of a
+	// request naming the bucket's key. Grouping by CountGroupType with no
+	// Filter.IssueType is the case where the two differ: an infra type's
+	// bucket counts the rows an untyped count reads (by default the durable
+	// plane), while a Count naming that type reads its ephemeral rows (see
+	// CountRequest.IssueType). They agree only under IncludeEphemeral.
 	Filter CountRequest
 	// GroupBy is the bucketing dimension and must be one of the five
 	// CountGroup constants. An empty or unknown value is ErrValidation, not a

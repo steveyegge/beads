@@ -2986,6 +2986,8 @@ type CountIssuesParams struct {
 	// The set is CLOSED, and a value outside it is a `400` rather than an empty answer: a caller that misspelled a dimension and got zero buckets back has no way to tell that from a workspace with nothing in it. That is the role's own rule, applied at the edge here so the refusal names the parameter.
 	//
 	// Bucket KEYS are normalized and printed unmodified by every front door, so the normalization is part of this contract: a priority bucket is `P` followed by the number (`P1`); the assignee bucket for unassigned rows is `(unassigned)`, never the empty string, which would be indistinguishable from a stored empty assignee; the label bucket for rows carrying no label at all is `(no labels)`, and it is ABSENT rather than zero when every matching row has one; `status` and `type` buckets are the stored value verbatim.
+	//
+	// A `type` bucket is a share of THIS request's set, NOT the count a request naming that `type` returns. A request with no `type` reads the durable plane by default, so the bucket of a type this workspace calls infra counts that type's durable rows, while `type=<infra>` counts its ephemeral rows (see `type`). `include_ephemeral` is the one flag that makes the two agree, both then counting both planes in full; `include_infra` admits the wisps tier to the bucket and keeps the typed count's narrowing.
 	GroupBy *CountIssuesParamsGroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
 }
 

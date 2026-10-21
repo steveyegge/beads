@@ -2970,6 +2970,16 @@ paths:
             bucket for rows carrying no label at all is `(no labels)`, and it is
             ABSENT rather than zero when every matching row has one; `status`
             and `type` buckets are the stored value verbatim.
+
+
+            A `type` bucket is a share of THIS request's set, NOT the count a
+            request naming that `type` returns. A request with no `type` reads
+            the durable plane by default, so the bucket of a type this
+            workspace calls infra counts that type's durable rows, while
+            `type=<infra>` counts its ephemeral rows (see `type`).
+            `include_ephemeral` is the one flag that makes the two agree, both
+            then counting both planes in full; `include_infra` admits the wisps
+            tier to the bucket and keeps the typed count's narrowing.
           schema:
             type: string
             enum: [status, priority, type, assignee, label]
