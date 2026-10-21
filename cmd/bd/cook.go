@@ -483,7 +483,8 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 }
 
 // createGateIssue creates a gate issue for a step with a Gate field.
-// Gate issues have type=gate and block the step they guard.
+// Gate issues have type=gate. collectSteps wires them to block the step they
+// guard, or, for a step declared type = "gate", to be blocked by it.
 // Returns the gate issue and its ID.
 func createGateIssue(step *formula.Step, parentID string) *types.Issue {
 	if step.Gate == nil {
@@ -609,6 +610,15 @@ func processStepToIssue(step *formula.Step, parentID string) *types.Issue {
 	return issue
 }
 
+// isExitGateStep reports whether a step is declared type = "gate" and has a
+// [steps.gate] block. Such a step is the preparation work for its companion
+// gate: cook makes the step a task that blocks the companion (an exit-gate),
+// instead of the companion blocking the step (an entry-gate, every other
+// step with a Gate) (GH#3316).
+func isExitGateStep(step *formula.Step) bool {
+	return step.Gate != nil && strings.TrimSpace(step.Type) == string(types.TypeGate)
+}
+
 // collectSteps collects issues and dependencies for steps and their children.
 // This is the unified implementation used by both DB-persisted and in-memory cooking.
 //
@@ -626,6 +636,12 @@ func collectSteps(steps []*formula.Step, parentID string,
 
 	for _, step := range steps {
 		issue := processStepToIssue(step, parentID)
+		exitGate := isExitGateStep(step)
+		if exitGate {
+			// The step is the prep work for its companion gate; as a
+			// TypeGate bead it would be hidden from ready work (GH#3316).
+			issue.IssueType = types.TypeTask
+		}
 		*issues = append(*issues, issue)
 
 		// Build mappings
@@ -676,12 +692,21 @@ func collectSteps(steps []*formula.Step, parentID string,
 				Type:        types.DepParentChild,
 			})
 
-			// Step depends on gate (gate blocks the step)
-			*deps = append(*deps, &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: gateIssue.ID,
-				Type:        types.DepBlocks,
-			})
+			if exitGate {
+				// Exit-gate: the step's task blocks its gate (GH#3316)
+				*deps = append(*deps, &types.Dependency{
+					IssueID:     gateIssue.ID,
+					DependsOnID: issue.ID,
+					Type:        types.DepBlocks,
+				})
+			} else {
+				// Entry-gate: step depends on gate (gate blocks the step)
+				*deps = append(*deps, &types.Dependency{
+					IssueID:     issue.ID,
+					DependsOnID: gateIssue.ID,
+					Type:        types.DepBlocks,
+				})
+			}
 		}
 
 		// Recursively collect children

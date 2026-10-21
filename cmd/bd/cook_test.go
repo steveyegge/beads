@@ -914,6 +914,117 @@ gate = ` + gateSrc + "\n"
 	}
 }
 
+// gateTypedReproTOML is the GH#3316 repro: a prep task, a type = "gate"
+// step carrying a human [steps.gate], and a step that depends on it.
+const gateTypedReproTOML = `formula = "gate-repro"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "prep"
+title = "Prep evidence"
+type = "task"
+assignee = "worker"
+
+[[steps]]
+id = "agree"
+title = "Human approves"
+description = "Gather evidence and write the decision template"
+type = "gate"
+assignee = "pa-agent"
+labels = ["needs-human"]
+depends_on = ["prep"]
+gate = { type = "human" }
+
+[[steps]]
+id = "execute"
+title = "Do the thing"
+type = "task"
+depends_on = ["agree"]
+`
+
+// TestCookFormulaToSubgraph_GateTypedStep covers the exit-gate form
+// (GH#3316): a step declared type = "gate" with a [steps.gate] block is
+// prep work whose task bead blocks the companion gate, not the reverse.
+func TestCookFormulaToSubgraph_GateTypedStep(t *testing.T) {
+	t.Run("issue_repro", func(t *testing.T) {
+		sg := cookGateFormulaTOML(t, "gate-repro", gateTypedReproTOML)
+		taskID, gateID, prepID := "gate-repro.agree", "gate-repro.gate-agree", "gate-repro.prep"
+
+		task := sg.IssueMap[taskID]
+		if task == nil {
+			t.Fatalf("task %s missing; issues %v", taskID, allIssueIDs(sg))
+		}
+		// The prep bead must be a type bd ready includes; gate is excluded
+		// from ready work (sqlbuild.ReadyWorkExcludeTypes).
+		if task.IssueType != types.TypeTask {
+			t.Errorf("task IssueType = %q, want %q", task.IssueType, types.TypeTask)
+		}
+		if task.Title != "Human approves" || task.Assignee != "pa-agent" ||
+			task.Description != "Gather evidence and write the decision template" {
+			t.Errorf("task lost step fields: title=%q assignee=%q desc=%q", task.Title, task.Assignee, task.Description)
+		}
+		if len(task.Labels) != 1 || task.Labels[0] != "needs-human" {
+			t.Errorf("task labels = %v, want [needs-human]", task.Labels)
+		}
+		if task.AwaitType != "" {
+			t.Errorf("task AwaitType = %q, want empty (await fields belong to the companion)", task.AwaitType)
+		}
+
+		gate := sg.IssueMap[gateID]
+		if gate == nil || gate.IssueType != types.TypeGate || gate.AwaitType != "human" {
+			t.Fatalf("companion %s = %+v, want a human gate", gateID, gate)
+		}
+
+		if got := blocksEdgesFrom(sg, gateID); len(got) != 1 || got[0] != taskID {
+			t.Errorf("companion blocks edges = %v, want [%s] (task blocks gate)", got, taskID)
+		}
+		if got := blocksEdgesFrom(sg, taskID); len(got) != 1 || got[0] != prepID {
+			t.Errorf("task blocks edges = %v, want only its declared depends_on [%s]", got, prepID)
+		}
+	})
+}
+
+// TestCollectStepsGateDirection pins GH#3316 (bd-4nndgi) at the
+// collectSteps level: for a step declared type = "gate" the task is the
+// preparation work for its companion gate, so the task blocks the gate.
+// The triage version of this test dropped Type: "gate" and asserted the
+// flip for every [steps.gate]; that contradicts the documented entry-gate
+// form (TestCookFormulaToSubgraph_EntryGateWiring), so it pins only the
+// gate-typed shape.
+func TestCollectStepsGateDirection(t *testing.T) {
+	steps := []*formula.Step{
+		{ID: "agree", Title: "Human approves", Type: "gate", Gate: &formula.Gate{Type: "human"}},
+	}
+	idMapping := make(map[string]string)
+	var issues []*types.Issue
+	var deps []*types.Dependency
+	collectSteps(steps, "mol-x", idMapping, nil, &issues, &deps, nil)
+
+	taskID, gateID := idMapping["agree"], idMapping["gate-agree"]
+	if taskID != "mol-x.agree" || gateID != "mol-x.gate-agree" {
+		t.Fatalf("idMapping = %v, want agree→mol-x.agree, gate-agree→mol-x.gate-agree", idMapping)
+	}
+	var taskBlocksGate, gateBlocksTask bool
+	for _, d := range deps {
+		if d.Type != types.DepBlocks {
+			continue
+		}
+		if d.IssueID == gateID && d.DependsOnID == taskID {
+			taskBlocksGate = true
+		}
+		if d.IssueID == taskID && d.DependsOnID == gateID {
+			gateBlocksTask = true
+		}
+	}
+	if gateBlocksTask {
+		t.Errorf("task %s depends on its gate %s: gate blocks its own prep task (inverted edge)", taskID, gateID)
+	}
+	if !taskBlocksGate {
+		t.Errorf("gate %s does not depend on task %s: want task --blocks--> gate", gateID, taskID)
+	}
+}
+
 // =============================================================================
 // Standalone Expansion Tests (bd-qzb)
 // =============================================================================

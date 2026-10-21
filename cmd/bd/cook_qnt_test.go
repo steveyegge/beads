@@ -247,4 +247,20 @@ gate = `+gateSrc+"\n")
 			}
 		})
 	}
+
+	t.Run("exit/gate-typed", func(t *testing.T) {
+		protoID := "test-exit"
+		cook(t, protoID, gateTypedReproTOML)
+		taskID, gateID := protoID+".agree", protoID+".gate-agree"
+		task, err := store.GetIssue(ctx, taskID)
+		if err != nil || task == nil || task.IssueType != types.TypeTask {
+			t.Fatalf("task %s: issue=%+v err=%v, want type task", taskID, task, err)
+		}
+		if got := blocksTargets(t, gateID); len(got) != 1 || got[0] != taskID {
+			t.Errorf("companion blocks edges = %v, want [%s] (task blocks gate)", got, taskID)
+		}
+		if got := blocksTargets(t, taskID); len(got) != 1 || got[0] != protoID+".prep" {
+			t.Errorf("task blocks edges = %v, want only [%s.prep]", got, protoID)
+		}
+	})
 }
