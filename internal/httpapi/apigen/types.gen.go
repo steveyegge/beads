@@ -2872,7 +2872,7 @@ type CountIssuesParams struct {
 
 	// Type One issue type, with `status`'s match-nothing-rather-than-fail treatment and NO shorthand alias expansion at all — unlike `GET /v0/beads/ready`'s `type`, which expands aliases.
 	//
-	// It has a SECOND effect: a type this workspace calls infra reads the wisps tier narrowed to that type's ephemeral rows — the same rows `GET /v0/beads/issues?type=<infra>` returns — unless `include_ephemeral` is also set, which lifts the narrowing and counts the type's durable rows too. That is the plane decision count and list share; it applies with or without `include_infra`.
+	// It has a SECOND effect: a type this workspace calls infra reads the wisps tier narrowed to that type's ephemeral rows — the plane and the narrowing `GET /v0/beads/issues?type=<infra>` applies, though not its rows, since a count keeps the closed and pinned rows that listing hides — unless `include_ephemeral` is also set, which lifts the narrowing and counts the type's durable rows too. That is the plane decision count and list share; it applies with or without `include_infra`.
 	Type *string `form:"type,omitempty" json:"type,omitempty"`
 
 	// Assignee Only issues assigned to this actor. Sending it beside `no_assignee` is not refused: the two are handed to the filter as written and answer with the empty intersection, which is `0`.
@@ -2938,11 +2938,11 @@ type CountIssuesParams struct {
 	// MetadataField Top-level metadata equality filter as `key=value`, split on the first `=`. Repeatable. An invalid key is a 400.
 	MetadataField *[]string `form:"metadata_field,omitempty" json:"metadata_field,omitempty"`
 
-	// IncludeEphemeral Admit the EPHEMERAL PLANE — the wisps table — and nothing else. Exactly the first of `include_infra`'s four changes, with none of the other three: no type exclusion is taken off, so a row whose TYPE a default count already excludes stays excluded.
+	// IncludeEphemeral Count BOTH PLANES in full — the wisps table as well as the durable one — and take no type exclusion off, so a row whose TYPE a default count already excludes stays excluded. For a count with no `type`, or of a type this workspace does not call infra, that admits the wisps table: exactly the first of `include_infra`'s four changes, with none of the other three.
 	//
 	// It exists because there was no way to ask for that one thing. The write path routes on STORAGE CLASS, not type, so a `no_history` bead lives in the wisps table while remaining ordinary durable work. Reaching it needed `include_infra`, which also drops template rows of the named type — one silent undercount traded for another.
 	//
-	// Beside `include_infra` it also lifts the fourth change's routing of an infra `type`, so that type's durable rows are counted along with its ephemeral ones rather than instead of them.
+	// For a `type` this workspace calls infra, which reads the wisps tier narrowed to its ephemeral rows (see `type`), the flag lifts that narrowing instead, with or without `include_infra`: the type's durable rows (a promoted wisp, a retyped issue) are counted along with its ephemeral ones rather than left out. It is the only flag that lifts it — `include_infra` keeps the narrowing — so it is the way to count those durable rows; sending `include_infra` beside it also drops the type's template rows.
 	IncludeEphemeral *bool `form:"include_ephemeral,omitempty" json:"include_ephemeral,omitempty"`
 
 	// HasMetadataKey Only issues carrying this top-level metadata key.

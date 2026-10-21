@@ -71,15 +71,17 @@ func TestBuildCountFilter_IncludeEphemeral(t *testing.T) {
 // field admits the wisps PLANE and changes nothing else.
 //
 // That half is why the field exists. IncludeInfra already admitted the plane,
-// but it also drops template rows of the named type, drops gates and routes an
-// infra type to the ephemeral tier. A builder that sent IncludeEphemeral
-// through IncludeInfra's branch would pass every SkipWisps assertion and bring
-// back exactly the undercount the flag was added to avoid, so this asserts the
-// other three fields against IncludeInfra — the field that does set them.
+// but it also drops template rows of the named type and drops gates, and it
+// keeps an infra type's narrowing to its ephemeral rows, which since GH#6258
+// a typed count applies with or without IncludeInfra and only IncludeEphemeral
+// lifts. A builder that sent IncludeEphemeral through IncludeInfra's branch
+// would pass every SkipWisps assertion and bring back exactly the undercount
+// the flag was added to avoid, so this asserts the other three fields against
+// IncludeInfra — the field that does set them.
 func TestCountIncludeEphemeralIsThePlaneBitAndNothingElse(t *testing.T) {
 	// The zero ListConfig falls back to the default InfraSet, under which
-	// "agent" is an infra type: the one IncludeInfra would route to the
-	// ephemeral tier.
+	// "agent" is an infra type: the one whose count narrows to its ephemeral
+	// rows unless IncludeEphemeral lifts that.
 	cfg := ListConfig{}
 
 	for _, tt := range []struct {
@@ -110,7 +112,8 @@ func TestCountIncludeEphemeralIsThePlaneBitAndNothingElse(t *testing.T) {
 		})
 	}
 
-	// And IncludeInfra still makes all four changes, so the contrast above is
+	// And IncludeInfra still sets all three — its template and gate exclusions,
+	// and an infra type's narrowing, which it keeps — so the contrast above is
 	// drawn against the field it has to differ from.
 	for _, tt := range []struct {
 		name          string

@@ -323,17 +323,20 @@ func registerCountFlags(cmd *cobra.Command) {
 	// `bd list --include-infra <filters> --all`.
 	cmd.Flags().Bool("include-infra", false, "Include infrastructure beads and the wisps tier (matches 'bd list --include-infra --all' cardinality)")
 
-	// The plane knob alone: admits the wisps tier WITHOUT lifting any type
-	// exclusion, which --include-infra cannot do (it bundles four changes, and
-	// its template exclusion silently drops template rows of a named type).
+	// The plane knob alone: counts both planes in full WITHOUT lifting any
+	// type exclusion, which --include-infra cannot do (it bundles four
+	// changes, and its template exclusion silently drops template rows of a
+	// named type).
 	//
-	// The sibling on `bd list` landed in #6098 (cmd/bd/list.go); the name and
-	// the help text deliberately follow its shape so the two halves of the
-	// pair read alike. The trailing clause is the one addition: on `bd count`
+	// The sibling on `bd list` landed in #6098 (cmd/bd/list.go) and keeps the
+	// same name, but this help text cannot borrow its "(normally hidden)": a
+	// count of an infra --type already reads only that type's ephemeral rows
+	// (GH#6258), so there the flag adds the durable rows instead, and the
+	// help names both defaults. The no-type-exclusions clause stays because
 	// the wider `--include-infra` sits right beside this flag and advertises
 	// cardinality matching, so the contrast has to be legible in `--help` and
 	// not only in this comment.
-	cmd.Flags().Bool("include-ephemeral", false, "Include ephemeral wisp-plane rows in the count (normally hidden), without lifting type exclusions")
+	cmd.Flags().Bool("include-ephemeral", false, "Count durable and ephemeral wisp-plane rows together, without lifting type exclusions (default: durable rows only, or an infra --type's ephemeral rows only)")
 
 	// Grouping flags
 	cmd.Flags().Bool("by-status", false, "Group count by status")
