@@ -817,3 +817,34 @@ func TestNewServerModeResolvedAddressDialFailureUnchanged(t *testing.T) {
 		}
 	})
 }
+
+// TestNewServerModeUnresolvedPortAutoStartStillRuns pins AC-3: with auto-start
+// enabled, an unresolved port still goes to EnsureRunningDetailed (which
+// allocates the port) rather than returning the unresolved-port error.
+func TestNewServerModeUnresolvedPortAutoStartStillRuns(t *testing.T) {
+	isolateUnresolvedPortEnv(t)
+	beadsDir := t.TempDir()
+	cfg := &Config{Database: "test_unresolved_autostart", BeadsDir: beadsDir, Path: filepath.Join(beadsDir, "dolt"), ServerHost: "127.0.0.1", AutoStart: true}
+
+	calls := 0
+	orig := ensureRunningDetailed
+	t.Cleanup(func() { ensureRunningDetailed = orig })
+	ensureRunningDetailed = func(string) (int, bool, error) {
+		calls++
+		return 0, false, fmt.Errorf("simulated start failure")
+	}
+
+	_, err := newServerMode(context.Background(), cfg)
+	if calls != 1 {
+		t.Fatalf("ensureRunningDetailed called %d times, want 1", calls)
+	}
+	if err == nil {
+		t.Fatal("expected the auto-start failure to surface")
+	}
+	if !strings.Contains(err.Error(), "auto-start failed: simulated start failure") {
+		t.Errorf("error is not the auto-start failure wrap:\n%v", err)
+	}
+	if strings.Contains(err.Error(), "no Dolt server port resolved") {
+		t.Errorf("auto-start-capable open got the unresolved-port error:\n%v", err)
+	}
+}
