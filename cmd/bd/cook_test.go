@@ -5,12 +5,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/steveyegge/beads/internal/formula"
+	"github.com/steveyegge/beads/internal/storage/sqlbuild"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -889,6 +891,170 @@ func TestCookFormulaToSubgraph_GateEntryForms(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCollectStepsGateDirection pins the GH#3316 fix at the collectSteps
+// unit boundary. The triage repro asserted a blanket flip of the edge for
+// *any* [steps.gate] step; that contradicts the documented entry-gate
+// semantics (see TestCookFormulaToSubgraph_GateDependencies and the
+// gate-timer primitive), so this replacement narrows the pin to the compound
+// exit-gate form the issue actually reports: a step declared type = "gate"
+// whose task is the preparation work for its companion gate. Only there may
+// the task block the gate.
+func TestCollectStepsGateDirection(t *testing.T) {
+	steps := []*formula.Step{
+		{ID: "agree", Title: "Human approves", Type: "gate", Gate: &formula.Gate{Type: "human"}},
+	}
+	idMapping := make(map[string]string)
+	var issues []*types.Issue
+	var deps []*types.Dependency
+	collectSteps(steps, "mol-x", idMapping, nil, &issues, &deps, nil)
+
+	taskID, gateID := idMapping["agree"], idMapping["gate-agree"]
+	if taskID == "" || gateID == "" {
+		t.Fatalf("missing task or gate mapping: %v", idMapping)
+	}
+	var taskBlocksGate, gateBlocksTask bool
+	for _, d := range deps {
+		if d.Type != types.DepBlocks {
+			continue
+		}
+		if d.IssueID == gateID && d.DependsOnID == taskID {
+			taskBlocksGate = true
+		}
+		if d.IssueID == taskID && d.DependsOnID == gateID {
+			gateBlocksTask = true
+		}
+	}
+	if gateBlocksTask {
+		t.Errorf("task %s depends on its gate %s: gate blocks its own prep task (inverted edge)", taskID, gateID)
+	}
+	if !taskBlocksGate {
+		t.Errorf("gate %s does not depend on task %s: want task --blocks--> gate", gateID, taskID)
+	}
+}
+
+// TestCookFormulaToSubgraph_GateTypedStep covers the compound exit-gate form
+// from GH#3316: a step declared type = "gate" with a [steps.gate] block cooks
+// into a dispatchable task bead (the prep work) plus a `gate`-typed
+// companion, with the task blocking the companion instead of the reverse.
+func TestCookFormulaToSubgraph_GateTypedStep(t *testing.T) {
+	t.Run("issue repro", func(t *testing.T) {
+		f := &formula.Formula{
+			Formula:     "mol-gate-typed",
+			Description: "GH#3316 issue repro",
+			Version:     1,
+			Type:        formula.TypeWorkflow,
+			Steps: []*formula.Step{
+				{ID: "prep", Title: "Prep evidence", Assignee: "worker"},
+				{
+					ID:          "agree",
+					Title:       "Human approves",
+					Type:        "gate",
+					Assignee:    "pa-agent",
+					Description: "Gather evidence and deliver the decision template",
+					Labels:      []string{"pa"},
+					DependsOn:   []string{"prep"},
+					Gate:        &formula.Gate{Type: "human"},
+				},
+				{ID: "execute", Title: "Do the thing", DependsOn: []string{"agree"}},
+			},
+		}
+
+		subgraph, err := cookFormulaToSubgraph(f, "mol-gate-typed")
+		if err != nil {
+			t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+		}
+
+		taskID := "mol-gate-typed.agree"
+		gateID := "mol-gate-typed.gate-agree"
+
+		var taskIssue, gateIssue *types.Issue
+		for _, issue := range subgraph.Issues {
+			switch issue.ID {
+			case taskID:
+				taskIssue = issue
+			case gateID:
+				gateIssue = issue
+			}
+		}
+		if taskIssue == nil || gateIssue == nil {
+			t.Fatalf("missing agree task (%v) or companion (%v); issues: %v", taskIssue, gateIssue, subgraphIssueIDs(subgraph))
+		}
+
+		// The prep bead is a task and keeps the step's authoring fields.
+		if taskIssue.IssueType != types.TypeTask {
+			t.Errorf("agree bead type = %q, want %q", taskIssue.IssueType, types.TypeTask)
+		}
+		if taskIssue.Title != "Human approves" {
+			t.Errorf("agree title = %q, want %q", taskIssue.Title, "Human approves")
+		}
+		if taskIssue.Description != "Gather evidence and deliver the decision template" {
+			t.Errorf("agree description = %q, want the step description", taskIssue.Description)
+		}
+		if taskIssue.Assignee != "pa-agent" {
+			t.Errorf("agree assignee = %q, want %q", taskIssue.Assignee, "pa-agent")
+		}
+		var hasPALabel bool
+		for _, l := range taskIssue.Labels {
+			if l == "pa" {
+				hasPALabel = true
+			}
+		}
+		if !hasPALabel {
+			t.Errorf("agree labels = %v, want %q present", taskIssue.Labels, "pa")
+		}
+
+		// The companion is a gate with the step's await fields.
+		if gateIssue.IssueType != types.TypeGate {
+			t.Errorf("companion %s type = %q, want %q", gateID, gateIssue.IssueType, types.TypeGate)
+		}
+		if gateIssue.AwaitType != "human" {
+			t.Errorf("companion %s await_type = %q, want %q", gateID, gateIssue.AwaitType, "human")
+		}
+
+		// The only blocks edge between the pair is gate <- task.
+		var taskBlocksGate, gateBlocksTask int
+		for _, dep := range subgraph.Dependencies {
+			if dep.Type != types.DepBlocks {
+				continue
+			}
+			if dep.IssueID == gateID && dep.DependsOnID == taskID {
+				taskBlocksGate++
+			}
+			if dep.IssueID == taskID && dep.DependsOnID == gateID {
+				gateBlocksTask++
+			}
+		}
+		if taskBlocksGate != 1 || gateBlocksTask != 0 {
+			t.Errorf("blocks edges between %s and %s: task-blocks-gate=%d, gate-blocks-task=%d; deps: %v",
+				taskID, gateID, taskBlocksGate, gateBlocksTask, depIDs(subgraph))
+		}
+
+		// The step's own declared depends_on lands on the task bead.
+		if !hasBlocksDepOn(subgraph, taskID, "mol-gate-typed.prep") {
+			t.Errorf("agree task %s must block on prep; deps: %v", taskID, depIDs(subgraph))
+		}
+
+		// The retyped bead is one bd ready lists once its deps close: task
+		// is not in the ready-work exclusion list (gate is, by contrast).
+		if slices.Contains(sqlbuild.ReadyWorkExcludeTypes(nil), types.TypeTask) {
+			t.Errorf("type %s must not be excluded from ready work", types.TypeTask)
+		}
+		if !slices.Contains(sqlbuild.ReadyWorkExcludeTypes(nil), types.TypeGate) {
+			t.Errorf("type %s must stay excluded from ready work (bare type=gate steps stay hidden)", types.TypeGate)
+		}
+	})
+}
+
+// hasBlocksDepOn reports whether sg carries a blocks edge from -> to.
+func hasBlocksDepOn(sg *TemplateSubgraph, from, to string) bool {
+	for _, dep := range sg.Dependencies {
+		if dep.IssueID == from && dep.DependsOnID == to && dep.Type == types.DepBlocks {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCookFormulaToSubgraph_GateParentChild tests that gate is a child of the parent

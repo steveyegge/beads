@@ -1,0 +1,36 @@
+# Exit-gate form — a step declared `type = "gate"` with a `[steps.gate]`
+# block (GH#3316).
+#
+# The step bead is the preparation work for the gate, so cook splits it into:
+#  * a `task`-typed bead carrying the step's title/description/assignee —
+#    dispatchable like any other task once its own depends_on close
+#  * a sibling `gate`-typed companion with await_type/timeout
+#  * a blocking dep of the companion on the task: the gate resolves only
+#    after the prep work closes (task --blocks--> gate), never the reverse
+#
+# Contrast gate-timer.formula.toml, the entry-gate form: there the step has
+# no declared type and its gate blocks the step itself (gate --blocks--> step).
+formula = "gate-typed"
+description = "Compound exit-gate: a type=gate step's prep task blocks its companion gate."
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "prep"
+title = "Prep evidence"
+
+[[steps]]
+id = "agree"
+title = "Human approves"
+type = "gate"
+assignee = "pa-agent"
+depends_on = ["prep"]
+
+[steps.gate]
+type = "human"
+timeout = "24h"
+
+[[steps]]
+id = "execute"
+title = "Do the thing"
+depends_on = ["agree"]

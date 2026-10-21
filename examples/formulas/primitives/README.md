@@ -13,7 +13,8 @@ and exercises exactly one primitive.
 | `children-epic.formula.toml`  | `Step.children`    | Nested steps form an epic with sibling `needs` honored. |
 | `branch-fanin.formula.toml`   | `ComposeRules.branch` | Fork-join: parallel steps fan in to a single join step. |
 | `condition.formula.toml`      | `Step.condition`   | Variable-driven step inclusion at cook time. |
-| `gate-timer.formula.toml`     | `Step.gate`        | Sibling `gate`-typed issue with `await_type` blocks the target step. |
+| `gate-timer.formula.toml`     | `Step.gate`        | Sibling `gate`-typed issue with `await_type` blocks the target step (entry gate). |
+| `gate-typed.formula.toml`     | `Step.type` + `Step.gate` | Compound exit gate: a `type = "gate"` step's prep `task` blocks its companion gate (GH#3316). |
 
 For the full schema index - every exported struct declared in
 `internal/formula/types.go`, with field types and tags -

@@ -118,6 +118,34 @@ func TestFormulaPrimitiveExamples(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "gate-typed",
+			assert: func(t *testing.T, sg *TemplateSubgraph) {
+				agree := issueByID(sg, "gate-typed.agree")
+				if agree == nil {
+					t.Fatalf("missing exit-gate prep bead; issues: %v", allIssueIDs(sg))
+				}
+				if agree.IssueType != types.TypeTask {
+					t.Errorf("exit-gate prep bead type = %q, want %q (must be dispatchable)", agree.IssueType, types.TypeTask)
+				}
+				gate := findGate(sg)
+				if gate == nil {
+					t.Fatalf("no companion gate issue in subgraph; issues: %v", allIssueIDs(sg))
+				}
+				if gate.ID != "gate-typed.gate-agree" {
+					t.Errorf("companion gate ID = %q, want %q", gate.ID, "gate-typed.gate-agree")
+				}
+				if gate.AwaitType != "human" {
+					t.Errorf("gate.AwaitType = %q, want %q", gate.AwaitType, "human")
+				}
+				if !hasBlockingDep(sg, gate.ID, agree.ID) {
+					t.Errorf("companion %s must block on its prep task %s (task --blocks--> gate); deps: %v", gate.ID, agree.ID, allDeps(sg))
+				}
+				if hasBlockingDep(sg, agree.ID, gate.ID) {
+					t.Errorf("prep task %s must not block on its own companion %s (inverted edge); deps: %v", agree.ID, gate.ID, allDeps(sg))
+				}
+			},
+		},
 	}
 
 	registered := map[string]bool{}
@@ -190,6 +218,15 @@ func hasBlockingDep(sg *TemplateSubgraph, from, to string) bool {
 		}
 	}
 	return false
+}
+
+func issueByID(sg *TemplateSubgraph, id string) *types.Issue {
+	for _, i := range sg.Issues {
+		if i.ID == id {
+			return i
+		}
+	}
+	return nil
 }
 
 func findGate(sg *TemplateSubgraph) *types.Issue {

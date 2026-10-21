@@ -482,8 +482,20 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	}, nil
 }
 
+// isExitGateStep reports whether a step uses the compound exit-gate form:
+// declared `type = "gate"` *and* carrying a [steps.gate] block. The step
+// bead is then the preparation work for the gate (evidence gathering,
+// decision-template filling, delivery to the human), so the task must run
+// before the gate resolves; every other [steps.gate] block is an entry gate
+// that blocks its step (GH#3316).
+func isExitGateStep(step *formula.Step) bool {
+	return strings.TrimSpace(step.Type) == "gate" && step.Gate != nil
+}
+
 // createGateIssue creates a gate issue for a step with a Gate field.
-// Gate issues have type=gate and block the step they guard.
+// Gate issues have type=gate. For an entry gate the companion blocks the
+// step it guards; for an exit-gate step (isExitGateStep) the flipped edge
+// is emitted by the caller so the step's task blocks the companion.
 // Returns the gate issue and its ID.
 func createGateIssue(step *formula.Step, parentID string) *types.Issue {
 	if step.Gate == nil {
@@ -626,6 +638,17 @@ func collectSteps(steps []*formula.Step, parentID string,
 
 	for _, step := range steps {
 		issue := processStepToIssue(step, parentID)
+
+		// An exit-gate step (declared `type = "gate"` with a [steps.gate]
+		// block) retypes its step bead to task: the bead is the preparation
+		// work for the gate, so it must be dispatchable like any other task
+		// (bd ready hides gate-typed beads). A bare `type = "gate"` step
+		// (no gate block) keeps its gate type and stays hidden (GH#3316).
+		exitGate := isExitGateStep(step)
+		if exitGate {
+			issue.IssueType = types.TypeTask
+		}
+
 		*issues = append(*issues, issue)
 
 		// Build mappings
@@ -676,12 +699,25 @@ func collectSteps(steps []*formula.Step, parentID string,
 				Type:        types.DepParentChild,
 			})
 
-			// Step depends on gate (gate blocks the step)
-			*deps = append(*deps, &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: gateIssue.ID,
-				Type:        types.DepBlocks,
-			})
+			// Entry gate (default): the gate blocks the step it guards.
+			// Exit gate (compound `type = "gate"` step): the step's task is
+			// the prep work for the gate, so the task blocks the companion —
+			// the gate resolves only after the prep work closes, and
+			// dependents wait on the gate instead of on the prep task
+			// (GH#3316; reference retargeting lands with refMapping).
+			if exitGate {
+				*deps = append(*deps, &types.Dependency{
+					IssueID:     gateIssue.ID,
+					DependsOnID: issue.ID,
+					Type:        types.DepBlocks,
+				})
+			} else {
+				*deps = append(*deps, &types.Dependency{
+					IssueID:     issue.ID,
+					DependsOnID: gateIssue.ID,
+					Type:        types.DepBlocks,
+				})
+			}
 		}
 
 		// Recursively collect children
