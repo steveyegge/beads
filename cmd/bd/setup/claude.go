@@ -1105,9 +1105,12 @@ func claudeSettingsAreShared(env claudeEnv, path string) bool {
 // claudeManagedSettingsPaths returns the file-based managed settings in dir,
 // highest precedence first. Claude Code merges managed-settings.json, then
 // each *.json in managed-settings.d in name order, skipping dot files, and a
-// later file's value replaces an earlier one's. Managed settings Claude Code
-// gets from its servers or an MDM profile rank above these files and are
-// not visible here.
+// later file's value replaces an earlier one's. bd assumes these files are
+// the managed source in force: it cannot see server-managed settings or an
+// MDM profile, which rank above them, and under the default
+// managedSourcesBehavior ("first-wins") Claude Code ignores the files
+// entirely, enabledPlugins included, when a higher source delivers any
+// policy key.
 func claudeManagedSettingsPaths(dir string) []string {
 	if dir == "" {
 		return nil
