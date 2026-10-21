@@ -34,7 +34,10 @@ const (
 // starts the server in one shot, so subsequent commands find a running
 // server and don't need fallback auto-start. If the user explicitly
 // stops the server, External mode's "you manage the lifecycle" semantics
-// asks the user to run `bd dolt start`.
+// applies: a port named for the server (BEADS_DOLT_SERVER_PORT, the legacy
+// BEADS_DOLT_PORT, dolt_server_port) gets the externally managed advice,
+// and only a shared server or a port from bd's own port file is still
+// pointed at `bd dolt start`.
 func ApplyCLIAutoStart(beadsDir string, cfg *Config) {
 	if cfg.DisableAutoStart {
 		cfg.AutoStart = false

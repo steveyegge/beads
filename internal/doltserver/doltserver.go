@@ -1048,13 +1048,16 @@ func DefaultConfig(beadsDir string) *Config {
 
 // DialConfig is DefaultConfig for a client that dials the server without
 // opening the store (`bd dolt test`, `bd dolt clean-databases`, `bd doctor
-// --perf`, EnsureRunning's externally managed refusal). When no port source
-// gives a port, it falls back to the legacy BEADS_DOLT_PORT, which is not in
-// portSources but which the store dials (applyConfigDefaults), so these
-// clients dial and name that endpoint instead of 127.0.0.1:0.
+// --perf`, `bd doctor --server`, EnsureRunning's externally managed refusal).
+// It applies the legacy BEADS_DOLT_PORT, which is not in portSources, the way
+// the store's applyConfigDefaults does: when BEADS_DOLT_SERVER_PORT is unset,
+// a valid BEADS_DOLT_PORT replaces any port that is not authoritative (none,
+// bd's own port file, or a bd-chosen default). These clients then dial and
+// name the endpoint the store dials, not 127.0.0.1:0 or a leftover port-file
+// port.
 func DialConfig(beadsDir string) *Config {
 	cfg := DefaultConfig(beadsDir)
-	if cfg.PortSource == PortSourceUnset {
+	if os.Getenv("BEADS_DOLT_SERVER_PORT") == "" && !cfg.PortSource.IsAuthoritative() {
 		if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BEADS_DOLT_PORT"))); err == nil && p > 0 {
 			cfg.Port, cfg.PortSource = p, PortSourceEnv
 		}

@@ -2094,21 +2094,28 @@ func TestResolveServerMode_EnvPortImpliesExternal(t *testing.T) {
 	}
 }
 
-// TestDialConfig_LegacyPortEnv pins DialConfig's fallback to the legacy
-// BEADS_DOLT_PORT, which the store dials but portSources does not read: with
-// no other source the diagnostics would dial (and advise about) port 0.
+// TestDialConfig_LegacyPortEnv pins DialConfig's handling of the legacy
+// BEADS_DOLT_PORT, which the store dials but portSources does not read: it
+// replaces a missing or port-file port (the store's applyConfigDefaults rule),
+// so the diagnostics do not dial (and advise about) port 0 or a leftover
+// port-file port, and it leaves an authoritative metadata.json port alone.
 func TestDialConfig_LegacyPortEnv(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		serverPort string
-		legacyPort string
-		wantPort   int
-		wantSource PortSource
+		name         string
+		serverPort   string
+		legacyPort   string
+		portFile     int
+		metadataPort int
+		wantPort     int
+		wantSource   PortSource
 	}{
-		{"neither", "", "", 0, PortSourceUnset},
-		{"legacy only", "", "13307", 13307, PortSourceEnv},
-		{"BEADS_DOLT_SERVER_PORT wins", "13400", "13307", 13400, PortSourceEnv},
-		{"legacy invalid", "", "not-a-port", 0, PortSourceUnset},
+		{name: "neither", wantSource: PortSourceUnset},
+		{name: "legacy only", legacyPort: "13307", wantPort: 13307, wantSource: PortSourceEnv},
+		{name: "BEADS_DOLT_SERVER_PORT wins", serverPort: "13400", legacyPort: "13307", wantPort: 13400, wantSource: PortSourceEnv},
+		{name: "legacy invalid", legacyPort: "not-a-port", wantSource: PortSourceUnset},
+		{name: "legacy over port file", legacyPort: "13307", portFile: 14444, wantPort: 13307, wantSource: PortSourceEnv},
+		{name: "port file without legacy", portFile: 14444, wantPort: 14444, wantSource: PortSourcePortFile},
+		{name: "metadata over legacy", legacyPort: "13307", metadataPort: 15555, wantPort: 15555, wantSource: PortSourceMetadataJSON},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BEADS_DOLT_SHARED_SERVER", "")
@@ -2117,7 +2124,19 @@ func TestDialConfig_LegacyPortEnv(t *testing.T) {
 			t.Setenv("BEADS_DOLT_PORT", tc.legacyPort)
 			config.ResetForTesting()
 
-			cfg := DialConfig(t.TempDir())
+			beadsDir := t.TempDir()
+			if tc.portFile > 0 {
+				if err := writePortFile(beadsDir, tc.portFile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.metadataPort > 0 {
+				meta := fmt.Sprintf(`{"backend":"dolt","dolt_mode":"server","dolt_server_port":%d}`, tc.metadataPort)
+				if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := DialConfig(beadsDir)
 			if cfg.Port != tc.wantPort || cfg.PortSource != tc.wantSource {
 				t.Errorf("DialConfig = port %d source %v, want port %d source %v",
 					cfg.Port, cfg.PortSource, tc.wantPort, tc.wantSource)

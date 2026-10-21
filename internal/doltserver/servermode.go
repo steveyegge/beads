@@ -285,7 +285,7 @@ func ExternallyManagedAdvice(setting, endpoint string) string {
 // port resolved from source, that found no server: the externally managed
 // advice when a setting declares the workspace's server so (see
 // ExternalPortSetting), or "" when the caller's own advice stands. A host off
-// this machine is left to the caller, which has remote-host advice of its own.
+// this machine also gets "", so the caller's own advice stands for it too.
 func UnreachableEndpointAdvice(beadsDir, host string, port int, source PortSource) string {
 	if !configfile.IsLocalHostString(host) {
 		return ""

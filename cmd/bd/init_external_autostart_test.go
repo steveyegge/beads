@@ -396,31 +396,72 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 // TestNamedPortServerDiagnosticsAdvice covers the commands that dial the
 // server themselves instead of opening the store: they report a dead
 // named-port endpoint with the same advice, not `bd dolt start`. The legacy
-// BEADS_DOLT_PORT alone must make them dial its port, as the store does,
-// rather than 127.0.0.1:0.
+// BEADS_DOLT_PORT must make them dial its port, as the store does, rather
+// than 127.0.0.1:0 when it is alone, or a port-file port left over beside it.
+// A remote host keeps the command's own advice.
 func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
+	diagnostics := [][]string{
+		{"dolt", "test"},
+		{"dolt", "clean-databases", "--dry-run"},
+		{"doctor", "--perf"},
+	}
 	for _, envName := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
-		for _, args := range [][]string{
-			{"dolt", "test"},
-			{"dolt", "clean-databases", "--dry-run"},
-			{"doctor", "--perf"},
-		} {
+		for _, args := range diagnostics {
 			t.Run(envName+"/"+strings.Join(args, " "), func(t *testing.T) {
-				f := newExternalInitFixture(t)
-				port := freeLoopbackPort(t)
-				ep := tcpEndpoint(port)
-				namedPortWorkspace(t, f, 0)
-				f.env = append(f.env, envName+"="+strconv.Itoa(port))
-
-				res := f.run("", args...)
-
-				requireNoLaunch(t, res)
-				requireExternalUnreachableMessage(t, res.output, ep.addr)
-				if !strings.Contains(res.output, envName+" declares") {
-					t.Errorf("output does not name %s:\n%s", envName, res.output)
-				}
+				runNamedPortDiagnostic(t, envName, false, args)
 			})
 		}
+	}
+	for _, args := range diagnostics {
+		t.Run("BEADS_DOLT_PORT beside a port file/"+strings.Join(args, " "), func(t *testing.T) {
+			runNamedPortDiagnostic(t, "BEADS_DOLT_PORT", true, args)
+		})
+	}
+	t.Run("remote host/doctor --perf", func(t *testing.T) {
+		f := newExternalInitFixture(t)
+		namedPortWorkspace(t, f, 0)
+		f.env = append(f.env, "BEADS_DOLT_SERVER_HOST=db.invalid",
+			"BEADS_DOLT_SERVER_PORT="+strconv.Itoa(freeLoopbackPort(t)))
+
+		res := f.run("", "doctor", "--perf")
+
+		requireNoLaunch(t, res)
+		if !res.failed {
+			t.Errorf("bd doctor --perf succeeded with no server:\n%s", res.output)
+		}
+		if strings.Contains(res.output, "externally managed") {
+			t.Errorf("output gives the local externally managed advice for a remote host:\n%s", res.output)
+		}
+	})
+}
+
+// runNamedPortDiagnostic runs one diagnostic against a dead port named by
+// envName and checks it dials that port and names envName. withPortFile
+// leaves bd's port file behind on another dead port, which the named port
+// must outrank.
+func runNamedPortDiagnostic(t *testing.T, envName string, withPortFile bool, args []string) {
+	t.Helper()
+	f := newExternalInitFixture(t)
+	port := freeLoopbackPort(t)
+	ep := tcpEndpoint(port)
+	beadsDir := namedPortWorkspace(t, f, 0)
+	if withPortFile {
+		stale := freeLoopbackPort(t)
+		for stale == port {
+			stale = freeLoopbackPort(t)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, "dolt-server.port"), []byte(strconv.Itoa(stale)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.env = append(f.env, envName+"="+strconv.Itoa(port))
+
+	res := f.run("", args...)
+
+	requireNoLaunch(t, res)
+	requireExternalUnreachableMessage(t, res.output, ep.addr)
+	if !strings.Contains(res.output, envName+" declares") {
+		t.Errorf("output does not name %s:\n%s", envName, res.output)
 	}
 }
 
