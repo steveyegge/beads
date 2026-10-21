@@ -104,17 +104,30 @@ func discoverChildTypes(repoPath string) []string {
 	return nil
 }
 
-// readTypesFromDB reads types.custom from the database config table
+// readTypesFromDB reads types.custom from the database config table of an
+// additional repository's workspace.
+//
+// Command admission checked only the workspace doctor runs in, so beadsDir's
+// metadata is read here as discovery reads it, without migrating a legacy
+// config.json, and a workspace in a format this build cannot open is refused
+// before anything else touches it. configfile.Load (getDatabasePath included)
+// would migrate that config.json into metadata.json, dropping graph_* keys it
+// does not know, before the store constructor could refuse a graph workspace
+// it marks; an ordinary legacy workspace is migrated only by that
+// constructor, when there is a database to open.
 func readTypesFromDB(beadsDir string) ([]string, error) {
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
+	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
 		return nil, fmt.Errorf("no config")
 	}
 	if cfg.GetBackend() != configfile.BackendDolt {
 		return nil, fmt.Errorf("not dolt backend")
 	}
 
-	doltPath := getDatabasePath(beadsDir)
+	doltPath := cfg.DatabasePath(beadsDir)
 	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
 		return nil, err
 	}
