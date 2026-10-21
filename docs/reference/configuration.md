@@ -88,7 +88,7 @@ The full namespaces routed to YAML are:
 
 Plus these individual keys:
 
-`no-db`, `json`, `db`, `actor`, `identity`, `no-push`, `no-git-ops`, `agent.profile`, `create.require-description`, `import.auto`, `import.path`, `prime.max-memories`, `prime.max-memory-chars`, `prime.disabled`, `memories.budget-chars`, and the secret keys `github.token`, `gitlab.token`, `jira.api_token`, `ado.pat`, `linear.api_key`, `linear.oauth_client_id`, `linear.oauth_client_secret`, `notion.token`.
+`no-db`, `json`, `db`, `actor`, `identity`, `no-push`, `no-git-ops`, `agent.profile`, `create.require-description`, `import.auto`, `import.path`, `prime.max-memories`, `prime.max-memory-chars`, `prime.disabled`, `memories.budget-chars`, and the secret keys `github.token`, `gitlab.token`, `jira.api_token`, `ado.pat`, `fizzy.token`, `linear.api_key`, `linear.oauth_client_id`, `linear.oauth_client_secret`, `notion.token`.
 
 Any key whose name contains `api_key`, `api-key`, `secret`, `token`, or `password` is treated as a secret: it is refused on git-tracked `config.yaml` files unless you pass `--force-git-tracked`. Prefer exporting the value as an environment variable instead (e.g. `LINEAR_API_KEY`).
 
@@ -302,6 +302,7 @@ These are written to the Dolt database by `bd config set` and have no env var ov
 | `gitlab.*` | GitLab integration |
 | `ado.*` | Azure DevOps integration (org, project(s), state_map, type_map) |
 | `notion.*` | Notion integration |
+| `fizzy.*` | Fizzy integration (url, account, board, status_map) |
 | `custom.*` | User-defined / custom integrations |
 | `<tracker>.last_sync` | Updated automatically after each tracker sync; enables incremental sync |
 | `status.custom` | Custom statuses with optional behavior categories (see [below](#custom-statuses-and-types)) |
@@ -505,6 +506,21 @@ See [bd github](/cli-reference/github).
 
 Connection keys (`ado.pat`, `ado.org`, `ado.project`, `ado.projects`, `ado.url`) each have an `AZURE_DEVOPS_*` environment variable equivalent; config keys take priority over env vars. When `ado.projects` is set, `bd ado sync` fetches work items from all listed projects in a single query. State maps default to the Agile process template (override with `ado.state_map.*` / `ado.type_map.*` for Scrum or CMMI), and priority mapping (ADO 1–4 ↔ beads 0–4, with backlog collapsing to low) is automatic and not configurable. Full setup, mapping tables, and sync commands: [Azure DevOps integration](/integrations/azure-devops) and [bd ado](/cli-reference/ado).
 
+### Fizzy
+
+```bash
+bd config set fizzy.url "https://app.fizzy.do"   # or the URL of a self-hosted instance
+bd config set fizzy.account "897362094"          # the number in the Fizzy URLs
+bd config set fizzy.board "03f5v9zkft4hj9qq0lsn9ohcm"
+export FIZZY_TOKEN="YOUR_TOKEN"                  # or: bd config set fizzy.token ...
+
+# Map bd statuses to the lanes of the board
+bd config set fizzy.status_map.open "Ready"
+bd config set fizzy.status_map.in_progress "In Progress"
+```
+
+A lane is a workflow column of the board, or one of the fixed lanes `Maybe?`, `Not Now` and `Done`. Mapping tables and sync commands: [Fizzy integration](/integrations/fizzy).
+
 ## Environment Variables
 
 The Viper env prefix is `BD_`. Config keys map to env vars by upper-casing and replacing `.` and `-` with `_` (e.g. `dolt.auto-commit` → `BD_DOLT_AUTO_COMMIT`, `validation.on-create` → `BD_VALIDATION_ON_CREATE`).
@@ -539,7 +555,7 @@ Selected commonly-used variables:
 | `BEADS_DOLT_SERVER_MODE`, `BEADS_DOLT_SHARED_SERVER`, `BEADS_DOLT_DATA_DIR`, `BEADS_DOLT_PORT`, ... | Embedded/server Dolt overrides |
 | `BEADS_DOLT_BIN` | Pin the exact external `dolt` CLI binary managed proxied-server mode spawns, overriding PATH lookup (highest precedence; an explicit path that fails validation is an error, not a silent fallback to PATH). On Windows the executable extension may be omitted — `C:\tools\dolt` finds `C:\tools\dolt.exe` via PATHEXT, though a file at the exact spelled path wins if both exist |
 
-Integration secrets follow tracker-specific conventions: `LINEAR_API_KEY`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `JIRA_API_TOKEN`, `AZURE_DEVOPS_PAT`, `ANTHROPIC_API_KEY`. These are preferred over storing the value in `config.yaml` for git-tracked projects.
+Integration secrets follow tracker-specific conventions: `LINEAR_API_KEY`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `JIRA_API_TOKEN`, `AZURE_DEVOPS_PAT`, `FIZZY_TOKEN`, `ANTHROPIC_API_KEY`. These are preferred over storing the value in `config.yaml` for git-tracked projects.
 
 `bd config show` will display the source of every effective key, making overrides explicit.
 

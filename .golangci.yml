@@ -594,7 +594,7 @@ linters:
           - gosec
         text: "G703"
       # G704: SSRF via taint in API clients with user-configured URLs
-      - path: 'cmd/bd/doctor/(claude|version)\.go|internal/github/client\.go|internal/gitlab/client\.go|internal/jira/client\.go|internal/linear/client\.go|internal/linear/oauth\.go'
+      - path: 'cmd/bd/doctor/(claude|version)\.go|internal/fizzy/client\.go|internal/github/client\.go|internal/gitlab/client\.go|internal/jira/client\.go|internal/linear/client\.go|internal/linear/oauth\.go'
         linters:
           - gosec
         text: "G704"
@@ -607,7 +607,7 @@ linters:
       # sink is fmt.Fprint* to the terminal (os.Stderr or cobra's stdout/stderr
       # writers), never a browser context (surfaced by the gosec bundled with
       # golangci-lint v2.10)
-      - path: 'cmd/bd/(ado|doctor|errors|github|gitlab|hooks|jira|linear|main|notion|sync_push_pull)\.go'
+      - path: 'cmd/bd/(ado|doctor|errors|fizzy|github|gitlab|hooks|jira|linear|main|notion|sync_push_pull)\.go'
         linters:
           - gosec
         text: "G705"

@@ -474,6 +474,8 @@ var proxyCapabilityRegistry = []capabilityRow{
 	refusedInRunE("ado status", "ado.go"),
 	refusedInRunE("ado projects", "ado.go"),
 	refusedInRunE("ado sync", "ado.go"),
+	refusedInRunE("fizzy status", "fizzy.go"),
+	refusedInRunE("fizzy sync", "fizzy.go"),
 	refusedInRunE("github status", "github.go"),
 	refusedInRunE("github repos", "github.go"),
 	refusedInRunE("github sync", "github.go"),

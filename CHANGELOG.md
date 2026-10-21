@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fizzy tracker integration.** `bd fizzy sync` and `bd fizzy status`
+  synchronize issues with the cards of one Fizzy board, with the shared sync
+  engine (pull, push, dry run, conflict strategies). The status maps to the
+  lane of the card (`fizzy.status_map.<status>`), the priority and the type
+  map to tags, and the labels map to the other tags. `fizzy.token` is a
+  yaml-only secret. See `docs/integrations/fizzy.md`.
+
 - `bd versions <id>` lists the versions recorded for a bead, and
   `versioned-history.enabled` turns recording on. While it is on, every
   accepted change to a bead created while it is on, or that enters the issues
@@ -789,6 +796,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunBatchApplyAppliesTheDefaultPriority`.
 
 ### Fixed
+
+- **A pull now refreshes the stored push hash of a tracker.** After a pull
+  changed an issue, a local change back to the content of the last push
+  matched the stale hash, and the push skipped the issue. The remote kept the
+  pulled content. Trackers with a `ContentHash` push hook (GitHub) were
+  affected.
 
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a

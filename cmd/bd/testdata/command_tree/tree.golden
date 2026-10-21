@@ -871,6 +871,7 @@ bd config
     |   - gitlab.*          GitLab integration settings
     |   - ado.*             Azure DevOps integration settings
     |   - notion.*          Notion integration settings
+    |   - fizzy.*           Fizzy integration settings
     |   - custom.*          Custom integration settings
     |   - status.*          Issue status configuration
     |   - claim.*           Claim arbitration settings (pool-aware claiming)
@@ -2617,6 +2618,59 @@ bd find-duplicates
   flag --model type=string default="" usage="AI model to use (only with --method ai; default from config ai.model)"
   flag --status -s type=string default="" usage="Filter by status (default: non-closed)"
   flag --threshold type=float64 default="0.5" usage="Similarity threshold (0.0-1.0, lower = more results)"
+
+bd fizzy
+  use: "fizzy"
+  short: "Fizzy integration commands"
+  hidden: false
+  runnable: false
+  long:
+    | Commands for syncing issues between beads and a Fizzy board.
+    |
+    | Configuration can be set via 'bd config' or environment variables:
+    |   fizzy.token / FIZZY_TOKEN     - Personal access token ("Read + Write" for push)
+    |   fizzy.url / FIZZY_URL         - URL of the Fizzy instance (default: https://app.fizzy.do)
+    |   fizzy.account / FIZZY_ACCOUNT - Account slug (the number in the Fizzy URLs)
+    |   fizzy.board / FIZZY_BOARD     - ID of the board to sync
+    |
+    | Optional status map, from a beads status to a lane of the board:
+    |   fizzy.status_map.<status>     - A workflow column, "Maybe?", "Not Now" or "Done"
+    |
+    | Without a status map, open goes to "Maybe?", in_progress and blocked go to
+    | the first workflow column, deferred goes to "Not Now" and closed goes to "Done".
+
+bd fizzy status
+  use: "status"
+  short: "Show Fizzy sync status"
+  hidden: false
+  runnable: true
+  long:
+    | Display current Fizzy configuration and sync status.
+
+bd fizzy sync
+  use: "sync"
+  short: "Sync issues with Fizzy"
+  hidden: false
+  runnable: true
+  long:
+    | Synchronize issues between beads and a Fizzy board.
+    |
+    | By default, performs bidirectional sync:
+    | - Pulls new/updated cards from Fizzy to beads
+    | - Pushes local beads issues to Fizzy
+    |
+    | Use --pull-only or --push-only to limit direction.
+  flag --dry-run type=bool default="false" usage="Show what would be synced without making changes"
+  flag --exclude-type type=string default="" usage="Exclude these issue types from sync (comma-separated)"
+  flag --issues type=string default="" usage="Comma-separated bead IDs to sync selectively (e.g., bd-abc,bd-def). Mutually exclusive with --parent."
+  flag --no-ephemeral type=bool default="true" usage="Exclude ephemeral/wisp issues from push (default: true)"
+  flag --parent type=string default="" usage="Limit push to this bead and its descendants (push only). Mutually exclusive with --issues."
+  flag --prefer-fizzy type=bool default="false" usage="On conflict, use Fizzy version"
+  flag --prefer-local type=bool default="false" usage="On conflict, keep local beads version"
+  flag --prefer-newer type=bool default="false" usage="On conflict, use most recent version (default)"
+  flag --pull-only type=bool default="false" usage="Only pull cards from Fizzy"
+  flag --push-only type=bool default="false" usage="Only push issues to Fizzy"
+  flag --type type=string default="" usage="Only sync these issue types (comma-separated)"
 
 bd flatten
   use: "flatten"
