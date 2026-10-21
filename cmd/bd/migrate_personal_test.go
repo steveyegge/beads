@@ -428,7 +428,8 @@ func (s *indeterminateCommitStore) DeleteIssues(ctx context.Context, ids []strin
 // that phase 1 does not roll back a copy whose commit may have landed
 // (storage.ErrCommitIndeterminate): an uncommitted delete of its rows would
 // undo that commit at the planning repo's next one. The error names bd dolt
-// commit, and the copy stays in the planning store for it to settle.
+// commit and the issues now in both repos, and the copy stays in the planning
+// store for it to settle.
 func TestEmbeddedCopyIssuesToPlanning_keepsCopyAfterIndeterminateCommit(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -459,8 +460,10 @@ func TestEmbeddedCopyIssuesToPlanning_keepsCopyAfterIndeterminateCommit(t *testi
 	if !errors.Is(err, storage.ErrCommitIndeterminate) {
 		t.Fatalf("copyIssuesToPlanning err = %v, want storage.ErrCommitIndeterminate", err)
 	}
-	if !strings.Contains(err.Error(), "run `bd dolt commit` in the planning repo") {
-		t.Errorf("copyIssuesToPlanning err = %v, want it to name bd dolt commit", err)
+	for _, want := range []string{"the copy of " + issue.ID + " is left there", "run `bd dolt commit` in the planning repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("copyIssuesToPlanning err = %v, want it to contain %q", err, want)
+		}
 	}
 	if dst.deleteCalls != 0 {
 		t.Errorf("DeleteIssues calls = %d after an indeterminate commit, want 0", dst.deleteCalls)

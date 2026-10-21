@@ -578,7 +578,7 @@ func copyIssuesToPlanning(ctx context.Context, src, dst storage.DoltStorage, per
 	err := commitPlanningWrites(ctx, dst, formatDoltAutoCommitMessage("migrate-personal", actor, created))
 	switch {
 	case errors.Is(err, storage.ErrCommitIndeterminate):
-		return nil, fmt.Errorf("committing the copy in the planning repo may have failed: %w; the copy is left there and nothing was deleted from the project DB, so run `bd dolt commit` in the planning repo, then resolve the duplicate manually", err)
+		return nil, fmt.Errorf("committing the copy in the planning repo may have failed: %w; the copy of %s is left there and nothing was deleted from the project DB, so run `bd dolt commit` in the planning repo, then resolve the duplicates manually", err, strings.Join(created, ", "))
 	case err != nil:
 		return rollback(fmt.Errorf("failed to commit the copy in the planning repo: %w", err))
 	}

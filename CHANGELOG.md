@@ -860,9 +860,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused before anything moves, since that commit would publish them under
   the move's message, and a planning repo the command initializes gets that
   in a commit of its own. When the planning commit fails without saying
-  whether it landed, the copy is kept rather than rolled back. A planning
-  repo that contributor setup left with no `metadata.json` is first given
-  one: the empty `.beads` from `bd init --contributor` is initialized the
+  whether it landed, the copy is kept rather than rolled back, and the error
+  names the issues now in both repositories. A planning repo that
+  contributor setup left with no `metadata.json` is first given one: the
+  empty `.beads` from `bd init --contributor` is initialized the
   way a routed `bd create` initializes it, and the database fork setup
   creates is kept, along with
   anything already in it, rather than hidden behind a new one. Any other
