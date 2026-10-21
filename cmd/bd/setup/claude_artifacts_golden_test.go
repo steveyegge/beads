@@ -252,7 +252,9 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 			// Run from ~/.claude, whose CLAUDE.md is the user-level file:
 			// with no hooks --check names the global install, since a
 			// project install there would write project scaffolding into
-			// ~/.claude/CLAUDE.md.
+			// ~/.claude/CLAUDE.md. A plain --remove takes that install's
+			// section, so it takes its hooks from the global settings too,
+			// as --remove --global does.
 			name: "global-from-user-level-dir",
 			dir:  "home/.claude",
 			steps: []claudeArtifactStep{
@@ -260,6 +262,9 @@ func TestClaudeSetupArtifactsGolden(t *testing.T) {
 				claudeInstallStep(true, false),
 				claudeCheckStep(),
 				claudeRemoveStep(true),
+				claudeCheckStep(),
+				claudeInstallStep(true, false),
+				claudeRemoveStep(false),
 				claudeCheckStep(),
 			},
 		},
