@@ -36,8 +36,9 @@ const (
 // stops the server, External mode's "you manage the lifecycle" semantics
 // applies: a port named for the server (BEADS_DOLT_SERVER_PORT, the legacy
 // BEADS_DOLT_PORT, dolt_server_port) gets the externally managed advice,
-// and only a shared server or a port from bd's own port file is still
-// pointed at `bd dolt start`.
+// while a shared server, a port from bd's own port file, or an external
+// workspace whose port no setting names (for example BEADS_DOLT_SERVER_MODE=1
+// with only a config.yaml or default port) still gets `bd dolt start`.
 func ApplyCLIAutoStart(beadsDir string, cfg *Config) {
 	if cfg.DisableAutoStart {
 		cfg.AutoStart = false
