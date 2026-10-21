@@ -2872,6 +2872,37 @@ func TestInstallClaudeFromHomeTreatsSettingsAsPersonal(t *testing.T) {
 	}
 }
 
+// TestCheckClaudeFindsTheRootLocalHook pins that --check, run from a
+// repository subdirectory, counts a hook in the repository root's
+// .claude/settings.local.json, which Claude Code loads there and the
+// double-run and plugin-off warnings already count. A project install from
+// the subdirectory does not migrate that file, so no migration is
+// suggested.
+func TestCheckClaudeFindsTheRootLocalHook(t *testing.T) {
+	stubDetectRenderOpts(t)
+	env, stdout, _ := newClaudeTestEnv(t)
+	env.localSettingsRoot = filepath.Dir(env.projectDir)
+	rootLocal := legacyProjectSettingsPath(env.localSettingsRoot)
+	settings := settingsWithPluginSetTo(false)
+	hooks := map[string]interface{}{}
+	addHookCommand(hooks, "SessionStart", "bd prime --hook-json")
+	settings["hooks"] = hooks
+	writeSettings(t, rootLocal, settings)
+	writeSettings(t, projectSettingsPath(env.projectDir), settingsWithPlugin())
+
+	// No CLAUDE.md is installed, so only the hook result is checked.
+	if err := checkClaude(env); errors.Is(err, errClaudeHooksMissing) {
+		t.Fatalf("--check reported missing hooks:\n%s", stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "✓ Project hooks installed (legacy): "+rootLocal+"\n") {
+		t.Errorf("--check should report the root-local hook:\n%s", out)
+	}
+	if strings.Contains(out, "migrate") || strings.Contains(out, "off for you") {
+		t.Errorf("--check disagreed with the hook it found:\n%s", out)
+	}
+}
+
 // TestInstallClaudePersonalPluginKeepsSharedLegacyHook pins what a project
 // install does with an older bare bd prime hook in the shared
 // .claude/settings.json when the beads plugin is enabled. Enabled in a

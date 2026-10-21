@@ -678,6 +678,15 @@ func checkClaude(env claudeEnv) error {
 	atHome := claudeProjectIsHome(env)
 	userLevelDir := atHome || claudeProjectIsUserLevelDir(env)
 	plugin := beadsPlugin(env, false)
+	// The local settings files Claude Code loads hooks from here: the
+	// current directory's and the repository root's.
+	localHook := ""
+	for _, path := range claudeProjectHookPaths(env)[1:] {
+		if hasBeadsHooks(path) {
+			localHook = path
+			break
+		}
+	}
 	userLevelHooks := false
 	switch {
 	case !atHome && hasBeadsHooks(projectSettings):
@@ -685,11 +694,11 @@ func checkClaude(env claudeEnv) error {
 	case hasBeadsHooks(globalSettings):
 		_, _ = fmt.Fprintf(env.stdout, "✓ Global hooks installed: %s\n", globalSettings)
 		userLevelHooks = true
-	case hasBeadsHooks(legacySettings):
-		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", legacySettings)
-		// A project install keeps the hook when the plugin is off for
-		// this user alone.
-		if plugin.enabled || userLevelDir || !sharedBeadsPlugin(env).enabled {
+	case localHook != "":
+		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", localHook)
+		// A project install migrates only the current directory's file,
+		// and keeps it when the plugin is off for this user alone.
+		if localHook == legacySettings && (plugin.enabled || userLevelDir || !sharedBeadsPlugin(env).enabled) {
 			_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
 		}
 	case plugin.enabled:
