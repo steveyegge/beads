@@ -114,7 +114,9 @@ func discoverChildTypes(repoPath string) []string {
 // would migrate that config.json into metadata.json, dropping graph_* keys it
 // does not know, before the store constructor could refuse a graph workspace
 // it marks; an ordinary legacy workspace is migrated only by that
-// constructor, when there is a database to open.
+// constructor, when there is a database to open. Metadata naming a backend
+// this build does not recognize is refused before the open too: the
+// constructor refuses it only after that migration.
 func readTypesFromDB(beadsDir string) ([]string, error) {
 	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
 	if err != nil {
@@ -125,6 +127,10 @@ func readTypesFromDB(beadsDir string) ([]string, error) {
 	}
 	if cfg.GetBackend() != configfile.BackendDolt {
 		return nil, fmt.Errorf("not dolt backend")
+	}
+	// GetBackend reads a backend this build does not recognize as Dolt.
+	if !configfile.IsSupportedBackend(cfg.Backend) {
+		return nil, fmt.Errorf("unrecognized backend %q", cfg.Backend)
 	}
 
 	doltPath := cfg.DatabasePath(beadsDir)

@@ -284,3 +284,46 @@ func TestDiscoverChildTypesLeavesLegacyConfigUnopenedUnchanged(t *testing.T) {
 		t.Fatalf("type discovery changed the workspace:\n got %q\nwant %q", got, want)
 	}
 }
+
+// TestDiscoverChildTypesLeavesUnrecognizedBackendUnchanged pins that type
+// discovery refuses an additional repo whose metadata names a backend this
+// build does not recognize before anything opens it. GetBackend reads such a
+// backend as Dolt, and the store constructor's configfile.Load migrated a
+// legacy config.json into metadata.json, dropping keys it does not know,
+// before the constructor refused the backend, whenever a Dolt database
+// directory was there for discovery to find.
+func TestDiscoverChildTypesLeavesUnrecognizedBackendUnchanged(t *testing.T) {
+	t.Setenv("BEADS_DOLT_DATA_DIR", "") // would override DatabasePath
+	// If the refusal were missing, the open must fail fast rather than reach
+	// the suite's shared test server.
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "1")
+	repo := t.TempDir()
+	beadsDir := filepath.Join(repo, ".beads")
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"config.json": `{"database":"beads.db","backend":"future-backend","dolt_mode":"server","dolt_database":"beads_future_0123","future_binding":"keep-me"}`,
+		"config.yaml": "types:\n  custom: [future-node]\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(beadsDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := snapshotBeadsDir(t, beadsDir)
+
+	if _, err := readTypesFromDB(beadsDir); err == nil {
+		t.Fatal("readTypesFromDB succeeded, want the unrecognized backend refused")
+	}
+	if got := snapshotBeadsDir(t, beadsDir); !reflect.DeepEqual(got, want) {
+		t.Fatalf("readTypesFromDB changed the workspace:\n got %q\nwant %q", got, want)
+	}
+	if got := discoverChildTypes(repo); !reflect.DeepEqual(got, []string{"future-node"}) {
+		t.Fatalf("discoverChildTypes = %q, want the config.yaml fallback [future-node]", got)
+	}
+	if got := snapshotBeadsDir(t, beadsDir); !reflect.DeepEqual(got, want) {
+		t.Fatalf("discoverChildTypes changed the workspace:\n got %q\nwant %q", got, want)
+	}
+}

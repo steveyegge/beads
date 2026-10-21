@@ -804,6 +804,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd init --proxied-server-log-path`) is not rotated. Purging the proxy's
   control files and a proxied→server migration remove the `.1` files with
   the primaries (#7527).
+- **`bd doctor` no longer rewrites a `repos.additional` repository whose
+  metadata names a backend bd does not recognize.** Its multi-repo types
+  check opened such a repository's Dolt database whenever one was there, and
+  the open migrated a legacy `config.json` into `metadata.json`, dropping
+  keys bd does not know, before it refused the backend. The check now
+  refuses that metadata before opening anything, leaving the repository
+  byte-identical, and lists the custom types in its `config.yaml`.
 
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a
