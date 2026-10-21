@@ -2412,10 +2412,18 @@ func serverOpenCanAutoStart(cfg *Config) bool {
 		cfg.ServerSocket == "" && isLocalHost(cfg.ServerHost)
 }
 
+// ErrUnresolvedServerPort is wrapped by the error an open returns when it has
+// no server address and will not start a server (see
+// unresolvedServerPortError). A caller with its own advice for that case,
+// such as `bd init --external` asking for --server-port, tests for it with
+// errors.Is.
+var ErrUnresolvedServerPort = errors.New("no Dolt server port resolved")
+
 // unresolvedServerPortError explains an open that has no server address: no
 // socket, and no port source resolved a port. It returns nil when cfg has
-// either. serverDir is ResolveServerDir(beadsDir), so the port file it names
-// is the shared-server one in shared mode.
+// either, and otherwise an error wrapping ErrUnresolvedServerPort. serverDir
+// is ResolveServerDir(beadsDir), so the port file it names is the
+// shared-server one in shared mode.
 //
 // The text never says "unreachable" or names 127.0.0.1:0 (nothing was
 // dialed), and it suggests `bd dolt start` only when bd manages the server:
@@ -2432,7 +2440,6 @@ func unresolvedServerPortError(cfg *Config, beadsDir, serverDir string) error {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "no Dolt server port resolved for %s\n\n", beadsDir)
 	b.WriteString("None of these port sources has a value:\n")
 	for i, label := range doltserver.PortSourceLabels() {
 		fmt.Fprintf(&b, "  %d. %s", i+1, label)
@@ -2459,7 +2466,7 @@ func unresolvedServerPortError(cfg *Config, beadsDir, serverDir string) error {
 		b.WriteString("This command does not start a Dolt server. Run a bd command that can start one, " +
 			"or start it with:\n  bd dolt start")
 	}
-	return errors.New(b.String())
+	return fmt.Errorf("%w for %s\n\n%s", ErrUnresolvedServerPort, beadsDir, b.String())
 }
 
 func persistResolvedPortFile(cfg *Config, beadsDir string) error {

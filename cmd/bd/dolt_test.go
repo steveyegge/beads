@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -2406,9 +2407,90 @@ func TestExternallyManagedFreshStartRefusalForce(t *testing.T) {
 	}
 }
 
+// trackServerForTest writes the state files bd keeps for a server it started:
+// port 54329 in the port file, and pid in the PID file.
+func trackServerForTest(t *testing.T, serverDir string, pid int) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(serverDir, doltserver.PortFileName), []byte("54329\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, doltserver.PIDFileName), []byte(fmt.Sprintf("%d\n", pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startStandInDoltServer starts a process that ps lists as a dolt sql-server,
+// which is all doltserver's identity check reads, and returns its PID. It is
+// killed when the test ends.
+func startStandInDoltServer(t *testing.T) int {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script; on Windows the identity check looks for dolt.exe")
+	}
+	script := filepath.Join(t.TempDir(), "dolt")
+	if err := os.WriteFile(script, []byte("while :; do sleep 1; done\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", script, "sql-server")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start the stand-in dolt sql-server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd.Process.Pid
+}
+
+// TestExternallyManagedFreshStartRefusesRecycledTrackedPID: a port file beside
+// a live PID that is not a dolt sql-server (the recorded server died and
+// another process took its PID) is no tracked server. Start's IsRunning would
+// delete both state files and init the data dir, so the start is refused, and
+// the guard itself leaves the state files in place.
+func TestExternallyManagedFreshStartRefusesRecycledTrackedPID(t *testing.T) {
+	isolateFreshStartEnv(t)
+	serverDir := t.TempDir()
+	trackServerForTest(t, serverDir, os.Getpid())
+
+	if err := externallyManagedFreshStartRefusal(serverDir, true, false); err == nil {
+		t.Fatal("a live PID that is not a dolt sql-server must not exempt the start from the refusal")
+	}
+	for _, name := range []string{doltserver.PortFileName, doltserver.PIDFileName} {
+		if _, err := os.Stat(filepath.Join(serverDir, name)); err != nil {
+			t.Errorf("the refusal removed %s: %v", name, err)
+		}
+	}
+}
+
+// TestDoltStartRefusesRecycledTrackedPIDWhenAutoStartOff drives the same case
+// through the binary: stale state files naming a live process that is not a
+// dolt sql-server do not get the start past the refusal into
+// doltserver.Start, which would remove them and init the data dir.
+func TestDoltStartRefusesRecycledTrackedPIDWhenAutoStartOff(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	root, beadsDir, env := externallyManagedStartWorkspace(t, "false")
+	trackServerForTest(t, beadsDir, os.Getpid())
+
+	out, err := runBDDoltStart(t, bd, root, env)
+	if err == nil {
+		t.Fatalf("bd dolt start succeeded over stale state files:\n%s", out)
+	}
+	if !strings.Contains(out, "--force") || strings.Contains(out, "dolt is not installed") {
+		t.Errorf("stale state files got the start past the refusal:\n%s", out)
+	}
+	for _, name := range []string{doltserver.PortFileName, doltserver.PIDFileName} {
+		if _, statErr := os.Stat(filepath.Join(beadsDir, name)); statErr != nil {
+			t.Errorf("refused start removed %s: %v", name, statErr)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(beadsDir, "dolt")); !os.IsNotExist(statErr) {
+		t.Errorf("refused start created the data dir (stat error: %v)", statErr)
+	}
+}
+
 // TestExternallyManagedFreshStartAllowsExistingDatabase pins AC-6: with
-// auto-start off, a data dir that already holds a database, or a live server
-// bd already tracks, is started or adopted as today.
+// auto-start off, a data dir that already holds a database, or a running dolt
+// sql-server bd already tracks, is started or adopted as today.
 func TestExternallyManagedFreshStartAllowsExistingDatabase(t *testing.T) {
 	mkdir := func(t *testing.T, path string) {
 		t.Helper()
@@ -2426,13 +2508,8 @@ func TestExternallyManagedFreshStartAllowsExistingDatabase(t *testing.T) {
 		{name: "database in an immediate child", setup: func(t *testing.T, _, doltDir string) {
 			mkdir(t, filepath.Join(doltDir, "beads", ".dolt"))
 		}},
-		{name: "live server bd tracks", setup: func(t *testing.T, serverDir, _ string) {
-			if err := os.WriteFile(filepath.Join(serverDir, doltserver.PortFileName), []byte("54329\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(serverDir, doltserver.PIDFileName), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
-				t.Fatal(err)
-			}
+		{name: "running server bd tracks", setup: func(t *testing.T, serverDir, _ string) {
+			trackServerForTest(t, serverDir, startStandInDoltServer(t))
 		}},
 		{name: "unreadable data dir", setup: func(t *testing.T, _, doltDir string) {
 			if os.Geteuid() == 0 {

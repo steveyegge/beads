@@ -882,12 +882,15 @@ over existing data, or adopting a server bd already tracks, is unaffected. Use
 // port is lost, starting here would `dolt init` an empty data dir and publish
 // a new port, so later commands silently resolve to the empty database
 // instead of the real one. A data dir that already holds a database, or a
-// live server bd already tracks, is a start or adopt bd can do safely.
+// running dolt sql-server bd already tracks, is a start or adopt bd can do
+// safely.
 //
 // Read-only: it resolves the data dir with DoltDirPath (ResolveDoltDir
 // creates the shared-server tree) and checks the tracked server with
-// ManagesLiveServerOnPort (IsRunning deletes state files and can stop a
-// server).
+// IsTrackedServerRunning (IsRunning deletes state files and can stop a
+// server). A tracked PID that is alive but not a dolt sql-server, such as a
+// PID recycled after a reboot, is refused: Start would delete both state
+// files and init the data dir.
 func externallyManagedFreshStartRefusal(serverDir string, autoStartDisabled, force bool) error {
 	if force || !autoStartDisabled {
 		return nil
@@ -896,7 +899,7 @@ func externallyManagedFreshStartRefusal(serverDir string, autoStartDisabled, for
 	if doltserver.HasDoltDatabase(doltDir) {
 		return nil
 	}
-	if port := doltserver.ReadPortFile(serverDir); port > 0 && doltserver.ManagesLiveServerOnPort(serverDir, port) {
+	if doltserver.IsTrackedServerRunning(serverDir) {
 		return nil
 	}
 	portFile := filepath.Join(serverDir, doltserver.PortFileName)

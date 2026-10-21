@@ -2,6 +2,7 @@ package dolt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -586,6 +587,9 @@ func assertUnresolvedPortError(t *testing.T, err error, beadsDir string, allowSt
 	t.Helper()
 	if err == nil {
 		t.Fatal("expected the unresolved-port error, got nil")
+	}
+	if !errors.Is(err, ErrUnresolvedServerPort) {
+		t.Errorf("error does not wrap ErrUnresolvedServerPort, so callers cannot word this case themselves: %v", err)
 	}
 	msg := err.Error()
 	firstLine, _, _ := strings.Cut(msg, "\n")

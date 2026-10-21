@@ -654,7 +654,8 @@ func ReadPortFile(beadsDir string) int {
 // Note that isDoltProcess here would close only this gap, not the adopted-server
 // one — reclaimPort already requires isDoltProcess before it will adopt.
 //
-// Callers needing certainty over latency should use IsRunning.
+// Callers needing certainty over latency should use IsRunning, or
+// IsTrackedServerRunning when they must not mutate the state files.
 func ManagesLiveServerOnPort(beadsDir string, port int) bool {
 	if beadsDir == "" || port <= 0 {
 		return false
@@ -673,6 +674,31 @@ func ManagesLiveServerOnPort(beadsDir string, port int) bool {
 		return false
 	}
 	return isProcessAlive(pid)
+}
+
+// IsTrackedServerRunning reports whether beadsDir's state files name a
+// running dolt sql-server: the port file holds a port, and the PID file a live
+// process that isDoltProcess accepts. With a port file present that is when
+// IsRunning reports Running, so Start reports the tracked server instead of
+// initializing the data dir and launching one.
+//
+// Read-only, unlike IsRunning, which deletes the state files of a PID that is
+// dead or not dolt and can stop a server whose port it cannot determine.
+// Unlike ManagesLiveServerOnPort it rejects a recycled PID, at the cost of a
+// `ps` call (PowerShell on Windows), so keep it off the every-open path.
+func IsTrackedServerRunning(beadsDir string) bool {
+	if readPortFile(beadsDir) <= 0 {
+		return false
+	}
+	data, err := os.ReadFile(pidPath(beadsDir))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	return isProcessAlive(pid) && isDoltProcess(pid)
 }
 
 // PortFileSnapshot captures the exact prior contents of a project's port
