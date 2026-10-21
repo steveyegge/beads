@@ -1213,6 +1213,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd setup gemini` before, re-run it to add the section to
   `~/.gemini/GEMINI.md`. A section an earlier run left in a directory's
   `GEMINI.md` stays there; delete it by hand if you don't want it.
+- **`bd setup` keeps the permissions of a file it rewrites.** The claude,
+  gemini, codex, cursor, mux, factory, opencode, aider and junie recipes,
+  and the Claude, Codex and Cursor setup `bd init` runs, replaced each
+  existing file they changed with a new one at mode 0644, on install and on
+  `--remove`, so a file you had restricted to 0600 came back readable by
+  other local accounts: `~/.gemini/GEMINI.md`, where Gemini CLI keeps your
+  saved memories, or a settings file that can hold API keys, such as
+  `~/.claude/settings.json`, `~/.gemini/settings.json` or
+  `~/.codex/config.toml`. A rewritten file now keeps its permission bits. A
+  file setup creates is still 0644, and `bd setup mux` still makes its
+  hooks executable. A file an earlier run widened stays as it is; narrow it
+  again with `chmod 600`.
 - **`bd setup claude --global` installs its hook when the beads plugin is
   enabled only in the current project.** It skipped the hook whenever the
   current directory's `.claude/settings.json` or `.claude/settings.local.json`

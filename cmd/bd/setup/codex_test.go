@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -117,6 +118,63 @@ func TestInstallCodexGlobalCreatesGlobalSkillAndInstructions(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(env.homeDir, ".agents", "AGENTS.md")); !os.IsNotExist(err) {
 		t.Fatal("global setup should not create ~/.agents/AGENTS.md")
+	}
+}
+
+// A global install or --remove rewrites ~/.codex/AGENTS.md, config.toml
+// (which can hold MCP server tokens) and hooks.json. Each must keep the mode
+// the owner gave it, not come back 0644.
+func TestCodexGlobalFilesKeepTheirMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions are not supported on Windows")
+	}
+	env, _, _ := newCodexTestEnv(t)
+	paths := []string{
+		codexInstructionsPath(env, true),
+		codexConfigPath(env, true),
+		codexHooksPath(env, true),
+	}
+	seeds := []string{
+		"# Mine\n",
+		"[mcp_servers.docs.env]\nAPI_TOKEN = \"secret\"\n",
+		// A user hook, so --remove rewrites hooks.json rather than deleting it.
+		`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}`,
+	}
+	for i, path := range paths {
+		seedFileMode(t, path, seeds[i], 0o600)
+	}
+
+	if err := installCodex(env, true); err != nil {
+		t.Fatalf("installCodex: %v", err)
+	}
+	installed := make([]string, len(paths))
+	for i, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if string(data) == seeds[i] {
+			t.Errorf("install did not change %s", path)
+		}
+		installed[i] = string(data)
+		assertFileMode(t, path, 0o600)
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatalf("chmod %s: %v", path, err)
+		}
+	}
+
+	if err := removeCodex(env, true); err != nil {
+		t.Fatalf("removeCodex: %v", err)
+	}
+	for i, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if string(data) == installed[i] {
+			t.Errorf("--remove did not change %s", path)
+		}
+		assertFileMode(t, path, 0o600)
 	}
 }
 

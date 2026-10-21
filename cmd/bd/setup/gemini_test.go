@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -298,6 +299,57 @@ func TestInstallGemini_GlobalSectionStaysClearOfGeminiMemories(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// ~/.gemini/GEMINI.md holds Gemini CLI's saved memories and settings.json
+// can hold API keys. An install or --remove that rewrites either must keep
+// the mode the owner gave it, not reset it to 0644.
+func TestGeminiUserLevelFilesKeepTheirMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions are not supported on Windows")
+	}
+	seed := "# Prefs\n\n" + geminiMemoriesHeading + "\n- My cat is named Miso.\n"
+	for _, install := range geminiUserLevelInstalls {
+		t.Run(install.name, func(t *testing.T) {
+			env, _, _ := newGeminiTestEnv(t)
+			env.projectDir = install.dir(env)
+			instructions := geminiGlobalInstructionsPath(env.homeDir)
+			settings := geminiGlobalSettingsPath(env.homeDir)
+			seedFileMode(t, instructions, seed, 0o600)
+			seedFileMode(t, settings, "{\"theme\": \"Default\"}\n", 0o600)
+
+			if err := installGemini(env, install.project, false); err != nil {
+				t.Fatalf("installGemini: %v", err)
+			}
+			data, err := os.ReadFile(instructions)
+			if err != nil {
+				t.Fatalf("read %s: %v", instructions, err)
+			}
+			if !containsBeadsMarker(string(data)) {
+				t.Fatalf("install did not add the beads section:\n%s", data)
+			}
+			assertFileMode(t, instructions, 0o600)
+			assertFileMode(t, settings, 0o600)
+
+			for _, path := range []string{instructions, settings} {
+				if err := os.Chmod(path, 0o600); err != nil {
+					t.Fatalf("chmod %s: %v", path, err)
+				}
+			}
+			if err := removeGemini(env, install.project); err != nil {
+				t.Fatalf("removeGemini: %v", err)
+			}
+			data, err = os.ReadFile(instructions)
+			if err != nil {
+				t.Fatalf("read %s: %v", instructions, err)
+			}
+			if string(data) != seed {
+				t.Errorf("--remove left:\n%s\nwant:\n%s", data, seed)
+			}
+			assertFileMode(t, instructions, 0o600)
+			assertFileMode(t, settings, 0o600)
+		})
 	}
 }
 
