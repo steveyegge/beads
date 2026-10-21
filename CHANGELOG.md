@@ -883,7 +883,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the issues while reporting them moved. An issue ID already present in the
   planning repo is also refused rather than overwritten; when the project
   copy is a `bd repo sync` mirror of the planning repo, the error names
-  `bd repo remove`.
+  `bd repo remove`. Its errors no longer end in the usage block, and a
+  refusal is no longer prefixed `failed to open planning store`.
 - **`bd dolt start` no longer creates a phantom database when auto-start is
   off.** With `dolt.auto-start: false` the server is managed outside bd. A
   start over a data directory that is missing, empty, or holds no Dolt

@@ -551,7 +551,8 @@ func TestDeleteMovedIssuesFollowsAutoCommitPolicy(t *testing.T) {
 }
 
 // requireMigratePersonalRefused runs "bd migrate-personal --yes" in dir,
-// expecting it to fail with output containing want and to report no move. It
+// expecting it to fail with output containing want and to report no move. A
+// refusal is not a usage error, so cobra's usage block must not follow it. It
 // returns the combined output.
 func requireMigratePersonalRefused(t *testing.T, bd, dir, want string) string {
 	t.Helper()
@@ -564,6 +565,9 @@ func requireMigratePersonalRefused(t *testing.T, bd, dir, want string) string {
 	}
 	if strings.Contains(out, "Moved") {
 		t.Errorf("bd migrate-personal --yes reported a move while refusing:\n%s", out)
+	}
+	if strings.Contains(out, "Usage:") {
+		t.Errorf("bd migrate-personal --yes printed cobra's usage block after a refusal:\n%s", out)
 	}
 	return out
 }
@@ -826,10 +830,11 @@ func TestEmbeddedMigratePersonal_initializesContributorPlanningRepos(t *testing.
 // TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges verifies that
 // a planning repo whose working set already holds changes is refused before
 // anything moves. The move's embedded commit is DOLT_COMMIT('-Am'), which would
-// publish them under migrate-personal's message. The refusal names its remedy,
-// bd dolt commit in the planning repo, after which a rerun moves the issue. A
-// fork-setup database with no metadata.json is refused before its adoption
-// writes anything: no issue_prefix and no metadata.json.
+// publish them under migrate-personal's message. The refusal is the Error line
+// alone, and names its remedy, bd dolt commit in the planning repo, after
+// which a rerun moves the issue. A fork-setup database with no metadata.json
+// is refused before its adoption writes anything: no issue_prefix and no
+// metadata.json.
 func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -903,7 +908,9 @@ func TestEmbeddedMigratePersonal_refusesUncommittedPlanningChanges(t *testing.T)
 			const title = "Personal issue for a planning repo with uncommitted changes"
 			personal := bdCreate(t, bd, dir, title)
 
-			out := requireMigratePersonalRefused(t, bd, dir, "planning repo "+planningDir+" has uncommitted changes (")
+			// The refusal is the Error line alone: no "failed to open planning
+			// store" prefix, since nothing failed to open.
+			out := requireMigratePersonalRefused(t, bd, dir, "Error: planning repo "+planningDir+" has uncommitted changes (")
 			if remedy := "commit them there with `bd dolt commit`, then rerun; nothing was moved"; !strings.Contains(out, remedy) {
 				t.Errorf("bd migrate-personal --yes output does not name the remedy %q:\n%s", remedy, out)
 			}

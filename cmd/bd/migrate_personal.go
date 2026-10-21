@@ -139,7 +139,7 @@ func refuseUncommittedPlanningChanges(ctx context.Context, planningStore storage
 		return nil
 	}
 	slices.Sort(tables)
-	return fmt.Errorf("planning repo %s has uncommitted changes (%s), which migrate-personal's commit would publish; commit them there with `bd dolt commit`, then rerun; nothing was moved", planningRepo, strings.Join(slices.Compact(tables), ", "))
+	return refusePlanningRepo("planning repo %s has uncommitted changes (%s), which migrate-personal's commit would publish; commit them there with `bd dolt commit`, then rerun; nothing was moved", planningRepo, strings.Join(slices.Compact(tables), ", "))
 }
 
 // refuseUninitializablePlanningRepo refuses a planning .beads that
@@ -164,7 +164,7 @@ func refuseUninitializablePlanningRepo(planningBeadsDir string) error {
 	// database otherwise, so among several nothing records which one holds
 	// the planning issues.
 	if databases := embeddeddolt.Databases(planningBeadsDir); len(databases) > 1 {
-		return fmt.Errorf("planning repo %s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", filepath.Dir(planningBeadsDir), strings.Join(databases, ", "))
+		return refusePlanningRepo("planning repo %s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", filepath.Dir(planningBeadsDir), strings.Join(databases, ", "))
 	}
 	return nil
 }
@@ -180,10 +180,10 @@ func redirectedPlanningRepoError(planningBeadsDir, target, stubDatabase string) 
 	planningRepo, targetRepo := filepath.Dir(planningBeadsDir), filepath.Dir(target)
 	if stubDatabase != "" {
 		if targetDatabase, err := autoRouteTargetDatabase(target, true); err != nil || targetDatabase != stubDatabase {
-			return fmt.Errorf("planning repo %s redirects to %s, where bd uses the database %q that the planning repo names; routing.contributor cannot select that database (set to %s, it selects that repository's own)", planningRepo, targetRepo, stubDatabase, targetRepo)
+			return refusePlanningRepo("planning repo %s redirects to %s, where bd uses the database %q that the planning repo names; routing.contributor cannot select that database (set to %s, it selects that repository's own)", planningRepo, targetRepo, stubDatabase, targetRepo)
 		}
 	}
-	return fmt.Errorf("planning repo %s redirects to %s; set routing.contributor to that repository instead", planningRepo, targetRepo)
+	return refusePlanningRepo("planning repo %s redirects to %s; set routing.contributor to that repository instead", planningRepo, targetRepo)
 }
 
 // initializePlanningRepo gives a planning .beads that refuseUninitializablePlanningRepo
@@ -316,8 +316,10 @@ The command:
 EXAMPLES:
   bd migrate-personal        # Interactive: show list and prompt
   bd migrate-personal -y     # Non-interactive: skip confirmation`,
-	GroupID: "setup",
-	RunE:    runMigratePersonal,
+	GroupID:       "setup",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runMigratePersonal,
 }
 
 var migratePersonalYes bool
@@ -394,7 +396,7 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 	// workspace's. See openMigrationPlanningStore.
 	planningStore, err := openMigrationPlanningStore(ctx, planningBeadsDir, store, identity)
 	if err != nil {
-		return planningOpenError(cmd, planningPath, err)
+		return planningOpenError(planningPath, err)
 	}
 	defer func() { _ = planningStore.Close() }()
 
@@ -447,20 +449,35 @@ func confirmMigratePersonal(ctx context.Context, n int) bool {
 	return true
 }
 
-// planningOpenError renders a failed openMigrationPlanningStore. A planning
-// repo bd's own command admission refuses (an unsupported format, a legacy
-// store) is rendered as that refusal is, naming the planning repo: the Error
-// line, plus the Hint line and exit 16 for a format. Nothing was opened, so it
-// carries no "failed to open planning store" prefix, and cobra is silenced for
-// this invocation (the migrationFreezeGate pattern), so neither "Error: exit
-// code N" nor a usage dump follows it.
-func planningOpenError(cmd *cobra.Command, planningPath string, err error) error {
-	if !isUnsupportedWorkspaceFormat(err) && !isLegacyUpgradeRefusal(err) {
-		return fmt.Errorf("failed to open planning store at %s: %w", planningPath, err)
+// planningRepoRefusal is openMigrationPlanningStore refusing the planning repo
+// before anything moves: a redirect stub, several databases with nothing
+// naming one, or a working set the migration's commit would publish. Its
+// message names the planning repo and the remedy.
+type planningRepoRefusal struct{ msg string }
+
+func (r *planningRepoRefusal) Error() string { return r.msg }
+
+func refusePlanningRepo(format string, args ...any) error {
+	return &planningRepoRefusal{msg: fmt.Sprintf(format, args...)}
+}
+
+// planningOpenError renders a failed openMigrationPlanningStore. A refusal of
+// the planning repo (planningRepoRefusal) is returned as it is: nothing
+// failed to open, so it carries no "failed to open planning store" prefix. A
+// planning repo bd's own command admission refuses (an unsupported format, a
+// legacy store) is rendered as that refusal is, naming the planning repo: the
+// Error line, plus the Hint line and exit 16 for a format. migratePersonalCmd
+// silences cobra, so neither "Error: exit code N" nor a usage dump follows
+// either.
+func planningOpenError(planningPath string, err error) error {
+	var refusal *planningRepoRefusal
+	switch {
+	case errors.As(err, &refusal):
+		return refusal
+	case isUnsupportedWorkspaceFormat(err) || isLegacyUpgradeRefusal(err):
+		return handleWorkspaceGuardError(fmt.Errorf("planning repo %s: %w", planningPath, err))
 	}
-	cmd.SilenceErrors = true
-	cmd.SilenceUsage = true
-	return handleWorkspaceGuardError(fmt.Errorf("planning repo %s: %w", planningPath, err))
+	return fmt.Errorf("failed to open planning store at %s: %w", planningPath, err)
 }
 
 // refuseIssuesAlreadyInPlanning is phase 0 of runMigratePersonal: it refuses
