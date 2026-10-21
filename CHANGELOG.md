@@ -1027,6 +1027,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom types in that repository's `config.yaml`, as before. It also no
   longer migrates an ordinary additional repository's legacy `config.json`
   when there is no Dolt database there to read.
+- **`bd codex-hook SessionStart` no longer leaves the next prompt to prime the
+  session again.** A `PostCompact` arms a per-session refresh marker so the
+  next `UserPromptSubmit` re-injects `bd prime`. `SessionStart` injected prime
+  but left that marker in place, so a session that compacted and then resumed
+  or cleared got the same payload twice in a row. `SessionStart` now drops the
+  marker, as `bd cursor-hook` already did (#6273).
+
 - **Activating the HTTP backend refuses a graph workspace too.**
   `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
   `metadata.json` declares a `graph_mode` other than `dependency`, or whose
