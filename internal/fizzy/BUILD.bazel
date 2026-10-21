@@ -6,12 +6,16 @@ go_library(
         "client.go",
         "description.go",
         "errors.go",
+        "fieldmapper.go",
         "mapping.go",
+        "tracker.go",
         "types.go",
     ],
     importpath = "github.com/steveyegge/beads/internal/fizzy",
     visibility = ["//:__subpackages__"],
     deps = [
+        "//internal/config",
+        "//internal/tracker",
         "//internal/types",
         "@org_golang_x_net//html",
     ],
@@ -24,9 +28,14 @@ go_test(
         "description_test.go",
         "fake_server_test.go",
         "mapping_test.go",
+        "tracker_test.go",
     ],
     embed = [":fizzy"],
-    deps = ["//internal/types"],
+    deps = [
+        "//internal/tracker",
+        "//internal/tracker/conformance",
+        "//internal/types",
+    ],
 )
 
 # --- begin repo_files (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
