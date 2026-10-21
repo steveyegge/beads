@@ -632,9 +632,10 @@ func ReadPortFile(beadsDir string) int {
 // One setting does suppress it: `dolt.auto-start: false` (or
 // BEADS_DOLT_AUTO_START=0) fails serverOpenCanAutoStart and IsAutoStartDisabled,
 // so a timed-out open errors instead of adopting. That closes the incidental
-// route only — `bd dolt start` never consults either check, so the deliberate
-// route above stays open. It is the one mitigation an operator has while #6123
-// is open.
+// route only. `bd dolt start` consults IsAutoStartDisabled solely to refuse
+// creating a new, empty database (bd-7pkvvd); a start over existing data still
+// adopts, so the deliberate route above stays open. It is the one mitigation an
+// operator has while #6123 is open.
 //
 // Closing it means recording adoption distinctly from launch (skip the write on
 // the adopt branch, or mark it so this helper declines it), which is a behavior
@@ -2385,6 +2386,33 @@ func MarkDoltDirCompatible(doltDir string) error {
 		return fmt.Errorf("writing dolt compatibility marker %s: %w", markerPath, err)
 	}
 	return nil
+}
+
+// HasDoltDatabase reports whether doltDir already holds a Dolt database in
+// either layout `dolt sql-server` serves: doltDir/.dolt, or <child>/.dolt in
+// an immediate child. It is read-only (unlike ensureDoltInit it never creates
+// the directory or the compatibility marker). A missing doltDir is false; any
+// other read error is true, because it cannot prove that a start there would
+// create a fresh database.
+func HasDoltDatabase(doltDir string) bool {
+	if _, err := os.Stat(filepath.Join(doltDir, ".dolt")); err == nil {
+		return true
+	} else if !os.IsNotExist(err) {
+		return true
+	}
+	entries, err := os.ReadDir(doltDir)
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(doltDir, entry.Name(), ".dolt")); err == nil || !os.IsNotExist(err) {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureDoltInit initializes a dolt database directory if .dolt/ doesn't exist.
