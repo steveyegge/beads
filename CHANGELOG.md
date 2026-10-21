@@ -804,6 +804,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd init --proxied-server-log-path`) is not rotated. Purging the proxy's
   control files and a proxied→server migration remove the `.1` files with
   the primaries (#7527).
+- **`bd doctor` says when its multi-repo types check skips a database.** For
+  a `repos.additional` repository in a format this build cannot open (a
+  `graph_mode` other than `dependency`, or the `graph-preview-format`
+  marker), the check listed only the custom types in that repository's
+  `config.yaml`, without saying that it had not read the repository's
+  database. It now adds a line under that repository saying so, naming the
+  workspace and its format. The line shows with `--verbose`, in `--json`,
+  and beside an "Issues with unknown types" warning, which can name types
+  that only the skipped database declares.
+
 - **`bd doctor` no longer rewrites a `repos.additional` repository whose
   metadata names a backend bd does not recognize.** Its multi-repo types
   check opened such a repository's Dolt database whenever one was there, and
