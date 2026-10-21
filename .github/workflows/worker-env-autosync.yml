@@ -10,8 +10,8 @@
 # beads remote-execution run stops in bazel.yml's rbe-job preflight
 # (tools/rbe/worker-env-sync) until the copy catches up. nightly.yml's
 # rbe-worker-env-sync job already opens a ci/infra issue for a human to fix;
-# this instead opens the fix itself, every 15 minutes, so the gap is
-# minutes, not until someone reads the issue.
+# this instead opens the fix itself, every 15 minutes, so the fix is up for
+# review within minutes, not once someone reads the issue.
 #
 # tools/rbe/worker-env-sync only detects the mismatch (exit 1) or that it
 # could not compare with gascity (exit 2, e.g. GitHub is briefly
@@ -26,11 +26,21 @@
 # this repo) mints push-token and does the git push of the fixed branch
 # (bot/worker-env-sync); it cannot open, label or merge a PR. The separate
 # gascity-autofix App (pull-requests:write only, no contents) mints pr-token
-# and does everything PR-shaped: create/update, the status/needs-review-auto
-# label, and arming auto-merge. Splitting them means a bug in the PR-shaped
-# half can never push a commit, and a bug in the push half can never touch a
-# PR; neither token can do the other's job even by accident. Both Apps'
-# credentials are secrets of the same `autofix` environment.
+# and does everything PR-shaped: create/update and the
+# status/needs-review-auto label. Splitting them means a bug in the
+# PR-shaped half can never push a commit, and a bug in the push half can
+# never touch a PR; neither token can do the other's job even by accident.
+# Both Apps' credentials are secrets of the same `autofix` environment.
+#
+# NO AUTO-MERGE: the status/needs-review-auto label is how the PR lands. The
+# automated review workflow picks it up, and once that review passes the
+# merge workflow queues it (CONTRIBUTING.md's status/* labels; #7746 landed
+# that way). Nothing here merges the PR or arms auto-merge, and nothing
+# could: GitHub's enablePullRequestAutoMerge wants contents:write and
+# pull-requests:write on one token (pr-token alone gets "Resource not
+# accessible by integration"), the push-plus-PR token the split above
+# exists to rule out. Arming it would also skip the review: main requires
+# only the CI and PR Risk gates (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md).
 #
 # peter-evans/create-pull-request takes one token for the whole push+PR
 # flow, so it cannot honor this split; this uses plain git for the push and
@@ -46,9 +56,7 @@
 # defense in depth for a fork of this repo, where the secrets would not
 # exist anyway. Both mint steps run only once worker-env-sync has already
 # found a real mismatch, so a run that is in step or can't compare asks
-# neither App for a token. gh pr merge --auto only arms GitHub's native
-# auto-merge (it still waits for every required check and the branch
-# protection rule); it does not merge anything itself.
+# neither App for a token.
 name: rbe worker-env autosync
 
 on:
@@ -119,7 +127,7 @@ jobs:
           permission-contents: write
 
       # pull-requests:write only, on this repo alone: all it can do is
-      # open, label and arm auto-merge on a PR -- never push a commit.
+      # open, edit and label a PR -- never push a commit or arm auto-merge.
       - name: Mint PR token (gascity-autofix)
         id: pr-token
         if: steps.sync.outputs.rc == '1'
@@ -155,7 +163,6 @@ jobs:
       # pr-token alone; it cannot push a commit, only act on the PR the
       # step above already pushed.
       - name: Open or update the sync PR
-        id: pr
         if: steps.sync.outputs.rc == '1'
         env:
           GH_TOKEN: ${{ steps.pr-token.outputs.token }}
@@ -173,8 +180,8 @@ jobs:
           (\`tools/rbe/worker-env-sync main\`, run $RUN_URL).
 
           This copies gascity main's manifest and pin byte for byte, same as
-          #7419. Auto-merge is armed: it lands once the automated review and the
-          rest of the required checks are green.
+          #7419. Nothing arms auto-merge: it is labeled \`$LABEL\`, and once
+          the automated review passes, the merge workflow queues it.
           BODY
           )"
           number="$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number')"
@@ -185,12 +192,3 @@ jobs:
             number="$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number')"
           fi
           gh pr edit "$number" --repo "$REPO" --add-label "$LABEL"
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-
-      - name: Enable auto-merge
-        if: steps.sync.outputs.rc == '1' && steps.pr.outputs.number
-        env:
-          GH_TOKEN: ${{ steps.pr-token.outputs.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
-        run: gh pr merge --auto --squash --repo "$REPO" "$PR_NUMBER"
