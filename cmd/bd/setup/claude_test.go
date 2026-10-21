@@ -2074,6 +2074,9 @@ func TestHasBeadsPlugin(t *testing.T) {
 		managedDropIn := func(env claudeEnv) string {
 			return filepath.Join(env.managedDir, "managed-settings.d", "20-plugins.json")
 		}
+		dropIn := func(name string) func(claudeEnv) string {
+			return func(env claudeEnv) string { return filepath.Join(env.managedDir, "managed-settings.d", name) }
+		}
 		type setting struct {
 			path    func(claudeEnv) string
 			enabled bool
@@ -2084,6 +2087,11 @@ func TestHasBeadsPlugin(t *testing.T) {
 			wantProject bool
 			wantGlobal  bool
 		}{
+			// Claude Code merges the drop-ins in name order, so the last
+			// name wins, and ignores hidden and non-.json files.
+			{"the last managed drop-in by name wins", []setting{{dropIn("10-a.json"), true}, {dropIn("20-b.json"), false}, {user, true}}, false, false},
+			{"the last managed drop-in by name wins, swapped", []setting{{dropIn("10-a.json"), false}, {dropIn("20-b.json"), true}}, true, true},
+			{"hidden and non-.json drop-ins are ignored", []setting{{user, true}, {dropIn(".hidden.json"), false}, {dropIn("notes.txt"), false}}, true, true},
 			{"local false turns off a user plugin", []setting{{user, true}, {local, false}}, false, true},
 			{"project false turns off a user plugin", []setting{{user, true}, {project, false}}, false, true},
 			{"local true turns on a plugin the project turns off", []setting{{project, false}, {local, true}}, true, false},
