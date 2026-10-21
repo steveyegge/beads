@@ -806,7 +806,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the primaries (#7527).
 - **A routed `bd create` no longer hides what a repository without
   `metadata.json` already holds.** The first `bd create` routed into such a
-  repository (by `routing.contributor`, `routing.default` or an absolute
+  repository (by any routing rule, or by an absolute or `~/`-prefixed
   `--repo`) gave it a new database named after the source project's prefix
   and a `metadata.json` naming it, and that file decides what `bd` opens
   there from then on. In the planning repo `bd init` sets up on a fork, that
@@ -824,7 +824,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and one holding several databases are refused before anything is written;
   for a server-mode repository, run `bd init --database <name>` there
   (`bd init --server --database <name>` when only `dolt.host` selects server
-  mode), naming the server database it uses, then rerun. `bd create
+  mode), naming the server database it uses, then rerun. When that config
+  names a non-local `dolt.host`, the refusal adds `--server-host <host>`,
+  since `bd init` does not read `dolt.host` from `config.yaml`. `bd create
   --dry-run` refuses the same repositories. `bd migrate-personal`
   initializes the planning repo by the same rule, so it now also refuses a
   server-mode planning repo instead of moving issues into a new embedded

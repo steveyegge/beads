@@ -1316,7 +1316,7 @@ func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 			writeServerModeWorkspace(t, beadsDir)
 			createForkSetupPlanningDatabase(t, beadsDir, nil)
 		}},
-		{name: "refuses server mode selected by a remote dolt.host", want: "selects Dolt server mode (dolt.host: db.example.com)", setup: func(t *testing.T, beadsDir string) {
+		{name: "refuses server mode selected by a remote dolt.host", want: "selects Dolt server mode (dolt.host: db.example.com); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server --server-host db.example.com --database <name>` there", setup: func(t *testing.T, beadsDir string) {
 			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt:\n  host: db.example.com\n  port: 3307\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
