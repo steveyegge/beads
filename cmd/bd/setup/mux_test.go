@@ -225,12 +225,22 @@ func TestCheckMuxProjectRequiresBothLayers(t *testing.T) {
 }
 
 func TestRemoveMuxProjectRemovesBothLayers(t *testing.T) {
-	env, _, _ := newFactoryTestEnv(t)
+	env, stdout, _ := newFactoryTestEnv(t)
 	if err := installMux(env, true, false); err != nil {
 		t.Fatalf("installMux(project=true) returned error: %v", err)
 	}
+	stdout.Reset()
 	if err := removeMux(env, true, false); err != nil {
 		t.Fatalf("removeMux(project=true) returned error: %v", err)
+	}
+	// Each removal names its own layer and file.
+	for _, header := range []string{
+		"Removing " + muxIntegration.name + " integration from " + env.agentsPath + "...\n",
+		"Removing " + muxProjectIntegration.name + " integration from " + muxProjectAgentsPath(env.agentsPath) + "...\n",
+	} {
+		if !strings.Contains(stdout.String(), header) {
+			t.Errorf("expected %q, got:\n%s", header, stdout.String())
+		}
 	}
 
 	for _, path := range []string{env.agentsPath, muxProjectAgentsPath(env.agentsPath)} {
@@ -481,12 +491,17 @@ func TestMuxLayerAtGlobalPathIsGlobalLayer(t *testing.T) {
 			if n := strings.Count(stdout.String(), "Removing "+muxGlobalIntegration.name+" integration from "+globalPath+"..."); n != want {
 				t.Errorf("expected %d removals reported as the global layer's, got %d:\n%s", want, n, stdout.String())
 			}
+			// No other file's removal is reported as the global layer's.
+			if n := strings.Count(stdout.String(), "Removing "+muxGlobalIntegration.name+" integration from "); n != want {
+				t.Errorf("expected only the global file's %d removals reported as the global layer's, got %d:\n%s", want, n, stdout.String())
+			}
 		})
 	}
 
 	// Only a root file named AGENTS.md is the global one: an agents file of
 	// another name in ~/.mux is the root layer's own. bd still runs in no
-	// workspace there, so it installs no hooks and --check asks for none.
+	// workspace there, so it installs no hooks or workspace layer, and
+	// --check asks for neither.
 	t.Run("root layer with another agents file from ~/.mux", func(t *testing.T) {
 		homeDir := stubMuxHome(t)
 		dir := filepath.Join(homeDir, ".mux")
@@ -511,6 +526,20 @@ func TestMuxLayerAtGlobalPathIsGlobalLayer(t *testing.T) {
 		stdout.Reset()
 		if err := checkMux(env, false, false); err != nil {
 			t.Fatalf("checkMux: %v\n%s", err, stdout.String())
+		}
+		// Nor does it install, or --check ask for, a workspace layer there.
+		stdout.Reset()
+		if err := installMux(env, true, false); err != nil {
+			t.Fatalf("installMux(project=true): %v\n%s", err, stdout.String())
+		}
+		if err := checkMux(env, true, false); err != nil {
+			t.Fatalf("checkMux(project=true): %v\n%s", err, stdout.String())
+		}
+		if _, err := os.Stat(nested); !os.IsNotExist(err) {
+			t.Errorf("setup --project from ~/.mux should not create %s, stat err = %v", nested, err)
+		}
+		if n := strings.Count(stdout.String(), muxNoWorkspaceLayerNote+"\n"); n != 2 {
+			t.Errorf("expected setup and --check each to note the skipped workspace layer, got %d:\n%s", n, stdout.String())
 		}
 	})
 }
