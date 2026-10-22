@@ -417,6 +417,35 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	if c01.Status != types.StatusClosed {
 		t.Fatalf("mr-c01 status = %q, want closed (1/2 progress)", c01.Status)
 	}
+
+	// A wisp-only edge (a wisp that depends on a durable issue) is still
+	// returned, after the durable rows.
+	mk("mr-w", types.TypeTask, true)
+	addDep("mr-w", "mr-epic", types.DepBlocks) // wisp source -> wisp_dependencies
+
+	dependents, err = store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata after wisp edge: %v", err)
+	}
+	if len(dependents) != 3 {
+		t.Fatalf("dependents = %d, want 3 (2 durable + 1 wisp-only)", len(dependents))
+	}
+	last := dependents[len(dependents)-1]
+	if last.ID != "mr-w" || last.DependencyType != types.DepBlocks {
+		t.Fatalf("last dependent = %s (%s), want mr-w (blocks) after the durable rows", last.ID, last.DependencyType)
+	}
+	c01Seen := 0
+	for _, d := range dependents {
+		if d.ID == "mr-c01" {
+			c01Seen++
+			if d.DependencyType != types.DepParentChild {
+				t.Fatalf("mr-c01 type = %q, want parent-child", d.DependencyType)
+			}
+		}
+	}
+	if c01Seen != 1 {
+		t.Fatalf("mr-c01 appears %d times, want 1", c01Seen)
+	}
 }
 
 // TestGetDependentRecordsLimitClamp verifies the self-clamp (default 100, cap 500).
