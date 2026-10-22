@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/sqlbuild"
 	"github.com/steveyegge/beads/internal/types"
@@ -399,5 +401,159 @@ func TestDependencyCountTypeFilteredDuplicateAgreesWithListing(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+// primeDurableDepCountErr installs a failing expectation for the durable
+// count leg.
+func primeDurableDepCountErr(mock sqlmock.Sqlmock, dir domain.DepDirection, anchor string, err error) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM dependencies WHERE "+testCountAnchorExpr(dir)+" = ?")).
+		WithArgs(anchor).
+		WillReturnError(err)
+}
+
+// TestDependencyReadersBrokenPlaneIsAnError pins the other half of the named
+// tolerance the merge contract introduced: the guard admits exactly a missing
+// OPTIONAL wisp table (wisps, wisp_dependencies). A missing durable table, a
+// missing core table under the hydration (leases in the issues join,
+// wisp_labels in the wisp-side label join), or an unrelated database error is
+// a broken database and must surface, never silently empty. Every one of
+// these failures propagated before the fix too — the base failed all reads
+// loudly — so this is a preservation contract: it holds the fix's tolerance
+// to the two names that may legitimately be absent (#3445).
+func TestDependencyReadersBrokenPlaneIsAnError(t *testing.T) {
+	gone := errors.New("connection refused")
+
+	// injections are the failures primed per entry point; each also says
+	// whether the count runs it (the count reads no issues and no labels, so
+	// the hydration-plane failures do not apply to it).
+	injections := []struct {
+		name   string
+		counts bool
+		// wantErr asserts the read surfaced the injected failure, never a
+		// silent empty answer.
+		wantErr func(t *testing.T, err error)
+		// prime installs the expectations for one reader entry point's read.
+		prime func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyReaderEntryPoint)
+		// primeCount installs the expectations for one count entry point.
+		primeCount func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyCountEntryPoint)
+	}{
+		{
+			name:   "missing dependencies table",
+			counts: true,
+			wantErr: func(t *testing.T, err error) {
+				if !dberrors.IsMissingTable(err, "dependencies") {
+					t.Fatalf("error = %v, want it to name the missing dependencies table", err)
+				}
+			},
+			prime: func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyReaderEntryPoint) {
+				primeEdgeTableErr(mock, tc.dir, "dependencies", tc.anchor, tableNotFound("dependencies"))
+			},
+			primeCount: func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyCountEntryPoint) {
+				primeDurableDepCountErr(mock, tc.dir, tc.anchor, tableNotFound("dependencies"))
+			},
+		},
+		{
+			name:   "unrelated database error",
+			counts: true,
+			wantErr: func(t *testing.T, err error) {
+				if !errors.Is(err, gone) {
+					t.Fatalf("error = %v, want the injected connection failure", err)
+				}
+			},
+			prime: func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyReaderEntryPoint) {
+				primeEdgeTableErr(mock, tc.dir, "dependencies", tc.anchor, gone)
+			},
+			primeCount: func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyCountEntryPoint) {
+				primeDurableDepCountErr(mock, tc.dir, tc.anchor, gone)
+			},
+		},
+		{
+			name:  "missing leases table",
+			counts: false,
+			wantErr: func(t *testing.T, err error) {
+				if !dberrors.IsMissingTable(err, "leases") {
+					t.Fatalf("error = %v, want it to name the missing leases table", err)
+				}
+			},
+			prime: func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyReaderEntryPoint) {
+				durable := []edgeRow{{farID: "child-a", depType: string(types.DepParentChild)}}
+				primeEdgeTable(mock, tc.dir, "dependencies", tc.anchor, durable)
+				primeEdgeTable(mock, tc.dir, "wisp_dependencies", tc.anchor, nil)
+				// The wisps probe answers empty, so the batch hydrates from
+				// `issues` — whose lease overlay is missing.
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps LIMIT 1")).
+					WillReturnError(sql.ErrNoRows)
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT "+IssueSelectColumns+" FROM issues "+sqlbuild.LeaseJoin("issues")+" WHERE id IN (?)")).
+					WithArgs("child-a").
+					WillReturnError(tableNotFound("leases"))
+			},
+		},
+		{
+			name:  "missing wisp_labels table",
+			counts: false,
+			wantErr: func(t *testing.T, err error) {
+				if !dberrors.IsMissingTable(err, "wisp_labels") {
+					t.Fatalf("error = %v, want it to name the missing wisp_labels table", err)
+				}
+			},
+			prime: func(t *testing.T, mock sqlmock.Sqlmock, tc dependencyReaderEntryPoint) {
+				// One wisp-source dependent, so the hydration routes through
+				// the wisps row and its label join.
+				const wispChild = "wisp-child-a"
+				primeEdgeTable(mock, tc.dir, "dependencies", tc.anchor,
+					[]edgeRow{{farID: wispChild, depType: string(types.DepParentChild)}})
+				primeEdgeTable(mock, tc.dir, "wisp_dependencies", tc.anchor, nil)
+				// The wisps probe answers non-empty ...
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps LIMIT 1")).
+					WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+				// ... the batch's ids resolve to the wisp ...
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM wisps WHERE id IN (?)")).
+					WithArgs(wispChild).
+					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(wispChild))
+				// ... whose row hydrates ...
+				wispRows := issueRows()
+				wispRows.AddRow(issueRowValues(wispChild, wispChild)...)
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT "+IssueSelectColumns+" FROM wisps "+sqlbuild.LeaseJoin("wisps")+" WHERE id IN (?)")).
+					WithArgs(wispChild).
+					WillReturnRows(wispRows)
+				// ... and whose labels live in a table this database lost.
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT issue_id, label FROM wisp_labels WHERE issue_id IN (?) ORDER BY issue_id, label")).
+					WithArgs(wispChild).
+					WillReturnError(tableNotFound("wisp_labels"))
+			},
+		},
+	}
+
+	for _, tc := range dependencyReaderEntryPoints {
+		for _, inj := range injections {
+			t.Run(tc.name+"/"+inj.name, func(t *testing.T) {
+				_, mock, tx := beginMockTx(t)
+				inj.prime(t, mock, tc)
+
+				_, err := tc.run(context.Background(), tx, tc.anchor)
+				if err == nil {
+					t.Fatalf("%s over a broken plane answered, want the failure surfaced", tc.name)
+				}
+				inj.wantErr(t, err)
+			})
+		}
+	}
+	for _, tc := range dependencyCountEntryPoints {
+		for _, inj := range injections {
+			if !inj.counts {
+				continue
+			}
+			t.Run(tc.name+"/"+inj.name, func(t *testing.T) {
+				_, mock, tx := beginMockTx(t)
+				inj.primeCount(t, mock, tc)
+
+				_, err := CountDependencyEdgesInTx(context.Background(), tx, tc.anchor, tc.dir, nil)
+				if err == nil {
+					t.Fatalf("%s over a broken plane answered, want the failure surfaced", tc.name)
+				}
+				inj.wantErr(t, err)
+			})
+		}
 	}
 }

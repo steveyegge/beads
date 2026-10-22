@@ -227,6 +227,7 @@ go_test(
     deps = [
         "//internal/config",
         "//internal/storage",
+        "//internal/storage/dberrors",
         "//internal/storage/depid",
         "//internal/storage/domain",
         "//internal/storage/journalscan",

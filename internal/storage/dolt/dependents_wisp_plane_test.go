@@ -15,6 +15,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/workapi"
 )
@@ -242,5 +243,34 @@ func TestDependentsAcrossWispPlaneStates(t *testing.T) {
 			}
 			assertDependentViewsAgree(t, ctx, store, epicID, childIDs)
 		})
+	}
+}
+
+// TestIterDependentsMissingLeasesStillErrors pins the named half of the
+// iterator's fallback: the tolerance admits exactly a missing OPTIONAL wisp
+// table. leases is a core table every issue read joins, so a database
+// without it is broken, and the dependents stream must surface that rather
+// than fall back to the durable leg and answer (#3445). This propagated
+// before the fix too — the base had no fallback to misapply — so it is a
+// preservation contract holding the fallback to the two optional names.
+func TestIterDependentsMissingLeasesStillErrors(t *testing.T) {
+	const epicID = "plane-leases-epic"
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	seedEpicWithChildren(t, ctx, store, epicID, 1)
+	if _, err := store.db.ExecContext(ctx, "DROP TABLE IF EXISTS leases"); err != nil {
+		t.Fatalf("drop leases: %v", err)
+	}
+
+	iter, err := store.IterDependentsWithMetadata(ctx, epicID)
+	if err == nil {
+		_ = iter.Close()
+		t.Fatal("IterDependentsWithMetadata over a database with no leases table answered, want the failure surfaced")
+	}
+	if !dberrors.IsMissingTable(err, "leases") {
+		t.Fatalf("IterDependentsWithMetadata error = %v, want it to name the missing leases table", err)
 	}
 }
