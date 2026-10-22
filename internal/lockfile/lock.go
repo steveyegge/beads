@@ -22,8 +22,12 @@ var ErrUnsupported = errors.New("file locking is not supported on this filesyste
 // cannot lock. It matches ErrUnsupported and unwraps to the underlying cause
 // (the errno), so errors.Is on that errno keeps working.
 type UnsupportedError struct {
-	Op  string
-	Err error
+	Op string
+	// Path is the lock file whose filesystem cannot lock, set by a caller
+	// that knows it (workspacegate sets its gate file); the lock helpers
+	// leave it empty. Error does not print it.
+	Path string
+	Err  error
 }
 
 func (e *UnsupportedError) Error() string {

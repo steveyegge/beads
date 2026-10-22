@@ -824,11 +824,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails claiming "a maintenance operation is running". bd checks a busy
   workspace gate once against a private file beside it; when that also
   reports busy, or the lock call fails with an unsupported error, the command
-  prints one warning naming the filesystem and runs without the gate.
-  `bd init` and `bd backup restore` still refuse there, now saying the
-  filesystem does not support file locking instead of "live bd activity".
-  Strict `--readonly` skips the check, since it creates no files. Embedders
-  can match the new `beads.ErrGateUnsupported` from `OpenGated` (#3613).
+  prints one warning naming the filesystem and runs ungated. `bd init`,
+  `bd migrate`, `bd bootstrap` and `bd backup restore` still refuse there,
+  now naming the filesystem that cannot lock instead of blaming live bd
+  activity or saying to wait. Strict `--readonly` skips the check, since it
+  creates no files. Embedders can match the new `beads.ErrGateUnsupported`
+  from `OpenGated` (#3613).
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

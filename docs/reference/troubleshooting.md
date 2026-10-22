@@ -878,22 +878,28 @@ any path argument, including `--db` and config values.
 NFS mount without a lock daemon, prints:
 
 ```text
-warning: <dir>\.beads is on a filesystem that does not support file locking (...); continuing without the workspace gate, so bd init, migrate and backup restore cannot be fenced here
+warning: <dir> is on a filesystem that does not support file locking (...); continuing ungated, so bd init, migrate, bootstrap and backup restore cannot be fenced here
 ```
 
-`bd init` and `bd backup restore` refuse with `cannot run here: ... does not
-support file locking`. The embedded Dolt engine may also fail to open with a
-lock error or `Incorrect function`.
+`<dir>` is the directory whose filesystem cannot lock: the project directory,
+or the database root's parent in shared-server mode or with a custom Dolt data
+directory. When the lock call answers `no locks available` (NFS without a
+lock daemon, or a system out of lock records), the warning says `file locking
+failed in <dir> (no locks available)` instead. `bd init`, `bd migrate`,
+`bd bootstrap` and `bd backup restore` refuse with `cannot run here: ...` and
+the same reason. The embedded Dolt engine may also fail to open with a lock
+error or `Incorrect function`.
 
 **Cause:** file locks on these filesystems do not work: Windows' 9P
 redirector for WSL paths does not pass `LockFileEx` through to Linux, and SMB
 and NFS without lockd either fail the call or report a lock as held when
 nobody holds it. bd checks a busy result once against a private file beside
 the gate, so it reports the filesystem instead of waiting for a maintenance
-operation that is not running. Ordinary commands then run without the
-workspace gate; maintenance operations still refuse, because they cannot
-fence other bd processes there. Dolt's own engine lock relies on the same
-file locks, so beads cannot make embedded mode safe on these filesystems.
+operation that is not running. Ordinary commands then run ungated: they hold
+none of their gates, not even a shared server's gate on a local disk.
+Maintenance operations still refuse, because they cannot fence other bd
+processes there. Dolt's own engine lock relies on the same file locks, so
+beads cannot make embedded mode safe on these filesystems.
 
 **Solution:**
 

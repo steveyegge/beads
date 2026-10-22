@@ -4,6 +4,7 @@ package lockfile
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -46,5 +47,39 @@ func TestClassifyLockErr(t *testing.T) {
 	}
 	if got := classifyLockErr(nil); got != nil {
 		t.Errorf("classifyLockErr(nil) = %v, want nil", got)
+	}
+}
+
+// The helpers callers actually use must classify too, not only
+// classifyLockErr: a lock call that fails outright on a filesystem that
+// cannot lock reaches every acquisition helper as ErrUnsupported, errno kept.
+func TestFlockHelpersClassifyUnsupported(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	helpers := []struct {
+		name string
+		lock func(*os.File) error
+	}{
+		{"FlockSharedNonBlock", FlockSharedNonBlock},
+		{"FlockExclusiveNonBlock", FlockExclusiveNonBlock},
+		{"FlockExclusiveNonBlocking", FlockExclusiveNonBlocking},
+		{"FlockExclusiveBlocking", FlockExclusiveBlocking},
+	}
+	old := flockSyscall
+	t.Cleanup(func() { flockSyscall = old })
+	for _, errno := range []unix.Errno{unix.ENOLCK, unix.ENOTSUP} {
+		flockSyscall = func(int, int) error { return errno }
+		for _, h := range helpers {
+			got := h.lock(f)
+			if !errors.Is(got, ErrUnsupported) || !errors.Is(got, errno) {
+				t.Errorf("%s with flock failing %v = %v, want ErrUnsupported wrapping the errno", h.name, errno, got)
+			}
+			if IsLocked(got) || errors.Is(got, ErrLockBusy) {
+				t.Errorf("%s with flock failing %v = %v, reads as busy", h.name, errno, got)
+			}
+		}
 	}
 }

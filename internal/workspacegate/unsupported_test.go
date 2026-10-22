@@ -75,6 +75,10 @@ func TestAcquireLyingBusyFilesystemIsUnsupported(t *testing.T) {
 				if !errors.Is(err, lockfile.ErrUnsupported) {
 					t.Fatalf("Acquire = %v, want lockfile.ErrUnsupported", err)
 				}
+				var unsupported *lockfile.UnsupportedError
+				if !errors.As(err, &unsupported) || unsupported.Path != g.Path() {
+					t.Errorf("Acquire = %v, want an UnsupportedError naming the gate %s", err, g.Path())
+				}
 				if errors.Is(err, ErrBusy) {
 					t.Errorf("Acquire = %v, must not read as ErrBusy", err)
 				}
@@ -125,6 +129,57 @@ func TestAcquireLyingBusyFilesystemIsUnsupported(t *testing.T) {
 			t.Fatalf("fail-fast Acquire = %v, want lockfile.ErrUnsupported and not ErrBusy", err)
 		}
 	})
+}
+
+// A lock call that fails outright (ENOLCK, ENOTSUP, Windows' "Incorrect
+// function") returns at once in either mode: no probe, no wait, and the error
+// names the gate whose filesystem cannot lock.
+func TestAcquireFailingLockCallIsUnsupported(t *testing.T) {
+	var probes atomic.Int32
+	fail := func(f *os.File) error {
+		if strings.Contains(filepath.Base(f.Name()), ".probe-") {
+			probes.Add(1)
+		}
+		return &lockfile.UnsupportedError{Op: "flock", Err: errors.ErrUnsupported}
+	}
+	setFlockSeams(t, fail, fail)
+	for _, mode := range []Mode{Shared, Exclusive} {
+		t.Run(mode.String(), func(t *testing.T) {
+			g, dir := testGate(t)
+			waited := false
+			start := time.Now()
+			h, err := g.Acquire(context.Background(), mode, Options{
+				Wait:   2 * time.Second,
+				OnWait: func(string) { waited = true },
+			})
+			elapsed := time.Since(start)
+			if h != nil {
+				_ = h.Release()
+			}
+			var unsupported *lockfile.UnsupportedError
+			if !errors.As(err, &unsupported) || unsupported.Path != g.Path() {
+				t.Fatalf("Acquire = %v, want an UnsupportedError naming the gate %s", err, g.Path())
+			}
+			if !errors.Is(err, errors.ErrUnsupported) {
+				t.Errorf("Acquire = %v, lost the lock call's cause", err)
+			}
+			if errors.Is(err, ErrBusy) {
+				t.Errorf("Acquire = %v, must not read as ErrBusy", err)
+			}
+			if elapsed >= time.Second {
+				t.Errorf("Acquire took %s, want well under the 2s wait", elapsed)
+			}
+			if waited {
+				t.Error("OnWait called for a lock call that failed outright")
+			}
+			if got := probes.Load(); got != 0 {
+				t.Errorf("probe ran %d times, want none", got)
+			}
+			if left := probeFiles(t, dir); len(left) != 0 {
+				t.Errorf("probe files left behind: %v", left)
+			}
+		})
+	}
 }
 
 // The probe must not turn real contention into "unsupported": on a local

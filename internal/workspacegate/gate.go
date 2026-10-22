@@ -39,8 +39,13 @@
 // with an error matching lockfile.ErrUnsupported, never ErrBusy: whether the
 // lock call fails outright or reports busy with no holder (the first busy
 // result is checked once against a private probe file), so a caller never
-// waits out its budget for a holder that does not exist. SHARED callers may
+// waits out its budget for a holder that does not exist. The error's
+// *lockfile.UnsupportedError names the gate file in Path. SHARED callers may
 // treat it as "cannot gate here" and continue; EXCLUSIVE callers must refuse.
+// The one exception is a SHARED acquisition with Options.ReadOnly: it creates
+// no files, so it cannot run the probe, and a lock that reports busy with no
+// holder still waits out its budget and fails with ErrBusy. A lock call that
+// fails outright is ErrUnsupported there too.
 package workspacegate
 
 import (
@@ -548,7 +553,7 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 		probed = true
 		if perr := lockfile.ProbeBusy(g.path, try); perr != nil {
 			_ = f.Close()
-			return fmt.Errorf("workspacegate: lock %s: %w", g.path, perr)
+			return g.lockErr(perr)
 		}
 		return nil
 	}
@@ -586,7 +591,7 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 			}
 			if !errors.Is(err, lockfile.ErrLockBusy) && !lockfile.IsLocked(err) {
 				_ = f.Close()
-				return nil, fmt.Errorf("workspacegate: lock %s: %w", g.path, err)
+				return nil, g.lockErr(err)
 			}
 			if err := unsupported(); err != nil {
 				return nil, err
@@ -636,6 +641,17 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 		case <-time.After(sleep):
 		}
 	}
+}
+
+// lockErr wraps a failure to lock the gate file that is not contention. An
+// unsupported-filesystem failure gets the gate file as its Path, so a caller
+// can name the filesystem that cannot lock.
+func (g Gate) lockErr(err error) error {
+	var unsupported *lockfile.UnsupportedError
+	if errors.As(err, &unsupported) && unsupported.Path == "" {
+		err = &lockfile.UnsupportedError{Op: unsupported.Op, Path: g.path, Err: unsupported.Err}
+	}
+	return fmt.Errorf("workspacegate: lock %s: %w", g.path, err)
 }
 
 // flockSharedNB and flockExclusiveNB are the non-blocking lock primitives

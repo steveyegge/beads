@@ -11,9 +11,13 @@ import (
 
 var errProcessLocked = errors.New("lock already held by another process")
 
+// flockSyscall is flock(2) for the lock helpers' acquisitions; a var so
+// tests can stand in a filesystem whose lock call fails.
+var flockSyscall = unix.Flock
+
 // flockExclusive acquires an exclusive non-blocking lock on the file
 func flockExclusive(f *os.File) error {
-	err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	err := flockSyscall(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if err == unix.EWOULDBLOCK {
 		return errProcessLocked
 	}
@@ -29,7 +33,7 @@ func FlockExclusiveNonBlocking(f *os.File) error {
 // FlockExclusiveBlocking acquires an exclusive blocking lock on the file.
 // This will wait until the lock is available.
 func FlockExclusiveBlocking(f *os.File) error {
-	return classifyLockErr(unix.Flock(int(f.Fd()), unix.LOCK_EX))
+	return classifyLockErr(flockSyscall(int(f.Fd()), unix.LOCK_EX))
 }
 
 // classifyLockErr marks errnos that mean the filesystem cannot lock at all
