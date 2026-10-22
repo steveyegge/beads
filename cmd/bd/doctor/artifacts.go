@@ -313,11 +313,21 @@ func scanSQLiteArtifacts(beadsDir string, cfg *configfile.Config, report *Artifa
 }
 
 // scanCruftBeadsDir checks if a .beads directory that should be redirect-only
-// contains extra files beyond the redirect file.
+// contains extra files beyond the redirect file. It passes over every entry
+// the cleanup (fix.ClassicArtifacts) keeps there, so it reports only files
+// that cleanup removes.
 func scanCruftBeadsDir(beadsDir string, report *ArtifactReport) {
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
 		return
+	}
+
+	hasRedirect := false
+	for _, entry := range entries {
+		if entry.Name() == "redirect" {
+			hasRedirect = true
+			break
+		}
 	}
 
 	// Count non-redirect entries
@@ -330,6 +340,12 @@ func scanCruftBeadsDir(beadsDir string, report *ArtifactReport) {
 		}
 		// .gitkeep is harmless
 		if name == ".gitkeep" {
+			continue
+		}
+		// Beside a redirect the cleanup keeps the directory's own metadata,
+		// metadata.json or an unmigrated, inert legacy config.json
+		// (gastownhall/beads#4692; see fix.cleanCruftBeadsDirFiles)
+		if (name == "metadata.json" || name == "config.json") && hasRedirect {
 			continue
 		}
 		extraFiles = append(extraFiles, name)

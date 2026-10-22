@@ -426,3 +426,44 @@ func TestClassicArtifacts_DoesNotMigrateLegacyConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestClassicArtifacts_PreservesLegacyConfigJSONAlongsideRedirect extends
+// TestClassicArtifacts_PreservesMetadataJSONAlongsideRedirect to a legacy
+// config.json, the form the source rig's metadata takes before its migration.
+// The walk no longer migrates it into a metadata.json the cleanup keeps, so
+// the cleanup keeps the config.json itself, byte-identical with its
+// dolt_database and keys bd does not know, while unrelated cruft beside it is
+// still removed. Without a redirect it is cruft like the rest.
+func TestClassicArtifacts_PreservesLegacyConfigJSONAlongsideRedirect(t *testing.T) {
+	const legacy = `{"dolt_mode":"server","dolt_database":"lola","future_key":"keep-me"}`
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  map[string]string // the .beads after the cleanup
+	}{
+		{
+			name:  "with redirect",
+			files: map[string]string{"redirect": "../../mayor/rig/.beads", "config.json": legacy, "extra.txt": "cruft"},
+			want:  map[string]string{".": "/", "redirect": "../../mayor/rig/.beads", "config.json": legacy},
+		},
+		{
+			name:  "without redirect",
+			files: map[string]string{"config.json": legacy, "extra.txt": "cruft"},
+			want:  map[string]string{".": "/"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			beadsDir := filepath.Join(root, "polecats", "p1", ".beads")
+			writeBeadsTree(t, beadsDir, tc.files)
+
+			if err := ClassicArtifacts(root); err != nil {
+				t.Fatalf("ClassicArtifacts: %v", err)
+			}
+			if got := snapshotBeadsTree(t, beadsDir); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("ClassicArtifacts left %s as\n %q\nwant %q", beadsDir, got, tc.want)
+			}
+		})
+	}
+}

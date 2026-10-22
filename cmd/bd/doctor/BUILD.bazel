@@ -156,6 +156,7 @@ go_test(
     embed = [":doctor"],
     env = {"BEADS_TEST_BD_BINARY": "$(rlocationpath //cmd/bd:bd_for_tests)"},
     deps = [
+        "//cmd/bd/doctor/fix",
         "//internal/beads",
         "//internal/config",
         "//internal/configfile",

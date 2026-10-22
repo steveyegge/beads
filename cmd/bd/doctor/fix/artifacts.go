@@ -262,8 +262,10 @@ func cleanSQLiteArtifacts(beadsDir string) (removed, skipped, errCount int) {
 }
 
 // cleanCruftBeadsDirFiles removes everything from a .beads directory except
-// the redirect file, .gitkeep, and (when a redirect file is present)
-// metadata.json.
+// the redirect file, .gitkeep, and (when a redirect file is present) the
+// directory's own metadata: metadata.json, or a legacy config.json, which
+// this walk does not migrate. The Classic Artifacts scan
+// (doctor.scanCruftBeadsDir) reports exactly the entries this removes.
 func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
@@ -277,6 +279,13 @@ func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 	// the shared Gas Town root). Deleting metadata.json here would corrupt
 	// that source rig's identity while leaving the redirect itself intact,
 	// so never delete it when a redirect is present in the same directory.
+	// A legacy config.json there is kept too, unmigrated, but it is inert:
+	// ResolveRedirect reads the source's dolt_database only from
+	// metadata.json, and this walk no longer migrates (see
+	// cleanBeadsDirArtifacts). bd wrote config.json only before its rename
+	// to metadata.json, which predates dolt_database, so one bd wrote names
+	// no database to route to. It is kept because the cleanup cannot vouch
+	// for what it holds, not for routing.
 	hasRedirect := false
 	for _, entry := range entries {
 		if entry.Name() == "redirect" {
@@ -291,7 +300,7 @@ func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 		if name == "redirect" || name == ".gitkeep" {
 			continue
 		}
-		if name == "metadata.json" && hasRedirect {
+		if (name == "metadata.json" || name == "config.json") && hasRedirect {
 			continue
 		}
 
