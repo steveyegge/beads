@@ -818,6 +818,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd show <epic>` children and rollup are correct when `wisp_dependencies`
+  is missing or holds edges that are also in `dependencies`;
+  `dependent_count` agrees with the listing. The dependents and
+  dependencies listings, their counts, and the dependents stream behind the
+  server's detail JSON each merged the durable and wisp dependency planes
+  with no tolerance for a missing wisp table and no de-duplication of an
+  edge stored in both, so an epic rendered 0, 12, or 24 children for the
+  same 12 depending on the working set's state (#3445). A missing wisp
+  plane is now an empty plane everywhere those reads run, and an edge
+  present in both tables is reported once, as its durable row, with the
+  counts agreeing with the listings.
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

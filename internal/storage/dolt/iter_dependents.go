@@ -10,8 +10,10 @@
 // edges, joined to `issues`) with `wisp_dependencies` (wisp-source edges,
 // joined to `wisps`). WispTableRouting routes every edge to exactly one table
 // by its source's wisp status, so each edge table joins cleanly to its source
-// and no row is double-counted. IterDependenciesWithMetadata delegates to the
-// slice path: a dependency's *target* may be permanent or wisp independent of
+// and no row is double-counted. When the wisp plane is absent the durable leg
+// alone answers, with the same columns, join and order — see
+// iterDependentsWithWispPlaneFallback. IterDependenciesWithMetadata delegates to
+// the slice path: a dependency's *target* may be permanent or wisp independent of
 // which table holds the edge, which a single streaming join cannot resolve,
 // and the method has no streaming caller today.
 package dolt
@@ -22,6 +24,7 @@ import (
 	"fmt"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/storage/sqlbuild"
 	"github.com/steveyegge/beads/internal/types"
@@ -44,9 +47,10 @@ type doltDependentsIter struct {
 // issueID) with the relationship type attached. Includes both permanent
 // (`dependencies`) and wisp (`wisp_dependencies`) dependents so the stream
 // matches GetDependentsWithMetadata. See the package doc for why the join
-// target per edge table is unambiguous.
+// target per edge table is unambiguous, and iterDependentsWithWispPlaneFallback
+// for what happens when the wisp plane's tables are missing.
 func (s *DoltStore) IterDependentsWithMetadata(ctx context.Context, issueID string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
-	q := fmt.Sprintf(`
+	twoPlane := fmt.Sprintf(`
 		SELECT %s, d.type
 		FROM issues i
 		JOIN dependencies d ON d.issue_id = i.id
@@ -61,7 +65,18 @@ func (s *DoltStore) IterDependentsWithMetadata(ctx context.Context, issueID stri
 		ORDER BY created_at ASC
 	`, prefixedIssueColumns("i"), sqlbuild.LeaseJoin("i"), depTargetExprWithAlias("d"),
 		prefixedIssueColumns("w"), sqlbuild.LeaseJoin("w"), depTargetExprWithAlias("d"))
-	return s.iterIssuesWithDepType(ctx, q, issueID, issueID)
+	// The durable leg alone: the first half of the UNION ALL above, verbatim,
+	// so a fallback answer has the same columns, lease join and order as the
+	// two-plane one (#3445).
+	durable := fmt.Sprintf(`
+		SELECT %s, d.type
+		FROM issues i
+		JOIN dependencies d ON d.issue_id = i.id
+		%s
+		WHERE %s = ?
+		ORDER BY created_at ASC
+	`, prefixedIssueColumns("i"), sqlbuild.LeaseJoin("i"), depTargetExprWithAlias("d"))
+	return s.iterDependentsWithWispPlaneFallback(ctx, twoPlane, durable, issueID)
 }
 
 func depTargetExprWithAlias(alias string) string {
@@ -85,7 +100,15 @@ func (s *DoltStore) IterDependenciesWithMetadata(ctx context.Context, issueID st
 	return storage.NewSliceIter(deps), nil
 }
 
-func (s *DoltStore) iterIssuesWithDepType(ctx context.Context, q string, args ...any) (storage.Iter[types.IssueWithDependencyMetadata], error) {
+// iterDependentsWithWispPlaneFallback runs the two-plane UNION ALL first and,
+// only when it failed because a wisp-plane table the database may legitimately
+// lack is missing (wisps and wisp_dependencies are dolt_ignore'd, so a
+// server-mode working-set reset can drop them), re-runs the durable leg alone
+// with the same columns, join and order. The tolerance is NAMED, never a
+// blanket table-not-exist: a missing leases or issues table is a broken
+// database and still fails, on either leg (#3445). Both queries bind the same
+// anchor id — the UNION once per leg, the durable leg once.
+func (s *DoltStore) iterDependentsWithWispPlaneFallback(ctx context.Context, twoPlane, durable, anchor string) (storage.Iter[types.IssueWithDependencyMetadata], error) {
 	if s.closed.Load() {
 		return nil, ErrStoreClosed
 	}
@@ -93,10 +116,17 @@ func (s *DoltStore) iterIssuesWithDepType(ctx context.Context, q string, args ..
 	if err != nil {
 		return nil, fmt.Errorf("iter dependents: acquire conn: %w", err)
 	}
-	rows, err := conn.QueryContext(ctx, q, args...)
+	rows, err := conn.QueryContext(ctx, twoPlane, anchor, anchor)
 	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("iter dependents: query: %w", err)
+		if name, missing := dberrors.MissingTableName(err); !missing || !sqlbuild.OptionalWispTable(name) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("iter dependents: query: %w", err)
+		}
+		rows, err = conn.QueryContext(ctx, durable, anchor)
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("iter dependents: query: %w", err)
+		}
 	}
 	return &doltDependentsIter{s: s, conn: conn, rows: rows}, nil
 }
