@@ -124,3 +124,40 @@ func TestAcquireUnderRealHolderIsBusyNotUnsupported(t *testing.T) {
 		t.Errorf("the probe left files in %s\n before: %v\n after:  %v", dir, before, got)
 	}
 }
+
+// (AC-6) Strict readonly (Options.ReadOnly) must skip the busy-path probe
+// entirely: a lying-busy filesystem still creates no file — the #7672
+// no-file guarantee — and the acquisition still ends in the same ErrBusy
+// as before the probe existed. The fake lock primitive records any file it
+// is asked to lock whose name is a probe file, so a probe that ran (even
+// one that cleaned up after itself) is caught deterministically.
+func TestReadOnlySkipsTheLyingBusyProbe(t *testing.T) {
+	g, dir := testGate(t)
+	// Materialize the gate file the way any ordinary command does: a
+	// missing gate file returns an empty handle before any lock is tried.
+	_ = mustAcquire(t, g, Shared, Options{}).Release()
+	before := gateDirEntries(t, dir)
+
+	probed := fakeLyingBusy(t)
+
+	const wait = 300 * time.Millisecond
+	h, err := g.Acquire(context.Background(), Shared, Options{
+		ReadOnly: true,
+		Wait:     wait,
+	})
+	if h != nil {
+		_ = h.Release()
+	}
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("Acquire readonly under a busy gate: err = %v, want ErrBusy exactly as before the probe", err)
+	}
+	if errors.Is(err, lockfile.ErrUnsupported) {
+		t.Errorf("err = %v: a skipped probe must leave the busy classification untouched", err)
+	}
+	if len(*probed) != 0 {
+		t.Errorf("a readonly acquisition probed %v; the busy-path probe must be skipped so no file is created (#7672)", *probed)
+	}
+	if got := gateDirEntries(t, dir); !slices.Equal(got, before) {
+		t.Errorf("readonly acquisition changed %s\n before: %v\n after:  %v", dir, before, got)
+	}
+}
