@@ -172,6 +172,56 @@ func renderIssueIDs(out []*types.Issue) string {
 	return strings.Join(parts, ",")
 }
 
+// dependencyCountEntryPoint is one direction of the distinct-edge count whose
+// agreement with the listings AC-4 pins: CountDependencyEdgesInTx, the body
+// behind `bd show`'s dependent_count/dependency_count on the proxied leg and
+// (delegated) the server and embedded legs.
+type dependencyCountEntryPoint struct {
+	name   string
+	anchor string
+	dir    domain.DepDirection
+}
+
+var dependencyCountEntryPoints = []dependencyCountEntryPoint{
+	{name: "CountDependencyEdgesInTx/in", anchor: "epic-3", dir: domain.DepDirectionIn},
+	{name: "CountDependencyEdgesInTx/out", anchor: "issue-3", dir: domain.DepDirectionOut},
+}
+
+// testCountAnchorExpr mirrors countAnchorExpr: the column a direction's
+// counted edges hang off the anchor by.
+func testCountAnchorExpr(dir domain.DepDirection) string {
+	if dir == domain.DepDirectionOut {
+		return "issue_id"
+	}
+	return DepTargetExpr
+}
+
+func primeDurableDepCount(mock sqlmock.Sqlmock, dir domain.DepDirection, anchor string, n int) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM dependencies WHERE "+testCountAnchorExpr(dir)+" = ?")).
+		WithArgs(anchor).
+		WillReturnRows(scalarCountRows(n))
+}
+
+// primeWispExtraDepCount installs the expectation for the wisp-only edge
+// count: the NOT-IN-complement query whose shape (far-end key, untyped
+// subquery, outbound NULL guard) is exactly what AC-4 pins.
+func primeWispExtraDepCount(mock sqlmock.Sqlmock, dir domain.DepDirection, anchor string, result any) {
+	farExpr := "issue_id"
+	nullGuard := ""
+	if dir == domain.DepDirectionOut {
+		farExpr = DepTargetExpr
+		nullGuard = " AND " + DepTargetExpr + " IS NOT NULL"
+	}
+	q := "SELECT COUNT(*) FROM wisp_dependencies WHERE " + testCountAnchorExpr(dir) + " = ? AND " + farExpr +
+		" NOT IN (SELECT " + farExpr + " FROM dependencies WHERE " + testCountAnchorExpr(dir) + " = ?" + nullGuard + ")"
+	expectation := mock.ExpectQuery(regexp.QuoteMeta(q)).WithArgs(anchor, anchor)
+	if err, ok := result.(error); ok {
+		expectation.WillReturnError(err)
+	} else {
+		expectation.WillReturnRows(scalarCountRows(result.(int)))
+	}
+}
+
 // mirroredEdges returns N inbound edges for anchor as the durable table's
 // rows plus the wisp table's copies of the SAME edges, with first wisp copy
 // carrying a different type: the cross-table duplicate #3445 reports, with the
@@ -225,6 +275,26 @@ func TestDependencyReadersCrossTableDuplicateReturnedOnce(t *testing.T) {
 			}
 		})
 	}
+	for _, tc := range dependencyCountEntryPoints {
+		t.Run(tc.name, func(t *testing.T) {
+			_, mock, tx := beginMockTx(t)
+			// Both tables hold the same N edges, so the distinct-edge count
+			// is N: the durable rows plus a wisp-only complement of zero.
+			primeDurableDepCount(mock, tc.dir, tc.anchor, 2)
+			primeWispExtraDepCount(mock, tc.dir, tc.anchor, 0)
+
+			got, err := CountDependencyEdgesInTx(context.Background(), tx, tc.anchor, tc.dir, nil)
+			if err != nil {
+				t.Fatalf("%s over a mirrored working set: %v", tc.name, err)
+			}
+			if got != 2 {
+				t.Fatalf("%s = %d, want 2 (the both-table duplicates count once)", tc.name, got)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("%s: unmet sql expectations: %v", tc.name, err)
+			}
+		})
+	}
 }
 
 // TestDependencyReadersMissingWispPlaneIsNotAnError pins the tolerance half
@@ -255,5 +325,79 @@ func TestDependencyReadersMissingWispPlaneIsNotAnError(t *testing.T) {
 				t.Fatalf("%s: unmet sql expectations: %v", tc.name, err)
 			}
 		})
+	}
+	for _, tc := range dependencyCountEntryPoints {
+		t.Run(tc.name, func(t *testing.T) {
+			_, mock, tx := beginMockTx(t)
+			primeDurableDepCount(mock, tc.dir, tc.anchor, 2)
+			primeWispExtraDepCount(mock, tc.dir, tc.anchor, tableNotFound("wisp_dependencies"))
+
+			got, err := CountDependencyEdgesInTx(context.Background(), tx, tc.anchor, tc.dir, nil)
+			if err != nil {
+				t.Fatalf("%s over a database with no wisp_dependencies: %v (want the plane treated as empty)", tc.name, err)
+			}
+			if got != 2 {
+				t.Fatalf("%s = %d, want the durable count 2", tc.name, got)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("%s: unmet sql expectations: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestDependencyCountTypeFilteredDuplicateAgreesWithListing pins why the
+// wisp-only count's de-duplication subquery carries no type filter: an edge
+// stored in both tables with diverging types is the durable row as far as the
+// de-duplicated listing is concerned, so a type filter that matches only the
+// wisp copy's type must answer zero on BOTH sides — the listing drops the
+// durable row after the de-duplication, and the count's untyped subquery
+// keeps the wisp copy out of the wisp-only complement. A typed subquery would
+// count 1 where the listing shows 0.
+func TestDependencyCountTypeFilteredDuplicateAgreesWithListing(t *testing.T) {
+	const anchor = "epic-4"
+	_, mock, tx := beginMockTx(t)
+
+	// The listing: the durable parent-child edge and its related-typed wisp
+	// copy. The de-duplication keeps the durable row.
+	primeEdgeTable(mock, domain.DepDirectionIn, "dependencies", anchor,
+		[]edgeRow{{farID: "child-a", depType: string(types.DepParentChild)}})
+	primeEdgeTable(mock, domain.DepDirectionIn, "wisp_dependencies", anchor,
+		[]edgeRow{{farID: "child-a", depType: string(types.DepRelated)}})
+	primeHydration(mock, []string{"child-a"})
+
+	listed, err := GetDependentsWithMetadataInTx(context.Background(), tx, anchor)
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadataInTx: %v", err)
+	}
+	if len(listed) != 1 || listed[0].DependencyType != types.DepParentChild {
+		t.Fatalf("listing = %+v, want the one durable row carrying parent-child", listed)
+	}
+	filtered := 0
+	for _, d := range listed {
+		if d.DependencyType == types.DepRelated {
+			filtered++
+		}
+	}
+
+	// The type-filtered count of the same state, as the proxied leg computes
+	// it (CountByID passes the filter to CountDependencyEdgesInTx).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM dependencies WHERE "+DepTargetExpr+" = ? AND type IN (?)")).
+		WithArgs(anchor, string(types.DepRelated)).
+		WillReturnRows(scalarCountRows(0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM wisp_dependencies WHERE "+DepTargetExpr+" = ? AND type IN (?) AND issue_id NOT IN (SELECT issue_id FROM dependencies WHERE "+DepTargetExpr+" = ?)")).
+		WithArgs(anchor, string(types.DepRelated), anchor).
+		WillReturnRows(scalarCountRows(0))
+
+	counted, err := CountDependencyEdgesInTx(context.Background(), tx, anchor, domain.DepDirectionIn,
+		[]types.DependencyType{types.DepRelated})
+	if err != nil {
+		t.Fatalf("CountDependencyEdgesInTx with a type filter: %v", err)
+	}
+	if filtered != 0 || counted != 0 {
+		t.Fatalf("type-filtered listing = %d rows, count = %d; want 0 on both (the durable row wins the de-duplication, so a filter matching only the wisp copy's type matches nothing)", filtered, counted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
 	}
 }
