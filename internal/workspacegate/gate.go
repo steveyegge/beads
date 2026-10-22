@@ -32,8 +32,13 @@
 // consumers using the ungated beads.Open, acquire nothing; operations
 // that need a hard quiescence guarantee must refuse when they cannot
 // assume sole cooperative ownership, rather than pretend this lock fences
-// strangers. Filesystems without advisory-lock support (some network
-// mounts) fail acquisition rather than degrade silently.
+// strangers. Filesystems that cannot support advisory locks — NFS mounted
+// nolock, a CIFS mount without lock semantics, the Windows 9P redirector
+// over \\wsl$ — surface lockfile.ErrUnsupported: the lock errnos that mean
+// "cannot lock" are classified by internal/lockfile, and a lock that
+// reports busy while a private probe file also reports busy is a
+// filesystem lying, not a holder. SHARED callers may fail open on it;
+// EXCLUSIVE callers refuse.
 package workspacegate
 
 import (
@@ -514,9 +519,9 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 		return nil, fmt.Errorf("workspacegate: open gate %s: %w", g.path, err)
 	}
 
-	try := lockfile.FlockSharedNonBlock
+	try := flockSharedNB
 	if mode == Exclusive {
-		try = lockfile.FlockExclusiveNonBlock
+		try = flockExclusiveNB
 	}
 	waiting := opts.Wait > 0
 	defersToIntent := waiting && mode == Shared && !opts.IgnoreQueuedExclusive
@@ -530,6 +535,9 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 	defer func() { g.releaseIntent(intent) }()
 
 	notified := false
+	// probed guards the lying-busy probe to one run per acquisition (see
+	// probeLyingBusy).
+	probed := false
 	// finalAttempt is set once the budget ran out while this acquisition was
 	// deferring to queued intent: it then gets exactly one more try at the
 	// gate, ignoring the queue, before it may fail. Deciding finality from
@@ -542,6 +550,14 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 		var detail string
 		deferred := defersToIntent && !finalAttempt && time.Until(deadline) > 0 && g.ExclusiveQueued()
 		if deferred {
+			// The queued-writer probe (ExclusiveQueued) reported busy: on a
+			// lying-busy filesystem that is the same lie as the gate lock
+			// itself, so classify it before waiting behind a "queued
+			// writer" nobody queued.
+			if perr := g.probeLyingBusy(try, readOnly, &probed); perr != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("workspacegate: lock %s: %w", g.path, perr)
+			}
 			detail = g.queuedDetail()
 			if testHookAfterIntentDefer != nil {
 				testHookAfterIntentDefer()
@@ -558,6 +574,13 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 			if !errors.Is(err, lockfile.ErrLockBusy) && !lockfile.IsLocked(err) {
 				_ = f.Close()
 				return nil, fmt.Errorf("workspacegate: lock %s: %w", g.path, err)
+			}
+			// Busy could be a real holder or a filesystem that reports
+			// every file as held: classify before any waiting notice
+			// fires, so a lying filesystem never looks like contention.
+			if perr := g.probeLyingBusy(try, readOnly, &probed); perr != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("workspacegate: lock %s: %w", g.path, perr)
 			}
 			detail = g.busyDetail(mode)
 		}
@@ -610,6 +633,35 @@ func (g Gate) Acquire(ctx context.Context, mode Mode, opts Options) (*Handle, er
 // waiting shared acquisition decides to defer to queued intent, so tests can
 // stall it past its deadline at exactly the point a loaded machine might.
 var testHookAfterIntentDefer func()
+
+// flockSharedNB and flockExclusiveNB are the lock primitives Acquire uses.
+// Package-level vars (not direct calls) so tests can stand in for a
+// filesystem whose locks always report busy, following the
+// testHookAfterIntentDefer precedent.
+var (
+	flockSharedNB    = lockfile.FlockSharedNonBlock
+	flockExclusiveNB = lockfile.FlockExclusiveNonBlock
+)
+
+// probeLyingBusy classifies the FIRST busy signal of an acquisition (the
+// gate lock itself busy, or ExclusiveQueued reporting a queued writer):
+// files on some filesystems (GH#3613 — the Windows 9P redirector, some
+// CIFS and NFS-nolock mounts) report contention for every file, so a
+// busy gate cannot tell "held" from "lying". The probe locks a private
+// file no other process can know; busy (or unsupported) there is a
+// filesystem lie and comes back as lockfile.ErrUnsupported. probed is the
+// caller's once-guard: at most one probe per Acquire call. Skipped for
+// ReadOnly acquisitions, which must not create files (#7672) and keep
+// exactly the pre-probe behavior. nil means the busy result stands — a
+// real holder, or an unverifiable probe — and the caller waits as it
+// always did.
+func (g Gate) probeLyingBusy(try func(*os.File) error, readOnly bool, probed *bool) error {
+	if *probed || readOnly {
+		return nil
+	}
+	*probed = true
+	return lockfile.ProbeBusy(g.path, try)
+}
 
 // maxIntentHold caps how long one Exclusive acquisition keeps the intent
 // lock without getting the gate. It must stay well below the shared wait
