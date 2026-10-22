@@ -23,6 +23,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/backends"
 	"github.com/steveyegge/beads/internal/storage/dolt"
@@ -631,6 +632,14 @@ var (
 	// budget ran out. Alias of the internal sentinel so errors.Is works
 	// across the package boundary.
 	ErrGateBusy = workspacegate.ErrBusy
+	// ErrGateUnsupported is returned by OpenGated when the workspace's
+	// filesystem cannot support advisory locks at all (NFS nolock, the
+	// Windows 9P redirector, some CIFS mounts): waiting cannot succeed,
+	// so OpenGated — which holds the gate SHARED — still returns the
+	// error, and an embedder may choose to fail open where bd's ordinary
+	// commands do. Alias of the internal sentinel so errors.Is works
+	// across the package boundary.
+	ErrGateUnsupported = lockfile.ErrUnsupported
 )
 
 // DependencyTypeConflictError is returned by AddDependency when an edge of a

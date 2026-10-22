@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,10 +12,12 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/workspacegate"
@@ -1135,5 +1138,70 @@ func TestStrictReadonlyCommandCreatesNoGateFiles(t *testing.T) {
 	}
 	if len(gateFiles) != 0 {
 		t.Fatalf("bd --readonly created gate files %v\noutput: %s", gateFiles, out)
+	}
+}
+
+// injectUnsupportedGate replaces the acquisition entrypoint with one that
+// fails the way a lying-busy filesystem (GH#3613: the 9P redirector over
+// \\wsl$, NFS nolock) fails after the busy-path probe: a
+// lockfile.ErrUnsupported error from the workspace gate. This machine's
+// filesystem cannot produce that failure for real, so the tests of the
+// fail-open/fail-closed posture inject it at the one chokepoint both
+// acquisition paths funnel through.
+func injectUnsupportedGate(t *testing.T, beadsDir string) {
+	t.Helper()
+	old := workspaceGateAcquireAll
+	workspaceGateAcquireAll = func(context.Context, workspacegate.Mode, workspacegate.Options, ...workspacegate.Gate) (*workspacegate.MultiHandle, error) {
+		gate, err := workspacegate.ForWorkspace(beadsDir)
+		if err != nil {
+			t.Fatalf("ForWorkspace: %v", err)
+		}
+		return nil, fmt.Errorf("workspacegate: lock %s: %w", gate.Path(), &lockfile.UnsupportedError{Op: "probe", Err: syscall.ENOLCK})
+	}
+	t.Cleanup(func() { workspaceGateAcquireAll = old })
+}
+
+// (AC-4) A filesystem that cannot lock is the documented SHARED fail-open
+// posture, now reached at once for a lying-busy filesystem instead of a
+// 30s wait and "a maintenance operation is running": the command proceeds
+// ungated with exactly one warning, and --quiet prints nothing.
+func TestAcquireCommandWorkspaceGatesUnsupportedFilesystemFailsOpen(t *testing.T) {
+	resetGateTestEnv(t)
+	t.Cleanup(releaseWorkspaceGates)
+	beadsDir := newGateTestWorkspace(t)
+	injectUnsupportedGate(t, beadsDir)
+
+	list := &cobra.Command{Use: "list"}
+	var err error
+	stderr := captureStderr(t, func() {
+		err = acquireCommandWorkspaceGates(context.Background(), list, beadsDir)
+	})
+	if err != nil {
+		t.Fatalf("SHARED fail-open on a lockless filesystem must not fail the command: %v", err)
+	}
+	if workspaceGateHandle != nil {
+		t.Fatal("fail-open acquisition must hold no gate")
+	}
+	for _, want := range []string{"warning:", beadsDir, "does not support file locking", "cannot be fenced here"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr %q missing %q", stderr, want)
+		}
+	}
+	if got := strings.Count(stderr, "warning:"); got != 1 {
+		t.Errorf("stderr %q carries %d warnings, want exactly one", stderr, got)
+	}
+
+	// --quiet suppresses the warning entirely.
+	oldQuiet := quietFlag
+	quietFlag = true
+	t.Cleanup(func() { quietFlag = oldQuiet })
+	stderr = captureStderr(t, func() {
+		err = acquireCommandWorkspaceGates(context.Background(), list, beadsDir)
+	})
+	if err != nil {
+		t.Fatalf("quiet SHARED fail-open must not fail the command: %v", err)
+	}
+	if stderr != "" {
+		t.Errorf("--quiet still printed %q, want nothing", stderr)
 	}
 }

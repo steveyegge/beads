@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/doltserver"
+	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/workspacegate"
 )
 
@@ -138,6 +139,23 @@ func withdrawSharedHold() {
 		_ = os.Unsetenv(workspacegate.InheritedHoldEnv)
 	}
 	inheritedHoldEnvSet = false
+}
+
+// workspaceGateAcquireAll is the acquisition entrypoint every gate path in
+// this file funnels through. A var (not a direct call) so tests can inject
+// acquisition failures this machine's filesystem cannot produce for real —
+// the lying-busy lockless filesystem of GH#3613.
+var workspaceGateAcquireAll = workspacegate.AcquireAll
+
+// lockUnsupportedDetail renders the underlying lock error from a
+// lockfile.ErrUnsupported chain for user-facing messages: the errno that
+// made the classification ("no locks available", "Incorrect function").
+func lockUnsupportedDetail(err error) string {
+	var uerr *lockfile.UnsupportedError
+	if errors.As(err, &uerr) && uerr.Err != nil {
+		return uerr.Err.Error()
+	}
+	return err.Error()
 }
 
 // exclusiveGateWait is how long EXCLUSIVE acquisitions poll before giving
@@ -460,7 +478,7 @@ func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beads
 			opts.OnWait, stopNotice = delayedGateNotice()
 		}
 	}
-	h, err := workspacegate.AcquireAll(ctx, mode, opts, gates...)
+	h, err := workspaceGateAcquireAll(ctx, mode, opts, gates...)
 	stopNotice()
 	if err != nil {
 		// Interrupted while waiting (Ctrl-C / SIGTERM cancels rootCtx):
@@ -469,6 +487,20 @@ func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beads
 		// operation it was waiting out.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return HandleErrorRespectJSON("interrupted while waiting for the workspace gate: %v", err)
+		}
+		// A filesystem that cannot lock at all (GH#3613: the 9P redirector
+		// over \\wsl$, NFS nolock) is the documented SHARED fail-open
+		// posture, now reached at once for a lying-busy filesystem too:
+		// waiting cannot help, and treating it as contention made every
+		// command report "a maintenance operation is running" after its
+		// whole 30s budget. EXCLUSIVE commands (backup restore) keep
+		// refusing: maintenance refuses rather than pretends, and the
+		// generic exclusive error below passes the precise text through.
+		if !exclusive && errors.Is(err, lockfile.ErrUnsupported) {
+			if !quietFlag {
+				fmt.Fprintf(os.Stderr, "warning: %s is on a filesystem that does not support file locking (%s); continuing without the workspace gate — bd init, migrate and backup restore cannot be fenced here\n", beadsDir, lockUnsupportedDetail(err))
+			}
+			return nil
 		}
 		if errors.Is(err, workspacegate.ErrBusy) {
 			// Contention is never fail-open, in either mode — but the two
@@ -583,7 +615,7 @@ func acquireExclusiveWorkspaceGatesWithOptions(ctx context.Context, beadsDir str
 			gates = append(gates, g)
 		}
 	}
-	return workspacegate.AcquireAll(ctx, workspacegate.Exclusive, opts, gates...)
+	return workspaceGateAcquireAll(ctx, workspacegate.Exclusive, opts, gates...)
 }
 
 // acquireInitMutationGate holds init's complete exclusive gate set while its

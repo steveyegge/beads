@@ -1389,6 +1389,7 @@ go_test(
         "//internal/httpclient/wire",
         "//internal/initprocs",
         "//internal/linear",
+        "//internal/lockfile",
         "//internal/metrics",
         "//internal/migration",
         "//internal/molecules",
