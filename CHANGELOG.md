@@ -818,6 +818,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Workspaces on filesystems that cannot support file locking (GH#3613: the
+  Windows 9P redirector over `\\wsl.localhost` and `\\wsl$`, some CIFS/SMB
+  mounts, NFS mounted `nolock`) no longer look like contention. Such a
+  filesystem either errors the lock (classified now as
+  `ErrUnsupported`/`beads.ErrGateUnsupported`) or reports every file as
+  held; the second case is told apart from a real holder by locking a
+  private probe file nobody else can know. Ordinary commands then warn
+  once — `<dir> is on a filesystem that does not support file locking
+  (<errno>); continuing without the workspace gate — bd init, migrate and
+  backup restore cannot be fenced here` — and proceed ungated instead of
+  waiting `BEADS_GATE_WAIT_TIMEOUT` and failing with "a maintenance
+  operation is running". Maintenance still refuses rather than pretends:
+  `bd init` says `bd init cannot run here: … initialize from a local
+  filesystem (for a WSL workspace, run bd inside WSL)` instead of claiming
+  "live bd activity", and `bd backup restore`, migrate and bootstrap pass
+  the precise diagnosis through. Strict `--readonly` commands keep the
+  guarantee that they create no files, so they skip the probe and can
+  still wait out the full budget against a lying-busy redirector plus an
+  existing gate file.
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

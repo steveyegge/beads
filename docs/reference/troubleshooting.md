@@ -871,6 +871,47 @@ execFile('bd.cmd', ['export', '-o', '/tmp/issues.jsonl'], { shell: true }, ...);
 `"$(cygpath -w /tmp)\issues.jsonl"` from Git Bash scripts. This applies to
 any path argument, including `--db` and config values.
 
+### Windows: workspace inside WSL (`\\wsl.localhost\…`) or on a network share
+
+**Symptom:** From a native Windows shell, an ordinary `bd` command pointed
+at a WSL or network-share workspace prints
+
+```
+warning: <dir> is on a filesystem that does not support file locking (<errno>);
+continuing without the workspace gate — bd init, migrate and backup restore cannot be fenced here
+```
+
+and runs without the workspace gate. Maintenance commands refuse instead:
+`bd init` reports `bd init cannot run here: … initialize from a local
+filesystem (for a WSL workspace, run bd inside WSL)`, and `bd backup
+restore` fails with the same filesystem diagnosis. Opening the embedded
+engine on such a workspace can also fail deeper down with "Incorrect
+function" or other lock errors from the Dolt engine itself.
+
+**Cause:** Advisory locks are not coherent across an OS boundary or a
+network protocol. The 9P redirector behind `\\wsl.localhost\` and `\\wsl$\`
+does not translate `LockFileEx` to a POSIX `flock`, so a lock can error,
+silently no-op, or report busy with no holder; SMB/CIFS mounts without
+negotiated lock semantics and NFS mounted `nolock` behave the same way. bd
+detects this (a lock that errors with an unsupported errno, or reports
+busy while a private probe file also reports busy) and reports it instead
+of treating it as contention, but the embedded Dolt engine needs a real
+lock of its own, which these filesystems cannot provide.
+
+**Remedy:** Run bd from inside the environment that owns the filesystem —
+`wsl bd …` for a WSL workspace, so the whole path is native ext4 and every
+lock is real. For a Windows-hosted workflow, use server mode with the Dolt
+server started inside WSL and point the workspace at it. Never run Windows
+`bd.exe` and Linux `bd` against the same embedded workspace at the same
+time: no lock on either side can fence the other.
+
+**Residual (strict `--readonly`):** a strict readonly command creates no
+files, so bd deliberately skips the busy-path probe for it — against a
+lying-busy redirector plus an already-existing gate file, it still waits
+out `BEADS_GATE_WAIT_TIMEOUT` and then reports the gate as held by a
+maintenance operation. That is the documented trade-off of the readonly
+no-file guarantee, not a bug in the detection.
+
 ### macOS: Gatekeeper blocking execution
 
 1. Verify the downloaded binary checksum matches the release `checksums.txt`.
