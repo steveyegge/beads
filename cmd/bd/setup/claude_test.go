@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -838,6 +839,57 @@ func TestInstallClaudeGlobalStealth(t *testing.T) {
 	if !strings.Contains(stdout.String(), "globally") {
 		t.Error("expected global installation message")
 	}
+}
+
+// A global install or --remove rewrites ~/.claude/CLAUDE.md and
+// ~/.claude/settings.json, which can hold API keys. Each must keep the mode
+// the owner gave it, not come back 0644.
+func TestClaudeGlobalFilesKeepTheirMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions are not supported on Windows")
+	}
+	env, _, _ := newClaudeTestEnv(t)
+	instructions := globalClaudeInstructionsPath(env.homeDir)
+	settings := globalSettingsPath(env.homeDir)
+	seedFileMode(t, instructions, "# Mine\n", 0o600)
+	seedFileMode(t, settings, "{\"env\": {\"ANTHROPIC_API_KEY\": \"sk-test\"}}\n", 0o600)
+
+	if err := installClaude(env, true, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	data, err := os.ReadFile(instructions)
+	if err != nil {
+		t.Fatalf("read %s: %v", instructions, err)
+	}
+	if !containsBeadsMarker(string(data)) {
+		t.Fatalf("install did not add the beads section:\n%s", data)
+	}
+	if !hasBeadsHooks(settings) {
+		t.Fatal("install did not add the beads hooks")
+	}
+	assertFileMode(t, instructions, 0o600)
+	assertFileMode(t, settings, 0o600)
+
+	for _, path := range []string{instructions, settings} {
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatalf("chmod %s: %v", path, err)
+		}
+	}
+	if err := removeClaude(env, true); err != nil {
+		t.Fatalf("removeClaude: %v", err)
+	}
+	data, err = os.ReadFile(instructions)
+	if err != nil {
+		t.Fatalf("read %s: %v", instructions, err)
+	}
+	if string(data) != "# Mine\n" {
+		t.Errorf("--remove left %q, want %q", data, "# Mine\n")
+	}
+	if hasBeadsHooks(settings) {
+		t.Error("--remove left the beads hooks")
+	}
+	assertFileMode(t, instructions, 0o600)
+	assertFileMode(t, settings, 0o600)
 }
 
 // The user-level ~/.claude/CLAUDE.md is shared by every project, so a global

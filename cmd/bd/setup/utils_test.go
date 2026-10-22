@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -253,4 +254,89 @@ func TestEnsureDir(t *testing.T) {
 	if !DirExists(nestedDir) {
 		t.Error("nested directory was not created")
 	}
+}
+
+// seedFileMode writes content to path and gives it mode, whatever the umask.
+func seedFileMode(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("seed %s: %v", path, err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatalf("chmod %s: %v", path, err)
+	}
+}
+
+// assertFileMode fails if path's permission bits are not want.
+func assertFileMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("%s mode = %04o, want %04o", path, got, want)
+	}
+}
+
+// A rewrite replaces the file with a new one. Without an explicit mode it
+// must keep the permission bits of the file it replaces, or a file the owner
+// narrowed comes back 0644.
+func TestAtomicWriteFile_KeepsExistingMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions are not supported on Windows")
+	}
+	for _, mode := range []os.FileMode{0o600, 0o640, 0o664} {
+		t.Run(fmt.Sprintf("%04o", mode), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "file.md")
+			seedFileMode(t, path, "old", mode)
+			if err := atomicWriteFile(path, []byte("new")); err != nil {
+				t.Fatalf("atomicWriteFile: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if string(data) != "new" {
+				t.Errorf("content = %q, want %q", data, "new")
+			}
+			assertFileMode(t, path, mode)
+		})
+	}
+	t.Run("explicit mode wins", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "file.md")
+		seedFileMode(t, path, "old", 0o600)
+		if err := atomicWriteFile(path, []byte("new"), 0o644); err != nil {
+			t.Fatalf("atomicWriteFile: %v", err)
+		}
+		assertFileMode(t, path, 0o644)
+	})
+}
+
+// Writing through a symlink keeps the mode of the file the link points to.
+func TestAtomicWriteFileFollowingSymlink_KeepsTargetMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions are not supported on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	link := filepath.Join(dir, "link.md")
+	seedFileMode(t, target, "old", 0o600)
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := atomicWriteFileFollowingSymlink(link, []byte("new")); err != nil {
+		t.Fatalf("atomicWriteFileFollowingSymlink: %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(data) != "new" {
+		t.Errorf("target content = %q, want %q", data, "new")
+	}
+	assertFileMode(t, target, 0o600)
 }
