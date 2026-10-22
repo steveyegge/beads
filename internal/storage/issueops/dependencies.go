@@ -1346,6 +1346,18 @@ func anchorEdgesInTx(ctx context.Context, tx DBTX, anchor string, dir domain.Dep
 	}
 
 	var edges []anchorEdge
+	// De-duplicate by far-end id. For a fixed anchor the far end is the pair
+	// depid.New hashes (issue_id, target), so an edge stored in BOTH tables —
+	// a pull that lands another clone's promotion beside the still-local wisp
+	// copy — must come back once, and so must the plain readers' repeated ids
+	// (an IN (a, a) batch hides a repeat only while both copies share one
+	// batch). The durable table is read first, so first occurrence wins and
+	// the durable row's type is the type the listing reports. Do not key on
+	// the `id` column: a read-only open cannot assume it exists or is
+	// non-NULL (#4690). Do not include the type in the key: AddDependency
+	// refuses a second type for the same pair, and the listing filters types
+	// after this de-duplication.
+	seen := make(map[string]bool)
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		//nolint:gosec // G201: depTable is a hardcoded constant
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(query, depTable), anchor)
@@ -1361,6 +1373,10 @@ func anchorEdgesInTx(ctx context.Context, tx DBTX, anchor string, dir domain.Dep
 				_ = rows.Close()
 				return nil, fmt.Errorf("get %s: scan: %w", noun, scanErr)
 			}
+			if seen[e.farID] {
+				continue
+			}
+			seen[e.farID] = true
 			edges = append(edges, e)
 		}
 		_ = rows.Close()
