@@ -5105,6 +5105,11 @@ bd mol ready
     | This enables discovery-based resume without explicit waiter tracking.
     | The patrol system uses this to find and dispatch gate-ready molecules.
     |
+    | A compound "type = gate" step (a step declared type = "gate" with a
+    | [steps.gate] block) cooks into a prep task blocking its companion exit
+    | gate; this command then resumes with the gate's dependents - the steps
+    | that follow it - not the prep task itself.
+    |
     | Examples:
     |   bd mol ready --gated           # Find all gate-ready molecules
     |   bd mol ready --gated --json    # JSON output for automation
