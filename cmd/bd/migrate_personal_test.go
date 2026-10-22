@@ -773,6 +773,65 @@ func TestRefuseSelfPlanningRepo(t *testing.T) {
 	}
 }
 
+// TestRefuseUninitializablePlanningRepoRaisesPlanningRepoRefusals verifies
+// that the refusals a metadata-less planning repo shares with a routed bd
+// create (refuseUninitializableTarget's own) are raised as refusals of the
+// planning repo, named as such, which planningOpenError returns as they are,
+// with no "failed to open planning store" prefix. bd's own admission refusal
+// is returned as it is, for planningOpenError to render as bd renders it.
+func TestRefuseUninitializablePlanningRepoRaisesPlanningRepoRefusals(t *testing.T) {
+	// databaseMarker is the file embeddeddolt.Databases looks for to count an
+	// embedded database.
+	databaseMarker := func(database string) string {
+		return filepath.Join("embeddeddolt", database, ".dolt", "noms", "manifest")
+	}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		// want follows "planning repo <dir>" in the refusal; "" is bd's own
+		// admission refusal.
+		want string
+	}{
+		{name: "server mode", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n"},
+			want: " has no metadata.json and its own config selects Dolt server mode (dolt.mode: server); "},
+		{name: "remote dolt.host", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n"},
+			want: ` has no metadata.json and its own config selects Dolt server mode (dolt.host: "db.example.com"); `},
+		{name: "unreadable config", files: map[string]string{"config.yaml": "dolt: [unterminated\n"},
+			want: " has no metadata.json and its dolt.mode cannot be read ("},
+		{name: "several databases", files: map[string]string{databaseMarker("beads"): "x", databaseMarker("other"): "x"},
+			want: " has no metadata.json and holds several databases (beads, other); give it a metadata.json whose dolt_database names the one to use, then rerun"},
+		{name: "sqlite-era repo", files: map[string]string{"config.json": `{"database":"beads.db"}`, "beads.db": "SQLite format 3\x00" + strings.Repeat("\x00", 4080)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			planningDir := t.TempDir()
+			planningBeadsDir := filepath.Join(planningDir, ".beads")
+			for name, content := range tc.files {
+				path := filepath.Join(planningBeadsDir, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := refuseUninitializablePlanningRepo(planningBeadsDir)
+			var refusal *planningRepoRefusal
+			if tc.want == "" {
+				if !isLegacyUpgradeRefusal(err) {
+					t.Fatalf("refuseUninitializablePlanningRepo() = %v (%T), want bd's own admission refusal as it is", err, err)
+				}
+				return
+			}
+			if want := "planning repo " + planningDir + tc.want; !errors.As(err, &refusal) || !strings.HasPrefix(err.Error(), want) {
+				t.Fatalf("refuseUninitializablePlanningRepo() = %v (%T), want a *planningRepoRefusal starting %q", err, err, want)
+			}
+			if got := planningOpenError(planningDir, err); got == nil || got.Error() != err.Error() {
+				t.Errorf("planningOpenError() = %v, want the refusal as it is: %v", got, err)
+			}
+		})
+	}
+}
+
 // TestEmbeddedMigratePersonal_refusesMetadataWithoutDoltDatabase verifies that
 // a planning repo whose metadata.json names no dolt_database is refused before
 // anything moves, and that no database is created in it: the launcher's
@@ -1580,7 +1639,11 @@ func TestEmbeddedMigratePersonal_refusesUninitializablePlanningRepos(t *testing.
 			before := planningDirListing(t, planningBeadsDir)
 
 			out := requireMigratePersonalRefused(t, bd, dir, tc.want)
-			requireCleanPlanningRefusal(t, out, planningDir)
+			if tc.wantCode != ExitUnsupportedWorkspaceFormat {
+				// The format refusal names the planning repo's .beads, as bd's
+				// own admission does there; its wantStderr pins it whole.
+				requireCleanPlanningRefusal(t, out, planningDir)
+			}
 			requireStillInProject(t, beadsDir, tc.prefix, personal.ID)
 			if after := planningDirListing(t, planningBeadsDir); !slices.Equal(after, before) {
 				t.Errorf("planning .beads after a refused migrate-personal = %v, want unchanged %v", after, before)

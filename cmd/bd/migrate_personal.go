@@ -171,7 +171,9 @@ func uncommittedTables(ctx context.Context, st storage.DoltStorage) ([]string, e
 // its own config selects Dolt server mode, bd's own admission refuses it, or
 // it holds several databases). Every other metadata-less .beads is left to
 // initializePlanningRepo. It writes nothing. A .beads that has a metadata.json
-// is left to the open, which refuses what it cannot use.
+// is left to the open, which refuses what it cannot use. A targetRefusal is
+// raised as a planningRepoRefusal naming the planning repo; bd's admission
+// refusals are returned as they are, for planningOpenError to render.
 func refuseUninitializablePlanningRepo(planningBeadsDir string) error {
 	if redirect := beads.ResolveRedirect(planningBeadsDir); utils.CanonicalizePath(redirect.TargetDir) != utils.CanonicalizePath(planningBeadsDir) {
 		return redirectedPlanningRepoError(planningBeadsDir, redirect.TargetDir, redirect.SourceDatabase)
@@ -179,7 +181,13 @@ func refuseUninitializablePlanningRepo(planningBeadsDir string) error {
 	if _, err := os.Stat(filepath.Join(planningBeadsDir, "metadata.json")); err == nil {
 		return nil
 	}
-	return refuseUninitializableTarget(planningBeadsDir)
+	err := refuseUninitializableTarget(planningBeadsDir)
+	var refusal *targetRefusal
+	if errors.As(err, &refusal) {
+		// Its message starts with the planning repo's path.
+		return refusePlanningRepo("planning repo %s", refusal.msg)
+	}
+	return err
 }
 
 // redirectedPlanningRepoError refuses a planning .beads that redirects to
@@ -433,9 +441,11 @@ func confirmMigratePersonal(ctx context.Context, n int) bool {
 }
 
 // planningRepoRefusal is openMigrationPlanningStore refusing the planning repo
-// before anything moves: a redirect stub, several databases with nothing
-// naming one, or a working set the migration's commit would publish. Its
-// message names the planning repo and the remedy.
+// before anything moves: a redirect stub, a metadata-less one a routed bd
+// create would not initialize either (its own config selects Dolt server
+// mode, or it holds several databases with nothing naming one), or a working
+// set the migration's commit would publish. Its message names the planning
+// repo and the remedy.
 type planningRepoRefusal struct{ msg string }
 
 func (r *planningRepoRefusal) Error() string { return r.msg }

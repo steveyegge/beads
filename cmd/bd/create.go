@@ -1229,7 +1229,9 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 //
 // A .beads holding one embedded database is left to adoptTargetDatabase. A
 // .beads in a format this build cannot open is refused as that first, as bd's
-// admission refuses it (checkDiscoveredWorkspaceFormat).
+// admission refuses it (checkDiscoveredWorkspaceFormat). Its own refusals are
+// targetRefusals; bd's admission refusals are returned as that admission
+// returns them.
 func refuseUninitializableTarget(beadsDir string) error {
 	// A workspace in a format this build cannot open is refused as that,
 	// before its config is read: the format fence's refusal (and its exit
@@ -1240,7 +1242,7 @@ func refuseUninitializableTarget(beadsDir string) error {
 	repo := filepath.Dir(beadsDir)
 	mode, _, err := config.WorkspaceYamlSettingWithLocal(beadsDir, "dolt.mode")
 	if err != nil {
-		return fmt.Errorf("%s has no metadata.json and its dolt.mode cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, err)
+		return refuseTarget("%s has no metadata.json and its dolt.mode cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, err)
 	}
 	// host is the target's own non-local dolt.host, if it has one. bd init
 	// does not read it from config.yaml (it takes the host from --server-host
@@ -1251,26 +1253,38 @@ func refuseUninitializableTarget(beadsDir string) error {
 		host = ""
 	}
 	if strings.EqualFold(mode, configfile.DoltModeServer) {
-		return fmt.Errorf("%s has no metadata.json and its own config selects Dolt server mode (dolt.mode: server); not initializing it as an embedded workspace, which would hide its server data. Run `%s` there, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, serverInitRemedy("bd init", beadsDir, host), configfile.DefaultDoltDatabase)
+		return refuseTarget("%s has no metadata.json and its own config selects Dolt server mode (dolt.mode: server); not initializing it as an embedded workspace, which would hide its server data. Run `%s` there, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, serverInitRemedy("bd init", beadsDir, host), configfile.DefaultDoltDatabase)
 	}
 	if mode == "" {
 		// With no dolt.mode, a non-local dolt.host selects server mode there
 		// too (HostImpliesServerMode's config.yaml tier), and the dolt_mode the
 		// metadata.json below pins switches that inference off.
 		if hostErr != nil {
-			return fmt.Errorf("%s has no metadata.json and its dolt.host cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, hostErr)
+			return refuseTarget("%s has no metadata.json and its dolt.host cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, hostErr)
 		}
 		if host != "" {
-			return fmt.Errorf("%s has no metadata.json and its own config selects Dolt server mode (dolt.host: %q); not initializing it as an embedded workspace, which would hide its server data. Run `%s` there, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, host, serverInitRemedy("bd init --server", beadsDir, host), configfile.DefaultDoltDatabase)
+			return refuseTarget("%s has no metadata.json and its own config selects Dolt server mode (dolt.host: %q); not initializing it as an embedded workspace, which would hide its server data. Run `%s` there, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, host, serverInitRemedy("bd init --server", beadsDir, host), configfile.DefaultDoltDatabase)
 		}
 	}
 	if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
 		return err
 	}
 	if databases := embeddeddolt.Databases(beadsDir); len(databases) > 1 {
-		return fmt.Errorf("%s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", repo, strings.Join(databases, ", "))
+		return refuseTarget("%s has no metadata.json and holds several databases (%s); give it a metadata.json whose dolt_database names the one to use, then rerun", repo, strings.Join(databases, ", "))
 	}
 	return nil
+}
+
+// targetRefusal is refuseUninitializableTarget's own refusal of a target: a
+// shape it must not initialize, in a message that starts with the target's
+// path and names the remedy. bd migrate-personal raises it as a refusal of
+// the planning repo (refuseUninitializablePlanningRepo).
+type targetRefusal struct{ msg string }
+
+func (r *targetRefusal) Error() string { return r.msg }
+
+func refuseTarget(format string, args ...any) error {
+	return &targetRefusal{msg: fmt.Sprintf(format, args...)}
 }
 
 // serverInitRemedy completes the bd init command, initCmd ("bd init" or
