@@ -328,8 +328,8 @@ func migrationFreezeRefusal(operation string, res migration.Result) error {
 //
 // Without the suppression a freeze refusal on any command that does not set
 // SilenceErrors/SilenceUsage statically — duplicate, supersede, dep
-// relate/unrelate, backup init/sync/remove/restore, ado sync, migrate-personal,
-// batch — is followed by "Error: exit code 14" (exitError's placeholder text)
+// relate/unrelate, backup init/sync/remove/restore, ado sync, batch — is
+// followed by "Error: exit code 14" (exitError's placeholder text)
 // and a full usage dump, so a clean refusal reads like a syntax error. Setting
 // the flags here rather than on each command covers the ones added after this
 // comment too. main() exits on the exitError before its own SilenceErrors

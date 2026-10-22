@@ -110,6 +110,7 @@
 100 30 TestEmbeddedCloseGuardsAndEpics
 100 30 TestEmbeddedDoltLocalOnly_Push_ExitsZeroWithMessage
 100 30 TestEmbeddedImportChunkedCrossBucketBlocksEdgesResumeBackfills
+100 30 TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect
 
 100 31 TestEmbeddedDoltLocalOnly_ConfigRoundTrip
 100 31 TestEmbeddedIfRevisionCloseWarnsOnForcedOpenChildren

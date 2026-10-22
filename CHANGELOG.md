@@ -872,16 +872,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dolt.auto-commit: on`, the move is a Dolt commit in each repository,
   including an embedded planning repo that a server-mode project moves
   issues into; with `batch` or `off`, the delete, and the copy in an
-  embedded planning repo, wait for `bd dolt commit` like any other write. A
-  planning repo whose working set already holds uncommitted changes is
-  refused before anything moves, since that commit would publish them under
-  the move's message, and a planning repo the command initializes gets that
-  in a commit of its own. When the planning commit fails without saying
-  whether it landed, the copy is kept rather than rolled back. A planning
-  repo that contributor setup left with no `metadata.json` is first given
-  one: the empty `.beads` from `bd init --contributor` is initialized the
-  way a routed `bd create` initializes it, and the database fork setup
-  creates is kept, along with
+  embedded planning repo, wait for `bd dolt commit` like any other write.
+  With `on`, an embedded planning repo whose working set already holds
+  uncommitted changes is refused before anything moves, since that commit
+  would publish them under the move's message. When no `metadata.json` names
+  the database holding them and it is not the default `beads` database, the
+  refusal says to give the planning repo one before `bd dolt commit`, which
+  would otherwise open the default database there. A planning repo the
+  command initializes gets that in a commit of its own. When the planning
+  commit fails without saying whether it landed, the copy is kept rather
+  than rolled back, and the error names the issues now in both
+  repositories. A planning repo that contributor setup left with no
+  `metadata.json` is first given one: the empty `.beads` from
+  `bd init --contributor` is initialized the way a routed `bd create`
+  initializes it, and the database fork setup creates is kept, along with
   anything already in it, rather than hidden behind a new one. Any other
   planning `.beads` with no `metadata.json` is handled the same way, except
   that a workspace `bd` itself refuses, such as a SQLite-era repo, is refused
@@ -890,17 +894,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is refused too, with or without a `metadata.json` of its own (point
   `routing.contributor` at the redirect target, unless the planning repo
   names a database of its own there, which `routing.contributor` cannot
-  select). A planning repo in a format this build cannot open exits 16 with
+  select; a rig beside the project under a shared root is such a planning
+  repo). A planning repo in a format this build cannot open exits 16 with
   a hint, as `bd` does in that repo. A planning repo whose `metadata.json`
   has no `dolt_database`, or whose database has not been bootstrapped, is
   refused before anything moves. So is a planning repo that is the project's
-  own workspace (for example `routing.contributor: .`). In server mode, when
+  own workspace (for example `routing.contributor: .`), or a clone of it,
+  which carries the project's `project_id`. In server mode, when
   the planning open resolved to the project's own database (`dolt_database`
   "beads", or `BEADS_DOLT_SERVER_DATABASE` naming it), that used to delete
   the issues while reporting them moved. An issue ID already present in the
   planning repo is also refused rather than overwritten; when the project
   copy is a `bd repo sync` mirror of the planning repo, the error names
-  `bd repo remove`.
+  `bd repo remove`. Its errors no longer end in the usage block, and the
+  redirect, several-databases and uncommitted-changes refusals are no
+  longer prefixed `failed to open planning store`.
 - **`bd dolt start` no longer creates a phantom database when auto-start is
   off.** With `dolt.auto-start: false` the server is managed outside bd. A
   start over a data directory that is missing, empty, or holds no Dolt
