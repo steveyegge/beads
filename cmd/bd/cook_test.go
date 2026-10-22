@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -1043,6 +1044,103 @@ func TestCookFormulaToSubgraph_GateTypedStep(t *testing.T) {
 		}
 		if !slices.Contains(sqlbuild.ReadyWorkExcludeTypes(nil), types.TypeGate) {
 			t.Errorf("type %s must stay excluded from ready work (bare type=gate steps stay hidden)", types.TypeGate)
+		}
+	})
+
+	t.Run("gh:run repo and step metadata stay split across companion and task", func(t *testing.T) {
+		f := &formula.Formula{
+			Formula:     "mol-exit-ghrun",
+			Description: "GH#3316 gh:run exit gate with step metadata",
+			Version:     1,
+			Type:        formula.TypeWorkflow,
+			Steps: []*formula.Step{
+				{
+					ID:     "agree",
+					Title:  "Gate CI",
+					Type:   "gate",
+					Labels: []string{"release"},
+					Metadata: map[string]interface{}{
+						"team": "ops",
+					},
+					Gate: &formula.Gate{
+						Type:    "gh:run",
+						ID:      "release-ci",
+						Repo:    "gastownhall/beads",
+						Timeout: "1h",
+					},
+				},
+			},
+		}
+
+		subgraph, err := cookFormulaToSubgraph(f, "mol-exit-ghrun")
+		if err != nil {
+			t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+		}
+
+		taskID := "mol-exit-ghrun.agree"
+		gateID := "mol-exit-ghrun.gate-agree"
+
+		var taskIssue, gateIssue *types.Issue
+		var gateCount int
+		for _, issue := range subgraph.Issues {
+			switch issue.ID {
+			case taskID:
+				taskIssue = issue
+			case gateID:
+				gateIssue = issue
+				gateCount++
+			}
+		}
+		if taskIssue == nil {
+			t.Fatalf("task bead %s not found; issues: %v", taskID, subgraphIssueIDs(subgraph))
+		}
+		if gateIssue == nil {
+			t.Fatalf("companion %s not found; issues: %v", gateID, subgraphIssueIDs(subgraph))
+		}
+		if gateCount != 1 {
+			t.Errorf("want exactly one companion bead, saw %d subgraph issues with id %s", gateCount, gateID)
+		}
+		// No other gate-typed sibling either: a second companion must not
+		// appear under a rewritten id.
+		for _, issue := range subgraph.Issues {
+			if issue.IssueType == types.TypeGate && issue.ID != gateID {
+				t.Errorf("unexpected second gate bead %s; issues: %v", issue.ID, subgraphIssueIDs(subgraph))
+			}
+		}
+
+		// The companion carries the await fields and the repo selector.
+		if gateIssue.AwaitType != "gh:run" || gateIssue.AwaitID != "release-ci" {
+			t.Errorf("companion await = %q/%q, want gh:run/release-ci", gateIssue.AwaitType, gateIssue.AwaitID)
+		}
+		if gateIssue.Timeout != time.Hour {
+			t.Errorf("companion timeout = %v, want 1h", gateIssue.Timeout)
+		}
+		var gateMeta map[string]string
+		if err := json.Unmarshal(gateIssue.Metadata, &gateMeta); err != nil {
+			t.Fatalf("companion metadata %s not valid JSON: %v", gateIssue.Metadata, err)
+		}
+		if got := len(gateMeta); got != 1 || gateMeta["repo"] != "gastownhall/beads" {
+			t.Errorf("companion metadata = %v, want exactly {repo: gastownhall/beads}", gateMeta)
+		}
+
+		// The task bead keeps its own metadata and none of the gate fields.
+		if taskIssue.IssueType != types.TypeTask {
+			t.Errorf("task bead type = %q, want %q", taskIssue.IssueType, types.TypeTask)
+		}
+		if taskIssue.AwaitType != "" || taskIssue.AwaitID != "" {
+			t.Errorf("task bead must not carry await fields, got %q/%q", taskIssue.AwaitType, taskIssue.AwaitID)
+		}
+		var taskMeta map[string]string
+		if err := json.Unmarshal(taskIssue.Metadata, &taskMeta); err != nil {
+			t.Fatalf("task metadata %s not valid JSON: %v", taskIssue.Metadata, err)
+		}
+		if got := len(taskMeta); got != 1 || taskMeta["team"] != "ops" {
+			t.Errorf("task metadata = %v, want exactly {team: ops} (step metadata stays on the task)", taskMeta)
+		}
+
+		// Direction still flipped: companion blocks on the task.
+		if !hasBlocksDepOn(subgraph, gateID, taskID) || hasBlocksDepOn(subgraph, taskID, gateID) {
+			t.Errorf("want task --blocks--> companion only; deps: %v", depIDs(subgraph))
 		}
 	})
 }
