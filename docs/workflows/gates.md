@@ -89,9 +89,25 @@ topology. Two limitations to expect, both tracked in
 ## Gates in formulas
 
 A formula step declares a gate with a `[steps.gate]` block. When the formula
-is instantiated, bd creates the gate issue and wires it as a blocker of that
-step. The schema has five fields: `type`, `id`, `await_id`, `timeout`, and
-`repo`.
+is instantiated, bd creates a sibling `gate` issue for the block. How it is
+wired depends on the declaring step:
+
+- On a step of any type other than `gate`, the companion is an **entry
+  gate**: it blocks its own step until the gate resolves (the form all
+  timer and `gh:*` pre-delays use).
+- On a step declared `type = "gate"`, the companion is an **exit gate**:
+  the step bead is the prep work (a dispatchable `task` that blocks the
+  companion), the gate resolves after that work closes, and `depends_on` /
+  `needs` / `waits_for` references to the step resolve to the companion, so
+  downstream steps wait for the gate, not the task.
+
+A `type = "gate"` step with no `[steps.gate]` block cooks to a single
+wait-only `gate` bead — no companion, no edges — for tooling to resolve
+with `bd gate resolve`.
+
+A timer gate's expiry is measured from the poured gate's creation, so under
+either form evaluation starts at pour, not at unblock. The schema has five
+fields: `type`, `id`, `await_id`, `timeout`, and `repo`.
 
 This is the release gate from beads' own release formula — the step that
 waits for the GitHub release workflow:

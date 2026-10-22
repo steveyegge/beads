@@ -107,9 +107,29 @@ title = "Deploy {{version}} to {{environment}}"
 ## Step Types
 
 A step's `type` sets the issue type of the bead it creates: `task`
-(default), `bug`, `feature`, `epic`, or `chore`. Any other value falls back
-to `task`. Human sign-offs and async waits are expressed with a
-`[steps.gate]` block, not a step type — see [Gates](/workflows/gates).
+(default) plus the built-in issue types — `bug`, `feature`, `epic`,
+`chore`, `gate`. A declared type is honored; a value that is neither
+built-in nor registered with `bd types register` falls back to `task`
+at pour time with a warning.
+
+Async waits are declared with a `[steps.gate]` block — see
+[Gates](/workflows/gates) — and there are two ways to combine one with
+`type`:
+
+- A `[steps.gate]` on a step of any other type is an **entry gate**: bd
+  creates a sibling `gate` bead that blocks the step until the gate
+  resolves. Use it for pre-delays (a timer soak or a `gh:run` CI wait
+  before the step's work).
+- A `[steps.gate]` on a step declared `type = "gate"` is a compound
+  **exit gate**: the step bead becomes the prep task for the gate —
+  dispatchable like any other task — the companion `gate` bead is
+  unblocked only after that task closes, and steps that reference this
+  step (`depends_on`, `needs`, `waits_for`) wait on the gate resolving,
+  not on the task closing. Use it for prepare-then-approve shapes.
+
+A step declared `type = "gate"` with **no** gate block cooks to a single
+`gate`-typed bead with no companion: a wait-only bead hidden from
+`bd ready`, for tooling to resolve with `bd gate resolve`.
 
 ## Dependencies
 
@@ -145,23 +165,44 @@ needs = ["test-unit", "test-integration"]  # Waits for both
 
 ## Gates
 
-Add gates for async coordination:
+Add gates for async coordination. An entry gate holds its own step until
+the gate resolves — a pre-delay:
 
 ```toml
 [[steps]]
-id = "approval"
-title = "Manager approval"
-type = "human"
+id = "deploy"
+title = "Deploy build"
+
+[steps.gate]
+type = "timer"
+await_id = "soak-30m"
+timeout = "30m"
+```
+
+A compound exit gate (`type = "gate"` plus a `[steps.gate]` block) makes
+the step the prep work for the gate: the prep task runs, then a human
+approves, and only then may dependents proceed:
+
+```toml
+[[steps]]
+id = "agree"
+title = "Human approves"
+type = "gate"
+assignee = "pa-agent"
+depends_on = ["prep"]
 
 [steps.gate]
 type = "human"
-approvers = ["manager"]
+timeout = "24h"
 
 [[steps]]
 id = "deploy"
 title = "Deploy to production"
-needs = ["approval"]
+needs = ["agree"]   # waits on the gate resolving, not on the prep task
 ```
+
+The companion bead of a step's gate is also referenceable directly as
+`gate-<step-id>`.
 
 ## Aspects (Cross-cutting)
 

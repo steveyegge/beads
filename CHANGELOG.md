@@ -790,6 +790,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A formula step declared `type = "gate"` with a `[steps.gate]` block no
+  longer deadlocks (GH#3316). `bd mol pour` / `bd cook` retype the step
+  bead to a dispatchable prep task that blocks its companion gate —
+  previously the companion blocked its own prep work, so nothing could
+  run and only an out-of-tree sweep hook kept the pattern usable. The
+  task now surfaces in `bd ready` once its declared dependencies close,
+  the gate enters its await state (human approve/reject, `gh:run`,
+  `gh:pr`, timer) once the prep work closes, and `depends_on` / `needs` /
+  `waits_for` references to the step resolve to the companion so
+  downstream steps wait for the gate to resolve rather than being
+  released by the task closing. Entry gates (`[steps.gate]` on a step of
+  any other type, including timer and `gh:*` pre-delays) and bare
+  `type = "gate"` wait-only beads keep their existing behavior.
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

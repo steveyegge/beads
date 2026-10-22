@@ -267,9 +267,14 @@ type Step struct {
 	// Children are nested steps (for creating epic hierarchies).
 	Children []*Step `json:"children,omitempty"`
 
-	// Gate defines an async wait condition for this step.
-	// When set, bd cook creates a gate issue that blocks this step.
-	// Close the gate issue (bd close bd-xxx.gate-stepid) to unblock.
+	// Gate defines an async wait condition for this step. bd cook creates a
+	// companion gate issue for the block. Unless the step is declared
+	// `type = "gate"` (the compound exit-gate form), the companion is an
+	// entry gate that blocks this step: close the gate issue (bd close
+	// bd-xxx.gate-stepid / bd gate resolve) to unblock. On a compound
+	// exit-gate step the step bead is instead the prep work — a task that
+	// blocks the companion — and other steps' references to this step's id
+	// resolve to the companion (GH#3316).
 	Gate *Gate `json:"gate,omitempty"`
 
 	// Loop defines iteration for this step.
@@ -292,9 +297,13 @@ type Step struct {
 	SourceLocation string `json:"-"` // Internal only, not serialized to JSON
 }
 
-// Gate defines an async wait condition for formula steps.
-// When a step has a Gate, bd cook creates a gate issue that blocks the step.
-// The gate must be closed (manually or via watchers) to unblock the step.
+// Gate defines an async wait condition for formula steps. bd cook creates a
+// sibling gate bead carrying the await fields. Unless the declaring step is
+// `type = "gate"`, the companion is an entry gate and the gate must be
+// closed (manually or via watchers) before the step can run. On a step
+// declared `type = "gate"` the companion is an exit gate: the step is the
+// prep work, the cooked task blocks the companion, and references to the
+// step id resolve to the companion (GH#3316).
 type Gate struct {
 	// Type is the condition type: gh:run, gh:pr, timer, human, mail.
 	Type string `json:"type"`
