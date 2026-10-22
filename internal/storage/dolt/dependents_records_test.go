@@ -356,6 +356,20 @@ func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 	if len(outbound) != 1 || outbound[0].ID != "mr-epic" {
 		t.Fatalf("GetDependencies(mr-c01) = %v, want exactly [mr-epic]", outbound)
 	}
+
+	// The counts behind `bd show`'s progress and unresolvable-edges notice
+	// read the durable rows too, instead of failing (a failed count is what
+	// published dependent_count 0 next to the 12-child listing).
+	if n, err := store.CountDependents(ctx, "mr-epic"); err != nil {
+		t.Fatalf("CountDependents with wisp_dependencies missing: %v", err)
+	} else if n != 2 {
+		t.Fatalf("CountDependents = %d, want 2", n)
+	}
+	if n, err := store.CountDependencies(ctx, "mr-c01"); err != nil {
+		t.Fatalf("CountDependencies with wisp_dependencies missing: %v", err)
+	} else if n != 1 {
+		t.Fatalf("CountDependencies = %d, want 1", n)
+	}
 }
 
 // TestDependentsReadEachMirroredEdgeOnce reproduces GH#3445 state 3: the SAME
