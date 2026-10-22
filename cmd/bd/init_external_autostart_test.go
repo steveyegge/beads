@@ -468,7 +468,8 @@ func TestNamedPortServerUnreachableAdvice(t *testing.T) {
 // than 127.0.0.1:0 when it is alone, or a port-file port left over beside it.
 // A config.yaml dolt.port outranks it for the dial, as in the store, and the
 // advice still names it when both name the same port. A remote host gets the
-// remote-host advice.
+// remote-host advice. A host set only in the central server config is not
+// dialed: they dial what bd list dials.
 func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 	diagnostics := [][]string{
 		{"dolt", "test"},
@@ -494,6 +495,43 @@ func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 		t.Run("remote host/"+strings.Join(args, " "), func(t *testing.T) {
 			runRemoteHostDiagnostic(t, args)
 		})
+		t.Run("host only in the central server config/"+strings.Join(args, " "), func(t *testing.T) {
+			runCentralConfigHostDiagnostic(t, args)
+		})
+	}
+}
+
+// runCentralConfigHostDiagnostic runs bd list and one diagnostic against a
+// workspace whose metadata.json names a dead port and whose host only the
+// central server config (~/.config/beads/server.json) names. bd list's store
+// open never applies that file, so it dials 127.0.0.1, and the diagnostic must
+// dial the same endpoint: --perf times bd list, and the others check the
+// server it uses.
+func runCentralConfigHostDiagnostic(t *testing.T, args []string) {
+	t.Helper()
+	f := newExternalInitFixture(t)
+	port := freeLoopbackPort(t)
+	ep := tcpEndpoint(port)
+	namedPortWorkspace(t, f, port)
+	central := filepath.Join(f.home, "server.json")
+	if err := os.WriteFile(central, []byte(`{"dolt_server_host":"db.invalid"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.env = append(f.env, "BEADS_CENTRAL_CONFIG="+central)
+
+	for _, cmdArgs := range [][]string{{"list"}, args} {
+		res := f.run("", cmdArgs...)
+
+		requireNoLaunch(t, res)
+		if !res.failed {
+			t.Errorf("bd %s succeeded with no server:\n%s", strings.Join(cmdArgs, " "), res.output)
+		}
+		if !strings.Contains(res.output, ep.addr) {
+			t.Errorf("bd %s output does not contain %q:\n%s", strings.Join(cmdArgs, " "), ep.addr, res.output)
+		}
+		if strings.Contains(res.output, "db.invalid") {
+			t.Errorf("bd %s output names the central server config's host:\n%s", strings.Join(cmdArgs, " "), res.output)
+		}
 	}
 }
 

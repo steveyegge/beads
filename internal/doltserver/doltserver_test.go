@@ -3610,6 +3610,61 @@ func TestExternalPortSettingNamesThePortFile(t *testing.T) {
 	}
 }
 
+// TestExternalPortSettingPortFileBehindAConfiguredPort pins that the advice
+// names bd's port file only when removing it moves the dial. A successful open
+// in a workspace whose config.yaml dolt.port or listener.port names its port
+// records that port in the file, and `bd dolt set port N` without
+// --update-config leaves both, so with the file gone bd still dials the same
+// port and "remove that file" would change nothing. A listener.port naming
+// another port does move the dial.
+func TestExternalPortSettingPortFileBehindAConfiguredPort(t *testing.T) {
+	const dialed, declared, other = 13330, 13331, 13332
+	writeListenerPort := func(t *testing.T, beadsDir string, port int) {
+		t.Helper()
+		doltDir := filepath.Join(beadsDir, "dolt")
+		if err := os.MkdirAll(doltDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		yaml := fmt.Sprintf("listener:\n  port: %d\n", port)
+		if err := os.WriteFile(filepath.Join(doltDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		setup     func(t *testing.T, beadsDir string)
+		namesFile bool
+	}{
+		{name: "listener.port naming the file's port", setup: func(t *testing.T, beadsDir string) { writeListenerPort(t, beadsDir, dialed) }},
+		{name: "config.yaml dolt.port naming the file's port", setup: func(t *testing.T, _ string) {
+			configDir := t.TempDir()
+			yaml := fmt.Sprintf("dolt.port: %d\n", dialed)
+			if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("BEADS_DIR", configDir)
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize: %v", err)
+			}
+		}},
+		{name: "listener.port naming another port", setup: func(t *testing.T, beadsDir string) { writeListenerPort(t, beadsDir, other) }, namesFile: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			dir := namedPortServerWorkspace(t, declared)
+			tc.setup(t, dir)
+
+			advice := ExternalPortSetting(dir, PortSourcePortFile, dialed).Advice(net.JoinHostPort("127.0.0.1", strconv.Itoa(dialed)))
+			if !strings.Contains(advice, "dolt_server_port in "+configfile.ConfigPath(dir)+" declares this workspace's Dolt server externally managed") {
+				t.Fatalf("advice is not the dolt_server_port advice:\n%s", advice)
+			}
+			if got := strings.Contains(advice, PortFileName); got != tc.namesFile {
+				t.Errorf("advice names the port file: %v, want %v:\n%s", got, tc.namesFile, advice)
+			}
+		})
+	}
+}
+
 // TestExternalPortSettingSoleDeclaration pins when the advice for a
 // dolt_server_port that does not name the dialed port says removing it lets
 // bd manage the server: only when nothing else declares the server externally

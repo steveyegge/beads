@@ -787,6 +787,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `RunLifecycleCreateAppliesTheDefaultPriority`,
   `RunBatchCreatorAppliesTheDefaultPriority` and
   `RunBatchApplyAppliesTheDefaultPriority`.
+- **For a Dolt server on another machine, the legacy `BEADS_DOLT_PORT` no
+  longer overrides a configured port.** It replaced the port that
+  `config.yaml` `dolt.port`, the data directory's `listener.port` or
+  `metadata.json` `dolt_server_port` named, although since #5835 it does not
+  for a server on this machine, so an ambient value could send bd to the
+  wrong server. A padded value counted too. It now fills in only a port that
+  no setting names, and is read untrimmed, as for a local server.
+  `BEADS_DOLT_SERVER_PORT` still overrides a configured port.
+
+  **Compatibility:** a remote setup that exported `BEADS_DOLT_PORT` to send
+  bd away from a pinned port now connects to the pinned port instead, as a
+  local one has since 1.3.0. That includes a tool that sets only
+  `BEADS_DOLT_PORT` for a remote server, and a `listener.port` left in the
+  local data directory's `config.yaml`, which now outranks the variable too.
+  Switch to `BEADS_DOLT_SERVER_PORT`, or change or remove the pinned value.
 
 ### Fixed
 
@@ -843,22 +858,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server, a server bd started (its pid file beside the port file), a server
   bd manages, and an external workspace whose port no setting names keep
   their advice.
-- **For a Dolt server on another machine, the legacy `BEADS_DOLT_PORT` no
-  longer overrides a configured port.** It replaced the port that
-  `config.yaml` `dolt.port`, the data directory's `listener.port` or
-  `metadata.json` `dolt_server_port` named, although since #5835 it does not
-  for a server on this machine, so an ambient value could send bd to the
-  wrong server. A padded value counted too. It now fills in only a port that
-  no setting names, and is read untrimmed, as for a local server.
-  `BEADS_DOLT_SERVER_PORT` still overrides a configured port.
 - **`bd doctor --perf` checks a remote Dolt server on its host, and the
   server diagnostics stop advising `bd dolt start` for one.**
   `bd doctor --perf` probed `127.0.0.1` instead of the configured host, so it
   reported a reachable remote server as not running; it now measures the
-  server the store uses. When nothing answers on a remote host,
-  `bd doctor --perf`, `bd dolt test` and `bd dolt clean-databases` say how to
-  check the server there (`nc -zv <host> <port>`) instead of advising
-  `bd dolt start`, which refuses a remote host.
+  server that `bd ready`, `bd list` and `bd show`, the commands it times,
+  connect to, and no longer reports the local data directory's size for a
+  remote server. When nothing answers on a remote host, `bd doctor --perf`,
+  `bd dolt test` and `bd dolt clean-databases` say how to check the server
+  there (`nc -zv <host> <port>`) instead of advising `bd dolt start`, which
+  refuses a remote host.
 - **When bd's port file chose the port, the unreachable-server advice names
   that file.** A command that reaches the server records its port in
   `.beads/dolt-server.port`, which outranks `dolt_server_port`, and
@@ -866,7 +875,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   port. The advice blamed `dolt_server_port` and suggested removing it, which
   would not change the port bd dials. It now says bd took the port from that
   file, which outranks `dolt_server_port` (N), and to start that server or
-  remove the file. Elsewhere the advice says removing `dolt_server_port` lets
+  remove the file, unless `config.yaml` `dolt.port` or the data directory's
+  `listener.port` names the file's port too, so that removing the file would
+  change nothing. Elsewhere the advice says removing `dolt_server_port` lets
   bd manage the server only when nothing else, such as
   `BEADS_DOLT_SERVER_MODE=1` or a port variable naming another port, declares
   the server externally managed.

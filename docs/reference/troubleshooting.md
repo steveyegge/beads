@@ -272,7 +272,8 @@ endpoint. After a command reaches the server, bd records its port in
 port` leaves that file alone, so when the file chose the port bd names it:
 remove it and bd falls back to the next configured port: `dolt_server_port`,
 unless `config.yaml`'s `dolt.port` or the data directory's `listener.port`
-names another.
+names another. When one of those names the file's own port, removing the
+file changes nothing, so bd does not name it.
 
 **Fix:** start the server that should be listening there, with its own data
 directory. Unless that server is bd's own over `.beads/dolt` (for example one

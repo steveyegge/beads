@@ -216,17 +216,19 @@ type ExternalPortDeclaration struct {
 	// chose a different port than the metadata.json dolt_server_port that
 	// makes the workspace external.
 	NamesEndpoint bool
-	// PortFile is bd's port file when it chose the dialed port and Setting
-	// names another one, DeclaredPort. The file records the port an earlier
-	// open reached and outranks dolt_server_port, and `bd dolt set port`
-	// leaves it alone, so it is what still points bd at the old port.
+	// PortFile is bd's port file when it chose the dialed port, Setting
+	// names another one, DeclaredPort, and removing the file moves the dial
+	// off that port (no config.yaml dolt.port or listener.port names it too).
+	// The file records the port an earlier open reached and outranks
+	// dolt_server_port, and `bd dolt set port` leaves it alone, so it is what
+	// still points bd at the old port.
 	PortFile     string
 	DeclaredPort int
-	// Sole reports, for a Setting that names neither the endpoint nor a
-	// port file's port, whether nothing else declares the server externally
-	// managed (ResolveServerMode checks 1, 2b and 2c: BEADS_DOLT_SERVER_MODE=1,
-	// a remote host, or a port env var naming another port), so removing
-	// Setting lets bd manage the server.
+	// Sole reports, when neither NamesEndpoint nor PortFile is set, whether
+	// nothing else declares the server externally managed (ResolveServerMode
+	// checks 1, 2b and 2c: BEADS_DOLT_SERVER_MODE=1, a remote host, or a port
+	// env var naming another port), so removing Setting lets bd manage the
+	// server.
 	Sole bool
 }
 
@@ -249,9 +251,11 @@ type ExternalPortDeclaration struct {
 // and it outranks listener.port, config.yaml and dolt_server_port for the
 // dial, so its port is matched against the settings like any other; when
 // dolt_server_port names another port, the declaration carries the file and
-// that port, since the file is what still points bd at the old one. A port of
-// 0 matches any named value. The env vars are parsed as the store and check
-// 2c parse them, untrimmed, so a value neither of them reads is never named.
+// that port, since the file is what still points bd at the old one, unless a
+// config.yaml dolt.port or listener.port names the file's port too, so that
+// removing the file would not move the dial. A port of 0 matches any named
+// value. The env vars are parsed as the store and check 2c parse them,
+// untrimmed, so a value neither of them reads is never named.
 func ExternalPortSetting(beadsDir string, source PortSource, port int) ExternalPortDeclaration {
 	switch source {
 	case PortSourceUnset, PortSourceSharedServerDefault, PortSourceExternalHostDefault:
@@ -283,7 +287,7 @@ func ExternalPortSetting(beadsDir string, source PortSource, port int) ExternalP
 	}
 	switch {
 	case decl.NamesEndpoint:
-	case source == PortSourcePortFile:
+	case source == PortSourcePortFile && portBehindPortFile(beadsDir, cfg.DoltServerPort) != port:
 		decl.PortFile, decl.DeclaredPort = portPath(beadsDir), cfg.DoltServerPort
 	default:
 		// Checks 1, 2b and 2c of resolveServerMode; keep in step with it.
@@ -293,14 +297,33 @@ func ExternalPortSetting(beadsDir string, source PortSource, port int) ExternalP
 	return decl
 }
 
+// portBehindPortFile is the port the dial falls back to once beadsDir's port
+// file is gone: the first source after the file in portSources that resolves
+// one. metadataPort stands in for metadata.json's dolt_server_port, whose
+// source prints a deprecation warning when it resolves.
+func portBehindPortFile(beadsDir string, metadataPort int) int {
+	for _, src := range portSources {
+		switch src.source {
+		case PortSourceEnv, PortSourcePortFile:
+			continue
+		case PortSourceMetadataJSON:
+			return metadataPort
+		}
+		if p, ok := src.resolve(beadsDir); ok {
+			return p
+		}
+	}
+	return metadataPort
+}
+
 // Advice is the advice for an unreachable Dolt server at endpoint that d
 // declares externally managed, or "" for the zero declaration. It says bd did
 // not start a server, in the words `bd init --external` uses (#7674), and
 // does not suggest `bd dolt start`: that command would start a server of bd's
 // own over .beads/dolt on the same port, a different database that hides the
-// real one and takes the port the real server needs. When bd's port file
-// chose the endpoint's port it names that file, and it says removing
-// dolt_server_port lets bd manage the server only when d is Sole.
+// real one and takes the port the real server needs. When d carries bd's port
+// file it names that file, and it says removing dolt_server_port lets bd
+// manage the server only when d is Sole.
 func (d ExternalPortDeclaration) Advice(endpoint string) string {
 	switch {
 	case d.Setting == "":
