@@ -589,6 +589,17 @@ func TestCountDependencyEdgesInTxDistinct(t *testing.T) {
 			want: 4,
 		},
 		{
+			name: "missing wisp table counts the durable edges",
+			dir:  domain.DepDirectionBoth,
+			arms: []countArm{
+				{"dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+				{"wisp_dependencies", false, edgeEndArm{err: missingTableError("wisp_dependencies")}},
+				{"dependencies", true, edgeEndArm{rows: children}},
+				{"wisp_dependencies", true, edgeEndArm{err: missingTableError("wisp_dependencies")}},
+			},
+			want: 3,
+		},
+		{
 			name:   "type filter applies after de-dup",
 			dir:    domain.DepDirectionIn,
 			filter: []types.DependencyType{types.DepBlocks},
