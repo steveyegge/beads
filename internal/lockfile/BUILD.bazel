@@ -10,6 +10,7 @@ go_library(
         "lock_unix.go",
         "lock_wasm.go",
         "lock_windows.go",
+        "probe.go",
     ],
     importpath = "github.com/steveyegge/beads/internal/lockfile",
     visibility = ["//:__subpackages__"],
@@ -60,6 +61,7 @@ go_test(
         "lock_classify_unix_test.go",
         "lock_classify_windows_test.go",
         "lock_test.go",
+        "probe_test.go",
     ],
     embed = [":lockfile"],
     deps = select({
