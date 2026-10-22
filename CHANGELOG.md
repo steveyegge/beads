@@ -1054,6 +1054,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom types in that repository's `config.yaml`, as before. It also no
   longer migrates an ordinary additional repository's legacy `config.json`
   when there is no Dolt database there to read.
+- **`bd doctor` no longer rewrites or empties nested graph workspaces.**
+  Its Classic Artifacts check walks every `.beads` directory under the
+  repository, those of nested repositories and worktrees included, which
+  command admission never checks. Both the scan (plain `bd doctor` and
+  `bd doctor --check=artifacts`) and the cleanup (`bd doctor --fix` and
+  `bd doctor --check=artifacts --clean`) read each one's metadata with the
+  loader that migrates a legacy `config.json` into `metadata.json`, so a
+  nested workspace whose metadata was still a `config.json` lost that file,
+  and any key bd does not know, such as a `graph_*` key beyond those a
+  rewrite keeps, to a new `metadata.json`. The cleanup also treated a graph
+  workspace's files as artifacts: in a location that should hold only a
+  redirect, such as `polecats/*/.beads` or `.git/beads-worktrees/*/.beads`,
+  it removed the `graph-preview-format` marker and the `dolt` directory, and,
+  without a `redirect` file, the metadata too. The check now reads that
+  metadata without migrating it, and it neither reports nor removes anything
+  in a `.beads` whose format this build cannot open (a `graph_mode` other
+  than `dependency`, or the `graph-preview-format` marker), which it leaves
+  byte-identical. In a redirect-only location, the workspace's own metadata
+  beside its `redirect` file now stays as it is: a legacy `config.json`
+  there is no longer migrated, and neither it nor a `metadata.json` there is
+  reported as cruft any more. The scan had listed that file as safe to
+  delete, though the cleanup kept it, so `bd doctor` warned about it again
+  after every `--fix`. A `config.json` kept beside a `redirect` is inert:
+  across a redirect, bd takes the source workspace's `dolt_database` only
+  from its `metadata.json`, and bd stopped writing `config.json` before
+  `dolt_database` existed. Rename a hand-written one to `metadata.json` for
+  its `dolt_database` to take effect.
 - **Activating the HTTP backend refuses a graph workspace too.**
   `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
   `metadata.json` declares a `graph_mode` other than `dependency`, or whose

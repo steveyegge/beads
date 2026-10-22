@@ -1,9 +1,14 @@
 package fix
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 func TestClassicArtifacts_NoArtifacts(t *testing.T) {
@@ -277,6 +282,187 @@ func TestIsRedirectExpectedLocation(t *testing.T) {
 			got := isRedirectExpectedLocation(tt.path)
 			if got != tt.expected {
 				t.Errorf("isRedirectExpectedLocation(%q) = %v, want %v", tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+
+// writeBeadsTree creates each entry under dir: a name ending in "/" is an empty
+// directory, anything else a file holding its value.
+func writeBeadsTree(t *testing.T, dir string, entries map[string]string) {
+	t.Helper()
+	for name, content := range entries {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if strings.HasSuffix(name, "/") {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// snapshotBeadsTree returns every entry under dir, keyed by its slash-separated
+// relative path: a file maps to its bytes, a directory to "/".
+func snapshotBeadsTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	snapshot := map[string]string{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			snapshot[filepath.ToSlash(rel)] = "/"
+			return nil
+		}
+		data, err := os.ReadFile(path) // #nosec G304 -- test-owned temp tree
+		if err != nil {
+			return err
+		}
+		snapshot[filepath.ToSlash(rel)] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+// TestClassicArtifacts_SkipsUnsupportedWorkspaceFormat pins that the Classic
+// Artifacts fix leaves a .beads directory in a format this build cannot open
+// byte-identical. The fix walks every .beads under the path, including those
+// of nested repositories and worktrees, which command admission never checks,
+// and it classified each one with the migrating configfile.Load: a graph
+// workspace's legacy config.json became a metadata.json without the graph_*
+// keys this build does not know. Each layout also holds artifacts the fix
+// would otherwise remove, and the redirect-expected ones cruft, so nothing
+// else in the workspace may change either; the admitted workspace at the root
+// is still cleaned.
+func TestClassicArtifacts_SkipsUnsupportedWorkspaceFormat(t *testing.T) {
+	const graphMetadata = `{"database":"beads.db","backend":"dolt","graph_mode":"%s","graph_future_binding":"keep-me"}`
+	const strippedMetadata = `{"database":"beads.db","backend":"dolt"}`
+	layouts := []struct {
+		name  string
+		dir   string // the workspace's .beads, relative to the walked root
+		files map[string]string
+	}{
+		{name: "graph_mode in legacy config.json", dir: "sub/.beads", files: map[string]string{"config.json": fmt.Sprintf(graphMetadata, configfile.GraphModeLink)}},
+		{name: "future graph_mode in legacy config.json", dir: "sub/.beads", files: map[string]string{"config.json": fmt.Sprintf(graphMetadata, "future-format")}},
+		{name: "marker beside legacy config.json", dir: "sub/.beads", files: map[string]string{"config.json": strippedMetadata, configfile.GraphFormatMarkerFile: "link-preview-v9\n"}},
+		{name: "graph_mode in metadata.json", dir: "sub/.beads", files: map[string]string{configfile.ConfigFileName: fmt.Sprintf(graphMetadata, configfile.GraphModeLink)}},
+		{name: "marker in a polecat worktree", dir: "polecats/p1/.beads", files: map[string]string{"redirect": "../../mayor/rig/.beads\n", configfile.GraphFormatMarkerFile: "link-preview-v9\n", "extra.txt": "cruft"}},
+		{name: "graph_mode in a beads worktree", dir: ".git/beads-worktrees/wt/.beads", files: map[string]string{"config.json": fmt.Sprintf(graphMetadata, configfile.GraphModeLink), "extra.txt": "cruft"}},
+	}
+	for _, layout := range layouts {
+		t.Run(layout.name, func(t *testing.T) {
+			root := t.TempDir()
+			rootWAL := filepath.Join(root, ".beads", "beads.db-wal")
+			writeBeadsTree(t, filepath.Dir(rootWAL), map[string]string{"beads.db-wal": "wal"})
+			beadsDir := filepath.Join(root, filepath.FromSlash(layout.dir))
+			entries := map[string]string{
+				"dolt/":                    "",
+				"beads.db-wal":             "wal",
+				"beads.backup-20260204.db": "backup",
+				"issues.jsonl.new":         `{"id":"x"}`,
+			}
+			for name, content := range layout.files {
+				entries[name] = content
+			}
+			writeBeadsTree(t, beadsDir, entries)
+			want := snapshotBeadsTree(t, beadsDir)
+
+			if err := ClassicArtifacts(root); err != nil {
+				t.Fatalf("ClassicArtifacts: %v", err)
+			}
+			if got := snapshotBeadsTree(t, beadsDir); !reflect.DeepEqual(got, want) {
+				t.Fatalf("ClassicArtifacts changed %s:\n got %q\nwant %q", layout.dir, got, want)
+			}
+			if _, err := os.Stat(rootWAL); !os.IsNotExist(err) {
+				t.Fatalf("ClassicArtifacts left the root workspace's %s (stat err %v)", rootWAL, err)
+			}
+		})
+	}
+}
+
+// TestClassicArtifacts_DoesNotMigrateLegacyConfig pins that the fix reads a
+// nested workspace's legacy config.json without migrating it into
+// metadata.json, and still cleans that workspace by what it says: the
+// dolt_data_dir it names is where the fix finds the Dolt directory that makes
+// a JSONL artifact removable.
+func TestClassicArtifacts_DoesNotMigrateLegacyConfig(t *testing.T) {
+	t.Setenv("BEADS_DOLT_DATA_DIR", "")
+	root := t.TempDir()
+	beadsDir := filepath.Join(root, "sub", ".beads")
+	const legacy = `{"database":"beads.db","backend":"dolt","dolt_data_dir":"custom-dolt","future_key":"keep-me"}`
+	writeBeadsTree(t, beadsDir, map[string]string{
+		"config.json":      legacy,
+		"custom-dolt/":     "",
+		"beads.db-wal":     "wal",
+		"issues.jsonl.new": `{"id":"x"}`,
+	})
+
+	if err := ClassicArtifacts(root); err != nil {
+		t.Fatalf("ClassicArtifacts: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(beadsDir, "config.json")); err != nil || string(got) != legacy {
+		t.Fatalf("config.json = %q (read err %v), want it unchanged: %q", got, err, legacy)
+	}
+	if _, err := os.Stat(filepath.Join(beadsDir, configfile.ConfigFileName)); !os.IsNotExist(err) {
+		t.Fatalf("ClassicArtifacts wrote %s (stat err %v)", configfile.ConfigFileName, err)
+	}
+	for _, name := range []string{"beads.db-wal", "issues.jsonl.new"} {
+		if _, err := os.Stat(filepath.Join(beadsDir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s should have been removed (stat err %v)", name, err)
+		}
+	}
+}
+
+// TestClassicArtifacts_PreservesLegacyConfigJSONAlongsideRedirect extends
+// TestClassicArtifacts_PreservesMetadataJSONAlongsideRedirect to a legacy
+// config.json, the form the source rig's metadata takes before its migration.
+// The walk no longer migrates it into a metadata.json the cleanup keeps, so
+// the cleanup keeps the config.json itself, byte-identical with its
+// dolt_database and keys bd does not know, while unrelated cruft beside it is
+// still removed. Without a redirect it is cruft like the rest.
+func TestClassicArtifacts_PreservesLegacyConfigJSONAlongsideRedirect(t *testing.T) {
+	const legacy = `{"dolt_mode":"server","dolt_database":"lola","future_key":"keep-me"}`
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  map[string]string // the .beads after the cleanup
+	}{
+		{
+			name:  "with redirect",
+			files: map[string]string{"redirect": "../../mayor/rig/.beads", "config.json": legacy, "extra.txt": "cruft"},
+			want:  map[string]string{".": "/", "redirect": "../../mayor/rig/.beads", "config.json": legacy},
+		},
+		{
+			name:  "without redirect",
+			files: map[string]string{"config.json": legacy, "extra.txt": "cruft"},
+			want:  map[string]string{".": "/"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			beadsDir := filepath.Join(root, "polecats", "p1", ".beads")
+			writeBeadsTree(t, beadsDir, tc.files)
+
+			if err := ClassicArtifacts(root); err != nil {
+				t.Fatalf("ClassicArtifacts: %v", err)
+			}
+			if got := snapshotBeadsTree(t, beadsDir); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("ClassicArtifacts left %s as\n %q\nwant %q", beadsDir, got, tc.want)
 			}
 		})
 	}

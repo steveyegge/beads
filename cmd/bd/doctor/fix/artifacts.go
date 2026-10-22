@@ -1,10 +1,13 @@
 package fix
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 // ClassicArtifacts removes beads classic artifacts found by scanning the path.
@@ -12,6 +15,10 @@ import (
 // - JSONL export artifacts (not issues.jsonl itself)
 // - SQLite WAL/SHM files and backup databases
 // - Extra files in redirect-only .beads directories
+//
+// It never migrates a .beads directory's metadata, and leaves a .beads
+// directory in a format this build cannot open untouched (see
+// cleanBeadsDirArtifacts).
 func ClassicArtifacts(path string) error {
 	var removed, skipped, errCount int
 
@@ -59,8 +66,23 @@ func ClassicArtifacts(path string) error {
 
 // cleanBeadsDirArtifacts cleans artifacts from a single .beads directory.
 // Returns counts of removed, skipped, and errored items.
+//
+// The walk reaches the .beads directories of nested repositories, sub-projects
+// and worktrees, and command admission checked only the workspace doctor runs
+// in. So beadsDir's metadata is read as discovery reads it, without migrating
+// a legacy config.json into metadata.json, and a workspace in a format this
+// build cannot open is left byte-identical: configfile.Load would rewrite that
+// config.json, dropping keys it does not know, and the cleanup below would
+// remove files, the format marker among them, whose meaning this build does
+// not know.
 func cleanBeadsDirArtifacts(beadsDir string) (removed, skipped, errCount int) {
-	hasDolt := hasDoltDir(beadsDir)
+	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	var formatErr *configfile.UnsupportedWorkspaceFormatError
+	if errors.As(err, &formatErr) {
+		return
+	}
+
+	hasDolt := hasDoltDir(beadsDir, cfg)
 	isRedirectExpected := isRedirectExpectedLocation(beadsDir)
 
 	// 1. Clean JSONL artifacts in dolt-native directories
@@ -90,9 +112,16 @@ func cleanBeadsDirArtifacts(beadsDir string) (removed, skipped, errCount int) {
 	return
 }
 
-// hasDoltDir returns true if the .beads directory contains a dolt/ subdirectory.
-func hasDoltDir(beadsDir string) bool {
-	info, err := os.Stat(getDatabasePath(beadsDir))
+// hasDoltDir returns true if the Dolt database directory of the .beads
+// directory exists: the one cfg, beadsDir's metadata, resolves (respecting
+// dolt_data_dir), or beadsDir/dolt when there is no metadata or it does not
+// load (cfg nil).
+func hasDoltDir(beadsDir string, cfg *configfile.Config) bool {
+	doltPath := filepath.Join(beadsDir, "dolt")
+	if cfg != nil {
+		doltPath = cfg.DatabasePath(beadsDir)
+	}
+	info, err := os.Stat(doltPath)
 	return err == nil && info.IsDir()
 }
 
@@ -233,8 +262,10 @@ func cleanSQLiteArtifacts(beadsDir string) (removed, skipped, errCount int) {
 }
 
 // cleanCruftBeadsDirFiles removes everything from a .beads directory except
-// the redirect file, .gitkeep, and (when a redirect file is present)
-// metadata.json.
+// the redirect file, .gitkeep, and (when a redirect file is present) the
+// directory's own metadata: metadata.json, or a legacy config.json, which
+// this walk does not migrate. The Classic Artifacts scan
+// (doctor.scanCruftBeadsDir) reports exactly the entries this removes.
 func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
@@ -248,6 +279,13 @@ func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 	// the shared Gas Town root). Deleting metadata.json here would corrupt
 	// that source rig's identity while leaving the redirect itself intact,
 	// so never delete it when a redirect is present in the same directory.
+	// A legacy config.json there is kept too, unmigrated, but it is inert:
+	// ResolveRedirect reads the source's dolt_database only from
+	// metadata.json, and this walk no longer migrates (see
+	// cleanBeadsDirArtifacts). bd wrote config.json only before its rename
+	// to metadata.json, which predates dolt_database, so one bd wrote names
+	// no database to route to. It is kept because the cleanup cannot vouch
+	// for what it holds, not for routing.
 	hasRedirect := false
 	for _, entry := range entries {
 		if entry.Name() == "redirect" {
@@ -262,7 +300,7 @@ func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 		if name == "redirect" || name == ".gitkeep" {
 			continue
 		}
-		if name == "metadata.json" && hasRedirect {
+		if (name == "metadata.json" || name == "config.json") && hasRedirect {
 			continue
 		}
 
