@@ -2770,18 +2770,23 @@ func TestInstallClaudePluginPrecedence(t *testing.T) {
 // where only this user's local settings turn off a plugin the shared
 // project settings enable, and a hook already runs bd prime here: a global
 // hook, a shared project hook a teammate committed, or a hook in this
-// user's own .claude/settings.local.json. The install names that hook
+// user's own .claude/settings.local.json, here or at the repository root.
+// The install names that hook
 // instead of warning that none runs, keeps the local hook (it cannot move
 // to the shared file), and --check agrees without suggesting a migration.
 func TestInstallClaudeOffForYouNamesTheHookThatRuns(t *testing.T) {
 	stubDetectRenderOpts(t)
 	cases := []struct {
 		name string
-		hook func(claudeEnv) string
+		hook func(*claudeEnv) string
 	}{
-		{"global hook", func(env claudeEnv) string { return globalSettingsPath(env.homeDir) }},
-		{"shared project hook", func(env claudeEnv) string { return projectSettingsPath(env.projectDir) }},
-		{"local hook", func(env claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }},
+		{"global hook", func(env *claudeEnv) string { return globalSettingsPath(env.homeDir) }},
+		{"shared project hook", func(env *claudeEnv) string { return projectSettingsPath(env.projectDir) }},
+		{"local hook", func(env *claudeEnv) string { return legacyProjectSettingsPath(env.projectDir) }},
+		{"local hook at the repository root", func(env *claudeEnv) string {
+			env.localSettingsRoot = filepath.Dir(env.projectDir)
+			return legacyProjectSettingsPath(env.localSettingsRoot)
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2792,7 +2797,7 @@ func TestInstallClaudeOffForYouNamesTheHookThatRuns(t *testing.T) {
 				project: settingsWithPlugin(),
 				local:   settingsWithPluginSetTo(false),
 			}
-			hookFile := tc.hook(env)
+			hookFile := tc.hook(&env)
 			if files[hookFile] == nil {
 				files[hookFile] = map[string]interface{}{}
 			}
@@ -2949,6 +2954,110 @@ func TestInstallClaudeFromHomeTreatsSettingsAsShared(t *testing.T) {
 			t.Errorf("want %q, got:\n%s", want, out)
 		}
 	})
+}
+
+// TestInstallClaudeFromUserLevelDirTreatsSettingsAsPersonal pins a project
+// install from ~/.claude, whose .claude/settings.json Claude Code loads only
+// in sessions started there, so no teammate or other project shares it:
+// with the plugin enabled there and turned off in the local settings, the
+// install registers the hook rather than leaving it out of a shared file.
+func TestInstallClaudeFromUserLevelDirTreatsSettingsAsPersonal(t *testing.T) {
+	stubDetectRenderOpts(t)
+	env, stdout, _ := newClaudeTestEnv(t)
+	env.projectDir = filepath.Dir(globalClaudeInstructionsPath(env.homeDir))
+	project := projectSettingsPath(env.projectDir)
+	writeSettings(t, project, settingsWithPlugin())
+	writeSettings(t, legacyProjectSettingsPath(env.projectDir), settingsWithPluginSetTo(false))
+
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	if !hasBeadsHooks(project) {
+		t.Errorf("install from ~/.claude registered no hook in %s:\n%s", project, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "off for you") {
+		t.Errorf("install from ~/.claude treated its settings as shared:\n%s", stdout.String())
+	}
+}
+
+// TestInstallClaudeOffForYouSweepsTheOldSharedHook pins a project install
+// where only this user's local settings turn off a plugin the shared
+// project settings enable, and the shared file holds an older bare bd prime
+// hook. The sweep removes that hook, so the install reports that none runs
+// bd prime here rather than naming the hook it just removed.
+func TestInstallClaudeOffForYouSweepsTheOldSharedHook(t *testing.T) {
+	stubDetectRenderOpts(t)
+	env, stdout, _ := newClaudeTestEnv(t)
+	project := projectSettingsPath(env.projectDir)
+	local := legacyProjectSettingsPath(env.projectDir)
+	shared := settingsWithPlugin()
+	hooks := map[string]interface{}{}
+	addHookCommand(hooks, "SessionStart", "bd prime")
+	shared["hooks"] = hooks
+	writeSettings(t, project, shared)
+	writeSettings(t, local, settingsWithPluginSetTo(false))
+
+	if err := installClaude(env, false, false); err != nil {
+		t.Fatalf("installClaude: %v", err)
+	}
+	out := stdout.String()
+	if hasBeadsHooks(project) {
+		t.Errorf("the shared file still has a bd prime hook:\n%s", out)
+	}
+	for _, want := range []string{
+		"✓ Removed SessionStart hook",
+		"⚠ The beads plugin is off for you (" + local + ") but on for everyone in " + project,
+		"  To run bd prime here: enable the plugin in " + local + ", or run bd setup claude --global\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "runs here from the hook") {
+		t.Errorf("install named the hook it removed:\n%s", out)
+	}
+}
+
+// TestCheckClaudeMigrateHint pins when --check suggests a project install
+// to migrate a hook in the local settings: only for the current directory's
+// file, which a project install moves, including when the project settings
+// enable the plugin, and not for the repository root's, which it leaves.
+func TestCheckClaudeMigrateHint(t *testing.T) {
+	stubDetectRenderOpts(t)
+	cases := []struct {
+		name     string
+		root     bool
+		plugin   bool
+		wantHint bool
+	}{
+		{"root-local hook, no plugin", true, false, false},
+		{"local hook, project plugin", false, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, stdout, _ := newClaudeTestEnv(t)
+			hookFile := legacyProjectSettingsPath(env.projectDir)
+			if tc.root {
+				env.localSettingsRoot = filepath.Dir(env.projectDir)
+				hookFile = legacyProjectSettingsPath(env.localSettingsRoot)
+			}
+			hooks := map[string]interface{}{}
+			addHookCommand(hooks, "SessionStart", "bd prime --hook-json")
+			writeSettings(t, hookFile, map[string]interface{}{"hooks": hooks})
+			if tc.plugin {
+				writeSettings(t, projectSettingsPath(env.projectDir), settingsWithPlugin())
+			}
+
+			_ = checkClaude(env)
+			out := stdout.String()
+			if !strings.Contains(out, "✓ Project hooks installed (legacy): "+hookFile+"\n") {
+				t.Errorf("--check should report the hook in %s:\n%s", hookFile, out)
+			}
+			if got := strings.Contains(out, "Consider running 'bd setup claude' to migrate"); got != tc.wantHint {
+				t.Errorf("--check suggested a migration = %v, want %v:\n%s", got, tc.wantHint, out)
+			}
+		})
+	}
 }
 
 // TestCheckClaudeFindsTheRootLocalHook pins that --check, run from a
