@@ -486,6 +486,12 @@ func TestListDepEdgeEndsInTx(t *testing.T) {
 			want:    durable,
 		},
 		{
+			name:    "wisp-only far end reads after the durable ends",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{rows: []depEdgeEnd{{"w1", "blocks"}, {"d1", "blocks"}, {"w2", "parent-child"}}},
+			want:    append(append([]depEdgeEnd(nil), durable...), depEdgeEnd{"w1", "blocks"}, depEdgeEnd{"w2", "parent-child"}),
+		},
+		{
 			name:    "empty wisp table",
 			durable: edgeEndArm{rows: durable},
 			wisp:    &edgeEndArm{},

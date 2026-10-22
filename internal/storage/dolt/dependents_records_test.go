@@ -553,4 +553,25 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 		t.Fatalf("GetDependentsWithMetadata: %v", err)
 	}
 	requireEpicChildren(t, got)
+
+	// A genuine wisp-only dependent (its edge lives only in wisp_dependencies)
+	// is still read, after the durable rows.
+	wisp := &types.Issue{ID: "mr-w", Title: "wisp", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask, Ephemeral: true}
+	if err := store.CreateIssue(ctx, wisp, "tester"); err != nil {
+		t.Fatalf("create mr-w: %v", err)
+	}
+	if err := store.AddDependency(ctx, &types.Dependency{IssueID: "mr-w", DependsOnID: "mr-epic", Type: types.DepBlocks}, "tester"); err != nil {
+		t.Fatalf("add mr-w -> mr-epic: %v", err)
+	}
+	got, err = store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata with a wisp dependent: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("GetDependentsWithMetadata(mr-epic) = %d rows, want 3 (2 children + mr-w)", len(got))
+	}
+	if last := got[2]; last.ID != "mr-w" || last.DependencyType != types.DepBlocks {
+		t.Fatalf("last dependent = %s/%s, want the wisp-only mr-w/blocks after the durable rows", last.ID, last.DependencyType)
+	}
+	requireEpicChildren(t, got[:2])
 }
