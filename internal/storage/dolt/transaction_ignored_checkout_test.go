@@ -104,7 +104,7 @@ var readOnlyMigrationTables = map[string]bool{
 // shared Dolt server may grant one: SELECT on the database, DML on the data tables,
 // and EXECUTE on only dolt_add/dolt_commit. The pool is pinned to one
 // connection, so the ignored tx must take the fresh-dial fallback. The caller
-// builds its own context after this returns (see openStoreWithOwnBudget).
+// builds its own context after this returns, so the open gets a full budget.
 func openCappedOperatorStore(t *testing.T) (admin, op *DoltStore) {
 	t.Helper()
 	admin, cleanup := setupConcurrentTestStore(t)
@@ -158,7 +158,9 @@ func openCappedOperatorStore(t *testing.T) (admin, op *DoltStore) {
 		exec(fmt.Sprintf("GRANT EXECUTE ON PROCEDURE `%s`.`%s` TO '%s'@'%%'", dbName, proc, user))
 	}
 
-	op, err = openStoreWithOwnBudget(t, &Config{
+	openCtx, openCancel := testContext(t)
+	defer openCancel()
+	op, err = New(openCtx, &Config{
 		Path:           t.TempDir(),
 		CommitterName:  "test",
 		CommitterEmail: "test@example.com",
