@@ -510,3 +510,47 @@ func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 	}
 	requireEpicChildren(t, got)
 }
+
+// mirrorIntoWispDependencies copies the durable edge src -> target into
+// wisp_dependencies under the same depid with the given type: the state a wisp
+// promoted to durable, or two merged clones, leave behind. FK checks are
+// relaxed because src is not a wisp.
+func mirrorIntoWispDependencies(t *testing.T, store *DoltStore, src, target string, depType types.DependencyType) {
+	t.Helper()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	if _, err := store.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0"); err != nil {
+		t.Fatalf("disable FK checks: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		"INSERT INTO wisp_dependencies (id, issue_id, depends_on_issue_id, type, created_by) VALUES (?, ?, ?, ?, 'tester')",
+		depid.New(src, target), src, target, string(depType)); err != nil {
+		t.Fatalf("mirror %s -> %s: %v", src, target, err)
+	}
+	if _, err := store.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1"); err != nil {
+		t.Fatalf("re-enable FK checks: %v", err)
+	}
+}
+
+// TestDependentsReadEachMirroredEdgeOnce reproduces GH#3445's third state: an
+// edge stored in both dependency tables is one edge, so `bd show <epic>` lists
+// each child once (not twice, which also doubled the progress rollup), with the
+// durable row's type when the mirror's type conflicts.
+func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	seedTwoChildEpic(t, store)
+	mirrorIntoWispDependencies(t, store, "mr-c01", "mr-epic", types.DepBlocks)
+	mirrorIntoWispDependencies(t, store, "mr-c02", "mr-epic", types.DepParentChild)
+
+	got, err := store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata: %v", err)
+	}
+	requireEpicChildren(t, got)
+}

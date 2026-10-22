@@ -451,8 +451,9 @@ func (a edgeEndArm) expect(mock sqlmock.Sqlmock, table string, inbound bool) {
 
 // TestListDepEdgeEndsInTx pins the shared both-table edge read behind the four
 // dependency readers and their counts, in both directions: the SQL of each
-// arm, a missing wisp_dependencies reading as empty (GH#3445), and the order
-// durable ends then wisp ends.
+// arm, a missing wisp_dependencies reading as empty (GH#3445), a far end
+// stored in both tables read once with its durable type, and the order durable
+// ends then wisp ends.
 func TestListDepEdgeEndsInTx(t *testing.T) {
 	t.Parallel()
 
@@ -476,6 +477,12 @@ func TestListDepEdgeEndsInTx(t *testing.T) {
 			name:    "missing wisp table in MySQL wording reads as empty",
 			durable: edgeEndArm{rows: durable},
 			wisp:    &edgeEndArm{err: missingTableErrorMySQLText("beads", "wisp_dependencies")},
+			want:    durable,
+		},
+		{
+			name:    "mirrored far end reads once with the durable type",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{rows: []depEdgeEnd{{"d1", "blocks"}, {"d2", "blocks"}}},
 			want:    durable,
 		},
 		{

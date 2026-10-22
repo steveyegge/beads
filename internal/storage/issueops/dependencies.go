@@ -1378,6 +1378,10 @@ type depEdgeEnd struct{ id, depType string }
 // one direction across both dependency tables: its dependents when inbound,
 // its dependencies otherwise. Durable rows come first, then wisp rows.
 //
+// Each far end is returned once. depid keys an edge on (issue_id, target), so
+// a far end present in both tables (a promoted wisp, two merged clones) is one
+// edge stored twice, and the durable row's type wins.
+//
 // A missing wisp_dependencies reads as empty (GH#3445): it is dolt-ignored, so
 // a server whose working set was replaced can lack it until the next writable
 // open recreates it. Any other error propagates.
@@ -1390,6 +1394,7 @@ func listDepEdgeEndsInTx(ctx context.Context, tx DBTX, issueID string, inbound b
 	}
 
 	var ends []depEdgeEnd
+	seen := make(map[string]bool)
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		query := fmt.Sprintf(`SELECT %s AS depends_on_id, type FROM %s WHERE issue_id = ?`, DepTargetExpr, depTable)
 		if inbound {
@@ -1408,6 +1413,10 @@ func listDepEdgeEndsInTx(ctx context.Context, tx DBTX, issueID string, inbound b
 				_ = rows.Close()
 				return nil, fmt.Errorf("get %s: scan: %w", what, scanErr)
 			}
+			if seen[e.id] {
+				continue
+			}
+			seen[e.id] = true
 			ends = append(ends, e)
 		}
 		_ = rows.Close()
