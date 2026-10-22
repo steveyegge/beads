@@ -430,6 +430,10 @@ func edgeEndQueryRegex(table string, inbound bool) string {
 	return regexp.QuoteMeta("SELECT " + DepTargetExpr + " AS depends_on_id, type FROM " + table + " WHERE issue_id = ?")
 }
 
+// errEdgeRead stands in for a read failure other than a missing table, which
+// the edge reads and counts must return rather than read as empty.
+var errEdgeRead = errors.New("connection reset")
+
 // edgeEndArm scripts one table's answer: far-end (id, type) rows, or an error.
 type edgeEndArm struct {
 	rows []depEdgeEnd
@@ -496,6 +500,17 @@ func TestListDepEdgeEndsInTx(t *testing.T) {
 			durable: edgeEndArm{rows: durable},
 			wisp:    &edgeEndArm{},
 			want:    durable,
+		},
+		{
+			name:    "dependencies error propagates",
+			durable: edgeEndArm{err: errEdgeRead},
+			wantErr: errEdgeRead,
+		},
+		{
+			name:    "wisp_dependencies error other than a missing table propagates",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{err: errEdgeRead},
+			wantErr: errEdgeRead,
 		},
 	}
 
@@ -609,6 +624,21 @@ func TestCountDependencyEdgesInTxDistinct(t *testing.T) {
 			},
 			// c1's conflicting wisp mirror is not an edge of its own; w1 is.
 			want: 1,
+		},
+		{
+			name:    "dependencies error propagates",
+			dir:     domain.DepDirectionIn,
+			arms:    []countArm{{"dependencies", true, edgeEndArm{err: errEdgeRead}}},
+			wantErr: errEdgeRead,
+		},
+		{
+			name: "wisp_dependencies error other than a missing table propagates",
+			dir:  domain.DepDirectionOut,
+			arms: []countArm{
+				{"dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+				{"wisp_dependencies", false, edgeEndArm{err: errEdgeRead}},
+			},
+			wantErr: errEdgeRead,
 		},
 	}
 
