@@ -1166,10 +1166,10 @@ func TestCookFormulaToSubgraph_GateTypedReferences(t *testing.T) {
 	}
 
 	const (
-		prepID   = "mol-gate-refs.prep"
-		gateID   = "mol-gate-refs.gate-agree" // the companion gate bead
-		agreeID  = "mol-gate-refs.agree"
-		depID    = "mol-gate-refs.execute"
+		prepID  = "mol-gate-refs.prep"
+		gateID  = "mol-gate-refs.gate-agree" // the companion gate bead
+		agreeID = "mol-gate-refs.agree"
+		depID   = "mol-gate-refs.execute"
 	)
 
 	t.Run("depends_on retargets to the companion", func(t *testing.T) {
