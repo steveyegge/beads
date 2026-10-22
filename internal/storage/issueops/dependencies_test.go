@@ -420,3 +420,106 @@ func TestAddDependencyInTxReadsNullStoredMetadataAsEmptyObject(t *testing.T) {
 		t.Fatalf("unmet sql expectations: %v", err)
 	}
 }
+
+// edgeEndQueryRegex matches one arm of listDepEdgeEndsInTx: the far-end select
+// over table in the given direction.
+func edgeEndQueryRegex(table string, inbound bool) string {
+	if inbound {
+		return regexp.QuoteMeta("SELECT issue_id, type FROM " + table + " WHERE " + DepTargetExpr + " = ?")
+	}
+	return regexp.QuoteMeta("SELECT " + DepTargetExpr + " AS depends_on_id, type FROM " + table + " WHERE issue_id = ?")
+}
+
+// edgeEndArm scripts one table's answer: far-end (id, type) rows, or an error.
+type edgeEndArm struct {
+	rows []depEdgeEnd
+	err  error
+}
+
+func (a edgeEndArm) expect(mock sqlmock.Sqlmock, table string, inbound bool) {
+	q := mock.ExpectQuery(edgeEndQueryRegex(table, inbound)).WithArgs("near")
+	if a.err != nil {
+		q.WillReturnError(a.err)
+		return
+	}
+	rows := sqlmock.NewRows([]string{"id", "type"})
+	for _, r := range a.rows {
+		rows.AddRow(r.id, r.depType)
+	}
+	q.WillReturnRows(rows)
+}
+
+// TestListDepEdgeEndsInTx pins the shared both-table edge read behind the four
+// dependency readers and their counts, in both directions: the SQL of each
+// arm, a missing wisp_dependencies reading as empty (GH#3445), and the order
+// durable ends then wisp ends.
+func TestListDepEdgeEndsInTx(t *testing.T) {
+	t.Parallel()
+
+	durable := []depEdgeEnd{{"d1", "parent-child"}, {"d2", "blocks"}}
+	cases := []struct {
+		name string
+		// wisp is nil when the dependencies arm fails and wisp_dependencies is
+		// never read.
+		durable edgeEndArm
+		wisp    *edgeEndArm
+		want    []depEdgeEnd
+		wantErr error
+	}{
+		{
+			name:    "missing wisp table reads as empty",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{err: missingTableError("wisp_dependencies")},
+			want:    durable,
+		},
+		{
+			name:    "missing wisp table in MySQL wording reads as empty",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{err: missingTableErrorMySQLText("beads", "wisp_dependencies")},
+			want:    durable,
+		},
+		{
+			name:    "empty wisp table",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{},
+			want:    durable,
+		},
+	}
+
+	for _, inbound := range []bool{true, false} {
+		for _, tc := range cases {
+			name := tc.name + "/outbound"
+			if inbound {
+				name = tc.name + "/inbound"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				_, mock, tx := beginMockTx(t)
+				tc.durable.expect(mock, "dependencies", inbound)
+				if tc.wisp != nil {
+					tc.wisp.expect(mock, "wisp_dependencies", inbound)
+				}
+
+				got, err := listDepEdgeEndsInTx(context.Background(), tx, "near", inbound)
+				if tc.wantErr != nil {
+					if !errors.Is(err, tc.wantErr) {
+						t.Fatalf("listDepEdgeEndsInTx error = %v, want it to wrap %v", err, tc.wantErr)
+					}
+					if got != nil {
+						t.Fatalf("listDepEdgeEndsInTx = %v alongside an error, want nil", got)
+					}
+				} else {
+					if err != nil {
+						t.Fatalf("listDepEdgeEndsInTx: %v", err)
+					}
+					if !reflect.DeepEqual(got, tc.want) {
+						t.Fatalf("listDepEdgeEndsInTx = %v, want %v", got, tc.want)
+					}
+				}
+				if err := mock.ExpectationsWereMet(); err != nil {
+					t.Fatalf("unmet SQL expectations: %v", err)
+				}
+			})
+		}
+	}
+}

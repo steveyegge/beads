@@ -818,6 +818,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd show <epic>` no longer loses its CHILDREN section when the
+  dolt-ignored `wisp_dependencies` table is missing from a server's working
+  set: the dependency readers treat a missing wisp table as empty (GH#3445).
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

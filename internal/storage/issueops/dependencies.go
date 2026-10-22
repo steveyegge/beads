@@ -1370,37 +1370,61 @@ func GetDependenciesWithMetadataInTx(ctx context.Context, tx DBTX, issueID strin
 	return results, nil
 }
 
-// GetDependentsWithMetadataInTx returns issues that depend on the given issueID
-// along with the dependency type. Works within an existing transaction.
+// depEdgeEnd is one dependency edge seen from a fixed near end: the far
+// end's id and the edge type.
+type depEdgeEnd struct{ id, depType string }
+
+// listDepEdgeEndsInTx returns the far ends of issueID's dependency edges in
+// one direction across both dependency tables: its dependents when inbound,
+// its dependencies otherwise. Durable rows come first, then wisp rows.
 //
-//nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
-func GetDependentsWithMetadataInTx(ctx context.Context, tx DBTX, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
-	type depMeta struct {
-		depID, depType string
+// A missing wisp_dependencies reads as empty (GH#3445): it is dolt-ignored, so
+// a server whose working set was replaced can lack it until the next writable
+// open recreates it. Any other error propagates.
+//
+//nolint:gosec // G201: table names come from hardcoded constants
+func listDepEdgeEndsInTx(ctx context.Context, tx DBTX, issueID string, inbound bool) ([]depEdgeEnd, error) {
+	what := "dependencies"
+	if inbound {
+		what = "dependents"
 	}
 
-	// Query both dependency tables to find all dependents.
-	var deps []depMeta
+	var ends []depEdgeEnd
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT issue_id, type FROM %s WHERE %s = ?`, depTable, DepTargetExpr), issueID)
+		query := fmt.Sprintf(`SELECT %s AS depends_on_id, type FROM %s WHERE issue_id = ?`, DepTargetExpr, depTable)
+		if inbound {
+			query = fmt.Sprintf(`SELECT issue_id, type FROM %s WHERE %s = ?`, depTable, DepTargetExpr)
+		}
+		rows, err := tx.QueryContext(ctx, query, issueID)
 		if err != nil {
-			return nil, fmt.Errorf("get dependents from %s: %w", depTable, err)
+			if optionalBlockedTable(depTable) && isTableNotExistError(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get %s from %s: %w", what, depTable, err)
 		}
 		for rows.Next() {
-			var d depMeta
-			if scanErr := rows.Scan(&d.depID, &d.depType); scanErr != nil {
+			var e depEdgeEnd
+			if scanErr := rows.Scan(&e.id, &e.depType); scanErr != nil {
 				_ = rows.Close()
-				return nil, fmt.Errorf("get dependents: scan: %w", scanErr)
+				return nil, fmt.Errorf("get %s: scan: %w", what, scanErr)
 			}
-			deps = append(deps, d)
+			ends = append(ends, e)
 		}
 		_ = rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("get dependents: rows from %s: %w", depTable, err)
+			return nil, fmt.Errorf("get %s: rows from %s: %w", what, depTable, err)
 		}
 	}
+	return ends, nil
+}
 
+// GetDependentsWithMetadataInTx returns issues that depend on the given issueID
+// along with the dependency type. Works within an existing transaction.
+func GetDependentsWithMetadataInTx(ctx context.Context, tx DBTX, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
+	deps, err := listDepEdgeEndsInTx(ctx, tx, issueID, true)
+	if err != nil {
+		return nil, err
+	}
 	if len(deps) == 0 {
 		return nil, nil
 	}
@@ -1408,7 +1432,7 @@ func GetDependentsWithMetadataInTx(ctx context.Context, tx DBTX, issueID string)
 	// Fetch all dependent issues.
 	ids := make([]string, len(deps))
 	for i, d := range deps {
-		ids[i] = d.depID
+		ids[i] = d.id
 	}
 	issues, err := GetIssuesByIDsInTx(ctx, tx, ids, nil)
 	if err != nil {
@@ -1421,7 +1445,7 @@ func GetDependentsWithMetadataInTx(ctx context.Context, tx DBTX, issueID string)
 
 	var results []*types.IssueWithDependencyMetadata
 	for _, d := range deps {
-		issue, ok := issueMap[d.depID]
+		issue, ok := issueMap[d.id]
 		if !ok {
 			continue
 		}
