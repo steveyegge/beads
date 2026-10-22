@@ -16,7 +16,8 @@ import (
 // re-pin (#7387's ~100-minute stall); this instead runs tools/rbe/worker-
 // env-sync every 15 minutes and, on a real mismatch (exit 1), copies
 // gascity main's manifest and pin (tools/rbe/worker-env-sync-copy) and
-// opens or updates a fixed-branch PR with auto-merge armed.
+// opens or updates a fixed-branch PR labeled status/needs-review-auto, which
+// lands through the automated review and the merge queue.
 const (
 	workerEnvAutosyncWorkflow = "worker-env-autosync.yml"
 	workerEnvAutosyncJob      = "autosync"
@@ -61,7 +62,7 @@ func TestWorkerEnvAutosyncWorkflowTriggersOnScheduleAndDispatchOnly(t *testing.T
 
 // TestWorkerEnvAutosyncWorkflowPermissionsAreMinimal: least privilege.
 // Top-level and the job's own grant both stay read-only: every write this
-// job makes (the push, the PR, the label, auto-merge) goes through one of
+// job makes (the push, the PR, the label) goes through one of
 // the two minted App tokens, never the job's own GITHUB_TOKEN permissions,
 // so there is nothing here for either App token's role to leak into.
 func TestWorkerEnvAutosyncWorkflowPermissionsAreMinimal(t *testing.T) {
@@ -96,9 +97,8 @@ func TestWorkerEnvAutosyncWorkflowPermissionsAreMinimal(t *testing.T) {
 // gates every write step on a real mismatch (rc == 1, never rc == 2's
 // "unknown" or rc == 0's "in step"), mints two App tokens only once a
 // mismatch needs a write, pushes the fixed branch with push-token alone,
-// opens/labels the PR and arms auto-merge with pr-token alone (so it is
-// not a GITHUB_TOKEN PR - those never trigger CI), and arms auto-merge
-// rather than merging directly.
+// and opens/labels the PR with pr-token alone (so it is not a
+// GITHUB_TOKEN PR - those never trigger CI).
 func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	job := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob)
 
@@ -180,17 +180,6 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	if pr.Env["LABEL"] != "status/needs-review-auto" {
 		t.Errorf("PR step env LABEL = %q, want status/needs-review-auto (routes it through the automated review workflow)", pr.Env["LABEL"])
 	}
-
-	merge := job.step(t, "Enable auto-merge")
-	if merge.If != mismatchIf+" && steps.pr.outputs.number" {
-		t.Errorf("merge step if = %q, want gated on a real mismatch and a PR having been opened", merge.If)
-	}
-	if merge.Uses != "" || !strings.Contains(merge.Run, "gh pr merge --auto") {
-		t.Errorf("merge step = %+v, want a gh pr merge --auto call (arms auto-merge; never merges outright)", merge)
-	}
-	if merge.Env["GH_TOKEN"] != "${{ steps.pr-token.outputs.token }}" {
-		t.Errorf("merge step env GH_TOKEN = %q, want pr-token (enabling auto-merge is PR-shaped, not a push)", merge.Env["GH_TOKEN"])
-	}
 }
 
 // TestWorkerEnvAutosyncWorkflowNeverInterpolatesExpressionsInRun: every
@@ -205,6 +194,42 @@ func TestWorkerEnvAutosyncWorkflowNeverInterpolatesExpressionsInRun(t *testing.T
 		if strings.Contains(step.Run, "${{") {
 			t.Errorf("step %q run contains a ${{ }} expression; move it to env: and reference the variable instead:\n%s", step.Name, step.Run)
 		}
+	}
+}
+
+// TestWorkerEnvAutosyncWorkflowNeverArmsAutoMerge: the sync PR lands the
+// way any other PR does. Its status/needs-review-auto label hands it to the
+// automated review workflow, and the merge workflow queues it once that
+// review passes, so no step merges it or arms auto-merge, and its body
+// names the label rather than promising an auto-merge nothing arms.
+// Arming cannot work here: GitHub's enablePullRequestAutoMerge wants
+// contents:write as well as pull-requests:write on one token (pr-token
+// alone failed with "Resource not accessible by integration" on the run
+// that opened #7746), the push-plus-PR token the two-token split rules
+// out. Nor should it: main requires only the CI and PR Risk gates
+// (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md), so an armed PR would join the
+// merge queue without the review.
+func TestWorkerEnvAutosyncWorkflowNeverArmsAutoMerge(t *testing.T) {
+	job := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob)
+	for _, step := range job.Steps {
+		for _, merge := range []string{"gh pr merge", "enablePullRequestAutoMerge", "enqueuePullRequest"} {
+			if strings.Contains(step.Run, merge) {
+				t.Errorf("step %q runs %s; the sync PR lands through its status/needs-review-auto label, never auto-merge or a direct merge", step.Name, merge)
+			}
+		}
+	}
+
+	pr := job.step(t, "Open or update the sync PR")
+	start, end := strings.Index(pr.Run, "<<BODY\n"), strings.Index(pr.Run, "\nBODY\n")
+	if start < 0 || end < start {
+		t.Fatalf("PR step run %q, want the PR body in a <<BODY heredoc", pr.Run)
+	}
+	body := pr.Run[start+len("<<BODY\n") : end]
+	if strings.Contains(strings.ToLower(body), "armed") {
+		t.Errorf("PR body says auto-merge is armed, but nothing arms it:\n%s", body)
+	}
+	if !strings.Contains(body, "$LABEL") {
+		t.Errorf("PR body does not name $LABEL, the label that lands it:\n%s", body)
 	}
 }
 
