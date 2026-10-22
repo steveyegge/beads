@@ -78,7 +78,7 @@ func (s *DoltStore) addDependencyWithOptions(ctx context.Context, dep *types.Dep
 	// dependency_added event (explicit verb + genuine new edge). A structural or
 	// idempotent add writes no event, so staging events would sweep unrelated
 	// pending event rows into this dependency commit.
-	tables := []string{"issues", "dependencies"}
+	tables := []string{"dependencies"}
 	if result.EventWritten {
 		tables = append(tables, "events")
 	}
@@ -161,7 +161,7 @@ func (s *DoltStore) RemoveDependencyWithOptions(ctx context.Context, issueID, de
 		// dependency_removed event (explicit verb + genuine edge removal). A
 		// structural or missing-edge remove writes no event, so staging events would
 		// sweep unrelated pending event rows into this dependency commit.
-		tables := []string{"issues", "dependencies"}
+		tables := []string{"dependencies"}
 		if result.EventWritten {
 			tables = append(tables, "events")
 		}

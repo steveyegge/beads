@@ -41,10 +41,12 @@ type BatchContext struct {
 	// Singular creates leave this false and mint in place — they never run
 	// the dependency pass.
 	DeferVersionMint bool
-	// SkipRowVersionReadback lets the batch entry point defer each issue's
-	// final row_lock readback until all cross-issue dependencies have been
-	// persisted (#5738). Singular creates leave this false and read the final
-	// token in place.
+	// SkipRowVersionReadback lets the batch entry point read every issue's
+	// row_lock back in one pass at the end instead of per issue (#5738). The
+	// readback exists because the upsert and multi-row insert paths do not
+	// hand the minted token back (see executeIssueInsert and
+	// insertIssueRowsIntoTable); nothing after the row insert remints it.
+	// Singular creates leave this false and read the token in place.
 	SkipRowVersionReadback bool
 	// cache, when set, answers the per-issue presence/label lookups from one
 	// up-front batch read and buffers the batch's audit events for one
@@ -512,10 +514,13 @@ func CreateIssuesInTxWithContext(ctx context.Context, tx DBTX, bc *BatchContext,
 			return CreateIssuesResult{}, err
 		}
 	}
-	// Auxiliary aggregate writes (notably dependency creation) may remint the
-	// token after the row insert. Return the final in-transaction token on each
-	// caller-owned Issue so an immediate guarded mutation does not start stale
-	// (#5738; the per-issue readback was deferred by SkipRowVersionReadback).
+	// The upsert and multi-row insert paths do not hand the minted token back
+	// (executeIssueInsert / insertIssueRowsIntoTable), so read it here. Nothing
+	// after the row insert remints it: creation-time labels and comments write
+	// their rows directly and dependency edges never touch row_lock (T4.10).
+	// Return the stored token on each caller-owned Issue so an immediate
+	// guarded mutation does not start stale (#5738; the per-issue readback was
+	// skipped by SkipRowVersionReadback).
 	for _, issue := range accepted {
 		if issue == nil {
 			continue

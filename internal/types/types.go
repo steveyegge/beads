@@ -86,11 +86,15 @@ type Issue struct {
 	// survive a JSON number in a JavaScript consumer. Go consumers read
 	// RowVersion directly and never see the string.
 	//
-	// Exact no-ops preserve the token. The derived is_blocked projection is the
-	// sole visible exception: recomputation is cache maintenance driven by other
-	// rows, not a user-authored mutation of this aggregate. The dependency edit
-	// that triggered it still remints its source token; inbound edges remain a
-	// graph query on the target.
+	// Exact no-ops preserve the token. So do dependency edits in either
+	// direction (a parent change included; it is a parent-child edge) and the
+	// derived is_blocked projection they drive: an edge is graph state, not an
+	// issues-row write, and recomputation is cache maintenance, so neither is a
+	// mutation of this aggregate (T4.10, pinned by cmd/bd
+	// TestEmbeddedRevisionRemintMatrix). The direct label and comment writers
+	// (AddLabel/RemoveLabel/AddComment) remint; the composite update's
+	// label-only patch does not, which is the asymmetry #5738 leaves to the
+	// maintainer's ruling.
 	//
 	// Migration 0073 (ignored/0029 for wisps) replaces legacy 0 tokens with a
 	// non-zero equality sentinel; current creates stamp a fresh random token.

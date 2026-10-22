@@ -247,7 +247,7 @@ func (s *DoltStore) updateWispChecked(ctx context.Context, id string, updates ma
 // depender recompute can change durable issues rows, and those must be
 // committed exactly as ReopenIssue commits its recompute — otherwise the
 // unblock sits in the working set and the NEXT durable commit silently
-// carries it (#5738: staging the add-dep recompute exposed this).
+// carries it (found during #5738's staging audit).
 func (s *DoltStore) closeWisp(ctx context.Context, id string, reason string, actor string, session string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

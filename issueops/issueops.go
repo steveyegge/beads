@@ -314,10 +314,11 @@ type UpdateRequest struct {
 	//   - THE TOKEN IS OPAQUE AND COMPARED FOR EQUALITY ONLY. RowVersion is
 	//     minted afresh on every lifecycle write rather than incremented, so
 	//     "newer" and "older" are not questions a version guard can answer.
-	//   - IT GUARDS THE USER-AUTHORED AGGREGATE, INCLUDING labels, comments and
-	//     dependency edges. Exact no-ops preserve it. Derived is_blocked cache
-	//     recomputation is excluded; the graph edit that caused it remints its
-	//     source aggregate instead.
+	//   - IT GUARDS THE USER-AUTHORED AGGREGATE: the issues row plus its labels
+	//     and comments. Exact no-ops preserve it. Dependency edges in either
+	//     direction (a parent change included) are graph state, not a row
+	//     write, and derived is_blocked cache recomputation is excluded, so
+	//     neither remints it (T4.10).
 	//   - nil DISABLES THE CHECK. Each is a pointer so that "do not check" is
 	//     distinct from a caller requiring the never-written version 0, or the
 	//     empty assignee, which is a real guard meaning "expected unassigned".

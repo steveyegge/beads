@@ -264,8 +264,8 @@ func executeUpdate(ctx context.Context, tx *sql.Tx, request publicops.UpdateRequ
 	}
 	if parentResult.Changed {
 		changedAny = true
-		issueTable, _, _, dependencyTable := WispTableRouting(IsActiveWispInTx(ctx, tx, attempt.IssueID))
-		tables.Add(issueTable, dependencyTable)
+		_, _, _, dependencyTable := WispTableRouting(IsActiveWispInTx(ctx, tx, attempt.IssueID))
+		tables.Add(dependencyTable)
 		if parentResult.IssueRowsChanged {
 			tables.Add("issues")
 		}

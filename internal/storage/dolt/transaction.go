@@ -972,7 +972,6 @@ func (t *doltTransaction) AddDependencyWithOptions(ctx context.Context, dep *typ
 		return nil
 	}
 	t.dirty.MarkDirty(table)
-	t.dirty.MarkDirty(opts.SourceTable)
 	// AddDependencyInTx records a dependency_added event on the source's event
 	// table only for a genuine emit (explicit verb + new edge); stage that table
 	// so StageAndCommit commits the event with the edge (a torn write otherwise
@@ -1140,9 +1139,6 @@ func (t *doltTransaction) RemoveDependencyWithOptions(ctx context.Context, issue
 		return nil
 	}
 	t.dirty.MarkDirty(table)
-	if table == "dependencies" {
-		t.dirty.MarkDirty("issues")
-	}
 	// RemoveDependencyInTx records a dependency_removed event on the source's
 	// event table only for a genuine emit (explicit verb + edge removal); stage
 	// that table so it commits with the edge. A structural or missing-edge remove

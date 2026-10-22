@@ -206,11 +206,13 @@ func TestAllIssueRowWritesStampRowLock(t *testing.T) {
 }
 
 // TestAllAuxiliaryAggregateWritersTouchRowVersion complements the SQL-row scan
-// above by pinning the known SQL-owning chokepoints for labels, comments and
-// dependency edges. It is an explicit inventory, not discovery of future
-// writers; the real-backend mutation matrix provides the supported-surface
-// check. Design adapted from Julian Knutsen's completeness guards in
-// gastownhall/beads#4682 and #4697.
+// above by pinning the known SQL-owning chokepoints for labels and comments.
+// Dependency edges are deliberately absent: an edge is graph state, not an
+// issues-row write, and never remints the token (T4.10, pinned by
+// cmd/bd TestEmbeddedRevisionRemintMatrix). It is an explicit inventory, not
+// discovery of future writers; the real-backend mutation matrix provides the
+// supported-surface check. Design adapted from Julian Knutsen's completeness
+// guards in gastownhall/beads#4682 and #4697.
 func TestAllAuxiliaryAggregateWritersTouchRowVersion(t *testing.T) {
 	writers := map[string][]string{
 		// addLabelInTx/removeLabelInTx (not their exported wrappers) own the
@@ -219,12 +221,10 @@ func TestAllAuxiliaryAggregateWritersTouchRowVersion(t *testing.T) {
 		// bodies with mintVersion=false, touching once itself after the last
 		// row. The chokepoint this inventory pins is where the SQL and its
 		// paired touch live.
-		"labels.go":       {"addLabelInTx", "removeLabelInTx"},
-		"comments.go":     {"addIssueCommentInTx", "AddCommentEventInTx"},
-		"dependencies.go": {"addDependencyInTx", "removeDependencyInTx"},
-		filepath.Join("..", "domain", "db", "label.go"):      {"Insert", "Delete"},
-		filepath.Join("..", "domain", "db", "comment.go"):    {"InsertRecord"},
-		filepath.Join("..", "domain", "db", "dependency.go"): {"Insert", "Delete"},
+		"labels.go":   {"addLabelInTx", "removeLabelInTx"},
+		"comments.go": {"addIssueCommentInTx", "AddCommentEventInTx"},
+		filepath.Join("..", "domain", "db", "label.go"):   {"Insert", "Delete"},
+		filepath.Join("..", "domain", "db", "comment.go"): {"InsertRecord"},
 	}
 	for path, names := range writers {
 		src, err := os.ReadFile(path)
@@ -262,6 +262,58 @@ func TestAllAuxiliaryAggregateWritersTouchRowVersion(t *testing.T) {
 				t.Errorf("%s: aggregate writer %s not found; update the completeness inventory", path, name)
 			} else if !touched {
 				t.Errorf("%s: aggregate writer %s does not touch RowVersion", path, name)
+			}
+		}
+	}
+}
+
+// TestDependencyWritersNeverTouchRowVersion is the negative half of the
+// inventory above: the dependency chokepoints on both planes must NOT touch
+// row_lock, because an edge is graph state and main's T4.10 contract (cmd/bd
+// TestEmbeddedRevisionRemintMatrix) pins that a dependency edit never changes
+// the CAS revision. A touch creeping back in fails here at build time rather
+// than in the embedded CLI lane.
+func TestDependencyWritersNeverTouchRowVersion(t *testing.T) {
+	writers := map[string][]string{
+		"dependencies.go": {"addDependencyInTx", "removeDependencyInTx"},
+		filepath.Join("..", "domain", "db", "dependency.go"): {"Insert", "Delete"},
+	}
+	for path, names := range writers {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, name := range names {
+			var found, touched bool
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Name.Name != name || fn.Body == nil {
+					continue
+				}
+				found = true
+				ast.Inspect(fn.Body, func(node ast.Node) bool {
+					call, ok := node.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					switch callee := call.Fun.(type) {
+					case *ast.Ident:
+						touched = callee.Name == "TouchRowVersionInTx" || touched
+					case *ast.SelectorExpr:
+						touched = callee.Sel.Name == "TouchRowVersionInTx" || touched
+					}
+					return true
+				})
+			}
+			if !found {
+				t.Errorf("%s: dependency writer %s not found; update the inventory", path, name)
+			} else if touched {
+				t.Errorf("%s: dependency writer %s touches RowVersion; an edge must never remint the token (T4.10)", path, name)
 			}
 		}
 	}

@@ -468,7 +468,7 @@ var versionExemptions = map[string]string{
 	"RestoreFromSnapshotInTx": "restore: CAS composition is Phase 3 (#6358)",
 
 	// constituent sub-helpers whose entry point mints the whole mutation once
-	"TouchRowVersionInTx":                    "constituent aggregate-token (row_lock) write; the calling label/comment/dependency entry point mints the version",
+	"TouchRowVersionInTx":                    "constituent aggregate-token (row_lock) write; the calling label/comment entry point mints the version",
 	"InsertIssueIntoTable":                   "raw issue insert; the calling create entry point mints",
 	"InsertIssueIfNew":                       "raw issue insert; the calling create entry point mints",
 	"InsertIssueStrictInTx":                  "raw issue insert; the calling create/persistence-move entry point mints",

@@ -62,12 +62,14 @@ func leaseTTL(ctx context.Context) time.Duration {
 //
 // INVARIANT: every supported write that changes the user-authored issue
 // aggregate MUST rewrite row_lock. That includes scalar and lifecycle fields,
-// labels, comments, dependency edges, compaction/restoration and rename. Exact
-// no-ops do not rewrite it. The derived is_blocked projection is deliberately
-// excluded: it is recomputed from other rows, is not authored issue state, and
-// bumping it would make an otherwise stable issue token depend on graph-cache
-// maintenance. The dependency mutation that caused a recompute still rewrites
-// its source aggregate's token. A heartbeat REFRESH does not touch the issues
+// labels, comments, compaction/restoration and rename. Exact no-ops do not
+// rewrite it. Dependency edges in either direction (a parent change included)
+// are deliberately excluded: an edge is graph state, not an issues-row write,
+// and main's T4.10 contract (cmd/bd TestEmbeddedRevisionRemintMatrix) pins
+// that a dependency edit never changes the CAS revision. So is the derived
+// is_blocked projection: it is recomputed from other rows, is not authored
+// issue state, and bumping it would make an otherwise stable issue token
+// depend on graph-cache maintenance. A heartbeat REFRESH does not touch the issues
 // row (bd-lrgn1): the lease lives in the ephemeral leases table, where a racing
 // heartbeat and reclaim contend on the SAME lease row and conflict without any
 // help. A heartbeat RE-ARM (a lease

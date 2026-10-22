@@ -693,10 +693,11 @@ type CloseIssueOptions struct {
 	// requires version 0. Force bypasses child and blocker policy, not this
 	// version check.
 	//
-	// RowVersion tracks every supported user-authored aggregate mutation,
-	// including labels, comments and dependency edges. Exact no-ops and derived
-	// is_blocked cache recomputation preserve it (see the freshRowLock invariant
-	// in internal/storage/issueops/lease.go).
+	// RowVersion tracks every supported user-authored mutation of the issues
+	// row, its labels and its comments. Exact no-ops, dependency edges in
+	// either direction (a parent change included) and derived is_blocked cache
+	// recomputation preserve it (T4.10; see the freshRowLock invariant in
+	// internal/storage/issueops/lease.go).
 	ExpectedVersion *int64
 }
 

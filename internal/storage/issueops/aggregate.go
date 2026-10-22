@@ -524,9 +524,10 @@ func applyParentPatch(ctx context.Context, tx DBTX, current *types.Issue, parent
 		}
 	}
 	if mintVersion {
-		// The edge helpers above already advanced the child's aggregate
-		// row_lock per write (#5738); the version row is still minted once
-		// here so it carries the complete post-patch edge set.
+		// A parent change is a parent-child dependency edge: graph state, not
+		// an issues-row write, so the child's row_lock token is deliberately
+		// NOT reminted (T4.10). The version row is still minted once here so
+		// it carries the complete post-patch edge set.
 		if err := RecordVersionInTx(ctx, tx, current.ID, actor); err != nil {
 			return ParentPatchResult{}, err
 		}

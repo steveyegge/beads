@@ -219,7 +219,8 @@ func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 
 // DependencyWriteResult reports what a dependency write actually did:
 // Changed is whether durable state was mutated (so the caller knows a Dolt
-// commit is warranted and the source's row_lock advanced), EventWritten
+// commit is warranted; the source's row_lock is never touched by an edge,
+// T4.10), EventWritten
 // whether an audit event row landed (so the caller knows to stage the events
 // table). A change-free re-add reports neither (#5738).
 type DependencyWriteResult struct {
@@ -357,11 +358,10 @@ func addDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 				metadata, thread, dep.IssueID, dep.DependsOnID); err != nil {
 				return false, fmt.Errorf("failed to update dependency metadata: %w", err)
 			}
-			// The refresh is durable state: the aggregate row_lock token
-			// advances with it, in the same transaction (#5738).
-			if err := TouchRowVersionInTx(ctx, tx, sourceTable, dep.IssueID); err != nil {
-				return false, fmt.Errorf("touch dependency row versions: %w", err)
-			}
+			// The refresh is durable state for the version journal, but it
+			// is NOT an issues-row write, so the row_lock token is left alone:
+			// a dependency edit never remints the CAS revision (T4.10,
+			// TestEmbeddedRevisionRemintMatrix).
 			if result != nil {
 				result.Changed = true
 			}
@@ -403,9 +403,9 @@ func addDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	`, writeTable, targetCol), depid.New(dep.IssueID, dep.DependsOnID), dep.IssueID, dep.DependsOnID, dep.Type, actor, metadata, dep.ThreadID); err != nil {
 		return false, fmt.Errorf("failed to add dependency: %w", err)
 	}
-	if err := TouchRowVersionInTx(ctx, tx, sourceTable, dep.IssueID); err != nil {
-		return false, fmt.Errorf("touch dependency row versions: %w", err)
-	}
+	// An outgoing edge is graph state, not an issues-row write: the source's
+	// row_lock token is deliberately NOT reminted (T4.10). The version journal
+	// below still records the mutation.
 	if result != nil {
 		result.Changed = true
 	}
@@ -1180,14 +1180,14 @@ func RemoveDependencyInTxWithResult(ctx context.Context, tx *sql.Tx, issueID, de
 }
 
 // removeDependencyInTx is the body of RemoveDependencyInTx. A deleted edge is a
-// change to the source issue's durable state: it advances the source's
-// aggregate row_lock and mints one version row for it, whether or not an audit
+// change to the source issue's durable state: it mints one version row for the
+// source (its row_lock is left alone, T4.10), whether or not an audit
 // event was requested; an absent edge returns before any write and mints
 // nothing. mintVersion is addDependencyInTx's, for the same reason, and
 // result, when non-nil, has Changed set if durable state was mutated.
 func removeDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID, actor string, emitEvent bool, recomputeResult *RecomputeIsBlockedResult, mintVersion bool, result *DependencyWriteResult) (bool, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
-	issueTable, _, eventTable, depTable := WispTableRouting(isWisp)
+	_, _, eventTable, depTable := WispTableRouting(isWisp)
 
 	// Capture the row's type before deleting so we can dispatch the right
 	// affected-set helper. If no row matches, treat as a no-op.
@@ -1207,9 +1207,8 @@ func removeDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID,
 		issueID, dependsOnID); err != nil {
 		return false, fmt.Errorf("remove dependency: %w", err)
 	}
-	if err := TouchRowVersionInTx(ctx, tx, issueTable, issueID); err != nil {
-		return false, fmt.Errorf("touch dependency row versions: %w", err)
-	}
+	// Symmetric with addDependencyInTx: the edge is graph state and the
+	// source's row_lock token is NOT reminted (T4.10).
 	if result != nil {
 		result.Changed = true
 	}

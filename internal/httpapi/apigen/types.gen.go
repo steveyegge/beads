@@ -1438,7 +1438,7 @@ type DeleteIssuesRequest struct {
 	//
 	// NEITHER `cascade` NOR `force` BYPASSES IT. Both bypass POLICY — the dependents guard — and never a precondition. Under `cascade` the guard still covers only the NAMED bead: the closure is resolved inside the deleting transaction, so a matching token promises the row is the one you read and promises nothing about how far the closure has grown since. A caller that needs the closure itself pinned wants `dry_run` first.
 	//
-	// IT GUARDS THE NAMED AGGREGATE, NOT ITS TRANSITIVE CLOSURE. The token is reminted by every supported user-authored mutation, including outgoing dependency edits. Inbound edges belong to their source aggregates and derived blocked-state recomputation is excluded, so a match does not promise the cascade closure is unchanged.
+	// IT GUARDS THE NAMED AGGREGATE, NOT ITS TRANSITIVE CLOSURE. The token is reminted by every supported user-authored mutation of the issues row. Dependency edges in either direction (a parent change included) are graph state, not a row write, and derived blocked-state recomputation is cache maintenance: neither remints, so a match does not promise the dependency graph or the cascade closure is unchanged.
 	//
 	// The token is the `revision` a lifecycle write answers with, and the one `GET /v0/beads/issues/{id}` publishes — which is where a delete guard should seed itself, since reading the bead before erasing it is the only way to be sure it is the bead you meant.
 	//

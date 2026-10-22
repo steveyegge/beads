@@ -197,11 +197,16 @@ func addDependencyEdgeInTx(ctx context.Context, tx *sql.Tx, request publicops.Ad
 	// commits nothing, which is right — the wisp plane is dolt-ignored and has
 	// no version history to write.
 	//
-	// Stage sourceTable as well as the edge. This closes bd-2y9ke's pre-existing
-	// torn-commit hole for derived is_blocked changes and is now mandatory because
-	// the aggregate row_lock is reminted with every genuine edge mutation.
+	// The source's issue table is NOT staged here: an edge never remints the
+	// source's row_lock (T4.10), so the only issues-row write a dep add can
+	// make is the derived is_blocked recompute, and that torn-commit hole
+	// predates this role (origin/main's dolt.AddDependencyWithOptions staged
+	// the same {dependencies, events} pair). Tracked as bd-2y9ke; fixing it
+	// changes what every dep-add commit contains and belongs in its own change
+	// with its own tests, so do not widen the set here without reading that
+	// bead first.
 	tables := ChangedTables{}
-	tables.Add(sourceTable, depTable)
+	tables.Add(depTable)
 	if eventWritten {
 		tables.Add(eventTable)
 	}
@@ -251,7 +256,7 @@ func ExecuteRemoveDependency(ctx context.Context, tx *sql.Tx, request publicops.
 	// the delete actually touched or the commit sweeps rows it never wrote
 	// (GH#2455). ChangedTables drops the wisp tables itself.
 	sourceIsWisp := IsActiveWispInTx(ctx, tx, request.IssueID)
-	sourceTable, _, eventTable, depTable := WispTableRouting(sourceIsWisp)
+	_, _, eventTable, depTable := WispTableRouting(sourceIsWisp)
 
 	// RemoveDependencyInTx reports whether it recorded an event, which on the
 	// explicit-verb path is exactly "an edge was there and is gone" — it
@@ -267,6 +272,6 @@ func ExecuteRemoveDependency(ctx context.Context, tx *sql.Tx, request publicops.
 	// RemoveDependencyInTx, at the row delete; an absent edge returned above
 	// without ever reaching that seam.
 	tables := ChangedTables{}
-	tables.Add(sourceTable, depTable, eventTable)
+	tables.Add(depTable, eventTable)
 	return publicops.RemoveDependencyResult{Removed: true}, tables, nil
 }

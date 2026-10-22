@@ -60,6 +60,16 @@ func TestAggregateRevisionChangesForEveryVisibleAuxiliaryMutation(t *testing.T) 
 		}
 		return after.RowVersion
 	}
+	assertUnchanged := func(t *testing.T, id string, before int64) {
+		t.Helper()
+		after, err := te.store.GetIssue(ctx, id)
+		if err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if after.RowVersion != before {
+			t.Fatalf("%s RowVersion = %d after a dependency-edge edit, want unchanged %d (T4.10: an edge is graph state, not an issues-row write)", id, after.RowVersion, before)
+		}
+	}
 
 	for _, wisp := range []bool{false, true} {
 		plane := "issue"
@@ -83,16 +93,24 @@ func TestAggregateRevisionChangesForEveryVisibleAuxiliaryMutation(t *testing.T) 
 			}
 			assertChanged(t, comment.ID, comment.RowVersion)
 
+			// Dependency edges are the deliberate exception: an outgoing edge
+			// is graph state on the source, not an issues-row write, so neither
+			// adding nor removing one remints the source's token (T4.10,
+			// pinned CLI-side by cmd/bd TestEmbeddedRevisionRemintMatrix).
+			// The version journal still records both edits; this is only
+			// about the CAS token.
 			target := create(t, "revision-"+plane+"-target", false)
 			dependency := create(t, "revision-"+plane+"-dependency", wisp)
 			if _, err := dependencies.AddDependencies(ctx, publicops.AddDependenciesRequest{Actor: "writer", Edges: []publicops.DependencyEdge{{IssueID: dependency.ID, DependsOnID: target.ID, Type: publicops.DepRelated}}}); err != nil {
 				t.Fatal(err)
 			}
-			version = assertChanged(t, dependency.ID, dependency.RowVersion)
+			assertUnchanged(t, dependency.ID, dependency.RowVersion)
+			assertUnchanged(t, target.ID, target.RowVersion)
 			if _, err := dependencies.RemoveDependency(ctx, publicops.RemoveDependencyRequest{Actor: "writer", IssueID: dependency.ID, DependsOnID: target.ID}); err != nil {
 				t.Fatal(err)
 			}
-			assertChanged(t, dependency.ID, version)
+			assertUnchanged(t, dependency.ID, dependency.RowVersion)
+			assertUnchanged(t, target.ID, target.RowVersion)
 
 			metadata := create(t, "revision-"+plane+"-metadata", wisp)
 			updated, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: metadata.ID, Patch: publicops.IssuePatch{Metadata: publicops.MetadataPatch{Set: map[string]json.RawMessage{"decision": json.RawMessage(`"yes"`)}}}})
@@ -101,13 +119,17 @@ func TestAggregateRevisionChangesForEveryVisibleAuxiliaryMutation(t *testing.T) 
 			}
 			assertChanged(t, metadata.ID, metadata.RowVersion)
 
+			// A parent change is a parent-child dependency edge, so it sits
+			// with the dependency edits above: journaled, Changed, but not a
+			// remint of the child's token.
 			parent := create(t, "revision-"+plane+"-parent", false)
 			child := create(t, "revision-"+plane+"-child", wisp)
 			updated, err = ops.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: child.ID, Patch: publicops.IssuePatch{ParentID: publicops.Field[string]{Set: true, Value: parent.ID}}})
 			if err != nil || !updated.Changed {
 				t.Fatalf("parent update: %#v, %v", updated, err)
 			}
-			assertChanged(t, child.ID, child.RowVersion)
+			assertUnchanged(t, child.ID, child.RowVersion)
+			assertUnchanged(t, parent.ID, parent.RowVersion)
 		})
 	}
 }
@@ -148,16 +170,6 @@ func TestAggregateRevisionAuxiliaryMutationInvalidatesGuard(t *testing.T) {
 			_, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: issue.ID, Patch: publicops.IssuePatch{Metadata: publicops.MetadataPatch{Set: map[string]json.RawMessage{"x": json.RawMessage(`1`)}}}})
 			mustNoError(t, err)
 		}},
-		{"parent", func(t *testing.T, issue *types.Issue) {
-			t.Helper()
-			_, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: issue.ID, Patch: publicops.IssuePatch{ParentID: publicops.Field[string]{Set: true, Value: parent.ID}}})
-			mustNoError(t, err)
-		}},
-		{"dependency", func(t *testing.T, issue *types.Issue) {
-			t.Helper()
-			_, err := dependencies.AddDependencies(ctx, publicops.AddDependenciesRequest{Actor: "writer", Edges: []publicops.DependencyEdge{{IssueID: issue.ID, DependsOnID: target.ID, Type: publicops.DepRelated}}})
-			mustNoError(t, err)
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			issue := create(t, "stale-"+tc.name)
@@ -166,6 +178,42 @@ func TestAggregateRevisionAuxiliaryMutationInvalidatesGuard(t *testing.T) {
 			_, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: issue.ID, ExpectedVersion: &stale, Patch: publicops.IssuePatch{Title: publicops.Field[string]{Set: true, Value: "must not land"}}})
 			if !errors.Is(err, storage.ErrVersionMismatch) {
 				t.Fatalf("guard after %s mutation = %v, want ErrVersionMismatch", tc.name, err)
+			}
+		})
+	}
+
+	// The converse for dependency edges (T4.10), a parent change included: an
+	// edge added between the read and the guarded write is graph state, not a
+	// mutation of the aggregate the token guards, so the guard still matches
+	// and the write lands. A caller that needs the graph pinned reads it, not
+	// the token.
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, *types.Issue)
+	}{
+		{"dependency", func(t *testing.T, issue *types.Issue) {
+			t.Helper()
+			_, err := dependencies.AddDependencies(ctx, publicops.AddDependenciesRequest{Actor: "writer", Edges: []publicops.DependencyEdge{{IssueID: issue.ID, DependsOnID: target.ID, Type: publicops.DepRelated}}})
+			mustNoError(t, err)
+		}},
+		{"parent", func(t *testing.T, issue *types.Issue) {
+			t.Helper()
+			_, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: issue.ID, Patch: publicops.IssuePatch{ParentID: publicops.Field[string]{Set: true, Value: parent.ID}}})
+			mustNoError(t, err)
+		}},
+	} {
+		t.Run(tc.name+"_preserves_guard", func(t *testing.T) {
+			issue := create(t, "kept-"+tc.name)
+			read := issue.RowVersion
+			tc.mutate(t, issue)
+			updated, err := ops.Update(ctx, publicops.UpdateRequest{Actor: "writer", IssueID: issue.ID, ExpectedVersion: &read, Patch: publicops.IssuePatch{Title: publicops.Field[string]{Set: true, Value: "lands"}}})
+			if err != nil || !updated.Changed {
+				t.Fatalf("guarded update after a %s edit = %#v, %v; want it to land (an edge never remints the token)", tc.name, updated, err)
+			}
+			after, err := te.store.GetIssue(ctx, issue.ID)
+			mustNoError(t, err)
+			if after.Title != "lands" || after.RowVersion == read {
+				t.Fatalf("after guarded update: title=%q RowVersion=%d (read %d); want the title landed and the title write itself reminted", after.Title, after.RowVersion, read)
 			}
 		})
 	}
@@ -390,6 +438,13 @@ func TestAggregateRevisionAuxiliaryUpdatesCommitTheRemintedToken(t *testing.T) {
 		t.Fatalf("label-only remint was not committed: working=%d HEAD=%d", working, head)
 	}
 
+	// A parent-only update is a parent-child edge, which never remints
+	// (T4.10): the committed token must equal the pre-update token on both
+	// sides, i.e. the edge commit neither reminted nor tore the row.
+	beforeWorking, beforeHead := readVersions("revision-commit-child")
+	if beforeWorking != beforeHead {
+		t.Fatalf("seed not committed: working=%d HEAD=%d", beforeWorking, beforeHead)
+	}
 	result, err = ops.Update(ctx, publicops.UpdateRequest{
 		Actor: "writer", IssueID: "revision-commit-child",
 		Patch: publicops.IssuePatch{ParentID: publicops.Field[string]{Set: true, Value: "revision-commit-parent"}},
@@ -398,8 +453,8 @@ func TestAggregateRevisionAuxiliaryUpdatesCommitTheRemintedToken(t *testing.T) {
 		t.Fatalf("parent-only update = %#v, %v", result, err)
 	}
 	working, head = readVersions("revision-commit-child")
-	if working != head {
-		t.Fatalf("parent-only remint was not committed: working=%d HEAD=%d", working, head)
+	if working != beforeHead || head != beforeHead {
+		t.Fatalf("parent-only update changed the token: working=%d HEAD=%d, want both %d (an edge never remints)", working, head, beforeHead)
 	}
 }
 

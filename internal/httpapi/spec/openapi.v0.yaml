@@ -9547,10 +9547,13 @@ components:
 
 
             IT GUARDS THE NAMED AGGREGATE, NOT ITS TRANSITIVE CLOSURE. The token
-            is reminted by every supported user-authored mutation, including
-            outgoing dependency edits. Inbound edges belong to their source
-            aggregates and derived blocked-state recomputation is excluded, so
-            a match does not promise the cascade closure is unchanged.
+            is reminted by every supported user-authored mutation of the issues
+            row. Dependency edges in either direction (a parent change
+            included) are graph state, not a row write, and derived
+            blocked-state
+            recomputation is cache maintenance: neither remints, so a match
+            does not promise the dependency graph or the cascade closure is
+            unchanged.
 
 
             The token is the `revision` a lifecycle write answers with, and the
