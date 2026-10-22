@@ -38,18 +38,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next recorded version under that version's actor, so keep recording on for
   every writer of a store or off for all of them. Turning it on with
   `bd config set` first checks every issue the store would version (one
-  created, or brought onto the issues plane, while recording was on) and
-  refuses, writing nothing, while any holds a number outside the I-JSON
-  exact-integer range (magnitude above 2^53-1, however it is spelled) in its
-  metadata or in a gate's timeout (held as nanoseconds, so about 104.25
-  days), and prints the count, the ids, the field and the fix. A legacy bead
-  is not versioned while recording stays on, so what it holds blocks nothing:
-  a store that has never recorded, where every bead is legacy, is not
-  refused. There is no override, and the check runs once; after that, a
-  recorded write that would hold such a number fails atomically. Turning
-  recording on through `BD_VERSIONED_HISTORY_ENABLED` or `config.yaml`
-  checks nothing ahead of time, at open or anywhere else: such a write is
-  refused when it is made. Migration 0071 adds a nullable
+  created, or brought onto the issues plane, while recording was on) and every
+  template (`bd mol pour` and `bd mol bond` copy a proto's metadata and gate
+  timeouts into the beads they create, which are versioned, and `bd update`
+  cannot change a template), and refuses, writing nothing, while any holds a
+  number outside the I-JSON exact-integer range (magnitude above 2^53-1,
+  however it is spelled) in its metadata or in a gate's timeout (held as
+  nanoseconds, so about 104.25 days), and prints the count, the ids, the
+  field and the fix; a template is fixed by cooking its corrected formula
+  again with `bd cook --persist --force`, or removed with `bd delete`. A
+  write to a legacy bead is never refused, so no other legacy bead stops the
+  switch: a store that has never recorded and holds no such template is not
+  refused (a storage backend that cannot say which beads participate checks
+  every legacy bead too, and says so). A legacy bead that is not a template
+  but sits under a proto's root (a template or a `template`-labeled bead),
+  which a pour would still copy, is named in a warning with its proto's
+  root, and `bd update` (for a gate, `bd delete`) fixes it with recording on
+  or off. A molecule poured
+  from a stored proto carries the proto's `template` label, so a legacy
+  poured molecule is named there too, and `bd label remove <root> template`
+  stops it counting as a proto. There is no override, and the check runs
+  once; after that, a recorded write that would hold such a number fails
+  atomically. Turning recording on through `BD_VERSIONED_HISTORY_ENABLED` or
+  `config.yaml` checks nothing ahead of time, at open or anywhere else, and no
+  check reads a formula file: such a write, or a pour or cook straight from
+  such a formula, is refused when it is made. Migration 0071 adds a nullable
   `removed_restriction` column to `issue_versions`. `bd version` now refuses
   an argument and suggests `bd versions <arg>`, instead of printing bd's
   build for a mistyped `bd version bd-123`.
