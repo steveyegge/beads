@@ -4,8 +4,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -450,6 +453,126 @@ func TestEnsureBeadsDirForPathChecksWorkspaceFormat(t *testing.T) {
 			}
 			if !tc.wantFormat && !strings.Contains(err.Error(), "no beads workspace found") {
 				t.Fatalf("ensureBeadsDirForPath() = %v, want the not-auto-created refusal", err)
+			}
+		})
+	}
+}
+
+// A create target whose .beads has no metadata.json is refused, with nothing
+// written, when initializing it would hide what bd run there already reads:
+// its own config selects Dolt server mode, by dolt.mode or, with no dolt.mode,
+// by a non-local dolt.host (config.local.yaml beside config.yaml outranks it;
+// a lone config.local.yaml is not read, as bd's own config merge does not read
+// one), its config cannot be read (a section whose children are all commented
+// out reads as unset, as bd reads it), bd's own
+// admission refuses it, or it holds several databases. Server mode is decided
+// first, from the target's own config, so a server workspace bd's admission
+// would misread as legacy from the launcher's mode gets the server refusal.
+// The bd init remedy for a remote dolt.host names the host quoted for the
+// shell and the port the target's own config names (else 3307), so a local
+// server's stale dolt-server.port beside it is never dialed on that host.
+func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
+	writeFiles := func(t *testing.T, beadsDir string, files map[string]string) {
+		t.Helper()
+		for name, content := range files {
+			path := filepath.Join(beadsDir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// databaseMarker is the file embeddeddolt.Databases looks for to count an
+	// embedded database.
+	databaseMarker := func(database string) string {
+		return filepath.Join("embeddeddolt", database, ".dolt", "noms", "manifest")
+	}
+	// remote is the --server-host/--server-port pair a remedy names.
+	remote := func(host string, port int) string {
+		return "--server-host " + shellQuotedPathFor(runtime.GOOS, host) + " --server-port " + strconv.Itoa(port)
+	}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		want  string // "" = not refused
+	}{
+		{name: "server mode in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n"}, want: "Run `bd init --database <name>` there"},
+		{name: "server mode with a local dolt.host", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: 127.0.0.1\n"}, want: "Run `bd init --database <name>` there"},
+		{name: "server mode with a remote dolt.host", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: db.example.com\n"}, want: "Run `bd init " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "server mode with a remote dolt.host beside a stale port file", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: db.example.com\n  port: 3310\n", "dolt-server.port": "45678\n"}, want: "Run `bd init " + remote("db.example.com", 3310) + " --database <name>` there"},
+		{name: "server mode with an unreadable dolt.host", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: [a, b]\n"}, want: "Run `bd init --database <name>` there"},
+		{name: "server mode in dotted config.yaml", files: map[string]string{"config.yaml": "dolt.mode: SERVER\n"}, want: "selects Dolt server mode"},
+		{name: "server mode in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n", "config.local.yaml": "dolt:\n  mode: server\n"}, want: "selects Dolt server mode"},
+		{name: "lone config.local.yaml", files: map[string]string{"config.local.yaml": "dolt:\n  mode: server\n"}},
+		{name: "embedded mode in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n"}},
+		{name: "unreadable config.yaml", files: map[string]string{"config.yaml": "dolt: [unterminated\n"}, want: "dolt.mode cannot be read"},
+		{name: "commented-out dolt section", files: map[string]string{"config.yaml": "dolt:\n  # mode: server\n"}},
+		{name: "remote dolt.host in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: 3307\n"}, want: "selects Dolt server mode (dolt.host: \"db.example.com\"); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "remote dolt.host and no dolt.port beside a stale port file", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n", "dolt-server.port": "45678\n"}, want: "Run `bd init --server " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "remote dolt.host with a dolt.port that is not a port", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: none\n"}, want: "Run `bd init --server " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "remote dolt.host in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n", "config.local.yaml": "dolt:\n  host: 10.0.0.5\n"}, want: "Run `bd init --server " + remote("10.0.0.5", 3307) + " --database <name>` there"},
+		{name: "dolt.port in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: 3311\n", "config.local.yaml": "dolt:\n  port: 3312\n"}, want: "Run `bd init --server " + remote("db.example.com", 3312) + " --database <name>` there"},
+		// The host is the target repository's content, pasted into a command.
+		{name: "remote dolt.host a shell would split", files: map[string]string{"config.yaml": "dolt:\n  host: \"db.example.com; touch pwned\"\n"}, want: "(dolt.host: \"db.example.com; touch pwned\"); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server " + remote("db.example.com; touch pwned", 3307) + " --database <name>` there"},
+		{name: "local dolt.host 127.0.0.1", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n"}},
+		{name: "local dolt.host localhost", files: map[string]string{"config.yaml": "dolt.host: localhost\n"}},
+		{name: "remote dolt.host under embedded mode", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n  host: db.example.com\n"}},
+		{name: "unreadable dolt.host", files: map[string]string{"config.yaml": "dolt:\n  host: [a, b]\n"}, want: "dolt.host cannot be read"},
+		{name: "server mode beside a legacy dolt root", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n", "dolt/leftover": "x"}, want: "selects Dolt server mode"},
+		{name: "several databases", files: map[string]string{databaseMarker("beads"): "x", databaseMarker("other"): "x"}, want: "holds several databases (beads, other)"},
+		{name: "sqlite-era repo", files: map[string]string{"config.json": `{"database":"beads.db"}`, "beads.db": "SQLite format 3\x00" + strings.Repeat("\x00", 4080)}, want: "historical SQLite workspace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			beadsDir := filepath.Join(targetDir, ".beads")
+			writeFiles(t, beadsDir, tc.files)
+			before := planningDirListing(t, beadsDir)
+
+			// A nil source store initializes nothing past these refusals,
+			// so a target that is not refused is left with no metadata.json.
+			err := ensureBeadsDirForPath(context.Background(), targetDir, nil, true)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("ensureBeadsDirForPath() = %v, want nil", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Fatalf("ensureBeadsDirForPath() = %v, want a refusal containing %q", err, tc.want)
+			}
+			if tc.want != "" {
+				if after := planningDirListing(t, beadsDir); !slices.Equal(after, before) {
+					t.Errorf(".beads after a refused initialization = %v, want unchanged %v", after, before)
+				}
+			}
+		})
+	}
+}
+
+// TestRefuseUninitializablePlanningRepoChecksFormatFirst verifies that a
+// metadata-less planning .beads in a format this build cannot open is refused
+// as that format, before its config.yaml is read: a server-mode or unreadable
+// config beside the graph format marker gets the format refusal, not the
+// server-mode or unreadable-config one.
+func TestRefuseUninitializablePlanningRepoChecksFormatFirst(t *testing.T) {
+	for name, configYAML := range map[string]string{
+		"server mode":       "dolt:\n  mode: server\n",
+		"remote dolt.host":  "dolt:\n  host: db.example.com\n",
+		"unreadable config": "dolt: [unterminated\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			beadsDir := filepath.Join(t.TempDir(), ".beads")
+			if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			for file, content := range map[string]string{"config.yaml": configYAML, configfile.GraphFormatMarkerFile: ""} {
+				if err := os.WriteFile(filepath.Join(beadsDir, file), []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := refuseUninitializablePlanningRepo(beadsDir)
+			var formatErr *configfile.UnsupportedWorkspaceFormatError
+			if !errors.As(err, &formatErr) || !formatErr.FormatMarker {
+				t.Fatalf("refuseUninitializablePlanningRepo() = %v, want the graph format marker refusal", err)
 			}
 		})
 	}

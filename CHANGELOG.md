@@ -832,6 +832,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd init --proxied-server-log-path`) is not rotated. Purging the proxy's
   control files and a proxied→server migration remove the `.1` files with
   the primaries (#7527).
+- **A routed `bd create` no longer hides what a repository without
+  `metadata.json` already holds.** The first `bd create` routed into such a
+  repository (by any routing rule, or by an absolute or `~/`-prefixed
+  `--repo`) gave it a new database named after the source project's prefix
+  and a `metadata.json` naming it, and that file decides what `bd` opens
+  there from then on. In the planning repo `bd init` sets up on a fork, that
+  put a second database beside the one setup created, and whatever that one
+  held no longer showed in `bd` run there. A repository whose own
+  `config.yaml` selects Dolt server mode with no `metadata.json` (by
+  `dolt.mode: server`, the shape gc provisions, or by a non-local `dolt.host`
+  with no `dolt.mode`) became an embedded one: `metadata.json` outranks
+  `config.yaml`, so `bd` there stopped reaching its server data. A SQLite-era repository,
+  which `bd` refuses to open, got a fresh Dolt database beside its data that
+  silenced the refusal. Now a repository that holds one embedded database
+  keeps it, with its issue prefix (or the source's, when it has none) and its
+  project identity, and the issue is created there. A repository whose own
+  config selects server mode, one `bd` refuses (such as a SQLite-era repo)
+  and one holding several databases are refused before anything is written;
+  for a server-mode repository, run `bd init --database <name>` there
+  (`bd init --server --database <name>` when only `dolt.host` selects server
+  mode), naming the server database it uses, then rerun. When that config
+  names a non-local `dolt.host`, the refusal adds `--server-host <host>
+  --server-port <port>` (its `dolt.port`, else 3307), since `bd init` does
+  not read `dolt.host` from `config.yaml` and would otherwise dial that host
+  on a local server's `.beads/dolt-server.port`. `bd create --dry-run`
+  refuses the same repositories. A database to keep that holds uncommitted
+  changes is refused as well, since the create's commit would publish them:
+  commit them there with `bd dolt commit`, then rerun. `bd migrate-personal`
+  initializes the planning repo by the same rule, so it now also refuses a
+  server-mode planning repo instead of moving issues into a new embedded
+  database there.
 - **`bd doctor` says when its multi-repo types check skips a database.** For
   a `repos.additional` repository in a format this build cannot open (a
   `graph_mode` other than `dependency`, or the `graph-preview-format`
