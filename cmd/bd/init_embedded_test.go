@@ -155,14 +155,6 @@ func isEmbeddedLockOutput(out string) bool {
 		strings.Contains(out, "workspace gate busy")
 }
 
-func runCommandBuffers(t *testing.T, cmd *exec.Cmd) (stdout, stderr bytes.Buffer, err error) {
-	t.Helper()
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	return stdout, stderr, err
-}
-
 // bdRunWithFlockRetry runs a bd command with retry on flock contention.
 // Returns stdout and nil on success, or combined stdout/stderr and the last
 // error after retries are exhausted or a non-flock error occurs.
