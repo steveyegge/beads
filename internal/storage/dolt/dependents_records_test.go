@@ -284,6 +284,64 @@ func TestDependentRecordsCrossTableCollision(t *testing.T) {
 	}
 }
 
+// TestDependentsReadWithoutWispDependenciesTable reproduces GH#3445 state 1:
+// in server mode the dolt_ignore'd wisp_dependencies table can be absent from
+// the working set (a push that replaces the working set drops it until the
+// next bd write recreates it), and the hydrated dependents read must treat it
+// as empty rather than failing — otherwise `bd show <epic>` renders no
+// CHILDREN at all while the epic still exists.
+func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	mk := func(id string, issueType types.IssueType) {
+		iss := &types.Issue{ID: id, Title: id, Status: types.StatusOpen, Priority: 2, IssueType: issueType}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	mk("mr-epic", types.TypeEpic)
+	mk("mr-c01", types.TypeTask)
+	mk("mr-c02", types.TypeTask)
+	addDep := func(src, tgt string, typ types.DependencyType) {
+		if err := store.AddDependency(ctx, &types.Dependency{IssueID: src, DependsOnID: tgt, Type: typ}, "tester"); err != nil {
+			t.Fatalf("add dep %s -> %s (%s): %v", src, tgt, typ, err)
+		}
+	}
+	addDep("mr-c01", "mr-epic", types.DepParentChild)
+	addDep("mr-c02", "mr-epic", types.DepParentChild)
+	if err := store.CloseIssue(ctx, "mr-c01", "done", "tester", ""); err != nil {
+		t.Fatalf("close mr-c01: %v", err)
+	}
+
+	// The bug condition: the wisp dependency plane is gone from the working set.
+	if _, err := store.db.ExecContext(ctx, "DROP TABLE wisp_dependencies"); err != nil {
+		t.Fatalf("drop wisp_dependencies: %v", err)
+	}
+
+	// The CHILDREN listing survives a missing wisp plane: both durable
+	// children, no error (2 rows, one closed — 1/2 progress).
+	dependents, err := store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata with wisp_dependencies missing: %v (want the 2 durable children)", err)
+	}
+	if len(dependents) != 2 {
+		t.Fatalf("dependents = %d, want 2 (the durable children)", len(dependents))
+	}
+	closed := 0
+	for _, d := range dependents {
+		if d.Status == types.StatusClosed {
+			closed++
+		}
+	}
+	if closed != 1 {
+		t.Fatalf("closed dependents = %d, want 1 (mr-c01)", closed)
+	}
+}
+
 // TestGetDependentRecordsLimitClamp verifies the self-clamp (default 100, cap 500).
 func TestGetDependentRecordsLimitClamp(t *testing.T) {
 	store, cleanup := setupTestStore(t)
