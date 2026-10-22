@@ -125,3 +125,52 @@ func TestAcquireLyingBusyFilesystemIsUnsupported(t *testing.T) {
 		}
 	})
 }
+
+// The probe must not turn real contention into "unsupported": on a local
+// filesystem the private probe file locks, so a real holder still makes a
+// waiting shared acquirer give up with ErrBusy.
+func TestAcquireRealContentionStaysBusy(t *testing.T) {
+	var probes atomic.Int32
+	counted := func(lock func(*os.File) error) func(*os.File) error {
+		return func(f *os.File) error {
+			if strings.Contains(filepath.Base(f.Name()), ".probe-") {
+				probes.Add(1)
+			}
+			return lock(f)
+		}
+	}
+	setFlockSeams(t, counted(lockfile.FlockSharedNonBlock), counted(lockfile.FlockExclusiveNonBlock))
+	g, dir := testGate(t)
+
+	// Another open file description holds the gate exclusively.
+	holder, err := os.OpenFile(g.path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	if err := lockfile.FlockExclusiveNonBlock(holder); err != nil {
+		t.Fatalf("holder lock: %v", err)
+	}
+	defer func() { _ = lockfile.FlockUnlock(holder) }()
+
+	start := time.Now()
+	h, err := g.Acquire(context.Background(), Shared, Options{Wait: 300 * time.Millisecond})
+	if h != nil {
+		_ = h.Release()
+	}
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("Acquire under a real holder = %v, want ErrBusy", err)
+	}
+	if errors.Is(err, lockfile.ErrUnsupported) {
+		t.Errorf("Acquire under a real holder = %v, must not read as unsupported", err)
+	}
+	if waited := time.Since(start); waited < 250*time.Millisecond {
+		t.Errorf("gave up after %s, want the 300ms wait spent", waited)
+	}
+	if got := probes.Load(); got != 1 {
+		t.Errorf("probe ran %d times, want once", got)
+	}
+	if left := probeFiles(t, dir); len(left) != 0 {
+		t.Errorf("probe files left behind: %v", left)
+	}
+}
