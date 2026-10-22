@@ -2,48 +2,11 @@ package issueops
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 )
-
-func CountDependencyEdgesInTx(ctx context.Context, tx DBTX, sourceID string, dir domain.DepDirection, typeFilter []types.DependencyType) (int64, error) {
-	typeClause, typeArgs := buildDepTypeClause(typeFilter)
-
-	var total int64
-	for _, table := range []string{"dependencies", "wisp_dependencies"} {
-		if dir == domain.DepDirectionOut || dir == domain.DepDirectionBoth {
-			n, err := countDepWhere(ctx, tx, table, "issue_id = ?", typeClause, sourceID, typeArgs)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		}
-		if dir == domain.DepDirectionIn || dir == domain.DepDirectionBoth {
-			n, err := countDepWhere(ctx, tx, table, DepTargetExpr+" = ?", typeClause, sourceID, typeArgs)
-			if err != nil {
-				return 0, err
-			}
-			total += n
-		}
-	}
-	return total, nil
-}
-
-func countDepWhere(ctx context.Context, tx DBTX, table, whereExpr, typeClause string, sourceID string, typeArgs []any) (int64, error) {
-	q := fmt.Sprintf("SELECT count(*) FROM %s WHERE %s", table, whereExpr) //nolint:gosec
-	if typeClause != "" {
-		q += " AND " + typeClause
-	}
-	args := append([]any{sourceID}, typeArgs...)
-	var n int64
-	if err := tx.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count %s: %w", table, err)
-	}
-	return n, nil
-}
 
 func buildDepTypeClause(filter []types.DependencyType) (string, []any) {
 	if len(filter) == 0 {
@@ -56,4 +19,56 @@ func buildDepTypeClause(filter []types.DependencyType) (string, []any) {
 		args[i] = string(t)
 	}
 	return "type IN (" + strings.Join(placeholders, ",") + ")", args
+}
+
+// CountDependencyEdgesInTx counts the dependency edges at one issue's near
+// end, both planes merged, as distinct far ends — the same rule the hydrated
+// readers apply — so a count can never disagree with the listing it
+// summarizes (GH#3445: the raw two-plane SUM doubled a mirrored edge and
+// printed a false "far end has no row" notice next to a correct CHILDREN
+// listing). The type filter applies after the de-dup, against the surviving
+// (durable-first) edge's type, matching filterDepsByType in
+// internal/storage/domain/db/dependency.go.
+func CountDependencyEdgesInTx(ctx context.Context, tx DBTX, sourceID string, dir domain.DepDirection, typeFilter []types.DependencyType) (int64, error) {
+	var allowed map[types.DependencyType]struct{}
+	if len(typeFilter) > 0 {
+		allowed = make(map[types.DependencyType]struct{}, len(typeFilter))
+		for _, t := range typeFilter {
+			allowed[t] = struct{}{}
+		}
+	}
+
+	count := func(inbound bool) (int64, error) {
+		ends, err := listDepEdgeEndsInTx(ctx, tx, sourceID, inbound)
+		if err != nil {
+			return 0, err
+		}
+		var n int64
+		for _, e := range ends {
+			if allowed != nil {
+				if _, ok := allowed[types.DependencyType(e.depType)]; !ok {
+					continue
+				}
+			}
+			n++
+		}
+		return n, nil
+	}
+
+	var total int64
+	if dir == domain.DepDirectionOut || dir == domain.DepDirectionBoth {
+		n, err := count(false)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	if dir == domain.DepDirectionIn || dir == domain.DepDirectionBoth {
+		n, err := count(true)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
 }

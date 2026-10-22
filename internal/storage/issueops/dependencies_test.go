@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
@@ -416,6 +417,71 @@ func TestAddDependencyInTxReadsNullStoredMetadataAsEmptyObject(t *testing.T) {
 	}
 	// No UPDATE and no journal write are expected: scripting only the two
 	// reads means any write this path attempted would fail the run.
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+// outboundDepEndsQuery is the exact outbound plane query the shared
+// dependency-edge reader issues (regexp-quoted for sqlmock).
+func outboundDepEndsQuery(table string) string {
+	return regexp.QuoteMeta(fmt.Sprintf(
+		`SELECT %s AS depends_on_id, type FROM %s WHERE issue_id = ?`, DepTargetExpr, table))
+}
+
+// inboundDepEndsQuery is the exact inbound plane query the shared
+// dependency-edge reader issues (regexp-quoted for sqlmock).
+func inboundDepEndsQuery(table string) string {
+	return regexp.QuoteMeta(fmt.Sprintf(
+		`SELECT issue_id, type FROM %s WHERE %s = ?`, table, DepTargetExpr))
+}
+
+// TestCountDependencyEdgesInTxDedupsMirroredEdges pins the count behind `bd
+// show`'s aggregates: an edge mirrored into both tables is ONE far end whose
+// durable copy wins, and the type filter applies after the de-dup against
+// that durable type (GH#3445: the raw two-plane SUM counted 2 and doubled the
+// be-lpi notice alongside a correct listing).
+func TestCountDependencyEdgesInTxDedupsMirroredEdges(t *testing.T) {
+	_, mock, tx := beginMockTx(t)
+
+	expect := func() {
+		mock.ExpectQuery(outboundDepEndsQuery("dependencies")).
+			WithArgs("mr-c01").
+			WillReturnRows(sqlmock.NewRows([]string{"depends_on_id", "type"}).
+				AddRow("mr-epic", "parent-child"))
+		mock.ExpectQuery(outboundDepEndsQuery("wisp_dependencies")).
+			WithArgs("mr-c01").
+			WillReturnRows(sqlmock.NewRows([]string{"depends_on_id", "type"}).
+				AddRow("mr-epic", "blocks"))
+	}
+
+	expect()
+	n, err := CountDependencyEdgesInTx(context.Background(), tx, "mr-c01", domain.DepDirectionOut, nil)
+	if err != nil {
+		t.Fatalf("CountDependencyEdgesInTx(out, no filter): %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("CountDependencyEdgesInTx(out, no filter) = %d, want 1 (mirrored edge counted once)", n)
+	}
+
+	expect()
+	n, err = CountDependencyEdgesInTx(context.Background(), tx, "mr-c01", domain.DepDirectionOut, []types.DependencyType{types.DepParentChild})
+	if err != nil {
+		t.Fatalf("CountDependencyEdgesInTx(out, parent-child): %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("CountDependencyEdgesInTx(out, parent-child) = %d, want 1 (filter matches the durable copy)", n)
+	}
+
+	expect()
+	n, err = CountDependencyEdgesInTx(context.Background(), tx, "mr-c01", domain.DepDirectionOut, []types.DependencyType{types.DepBlocks})
+	if err != nil {
+		t.Fatalf("CountDependencyEdgesInTx(out, blocks): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("CountDependencyEdgesInTx(out, blocks) = %d, want 0 (the mirrored blocks copy lost the de-dup; the filter must not resurrect it)", n)
+	}
+
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sql expectations: %v", err)
 	}

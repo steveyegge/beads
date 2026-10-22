@@ -818,6 +818,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd show <epic>` no longer renders 0, 12 or 24 children for the same data
+  depending on the state of the `wisp_dependencies` table (#3445). In server
+  mode a `bd dolt push` that replaces the working set drops the
+  dolt_ignore'd table until the next write recreates it; the dependents read
+  treated the missing table as a failure, which `bd show` swallowed into an
+  empty CHILDREN listing next to a correct rollup. An edge mirrored into
+  both dependency tables (a wisp promoted to durable, or two clones merged)
+  was listed and counted twice, doubling the epic's progress rollup and
+  printing a false "far end has no row in this database" notice. The
+  dependents/dependencies readers and the counts behind the rollup, the
+  notice and JSON `dependent_count` now share one rule: each edge once, the
+  durable copy winning any type conflict, and a missing wisp plane read as
+  empty.
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

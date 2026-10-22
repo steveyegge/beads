@@ -434,6 +434,19 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 		t.Fatalf("mr-c01 status = %q, want closed (1/2 progress)", c01.Status)
 	}
 
+	// The counts equal the distinct far-end set, so `bd show` prints no
+	// "far end has no row in this database" notice for the epic or the child.
+	if n, err := store.CountDependents(ctx, "mr-epic"); err != nil {
+		t.Fatalf("CountDependents: %v", err)
+	} else if n != 2 {
+		t.Fatalf("CountDependents = %d, want 2 (not the raw two-plane sum 4)", n)
+	}
+	if n, err := store.CountDependencies(ctx, "mr-c01"); err != nil {
+		t.Fatalf("CountDependencies: %v", err)
+	} else if n != 1 {
+		t.Fatalf("CountDependencies = %d, want 1 (not 2)", n)
+	}
+
 	// A wisp-only edge (a wisp that depends on a durable issue) is still
 	// returned, after the durable rows.
 	mk("mr-w", types.TypeTask, true)
@@ -485,6 +498,18 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	}
 	if len(outMeta) != 1 || outMeta[0].ID != "mr-epic" || outMeta[0].DependencyType != types.DepParentChild {
 		t.Fatalf("GetDependenciesWithMetadata(mr-c01) = %v, want one mr-epic edge with type parent-child (durable copy wins)", outMeta)
+	}
+
+	// Listing and counts stay equal after the wisp-only edge.
+	if n, err := store.CountDependents(ctx, "mr-epic"); err != nil {
+		t.Fatalf("CountDependents after wisp edge: %v", err)
+	} else if n != 3 {
+		t.Fatalf("CountDependents = %d, want 3 (listing and count stay equal)", n)
+	}
+	if n, err := store.CountDependencies(ctx, "mr-c01"); err != nil {
+		t.Fatalf("CountDependencies after wisp edge: %v", err)
+	} else if n != 1 {
+		t.Fatalf("CountDependencies = %d, want 1", n)
 	}
 }
 
