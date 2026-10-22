@@ -3448,18 +3448,252 @@ func TestExternalPortDeclarationAdvice(t *testing.T) {
 	}
 }
 
-// TestUnreachableEndpointAdviceLeavesRemoteHosts pins that a host off this
-// machine keeps its caller's own advice: it is not bd's to start either way,
-// and the remote-host advice (GH#3518) says how to check it.
-func TestUnreachableEndpointAdviceLeavesRemoteHosts(t *testing.T) {
+// TestUnreachableEndpointAdviceRemoteHost pins the advice for a host off this
+// machine: how to check the server there (GH#3518), whatever declares it, and
+// never `bd dolt start`, which refuses a remote host, or the local externally
+// managed advice. A host on this machine keeps the externally managed advice.
+func TestUnreachableEndpointAdviceRemoteHost(t *testing.T) {
 	namedPortRefusalEnv(t)
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "13322")
 	config.ResetForTesting()
 	dir := namedPortServerWorkspace(t, 0)
-	if got := UnreachableEndpointAdvice(dir, "db.example.com", 13322, PortSourceEnv); got != "" {
-		t.Errorf("remote host advice = %q, want none", got)
+	remote := UnreachableEndpointAdvice(dir, "db.example.com", 13322, PortSourceEnv)
+	if !strings.Contains(remote, "nc -zv db.example.com 13322") {
+		t.Errorf("remote host advice = %q, want the remote-host advice for db.example.com:13322", remote)
+	}
+	for _, banned := range []string{"bd dolt start", "externally managed"} {
+		if strings.Contains(remote, banned) {
+			t.Errorf("remote host advice contains %q:\n%s", banned, remote)
+		}
 	}
 	if got := UnreachableEndpointAdvice(dir, "127.0.0.1", 13322, PortSourceEnv); !strings.Contains(got, "BEADS_DOLT_SERVER_PORT declares") {
 		t.Errorf("local host advice = %q, want the externally managed advice", got)
+	}
+}
+
+// TestDefaultConfigRemoteHostLegacyPortEnv pins the legacy BEADS_DOLT_PORT
+// for a server on another machine to the rule DialConfig and the store's
+// applyConfigDefaults apply for a local one (#5835): parsed untrimmed, it
+// fills a port no authoritative source resolved, and never replaces
+// config.yaml dolt.port, the data directory's listener.port or metadata.json
+// dolt_server_port. bd's port file records a local server, so it is dropped
+// first and never decides the port either way. The store dials what
+// DefaultConfig resolves for a remote host, so DialConfig must agree.
+func TestDefaultConfigRemoteHostLegacyPortEnv(t *testing.T) {
+	const legacy, authoritative, portFile = 13307, 15555, 14444
+	for _, tc := range []struct {
+		name       string
+		serverPort string
+		legacyPort string
+		setup      func(t *testing.T, beadsDir string)
+		wantPort   int
+		wantSource PortSource
+	}{
+		{name: "legacy only", legacyPort: strconv.Itoa(legacy), wantPort: legacy, wantSource: PortSourceEnv},
+		{name: "legacy padded", legacyPort: " " + strconv.Itoa(legacy) + "\n",
+			wantPort: configfile.DefaultDoltServerPort, wantSource: PortSourceExternalHostDefault},
+		{name: "metadata dolt_server_port over legacy", legacyPort: strconv.Itoa(legacy),
+			setup:    func(t *testing.T, beadsDir string) { writeRemoteMetadataPort(t, beadsDir, authoritative) },
+			wantPort: authoritative, wantSource: PortSourceMetadataJSON},
+		{name: "metadata dolt_server_port over padded legacy", legacyPort: " " + strconv.Itoa(legacy),
+			setup:    func(t *testing.T, beadsDir string) { writeRemoteMetadataPort(t, beadsDir, authoritative) },
+			wantPort: authoritative, wantSource: PortSourceMetadataJSON},
+		{name: "listener.port over legacy", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, beadsDir string) {
+				doltDir := filepath.Join(beadsDir, "dolt")
+				if err := os.MkdirAll(doltDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				yaml := fmt.Sprintf("listener:\n  port: %d\n", authoritative)
+				if err := os.WriteFile(filepath.Join(doltDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPort: authoritative, wantSource: PortSourceDoltConfigYaml},
+		{name: "config.yaml dolt.port over legacy", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, _ string) {
+				configDir := t.TempDir()
+				yaml := fmt.Sprintf("dolt.port: %d\n", authoritative)
+				if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("BEADS_DIR", configDir)
+				if err := config.Initialize(); err != nil {
+					t.Fatalf("config.Initialize: %v", err)
+				}
+			},
+			wantPort: authoritative, wantSource: PortSourceConfigYaml},
+		{name: "legacy over a port file", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, beadsDir string) {
+				if err := writePortFile(beadsDir, portFile); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPort: legacy, wantSource: PortSourceEnv},
+		{name: "metadata dolt_server_port behind a port file over legacy", legacyPort: strconv.Itoa(legacy),
+			setup: func(t *testing.T, beadsDir string) {
+				writeRemoteMetadataPort(t, beadsDir, authoritative)
+				if err := writePortFile(beadsDir, portFile); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPort: authoritative, wantSource: PortSourceMetadataJSON},
+		{name: "BEADS_DOLT_SERVER_PORT over legacy", serverPort: "13400", legacyPort: strconv.Itoa(legacy),
+			setup:    func(t *testing.T, beadsDir string) { writeRemoteMetadataPort(t, beadsDir, authoritative) },
+			wantPort: 13400, wantSource: PortSourceEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			t.Setenv("BEADS_DOLT_SERVER_HOST", "db.example.com")
+			t.Setenv("BEADS_DOLT_SERVER_PORT", tc.serverPort)
+			t.Setenv("BEADS_DOLT_PORT", tc.legacyPort)
+			beadsDir := t.TempDir()
+			if tc.setup != nil {
+				tc.setup(t, beadsDir)
+			}
+
+			for _, got := range []struct {
+				name string
+				cfg  *Config
+			}{{"DefaultConfig", DefaultConfig(beadsDir)}, {"DialConfig", DialConfig(beadsDir)}} {
+				if got.cfg.Port != tc.wantPort || got.cfg.PortSource != tc.wantSource {
+					t.Errorf("%s = port %d from %q, want port %d from %q",
+						got.name, got.cfg.Port, got.cfg.PortSource, tc.wantPort, tc.wantSource)
+				}
+			}
+		})
+	}
+}
+
+// writeRemoteMetadataPort writes a server-mode metadata.json naming port as
+// dolt_server_port.
+func writeRemoteMetadataPort(t *testing.T, beadsDir string, port int) {
+	t.Helper()
+	meta := fmt.Sprintf(`{"backend":"dolt","dolt_mode":"server","dolt_server_port":%d}`, port)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestExternalPortSettingNamesThePortFile pins the declaration for a port
+// that bd's port file chose over a dolt_server_port naming another one, the
+// shape `bd dolt set port N` leaves after a successful open recorded the old
+// port: it carries the file and the declared port, and its advice names them
+// and does not suggest removing dolt_server_port, which would not stop bd
+// dialing the file's port.
+func TestExternalPortSettingNamesThePortFile(t *testing.T) {
+	const dialed, declared = 13325, 13326
+	namedPortRefusalEnv(t)
+	dir := namedPortServerWorkspace(t, declared)
+
+	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(dialed))
+	advice := ExternalPortSetting(dir, PortSourcePortFile, dialed).Advice(endpoint)
+	for _, want := range []string{
+		"dolt_server_port in " + configfile.ConfigPath(dir) + " declares this workspace's Dolt server externally managed, so bd did not start one at " + endpoint + ".",
+		fmt.Sprintf("bd took that port from %s, which records the port an earlier command reached and outranks dolt_server_port (%d). "+
+			"Start that server, or remove that file.", portPath(dir), declared),
+	} {
+		if !strings.Contains(advice, want) {
+			t.Errorf("advice does not contain %q:\n%s", want, advice)
+		}
+	}
+	for _, banned := range []string{"Removing dolt_server_port", "bd dolt start"} {
+		if strings.Contains(advice, banned) {
+			t.Errorf("advice contains %q:\n%s", banned, advice)
+		}
+	}
+
+	// A port file that agrees with dolt_server_port is not worth naming.
+	same := ExternalPortSetting(dir, PortSourcePortFile, declared).Advice(net.JoinHostPort("127.0.0.1", strconv.Itoa(declared)))
+	if strings.Contains(same, PortFileName) {
+		t.Errorf("advice for a port file naming dolt_server_port's own port names the file:\n%s", same)
+	}
+}
+
+// TestExternalPortSettingPortFileBehindAConfiguredPort pins that the advice
+// names bd's port file only when removing it moves the dial. A successful open
+// in a workspace whose config.yaml dolt.port or listener.port names its port
+// records that port in the file, and `bd dolt set port N` without
+// --update-config leaves both, so with the file gone bd still dials the same
+// port and "remove that file" would change nothing. A listener.port naming
+// another port does move the dial.
+func TestExternalPortSettingPortFileBehindAConfiguredPort(t *testing.T) {
+	const dialed, declared, other = 13330, 13331, 13332
+	writeListenerPort := func(t *testing.T, beadsDir string, port int) {
+		t.Helper()
+		doltDir := filepath.Join(beadsDir, "dolt")
+		if err := os.MkdirAll(doltDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		yaml := fmt.Sprintf("listener:\n  port: %d\n", port)
+		if err := os.WriteFile(filepath.Join(doltDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		setup     func(t *testing.T, beadsDir string)
+		namesFile bool
+	}{
+		{name: "listener.port naming the file's port", setup: func(t *testing.T, beadsDir string) { writeListenerPort(t, beadsDir, dialed) }},
+		{name: "config.yaml dolt.port naming the file's port", setup: func(t *testing.T, _ string) {
+			configDir := t.TempDir()
+			yaml := fmt.Sprintf("dolt.port: %d\n", dialed)
+			if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("BEADS_DIR", configDir)
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize: %v", err)
+			}
+		}},
+		{name: "listener.port naming another port", setup: func(t *testing.T, beadsDir string) { writeListenerPort(t, beadsDir, other) }, namesFile: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			dir := namedPortServerWorkspace(t, declared)
+			tc.setup(t, dir)
+
+			advice := ExternalPortSetting(dir, PortSourcePortFile, dialed).Advice(net.JoinHostPort("127.0.0.1", strconv.Itoa(dialed)))
+			if !strings.Contains(advice, "dolt_server_port in "+configfile.ConfigPath(dir)+" declares this workspace's Dolt server externally managed") {
+				t.Fatalf("advice is not the dolt_server_port advice:\n%s", advice)
+			}
+			if got := strings.Contains(advice, PortFileName); got != tc.namesFile {
+				t.Errorf("advice names the port file: %v, want %v:\n%s", got, tc.namesFile, advice)
+			}
+		})
+	}
+}
+
+// TestExternalPortSettingSoleDeclaration pins when the advice for a
+// dolt_server_port that does not name the dialed port says removing it lets
+// bd manage the server: only when nothing else declares the server externally
+// managed.
+func TestExternalPortSettingSoleDeclaration(t *testing.T) {
+	const dialed, declared, other = 13327, 13328, 13329
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		sole bool
+	}{
+		{"dolt_server_port alone", nil, true},
+		{"BEADS_DOLT_SERVER_MODE=1", map[string]string{"BEADS_DOLT_SERVER_MODE": "1"}, false},
+		{"BEADS_DOLT_PORT naming another port", map[string]string{"BEADS_DOLT_PORT": strconv.Itoa(other)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			dir := namedPortServerWorkspace(t, declared)
+
+			advice := ExternalPortSetting(dir, PortSourceConfigYaml, dialed).Advice(net.JoinHostPort("127.0.0.1", strconv.Itoa(dialed)))
+			if !strings.Contains(advice, "declares this workspace's Dolt server externally managed") {
+				t.Fatalf("advice is not the dolt_server_port advice:\n%s", advice)
+			}
+			if got := strings.Contains(advice, "Removing dolt_server_port lets bd manage the server."); got != tc.sole {
+				t.Errorf("advice says removing dolt_server_port lets bd manage the server: %v, want %v:\n%s", got, tc.sole, advice)
+			}
+		})
 	}
 }

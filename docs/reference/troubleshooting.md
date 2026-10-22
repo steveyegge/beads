@@ -267,7 +267,13 @@ managed and intentionally disables auto-start — spawning a different server
 would create a shadow database. A `dolt_server_port` does so even when
 `config.yaml`'s `dolt.port` chose the port; bd then says the setting declares
 this workspace's server externally managed without claiming it names the
-endpoint.
+endpoint. After a command reaches the server, bd records its port in
+`.beads/dolt-server.port`, which outranks `dolt_server_port`. `bd dolt set
+port` leaves that file alone, so when the file chose the port bd names it:
+remove it and bd falls back to the next configured port: `dolt_server_port`,
+unless `config.yaml`'s `dolt.port` or the data directory's `listener.port`
+names another. When one of those names the file's own port, removing the
+file changes nothing, so bd does not name it.
 
 **Fix:** start the server that should be listening there, with its own data
 directory. Unless that server is bd's own over `.beads/dolt` (for example one
@@ -279,7 +285,8 @@ dolt sql-server --host 127.0.0.1 --port 3307 --data-dir /path/to/your/dolt/data
 ```
 
 If you want auto-start behavior, remove `dolt_server_port` from
-`.beads/metadata.json`.
+`.beads/metadata.json`, and unset `BEADS_DOLT_SERVER_MODE` or a port variable
+if one also declares the server externally managed.
 
 ### Port conflicts with multiple projects
 

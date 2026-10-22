@@ -28,7 +28,7 @@ type DoltPerfMetrics struct {
 	OpenIssues   int    // Open issue count
 	ClosedIssues int    // Closed issue count
 	Dependencies int    // Dependency count
-	DatabaseSize string // Size of .dolt directory
+	DatabaseSize string // Size of .dolt directory; n/a for a server on another machine
 
 	// Timing metrics (milliseconds)
 	ConnectionTime   int64 // Time to establish connection
@@ -57,27 +57,23 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 		GoVersion: runtime.Version(),
 	}
 
-	// Resolve server config (handles standalone ephemeral ports and the
-	// legacy BEADS_DOLT_PORT the store dials)
+	// Dial the endpoint the commands --perf times (bd ready, bd list, bd
+	// show) dial. The host is metadata.json's, read as the CLI's own store
+	// open reads it: DialConfig's Host is always 127.0.0.1, and that open
+	// never applies the central server config (~/.config/beads/server.json),
+	// as bd doctor's store checks (dolt.NewFromConfig*) do. The port is
+	// DialConfig's, which handles standalone ephemeral ports and the legacy
+	// BEADS_DOLT_PORT.
 	dsCfg := doltserver.DialConfig(beadsDir)
+	fileCfg := loadServerConfig(beadsDir)
+	host := fileCfg.GetDoltServerHost()
 
 	// Check server status
-	doltDir := getDatabasePath(beadsDir)
-	serverRunning := isDoltServerRunning(dsCfg.Host, dsCfg.Port)
+	serverRunning := isDoltServerRunning(host, dsCfg.Port)
 	if serverRunning {
 		metrics.ServerStatus = "running"
 	} else {
 		metrics.ServerStatus = "not running"
-	}
-
-	// Determine the database name and the configured server host. dsCfg.Host
-	// is always 127.0.0.1, so the unreachable advice below must be gated on
-	// the configured host: a remote server keeps the generic advice.
-	dbName := configfile.DefaultDoltDatabase
-	configuredHost := (&configfile.Config{}).GetDoltServerHost()
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		dbName = cfg.GetDoltDatabase()
-		configuredHost = cfg.GetDoltServerHost()
 	}
 
 	// Start profiling if requested
@@ -93,28 +89,40 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 
 	// Connect and run diagnostics via server
 	if !serverRunning {
-		advice := ""
-		if configfile.IsLocalHostString(configuredHost) {
-			advice = doltserver.UnreachableEndpointAdvice(beadsDir, dsCfg.Host, dsCfg.Port, dsCfg.PortSource)
+		if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dsCfg.Port, dsCfg.PortSource); advice != "" {
+			return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d.\n%s", host, dsCfg.Port, advice)
 		}
-		if advice != "" {
-			return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d.\n%s", dsCfg.Host, dsCfg.Port, advice)
-		}
-		return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d; start it with 'bd dolt start'", dsCfg.Host, dsCfg.Port)
+		return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d; start it with 'bd dolt start'", host, dsCfg.Port)
 	}
 
-	if err := runDoltServerDiagnostics(metrics, dsCfg.Host, dsCfg.Port, dbName, beadsDir); err != nil {
+	if err := runDoltServerDiagnostics(metrics, fileCfg, host, dsCfg.Port); err != nil {
 		return metrics, fmt.Errorf("server diagnostics failed: %w", err)
 	}
 
-	// Calculate database size
-	metrics.DatabaseSize = getDoltDatabaseSize(doltDir)
+	// Calculate database size. The data directory is this machine's, so it
+	// holds the database just measured only for a server on this machine.
+	if configfile.IsLocalHostString(host) {
+		metrics.DatabaseSize = getDoltDatabaseSize(getDatabasePath(beadsDir))
+	} else {
+		metrics.DatabaseSize = "n/a (server on another machine)"
+	}
 
 	return metrics, nil
 }
 
-// runDoltServerDiagnostics runs diagnostics via dolt sql-server
-func runDoltServerDiagnostics(metrics *DoltPerfMetrics, host string, port int, dbName string, beadsDir string) error {
+// loadServerConfig is beadsDir's metadata.json, or, when that is missing or
+// unreadable, an empty config, whose getters still read the environment.
+func loadServerConfig(beadsDir string) *configfile.Config {
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return &configfile.Config{}
+	}
+	return cfg
+}
+
+// runDoltServerDiagnostics runs diagnostics via the dolt sql-server at
+// host:port, on cfg's database as cfg's user.
+func runDoltServerDiagnostics(metrics *DoltPerfMetrics, cfg *configfile.Config, host string, port int) error {
 	metrics.Backend = "dolt-server"
 	metrics.ServerMode = true
 
@@ -122,22 +130,13 @@ func runDoltServerDiagnostics(metrics *DoltPerfMetrics, host string, port int, d
 	// GetDoltServerPasswordForPort checks BEADS_DOLT_PASSWORD env first, then
 	// falls back to ~/.config/beads/credentials keyed by [host:port] — required
 	// for externally-hosted Dolt servers (bd-h5k7).
-	user := configfile.DefaultDoltServerUser
-	var password string
-	var tls bool
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		user = cfg.GetDoltServerUser()
-		tls = cfg.GetDoltServerTLS()
-		password = cfg.GetDoltServerPasswordForPort(port)
-	}
-
 	dsn := doltutil.ServerDSN{
 		Host:     host,
 		Port:     port,
-		User:     user,
-		Password: password,
-		Database: dbName,
-		TLS:      tls,
+		User:     cfg.GetDoltServerUser(),
+		Password: cfg.GetDoltServerPasswordForPort(port),
+		Database: cfg.GetDoltDatabase(),
+		TLS:      cfg.GetDoltServerTLS(),
 	}.String()
 
 	// Measure connection time
@@ -264,7 +263,9 @@ func measureQueryTime(ctx context.Context, db *sql.DB, query string) int64 {
 	return time.Since(start).Milliseconds()
 }
 
-// isDoltServerRunning checks if a dolt sql-server is responding.
+// isDoltServerRunning checks if a dolt sql-server is responding at host:port,
+// joined as the store's DSN joins them (doltutil.ServerDSN), so it probes a
+// host the store can dial, a bracketed IPv6 literal included, as written.
 func isDoltServerRunning(host string, port int) bool {
 	_, err := doltserver.ProbeSQLServer("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
 	return err == nil

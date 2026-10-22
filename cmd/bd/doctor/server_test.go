@@ -199,9 +199,9 @@ func TestCheckDoltVersion_Unreachable(t *testing.T) {
 }
 
 // TestRunDoltServerDiagnostics_Unreachable exercises the credential-resolution
-// branch in runDoltServerDiagnostics (bd-h5k7). metadata.json is loaded so
-// that user / tls / password are pulled from configfile.Load before the DSN
-// is built and the ping fails against the unreachable port.
+// branch in runDoltServerDiagnostics (bd-h5k7): the loaded metadata.json's
+// user / tls / password build the DSN before the ping fails against the
+// unreachable port.
 func TestRunDoltServerDiagnostics_Unreachable(t *testing.T) {
 	beadsDir := t.TempDir()
 
@@ -218,8 +218,13 @@ func TestRunDoltServerDiagnostics_Unreachable(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		t.Fatalf("load metadata.json: %v", err)
+	}
+
 	metrics := &DoltPerfMetrics{}
-	err := runDoltServerDiagnostics(metrics, "127.0.0.1", 1, "beads", beadsDir)
+	err = runDoltServerDiagnostics(metrics, cfg, "127.0.0.1", 1)
 	if err == nil {
 		t.Fatal("expected error connecting to unreachable server")
 	}

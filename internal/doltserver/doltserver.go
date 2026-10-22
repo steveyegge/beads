@@ -1084,12 +1084,22 @@ func DefaultConfig(beadsDir string) *Config {
 // dials, not 127.0.0.1:0 or a leftover port-file port.
 func DialConfig(beadsDir string) *Config {
 	cfg := DefaultConfig(beadsDir)
-	if os.Getenv("BEADS_DOLT_SERVER_PORT") == "" && !cfg.PortSource.IsAuthoritative() {
-		if p, err := strconv.Atoi(os.Getenv("BEADS_DOLT_PORT")); err == nil && p > 0 {
-			cfg.Port, cfg.PortSource = p, PortSourceEnv
-		}
-	}
+	applyLegacyPortEnv(cfg)
 	return cfg
+}
+
+// applyLegacyPortEnv applies the legacy BEADS_DOLT_PORT, which is not in
+// portSources, by the store's applyConfigDefaults rule: when
+// BEADS_DOLT_SERVER_PORT is unset, a valid BEADS_DOLT_PORT, parsed untrimmed,
+// replaces a port that is not authoritative. A port from config.yaml
+// dolt.port, listener.port or metadata.json dolt_server_port stays.
+func applyLegacyPortEnv(cfg *Config) {
+	if os.Getenv("BEADS_DOLT_SERVER_PORT") != "" || cfg.PortSource.IsAuthoritative() {
+		return
+	}
+	if p, err := strconv.Atoi(os.Getenv("BEADS_DOLT_PORT")); err == nil && p > 0 {
+		cfg.Port, cfg.PortSource = p, PortSourceEnv
+	}
 }
 
 // DefaultConfigForMode resolves server configuration for an already-classified
@@ -1138,18 +1148,6 @@ func defaultConfigForMode(beadsDir string, sharedMode bool, resolvePort serverPo
 			}
 		}
 		if !configfile.IsLocalHostString(fc.GetDoltServerHost()) {
-			// The legacy BEADS_DOLT_PORT override is not in
-			// portSources but the storage layer honors it ahead of
-			// persisted sources; resolve it the same way here so
-			// credentials/probes and the eventual connection agree
-			// on the port. BEADS_DOLT_SERVER_PORT (PortSourceEnv)
-			// still wins over the legacy spelling.
-			if cfg.PortSource != PortSourceEnv {
-				if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BEADS_DOLT_PORT"))); err == nil && p > 0 {
-					cfg.Port = p
-					cfg.PortSource = PortSourceEnv
-				}
-			}
 			// The gitignored port file is bd's bookkeeping for a
 			// bd-owned LOCAL server; pairing it with a remote host
 			// dials the remote machine on a stale local ephemeral
@@ -1160,6 +1158,14 @@ func defaultConfigForMode(beadsDir string, sharedMode bool, resolvePort serverPo
 				cfg.Port, cfg.PortSource = resolvePort(workspaceBeadsDir, beadsDir, false, true)
 				cfg.PortSharedServer = false
 			}
+			// The legacy BEADS_DOLT_PORT is not in portSources, and the
+			// store dials the port resolved here, so apply it by the
+			// rule the store applies to a local server (#5835), once the
+			// port file is gone: it fills in a port no setting names and
+			// never replaces listener.port, dolt.port or
+			// dolt_server_port. Credentials, probes and the connection
+			// then agree on the port.
+			applyLegacyPortEnv(cfg)
 			// With no configured port, dial the documented default
 			// 3307, not :0 — there is no local Start() to allocate
 			// an ephemeral port for a remote server.
