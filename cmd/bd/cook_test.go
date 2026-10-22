@@ -1210,6 +1210,56 @@ func TestCookFormulaToSubgraph_GateTypedReferences(t *testing.T) {
 	})
 }
 
+// TestCookFormulaToSubgraph_BareGateStepType pins the wait-only form
+// (GH#3316): a step declared type = "gate" with no [steps.gate] block cooks
+// to a single gate-typed bead — no companion gate bead, no await fields,
+// and no synthesized blocks edge. The exit-gate rework must leave it alone:
+// the bead stays hidden from bd ready (gate type) and flattenUnregistered-
+// IssueTypes leaves the built-in gate type alone.
+func TestCookFormulaToSubgraph_BareGateStepType(t *testing.T) {
+	f := &formula.Formula{
+		Formula:     "mol-bare-gate",
+		Description: "Bare gate-typed step",
+		Version:     1,
+		Type:        formula.TypeWorkflow,
+		Steps: []*formula.Step{
+			{ID: "wait", Title: "Wait here", Type: "gate"},
+		},
+	}
+
+	subgraph, err := cookFormulaToSubgraph(f, "mol-bare-gate")
+	if err != nil {
+		t.Fatalf("cookFormulaToSubgraph failed: %v", err)
+	}
+
+	// Root + the single wait bead: no companion spawned.
+	if len(subgraph.Issues) != 2 {
+		t.Errorf("want exactly root + wait bead, got %d: %v", len(subgraph.Issues), subgraphIssueIDs(subgraph))
+	}
+	waitIssue := issueByID(subgraph, "mol-bare-gate.wait")
+	if waitIssue == nil {
+		t.Fatalf("wait bead not found; issues: %v", subgraphIssueIDs(subgraph))
+	}
+	if waitIssue.IssueType != types.TypeGate {
+		t.Errorf("bare wait bead type = %q, want %q", waitIssue.IssueType, types.TypeGate)
+	}
+	if waitIssue.AwaitType != "" {
+		t.Errorf("bare wait bead await_type = %q, want empty (no [steps.gate] block)", waitIssue.AwaitType)
+	}
+	if waitIssue.AwaitID != "" {
+		t.Errorf("bare wait bead await_id = %q, want empty", waitIssue.AwaitID)
+	}
+	var blocksEdges int
+	for _, dep := range subgraph.Dependencies {
+		if dep.Type == types.DepBlocks {
+			blocksEdges++
+		}
+	}
+	if blocksEdges != 0 {
+		t.Errorf("want no synthesized blocks edges, got %d: %v", blocksEdges, depIDs(subgraph))
+	}
+}
+
 // hasBlocksDepOn reports whether sg carries a blocks edge from -> to.
 func hasBlocksDepOn(sg *TemplateSubgraph, from, to string) bool {
 	for _, dep := range sg.Dependencies {
