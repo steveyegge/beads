@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -77,4 +78,70 @@ func TestAcquireCommandWorkspaceGatesUnsupportedFailsOpen(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Maintenance refuses on a filesystem that cannot lock, as it did before,
+// but says so instead of claiming live bd activity or a busy workspace.
+func TestAcquireInitMutationGateUnsupportedMessage(t *testing.T) {
+	t.Run("bd init", func(t *testing.T) {
+		resetGateTestEnv(t)
+		beadsDir := newGateTestWorkspace(t)
+		physicalRoot := filepath.Join(filepath.Dir(beadsDir), "dolt-data")
+		failGatesUnsupported(t)
+
+		preflightRan := false
+		h, err := acquireInitMutationGate(context.Background(), beadsDir, physicalRoot, func() error {
+			preflightRan = true
+			return nil
+		})
+		if err == nil {
+			_ = h.Release()
+			t.Fatal("bd init acquired its gates on a filesystem that cannot lock")
+		}
+		if !errors.Is(err, lockfile.ErrUnsupported) {
+			t.Errorf("error %v does not wrap lockfile.ErrUnsupported", err)
+		}
+		for _, want := range []string{"bd init cannot run here", beadsDir, "filesystem that does not support file locking"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q missing %q", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "live bd activity") {
+			t.Errorf("error %q blames live bd activity", err)
+		}
+		if preflightRan {
+			t.Error("preflight ran without the gates")
+		}
+	})
+
+	t.Run("bd backup restore", func(t *testing.T) {
+		resetGateTestEnv(t)
+		t.Cleanup(releaseWorkspaceGates)
+		beadsDir := newGateTestWorkspace(t)
+		failGatesUnsupported(t)
+		root := &cobra.Command{Use: "bd"}
+		backup := &cobra.Command{Use: "backup"}
+		restore := &cobra.Command{Use: "restore [path]"}
+		backup.AddCommand(restore)
+		root.AddCommand(backup)
+		if !commandNeedsExclusiveGate(restore) {
+			t.Fatal("backup restore must take the exclusive gate")
+		}
+
+		var err error
+		stderr := captureStderr(t, func() {
+			err = acquireCommandWorkspaceGates(context.Background(), restore, beadsDir)
+		})
+		if err == nil {
+			t.Fatal("backup restore proceeded on a filesystem that cannot lock")
+		}
+		for _, want := range []string{"backup restore cannot run here", beadsDir, "filesystem that does not support file locking"} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("stderr %q missing %q", stderr, want)
+			}
+		}
+		if workspaceGateHandle != nil {
+			t.Error("refused restore must hold no gate")
+		}
+	})
 }

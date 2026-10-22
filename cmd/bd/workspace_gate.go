@@ -481,7 +481,12 @@ func acquireCommandWorkspaceGates(ctx context.Context, cmd *cobra.Command, beads
 		// a \\wsl$ path from Windows) is not contention: no holder exists,
 		// and waiting or retrying cannot help. Ordinary commands take the
 		// documented fail-open posture at once, saying why.
-		if errors.Is(err, lockfile.ErrUnsupported) && !exclusive {
+		if errors.Is(err, lockfile.ErrUnsupported) {
+			// Maintenance refuses rather than pretends, as before; only the
+			// message changes.
+			if exclusive {
+				return HandleErrorRespectJSON("backup restore cannot run here: %s; run it inside WSL or on a local filesystem", gateLockUnsupportedReason(beadsDir, err))
+			}
 			if !quietFlag {
 				fmt.Fprintf(os.Stderr, "warning: %s; continuing without the workspace gate, so bd init, migrate and backup restore cannot be fenced here\n", gateLockUnsupportedReason(beadsDir, err))
 			}
@@ -634,6 +639,9 @@ func acquireInitMutationGate(ctx context.Context, beadsDir, physicalRoot string,
 	h, err := acquireExclusiveWorkspaceGatesWithOptions(ctx, beadsDir, opts, physicalRoot)
 	stopNotice()
 	if err != nil {
+		if errors.Is(err, lockfile.ErrUnsupported) {
+			return nil, fmt.Errorf("bd init cannot run here: %s; initialize from a local filesystem (for a WSL workspace, run bd inside WSL): %w", gateLockUnsupportedReason(beadsDir, err), err)
+		}
 		if errors.Is(err, workspacegate.ErrBusy) {
 			return nil, fmt.Errorf("bd init refuses to run over live bd activity on this workspace (waited %s; set %s to wait longer): %w", wait, initGateTimeoutEnv, err)
 		}

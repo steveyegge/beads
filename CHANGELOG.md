@@ -818,6 +818,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On a filesystem whose file locks do not work (a WSL workspace opened from
+  Windows `bd.exe` over `\\wsl.localhost\`, SMB shares, NFS without lockd),
+  an ordinary `bd` command no longer waits `BEADS_GATE_WAIT_TIMEOUT` and then
+  fails claiming "a maintenance operation is running". bd checks a busy
+  workspace gate once against a private file beside it; when that also
+  reports busy, or the lock call fails with an unsupported error, the command
+  prints one warning naming the filesystem and runs without the gate.
+  `bd init` and `bd backup restore` still refuse there, now saying the
+  filesystem does not support file locking instead of "live bd activity".
+  Strict `--readonly` skips the check, since it creates no files. Embedders
+  can match the new `beads.ErrGateUnsupported` from `OpenGated` (#3613).
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to
