@@ -53,7 +53,13 @@ import (
 // Attach refuses a workspace in a format this build cannot open — a
 // metadata.json graph_mode other than "dependency", or the
 // .beads/graph-preview-format marker — with *UnsupportedWorkspaceFormatError,
-// the refusal every open and `bd connect` give it, and writes nothing.
+// the refusal every open and `bd connect` give it, and writes nothing. It
+// checks before its metadata read, which migrates a legacy config.json, and
+// again on what that read returned. Only a concurrent writer can change the
+// format between the two, and the second check cannot undo the read's
+// migration: a legacy config.json given a graph format in that window is
+// refused only after it was migrated into metadata.json. The Dolt store's
+// metadata-driven constructors share this window.
 func Attach(beadsDir string, target Target) error {
 	// Before Load, which migrates a legacy config.json into metadata.json.
 	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
@@ -65,6 +71,7 @@ func Attach(beadsDir string, target Target) error {
 	}
 	// Again on what Load returned, which a writer could have changed since
 	// the check above; the Dolt constructors re-check theirs the same way.
+	// This refuses such a workspace but cannot undo Load's migration of it.
 	if err := configfile.CheckWorkspaceFormat(cfg, beadsDir); err != nil {
 		return err
 	}
@@ -92,7 +99,9 @@ func Attach(beadsDir string, target Target) error {
 			target.PreviousBackend = cfg.GetBackend()
 		}
 	}
-	if err := SaveTarget(beadsDir, target); err != nil {
+	// The encoder itself: the format is checked above, against the metadata
+	// this saves alongside.
+	if err := httpclient.SaveTarget(beadsDir, target); err != nil {
 		return fmt.Errorf("writing %s: %w", httpclient.TargetFileName, err)
 	}
 	// Both of this backend's per-user files: the sidecar just written, and

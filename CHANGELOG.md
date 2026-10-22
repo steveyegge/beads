@@ -1062,11 +1062,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migrated a legacy `config.json`, and `Connect` handshook with the server
   first. They now return `*bdhttp.UnsupportedWorkspaceFormatError` (the type
   `beads.UnsupportedWorkspaceFormatError` names) before writing anything, and
-  `Connect` before it dials. `bd connect` in a linked git worktree with no
+  `Connect` before it dials; `bdhttp.SaveTarget`, which writes the sidecar
+  alone, refuses it the same way. `bd connect` in a linked git worktree with no
   `.beads` of its own attaches the main checkout's `.beads`, and attached a
   graph workspace there that only the marker or a legacy `config.json`
   declares (refused without `--force`, it still migrated that `config.json`);
-  it now exits 16 there too, without dialing or writing.
+  it now exits 16 there too, without dialing or writing. A workspace that a
+  graph build declares while `bd connect`'s handshake is in flight now gets
+  the same refusal, hint and exit 16 before `bd connect` writes anything
+  there, where `bd connect` wrote its `.gitignore` and then exited 1.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in

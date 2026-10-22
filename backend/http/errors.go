@@ -16,11 +16,11 @@ import (
 // types carry the server URL, its release and its advertised capabilities
 // precisely so a renderer parses nothing.
 
-// UnsupportedWorkspaceFormatError is Attach's and Connect's refusal of a
-// workspace whose metadata.json graph_mode is not "dependency", or whose
-// .beads holds the graph-preview-format marker (FormatMarker): a format this
-// build cannot open. Nothing was written, and Connect dialed nothing. It is
-// the type beads.UnsupportedWorkspaceFormatError names too.
+// UnsupportedWorkspaceFormatError is Attach's, Connect's and SaveTarget's
+// refusal of a workspace whose metadata.json graph_mode is not "dependency",
+// or whose .beads holds the graph-preview-format marker (FormatMarker): a
+// format this build cannot open. Nothing was written, and Connect dialed
+// nothing. It is the type beads.UnsupportedWorkspaceFormatError names too.
 type UnsupportedWorkspaceFormatError = configfile.UnsupportedWorkspaceFormatError
 
 // ErrNoTransport reports a process that registered this backend without
