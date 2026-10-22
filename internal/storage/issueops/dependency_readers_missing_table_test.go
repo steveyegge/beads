@@ -87,13 +87,15 @@ func primeHydration(mock sqlmock.Sqlmock, ids []string) {
 }
 
 // dependencyReaderEntryPoint is one anchor-keyed read whose both-table merge
-// the #3445 fix pins. render answers "id:type" per row so a duplicate or a
-// wrong-type survivor is visible, not just the row count.
+// the #3445 fix pins. plain readers answer far-end ids only; the metadata
+// readers answer "id:type" per row so a duplicate or a wrong-type survivor is
+// visible, not just the row count.
 type dependencyReaderEntryPoint struct {
 	name string
 	// anchor is the fixed anchor issue every primed leg binds to.
 	anchor string
 	dir    domain.DepDirection
+	plain   bool
 	// run drives the reader inside the primed transaction.
 	run func(ctx context.Context, tx *sql.Tx, anchor string) (string, error)
 }
@@ -108,12 +110,64 @@ var dependencyReaderEntryPoints = []dependencyReaderEntryPoint{
 			return renderDepMetaRows(out), err
 		},
 	},
+	{
+		name:   "GetDependenciesWithMetadataInTx",
+		anchor: "issue-1",
+		dir:    domain.DepDirectionOut,
+		run: func(ctx context.Context, tx *sql.Tx, anchor string) (string, error) {
+			out, err := GetDependenciesWithMetadataInTx(ctx, tx, anchor)
+			return renderDepMetaRows(out), err
+		},
+	},
+	{
+		name:   "GetDependentsInTx",
+		anchor: "epic-2",
+		dir:    domain.DepDirectionIn,
+		plain:  true,
+		run: func(ctx context.Context, tx *sql.Tx, anchor string) (string, error) {
+			out, err := GetDependentsInTx(ctx, tx, anchor)
+			return renderIssueIDs(out), err
+		},
+	},
+	{
+		name:   "GetDependenciesInTx",
+		anchor: "issue-2",
+		dir:    domain.DepDirectionOut,
+		plain:  true,
+		run: func(ctx context.Context, tx *sql.Tx, anchor string) (string, error) {
+			out, err := GetDependenciesInTx(ctx, tx, anchor)
+			return renderIssueIDs(out), err
+		},
+	},
+}
+
+// wantReaderRows renders the expected answer for durable rows: far-end ids in
+// first-seen order, each once, with the metadata readers also carrying the
+// durable row's type.
+func wantReaderRows(durable []edgeRow, plain bool) string {
+	parts := make([]string, 0, len(durable))
+	for _, r := range durable {
+		if plain {
+			parts = append(parts, r.farID)
+		} else {
+			parts = append(parts, r.farID+":"+r.depType)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 func renderDepMetaRows(out []*types.IssueWithDependencyMetadata) string {
 	parts := make([]string, 0, len(out))
 	for _, d := range out {
 		parts = append(parts, d.ID+":"+string(d.DependencyType))
+	}
+	return strings.Join(parts, ",")
+}
+
+func renderIssueIDs(out []*types.Issue) string {
+	parts := make([]string, 0, len(out))
+	for _, iss := range out {
+		parts = append(parts, iss.ID)
 	}
 	return strings.Join(parts, ",")
 }
@@ -162,7 +216,7 @@ func TestDependencyReadersCrossTableDuplicateReturnedOnce(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s over a mirrored working set: %v", tc.name, err)
 			}
-			want := "child-a:" + string(types.DepParentChild) + ",child-b:" + string(types.DepParentChild)
+			want := wantReaderRows(durable, tc.plain)
 			if got != want {
 				t.Fatalf("%s = %q, want %q (each far end once, durable type wins)", tc.name, got, want)
 			}
@@ -193,7 +247,7 @@ func TestDependencyReadersMissingWispPlaneIsNotAnError(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s over a database with no wisp_dependencies: %v (want the plane treated as empty)", tc.name, err)
 			}
-			want := "child-a:" + string(types.DepParentChild) + ",child-b:" + string(types.DepParentChild)
+			want := wantReaderRows(durable, tc.plain)
 			if got != want {
 				t.Fatalf("%s = %q, want %q", tc.name, got, want)
 			}
