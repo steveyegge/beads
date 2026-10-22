@@ -22,7 +22,7 @@ func IsLocked(err error) bool {
 // It is distinct from contention: no amount of waiting can succeed, and a
 // caller that reports busy may be looking at a filesystem that reports
 // every file as held. Match with errors.Is.
-var ErrUnsupported = errors.New("file locking is not supported on this filesystem")
+var ErrUnsupported = errors.New("this filesystem does not support file locking")
 
 // UnsupportedError wraps a filesystem error that proves this filesystem
 // cannot support advisory locks (ENOLCK, ERROR_INVALID_FUNCTION, ...).

@@ -637,6 +637,15 @@ func acquireInitMutationGate(ctx context.Context, beadsDir, physicalRoot string,
 	h, err := acquireExclusiveWorkspaceGatesWithOptions(ctx, beadsDir, opts, physicalRoot)
 	stopNotice()
 	if err != nil {
+		// A filesystem that cannot lock is not "live bd activity": init
+		// cannot be fenced here at all, and no wait budget changes that.
+		// Name the filesystem and the recovery instead of a contention
+		// claim (GH#3613: the dominant case is a Windows bd.exe pointed at
+		// \\wsl.localhost, whose 9P redirector lies about locks).
+		if errors.Is(err, lockfile.ErrUnsupported) {
+			return nil, fmt.Errorf("bd init cannot run here: %s is on a filesystem that does not support file locking (%s); initialize from a local filesystem (for a WSL workspace, run bd inside WSL): %w",
+				beadsDir, lockUnsupportedDetail(err), err)
+		}
 		if errors.Is(err, workspacegate.ErrBusy) {
 			return nil, fmt.Errorf("bd init refuses to run over live bd activity on this workspace (waited %s; set %s to wait longer): %w", wait, initGateTimeoutEnv, err)
 		}

@@ -1205,3 +1205,74 @@ func TestAcquireCommandWorkspaceGatesUnsupportedFilesystemFailsOpen(t *testing.T
 		t.Errorf("--quiet still printed %q, want nothing", stderr)
 	}
 }
+
+// (AC-5) EXCLUSIVE acquisitions refuse on a lockless filesystem instead
+// of claiming "live bd activity": bd init names the filesystem and the
+// recovery (initialize from a local filesystem; for WSL, run bd inside
+// WSL), and the preflight never runs without the gates.
+func TestAcquireInitMutationGateRefusesOnUnsupportedFilesystem(t *testing.T) {
+	resetGateTestEnv(t)
+	beadsDir := newGateTestWorkspace(t)
+	physicalRoot := filepath.Join(filepath.Dir(beadsDir), "dolt-data")
+	injectUnsupportedGate(t, beadsDir)
+
+	preflightRan := false
+	_, err := acquireInitMutationGate(context.Background(), beadsDir, physicalRoot, func() error {
+		preflightRan = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("bd init must refuse to run on a filesystem that cannot lock")
+	}
+	if !errors.Is(err, lockfile.ErrUnsupported) {
+		t.Errorf("err = %v, want lockfile.ErrUnsupported kept in the chain", err)
+	}
+	for _, want := range []string{"bd init cannot run here", "does not support file locking", "run bd inside WSL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "live bd activity") {
+		t.Errorf("error %q still claims live bd activity on a lockless filesystem", err)
+	}
+	if preflightRan {
+		t.Error("preflight ran without the gates")
+	}
+}
+
+// (AC-5, chokepoint half) `bd backup restore` acquires its EXCLUSIVE gates
+// through the chokepoint; on a lockless filesystem it keeps refusing,
+// with the precise unsupported-filesystem text passed through rather than
+// a contention claim.
+func TestAcquireCommandWorkspaceGatesExclusiveRefusesOnUnsupportedFilesystem(t *testing.T) {
+	resetGateTestEnv(t)
+	t.Cleanup(releaseWorkspaceGates)
+	beadsDir := newGateTestWorkspace(t)
+	injectUnsupportedGate(t, beadsDir)
+
+	backup := &cobra.Command{Use: "backup"}
+	restore := &cobra.Command{Use: "restore"}
+	backup.AddCommand(restore)
+	if !commandNeedsExclusiveGate(restore) {
+		t.Fatal("precondition: backup restore must be the chokepoint's exclusive command")
+	}
+
+	var err error
+	stderr := captureStderr(t, func() {
+		err = acquireCommandWorkspaceGates(context.Background(), restore, beadsDir)
+	})
+	if err == nil {
+		t.Fatal("backup restore must refuse to run on a filesystem that cannot lock")
+	}
+	// The chokepoint routes EXCLUSIVE failures through HandleErrorRespectJSON:
+	// the refusal is the printed message, and err is the CLI exit error.
+	if !strings.Contains(stderr, "does not support file locking") {
+		t.Errorf("stderr %q does not state the unsupported filesystem", stderr)
+	}
+	if strings.Contains(stderr, "a maintenance operation is running") {
+		t.Errorf("stderr %q claims a maintenance operation is running on a lockless filesystem", stderr)
+	}
+	if workspaceGateHandle != nil {
+		t.Error("refused exclusive acquisition must leave no gate handle")
+	}
+}
