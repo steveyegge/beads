@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -471,9 +470,9 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	collectSteps(f.Steps, protoID, idMapping, issueMap, &issues, &deps, nil) // nil = keep labels on issues
 
 	// Collect dependencies from depends_on using the idMapping built above
-	refMapping := gateRefMapping(f.Steps, idMapping)
+	exitGates := exitGateCompanions(f.Steps, idMapping)
 	for _, step := range f.Steps {
-		collectDependencies(step, idMapping, refMapping, &deps)
+		collectDependencies(step, idMapping, exitGates, &deps)
 	}
 
 	return &TemplateSubgraph{
@@ -1013,9 +1012,9 @@ func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula,
 	})
 
 	// Collect dependencies from depends_on
-	refMapping := gateRefMapping(f.Steps, idMapping)
+	exitGates := exitGateCompanions(f.Steps, idMapping)
 	for _, step := range f.Steps {
-		collectDependencies(step, idMapping, refMapping, &deps)
+		collectDependencies(step, idMapping, exitGates, &deps)
 	}
 
 	// Create issues, labels, and dependencies in a single atomic transaction.
@@ -1061,43 +1060,38 @@ func cookFormula(ctx context.Context, s storage.DoltStorage, f *formula.Formula,
 	}, nil
 }
 
-// gateRefMapping returns the step.ID → issue.ID mapping that depends_on,
-// needs, and waits_for targets resolve through. It is idMapping except that
-// a step declared type = "gate" with a Gate resolves to its companion gate,
-// so a step that references it waits for the gate to be resolved, not just
-// for the prep task to close (GH#3316). Returns idMapping itself when no
-// step needs retargeting.
-func gateRefMapping(steps []*formula.Step, idMapping map[string]string) map[string]string {
-	var refMapping map[string]string
+// exitGateCompanions returns step.ID → companion gate issue ID for every
+// step declared type = "gate" with a Gate (see isExitGateStep), or nil when
+// there is none. collectDependencies makes a step that references such a
+// step wait for both its task and its companion: gate check and resolve
+// close a gate without looking at its blockers, so the companion alone can
+// close while the task is still open (GH#3316).
+func exitGateCompanions(steps []*formula.Step, idMapping map[string]string) map[string]string {
+	var companions map[string]string
 	var walk func([]*formula.Step)
 	walk = func(steps []*formula.Step) {
 		for _, step := range steps {
 			if isExitGateStep(step) {
 				if gateIssueID, ok := idMapping["gate-"+step.ID]; ok {
-					if refMapping == nil {
-						refMapping = maps.Clone(idMapping)
+					if companions == nil {
+						companions = make(map[string]string)
 					}
-					refMapping[step.ID] = gateIssueID
+					companions[step.ID] = gateIssueID
 				}
 			}
 			walk(step.Children)
 		}
 	}
 	walk(steps)
-	if refMapping == nil {
-		return idMapping
-	}
-	return refMapping
+	return companions
 }
 
 // collectDependencies collects blocking dependencies from depends_on, needs, and waits_for fields.
 // This is the shared implementation used by both DB-persisted and in-memory subgraph cooking.
-// The dependent issue is looked up in idMapping; targets are looked up in
-// refMapping (see gateRefMapping; nil means idMapping).
-func collectDependencies(step *formula.Step, idMapping, refMapping map[string]string, deps *[]*types.Dependency) {
-	if refMapping == nil {
-		refMapping = idMapping
-	}
+// exitGates maps an exit-gate step's ID to its companion gate issue ID (see
+// exitGateCompanions; nil when the formula has none): a step that references
+// an exit-gate step also gets a blocks edge onto its companion.
+func collectDependencies(step *formula.Step, idMapping, exitGates map[string]string, deps *[]*types.Dependency) {
 	issueID := idMapping[step.ID]
 
 	// Pre-compute the waits_for spawner so we can dedupe against depends_on
@@ -1128,19 +1122,15 @@ func collectDependencies(step *formula.Step, idMapping, refMapping map[string]st
 	var waitsForCollapsedBlocks bool
 
 	// The waits_for spawner is compared by resolved issue ID, and blocks
-	// targets are emitted once each: after gateRefMapping, a gate-typed step
-	// S and its gate key gate-S resolve to the same companion, and storage
-	// rejects a second edge on the same pair.
+	// targets are emitted once each: a reference to an exit-gate step S adds
+	// S's companion, which the dependent may also list as gate-S, and
+	// storage rejects a second edge on the same pair.
 	var waitsForSpawnerIssueID string
 	if waitsForSpawnerStepID != "" {
-		waitsForSpawnerIssueID = refMapping[waitsForSpawnerStepID]
+		waitsForSpawnerIssueID = idMapping[waitsForSpawnerStepID]
 	}
 	blocksTargets := make(map[string]bool)
-	addBlocks := func(targetStepID string) {
-		targetIssueID, ok := refMapping[targetStepID]
-		if !ok {
-			return // Will be caught during validation
-		}
+	addBlocksEdge := func(targetIssueID string) {
 		if targetIssueID == waitsForSpawnerIssueID {
 			// This target is also the waits_for spawner; the DepWaitsFor edge
 			// emitted below subsumes the blocking semantics for this pair.
@@ -1158,6 +1148,18 @@ func collectDependencies(step *formula.Step, idMapping, refMapping map[string]st
 			Type:        types.DepBlocks,
 		})
 	}
+	addBlocks := func(targetStepID string) {
+		targetIssueID, ok := idMapping[targetStepID]
+		if !ok {
+			return // Will be caught during validation
+		}
+		addBlocksEdge(targetIssueID)
+		// A reference to an exit-gate step waits for its task and for its
+		// companion gate (GH#3316).
+		if gateIssueID, ok := exitGates[targetStepID]; ok {
+			addBlocksEdge(gateIssueID)
+		}
+	}
 
 	// Process depends_on field
 	for _, depID := range step.DependsOn {
@@ -1171,7 +1173,7 @@ func collectDependencies(step *formula.Step, idMapping, refMapping map[string]st
 
 	// Process waits_for field - fanout gate dependency
 	if waitsForSpec != nil && waitsForSpawnerStepID != "" {
-		if spawnerIssueID, ok := refMapping[waitsForSpawnerStepID]; ok {
+		if spawnerIssueID, ok := idMapping[waitsForSpawnerStepID]; ok {
 			// Spawner identity is the depends_on_id; metadata carries
 			// the gate. A collapsed needs/depends_on edge additionally marks
 			// also_blocks so the gate blocks while the spawner itself is
@@ -1186,12 +1188,18 @@ func collectDependencies(step *formula.Step, idMapping, refMapping map[string]st
 			if err == nil {
 				*deps = append(*deps, dep)
 			}
+			// An exit-gate spawner's children are bonded under its task,
+			// which the waits-for edge names; the waiter also waits for the
+			// companion gate (GH#3316).
+			if gateIssueID, ok := exitGates[waitsForSpawnerStepID]; ok {
+				addBlocksEdge(gateIssueID)
+			}
 		}
 	}
 
 	// Recursively handle children
 	for _, child := range step.Children {
-		collectDependencies(child, idMapping, refMapping, deps)
+		collectDependencies(child, idMapping, exitGates, deps)
 	}
 }
 

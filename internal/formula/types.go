@@ -272,7 +272,7 @@ type Step struct {
 	// (an entry-gate). Close the gate issue (bd close bd-xxx.gate-stepid) to
 	// unblock. If the step is declared type = "gate", the companion is an
 	// exit-gate instead: the step becomes a task that blocks the companion,
-	// and references to the step id resolve to the companion (GH#3316).
+	// and steps that reference the step id wait for both (GH#3316).
 	Gate *Gate `json:"gate,omitempty"`
 
 	// Loop defines iteration for this step.
@@ -299,7 +299,7 @@ type Step struct {
 // When a step has a Gate, bd cook creates a gate issue that blocks the step.
 // The gate must be closed (manually or via watchers) to unblock the step.
 // For a step declared type = "gate" the direction is reversed: the step's
-// task blocks the gate, and steps referencing the step wait on the gate.
+// task blocks the gate, and steps referencing the step wait on both.
 type Gate struct {
 	// Type is the condition type: gh:run, gh:pr, timer, human, mail.
 	Type string `json:"type"`

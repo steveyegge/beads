@@ -137,8 +137,8 @@ func TestFormulaPrimitiveExamples(t *testing.T) {
 				if hasBlockingDep(sg, "gate-typed.approve", gate.ID) {
 					t.Errorf("approve task must not block on its own gate; deps: %v", allDeps(sg))
 				}
-				if !hasBlockingDep(sg, "gate-typed.ship", gate.ID) {
-					t.Errorf("ship must block on gate %s, not only on the approve task; deps: %v", gate.ID, allDeps(sg))
+				if !hasBlockingDep(sg, "gate-typed.ship", gate.ID) || !hasBlockingDep(sg, "gate-typed.ship", "gate-typed.approve") {
+					t.Errorf("ship must block on both the approve task and gate %s; deps: %v", gate.ID, allDeps(sg))
 				}
 			},
 		},

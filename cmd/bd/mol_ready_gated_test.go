@@ -498,3 +498,100 @@ func TestFindGateReadyMolecules_ExitGateDownstream(t *testing.T) {
 		t.Errorf("ClosedGate = %+v, want %s", molecules[0].ClosedGate, gateID)
 	}
 }
+
+// pouredGateMolecule is a formula cooked and poured into a Dolt test store,
+// for walking its gate wiring through the store's ready computation.
+type pouredGateMolecule struct {
+	t      *testing.T
+	ctx    context.Context
+	store  *dolt.DoltStore
+	result *InstantiateResult
+}
+
+func pourGateMolecule(t *testing.T, ctx context.Context, store *dolt.DoltStore, name, src string) *pouredGateMolecule {
+	t.Helper()
+	sg := cookGateFormulaTOML(t, name, src)
+	result, err := spawnMolecule(ctx, store, sg, nil, "", "test", false, "")
+	if err != nil {
+		t.Fatalf("spawnMolecule: %v", err)
+	}
+	return &pouredGateMolecule{t: t, ctx: ctx, store: store, result: result}
+}
+
+// id returns the poured ID of a template issue ID.
+func (m *pouredGateMolecule) id(templateID string) string {
+	m.t.Helper()
+	newID, ok := m.result.IDMapping[templateID]
+	if !ok {
+		m.t.Fatalf("id mapping has no %s: %v", templateID, m.result.IDMapping)
+	}
+	return newID
+}
+
+func (m *pouredGateMolecule) ready() map[string]bool {
+	m.t.Helper()
+	issues, err := m.store.GetReadyWork(m.ctx, types.WorkFilter{})
+	if err != nil {
+		m.t.Fatalf("GetReadyWork: %v", err)
+	}
+	ids := make(map[string]bool, len(issues))
+	for _, i := range issues {
+		ids[i.ID] = true
+	}
+	return ids
+}
+
+// closeIssue closes an issue with the raw close bd gate check and bd gate
+// resolve use, which ignores the issue's open blockers.
+func (m *pouredGateMolecule) closeIssue(issueID string) {
+	m.t.Helper()
+	if err := m.store.CloseIssue(m.ctx, issueID, "done", "test", ""); err != nil {
+		m.t.Fatalf("CloseIssue(%s): %v", issueID, err)
+	}
+}
+
+// TestFindGateReadyMolecules_ExitGateClosedBeforeTask closes the companion
+// gate of the GH#3316 repro while the gate step's task is still open, as bd
+// gate check (an expired timer, a matched gh:run) and bd gate resolve can.
+// The step after the gate also waits for the task, so it stays blocked and
+// gate-resume discovery reports it only once the task closes.
+func TestFindGateReadyMolecules_ExitGateClosedBeforeTask(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupGatedTestDB(t)
+	defer cleanup()
+
+	mol := pourGateMolecule(t, ctx, store, "gate-repro", gateTypedReproTOML)
+	prepID, taskID := mol.id("gate-repro.prep"), mol.id("gate-repro.agree")
+	gateID, executeID := mol.id("gate-repro.gate-agree"), mol.id("gate-repro.execute")
+
+	mol.closeIssue(prepID)
+	mol.closeIssue(gateID)
+	if r := mol.ready(); r[executeID] || !r[taskID] {
+		t.Fatalf("after the gate %s closed with its task open: execute ready = %v, task ready = %v; want false, true", gateID, r[executeID], r[taskID])
+	}
+	molecules, err := findGateReadyMolecules(ctx, store)
+	if err != nil {
+		t.Fatalf("findGateReadyMolecules: %v", err)
+	}
+	if len(molecules) != 0 {
+		t.Fatalf("gate-ready molecules while the gate step's task %s is open = %d, want 0", taskID, len(molecules))
+	}
+
+	mol.closeIssue(taskID)
+	if r := mol.ready(); !r[executeID] {
+		t.Fatalf("execute %s not ready after both the task and the gate closed; ready: %v", executeID, r)
+	}
+	molecules, err = findGateReadyMolecules(ctx, store)
+	if err != nil {
+		t.Fatalf("findGateReadyMolecules: %v", err)
+	}
+	if len(molecules) != 1 {
+		t.Fatalf("gate-ready molecules = %d, want 1", len(molecules))
+	}
+	if molecules[0].ReadyStep == nil || molecules[0].ReadyStep.ID != executeID {
+		t.Errorf("ReadyStep = %+v, want %s", molecules[0].ReadyStep, executeID)
+	}
+	if molecules[0].ClosedGate == nil || molecules[0].ClosedGate.ID != gateID {
+		t.Errorf("ClosedGate = %+v, want %s", molecules[0].ClosedGate, gateID)
+	}
+}

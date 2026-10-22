@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/types"
@@ -262,8 +264,102 @@ gate = `+gateSrc+"\n")
 		if got := blocksTargets(t, taskID); len(got) != 1 || got[0] != protoID+".prep" {
 			t.Errorf("task blocks edges = %v, want only [%s.prep]", got, protoID)
 		}
-		if got := blocksTargets(t, protoID+".execute"); len(got) != 1 || got[0] != gateID {
-			t.Errorf("execute blocks edges = %v, want [%s]", got, gateID)
+		got := blocksTargets(t, protoID+".execute")
+		slices.Sort(got)
+		if want := []string{taskID, gateID}; !slices.Equal(got, want) {
+			t.Errorf("execute blocks edges = %v, want %v (the task and the gate)", got, want)
+		}
+	})
+}
+
+// gateFanTOML is a gate-typed step that spawns workers, followed by a fan-in
+// step; callers append the fan-in step's needs/waits_for lines (GH#3316).
+const gateFanTOML = `formula = "gate-fan"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "fanout"
+title = "Spawn workers for review"
+type = "gate"
+gate = { type = "human" }
+
+[[steps]]
+id = "summarize"
+title = "Summarize the workers"
+`
+
+// TestPourExitGateWaitsForSpawner pours a fan-in step whose waits_for
+// spawner is a gate-typed step and bonds workers under that step's task,
+// where dynamic children land (GH#3316). The waiter waits for those workers
+// and for the companion gate, whichever closes last.
+func TestPourExitGateWaitsForSpawner(t *testing.T) {
+	bondWorker := func(t *testing.T, mol *pouredGateMolecule, parentID, workerID string) {
+		t.Helper()
+		worker := &types.Issue{
+			ID:        workerID,
+			Title:     "Worker",
+			IssueType: types.TypeTask,
+			Status:    types.StatusOpen,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := mol.store.CreateIssue(mol.ctx, worker, "test"); err != nil {
+			t.Fatalf("CreateIssue(%s): %v", workerID, err)
+		}
+		if err := mol.store.AddDependency(mol.ctx, &types.Dependency{
+			IssueID: workerID, DependsOnID: parentID, Type: types.DepParentChild,
+		}, "test"); err != nil {
+			t.Fatalf("bond %s under %s: %v", workerID, parentID, err)
+		}
+	}
+
+	t.Run("children_of", func(t *testing.T) {
+		ctx := context.Background()
+		store := newTestStore(t, filepath.Join(t.TempDir(), "test.db"))
+		mol := pourGateMolecule(t, ctx, store, "gate-fan", gateFanTOML+`waits_for = "children-of(fanout)"`+"\n")
+		taskID, gateID, waiterID := mol.id("gate-fan.fanout"), mol.id("gate-fan.gate-fanout"), mol.id("gate-fan.summarize")
+
+		bondWorker(t, mol, taskID, "test-fanw1")
+		mol.closeIssue("test-fanw1")
+		if mol.ready()[waiterID] {
+			t.Fatalf("summarize %s is ready while the gate %s is open", waiterID, gateID)
+		}
+
+		bondWorker(t, mol, taskID, "test-fanw2")
+		mol.closeIssue(gateID)
+		if mol.ready()[waiterID] {
+			t.Fatalf("summarize %s is ready while worker test-fanw2 under the task %s is open", waiterID, taskID)
+		}
+
+		mol.closeIssue("test-fanw2")
+		if !mol.ready()[waiterID] {
+			t.Fatalf("summarize %s not ready after its workers and the gate %s closed", waiterID, gateID)
+		}
+	})
+
+	t.Run("needs_all_children", func(t *testing.T) {
+		ctx := context.Background()
+		store := newTestStore(t, filepath.Join(t.TempDir(), "test.db"))
+		mol := pourGateMolecule(t, ctx, store, "gate-fan", gateFanTOML+"needs = [\"fanout\"]\nwaits_for = \"all-children\"\n")
+		taskID, gateID, waiterID := mol.id("gate-fan.fanout"), mol.id("gate-fan.gate-fanout"), mol.id("gate-fan.summarize")
+
+		bondWorker(t, mol, taskID, "test-fanw1")
+		mol.closeIssue(gateID)
+		if mol.ready()[waiterID] {
+			t.Fatalf("summarize %s is ready while worker test-fanw1 under the task %s is open", waiterID, taskID)
+		}
+
+		// needs = ["fanout"] collapses into the waits-for edge (also_blocks),
+		// so the waiter also waits for the task itself.
+		mol.closeIssue("test-fanw1")
+		if mol.ready()[waiterID] {
+			t.Fatalf("summarize %s is ready while the task %s it needs is open", waiterID, taskID)
+		}
+
+		mol.closeIssue(taskID)
+		if !mol.ready()[waiterID] {
+			t.Fatalf("summarize %s not ready after the task, its worker and the gate %s closed", waiterID, gateID)
 		}
 	})
 }

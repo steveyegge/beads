@@ -116,8 +116,8 @@ warning.
 
 - **With a `[steps.gate]` block** (an exit-gate): the step becomes a `task`
   bead holding the preparation work, plus a companion `gate` bead that the
-  task blocks. Other steps that reference the step id wait on the companion,
-  so they run only after the gate is resolved.
+  task blocks. Other steps that reference the step id wait for both, so they
+  run only after the work is done and the gate is resolved.
 - **Without a `[steps.gate]` block**: the step becomes a single `gate` bead
   with no await condition. It is hidden from `bd ready` and is resolved by
   hand.
@@ -173,8 +173,8 @@ timeout = "1h"    # deploy waits until bd gate check closes the timer, 1h after 
 ```
 
 On a step declared `type = "gate"` it is an exit-gate: the step is the
-preparation work, and the gate opens for its decision once that work is
-done. Steps that reference it wait for the gate to be resolved.
+preparation work for the gate's decision, and its task blocks the gate.
+Steps that reference it wait for both that work and the gate.
 
 ```toml
 [[steps]]
@@ -188,7 +188,7 @@ type = "human"
 [[steps]]
 id = "deploy"
 title = "Deploy to production"
-needs = ["approval"]   # waits for bd gate resolve on the approval gate
+needs = ["approval"]   # waits for the prep task and for bd gate resolve
 ```
 
 ## Aspects (Cross-cutting)

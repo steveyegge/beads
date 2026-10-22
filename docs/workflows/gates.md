@@ -98,12 +98,17 @@ How the companion is wired depends on the step's own `type`:
 - **Entry-gate** (any step not declared `type = "gate"`): the gate blocks the
   step. The step's work starts after the gate resolves.
 - **Exit-gate** (a step declared `type = "gate"`): the step becomes a `task`
-  that blocks the gate. The task is the preparation work; once it closes,
-  the gate waits for its condition. A step that lists this step in
-  `depends_on`, `needs`, or `waits_for` waits on the gate, not on the task.
+  that holds the preparation work and blocks the gate. A step that lists
+  this step in `depends_on` or `needs` waits for both the task and the gate.
+  A `waits_for` on this step waits for the children bonded under the task,
+  and for the gate.
 
-Under either form, a `timer` gate's timeout and `gh:*` gate checks count
-from when the molecule is poured, not from when the gate's blockers close.
+`bd gate check` and `bd gate resolve` close a gate without waiting for its
+blockers, so an exit-gate can close while its task is still open; a step
+that lists the exit-gate step in `depends_on` or `needs` still waits for the
+task. Under either form, a `timer` gate's timeout and `gh:*` gate checks
+count from when the molecule is poured, not from when the gate's blockers
+close: a timer exit-gate's wait runs alongside its task, not after it.
 
 This is the release gate from beads' own release formula — the step that
 waits for the GitHub release workflow:
@@ -164,7 +169,7 @@ type = "human"
 [[steps]]
 id = "deploy"
 title = "Deploy"
-needs = ["approve-deploy"]   # waits for bd gate resolve on the approval gate
+needs = ["approve-deploy"]   # waits for the prep task and for bd gate resolve
 ```
 
 And a cooling-off timer:

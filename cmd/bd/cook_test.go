@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -985,8 +986,10 @@ func TestCookFormulaToSubgraph_GateTypedStep(t *testing.T) {
 		}
 	})
 
-	// AC-3: references to a gate-typed step resolve to its companion.
-	t.Run("references_resolve_to_companion", func(t *testing.T) {
+	// AC-3: a reference to a gate-typed step waits for its task and for its
+	// companion. The task edge holds the order when gate check or resolve
+	// closes the companion while the task is still open.
+	t.Run("references_wait_for_task_and_companion", func(t *testing.T) {
 		// Built in Go, not TOML: formula validation rejects "gate-s" as an
 		// unknown step id, but cookFormulaToSubgraph callers can still pass
 		// it, and it must not produce a duplicate edge.
@@ -1006,30 +1009,39 @@ func TestCookFormulaToSubgraph_GateTypedStep(t *testing.T) {
 		if err != nil {
 			t.Fatalf("cookFormulaToSubgraph: %v", err)
 		}
-		gateID := "gate-refs.gate-s"
+		taskID, gateID := "gate-refs.s", "gate-refs.gate-s"
+		want := []string{taskID, gateID}
 		for _, dependent := range []string{"by-depends-on", "by-needs", "by-both-ids"} {
-			if got := blocksEdgesFrom(sg, "gate-refs."+dependent); len(got) != 1 || got[0] != gateID {
-				t.Errorf("%s blocks edges = %v, want exactly [%s]", dependent, got, gateID)
+			if got := blocksEdgesFrom(sg, "gate-refs."+dependent); !slices.Equal(got, want) {
+				t.Errorf("%s blocks edges = %v, want exactly %v", dependent, got, want)
 			}
 		}
 		if got := blocksEdgesFrom(sg, "gate-refs.unrelated"); len(got) != 0 {
 			t.Errorf("unrelated blocks edges = %v, want none", got)
 		}
-		var blockersOfGate []string
-		for _, d := range sg.Dependencies {
-			if d.DependsOnID == gateID && d.Type == types.DepBlocks {
-				blockersOfGate = append(blockersOfGate, d.IssueID)
+		blockedBy := func(targetID string) []string {
+			var out []string
+			for _, d := range sg.Dependencies {
+				if d.DependsOnID == targetID && d.Type == types.DepBlocks {
+					out = append(out, d.IssueID)
+				}
 			}
+			return out
 		}
-		if len(blockersOfGate) != 3 {
-			t.Errorf("issues blocked by the companion = %v, want the three referencing steps", blockersOfGate)
+		if got := blockedBy(gateID); len(got) != 3 {
+			t.Errorf("issues blocked by the companion = %v, want the three referencing steps", got)
+		}
+		// The three referencing steps, plus the companion itself.
+		if got := blockedBy(taskID); len(got) != 4 || !slices.Contains(got, gateID) {
+			t.Errorf("issues blocked by the task = %v, want the companion and the three referencing steps", got)
 		}
 	})
 
 	t.Run("issue_repro_downstream", func(t *testing.T) {
 		sg := cookGateFormulaTOML(t, "gate-repro", gateTypedReproTOML)
-		if got := blocksEdgesFrom(sg, "gate-repro.execute"); len(got) != 1 || got[0] != "gate-repro.gate-agree" {
-			t.Errorf("execute blocks edges = %v, want [gate-repro.gate-agree]", got)
+		want := []string{"gate-repro.agree", "gate-repro.gate-agree"}
+		if got := blocksEdgesFrom(sg, "gate-repro.execute"); !slices.Equal(got, want) {
+			t.Errorf("execute blocks edges = %v, want %v", got, want)
 		}
 	})
 
@@ -1060,8 +1072,8 @@ needs = ["review"]
 		if got := blocksEdgesFrom(sg, gateID); len(got) != 1 || got[0] != taskID {
 			t.Errorf("companion blocks edges = %v, want [%s]", got, taskID)
 		}
-		if got := blocksEdgesFrom(sg, "gate-child.phase.apply"); len(got) != 1 || got[0] != gateID {
-			t.Errorf("apply blocks edges = %v, want [%s]", got, gateID)
+		if got, want := blocksEdgesFrom(sg, "gate-child.phase.apply"), []string{taskID, gateID}; !slices.Equal(got, want) {
+			t.Errorf("apply blocks edges = %v, want %v", got, want)
 		}
 	})
 
@@ -1097,11 +1109,59 @@ needs = ["review"]
 			if got := blocksEdgesFrom(sg, gateID); len(got) != 1 || got[0] != taskID {
 				t.Errorf("companion blocks edges = %v, want [%s]", got, taskID)
 			}
-			if got := blocksEdgesFrom(sg, "gate-loop.round."+iter+".apply"); len(got) != 1 || got[0] != gateID {
-				t.Errorf("%s apply blocks edges = %v, want [%s]; deps %v", iter, got, gateID, allDeps(sg))
+			if got, want := blocksEdgesFrom(sg, "gate-loop.round."+iter+".apply"), []string{taskID, gateID}; !slices.Equal(got, want) {
+				t.Errorf("%s apply blocks edges = %v, want %v; deps %v", iter, got, want, allDeps(sg))
 			}
 		}
 	})
+
+	// A waits_for spawner that is a gate-typed step resolves to its task,
+	// where the fanout's children are bonded; the waiter also blocks on the
+	// companion. A collapsed needs entry keeps also_blocks on the task edge.
+	for name, tc := range map[string]struct {
+		waiter     string
+		alsoBlocks bool
+	}{
+		"children_of":        {waiter: `waits_for = "children-of(fanout)"`},
+		"needs_all_children": {waiter: "needs = [\"fanout\"]\nwaits_for = \"all-children\"", alsoBlocks: true},
+	} {
+		t.Run("waits_for_spawner/"+name, func(t *testing.T) {
+			sg := cookGateFormulaTOML(t, "gate-fan", `formula = "gate-fan"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "fanout"
+title = "Spawn workers for review"
+type = "gate"
+gate = { type = "human" }
+
+[[steps]]
+id = "summarize"
+title = "Summarize the workers"
+`+tc.waiter+"\n")
+			taskID, gateID, waiterID := "gate-fan.fanout", "gate-fan.gate-fanout", "gate-fan.summarize"
+			var waitsFor []*types.Dependency
+			for _, d := range sg.Dependencies {
+				if d.IssueID == waiterID && d.Type == types.DepWaitsFor {
+					waitsFor = append(waitsFor, d)
+				}
+			}
+			if len(waitsFor) != 1 || waitsFor[0].DependsOnID != taskID {
+				t.Fatalf("summarize needs one waits-for edge onto the task %s; deps %v", taskID, allDeps(sg))
+			}
+			var meta types.WaitsForMeta
+			if err := json.Unmarshal([]byte(waitsFor[0].Metadata), &meta); err != nil {
+				t.Fatalf("waits-for metadata %q: %v", waitsFor[0].Metadata, err)
+			}
+			if meta.AlsoBlocks != tc.alsoBlocks {
+				t.Errorf("waits-for also_blocks = %v, want %v (metadata %s)", meta.AlsoBlocks, tc.alsoBlocks, waitsFor[0].Metadata)
+			}
+			if got, want := blocksEdgesFrom(sg, waiterID), []string{gateID}; !slices.Equal(got, want) {
+				t.Errorf("summarize blocks edges = %v, want %v", got, want)
+			}
+		})
+	}
 
 	// AC-6: the companion carries the gate's await fields and repo selector;
 	// the task keeps the step's own metadata.
