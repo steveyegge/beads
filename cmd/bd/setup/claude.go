@@ -480,10 +480,15 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	sharedProject := !global && !claudeProjectIsUserLevelDir(env)
 	atHome := sharedProject && claudeProjectIsHome(env)
 	var shared beadsPluginState
+	rootHook := ""
 	if sharedProject {
 		shared = sharedBeadsPlugin(env)
+		rootHook = rootLocalPrimeHook(env)
 	}
-	offForYou := false
+	// keepLocal keeps a bd prime hook in this directory's local settings,
+	// since none is added in its place; pluginManaged removes it, since the
+	// plugin runs bd prime here instead.
+	offForYou, keepLocal, pluginManaged := false, false, false
 	switch {
 	case plugin.enabled && sharedProject && sweptSessionStart && !shared.enabled:
 		// The plugin is enabled for this user alone, and the shared project
@@ -498,13 +503,25 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 			_, _ = fmt.Fprintf(env.stdout, "✓ Registered SessionStart hook in place of the old one: the beads plugin is enabled only in %s, and %s\n", plugin.path, needed)
 		}
 	case plugin.enabled:
+		pluginManaged = true
 		_, _ = fmt.Fprintf(env.stdout, "✓ Beads plugin enabled in %s — hooks are plugin-managed, skipping\n", plugin.path)
 	case shared.enabled:
 		// Only this user's own settings turn off a plugin the shared
 		// settings enable. A hook in the shared file would make every
 		// teammate with the plugin run bd prime twice (GH#3192), so none
-		// is added; this is reported below, once the settings are written.
-		offForYou = true
+		// is added and a local hook stays; this is reported below, once the
+		// settings are written.
+		offForYou, keepLocal = true, true
+	case rootHook != "":
+		// Claude Code loads the repository root's local settings in every
+		// session started in the repository, so their hook, typically the
+		// bare bd prime an older install wrote there, already runs bd prime
+		// here, and a second hook in this directory's settings would run
+		// beside it. A hook in this directory's local settings stays: when
+		// it runs a different command from the root's, the double-run
+		// warning below names the one to remove.
+		keepLocal = true
+		_, _ = fmt.Fprintf(env.stdout, "✓ bd prime already runs here from the hook in %s — skipping\n", rootHook)
 	default:
 		if addHookCommand(hooks, "SessionStart", command) {
 			_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
@@ -535,26 +552,16 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	}
 
 	// Migrate legacy hooks: remove beads hooks from settings.local.json if
-	// present. When the plugin is off for this user alone the hook cannot
-	// move to the shared file, so it stays.
-	if !global && !offForYou {
+	// present. The settings written above now run bd prime here, or the
+	// plugin does (pluginManaged); when neither does, the hook stays
+	// (keepLocal).
+	if !global && !keepLocal {
 		legacyPath := legacyProjectSettingsPath(env.projectDir)
-		if hasBeadsHooks(legacyPath) {
-			if legacyData, readErr := env.readFile(legacyPath); readErr == nil {
-				var legacySettings map[string]interface{}
-				if json.Unmarshal(legacyData, &legacySettings) == nil {
-					if legacyHooks, ok := legacySettings["hooks"].(map[string]interface{}); ok {
-						for _, v := range []string{"bd prime", "bd prime --stealth", "bd prime --hook-json", "bd prime --stealth --hook-json"} {
-							removeHookCommand(env.stdout, legacyHooks, "SessionStart", v)
-							removeHookCommand(env.stdout, legacyHooks, "PreCompact", v)
-						}
-						if migrated, marshalErr := marshalSettings(legacySettings); marshalErr == nil {
-							if writeErr := writeSettingsIfChanged(env, legacyPath, migrated); writeErr == nil {
-								_, _ = fmt.Fprintf(env.stdout, "✓ Migrated hooks from %s\n", legacyPath)
-							}
-						}
-					}
-				}
+		if removeLocalClaudeHooks(env, legacyPath) {
+			if pluginManaged {
+				_, _ = fmt.Fprintf(env.stdout, "✓ Removed bd prime hooks from %s: the beads plugin runs bd prime here\n", legacyPath)
+			} else {
+				_, _ = fmt.Fprintf(env.stdout, "✓ Migrated hooks from %s\n", legacyPath)
 			}
 		}
 	}
@@ -647,13 +654,11 @@ func claudeSettingsUsesRemovedSyncCommand(data []byte) bool {
 	return false
 }
 
+// warnIfClaudeHooksUseRemovedSync warns about each settings file Claude Code
+// loads hooks from here, the project's (claudeProjectHookPaths) and the
+// global one, that has a hook running the removed bd sync.
 func warnIfClaudeHooksUseRemovedSync(env claudeEnv) {
-	paths := []string{
-		projectSettingsPath(env.projectDir),
-		globalSettingsPath(env.homeDir),
-		legacyProjectSettingsPath(env.projectDir),
-	}
-	for _, p := range paths {
+	for _, p := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
 		data, err := env.readFile(p)
 		if err != nil {
 			continue
@@ -703,9 +708,13 @@ func checkClaude(env claudeEnv) error {
 		userLevelHooks = true
 	case localHook != "":
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", localHook)
-		// A project install migrates only the current directory's file,
-		// and keeps it when the plugin is off for this user alone.
-		if localHook == legacySettings && (plugin.enabled || claudeProjectIsUserLevelDir(env) || !sharedBeadsPlugin(env).enabled) {
+		// A project install moves only the current directory's file, and
+		// only when it adds a hook in its place: with the plugin on it
+		// removes the hook, which the double-run warning below names, and it
+		// keeps the hook when the plugin is off for this user alone or the
+		// repository root's local hook runs bd prime here.
+		keepsLocal := !claudeProjectIsUserLevelDir(env) && (sharedBeadsPlugin(env).enabled || rootLocalPrimeHook(env) != "")
+		if localHook == legacySettings && !plugin.enabled && !keepsLocal {
 			_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
 		}
 	case plugin.enabled:
@@ -750,10 +759,13 @@ func checkClaude(env claudeEnv) error {
 // Claude Code runs a plugin's hook beside a settings file's, even an
 // identical one, so bd prime runs twice per session (GH#3192). A global
 // install from a project whose own settings enable the plugin leaves it so:
-// its hook is for every other project, where the plugin does not run.
+// its hook is for every other project, where the plugin does not run. With
+// the plugin off here, it reports two project settings hooks that differ
+// (warnIfSettingsHooksRunPrimeTwice).
 func warnIfPrimeRunsTwice(env claudeEnv) {
 	plugin := beadsPlugin(env, false)
 	if !plugin.enabled {
+		warnIfSettingsHooksRunPrimeTwice(env)
 		return
 	}
 	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
@@ -762,6 +774,40 @@ func warnIfPrimeRunsTwice(env claudeEnv) {
 			_, _ = fmt.Fprintf(env.stdout, "  Both the beads plugin (enabled in %s) and the hook in %s run it\n", plugin.path, path)
 			_, _ = fmt.Fprintf(env.stdout, "  To run it once: %s\n", primeTwiceRemedy(env, path))
 			return
+		}
+	}
+}
+
+// warnIfSettingsHooksRunPrimeTwice reports two of the project's settings
+// files Claude Code loads hooks from here (claudeProjectHookPaths) whose bd
+// prime hooks differ, such as an older bare bd prime in the repository
+// root's local settings beside a project install's current hook. Claude Code
+// runs a hook defined in several settings files once, but each different one
+// runs. The remedy keeps the project's shared hook, which teammates rely on,
+// and, of the two local files, the repository root's, which Claude Code
+// v2.1.211 and later uses, over one an older version left in this directory.
+func warnIfSettingsHooksRunPrimeTwice(env claudeEnv) {
+	first := ""
+	seen := map[string]bool{}
+	for _, path := range claudeProjectHookPaths(env) {
+		commands := primeHookCommands(path)
+		for _, command := range commands {
+			if first != "" && !seen[command] {
+				extra := path
+				if first == legacyProjectSettingsPath(env.projectDir) {
+					extra = first
+				}
+				_, _ = fmt.Fprintln(env.stdout, "⚠ bd prime runs twice per session here")
+				_, _ = fmt.Fprintf(env.stdout, "  The hooks in %s and %s run different bd prime commands, and Claude Code runs both\n", first, path)
+				_, _ = fmt.Fprintf(env.stdout, "  To run it once: remove the bd prime hook from %s\n", extra)
+				return
+			}
+		}
+		for _, command := range commands {
+			seen[command] = true
+		}
+		if first == "" && len(commands) > 0 {
+			first = path
 		}
 	}
 }
@@ -860,10 +906,36 @@ func primeHookHere(env claudeEnv) string {
 // settings beside it and the local settings at the repository root.
 func claudeProjectHookPaths(env claudeEnv) []string {
 	paths := []string{projectSettingsPath(env.projectDir), legacyProjectSettingsPath(env.projectDir)}
-	if env.localSettingsRoot != "" && !sameDir(env.localSettingsRoot, env.projectDir) {
-		paths = append(paths, legacyProjectSettingsPath(env.localSettingsRoot))
+	if root := rootLocalSettingsPath(env); root != "" {
+		paths = append(paths, root)
 	}
 	return paths
+}
+
+// rootLocalSettingsPath returns the repository root's
+// .claude/settings.local.json when Claude Code reads it here as well as the
+// one beside .claude/settings.json (see claudeLocalSettingsRoot), and ""
+// when they are the same file or Claude Code reads no root file.
+func rootLocalSettingsPath(env claudeEnv) string {
+	if env.localSettingsRoot == "" || sameDir(env.localSettingsRoot, env.projectDir) {
+		return ""
+	}
+	return legacyProjectSettingsPath(env.localSettingsRoot)
+}
+
+// rootLocalPrimeHook returns the repository root's local settings
+// (rootLocalSettingsPath) when they have a bd prime hook and the project's
+// .claude/settings.json has none, and "" otherwise. Claude Code loads that
+// file in every session started in the repository, so from a subdirectory
+// or linked worktree its hook already runs bd prime and a project install
+// adds none of its own. A hook already in the project's settings stays, or
+// is replaced when it is an older bare one: teammates rely on it.
+func rootLocalPrimeHook(env claudeEnv) string {
+	root := rootLocalSettingsPath(env)
+	if root == "" || !hasBeadsHooks(root) || hasBeadsHooks(projectSettingsPath(env.projectDir)) {
+		return ""
+	}
+	return root
 }
 
 func RemoveClaude(global bool) error {
@@ -986,27 +1058,46 @@ func removeClaudeHooks(env claudeEnv, settingsPath string) error {
 	return nil
 }
 
-// removeLegacyClaudeHooks removes the bd prime hooks older installs left in
-// the project's .claude/settings.local.json. Like removeClaudeHooks it writes
-// the file only when it removed a hook. It is best effort: a file that is
-// missing, does not parse or cannot be written is left as it is.
+// removeLegacyClaudeHooks removes the bd prime hooks from the local settings
+// Claude Code loads hooks from here (claudeProjectHookPaths): the project's
+// .claude/settings.local.json, where older installs wrote them, and the
+// repository root's, so that a hook there does not outlive the removal. It
+// names each file it removed them from.
 func removeLegacyClaudeHooks(env claudeEnv) {
-	legacyPath := legacyProjectSettingsPath(env.projectDir)
+	for _, legacyPath := range claudeProjectHookPaths(env)[1:] {
+		if removeLocalClaudeHooks(env, legacyPath) {
+			_, _ = fmt.Fprintf(env.stdout, "✓ Removed bd prime hooks from %s\n", legacyPath)
+		}
+	}
+}
+
+// removeLocalClaudeHooks removes the bd prime hooks from the local settings
+// file at legacyPath and reports whether it did. Like removeClaudeHooks it
+// writes the file only when it removed a hook. It is best effort: a file
+// that is missing or does not parse is left as it is, and so is one that
+// cannot be written, with a warning that names it.
+func removeLocalClaudeHooks(env claudeEnv, legacyPath string) bool {
 	legacyData, err := env.readFile(legacyPath)
 	if err != nil {
-		return
+		return false
 	}
 	var legacySettings map[string]interface{}
 	if json.Unmarshal(legacyData, &legacySettings) != nil {
-		return
+		return false
 	}
 	legacyHooks, ok := legacySettings["hooks"].(map[string]interface{})
 	if !ok || !removeBdPrimeHooks(env.stdout, legacyHooks) {
-		return
+		return false
 	}
-	if migrated, err := marshalSettings(legacySettings); err == nil {
-		_ = writeSettingsIfChanged(env, legacyPath, migrated)
+	migrated, err := marshalSettings(legacySettings)
+	if err == nil {
+		err = writeSettingsIfChanged(env, legacyPath, migrated)
 	}
+	if err != nil {
+		_, _ = fmt.Fprintf(env.stderr, "Warning: failed to remove bd prime hooks from %s: %v\n", legacyPath, err)
+		return false
+	}
+	return true
 }
 
 // removeBdPrimeHooks removes every bd prime variant from the SessionStart and
@@ -1172,8 +1263,8 @@ func beadsPlugin(env claudeEnv, global bool) beadsPluginState {
 func claudePluginSettingsPaths(env claudeEnv, global bool) []string {
 	paths := claudeManagedSettingsPaths(env.managedDir)
 	if !global {
-		if env.localSettingsRoot != "" && !sameDir(env.localSettingsRoot, env.projectDir) {
-			paths = append(paths, legacyProjectSettingsPath(env.localSettingsRoot))
+		if root := rootLocalSettingsPath(env); root != "" {
+			paths = append(paths, root)
 		}
 		paths = append(paths, legacyProjectSettingsPath(env.projectDir), projectSettingsPath(env.projectDir))
 	}
@@ -1271,22 +1362,29 @@ func beadsPluginEntries(readFile func(string) ([]byte, error), path string) map[
 
 // hasBeadsHooks checks if a settings file has bd prime hooks
 func hasBeadsHooks(settingsPath string) bool {
+	return len(primeHookCommands(settingsPath)) > 0
+}
+
+// primeHookCommands returns the bd prime commands a settings file's
+// SessionStart and PreCompact hooks run.
+func primeHookCommands(settingsPath string) []string {
 	data, err := os.ReadFile(settingsPath) // #nosec G304 -- settingsPath is constructed from known safe locations (user home/.claude), not user input
 	if err != nil {
-		return false
+		return nil
 	}
 
 	var settings map[string]interface{}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return false
+		return nil
 	}
 
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
-		return false
+		return nil
 	}
 
 	// Check SessionStart and PreCompact for "bd prime"
+	var primeCommands []string
 	for _, event := range []string{"SessionStart", "PreCompact"} {
 		eventHooks, ok := hooks[event].([]interface{})
 		if !ok {
@@ -1308,14 +1406,14 @@ func hasBeadsHooks(settingsPath string) bool {
 					continue
 				}
 				// Recognize both current (--hook-json) and legacy bare variants.
-				switch cmdMap["command"] {
+				switch command, _ := cmdMap["command"].(string); command {
 				case "bd prime", "bd prime --stealth",
 					"bd prime --hook-json", "bd prime --stealth --hook-json":
-					return true
+					primeCommands = append(primeCommands, command)
 				}
 			}
 		}
 	}
 
-	return false
+	return primeCommands
 }

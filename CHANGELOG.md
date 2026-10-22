@@ -1256,7 +1256,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd prime` twice, and keeps a `bd prime` hook in your
   `.claude/settings.local.json` instead of migrating it there. It names the
   hook that already runs `bd prime` for you; when none does, it, `--global`
-  and `--check` name how to run `bd prime` for yourself.
+  and `--check` name how to run `bd prime` for yourself. Run in a
+  subdirectory or linked worktree, a project install adds no hook beside a
+  `bd prime` hook in the repository root's `.claude/settings.local.json`,
+  which Claude Code loads there, unless the project's `.claude/settings.json`
+  already has one, and keeps a hook in the current directory's own
+  `.claude/settings.local.json`. `--remove` removes the hook from the root's
+  file too, and `--check` warns about a removed `bd sync` hook in that file
+  as well. When an install or `--remove` cannot rewrite a
+  `.claude/settings.local.json` it takes a `bd prime` hook out of, such as a
+  symlinked one, it warns and names the file. `bd setup claude` and `--check`
+  also warn when two of the project's settings files run different `bd prime`
+  commands, which Claude Code runs both of. `--check` suggests migrating a
+  hook in `.claude/settings.local.json` only when `bd setup claude` would move
+  it to `.claude/settings.json`, and an install that leaves the hooks to the
+  plugin says it removed such a hook because the plugin runs `bd prime`,
+  rather than reporting a migration. bd assumes the managed settings files are
+  in force: it cannot see server-managed settings or an MDM profile, under
+  which Claude Code ignores those files by default.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query
