@@ -568,10 +568,32 @@ func mirrorIntoWispDependencies(t *testing.T, store *DoltStore, src, target stri
 	}
 }
 
+// requireEdgeCounts asserts CountDependents(mr-epic) and
+// CountDependencies(mr-c01) equal the listings above. `bd show` prints
+// count - len(listing) as edges "whose far end has no row", and --json
+// publishes the counts, so a count that sums a mirrored edge twice reports a
+// phantom unresolvable dependent.
+func requireEdgeCounts(t *testing.T, store *DoltStore, wantDependents int64) {
+	t.Helper()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	if n, err := store.CountDependents(ctx, "mr-epic"); err != nil {
+		t.Fatalf("CountDependents(mr-epic): %v", err)
+	} else if n != wantDependents {
+		t.Fatalf("CountDependents(mr-epic) = %d, want %d (each far end once)", n, wantDependents)
+	}
+	if n, err := store.CountDependencies(ctx, "mr-c01"); err != nil {
+		t.Fatalf("CountDependencies(mr-c01): %v", err)
+	} else if n != 1 {
+		t.Fatalf("CountDependencies(mr-c01) = %d, want 1 (its epic once)", n)
+	}
+}
+
 // TestDependentsReadEachMirroredEdgeOnce reproduces GH#3445's third state: an
 // edge stored in both dependency tables is one edge, so `bd show <epic>` lists
 // each child once (not twice, which also doubled the progress rollup), with the
-// durable row's type when the mirror's type conflicts.
+// durable row's type when the mirror's type conflicts, and counts it once.
 func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -589,6 +611,7 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	}
 	requireEpicChildren(t, got)
 	requireEdgeReadsOnce(t, store, 2)
+	requireEdgeCounts(t, store, 2)
 
 	// A genuine wisp-only dependent (its edge lives only in wisp_dependencies)
 	// is still read, after the durable rows.
@@ -611,4 +634,5 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	}
 	requireEpicChildren(t, got[:2])
 	requireEdgeReadsOnce(t, store, 3)
+	requireEdgeCounts(t, store, 3)
 }
