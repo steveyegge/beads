@@ -2831,45 +2831,124 @@ func TestInstallClaudeOffForYouNamesTheHookThatRuns(t *testing.T) {
 	}
 }
 
-// TestInstallClaudeFromHomeTreatsSettingsAsPersonal pins a project install
-// from the home directory, where the project's .claude/settings.json is the
-// user's own: with the plugin enabled there and turned off in
-// ~/.claude/settings.local.json, nothing is shared with teammates, so the
-// install registers the hook, and --check, which names the change that
-// makes bd prime run here rather than a global install that would leave
-// the hooks to the plugin, then passes.
-func TestInstallClaudeFromHomeTreatsSettingsAsPersonal(t *testing.T) {
+// TestInstallClaudeFromHomeTreatsSettingsAsShared pins a project install
+// from the home directory, where the project's .claude/settings.json is
+// ~/.claude/settings.json, which every other project loads. Those projects
+// take the teammates' place: with the plugin enabled there and turned off in
+// ~/.claude/settings.local.json, the install adds no hook there, which would
+// make every other project run bd prime twice, keeps a hook already in
+// ~/.claude/settings.local.json, and names the remedy --check names. With
+// the plugin enabled only in ~/.claude/settings.local.json, an older bare
+// global hook is replaced, since the other projects still need it.
+func TestInstallClaudeFromHomeTreatsSettingsAsShared(t *testing.T) {
 	stubDetectRenderOpts(t)
-	env, stdout, _ := newClaudeTestEnv(t)
-	env.projectDir = env.homeDir
-	writeSettings(t, globalSettingsPath(env.homeDir), settingsWithPlugin())
-	local := legacyProjectSettingsPath(env.homeDir)
-	writeSettings(t, local, settingsWithPluginSetTo(false))
-
-	if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
-		t.Fatalf("--check should report missing hooks, got %v:\n%s", err, stdout.String())
-	}
-	if want := "  To run bd prime here: enable the plugin in " + local + "\n"; !strings.Contains(stdout.String(), want) {
-		t.Errorf("want %q, got:\n%s", want, stdout.String())
-	}
-	if strings.Contains(stdout.String(), "Run: bd setup claude --global") || strings.Contains(stdout.String(), "off for you") {
-		t.Errorf("--check from home named a remedy that changes nothing there:\n%s", stdout.String())
+	primeHook := func() map[string]interface{} {
+		hooks := map[string]interface{}{}
+		addHookCommand(hooks, "SessionStart", "bd prime --hook-json")
+		return hooks
 	}
 
-	stdout.Reset()
-	if err := installClaude(env, false, false); err != nil {
-		t.Fatalf("installClaude: %v", err)
-	}
-	if strings.Contains(stdout.String(), "off for you") {
-		t.Errorf("install from home treated the user settings as shared:\n%s", stdout.String())
-	}
-	if !hasBeadsHooks(globalSettingsPath(env.homeDir)) {
-		t.Errorf("install from home registered no hook:\n%s", stdout.String())
-	}
-	stdout.Reset()
-	if err := checkClaude(env); err != nil {
-		t.Fatalf("--check after the install: %v\n%s", err, stdout.String())
-	}
+	t.Run("plugin off for you, no hook", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		global := globalSettingsPath(env.homeDir)
+		local := legacyProjectSettingsPath(env.homeDir)
+		writeSettings(t, global, settingsWithPlugin())
+		writeSettings(t, local, settingsWithPluginSetTo(false))
+
+		remedy := "  To run bd prime here: enable the plugin in " + local + "\n"
+		if err := checkClaude(env); !errors.Is(err, errClaudeHooksMissing) {
+			t.Fatalf("--check should report missing hooks, got %v:\n%s", err, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), remedy) {
+			t.Errorf("want %q, got:\n%s", remedy, stdout.String())
+		}
+		if strings.Contains(stdout.String(), "Run: bd setup claude --global") {
+			t.Errorf("--check from home named a remedy that changes nothing there:\n%s", stdout.String())
+		}
+
+		stdout.Reset()
+		if err := installClaude(env, false, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		out := stdout.String()
+		if hasBeadsHooks(global) {
+			t.Errorf("install from home put a hook in %s, which every other project loads:\n%s", global, out)
+		}
+		want := "⚠ The beads plugin is off for you (" + local + ") but on in every project through " + global +
+			", so bd adds no hook there: those projects would run bd prime twice\n" + remedy
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q, got:\n%s", want, out)
+		}
+		if strings.Contains(out, "teammates") || strings.Contains(out, "Registered") {
+			t.Errorf("install from home misdescribed the shared settings:\n%s", out)
+		}
+	})
+
+	t.Run("plugin off for you, local hook", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		global := globalSettingsPath(env.homeDir)
+		local := legacyProjectSettingsPath(env.homeDir)
+		writeSettings(t, global, settingsWithPlugin())
+		localSettings := settingsWithPluginSetTo(false)
+		localSettings["hooks"] = primeHook()
+		writeSettings(t, local, localSettings)
+
+		if err := checkClaude(env); errors.Is(err, errClaudeHooksMissing) {
+			t.Fatalf("--check reported missing hooks:\n%s", stdout.String())
+		}
+		if strings.Contains(stdout.String(), "migrate") {
+			t.Errorf("--check suggested moving the hook into %s:\n%s", global, stdout.String())
+		}
+
+		stdout.Reset()
+		if err := installClaude(env, false, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		out := stdout.String()
+		if hasBeadsHooks(global) {
+			t.Errorf("install from home put a hook in %s:\n%s", global, out)
+		}
+		if !hasBeadsHooks(local) {
+			t.Errorf("install from home dropped the hook in %s:\n%s", local, out)
+		}
+		want := "✓ The beads plugin is off for you (" + local + "); bd prime runs here from the hook in " + local + "\n"
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q, got:\n%s", want, out)
+		}
+		if strings.Contains(out, "Migrated") || strings.Contains(out, "⚠") {
+			t.Errorf("install from home did more than name the hook:\n%s", out)
+		}
+	})
+
+	t.Run("plugin enabled only locally, old global hook", func(t *testing.T) {
+		env, stdout, _ := newClaudeTestEnv(t)
+		env.projectDir = env.homeDir
+		global := globalSettingsPath(env.homeDir)
+		local := legacyProjectSettingsPath(env.homeDir)
+		hooks := map[string]interface{}{}
+		addHookCommand(hooks, "SessionStart", "bd prime")
+		writeSettings(t, global, map[string]interface{}{"hooks": hooks})
+		writeSettings(t, local, settingsWithPlugin())
+
+		if err := installClaude(env, false, false); err != nil {
+			t.Fatalf("installClaude: %v", err)
+		}
+		out := stdout.String()
+		data, err := os.ReadFile(global)
+		if err != nil {
+			t.Fatalf("read global settings: %v", err)
+		}
+		if strings.Contains(string(data), `"bd prime"`) || !strings.Contains(string(data), "bd prime --hook-json") {
+			t.Errorf("%s should hold the current hook in place of the old one:\n%s\n%s", global, data, out)
+		}
+		want := "✓ Registered SessionStart hook in place of the old one: the beads plugin is enabled only in " + local +
+			", and your other projects still need the hook\n"
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q, got:\n%s", want, out)
+		}
+	})
 }
 
 // TestCheckClaudeFindsTheRootLocalHook pins that --check, run from a

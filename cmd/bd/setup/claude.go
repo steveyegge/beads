@@ -474,8 +474,11 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 	plugin := beadsPlugin(env, global)
 	// Whether teammates get the plugin is decided by the settings they
 	// share, not by the file that decided it for this user. From the home
-	// directory or ~/.claude the project's settings are the user's own.
-	sharedProject := !global && !claudeProjectIsHome(env) && !claudeProjectIsUserLevelDir(env)
+	// directory the project's settings are ~/.claude/settings.json, which
+	// every other project loads, so those projects take the teammates'
+	// place. From ~/.claude the project's settings are the user's own.
+	sharedProject := !global && !claudeProjectIsUserLevelDir(env)
+	atHome := sharedProject && claudeProjectIsHome(env)
 	var shared beadsPluginState
 	if sharedProject {
 		shared = sharedBeadsPlugin(env)
@@ -488,7 +491,11 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 		// plugin rely on. Replace it rather than drop it; the double run
 		// this leaves for this user is reported below.
 		if addHookCommand(hooks, "SessionStart", command) {
-			_, _ = fmt.Fprintf(env.stdout, "✓ Registered SessionStart hook in place of the old one: the beads plugin is enabled only in %s, and teammates without it still need the hook\n", plugin.path)
+			needed := "teammates without it still need the hook"
+			if atHome {
+				needed = "your other projects still need the hook"
+			}
+			_, _ = fmt.Fprintf(env.stdout, "✓ Registered SessionStart hook in place of the old one: the beads plugin is enabled only in %s, and %s\n", plugin.path, needed)
 		}
 	case plugin.enabled:
 		_, _ = fmt.Fprintf(env.stdout, "✓ Beads plugin enabled in %s — hooks are plugin-managed, skipping\n", plugin.path)
@@ -698,7 +705,7 @@ func checkClaude(env claudeEnv) error {
 		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed (legacy): %s\n", localHook)
 		// A project install migrates only the current directory's file,
 		// and keeps it when the plugin is off for this user alone.
-		if localHook == legacySettings && (plugin.enabled || userLevelDir || !sharedBeadsPlugin(env).enabled) {
+		if localHook == legacySettings && (plugin.enabled || claudeProjectIsUserLevelDir(env) || !sharedBeadsPlugin(env).enabled) {
 			_, _ = fmt.Fprintf(env.stdout, "  Consider running 'bd setup claude' to migrate to .claude/settings.json\n")
 		}
 	case plugin.enabled:
@@ -793,9 +800,15 @@ func primeTwiceRemedy(env claudeEnv, hookPath string) string {
 // reportPluginOffForYou reports that only this user's own settings (plugin,
 // resolved for this user) turn off a beads plugin the shared settings
 // (shared) enable, so no hook goes in the shared settings, and how this user
-// can still have bd prime run here. prefix starts the first line.
+// can still have bd prime run here. prefix starts the first line. From the
+// home directory the shared settings are ~/.claude/settings.json, which
+// turns the plugin on in every other project rather than for teammates.
 func reportPluginOffForYou(env claudeEnv, plugin, shared beadsPluginState, prefix string) {
-	_, _ = fmt.Fprintf(env.stdout, "%sThe beads plugin is off for you (%s) but on for everyone in %s, so bd adds no hook there: teammates with the plugin would run bd prime twice\n", prefix, plugin.path, shared.path)
+	if claudeProjectIsHome(env) {
+		_, _ = fmt.Fprintf(env.stdout, "%sThe beads plugin is off for you (%s) but on in every project through %s, so bd adds no hook there: those projects would run bd prime twice\n", prefix, plugin.path, shared.path)
+	} else {
+		_, _ = fmt.Fprintf(env.stdout, "%sThe beads plugin is off for you (%s) but on for everyone in %s, so bd adds no hook there: teammates with the plugin would run bd prime twice\n", prefix, plugin.path, shared.path)
+	}
 	remedy := "enable the plugin in " + plugin.path
 	if !hasBeadsPlugin(env, true) {
 		remedy += ", or run bd setup claude --global"
