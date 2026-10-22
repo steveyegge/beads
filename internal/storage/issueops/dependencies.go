@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gowebpki/jcs"
+	"github.com/steveyegge/beads/internal/storage/dberrors"
 	"github.com/steveyegge/beads/internal/storage/depid"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/sqlbuild"
@@ -1306,6 +1307,70 @@ func GetIssuesByIDsInTx(ctx context.Context, tx DBTX, ids []string, wispSet map[
 	return allIssues, nil
 }
 
+// anchorEdge is one edge of a fixed anchor issue as the anchor-keyed edge
+// readers see it: the far-end issue id plus the edge's type.
+type anchorEdge struct {
+	farID, depType string
+}
+
+// missingOptionalDepTable reports whether err is the absence of the optional
+// wisp plane the dependency query just named. The named-table check is the
+// contract dberrors.IsMissingTable was written for: the durable
+// `dependencies` table is never optional, and only its absence must stay an
+// error — never a silently empty answer.
+func missingOptionalDepTable(err error, depTable string) bool {
+	return optionalBlockedTable(depTable) && dberrors.IsMissingTable(err, depTable)
+}
+
+// anchorEdgesInTx returns the dependency edges of anchor in the given
+// direction, reading the durable `dependencies` table first and the optional
+// `wisp_dependencies` table second. It is the one both-table edge reader
+// behind GetDependentsWithMetadataInTx, GetDependenciesWithMetadataInTx,
+// GetDependentsInTx and GetDependenciesInTx, so the four listings cannot drift
+// in what "all edges of an issue" means (#3445).
+//
+// The wisp plane is dolt_ignore'd and can be absent from a server-mode working
+// set (a push or a working-set reset drops it until the next bd write
+// recreates it), so a missing wisp_dependencies is an empty plane, never a
+// failed read — the same contract every other read over these two tables
+// already applies (optionalBlockedTable, blocked.go). Every other error,
+// including a missing `dependencies`, is returned as-is.
+func anchorEdgesInTx(ctx context.Context, tx DBTX, anchor string, dir domain.DepDirection) ([]anchorEdge, error) {
+	var query, noun string
+	if dir == domain.DepDirectionIn {
+		noun = "dependents"
+		query = `SELECT issue_id, type FROM %s WHERE ` + DepTargetExpr + ` = ?`
+	} else {
+		noun = "dependencies"
+		query = `SELECT ` + DepTargetExpr + ` AS depends_on_id, type FROM %s WHERE issue_id = ?`
+	}
+
+	var edges []anchorEdge
+	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
+		//nolint:gosec // G201: depTable is a hardcoded constant
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(query, depTable), anchor)
+		if err != nil {
+			if missingOptionalDepTable(err, depTable) {
+				continue
+			}
+			return nil, fmt.Errorf("get %s from %s: %w", noun, depTable, err)
+		}
+		for rows.Next() {
+			var e anchorEdge
+			if scanErr := rows.Scan(&e.farID, &e.depType); scanErr != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("get %s: scan: %w", noun, scanErr)
+			}
+			edges = append(edges, e)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("get %s: rows from %s: %w", noun, depTable, err)
+		}
+	}
+	return edges, nil
+}
+
 // GetDependenciesWithMetadataInTx returns issues that the given issueID depends on,
 // along with the dependency type. Works within an existing transaction.
 // Queries both dependency tables to handle cross-table dependencies.
@@ -1375,30 +1440,9 @@ func GetDependenciesWithMetadataInTx(ctx context.Context, tx DBTX, issueID strin
 //
 //nolint:gosec // G201: table names come from WispTableRouting (hardcoded constants)
 func GetDependentsWithMetadataInTx(ctx context.Context, tx DBTX, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
-	type depMeta struct {
-		depID, depType string
-	}
-
-	// Query both dependency tables to find all dependents.
-	var deps []depMeta
-	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT issue_id, type FROM %s WHERE %s = ?`, depTable, DepTargetExpr), issueID)
-		if err != nil {
-			return nil, fmt.Errorf("get dependents from %s: %w", depTable, err)
-		}
-		for rows.Next() {
-			var d depMeta
-			if scanErr := rows.Scan(&d.depID, &d.depType); scanErr != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("get dependents: scan: %w", scanErr)
-			}
-			deps = append(deps, d)
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("get dependents: rows from %s: %w", depTable, err)
-		}
+	deps, err := anchorEdgesInTx(ctx, tx, issueID, domain.DepDirectionIn)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(deps) == 0 {
@@ -1408,7 +1452,7 @@ func GetDependentsWithMetadataInTx(ctx context.Context, tx DBTX, issueID string)
 	// Fetch all dependent issues.
 	ids := make([]string, len(deps))
 	for i, d := range deps {
-		ids[i] = d.depID
+		ids[i] = d.farID
 	}
 	issues, err := GetIssuesByIDsInTx(ctx, tx, ids, nil)
 	if err != nil {
@@ -1421,7 +1465,7 @@ func GetDependentsWithMetadataInTx(ctx context.Context, tx DBTX, issueID string)
 
 	var results []*types.IssueWithDependencyMetadata
 	for _, d := range deps {
-		issue, ok := issueMap[d.depID]
+		issue, ok := issueMap[d.farID]
 		if !ok {
 			continue
 		}
