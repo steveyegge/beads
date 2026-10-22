@@ -433,3 +433,80 @@ func pad(i int) string {
 	}
 	return s
 }
+
+// seedTwoChildEpic creates epic mr-epic with parent-child children mr-c01
+// (closed) and mr-c02 (open), all durable, so both edges land in
+// `dependencies`.
+func seedTwoChildEpic(t *testing.T, store *DoltStore) {
+	t.Helper()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	for _, iss := range []*types.Issue{
+		{ID: "mr-epic", Title: "epic", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeEpic},
+		{ID: "mr-c01", Title: "child 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "mr-c02", Title: "child 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+	} {
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create %s: %v", iss.ID, err)
+		}
+	}
+	for _, child := range []string{"mr-c01", "mr-c02"} {
+		if err := store.AddDependency(ctx, &types.Dependency{IssueID: child, DependsOnID: "mr-epic", Type: types.DepParentChild}, "tester"); err != nil {
+			t.Fatalf("add parent-child %s: %v", child, err)
+		}
+	}
+	if err := store.CloseIssue(ctx, "mr-c01", "done", "tester", ""); err != nil {
+		t.Fatalf("close mr-c01: %v", err)
+	}
+}
+
+// requireEpicChildren asserts got is exactly mr-c01 and mr-c02, each once and
+// parent-child, with mr-c01 the one closed child: the rows `bd show` renders as
+// CHILDREN with 1/2 progress. A table read has no ORDER BY, so the check is
+// set-based.
+func requireEpicChildren(t *testing.T, got []*types.IssueWithDependencyMetadata) {
+	t.Helper()
+	if len(got) != 2 {
+		t.Fatalf("GetDependentsWithMetadata(mr-epic) = %d rows, want 2 (one per child)", len(got))
+	}
+	seen := map[string]*types.IssueWithDependencyMetadata{}
+	for _, d := range got {
+		seen[d.ID] = d
+	}
+	c1, c2 := seen["mr-c01"], seen["mr-c02"]
+	if c1 == nil || c2 == nil {
+		t.Fatalf("dependents = %v, want mr-c01 and mr-c02 once each", seen)
+	}
+	for _, d := range []*types.IssueWithDependencyMetadata{c1, c2} {
+		if d.DependencyType != types.DepParentChild {
+			t.Fatalf("dependent %s type = %s, want parent-child", d.ID, d.DependencyType)
+		}
+	}
+	if c1.Status != types.StatusClosed || c2.Status == types.StatusClosed {
+		t.Fatalf("child status mr-c01=%s mr-c02=%s, want 1/2 complete with mr-c01 closed", c1.Status, c2.Status)
+	}
+}
+
+// TestDependentsReadWithoutWispDependenciesTable reproduces GH#3445's first
+// state: in server mode the dolt-ignored wisp_dependencies can be absent from
+// the working set, and the dependents read must treat it as empty rather than
+// fail, or `bd show <epic>` (which reads dependents best-effort) drops CHILDREN.
+func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	seedTwoChildEpic(t, store)
+	if _, err := store.db.ExecContext(ctx, "DROP TABLE wisp_dependencies"); err != nil {
+		t.Fatalf("drop wisp_dependencies: %v", err)
+	}
+
+	got, err := store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata with wisp_dependencies missing: %v", err)
+	}
+	requireEpicChildren(t, got)
+}
