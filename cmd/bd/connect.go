@@ -266,6 +266,14 @@ Examples:
 		if err != nil {
 			return HandleError("connecting to %s: %v", redactedURL, err)
 		}
+		// The format check at the top of RunE ran before the dial, and a
+		// graph build can declare the format while the handshake is in
+		// flight. Check again before anything below writes the workspace:
+		// the .gitignore would otherwise land in it before Attach's own check
+		// refused it.
+		if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
+			return handleWorkspaceGuardError(err)
+		}
 		if target.ExpectProjectID == "" {
 			// Nothing was pinned (a genuine first connect, or --force
 			// dropped the prior pin above): record what the server said so
@@ -306,10 +314,9 @@ Examples:
 		// needs intact.
 		//
 		// Attach re-checks the format, so a refusal from it here is a
-		// workspace that turned graph after connect's own check, in practice
-		// while the handshake was in flight: render it as that check does,
-		// with the hint and exit 16. Any other error keeps HandleError's
-		// rendering.
+		// workspace that turned graph after the re-check that follows the
+		// handshake: render it as connect's own checks do, with the hint and
+		// exit 16. Any other error keeps HandleError's rendering.
 		if err := bdhttp.Attach(beadsDir, target); err != nil {
 			return handleWorkspaceGuardError(err)
 		}

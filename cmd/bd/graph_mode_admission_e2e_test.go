@@ -302,10 +302,11 @@ func TestGraphModeOutsideEntryPointsRefuseWithoutWorkspaceEffects(t *testing.T) 
 
 // bd connect checks the format of the workspace it attaches before its
 // handshake, but a graph build can declare that format while the handshake is
-// in flight. bdhttp.Attach checks again and refuses the workspace; connect
-// must render that refusal as every other graph refusal is rendered (the
-// format, its hint and exit 16), not as a generic failure, and Attach writes
-// neither the sidecar nor metadata.json.
+// in flight. connect checks again once the handshake returns. It must render
+// that refusal as every other graph refusal is rendered (the format, its hint
+// and exit 16), not as a generic failure, and refuse before it writes anything
+// there: the workspace keeps exactly what the graph build declared, with no
+// .gitignore, sidecar or metadata.json of connect's.
 func TestGraphModeConnectRefusesAFormatDeclaredDuringItsHandshake(t *testing.T) {
 	bd := buildBDUnderTest(t)
 	const handshake = `{"api_version":"v0","backend":"dolt","bd_version":"9.9.9",` +
@@ -322,6 +323,12 @@ func TestGraphModeConnectRefusesAFormatDeclaredDuringItsHandshake(t *testing.T) 
 				repoDir := t.TempDir()
 				initGitRepoAt(t, repoDir)
 				beadsDir := filepath.Join(repoDir, ".beads")
+				// The workspace as the graph build alone leaves it.
+				declaredDir := filepath.Join(t.TempDir(), ".beads")
+				if err := fixture.declare(declaredDir); err != nil {
+					t.Fatal(err)
+				}
+				want := legacyUpgradeTreeDigest(t, declaredDir)
 				declared := make(chan error, 1)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path != "/v0/beads/context" {
@@ -360,6 +367,9 @@ func TestGraphModeConnectRefusesAFormatDeclaredDuringItsHandshake(t *testing.T) 
 					if _, err := os.Lstat(filepath.Join(beadsDir, "metadata.json")); !os.IsNotExist(err) {
 						t.Fatalf("refused bd %s wrote metadata.json (%v)", strings.Join(args, " "), err)
 					}
+				}
+				if got := legacyUpgradeTreeDigest(t, beadsDir); got != want {
+					t.Fatalf("refused bd %s changed the graph workspace\n%s", strings.Join(args, " "), output)
 				}
 			})
 		}

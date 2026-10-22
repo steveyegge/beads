@@ -1042,7 +1042,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declares (refused without `--force`, it still migrated that `config.json`);
   it now exits 16 there too, without dialing or writing. A workspace that a
   graph build declares while `bd connect`'s handshake is in flight now gets
-  the same refusal, hint and exit 16, where `bd connect` exited 1.
+  the same refusal, hint and exit 16 before `bd connect` writes anything
+  there, where `bd connect` wrote its `.gitignore` and then exited 1.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in
