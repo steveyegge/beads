@@ -486,3 +486,139 @@ func TestCountDependencyEdgesInTxDedupsMirroredEdges(t *testing.T) {
 		t.Fatalf("unmet sql expectations: %v", err)
 	}
 }
+
+// TestCountDependencyEdgesInTxErrorBoundary pins exactly which failures the
+// count tolerates: a missing wisp_dependencies is an empty plane (GH#3445
+// state 1 — the working set can legitimately lack it), while every other
+// error, from either plane, propagates and is never turned into a count.
+func TestCountDependencyEdgesInTxErrorBoundary(t *testing.T) {
+	t.Run("missing wisp plane counts the durable rows", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(inboundDepEndsQuery("dependencies")).
+			WithArgs("mr-epic").
+			WillReturnRows(sqlmock.NewRows([]string{"issue_id", "type"}).
+				AddRow("mr-c01", "parent-child"))
+		mock.ExpectQuery(inboundDepEndsQuery("wisp_dependencies")).
+			WithArgs("mr-epic").
+			WillReturnError(missingTableError("wisp_dependencies"))
+
+		n, err := CountDependencyEdgesInTx(context.Background(), tx, "mr-epic", domain.DepDirectionIn, nil)
+		if err != nil {
+			t.Fatalf("CountDependencyEdgesInTx with wisp_dependencies missing: %v (want the durable count)", err)
+		}
+		if n != 1 {
+			t.Fatalf("CountDependencyEdgesInTx = %d, want 1 (the durable row)", n)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet sql expectations: %v", err)
+		}
+	})
+
+	t.Run("other wisp plane errors propagate", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(inboundDepEndsQuery("dependencies")).
+			WithArgs("mr-epic").
+			WillReturnRows(sqlmock.NewRows([]string{"issue_id", "type"}))
+		mock.ExpectQuery(inboundDepEndsQuery("wisp_dependencies")).
+			WithArgs("mr-epic").
+			WillReturnError(errors.New("connection refused"))
+
+		n, err := CountDependencyEdgesInTx(context.Background(), tx, "mr-epic", domain.DepDirectionIn, nil)
+		if err == nil {
+			t.Fatalf("CountDependencyEdgesInTx swallowed a non-missing-table error (n=%d)", n)
+		}
+		if !strings.Contains(err.Error(), "wisp_dependencies") {
+			t.Fatalf("error does not name the failing plane: %v", err)
+		}
+	})
+
+	t.Run("durable plane errors propagate", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(inboundDepEndsQuery("dependencies")).
+			WithArgs("mr-epic").
+			WillReturnError(errors.New("boom"))
+
+		n, err := CountDependencyEdgesInTx(context.Background(), tx, "mr-epic", domain.DepDirectionIn, nil)
+		if err == nil {
+			t.Fatalf("CountDependencyEdgesInTx swallowed a durable-plane error (n=%d)", n)
+		}
+		if !strings.Contains(err.Error(), "dependencies") {
+			t.Fatalf("error does not name the failing plane: %v", err)
+		}
+	})
+}
+
+// TestGetDependentsWithMetadataInTxErrorBoundary pins the reader behind `bd
+// show`'s CHILDREN section to the same tolerance: a missing wisp_dependencies
+// is an empty plane, a missing durable dependencies table is still an error
+// (it is not optional), and every other error propagates.
+func TestGetDependentsWithMetadataInTxErrorBoundary(t *testing.T) {
+	t.Run("missing wisp plane is empty, not an error", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(inboundDepEndsQuery("dependencies")).
+			WithArgs("mr-epic").
+			WillReturnRows(sqlmock.NewRows([]string{"issue_id", "type"}))
+		mock.ExpectQuery(inboundDepEndsQuery("wisp_dependencies")).
+			WithArgs("mr-epic").
+			WillReturnError(missingTableError("wisp_dependencies"))
+
+		dependents, err := GetDependentsWithMetadataInTx(context.Background(), tx, "mr-epic")
+		if err != nil {
+			t.Fatalf("GetDependentsWithMetadataInTx with wisp_dependencies missing: %v (want the durable children)", err)
+		}
+		if len(dependents) != 0 {
+			t.Fatalf("dependents = %d, want 0 (no durable dependents in this database)", len(dependents))
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet sql expectations: %v", err)
+		}
+	})
+
+	t.Run("missing durable plane is an error", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(inboundDepEndsQuery("dependencies")).
+			WithArgs("mr-epic").
+			WillReturnError(missingTableError("dependencies"))
+
+		_, err := GetDependentsWithMetadataInTx(context.Background(), tx, "mr-epic")
+		if err == nil {
+			t.Fatal("GetDependentsWithMetadataInTx treated a missing dependencies table as empty")
+		}
+		if !strings.Contains(err.Error(), "dependencies") {
+			t.Fatalf("error does not name the missing table: %v", err)
+		}
+	})
+
+	t.Run("other wisp plane errors propagate", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(inboundDepEndsQuery("dependencies")).
+			WithArgs("mr-epic").
+			WillReturnRows(sqlmock.NewRows([]string{"issue_id", "type"}))
+		mock.ExpectQuery(inboundDepEndsQuery("wisp_dependencies")).
+			WithArgs("mr-epic").
+			WillReturnError(errors.New("connection refused"))
+
+		_, err := GetDependentsWithMetadataInTx(context.Background(), tx, "mr-epic")
+		if err == nil {
+			t.Fatal("GetDependentsWithMetadataInTx swallowed a non-missing-table error")
+		}
+		if !strings.Contains(err.Error(), "wisp_dependencies") {
+			t.Fatalf("error does not name the failing plane: %v", err)
+		}
+	})
+
+	t.Run("durable plane errors propagate", func(t *testing.T) {
+		_, mock, tx := beginMockTx(t)
+		mock.ExpectQuery(inboundDepEndsQuery("dependencies")).
+			WithArgs("mr-epic").
+			WillReturnError(errors.New("boom"))
+
+		_, err := GetDependentsWithMetadataInTx(context.Background(), tx, "mr-epic")
+		if err == nil {
+			t.Fatal("GetDependentsWithMetadataInTx swallowed a durable-plane error")
+		}
+		if !strings.Contains(err.Error(), "dependencies") {
+			t.Fatalf("error does not name the failing plane: %v", err)
+		}
+	})
+}
