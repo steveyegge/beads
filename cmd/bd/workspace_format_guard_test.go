@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -467,6 +468,9 @@ func TestEnsureBeadsDirForPathChecksWorkspaceFormat(t *testing.T) {
 // admission refuses it, or it holds several databases. Server mode is decided
 // first, from the target's own config, so a server workspace bd's admission
 // would misread as legacy from the launcher's mode gets the server refusal.
+// The bd init remedy for a remote dolt.host names the host quoted for the
+// shell and the port the target's own config names (else 3307), so a local
+// server's stale dolt-server.port beside it is never dialed on that host.
 func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 	writeFiles := func(t *testing.T, beadsDir string, files map[string]string) {
 		t.Helper()
@@ -485,6 +489,10 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 	databaseMarker := func(database string) string {
 		return filepath.Join("embeddeddolt", database, ".dolt", "noms", "manifest")
 	}
+	// remote is the --server-host/--server-port pair a remedy names.
+	remote := func(host string, port int) string {
+		return "--server-host " + shellQuotedPathFor(runtime.GOOS, host) + " --server-port " + strconv.Itoa(port)
+	}
 	for _, tc := range []struct {
 		name  string
 		files map[string]string
@@ -492,7 +500,8 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 	}{
 		{name: "server mode in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n"}, want: "Run `bd init --database <name>` there"},
 		{name: "server mode with a local dolt.host", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: 127.0.0.1\n"}, want: "Run `bd init --database <name>` there"},
-		{name: "server mode with a remote dolt.host", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: db.example.com\n"}, want: "Run `bd init --server-host db.example.com --database <name>` there"},
+		{name: "server mode with a remote dolt.host", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: db.example.com\n"}, want: "Run `bd init " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "server mode with a remote dolt.host beside a stale port file", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: db.example.com\n  port: 3310\n", "dolt-server.port": "45678\n"}, want: "Run `bd init " + remote("db.example.com", 3310) + " --database <name>` there"},
 		{name: "server mode with an unreadable dolt.host", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: [a, b]\n"}, want: "Run `bd init --database <name>` there"},
 		{name: "server mode in dotted config.yaml", files: map[string]string{"config.yaml": "dolt.mode: SERVER\n"}, want: "selects Dolt server mode"},
 		{name: "server mode in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n", "config.local.yaml": "dolt:\n  mode: server\n"}, want: "selects Dolt server mode"},
@@ -500,8 +509,13 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 		{name: "embedded mode in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n"}},
 		{name: "unreadable config.yaml", files: map[string]string{"config.yaml": "dolt: [unterminated\n"}, want: "dolt.mode cannot be read"},
 		{name: "commented-out dolt section", files: map[string]string{"config.yaml": "dolt:\n  # mode: server\n"}},
-		{name: "remote dolt.host in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: 3307\n"}, want: "selects Dolt server mode (dolt.host: db.example.com); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server --server-host db.example.com --database <name>` there"},
-		{name: "remote dolt.host in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n", "config.local.yaml": "dolt:\n  host: 10.0.0.5\n"}, want: "Run `bd init --server --server-host 10.0.0.5 --database <name>` there"},
+		{name: "remote dolt.host in config.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: 3307\n"}, want: "selects Dolt server mode (dolt.host: \"db.example.com\"); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "remote dolt.host and no dolt.port beside a stale port file", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n", "dolt-server.port": "45678\n"}, want: "Run `bd init --server " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "remote dolt.host with a dolt.port that is not a port", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: none\n"}, want: "Run `bd init --server " + remote("db.example.com", 3307) + " --database <name>` there"},
+		{name: "remote dolt.host in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n", "config.local.yaml": "dolt:\n  host: 10.0.0.5\n"}, want: "Run `bd init --server " + remote("10.0.0.5", 3307) + " --database <name>` there"},
+		{name: "dolt.port in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: 3311\n", "config.local.yaml": "dolt:\n  port: 3312\n"}, want: "Run `bd init --server " + remote("db.example.com", 3312) + " --database <name>` there"},
+		// The host is the target repository's content, pasted into a command.
+		{name: "remote dolt.host a shell would split", files: map[string]string{"config.yaml": "dolt:\n  host: \"db.example.com; touch pwned\"\n"}, want: "(dolt.host: \"db.example.com; touch pwned\"); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server " + remote("db.example.com; touch pwned", 3307) + " --database <name>` there"},
 		{name: "local dolt.host 127.0.0.1", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n"}},
 		{name: "local dolt.host localhost", files: map[string]string{"config.yaml": "dolt.host: localhost\n"}},
 		{name: "remote dolt.host under embedded mode", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n  host: db.example.com\n"}},

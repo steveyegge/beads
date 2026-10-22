@@ -135,23 +135,33 @@ func refuseUncommittedPlanningChanges(ctx context.Context, planningStore storage
 	if err != nil || !commits {
 		return err
 	}
-	status, err := planningStore.Status(ctx)
+	tables, err := uncommittedTables(ctx, planningStore)
 	if err != nil {
 		return fmt.Errorf("failed to read the planning repo's uncommitted changes: %w", err)
+	}
+	if len(tables) == 0 {
+		return nil
+	}
+	remedy := "commit them there with `bd dolt commit`, then rerun"
+	if unnamedDatabase != "" {
+		remedy = fmt.Sprintf("bd run there opens the database %[1]q only once a metadata.json names it, so give it a .beads/metadata.json whose dolt_database is %[1]q, commit them there with `bd dolt commit`, then rerun", unnamedDatabase)
+	}
+	return refusePlanningRepo("planning repo %s has uncommitted changes (%s), which migrate-personal's commit would publish; %s; nothing was moved", planningRepo, strings.Join(tables, ", "), remedy)
+}
+
+// uncommittedTables lists the tables with staged or unstaged changes in st's
+// working set, sorted, each once. Dolt-ignored tables are not in it.
+func uncommittedTables(ctx context.Context, st storage.DoltStorage) ([]string, error) {
+	status, err := st.Status(ctx)
+	if err != nil {
+		return nil, err
 	}
 	var tables []string
 	for _, entry := range slices.Concat(status.Staged, status.Unstaged) {
 		tables = append(tables, entry.Table)
 	}
-	if len(tables) == 0 {
-		return nil
-	}
 	slices.Sort(tables)
-	remedy := "commit them there with `bd dolt commit`, then rerun"
-	if unnamedDatabase != "" {
-		remedy = fmt.Sprintf("bd run there opens the database %[1]q only once a metadata.json names it, so give it a .beads/metadata.json whose dolt_database is %[1]q, commit them there with `bd dolt commit`, then rerun", unnamedDatabase)
-	}
-	return refusePlanningRepo("planning repo %s has uncommitted changes (%s), which migrate-personal's commit would publish; %s; nothing was moved", planningRepo, strings.Join(slices.Compact(tables), ", "), remedy)
+	return slices.Compact(tables), nil
 }
 
 // refuseUninitializablePlanningRepo refuses a planning .beads that

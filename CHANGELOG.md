@@ -825,9 +825,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a server-mode repository, run `bd init --database <name>` there
   (`bd init --server --database <name>` when only `dolt.host` selects server
   mode), naming the server database it uses, then rerun. When that config
-  names a non-local `dolt.host`, the refusal adds `--server-host <host>`,
-  since `bd init` does not read `dolt.host` from `config.yaml`. `bd create
-  --dry-run` refuses the same repositories. `bd migrate-personal`
+  names a non-local `dolt.host`, the refusal adds `--server-host <host>
+  --server-port <port>` (its `dolt.port`, else 3307), since `bd init` does
+  not read `dolt.host` from `config.yaml` and would otherwise dial that host
+  on a local server's `.beads/dolt-server.port`. `bd create --dry-run`
+  refuses the same repositories. A database to keep that holds uncommitted
+  changes is refused as well, since the create's commit would publish them:
+  commit them there with `bd dolt commit`, then rerun. `bd migrate-personal`
   initializes the planning repo by the same rule, so it now also refuses a
   server-mode planning repo instead of moving issues into a new embedded
   database there.

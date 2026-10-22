@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -1195,12 +1196,14 @@ func writeServerModeWorkspace(t *testing.T, beadsDir string) {
 // there from then on. A sole embedded database is adopted, as bd
 // migrate-personal adopts it, with no second database created beside it: it
 // keeps what it holds, its issue_prefix (given the source's when it has none,
-// as fork setup leaves it) and its project identity. A target that bd run
-// there would open some other way is refused and left as it was: one whose
-// own config.yaml selects Dolt server mode (the shape gc provisions, or a
+// as fork setup leaves it) and its project identity. One whose working set
+// holds uncommitted changes is refused, as migrate-personal refuses it, since
+// the create's commit would publish them. A target that bd run there would
+// open some other way is refused and left as it was: one whose own
+// config.yaml selects Dolt server mode (the shape gc provisions, or a
 // non-local dolt.host with no dolt.mode), with or without an embedded database
 // beside it, one holding several databases, and a SQLite-era one that bd's own
-// admission refuses. bd create --dry-run refuses each of them as well.
+// admission refuses. bd create --dry-run refuses each of those as well.
 func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt create tests")
@@ -1257,29 +1260,101 @@ func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 		}
 	}
 
-	t.Run("adopts the fork setup database on an auto-routed create", func(t *testing.T) {
-		t.Parallel()
-		dir := t.TempDir()
-		initGitRepoAt(t, dir)
-		for _, name := range []string{"origin", "upstream"} {
-			bare := filepath.Join(t.TempDir(), name+".git")
-			if out, err := gitCommand("init", "--bare", bare).CombinedOutput(); err != nil {
-				t.Fatalf("git init --bare %s: %v\n%s", bare, err, out)
+	for _, tc := range []struct {
+		name string
+		// fill, when set, fills the database fork setup created and commits it.
+		fill          func(s *embeddeddolt.EmbeddedDoltStore) error
+		wantPrefix    string
+		wantProjectID string
+	}{
+		// As setup leaves it: its creation left nothing uncommitted for
+		// refuseUncommittedTargetChanges to refuse.
+		{name: "adopts the fork setup database on an auto-routed create", wantPrefix: "rmf"},
+		{name: "adopts the fork setup database holding an issue on an auto-routed create", fill: holdKept, wantPrefix: "pl", wantProjectID: keptProjectID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			initGitRepoAt(t, dir)
+			for _, name := range []string{"origin", "upstream"} {
+				bare := filepath.Join(t.TempDir(), name+".git")
+				if out, err := gitCommand("init", "--bare", bare).CombinedOutput(); err != nil {
+					t.Fatalf("git init --bare %s: %v\n%s", bare, err, out)
+				}
+				cmd := gitCommand("remote", "add", name, bare)
+				cmd.Dir = dir
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git remote add %s: %v\n%s", name, err, out)
+				}
 			}
-			cmd := gitCommand("remote", "add", name, bare)
-			cmd.Dir = dir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git remote add %s: %v\n%s", name, err, out)
+			// Fork setup: routing.contributor is ~/.beads-planning (HOME is
+			// dir), which gets a database and no metadata.json.
+			runBDInit(t, bd, dir, "--prefix", "rmf")
+			planningDir := filepath.Join(dir, ".beads-planning")
+			planningBeadsDir := filepath.Join(planningDir, ".beads")
+			if got := embeddeddolt.Databases(planningBeadsDir); !slices.Equal(got, []string{"beads"}) {
+				t.Fatalf("fork setup planning databases = %v, want [beads]", got)
+			}
+			if tc.fill != nil {
+				createForkSetupPlanningDatabase(t, planningBeadsDir, tc.fill)
+			}
+
+			issue := bdCreate(t, bd, dir, "Routed into the fork setup planning repo")
+			requireAdopted(t, planningDir, issue, tc.wantPrefix, tc.wantProjectID, tc.fill != nil)
+		})
+	}
+
+	// A database whose working set already holds a change is refused before
+	// anything is written: the create's commit would publish that change under
+	// its own message. Once the change is committed there, as the refusal
+	// says, the create adopts the database.
+	t.Run("refuses a database with uncommitted changes", func(t *testing.T) {
+		t.Parallel()
+		dir, _, _ := bdInit(t, bd, "--prefix", "rmu")
+		targetDir := t.TempDir()
+		initGitRepoAt(t, targetDir)
+		beadsDir := filepath.Join(targetDir, ".beads")
+		createForkSetupPlanningDatabase(t, beadsDir, nil)
+		const uncommittedProjectID = "uncommitted-target-project"
+		s, err := embeddeddolt.Open(t.Context(), beadsDir, "beads", "main")
+		if err != nil {
+			t.Fatalf("open the target database: %v", err)
+		}
+		err = s.SetMetadata(t.Context(), "_project_id", uncommittedProjectID)
+		if closeErr := s.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			t.Fatalf("leave a change uncommitted in the target database: %v", err)
+		}
+		commitsBefore, dirtyBefore := planningLogCountAndDirtyTables(t, beadsDir, "beads")
+		if len(dirtyBefore) == 0 {
+			t.Fatal("the target database has no uncommitted changes to refuse")
+		}
+
+		out := bdCreateFail(t, bd, dir, "--silent", "Routed into a target with uncommitted changes", "--repo", targetDir)
+		for _, want := range []string{
+			targetDir + " has no metadata.json and its database \"beads\" has uncommitted changes (",
+			"which bd create's commit would publish; commit them there with `bd dolt commit`, then rerun; nothing was created",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("bd create --repo output does not contain %q:\n%s", want, out)
 			}
 		}
-		// Fork setup: routing.contributor is ~/.beads-planning (HOME is dir),
-		// which gets a database and no metadata.json.
-		runBDInit(t, bd, dir, "--prefix", "rmf")
-		planningDir := filepath.Join(dir, ".beads-planning")
-		createForkSetupPlanningDatabase(t, filepath.Join(planningDir, ".beads"), holdKept)
+		if _, err := os.Stat(filepath.Join(beadsDir, "metadata.json")); !os.IsNotExist(err) {
+			t.Errorf("target metadata.json written by a refused create: stat err = %v, want not exist", err)
+		}
+		// The adoption's own write (the source's issue_prefix) would show as
+		// another uncommitted table.
+		if commits, dirty := planningLogCountAndDirtyTables(t, beadsDir, "beads"); commits != commitsBefore || !slices.Equal(dirty, dirtyBefore) {
+			t.Errorf("target database after a refused create: %d commits, uncommitted %v; want unchanged %d, %v", commits, dirty, commitsBefore, dirtyBefore)
+		}
 
-		issue := bdCreate(t, bd, dir, "Routed into the fork setup planning repo")
-		requireAdopted(t, planningDir, issue, "pl", keptProjectID, true)
+		if out, err := bdRunWithFlockRetry(t, bd, targetDir, "dolt", "commit"); err != nil {
+			t.Fatalf("bd dolt commit in the target: %v\n%s", err, out)
+		}
+		issue := bdCreate(t, bd, dir, "Routed into the target after bd dolt commit", "--repo", targetDir)
+		requireAdopted(t, targetDir, issue, "rmu", uncommittedProjectID, false)
 	})
 
 	for _, tc := range []struct {
@@ -1316,9 +1391,16 @@ func TestEmbeddedCreateRepoMetadataLessTarget(t *testing.T) {
 			writeServerModeWorkspace(t, beadsDir)
 			createForkSetupPlanningDatabase(t, beadsDir, nil)
 		}},
-		{name: "refuses server mode selected by a remote dolt.host", want: "selects Dolt server mode (dolt.host: db.example.com); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server --server-host db.example.com --database <name>` there", setup: func(t *testing.T, beadsDir string) {
-			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt:\n  host: db.example.com\n  port: 3307\n"), 0o600); err != nil {
-				t.Fatal(err)
+		{name: "refuses server mode selected by a remote dolt.host", want: "selects Dolt server mode (dolt.host: \"db.example.com\"); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server --server-host " + shellQuotedPathFor(runtime.GOOS, "db.example.com") + " --server-port 3307 --database <name>` there", setup: func(t *testing.T, beadsDir string) {
+			// The port file a local server left is not the remote host's
+			// port, so the remedy names the one config.yaml does.
+			for name, content := range map[string]string{
+				"config.yaml":      "dolt:\n  host: db.example.com\n  port: 3307\n",
+				"dolt-server.port": "45678\n",
+			} {
+				if err := os.WriteFile(filepath.Join(beadsDir, name), []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}},
 		{name: "refuses several databases", want: "holds several databases (beads, other)", setup: func(t *testing.T, beadsDir string) {
