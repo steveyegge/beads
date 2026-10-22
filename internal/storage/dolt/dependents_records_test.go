@@ -342,6 +342,83 @@ func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 	}
 }
 
+// TestDependentsReadEachMirroredEdgeOnce reproduces GH#3445 state 3: the SAME
+// logical edge can exist in BOTH dependency tables (a wisp promoted to
+// durable, or two clones merged — TestDependentRecordsCrossTableCollision is
+// the raw-records leg of the same collision). The hydrated dependents read
+// must treat it as one edge whose durable copy wins.
+func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	mk := func(id string, issueType types.IssueType, ephemeral bool) {
+		iss := &types.Issue{ID: id, Title: id, Status: types.StatusOpen, Priority: 2, IssueType: issueType, Ephemeral: ephemeral}
+		if err := store.CreateIssue(ctx, iss, "tester"); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	mk("mr-epic", types.TypeEpic, false)
+	mk("mr-c01", types.TypeTask, false)
+	mk("mr-c02", types.TypeTask, false)
+	addDep := func(src, tgt string, typ types.DependencyType) {
+		if err := store.AddDependency(ctx, &types.Dependency{IssueID: src, DependsOnID: tgt, Type: typ}, "tester"); err != nil {
+			t.Fatalf("add dep %s -> %s (%s): %v", src, tgt, typ, err)
+		}
+	}
+	addDep("mr-c01", "mr-epic", types.DepParentChild)
+	addDep("mr-c02", "mr-epic", types.DepParentChild)
+	if err := store.CloseIssue(ctx, "mr-c01", "done", "tester", ""); err != nil {
+		t.Fatalf("close mr-c01: %v", err)
+	}
+
+	// Mirror both child edges into wisp_dependencies under the same depid
+	// (depid.New omits the table) — the post-merge/promotion state — and give
+	// mr-c01's copy a conflicting type, so the de-dup must keep the durable
+	// copy. FK checks are relaxed because the mirror's source is a durable
+	// issue, not a wisp.
+	seedMirror := func(src, tgt, typ string) {
+		if _, err := store.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0"); err != nil {
+			t.Fatalf("disable FK checks: %v", err)
+		}
+		if _, err := store.db.ExecContext(ctx,
+			"INSERT INTO wisp_dependencies (id, issue_id, depends_on_issue_id, type, created_by) VALUES (?, ?, ?, ?, 'tester')",
+			depid.New(src, tgt), src, tgt, typ); err != nil {
+			t.Fatalf("seed mirror row %s -> %s: %v", src, tgt, err)
+		}
+		if _, err := store.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1"); err != nil {
+			t.Fatalf("re-enable FK checks: %v", err)
+		}
+	}
+	seedMirror("mr-c01", "mr-epic", "blocks")       // conflicting type
+	seedMirror("mr-c02", "mr-epic", "parent-child") // same type
+
+	// Each child once, with the durable row's type (2 rows, not 4).
+	dependents, err := store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata: %v", err)
+	}
+	if len(dependents) != 2 {
+		t.Fatalf("dependents = %d, want 2 (each mirrored edge once, not 4)", len(dependents))
+	}
+	byID := map[string]*types.IssueWithDependencyMetadata{}
+	for _, d := range dependents {
+		byID[d.ID] = d
+	}
+	c01 := byID["mr-c01"]
+	if c01 == nil {
+		t.Fatalf("dependents = %v, missing mr-c01", dependents)
+	}
+	if c01.DependencyType != types.DepParentChild {
+		t.Fatalf("mr-c01 dependency type = %q, want %q (durable copy wins over the mirrored blocks copy)", c01.DependencyType, types.DepParentChild)
+	}
+	if c01.Status != types.StatusClosed {
+		t.Fatalf("mr-c01 status = %q, want closed (1/2 progress)", c01.Status)
+	}
+}
+
 // TestGetDependentRecordsLimitClamp verifies the self-clamp (default 100, cap 500).
 func TestGetDependentRecordsLimitClamp(t *testing.T) {
 	store, cleanup := setupTestStore(t)

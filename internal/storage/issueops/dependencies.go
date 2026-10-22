@@ -1382,12 +1382,19 @@ type depEdgeEnd struct {
 // dolt_ignore'd and a server-mode working-set replacement (a dolt push) can
 // drop it until the next bd write recreates it (GH#3445). Any other error
 // propagates, wrapped with the reader's direction word.
+//
+// A far end is listed once. One logical edge can sit in BOTH planes under
+// the same depid (depid.New omits the table) — a wisp promoted to durable, or
+// two clones merged — and for a near end's reader that edge is the far end,
+// so the far end's id is the edge identity here. The durable plane is
+// queried first, so the durable row wins any type conflict with its mirror.
 func listDepEdgeEndsInTx(ctx context.Context, tx DBTX, issueID string, inbound bool) ([]depEdgeEnd, error) {
 	verb := "dependencies"
 	if inbound {
 		verb = "dependents"
 	}
 	var ends []depEdgeEnd
+	seen := make(map[string]struct{})
 	for _, depTable := range []string{"dependencies", "wisp_dependencies"} {
 		//nolint:gosec // G201: depTable is a hardcoded constant.
 		query := fmt.Sprintf(
@@ -1409,6 +1416,10 @@ func listDepEdgeEndsInTx(ctx context.Context, tx DBTX, issueID string, inbound b
 				_ = rows.Close()
 				return nil, fmt.Errorf("get %s: scan: %w", verb, scanErr)
 			}
+			if _, dup := seen[e.id]; dup {
+				continue
+			}
+			seen[e.id] = struct{}{}
 			ends = append(ends, e)
 		}
 		_ = rows.Close()
