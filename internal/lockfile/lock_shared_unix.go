@@ -16,7 +16,7 @@ func FlockSharedNonBlock(f *os.File) error {
 	if err == unix.EWOULDBLOCK {
 		return ErrLockBusy
 	}
-	return err
+	return classifyLockErr(err)
 }
 
 // FlockExclusiveNonBlock acquires an exclusive non-blocking lock on the file.
@@ -26,5 +26,5 @@ func FlockExclusiveNonBlock(f *os.File) error {
 	if err == unix.EWOULDBLOCK {
 		return ErrLockBusy
 	}
-	return err
+	return classifyLockErr(err)
 }
