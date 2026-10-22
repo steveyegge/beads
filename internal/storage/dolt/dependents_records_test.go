@@ -340,6 +340,22 @@ func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 	if closed != 1 {
 		t.Fatalf("closed dependents = %d, want 1 (mr-c01)", closed)
 	}
+
+	// The ID-list readers keep the same contract, in both directions.
+	inbound, err := store.GetDependents(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependents with wisp_dependencies missing: %v", err)
+	}
+	if len(inbound) != 2 {
+		t.Fatalf("GetDependents = %d issues, want 2", len(inbound))
+	}
+	outbound, err := store.GetDependencies(ctx, "mr-c01")
+	if err != nil {
+		t.Fatalf("GetDependencies with wisp_dependencies missing: %v", err)
+	}
+	if len(outbound) != 1 || outbound[0].ID != "mr-epic" {
+		t.Fatalf("GetDependencies(mr-c01) = %v, want exactly [mr-epic]", outbound)
+	}
 }
 
 // TestDependentsReadEachMirroredEdgeOnce reproduces GH#3445 state 3: the SAME
@@ -445,6 +461,30 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	}
 	if c01Seen != 1 {
 		t.Fatalf("mr-c01 appears %d times, want 1", c01Seen)
+	}
+
+	// The ID-list readers agree in both directions: 3 dependents, and the
+	// child's outbound edge to its epic counts once.
+	inbound, err := store.GetDependents(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependents: %v", err)
+	}
+	if len(inbound) != 3 {
+		t.Fatalf("GetDependents = %d issues, want 3", len(inbound))
+	}
+	outbound, err := store.GetDependencies(ctx, "mr-c01")
+	if err != nil {
+		t.Fatalf("GetDependencies(mr-c01): %v", err)
+	}
+	if len(outbound) != 1 || outbound[0].ID != "mr-epic" {
+		t.Fatalf("GetDependencies(mr-c01) = %v, want exactly [mr-epic] (mirrored edge once)", outbound)
+	}
+	outMeta, err := store.GetDependenciesWithMetadata(ctx, "mr-c01")
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata(mr-c01): %v", err)
+	}
+	if len(outMeta) != 1 || outMeta[0].ID != "mr-epic" || outMeta[0].DependencyType != types.DepParentChild {
+		t.Fatalf("GetDependenciesWithMetadata(mr-c01) = %v, want one mr-epic edge with type parent-child (durable copy wins)", outMeta)
 	}
 }
 
