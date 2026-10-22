@@ -526,6 +526,8 @@ func requireEdgeReadsOnce(t *testing.T, store *DoltStore, wantDependents int) {
 // state: in server mode the dolt-ignored wisp_dependencies can be absent from
 // the working set, and the dependents read must treat it as empty rather than
 // fail, or `bd show <epic>` (which reads dependents best-effort) drops CHILDREN.
+// The counts must answer too: --json publishes dependent_count 0 when the count
+// fails.
 func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -544,6 +546,7 @@ func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 	}
 	requireEpicChildren(t, got)
 	requireEdgeReadsOnce(t, store, 2)
+	requireEdgeCounts(t, store, 2)
 }
 
 // mirrorIntoWispDependencies copies the durable edge src -> target into

@@ -151,3 +151,17 @@ func TestCountDependentsDistinctOnMirroredWispEdge(t *testing.T) {
 
 	requireEpicEdgeCounts(t, te, "mr")
 }
+
+// TestCountDependentsWithoutWispDependenciesTable pins GH#3445's missing-table
+// state on the embedded store: the dolt-ignored wisp_dependencies can be absent
+// from the working set, and the dependency counts read it as empty rather than
+// fail.
+func TestCountDependentsWithoutWispDependenciesTable(t *testing.T) {
+	skipUnlessEmbeddedDolt(t)
+
+	te := newTestEnv(t, "mt")
+	seedTwoChildEpic(t, te, "mt")
+	te.exec(t, t.Context(), "RENAME TABLE wisp_dependencies TO wisp_dependencies_renamed_away")
+
+	requireEpicEdgeCounts(t, te, "mt")
+}
