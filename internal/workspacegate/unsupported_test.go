@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -172,5 +173,34 @@ func TestAcquireRealContentionStaysBusy(t *testing.T) {
 	}
 	if left := probeFiles(t, dir); len(left) != 0 {
 		t.Errorf("probe files left behind: %v", left)
+	}
+}
+
+// Strict readonly promises to create nothing (#7672), so it never runs the
+// probe: a busy existing gate gives the same ErrBusy as before the probe.
+func TestAcquireReadOnlyBusyCreatesNoProbe(t *testing.T) {
+	var probes atomic.Int32
+	setFlockSeams(t, countingBusy(&probes), countingBusy(&probes))
+	g, dir := testGate(t)
+	if err := os.WriteFile(g.path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := gateDirEntries(t, dir)
+
+	h, err := g.Acquire(context.Background(), Shared, Options{ReadOnly: true, Wait: 300 * time.Millisecond})
+	if h != nil {
+		_ = h.Release()
+	}
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("readonly Acquire on a busy gate = %v, want ErrBusy", err)
+	}
+	if errors.Is(err, lockfile.ErrUnsupported) {
+		t.Errorf("readonly Acquire = %v, must not have probed", err)
+	}
+	if got := probes.Load(); got != 0 {
+		t.Errorf("readonly Acquire ran the probe %d times", got)
+	}
+	if after := gateDirEntries(t, dir); !slices.Equal(before, after) {
+		t.Errorf("readonly Acquire changed the directory: %v -> %v", before, after)
 	}
 }
