@@ -179,11 +179,11 @@ func proxiedListDeps(ctx context.Context, uw uow.UnitOfWork, id string, isWisp b
 // per-table and have to be told which side to read.
 //
 // The two queries are the same arithmetic either way — CountDependencyEdgesInTx
-// counts `dependencies` plus `wisp_dependencies` with no join to `issues`,
-// while the listing behind proxiedListDeps runs the very
-// GetDependenciesWithMetadataInTx / GetDependentsWithMetadataInTx the direct
-// route runs, so it drops the same unrenderable far ends. The difference
-// therefore means here exactly what it means there.
+// counts the distinct far ends across `dependencies` and `wisp_dependencies`
+// with no join to `issues`, while the listing behind proxiedListDeps runs the
+// very GetDependenciesWithMetadataInTx / GetDependentsWithMetadataInTx the
+// direct route runs over the same far ends, so it drops only the unrenderable
+// ones. The difference therefore means here exactly what it means there.
 type proxiedDepCounter struct {
 	src    workapi.DetailSource
 	isWisp bool

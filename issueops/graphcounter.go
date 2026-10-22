@@ -145,10 +145,10 @@ type AnchorEdgeCount struct {
 	// `wisp_dependencies` according to which plane its SOURCE sits on, and this
 	// count is the total across the two — so a durable issue's dependent count
 	// includes the wisps that depend on it, and a wisp's dependency count
-	// includes the durable issues it depends on. That is the shipped answer of
-	// every raw count this role covers and of the domain body behind the
-	// unit-of-work leg (CountDependencyEdgesInTx), and it is what makes the
-	// number agree with the row list a caller gets from the matching read.
+	// includes the durable issues it depends on. That is what makes the number
+	// agree with the row list a caller gets from the matching read. `bd show`'s
+	// per-issue counts (CountDependencyEdgesInTx) span both planes too, but
+	// count each far end once, so they differ from this sum on a mirror.
 	//
 	// It is a SUM over the two planes and NOT a distinct count of edge rows. The
 	// two are the same number unless one row id is present in both tables, which
