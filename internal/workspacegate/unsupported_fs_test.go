@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,5 +85,42 @@ func TestAcquireLyingBusyFilesystemIsUnsupported(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+// (AC-2) A REAL holder on a local filesystem is the opposite case: the
+// probe file locks fine, so the busy result stands — the acquisition waits
+// out its budget and fails with ErrBusy, never ErrUnsupported, and the
+// probe leaves nothing behind in the gate's directory.
+func TestAcquireUnderRealHolderIsBusyNotUnsupported(t *testing.T) {
+	g, dir := testGate(t)
+	holder := mustAcquire(t, g, Exclusive, Options{Reason: "test maintenance"})
+	defer func() { _ = holder.Release() }()
+	before := gateDirEntries(t, dir)
+
+	const wait = 300 * time.Millisecond
+	waited := 0
+	start := time.Now()
+	h, err := g.Acquire(context.Background(), Shared, Options{
+		Wait:   wait,
+		OnWait: func(string) { waited++ },
+	})
+	elapsed := time.Since(start)
+	if h != nil {
+		_ = h.Release()
+	}
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("Acquire under a real exclusive holder: err = %v, want ErrBusy once the wait expires", err)
+	}
+	if errors.Is(err, lockfile.ErrUnsupported) {
+		t.Errorf("err = %v: a real holder on a lockable filesystem must not be classified unsupported", err)
+	}
+	if elapsed < wait {
+		t.Errorf("gave up after %s, before its %s budget: a real holder must still be waited out", elapsed, wait)
+	}
+	if waited != 1 {
+		t.Errorf("OnWait fired %d times, want once as before the probe existed", waited)
+	}
+	if got := gateDirEntries(t, dir); !slices.Equal(got, before) {
+		t.Errorf("the probe left files in %s\n before: %v\n after:  %v", dir, before, got)
 	}
 }
