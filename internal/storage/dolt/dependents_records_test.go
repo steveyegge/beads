@@ -1,9 +1,11 @@
 package dolt
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/storage/depid"
+	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -488,6 +490,38 @@ func requireEpicChildren(t *testing.T, got []*types.IssueWithDependencyMetadata)
 	}
 }
 
+// requireEdgeReadsOnce asserts the other three both-table readers read each
+// edge once: mr-epic's dependents by id, and mr-c01's single outbound edge
+// (to its epic) by id and with metadata. DoltStore.GetDependenciesWithMetadata
+// reads one plane, so the issueops reader is driven directly.
+func requireEdgeReadsOnce(t *testing.T, store *DoltStore, wantDependents int) {
+	t.Helper()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	if got, err := store.GetDependents(ctx, "mr-epic"); err != nil {
+		t.Fatalf("GetDependents(mr-epic): %v", err)
+	} else if len(got) != wantDependents {
+		t.Fatalf("GetDependents(mr-epic) = %d, want %d", len(got), wantDependents)
+	}
+	if got, err := store.GetDependencies(ctx, "mr-c01"); err != nil {
+		t.Fatalf("GetDependencies(mr-c01): %v", err)
+	} else if len(got) != 1 || got[0].ID != "mr-epic" {
+		t.Fatalf("GetDependencies(mr-c01) = %d, want [mr-epic]", len(got))
+	}
+	var withMeta []*types.IssueWithDependencyMetadata
+	if err := store.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		withMeta, err = issueops.GetDependenciesWithMetadataInTx(ctx, tx, "mr-c01")
+		return err
+	}); err != nil {
+		t.Fatalf("GetDependenciesWithMetadataInTx(mr-c01): %v", err)
+	}
+	if len(withMeta) != 1 || withMeta[0].ID != "mr-epic" || withMeta[0].DependencyType != types.DepParentChild {
+		t.Fatalf("GetDependenciesWithMetadataInTx(mr-c01) = %d rows, want [mr-epic/parent-child]", len(withMeta))
+	}
+}
+
 // TestDependentsReadWithoutWispDependenciesTable reproduces GH#3445's first
 // state: in server mode the dolt-ignored wisp_dependencies can be absent from
 // the working set, and the dependents read must treat it as empty rather than
@@ -509,6 +543,7 @@ func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 		t.Fatalf("GetDependentsWithMetadata with wisp_dependencies missing: %v", err)
 	}
 	requireEpicChildren(t, got)
+	requireEdgeReadsOnce(t, store, 2)
 }
 
 // mirrorIntoWispDependencies copies the durable edge src -> target into
@@ -553,6 +588,7 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 		t.Fatalf("GetDependentsWithMetadata: %v", err)
 	}
 	requireEpicChildren(t, got)
+	requireEdgeReadsOnce(t, store, 2)
 
 	// A genuine wisp-only dependent (its edge lives only in wisp_dependencies)
 	// is still read, after the durable rows.
@@ -574,4 +610,5 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 		t.Fatalf("last dependent = %s/%s, want the wisp-only mr-w/blocks after the durable rows", last.ID, last.DependencyType)
 	}
 	requireEpicChildren(t, got[:2])
+	requireEdgeReadsOnce(t, store, 3)
 }
