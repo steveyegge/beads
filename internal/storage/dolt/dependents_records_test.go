@@ -1,12 +1,22 @@
 package dolt
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	mysql "github.com/go-sql-driver/mysql"
 
 	"github.com/steveyegge/beads/internal/storage/depid"
 	"github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
+	publicops "github.com/steveyegge/beads/issueops"
 )
 
 // TestGetDependentRecords verifies the target-keyed raw dependents read:
@@ -463,14 +473,15 @@ func seedTwoChildEpic(t *testing.T, store *DoltStore) {
 	}
 }
 
-// requireEpicChildren asserts got is exactly mr-c01 and mr-c02, each once and
-// parent-child, with mr-c01 the one closed child: the rows `bd show` renders as
-// CHILDREN with 1/2 progress. A table read has no ORDER BY, so the check is
+// requireEpicChildren asserts got, the dependents read names, is exactly mr-c01
+// and mr-c02, each once and parent-child, with closed the one closed child: the
+// rows `bd show` renders as CHILDREN with 1/2 progress. A table read has no
+// ORDER BY, and the two children can share a created_at, so the check is
 // set-based.
-func requireEpicChildren(t *testing.T, got []*types.IssueWithDependencyMetadata) {
+func requireEpicChildren(t *testing.T, read string, got []*types.IssueWithDependencyMetadata, closed string) {
 	t.Helper()
 	if len(got) != 2 {
-		t.Fatalf("GetDependentsWithMetadata(mr-epic) = %d rows, want 2 (one per child)", len(got))
+		t.Fatalf("%s = %d rows, want 2 (one per child)", read, len(got))
 	}
 	seen := map[string]*types.IssueWithDependencyMetadata{}
 	for _, d := range got {
@@ -484,9 +495,9 @@ func requireEpicChildren(t *testing.T, got []*types.IssueWithDependencyMetadata)
 		if d.DependencyType != types.DepParentChild {
 			t.Fatalf("dependent %s type = %s, want parent-child", d.ID, d.DependencyType)
 		}
-	}
-	if c1.Status != types.StatusClosed || c2.Status == types.StatusClosed {
-		t.Fatalf("child status mr-c01=%s mr-c02=%s, want 1/2 complete with mr-c01 closed", c1.Status, c2.Status)
+		if (d.Status == types.StatusClosed) != (d.ID == closed) {
+			t.Fatalf("child status mr-c01=%s mr-c02=%s, want 1/2 complete with %s closed", c1.Status, c2.Status, closed)
+		}
 	}
 }
 
@@ -544,9 +555,10 @@ func TestDependentsReadWithoutWispDependenciesTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDependentsWithMetadata with wisp_dependencies missing: %v", err)
 	}
-	requireEpicChildren(t, got)
+	requireEpicChildren(t, "GetDependentsWithMetadata(mr-epic)", got, "mr-c01")
 	requireEdgeReadsOnce(t, store, 2)
 	requireEdgeCounts(t, store, 2)
+	requireDetailDependents(t, store, "", "mr-c01")
 }
 
 // mirrorIntoWispDependencies copies the durable edge src -> target into
@@ -612,9 +624,10 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDependentsWithMetadata: %v", err)
 	}
-	requireEpicChildren(t, got)
+	requireEpicChildren(t, "GetDependentsWithMetadata(mr-epic)", got, "mr-c01")
 	requireEdgeReadsOnce(t, store, 2)
 	requireEdgeCounts(t, store, 2)
+	requireDetailDependents(t, store, "", "mr-c01")
 
 	// A genuine wisp-only dependent (its edge lives only in wisp_dependencies)
 	// is still read, after the durable rows.
@@ -635,7 +648,377 @@ func TestDependentsReadEachMirroredEdgeOnce(t *testing.T) {
 	if last := got[2]; last.ID != "mr-w" || last.DependencyType != types.DepBlocks {
 		t.Fatalf("last dependent = %s/%s, want the wisp-only mr-w/blocks after the durable rows", last.ID, last.DependencyType)
 	}
-	requireEpicChildren(t, got[:2])
+	requireEpicChildren(t, "GetDependentsWithMetadata(mr-epic)", got[:2], "mr-c01")
 	requireEdgeReadsOnce(t, store, 3)
 	requireEdgeCounts(t, store, 3)
+	requireDetailDependents(t, store, "mr-w", "mr-c01")
+}
+
+// requireDetailDependents asserts what `bd show --json --include-dependents`
+// and `bd serve`'s include_dependents publish for mr-epic. That detail view
+// streams its dependents through DoltStore.IterDependentsWithMetadata, not the
+// slice path the other helpers drive, so it must list mr-c01 and mr-c02 once
+// each, as requireEpicChildren checks them with closed the closed child, then
+// wantWisp last when it is set. The dependent count must equal that list, so
+// no edge is announced as unresolvable, and the epic rollup must be 1/2.
+func requireDetailDependents(t *testing.T, store *DoltStore, wantWisp, closed string) {
+	t.Helper()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	reader, err := store.IssueReader()
+	if err != nil {
+		t.Fatalf("IssueReader(): %v", err)
+	}
+	details, err := reader.Get(ctx, publicops.GetRequest{ID: "mr-epic", IncludeDependents: true})
+	if err != nil {
+		t.Fatalf("Get(mr-epic, IncludeDependents): %v", err)
+	}
+	children := details.Dependents
+	if wantWisp != "" {
+		if len(children) != 3 || children[2].ID != wantWisp {
+			t.Fatalf("Get(mr-epic, IncludeDependents) dependents = %v, want mr-c01 and mr-c02, then %s", dependentIDs(children), wantWisp)
+		}
+		children = children[:2]
+	}
+	requireEpicChildren(t, "Get(mr-epic, IncludeDependents) dependents", children, closed)
+	if details.DependentCount == nil || *details.DependentCount != int64(len(details.Dependents)) {
+		t.Fatalf("dependent_count = %v, want %d (one per listed dependent)", details.DependentCount, len(details.Dependents))
+	}
+	if details.UnresolvableDependents != nil {
+		t.Fatalf("unresolvable_dependents = %d, want none", *details.UnresolvableDependents)
+	}
+	if details.EpicTotalChildren == nil || details.EpicClosedChildren == nil ||
+		*details.EpicTotalChildren != 2 || *details.EpicClosedChildren != 1 {
+		t.Fatalf("epic rollup = %v/%v closed/total, want 1/2", details.EpicClosedChildren, details.EpicTotalChildren)
+	}
+}
+
+func dependentIDs(deps []*types.IssueWithDependencyMetadata) []string {
+	ids := make([]string, len(deps))
+	for i, d := range deps {
+		ids[i] = d.ID
+	}
+	return ids
+}
+
+// dependentRow is what the slice and the streaming dependents reads must agree
+// on for one dependent: its edge type, and the fields of the issue row it was
+// read from that the detail view and the epic rollup publish.
+type dependentRow struct {
+	depType     types.DependencyType
+	status      types.Status
+	title       string
+	ephemeral   bool
+	closeReason string
+	closedAt    string
+}
+
+func dependentRowOf(d *types.IssueWithDependencyMetadata) dependentRow {
+	row := dependentRow{
+		depType:     d.DependencyType,
+		status:      d.Status,
+		title:       d.Title,
+		ephemeral:   d.Ephemeral,
+		closeReason: d.CloseReason,
+	}
+	if d.ClosedAt != nil {
+		row.closedAt = d.ClosedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return row
+}
+
+// requireStreamMatchesSlice asserts DoltStore.IterDependentsWithMetadata, the
+// detail view's read, streams the dependents of mr-epic the slice path
+// returned in slice, each once, with the same type and from the same issue row.
+// The two reads order the dependents differently, so the check is by id.
+func requireStreamMatchesSlice(t *testing.T, store *DoltStore, slice []*types.IssueWithDependencyMetadata) {
+	t.Helper()
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	want := make(map[string]dependentRow, len(slice))
+	for _, d := range slice {
+		want[d.ID] = dependentRowOf(d)
+	}
+	iter, err := store.IterDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("IterDependentsWithMetadata(mr-epic): %v", err)
+	}
+	defer iter.Close() //nolint:errcheck // read-only iterator
+	got := make(map[string]dependentRow, len(slice))
+	for iter.Next(ctx) {
+		d := iter.Value()
+		if _, dup := got[d.ID]; dup {
+			t.Fatalf("IterDependentsWithMetadata(mr-epic) streamed %s twice", d.ID)
+		}
+		got[d.ID] = dependentRowOf(d)
+	}
+	if err := iter.Err(); err != nil {
+		t.Fatalf("IterDependentsWithMetadata(mr-epic): %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("IterDependentsWithMetadata(mr-epic) = %+v, want the slice path's %+v", got, want)
+	}
+}
+
+// TestDependentsStreamADualResidentChildOnce reproduces the mirror on the state
+// the detail view's streaming read can see: both children are also resident in
+// `wisps`, the replication residual publicops.GetRequest documents, with their
+// edges in both dependency tables. The stream's wisp query joins the wisp
+// copies, so before the stream de-duplicated, `bd show --json
+// --include-dependents` listed mr-c01 a second time (as blocks) and mr-c02 a
+// second time, which doubled it in the rollup. Each child must stream once,
+// with its durable type, agreeing with the slice path and the count.
+//
+// The slice path reads an id resident in both planes from `wisps`
+// (GetIssuesByIDsInTx), so the stream must stream that row too. The wisp
+// copies therefore differ from the durable rows: their titles name the copy,
+// and the closed child is mr-c02, not mr-c01. Text `bd show` and the detail
+// view then report the same child closed.
+func TestDependentsStreamADualResidentChildOnce(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	seedTwoChildEpic(t, store)
+	closedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, child := range []struct {
+		id          string
+		status      types.Status
+		closeReason string
+		closedAt    *time.Time
+	}{{"mr-c01", types.StatusOpen, "", nil}, {"mr-c02", types.StatusClosed, "done in the wisp", &closedAt}} {
+		if _, err := store.db.ExecContext(ctx,
+			"INSERT INTO wisps (id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, ephemeral, close_reason, closed_at) VALUES (?, ?, '', '', '', '', ?, 2, ?, 1, ?, ?)",
+			child.id, child.id+" wisp copy", child.status, types.TypeTask, child.closeReason, child.closedAt); err != nil {
+			t.Fatalf("seed wisp copy of %s: %v", child.id, err)
+		}
+	}
+	mirrorIntoWispDependencies(t, store, "mr-c01", "mr-epic", types.DepBlocks)
+	mirrorIntoWispDependencies(t, store, "mr-c02", "mr-epic", types.DepParentChild)
+
+	got, err := store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata: %v", err)
+	}
+	requireEpicChildren(t, "GetDependentsWithMetadata(mr-epic)", got, "mr-c02")
+	for _, d := range got {
+		if d.Title != d.ID+" wisp copy" || !d.Ephemeral {
+			t.Fatalf("GetDependentsWithMetadata(mr-epic) read %s as %q (ephemeral=%v), want its wisp copy", d.ID, d.Title, d.Ephemeral)
+		}
+	}
+	requireStreamMatchesSlice(t, store, got)
+	requireEdgeCounts(t, store, 2)
+	requireDetailDependents(t, store, "", "mr-c02")
+}
+
+// TestDependentsStreamAChildLinkedOnlyByItsMirror pins the other out-of-step
+// join. On GH#3445's third state, `bd dep remove` of a durable child deletes
+// only its `dependencies` row (RemoveDependency routes by the source's plane),
+// so the child's edge survives as its wisp_dependencies mirror. The slice
+// path lists the child, read from `issues`, with the mirror's type, and the
+// count includes it, so the stream must list it too. Otherwise the detail view
+// reports it as an edge whose far end has no row.
+func TestDependentsStreamAChildLinkedOnlyByItsMirror(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	seedTwoChildEpic(t, store)
+	mirrorIntoWispDependencies(t, store, "mr-c02", "mr-epic", types.DepParentChild)
+	if err := store.RemoveDependency(ctx, "mr-c02", "mr-epic", "tester"); err != nil {
+		t.Fatalf("remove mr-c02 -> mr-epic: %v", err)
+	}
+
+	got, err := store.GetDependentsWithMetadata(ctx, "mr-epic")
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata: %v", err)
+	}
+	requireEpicChildren(t, "GetDependentsWithMetadata(mr-epic)", got, "mr-c01")
+	requireStreamMatchesSlice(t, store, got)
+	requireEdgeCounts(t, store, 2)
+	requireDetailDependents(t, store, "", "mr-c01")
+}
+
+// iterDependentRows answers one IterDependentsWithMetadata query: each
+// (id, type) pair becomes a minimal open issue row for the dependent, titled
+// with the issue table the query reads, so a test can tell which join a
+// streamed dependent came from, followed by its edge type.
+func iterDependentRows(issueTable string, ends ...[2]string) *sqlmock.Rows {
+	cols := splitCommaList(prefixedIssueColumns("i"))
+	rows := sqlmock.NewRows(append(append([]string(nil), cols...), "type"))
+	for _, end := range ends {
+		values := make([]driver.Value, 0, len(cols)+1)
+		for _, col := range cols {
+			switch col[strings.LastIndex(col, ".")+1:] {
+			case "id":
+				values = append(values, end[0])
+			case "title":
+				values = append(values, issueTable)
+			case "description", "design", "acceptance_criteria", "notes":
+				values = append(values, "")
+			case "status":
+				values = append(values, string(types.StatusOpen))
+			case "priority":
+				values = append(values, 2)
+			case "issue_type":
+				values = append(values, string(types.TypeTask))
+			case "compaction_level":
+				values = append(values, 0)
+			default:
+				values = append(values, nil)
+			}
+		}
+		rows.AddRow(append(values, end[1])...)
+	}
+	return rows
+}
+
+// TestIterDependentsWithMetadataReadsBothTables pins the four joins behind the
+// streaming dependents read, which the Dolt-backed tests above cover only on a
+// server. They run in one read transaction: `dependencies` before
+// `wisp_dependencies`, and for each, `wisps` before `issues`. A dependent
+// streams once, with the first row returned for it, so it keeps its durable
+// type, and its wisps row when its id is resident in both planes, as the slice
+// path reads it. A missing wisps or wisp_dependencies table means no rows from
+// the joins that name it (GH#3445). Any other error fails the read, a missing
+// leases table included: it is in every join's FROM clause too, and the
+// tolerance is for the optional wisp tables alone.
+func TestIterDependentsWithMetadataReadsBothTables(t *testing.T) {
+	// The joins in the order they run, each with the issue table it reads.
+	joins := []struct{ query, issueTable string }{
+		{`FROM wisps i\s+JOIN dependencies d ON d\.issue_id = i\.id`, "wisps"},
+		{`FROM issues i\s+JOIN dependencies d ON d\.issue_id = i\.id`, "issues"},
+		{`FROM wisps i\s+JOIN wisp_dependencies d ON d\.issue_id = i\.id`, "wisps"},
+		{`FROM issues i\s+JOIN wisp_dependencies d ON d\.issue_id = i\.id`, "issues"},
+	}
+	missingTable := func(table string) error {
+		return &mysql.MySQLError{Number: 1146, Message: "table not found: " + table}
+	}
+	errRead := errors.New("connection reset")
+	errMissingLeases := missingTable("leases")
+	durable := [][2]string{{"c1", "parent-child"}, {"c2", "parent-child"}}
+	// durableRows is how the durable dependents stream: from issues.
+	durableRows := [][3]string{{"c1", "parent-child", "issues"}, {"c2", "parent-child", "issues"}}
+
+	type arm struct {
+		ends [][2]string
+		err  error
+	}
+	cases := []struct {
+		name string
+		// arms answer the joins in order. A join after the one that fails the
+		// read never runs, so it has no arm.
+		arms []arm
+		// want is each streamed dependent: its id, its type, and the issue
+		// table its row came from.
+		want [][3]string
+		// wantCallErr is the call's error when the first join fails the read;
+		// wantErr is the error Err returns after the rows in want otherwise.
+		wantCallErr, wantErr error
+	}{
+		{
+			name: "a dependent streams once, with its durable type and its wisps row",
+			arms: []arm{
+				{ends: [][2]string{{"c1", "parent-child"}}},
+				{ends: durable},
+				{ends: [][2]string{{"c1", "blocks"}, {"w1", "blocks"}}},
+				{ends: [][2]string{{"c1", "blocks"}, {"c2", "related"}, {"i1", "related"}}},
+			},
+			want: [][3]string{
+				{"c1", "parent-child", "wisps"},
+				{"c2", "parent-child", "issues"},
+				{"w1", "blocks", "wisps"},
+				{"i1", "related", "issues"},
+			},
+		},
+		{
+			name: "missing wisp_dependencies reads as empty",
+			arms: []arm{
+				{},
+				{ends: durable},
+				{err: missingTable("wisp_dependencies")},
+				{err: missingTable("wisp_dependencies")},
+			},
+			want: durableRows,
+		},
+		{
+			name: "missing wisps reads as empty",
+			arms: []arm{
+				{err: missingTable("wisps")},
+				{ends: durable},
+				{err: missingTable("wisps")},
+				{ends: [][2]string{{"i1", "related"}}},
+			},
+			want: append(append([][3]string(nil), durableRows...), [3]string{"i1", "related", "issues"}),
+		},
+		{
+			name:        "missing leases fails the call",
+			arms:        []arm{{err: errMissingLeases}},
+			wantCallErr: errMissingLeases,
+		},
+		{
+			name: "a later join's error fails the read",
+			arms: []arm{
+				{},
+				{ends: durable},
+				{ends: [][2]string{{"w1", "blocks"}}},
+				{err: errRead},
+			},
+			want:    append(append([][3]string(nil), durableRows...), [3]string{"w1", "blocks", "wisps"}),
+			wantErr: errRead,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			mock.ExpectBegin()
+			for i, a := range tc.arms {
+				q := mock.ExpectQuery(joins[i].query).WithArgs("near")
+				if a.err != nil {
+					q.WillReturnError(a.err)
+					continue
+				}
+				q.WillReturnRows(iterDependentRows(joins[i].issueTable, a.ends...))
+			}
+			mock.ExpectRollback()
+
+			ctx := context.Background()
+			iter, err := (&DoltStore{db: db}).IterDependentsWithMetadata(ctx, "near")
+			if tc.wantCallErr != nil {
+				if !errors.Is(err, tc.wantCallErr) || iter != nil {
+					t.Fatalf("IterDependentsWithMetadata = %v, %v; want no iterator and an error wrapping %v", iter, err, tc.wantCallErr)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("IterDependentsWithMetadata: %v", err)
+				}
+				var got [][3]string
+				for iter.Next(ctx) {
+					d := iter.Value()
+					got = append(got, [3]string{d.ID, string(d.DependencyType), d.Title})
+				}
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("streamed %v, want %v", got, tc.want)
+				}
+				if err := iter.Err(); !errors.Is(err, tc.wantErr) {
+					t.Fatalf("Err() = %v, want %v", err, tc.wantErr)
+				}
+				_ = iter.Close()
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
+	}
 }

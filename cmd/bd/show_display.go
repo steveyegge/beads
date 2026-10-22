@@ -220,7 +220,9 @@ func displayShowIssueReturn(ctx context.Context, issueID string, commentsTail in
 }
 
 // unresolvableDepCounter is the slice of the store warnUnresolvableDepEdges
-// reads. Both counts are O(1) aggregate queries over the dependency tables.
+// reads. Both counts hydrate no issue rows: they read one (far end, type) pair
+// per edge and count the distinct far ends, the far ends the listings hydrate,
+// so only a far end with no row makes a count and its listing differ.
 // depListing is one direction's rendered edge list: how many rows reached the
 // screen, and whether the read that produced them succeeded. The error is the
 // load-bearing half — a failed read and a genuinely short one are both an

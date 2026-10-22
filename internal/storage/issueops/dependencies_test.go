@@ -434,6 +434,11 @@ func edgeEndQueryRegex(table string, inbound bool) string {
 // the edge reads and counts must return rather than read as empty.
 var errEdgeRead = errors.New("connection reset")
 
+// errMissingDependencies is a missing durable `dependencies` table. Only the
+// optional wisp_dependencies may read as empty when it is missing, so the edge
+// reads and counts must return this error rather than an empty edge list.
+var errMissingDependencies = missingTableError("dependencies")
+
 // edgeEndArm scripts one table's answer: far-end (id, type) rows, or an error.
 type edgeEndArm struct {
 	rows []depEdgeEnd
@@ -505,6 +510,11 @@ func TestListDepEdgeEndsInTx(t *testing.T) {
 			name:    "dependencies error propagates",
 			durable: edgeEndArm{err: errEdgeRead},
 			wantErr: errEdgeRead,
+		},
+		{
+			name:    "missing dependencies table propagates",
+			durable: edgeEndArm{err: errMissingDependencies},
+			wantErr: errMissingDependencies,
 		},
 		{
 			name:    "wisp_dependencies error other than a missing table propagates",
@@ -630,6 +640,12 @@ func TestCountDependencyEdgesInTxDistinct(t *testing.T) {
 			dir:     domain.DepDirectionIn,
 			arms:    []countArm{{"dependencies", true, edgeEndArm{err: errEdgeRead}}},
 			wantErr: errEdgeRead,
+		},
+		{
+			name:    "missing dependencies table propagates",
+			dir:     domain.DepDirectionOut,
+			arms:    []countArm{{"dependencies", false, edgeEndArm{err: errMissingDependencies}}},
+			wantErr: errMissingDependencies,
 		},
 		{
 			name: "wisp_dependencies error other than a missing table propagates",

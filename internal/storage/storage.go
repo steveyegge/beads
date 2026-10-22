@@ -592,6 +592,9 @@ type Storage interface {
 	// status, priority, type, assignee, label.
 	CountIssuesByGroup(ctx context.Context, filter types.IssueFilter, groupBy string) (map[string]int, error)
 	// CountDependents returns the number of issues that depend on issueID.
+	// It and CountDependencies count each far end once across both dependency
+	// tables (GH#3445), so they read one small row per edge, though still no
+	// issue row, rather than a single aggregate.
 	CountDependents(ctx context.Context, issueID string) (int64, error)
 	// CountDependencies returns the number of issues that issueID depends on.
 	CountDependencies(ctx context.Context, issueID string) (int64, error)

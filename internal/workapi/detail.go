@@ -118,7 +118,10 @@ func BuildIssueDetails(ctx context.Context, src DetailSource, issue *types.Issue
 
 	details.Labels, _ = src.Labels(ctx, id, isWisp)
 
-	// Aggregate counts - O(1) queries, no row materialization.
+	// Counts - no issue rows are hydrated. The comment count is an aggregate;
+	// the two dependency counts read one (far end, type) pair per edge and
+	// count the distinct far ends, so an edge stored in both dependency tables
+	// counts once, as the listings below show it (GH#3445).
 	//
 	// THE COUNTS ARE READ BEFORE THE ROW LISTS, and the order is load-bearing
 	// wherever the source is not snapshot-consistent. The UOW source runs the
