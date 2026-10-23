@@ -818,6 +818,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd compact` no longer drops a write that lands while it runs.** Its
+  last step reset `main` with `DOLT_RESET('--hard', 'compact-tmp')`, which
+  deleted a commit that reached `main` after the final head check and any
+  row in `main`'s working set that no Dolt commit held yet, after the writer
+  had been told it succeeded. The reset is now `--soft`, and when `main`'s
+  working set then differs from the squashed head the compaction commits
+  it, so `main` is never left dirty.
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to
