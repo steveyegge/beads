@@ -656,3 +656,64 @@ func TestRemoveCodexHooksRemovesLegacyAndPreservesUnrelated(t *testing.T) {
 		t.Fatal("removed config should no longer be detected as a Codex Beads integration")
 	}
 }
+
+// Remove takes the agent skill's files out of .agents/skills/beads and then
+// removes the directories they were in, innermost first, each if that left
+// it empty, but it never removes one that is a symlink, since that unlinks
+// it whatever its target holds, nor any when it removed no file. Cursor's
+// remove shares this (removeAgentSkill).
+func TestRemoveCodexKeepsSkillDirsItDidNotEmpty(t *testing.T) {
+	agents := ".agents"
+	skills := filepath.Join(agents, "skills")
+	beads := filepath.Join(skills, "beads")
+	for _, tt := range []struct {
+		name    string
+		link    string // the directory that is a symlink to one beside the project
+		mkdir   string // a real directory the user made
+		install bool   // bd setup codex ran first
+		want    map[string]string
+	}{
+		{name: "linked .agents bd installed nothing in", link: agents,
+			want: map[string]string{agents: "link"}},
+		{name: "linked .agents bd installed the skill through", link: agents, install: true,
+			want: map[string]string{agents: "link", skills: "gone"}},
+		{name: "linked .agents/skills bd installed the skill through", link: skills, install: true,
+			want: map[string]string{agents: "dir", skills: "link", beads: "gone"}},
+		{name: "linked .agents/skills/beads bd installed the skill through", link: beads, install: true,
+			want: map[string]string{skills: "dir", beads: "link"}},
+		{name: "real .agents/skills bd installed nothing in", mkdir: skills,
+			want: map[string]string{agents: "dir", skills: "dir"}},
+		{name: "real .agents holding only bd's skill", install: true,
+			want: map[string]string{agents: "gone"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env, stdout, _ := newCodexTestEnv(t)
+			if tt.link != "" {
+				link := filepath.Join(env.projectDir, tt.link)
+				if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				symlinkDir(t, filepath.Join(filepath.Dir(env.projectDir), "shared"), link)
+			}
+			if tt.mkdir != "" {
+				if err := os.MkdirAll(filepath.Join(env.projectDir, tt.mkdir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.install {
+				if err := installCodex(env, false); err != nil {
+					t.Fatalf("installCodex: %v\n%s", err, stdout.String())
+				}
+			}
+
+			if err := removeCodex(env, false); err != nil {
+				t.Fatalf("removeCodex: %v\n%s", err, stdout.String())
+			}
+			requireGone(t, agentSkillPath(env.projectDir))
+			requireGone(t, agentSkillOpenAIYAMLPath(env.projectDir))
+			for rel, want := range tt.want {
+				requireState(t, filepath.Join(env.projectDir, rel), want)
+			}
+		})
+	}
+}

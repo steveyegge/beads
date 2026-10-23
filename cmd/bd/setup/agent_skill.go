@@ -106,34 +106,34 @@ func checkAgentSkill(env agentSkillEnv, setupCommand string) error {
 
 func removeAgentSkill(env agentSkillEnv) error {
 	_, _ = fmt.Fprintln(env.stdout, "Removing Beads agent skill...")
+	removed := false
 	for _, path := range []string{
 		agentSkillOpenAIYAMLPath(env.projectDir),
 		agentSkillPath(env.projectDir),
 	} {
-		if err := env.removeFile(path); err != nil && !os.IsNotExist(err) {
+		err := env.removeFile(path)
+		if err == nil {
+			removed = true
+		} else if !os.IsNotExist(err) {
 			_, _ = fmt.Fprintf(env.stderr, "Error: remove %s: %v\n", path, err)
 			return err
 		}
 	}
-	for _, dir := range []string{
-		filepath.Join(env.projectDir, ".agents", "skills", "beads", "agents"),
-		filepath.Join(env.projectDir, ".agents", "skills", "beads"),
-		filepath.Join(env.projectDir, ".agents", "skills"),
-		filepath.Join(env.projectDir, ".agents"),
-	} {
-		entries, err := os.ReadDir(dir) // #nosec G304 -- project-local skill path
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if len(entries) != 0 {
-			continue
-		}
-		if err := env.removeFile(dir); err != nil && !os.IsNotExist(err) {
-			_, _ = fmt.Fprintf(env.stderr, "Error: remove %s: %v\n", dir, err)
-			return err
+	// The directories the skill's files were in, innermost first, go only
+	// when this run removed one of those files, and each only if that left
+	// it empty; never a symlinked one (RemoveEmptyDir), so a linked .agents,
+	// .agents/skills or .agents/skills/beads stays.
+	if removed {
+		for _, dir := range []string{
+			filepath.Join(env.projectDir, ".agents", "skills", "beads", "agents"),
+			filepath.Join(env.projectDir, ".agents", "skills", "beads"),
+			filepath.Join(env.projectDir, ".agents", "skills"),
+			filepath.Join(env.projectDir, ".agents"),
+		} {
+			if err := RemoveEmptyDir(dir); err != nil {
+				_, _ = fmt.Fprintf(env.stderr, "Error: remove %s: %v\n", dir, err)
+				return err
+			}
 		}
 	}
 	_, _ = fmt.Fprintln(env.stdout, "✓ Beads agent skill removed")

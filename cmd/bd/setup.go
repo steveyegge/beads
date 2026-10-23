@@ -275,7 +275,10 @@ func runRecipe(name string) error {
 				return HandleError("%v", err)
 			}
 			removed = true
-			_ = os.Remove(filepath.Dir(path))
+			// Drop the file's directory if that left it empty, but never a
+			// symlinked one, which removing would unlink whatever its
+			// target holds (setup.RemoveEmptyDir).
+			_ = setup.RemoveEmptyDir(filepath.Dir(path))
 		}
 		if !removed {
 			fmt.Println("No integration files found")

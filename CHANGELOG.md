@@ -1321,6 +1321,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   link, or on Windows a junction, stays. Run from `~/.mux`, setup and
   `--check` now also name the hooks an earlier bd installed in `~/.mux/.mux`,
   which Mux does not load, and how to remove them.
+- **`bd setup <recipe> --remove` keeps a symlinked integration directory.**
+  After removing its files, `--remove` also removes the directories they were
+  in if that leaves them empty, but where such a directory was a symlink it
+  deleted the link: a linked `.aider`, `.junie` or `.junie/mcp`, even when bd
+  had installed nothing there, `.cursor/rules`, or a file recipe's directory
+  such as `.windsurf/rules` or `.github` (windsurf, cody, kilocode, kiro,
+  copilot and custom recipes), whatever the link's target held, and the agent
+  skill's linked `.agents`, `.agents/skills` or `.agents/skills/beads` (Codex
+  and Cursor; with `--global`, in your home directory) once its target was
+  empty. Every recipe now removes a directory as `bd setup mux --remove`
+  does: only a real one that the files it just removed left empty. A link, or
+  on Windows a junction, stays, and so does a directory it took nothing from,
+  such as an empty `.agents/skills` you made.
 - **`bd setup claude --global` keeps its beads section in `~/.claude/CLAUDE.md`.**
   It wrote the section into the current directory's `CLAUDE.md`: run from your
   home directory it created `~/CLAUDE.md`, which by default stops Claude Code
