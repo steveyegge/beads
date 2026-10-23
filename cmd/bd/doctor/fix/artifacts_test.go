@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/backendnames"
 )
 
 func TestClassicArtifacts_NoArtifacts(t *testing.T) {
@@ -474,13 +475,21 @@ func TestClassicArtifacts_PreservesLegacyConfigJSONAlongsideRedirect(t *testing.
 // The walk reaches nested workspaces that command admission never checks, and
 // the fix removed beads.db-wal, beads.db-shm and every beads.backup-*.db in
 // each of them whatever its backend. In a workspace on a removed backend
-// (sqlite, postgres, mysql), or on one this build does not recognize, those
-// are that backend's files: a sqlite workspace's WAL can hold committed
+// (sqlite, postgres, mysql), on a registered one (such as http in the shipped
+// bd; a test-only name stands in for it here), or on one this build does not
+// recognize, those are that backend's files: a sqlite workspace's WAL can hold committed
 // transactions not yet checkpointed into beads.db, which only a build that
 // opens it can recover. The root workspace's WAL, which the scan reports, is
 // still removed.
 func TestClassicArtifacts_LeavesOtherBackendsSQLiteFiles(t *testing.T) {
-	backends := []string{configfile.BackendSQLite, configfile.BackendPostgres, configfile.BackendMySQL, "future-backend"}
+	// GetBackend returns a registered name unchanged, so this is the case
+	// only the SelectsDolt GetBackend check guards: IsSupportedBackend
+	// accepts it.
+	const registered = "acme-artifacts-fix"
+	backendnames.Add(registered)
+	t.Cleanup(func() { backendnames.Remove(registered) })
+
+	backends := []string{configfile.BackendSQLite, configfile.BackendPostgres, configfile.BackendMySQL, registered, "future-backend"}
 	for _, backend := range backends {
 		for _, metadataFile := range []string{configfile.ConfigFileName, "config.json"} {
 			t.Run(backend+"/"+metadataFile, func(t *testing.T) {

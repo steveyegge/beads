@@ -91,6 +91,7 @@ go_test(
     deps = [
         "//internal/configfile",
         "//internal/doltserver",
+        "//internal/storage/backendnames",
         "//internal/storage/depid",
         "//internal/storage/dolt",
         "//internal/storage/doltutil",

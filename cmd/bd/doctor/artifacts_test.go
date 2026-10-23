@@ -10,6 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/backendnames"
 )
 
 func TestCheckClassicArtifacts_NoArtifacts(t *testing.T) {
@@ -653,9 +654,15 @@ func TestScanForArtifacts_ScansWorkspaceWithUnloadableMetadata(t *testing.T) {
 // scan finds only what is left for manual review. The cleanup used to remove
 // beads.db-wal, beads.db-shm and every beads.backup-*.db whatever the backend,
 // files the scan never reported, as soon as the scan found anything at all,
-// here the root workspace's WAL. A backend this build does not recognize,
-// which configfile.Config.GetBackend reads as Dolt, is not Dolt to either half.
+// here the root workspace's WAL. A registered backend (such as http in the
+// shipped bd; a test-only name stands in for it here) is not Dolt, and a
+// backend this build does not recognize, which configfile.Config.GetBackend
+// reads as Dolt, is not Dolt to either half.
 func TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles(t *testing.T) {
+	const registered = "acme-artifacts-doctor"
+	backendnames.Add(registered)
+	t.Cleanup(func() { backendnames.Remove(registered) })
+
 	sqliteFiles := map[string]string{
 		"beads.db":                 "db",
 		"beads.db-wal":             "wal",
@@ -670,6 +677,7 @@ func TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles(t *testing.T) {
 		{backend: configfile.BackendSQLite},
 		{backend: configfile.BackendPostgres},
 		{backend: configfile.BackendMySQL},
+		{backend: registered},
 		{backend: "future-backend"},
 	}
 	for _, tc := range cases {

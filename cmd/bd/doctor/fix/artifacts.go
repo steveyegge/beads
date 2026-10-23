@@ -211,19 +211,28 @@ func cleanJSONLArtifacts(beadsDir string) (removed, skipped, errCount int) {
 	return
 }
 
-// cleanSQLiteArtifacts removes leftover SQLite database files from a .beads
-// directory whose metadata, cfg (nil when it has none), selects Dolt. The
-// Classic Artifacts scan (doctor.scanSQLiteArtifacts) reports them only there,
-// and this removes exactly the ones it marks safe to delete. In a workspace on
-// another backend they are that backend's files: a sqlite workspace's
-// beads.db-wal can hold committed transactions not yet checkpointed into
-// beads.db.
-func cleanSQLiteArtifacts(beadsDir string, cfg *configfile.Config) (removed, skipped, errCount int) {
+// SelectsDolt reports whether cfg, a .beads directory's metadata (nil when it
+// has none or it does not load), selects Dolt, so that the directory's
+// beads.db, beads.db-wal, beads.db-shm and beads.backup-*.db are leftovers of
+// an earlier SQLite era rather than a live backend's files. The Classic
+// Artifacts scan (doctor.scanSQLiteArtifacts) reports SQLite files only where
+// this holds and cleanSQLiteArtifacts removes them only there, so the two
+// halves share one predicate. GetBackend reads a backend this build does not
+// recognize as Dolt, so that is checked too.
+func SelectsDolt(cfg *configfile.Config) bool {
 	if cfg.GetBackend() != configfile.BackendDolt {
-		return
+		return false
 	}
-	// GetBackend reads a backend this build does not recognize as Dolt.
-	if cfg != nil && !configfile.IsSupportedBackend(cfg.Backend) {
+	return cfg == nil || configfile.IsSupportedBackend(cfg.Backend)
+}
+
+// cleanSQLiteArtifacts removes leftover SQLite database files from a .beads
+// directory whose metadata, cfg, selects Dolt (SelectsDolt), the only place
+// the scan reports them. In a workspace on another backend they are that
+// backend's files: a sqlite workspace's beads.db-wal can hold committed
+// transactions not yet checkpointed into beads.db.
+func cleanSQLiteArtifacts(beadsDir string, cfg *configfile.Config) (removed, skipped, errCount int) {
+	if !SelectsDolt(cfg) {
 		return
 	}
 

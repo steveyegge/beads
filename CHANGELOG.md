@@ -1208,16 +1208,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose metadata selects Dolt, but its cleanup (`bd doctor --fix` and
   `bd doctor --check=artifacts --clean`) removed the WAL, the SHM and every
   backup in each `.beads` under the repository whatever its backend, once the
-  check had found anything, such as a leftover WAL in the repository's own
-  `.beads`. A nested workspace whose metadata names `sqlite`, `postgres` or
-  `mysql` lost files the check never listed. In a `sqlite` one, a
-  `beads.db-wal` left by an unclean close holds committed transactions not
-  yet checkpointed into `beads.db`, which exporting the workspace with a bd
-  release that still includes the sqlite backend, as bd advises, would have
-  recovered. The cleanup now removes SQLite files only where the check
-  reports them. Neither half treats a workspace whose metadata names a
-  backend this build does not recognize as Dolt any more, so its SQLite
-  files are neither reported nor removed.
+  check had found something (with `--clean`, something safe to delete), such
+  as a leftover WAL in the repository's own `.beads`. A nested workspace
+  whose metadata names `sqlite`, `postgres`, `mysql` or another registered
+  backend such as `http` lost files the check never listed. In a `sqlite`
+  one, a `beads.db-wal` left by an unclean close holds committed
+  transactions not yet checkpointed into `beads.db`, which exporting the
+  workspace with a bd release that still includes the sqlite backend, as bd
+  advises, would have recovered. The check and the cleanup now share one
+  backend predicate, so in each `.beads` both reach the cleanup removes
+  SQLite files only where the check reports them. Neither treats a
+  workspace whose metadata names a backend this build does not recognize as
+  Dolt any more, so its SQLite files are neither reported nor removed.
 - **Activating the HTTP backend refuses a graph workspace too.**
   `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
   `metadata.json` declares a `graph_mode` other than `dependency`, or whose
