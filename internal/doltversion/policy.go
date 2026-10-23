@@ -14,13 +14,16 @@ import (
 // (dolthub/go-mysql-server#4037). Three older boundaries sit below it.
 // Releases before 2.4.0 mis-plan a join (dolthub/dolt#11886). 2.3.0 and 2.3.1
 // regressed CALL DOLT_RESET('--hard') (dolthub/dolt#11581, fixed in 2.3.2 by
-// dolthub/dolt#11652). Releases before 2.3.3 cannot read the descending index
-// column every database bd creates holds ("table has unknown fields"; 2.3.3 is
-// the first release that stores one, dolthub/dolt#11746). The embedded engine
-// bd links and the CI pin are both 2.5.1 (scripts/ci/install-dolt.sh), which
-// TestPinnedDoltCLIAtLeastRecommendedMin keeps at or above this value;
-// docs/architecture/dolt.md ("Which Dolt version to install") records the
-// dated measurements.
+// dolthub/dolt#11652). Releases before 2.3.3 cannot write to a database
+// holding a descending index column (2.3.3 is the first release that stores
+// one, dolthub/dolt#11746): an UPDATE or DELETE on issues fails on
+// fk_comp_snap_issue, and other writes and information_schema queries fail
+// with "table has unknown fields". Every database bd creates in embedded mode
+// holds one, and so does any database whose schema a dolt sql-server 2.3.3 or
+// newer created. The embedded engine bd links and the CI pin are both 2.5.1
+// (scripts/ci/install-dolt.sh), which TestPinnedDoltCLIAtLeastRecommendedMin
+// keeps at or above this value; docs/architecture/dolt.md ("Which Dolt version
+// to install") records the dated measurements.
 //
 // This is deliberately a recommendation, not a hard floor (see
 // CheckRecommended): an earlier design that hard-failed startup below a
@@ -93,7 +96,9 @@ func (w *Warning) Message() string {
 				"dolt 2.4.0 through 2.4.2 return no row for an ungrouped MAX or MIN over an unmatched primary-key prefix (dolthub/dolt#12093), "+
 				"dolt before 2.4.0 can return wrong join results (dolthub/dolt#11886), "+
 				"dolt 2.3.0 and 2.3.1 can leave CALL DOLT_RESET('--hard') failing with \"context canceled\" on a freshly created database, "+
-				"and dolt before 2.3.3 fails with \"table has unknown fields\" on the descending index every database bd creates holds "+
+				"and dolt before 2.3.3 cannot write to a database holding a descending index "+
+				"(every database bd creates in embedded mode, and any database whose schema a dolt sql-server 2.3.3 or newer created): "+
+				"an UPDATE or DELETE on issues fails on fk_comp_snap_issue, other writes with \"table has unknown fields\" "+
 				"(see gastownhall/beads doltversion package docs)",
 			w.Probed, w.Recommended,
 		)

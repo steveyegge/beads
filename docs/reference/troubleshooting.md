@@ -414,9 +414,14 @@ startup it probes that binary with `dolt version` and recommends
   an unmatched primary-key prefix (dolthub/dolt#12093).
 - Dolt before 2.4.0 has a join bug that returns wrong results
   (dolthub/dolt#11886).
-- Dolt before 2.3.3 fails with `table has unknown fields` on the descending
-  index column every database `bd` creates holds (dolthub/dolt#11746), so it
-  cannot open those databases at all.
+- Dolt before 2.3.3 cannot write to a database holding a descending index
+  column (dolthub/dolt#11746). Every database `bd` creates in embedded mode
+  holds one, and so does any database whose schema a `dolt sql-server` 2.3.3
+  or newer created. On such a database an `UPDATE` or `DELETE` on `issues`,
+  which `bd create` and `bd update` both run, fails with
+  `cannot add or update a child row: a foreign key constraint fails` on
+  `fk_comp_snap_issue`. Other writes and `information_schema` queries fail
+  with `table has unknown fields`.
 
 [Which Dolt version to install](/architecture/dolt#which-dolt-version-to-install)
 records the dated measurements. (Earlier, the 2026-07-25 cross-version

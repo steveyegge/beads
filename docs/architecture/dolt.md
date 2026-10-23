@@ -59,15 +59,17 @@ proxied-server mode warns below it.
 
 Dolt 2.3.3 is the first release that stores a descending index column as
 descending (dolthub/dolt#11746), and older releases cannot read a table that
-holds one: even a plain `INSERT` fails with `table has unknown fields`.
-Migration 0010 declares `compaction_snapshots.idx_comp_snap_issue` with
-`created_at DESC`. So every database `bd` creates from this release on, and
-every database whose schema a `dolt sql-server` 2.3.3 or newer created, holds
-one. **This is one-way: `bd` does not convert the index back**, so such a
-database needs Dolt 2.3.3 or newer, and a `bd` built on Dolt 2.3.3 or newer,
-for good. Databases created earlier keep an ascending index and stay readable
-and writable by older Dolt even after this release migrates and writes to them
-(measured 2026-10-21 with Dolt 2.2.0 and 2.3.2).
+holds one: even a plain `INSERT` fails with `table has unknown fields`, and an
+`UPDATE` or `DELETE` on `issues` fails with `cannot add or update a child row:
+a foreign key constraint fails` on `fk_comp_snap_issue`. Migration 0010
+declares `compaction_snapshots.idx_comp_snap_issue` with `created_at DESC`. So
+every database `bd` creates in embedded mode from this release on, and every
+database whose schema a `dolt sql-server` 2.3.3 or newer created, holds one.
+**This is one-way: `bd` does not convert the index back**, so such a database
+needs Dolt 2.3.3 or newer, and a `bd` built on Dolt 2.3.3 or newer, for good.
+Other databases keep an ascending index and stay readable and writable by
+older Dolt even after this release migrates and writes to them (measured
+2026-10-21 with Dolt 2.2.0 and 2.3.2).
 
 Dolt 2.3.0 (released 2026-08-13) regressed `CALL DOLT_RESET('--hard')`. A few
 percent of freshly created databases come up with that procedure unusable —
@@ -87,9 +89,9 @@ immediately calling the procedure:
 |---|---|---|---|
 | 2.1.8 | no | correct | 0 / 40 |
 | 2.2.0 | no | correct | 0 / 60 |
-| 2.3.0 | no | not measured | 3 / 60 |
+| 2.3.0 | no | correct | 3 / 60 |
 | 2.3.1 | no | correct | 3 / 100 (2026-08-20); 8 / 150 (2026-10-10); 4 / 300 (2026-10-21) |
-| 2.3.2 | no (measured) | correct | not measured (carries the fix, dolthub/dolt#11652) |
+| 2.3.2 | no | correct | not measured (carries the fix, dolthub/dolt#11652) |
 | 2.3.3 – 2.3.5 | **yes (the floor)** | correct | not measured |
 | 2.4.0 | yes | **no row** (dolthub/dolt#12093) | not measured |
 | 2.4.1 | yes | **no row** | 0 / 250 |
@@ -98,9 +100,9 @@ immediately calling the procedure:
 | **2.5.1** (pinned) | yes | correct | 0 / 500 |
 
 "Opens a database `bd` creates" means `information_schema` reads and writes
-don't fail with `table has unknown fields`. The "no" for 2.1.8, 2.2.0, 2.3.1
-and 2.3.2 is measured; 2.3.0 is inferred, since 2.3.3 introduced descending
-storage.
+don't fail with `table has unknown fields`. Every row of that column is
+measured (2026-10-23, on a database `bd` created in embedded mode); plain
+reads of `issues` still succeed on the releases marked "no".
 
 - The embedded engine measured 0 / 100 on 2.5.1 and 0 / 100 on 2.4.1
   (2026-10-21), and 0 / 60 on 2.4.1 (2026-10-10). The 2026-10-10 and
@@ -112,6 +114,11 @@ storage.
   versioned-history revision read, no longer depends on it.
 - 2.4.0 through 2.4.2 also panic on an ungrouped `MAX` of a non-key column under
   a fully bound primary key (dolthub/go-mysql-server#4037).
+- "Correct" is for the shape the column names. Every release before 2.5.0,
+  2.2.0 included, returns no row for an ungrouped `MAX` over the whole primary
+  key of an empty table (`SELECT COALESCE(MAX(pk), 0) FROM t`); 2.5.0 and
+  later return one row. `bd`'s production queries of that shape accept either
+  answer.
 - Releases before 2.4.0 drop a join condition when an `ON` clause has an `OR`
   over indexed columns (dolthub/dolt#11886).
 

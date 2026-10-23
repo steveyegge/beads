@@ -426,13 +426,16 @@ func TestEmbeddedGuardedUpdateMintsOnceAfterItsPatches(t *testing.T) {
 // TestEmbeddedFirstMintOnEmptyHistoryIsRevisionOne pins the next-revision
 // computation on an issue with no issue_versions rows yet. The ungrouped
 // MAX(revision) over the empty primary-key prefix (issue_id = ?) must still
-// yield one row so the first mint is revision 1: go-mysql-server's
-// aggregate-over-index rewrite (dolthub/go-mysql-server#3907) returns zero rows
-// for that shape, which failed every first mint with "sql: no rows in result
-// set". The second mint pins that the computation still advances on a
-// non-empty prefix, and a second issue's first mint pins that it counts per
-// issue: without the issue_id filter it would continue the first issue's
-// sequence.
+// yield one row so the first mint is revision 1. On the Dolt 2.4.0-2.4.2
+// engines, go-mysql-server's aggregate-over-index rewrite
+// (dolthub/go-mysql-server#3907) returned zero rows for that shape, which
+// failed every first mint with "sql: no rows in result set". The 2.5.x engine
+// embedded mode links answers the old flat query correctly too, so this test
+// pins the result, not the query form; the sqlmock pins in issueops'
+// version_history_preenable_scan_test.go hold the form. The second mint pins
+// that the computation still advances on a non-empty prefix, and a second
+// issue's first mint pins that it counts per issue: without the issue_id
+// filter it would continue the first issue's sequence.
 func TestEmbeddedFirstMintOnEmptyHistoryIsRevisionOne(t *testing.T) {
 	skipUnlessEmbeddedDolt(t)
 	te := newTestEnv(t, "verfirst")
