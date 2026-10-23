@@ -1493,7 +1493,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a project that turns off a plugin your user settings enable. `bd doctor`
   now takes the plugin's setting from the first settings file that names it,
   in Claude Code's order, and the tip appears where `--check` reports no
-  hooks installed.
+  hooks installed. `bd doctor`'s hook checks (Claude Integration, Claude Hook
+  Completeness and Claude Settings Health) also read the repository root's
+  `.claude/settings.local.json` from a subdirectory or linked worktree, where
+  they missed a `bd prime` hook that `--check` finds; for `bd doctor <path>`
+  that is the root of `<path>`'s repository.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query

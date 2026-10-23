@@ -813,8 +813,12 @@ func TestClaudeSetupTipCondition(t *testing.T) {
 // --check does, on the same fixtures: the beads plugin by Claude Code's
 // settings precedence (managed settings, the repository root's local
 // settings, the current directory's, the project's, then the user's), and
-// only a plugin named beads; and, for the tip, a bd prime hook in the
-// project's settings as well (#7774's review).
+// only a plugin named beads; and a bd prime hook in the project's settings,
+// the repository root's local settings or the user's as well (#7774's
+// review). bd doctor reports the same for the directory it checks when it
+// runs elsewhere, in a separate checkout or in the repository that encloses
+// a nested one, whose cached git context is not that directory's (#7802's
+// review).
 func TestClaudeSetupReadersAgree(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
@@ -831,6 +835,8 @@ func TestClaudeSetupReadersAgree(t *testing.T) {
 		managed  = "managed/managed-settings.json"
 		repoDir  = "repo"
 		subDir   = "repo/sub"
+		nested   = "repo/nested"
+		otherDir = "other"
 		pluginOn = "Plugin installed"
 	)
 	cases := []struct {
@@ -846,6 +852,8 @@ func TestClaudeSetupReadersAgree(t *testing.T) {
 		{"managed settings enable it", map[string]string{managed: on}, repoDir, true, true},
 		{"managed settings turn off a user plugin", map[string]string{managed: off, user: on}, repoDir, false, false},
 		{"the repository root's local settings enable it in a subdirectory", map[string]string{local: on}, subDir, true, true},
+		{"a hook only in the repository root's local settings, in a subdirectory", map[string]string{local: hook}, subDir, false, true},
+		{"a nested repository does not read the enclosing one's local settings", map[string]string{user: on, local: off}, nested, true, true},
 		{"a plugin named design-to-beads is not the beads plugin", map[string]string{user: decoy}, repoDir, false, false},
 		{"the project's settings enable it", map[string]string{project: on}, repoDir, true, true},
 		{"a project hook where the project turns off a user plugin", map[string]string{user: on, project: offHook}, repoDir, false, true},
@@ -866,8 +874,10 @@ func TestClaudeSetupReadersAgree(t *testing.T) {
 					t.Fatalf("mkdir: %v", err)
 				}
 			}
-			if out, err := exec.Command("git", "init", "-q", filepath.Join(root, repoDir)).CombinedOutput(); err != nil {
-				t.Fatalf("git init: %v\n%s", err, out)
+			for _, repo := range []string{repoDir, nested, otherDir} {
+				if out, err := exec.Command("git", "init", "-q", filepath.Join(root, repo)).CombinedOutput(); err != nil {
+					t.Fatalf("git init: %v\n%s", err, out)
+				}
 			}
 			for path, body := range tc.files {
 				path = filepath.Join(root, path)
@@ -895,15 +905,19 @@ func TestClaudeSetupReadersAgree(t *testing.T) {
 			if got := !strings.Contains(check, "No hooks installed"); got != tc.hooks {
 				t.Errorf("--check reports hooks = %v, want %v:\n%s", got, tc.hooks, check)
 			}
-			msg := doctor.CheckClaude(dir).Message
-			if got := msg == pluginOn; got != tc.plugin {
-				t.Errorf("bd doctor reports the plugin = %v (%q), want %v", got, msg, tc.plugin)
-			}
-			if got := msg == pluginOn || msg == "Hooks installed (CLI mode)"; got != tc.hooks {
-				t.Errorf("bd doctor reports hooks = %v (%q), want %v", got, msg, tc.hooks)
-			}
 			if got := isClaudeSetupComplete(); got != tc.hooks {
 				t.Errorf("the claude_setup tip counts setup complete = %v, want %v", got, tc.hooks)
+			}
+			for _, from := range []string{tc.dir, otherDir, repoDir} {
+				t.Chdir(filepath.Join(root, from))
+				resetRepoCaches()
+				msg := doctor.CheckClaude(dir).Message
+				if got := msg == pluginOn; got != tc.plugin {
+					t.Errorf("bd doctor run in %s reports the plugin = %v (%q), want %v", from, got, msg, tc.plugin)
+				}
+				if got := msg == pluginOn || msg == "Hooks installed (CLI mode)"; got != tc.hooks {
+					t.Errorf("bd doctor run in %s reports hooks = %v (%q), want %v", from, got, msg, tc.hooks)
+				}
 			}
 		})
 	}

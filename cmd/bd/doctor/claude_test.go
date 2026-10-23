@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/cmd/bd/setup"
@@ -650,6 +652,74 @@ func TestCheckClaudeSettingsHealth(t *testing.T) {
 			t.Errorf("Expected error for malformed project settings, got %s", check.Status)
 		}
 	})
+
+	t.Run("malformed repository root local settings, from a subdirectory", func(t *testing.T) {
+		home, repo, sub := rootLocalSettingsFixture(t)
+		rootLocal := filepath.Join(repo, ".claude", "settings.local.json")
+		for _, path := range []string{filepath.Join(sub, ".claude", "settings.json"), rootLocal, filepath.Join(home, ".claude", "settings.json")} {
+			writeClaudeSettingsFile(t, path, `not json`)
+		}
+
+		check := CheckClaudeSettingsHealth(sub)
+		if check.Status != StatusError || check.Message != "3 malformed settings file(s)" {
+			t.Fatalf("Expected 3 malformed settings files, got %s: %s\n%s", check.Status, check.Message, check.Detail)
+		}
+		// The project's file is named relative to the directory doctor
+		// checks, the user's from ~, and the repository root's in full.
+		lines := strings.Split(check.Detail, "\n")
+		for i, prefix := range []string{filepath.Join(".claude", "settings.json") + ": ", rootLocal + ": ", "~/.claude/settings.json: "} {
+			if i >= len(lines) || !strings.HasPrefix(lines[i], prefix) {
+				t.Errorf("Expected detail line %d to start with %q, got:\n%s", i, prefix, check.Detail)
+			}
+		}
+	})
+}
+
+// rootLocalSettingsFixture makes a git repository with a subdirectory sub
+// and a home directory outside it, and points HOME there. Claude Code reads
+// the repository root's .claude/settings.local.json in a session started in
+// sub, as bd setup claude --check does there.
+func rootLocalSettingsFixture(t *testing.T) (home, repo, sub string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code keeps settings.local.json beside settings.json on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	for _, name := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"} {
+		t.Setenv(name, "")
+		_ = os.Unsetenv(name)
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, repo = filepath.Join(root, "home"), filepath.Join(root, "repo")
+	sub = filepath.Join(repo, "sub")
+	for _, dir := range []string{home, sub} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home, repo, sub
+}
+
+// writeClaudeSettingsFile writes a Claude Code settings file, creating its
+// .claude directory.
+func writeClaudeSettingsFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCheckClaudeHookCompleteness(t *testing.T) {
@@ -761,6 +831,25 @@ func TestCheckClaudeHookCompleteness(t *testing.T) {
 		check := CheckClaudeHookCompleteness(tmpDir)
 		if check.Status != StatusOK {
 			t.Errorf("Expected OK for stealth mode hooks, got %s: %s", check.Status, check.Message)
+		}
+	})
+
+	// From a subdirectory Claude Code loads the hooks in the repository
+	// root's .claude/settings.local.json, as bd setup claude --check finds.
+	t.Run("PreCompact hook only in the repository root's local settings, from a subdirectory", func(t *testing.T) {
+		_, repo, sub := rootLocalSettingsFixture(t)
+		writeClaudeSettingsFile(t, filepath.Join(repo, ".claude", "settings.local.json"), `{
+			"hooks": {
+				"PreCompact": [{"matcher":"","hooks":[{"type":"command","command":"bd prime --hook-json"}]}]
+			}
+		}`)
+
+		check := CheckClaudeHookCompleteness(sub)
+		if check.Status != StatusWarning {
+			t.Errorf("Expected warning for missing SessionStart, got %s: %s", check.Status, check.Message)
+		}
+		if !hasClaudeHooks(sub) {
+			t.Error("Expected the repository root's local hook to count as installed")
 		}
 	})
 }
@@ -928,6 +1017,8 @@ func TestCheckClaude_ClaudeCodeWithoutClaude(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	t.Setenv("USERPROFILE", tmpDir)
 	t.Setenv("CLAUDECODE", "1")
+	// Keep a host managed policy that enables beads out of "CLI-only mode".
+	t.Cleanup(setup.SetClaudeManagedSettingsDirForTest(""))
 
 	check := CheckClaude(tmpDir)
 

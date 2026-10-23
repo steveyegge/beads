@@ -123,21 +123,32 @@ func claudeManagedSettingsDir() string {
 // repository, on Windows, and when the root is the home directory. Claude
 // Code also keeps it there when another user owns the root, its .git or its
 // .claude; git refuses such a repository unless safe.directory allows it, and
-// bd does not check further. It is "" too when the process's cached git
-// context is not workDir's repository.
+// bd does not check further.
 func claudeLocalSettingsRoot(home, workDir string) string {
 	if runtime.GOOS == "windows" {
 		return ""
 	}
-	repoRoot := git.GetRepoRoot()
-	if repoRoot == "" || !dirWithin(workDir, repoRoot) {
-		return ""
-	}
-	root, err := git.GetMainRepoRoot()
+	root, err := claudeMainRepoRoot(workDir)
 	if err != nil || root == "" || sameDir(root, home) {
 		return ""
 	}
 	return root
+}
+
+// claudeMainRepoRoot returns the main checkout's root of workDir's git
+// repository (git.GetMainRepoRoot). In the process's working directory it
+// reads the cached git context, as bd setup claude does there, and returns ""
+// when that context is another directory's. Any other directory, such as the
+// one bd doctor <path> checks, resolves its own repository, which need not be
+// the working directory's: a separate checkout, or a repository nested in it.
+func claudeMainRepoRoot(workDir string) (string, error) {
+	if wd, err := os.Getwd(); err != nil || !sameDir(workDir, wd) {
+		return git.GetMainRepoRootFrom(workDir)
+	}
+	if repoRoot := git.GetRepoRoot(); repoRoot == "" || !dirWithin(workDir, repoRoot) {
+		return "", nil
+	}
+	return git.GetMainRepoRoot()
 }
 
 // dirWithin reports whether dir is root or lies below it, comparing
@@ -791,7 +802,7 @@ func warnIfPrimeRunsTwice(env claudeEnv) {
 		warnIfSettingsHooksRunPrimeTwice(env)
 		return
 	}
-	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
+	for _, path := range claudeHookSettingsPaths(env) {
 		if hasBeadsHooks(path) {
 			_, _ = fmt.Fprintln(env.stdout, "⚠ bd prime runs twice per session here")
 			_, _ = fmt.Fprintf(env.stdout, "  Both the beads plugin (enabled in %s) and the hook in %s run it\n", plugin.path, path)
@@ -916,12 +927,19 @@ func warnIfPluginOffHere(env claudeEnv) {
 // directory that has a bd prime hook: a project file or the global one. It
 // returns "" when none has.
 func primeHookHere(env claudeEnv) string {
-	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
+	for _, path := range claudeHookSettingsPaths(env) {
 		if hasBeadsHooks(path) {
 			return path
 		}
 	}
 	return ""
+}
+
+// claudeHookSettingsPaths returns the settings files Claude Code loads hooks
+// from in this directory: the project's (claudeProjectHookPaths), then the
+// user's ~/.claude/settings.json.
+func claudeHookSettingsPaths(env claudeEnv) []string {
+	return append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir))
 }
 
 // claudeProjectHookPaths returns the project's settings files Claude Code
@@ -1277,6 +1295,21 @@ func BeadsPluginEnabled(dir string) bool {
 func ClaudeHooksInstalled(dir string) bool {
 	env, ok := claudeSessionEnv(dir)
 	return ok && (primeHookHere(env) != "" || hasBeadsPlugin(env, false))
+}
+
+// ClaudeHookSettingsPaths returns the settings files a Claude Code session
+// started in dir loads hooks from, the ones bd setup claude --check looks for
+// a bd prime hook in there (primeHookHere): the project's
+// .claude/settings.json, the .claude/settings.local.json beside it, the
+// repository root's when Claude Code reads that one too, and the user's
+// ~/.claude/settings.json. bd doctor checks the hooks in them. It returns nil
+// when the home directory or dir's absolute path cannot be found.
+func ClaudeHookSettingsPaths(dir string) []string {
+	env, ok := claudeSessionEnv(dir)
+	if !ok {
+		return nil
+	}
+	return claudeHookSettingsPaths(env)
 }
 
 // claudeSessionEnv is claudeEnvIn for dir, made absolute, and the user's
