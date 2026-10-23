@@ -3,10 +3,11 @@ package doltutil
 import (
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 // maxAllowedPacketBytes is the client-side packet ceiling pinned into every
@@ -44,10 +45,7 @@ func ServerAddr(host string, port int) string {
 // be configured in ("[::1]" is "::1"), which is the form net.JoinHostPort
 // takes. Any other host is returned as it is.
 func UnbracketHost(host string) string {
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		return host[1 : len(host)-1]
-	}
-	return host
+	return configfile.UnbracketHost(host)
 }
 
 // ServerDSN holds connection parameters for building a MySQL DSN to a Dolt server.

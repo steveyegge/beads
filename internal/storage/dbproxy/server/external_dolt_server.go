@@ -13,6 +13,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 type ExternalDoltServer struct {
@@ -37,7 +38,7 @@ func NewExternalDoltServer(cfg configfile.ExternalDoltConfig) (*ExternalDoltServ
 	}
 	return &ExternalDoltServer{
 		id:              ExternalDoltServerID(cfg),
-		host:            cfg.Host,
+		host:            doltutil.UnbracketHost(cfg.Host),
 		port:            cfg.Port,
 		socket:          cfg.Socket,
 		keepAlivePeriod: keepAlive,
@@ -53,7 +54,7 @@ func externalDoltServerTarget(cfg configfile.ExternalDoltConfig) string {
 	if cfg.Socket != "" {
 		return "unix://" + cfg.Socket
 	}
-	return "tcp://" + net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	return "tcp://" + doltutil.ServerAddr(cfg.Host, cfg.Port)
 }
 
 func (s *ExternalDoltServer) ID(_ context.Context) string {

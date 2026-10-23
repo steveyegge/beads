@@ -12,6 +12,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dberrors"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // Sentinel errors for the dolt storage layer.
@@ -164,7 +165,7 @@ func wrapExecError(op string, err error) error {
 // for testability.
 func databaseNotFoundError(cfg *Config) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "database %q not found on Dolt server at %s:%d\n\n", cfg.Database, cfg.ServerHost, cfg.ServerPort)
+	fmt.Fprintf(&b, "database %q not found on Dolt server at %s\n\n", cfg.Database, doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort))
 
 	// Check if backup files exist — strong signal this is a branch-switch or
 	// fresh-clone scenario rather than a server misconfiguration (GH#2327).

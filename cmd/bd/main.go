@@ -321,7 +321,11 @@ func commandMemoizesReads(cmd *cobra.Command) bool {
 // It mirrors dolt.applyResolvedConfig, which this hand-built doltCfg path
 // bypasses.
 func resolveDoltServerConnection(ctx context.Context, beadsDir string, fileCfg *configfile.Config, doltCfg *dolt.Config) error {
-	doltCfg.ServerHost = fileCfg.GetDoltServerHost()
+	// An IPv6 host may be configured bracketed ("[::1]") as well as bare. The
+	// store and `bd serve` both join this host with net.JoinHostPort (serve in
+	// its socket-fallback probe and its proxy's ExternalDoltServer), which
+	// adds the brackets itself, so hand them the bare form.
+	doltCfg.ServerHost = configfile.UnbracketHost(fileCfg.GetDoltServerHost())
 	// Port 0 is fine here — auto-start will resolve it. Use the shared helper
 	// rather than DefaultConfig(...).Port: this hand-built doltCfg is handed
 	// straight to dolt.New, and a port arriving there without its source is

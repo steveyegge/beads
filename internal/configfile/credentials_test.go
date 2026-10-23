@@ -256,3 +256,34 @@ func TestDefaultCredentialsPath(t *testing.T) {
 		t.Errorf("DefaultCredentialsPath() = %q, want absolute path", path)
 	}
 }
+
+// An IPv6 Dolt host may be configured bare ("::1") or bracketed ("[::1]"), and
+// both name the same server. The password lookup has to agree, whichever of the
+// two section spellings the credentials file uses: [[::1]:3307], the
+// net.JoinHostPort form, or [::1:3307], the form a bare host was looked up under
+// before. On main each host spelling found only its own section spelling.
+func TestLookupCredentialsPassword_IPv6HostEitherSpelling(t *testing.T) {
+	for _, tc := range []struct{ addr, section string }{
+		{"::1", "[[::1]:3307]"},
+		{"::1", "[::1:3307]"},
+		{"2001:db8::1", "[[2001:db8::1]:3307]"},
+		{"2001:db8::1", "[2001:db8::1:3307]"},
+	} {
+		t.Run(tc.section, func(t *testing.T) {
+			credFile := filepath.Join(t.TempDir(), "credentials")
+			if err := os.WriteFile(credFile, []byte(tc.section+"\npassword=ipv6Pass\n"), 0600); err != nil {
+				t.Fatalf("failed to write credentials file: %v", err)
+			}
+			t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
+
+			for _, host := range []string{tc.addr, "[" + tc.addr + "]"} {
+				if got := LookupCredentialsPassword(host, 3307); got != "ipv6Pass" {
+					t.Errorf("LookupCredentialsPassword(%q, 3307) = %q, want %q", host, got, "ipv6Pass")
+				}
+			}
+			if got := LookupCredentialsPassword(tc.addr, 3308); got != "" {
+				t.Errorf("LookupCredentialsPassword(%q, 3308) = %q, want no password for another port", tc.addr, got)
+			}
+		})
+	}
+}

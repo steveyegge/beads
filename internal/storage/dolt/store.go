@@ -1824,7 +1824,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// the second of two AD-01 defenses (the first is the production-port
 	// guard above). Returning an error (not panic) lets tests assert on it.
 	if isTestDatabaseName(cfg.Database) && os.Getenv("BEADS_TEST_SERVER") != "1" {
-		addr := net.JoinHostPort(cfg.ServerHost, strconv.Itoa(cfg.ServerPort))
+		addr := doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort)
 		if cfg.ServerSocket != "" {
 			addr = cfg.ServerSocket
 		}
@@ -1885,7 +1885,7 @@ func resolveLocalActiveDatabaseDir(cfg *Config) string {
 // list of detection rules that matched, and a fix block naming each
 // supported escape hatch.
 func buildTestModeProductionPortPanic(cfg *Config) string {
-	addr := net.JoinHostPort(cfg.ServerHost, strconv.Itoa(cfg.ServerPort))
+	addr := doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort)
 	if cfg.ServerSocket != "" {
 		addr = cfg.ServerSocket
 	}
@@ -2939,8 +2939,8 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, se
 	// caller.
 	if cfg.Gateway {
 		if err := db.PingContext(ctx); err != nil {
-			return nil, "", serverConnFacts{}, fmt.Errorf("failed to connect to gateway server %s:%d (database %q): %w",
-				cfg.ServerHost, cfg.ServerPort, cfg.Database, err)
+			return nil, "", serverConnFacts{}, fmt.Errorf("failed to connect to gateway server %s (database %q): %w",
+				doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort), cfg.Database, err)
 		}
 		// A connect proves the gateway accepted the credential, NOT that it
 		// honored the database name. A gateway scopes connections by
@@ -3012,8 +3012,8 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, se
 	// is back to burning the extra MySQL session this path exists to remove,
 	// with nothing to say so. Same reasoning as the convergence probe in
 	// internal/storage/schema/lock.go.
-	debug.Logf("dolt: direct-connect fast path unavailable for %q on %s:%d, using the no-database init connection: %v\n",
-		cfg.Database, cfg.ServerHost, cfg.ServerPort, pingErr)
+	debug.Logf("dolt: direct-connect fast path unavailable for %q on %s, using the no-database init connection: %v\n",
+		cfg.Database, doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort), pingErr)
 
 	// Ensure database exists (may need to create it)
 	// First connect without database to create it
@@ -3038,8 +3038,8 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, se
 	// match unrelated databases with LIKE.
 	dbExists, checkErr := databaseExistsOnServer(ctx, initDB, cfg.Database)
 	if checkErr != nil {
-		return nil, "", serverConnFacts{}, fmt.Errorf("failed to check if database %q exists on server %s:%d: %w",
-			cfg.Database, cfg.ServerHost, cfg.ServerPort, checkErr)
+		return nil, "", serverConnFacts{}, fmt.Errorf("failed to check if database %q exists on server %s: %w",
+			cfg.Database, doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort), checkErr)
 	}
 
 	// created reports whether THIS call's CREATE DATABASE won the race and
@@ -3071,8 +3071,8 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, se
 			if !strings.Contains(errLower, "database exists") && !strings.Contains(errLower, "1007") {
 				// Check for connection refused - server likely not running
 				if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
-					return nil, "", serverConnFacts{}, fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
-						cfg.ServerHost, cfg.ServerPort, err)
+					return nil, "", serverConnFacts{}, fmt.Errorf("failed to connect to Dolt server at %s: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
+						doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort), err)
 				}
 				return nil, "", serverConnFacts{}, fmt.Errorf("failed to create database: %w", err)
 			}

@@ -3,6 +3,7 @@ package configfile
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -48,7 +49,38 @@ func LookupCredentialsPassword(host string, port int) string {
 		return ""
 	}
 
-	return readPasswordFromFile(credFile, fmt.Sprintf("%s:%d", host, port))
+	for _, key := range credentialsSectionKeys(host, port) {
+		if pw := readPasswordFromFile(credFile, key); pw != "" {
+			return pw
+		}
+	}
+	return ""
+}
+
+// credentialsSectionKeys returns the [host:port] section names that hold the
+// password for the Dolt server at host and port, most canonical first. An
+// IPv6 literal host may be configured bare ("::1") or bracketed ("[::1]"),
+// and both name the same server, so either spelling finds a section written
+// as [[::1]:3307] (the net.JoinHostPort form) or as [::1:3307] (the form a
+// bare host was looked up under before). Any other host has one key.
+func credentialsSectionKeys(host string, port int) []string {
+	bare := UnbracketHost(host)
+	joined := net.JoinHostPort(bare, fmt.Sprint(port))
+	legacy := fmt.Sprintf("%s:%d", bare, port)
+	if legacy == joined {
+		return []string{joined}
+	}
+	return []string{joined, legacy}
+}
+
+// UnbracketHost returns host without the square brackets an IPv6 literal may
+// be configured in ("[::1]" is "::1"), which is the form net.JoinHostPort
+// takes. Any other host is returned as it is.
+func UnbracketHost(host string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return host[1 : len(host)-1]
+	}
+	return host
 }
 
 // readPasswordFromFile parses an INI-style credentials file and returns the
