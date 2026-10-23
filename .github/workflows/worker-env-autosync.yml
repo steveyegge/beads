@@ -142,7 +142,10 @@ jobs:
       # push-token alone; it cannot see a PR exists, let alone touch one.
       # Leased to the branch: a force-with-lease scoped to refs/heads/
       # bot/worker-env-sync only, so a push can never move any other ref.
+      # pushed=1 is written only once the push has landed, and tells the
+      # PR step this run put a new commit on the branch.
       - name: Commit and push the sync branch
+        id: push
         if: steps.sync.outputs.rc == '1'
         env:
           PUSH_TOKEN: ${{ steps.push-token.outputs.token }}
@@ -159,9 +162,27 @@ jobs:
           git commit -m "$COMMIT_SUBJECT"
           git push "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git" \
             "HEAD:refs/heads/$BRANCH" "--force-with-lease=refs/heads/$BRANCH"
+          echo "pushed=1" >> "$GITHUB_OUTPUT"
 
       # pr-token alone; it cannot push a commit, only act on the PR the
-      # step above already pushed.
+      # step above already pushed. It labels only a PR it opens itself, in
+      # the gh pr create call: the review pipeline swaps $LABEL for
+      # status/reviewing when the review starts, so adding it to an open PR
+      # would request a second review of a PR whose review is running,
+      # failed, or done. Every run that gets past the push step reaches this
+      # step; once the push step can finish without pushing (a branch that
+      # already carries the copy), that is every run while main's pin is
+      # stale -- the whole time the PR waits on that review. An open PR is
+      # edited only when this run pushed a new commit to it (pushed=1);
+      # otherwise it is left as it is. Not gated on pushed itself: a run
+      # that pushed nothing still opens a PR for a sync branch that has
+      # none. An open PR with no review-pipeline label (none of the review
+      # and merge labels in CONTRIBUTING.md's pull request pipeline table,
+      # nor status/awaiting-approval; its label was lost, or a maintainer
+      # removed it) is never relabeled from here, since a review could be
+      # mid-swap; the run warns so a human can label it. Only a same-repo
+      # PR counts as the sync PR: gh pr list --head matches the branch name
+      # alone, so a fork PR from a branch of the same name would match too.
       - name: Open or update the sync PR
         if: steps.sync.outputs.rc == '1'
         env:
@@ -170,6 +191,7 @@ jobs:
           BRANCH: bot/worker-env-sync
           TITLE: "build(rbe): sync worker-env pin with gascity main"
           LABEL: status/needs-review-auto
+          PUSHED: ${{ steps.push.outputs.pushed }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           body="$(cat <<BODY
@@ -184,11 +206,24 @@ jobs:
           the automated review passes, the merge workflow queues it.
           BODY
           )"
-          number="$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number')"
-          if [ -n "$number" ]; then
+          # "<number> <count of review-pipeline labels>" for the open sync
+          # PR, or nothing when there is none. A fork PR (isCrossRepository)
+          # from a branch named $BRANCH is never the sync PR. Triage labels
+          # (status/needs-triage, which triage-label.yml adds to every PR it
+          # sees opened, and the rest) and status/needs-bugflow are not
+          # review-pipeline labels.
+          found="$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number,labels,isCrossRepository \
+            --jq 'map(select(.isCrossRepository | not)) | .[0] // empty | "\(.number) \([.labels[].name | select(IN("status/needs-review", "status/needs-review-auto", "status/reviewing", "status/awaiting-approval", "status/review-failed", "status/merge-ready", "status/merge-queued", "status/merge-failed"))] | length)"')"
+          number="${found%% *}"
+          if [ -z "$number" ]; then
+            gh pr create --repo "$REPO" --base main --head "$BRANCH" --title "$TITLE" --body "$body" --label "$LABEL"
+            exit 0
+          fi
+          if [ "$PUSHED" = 1 ]; then
             gh pr edit "$number" --repo "$REPO" --title "$TITLE" --body "$body"
           else
-            gh pr create --repo "$REPO" --base main --head "$BRANCH" --title "$TITLE" --body "$body"
-            number="$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number')"
+            echo "worker-env autosync: sync PR #$number already carries this copy; left as it is."
           fi
-          gh pr edit "$number" --repo "$REPO" --add-label "$LABEL"
+          if [ "${found#* }" = 0 ]; then
+            echo "::warning::sync PR #$number carries no review-pipeline status/* label, so no review or merge will pick it up; add $LABEL to it by hand (this workflow never labels an open PR, since that could request a second review)."
+          fi
