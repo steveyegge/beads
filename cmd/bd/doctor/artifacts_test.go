@@ -644,3 +644,96 @@ func TestScanForArtifacts_ScansWorkspaceWithUnloadableMetadata(t *testing.T) {
 		t.Errorf("cruft .beads dirs = %+v, want %+v", report.CruftBeadsDirs, wantCruft)
 	}
 }
+
+// TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles pins that the
+// scan and the cleanup (fix.ClassicArtifacts) agree on a nested workspace's
+// SQLite files, which the walk reaches though command admission never checks
+// that workspace: the scan reports them only where the metadata selects Dolt,
+// the cleanup removes exactly the ones it marks safe to delete, and a second
+// scan finds only what is left for manual review. The cleanup used to remove
+// beads.db-wal, beads.db-shm and every beads.backup-*.db whatever the backend,
+// files the scan never reported, as soon as the scan found anything at all,
+// here the root workspace's WAL. A backend this build does not recognize,
+// which configfile.Config.GetBackend reads as Dolt, is not Dolt to either half.
+func TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles(t *testing.T) {
+	sqliteFiles := map[string]string{
+		"beads.db":                 "db",
+		"beads.db-wal":             "wal",
+		"beads.db-shm":             "shm",
+		"beads.backup-20260204.db": "backup",
+	}
+	cases := []struct {
+		backend  string
+		reported map[string]bool // the nested files the scan reports, and whether each is safe to delete
+	}{
+		{backend: configfile.BackendDolt, reported: map[string]bool{"beads.db": false, "beads.db-wal": true, "beads.db-shm": true, "beads.backup-20260204.db": true}},
+		{backend: configfile.BackendSQLite},
+		{backend: configfile.BackendPostgres},
+		{backend: configfile.BackendMySQL},
+		{backend: "future-backend"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.backend, func(t *testing.T) {
+			root := t.TempDir()
+			rootWAL := filepath.Join(root, ".beads", "beads.db-wal")
+			writeArtifactTree(t, filepath.Dir(rootWAL), map[string]string{"beads.db-wal": "wal"})
+			beadsDir := filepath.Join(root, "sub", ".beads")
+			entries := map[string]string{configfile.ConfigFileName: fmt.Sprintf(`{"database":"dolt","backend":%q}`, tc.backend)}
+			for name, content := range sqliteFiles {
+				entries[name] = content
+			}
+			writeArtifactTree(t, beadsDir, entries)
+			before := snapshotBeadsDir(t, beadsDir)
+
+			report, err := ScanForArtifacts(root)
+			if err != nil {
+				t.Fatalf("ScanForArtifacts: %v", err)
+			}
+			want := map[string]bool{rootWAL: true}
+			for name, safe := range tc.reported {
+				want[filepath.Join(beadsDir, name)] = safe
+			}
+			got := map[string]bool{}
+			for _, f := range report.SQLiteArtifacts {
+				got[f.Path] = f.SafeDelete
+			}
+			if report.TotalCount != len(report.SQLiteArtifacts) || !reflect.DeepEqual(got, want) {
+				t.Fatalf("ScanForArtifacts = %+v\nwant only the SQLite findings (path: safe to delete) %v", report, want)
+			}
+
+			if err := fix.ClassicArtifacts(root); err != nil {
+				t.Fatalf("fix.ClassicArtifacts: %v", err)
+			}
+			after := map[string]string{}
+			for name, content := range before {
+				if !tc.reported[name] {
+					after[name] = content
+				}
+			}
+			if got := snapshotBeadsDir(t, beadsDir); !reflect.DeepEqual(got, after) {
+				t.Fatalf("fix.ClassicArtifacts left %s as\n %q\nwant only the files the scan reported as safe to delete removed: %q", beadsDir, got, after)
+			}
+			if _, err := os.Stat(rootWAL); !os.IsNotExist(err) {
+				t.Fatalf("fix.ClassicArtifacts left the root workspace's %s (stat err %v)", rootWAL, err)
+			}
+
+			report, err = ScanForArtifacts(root)
+			if err != nil {
+				t.Fatalf("ScanForArtifacts after the cleanup: %v", err)
+			}
+			left := map[string]bool{}
+			for _, f := range report.SQLiteArtifacts {
+				left[f.Path] = f.SafeDelete
+			}
+			wantLeft := map[string]bool{}
+			for name, safe := range tc.reported {
+				if !safe {
+					wantLeft[filepath.Join(beadsDir, name)] = false
+				}
+			}
+			if report.TotalCount != len(report.SQLiteArtifacts) || !reflect.DeepEqual(left, wantLeft) {
+				t.Fatalf("ScanForArtifacts after the cleanup = %+v\nwant only the findings left for manual review %v", report, wantLeft)
+			}
+		})
+	}
+}

@@ -467,3 +467,46 @@ func TestClassicArtifacts_PreservesLegacyConfigJSONAlongsideRedirect(t *testing.
 		})
 	}
 }
+
+// TestClassicArtifacts_LeavesOtherBackendsSQLiteFiles pins that the Classic
+// Artifacts fix removes SQLite files only in a .beads whose metadata selects
+// Dolt, the only place the scan (doctor.scanSQLiteArtifacts) reports them.
+// The walk reaches nested workspaces that command admission never checks, and
+// the fix removed beads.db-wal, beads.db-shm and every beads.backup-*.db in
+// each of them whatever its backend. In a workspace on a removed backend
+// (sqlite, postgres, mysql), or on one this build does not recognize, those
+// are that backend's files: a sqlite workspace's WAL can hold committed
+// transactions not yet checkpointed into beads.db, which only a build that
+// opens it can recover. The root workspace's WAL, which the scan reports, is
+// still removed.
+func TestClassicArtifacts_LeavesOtherBackendsSQLiteFiles(t *testing.T) {
+	backends := []string{configfile.BackendSQLite, configfile.BackendPostgres, configfile.BackendMySQL, "future-backend"}
+	for _, backend := range backends {
+		for _, metadataFile := range []string{configfile.ConfigFileName, "config.json"} {
+			t.Run(backend+"/"+metadataFile, func(t *testing.T) {
+				root := t.TempDir()
+				rootWAL := filepath.Join(root, ".beads", "beads.db-wal")
+				writeBeadsTree(t, filepath.Dir(rootWAL), map[string]string{"beads.db-wal": "wal"})
+				beadsDir := filepath.Join(root, "sub", ".beads")
+				writeBeadsTree(t, beadsDir, map[string]string{
+					metadataFile:               fmt.Sprintf(`{"database":"beads.db","backend":%q}`, backend),
+					"beads.db":                 "db",
+					"beads.db-wal":             "wal",
+					"beads.db-shm":             "shm",
+					"beads.backup-20260204.db": "backup",
+				})
+				want := snapshotBeadsTree(t, beadsDir)
+
+				if err := ClassicArtifacts(root); err != nil {
+					t.Fatalf("ClassicArtifacts: %v", err)
+				}
+				if got := snapshotBeadsTree(t, beadsDir); !reflect.DeepEqual(got, want) {
+					t.Fatalf("ClassicArtifacts changed the %s workspace %s:\n got %q\nwant %q", backend, beadsDir, got, want)
+				}
+				if _, err := os.Stat(rootWAL); !os.IsNotExist(err) {
+					t.Fatalf("ClassicArtifacts left the root workspace's %s (stat err %v)", rootWAL, err)
+				}
+			})
+		}
+	}
+}
