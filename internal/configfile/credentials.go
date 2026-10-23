@@ -49,12 +49,7 @@ func LookupCredentialsPassword(host string, port int) string {
 		return ""
 	}
 
-	for _, key := range credentialsSectionKeys(host, port) {
-		if pw := readPasswordFromFile(credFile, key); pw != "" {
-			return pw
-		}
-	}
-	return ""
+	return readPasswordFromFile(credFile, credentialsSectionKeys(host, port)...)
 }
 
 // credentialsSectionKeys returns the [host:port] section names that hold the
@@ -84,8 +79,10 @@ func UnbracketHost(host string) string {
 }
 
 // readPasswordFromFile parses an INI-style credentials file and returns the
-// password for the given [host:port] section. Returns empty string on any error.
-func readPasswordFromFile(path string, sectionKey string) string {
+// password of the first of sectionKeys, in order, whose [host:port] section
+// sets one. The file is read, and its permissions checked, once however many
+// keys are given. Returns empty string on any error.
+func readPasswordFromFile(path string, sectionKeys ...string) string {
 	f, err := os.Open(path) //nolint:gosec // path comes from env var or os.UserHomeDir, not user input
 	if err != nil {
 		return ""
@@ -95,7 +92,14 @@ func readPasswordFromFile(path string, sectionKey string) string {
 	// Warn if file has overly permissive permissions (unix only)
 	warnIfInsecurePermissions(path)
 
+	wanted := make(map[string]bool, len(sectionKeys))
+	for _, key := range sectionKeys {
+		wanted[key] = true
+	}
+	found := make(map[string]string, len(sectionKeys))
+
 	scanner := bufio.NewScanner(f)
+	section := ""
 	inSection := false
 
 	for scanner.Scan() {
@@ -111,24 +115,26 @@ func readPasswordFromFile(path string, sectionKey string) string {
 
 		// Section header: [host:port]
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			section := line[1 : len(line)-1]
-			if section == sectionKey {
-				inSection = true
-			} else if inSection {
-				// We've left our section without finding a password
-				break
-			}
+			section = line[1 : len(line)-1]
+			inSection = wanted[section]
 			continue
 		}
 
-		// Key=value within our section
+		// Key=value within one of our sections; its first password wins.
 		if inSection {
-			key, value, found := strings.Cut(line, "=")
-			if found && strings.TrimSpace(key) == "password" {
-				return strings.TrimSpace(value)
+			key, value, ok := strings.Cut(line, "=")
+			if ok && strings.TrimSpace(key) == "password" {
+				if _, seen := found[section]; !seen {
+					found[section] = strings.TrimSpace(value)
+				}
 			}
 		}
 	}
 
+	for _, key := range sectionKeys {
+		if pw := found[key]; pw != "" {
+			return pw
+		}
+	}
 	return ""
 }

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -38,7 +37,7 @@ func NewExternalDoltServer(cfg configfile.ExternalDoltConfig) (*ExternalDoltServ
 	}
 	return &ExternalDoltServer{
 		id:              ExternalDoltServerID(cfg),
-		host:            doltutil.UnbracketHost(cfg.Host),
+		host:            configfile.UnbracketHost(cfg.Host),
 		port:            cfg.Port,
 		socket:          cfg.Socket,
 		keepAlivePeriod: keepAlive,
@@ -93,7 +92,7 @@ func (s *ExternalDoltServer) Running(_ context.Context) bool {
 }
 
 func (s *ExternalDoltServer) Dial(ctx context.Context) (net.Conn, error) {
-	network, addr := "tcp", net.JoinHostPort(s.host, strconv.Itoa(s.port))
+	network, addr := "tcp", doltutil.ServerAddr(s.host, s.port)
 	if s.socket != "" {
 		network, addr = "unix", s.socket
 	}

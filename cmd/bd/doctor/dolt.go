@@ -207,8 +207,8 @@ func checkConnectionWithDB(conn *doltConn) DoctorCheck {
 
 	storageDetail := "Storage: Dolt (server mode)"
 	if conn.cfg != nil {
-		storageDetail = fmt.Sprintf("Storage: Dolt (server %s:%d)",
-			conn.cfg.GetDoltServerHost(), conn.port)
+		storageDetail = fmt.Sprintf("Storage: Dolt (server %s)",
+			doltutil.ServerAddr(conn.cfg.GetDoltServerHost(), conn.port))
 	}
 
 	return DoctorCheck{

@@ -1,8 +1,11 @@
 package configfile
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -286,4 +289,58 @@ func TestLookupCredentialsPassword_IPv6HostEitherSpelling(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An IPv6 host has two candidate sections, but the lookup reads the credentials
+// file once, so an overly permissive file is warned about once per lookup, as
+// it is for any other host, not once per candidate section.
+func TestLookupCredentialsPassword_IPv6HostWarnsOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("credentials file permissions are not checked on Windows")
+	}
+	credFile := filepath.Join(t.TempDir(), "credentials")
+	if err := os.WriteFile(credFile, []byte("[::1:3307]\npassword=legacyPass\n"), 0600); err != nil {
+		t.Fatalf("failed to write credentials file: %v", err)
+	}
+	if err := os.Chmod(credFile, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
+
+	for _, tc := range []struct{ host, want string }{
+		{"::1", "legacyPass"},   // found under the second, legacy section
+		{"[::1]", "legacyPass"}, // likewise
+		{"2001:db8::1", ""},     // no section: both candidates are tried
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			var got string
+			stderr := captureStderr(t, func() { got = LookupCredentialsPassword(tc.host, 3307) })
+			if got != tc.want {
+				t.Errorf("LookupCredentialsPassword(%q, 3307) = %q, want %q", tc.host, got, tc.want)
+			}
+			if n := strings.Count(stderr, "overly permissive permissions"); n != 1 {
+				t.Errorf("permissions warning printed %d times, want once; stderr:\n%s", n, stderr)
+			}
+		})
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	return string(out)
 }

@@ -371,5 +371,5 @@ func UnreachableEndpointAdvice(beadsDir, host string, port int, source PortSourc
 func remoteServerAdvice(host string, port int) string {
 	return fmt.Sprintf("Verify the external server is running and reachable from this host:\n"+
 		"  nc -zv %s %d  # or curl %s for an HTTP-style check",
-		doltutil.UnbracketHost(host), port, doltutil.ServerAddr(host, port))
+		configfile.UnbracketHost(host), port, doltutil.ServerAddr(host, port))
 }

@@ -1330,16 +1330,10 @@ func shouldUseExternalDoltStatus(cfg *configfile.Config, autoStartDisabled, shar
 
 // isLocalHost reports whether host refers to this machine. Used to
 // distinguish beads-managed local servers from externally-hosted ones.
+// An empty host defaults to local, and the IPv6 loopback counts in either
+// spelling ("::1" or "[::1]"), as configfile.IsLocalHostString has it.
 func isLocalHost(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if h == "" {
-		return true // empty defaults to local
-	}
-	switch h {
-	case "localhost", "127.0.0.1", "::1", "0.0.0.0":
-		return true
-	}
-	return false
+	return configfile.IsLocalHostString(host)
 }
 
 // runExternalDoltStatus queries an externally-hosted Dolt server and prints
@@ -2534,7 +2528,7 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		fmt.Fprintf(os.Stderr, "Error: cannot reach Dolt server at %s:%d: %v\n", host, port, err)
+		fmt.Fprintf(os.Stderr, "Error: cannot reach Dolt server at %s: %v\n", doltutil.ServerAddr(host, port), err)
 		fmt.Fprintln(os.Stderr, unreachableServerAdvice(beadsDir, host, dc))
 		return nil, nil, SilentExit()
 	}

@@ -38,14 +38,7 @@ const maxAllowedPacketBytes = 1 << 30
 // configured Dolt server host with this, not net.JoinHostPort or "%s:%d": each
 // of those dials only one of the two spellings.
 func ServerAddr(host string, port int) string {
-	return net.JoinHostPort(UnbracketHost(host), strconv.Itoa(port))
-}
-
-// UnbracketHost returns host without the square brackets an IPv6 literal may
-// be configured in ("[::1]" is "::1"), which is the form net.JoinHostPort
-// takes. Any other host is returned as it is.
-func UnbracketHost(host string) string {
-	return configfile.UnbracketHost(host)
+	return net.JoinHostPort(configfile.UnbracketHost(host), strconv.Itoa(port))
 }
 
 // ServerDSN holds connection parameters for building a MySQL DSN to a Dolt server.

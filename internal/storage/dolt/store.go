@@ -1968,8 +1968,8 @@ func ResolveSocketTransport(socket, host string, port int, timeout time.Duration
 	if dialProbe("unix", socket, timeout) == nil {
 		return socket // socket is live — keep using it
 	}
-	if port > 0 && dialProbe("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout) == nil {
-		debug.Logf("dolt: socket %s unreachable, falling back to TCP %s\n", socket, net.JoinHostPort(host, strconv.Itoa(port)))
+	if port > 0 && dialProbe("tcp", doltutil.ServerAddr(host, port), timeout) == nil {
+		debug.Logf("dolt: socket %s unreachable, falling back to TCP %s\n", socket, doltutil.ServerAddr(host, port))
 		return "" // socket down but TCP up — transparently fall back to TCP
 	}
 	return socket // both down (or no TCP port) — keep socket for the error path
@@ -1993,9 +1993,10 @@ var stopRejectedAutoStartedServer = doltserver.Stop
 func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// An IPv6 host may be configured bracketed ("[::1]") as well as bare.
 	// Every address below, the fail-fast probe's and the DSN's alike, is
-	// joined by net.JoinHostPort, which adds the brackets itself, so keep the
-	// bare form: both spellings then dial [::1]:port.
-	cfg.ServerHost = doltutil.UnbracketHost(cfg.ServerHost)
+	// joined by doltutil.ServerAddr, which accepts either, but the breaker
+	// key, hints and errors use the host as it is, so keep the bare form once
+	// here: both spellings then name and dial [::1]:port.
+	cfg.ServerHost = configfile.UnbracketHost(cfg.ServerHost)
 	breaker := initializeServerCircuitBreaker(cfg)
 
 	// Circuit breaker: fail-fast if the server is known to be down.
@@ -2040,7 +2041,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		addr = cfg.ServerSocket
 		conn, dialErr = net.DialTimeout("unix", cfg.ServerSocket, 500*time.Millisecond)
 	} else {
-		addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
+		addr = doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort)
 		conn, dialErr = net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	}
 	if dialErr != nil {
@@ -2153,7 +2154,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 					fmt.Fprintf(os.Stderr, "  To pin a port: set dolt.port in .beads/config.yaml\n")
 				}
 				cfg.ServerPort = port
-				addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
+				addr = doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort)
 				breaker = maybeNewCircuitBreaker(cfg.ServerHost, cfg.ServerPort, cfg.Database)
 			}
 			// Retry connection with longer timeout (server just started)
@@ -3138,7 +3139,7 @@ func serverEndpointIdentity(cfg *Config) string {
 	if cfg.ServerSocket != "" {
 		return "unix:" + cfg.ServerSocket
 	}
-	return "tcp:" + net.JoinHostPort(cfg.ServerHost, strconv.Itoa(cfg.ServerPort))
+	return "tcp:" + doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort)
 }
 
 // databaseExistsOnServer checks if a database with the exact given name exists

@@ -1463,6 +1463,7 @@ func TestIsLocalHost(t *testing.T) {
 		{"uppercase Localhost", "Localhost", true},
 		{"IPv4 loopback", "127.0.0.1", true},
 		{"IPv6 loopback", "::1", true},
+		{"IPv6 loopback bracketed", "[::1]", true},
 		{"all-zeros bind", "0.0.0.0", true},
 		{"surrounding whitespace", "  127.0.0.1  ", true},
 		{"public IPv4", "20.150.139.92", false},
@@ -1705,6 +1706,18 @@ func TestShouldUseExternalDoltStatus(t *testing.T) {
 			},
 			autoStartDisabled: true,
 			want:              true,
+		},
+		{
+			// A bracketed IPv6 loopback is as local as a bare one: with
+			// auto-start on, both go to the bd-managed status path.
+			name: "server mode + bracketed IPv6 loopback + auto-start on",
+			cfg: &configfile.Config{
+				Backend:        "dolt",
+				DoltMode:       "server",
+				DoltServerHost: "[::1]",
+			},
+			autoStartDisabled: false,
+			want:              false,
 		},
 	}
 
