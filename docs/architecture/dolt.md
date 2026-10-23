@@ -26,7 +26,7 @@ Install a specific version. Do not install `releases/latest` — see
 version to use and why the pin exists.
 
 ```bash
-DOLT_VERSION=2.4.1   # see "Which Dolt version to install" below
+DOLT_VERSION=2.5.1   # see "Which Dolt version to install" below
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m | sed -e 's/^x86_64$/amd64/' -e 's/^aarch64$/arm64/')
@@ -44,7 +44,7 @@ against the pin below.
 
 ### Which Dolt version to install
 
-Beads pins Dolt to **2.4.1**. CI installs that same pin with
+Beads pins Dolt to **2.5.1**. CI installs that same pin with
 `scripts/ci/install-dolt.sh`, which records the per-version measurements and
 the criterion for raising it; raise the pin here and in that script together.
 
