@@ -920,6 +920,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses that metadata before opening anything, leaving the repository
   byte-identical, and lists the custom types in its `config.yaml`.
 
+- **The Go library's opens no longer rewrite a legacy `config.json` they
+  refuse.** `beads.OpenBestAvailable`, `OpenBestAvailableWith`,
+  `OpenFromConfig` and `OpenGated` migrated a `.beads/config.json` naming a
+  removed or unrecognized backend into `metadata.json`, dropping keys bd does
+  not know and deleting `config.json`, before they refused the backend, and
+  `OpenGated` created its gate files in and beside `.beads` first. They now
+  refuse that metadata before writing anything, as the CLI's command
+  admission already does for the workspace bd runs in.
+  `OpenGated` also refuses any backend it cannot open before taking its gates,
+  whichever metadata file names it, so it no longer creates gate files for
+  such a workspace. For a workspace whose only metadata is a legacy
+  `config.json`, these refusals (and the CLI's) now name `config.json` as the
+  file to edit. The CLI's refusal named a `metadata.json` that did not exist,
+  and the library's named the `metadata.json` its own migration had just
+  written. `OpenFromConfig` now returns a nil `Storage` with every error, as
+  the other opens do; it returned a non-nil interface holding a nil store for
+  a backend refusal or a failed open, on which `Close` panics.
+
+- **bd no longer rewrites another repository's legacy `config.json` that it
+  refuses.** Command admission checks only the workspace bd runs in. When bd
+  opened another repository (an auto-routing target, or the project an
+  `external:` dependency names) whose only metadata was a
+  `.beads/config.json` naming a removed or unrecognized backend, it migrated
+  that file into `metadata.json`, dropping keys bd does not know and deleting
+  `config.json`, before it refused the backend. It now refuses that metadata
+  before writing anything, leaving the repository byte-identical, and a
+  refusal that names the file to edit names `config.json`, not the
+  `metadata.json` the migration wrote.
+
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a
   record, so in a quiet workspace a follower whose parent died without
