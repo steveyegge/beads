@@ -857,6 +857,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An IPv6 Dolt server host now works whether it is configured bare (`::1`)
+  or bracketed (`[::1]`), in `metadata.json` `dolt_server_host`,
+  `BEADS_DOLT_SERVER_HOST`, `config.yaml` `dolt.host` or
+  `bd init --server-host`. Previously neither spelling could open the store:
+  a bare host failed in the MySQL connection (`lookup ::1:3307: no such
+  host`) and a bracketed one failed the reachability probe (`[[::1]]:3307:
+  missing port in address`). `bd doctor --perf`, `bd doctor --server`,
+  `bd dolt test` and `bd dolt show` now dial the same `[::1]:port` the store
+  dials, so `bd doctor --perf` no longer reports a running server at a bare
+  IPv6 host as not running, and the unreachable-server advice names
+  `[host]:port`. IPv4 addresses and hostnames are joined as before.
+
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

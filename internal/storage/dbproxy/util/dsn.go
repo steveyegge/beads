@@ -1,7 +1,8 @@
 package util
 
 import (
-	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
@@ -35,17 +36,19 @@ func (d DoltServerDSN) String() string {
 		timeout = 5 * time.Second
 	}
 
-	net := "tcp"
-	addr := fmt.Sprintf("%s:%d", d.Host, d.Port)
+	// net.JoinHostPort, not "%s:%d": a managed server's listener.host may be
+	// the IPv6 loopback, ::1, which the driver dials only as "[::1]:port".
+	network := "tcp"
+	addr := net.JoinHostPort(d.Host, strconv.Itoa(d.Port))
 	if d.Socket != "" {
-		net = "unix"
+		network = "unix"
 		addr = d.Socket
 	}
 
 	cfg := mysql.Config{
 		User:            d.User,
 		Passwd:          d.Password,
-		Net:             net,
+		Net:             network,
 		Addr:            addr,
 		DBName:          d.Database,
 		ParseTime:       true,

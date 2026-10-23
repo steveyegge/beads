@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
@@ -262,7 +261,7 @@ func checkStaleDatabases(db *sql.DB) DoctorCheck {
 
 // checkServerReachable checks if the server is reachable via TCP
 func checkServerReachable(host string, port int) DoctorCheck {
-	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	addr := doltutil.ServerAddr(host, port)
 	_, err := doltserver.ProbeSQLServer("tcp", addr, 5*time.Second)
 	if err != nil {
 		return DoctorCheck{

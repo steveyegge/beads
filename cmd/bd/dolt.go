@@ -2336,7 +2336,7 @@ func testDoltConnection() error {
 	host := cfg.GetDoltServerHost()
 	dc := doltserver.DialConfig(beadsDir)
 	port := dc.Port
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := doltutil.ServerAddr(host, port)
 
 	if jsonOutput {
 		ok := testServerConnection(host, port)
@@ -2405,7 +2405,7 @@ func testDoltConnection() error {
 var serverDialTimeout = 3 * time.Second
 
 func testServerConnection(host string, port int) bool {
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	addr := doltutil.ServerAddr(host, port)
 
 	_, err := doltserver.ProbeSQLServer("tcp", addr, serverDialTimeout)
 	return err == nil

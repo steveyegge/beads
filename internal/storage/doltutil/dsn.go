@@ -1,7 +1,9 @@
 package doltutil
 
 import (
-	"fmt"
+	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
@@ -29,11 +31,30 @@ import (
 // lowered setting is no longer honored anywhere on the statement path.
 const maxAllowedPacketBytes = 1 << 30
 
+// ServerAddr is the TCP address of the Dolt server at host and port, as
+// net.JoinHostPort joins them. An IPv6 literal host may be configured bare
+// ("::1") or bracketed ("[::1]"): both name the server at "[::1]:port". Join a
+// configured Dolt server host with this, not net.JoinHostPort or "%s:%d": each
+// of those dials only one of the two spellings.
+func ServerAddr(host string, port int) string {
+	return net.JoinHostPort(UnbracketHost(host), strconv.Itoa(port))
+}
+
+// UnbracketHost returns host without the square brackets an IPv6 literal may
+// be configured in ("[::1]" is "::1"), which is the form net.JoinHostPort
+// takes. Any other host is returned as it is.
+func UnbracketHost(host string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return host[1 : len(host)-1]
+	}
+	return host
+}
+
 // ServerDSN holds connection parameters for building a MySQL DSN to a Dolt server.
 // All DSNs built with this struct set parseTime=true and multiStatements=true.
 type ServerDSN struct {
 	Socket   string // Unix domain socket path; when set, Net="unix" and Host/Port are ignored
-	Host     string
+	Host     string // an IPv6 literal bare or bracketed; see ServerAddr
 	Port     int
 	User     string
 	Password string        //nolint:gosec // G117: MySQL DSN password field; required by the connection-string builder, not serialized as JSON
@@ -50,17 +71,17 @@ func (d ServerDSN) String() string {
 		timeout = 5 * time.Second
 	}
 
-	net := "tcp"
-	addr := fmt.Sprintf("%s:%d", d.Host, d.Port)
+	network := "tcp"
+	addr := ServerAddr(d.Host, d.Port)
 	if d.Socket != "" {
-		net = "unix"
+		network = "unix"
 		addr = d.Socket
 	}
 
 	cfg := mysql.Config{
 		User:            d.User,
 		Passwd:          d.Password,
-		Net:             net,
+		Net:             network,
 		Addr:            addr,
 		DBName:          d.Database,
 		ParseTime:       true,

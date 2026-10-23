@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 func TestDoltShowConfigNotInRepo(t *testing.T) {
@@ -425,6 +426,17 @@ func TestTestServerConnection(t *testing.T) {
 		result := testServerConnection(cfg.DoltServerHost, cfg.DoltServerPort)
 		if result {
 			t.Error("expected connection to fail for unused port on IPv6")
+		}
+	})
+
+	// bd dolt test and bd dolt show dial what the store dials for an IPv6
+	// host configured bare or bracketed: the server at [::1]:port.
+	t.Run("IPv6 loopback bare or bracketed reaches the server", func(t *testing.T) {
+		port, _ := testutil.IPv6LoopbackListener(t)
+		for _, host := range []string{"::1", "[::1]"} {
+			if !testServerConnection(host, port) {
+				t.Errorf("testServerConnection(%q, %d) = false, want the server at [::1]:%d", host, port, port)
+			}
 		}
 	})
 }

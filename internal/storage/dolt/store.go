@@ -1991,6 +1991,11 @@ var stopRejectedAutoStartedServer = doltserver.Stop
 // newServerMode creates a DoltStore connected to a running dolt sql-server.
 // This path is pure Go and does not require CGO.
 func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
+	// An IPv6 host may be configured bracketed ("[::1]") as well as bare.
+	// Every address below, the fail-fast probe's and the DSN's alike, is
+	// joined by net.JoinHostPort, which adds the brackets itself, so keep the
+	// bare form: both spellings then dial [::1]:port.
+	cfg.ServerHost = doltutil.UnbracketHost(cfg.ServerHost)
 	breaker := initializeServerCircuitBreaker(cfg)
 
 	// Circuit breaker: fail-fast if the server is known to be down.
@@ -2179,13 +2184,13 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 				// External (non-localhost) server: bd does not
 				// manage it; "bd dolt start" would be wrong advice
 				// (GH#3518). Suggest verifying the external server
-				// instead.
-				hint = fmt.Sprintf("Configured Dolt server at %s:%d is unreachable.\n"+
+				// instead. nc takes the host, kept bare above; the
+				// endpoint and curl take addr, which brackets an IPv6
+				// host.
+				hint = fmt.Sprintf("Configured Dolt server at %s is unreachable.\n"+
 					"Verify the external server is running and reachable from this host:\n"+
-					"  nc -zv %s %d  # or curl %s:%d for an HTTP-style check",
-					cfg.ServerHost, cfg.ServerPort,
-					cfg.ServerHost, cfg.ServerPort,
-					cfg.ServerHost, cfg.ServerPort)
+					"  nc -zv %s %d  # or curl %s for an HTTP-style check",
+					addr, cfg.ServerHost, cfg.ServerPort, addr)
 			} else if named := externallyManagedPortHint(cfg, resolvedBeadsDir, addr); named != "" {
 				// A named port declares the server externally managed
 				// (BEADS_DOLT_SERVER_PORT, dolt_server_port), which is

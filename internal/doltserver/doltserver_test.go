@@ -3471,6 +3471,30 @@ func TestUnreachableEndpointAdviceRemoteHost(t *testing.T) {
 	}
 }
 
+// TestUnreachableEndpointAdviceIPv6Host pins the endpoint the advice names
+// for an IPv6 server host configured bare ("::1") or bracketed ("[::1]"): the
+// address bd dialed, [::1]:port, never [[::1]]:port.
+func TestUnreachableEndpointAdviceIPv6Host(t *testing.T) {
+	namedPortRefusalEnv(t)
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "13322")
+	config.ResetForTesting()
+	dir := namedPortServerWorkspace(t, 0)
+	const want = "BEADS_DOLT_SERVER_PORT declares the Dolt server at [::1]:13322 externally managed"
+	for _, host := range []string{"::1", "[::1]"} {
+		if got := UnreachableEndpointAdvice(dir, host, 13322, PortSourceEnv); !strings.Contains(got, want) {
+			t.Errorf("advice for %q = %q, want it to contain %q", host, got, want)
+		}
+	}
+	// A remote IPv6 host gets the store's remote-host advice, whose nc takes
+	// the host bare and whose curl takes [host]:port.
+	const remote = "nc -zv 2001:db8::1 13322  # or curl [2001:db8::1]:13322 for an HTTP-style check"
+	for _, host := range []string{"2001:db8::1", "[2001:db8::1]"} {
+		if got := UnreachableEndpointAdvice(dir, host, 13322, PortSourceEnv); !strings.Contains(got, remote) {
+			t.Errorf("advice for %q = %q, want it to contain %q", host, got, remote)
+		}
+	}
+}
+
 // TestDefaultConfigRemoteHostLegacyPortEnv pins the legacy BEADS_DOLT_PORT
 // for a server on another machine to the rule DialConfig and the store's
 // applyConfigDefaults apply for a local one (#5835): parsed untrimmed, it

@@ -3,12 +3,12 @@ package doltserver
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // ServerMode describes who owns and manages the dolt sql-server lifecycle.
@@ -362,12 +362,14 @@ func UnreachableEndpointAdvice(beadsDir, host string, port int, source PortSourc
 	if !configfile.IsLocalHostString(host) {
 		return remoteServerAdvice(host, port)
 	}
-	return ExternalPortSetting(beadsDir, source, port).Advice(net.JoinHostPort(host, strconv.Itoa(port)))
+	return ExternalPortSetting(beadsDir, source, port).Advice(doltutil.ServerAddr(host, port))
 }
 
 // remoteServerAdvice is the advice for a Dolt server at host:port on another
-// machine that bd could not reach, in the words the store uses for one.
+// machine that bd could not reach, in the words the store uses for one. nc
+// takes an IPv6 host bare, and curl takes it bracketed with the port.
 func remoteServerAdvice(host string, port int) string {
 	return fmt.Sprintf("Verify the external server is running and reachable from this host:\n"+
-		"  nc -zv %s %d  # or curl %s:%d for an HTTP-style check", host, port, host, port)
+		"  nc -zv %s %d  # or curl %s for an HTTP-style check",
+		doltutil.UnbracketHost(host), port, doltutil.ServerAddr(host, port))
 }

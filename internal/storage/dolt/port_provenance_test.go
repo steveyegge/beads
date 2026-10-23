@@ -820,6 +820,29 @@ func TestNewServerModeResolvedAddressDialFailureUnchanged(t *testing.T) {
 			t.Errorf("error lacks today's external-host hint (GH#3518):\n%s", msg)
 		}
 	})
+
+	// An IPv6 host, bare or bracketed, is dialed and named as [host]:port,
+	// and the hint's nc takes it bare while its curl takes [host]:port.
+	for _, host := range []string{"2001:db8::1", "[2001:db8::1]"} {
+		t.Run("remote IPv6 host "+host, func(t *testing.T) {
+			cfg, _ := offCfg(t)
+			cfg.ServerHost = host // RFC 3849 documentation prefix: never routable
+			cfg.ServerPort = 3307
+			_, err := newServerMode(context.Background(), cfg)
+			if err == nil {
+				t.Fatal("expected a dial error for an unroutable remote host")
+			}
+			msg := err.Error()
+			if want := "Dolt server unreachable at [2001:db8::1]:3307: "; !strings.HasPrefix(msg, want) {
+				t.Errorf("error does not start with %q:\n%s", want, msg)
+			}
+			if want := "Configured Dolt server at [2001:db8::1]:3307 is unreachable.\n" +
+				"Verify the external server is running and reachable from this host:\n" +
+				"  nc -zv 2001:db8::1 3307  # or curl [2001:db8::1]:3307 for an HTTP-style check"; !strings.Contains(msg, want) {
+				t.Errorf("error lacks the external-host hint %q:\n%s", want, msg)
+			}
+		})
+	}
 }
 
 // TestNewServerModeUnresolvedPortAutoStartStillRuns pins AC-3: with auto-start

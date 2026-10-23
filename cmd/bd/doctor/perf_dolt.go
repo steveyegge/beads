@@ -89,10 +89,11 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 
 	// Connect and run diagnostics via server
 	if !serverRunning {
+		addr := doltutil.ServerAddr(host, dsCfg.Port)
 		if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dsCfg.Port, dsCfg.PortSource); advice != "" {
-			return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d.\n%s", host, dsCfg.Port, advice)
+			return metrics, fmt.Errorf("dolt sql-server is not running on %s.\n%s", addr, advice)
 		}
-		return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d; start it with 'bd dolt start'", host, dsCfg.Port)
+		return metrics, fmt.Errorf("dolt sql-server is not running on %s; start it with 'bd dolt start'", addr)
 	}
 
 	if err := runDoltServerDiagnostics(metrics, fileCfg, host, dsCfg.Port); err != nil {
@@ -264,10 +265,11 @@ func measureQueryTime(ctx context.Context, db *sql.DB, query string) int64 {
 }
 
 // isDoltServerRunning checks if a dolt sql-server is responding at host:port,
-// joined as the store's DSN joins them (doltutil.ServerDSN), so it probes a
-// host the store can dial, a bracketed IPv6 literal included, as written.
+// joined by doltutil.ServerAddr as the store's fail-fast probe and DSN join
+// them, so an IPv6 host configured bare ("::1") or bracketed ("[::1]") probes
+// the address the store dials.
 func isDoltServerRunning(host string, port int) bool {
-	_, err := doltserver.ProbeSQLServer("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
+	_, err := doltserver.ProbeSQLServer("tcp", doltutil.ServerAddr(host, port), 2*time.Second)
 	return err == nil
 }
 
