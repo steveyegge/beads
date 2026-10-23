@@ -2,47 +2,37 @@ package issueops
 
 import (
 	"context"
-	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// CountDependencyEdgesInTx counts sourceID's dependency edges in dir across
+// both dependency tables. It counts the far ends listDepEdgeEndsInTx lists, so
+// a far end stored in both tables counts once and a missing wisp_dependencies
+// counts as empty (GH#3445): the count equals the listing `bd show` subtracts
+// it from, and only far ends with no row make the two differ. typeFilter
+// applies after the de-dup, to the type the listing reports. With
+// DepDirectionBoth the two directions are summed.
 func CountDependencyEdgesInTx(ctx context.Context, tx DBTX, sourceID string, dir domain.DepDirection, typeFilter []types.DependencyType) (int64, error) {
-	typeClause, typeArgs := buildDepTypeClause(typeFilter)
-
 	var total int64
-	for _, table := range []string{"dependencies", "wisp_dependencies"} {
-		if dir == domain.DepDirectionOut || dir == domain.DepDirectionBoth {
-			n, err := countDepWhere(ctx, tx, table, "issue_id = ?", typeClause, sourceID, typeArgs)
-			if err != nil {
-				return 0, err
-			}
-			total += n
+	for _, inbound := range []bool{false, true} {
+		if (inbound && dir == domain.DepDirectionOut) || (!inbound && dir == domain.DepDirectionIn) {
+			continue
 		}
-		if dir == domain.DepDirectionIn || dir == domain.DepDirectionBoth {
-			n, err := countDepWhere(ctx, tx, table, DepTargetExpr+" = ?", typeClause, sourceID, typeArgs)
-			if err != nil {
-				return 0, err
+		ends, err := listDepEdgeEndsInTx(ctx, tx, sourceID, inbound)
+		if err != nil {
+			return 0, err
+		}
+		for _, e := range ends {
+			if len(typeFilter) == 0 || slices.Contains(typeFilter, types.DependencyType(e.depType)) {
+				total++
 			}
-			total += n
 		}
 	}
 	return total, nil
-}
-
-func countDepWhere(ctx context.Context, tx DBTX, table, whereExpr, typeClause string, sourceID string, typeArgs []any) (int64, error) {
-	q := fmt.Sprintf("SELECT count(*) FROM %s WHERE %s", table, whereExpr) //nolint:gosec
-	if typeClause != "" {
-		q += " AND " + typeClause
-	}
-	args := append([]any{sourceID}, typeArgs...)
-	var n int64
-	if err := tx.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count %s: %w", table, err)
-	}
-	return n, nil
 }
 
 func buildDepTypeClause(filter []types.DependencyType) (string, []any) {

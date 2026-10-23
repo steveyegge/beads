@@ -420,3 +420,265 @@ func TestAddDependencyInTxReadsNullStoredMetadataAsEmptyObject(t *testing.T) {
 		t.Fatalf("unmet sql expectations: %v", err)
 	}
 }
+
+// edgeEndQueryRegex matches one arm of listDepEdgeEndsInTx: the far-end select
+// over table in the given direction.
+func edgeEndQueryRegex(table string, inbound bool) string {
+	if inbound {
+		return regexp.QuoteMeta("SELECT issue_id, type FROM " + table + " WHERE " + DepTargetExpr + " = ?")
+	}
+	return regexp.QuoteMeta("SELECT " + DepTargetExpr + " AS depends_on_id, type FROM " + table + " WHERE issue_id = ?")
+}
+
+// errEdgeRead stands in for a read failure other than a missing table, which
+// the edge reads and counts must return rather than read as empty.
+var errEdgeRead = errors.New("connection reset")
+
+// errMissingDependencies is a missing durable `dependencies` table. Only the
+// optional wisp_dependencies may read as empty when it is missing, so the edge
+// reads and counts must return this error rather than an empty edge list.
+var errMissingDependencies = missingTableError("dependencies")
+
+// edgeEndArm scripts one table's answer: far-end (id, type) rows, or an error.
+type edgeEndArm struct {
+	rows []depEdgeEnd
+	err  error
+}
+
+func (a edgeEndArm) expect(mock sqlmock.Sqlmock, table string, inbound bool) {
+	q := mock.ExpectQuery(edgeEndQueryRegex(table, inbound)).WithArgs("near")
+	if a.err != nil {
+		q.WillReturnError(a.err)
+		return
+	}
+	rows := sqlmock.NewRows([]string{"id", "type"})
+	for _, r := range a.rows {
+		rows.AddRow(r.id, r.depType)
+	}
+	q.WillReturnRows(rows)
+}
+
+// TestListDepEdgeEndsInTx pins the shared both-table edge read behind the four
+// dependency readers and their counts, in both directions: the SQL of each
+// arm, a missing wisp_dependencies reading as empty (GH#3445), a far end
+// stored in both tables read once with its durable type, and the order durable
+// ends then wisp ends.
+func TestListDepEdgeEndsInTx(t *testing.T) {
+	t.Parallel()
+
+	durable := []depEdgeEnd{{"d1", "parent-child"}, {"d2", "blocks"}}
+	cases := []struct {
+		name string
+		// wisp is nil when the dependencies arm fails and wisp_dependencies is
+		// never read.
+		durable edgeEndArm
+		wisp    *edgeEndArm
+		want    []depEdgeEnd
+		wantErr error
+	}{
+		{
+			name:    "missing wisp table reads as empty",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{err: missingTableError("wisp_dependencies")},
+			want:    durable,
+		},
+		{
+			name:    "missing wisp table in MySQL wording reads as empty",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{err: missingTableErrorMySQLText("beads", "wisp_dependencies")},
+			want:    durable,
+		},
+		{
+			name:    "mirrored far end reads once with the durable type",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{rows: []depEdgeEnd{{"d1", "blocks"}, {"d2", "blocks"}}},
+			want:    durable,
+		},
+		{
+			name:    "wisp-only far end reads after the durable ends",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{rows: []depEdgeEnd{{"w1", "blocks"}, {"d1", "blocks"}, {"w2", "parent-child"}}},
+			want:    append(append([]depEdgeEnd(nil), durable...), depEdgeEnd{"w1", "blocks"}, depEdgeEnd{"w2", "parent-child"}),
+		},
+		{
+			name:    "empty wisp table",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{},
+			want:    durable,
+		},
+		{
+			name:    "dependencies error propagates",
+			durable: edgeEndArm{err: errEdgeRead},
+			wantErr: errEdgeRead,
+		},
+		{
+			name:    "missing dependencies table propagates",
+			durable: edgeEndArm{err: errMissingDependencies},
+			wantErr: errMissingDependencies,
+		},
+		{
+			name:    "wisp_dependencies error other than a missing table propagates",
+			durable: edgeEndArm{rows: durable},
+			wisp:    &edgeEndArm{err: errEdgeRead},
+			wantErr: errEdgeRead,
+		},
+	}
+
+	for _, inbound := range []bool{true, false} {
+		for _, tc := range cases {
+			name := tc.name + "/outbound"
+			if inbound {
+				name = tc.name + "/inbound"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				_, mock, tx := beginMockTx(t)
+				tc.durable.expect(mock, "dependencies", inbound)
+				if tc.wisp != nil {
+					tc.wisp.expect(mock, "wisp_dependencies", inbound)
+				}
+
+				got, err := listDepEdgeEndsInTx(context.Background(), tx, "near", inbound)
+				if tc.wantErr != nil {
+					if !errors.Is(err, tc.wantErr) {
+						t.Fatalf("listDepEdgeEndsInTx error = %v, want it to wrap %v", err, tc.wantErr)
+					}
+					if got != nil {
+						t.Fatalf("listDepEdgeEndsInTx = %v alongside an error, want nil", got)
+					}
+				} else {
+					if err != nil {
+						t.Fatalf("listDepEdgeEndsInTx: %v", err)
+					}
+					if !reflect.DeepEqual(got, tc.want) {
+						t.Fatalf("listDepEdgeEndsInTx = %v, want %v", got, tc.want)
+					}
+				}
+				if err := mock.ExpectationsWereMet(); err != nil {
+					t.Fatalf("unmet SQL expectations: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// countArm scripts one table read of CountDependencyEdgesInTx.
+type countArm struct {
+	table   string
+	inbound bool
+	arm     edgeEndArm
+}
+
+// TestCountDependencyEdgesInTxDistinct pins that the per-issue edge counts
+// behind `bd show` count the same far-end set listDepEdgeEndsInTx lists, so
+// count - len(listing) only measures far ends with no row (GH#3445).
+func TestCountDependencyEdgesInTxDistinct(t *testing.T) {
+	t.Parallel()
+
+	children := []depEdgeEnd{{"c1", "parent-child"}, {"c2", "parent-child"}}
+	cases := []struct {
+		name    string
+		dir     domain.DepDirection
+		filter  []types.DependencyType
+		arms    []countArm
+		want    int64
+		wantErr error
+	}{
+		{
+			name: "mirrored dependents count once",
+			dir:  domain.DepDirectionIn,
+			arms: []countArm{
+				{"dependencies", true, edgeEndArm{rows: children}},
+				{"wisp_dependencies", true, edgeEndArm{rows: []depEdgeEnd{{"c1", "blocks"}, {"c2", "parent-child"}}}},
+			},
+			want: 2,
+		},
+		{
+			name: "mirrored dependency counts once",
+			dir:  domain.DepDirectionOut,
+			arms: []countArm{
+				{"dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+				{"wisp_dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+			},
+			want: 1,
+		},
+		{
+			name: "both directions sum their distinct counts",
+			dir:  domain.DepDirectionBoth,
+			arms: []countArm{
+				{"dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+				{"wisp_dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+				{"dependencies", true, edgeEndArm{rows: children}},
+				{"wisp_dependencies", true, edgeEndArm{rows: []depEdgeEnd{{"c1", "parent-child"}, {"w1", "blocks"}}}},
+			},
+			want: 4,
+		},
+		{
+			name: "missing wisp table counts the durable edges",
+			dir:  domain.DepDirectionBoth,
+			arms: []countArm{
+				{"dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+				{"wisp_dependencies", false, edgeEndArm{err: missingTableError("wisp_dependencies")}},
+				{"dependencies", true, edgeEndArm{rows: children}},
+				{"wisp_dependencies", true, edgeEndArm{err: missingTableError("wisp_dependencies")}},
+			},
+			want: 3,
+		},
+		{
+			name:   "type filter applies after de-dup",
+			dir:    domain.DepDirectionIn,
+			filter: []types.DependencyType{types.DepBlocks},
+			arms: []countArm{
+				{"dependencies", true, edgeEndArm{rows: children}},
+				{"wisp_dependencies", true, edgeEndArm{rows: []depEdgeEnd{{"c1", "blocks"}, {"w1", "blocks"}}}},
+			},
+			// c1's conflicting wisp mirror is not an edge of its own; w1 is.
+			want: 1,
+		},
+		{
+			name:    "dependencies error propagates",
+			dir:     domain.DepDirectionIn,
+			arms:    []countArm{{"dependencies", true, edgeEndArm{err: errEdgeRead}}},
+			wantErr: errEdgeRead,
+		},
+		{
+			name:    "missing dependencies table propagates",
+			dir:     domain.DepDirectionOut,
+			arms:    []countArm{{"dependencies", false, edgeEndArm{err: errMissingDependencies}}},
+			wantErr: errMissingDependencies,
+		},
+		{
+			name: "wisp_dependencies error other than a missing table propagates",
+			dir:  domain.DepDirectionOut,
+			arms: []countArm{
+				{"dependencies", false, edgeEndArm{rows: []depEdgeEnd{{"epic", "parent-child"}}}},
+				{"wisp_dependencies", false, edgeEndArm{err: errEdgeRead}},
+			},
+			wantErr: errEdgeRead,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, mock, tx := beginMockTx(t)
+			for _, a := range tc.arms {
+				a.arm.expect(mock, a.table, a.inbound)
+			}
+
+			got, err := CountDependencyEdgesInTx(context.Background(), tx, "near", tc.dir, tc.filter)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("CountDependencyEdgesInTx error = %v, want it to wrap %v", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("CountDependencyEdgesInTx: %v", err)
+			} else if got != tc.want {
+				t.Fatalf("CountDependencyEdgesInTx = %d, want %d", got, tc.want)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
+	}
+}

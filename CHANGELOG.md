@@ -857,6 +857,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bd show <epic>` lists each child once, and no longer loses its CHILDREN
+  section when the dolt-ignored `wisp_dependencies` table is missing from a
+  server's working set: the dependency readers treat a missing wisp table as
+  empty, and read an edge stored in both dependency tables (a promoted wisp,
+  two merged clones) once, with its durable type (GH#3445). On a server,
+  `bd show --json --include-dependents` and `bd serve`'s `include_dependents`
+  no longer fail on a missing `wisp_dependencies` either, and list the same
+  dependents as text `bd show`, each once: a dependent whose id is in both
+  the issue and wisp tables appears with its wisp row.
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to
