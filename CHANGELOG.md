@@ -862,6 +862,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Dolt server you run at an IPv6 address can now be configured bare
+  (`::1`) or bracketed (`[::1]`) in `metadata.json` `dolt_server_host`,
+  `BEADS_DOLT_SERVER_HOST`, `config.yaml` `dolt.host` or `bd init
+  --server-host`. Previously neither spelling could open the store: with a
+  bare host the MySQL connection dialed the wrong address (`[::1:3307]:3306`
+  for port 3307, which timed out, or `lookup ::1:13322: no such host` for a
+  five-digit port), and a bracketed one failed the reachability probe
+  (`[[::1]]:3307: missing port in address`). `bd init
+  --proxied-server-external-host` already worked with a bare host, and now
+  also accepts the bracketed one. The CLI, `bd serve` and a proxied-server
+  external backend now all dial `[::1]:port`. `bd doctor --perf`, `bd doctor
+  --server`, `bd dolt test` and `bd dolt show` dial the same address, so `bd
+  doctor --perf` no longer reports a running server at a bare IPv6 host as
+  not running. `bd dolt status` checks a server at the IPv6 loopback over
+  SQL, as it does an external one, rather than reading bd's PID file: a Dolt
+  server bd starts itself still listens on 127.0.0.1 only. For the same
+  reason, when nothing answers at the IPv6 loopback, bd no longer auto-starts
+  its own server, which it could not reach there and left running, and no
+  longer advises `bd dolt start`: the advice checks the server at `[::1]`
+  instead, and `bd dolt start` refuses that host. `bd dolt stop` refuses
+  it too, rather than stop bd's own 127.0.0.1 server and report success
+  while the one at `[::1]` keeps running, and `bd migrate
+  from-server-to-proxied-server` refuses it as it refuses a remote host,
+  rather than re-point the workspace at `.beads/dolt`, which does not hold
+  that server's data. Nor do the state files of such a
+  server make the one at `[::1]` bd's own: as for any server bd does not
+  own, its schema is migrated only with consent (#5920) and `bd admin
+  compact --dolt` does not run `dolt gc` on `.beads/dolt`. Its port file no
+  longer outranks the port `dolt_server_port`, `dolt.port` or
+  `listener.port` names for `[::1]`, and bd writes none for a server there.
+  With no port set for a server there, or on another machine, `bd doctor`,
+  `bd doctor --server`, `bd doctor --perf`, `bd dolt status`, `bd dolt
+  test`, `bd dolt show` and `bd dolt clean-databases` say to pin it, as the
+  store's error does, rather than advise an auto-start or check port 0, and
+  `bd doctor --server` exits 1 there rather than 0. `bd doctor` no longer
+  skips its Dolt checks for such a server as if the next bd command would
+  start it: they fail, with that advice or, when nothing answers at the port
+  set, with the reachability check. `bd doctor --perf` reports no
+  `.beads/dolt` size for a server at `[::1]`.
+  To stop a server bd started for such a workspace earlier, run
+  `BEADS_DOLT_SERVER_HOST=127.0.0.1 bd dolt stop`. Errors, advice and status
+  output that name the server read `[::1]:port` for either spelling, quoted
+  where the advice passes it to curl, and `[::1]` counts as a local host
+  wherever `::1` does. A credentials-file section for an IPv6 server,
+  including the one that holds a `bd serve` endpoint's bearer token, is
+  found whichever spelling it and the configured host use. `[[::1]:3307]`
+  is read before `[::1:3307]`, and an empty `password=` there is not
+  replaced by the other's. When a server bd does not run, on another
+  machine as well as at `[::1]`, refuses the connection bd opens to create
+  its database, the error suggests checking that the server is reachable
+  rather than `bd dolt start`. IPv4 addresses and hostnames are joined as
+  before, and a host is dialed without the surrounding whitespace bd
+  already ignored when it decided whether the host is local.
+
 - In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
   every `bd` command, and it and the default proxied `server.log` are
   rotated when the proxy starts. The proxy wrote about six lines to

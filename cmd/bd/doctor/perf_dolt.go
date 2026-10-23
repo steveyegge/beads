@@ -28,7 +28,7 @@ type DoltPerfMetrics struct {
 	OpenIssues   int    // Open issue count
 	ClosedIssues int    // Closed issue count
 	Dependencies int    // Dependency count
-	DatabaseSize string // Size of .dolt directory; n/a for a server on another machine
+	DatabaseSize string // Size of .dolt directory; n/a for a server bd does not run
 
 	// Timing metrics (milliseconds)
 	ConnectionTime   int64 // Time to establish connection
@@ -68,6 +68,15 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 	fileCfg := loadServerConfig(beadsDir)
 	host := fileCfg.GetDoltServerHost()
 
+	// No bd command resolves a port for a server bd does not run, at the
+	// IPv6 loopback or on another machine, so with none configured there is
+	// no address to probe: give the store's advice, not a check of port 0.
+	if dsCfg.Port == 0 {
+		if advice := doltserver.UnresolvedPortAdvice(host); advice != "" {
+			return metrics, fmt.Errorf("no Dolt server port is configured.\n%s", advice)
+		}
+	}
+
 	// Check server status
 	serverRunning := isDoltServerRunning(host, dsCfg.Port)
 	if serverRunning {
@@ -89,25 +98,35 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 
 	// Connect and run diagnostics via server
 	if !serverRunning {
+		addr := doltutil.ServerAddr(host, dsCfg.Port)
 		if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dsCfg.Port, dsCfg.PortSource); advice != "" {
-			return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d.\n%s", host, dsCfg.Port, advice)
+			return metrics, fmt.Errorf("dolt sql-server is not running on %s.\n%s", addr, advice)
 		}
-		return metrics, fmt.Errorf("dolt sql-server is not running on %s:%d; start it with 'bd dolt start'", host, dsCfg.Port)
+		return metrics, fmt.Errorf("dolt sql-server is not running on %s; start it with 'bd dolt start'", addr)
 	}
 
 	if err := runDoltServerDiagnostics(metrics, fileCfg, host, dsCfg.Port); err != nil {
 		return metrics, fmt.Errorf("server diagnostics failed: %w", err)
 	}
 
-	// Calculate database size. The data directory is this machine's, so it
-	// holds the database just measured only for a server on this machine.
-	if configfile.IsLocalHostString(host) {
-		metrics.DatabaseSize = getDoltDatabaseSize(getDatabasePath(beadsDir))
-	} else {
-		metrics.DatabaseSize = "n/a (server on another machine)"
-	}
+	metrics.DatabaseSize = databaseSizeFor(beadsDir, host)
 
 	return metrics, nil
+}
+
+// databaseSizeFor is the size of the database the Dolt server at host
+// serves, read from beadsDir's data directory. That directory holds it only
+// for a server bd runs: not one on another machine, nor one at the IPv6
+// loopback, where bd's own server, which listens on 127.0.0.1 only, never
+// runs.
+func databaseSizeFor(beadsDir, host string) string {
+	switch {
+	case !configfile.IsLocalHostString(host):
+		return "n/a (server on another machine)"
+	case configfile.IsIPv6LoopbackHost(host):
+		return "n/a (server bd does not run)"
+	}
+	return getDoltDatabaseSize(getDatabasePath(beadsDir))
 }
 
 // loadServerConfig is beadsDir's metadata.json, or, when that is missing or
@@ -264,10 +283,11 @@ func measureQueryTime(ctx context.Context, db *sql.DB, query string) int64 {
 }
 
 // isDoltServerRunning checks if a dolt sql-server is responding at host:port,
-// joined as the store's DSN joins them (doltutil.ServerDSN), so it probes a
-// host the store can dial, a bracketed IPv6 literal included, as written.
+// joined by doltutil.ServerAddr as the store's fail-fast probe and DSN join
+// them, so an IPv6 host configured bare ("::1") or bracketed ("[::1]") probes
+// the address the store dials.
 func isDoltServerRunning(host string, port int) bool {
-	_, err := doltserver.ProbeSQLServer("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
+	_, err := doltserver.ProbeSQLServer("tcp", doltutil.ServerAddr(host, port), 2*time.Second)
 	return err == nil
 }
 

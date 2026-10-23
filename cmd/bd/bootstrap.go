@@ -766,7 +766,7 @@ func existingBootstrapDBPlan(beadsDir string, cfg *configfile.Config, isServer, 
 		if result.Exists {
 			plan.HasExisting = true
 			plan.Action = "none"
-			plan.Reason = fmt.Sprintf("Database %s already exists on server at %s:%d", cfg.GetDoltDatabase(), ep.host, ep.port)
+			plan.Reason = fmt.Sprintf("Database %s already exists on server at %s", cfg.GetDoltDatabase(), doltutil.ServerAddr(ep.host, ep.port))
 			return plan, probe, true
 		}
 		// An unverifiable probe means UNKNOWN, never "exists". Answering
@@ -1079,9 +1079,9 @@ func refuseServerModeInitForExistingProject(plan BootstrapPlan, cfg *configfile.
 // consumers get the explanation without ANSI escapes.
 func bootstrapMissingServerDBSummary(dbName, host string, port int, probeErr error) string {
 	if probeErr != nil {
-		return fmt.Sprintf("Could not verify database %q on Dolt server at %s:%d (%v); workspace already initialized (project_id set) — refusing to create an empty database", dbName, host, port, probeErr)
+		return fmt.Sprintf("Could not verify database %q on Dolt server at %s (%v); workspace already initialized (project_id set) — refusing to create an empty database", dbName, doltutil.ServerAddr(host, port), probeErr)
 	}
-	return fmt.Sprintf("Database %q not found on server at %s:%d; workspace already initialized (project_id set) — refusing to create an empty database", dbName, host, port)
+	return fmt.Sprintf("Database %q not found on server at %s; workspace already initialized (project_id set) — refusing to create an empty database", dbName, doltutil.ServerAddr(host, port))
 }
 
 // bootstrapMissingServerDBRefusal builds the refusal error shown when bd
@@ -1095,9 +1095,9 @@ func bootstrapMissingServerDBSummary(dbName, host string, port int, probeErr err
 func bootstrapMissingServerDBRefusal(dbName, host string, port int, probeErr error) error {
 	var b strings.Builder
 	if probeErr != nil {
-		fmt.Fprintf(&b, "\n%s Could not verify database %q on Dolt server at %s:%d: %v\n", ui.RenderWarn("⚠"), dbName, host, port, probeErr)
+		fmt.Fprintf(&b, "\n%s Could not verify database %q on Dolt server at %s: %v\n", ui.RenderWarn("⚠"), dbName, doltutil.ServerAddr(host, port), probeErr)
 	} else {
-		fmt.Fprintf(&b, "\n%s Database %q not found on server at %s:%d.\n", ui.RenderWarn("⚠"), dbName, host, port)
+		fmt.Fprintf(&b, "\n%s Database %q not found on server at %s.\n", ui.RenderWarn("⚠"), dbName, doltutil.ServerAddr(host, port))
 	}
 	b.WriteString("This workspace was already initialized (metadata.json has a project_id from a prior\n")
 	b.WriteString("bd init/bootstrap), so this looks like a recovery situation, not a fresh clone.\n")
@@ -1517,15 +1517,15 @@ func cloneViaServer(ctx context.Context, remoteURL, dbName string, ep bootstrapS
 	defer cancel()
 
 	if err := db.PingContext(cloneCtx); err != nil {
-		return fmt.Errorf("dolt server unreachable at %s:%d (is dolt sql-server running?): %w",
-			ep.host, ep.port, err)
+		return fmt.Errorf("dolt server unreachable at %s (is dolt sql-server running?): %w",
+			doltutil.ServerAddr(ep.host, ep.port), err)
 	}
 
 	if err := versioncontrolops.DoltClone(cloneCtx, db, remoteURL, dbName, os.Getenv("DOLT_REMOTE_USER")); err != nil {
 		return fmt.Errorf("clone from remote via server: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Synced database from %s (via server at %s:%d)\n",
-		remoteURL, ep.host, ep.port)
+	fmt.Fprintf(os.Stderr, "Synced database from %s (via server at %s)\n",
+		remoteURL, doltutil.ServerAddr(ep.host, ep.port))
 	return nil
 }
 

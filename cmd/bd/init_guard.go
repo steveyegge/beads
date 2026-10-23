@@ -86,7 +86,7 @@ func checkDatabaseOnServer(host string, port int, user, password, dbName string,
 // database.  Instead we guide the user toward safe diagnostic commands.
 func initGuardServerMessage(dbName, host string, port int, prefix, syncRemote string) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n%s Database %q not found on server at %s:%d.\n", ui.RenderWarn("⚠"), dbName, host, port)
+	fmt.Fprintf(&b, "\n%s Database %q not found on server at %s.\n", ui.RenderWarn("⚠"), dbName, doltutil.ServerAddr(host, port))
 	b.WriteString("The server is running but this database hasn't been created yet.\n")
 
 	b.WriteString("\nDiagnose with:\n")
@@ -152,7 +152,7 @@ var initAllowRecreateMissing bool
 // guard call sites stay unchanged.
 func initGuardMissingServerDBMessage(dbName, host string, port int, _ string, haveProjectID bool) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n%s Database %q not found on server at %s:%d (or the server could not be reached to confirm).\n", ui.RenderWarn("⚠"), dbName, host, port)
+	fmt.Fprintf(&b, "\n%s Database %q not found on server at %s (or the server could not be reached to confirm).\n", ui.RenderWarn("⚠"), dbName, doltutil.ServerAddr(host, port))
 	if haveProjectID {
 		b.WriteString("This workspace was already initialized (metadata.json has a project_id from a prior\n")
 		b.WriteString("bd init), so this looks like a recovery situation, not a fresh clone: the configured\n")

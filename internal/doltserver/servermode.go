@@ -3,12 +3,12 @@ package doltserver
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // ServerMode describes who owns and manages the dolt sql-server lifecycle.
@@ -356,18 +356,53 @@ func ExternallyManagedAdvice(setting, endpoint string) string {
 // port resolved from source, that found no server, or "" when the caller's own
 // advice stands. A host off this machine gets the remote-host advice
 // (GH#3518): bd starts no server there, and `bd dolt start` refuses a remote
-// host. A host on this machine gets the externally managed advice when a
-// setting declares the workspace's server so (see ExternalPortSetting).
+// host. So does the IPv6 loopback, where bd's own server, which listens on
+// 127.0.0.1 only, never runs and `bd dolt start` refuses too. With no port
+// resolved (port 0), either gets UnresolvedPortAdvice instead, never a check
+// of port 0. Any other host on this machine gets the externally managed
+// advice when a setting declares the workspace's server so (see
+// ExternalPortSetting).
 func UnreachableEndpointAdvice(beadsDir, host string, port int, source PortSource) string {
-	if !configfile.IsLocalHostString(host) {
+	if !configfile.IsLocalHostString(host) || configfile.IsIPv6LoopbackHost(host) {
+		if port == 0 {
+			return UnresolvedPortAdvice(host)
+		}
 		return remoteServerAdvice(host, port)
 	}
-	return ExternalPortSetting(beadsDir, source, port).Advice(net.JoinHostPort(host, strconv.Itoa(port)))
+	return ExternalPortSetting(beadsDir, source, port).Advice(doltutil.ServerAddr(host, port))
 }
 
-// remoteServerAdvice is the advice for a Dolt server at host:port on another
-// machine that bd could not reach, in the words the store uses for one.
+// UnresolvedPortAdvice is the advice for a Dolt server at host for which no
+// port source resolved a port, or "" when bd runs the server there, whose
+// start resolves one. bd runs no server on another machine or at the IPv6
+// loopback, so no bd command publishes a port for one there, and the store
+// refuses to open until the port is pinned, with this advice.
+func UnresolvedPortAdvice(host string) string {
+	if configfile.IsLocalHostString(host) && !configfile.IsIPv6LoopbackHost(host) {
+		return ""
+	}
+	return fmt.Sprintf("bd does not manage the Dolt server at %s; pin its port with "+
+		"BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml.", host)
+}
+
+// remoteServerAdvice is the advice for a Dolt server at host:port that bd
+// does not run, on another machine or at the IPv6 loopback, and could not
+// reach, in the words the store uses for one.
 func remoteServerAdvice(host string, port int) string {
-	return fmt.Sprintf("Verify the external server is running and reachable from this host:\n"+
-		"  nc -zv %s %d  # or curl %s:%d for an HTTP-style check", host, port, host, port)
+	return "Verify the external server is running and reachable from this host:\n  " +
+		ReachabilityCheck(host, port)
+}
+
+// ReachabilityCheck is the shell check that advice for an unreachable Dolt
+// server at host:port suggests. nc takes an IPv6 host bare, and curl takes it
+// bracketed with the port, in double quotes: a shell reads an unquoted
+// [::1]:3307 as a glob, which zsh refuses ("no matches found"). An IPv4
+// address or a hostname needs no quotes and gets none.
+func ReachabilityCheck(host string, port int) string {
+	target := doltutil.ServerAddr(host, port)
+	if strings.HasPrefix(target, "[") {
+		target = `"` + target + `"`
+	}
+	return fmt.Sprintf("nc -zv %s %d  # or curl %s for an HTTP-style check",
+		configfile.UnbracketHost(host), port, target)
 }

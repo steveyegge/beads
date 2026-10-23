@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 // `bd init --external` declares that the Dolt server is managed outside bd, so
@@ -498,6 +499,53 @@ func TestNamedPortServerDiagnosticsAdvice(t *testing.T) {
 		t.Run("host only in the central server config/"+strings.Join(args, " "), func(t *testing.T) {
 			runCentralConfigHostDiagnostic(t, args)
 		})
+		for _, host := range []string{"::1", "[::1]"} {
+			t.Run("IPv6 host "+host+"/"+strings.Join(args, " "), func(t *testing.T) {
+				runIPv6HostDiagnostic(t, host, args)
+			})
+		}
+	}
+}
+
+// runIPv6HostDiagnostic runs bd list and one diagnostic against a server at
+// an IPv6 host that BEADS_DOLT_SERVER_HOST names bare ("::1") or bracketed
+// ("[::1]"). The listener speaks no MySQL, so both fail, but both must reach
+// it, as they would a server at any other host: bd list with its fail-fast
+// probe and its connection, the diagnostic with its probe or connection. A
+// diagnostic that dials ::1:port or [[::1]]:port instead reports the running
+// server as not running.
+func runIPv6HostDiagnostic(t *testing.T, host string, args []string) {
+	t.Helper()
+	port, accepted := testutil.IPv6LoopbackListener(t)
+	f := newExternalInitFixture(t)
+	namedPortWorkspace(t, f, 0)
+	f.env = append(f.env, "BEADS_DOLT_SERVER_HOST="+host, "BEADS_DOLT_SERVER_PORT="+strconv.Itoa(port))
+
+	for _, cmdArgs := range [][]string{{"list"}, args} {
+		want := int64(1)
+		if cmdArgs[0] == "list" {
+			want = 2 // the fail-fast probe and the connection
+		}
+		before := accepted()
+		res := f.run("", cmdArgs...)
+
+		requireNoLaunch(t, res)
+		for deadline := time.Now().Add(2 * time.Second); accepted()-before < want && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if got := accepted() - before; got < want {
+			t.Errorf("bd %s made %d connections to the server at [::1]:%d, want at least %d:\n%s",
+				strings.Join(cmdArgs, " "), got, port, want, res.output)
+		}
+		for _, banned := range []string{"not running", "[[::1]]", "no such host", "too many colons", "missing port"} {
+			if strings.Contains(res.output, banned) {
+				t.Errorf("bd %s output contains %q:\n%s", strings.Join(cmdArgs, " "), banned, res.output)
+			}
+		}
+		if want := "Testing connection to " + net.JoinHostPort("::1", strconv.Itoa(port)); cmdArgs[0] == "dolt" &&
+			cmdArgs[1] == "test" && !strings.Contains(res.output, want) {
+			t.Errorf("bd dolt test output does not contain %q:\n%s", want, res.output)
+		}
 	}
 }
 

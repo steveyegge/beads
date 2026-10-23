@@ -843,8 +843,16 @@ over existing data, or adopting a server bd already tracks, is unaffected. Use
 		// server lifecycle (GH#3545/GH#3518): starting a repo-local
 		// server here would write local PID/port state that shadows the
 		// configured remote endpoint.
-		if host := fileCfg.GetDoltServerHost(); !configfile.IsLocalHostString(host) {
+		host := fileCfg.GetDoltServerHost()
+		if !configfile.IsLocalHostString(host) {
 			return HandleError("the configured Dolt server host is remote (%s); 'bd dolt start' only manages a local server.\nStart the server on that host, or clear dolt_server_host / dolt.host / BEADS_DOLT_SERVER_HOST to run one locally", host)
+		}
+		// Nor does bd own a server at the IPv6 loopback: its own server
+		// listens on 127.0.0.1 only, so one started here never answers at
+		// [::1]:port, and bd dolt status, which probes that address over
+		// SQL, never shows it.
+		if configfile.IsIPv6LoopbackHost(host) {
+			return HandleError("the configured Dolt server host is the IPv6 loopback (%s); 'bd dolt start' starts bd's own server, which listens on 127.0.0.1 only.\nStart the server that listens on [::1], or clear dolt_server_host / dolt.host / BEADS_DOLT_SERVER_HOST to run bd's own", host)
 		}
 		serverDir := doltserver.ResolveServerDir(beadsDir)
 		force, _ := cmd.Flags().GetBool("force")
@@ -945,8 +953,16 @@ scope cannot be established.`,
 		// remote server host, the repo-local PID state (if any) is a
 		// leftover, and stopping it would report success while the
 		// configured external server keeps running (GH#3545/GH#3518).
-		if host := fileCfg.GetDoltServerHost(); !usesProxiedServer() && !configfile.IsLocalHostString(host) {
+		host := fileCfg.GetDoltServerHost()
+		if !usesProxiedServer() && !configfile.IsLocalHostString(host) {
 			return HandleError("the configured Dolt server host is remote (%s); 'bd dolt stop' only manages a local server.\nStop the server on that host, or clear dolt_server_host / dolt.host / BEADS_DOLT_SERVER_HOST to manage one locally", host)
+		}
+		// Nor the IPv6 loopback, as in 'bd dolt start': bd's own server
+		// listens on 127.0.0.1 only, so the PID file names a server other
+		// than the one configured at [::1], and stopping it would report
+		// success while that one keeps running.
+		if !usesProxiedServer() && configfile.IsIPv6LoopbackHost(host) {
+			return HandleError("the configured Dolt server host is the IPv6 loopback (%s); 'bd dolt stop' stops bd's own server, which listens on 127.0.0.1 only.\nStop the server that listens on [::1]. To stop a server bd started here earlier, run: BEADS_DOLT_SERVER_HOST=127.0.0.1 bd dolt stop", host)
 		}
 		force, _ := cmd.Flags().GetBool("force")
 
@@ -1159,9 +1175,11 @@ In embedded mode, reports that the Dolt engine runs in-process and shows
 the on-disk data directory. For beads-managed (local) servers, displays
 PID, port, and data directory from the local PID file. For externally-
 managed servers — a shared server (dolt.shared-server: true), a remote
-dolt_server_host, or a local server managed outside bd (dolt.auto-start:
-false, e.g. an orchestrator-shared sql-server) — pings the configured
-endpoint via SQL and reports reachability, server version, and database.
+dolt_server_host, a server at the IPv6 loopback (::1, where bd's own
+server never listens), or a local server managed outside bd
+(dolt.auto-start: false, e.g. an orchestrator-shared sql-server) — pings
+the configured endpoint via SQL and reports reachability, server version,
+and database.
 
 In proxied-server mode, reports the proxy (the endpoint every bd command
 connects through) and the dolt backend behind it separately, read from the
@@ -1294,6 +1312,9 @@ func renderLocalDoltStatus(state *doltserver.State, serverDir string) {
 //     GH#3218 bug lived.
 //   - dolt_mode=server with a non-local host (Hosted Dolt, remote shared
 //     sql-server) — the PID file is on a different machine.
+//   - dolt_mode=server with the IPv6 loopback host, "::1" or "[::1]" — bd's
+//     own server listens on 127.0.0.1 only, so a server there is never one
+//     bd started, and the PID file, if any, is for a different server.
 //   - dolt_mode=server with a local host but bd auto-start is disabled —
 //     the server lifecycle is owned by something outside bd (e.g. an
 //     orchestrator or systemd unit), so no bd PID file exists. Without
@@ -1322,7 +1343,7 @@ func shouldUseExternalDoltStatus(cfg *configfile.Config, autoStartDisabled, shar
 	if !cfg.IsDoltServerMode() {
 		return false
 	}
-	if !isLocalHost(cfg.GetDoltServerHost()) {
+	if host := cfg.GetDoltServerHost(); !isLocalHost(host) || configfile.IsIPv6LoopbackHost(host) {
 		return true
 	}
 	return autoStartDisabled
@@ -1330,16 +1351,10 @@ func shouldUseExternalDoltStatus(cfg *configfile.Config, autoStartDisabled, shar
 
 // isLocalHost reports whether host refers to this machine. Used to
 // distinguish beads-managed local servers from externally-hosted ones.
+// An empty host defaults to local, and the IPv6 loopback counts in either
+// spelling ("::1" or "[::1]"), as configfile.IsLocalHostString has it.
 func isLocalHost(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if h == "" {
-		return true // empty defaults to local
-	}
-	switch h {
-	case "localhost", "127.0.0.1", "::1", "0.0.0.0":
-		return true
-	}
-	return false
+	return configfile.IsLocalHostString(host)
 }
 
 // runExternalDoltStatus queries an externally-hosted Dolt server and prints
@@ -1372,12 +1387,14 @@ func runExternalDoltStatus(beadsDir string, cfg *configfile.Config) {
 		"tls":      tls,
 	}
 
-	db, openErr := sql.Open("mysql", dsn)
 	var running bool
 	var version string
 	var connErr error
 
-	if openErr == nil {
+	if advice := unresolvedServerPortAdvice(host, port); advice != "" {
+		// Nothing to dial: give the store's advice, not a dial of port 0.
+		connErr = fmt.Errorf("no Dolt server port configured; %s", advice)
+	} else if db, openErr := sql.Open("mysql", dsn); openErr == nil {
 		defer db.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -2099,7 +2116,8 @@ func showDoltConfig(testConnection bool) error {
 				result["tls"] = cfg.GetDoltServerTLS()
 				result["shared_server"] = doltserver.IsSharedServerMode()
 				if testConnection {
-					result["connection_ok"] = testServerConnection(showHost, showPort)
+					result["connection_ok"] = unresolvedServerPortAdvice(showHost, showPort) == "" &&
+						testServerConnection(showHost, showPort)
 				}
 			}
 		}
@@ -2136,11 +2154,7 @@ func showDoltConfig(testConnection bool) error {
 
 		if testConnection {
 			fmt.Println()
-			if testServerConnection(showHost, showPort) {
-				fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
-			} else {
-				fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
-			}
+			printDoltShowConnection(showHost, showPort)
 		}
 	}
 
@@ -2156,6 +2170,20 @@ func showDoltConfig(testConnection bool) error {
 
 	printDoltShowConfigSources(os.Stdout)
 	return nil
+}
+
+// printDoltShowConnection prints bd dolt show's check of the Dolt server at
+// host:port: for a server bd does not run with no port resolved, the advice
+// to pin it, with no dial of port 0; else whether the server answered.
+func printDoltShowConnection(host string, port int) {
+	switch advice := unresolvedServerPortAdvice(host, port); {
+	case advice != "":
+		fmt.Printf("  %s\n  %s\n", ui.RenderWarn("✗ No Dolt server port configured"), advice)
+	case testServerConnection(host, port):
+		fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
+	default:
+		fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
+	}
 }
 
 // printDoltShowConfigSources renders doltserver.PortSourceLabels(), the same
@@ -2336,10 +2364,11 @@ func testDoltConnection() error {
 	host := cfg.GetDoltServerHost()
 	dc := doltserver.DialConfig(beadsDir)
 	port := dc.Port
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := doltutil.ServerAddr(host, port)
+	unresolvedAdvice := unresolvedServerPortAdvice(host, port)
 
 	if jsonOutput {
-		ok := testServerConnection(host, port)
+		ok := unresolvedAdvice == "" && testServerConnection(host, port)
 		if err := outputJSON(map[string]interface{}{
 			"host":          host,
 			"port":          port,
@@ -2351,6 +2380,12 @@ func testDoltConnection() error {
 			return SilentExit()
 		}
 		return nil
+	}
+
+	if unresolvedAdvice != "" {
+		fmt.Printf("%s\n", ui.RenderWarn("✗ No Dolt server port configured"))
+		fmt.Println("\n" + unresolvedAdvice)
+		return SilentExit()
 	}
 
 	fmt.Printf("Testing connection to %s...\n", addr)
@@ -2405,7 +2440,7 @@ func testDoltConnection() error {
 var serverDialTimeout = 3 * time.Second
 
 func testServerConnection(host string, port int) bool {
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	addr := doltutil.ServerAddr(host, port)
 
 	_, err := doltserver.ProbeSQLServer("tcp", addr, serverDialTimeout)
 	return err == nil
@@ -2509,6 +2544,10 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 	host := cfg.GetDoltServerHost()
 	dc := doltserver.DialConfig(beadsDir)
 	port := dc.Port
+	if advice := unresolvedServerPortAdvice(host, port); advice != "" {
+		fmt.Fprintf(os.Stderr, "Error: no Dolt server port configured; %s\n", advice)
+		return nil, nil, SilentExit()
+	}
 	user := cfg.GetDoltServerUser()
 	password := os.Getenv("BEADS_DOLT_PASSWORD")
 
@@ -2534,7 +2573,7 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		fmt.Fprintf(os.Stderr, "Error: cannot reach Dolt server at %s:%d: %v\n", host, port, err)
+		fmt.Fprintf(os.Stderr, "Error: cannot reach Dolt server at %s: %v\n", doltutil.ServerAddr(host, port), err)
 		fmt.Fprintln(os.Stderr, unreachableServerAdvice(beadsDir, host, dc))
 		return nil, nil, SilentExit()
 	}
@@ -2544,14 +2583,28 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 
 // unreachableServerAdvice is what to do about a Dolt server at host and dc's
 // port that did not answer: the remote-host advice for a host on another
-// machine (`bd dolt start` refuses one), the externally managed advice when a
-// setting naming the port declares the server so (bd starts no server there,
-// and `bd dolt start` would start its own on that port), else `bd dolt start`.
+// machine or at the IPv6 loopback (`bd dolt start` refuses both), the
+// externally managed advice when a setting naming the port declares the
+// server so (bd starts no server there, and `bd dolt start` would start its
+// own on that port), else `bd dolt start`.
 func unreachableServerAdvice(beadsDir, host string, dc *doltserver.Config) string {
 	if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dc.Port, dc.PortSource); advice != "" {
 		return advice
 	}
 	return "Start the server with: bd dolt start"
+}
+
+// unresolvedServerPortAdvice is the advice for a Dolt server at host that bd
+// does not run, at the IPv6 loopback or on another machine, when no port
+// source resolved a port for it (port 0), or "" otherwise. No bd command
+// starts, and so resolves a port for, such a server, so there is no address
+// to dial until the port is pinned. Callers print this advice instead of
+// dialing port 0; the store refuses to open with the same advice.
+func unresolvedServerPortAdvice(host string, port int) string {
+	if port != 0 {
+		return ""
+	}
+	return doltserver.UnresolvedPortAdvice(host)
 }
 
 // doltServerPidFile returns the path to the PID file for the managed dolt server.

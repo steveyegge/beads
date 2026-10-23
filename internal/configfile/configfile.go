@@ -550,6 +550,16 @@ func IsLocalHostString(host string) bool {
 	return false
 }
 
+// IsIPv6LoopbackHost reports whether host is the IPv6 loopback in either
+// spelling, "::1" or "[::1]". IsLocalHostString counts it as this machine, but
+// bd's own Dolt server listens on 127.0.0.1 only, so a server there is never
+// one bd started or can start. A caller that decides whether bd manages the
+// server at host, auto-starts it, or advises `bd dolt start` for it excludes
+// this host.
+func IsIPv6LoopbackHost(host string) bool {
+	return UnbracketHost(host) == "::1"
+}
+
 func (c *Config) IsDoltProxiedServerMode() bool {
 	if c.GetBackend() != BackendDolt {
 		return false

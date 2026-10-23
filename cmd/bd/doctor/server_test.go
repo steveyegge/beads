@@ -2,12 +2,15 @@ package doctor
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/testutil"
 )
 
 func TestIsValidIdentifier(t *testing.T) {
@@ -52,6 +55,20 @@ func TestCheckServerReachable_UnreachableHost(t *testing.T) {
 	}
 	if check.Category != CategoryFederation {
 		t.Errorf("Category = %q, want %q", check.Category, CategoryFederation)
+	}
+}
+
+// TestCheckServerReachableIPv6Host pins bd doctor --server's reachability
+// probe to the address the store dials for an IPv6 server host configured bare
+// ("::1") or bracketed ("[::1]"): [::1]:port, never [[::1]]:port.
+func TestCheckServerReachableIPv6Host(t *testing.T) {
+	port, _ := testutil.IPv6LoopbackListener(t)
+	want := "Connected to " + net.JoinHostPort("::1", strconv.Itoa(port))
+	for _, host := range []string{"::1", "[::1]"} {
+		check := checkServerReachable(host, port)
+		if check.Status != StatusOK || check.Message != want {
+			t.Errorf("checkServerReachable(%q) = %s %q (%s), want %s %q", host, check.Status, check.Message, check.Detail, StatusOK, want)
+		}
 	}
 }
 

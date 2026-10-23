@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -378,6 +379,49 @@ func TestRemoteHostStoreDialsTheAuthoritativePort(t *testing.T) {
 			if dial := doltserver.DialConfig(beadsDir); dial.Port != store.ServerPort || dial.PortSource != store.ServerPortSource {
 				t.Errorf("DialConfig = port %d from %s, store dials port %d from %s",
 					dial.Port, dial.PortSource, store.ServerPort, store.ServerPortSource)
+			}
+		})
+	}
+}
+
+// TestNewDialsAnIPv6HostInEitherSpelling pins the address the store dials for
+// an IPv6 server host, configured bare ("::1") or bracketed ("[::1]"), on the
+// caller's config or in BEADS_DOLT_SERVER_HOST: the fail-fast probe and the
+// connection both reach the server at [::1]:port. The listener speaks no
+// MySQL, so the open fails, but only after both dials arrived.
+func TestNewDialsAnIPv6HostInEitherSpelling(t *testing.T) {
+	for _, tc := range []struct{ name, host, env string }{
+		{"bare", "::1", ""},
+		{"bracketed", "[::1]", ""},
+		{"bracketed BEADS_DOLT_SERVER_HOST", "", "[::1]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			externalPortAdviceEnv(t)
+			t.Setenv("BEADS_DOLT_SERVER_HOST", tc.env)
+			port, accepted := testutil.IPv6LoopbackListener(t)
+			beadsDir := t.TempDir()
+			cfg := &Config{
+				Path:       filepath.Join(beadsDir, "dolt"),
+				BeadsDir:   beadsDir,
+				Database:   "ipv6_host",
+				ServerHost: tc.host,
+				ServerPort: port,
+			}
+
+			_, err := New(context.Background(), cfg)
+			if err == nil {
+				t.Fatal("open of a listener that speaks no MySQL succeeded")
+			}
+			for deadline := time.Now().Add(2 * time.Second); accepted() < 2 && time.Now().Before(deadline); {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if n := accepted(); n < 2 {
+				t.Errorf("the server at [::1]:%d took %d connections, want the fail-fast probe's and the connection's: %v", port, n, err)
+			}
+			for _, banned := range []string{"unreachable", "no such host", "too many colons", "missing port"} {
+				if strings.Contains(err.Error(), banned) {
+					t.Errorf("error contains %q:\n%v", banned, err)
+				}
 			}
 		})
 	}

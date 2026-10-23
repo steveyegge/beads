@@ -9,6 +9,7 @@ import (
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/httpclient"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/domain"
 )
 
@@ -211,7 +212,7 @@ func printContextText(info ContextInfo) {
 		fmt.Printf("  database:     %s\n", info.Database)
 	}
 	if info.ServerHost != "" {
-		fmt.Printf("  server:       %s:%d\n", info.ServerHost, info.ServerPort)
+		fmt.Printf("  server:       %s\n", doltutil.ServerAddr(info.ServerHost, info.ServerPort))
 	}
 	if info.ProxiedDir != "" {
 		fmt.Printf("  proxied dir:  %s\n", info.ProxiedDir)
