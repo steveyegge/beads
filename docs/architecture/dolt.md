@@ -109,10 +109,11 @@ database after a restart, with a healthy database on the same server as the
 control. A restart re-rolls the dice for every database, though, so the
 durable fix is to move to the pinned version.
 
-This matters because `bd flatten` and the Dolt-history compaction in
-`bd admin compact` both finish by hard-resetting `main` onto a temporary
-branch, and the merge-settle path behind `bd dolt pull` / `bd sync` falls
-back to a hard reset when it has to abandon a merge. See
+This matters because `bd flatten` finishes by hard-resetting `main` onto a
+temporary branch, and the merge-settle path behind `bd dolt pull` / `bd sync`
+falls back to a hard reset when it has to abandon a merge. The Dolt-history
+compaction in `bd compact` soft-resets `main` onto its temporary branch
+instead and then commits any rows `main` held outside its plan. See
 [Maintenance](#maintenance--bd-prune-and-bd-purge).
 
 ### New Project

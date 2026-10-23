@@ -21,8 +21,9 @@ import (
 // These tests run Compact against a real `dolt sql-server` with a second
 // session writing to main, because the defect they cover is a race between
 // sessions that sqlmock cannot reproduce: a commit that reached main after
-// the compaction plan was read was deleted by the final hard reset, after
-// the writer had already been told it succeeded.
+// the compaction plan was read was deleted by the final reset of main, after
+// the writer had already been told it succeeded. Compact now refuses when
+// main moved, soft-resets main, and commits the rows the reset kept.
 
 // startCompactTestServer starts a dolt sql-server on a free local port with
 // one database holding a table and a few commits, and returns a pool on it.
@@ -175,7 +176,7 @@ func assertNoTempBranch(t *testing.T, db DBConn) {
 }
 
 // A write that lands on main while the squashed branch is being built must
-// survive: Compact refuses the hard reset and leaves main where the writer
+// survive: Compact refuses the reset and leaves main where the writer
 // put it. This is the loss measured on a copy of a live store (wh-p4ir7).
 func TestCompactRefusesResetWhenMainMovedDuringBuild(t *testing.T) {
 	db := startCompactTestServer(t)
