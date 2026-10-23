@@ -304,6 +304,7 @@ func TestRunRecipe_RemoveKeepsDirItDidNotEmpty(t *testing.T) {
 		file   string // the recipe's file
 		link   bool   // dir is a symlink to a directory beside the workspace
 		mine   bool   // dir holds a file of the user's too
+		bare   bool   // bd setup did not run first; dir is one the user made
 		kept   bool
 	}{
 		{name: "linked .windsurf/rules holding a rule of the user's", recipe: "windsurf", dir: rules, file: "beads.md", link: true, mine: true, kept: true},
@@ -311,6 +312,7 @@ func TestRunRecipe_RemoveKeepsDirItDidNotEmpty(t *testing.T) {
 		{name: "linked .github holding workflows", recipe: "copilot", dir: ".github", file: "copilot-instructions.md", link: true, mine: true, kept: true},
 		{name: "real .windsurf/rules holding a rule of the user's", recipe: "windsurf", dir: rules, file: "beads.md", mine: true, kept: true},
 		{name: "real .windsurf/rules holding only bd's rule", recipe: "windsurf", dir: rules, file: "beads.md"},
+		{name: "real empty .windsurf/rules, nothing installed", recipe: "windsurf", dir: rules, file: "beads.md", bare: true, kept: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -339,9 +341,11 @@ func TestRunRecipe_RemoveKeepsDirItDidNotEmpty(t *testing.T) {
 			t.Chdir(ws)
 			t.Setenv("BEADS_DIR", "")
 			resetSetupResolutionCaches(t)
-			resetSetupGlobals(t)
-			if err := runRecipe(tt.recipe); err != nil {
-				t.Fatalf("bd setup %s: %v", tt.recipe, err)
+			if !tt.bare {
+				resetSetupGlobals(t)
+				if err := runRecipe(tt.recipe); err != nil {
+					t.Fatalf("bd setup %s: %v", tt.recipe, err)
+				}
 			}
 
 			resetSetupGlobals(t)

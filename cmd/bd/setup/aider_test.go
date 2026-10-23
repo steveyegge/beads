@@ -429,9 +429,10 @@ func TestAiderFilePaths(t *testing.T) {
 func TestRemoveAiderKeepsAiderDirItDidNotEmpty(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
-		link    bool // .aider is a symlink to a directory beside the workspace
-		install bool // bd setup aider ran first
-		config  bool // bd's .aider.conf.yml is the one file there to remove
+		link    bool   // .aider is a symlink to a directory beside the workspace
+		install bool   // bd setup aider ran first
+		config  bool   // bd's .aider.conf.yml is the one file there to remove
+		drop    string // a file of bd's the user then deleted by hand
 		kept    bool
 	}{
 		{name: "linked .aider bd installed its files through", link: true, install: true, kept: true},
@@ -439,6 +440,7 @@ func TestRemoveAiderKeepsAiderDirItDidNotEmpty(t *testing.T) {
 		{name: "real .aider bd installed nothing in", kept: true},
 		{name: "real .aider bd took no file from", config: true, kept: true},
 		{name: "real .aider holding only bd's files", install: true},
+		{name: "real .aider, BEADS.md deleted by hand", install: true, drop: filepath.Join(".aider", "BEADS.md")},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -462,6 +464,11 @@ func TestRemoveAiderKeepsAiderDirItDidNotEmpty(t *testing.T) {
 			if tt.install {
 				if err := InstallAider(); err != nil {
 					t.Fatalf("InstallAider: %v", err)
+				}
+			}
+			if tt.drop != "" {
+				if err := os.Remove(tt.drop); err != nil {
+					t.Fatal(err)
 				}
 			}
 			if tt.config {

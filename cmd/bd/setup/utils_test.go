@@ -456,7 +456,12 @@ func TestRemoveEmptyDir(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			check: requireLinkKept,
+			check: func(t *testing.T, path string) {
+				requireLinkKept(t, path)
+				if _, err := os.Lstat(filepath.Join(filepath.Dir(path), "target", "keep")); err != nil {
+					t.Fatalf("remove should keep the file in the link's target: %v", err)
+				}
+			},
 		},
 		{
 			name: "file",

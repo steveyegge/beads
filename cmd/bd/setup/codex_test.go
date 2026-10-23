@@ -681,7 +681,7 @@ func TestRemoveCodexKeepsSkillDirsItDidNotEmpty(t *testing.T) {
 		{name: "linked .agents/skills bd installed the skill through", link: skills, install: true,
 			want: map[string]string{agents: "dir", skills: "link", beads: "gone"}},
 		{name: "linked .agents/skills/beads bd installed the skill through", link: beads, install: true,
-			want: map[string]string{skills: "dir", beads: "link"}},
+			want: map[string]string{skills: "dir", beads: "link", filepath.Join(beads, "agents"): "gone"}},
 		{name: "real .agents/skills bd installed nothing in", mkdir: skills,
 			want: map[string]string{agents: "dir", skills: "dir"}},
 		{name: "real .agents holding only bd's skill", install: true,
@@ -689,6 +689,9 @@ func TestRemoveCodexKeepsSkillDirsItDidNotEmpty(t *testing.T) {
 		{name: "real empty agents dir bd took no file from", install: true,
 			drop: filepath.Join(beads, "agents", "openai.yaml"),
 			want: map[string]string{filepath.Join(beads, "agents"): "dir", beads: "dir"}},
+		{name: "real dirs, SKILL.md deleted by hand", install: true,
+			drop: filepath.Join(beads, "SKILL.md"),
+			want: map[string]string{agents: "gone"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			env, stdout, _ := newCodexTestEnv(t)
@@ -725,4 +728,25 @@ func TestRemoveCodexKeepsSkillDirsItDidNotEmpty(t *testing.T) {
 			}
 		})
 	}
+}
+
+// removeAgentSkill removes the skill's emptied directories through the env's
+// removeFile, as it does the skill's files, so an injected removal sees them.
+func TestRemoveCodexRemovesSkillDirsThroughEnv(t *testing.T) {
+	env, stdout, _ := newCodexTestEnv(t)
+	if err := installCodex(env, false); err != nil {
+		t.Fatalf("installCodex: %v\n%s", err, stdout.String())
+	}
+	agents := filepath.Join(env.projectDir, ".agents")
+	injected := errors.New("injected")
+	env.removeFile = func(path string) error {
+		if path == agents {
+			return injected
+		}
+		return os.Remove(path)
+	}
+	if err := removeCodex(env, false); !errors.Is(err, injected) {
+		t.Fatalf("removeCodex err = %v, want the injected removal error for %s", err, agents)
+	}
+	requireDirKept(t, agents)
 }

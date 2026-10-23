@@ -607,6 +607,7 @@ func TestRemoveCursorKeepsDirsItDidNotEmpty(t *testing.T) {
 		name string
 		link string // the directory that is a symlink to one beside the workspace
 		mine bool   // .cursor/rules holds a rule of the user's too
+		bare bool   // bd setup cursor did not run first; the user made an empty .cursor/rules
 		want map[string]string
 	}{
 		{name: "linked .cursor/rules holding a rule of the user's", link: rules, mine: true,
@@ -614,11 +615,13 @@ func TestRemoveCursorKeepsDirsItDidNotEmpty(t *testing.T) {
 		{name: "linked .cursor/rules holding only bd's rule", link: rules,
 			want: map[string]string{rules: "link"}},
 		{name: "linked .agents/skills holding only bd's skill", link: skills,
-			want: map[string]string{rules: "gone", agents: "dir", skills: "link"}},
+			want: map[string]string{rules: "gone", agents: "dir", skills: "link", filepath.Join(skills, "beads"): "gone"}},
 		{name: "real .cursor/rules holding a rule of the user's", mine: true,
 			want: map[string]string{rules: "dir"}},
 		{name: "real directories holding only bd's files",
 			want: map[string]string{rules: "gone", agents: "gone"}},
+		{name: "real empty .cursor/rules, nothing installed", bare: true,
+			want: map[string]string{rules: "dir"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -637,9 +640,16 @@ func TestRemoveCursorKeepsDirsItDidNotEmpty(t *testing.T) {
 					rulesDir = filepath.Join(root, "shared")
 				}
 			}
+			if tt.bare {
+				if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
 			t.Chdir(ws)
-			if err := InstallCursor(false); err != nil {
-				t.Fatalf("InstallCursor: %v", err)
+			if !tt.bare {
+				if err := InstallCursor(false); err != nil {
+					t.Fatalf("InstallCursor: %v", err)
+				}
 			}
 			mine := filepath.Join(rulesDir, "mine.mdc")
 			if tt.mine {

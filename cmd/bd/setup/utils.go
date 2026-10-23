@@ -119,6 +119,12 @@ func EnsureDir(path string, perm os.FileMode) error {
 // as it is; the error is for one it could not read, or an empty one it could
 // not remove.
 func RemoveEmptyDir(dir string) error {
+	return removeEmptyDir(dir, os.Remove)
+}
+
+// removeEmptyDir is RemoveEmptyDir with the call that removes the empty
+// directory injected, for an integration whose env injects its removals.
+func removeEmptyDir(dir string, remove func(string) error) error {
 	// Lstat, not Stat: a link to a directory, or a junction, is no
 	// directory. IsDir on its result, rather than a ModeSymlink test, also
 	// keeps a junction, which Go reports as ModeIrregular.
@@ -139,7 +145,7 @@ func RemoveEmptyDir(dir string) error {
 	if len(entries) != 0 {
 		return nil
 	}
-	if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+	if err := remove(dir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

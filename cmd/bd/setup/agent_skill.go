@@ -122,9 +122,10 @@ func removeAgentSkill(env agentSkillEnv) error {
 	// The directories the skill's files were in, innermost first, go only
 	// when this run took one of bd's files, or such a directory, out of
 	// them, and each only if that left it empty; never a symlinked one
-	// (RemoveEmptyDir), so a linked .agents, .agents/skills or
+	// (removeEmptyDir), so a linked .agents, .agents/skills or
 	// .agents/skills/beads stays. The metadata's agents directory goes only
-	// when its openai.yaml did.
+	// when its openai.yaml did. Directories are removed through
+	// env.removeFile, as the skill's files are.
 	var dirs []string
 	if removed[agentSkillOpenAIYAMLPath(env.projectDir)] {
 		dirs = append(dirs, filepath.Join(env.projectDir, ".agents", "skills", "beads", "agents"))
@@ -137,7 +138,7 @@ func removeAgentSkill(env agentSkillEnv) error {
 		)
 	}
 	for _, dir := range dirs {
-		if err := RemoveEmptyDir(dir); err != nil {
+		if err := removeEmptyDir(dir, env.removeFile); err != nil {
 			_, _ = fmt.Fprintf(env.stderr, "Error: remove %s: %v\n", dir, err)
 			return err
 		}
