@@ -2526,7 +2526,7 @@ func unresolvedServerPortError(cfg *Config, beadsDir, serverDir string) error {
 	const pinPort = "BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml"
 	switch {
 	case isExternalServerHost(cfg.ServerHost):
-		fmt.Fprintf(&b, "bd does not manage the Dolt server at %s; pin its port with %s.", cfg.ServerHost, pinPort)
+		b.WriteString(doltserver.UnresolvedPortAdvice(cfg.ServerHost))
 	case doltserver.IsAutoStartDisabled() || !cfg.AutoStart:
 		if doltserver.IsAutoStartDisabled() {
 			b.WriteString("dolt.auto-start is off, so bd does not start this workspace's Dolt server.\n")

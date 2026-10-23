@@ -3525,6 +3525,49 @@ func TestReachabilityCheck(t *testing.T) {
 	}
 }
 
+// TestUnresolvedPortAdvice pins the advice for a server no port source names:
+// pin its port, for a server bd does not run, at the IPv6 loopback in either
+// spelling or on another machine, and none, so the caller's own stands, for a
+// host where bd runs its own server and its start resolves the port.
+func TestUnresolvedPortAdvice(t *testing.T) {
+	for _, host := range []string{"::1", "[::1]", "10.0.0.5", "db.example.com"} {
+		want := "bd does not manage the Dolt server at " + host +
+			"; pin its port with BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml."
+		if got := UnresolvedPortAdvice(host); got != want {
+			t.Errorf("UnresolvedPortAdvice(%q) = %q, want %q", host, got, want)
+		}
+	}
+	for _, host := range []string{"", "127.0.0.1", "localhost", "0.0.0.0"} {
+		if got := UnresolvedPortAdvice(host); got != "" {
+			t.Errorf("UnresolvedPortAdvice(%q) = %q, want none for a server bd runs", host, got)
+		}
+	}
+}
+
+// TestUnreachableEndpointAdviceUnresolvedPort pins the advice for a dial of
+// port 0, no port source having resolved one, of a server bd does not run, at
+// the IPv6 loopback in either spelling or on another machine: the advice to
+// pin its port, never a check of port 0. A host where bd runs its own server
+// keeps the caller's advice.
+func TestUnreachableEndpointAdviceUnresolvedPort(t *testing.T) {
+	namedPortRefusalEnv(t)
+	dir := namedPortServerWorkspace(t, 0)
+	for _, host := range []string{"::1", "[::1]", "10.0.0.5", "db.example.com"} {
+		got := UnreachableEndpointAdvice(dir, host, 0, PortSourceUnset)
+		if want := UnresolvedPortAdvice(host); got != want {
+			t.Errorf("UnreachableEndpointAdvice(%q, port 0) = %q, want %q", host, got, want)
+		}
+		for _, banned := range []string{"nc -zv", ":0", "bd dolt start"} {
+			if strings.Contains(got, banned) {
+				t.Errorf("UnreachableEndpointAdvice(%q, port 0) contains %q:\n%s", host, banned, got)
+			}
+		}
+	}
+	if got := UnreachableEndpointAdvice(dir, "127.0.0.1", 0, PortSourceUnset); got != "" {
+		t.Errorf("UnreachableEndpointAdvice(127.0.0.1, port 0) = %q, want none for a server bd runs", got)
+	}
+}
+
 // TestDefaultConfigRemoteHostLegacyPortEnv pins the legacy BEADS_DOLT_PORT
 // for a server on another machine to the rule DialConfig and the store's
 // applyConfigDefaults apply for a local one (#5835): parsed untrimmed, it

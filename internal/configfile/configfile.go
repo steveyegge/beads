@@ -557,7 +557,7 @@ func IsLocalHostString(host string) bool {
 // server at host, auto-starts it, or advises `bd dolt start` for it excludes
 // this host.
 func IsIPv6LoopbackHost(host string) bool {
-	return UnbracketHost(strings.TrimSpace(host)) == "::1"
+	return UnbracketHost(host) == "::1"
 }
 
 func (c *Config) IsDoltProxiedServerMode() bool {

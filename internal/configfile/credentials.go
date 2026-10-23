@@ -69,11 +69,14 @@ func CredentialsSectionKeys(host string, port int) []string {
 	return []string{joined, legacy}
 }
 
-// UnbracketHost returns host without one pair of enclosing square brackets,
-// which an IPv6 literal may be configured in ("[::1]" is "::1"), giving the
-// form net.JoinHostPort takes. It strips them from any host, so "[db]" is
-// "db" too; a host not enclosed in brackets is returned as it is.
+// UnbracketHost returns host, trimmed of surrounding whitespace, without one
+// pair of enclosing square brackets, which an IPv6 literal may be configured
+// in ("[::1]" is "::1"), giving the form net.JoinHostPort takes. It strips
+// them from any host, so "[db]" is "db" too. It trims as IsLocalHostString
+// and IsIPv6LoopbackHost do, so a host they classify is dialed, and its
+// credentials are looked up, at the address they classified.
 func UnbracketHost(host string) string {
+	host = strings.TrimSpace(host)
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		return host[1 : len(host)-1]
 	}

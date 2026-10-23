@@ -87,6 +87,20 @@ func RunServerHealthChecks(path string) ServerHealthResult {
 	// Port 0 means server not yet started — report that clearly.
 	port := doltserver.DialConfig(beadsDir).Port
 	if port == 0 {
+		// No bd command starts, and so resolves a port for, a server bd does
+		// not run, at the IPv6 loopback or on another machine: every store
+		// open there refuses until the port is pinned, with this advice.
+		if advice := doltserver.UnresolvedPortAdvice(host); advice != "" {
+			result.Checks = append(result.Checks, DoctorCheck{
+				Name:     "Server port",
+				Status:   StatusError,
+				Message:  "No Dolt server port configured",
+				Fix:      advice,
+				Category: CategoryFederation,
+			})
+			result.OverallOK = false
+			return result
+		}
 		result.Checks = append(result.Checks, DoctorCheck{
 			Name:     "Server port",
 			Status:   StatusWarning,

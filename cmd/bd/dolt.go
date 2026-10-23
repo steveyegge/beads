@@ -1387,12 +1387,14 @@ func runExternalDoltStatus(beadsDir string, cfg *configfile.Config) {
 		"tls":      tls,
 	}
 
-	db, openErr := sql.Open("mysql", dsn)
 	var running bool
 	var version string
 	var connErr error
 
-	if openErr == nil {
+	if advice := unresolvedServerPortAdvice(host, port); advice != "" {
+		// Nothing to dial: give the store's advice, not a dial of port 0.
+		connErr = fmt.Errorf("no Dolt server port configured; %s", advice)
+	} else if db, openErr := sql.Open("mysql", dsn); openErr == nil {
 		defer db.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -2114,7 +2116,8 @@ func showDoltConfig(testConnection bool) error {
 				result["tls"] = cfg.GetDoltServerTLS()
 				result["shared_server"] = doltserver.IsSharedServerMode()
 				if testConnection {
-					result["connection_ok"] = testServerConnection(showHost, showPort)
+					result["connection_ok"] = unresolvedServerPortAdvice(showHost, showPort) == "" &&
+						testServerConnection(showHost, showPort)
 				}
 			}
 		}
@@ -2151,11 +2154,7 @@ func showDoltConfig(testConnection bool) error {
 
 		if testConnection {
 			fmt.Println()
-			if testServerConnection(showHost, showPort) {
-				fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
-			} else {
-				fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
-			}
+			printDoltShowConnection(showHost, showPort)
 		}
 	}
 
@@ -2171,6 +2170,20 @@ func showDoltConfig(testConnection bool) error {
 
 	printDoltShowConfigSources(os.Stdout)
 	return nil
+}
+
+// printDoltShowConnection prints bd dolt show's check of the Dolt server at
+// host:port: for a server bd does not run with no port resolved, the advice
+// to pin it, with no dial of port 0; else whether the server answered.
+func printDoltShowConnection(host string, port int) {
+	switch advice := unresolvedServerPortAdvice(host, port); {
+	case advice != "":
+		fmt.Printf("  %s\n  %s\n", ui.RenderWarn("✗ No Dolt server port configured"), advice)
+	case testServerConnection(host, port):
+		fmt.Printf("  %s\n", ui.RenderPass("✓ Server connection OK"))
+	default:
+		fmt.Printf("  %s\n", ui.RenderWarn("✗ Server not reachable"))
+	}
 }
 
 // printDoltShowConfigSources renders doltserver.PortSourceLabels(), the same
@@ -2352,9 +2365,10 @@ func testDoltConnection() error {
 	dc := doltserver.DialConfig(beadsDir)
 	port := dc.Port
 	addr := doltutil.ServerAddr(host, port)
+	unresolvedAdvice := unresolvedServerPortAdvice(host, port)
 
 	if jsonOutput {
-		ok := testServerConnection(host, port)
+		ok := unresolvedAdvice == "" && testServerConnection(host, port)
 		if err := outputJSON(map[string]interface{}{
 			"host":          host,
 			"port":          port,
@@ -2366,6 +2380,12 @@ func testDoltConnection() error {
 			return SilentExit()
 		}
 		return nil
+	}
+
+	if unresolvedAdvice != "" {
+		fmt.Printf("%s\n", ui.RenderWarn("✗ No Dolt server port configured"))
+		fmt.Println("\n" + unresolvedAdvice)
+		return SilentExit()
 	}
 
 	fmt.Printf("Testing connection to %s...\n", addr)
@@ -2524,6 +2544,10 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 	host := cfg.GetDoltServerHost()
 	dc := doltserver.DialConfig(beadsDir)
 	port := dc.Port
+	if advice := unresolvedServerPortAdvice(host, port); advice != "" {
+		fmt.Fprintf(os.Stderr, "Error: no Dolt server port configured; %s\n", advice)
+		return nil, nil, SilentExit()
+	}
 	user := cfg.GetDoltServerUser()
 	password := os.Getenv("BEADS_DOLT_PASSWORD")
 
@@ -2568,6 +2592,19 @@ func unreachableServerAdvice(beadsDir, host string, dc *doltserver.Config) strin
 		return advice
 	}
 	return "Start the server with: bd dolt start"
+}
+
+// unresolvedServerPortAdvice is the advice for a Dolt server at host that bd
+// does not run, at the IPv6 loopback or on another machine, when no port
+// source resolved a port for it (port 0), or "" otherwise. No bd command
+// starts, and so resolves a port for, such a server, so there is no address
+// to dial until the port is pinned. Callers print this advice instead of
+// dialing port 0; the store refuses to open with the same advice.
+func unresolvedServerPortAdvice(host string, port int) string {
+	if port != 0 {
+		return ""
+	}
+	return doltserver.UnresolvedPortAdvice(host)
 }
 
 // doltServerPidFile returns the path to the PID file for the managed dolt server.

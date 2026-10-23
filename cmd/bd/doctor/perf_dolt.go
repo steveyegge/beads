@@ -28,7 +28,7 @@ type DoltPerfMetrics struct {
 	OpenIssues   int    // Open issue count
 	ClosedIssues int    // Closed issue count
 	Dependencies int    // Dependency count
-	DatabaseSize string // Size of .dolt directory; n/a for a server on another machine
+	DatabaseSize string // Size of .dolt directory; n/a for a server bd does not run
 
 	// Timing metrics (milliseconds)
 	ConnectionTime   int64 // Time to establish connection
@@ -68,6 +68,15 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 	fileCfg := loadServerConfig(beadsDir)
 	host := fileCfg.GetDoltServerHost()
 
+	// No bd command resolves a port for a server bd does not run, at the
+	// IPv6 loopback or on another machine, so with none configured there is
+	// no address to probe: give the store's advice, not a check of port 0.
+	if dsCfg.Port == 0 {
+		if advice := doltserver.UnresolvedPortAdvice(host); advice != "" {
+			return metrics, fmt.Errorf("no Dolt server port is configured.\n%s", advice)
+		}
+	}
+
 	// Check server status
 	serverRunning := isDoltServerRunning(host, dsCfg.Port)
 	if serverRunning {
@@ -100,15 +109,24 @@ func RunDoltPerformanceDiagnostics(path string, enableProfiling bool) (*DoltPerf
 		return metrics, fmt.Errorf("server diagnostics failed: %w", err)
 	}
 
-	// Calculate database size. The data directory is this machine's, so it
-	// holds the database just measured only for a server on this machine.
-	if configfile.IsLocalHostString(host) {
-		metrics.DatabaseSize = getDoltDatabaseSize(getDatabasePath(beadsDir))
-	} else {
-		metrics.DatabaseSize = "n/a (server on another machine)"
-	}
+	metrics.DatabaseSize = databaseSizeFor(beadsDir, host)
 
 	return metrics, nil
+}
+
+// databaseSizeFor is the size of the database the Dolt server at host
+// serves, read from beadsDir's data directory. That directory holds it only
+// for a server bd runs: not one on another machine, nor one at the IPv6
+// loopback, where bd's own server, which listens on 127.0.0.1 only, never
+// runs.
+func databaseSizeFor(beadsDir, host string) string {
+	switch {
+	case !configfile.IsLocalHostString(host):
+		return "n/a (server on another machine)"
+	case configfile.IsIPv6LoopbackHost(host):
+		return "n/a (server bd does not run)"
+	}
+	return getDoltDatabaseSize(getDatabasePath(beadsDir))
 }
 
 // loadServerConfig is beadsDir's metadata.json, or, when that is missing or

@@ -264,7 +264,9 @@ func TestDefaultCredentialsPath(t *testing.T) {
 // both name the same server. The password lookup has to agree, whichever of the
 // two section spellings the credentials file uses: [[::1]:3307], the
 // net.JoinHostPort form, or [::1:3307], the form a bare host was looked up under
-// before. On main each host spelling found only its own section spelling.
+// before. On main each host spelling found only its own section spelling. A
+// host with surrounding whitespace finds them too, as it is classified and
+// dialed trimmed.
 func TestLookupCredentialsPassword_IPv6HostEitherSpelling(t *testing.T) {
 	for _, tc := range []struct{ addr, section string }{
 		{"::1", "[[::1]:3307]"},
@@ -279,7 +281,7 @@ func TestLookupCredentialsPassword_IPv6HostEitherSpelling(t *testing.T) {
 			}
 			t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
 
-			for _, host := range []string{tc.addr, "[" + tc.addr + "]"} {
+			for _, host := range []string{tc.addr, "[" + tc.addr + "]", " [" + tc.addr + "] "} {
 				if got := LookupCredentialsPassword(host, 3307); got != "ipv6Pass" {
 					t.Errorf("LookupCredentialsPassword(%q, 3307) = %q, want %q", host, got, "ipv6Pass")
 				}

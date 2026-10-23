@@ -2729,3 +2729,57 @@ func configureDoltServerHost(t *testing.T, beadsDir string, env []string, host s
 	}
 	return env
 }
+
+// TestDoltCommandsAdviseAPortForAServerBdDoesNotRun drives bd dolt status,
+// test, show and clean-databases through the binary for a server-mode
+// workspace with no port setting whose server bd does not run: at the IPv6
+// loopback, in metadata.json or BEADS_DOLT_SERVER_HOST and in either
+// spelling, beside the port file bd's own 127.0.0.1 server leaves, which
+// names no port there, or on another machine. No bd command starts, and so
+// resolves a port for, that server: each command gives the store's advice to
+// pin the port instead of dialing port 0 or suggesting a check of it.
+func TestDoltCommandsAdviseAPortForAServerBdDoesNotRun(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	for _, tc := range []struct {
+		name     string
+		host     string
+		inEnv    bool
+		portFile bool
+	}{
+		{"metadata.json bare IPv6 loopback", "::1", false, true},
+		{"BEADS_DOLT_SERVER_HOST bracketed IPv6 loopback", "[::1]", true, true},
+		{"metadata.json remote host", "db.invalid", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, beadsDir, env := externallyManagedStartWorkspace(t, "true")
+			env = configureDoltServerHost(t, beadsDir, env, tc.host, tc.inEnv)
+			if tc.portFile {
+				if err := os.WriteFile(filepath.Join(beadsDir, doltserver.PortFileName), []byte("13307"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := "bd does not manage the Dolt server at " + tc.host +
+				"; pin its port with BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml."
+			for _, args := range [][]string{
+				{"dolt", "status"},
+				{"dolt", "test"},
+				{"dolt", "show"},
+				{"dolt", "clean-databases", "--dry-run"},
+			} {
+				cmd := exec.Command(bd, args...)
+				cmd.Dir = root
+				cmd.Env = env
+				outBytes, _ := cmd.CombinedOutput()
+				out := string(outBytes)
+				if !strings.Contains(out, want) {
+					t.Errorf("bd %s does not contain %q:\n%s", strings.Join(args, " "), want, out)
+				}
+				for _, banned := range []string{":0", "nc -zv", "13307", "bd dolt start"} {
+					if strings.Contains(out, banned) {
+						t.Errorf("bd %s contains %q:\n%s", strings.Join(args, " "), banned, out)
+					}
+				}
+			}
+		})
+	}
+}
