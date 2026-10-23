@@ -40,6 +40,10 @@ func TestIsYamlOnlyKey(t *testing.T) {
 		{"hierarchy.max-depth", true},
 		{"hierarchy.custom_setting", true}, // prefix match
 
+		// Dolt dial budget (ga-g8lsb4): read through viper, so `bd config set`
+		// must route it to config.yaml or the setting is silently ignored.
+		{"dolt.dial-timeout", true},
+
 		// Backup settings (GH#2358)
 		{"backup.enabled", true},
 		{"backup.interval", true},

@@ -356,6 +356,11 @@ func applyResolvedConfig(ctx context.Context, beadsDir string, fileCfg *configfi
 //     each, see buildServerDSN). The default fast-fail is right for healthy
 //     local servers; overloaded shared-server deployments raise it so ordinary
 //     queries stop dying with "i/o timeout" under load (bd-vz0y9).
+//   - fail-fast dial budget: BEADS_DOLT_DIAL_TIMEOUT / dolt.dial-timeout
+//     (default 500ms, resolved at dial time by dialTimeoutFor, so an unset
+//     field stays 0 here like the deadlines). Right for loopback; a WAN
+//     hub raises it so one slow SYN is not counted toward the circuit
+//     breaker (ga-g8lsb4).
 //
 // It is idempotent, and it runs from New (applyConfigDefaults) so every
 // DoltStore open honors the knobs. The CLI's main store open hand-builds its
@@ -386,6 +391,12 @@ func applyPoolKnobs(cfg *Config) {
 	}
 	if cfg.PoolWriteTimeout == 0 {
 		cfg.PoolWriteTimeout = parseTimeout(poolKnobFromConfig(cfg, "dolt.pool-write-timeout"), 0)
+	}
+	if cfg.DialTimeout == 0 {
+		cfg.DialTimeout = timeoutFromEnv("BEADS_DOLT_DIAL_TIMEOUT", 0)
+	}
+	if cfg.DialTimeout == 0 {
+		cfg.DialTimeout = parseTimeout(poolKnobFromConfig(cfg, "dolt.dial-timeout"), 0)
 	}
 }
 
