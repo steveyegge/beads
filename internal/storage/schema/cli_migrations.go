@@ -18,15 +18,20 @@ package schema
 // this limitation does not apply.
 //
 // Dolt 2.3.0 fixed #11345, and that fix MASKS a missing override here rather
-// than removing the need for one: on 2.3.x the CLI executes the prepared
+// than removing the need for one: a 2.3.0-or-newer CLI executes the prepared
 // ALTER, so a bundle that forgot the direct statement still lands the right
-// schema and TestCLIBundleMatchesRuntimeCommittedSchema goes green against a
-// 2.2.0 sql-server. So every override below must be justified against the
-// pre-2.3 behavior, and the string assertions in
-// TestAllMigrationsSQLUsesDirectDDLForKnownCLIIncompatibilities — which need
-// no Dolt binary at all — are the guard that survives a CLI version bump.
+// schema. Run through a 2.3.x CLI, TestCLIBundleMatchesRuntimeCommittedSchema
+// went green that way against the then-pinned 2.2.0 sql-server, and with the
+// CLI now pinned at 2.5.1 it cannot catch a dropped override on any run
+// (probed 2026-10-21: a prepared ADD COLUMN vanishes on the 2.2.0 CLI and
+// lands on 2.5.1). So every override below must be justified against the
+// pre-2.3 behavior, and the guards that still work need no Dolt binary at
+// all: the string assertions in
+// TestAllMigrationsSQLUsesDirectDDLForKnownCLIIncompatibilities and
+// TestBundleMigrationsWithPreparedALTERAreOverriddenOrJustified
+// (cli_prepared_ddl.go).
 //
-// The measurement that check stands in for: run AllMigrationsSQL() through
+// The measurement those checks stand in for: run AllMigrationsSQL() through
 // each CLI and diff information_schema. On 2026-08-21, with 0060's and 0065's
 // overrides both in place, dolt 2.1.8, 2.2.0 (the CLI pinned then) and 2.3.1 agree
 // on all 504 snapshot lines including the wisp_ tables the parity oracle
