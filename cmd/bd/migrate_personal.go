@@ -529,6 +529,11 @@ func repoSyncMirrorRefusal(issue *types.Issue, planningPath, goos string) error 
 // value in a command only when the shells people run there all pass it to bd
 // unchanged, and otherwise names it beside a placeholder.
 //
+// On every platform it refuses a control character: a line break ends the
+// command in each shell, and a carriage return or terminal escape sequence
+// can redraw the printed command so the one a user copies is not the one bd
+// printed.
+//
 // On POSIX a value goes in single quotes (doltutil.ShellQuote), which sh, bash
 // and zsh keep literal, unless it holds a backslash: fish reads \' and \\ as
 // escapes inside single quotes, so a backslash before a quote ends them there.
@@ -541,31 +546,33 @@ func repoSyncMirrorRefusal(issue *types.Issue, planningPath, goos string) error 
 //   - % or !, which cmd.exe expands there (! with delayed expansion on), and
 //     bash expands ! as history;
 //   - & | < > or ^, which cmd.exe acts on when PowerShell hands a .cmd shim,
-//     such as npm's bd.cmd, an argument with no space in it unquoted;
-//   - a control character: a line break ends the command in cmd.exe;
+//     such as npm's bd.cmd, an argument with no space in it unquoted (refused
+//     whether or not the value has a space, so a path such as R&D planning
+//     gets a placeholder too);
 //   - \\, which bash reads there as one backslash;
 //
 // or ends in a backslash, which Go's argument parsing reads as escaping the
 // closing quote. cmd.exe needs it doubled, and PowerShell, which takes
 // backslashes literally, would then pass both on.
 func shellQuotedFor(goos, value string) (string, bool) {
+	if strings.ContainsFunc(value, unicode.IsControl) {
+		return "", false
+	}
 	if goos != "windows" {
 		if strings.Contains(value, `\`) {
 			return "", false
 		}
 		return doltutil.ShellQuote(value), true
 	}
-	if strings.HasSuffix(value, `\`) || strings.Contains(value, `\\`) || strings.ContainsFunc(value, unquotableOnWindows) {
+	if strings.HasSuffix(value, `\`) || strings.Contains(value, `\\`) || strings.ContainsAny(value, unquotableOnWindows) {
 		return "", false
 	}
 	return `"` + value + `"`, true
 }
 
-// unquotableOnWindows reports whether r is a character a Windows shell does
-// not keep literal inside double quotes (shellQuotedFor).
-func unquotableOnWindows(r rune) bool {
-	return strings.ContainsRune("\"“”„$`%!&|<>^", r) || unicode.IsControl(r)
-}
+// unquotableOnWindows holds the characters a Windows shell does not keep
+// literal inside double quotes (shellQuotedFor).
+const unquotableOnWindows = "\"“”„$`%!&|<>^"
 
 // copyIssuesToPlanning is phase 1 of runMigratePersonal: it copies every
 // personal issue from src to the planning store dst and returns their IDs. The
