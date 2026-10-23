@@ -622,13 +622,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Dolt older than 2.3.3 answers `table has unknown fields` for a database
   holding such a table: writes to any table and `information_schema` queries
-  fail. An earlier `bd` release (every release through v1.3.x links Dolt 2.2.0
-  or older), or a `bd` built against an older driver, therefore cannot open
-  the workspace, and `BD_IGNORE_SCHEMA_SKEW=1` does not get past it.
+  fail. A write that touches `issues` reports it as a foreign-key violation
+  instead: `cannot add or update a child row: a foreign key constraint fails`
+  on `fk_comp_snap_issue`. An earlier `bd` release (every release through
+  v1.3.x links Dolt 2.2.0 or older) therefore cannot open the workspace
+  (`schema skew check: probing schema_migrations existence: … table has
+  unknown fields`), and `BD_IGNORE_SCHEMA_SKEW=1` does not get past it. A
+  `bd` built from source against an older driver may open and read the
+  workspace, but every write fails.
 
-  This applies to every database created from this release on, and to any
-  database whose schema a `dolt sql-server` 2.3.3 or newer created, whatever
-  the `bd` version. `bd` does not convert the index back. A database created
+  This applies to every database this release creates in embedded mode, and
+  to any database whose schema a `dolt sql-server` 2.3.3 or newer created,
+  whatever the `bd` version. `bd` does not convert the index back. A database created
   earlier keeps its ascending index and stays readable and writable by older
   and newer Dolt alike, even after this release migrates and writes to it.
   Every `bd` that touches a new database must be this release or later.
