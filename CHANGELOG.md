@@ -1218,6 +1218,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from its `metadata.json`, and bd stopped writing `config.json` before
   `dolt_database` existed. Rename a hand-written one to `metadata.json` for
   its `dolt_database` to take effect.
+- **`bd doctor` no longer deletes the SQLite files of a nested workspace on
+  another backend.** The Classic Artifacts check reports `beads.db`,
+  `beads.db-wal`, `beads.db-shm` and `beads.backup-*.db` only in a `.beads`
+  whose metadata selects Dolt, but its cleanup (`bd doctor --fix` and
+  `bd doctor --check=artifacts --clean`) removed the WAL, the SHM and every
+  backup in each `.beads` under the repository whatever its backend, once the
+  check had found something (with `--clean`, something safe to delete), such
+  as a leftover WAL in the repository's own `.beads`. A nested workspace
+  whose metadata names `sqlite`, `postgres`, `mysql` or another registered
+  backend such as `http` lost files the check never listed. In a `sqlite`
+  one, a `beads.db-wal` left by an unclean close holds committed
+  transactions not yet checkpointed into `beads.db`, which exporting the
+  workspace with a bd release that still includes the sqlite backend, as bd
+  advises, would have recovered. The check and the cleanup now share one
+  backend predicate, so in each `.beads` both reach the cleanup removes
+  SQLite files only where the check reports them. Neither treats a
+  workspace whose metadata names a backend this build does not recognize as
+  Dolt any more, so its SQLite files are neither reported nor removed. Nor
+  do they treat a nested Beads Classic SQLite workspace as Dolt: its
+  metadata predates the `backend` key, or it has none, which bd reads as
+  Dolt, so the check listed its WAL, SHM and backups as safe to delete and
+  the cleanup removed them. Both now pass over every historical SQLite
+  layout that bd refuses to open.
 - **Activating the HTTP backend refuses a graph workspace too.**
   `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
   `metadata.json` declares a `graph_mode` other than `dependency`, or whose
