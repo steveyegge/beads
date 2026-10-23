@@ -431,6 +431,12 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 			_, _ = fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
 			return err
 		}
+	} else if !os.IsNotExist(err) {
+		// Only a missing file starts from empty settings. One that cannot be
+		// read would be replaced by a file holding only bd's hook: the rename
+		// that replaces it needs no read access to the file.
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to read %s: %v\n", settingsPath, err)
+		return err
 	}
 
 	hooks, hadHooks := settings["hooks"].(map[string]interface{})

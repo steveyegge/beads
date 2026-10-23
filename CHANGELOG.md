@@ -1415,6 +1415,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file setup creates is still 0644, and `bd setup mux` still makes its
   hooks executable. A file an earlier run widened stays as it is; narrow it
   again with `chmod 600`.
+- **`bd setup claude` and `bd setup gemini` no longer replace a settings file
+  they cannot read.** An install took any error reading
+  `.claude/settings.json`, `~/.claude/settings.json`, `.gemini/settings.json`
+  or `~/.gemini/settings.json` for a missing file, so a file it could not
+  read, such as one a `sudo` run left owned by root, was replaced by one
+  holding only the `bd prime` hook, and every other setting in it, API keys
+  included, was lost. The Claude setup `bd init` runs did the same without a
+  warning. Only a missing file now counts as no settings: any other read
+  error stops the install before it writes anything, with an error that
+  names the file (`bd init` warns and goes on). `bd setup gemini --remove`
+  reported such a file as "No settings file found", then removed the beads
+  section from `GEMINI.md` and reported success with the hook still in
+  place; like `bd setup claude --remove`, it now fails and keeps the
+  section.
 - **`bd setup claude --global` installs its hook when the beads plugin is
   enabled only in the current project.** It skipped the hook whenever the
   current directory's `.claude/settings.json` or `.claude/settings.local.json`
