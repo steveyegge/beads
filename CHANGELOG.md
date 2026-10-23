@@ -1571,6 +1571,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than reporting a migration. bd assumes the managed settings files are
   in force: it cannot see server-managed settings or an MDM profile, under
   which Claude Code ignores those files by default.
+- **`bd doctor` and the `bd setup claude` tip read the beads plugin's setting
+  the way `bd setup claude --check` does.** `bd doctor`'s Claude Integration
+  check reported "Plugin installed" when `~/.claude/settings.json`, the
+  project's `.claude/settings.json` or `.claude/settings.local.json` enabled
+  any plugin whose name contains `beads`: also in a project whose own
+  settings turn off a plugin your user settings enable, where `--check`
+  reports no hooks, and for a plugin such as `design-to-beads`. It missed a
+  plugin enabled only in managed settings or in the repository root's
+  `.claude/settings.local.json`. The tip suggesting the plugin or
+  `bd setup claude` looked only at `~/.claude/settings.json` for the plugin
+  and in `~/.claude/` for a `bd prime` hook, and did not recognize the
+  `bd prime --hook-json` hook `bd setup claude` writes, so it kept appearing
+  after `bd setup claude --global` and in a project whose
+  `.claude/settings.json` enables the plugin or holds the hook, and never in
+  a project that turns off a plugin your user settings enable. `bd doctor`
+  now takes the plugin's setting from the first settings file that names it,
+  in Claude Code's order, and the tip appears where `--check` reports no
+  hooks installed. `bd doctor`'s hook checks (Claude Integration, Claude Hook
+  Completeness and Claude Settings Health) also read the repository root's
+  `.claude/settings.local.json` from a subdirectory or linked worktree, where
+  they missed a `bd prime` hook that `--check` finds; for `bd doctor <path>`
+  that is the root of `<path>`'s repository.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query

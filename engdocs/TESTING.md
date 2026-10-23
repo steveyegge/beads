@@ -262,13 +262,16 @@ test environment adds `dolt` to `BEADS_TEST_SKIP`; set
 and its prerequisites are available. Do not make ordinary tests depend on a
 developer's database, daemon, global Git configuration, or filesystem state.
 
-System-wide files are not isolated. `bd setup claude`, and the `bd init` that
-runs it, read Claude Code's managed settings from `/etc/claude-code`
+System-wide files are not isolated. `bd setup claude`, the `bd init` that runs
+it, `bd doctor`'s Claude Integration check and the `bd setup claude` tip read
+Claude Code's managed settings from `/etc/claude-code`
 (`/Library/Application Support/ClaudeCode` on macOS). On a host whose managed
-settings enable or turn off the beads plugin, the tests that run `bd init` or
-`bd setup claude` there, such as the `cmd/bd/testdata/agent_artifacts/`
-goldens, see that policy. The `cmd/bd/setup` unit tests are unaffected: they
-read no managed settings, or a managed directory of their own.
+settings enable or turn off the beads plugin, the tests that run `bd init`,
+`bd setup claude` or `bd doctor` there, such as the
+`cmd/bd/testdata/agent_artifacts/` goldens, see that policy. The
+`cmd/bd/setup` unit tests are unaffected: they read no managed settings, or a
+managed directory of their own. Tests in other packages that check the plugin
+give themselves one with `setup.SetClaudeManagedSettingsDirForTest`.
 
 To skip an optional service explicitly, use the existing skip mechanism:
 

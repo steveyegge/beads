@@ -2337,9 +2337,11 @@ func TestDirWithin(t *testing.T) {
 
 // TestClaudeLocalSettingsRoot pins where claudeLocalSettingsRoot finds the
 // local settings Claude Code reads for a session: the repository root from a
-// subdirectory, the main checkout's root from a linked worktree, nowhere
-// when that root is the home directory, and nowhere when the cached git
-// context belongs to another repository than the working directory.
+// subdirectory, the main checkout's root from a linked worktree, and nowhere
+// when that root is the home directory. A directory other than the working
+// directory, such as the one bd doctor <path> checks, is resolved in its own
+// repository rather than the working directory's cached one, and in the
+// working directory a git context cached for another directory is not used.
 func TestClaudeLocalSettingsRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Claude Code keeps settings.local.json beside settings.json on Windows")
@@ -2390,6 +2392,8 @@ func TestClaudeLocalSettingsRoot(t *testing.T) {
 	if err := os.MkdirAll(outside, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	nested := filepath.Join(main, "nested")
+	newRepo(nested)
 
 	cases := []struct {
 		name string
@@ -2404,7 +2408,14 @@ func TestClaudeLocalSettingsRoot(t *testing.T) {
 		{"subdirectory of a linked worktree", filepath.Join(wt, "sub"), filepath.Join(wt, "sub"), main},
 		{"repository root is the home directory", filepath.Join(home, "sub"), filepath.Join(home, "sub"), ""},
 		{"outside any repository", outside, outside, ""},
-		{"git context cached for another repository", main, outside, ""},
+		{"a repository nested in the main checkout", filepath.Join(nested, "sub"), filepath.Join(nested, "sub"), nested},
+		// workDir is not the working directory: its own repository decides.
+		{"subdirectory of a checkout other than the working directory's", outside, filepath.Join(main, "sub"), main},
+		{"linked worktree other than the working directory's", outside, filepath.Join(wt, "sub"), main},
+		{"repository nested in the working directory's", main, filepath.Join(nested, "sub"), nested},
+		{"the working directory's repository from a nested one", nested, filepath.Join(main, "sub"), main},
+		{"home directory's repository from another", main, filepath.Join(home, "sub"), ""},
+		{"outside any repository, asked from one", main, outside, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2422,6 +2433,19 @@ func TestClaudeLocalSettingsRoot(t *testing.T) {
 			}
 		})
 	}
+	// A git context cached before the process left its directory is another
+	// directory's, so the working directory gets no root from it.
+	t.Run("git context cached for another directory than the working directory", func(t *testing.T) {
+		t.Chdir(main)
+		git.ResetCaches()
+		if got := git.GetRepoRoot(); got == "" || !sameDir(got, main) {
+			t.Fatalf("git context cached in %s = %q", main, got)
+		}
+		t.Chdir(outside)
+		if got := claudeLocalSettingsRoot(home, outside); got != "" {
+			t.Errorf("claudeLocalSettingsRoot(%s) = %q, want \"\"", outside, got)
+		}
+	})
 }
 
 // TestDefaultClaudeEnv pins that the environment the commands run with reads
