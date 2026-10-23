@@ -516,6 +516,7 @@ func TestRemoveJunieKeepsDirsItDidNotEmpty(t *testing.T) {
 		link    string // the directory that is a symlink to one beside the workspace
 		mkdir   string // a real directory the user made
 		install bool   // bd setup junie ran first
+		drop    string // a file of bd's the user then deleted by hand
 		want    map[string]string
 	}{
 		{name: "linked .junie bd installed its files through", link: junie, install: true,
@@ -532,6 +533,9 @@ func TestRemoveJunieKeepsDirsItDidNotEmpty(t *testing.T) {
 			want: map[string]string{junie: "dir", mcp: "dir"}},
 		{name: "real .junie and .junie/mcp holding only bd's files", install: true,
 			want: map[string]string{junie: "gone"}},
+		{name: "real empty .junie/mcp bd took no file from", install: true,
+			drop: filepath.Join(mcp, "mcp.json"),
+			want: map[string]string{junie: "dir", mcp: "dir"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -555,6 +559,11 @@ func TestRemoveJunieKeepsDirsItDidNotEmpty(t *testing.T) {
 			if tt.install {
 				if err := InstallJunie(); err != nil {
 					t.Fatalf("InstallJunie: %v", err)
+				}
+			}
+			if tt.drop != "" {
+				if err := os.Remove(filepath.Join(ws, tt.drop)); err != nil {
+					t.Fatal(err)
 				}
 			}
 

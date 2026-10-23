@@ -354,7 +354,9 @@ func symlinkDir(t *testing.T, target, link string) {
 	}
 }
 
-// requireLinkKept fails the test unless path is still a symlink.
+// requireLinkKept fails the test unless path is still a symlink that still
+// leads to a directory, so removing the link's emptied target, which would
+// leave it dangling, fails too.
 func requireLinkKept(t *testing.T, path string) {
 	t.Helper()
 	info, err := os.Lstat(path)
@@ -363,6 +365,13 @@ func requireLinkKept(t *testing.T, path string) {
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("%s should still be a symlink, mode = %v", path, info.Mode())
+	}
+	target, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("remove should keep the directory the link %s leads to, stat err = %v", path, err)
+	}
+	if !target.IsDir() {
+		t.Fatalf("the link %s should still lead to a directory, mode = %v", path, target.Mode())
 	}
 }
 

@@ -365,6 +365,10 @@ func TestRunRecipe_RemoveKeepsDirItDidNotEmpty(t *testing.T) {
 				t.Errorf("remove should keep %s, lstat err = %v", dir, err)
 			case info.Mode()&os.ModeSymlink != 0 != tt.link:
 				t.Errorf("%s is a symlink = %v, want %v", dir, !tt.link, tt.link)
+			case tt.link:
+				if target, err := os.Stat(dir); err != nil || !target.IsDir() {
+					t.Errorf("the link %s should still lead to a directory, stat err = %v", dir, err)
+				}
 			}
 		})
 	}

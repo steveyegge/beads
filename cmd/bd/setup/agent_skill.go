@@ -106,34 +106,40 @@ func checkAgentSkill(env agentSkillEnv, setupCommand string) error {
 
 func removeAgentSkill(env agentSkillEnv) error {
 	_, _ = fmt.Fprintln(env.stdout, "Removing Beads agent skill...")
-	removed := false
+	removed := map[string]bool{}
 	for _, path := range []string{
 		agentSkillOpenAIYAMLPath(env.projectDir),
 		agentSkillPath(env.projectDir),
 	} {
 		err := env.removeFile(path)
 		if err == nil {
-			removed = true
+			removed[path] = true
 		} else if !os.IsNotExist(err) {
 			_, _ = fmt.Fprintf(env.stderr, "Error: remove %s: %v\n", path, err)
 			return err
 		}
 	}
 	// The directories the skill's files were in, innermost first, go only
-	// when this run removed one of those files, and each only if that left
-	// it empty; never a symlinked one (RemoveEmptyDir), so a linked .agents,
-	// .agents/skills or .agents/skills/beads stays.
-	if removed {
-		for _, dir := range []string{
-			filepath.Join(env.projectDir, ".agents", "skills", "beads", "agents"),
+	// when this run took one of bd's files, or such a directory, out of
+	// them, and each only if that left it empty; never a symlinked one
+	// (RemoveEmptyDir), so a linked .agents, .agents/skills or
+	// .agents/skills/beads stays. The metadata's agents directory goes only
+	// when its openai.yaml did.
+	var dirs []string
+	if removed[agentSkillOpenAIYAMLPath(env.projectDir)] {
+		dirs = append(dirs, filepath.Join(env.projectDir, ".agents", "skills", "beads", "agents"))
+	}
+	if len(removed) > 0 {
+		dirs = append(dirs,
 			filepath.Join(env.projectDir, ".agents", "skills", "beads"),
 			filepath.Join(env.projectDir, ".agents", "skills"),
 			filepath.Join(env.projectDir, ".agents"),
-		} {
-			if err := RemoveEmptyDir(dir); err != nil {
-				_, _ = fmt.Fprintf(env.stderr, "Error: remove %s: %v\n", dir, err)
-				return err
-			}
+		)
+	}
+	for _, dir := range dirs {
+		if err := RemoveEmptyDir(dir); err != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: remove %s: %v\n", dir, err)
+			return err
 		}
 	}
 	_, _ = fmt.Fprintln(env.stdout, "✓ Beads agent skill removed")

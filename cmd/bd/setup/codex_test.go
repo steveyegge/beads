@@ -671,6 +671,7 @@ func TestRemoveCodexKeepsSkillDirsItDidNotEmpty(t *testing.T) {
 		link    string // the directory that is a symlink to one beside the project
 		mkdir   string // a real directory the user made
 		install bool   // bd setup codex ran first
+		drop    string // a file of bd's the user then deleted by hand
 		want    map[string]string
 	}{
 		{name: "linked .agents bd installed nothing in", link: agents,
@@ -685,6 +686,9 @@ func TestRemoveCodexKeepsSkillDirsItDidNotEmpty(t *testing.T) {
 			want: map[string]string{agents: "dir", skills: "dir"}},
 		{name: "real .agents holding only bd's skill", install: true,
 			want: map[string]string{agents: "gone"}},
+		{name: "real empty agents dir bd took no file from", install: true,
+			drop: filepath.Join(beads, "agents", "openai.yaml"),
+			want: map[string]string{filepath.Join(beads, "agents"): "dir", beads: "dir"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			env, stdout, _ := newCodexTestEnv(t)
@@ -703,6 +707,11 @@ func TestRemoveCodexKeepsSkillDirsItDidNotEmpty(t *testing.T) {
 			if tt.install {
 				if err := installCodex(env, false); err != nil {
 					t.Fatalf("installCodex: %v\n%s", err, stdout.String())
+				}
+			}
+			if tt.drop != "" {
+				if err := os.Remove(filepath.Join(env.projectDir, tt.drop)); err != nil {
+					t.Fatal(err)
 				}
 			}
 
