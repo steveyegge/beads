@@ -2,7 +2,6 @@ package dolt
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -123,15 +122,12 @@ func requireDoltBackend(fileCfg *configfile.Config, beadsDir string) error {
 // caller that writes into the workspace before it reaches a constructor
 // (beads.OpenGated's gates) runs it first too. Metadata that does not load is
 // left to Load to report, unless the graph format marker sits beside it
-// (configfile.LoadAndCheckWorkspaceFormat); no metadata at all selects Dolt.
+// (configfile.LoadDiscoveredForOpen); no metadata at all (and no format
+// marker) selects Dolt.
 func RequireDiscoveredDoltBackend(beadsDir string) error {
-	fileCfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	fileCfg, err := configfile.LoadDiscoveredForOpen(beadsDir)
 	if err != nil {
-		var formatErr *configfile.UnsupportedWorkspaceFormatError
-		if errors.As(err, &formatErr) {
-			return err
-		}
-		return nil
+		return err
 	}
 	if fileCfg == nil {
 		return nil

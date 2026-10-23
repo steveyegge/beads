@@ -931,7 +931,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whichever metadata file names it, so it no longer creates gate files for
   such a workspace. For a workspace whose only metadata is a legacy
   `config.json`, these refusals (and the CLI's) now name `config.json` as the
-  file to edit; they named a `metadata.json` that did not exist.
+  file to edit. The CLI's refusal named a `metadata.json` that did not exist,
+  and the library's named the `metadata.json` its own migration had just
+  written. `OpenFromConfig` now returns a nil `Storage` with every error, as
+  the other opens do; it returned a non-nil interface holding a nil store for
+  a backend refusal or a failed open, on which `Close` panics.
 
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a

@@ -611,12 +611,13 @@ func TestPublicOpensRefuseGraphWorkspace(t *testing.T) {
 				}
 				before := workspaceTreeDigest(t, root)
 
-				// Check err, not store: a failed OpenFromConfig can return a
-				// typed-nil store.
 				store, err := open(t.Context(), beadsDir)
 				if err == nil {
 					_ = store.Close()
 					t.Fatalf("%s opened a graph_mode %q workspace", name, layout.mode)
+				}
+				if store != nil {
+					t.Fatalf("%s returned a non-nil %T with its refusal; an embedder's `if store != nil { store.Close() }` would call Close on it", name, store)
 				}
 				var formatErr *beads.UnsupportedWorkspaceFormatError
 				if !errors.As(err, &formatErr) {
@@ -701,12 +702,18 @@ func TestPublicOpensRefuseUnsupportedBackendBeforeWriting(t *testing.T) {
 						}
 						before := workspaceTreeDigest(t, root)
 
-						// Check err, not store: a failed OpenFromConfig can return a
-						// typed-nil store.
 						store, err := open(t.Context(), beadsDir)
 						if err == nil {
 							_ = store.Close()
 							t.Fatalf("%s opened a workspace whose %s names backend %q", name, layout.file, backend)
+						}
+						// The tree first: a regression that migrates config.json
+						// must report the rewrite, not just the file it names.
+						if after := workspaceTreeDigest(t, root); !maps.Equal(after, before) {
+							t.Fatalf("%s changed the workspace: before %v, after %v", name, before, after)
+						}
+						if store != nil {
+							t.Fatalf("%s returned a non-nil %T with its refusal", name, store)
 						}
 						if !strings.Contains(err.Error(), strconv.Quote(backend)) || !strings.Contains(err.Error(), "no storage database was opened or modified") {
 							t.Fatalf("%s error = %v, want the refusal of backend %q with the data-safety guarantee", name, err, backend)
@@ -714,12 +721,92 @@ func TestPublicOpensRefuseUnsupportedBackendBeforeWriting(t *testing.T) {
 						if !strings.Contains(err.Error(), layout.file) || strings.Contains(err.Error(), layout.other) {
 							t.Fatalf("%s error = %v, want it to name %s, the file holding the backend, and not %s", name, err, layout.file, layout.other)
 						}
-						if after := workspaceTreeDigest(t, root); !maps.Equal(after, before) {
-							t.Fatalf("%s changed the workspace: before %v, after %v", name, before, after)
-						}
 					})
 				}
 			}
+		}
+	}
+}
+
+// TestDoltOnlyOpensRefuseRegisteredBackendBeforeWriting pins that the public
+// opens that only open Dolt (OpenFromConfig and OpenGated) refuse a
+// registered non-Dolt backend before they write anything, whichever file
+// names it: Load would migrate a legacy config.json, and OpenGated's gates
+// create files in and beside .beads. OpenBestAvailable* dispatch such a
+// backend to the registry instead
+// (TestOpenBestAvailableWithDispatchesRegisteredBackendAndPassesOptions).
+func TestDoltOnlyOpensRefuseRegisteredBackendBeforeWriting(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "1")
+	const backend = "fake-registered-dolt-only"
+	registerWorkspaceBackend(t, backend)
+	opens := map[string]func(context.Context, string) (beads.Storage, error){
+		"OpenFromConfig": publicOpens["OpenFromConfig"],
+		"OpenGated":      publicOpens["OpenGated"],
+	}
+	for _, file := range []string{"config.json", "metadata.json"} {
+		for name, open := range opens {
+			t.Run(file+"/"+name, func(t *testing.T) {
+				root := t.TempDir()
+				beadsDir := filepath.Join(root, ".beads")
+				if err := os.MkdirAll(filepath.Join(beadsDir, "dolt", ".dolt"), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				metadata := `{"backend":"` + backend + `","dolt_mode":"server","dolt_database":"beads_legacy","future_binding":"keep-me"}`
+				if err := os.WriteFile(filepath.Join(beadsDir, file), []byte(metadata), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				before := workspaceTreeDigest(t, root)
+
+				store, err := open(t.Context(), beadsDir)
+				if err == nil {
+					_ = store.Close()
+					t.Fatalf("%s opened a workspace whose %s names registered backend %q", name, file, backend)
+				}
+				if after := workspaceTreeDigest(t, root); !maps.Equal(after, before) {
+					t.Fatalf("%s changed the workspace: before %v, after %v", name, before, after)
+				}
+				if store != nil {
+					t.Fatalf("%s returned a non-nil %T with its refusal", name, store)
+				}
+				if want := strconv.Quote(backend) + " cannot be opened as Dolt"; !strings.Contains(err.Error(), want) {
+					t.Fatalf("%s error = %v, want %q", name, err, want)
+				}
+			})
+		}
+	}
+}
+
+// TestPublicOpensAdmitSupportedBackendInLegacyConfig pins the admitted side
+// of the pre-Load backend refusal: a legacy config.json naming Dolt, or no
+// backend, passes it, is migrated into metadata.json as before, and the open
+// proceeds to the backend's own unreachable-server error.
+func TestPublicOpensAdmitSupportedBackendInLegacyConfig(t *testing.T) {
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "1")
+	for _, backend := range []string{"dolt", ""} {
+		for name, open := range publicOpens {
+			t.Run("backend="+backend+"/"+name, func(t *testing.T) {
+				beadsDir := filepath.Join(t.TempDir(), ".beads")
+				if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				legacy := `{"backend":"` + backend + `","dolt_mode":"server"}`
+				if err := os.WriteFile(filepath.Join(beadsDir, "config.json"), []byte(legacy), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				store, err := open(t.Context(), beadsDir)
+				if err == nil {
+					_ = store.Close()
+					t.Fatalf("%s opened a store on an unreachable server", name)
+				}
+				if !strings.Contains(err.Error(), "unreachable") {
+					t.Fatalf("%s error = %v, want the backend's unreachable-server error", name, err)
+				}
+				if _, statErr := os.Stat(filepath.Join(beadsDir, "metadata.json")); statErr != nil {
+					t.Fatalf("%s did not migrate the admitted legacy config.json: %v", name, statErr)
+				}
+			})
 		}
 	}
 }

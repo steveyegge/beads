@@ -107,15 +107,12 @@ func configuredBackendUnavailable(backend, beadsDir string, cfg *configfile.Conf
 // migrates a legacy config.json into metadata.json and drops the keys Config
 // does not know, as the CLI's command admission checks the same read before
 // any Load. Metadata that does not load is left to Load to report, unless the
-// graph format marker sits beside it; no metadata at all selects Dolt.
+// graph format marker sits beside it (configfile.LoadDiscoveredForOpen); no
+// metadata at all (and no format marker) selects Dolt.
 func checkDiscoveredBackend(beadsDir string) error {
-	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	cfg, err := configfile.LoadDiscoveredForOpen(beadsDir)
 	if err != nil {
-		var formatErr *configfile.UnsupportedWorkspaceFormatError
-		if errors.As(err, &formatErr) {
-			return err
-		}
-		return nil
+		return err
 	}
 	if cfg != nil && !configfile.IsSupportedBackend(cfg.Backend) {
 		return configuredBackendUnavailable(cfg.Backend, beadsDir, cfg)
@@ -405,10 +402,17 @@ func Open(ctx context.Context, dbPath string) (Storage, error) {
 // name configuration.
 // beadsDir is the path to the .beads directory.
 func OpenFromConfig(ctx context.Context, beadsDir string) (Storage, error) {
-	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+	// NewFromConfigWithOptions refuses an unsupported format or backend
+	// (dolt.RequireDiscoveredDoltBackend) before its Load can migrate a
+	// legacy config.json.
+	st, err := dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{CreateIfMissing: true})
+	if err != nil {
+		// An untyped nil, as the other public opens return: a nil
+		// *DoltStore in the Storage interface is non-nil, and Close on it
+		// panics.
 		return nil, err
 	}
-	return dolt.NewFromConfigWithOptions(ctx, beadsDir, &dolt.Config{CreateIfMissing: true})
+	return st, nil
 }
 
 // OpenGated is OpenFromConfig plus participation in the workspace
