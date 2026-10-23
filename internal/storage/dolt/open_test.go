@@ -349,8 +349,9 @@ func TestConfigConstructorsRefuseGraphFormatMarker(t *testing.T) {
 // cannot open as Dolt (removed, unrecognized, or another binary's registered
 // backend) before configfile.Load migrates that file into metadata.json,
 // dropping the keys Config does not know. The workspace holds a Dolt database,
-// so the refusal offers the metadata heal; it must not have rewritten the
-// metadata first.
+// so a removed backend's refusal offers the metadata heal; it must not have
+// rewritten the metadata first, and it names config.json, the file that holds
+// the backend, rather than a metadata.json that does not exist.
 func TestConfigConstructorsRefuseNonDoltBackendInLegacyConfig(t *testing.T) {
 	// If the refusal were missing, the open must fail fast rather than reach
 	// the suite's shared test server.
@@ -391,6 +392,10 @@ func TestConfigConstructorsRefuseNonDoltBackendInLegacyConfig(t *testing.T) {
 						}
 						if !strings.Contains(err.Error(), "cannot be opened as Dolt") || !strings.Contains(err.Error(), strconv.Quote(backend)) {
 							t.Fatalf("constructor error = %v, want the refusal of backend %q", err, backend)
+						}
+						// The registered backend's refusal names no file.
+						if backend != registered && (!strings.Contains(err.Error(), "config.json") || strings.Contains(err.Error(), "metadata.json")) {
+							t.Fatalf("constructor error = %v, want it to name config.json and not metadata.json", err)
 						}
 						entries, readErr := os.ReadDir(beadsDir)
 						names := make([]string, 0, len(entries))

@@ -926,8 +926,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed or unrecognized backend into `metadata.json`, dropping keys bd does
   not know and deleting `config.json`, before they refused the backend, and
   `OpenGated` created its gate files in and beside `.beads` first. They now
-  refuse that metadata before writing anything, as the CLI already does, with
-  the same errors as before.
+  refuse that metadata before writing anything, as the CLI already does.
+  `OpenGated` also refuses any backend it cannot open before taking its gates,
+  whichever metadata file names it, so it no longer creates gate files for
+  such a workspace. For a workspace whose only metadata is a legacy
+  `config.json`, these refusals (and the CLI's) now name `config.json` as the
+  file to edit; they named a `metadata.json` that did not exist.
 
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a

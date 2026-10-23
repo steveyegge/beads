@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -104,7 +105,7 @@ func requireDoltBackend(fileCfg *configfile.Config, beadsDir string) error {
 		return fmt.Errorf("configured storage backend %q is no longer supported and cannot be opened as Dolt: %s", fileCfg.Backend, configfile.RemovedBackendDetailAt(fileCfg.Backend, beadsDir, fileCfg))
 	}
 	if !configfile.IsSupportedBackend(fileCfg.Backend) {
-		return fmt.Errorf("configured storage backend %q in metadata.json is not recognized and cannot be opened as Dolt; %s", fileCfg.Backend, configfile.BackendNotOpenedGuarantee)
+		return fmt.Errorf("configured storage backend %q in %s is not recognized and cannot be opened as Dolt; %s", fileCfg.Backend, filepath.Base(configfile.MetadataFilePath(beadsDir)), configfile.BackendNotOpenedGuarantee)
 	}
 	backend := fileCfg.GetBackend()
 	if backend != configfile.BackendDolt {
