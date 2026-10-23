@@ -1026,7 +1026,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which carries the project's `project_id`. In server mode, when
   the planning open resolved to the project's own database (`dolt_database`
   "beads", or `BEADS_DOLT_SERVER_DATABASE` naming it), that used to delete
-  the issues while reporting them moved. An issue ID already present in the
+  the issues while reporting them moved. Run from a rig under a shared
+  root, the shared root, or a redirect stub that uses its database, is
+  refused too; the refusal names the database `bd` uses there and the
+  project's, and points `routing.contributor` at a separate planning
+  repository. An issue ID already present in the
   planning repo is also refused rather than overwritten; when the project
   copy is a `bd repo sync` mirror of the planning repo, the error names
   `bd repo remove`. Its errors no longer end in the usage block, and the

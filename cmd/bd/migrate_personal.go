@@ -191,20 +191,30 @@ func refuseUninitializablePlanningRepo(planningBeadsDir string) error {
 }
 
 // redirectedPlanningRepoError refuses a planning .beads that redirects to
-// target. bd run in the planning repo opens target under stubDatabase, the
+// target, a .beads other than the project's (refuseSelfPlanningRepo refuses
+// that one). bd run in the planning repo opens target under stubDatabase, the
 // dolt_database the stub's own metadata.json names, when it names one
 // (preserveRedirectSourceDatabase), while a migration into target opens
 // target's own (autoRouteTargetDatabase). The refusal therefore points
 // routing.contributor at target only when the two agree; otherwise it names
-// the database bd uses there, which routing.contributor cannot select.
+// the database bd uses there, which routing.contributor cannot select
+// (stubDatabaseRefusal).
 func redirectedPlanningRepoError(planningBeadsDir, target, stubDatabase string) error {
 	planningRepo, targetRepo := filepath.Dir(planningBeadsDir), filepath.Dir(target)
 	if stubDatabase != "" {
 		if targetDatabase, err := autoRouteTargetDatabase(target, true); err != nil || targetDatabase != stubDatabase {
-			return refusePlanningRepo("planning repo %s redirects to %s, where bd uses the database %q that the planning repo names; routing.contributor cannot select that database (set to %s, it selects that repository's own); set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningRepo, targetRepo, stubDatabase, targetRepo)
+			return stubDatabaseRefusal(planningRepo, targetRepo, stubDatabase)
 		}
 	}
 	return refusePlanningRepo("planning repo %s redirects to %s; set routing.contributor to that repository instead", planningRepo, targetRepo)
+}
+
+// stubDatabaseRefusal refuses planningRepo, a redirect stub to targetRepo that
+// names stubDatabase, a database other than targetRepo's own: bd run in the
+// planning repo uses stubDatabase there, and routing.contributor, set to
+// targetRepo, selects targetRepo's own instead.
+func stubDatabaseRefusal(planningRepo, targetRepo, stubDatabase string) error {
+	return refusePlanningRepo("planning repo %s redirects to %s, where bd uses the database %q that the planning repo names; routing.contributor cannot select that database (set to %s, it selects that repository's own); set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningRepo, targetRepo, stubDatabase, targetRepo)
 }
 
 // initializePlanningRepo gives a planning .beads that refuseUninitializablePlanningRepo
@@ -248,11 +258,20 @@ func adoptPlanningDatabase(ctx context.Context, planningBeadsDir, database strin
 // delete removes the only copy.
 //
 // The planning .beads directory (after any redirect) is compared with the
-// project's. The same directory is the project's own workspace unless the
-// planning repo is a redirect stub that names a database of its own, other
-// than the one the project's store uses there: a rig beside the project under
-// a shared root (beads.ResolveRedirect). That stub is a different database,
-// and is refused as the redirect it is (redirectedPlanningRepoError).
+// project's. A planning repo in the same directory is refused whatever
+// database it uses there: none of them is a separate planning repository, and
+// in embedded mode the planning open would hand back this process's own store
+// for that directory (embeddeddolt.Open keeps one per directory). The refusal
+// names the database the planning repo uses: the one a redirect stub names
+// (beads.ResolveRedirect), else the directory's own dolt_database, which a
+// migration opens (autoRouteTargetDatabase), or the default database bd uses
+// there when the directory names none. The database the project's store
+// uses is the project's own workspace. A stub naming another database is a rig
+// beside the project under a shared root, refused as the redirect it is
+// (stubDatabaseRefusal). The directory's own database, seen from a rig under
+// that shared root, is refused as that database. Each refusal points
+// routing.contributor at a separate planning repository, never at the shared
+// root, which this check would refuse in turn.
 // Two directories whose metadata.json carry the same project_id are one
 // project's workspaces, a clone sharing the git-tracked metadata.json: a
 // separate planning repository has an identity of its own.
@@ -271,16 +290,33 @@ func refuseSelfPlanningRepo(planningPath, planningBeadsDir, projectBeadsDir stri
 		// The database the project's store opened: BEADS_DOLT_SERVER_DATABASE,
 		// which preserveRedirectSourceDatabase sets for a launch through a
 		// redirect, outranks the shared metadata.json (GetDoltDatabase).
-		projectDatabase := configfile.DefaultConfig().GetDoltDatabase()
+		// sharedDatabase is the database bd uses in the directory itself, its
+		// own dolt_database or, when that is empty, the default; the planning
+		// repo uses it unless it is a stub naming one of its own.
+		projectDatabase, sharedDatabase := configfile.DefaultConfig().GetDoltDatabase(), ""
 		if qerr == nil && projectCfg != nil {
-			projectDatabase = projectCfg.GetDoltDatabase()
+			projectDatabase, sharedDatabase = projectCfg.GetDoltDatabase(), projectCfg.DoltDatabase
+			if sharedDatabase == "" {
+				sharedDatabase = configfile.DefaultDoltDatabase
+			}
 		}
-		if redirect.WasRedirected && redirect.SourceDatabase != "" && redirect.SourceDatabase != projectDatabase {
-			// Refused here, before the confirmation prompt, rather than by
-			// refuseUninitializablePlanningRepo after it.
-			return redirectedPlanningRepoError(planningBeadsDir, redirect.TargetDir, redirect.SourceDatabase)
+		planningDatabase := sharedDatabase
+		if redirect.WasRedirected && redirect.SourceDatabase != "" {
+			planningDatabase = redirect.SourceDatabase
 		}
-		return fmt.Errorf("planning repo %s is this project's own workspace; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningPath)
+		// Refused here, before the confirmation prompt, rather than by
+		// refuseUninitializablePlanningRepo after it.
+		switch {
+		case planningDatabase == "" || planningDatabase == projectDatabase:
+			return fmt.Errorf("planning repo %s is this project's own workspace; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", planningPath)
+		case planningDatabase != sharedDatabase:
+			return stubDatabaseRefusal(filepath.Dir(planningBeadsDir), filepath.Dir(redirect.TargetDir), planningDatabase)
+		}
+		where := planningPath
+		if redirect.WasRedirected {
+			where = fmt.Sprintf("%s redirects to %s, which", planningPath, filepath.Dir(redirect.TargetDir))
+		}
+		return fmt.Errorf("planning repo %s holds the .beads this project uses, where bd uses the database %q, not this project's %q; a database beside this project's is not a separate planning repository; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)", where, planningDatabase, projectDatabase)
 	}
 	planningCfg, perr := configfile.LoadForDiscovery(planning)
 	if perr == nil && qerr == nil && planningCfg != nil && projectCfg != nil &&
