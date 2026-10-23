@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-23
+
+First stable release of the 1.3.2 patch line. It ships the same code as
+[1.3.2-rc.3]; the only change since that candidate is the version stamp. The
+full notes are in the [1.3.2-rc.3], [1.3.2-rc.2] and [1.3.2-rc.1] sections
+below, which together cover everything since [1.3.1].
+
+There is **no schema migration**, and the embedded Dolt engine is unchanged:
+upgrading from 1.3.1 or any 1.3.2 release candidate is a binary swap.
+
+### Upgrade notes
+
+- **Run `bd recompute-blocked` once per workspace whose store crossed
+  migration 0059 under bd 1.3.0 or later**
+  ([#7037](https://github.com/gastownhall/beads/issues/7037)). That includes a
+  workspace now on 1.3.1 that was first created by 1.2.x or earlier. The
+  [1.3.2-rc.1] upgrade notes explain why and who is affected; on an
+  unaffected workspace the command changes nothing.
+- Coming from 1.3.1, read the **Fixed** entries in [1.3.2-rc.3],
+  [1.3.2-rc.2] and [1.3.2-rc.1]. Three can change what a script sees:
+  `bd purge` keeps more closed beads (the whole closed chain above a live
+  bead), the `bd purge --limit N` confirmation now suggests a `--force`
+  command that keeps `--limit`, and `bd export` fails with
+  `failed to classify wisp-plane rows` when the `wisps` table exists but
+  cannot be read, instead of exporting without wisp markers.
+- Coming from 1.3.2-rc.3, nothing changes in behaviour.
+
 ## [1.3.2-rc.3] - 2026-10-23
 
 Third release candidate for 1.3.2. Like rc.1 and rc.2 it has **no schema
