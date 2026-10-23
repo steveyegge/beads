@@ -99,6 +99,30 @@ func configuredBackendUnavailable(backend, beadsDir string, cfg *configfile.Conf
 	}
 }
 
+// checkDiscoveredBackend refuses a workspace that OpenBestAvailableWith cannot
+// open, reading its metadata as configfile.LoadForDiscovery does, which never
+// rewrites the workspace: a format this build does not support
+// (configfile.CheckDiscoveredWorkspaceFormat), or a removed or unrecognized
+// backend (configuredBackendUnavailable). It runs before configfile.Load, which
+// migrates a legacy config.json into metadata.json and drops the keys Config
+// does not know, as the CLI's command admission checks the same read before
+// any Load. Metadata that does not load is left to Load to report, unless the
+// graph format marker sits beside it; no metadata at all selects Dolt.
+func checkDiscoveredBackend(beadsDir string) error {
+	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	if err != nil {
+		var formatErr *configfile.UnsupportedWorkspaceFormatError
+		if errors.As(err, &formatErr) {
+			return err
+		}
+		return nil
+	}
+	if cfg != nil && !configfile.IsSupportedBackend(cfg.Backend) {
+		return configuredBackendUnavailable(cfg.Backend, beadsDir, cfg)
+	}
+	return nil
+}
+
 // UnsupportedWorkspaceFormatError is returned by OpenBestAvailable,
 // OpenBestAvailableWith, OpenFromConfig and OpenGated when the workspace
 // declares a data model this build cannot open: a metadata.json graph_mode
@@ -419,8 +443,9 @@ func OpenFromConfig(ctx context.Context, beadsDir string) (Storage, error) {
 // reported as ErrGateBusy (match with errors.Is).
 func OpenGated(ctx context.Context, beadsDir string, wait time.Duration) (Storage, error) {
 	// Before the gates: taking them creates gate files in and beside a
-	// workspace this build must leave untouched.
-	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+	// workspace this build must leave untouched. This is the refusal the
+	// Dolt open below makes before its own Load.
+	if err := dolt.RequireDiscoveredDoltBackend(beadsDir); err != nil {
 		return nil, err
 	}
 	wsGate, err := workspacegate.ForWorkspace(beadsDir)

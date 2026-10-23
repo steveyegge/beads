@@ -920,6 +920,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses that metadata before opening anything, leaving the repository
   byte-identical, and lists the custom types in its `config.yaml`.
 
+- **The Go library's opens no longer rewrite a legacy `config.json` they
+  refuse.** `beads.OpenBestAvailable`, `OpenBestAvailableWith`,
+  `OpenFromConfig` and `OpenGated` migrated a `.beads/config.json` naming a
+  removed or unrecognized backend into `metadata.json`, dropping keys bd does
+  not know and deleting `config.json`, before they refused the backend, and
+  `OpenGated` created its gate files in and beside `.beads` first. They now
+  refuse that metadata before writing anything, as the CLI already does, with
+  the same errors as before.
+
 - **`bd events tail --follow` can stop when its parent goes away.** A
   follower noticed that its reader was gone only when it next wrote a
   record, so in a quiet workspace a follower whose parent died without
