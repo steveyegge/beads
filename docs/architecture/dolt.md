@@ -50,12 +50,24 @@ the criterion for raising it; raise the pin here and in that script together.
 
 This pin is about the standalone `dolt` CLI, which only server and
 proxied-server mode use. Embedded mode is unaffected either way: it links the
-Dolt engine into `bd` through the v2.4.1 driver in `go.mod`, no matter which
-`dolt` CLI is on your PATH. Server and proxied-server mode do care: storage the
-v2.4.1 engine writes is not writable by dolt older than 2.3.3, the first
-release that stores descending index columns (dolthub/dolt#11746; a plain
-`INSERT` fails with `table has unknown fields`), so the CLI pin tracks the
-driver.
+Dolt 2.5.1 engine into `bd` (`dolthub/driver` v2.4.1 with
+`github.com/dolthub/dolt/go` at the v2.5.1 release, in `go.mod`), no matter
+which `dolt` CLI is on your PATH. The CLI pin tracks that engine, so every mode
+runs the same Dolt. `bd` recommends Dolt **2.5.0** or newer, the first release
+whose engine is correct on the query shape in the table below, and managed
+proxied-server mode warns below it.
+
+Dolt 2.3.3 is the first release that stores a descending index column as
+descending (dolthub/dolt#11746), and older releases cannot read a table that
+holds one: even a plain `INSERT` fails with `table has unknown fields`.
+Migration 0010 declares `compaction_snapshots.idx_comp_snap_issue` with
+`created_at DESC`. So every database `bd` creates from this release on, and
+every database whose schema a `dolt sql-server` 2.3.3 or newer created, holds
+one. **This is one-way: `bd` does not convert the index back**, so such a
+database needs Dolt 2.3.3 or newer, and a `bd` built on Dolt 2.3.3 or newer,
+for good. Databases created earlier keep an ascending index and stay readable
+and writable by older Dolt even after this release migrates and writes to them
+(measured 2026-10-21 with Dolt 2.2.0 and 2.3.2).
 
 Dolt 2.3.0 (released 2026-08-13) regressed `CALL DOLT_RESET('--hard')`. A few
 percent of freshly created databases come up with that procedure unusable —
@@ -65,21 +77,46 @@ about the database looks wrong: `SELECT 1`, `CALL DOLT_CLEAN()`,
 `CALL DOLT_CHECKOUT('.')`, `CALL DOLT_COMMIT()` and soft resets all work
 normally, so the damage is invisible until something needs a hard reset.
 
-Measured by creating fresh databases and immediately calling the procedure:
+The table records, per release, whether it opens a database `bd` creates,
+whether its engine answers an ungrouped `MAX` or `MIN` over an unmatched
+primary-key prefix correctly (the shape of dolthub/dolt#12093), and the
+`DOLT_RESET('--hard')` regression, measured by creating fresh databases and
+immediately calling the procedure:
 
-| Dolt version | Fresh databases with `DOLT_RESET('--hard')` broken |
-|--------------|----------------------------------------------------|
-| 2.1.8        | 0 / 40                                             |
-| 2.2.0        | 0 / 60                                             |
-| 2.3.0        | 3 / 60                                             |
-| 2.3.1        | 3 / 100 (2026-08-20); 8 / 150 (2026-10-10)         |
-| 2.4.1        | 0 / 250                                            |
+| Dolt | Opens a database `bd` creates | Ungrouped `MAX`/`MIN` over an unmatched primary-key prefix | Fresh databases with `DOLT_RESET('--hard')` broken |
+|---|---|---|---|
+| 2.1.8 | no | correct | 0 / 40 |
+| 2.2.0 | no | correct | 0 / 60 |
+| 2.3.0 | no | not measured | 3 / 60 |
+| 2.3.1 | no | correct | 3 / 100 (2026-08-20); 8 / 150 (2026-10-10); 4 / 300 (2026-10-21) |
+| 2.3.2 | no (measured) | correct | not measured (carries the fix, dolthub/dolt#11652) |
+| 2.3.3 – 2.3.5 | **yes (the floor)** | correct | not measured |
+| 2.4.0 | yes | **no row** (dolthub/dolt#12093) | not measured |
+| 2.4.1 | yes | **no row** | 0 / 250 |
+| 2.4.2 | yes | **no row** | 0 / 250 |
+| **2.5.0** | yes | correct | 0 / 500 |
+| **2.5.1** (pinned) | yes | correct | 0 / 500 |
 
-The 2026-10-10 runs re-measured 2.3.1 as a positive control, confirming the
-method still reproduces the regression; the embedded engine through the
-v2.4.1 driver measured 0 / 60. No other release after 2.3.1 has been
-measured here. Raise the pin only once a newer release is confirmed clean by
-that same measurement — not because it is newer.
+"Opens a database `bd` creates" means `information_schema` reads and writes
+don't fail with `table has unknown fields`. The "no" for 2.1.8, 2.2.0, 2.3.1
+and 2.3.2 is measured; 2.3.0 is inferred, since 2.3.3 introduced descending
+storage.
+
+- The embedded engine measured 0 / 100 on 2.5.1 and 0 / 100 on 2.4.1
+  (2026-10-21), and 0 / 60 on 2.4.1 (2026-10-10). The 2026-10-10 and
+  2026-10-21 runs re-measured 2.3.1 as a positive control, confirming the
+  method still reproduces the regression.
+- The `MAX`/`MIN` column is bee-ghosttrack's reproduction from
+  [#7646](https://github.com/gastownhall/beads/pull/7646), reproduced on
+  linux/amd64 and darwin/arm64. `bd`'s one query of that shape, the
+  versioned-history revision read, no longer depends on it.
+- 2.4.0 through 2.4.2 also panic on an ungrouped `MAX` of a non-key column under
+  a fully bound primary key (dolthub/go-mysql-server#4037).
+- Releases before 2.4.0 drop a join condition when an `ON` clause has an `OR`
+  over indexed columns (dolthub/dolt#11886).
+
+Raise the pin only once a newer release is confirmed clean by that same
+measurement — not because it is newer.
 
 Pin rather than track `latest` for a second, independent reason: the upstream
 `releases/latest` URL resolves to the most recently *created* release, not the

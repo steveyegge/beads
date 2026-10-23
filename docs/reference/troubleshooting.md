@@ -407,13 +407,19 @@ Managed proxied-server mode spawns an external `dolt` CLI it finds via
 clone-local sidecar setting will slot between the two when the sidecar
 reader lands in contract part 2). On
 startup it probes that binary with `dolt version` and recommends
-**dolt >= 2.4.1**, matching the Dolt engine `bd` links (the v2.4.1 driver).
-Storage that engine writes is not writable by dolt older than 2.3.3, the
-first release that stores descending index columns (dolthub/dolt#11746):
-measured 2026-10-17, dolt 2.2.0 and 2.3.2 fail a plain `INSERT` into a
-database `bd init` created with `table has unknown fields`, while 2.3.3,
-2.4.0 and 2.4.1 succeed. Dolt before 2.4.0 also has a join bug that returns
-wrong results (dolthub/dolt#11886). (Earlier, the 2026-07-25 cross-version
+**dolt >= 2.5.0** (the embedded engine `bd` links, and the release CI pins, is
+2.5.1). Older releases have known problems:
+
+- Dolt 2.4.0 through 2.4.2 return no row for an ungrouped `MAX` or `MIN` over
+  an unmatched primary-key prefix (dolthub/dolt#12093).
+- Dolt before 2.4.0 has a join bug that returns wrong results
+  (dolthub/dolt#11886).
+- Dolt before 2.3.3 fails with `table has unknown fields` on the descending
+  index column every database `bd` creates holds (dolthub/dolt#11746), so it
+  cannot open those databases at all.
+
+[Which Dolt version to install](/architecture/dolt#which-dolt-version-to-install)
+records the dated measurements. (Earlier, the 2026-07-25 cross-version
 matrix had found that dolt < 2.0.0 cannot even *read* storage the module
 wrote.)
 
