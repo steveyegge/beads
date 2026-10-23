@@ -909,20 +909,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the host in plain double quotes on Windows, so a host such as
   `x" & calc & "` ran `calc` from cmd.exe and `$(calc)` ran it from
   PowerShell when the command was pasted; elsewhere its single quotes let a
-  host with a backslash before a quote do the same from fish. The
+  host with a backslash before a quote do the same from fish, and one with a
+  single quote (`'`, or a curly one such as `’`) from PowerShell. The
   `bd repo remove` and `bd repo add` commands `bd migrate-personal` prints
-  for a `bd repo sync` copy used the same Windows quoting, and a
+  for a `bd repo sync` copy used the same quoting, and on Windows a
   `source_repo` ending in a backslash reached `bd` with a stray quote, so
-  `bd repo remove` found no such repository. On every platform a host with
+  `bd repo remove` found no such repository. On every platform a value with
   control characters, such as a carriage return or a terminal escape
-  sequence, went into the command raw and could redraw it so the command a
-  user copied was not the one printed. A remedy now prints a value in its
-  command only when it has no control characters and cmd.exe, PowerShell and
-  Git Bash (on Windows) or sh, bash, zsh and fish (elsewhere) all pass it on
-  unchanged, and otherwise prints `<host>` or `<path>` and names the value
-  beside the command. On Windows this also covers a value with any of
-  `& | < > ^`, so a path such as `C:\Users\Jane Doe\R&D planning`, which was
-  printed in the command before, now gets a `<path>` placeholder.
+  sequence, went onto the remedy's line raw, in the command or beside it (the
+  repository path and the `source_repo` the refusal names), and could redraw
+  the command so the one a user copied was not the one printed. A remedy now
+  prints a value in its command only when every character of it prints as
+  itself and cmd.exe, PowerShell and Git Bash (on Windows) or sh, bash, zsh,
+  fish and PowerShell (elsewhere) all pass it on unchanged, and otherwise
+  prints `<host>` or `<path>` and names the value beside the command,
+  escaped as a Go string whose every quote and every character one of those
+  shells acts on is escaped too (`\x22` for `"`, `\x24` for `$`), so pasting
+  the name as printed runs nothing. A value named beside the command that
+  holds a control character, or a character such as U+202E or U+2028 that
+  reorders or splits the line, is printed escaped (`\r`, `\x1b`, `\u202e`).
+  On Windows a value with any of `& | < > ^`, such as
+  `C:\Users\Jane Doe\R&D planning`, or of `; , =`, which cmd.exe reads as
+  separating the arguments of a `.cmd` shim that takes them one by one, and a
+  UNC path such as `\\server\share\planning`, all printed in the command
+  before, now get a `<path>` placeholder, as does a path with a single quote,
+  such as `~/Jane's planning`, elsewhere.
 - **`bd doctor` says when its multi-repo types check skips a database.** For
   a `repos.additional` repository in a format this build cannot open (a
   `graph_mode` other than `dependency`, or the `graph-preview-format`

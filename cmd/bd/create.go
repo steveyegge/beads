@@ -1239,7 +1239,10 @@ func refuseUninitializableTarget(beadsDir string) error {
 	if err := checkDiscoveredWorkspaceFormat(beadsDir); err != nil {
 		return err
 	}
-	repo := filepath.Dir(beadsDir)
+	// repo is the target as its refusals name it (printedValue), so a path
+	// holding a control character cannot redraw the bd init remedy printed
+	// after it.
+	repo := printedValue(filepath.Dir(beadsDir))
 	mode, _, err := config.WorkspaceYamlSettingWithLocal(beadsDir, "dolt.mode")
 	if err != nil {
 		return refuseTarget("%s has no metadata.json and its dolt.mode cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, err)
@@ -1264,8 +1267,10 @@ func refuseUninitializableTarget(beadsDir string) error {
 			return refuseTarget("%s has no metadata.json and its dolt.host cannot be read (%v); not initializing it, since it may select Dolt server mode", repo, hostErr)
 		}
 		if host != "" {
+			// The host is named escaped (escapedValue), as hostNote names
+			// one the remedy leaves as a placeholder.
 			remedy, hostNote := serverInitRemedy(runtime.GOOS, "bd init --server", beadsDir, host)
-			return refuseTarget("%s has no metadata.json and its own config selects Dolt server mode (dolt.host: %q); not initializing it as an embedded workspace, which would hide its server data. Run `%s` there%s, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, host, remedy, hostNote, configfile.DefaultDoltDatabase)
+			return refuseTarget("%s has no metadata.json and its own config selects Dolt server mode (dolt.host: %s); not initializing it as an embedded workspace, which would hide its server data. Run `%s` there%s, naming the server database it uses (%q unless BEADS_DOLT_SERVER_DATABASE names another), then rerun", repo, escapedValue(host), remedy, hostNote, configfile.DefaultDoltDatabase)
 		}
 	}
 	if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
@@ -1297,16 +1302,17 @@ func refuseTarget(format string, args ...any) error {
 // quoted for the shell the command is pasted into on goos (shellQuotedFor),
 // since it is the target repository's content. A host no quoting there passes
 // on unchanged is left as a <host> placeholder, and hostNote, which the
-// refusal prints after the command, names it. Its port is passed with it
-// (remoteServerPort): bd init takes a .beads/dolt-server.port over any
-// configured port, and that file is a local server's bookkeeping, which bd
-// itself discards for a remote host (doltserver.DefaultConfig), so the
+// refusal prints after the command, names it escaped (escapedValue), so
+// pasting that name in its place runs nothing either. Its port is passed
+// with it (remoteServerPort): bd init takes a .beads/dolt-server.port over
+// any configured port, and that file is a local server's bookkeeping, which
+// bd itself discards for a remote host (doltserver.DefaultConfig), so the
 // remote host would be dialed on a stale local port.
 func serverInitRemedy(goos, initCmd, beadsDir, host string) (remedy, hostNote string) {
 	if host != "" {
 		quoted, ok := shellQuotedFor(goos, host)
 		if !ok {
-			quoted, hostNote = "<host>", fmt.Sprintf(" with its dolt.host %q for <host>", host)
+			quoted, hostNote = "<host>", fmt.Sprintf(" with its dolt.host %s for <host>", escapedValue(host))
 		}
 		initCmd += fmt.Sprintf(" --server-host %s --server-port %d", quoted, remoteServerPort(beadsDir))
 	}
