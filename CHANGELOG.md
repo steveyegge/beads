@@ -983,6 +983,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bd manage the server only when nothing else, such as
   `BEADS_DOLT_SERVER_MODE=1` or a port variable naming another port, declares
   the server externally managed.
+- **`bd bootstrap` clones into the Dolt server that later commands connect
+  to.** For a workspace in Dolt server mode it picked the port to clone
+  through in its own order: the legacy `BEADS_DOLT_PORT` over `config.yaml`
+  `dolt.port` and the data directory's `listener.port`, and `metadata.json`
+  `dolt_server_port` over `BEADS_DOLT_SERVER_PORT`, `dolt.port`,
+  `listener.port` and bd's port file. Every other command
+  connects in the opposite order (#5835, and for a server on another machine
+  #7767), so when two of those settings named different ports the clone
+  landed on one server, `bd bootstrap` still exited 0, and the next command
+  reported the database missing on the other. It now clones through the port
+  those commands connect to; in shared-server mode it no longer takes the
+  workspace's `dolt_server_port`, which no other command reads there. A
+  fresh rig with no `.beads` yet sees an enclosing workspace's `config.yaml`
+  only until bootstrap writes its own, so that file's `dolt.port` and
+  `dolt.shared-server` do not pick the clone port.
+  `bd init --server --external` keeps its order, which matches the
+  connection it opens right after the clone.
 - **`bd migrate-personal` opens the planning repo the way that repo is
   configured.** It opened the planning store as a Dolt SQL server under the
   default database name, ignoring the planning repo's `metadata.json`. An

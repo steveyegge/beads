@@ -1437,7 +1437,17 @@ func cloneFromRemoteWithMode(ctx context.Context, beadsDir, remoteURL, dbName st
 			}
 		}
 		if cfg != nil {
-			return cloneViaServer(ctx, beadsDir, remoteURL, dbName, cfg)
+			// bd bootstrap lets the workspace pick the mode and clones into
+			// it, so it dials the port every later command dials there. bd
+			// init picks the mode itself and opens its own store with the
+			// environment first, so its clone keeps that order.
+			var port int
+			if cloneMode == remoteCloneAuto {
+				port = serverClonePort(beadsDir, cfg)
+			} else {
+				port = initServerClonePort(beadsDir, cfg)
+			}
+			return cloneViaServer(ctx, remoteURL, dbName, cfg, port)
 		}
 		// No config available — fall through to CLI clone.
 		fmt.Fprintf(os.Stderr, "Warning: server mode detected but no config available, falling back to CLI clone\n")
@@ -1493,8 +1503,7 @@ func cloneViaEmbedded(ctx context.Context, beadsDir, remoteURL, dbName string) e
 // executing CALL DOLT_CLONE. The server places the database in its own
 // data directory, which is the correct behavior for externally managed
 // servers where bd does not know the filesystem layout.
-func cloneViaServer(ctx context.Context, beadsDir, remoteURL, dbName string, cfg *configfile.Config) error {
-	port := serverClonePort(beadsDir, cfg)
+func cloneViaServer(ctx context.Context, remoteURL, dbName string, cfg *configfile.Config, port int) error {
 	dsn := doltutil.ServerDSN{
 		Socket:   cfg.GetDoltServerSocket(),
 		Host:     cfg.GetDoltServerHost(),
@@ -1527,7 +1536,142 @@ func cloneViaServer(ctx context.Context, beadsDir, remoteURL, dbName string, cfg
 	return nil
 }
 
+// serverClonePort is the port bd bootstrap clones through on an external Dolt
+// server: the port the store dials in this workspace once metadata.json holds
+// cfg, so the clone lands where every later command looks for it. That is
+// doltserver.DialConfig's port, by the store's rule (#5835, #7767):
+// BEADS_DOLT_SERVER_PORT first, and the legacy BEADS_DOLT_PORT only where no
+// listener.port, config.yaml dolt.port or metadata.json dolt_server_port
+// names one.
+//
+// A fresh clone has no metadata.json yet: cfg comes from a parent workspace
+// or the defaults, and finalizeSyncedBootstrap writes it after the clone.
+// DialConfig cannot see it, so cfg's dolt_server_port takes the rank the
+// file's will have. A shared server reads no port from the workspace's file.
+//
+// A fresh rig or clone with no .beads yet, whose own git repository bounds
+// discovery (GH#3029, GH#2792), runs bootstrap with an enclosing workspace's
+// config.yaml loaded, so DialConfig can report that workspace's dolt.port or
+// dolt.shared-server. finalizeSyncedBootstrap then writes the workspace's own
+// config.yaml, which names neither, and later commands read that. When that
+// enclosing config.yaml is the one loaded, the clone port is re-resolved
+// from the sources later commands will read.
 func serverClonePort(beadsDir string, cfg *configfile.Config) int {
+	dial := doltserver.DialConfig(beadsDir)
+	if ancestorConfigLoaded(beadsDir) {
+		dial = dialWithoutAncestorConfig(beadsDir, dial)
+	}
+	if cfg != nil && cfg.DoltServerPort > 0 && !dial.PortSharedServer && !outranksMetadataPort(dial) {
+		if _, err := os.Stat(configfile.ConfigPath(beadsDir)); errors.Is(err, os.ErrNotExist) {
+			return cfg.DoltServerPort
+		}
+	}
+	if dial.Port > 0 {
+		return dial.Port
+	}
+	return configfile.DefaultDoltServerPort
+}
+
+// ancestorConfigLoaded reports whether config loaded an enclosing
+// workspace's .beads/config.yaml in place of beadsDir's own. User layers,
+// including the legacy ~/.beads/config.yaml (which the directory walk also
+// finds for a repository under HOME), are not ancestors: later commands keep
+// reading them. config.ConfigFileUsed names the last user file when no
+// project file is loaded, so only a .beads/config.yaml counts.
+func ancestorConfigLoaded(beadsDir string) bool {
+	if hasOwnConfigYaml(beadsDir) {
+		return false
+	}
+	used := config.ConfigFileUsed()
+	if used == "" || filepath.Base(used) != "config.yaml" || filepath.Base(filepath.Dir(used)) != ".beads" {
+		return false
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		legacy := filepath.Join(home, ".beads", "config.yaml")
+		if a, err1 := filepath.EvalSymlinks(used); err1 == nil {
+			if b, err2 := filepath.EvalSymlinks(legacy); err2 == nil && a == b {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// hasOwnConfigYaml reports whether beadsDir holds its own config.yaml. When
+// it does, config loaded that file and the config.local.yaml beside it, not
+// an ancestor's, so DialConfig's dolt.port is the one later commands read.
+func hasOwnConfigYaml(beadsDir string) bool {
+	_, err := os.Stat(filepath.Join(beadsDir, "config.yaml"))
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+// dialWithoutAncestorConfig re-resolves dial for a workspace with no
+// config.yaml of its own, whose loaded config.yaml belongs to an enclosing
+// workspace. Later commands read neither that file's dolt.port nor its
+// dolt.shared-server, so a config.yaml dolt.port ranks as if unset and
+// shared-server mode comes from the environment and the user config alone. BD_DOLT_PORT, which config reports as dolt.port and later commands
+// read too, keeps DialConfig's answer: DefaultConfigForMode reads only files.
+func dialWithoutAncestorConfig(beadsDir string, dial *doltserver.Config) *doltserver.Config {
+	if os.Getenv("BD_DOLT_PORT") != "" {
+		return dial
+	}
+	shared := sharedServerWithoutAncestorConfig()
+	if dial.PortSource != doltserver.PortSourceConfigYaml && shared == dial.PortSharedServer {
+		return dial
+	}
+	dial = doltserver.DefaultConfigForMode(beadsDir, shared)
+	applyLegacyClonePort(dial)
+	return dial
+}
+
+// sharedServerWithoutAncestorConfig is doltserver.IsSharedServerMode without
+// a project config.yaml: BEADS_DOLT_SHARED_SERVER, then BD_DOLT_SHARED_SERVER
+// (which config reports as dolt.shared-server ahead of any file), then the
+// user config's dolt.shared-server.
+func sharedServerWithoutAncestorConfig() bool {
+	if v := os.Getenv("BEADS_DOLT_SHARED_SERVER"); v == "1" || strings.EqualFold(v, "true") {
+		return true
+	}
+	raw := os.Getenv("BD_DOLT_SHARED_SERVER")
+	if raw == "" {
+		raw = config.GetUserYamlConfig("dolt.shared-server")
+	}
+	shared, err := strconv.ParseBool(raw)
+	return err == nil && shared
+}
+
+// applyLegacyClonePort applies the legacy BEADS_DOLT_PORT to a port resolved
+// without it, by DialConfig's rule: it fills in a port no authoritative
+// source names when BEADS_DOLT_SERVER_PORT is unset.
+func applyLegacyClonePort(dial *doltserver.Config) {
+	if os.Getenv("BEADS_DOLT_SERVER_PORT") != "" || dial.PortSource.IsAuthoritative() {
+		return
+	}
+	if p, err := strconv.Atoi(os.Getenv("BEADS_DOLT_PORT")); err == nil && p > 0 {
+		dial.Port, dial.PortSource = p, doltserver.PortSourceEnv
+	}
+}
+
+// outranksMetadataPort reports whether DialConfig took its port from a source
+// the store ranks above metadata.json's dolt_server_port. DialConfig reports
+// the legacy BEADS_DOLT_PORT as PortSourceEnv too, but it ranks below.
+func outranksMetadataPort(dial *doltserver.Config) bool {
+	switch dial.PortSource {
+	case doltserver.PortSourceEnv:
+		return os.Getenv("BEADS_DOLT_SERVER_PORT") != ""
+	case doltserver.PortSourcePortFile, doltserver.PortSourceDoltConfigYaml,
+		doltserver.PortSourceConfigYaml, doltserver.PortSourceMetadataJSON:
+		return true
+	}
+	return false
+}
+
+// initServerClonePort is the port bd init --server --external clones through.
+// It follows the store config init opens right after the clone, which takes
+// --server-port (promoted to BEADS_DOLT_SERVER_PORT) and then the legacy
+// BEADS_DOLT_PORT ahead of the workspace's port sources, so init's own reads
+// and writes find the clone.
+func initServerClonePort(beadsDir string, cfg *configfile.Config) int {
 	if cfg != nil && cfg.DoltServerPort > 0 {
 		return cfg.DoltServerPort
 	}

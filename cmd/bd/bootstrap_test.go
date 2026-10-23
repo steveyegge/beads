@@ -7,14 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/doltserver"
 )
 
 // snapshotBootstrapEnv saves all BD_/BEADS_-prefixed env vars, clears them,
@@ -1780,12 +1783,13 @@ func TestResolveRemoteCloneModeExplicitExternalOverridesMissingMetadata(t *testi
 // TestCloneFromRemoteSharedServerModeUsesServer verifies that
 // BEADS_DOLT_SHARED_SERVER=1 triggers the server clone path.
 func TestCloneFromRemoteSharedServerModeUsesServer(t *testing.T) {
-	t.Setenv("BEADS_DOLT_DATA_DIR", "")
-	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "")
-	t.Setenv("BEADS_DOLT_SERVER_HOST", "")
-	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
-	t.Setenv("BEADS_DOLT_SERVER_MODE", "")
+	// Isolated, with the legacy BEADS_DOLT_PORT naming a closed loopback
+	// port: a shared server's clone port follows it over the 3308 default,
+	// so the clone fails fast here instead of dialing a harness server.
+	clonePortTestEnv(t)
 	t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+	port := freeLoopbackPort(t)
+	t.Setenv("BEADS_DOLT_PORT", strconv.Itoa(port))
 
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -1806,8 +1810,8 @@ func TestCloneFromRemoteSharedServerModeUsesServer(t *testing.T) {
 	if strings.Contains(err.Error(), "dolt clone failed") {
 		t.Errorf("shared-server mode used filesystem clone: %v", err)
 	}
-	if !strings.Contains(err.Error(), "server") {
-		t.Errorf("expected server-related error, got: %v", err)
+	if want := "dolt server unreachable at " + net.JoinHostPort("127.0.0.1", strconv.Itoa(port)); !strings.Contains(err.Error(), want) {
+		t.Errorf("clone error = %v, want it to name %s", err, want)
 	}
 }
 
@@ -2382,5 +2386,404 @@ func TestDetectBootstrapAction_ShadowDirServerNameMatchSettlesNone(t *testing.T)
 	// settle, which the same populated shadow directory also unlocks.
 	if !strings.Contains(plan.Reason, "already exists on server") {
 		t.Errorf("reason = %q, want the Exists-arm wording — a 'Could not verify' reason here means the probe result, not the local evidence, is what settled the plan", plan.Reason)
+	}
+}
+
+// clonePortTestEnv clears every variable that names a Dolt server endpoint or
+// mode, isolates HOME (the shared-server directory and user config live
+// there) and resets the config package, so only what a test writes chooses
+// the port.
+func clonePortTestEnv(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("BEADS_SHARED_SERVER_DIR", filepath.Join(home, "shared-server"))
+	for _, name := range []string{
+		"BEADS_DOLT_SERVER_MODE", "BEADS_DOLT_SHARED_SERVER", "BEADS_DOLT_SERVER_HOST",
+		"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT", "BEADS_DOLT_SERVER_SOCKET",
+		"BEADS_DOLT_DATA_DIR", "BEADS_DOLT_SERVER_DATABASE",
+		// Config reports these as dolt.port and dolt.shared-server.
+		"BD_DOLT_PORT", "BD_DOLT_SHARED_SERVER",
+	} {
+		t.Setenv(name, "")
+	}
+	config.ResetForTesting()
+	t.Cleanup(config.ResetForTesting)
+}
+
+// loadClonePortConfig makes beadsDir's config.yaml the one the store reads
+// dolt.port from.
+func loadClonePortConfig(t *testing.T, beadsDir string) {
+	t.Helper()
+	t.Setenv("BEADS_DIR", beadsDir)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize: %v", err)
+	}
+}
+
+func writeClonePortFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestServerClonePortIsTheStorePort pins the port bd bootstrap clones
+// through on an external Dolt server to the one the store dials in that
+// workspace once metadata.json holds the config bootstrap writes, so the clone
+// lands where every later command looks: DialConfig's rule, for a server on
+// another machine. A fresh clone writes metadata.json only after the clone,
+// so its config's dolt_server_port must still take the file's rank.
+func TestServerClonePortIsTheStorePort(t *testing.T) {
+	const legacy, serverEnv, configured, metadata = 13307, 13400, 15555, 14444
+	doltPort := func(t *testing.T, beadsDir string) {
+		writeClonePortFile(t, filepath.Join(beadsDir, "config.yaml"), fmt.Sprintf("dolt.port: %d\n", configured))
+	}
+	listenerPort := func(t *testing.T, beadsDir string) {
+		writeClonePortFile(t, filepath.Join(beadsDir, "dolt", "config.yaml"), fmt.Sprintf("listener:\n  port: %d\n", configured))
+	}
+	localPort := func(t *testing.T, beadsDir string) {
+		writeClonePortFile(t, filepath.Join(beadsDir, "config.local.yaml"), fmt.Sprintf("dolt.port: %d\n", configured))
+	}
+	for _, tc := range []struct {
+		name       string
+		serverPort int // BEADS_DOLT_SERVER_PORT
+		legacyPort int // BEADS_DOLT_PORT
+		metaPort   int // dolt_server_port in the config bootstrap writes
+		fresh      bool
+		shared     bool // BEADS_DOLT_SHARED_SERVER=1
+		setup      func(t *testing.T, beadsDir string)
+		want       int
+	}{
+		{name: "config.yaml dolt.port over BEADS_DOLT_PORT", legacyPort: legacy, setup: doltPort, want: configured},
+		{name: "listener.port over BEADS_DOLT_PORT", legacyPort: legacy, setup: listenerPort, want: configured},
+		{name: "config.local.yaml dolt.port over BEADS_DOLT_PORT", legacyPort: legacy, setup: localPort, want: configured},
+		{name: "config.local.yaml dolt.port alone", setup: localPort, want: configured},
+		{name: "BEADS_DOLT_SERVER_PORT over dolt_server_port", serverPort: serverEnv, metaPort: metadata, want: serverEnv},
+		{name: "dolt_server_port over BEADS_DOLT_PORT", legacyPort: legacy, metaPort: metadata, want: metadata},
+		{name: "config.yaml dolt.port over dolt_server_port", metaPort: metadata, setup: doltPort, want: configured},
+		{name: "BEADS_DOLT_PORT alone", legacyPort: legacy, want: legacy},
+		{name: "nothing named", want: configfile.DefaultDoltServerPort},
+		{name: "fresh clone/inherited dolt_server_port over BEADS_DOLT_PORT", fresh: true, legacyPort: legacy, metaPort: metadata, want: metadata},
+		{name: "fresh clone/inherited dolt_server_port alone", fresh: true, metaPort: metadata, want: metadata},
+		{name: "fresh clone/BEADS_DOLT_SERVER_PORT over inherited dolt_server_port", fresh: true, serverPort: serverEnv, metaPort: metadata, want: serverEnv},
+		{name: "fresh clone/config.yaml dolt.port over inherited dolt_server_port", fresh: true, metaPort: metadata, setup: doltPort, want: configured},
+		{name: "shared server/dolt_server_port not read", shared: true, metaPort: metadata, want: doltserver.DefaultSharedServerPort},
+		{name: "shared server/fresh clone/inherited dolt_server_port not read", shared: true, fresh: true, metaPort: metadata, want: doltserver.DefaultSharedServerPort},
+		{name: "shared server/BEADS_DOLT_PORT over the shared default", shared: true, legacyPort: legacy, metaPort: metadata, want: legacy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clonePortTestEnv(t)
+			if tc.shared {
+				t.Setenv("BEADS_DOLT_SHARED_SERVER", "1")
+			}
+			if tc.serverPort > 0 {
+				t.Setenv("BEADS_DOLT_SERVER_PORT", strconv.Itoa(tc.serverPort))
+			}
+			if tc.legacyPort > 0 {
+				t.Setenv("BEADS_DOLT_PORT", strconv.Itoa(tc.legacyPort))
+			}
+			beadsDir := filepath.Join(t.TempDir(), ".beads")
+			writeClonePortFile(t, filepath.Join(beadsDir, "config.yaml"), "# Beads Config\n")
+			if tc.setup != nil {
+				tc.setup(t, beadsDir)
+			}
+			loadClonePortConfig(t, beadsDir)
+			cfg := &configfile.Config{
+				Backend:        configfile.BackendDolt,
+				DoltMode:       configfile.DoltModeServer,
+				DoltServerHost: "db.example.com",
+				DoltServerPort: tc.metaPort,
+				DoltDatabase:   "clone_port",
+			}
+			if !tc.fresh {
+				if err := cfg.Save(beadsDir); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			got := serverClonePort(beadsDir, cfg)
+
+			if tc.fresh {
+				// What finalizeSyncedBootstrap writes before the store opens.
+				if err := cfg.Save(beadsDir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dial := doltserver.DialConfig(beadsDir)
+			if got != tc.want {
+				t.Errorf("serverClonePort = %d, want %d", got, tc.want)
+			}
+			if tc.want != configfile.DefaultDoltServerPort && got != dial.Port {
+				t.Errorf("serverClonePort = %d, but the store dials %d (%s)", got, dial.Port, dial.PortSource)
+			}
+		})
+	}
+}
+
+// TestCloneFromRemoteServerPortFollowsTheCaller pins which port each caller's
+// server clone dials when config.yaml dolt.port and the legacy BEADS_DOLT_PORT
+// disagree. bd bootstrap clones into the workspace, whose later commands
+// connect on dolt.port. bd init --server --external opens its own store with
+// BEADS_DOLT_PORT first, so its clone stays there.
+func TestCloneFromRemoteServerPortFollowsTheCaller(t *testing.T) {
+	clonePortTestEnv(t)
+	configured := freeLoopbackPort(t)
+	legacy := freeLoopbackPort(t)
+	for legacy == configured {
+		legacy = freeLoopbackPort(t)
+	}
+	t.Setenv("BEADS_DOLT_PORT", strconv.Itoa(legacy))
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	writeClonePortFile(t, filepath.Join(beadsDir, "config.yaml"), fmt.Sprintf("dolt.port: %d\n", configured))
+	loadClonePortConfig(t, beadsDir)
+	cfg := &configfile.Config{
+		Backend:        configfile.BackendDolt,
+		DoltMode:       configfile.DoltModeServer,
+		DoltServerHost: "127.0.0.1",
+		DoltDatabase:   "clone_port",
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatal(err)
+	}
+	const remote = "file:///nonexistent/remote"
+
+	for _, tc := range []struct {
+		name  string
+		clone func() error
+		want  int
+	}{
+		{name: "bd bootstrap", want: configured, clone: func() error {
+			return cloneFromRemote(t.Context(), beadsDir, remote, "clone_port", cfg)
+		}},
+		{name: "bd init --server --external", want: legacy, clone: func() error {
+			initCfg := initTimeCloneConfig(true, "", 0, "", "", "clone_port")
+			return cloneFromRemoteWithMode(t.Context(), beadsDir, remote, "clone_port", initCfg, remoteCloneExternalServer)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.clone()
+			if err == nil {
+				t.Fatal("clone succeeded with no server running")
+			}
+			want := "dolt server unreachable at " + net.JoinHostPort("127.0.0.1", strconv.Itoa(tc.want))
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("clone error = %v, want it to name %s", err, want)
+			}
+		})
+	}
+}
+
+// TestServerClonePortIgnoresAnAncestorDoltPort covers a fresh rig with no
+// .beads yet, inside a town but bounded by its own git repository (GH#3029,
+// GH#2792): config loads the town's config.yaml, so DialConfig sees the
+// town's dolt.port or dolt.shared-server. finalizeSyncedBootstrap then writes
+// the rig's own config.yaml, which names neither, and later commands dial by
+// the rig's own sources. The clone must land there too.
+func TestServerClonePortIgnoresAnAncestorDoltPort(t *testing.T) {
+	const legacy, townPort, metadata, bdPort = 13307, 15555, 14444, 16666
+	for _, tc := range []struct {
+		name       string
+		committed  bool // the rig commits metadata.json (defensive: the CLI pins BEADS_DIR to it)
+		townShared bool // the town's config.yaml sets dolt.shared-server instead of dolt.port
+		noMetaPort bool // the rig's config names no dolt_server_port
+		legacyPort int  // BEADS_DOLT_PORT
+		bdDoltPort int  // BD_DOLT_PORT
+		bdShared   bool // BD_DOLT_SHARED_SERVER=1
+		want       int
+	}{
+		{name: "fresh clone", want: metadata},
+		{name: "committed metadata.json (defensive)", committed: true, want: metadata},
+		{name: "fresh clone/inherited dolt_server_port over BEADS_DOLT_PORT", legacyPort: legacy, want: metadata},
+		{name: "fresh clone/BEADS_DOLT_PORT without dolt_server_port", noMetaPort: true, legacyPort: legacy, want: legacy},
+		{name: "fresh clone/BD_DOLT_PORT", bdDoltPort: bdPort, want: bdPort},
+		{name: "fresh clone/town shared-server", townShared: true, want: metadata},
+		{name: "fresh clone/BD_DOLT_SHARED_SERVER", bdShared: true, want: doltserver.DefaultSharedServerPort},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clonePortTestEnv(t)
+			t.Setenv("BEADS_CEILING_DIRECTORIES", "")
+			if tc.bdShared {
+				t.Setenv("BD_DOLT_SHARED_SERVER", "1")
+			}
+			if tc.legacyPort > 0 {
+				t.Setenv("BEADS_DOLT_PORT", strconv.Itoa(tc.legacyPort))
+			}
+			if tc.bdDoltPort > 0 {
+				t.Setenv("BD_DOLT_PORT", strconv.Itoa(tc.bdDoltPort))
+			}
+			town := t.TempDir()
+			townConfig := fmt.Sprintf("dolt.port: %d\n", townPort)
+			if tc.townShared {
+				townConfig = "dolt.shared-server: true\n"
+			}
+			writeClonePortFile(t, filepath.Join(town, ".beads", "config.yaml"), townConfig)
+			rig := filepath.Join(town, "rig")
+			beadsDir := filepath.Join(rig, ".beads")
+			if err := os.MkdirAll(rig, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &configfile.Config{
+				Backend:        configfile.BackendDolt,
+				DoltMode:       configfile.DoltModeServer,
+				DoltServerHost: "db.example.com",
+				DoltServerPort: metadata,
+				DoltDatabase:   "rig_clone_port",
+			}
+			if tc.noMetaPort {
+				cfg.DoltServerPort = 0
+			}
+			if tc.committed {
+				if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := cfg.Save(beadsDir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(rig)
+			t.Setenv("BEADS_DIR", "")
+			config.ResetForTesting()
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize: %v", err)
+			}
+			before := doltserver.DialConfig(beadsDir)
+			switch {
+			case tc.townShared && !before.PortSharedServer:
+				t.Fatalf("precondition: DialConfig before bootstrap is not in shared-server mode (port %d, %s)", before.Port, before.PortSource)
+			case !tc.townShared && !tc.bdShared && tc.bdDoltPort == 0 && before.Port != townPort:
+				t.Fatalf("precondition: DialConfig before bootstrap = %d (%s), want the town's dolt.port %d", before.Port, before.PortSource, townPort)
+			}
+
+			got := serverClonePort(beadsDir, cfg)
+
+			// What finalizeSyncedBootstrap writes before the next command.
+			if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.Save(beadsDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := createConfigYaml(beadsDir, false, ""); err != nil {
+				t.Fatal(err)
+			}
+			config.ResetForTesting()
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize: %v", err)
+			}
+			dial := doltserver.DialConfig(beadsDir)
+			if got != tc.want {
+				t.Errorf("serverClonePort = %d, want %d", got, tc.want)
+			}
+			if got != dial.Port {
+				t.Errorf("serverClonePort = %d, but later commands in the rig dial %d (%s)", got, dial.Port, dial.PortSource)
+			}
+		})
+	}
+}
+
+// TestServerClonePortReadsTheUserLayers covers a fresh clone with no .beads
+// and no enclosing workspace, whose port or shared-server mode comes from a
+// layer every later command reads through config: BD_DOLT_SHARED_SERVER, the
+// documented user config, or the legacy ~/.beads/config.yaml (which the
+// directory walk also loads as the project file for a repository under
+// HOME). None of these is an enclosing workspace's config, so the clone port
+// must stay the one the store dials.
+func TestServerClonePortReadsTheUserLayers(t *testing.T) {
+	const port, metadata = 15555, 14444
+	userFile := func(rel, body string) func(t *testing.T, home string) {
+		return func(t *testing.T, home string) {
+			writeClonePortFile(t, filepath.Join(home, rel), body)
+		}
+	}
+	legacyPort := userFile(filepath.Join(".beads", "config.yaml"), fmt.Sprintf("dolt.port: %d\n", port))
+	legacyShared := userFile(filepath.Join(".beads", "config.yaml"), "dolt.shared-server: true\n")
+	documentedPort := userFile(filepath.Join(".config", "bd", "config.yaml"), fmt.Sprintf("dolt.port: %d\n", port))
+	documentedShared := userFile(filepath.Join(".config", "bd", "config.yaml"), "dolt.shared-server: true\n")
+	bdShared := func(value string) func(t *testing.T, home string) {
+		return func(t *testing.T, home string) { t.Setenv("BD_DOLT_SHARED_SERVER", value) }
+	}
+	shared := doltserver.DefaultSharedServerPort
+	for _, tc := range []struct {
+		name      string
+		setup     []func(t *testing.T, home string)
+		underHome bool // the repository lives under HOME
+		localHost bool // 127.0.0.1 instead of a remote host
+		metaPort  int  // dolt_server_port in the config bootstrap writes
+		want      int
+	}{
+		{name: "BD_DOLT_SHARED_SERVER", setup: []func(*testing.T, string){bdShared("1")}, want: shared},
+		{name: "BD_DOLT_SHARED_SERVER/local host", setup: []func(*testing.T, string){bdShared("1")}, localHost: true, want: shared},
+		{name: "BD_DOLT_SHARED_SERVER=false over the user config", setup: []func(*testing.T, string){documentedShared, bdShared("false")}, want: configfile.DefaultDoltServerPort},
+		{name: "legacy dolt.port", setup: []func(*testing.T, string){legacyPort}, want: port},
+		{name: "legacy dolt.port over dolt_server_port", setup: []func(*testing.T, string){legacyPort}, metaPort: metadata, want: port},
+		{name: "legacy dolt.shared-server", setup: []func(*testing.T, string){legacyShared}, want: shared},
+		{name: "legacy dolt.shared-server/local host", setup: []func(*testing.T, string){legacyShared}, localHost: true, want: shared},
+		{name: "repo under HOME/legacy dolt.port", setup: []func(*testing.T, string){legacyPort}, underHome: true, want: port},
+		{name: "repo under HOME/legacy dolt.shared-server", setup: []func(*testing.T, string){legacyShared}, underHome: true, want: shared},
+		{name: "user config dolt.port", setup: []func(*testing.T, string){documentedPort}, want: port},
+		{name: "user config dolt.shared-server", setup: []func(*testing.T, string){documentedShared}, want: shared},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clonePortTestEnv(t)
+			t.Setenv("BEADS_CEILING_DIRECTORIES", "")
+			home := os.Getenv("HOME")
+			for _, setup := range tc.setup {
+				setup(t, home)
+			}
+			repo := filepath.Join(t.TempDir(), "repo")
+			if tc.underHome {
+				repo = filepath.Join(home, "code", "repo")
+			}
+			if err := os.MkdirAll(repo, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			beadsDir := filepath.Join(repo, ".beads")
+			host := "db.example.com"
+			if tc.localHost {
+				host = "127.0.0.1"
+			}
+			cfg := &configfile.Config{
+				Backend:        configfile.BackendDolt,
+				DoltMode:       configfile.DoltModeServer,
+				DoltServerHost: host,
+				DoltServerPort: tc.metaPort,
+				DoltDatabase:   "user_clone_port",
+			}
+			t.Chdir(repo)
+			t.Setenv("BEADS_DIR", "")
+			config.ResetForTesting()
+			if err := config.Initialize(); err != nil {
+				t.Fatalf("config.Initialize: %v", err)
+			}
+
+			got := serverClonePort(beadsDir, cfg)
+
+			// What finalizeSyncedBootstrap writes before the next command,
+			// which the CLI runs with BEADS_DIR pinned to it.
+			if err := os.MkdirAll(beadsDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.Save(beadsDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := createConfigYaml(beadsDir, false, ""); err != nil {
+				t.Fatal(err)
+			}
+			loadClonePortConfig(t, beadsDir)
+			dial := doltserver.DialConfig(beadsDir)
+			if got != tc.want {
+				t.Errorf("serverClonePort = %d, want %d", got, tc.want)
+			}
+			if tc.want != configfile.DefaultDoltServerPort && got != dial.Port {
+				t.Errorf("serverClonePort = %d, but later commands dial %d (%s)", got, dial.Port, dial.PortSource)
+			}
+		})
 	}
 }
