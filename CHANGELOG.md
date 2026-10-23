@@ -933,6 +933,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncation: when the read it lands on has already found the checkpoint
   pruned, the follower still reports `events_journal_truncated` and exits 1.
 
+- **`bd events tail --follow --json` reports a failure on one line.** A
+  follower whose read failed for any reason but a pruned checkpoint (a lost
+  server connection, a failed embedded or proxied read) ended its JSON Lines
+  stream with an indented, multi-line error object that a line reader cannot
+  parse, and so did a follower whose first read found its checkpoint pruned.
+  Both are now one compact line: a failed read is bd's usual `--json` error
+  object (`error` and `schema_version`, inside `data` under
+  `BD_JSON_ENVELOPE=1`), and a truncation is the `events_journal_truncated`
+  line a later poll already printed, without the envelope. Without
+  `--follow`, `bd events tail` and `bd events export` print failures as
+  before.
+
 - **A Dolt server whose port is named for it is no longer met with
   `bd dolt start` advice when it is down.** A port named by
   `BEADS_DOLT_SERVER_PORT` (or the legacy `BEADS_DOLT_PORT`), by
