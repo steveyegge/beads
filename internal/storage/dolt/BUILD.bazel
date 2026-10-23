@@ -410,6 +410,7 @@ go_test(
         "//internal/doltserver",
         "//internal/githooksenv",
         "//internal/storage",
+        "//internal/storage/backendnames",
         "//internal/storage/batchbench",
         "//internal/storage/batchfixtures",
         "//internal/storage/createbatchequiv",

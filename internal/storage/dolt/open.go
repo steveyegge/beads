@@ -2,6 +2,7 @@ package dolt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -112,6 +113,31 @@ func requireDoltBackend(fileCfg *configfile.Config, beadsDir string) error {
 	return nil
 }
 
+// RequireDiscoveredDoltBackend runs requireDoltBackend on beadsDir's metadata
+// as configfile.LoadForDiscovery reads it, which never rewrites the workspace.
+// The metadata-driven constructors run it before configfile.Load, which
+// migrates a legacy config.json into metadata.json and drops the keys Config
+// does not know, so a workspace they refuse (another data model, or a backend
+// other than Dolt) is refused before that rewrite rather than after it. A
+// caller that writes into the workspace before it reaches a constructor
+// (beads.OpenGated's gates) runs it first too. Metadata that does not load is
+// left to Load to report, unless the graph format marker sits beside it
+// (configfile.LoadAndCheckWorkspaceFormat); no metadata at all selects Dolt.
+func RequireDiscoveredDoltBackend(beadsDir string) error {
+	fileCfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	if err != nil {
+		var formatErr *configfile.UnsupportedWorkspaceFormatError
+		if errors.As(err, &formatErr) {
+			return err
+		}
+		return nil
+	}
+	if fileCfg == nil {
+		return nil
+	}
+	return requireDoltBackend(fileCfg, beadsDir)
+}
+
 // NewFromConfig creates a DoltStore based on the metadata.json configuration.
 // beadsDir is the path to the .beads directory.
 func NewFromConfig(ctx context.Context, beadsDir string) (*DoltStore, error) {
@@ -123,9 +149,9 @@ func NewFromConfig(ctx context.Context, beadsDir string) (*DoltStore, error) {
 // `bd doctor` that should behave the same way as normal top-level CLI commands
 // while still honoring externally managed server mode.
 func NewFromConfigWithCLIOptions(ctx context.Context, beadsDir string, cfg *Config) (*DoltStore, error) {
-	// Refuse a graph workspace before Load can migrate a legacy config.json
-	// into metadata.json; requireDoltBackend re-checks the loaded config.
-	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+	// Refuse before Load can migrate a legacy config.json into metadata.json;
+	// requireDoltBackend re-checks the loaded config.
+	if err := RequireDiscoveredDoltBackend(beadsDir); err != nil {
 		return nil, err
 	}
 	fileCfg, err := configfile.Load(beadsDir)
@@ -158,9 +184,9 @@ func NewFromConfigWithCLIOptions(ctx context.Context, beadsDir string, cfg *Conf
 // NewFromConfigWithOptions creates a DoltStore with options from metadata.json.
 // Options in cfg override those from the config file. Pass nil for default options.
 func NewFromConfigWithOptions(ctx context.Context, beadsDir string, cfg *Config) (*DoltStore, error) {
-	// Refuse a graph workspace before Load can migrate a legacy config.json
-	// into metadata.json; requireDoltBackend re-checks the loaded config.
-	if err := configfile.CheckDiscoveredWorkspaceFormat(beadsDir); err != nil {
+	// Refuse before Load can migrate a legacy config.json into metadata.json;
+	// requireDoltBackend re-checks the loaded config.
+	if err := RequireDiscoveredDoltBackend(beadsDir); err != nil {
 		return nil, err
 	}
 	fileCfg, err := configfile.Load(beadsDir)
