@@ -340,3 +340,153 @@ func TestAtomicWriteFileFollowingSymlink_KeepsTargetMode(t *testing.T) {
 	}
 	assertFileMode(t, target, 0o600)
 }
+
+// symlinkDir makes link a symlink to the directory target, creating target,
+// and skips the test where links cannot be made, as on Windows without the
+// privilege.
+func symlinkDir(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", target, err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+}
+
+// requireLinkKept fails the test unless path is still a symlink that still
+// leads to a directory, so removing the link's emptied target, which would
+// leave it dangling, fails too.
+func requireLinkKept(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("remove should keep the link %s, lstat err = %v", path, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s should still be a symlink, mode = %v", path, info.Mode())
+	}
+	target, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("remove should keep the directory the link %s leads to, stat err = %v", path, err)
+	}
+	if !target.IsDir() {
+		t.Fatalf("the link %s should still lead to a directory, mode = %v", path, target.Mode())
+	}
+}
+
+// requireDirKept fails the test unless path is still a real directory.
+func requireDirKept(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("remove should keep the directory %s, lstat err = %v", path, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("%s should still be a directory, mode = %v", path, info.Mode())
+	}
+}
+
+// requireGone fails the test unless nothing is at path.
+func requireGone(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("remove should leave nothing at %s, lstat err = %v", path, err)
+	}
+}
+
+// requireState fails the test unless path is in the state want names: "link"
+// for a symlink, "dir" for a real directory, "gone" for nothing there.
+func requireState(t *testing.T, path, want string) {
+	t.Helper()
+	switch want {
+	case "link":
+		requireLinkKept(t, path)
+	case "dir":
+		requireDirKept(t, path)
+	case "gone":
+		requireGone(t, path)
+	default:
+		t.Fatalf("requireState: unknown state %q for %s", want, path)
+	}
+}
+
+// RemoveEmptyDir removes only a real directory that holds nothing: never a
+// link to a directory, which removing would unlink whatever its target
+// holds, nor a file.
+func TestRemoveEmptyDir(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		make  func(t *testing.T, root, path string)
+		check func(t *testing.T, path string)
+	}{
+		{name: "missing", check: requireGone},
+		{
+			name: "empty directory",
+			make: func(t *testing.T, _, path string) {
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: requireGone,
+		},
+		{
+			name: "directory holding a file",
+			make: func(t *testing.T, _, path string) {
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(path, "keep"), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: requireDirKept,
+		},
+		{
+			name:  "link to an empty directory",
+			make:  func(t *testing.T, root, path string) { symlinkDir(t, filepath.Join(root, "target"), path) },
+			check: requireLinkKept,
+		},
+		{
+			name: "link to a directory holding a file",
+			make: func(t *testing.T, root, path string) {
+				target := filepath.Join(root, "target")
+				symlinkDir(t, target, path)
+				if err := os.WriteFile(filepath.Join(target, "keep"), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, path string) {
+				requireLinkKept(t, path)
+				if _, err := os.Lstat(filepath.Join(filepath.Dir(path), "target", "keep")); err != nil {
+					t.Fatalf("remove should keep the file in the link's target: %v", err)
+				}
+			},
+		},
+		{
+			name: "file",
+			make: func(t *testing.T, _, path string) {
+				if err := os.WriteFile(path, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, path string) {
+				if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+					t.Fatalf("remove should keep the file %s, lstat err = %v", path, err)
+				}
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "dir")
+			if tt.make != nil {
+				tt.make(t, root, path)
+			}
+			if err := RemoveEmptyDir(path); err != nil {
+				t.Fatalf("RemoveEmptyDir: %v", err)
+			}
+			tt.check(t, path)
+		})
+	}
+}
