@@ -99,6 +99,12 @@ func (s *stopOnReadStore) PruneEventsJournal(context.Context, int64, int, int) (
 // already found is not a stop: the consumer still gets the report and a
 // non-zero exit, because a clean exit would tell it the stream had no gap.
 // A read that fails while the follower is still running is no stop at all.
+//
+// It reads stdout the way the follower's consumer does, line by line: a
+// failure is one compact JSON line after the records already emitted,
+// whichever read it lands on and in either --json mode. A failed read is
+// bd's usual --json error object, a truncation the events_journal_truncated
+// line.
 func TestEventsTailFollowStopMidRead(t *testing.T) {
 	t.Setenv("BD_EVENTS_JOURNAL", "1") // no disabled-journal notice
 	oldStore, oldJSON, oldProxied := store, jsonOutput, proxiedServerMode
@@ -107,6 +113,7 @@ func TestEventsTailFollowStopMidRead(t *testing.T) {
 
 	truncated := &storage.EventsJournalTruncatedError{Since: 0, Floor: 4, Head: 5}
 	canceled := func(ctx context.Context) error { return fmt.Errorf("journal: read since 0: %w", ctx.Err()) }
+	badConn := func(context.Context) error { return errors.New("journal: read since 0: driver: bad connection") }
 	for _, tc := range []struct {
 		name string
 		// poll lands the stop on the first poll; otherwise on the catch-up read.
@@ -117,6 +124,8 @@ func TestEventsTailFollowStopMidRead(t *testing.T) {
 		// no stop, so it is a real failure rather than a clean stop.
 		live          bool
 		wantTruncated bool
+		// envelope runs the follower with BD_JSON_ENVELOPE=1.
+		envelope bool
 	}{
 		{name: "catch-up read canceled", readErr: canceled},
 		// A canceled read can also surface without the context error: the
@@ -125,21 +134,32 @@ func TestEventsTailFollowStopMidRead(t *testing.T) {
 			return errors.Join(errors.New("journal: read since 0: driver: bad connection"), sql.ErrTxDone)
 		}},
 		{name: "catch-up read truncated", readErr: func(context.Context) error { return truncated }, wantTruncated: true},
+		{name: "catch-up read truncated, envelope", envelope: true, wantTruncated: true, readErr: func(context.Context) error { return truncated }},
+		{name: "catch-up read fails without a stop", live: true, readErr: badConn},
 		{name: "poll canceled", poll: true, readErr: canceled},
 		{name: "poll truncated", poll: true, wantTruncated: true, readErr: func(context.Context) error {
 			return errors.Join(truncated, sql.ErrTxDone)
 		}},
-		{name: "poll fails without a stop", poll: true, live: true, readErr: func(context.Context) error {
-			return errors.New("journal: read since 0: driver: bad connection")
-		}},
+		{name: "poll fails without a stop", poll: true, live: true, readErr: badConn},
+		{name: "poll fails without a stop, envelope", poll: true, live: true, envelope: true, readErr: badConn},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			envelope := ""
+			if tc.envelope {
+				envelope = "1"
+			}
+			t.Setenv("BD_JSON_ENVELOPE", envelope)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			fake := &stopOnReadStore{}
+			records := 0
 			if tc.poll {
-				// The catch-up read finds nothing new.
-				fake.reads = append(fake.reads, func(context.Context) ([]storage.EventsJournalRow, error) { return nil, nil })
+				// The catch-up read emits a record, so the poll fails on a
+				// stream that already carries one.
+				records = 1
+				fake.reads = append(fake.reads, func(context.Context) ([]storage.EventsJournalRow, error) {
+					return []storage.EventsJournalRow{{Seq: 1, Op: "create", IssueID: "bd-1"}}, nil
+				})
 			}
 			fake.reads = append(fake.reads, func(ctx context.Context) ([]storage.EventsJournalRow, error) {
 				if !tc.live {
@@ -157,39 +177,74 @@ func TestEventsTailFollowStopMidRead(t *testing.T) {
 			if fake.calls != len(fake.reads) {
 				t.Fatalf("follower made %d journal read(s), want %d", fake.calls, len(fake.reads))
 			}
-			if tc.live {
-				if code, ok := exitCodeFromError(err); !ok || code != 1 {
-					t.Fatalf("runEventsTail = %v, want exit 1: a read that fails with no stop is not a clean stop\nstdout:\n%s", err, out)
-				}
-				if !strings.Contains(out, "reading events journal") {
-					t.Errorf("stdout does not report the failed read\nstdout:\n%s", out)
-				}
-				return
-			}
-			if !tc.wantTruncated {
+			lines := followerStdoutLines(t, out)
+			if !tc.live && !tc.wantTruncated {
 				if err != nil {
 					t.Fatalf("runEventsTail = %v, want nil: a read the stop canceled is a clean stop\nstdout:\n%s", err, out)
 				}
+				if len(lines) != records {
+					t.Errorf("stdout has %d line(s), want only the %d record(s) emitted before the stop\nstdout:\n%s", len(lines), records, out)
+				}
 				return
 			}
+			why := "a truncation found on the stop's turn must still fail the follower"
+			if tc.live {
+				why = "a read that fails with no stop is not a clean stop"
+			}
 			if code, ok := exitCodeFromError(err); !ok || code != 1 {
-				t.Fatalf("runEventsTail = %v, want exit 1: a truncation found on the stop's turn must still fail the follower\nstdout:\n%s", err, out)
+				t.Fatalf("runEventsTail = %v, want exit 1: %s\nstdout:\n%s", err, why, out)
 			}
-			var last struct {
-				Code  string `json:"code"`
-				Floor int64  `json:"floor"`
+			if len(lines) != records+1 {
+				t.Fatalf("stdout has %d line(s), want %d record(s) and then the failure on one line\nstdout:\n%s", len(lines), records, out)
 			}
-			for dec := json.NewDecoder(strings.NewReader(out)); dec.More(); {
-				if decErr := dec.Decode(&last); decErr != nil {
-					t.Fatalf("stdout is not JSON: %v\n%s", decErr, out)
+			for i, rec := range lines[:records] {
+				if rec["seq"] != float64(i+1) {
+					t.Errorf("stdout line %d = %v, want the record with seq %d\nstdout:\n%s", i+1, rec, i+1, out)
 				}
 			}
-			if last.Code != storage.EventsJournalTruncatedCode || last.Floor != truncated.Floor {
-				t.Errorf("last stdout object = %+v, want the %s report with floor %d\nstdout:\n%s",
-					last, storage.EventsJournalTruncatedCode, truncated.Floor, out)
+			last := lines[records]
+			if tc.wantTruncated {
+				// The stream's own framing, envelope or not.
+				if last["code"] != storage.EventsJournalTruncatedCode || last["floor"] != float64(truncated.Floor) {
+					t.Errorf("failure line = %v, want the %s report with floor %d\nstdout:\n%s",
+						last, storage.EventsJournalTruncatedCode, truncated.Floor, out)
+				}
+				return
+			}
+			// bd's usual --json error object: error and schema_version, with the
+			// error inside data under the envelope.
+			if last["schema_version"] != float64(JSONSchemaVersion) {
+				t.Errorf("failure line has schema_version %v, want %d\nstdout:\n%s", last["schema_version"], JSONSchemaVersion, out)
+			}
+			payload := last
+			if tc.envelope {
+				payload, _ = last["data"].(map[string]any)
+			}
+			if msg, _ := payload["error"].(string); !strings.HasPrefix(msg, "reading events journal: ") || !strings.Contains(msg, "bad connection") {
+				t.Errorf("failure line = %v, want the error reading events journal: ... bad connection\nstdout:\n%s", last, out)
 			}
 		})
 	}
+}
+
+// followerStdoutLines decodes a follower's stdout the way its consumer reads
+// it, one line at a time, failing the test on any line that is not a whole
+// JSON object by itself: an indented object is valid JSON as a document and
+// still unreadable to a line reader.
+func followerStdoutLines(t *testing.T, out string) []map[string]any {
+	t.Helper()
+	if out == "" {
+		return nil
+	}
+	var objs []map[string]any
+	for i, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("stdout line %d is not a JSON object on its own, so a line reader cannot parse it: %v\nline: %q\nstdout:\n%s", i+1, err, line, out)
+		}
+		objs = append(objs, obj)
+	}
+	return objs
 }
 
 // TestEmbeddedEventsTailFollowExitsOnStdinEOF pins #7086's lifecycle
@@ -348,6 +403,37 @@ func TestEmbeddedEventsTailReportsTruncationToTheCLI(t *testing.T) {
 		if got.Since != 0 || got.Floor != 4 || got.Head != 5 {
 			t.Errorf("%v: since/floor/head = %d/%d/%d, want 0/4/5\n%s", args, got.Since, got.Floor, got.Head, out)
 		}
+	}
+
+	// A follower started on the pruned checkpoint finds the truncation on its
+	// first read. Its consumer is the line reader every later poll reports to,
+	// so the report is the stream's one line, not the indented object above.
+	followCtx, cancelFollow := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancelFollow()
+	follow := exec.CommandContext(followCtx, bd, "events", "tail", "--since", "0", "--follow", "--json")
+	follow.Dir = dir
+	follow.Env = env
+	var followOut, followErr strings.Builder
+	follow.Stdout = &followOut
+	follow.Stderr = &followErr
+	if err := follow.Run(); err == nil {
+		t.Fatalf("a follower on a pruned-past checkpoint exited 0; want a truncation failure\nstdout:\n%s", followOut.String())
+	} else if followCtx.Err() != nil {
+		t.Fatalf("a follower on a pruned-past checkpoint kept polling; want a truncation failure\nstdout:\n%s\nstderr:\n%s",
+			followOut.String(), followErr.String())
+	}
+	var followGot struct {
+		Code  string `json:"code"`
+		Since int64  `json:"since"`
+		Floor int64  `json:"floor"`
+		Head  int64  `json:"head"`
+	}
+	line := strings.TrimSuffix(followOut.String(), "\n")
+	if strings.Contains(line, "\n") || json.Unmarshal([]byte(line), &followGot) != nil {
+		t.Fatalf("the follower's truncation report is not one JSON line, so a line reader cannot parse it:\n%s", followOut.String())
+	}
+	if followGot.Code != storage.EventsJournalTruncatedCode || followGot.Since != 0 || followGot.Floor != 4 || followGot.Head != 5 {
+		t.Errorf("follower report = %+v, want %s with since/floor/head 0/4/5\n%s", followGot, storage.EventsJournalTruncatedCode, line)
 	}
 
 	// Resuming from the retained floor-1 still works and returns the surviving
