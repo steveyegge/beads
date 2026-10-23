@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/steveyegge/beads/cmd/bd/setup"
 )
 
 func TestCheckBdInPath(t *testing.T) {
@@ -236,6 +238,9 @@ func TestIsBeadsPluginInstalled(t *testing.T) {
 }
 
 func TestIsBeadsPluginInstalledProjectLevel(t *testing.T) {
+	// Keep the host's managed settings out of these rows.
+	t.Cleanup(setup.SetClaudeManagedSettingsDirForTest(""))
+
 	// Test that plugin is detected in each project-level settings file
 	for _, filename := range []string{"settings.json", "settings.local.json"} {
 		t.Run(filename, func(t *testing.T) {
@@ -274,6 +279,42 @@ func TestIsBeadsPluginInstalledProjectLevel(t *testing.T) {
 			t.Error("expected NOT to detect plugin when explicitly disabled")
 		}
 	})
+
+	// bd doctor resolves the plugin as bd setup claude --check does: the
+	// first settings file that names it decides, so a project's false turns
+	// off a plugin the user settings enable, and only a plugin named beads
+	// counts (#7774's review).
+	for _, tc := range []struct {
+		name, user, local string
+	}{
+		{"a local false turns off a user plugin", `{"enabledPlugins":{"beads@beads-marketplace":true}}`, `{"enabledPlugins":{"beads@beads-marketplace":false}}`},
+		{"design-to-beads is not the beads plugin", `{"enabledPlugins":{"design-to-beads@xexr-marketplace":true}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			home := filepath.Join(tmpDir, "home")
+			project := filepath.Join(tmpDir, "project")
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			for path, content := range map[string]string{
+				filepath.Join(home, ".claude", "settings.json"):          tc.user,
+				filepath.Join(project, ".claude", "settings.local.json"): tc.local,
+			} {
+				if content == "" {
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if isBeadsPluginInstalled(project) {
+				t.Error("expected the beads plugin to be off in the project")
+			}
+		})
+	}
 
 	t.Run("no plugin section", func(t *testing.T) {
 		tmpDir := t.TempDir()

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/beads/cmd/bd/setup"
 )
 
 var latestPyPIVersionFetcher = fetchLatestPyPIVersion
@@ -95,66 +97,11 @@ func CheckClaude(repoPath string) DoctorCheck {
 	}
 }
 
-// isBeadsPluginInstalled checks if beads plugin is enabled in Claude Code.
-// It checks user-level (~/.claude/settings.json) and project-level settings
-// (.claude/settings.json and .claude/settings.local.json).
-// repoPath is the project root directory.
+// isBeadsPluginInstalled reports whether Claude Code enables the beads plugin
+// in a session started in repoPath, the project root directory, resolved as
+// bd setup claude --check resolves it there (setup.BeadsPluginEnabled).
 func isBeadsPluginInstalled(repoPath string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-
-	// Check user-level settings
-	userSettings := filepath.Join(home, ".claude", "settings.json")
-	if checkPluginInSettings(userSettings) {
-		return true
-	}
-
-	// Check project-level settings
-	projectSettings := filepath.Join(repoPath, ".claude", "settings.json")
-	if checkPluginInSettings(projectSettings) {
-		return true
-	}
-
-	// Check project-level local settings (gitignored)
-	projectLocalSettings := filepath.Join(repoPath, ".claude", "settings.local.json")
-	if checkPluginInSettings(projectLocalSettings) {
-		return true
-	}
-
-	return false
-}
-
-// checkPluginInSettings checks if beads plugin is enabled in a settings file
-func checkPluginInSettings(settingsPath string) bool {
-	data, err := os.ReadFile(settingsPath) // #nosec G304 -- settingsPath is constructed from known safe locations, not user input
-	if err != nil {
-		return false
-	}
-
-	var settings map[string]interface{}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return false
-	}
-
-	// Check enabledPlugins section for beads
-	enabledPlugins, ok := settings["enabledPlugins"].(map[string]interface{})
-	if !ok {
-		return false
-	}
-
-	// Look for beads@beads-marketplace plugin
-	for key, value := range enabledPlugins {
-		if strings.Contains(strings.ToLower(key), "beads") {
-			// Check if it's enabled (value should be true)
-			if enabled, ok := value.(bool); ok && enabled {
-				return true
-			}
-		}
-	}
-
-	return false
+	return setup.BeadsPluginEnabled(repoPath)
 }
 
 // isMCPServerInstalled checks if MCP server is configured.

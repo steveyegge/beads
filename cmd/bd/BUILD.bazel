@@ -1368,6 +1368,7 @@ go_test(
     deps = [
         "//:beads",
         "//cmd/bd/doctor",
+        "//cmd/bd/setup",
         "//internal/ado",
         "//internal/beads",
         "//internal/ceiling",
