@@ -34,9 +34,12 @@ set -euo pipefail
 # return no row for an ungrouped MAX/MIN over an unmatched primary-key prefix
 # (dolthub/dolt#12093); releases before 2.4.0 drop a join condition when an
 # ON clause has an OR over indexed columns (dolthub/dolt#11886); releases
-# before 2.3.3 cannot read the descending index column every database bd
-# creates holds ("table has unknown fields"). docs/architecture/dolt.md,
-# "Which Dolt version to install", has the dated measurements.
+# before 2.3.3 cannot write to a database holding a descending index column,
+# which every database bd creates in embedded mode and any database whose
+# schema a dolt sql-server 2.3.3 or newer created holds (an UPDATE or DELETE
+# on issues fails on fk_comp_snap_issue, other writes with "table has unknown
+# fields"). docs/architecture/dolt.md, "Which Dolt version to install", has
+# the dated measurements.
 readonly version="2.5.1"
 readonly max_attempts=3
 readonly retry_delay_seconds=5

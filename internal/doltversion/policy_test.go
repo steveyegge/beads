@@ -33,13 +33,17 @@ func TestWarningMessage(t *testing.T) {
 		t.Error("Message() for old-version warning is empty")
 	} else {
 		// The advisory names what goes wrong below the recommendation, release
-		// range by release range, not just that something may.
+		// range by release range, not just that something may. Below 2.3.3 it
+		// names both errors and both kinds of database that hold the
+		// descending index: the warning prints in proxied-server mode, where
+		// the probed dolt runs the sql-server that creates the schema.
 		for _, want := range []string{
 			"1.52.1", RecommendedMin.String(),
 			"2.4.0 through 2.4.2", "dolthub/dolt#12093",
 			"before 2.4.0", "dolthub/dolt#11886",
 			"2.3.0 and 2.3.1", "DOLT_RESET('--hard')",
-			"before 2.3.3", "table has unknown fields",
+			"before 2.3.3", "table has unknown fields", "fk_comp_snap_issue",
+			"bd creates in embedded mode", "dolt sql-server 2.3.3 or newer created",
 		} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("Message() = %q, want it to mention %q", msg, want)

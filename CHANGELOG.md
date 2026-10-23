@@ -611,30 +611,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with one `listSettings`, and the hook decorator skips its post-write re-reads
   when no hook for the event is installed.
 - **Embedded mode now runs the Dolt 2.5.1 engine, and a database `bd init`
-  creates can no longer be opened by Dolt older than 2.3.3. This change is
-  one-way.** `bd` links `dolthub/driver` v2.4.1 with `dolthub/dolt/go` at the
-  v2.5.1 release.
+  creates in embedded mode can no longer be opened by Dolt older than 2.3.3.
+  This change is one-way.** `bd` links `dolthub/driver` v2.4.1 with
+  `dolthub/dolt/go` at the v2.5.1 release.
 
   Dolt 2.3.3 and later store a descending index column as descending
   (dolthub/dolt#11746), where earlier releases silently stored it ascending.
   Migration 0010 declares `compaction_snapshots`' `idx_comp_snap_issue` with
   `created_at DESC`.
 
-  Dolt older than 2.3.3 answers `table has unknown fields` for a database
-  holding such a table: writes to any table and `information_schema` queries
-  fail. A write that touches `issues` reports it as a foreign-key violation
-  instead: `cannot add or update a child row: a foreign key constraint fails`
-  on `fk_comp_snap_issue`. An earlier `bd` release (every release through
-  v1.3.x links Dolt 2.2.0 or older) therefore cannot open the workspace
-  (`schema skew check: probing schema_migrations existence: … table has
-  unknown fields`), and `BD_IGNORE_SCHEMA_SKEW=1` does not get past it. A
-  `bd` built from source against an older driver may open and read the
-  workspace, but every write fails.
+  Dolt older than 2.3.3 cannot write to a database holding such a table. An
+  `UPDATE` or `DELETE` on `issues`, which `bd create` and `bd update` both
+  run, fails with `cannot add or update a child row: a foreign key constraint
+  fails` on `fk_comp_snap_issue`. Other writes and `information_schema`
+  queries fail with `table has unknown fields`. An earlier `bd` release
+  (every release through v1.3.x links Dolt 2.2.0 or older) therefore cannot
+  open the workspace (`schema skew check: probing schema_migrations
+  existence: … table has unknown fields`), and `BD_IGNORE_SCHEMA_SKEW=1` does
+  not get past it. A `bd` built from source against an older driver may open
+  and read the workspace, but every write fails.
 
   This applies to every database this release creates in embedded mode, and
   to any database whose schema a `dolt sql-server` 2.3.3 or newer created,
-  whatever the `bd` version. `bd` does not convert the index back. A database created
-  earlier keeps its ascending index and stays readable and writable by older
+  whatever the `bd` version. `bd` does not convert the index back. Any other
+  database keeps its ascending index and stays readable and writable by older
   and newer Dolt alike, even after this release migrates and writes to it.
   Every `bd` that touches a new database must be this release or later.
 
