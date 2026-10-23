@@ -1,12 +1,17 @@
 package scripts_test
 
 import (
+	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -107,6 +112,11 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 		t.Errorf("sync step: id %q, run %q; want id sync running tools/rbe/worker-env-sync main", sync.ID, sync.Run)
 	}
 
+	// The PR step stays on the mismatch gate alone, not on the push step's
+	// pushed output: a run that pushed nothing must still open a PR for a
+	// sync branch that has none (its PR was closed unmerged, or the run that
+	// pushed it failed at gh pr create). The step itself leaves an open PR
+	// alone unless this run pushed (TestWorkerEnvAutosyncPRStepNeverRelabelsAnOpenPR).
 	const mismatchIf = "steps.sync.outputs.rc == '1'"
 	for _, name := range []string{
 		"Copy gascity main's worker-env manifest and pin",
@@ -160,6 +170,17 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	if !strings.Contains(push.Run, "force-with-lease=refs/heads/$BRANCH") {
 		t.Errorf("push step run %q, want a --force-with-lease scoped to the fixed branch's ref alone", push.Run)
 	}
+	// pushed=1 is the PR step's only evidence that this run moved the
+	// branch. It is written once, after git push: under bash -e a failed
+	// push ends the step before it, and a run that pushes nothing never
+	// reaches it.
+	const pushedLine = `echo "pushed=1" >> "$GITHUB_OUTPUT"`
+	if push.ID != "push" {
+		t.Errorf("push step id = %q, want push (the PR step reads steps.push.outputs.pushed)", push.ID)
+	}
+	if strings.Count(push.Run, "pushed=1") != 1 || strings.Index(push.Run, pushedLine) < strings.LastIndex(push.Run, "git push") {
+		t.Errorf("push step run %q, want pushed=1 written once, as %s after the git push", push.Run, pushedLine)
+	}
 
 	pr := job.step(t, "Open or update the sync PR")
 	if pr.Uses != "" {
@@ -174,12 +195,225 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	if pr.Env["BRANCH"] != workerEnvAutosyncBranch {
 		t.Errorf("PR step env BRANCH = %q, want the fixed branch %q (so a later run updates the same PR instead of opening a new one)", pr.Env["BRANCH"], workerEnvAutosyncBranch)
 	}
-	if !strings.Contains(pr.Run, "gh pr create") || !strings.Contains(pr.Run, "gh pr edit") || !strings.Contains(pr.Run, `--add-label "$LABEL"`) {
-		t.Errorf("PR step run %q, want it to create-or-update the PR and add the label via gh", pr.Run)
+	if !strings.Contains(pr.Run, "gh pr create") || !strings.Contains(pr.Run, "gh pr edit") || !strings.Contains(pr.Run, `--label "$LABEL"`) {
+		t.Errorf("PR step run %q, want it to create-or-update the PR via gh, labeling the PR it creates", pr.Run)
+	}
+	if strings.Contains(pr.Run, "--add-label") {
+		t.Errorf("PR step run %q adds a label to an existing PR; it labels only in gh pr create (an open PR's review may be in flight)", pr.Run)
 	}
 	if pr.Env["LABEL"] != "status/needs-review-auto" {
 		t.Errorf("PR step env LABEL = %q, want status/needs-review-auto (routes it through the automated review workflow)", pr.Env["LABEL"])
 	}
+	if pr.Env["PUSHED"] != "${{ steps.push.outputs.pushed }}" {
+		t.Errorf("PR step env PUSHED = %q, want ${{ steps.push.outputs.pushed }} (an open PR is edited only by a run that pushed)", pr.Env["PUSHED"])
+	}
+}
+
+// TestWorkerEnvAutosyncPRStepNeverRelabelsAnOpenPR runs the "Open or
+// update the sync PR" step's real run: script, parsed from the workflow,
+// under bash -e (Actions' shell for a run: step with no shell:) against a
+// fake gh that applies --jq with jq, as gh does (a null result printed as
+// an empty line, as gh prints it). status/needs-review-auto
+// requests the automated review, and the review pipeline swaps it for
+// status/reviewing when that review starts (#7746: labeled 01:33:56Z,
+// reviewing 01:34:34Z, label removed 01:34:36Z), so adding it to a PR that
+// is already open requests another review of a PR whose review is running,
+// failed, or done. Every run that gets past the push step reaches this
+// step; once the push step can finish without pushing, that is every run
+// while main's pin is stale, the whole time the PR waits on that review.
+// The step labels only a PR it opens itself (in the gh pr create call),
+// edits an open PR only when this run pushed a new commit to it, and only
+// warns about an open PR that carries no review-pipeline label (triage
+// labels such as status/needs-triage, which triage-label.yml adds to every
+// new PR, and status/needs-bugflow do not count). A fork PR from a branch
+// of the same name is never taken for the sync PR.
+func TestWorkerEnvAutosyncPRStepNeverRelabelsAnOpenPR(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skipf("the PR step runs only on worker-env-autosync.yml's ubuntu-latest runner; this file's executed fixtures are Linux-only; GOOS=%s", runtime.GOOS)
+	}
+	bash := requireHostTool(t, "bash")
+	requireHostTool(t, "jq")
+	pr := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob).step(t, "Open or update the sync PR")
+	dir := t.TempDir()
+	script := filepath.Join(dir, "pr-step.sh")
+	if err := os.WriteFile(script, []byte(pr.Run), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The open PRs on the sync branch's head name, as gh pr list's
+	// comma-separated JSON objects in $FAKE_GH_DIR/open.json; the fake
+	// keeps only the fields the step's --json requests, as gh does. Each
+	// call's argv is kept NUL-separated, one file per call, so a multi-line
+	// --body stays one argument.
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const fakeGH = `#!/usr/bin/env bash
+set -u
+count=$(( $(cat "$FAKE_GH_DIR/count" 2>/dev/null || echo 0) + 1 ))
+echo "$count" > "$FAKE_GH_DIR/count"
+printf '%s\0' "$@" > "$FAKE_GH_DIR/call.$(printf '%03d' "$count")"
+case "${1-} ${2-}" in
+"pr list")
+  if [ -n "${FAKE_GH_LIST_FAILS:-}" ]; then echo "fake gh: HTTP 502" >&2; exit 1; fi
+  jq_expr="." fields=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --jq) jq_expr="$2"; shift ;;
+    --json) fields="$2"; shift ;;
+    esac
+    shift
+  done
+  if [ -f "$FAKE_GH_DIR/open.json" ]; then json="[$(cat "$FAKE_GH_DIR/open.json")]"; else json='[]'; fi
+  # gh returns only the fields named in --json, so a field the --jq reads
+  # but --json does not request is absent here too.
+  json="$(printf '%s\n' "$json" | jq -c --arg f "$fields" 'map(with_entries(select(.key as $k | $f | split(",") | index($k))))')"
+  # gh prints an empty line where jq -r would print null.
+  printf '%s\n' "$json" | jq -r "($jq_expr) | if . == null then \"\" else . end"
+  exit ;;
+"pr create")
+  echo "https://github.com/gastownhall/beads/pull/4321"
+  exit 0 ;;
+"pr edit")
+  exit 0 ;;
+esac
+echo "fake gh: unexpected invocation: $*" >&2
+exit 127
+`
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const runURL = "https://github.com/gastownhall/beads/actions/runs/1001"
+	run := func(t *testing.T, openJSON, pushed string, listFails bool) (int, string, [][]string) {
+		t.Helper()
+		state := t.TempDir()
+		if openJSON != "" {
+			if err := os.WriteFile(filepath.Join(state, "open.json"), []byte(openJSON), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bash, "-e", script)
+		cmd.Env = []string{
+			"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"FAKE_GH_DIR=" + state,
+			"GH_TOKEN=fake-pr-token",
+			"REPO=gastownhall/beads",
+			"BRANCH=" + pr.Env["BRANCH"],
+			"TITLE=" + pr.Env["TITLE"],
+			"LABEL=" + pr.Env["LABEL"],
+			"RUN_URL=" + runURL,
+			"PUSHED=" + pushed,
+		}
+		if listFails {
+			cmd.Env = append(cmd.Env, "FAKE_GH_LIST_FAILS=1")
+		}
+		out, err := cmd.CombinedOutput()
+		code := exitCode(err)
+		if code < 0 {
+			t.Fatalf("run PR step: %v\n%s", err, out)
+		}
+		files, err := filepath.Glob(filepath.Join(state, "call.*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(files)
+		var calls [][]string
+		for _, f := range files {
+			raw, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = append(calls, strings.Split(string(bytes.TrimSuffix(raw, []byte{0})), "\x00"))
+		}
+		return code, string(out), calls
+	}
+
+	// Every call but the lookup, with each --body value checked to cite
+	// this run and then replaced by <body>.
+	writes := func(t *testing.T, calls [][]string) [][]string {
+		t.Helper()
+		var w [][]string
+		for _, c := range calls {
+			if len(c) > 1 && c[0] == "pr" && c[1] == "list" {
+				continue
+			}
+			c = slices.Clone(c)
+			if i := slices.Index(c, "--body"); i >= 0 && i+1 < len(c) {
+				if !strings.Contains(c[i+1], runURL) {
+					t.Errorf("gh %q: --body does not cite this run %s", c[:i], runURL)
+				}
+				c[i+1] = "<body>"
+			}
+			w = append(w, c)
+		}
+		return w
+	}
+	const (
+		reviewing = `{"number":7746,"isCrossRepository":false,"labels":[{"name":"status/reviewing"}]}`
+		unlabeled = `{"number":7746,"isCrossRepository":false,"labels":[{"name":"kind/chore"}]}`
+		triaged   = `{"number":7746,"isCrossRepository":false,"labels":[{"name":"status/needs-triage"}]}`
+		bugflow   = `{"number":7746,"isCrossRepository":false,"labels":[{"name":"status/needs-bugflow"},{"name":"status/accepted"}]}`
+		// A fork PR from a branch named bot/worker-env-sync: gh pr list
+		// --head matches the branch name alone. It also carries
+		// status/needs-triage, which triage-label.yml adds to fork PRs too.
+		fork = `{"number":7792,"isCrossRepository":true,"labels":[{"name":"status/needs-triage"}]}`
+	)
+	create := []string{"pr", "create", "--repo", "gastownhall/beads", "--base", "main", "--head", workerEnvAutosyncBranch,
+		"--title", "build(rbe): sync worker-env pin with gascity main", "--body", "<body>", "--label", "status/needs-review-auto"}
+	edit := []string{"pr", "edit", "7746", "--repo", "gastownhall/beads",
+		"--title", "build(rbe): sync worker-env pin with gascity main", "--body", "<body>"}
+	for _, tc := range []struct {
+		name, open, pushed string
+		want               [][]string
+		wantWarning        bool
+	}{
+		{name: "first run opens the PR already labeled", pushed: "1", want: [][]string{create}},
+		{name: "run that pushed nothing opens a labeled PR for a sync branch that has none", want: [][]string{create}},
+		{name: "run that pushed nothing makes no write to the open PR", open: reviewing},
+		{name: "run that pushed a new commit refreshes the open PR's title and body but never labels it", open: reviewing, pushed: "1", want: [][]string{edit}},
+		{name: "open PR with no status label is warned about, never labeled", open: unlabeled, wantWarning: true},
+		{name: "pushed run on an open PR with no status label edits it and warns, never labels", open: unlabeled, pushed: "1", want: [][]string{edit}, wantWarning: true},
+		{name: "open PR carrying only status/needs-triage is warned about, never labeled", open: triaged, wantWarning: true},
+		{name: "open PR carrying only non-review status labels is warned about, never labeled", open: bugflow, wantWarning: true},
+		{name: "fork PR on the same head name is not the sync PR: opens a labeled PR, never edits the fork's", open: fork, pushed: "1", want: [][]string{create}},
+		{name: "fork PR listed ahead of the open sync PR is skipped", open: fork + "," + reviewing, pushed: "1", want: [][]string{edit}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, calls := run(t, tc.open, tc.pushed, false)
+			if code != 0 {
+				t.Fatalf("PR step exit %d, want 0\n%s", code, out)
+			}
+			if len(calls) == 0 || calls[0][0] != "pr" || calls[0][1] != "list" {
+				t.Errorf("first gh call %q, want the gh pr list lookup", calls)
+			}
+			for _, c := range calls {
+				if slices.Contains(c, "--add-label") {
+					t.Errorf("PR step ran %q; it must never add a label to an existing PR (it would request another review)", c)
+				}
+			}
+			if got := writes(t, calls); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("PR step gh calls after the lookup = %q, want %q", got, tc.want)
+			}
+			if got := strings.Contains(out, "::warning::"); got != tc.wantWarning {
+				t.Errorf("PR step emitted a warning = %v, want %v\n%s", got, tc.wantWarning, out)
+			}
+			if tc.wantWarning && !strings.Contains(out, "::warning::sync PR #7746 carries no review-pipeline status/* label") {
+				t.Errorf("PR step warning does not name sync PR #7746's missing review-pipeline label\n%s", out)
+			}
+		})
+	}
+
+	t.Run("a failed PR lookup opens nothing", func(t *testing.T) {
+		code, out, calls := run(t, "", "1", true)
+		if code == 0 {
+			t.Errorf("PR step exit 0 after gh pr list failed, want a failure\n%s", out)
+		}
+		if w := writes(t, calls); len(w) != 0 {
+			t.Errorf("PR step ran %q after a failed lookup, want nothing (it could open a duplicate PR)", w)
+		}
+	})
 }
 
 // TestWorkerEnvAutosyncWorkflowNeverInterpolatesExpressionsInRun: every
