@@ -649,48 +649,64 @@ func TestScanForArtifacts_ScansWorkspaceWithUnloadableMetadata(t *testing.T) {
 // TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles pins that the
 // scan and the cleanup (fix.ClassicArtifacts) agree on a nested workspace's
 // SQLite files, which the walk reaches though command admission never checks
-// that workspace: the scan reports them only where the metadata selects Dolt,
-// the cleanup removes exactly the ones it marks safe to delete, and a second
-// scan finds only what is left for manual review. The cleanup used to remove
-// beads.db-wal, beads.db-shm and every beads.backup-*.db whatever the backend,
-// files the scan never reported, as soon as the scan found anything at all,
-// here the root workspace's WAL. A registered backend (such as http in the
-// shipped bd; a test-only name stands in for it here) is not Dolt, and a
-// backend this build does not recognize, which configfile.Config.GetBackend
-// reads as Dolt, is not Dolt to either half.
+// that workspace: the scan reports them only where the workspace is on Dolt
+// (fix.SelectsDolt), the cleanup removes exactly the ones it marks safe to
+// delete, and a second scan finds only what is left for manual review. The
+// cleanup used to remove beads.db-wal, beads.db-shm and every
+// beads.backup-*.db whatever the backend, files the scan never reported, as
+// soon as the scan found anything at all, here the root workspace's WAL. A
+// registered backend (such as http in the shipped bd; a test-only name stands
+// in for it here) is not Dolt, and a backend this build does not recognize,
+// which configfile.Config.GetBackend reads as Dolt, is not Dolt to either
+// half. Nor is a Beads Classic SQLite workspace, whose metadata predates the
+// backend key and so reads as Dolt to GetBackend too: command admission
+// refuses it as historical SQLite (historicalsqlite.IsWorkspace), and its WAL
+// can hold transactions not yet checkpointed into beads.db.
 func TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles(t *testing.T) {
 	const registered = "acme-artifacts-doctor"
 	backendnames.Add(registered)
 	t.Cleanup(func() { backendnames.Remove(registered) })
 
-	sqliteFiles := map[string]string{
-		"beads.db":                 "db",
-		"beads.db-wal":             "wal",
-		"beads.db-shm":             "shm",
-		"beads.backup-20260204.db": "backup",
+	const sqliteDB = "SQLite format 3\x00"
+	// workspace is a nested .beads directory holding metadata, in
+	// metadataFile, and every SQLite file the scan can report.
+	workspace := func(metadataFile, metadata string) map[string]string {
+		return map[string]string{
+			metadataFile:               metadata,
+			"beads.db":                 sqliteDB,
+			"beads.db-wal":             "wal",
+			"beads.db-shm":             "shm",
+			"beads.backup-20260204.db": "backup",
+		}
+	}
+	named := func(backend string) map[string]string {
+		return workspace(configfile.ConfigFileName, fmt.Sprintf(`{"database":"dolt","backend":%q}`, backend))
 	}
 	cases := []struct {
-		backend  string
-		reported map[string]bool // the nested files the scan reports, and whether each is safe to delete
+		name     string
+		files    map[string]string // the nested .beads directory's entries
+		reported map[string]bool   // the nested files the scan reports, and whether each is safe to delete
 	}{
-		{backend: configfile.BackendDolt, reported: map[string]bool{"beads.db": false, "beads.db-wal": true, "beads.db-shm": true, "beads.backup-20260204.db": true}},
-		{backend: configfile.BackendSQLite},
-		{backend: configfile.BackendPostgres},
-		{backend: configfile.BackendMySQL},
-		{backend: registered},
-		{backend: "future-backend"},
+		{name: configfile.BackendDolt, files: named(configfile.BackendDolt), reported: map[string]bool{"beads.db": false, "beads.db-wal": true, "beads.db-shm": true, "beads.backup-20260204.db": true}},
+		{name: configfile.BackendSQLite, files: named(configfile.BackendSQLite)},
+		{name: configfile.BackendPostgres, files: named(configfile.BackendPostgres)},
+		{name: configfile.BackendMySQL, files: named(configfile.BackendMySQL)},
+		{name: registered, files: named(registered)},
+		{name: "future-backend", files: named("future-backend")},
+		// Beads Classic metadata, with no backend key.
+		{name: "classic metadata.json", files: workspace(configfile.ConfigFileName, `{"database":"beads.db","jsonl_export":"issues.jsonl"}`)},
+		{name: "classic config.json", files: workspace("config.json", `{"database":"beads.db"}`)},
+		// Without metadata, admission recognizes the workspace by its layout,
+		// which allows one .db file only, so this one has no backup.
+		{name: "classic without metadata", files: map[string]string{"beads.db": sqliteDB, "beads.db-wal": "wal", "beads.db-shm": "shm"}},
 	}
 	for _, tc := range cases {
-		t.Run(tc.backend, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			rootWAL := filepath.Join(root, ".beads", "beads.db-wal")
 			writeArtifactTree(t, filepath.Dir(rootWAL), map[string]string{"beads.db-wal": "wal"})
 			beadsDir := filepath.Join(root, "sub", ".beads")
-			entries := map[string]string{configfile.ConfigFileName: fmt.Sprintf(`{"database":"dolt","backend":%q}`, tc.backend)}
-			for name, content := range sqliteFiles {
-				entries[name] = content
-			}
-			writeArtifactTree(t, beadsDir, entries)
+			writeArtifactTree(t, beadsDir, tc.files)
 			before := snapshotBeadsDir(t, beadsDir)
 
 			report, err := ScanForArtifacts(root)

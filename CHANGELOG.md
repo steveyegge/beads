@@ -1219,7 +1219,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend predicate, so in each `.beads` both reach the cleanup removes
   SQLite files only where the check reports them. Neither treats a
   workspace whose metadata names a backend this build does not recognize as
-  Dolt any more, so its SQLite files are neither reported nor removed.
+  Dolt any more, so its SQLite files are neither reported nor removed. Nor
+  do they treat a nested Beads Classic SQLite workspace as Dolt: its
+  metadata predates the `backend` key, or it has none, which bd reads as
+  Dolt, so the check listed its WAL, SHM and backups as safe to delete and
+  the cleanup removed them. Both now pass over every historical SQLite
+  layout that bd refuses to open.
 - **Activating the HTTP backend refuses a graph workspace too.**
   `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
   `metadata.json` declares a `graph_mode` other than `dependency`, or whose
