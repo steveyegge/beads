@@ -1708,16 +1708,27 @@ func TestShouldUseExternalDoltStatus(t *testing.T) {
 			want:              true,
 		},
 		{
-			// A bracketed IPv6 loopback is as local as a bare one: with
-			// auto-start on, both go to the bd-managed status path.
-			name: "server mode + bracketed IPv6 loopback + auto-start on",
+			// bd's own server listens on 127.0.0.1 only, so one at the IPv6
+			// loopback, in either spelling, is never bd-managed: even with
+			// auto-start on, status probes it rather than bd's PID file.
+			name: "server mode + bare IPv6 loopback + auto-start on routes to external",
+			cfg: &configfile.Config{
+				Backend:        "dolt",
+				DoltMode:       "server",
+				DoltServerHost: "::1",
+			},
+			autoStartDisabled: false,
+			want:              true,
+		},
+		{
+			name: "server mode + bracketed IPv6 loopback + auto-start on routes to external",
 			cfg: &configfile.Config{
 				Backend:        "dolt",
 				DoltMode:       "server",
 				DoltServerHost: "[::1]",
 			},
 			autoStartDisabled: false,
-			want:              false,
+			want:              true,
 		},
 	}
 
@@ -2445,9 +2456,11 @@ func trackServerForTest(t *testing.T, serverDir string, pid int) {
 }
 
 // startStandInDoltServer starts a process that ps lists as a dolt sql-server,
-// which is all doltserver's identity check reads, and returns its PID. It is
+// which is all doltserver's identity check reads, and returns its PID and a
+// channel closed once it has exited. The stand-in is a shell that any signal
+// bd's stop sends ends, so a closed channel means something stopped it. It is
 // killed when the test ends.
-func startStandInDoltServer(t *testing.T) int {
+func startStandInDoltServer(t *testing.T) (int, <-chan struct{}) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the stand-in is a shell script; on Windows the identity check looks for dolt.exe")
@@ -2460,11 +2473,18 @@ func startStandInDoltServer(t *testing.T) int {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start the stand-in dolt sql-server: %v", err)
 	}
+	// Reaped here, not only at cleanup: an unreaped zombie still answers
+	// signal 0, so bd's stop would wait out its timeout on one it killed.
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-exited
 	})
-	return cmd.Process.Pid
+	return cmd.Process.Pid, exited
 }
 
 // TestExternallyManagedFreshStartRefusesRecycledTrackedPID: a port file beside
@@ -2534,7 +2554,8 @@ func TestExternallyManagedFreshStartAllowsExistingDatabase(t *testing.T) {
 			mkdir(t, filepath.Join(doltDir, "beads", ".dolt"))
 		}},
 		{name: "running server bd tracks", setup: func(t *testing.T, serverDir, _ string) {
-			trackServerForTest(t, serverDir, startStandInDoltServer(t))
+			pid, _ := startStandInDoltServer(t)
+			trackServerForTest(t, serverDir, pid)
 		}},
 		{name: "unreadable data dir", setup: func(t *testing.T, _, doltDir string) {
 			if os.Geteuid() == 0 {
@@ -2598,4 +2619,113 @@ func TestDoltStartWithAutoStartOnIsUnchanged(t *testing.T) {
 	if !strings.Contains(out, "dolt is not installed") || strings.Contains(out, "--force") {
 		t.Errorf("auto-start-on start did not reach doltserver.Start:\n%s", out)
 	}
+}
+
+// TestDoltStartRefusesIPv6LoopbackHost drives `bd dolt start` through the
+// binary with the server host at the IPv6 loopback, in metadata.json or
+// BEADS_DOLT_SERVER_HOST and in either spelling. bd's own server listens on
+// 127.0.0.1 only, so it would never answer at [::1]:port: the start is
+// refused before doltserver.Start, which the same workspace otherwise reaches
+// (TestDoltStartWithAutoStartOnIsUnchanged), and writes nothing.
+func TestDoltStartRefusesIPv6LoopbackHost(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	for _, tc := range []struct {
+		name  string
+		host  string
+		inEnv bool
+	}{
+		{"metadata.json bare", "::1", false},
+		{"BEADS_DOLT_SERVER_HOST bracketed", "[::1]", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, beadsDir, env := externallyManagedStartWorkspace(t, "true")
+			env = configureDoltServerHost(t, beadsDir, env, tc.host, tc.inEnv)
+
+			out, err := runBDDoltStart(t, bd, root, env)
+			if err == nil {
+				t.Fatalf("bd dolt start succeeded for the IPv6 loopback host %s:\n%s", tc.host, out)
+			}
+			if want := "the configured Dolt server host is the IPv6 loopback (" + tc.host + ")"; !strings.Contains(out, want) {
+				t.Errorf("refusal does not contain %q:\n%s", want, out)
+			}
+			if strings.Contains(out, "dolt is not installed") {
+				t.Errorf("output reached doltserver.Start; the guard did not refuse first:\n%s", out)
+			}
+			for _, name := range []string{doltserver.PortFileName, doltserver.PIDFileName} {
+				if _, statErr := os.Stat(filepath.Join(beadsDir, name)); !os.IsNotExist(statErr) {
+					t.Errorf("refused start created %s (stat error: %v)", name, statErr)
+				}
+			}
+		})
+	}
+}
+
+// TestDoltStopRefusesIPv6LoopbackHost is the stop twin of
+// TestDoltStartRefusesIPv6LoopbackHost. The PID file names a live dolt
+// sql-server, as main's auto-start left one at 127.0.0.1 for an IPv6-loopback
+// host, and bd runs with ps on its PATH, so doltserver.StopWithForce would
+// signal it and report success while the server at [::1] kept running. The
+// stop is refused first: the server is not signaled and both state files stay.
+func TestDoltStopRefusesIPv6LoopbackHost(t *testing.T) {
+	bd := buildBDForInitTests(t)
+	ps, err := exec.LookPath("ps")
+	if err != nil {
+		t.Skip("doltserver's identity check runs ps, which is not on PATH")
+	}
+	for _, tc := range []struct {
+		name  string
+		host  string
+		inEnv bool
+	}{
+		{"metadata.json bare", "::1", false},
+		{"BEADS_DOLT_SERVER_HOST bracketed", "[::1]", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, beadsDir, env := externallyManagedStartWorkspace(t, "true")
+			env = configureDoltServerHost(t, beadsDir, append(env, "PATH="+filepath.Dir(ps)), tc.host, tc.inEnv)
+			pid, exited := startStandInDoltServer(t)
+			trackServerForTest(t, beadsDir, pid)
+
+			cmd := exec.Command(bd, "dolt", "stop")
+			cmd.Dir = root
+			cmd.Env = env
+			outBytes, err := cmd.CombinedOutput()
+			out := string(outBytes)
+			if err == nil {
+				t.Errorf("bd dolt stop succeeded for the IPv6 loopback host %s:\n%s", tc.host, out)
+			}
+			if want := "the configured Dolt server host is the IPv6 loopback (" + tc.host + ")"; !strings.Contains(out, want) {
+				t.Errorf("refusal does not contain %q:\n%s", want, out)
+			}
+			select {
+			case <-exited:
+				t.Errorf("refused stop signaled the tracked server (PID %d):\n%s", pid, out)
+			default:
+			}
+			for _, name := range []string{doltserver.PortFileName, doltserver.PIDFileName} {
+				if _, statErr := os.Stat(filepath.Join(beadsDir, name)); statErr != nil {
+					t.Errorf("refused stop removed %s: %v", name, statErr)
+				}
+			}
+		})
+	}
+}
+
+// configureDoltServerHost points the workspace's server host at host, in
+// BEADS_DOLT_SERVER_HOST when inEnv and in metadata.json otherwise, and
+// returns the env to run bd with.
+func configureDoltServerHost(t *testing.T, beadsDir string, env []string, host string, inEnv bool) []string {
+	t.Helper()
+	if inEnv {
+		return append(env, "BEADS_DOLT_SERVER_HOST="+host)
+	}
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		t.Fatalf("load metadata: %v", err)
+	}
+	cfg.DoltServerHost = host
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	return env
 }

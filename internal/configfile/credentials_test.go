@@ -291,6 +291,33 @@ func TestLookupCredentialsPassword_IPv6HostEitherSpelling(t *testing.T) {
 	}
 }
 
+// An IPv6 host's [[::1]:3307] section is read before [::1:3307], and a
+// password key there decides, even with an empty value: `password=` clears the
+// password, as it does for a host with one section, rather than falling
+// through to the other section's old one. Only a first section with no
+// password key falls through.
+func TestLookupCredentialsPassword_IPv6HostPreferredSectionDecides(t *testing.T) {
+	for _, tc := range []struct{ name, preferred, want string }{
+		{"empty password", "password=\n", ""},
+		{"no password key", "user=admin\n", "legacyPass"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			credFile := filepath.Join(t.TempDir(), "credentials")
+			content := "[[::1]:3307]\n" + tc.preferred + "\n[::1:3307]\npassword=legacyPass\n"
+			if err := os.WriteFile(credFile, []byte(content), 0600); err != nil {
+				t.Fatalf("failed to write credentials file: %v", err)
+			}
+			t.Setenv("BEADS_CREDENTIALS_FILE", credFile)
+
+			for _, host := range []string{"::1", "[::1]"} {
+				if got := LookupCredentialsPassword(host, 3307); got != tc.want {
+					t.Errorf("LookupCredentialsPassword(%q, 3307) = %q, want %q", host, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // An IPv6 host has two candidate sections, but the lookup reads the credentials
 // file once, so an overly permissive file is warned about once per lookup, as
 // it is for any other host, not once per candidate section.

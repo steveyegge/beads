@@ -1,11 +1,11 @@
 package util
 
 import (
-	"net"
-	"strconv"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // maxAllowedPacketBytes is the client-side packet ceiling pinned into every
@@ -36,10 +36,11 @@ func (d DoltServerDSN) String() string {
 		timeout = 5 * time.Second
 	}
 
-	// net.JoinHostPort, not "%s:%d": a managed server's listener.host may be
-	// the IPv6 loopback, ::1, which the driver dials only as "[::1]:port".
+	// doltutil.ServerAddr, not "%s:%d": a managed server's listener.host may
+	// be the IPv6 loopback, which the driver dials only as "[::1]:port",
+	// whether the host is written ::1 or [::1].
 	network := "tcp"
-	addr := net.JoinHostPort(d.Host, strconv.Itoa(d.Port))
+	addr := doltutil.ServerAddr(d.Host, d.Port)
 	if d.Socket != "" {
 		network = "unix"
 		addr = d.Socket

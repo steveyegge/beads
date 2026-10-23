@@ -1842,10 +1842,13 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 // server configurations whose storage ownership is known. It deliberately
 // does not infer locality from Path, CLIDir, or filesystem existence: external
 // servers may leave unrelated client-local directories at those locations.
+// Nor is a server at the IPv6 loopback ever one whose data directory bd
+// knows: bd's own server, shared or not, listens on 127.0.0.1 only.
 func resolveLocalActiveDatabaseDir(cfg *Config) string {
 	if cfg == nil || cfg.BeadsDir == "" || cfg.Database == "" ||
 		cfg.Gateway || cfg.ProxiedServer || cfg.ServerSocket != "" ||
-		cfg.ServerTLS || !isLocalHost(cfg.ServerHost) {
+		cfg.ServerTLS || !isLocalHost(cfg.ServerHost) ||
+		configfile.IsIPv6LoopbackHost(cfg.ServerHost) {
 		return ""
 	}
 
@@ -2182,16 +2185,16 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 					"Auto-start is not supported in socket mode.",
 					cfg.ServerSocket, cfg.ServerSocket)
 			} else if isExternalServerHost(cfg.ServerHost) {
-				// External (non-localhost) server: bd does not
-				// manage it; "bd dolt start" would be wrong advice
-				// (GH#3518). Suggest verifying the external server
-				// instead. nc takes the host, kept bare above; the
-				// endpoint and curl take addr, which brackets an IPv6
-				// host.
+				// External (non-localhost or IPv6 loopback) server: bd
+				// does not manage it; "bd dolt start" would be wrong
+				// advice (GH#3518). Suggest verifying the external server
+				// instead. The endpoint is addr, which brackets an IPv6
+				// host; doltserver.ReachabilityCheck spells the host as
+				// nc and curl each take it.
 				hint = fmt.Sprintf("Configured Dolt server at %s is unreachable.\n"+
 					"Verify the external server is running and reachable from this host:\n"+
-					"  nc -zv %s %d  # or curl %s for an HTTP-style check",
-					addr, cfg.ServerHost, cfg.ServerPort, addr)
+					"  %s",
+					addr, doltserver.ReachabilityCheck(cfg.ServerHost, cfg.ServerPort))
 			} else if named := externallyManagedPortHint(cfg, resolvedBeadsDir, addr); named != "" {
 				// A named port declares the server externally managed
 				// (BEADS_DOLT_SERVER_PORT, dolt_server_port), which is
@@ -2472,9 +2475,14 @@ func initializeServerCircuitBreaker(cfg *Config) *circuitBreaker {
 // not cfg.ReadOnly: ordinary classified-read commands (bd show, bd list, ...)
 // also set cfg.ReadOnly but must still be able to auto-start a stopped
 // managed server, per dolt_autostart_lifecycle_integration_test.go.
+//
+// The IPv6 loopback is a local host that never auto-starts: the server bd
+// would start listens on 127.0.0.1 only, so the retry would still find
+// nothing at [::1]:port and leave that server running.
 func serverOpenCanAutoStart(cfg *Config) bool {
 	return !cfg.DisableAutoStart && cfg.AutoStart && cfg.Path != "" &&
-		cfg.ServerSocket == "" && isLocalHost(cfg.ServerHost)
+		cfg.ServerSocket == "" && isLocalHost(cfg.ServerHost) &&
+		!configfile.IsIPv6LoopbackHost(cfg.ServerHost)
 }
 
 // ErrUnresolvedServerPort is wrapped by the error an open returns when it has
@@ -2554,9 +2562,12 @@ func externallyManagedPortHint(cfg *Config, beadsDir, addr string) string {
 // persistResolvedPortFile records the port a successful local open reached in
 // bd's port file. It writes no pid file, so the record does not make the
 // server bd's own: doltserver.ExternalPortSetting still names the setting
-// that declared the port when a later open finds the server down.
+// that declared the port when a later open finds the server down. A server at
+// the IPv6 loopback gets no record: the port file names a port on 127.0.0.1,
+// where bd's own server listens, and doltserver.DefaultConfig ignores it for
+// that host.
 func persistResolvedPortFile(cfg *Config, beadsDir string) error {
-	if cfg.DisableAutoStart || !shouldPersistResolvedPortFile() {
+	if cfg.DisableAutoStart || !shouldPersistResolvedPortFile() || configfile.IsIPv6LoopbackHost(cfg.ServerHost) {
 		return nil
 	}
 	return ensureResolvedPortFile(beadsDir, cfg.ServerPort)
@@ -2683,18 +2694,31 @@ func isLocalHost(host string) bool {
 	return false
 }
 
-// isExternalServerHost reports whether host names a remote server for the
-// purposes of connect-failure hints (GH#3518). Unlike isLocalHost it
-// normalizes case/whitespace and treats 0.0.0.0 as local, matching the
-// mode-inference classification in internal/configfile — the two must
-// agree or an unreachable local server gets external-server advice with
-// no "bd dolt start" recovery hint.
+// isExternalServerHost reports whether host names a server bd does not
+// manage, for the purposes of connect-failure hints (GH#3518). That is a
+// host off this machine by the mode-inference classification in
+// internal/configfile, which unlike isLocalHost normalizes case/whitespace
+// and treats 0.0.0.0 as local (the two must agree, or an unreachable local
+// server gets external-server advice with no "bd dolt start" recovery
+// hint), or the IPv6 loopback in either spelling: bd's own server listens
+// on 127.0.0.1 only, so "bd dolt start" cannot bring up a server there.
 func isExternalServerHost(host string) bool {
-	switch strings.ToLower(strings.TrimSpace(host)) {
-	case "", "localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0":
-		return false
+	return !configfile.IsLocalHostString(host) || configfile.IsIPv6LoopbackHost(host)
+}
+
+// createDatabaseRefusedError is the error for a CREATE DATABASE whose
+// connection the server refused after the open had already reached it. As
+// in the dial-failure hint, only a server bd can start gets `bd dolt start`;
+// an external one, or one at the IPv6 loopback, gets the reachability check.
+func createDatabaseRefusedError(cfg *Config, err error) error {
+	addr := doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort)
+	if isExternalServerHost(cfg.ServerHost) {
+		return fmt.Errorf("failed to connect to Dolt server at %s: %w\n\n"+
+			"Verify the external server is running and reachable from this host:\n  %s",
+			addr, err, doltserver.ReachabilityCheck(cfg.ServerHost, cfg.ServerPort))
 	}
-	return true
+	return fmt.Errorf("failed to connect to Dolt server at %s: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
+		addr, err)
 }
 
 // buildServerDSN constructs a MySQL DSN for connecting to a Dolt server.
@@ -3072,8 +3096,7 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, se
 			if !strings.Contains(errLower, "database exists") && !strings.Contains(errLower, "1007") {
 				// Check for connection refused - server likely not running
 				if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
-					return nil, "", serverConnFacts{}, fmt.Errorf("failed to connect to Dolt server at %s: %w\n\nThe Dolt server may not be running. Try:\n  bd dolt start    # Start a local server\n  gt dolt start    # If using an orchestrator",
-						doltutil.ServerAddr(cfg.ServerHost, cfg.ServerPort), err)
+					return nil, "", serverConnFacts{}, createDatabaseRefusedError(cfg, err)
 				}
 				return nil, "", serverConnFacts{}, fmt.Errorf("failed to create database: %w", err)
 			}
@@ -3340,9 +3363,12 @@ func sharedServerDatabase(cfg *Config) bool {
 		return true
 	}
 	// Somebody else's server by construction: a host that is not this
-	// machine, a TLS endpoint (Hosted Dolt), or a unix socket — bd's own
-	// auto-start only ever creates a local TCP listener.
-	if !isLocalHost(cfg.ServerHost) || cfg.ServerTLS || cfg.ServerSocket != "" {
+	// machine, the IPv6 loopback, a TLS endpoint (Hosted Dolt), or a unix
+	// socket — bd's own auto-start only ever creates a TCP listener on
+	// 127.0.0.1. So state files a server bd started there left behind prove
+	// nothing about a server at [::1], even on the same port.
+	if !isLocalHost(cfg.ServerHost) || configfile.IsIPv6LoopbackHost(cfg.ServerHost) ||
+		cfg.ServerTLS || cfg.ServerSocket != "" {
 		return true
 	}
 	// The one shared topology that is otherwise indistinguishable from an

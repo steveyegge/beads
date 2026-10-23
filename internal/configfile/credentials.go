@@ -49,16 +49,17 @@ func LookupCredentialsPassword(host string, port int) string {
 		return ""
 	}
 
-	return readPasswordFromFile(credFile, credentialsSectionKeys(host, port)...)
+	return readPasswordFromFile(credFile, CredentialsSectionKeys(host, port)...)
 }
 
-// credentialsSectionKeys returns the [host:port] section names that hold the
-// password for the Dolt server at host and port, most canonical first. An
-// IPv6 literal host may be configured bare ("::1") or bracketed ("[::1]"),
-// and both name the same server, so either spelling finds a section written
-// as [[::1]:3307] (the net.JoinHostPort form) or as [::1:3307] (the form a
-// bare host was looked up under before). Any other host has one key.
-func credentialsSectionKeys(host string, port int) []string {
+// CredentialsSectionKeys returns the [host:port] section names that hold the
+// password for the server at host and port, in the order
+// LookupCredentialsPassword tries them, most canonical first. An IPv6 literal
+// host may be configured bare ("::1") or bracketed ("[::1]"), and both name
+// the same server, so either spelling finds a section written as [[::1]:3307]
+// (the net.JoinHostPort form) or as [::1:3307] (the form a bare host was
+// looked up under before). Any other host has one key.
+func CredentialsSectionKeys(host string, port int) []string {
 	bare := UnbracketHost(host)
 	joined := net.JoinHostPort(bare, fmt.Sprint(port))
 	legacy := fmt.Sprintf("%s:%d", bare, port)
@@ -68,9 +69,10 @@ func credentialsSectionKeys(host string, port int) []string {
 	return []string{joined, legacy}
 }
 
-// UnbracketHost returns host without the square brackets an IPv6 literal may
-// be configured in ("[::1]" is "::1"), which is the form net.JoinHostPort
-// takes. Any other host is returned as it is.
+// UnbracketHost returns host without one pair of enclosing square brackets,
+// which an IPv6 literal may be configured in ("[::1]" is "::1"), giving the
+// form net.JoinHostPort takes. It strips them from any host, so "[db]" is
+// "db" too; a host not enclosed in brackets is returned as it is.
 func UnbracketHost(host string) string {
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		return host[1 : len(host)-1]
@@ -80,8 +82,10 @@ func UnbracketHost(host string) string {
 
 // readPasswordFromFile parses an INI-style credentials file and returns the
 // password of the first of sectionKeys, in order, whose [host:port] section
-// sets one. The file is read, and its permissions checked, once however many
-// keys are given. Returns empty string on any error.
+// has a password key. An empty value there is that section's password, as it
+// is with one key: it is returned, not skipped for a later key's. The file is
+// read, and its permissions checked, once however many keys are given.
+// Returns empty string on any error.
 func readPasswordFromFile(path string, sectionKeys ...string) string {
 	f, err := os.Open(path) //nolint:gosec // path comes from env var or os.UserHomeDir, not user input
 	if err != nil {
@@ -132,7 +136,7 @@ func readPasswordFromFile(path string, sectionKeys ...string) string {
 	}
 
 	for _, key := range sectionKeys {
-		if pw := found[key]; pw != "" {
+		if pw, ok := found[key]; ok {
 			return pw
 		}
 	}

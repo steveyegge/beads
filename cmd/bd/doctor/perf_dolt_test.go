@@ -151,26 +151,55 @@ func TestRunDoltPerformanceDiagnosticsIPv6Host(t *testing.T) {
 		})
 	}
 	// With nothing listening, the error names the address it probed, as the
-	// advice under it does: [::1]:port, never ::1:port.
+	// advice under it does: [::1]:port, never ::1:port. The advice checks the
+	// server there and never names `bd dolt start`: bd's own server listens
+	// on 127.0.0.1 only. For the same reason a port file that server left
+	// behind names no port at [::1], and the probe stays on the port
+	// metadata.json's dolt_server_port declares.
 	for _, host := range []string{"::1", "[::1]"} {
-		t.Run(host+" not running", func(t *testing.T) {
-			ln, err := net.Listen("tcp", "[::1]:0")
-			if err != nil {
-				t.Skipf("IPv6 loopback not available: %v", err)
+		for _, portFile := range []bool{false, true} {
+			name := host + " not running"
+			if portFile {
+				name += ", beside a port file"
 			}
-			port := ln.Addr().(*net.TCPAddr).Port
-			_ = ln.Close()
-			tmpDir := perfServerWorkspaceOn(t, host, port)
-			addr := net.JoinHostPort("::1", strconv.Itoa(port))
+			t.Run(name, func(t *testing.T) {
+				ln, err := net.Listen("tcp", "[::1]:0")
+				if err != nil {
+					t.Skipf("IPv6 loopback not available: %v", err)
+				}
+				other, err := net.Listen("tcp", "[::1]:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				port, stale := ln.Addr().(*net.TCPAddr).Port, other.Addr().(*net.TCPAddr).Port
+				_ = ln.Close()
+				_ = other.Close()
+				tmpDir := perfServerWorkspaceOn(t, host, port)
+				if portFile {
+					if err := os.WriteFile(filepath.Join(tmpDir, ".beads", "dolt-server.port"), []byte(strconv.Itoa(stale)), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				addr := net.JoinHostPort("::1", strconv.Itoa(port))
 
-			_, err = RunDoltPerformanceDiagnostics(tmpDir, false)
-			if err == nil {
-				t.Fatalf("performance diagnostics succeeded with nothing listening at %s", addr)
-			}
-			if want := "not running on " + addr; !strings.Contains(err.Error(), want) {
-				t.Errorf("error does not contain %q:\n%v", want, err)
-			}
-		})
+				_, err = RunDoltPerformanceDiagnostics(tmpDir, false)
+				if err == nil {
+					t.Fatalf("performance diagnostics succeeded with nothing listening at %s", addr)
+				}
+				for _, want := range []string{"not running on " + addr, fmt.Sprintf(`nc -zv ::1 %d  # or curl "%s"`, port, addr)} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error does not contain %q:\n%v", want, err)
+					}
+				}
+				// bd's own server listens on 127.0.0.1 only: bd starts none
+				// at [::1], and its port is not the one to check there.
+				for _, banned := range []string{"bd dolt start", fmt.Sprintf("nc -zv ::1 %d ", stale)} {
+					if strings.Contains(err.Error(), banned) {
+						t.Errorf("error contains %q:\n%v", banned, err)
+					}
+				}
+			})
+		}
 	}
 }
 

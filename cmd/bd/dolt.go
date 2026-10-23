@@ -843,8 +843,16 @@ over existing data, or adopting a server bd already tracks, is unaffected. Use
 		// server lifecycle (GH#3545/GH#3518): starting a repo-local
 		// server here would write local PID/port state that shadows the
 		// configured remote endpoint.
-		if host := fileCfg.GetDoltServerHost(); !configfile.IsLocalHostString(host) {
+		host := fileCfg.GetDoltServerHost()
+		if !configfile.IsLocalHostString(host) {
 			return HandleError("the configured Dolt server host is remote (%s); 'bd dolt start' only manages a local server.\nStart the server on that host, or clear dolt_server_host / dolt.host / BEADS_DOLT_SERVER_HOST to run one locally", host)
+		}
+		// Nor does bd own a server at the IPv6 loopback: its own server
+		// listens on 127.0.0.1 only, so one started here never answers at
+		// [::1]:port, and bd dolt status, which probes that address over
+		// SQL, never shows it.
+		if configfile.IsIPv6LoopbackHost(host) {
+			return HandleError("the configured Dolt server host is the IPv6 loopback (%s); 'bd dolt start' starts bd's own server, which listens on 127.0.0.1 only.\nStart the server that listens on [::1], or clear dolt_server_host / dolt.host / BEADS_DOLT_SERVER_HOST to run bd's own", host)
 		}
 		serverDir := doltserver.ResolveServerDir(beadsDir)
 		force, _ := cmd.Flags().GetBool("force")
@@ -945,8 +953,16 @@ scope cannot be established.`,
 		// remote server host, the repo-local PID state (if any) is a
 		// leftover, and stopping it would report success while the
 		// configured external server keeps running (GH#3545/GH#3518).
-		if host := fileCfg.GetDoltServerHost(); !usesProxiedServer() && !configfile.IsLocalHostString(host) {
+		host := fileCfg.GetDoltServerHost()
+		if !usesProxiedServer() && !configfile.IsLocalHostString(host) {
 			return HandleError("the configured Dolt server host is remote (%s); 'bd dolt stop' only manages a local server.\nStop the server on that host, or clear dolt_server_host / dolt.host / BEADS_DOLT_SERVER_HOST to manage one locally", host)
+		}
+		// Nor the IPv6 loopback, as in 'bd dolt start': bd's own server
+		// listens on 127.0.0.1 only, so the PID file names a server other
+		// than the one configured at [::1], and stopping it would report
+		// success while that one keeps running.
+		if !usesProxiedServer() && configfile.IsIPv6LoopbackHost(host) {
+			return HandleError("the configured Dolt server host is the IPv6 loopback (%s); 'bd dolt stop' stops bd's own server, which listens on 127.0.0.1 only.\nStop the server that listens on [::1]. To stop a server bd started here earlier, run: BEADS_DOLT_SERVER_HOST=127.0.0.1 bd dolt stop", host)
 		}
 		force, _ := cmd.Flags().GetBool("force")
 
@@ -1159,9 +1175,11 @@ In embedded mode, reports that the Dolt engine runs in-process and shows
 the on-disk data directory. For beads-managed (local) servers, displays
 PID, port, and data directory from the local PID file. For externally-
 managed servers — a shared server (dolt.shared-server: true), a remote
-dolt_server_host, or a local server managed outside bd (dolt.auto-start:
-false, e.g. an orchestrator-shared sql-server) — pings the configured
-endpoint via SQL and reports reachability, server version, and database.
+dolt_server_host, a server at the IPv6 loopback (::1, where bd's own
+server never listens), or a local server managed outside bd
+(dolt.auto-start: false, e.g. an orchestrator-shared sql-server) — pings
+the configured endpoint via SQL and reports reachability, server version,
+and database.
 
 In proxied-server mode, reports the proxy (the endpoint every bd command
 connects through) and the dolt backend behind it separately, read from the
@@ -1294,6 +1312,9 @@ func renderLocalDoltStatus(state *doltserver.State, serverDir string) {
 //     GH#3218 bug lived.
 //   - dolt_mode=server with a non-local host (Hosted Dolt, remote shared
 //     sql-server) — the PID file is on a different machine.
+//   - dolt_mode=server with the IPv6 loopback host, "::1" or "[::1]" — bd's
+//     own server listens on 127.0.0.1 only, so a server there is never one
+//     bd started, and the PID file, if any, is for a different server.
 //   - dolt_mode=server with a local host but bd auto-start is disabled —
 //     the server lifecycle is owned by something outside bd (e.g. an
 //     orchestrator or systemd unit), so no bd PID file exists. Without
@@ -1322,7 +1343,7 @@ func shouldUseExternalDoltStatus(cfg *configfile.Config, autoStartDisabled, shar
 	if !cfg.IsDoltServerMode() {
 		return false
 	}
-	if !isLocalHost(cfg.GetDoltServerHost()) {
+	if host := cfg.GetDoltServerHost(); !isLocalHost(host) || configfile.IsIPv6LoopbackHost(host) {
 		return true
 	}
 	return autoStartDisabled
@@ -2538,9 +2559,10 @@ func openDoltServerConnection() (*sql.DB, func(), error) {
 
 // unreachableServerAdvice is what to do about a Dolt server at host and dc's
 // port that did not answer: the remote-host advice for a host on another
-// machine (`bd dolt start` refuses one), the externally managed advice when a
-// setting naming the port declares the server so (bd starts no server there,
-// and `bd dolt start` would start its own on that port), else `bd dolt start`.
+// machine or at the IPv6 loopback (`bd dolt start` refuses both), the
+// externally managed advice when a setting naming the port declares the
+// server so (bd starts no server there, and `bd dolt start` would start its
+// own on that port), else `bd dolt start`.
 func unreachableServerAdvice(beadsDir, host string, dc *doltserver.Config) string {
 	if advice := doltserver.UnreachableEndpointAdvice(beadsDir, host, dc.Port, dc.PortSource); advice != "" {
 		return advice
