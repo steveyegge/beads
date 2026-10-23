@@ -118,7 +118,7 @@ Examples:
 			if oldCommits <= 1 {
 				fmt.Printf("\n  Nothing to compact (0-1 old commits).\n")
 			} else {
-				fmt.Printf("\n  Result: %d commits → %d commits\n", totalCommits, recentCommits+1)
+				fmt.Printf("\n  Result: %d commits → %d commit%s\n", totalCommits, recentCommits+1, plural(recentCommits+1))
 				fmt.Printf("  Run with --force to proceed.\n")
 			}
 			return nil
@@ -161,6 +161,15 @@ Examples:
 		if err := compactor.Compact(ctx, initialHash, boundaryHash, oldCommits, recentHashes); err != nil {
 			return HandleError("compact failed: %v", err)
 		}
+		// Count main's log the same way commits_before does: the initial
+		// commit under the squashed base, the replayed commits, and the
+		// commit holding any rows main had outside the plan. 0 means unread.
+		var commitsAfter int
+		if after, err := store.Log(ctx, 0); err != nil {
+			WarnError("counting commits after compact: %v", err)
+		} else {
+			commitsAfter = len(after)
+		}
 
 		// Prune remote-tracking refs before GC: they still anchor the
 		// pre-compact chain, and with them in place GC reclaims nothing on any
@@ -176,18 +185,20 @@ Examples:
 		sizeAfter := storeSizeBytes(ctx)
 
 		elapsed := time.Since(start)
-		resultCommits := len(recentHashes) + 1
 
 		if jsonOutput {
 			result := map[string]interface{}{
 				"success":            true,
 				"commits_before":     totalCommits,
-				"commits_after":      resultCommits,
 				"old_squashed":       oldCommits,
 				"recent_kept":        len(recentHashes),
 				"remote_refs_pruned": pruned,
 				"tags_anchoring":     tags,
 				"elapsed_ms":         elapsed.Milliseconds(),
+			}
+			// Absent means the count could not be read.
+			if commitsAfter > 0 {
+				result["commits_after"] = commitsAfter
 			}
 			if gcMode != "" {
 				result["gc_mode"] = gcMode
@@ -195,7 +206,11 @@ Examples:
 			addGCSizeJSON(result, sizeBefore, sizeAfter)
 			return outputJSON(result)
 		}
-		fmt.Printf("✓ Compacted %d commits → %d\n", totalCommits, resultCommits)
+		if commitsAfter > 0 {
+			fmt.Printf("✓ Compacted %d commits → %d\n", totalCommits, commitsAfter)
+		} else {
+			fmt.Printf("✓ Compacted %d commits\n", totalCommits)
+		}
 		fmt.Printf("  Squashed: %d old commits → 1 base\n", oldCommits)
 		fmt.Printf("  Preserved: %d recent commits\n", len(recentHashes))
 		if line := gcSizeLine(sizeBefore, sizeAfter); line != "" {

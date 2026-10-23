@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/metrics"
@@ -28,9 +29,16 @@ func runCompactProxiedServer(ctx context.Context) error {
 		return HandleError("--days must be non-negative")
 	}
 
+	// Read main's head before the log: a commit that lands between the two
+	// reads is then in the log but not at plannedHead, so Compact refuses
+	// instead of resetting main past it, and a refusal names the true head.
+	var plannedHead string
 	var logEntries []storage.CommitInfo
 	if err := runProxiedNonTx(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		var err error
+		if plannedHead, err = versioncontrolops.MainHead(ctx, conn); err != nil {
+			return fmt.Errorf("reading the head of main: %w", err)
+		}
 		logEntries, err = versioncontrolops.Log(ctx, conn, 0)
 		return err
 	}); err != nil {
@@ -69,6 +77,7 @@ func runCompactProxiedServer(ctx context.Context) error {
 				"cutoff_date":    cutoff.Format("2006-01-02"),
 				"initial_hash":   initialHash,
 				"boundary_hash":  boundaryHash,
+				"planned_head":   plannedHead,
 			})
 		}
 		fmt.Printf("DRY RUN — Compact preview\n\n")
@@ -79,7 +88,7 @@ func runCompactProxiedServer(ctx context.Context) error {
 		if oldCommits <= 1 {
 			fmt.Printf("\n  Nothing to compact (0-1 old commits).\n")
 		} else {
-			fmt.Printf("\n  Result: %d commits → %d commits\n", totalCommits, recentCommits+1)
+			fmt.Printf("\n  Result: %d commits → %d commit%s\n", totalCommits, recentCommits+1, plural(recentCommits+1))
 			fmt.Printf("  Run with --force to proceed.\n")
 		}
 		return nil
@@ -115,11 +124,37 @@ func runCompactProxiedServer(ctx context.Context) error {
 	}
 
 	var pruned, tags []string
+	// compactedHead is main after the compaction. changedTables names the
+	// tables whose data differs between plannedHead and the squashed head,
+	// so it answers whether bd's squash and replay changed any data. Rows
+	// main held outside the plan (a commit that landed after the last head
+	// check, or rows a writer left uncommitted) are committed above the
+	// squashed head as keptRowsCommit and are not in changedTables. All of it
+	// is read before GC, which may remove the planned head's chain.
+	// commitsAfter counts main's log the same way commits_before does; 0
+	// means the count could not be read.
+	var compactedHead, keptRowsCommit, changedErr string
+	var changedTables []string
+	var commitsAfter int
 	if err := runProxiedNonTx(ctx, func(ctx context.Context, conn *sql.Conn) error {
-		if err := versioncontrolops.Compact(ctx, conn, initialHash, boundaryHash, oldCommits, recentHashes); err != nil {
+		res, err := versioncontrolops.CompactAtHead(ctx, conn, plannedHead, initialHash, boundaryHash, oldCommits, recentHashes)
+		if err != nil {
 			return err
 		}
+		keptRowsCommit = res.KeptRowsCommit
 		var perr error
+		if compactedHead, perr = versioncontrolops.MainHead(ctx, conn); perr != nil {
+			WarnError("reading the head of main after compact: %v", perr)
+		}
+		if changedTables, perr = versioncontrolops.TablesChangedBetween(ctx, conn, plannedHead, res.SquashedHead); perr != nil {
+			changedErr = fmt.Sprintf("comparing the squashed head with the planned head: %v", perr)
+			WarnError("%s", changedErr)
+		}
+		if after, perr := versioncontrolops.Log(ctx, conn, 0); perr != nil {
+			WarnError("counting commits after compact: %v", perr)
+		} else {
+			commitsAfter = len(after)
+		}
 		if pruned, perr = versioncontrolops.PruneRemoteRefs(ctx, conn); perr != nil {
 			WarnError("pruning remote-tracking refs before GC: %v (GC may reclaim little)", perr)
 		}
@@ -141,29 +176,62 @@ func runCompactProxiedServer(ctx context.Context) error {
 	}
 
 	elapsed := time.Since(start)
-	resultCommits := recentCommits + 1
 
 	if !jsonOutput {
 		printPruneReport(pruned, tags)
 	}
 
 	if jsonOutput {
-		return outputJSON(map[string]interface{}{
+		result := map[string]interface{}{
 			"success":            true,
 			"commits_before":     totalCommits,
-			"commits_after":      resultCommits,
 			"old_squashed":       oldCommits,
 			"recent_kept":        recentCommits,
 			"remote_refs_pruned": pruned,
 			"tags_anchoring":     tags,
 			"gc_mode":            gcModeFull,
 			"elapsed_ms":         elapsed.Milliseconds(),
-		})
+			"planned_head":       plannedHead,
+		}
+		// Absent means unknown: commits_after and compacted_head are written
+		// only when they were read.
+		if commitsAfter > 0 {
+			result["commits_after"] = commitsAfter
+		}
+		if compactedHead != "" {
+			result["compacted_head"] = compactedHead
+		}
+		if keptRowsCommit != "" {
+			result["kept_rows_commit"] = keptRowsCommit
+		}
+		// Absent means unknown, never "nothing changed": only a completed
+		// comparison writes tables_changed_by_compact, and [] is its clean answer.
+		if changedErr != "" {
+			result["tables_changed_error"] = changedErr
+		} else {
+			result["tables_changed_by_compact"] = changedTables
+		}
+		return outputJSON(result)
 	}
 
-	fmt.Printf("✓ Compacted %d commits → %d\n", totalCommits, resultCommits)
+	if commitsAfter > 0 {
+		fmt.Printf("✓ Compacted %d commits → %d\n", totalCommits, commitsAfter)
+	} else {
+		fmt.Printf("✓ Compacted %d commits\n", totalCommits)
+	}
 	fmt.Printf("  Squashed: %d old commits → 1 base\n", oldCommits)
 	fmt.Printf("  Preserved: %d recent commits\n", recentCommits)
+	if keptRowsCommit != "" {
+		fmt.Printf("  Kept: rows main held outside the plan, committed as %s\n", keptRowsCommit)
+	}
+	switch {
+	case changedErr != "":
+		fmt.Printf("  Data: not compared with the planned head %s\n", plannedHead)
+	case len(changedTables) == 0:
+		fmt.Printf("  Data: same as the planned head %s\n", plannedHead)
+	default:
+		fmt.Printf("  Data: differs from the planned head %s in %s\n", plannedHead, strings.Join(changedTables, ", "))
+	}
 	fmt.Printf("  Time: %v\n", elapsed.Round(time.Millisecond))
 	return nil
 }
