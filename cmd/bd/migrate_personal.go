@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
@@ -510,24 +511,60 @@ func isPlanningRepoMirror(issue *types.Issue, planningPath string) bool {
 // repoSyncMirrorRefusal is the phase-0 refusal for a project copy that bd repo
 // sync imported from the planning repo (isPlanningRepoMirror). It names the
 // commands that remove those copies and turn their hydration back on, with
-// the recorded source_repo quoted for a shell on goos (shellQuotedPathFor), so
-// each runs as printed.
+// the recorded source_repo quoted for a shell on goos (shellQuotedFor), so
+// each runs as printed. A source_repo no quoting there passes on unchanged is
+// left as a <path> placeholder for the path the refusal names.
 func repoSyncMirrorRefusal(issue *types.Issue, planningPath, goos string) error {
-	repo := shellQuotedPathFor(goos, issue.SourceRepo)
-	return fmt.Errorf("issue %s already exists in the planning repo %s; the project copy was imported from %s by `bd repo sync` (remove those copies with `bd repo remove %s`, then rerun, and run `bd repo add %s` again if you want them hydrated); nothing was moved",
-		issue.ID, planningPath, issue.SourceRepo, repo, repo)
+	repo, ok := shellQuotedFor(goos, issue.SourceRepo)
+	pathNote := ""
+	if !ok {
+		repo, pathNote = "<path>", ", with that path for <path>"
+	}
+	return fmt.Errorf("issue %s already exists in the planning repo %s; the project copy was imported from %s by `bd repo sync` (remove those copies with `bd repo remove %s`, then rerun, and run `bd repo add %s` again if you want them hydrated%s); nothing was moved",
+		issue.ID, planningPath, issue.SourceRepo, repo, repo, pathNote)
 }
 
-// shellQuotedPathFor quotes path for a command a user pastes into a shell on
-// goos. A POSIX shell takes it in single quotes (doltutil.ShellQuote), which
-// keep $, backticks and backslashes literal. cmd.exe and PowerShell take no
-// single quotes and do not unescape backslashes, so on Windows the path goes
-// in plain double quotes, a character no Windows path contains.
-func shellQuotedPathFor(goos, path string) string {
-	if goos == "windows" {
-		return `"` + path + `"`
+// shellQuotedFor quotes value as one argument of a command printed for a user
+// to paste into a shell on goos, and reports whether it can: a remedy prints a
+// value in a command only when the shells people run there all pass it to bd
+// unchanged, and otherwise names it beside a placeholder.
+//
+// On POSIX a value goes in single quotes (doltutil.ShellQuote), which sh, bash
+// and zsh keep literal, unless it holds a backslash: fish reads \' and \\ as
+// escapes inside single quotes, so a backslash before a quote ends them there.
+//
+// On Windows a value goes in plain double quotes, inside which cmd.exe,
+// PowerShell and Git Bash keep spaces, backslashes and ( ) ; , ' # @ literal,
+// as Go's argument parsing does, unless it holds:
+//   - ", which ends the quotes in each, or “ ” „, which end them in PowerShell;
+//   - $ or `, which PowerShell and bash expand there;
+//   - % or !, which cmd.exe expands there (! with delayed expansion on), and
+//     bash expands ! as history;
+//   - & | < > or ^, which cmd.exe acts on when PowerShell hands a .cmd shim,
+//     such as npm's bd.cmd, an argument with no space in it unquoted;
+//   - a control character: a line break ends the command in cmd.exe;
+//   - \\, which bash reads there as one backslash;
+//
+// or ends in a backslash, which Go's argument parsing reads as escaping the
+// closing quote. cmd.exe needs it doubled, and PowerShell, which takes
+// backslashes literally, would then pass both on.
+func shellQuotedFor(goos, value string) (string, bool) {
+	if goos != "windows" {
+		if strings.Contains(value, `\`) {
+			return "", false
+		}
+		return doltutil.ShellQuote(value), true
 	}
-	return doltutil.ShellQuote(path)
+	if strings.HasSuffix(value, `\`) || strings.Contains(value, `\\`) || strings.ContainsFunc(value, unquotableOnWindows) {
+		return "", false
+	}
+	return `"` + value + `"`, true
+}
+
+// unquotableOnWindows reports whether r is a character a Windows shell does
+// not keep literal inside double quotes (shellQuotedFor).
+func unquotableOnWindows(r rune) bool {
+	return strings.ContainsRune("\"“”„$`%!&|<>^", r) || unicode.IsControl(r)
 }
 
 // copyIssuesToPlanning is phase 1 of runMigratePersonal: it copies every

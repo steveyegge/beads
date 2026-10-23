@@ -902,6 +902,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initializes the planning repo by the same rule, so it now also refuses a
   server-mode planning repo instead of moving issues into a new embedded
   database there.
+- **A pasted `bd init` or `bd repo remove` remedy no longer runs part of a
+  crafted value.** When `bd create --repo` (or `bd migrate-personal`)
+  refuses a repository with no `metadata.json` whose own config names a
+  remote `dolt.host`, the `bd init --server-host ...` command it printed put
+  the host in plain double quotes on Windows, so a host such as
+  `x" & calc & "` ran `calc` from cmd.exe and `$(calc)` ran it from
+  PowerShell when the command was pasted; elsewhere its single quotes let a
+  host with a backslash before a quote do the same from fish. The
+  `bd repo remove` and `bd repo add` commands `bd migrate-personal` prints
+  for a `bd repo sync` copy used the same Windows quoting, and a
+  `source_repo` ending in a backslash reached `bd` with a stray quote, so
+  `bd repo remove` found no such repository. A remedy now prints a value in
+  its command only when cmd.exe, PowerShell and Git Bash (on Windows) or
+  sh, bash, zsh and fish (elsewhere) all pass it on unchanged, and otherwise
+  prints `<host>` or `<path>` and names the value beside the command.
 - **`bd doctor` says when its multi-repo types check skips a database.** For
   a `repos.additional` repository in a format this build cannot open (a
   `graph_mode` other than `dependency`, or the `graph-preview-format`

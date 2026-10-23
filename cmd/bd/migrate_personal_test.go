@@ -1358,9 +1358,12 @@ func TestEmbeddedMigratePersonal_repoSyncMirrorHint(t *testing.T) {
 	}
 	requireStillInProject(t, beadsDir, "mps", planningIssue.ID)
 
-	// The path is quoted for this host's shell (TestShellQuotedPathFor), and
+	// The path is quoted for this host's shell (TestShellQuotedFor), and
 	// the hint says how to turn back on the hydration bd repo remove turns off.
-	quoted := shellQuotedPathFor(runtime.GOOS, planningDir)
+	quoted, ok := shellQuotedFor(runtime.GOOS, planningDir)
+	if !ok {
+		t.Fatalf("shellQuotedFor(%q, %q) cannot quote the planning repo's path", runtime.GOOS, planningDir)
+	}
 	requireMigratePersonalRefused(t, bd, dir, "by `bd repo sync` (remove those copies with `bd repo remove "+quoted+
 		"`, then rerun, and run `bd repo add "+quoted+"` again if you want them hydrated); nothing was moved")
 	requireStillInProject(t, beadsDir, "mps", personal.ID)
@@ -1754,36 +1757,86 @@ func TestIsPlanningRepoMirror(t *testing.T) {
 	}
 }
 
-// TestShellQuotedPathFor pins how the phase-0 mirror refusal quotes a
-// source_repo for the shell its commands are pasted into: in single quotes on
-// POSIX, which keep $, backticks and quotes literal, and in plain double
-// quotes on Windows, whose shells keep backslashes as they are (Go's %q
-// doubled them there, and bd repo remove then found no such repository). On
-// a POSIX host each POSIX form is also run through sh, which must pass the
-// path on unchanged.
-func TestShellQuotedPathFor(t *testing.T) {
+// TestShellQuotedFor pins how a remedy quotes a value (a source_repo, a
+// dolt.host) for the shell its command is pasted into, and which values it
+// refuses to print in a command at all (shellQuotedFor). On POSIX a value goes
+// in single quotes unless it holds a backslash, which fish reads as an escape
+// there. On Windows a value goes in plain double quotes, which keep its
+// backslashes as they are (Go's %q doubled them, and bd repo remove then found
+// no such repository), unless a Windows shell would not pass it on unchanged:
+// a " ends cmd.exe's quotes, so the rest of a crafted host runs as a command;
+// PowerShell expands $( ) and $name, unescapes a backtick and ends the quotes
+// at a curly quote; cmd.exe expands %name% and !name! and ends the command at
+// a line break, and acts on & | < > ^ in an argument PowerShell hands a .cmd
+// shim unquoted; bash collapses \\ to one; and Go reads a trailing backslash as
+// escaping the closing quote. On a POSIX host each printed form is also run
+// through a shell, which must pass the value on unchanged: sh for the POSIX
+// forms, and bash, as Git Bash on Windows runs them, for the Windows forms.
+func TestShellQuotedFor(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		goos, path, want string
+		goos, value, want string // want "" = refused
 	}{
 		{"linux", "/home/me/.beads-planning", `'/home/me/.beads-planning'`},
 		{"darwin", "/tmp/$HOME/it's `id`", `'/tmp/$HOME/it'\''s ` + "`id`'"},
+		{"linux", `x" & calc & "$(calc)`, `'x" & calc & "$(calc)'`},
+		{"linux", "db\ncalc", "'db\ncalc'"},
+		{"linux", `x\'; calc #`, ""},
 		{"windows", `C:\Users\me\.beads-planning`, `"C:\Users\me\.beads-planning"`},
-		{"windows", `C:\Users\Jane Doe\R&D planning`, `"C:\Users\Jane Doe\R&D planning"`},
+		{"windows", `C:\Users\Jane Doe\Proj (x86); it's #1 @home ~a +b =c ,d [e] {f}`, `"C:\Users\Jane Doe\Proj (x86); it's #1 @home ~a +b =c ,d [e] {f}"`},
+		{"windows", "db.example.com; calc", `"db.example.com; calc"`},
+		{"windows", `x" & calc & "`, ""},
+		{"windows", "$(calc)", ""},
+		{"windows", `C:\Users\me\$work\planning`, ""},
+		{"windows", "C:\\Users\\me\\`tplanning", ""},
+		{"windows", "db\u201d; calc; \u201c", ""},
+		{"windows", `C:\100%PATH%\planning`, ""},
+		{"windows", `C:\Hello!\planning`, ""},
+		{"windows", "db&calc", ""},
+		{"windows", `C:\Users\Jane Doe\R&D planning`, ""},
+		{"windows", "db\r\ncalc", ""},
+		{"windows", `\\server\share\planning`, ""},
+		{"windows", `C:\planning\`, ""},
 	} {
-		got := shellQuotedPathFor(tc.goos, tc.path)
-		if got != tc.want {
-			t.Errorf("shellQuotedPathFor(%q, %q) = %s, want %s", tc.goos, tc.path, got, tc.want)
+		got, ok := shellQuotedFor(tc.goos, tc.value)
+		if got != tc.want || ok != (tc.want != "") {
+			t.Errorf("shellQuotedFor(%q, %q) = %s, %v, want %s, %v", tc.goos, tc.value, got, ok, tc.want, tc.want != "")
 		}
-		if tc.goos == "windows" || runtime.GOOS == "windows" {
+		if !ok || runtime.GOOS == "windows" {
 			continue
 		}
-		out, err := exec.Command("sh", "-c", "printf '%s' "+got).Output()
-		if err != nil {
-			t.Fatalf("sh -c \"printf '%%s' %s\": %v", got, err)
+		shell := "sh"
+		if tc.goos == "windows" {
+			shell = "bash"
 		}
-		if string(out) != tc.path {
-			t.Errorf("sh passed %s on as %q, want %q", got, out, tc.path)
+		out, err := exec.Command(shell, "-c", "printf '%s' "+got).Output()
+		if err != nil {
+			t.Fatalf("%s -c \"printf '%%s' %s\": %v", shell, got, err)
+		}
+		if string(out) != tc.value {
+			t.Errorf("%s passed %s on as %q, want %q", shell, got, out, tc.value)
+		}
+	}
+}
+
+// TestRepoSyncMirrorRefusal pins the phase-0 refusal's bd repo remove and bd
+// repo add commands on both platforms: the source_repo quoted for the shell
+// (TestShellQuotedFor), or, when no quoting passes it on unchanged there, a
+// <path> placeholder for the path the refusal names.
+func TestRepoSyncMirrorRefusal(t *testing.T) {
+	t.Parallel()
+	const prefix = "issue mps-1 already exists in the planning repo P; the project copy was imported from "
+	for _, tc := range []struct {
+		goos, sourceRepo, want string
+	}{
+		{"linux", "/home/me/planning", prefix + "/home/me/planning by `bd repo sync` (remove those copies with `bd repo remove '/home/me/planning'`, then rerun, and run `bd repo add '/home/me/planning'` again if you want them hydrated); nothing was moved"},
+		{"windows", `C:\planning`, prefix + `C:\planning by ` + "`bd repo sync` (remove those copies with `bd repo remove \"C:\\planning\"`, then rerun, and run `bd repo add \"C:\\planning\"` again if you want them hydrated); nothing was moved"},
+		{"windows", `C:\planning\`, prefix + `C:\planning\ by ` + "`bd repo sync` (remove those copies with `bd repo remove <path>`, then rerun, and run `bd repo add <path>` again if you want them hydrated, with that path for <path>); nothing was moved"},
+		{"windows", `C:\Users\me\$work\planning`, prefix + `C:\Users\me\$work\planning by ` + "`bd repo sync` (remove those copies with `bd repo remove <path>`, then rerun, and run `bd repo add <path>` again if you want them hydrated, with that path for <path>); nothing was moved"},
+	} {
+		err := repoSyncMirrorRefusal(&types.Issue{ID: "mps-1", SourceRepo: tc.sourceRepo}, "P", tc.goos)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("repoSyncMirrorRefusal(source_repo %q, %q) = %v\nwant %s", tc.sourceRepo, tc.goos, err, tc.want)
 		}
 	}
 }
