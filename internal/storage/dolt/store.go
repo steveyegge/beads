@@ -1706,6 +1706,33 @@ func applyConfigDefaults(cfg *Config) {
 			cfg.ServerHost = "127.0.0.1"
 		}
 	}
+	ResolveServerPort(cfg)
+	if cfg.ServerUser == "" {
+		cfg.ServerUser = "root"
+	}
+	// Check environment variable for password (more secure than command-line)
+	if cfg.ServerPassword == "" {
+		cfg.ServerPassword = os.Getenv("BEADS_DOLT_PASSWORD")
+	}
+
+	// Remote credentials for Hosted Dolt push/pull (env vars take precedence)
+	if cfg.RemoteUser == "" {
+		cfg.RemoteUser = os.Getenv("DOLT_REMOTE_USER")
+	}
+	if cfg.RemotePassword == "" {
+		cfg.RemotePassword = os.Getenv("DOLT_REMOTE_PASSWORD")
+	}
+	// Pool knobs last: every DoltStore open (the CLI's store and library
+	// callers of New/NewFromConfig*) reaches New, so the knob ladders hold
+	// here regardless of how cfg was built.
+	applyPoolKnobs(cfg)
+}
+
+// ResolveServerPort applies the store's port rule to cfg, as New does before
+// it connects. Callers that dial the store's server without opening it
+// first, like bd init's clone into an external server, use it to dial the
+// port New will.
+func ResolveServerPort(cfg *Config) {
 	// Port resolution: caller-preset explicit ServerPort > BEADS_DOLT_SERVER_PORT
 	// env (or legacy BEADS_DOLT_PORT) > BEADS_TEST_MODE guard > metadata config > default.
 	// CRITICAL: BEADS_TEST_MODE=1 forces port 1 (immediate fail) if the resolved port
@@ -1772,25 +1799,6 @@ func applyConfigDefaults(cfg *Config) {
 			cfg.ServerPort = 1
 		}
 	}
-	if cfg.ServerUser == "" {
-		cfg.ServerUser = "root"
-	}
-	// Check environment variable for password (more secure than command-line)
-	if cfg.ServerPassword == "" {
-		cfg.ServerPassword = os.Getenv("BEADS_DOLT_PASSWORD")
-	}
-
-	// Remote credentials for Hosted Dolt push/pull (env vars take precedence)
-	if cfg.RemoteUser == "" {
-		cfg.RemoteUser = os.Getenv("DOLT_REMOTE_USER")
-	}
-	if cfg.RemotePassword == "" {
-		cfg.RemotePassword = os.Getenv("DOLT_REMOTE_PASSWORD")
-	}
-	// Pool knobs last: every DoltStore open (the CLI's store and library
-	// callers of New/NewFromConfig*) reaches New, so the knob ladders hold
-	// here regardless of how cfg was built.
-	applyPoolKnobs(cfg)
 }
 
 // New creates a new Dolt storage backend.

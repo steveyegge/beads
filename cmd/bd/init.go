@@ -1598,42 +1598,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// AutoStart is enabled during init — we need a server to initialize the database —
 		// except under --external: that server is managed outside bd, so bd must not start
 		// one of its own on the endpoint the caller named.
-		//
-		// Port resolution for init: use ONLY project-local sources (env var, port file)
-		// to prevent cross-project data leakage (GH#2336). DefaultConfig falls through
-		// to config.yaml / global config, which may resolve to another project's server
-		// because metadata.json doesn't exist yet during init. For fresh inits, port 0
-		// forces auto-start to allocate an ephemeral port for THIS project.
-		// The source travels with the port. applyConfigDefaults reads a nonzero
-		// ServerPort with no source as a caller assertion (be-wf9a.1), and none
-		// of the three resolutions below is one: they are an ambient env var and
-		// two pieces of bd's own bookkeeping. Mislabeling them makes auto-start
-		// refuse to retarget a stale port the user never chose (GH#4052).
-		initPort := 0
-		initPortSource := doltserver.PortSourceUnset
-		initPortShared := false
-		if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
-			if port, err := strconv.Atoi(p); err == nil && port > 0 {
-				initPort = port
-				initPortSource = doltserver.PortSourceEnv
-			}
-		}
-		if initPort == 0 {
-			if port := doltserver.ReadPortFile(beadsDir); port > 0 {
-				initPort = port
-				initPortSource = doltserver.PortSourcePortFile
-			}
-		}
-		// Shared server mode intentionally uses a common port for all projects.
-		if initPort == 0 && doltserver.IsSharedServerMode() {
-			initPort = doltserver.DefaultSharedServerPort
-			initPortSource = doltserver.PortSourceSharedServerDefault
-			// Mirrors doltserver.DefaultConfig's own shared-mode fill. It makes
-			// newServerMode fail closed if the shared server is down and
-			// auto-start brings up a repo-local one instead — a different
-			// database, never a benign port refresh (GH#4052).
-			initPortShared = true
-		}
+		initPort, initPortSource, initPortShared := initStoreServerPort(beadsDir)
 		doltCfg := &dolt.Config{
 			Path:                   storagePath,
 			BeadsDir:               beadsDir,
@@ -3840,6 +3805,40 @@ func initTimeCloneConfig(serverMode bool, serverHost string, serverPort int, ser
 		cfg.DoltServerUser = serverUser
 	}
 	return cfg
+}
+
+// initStoreServerPort is the server port, and its source, that bd init puts on
+// the store config it opens unless --server-port names one; the store then
+// applies its own rule to it (dolt.ResolveServerPort).
+//
+// Port resolution for init: use ONLY project-local sources (env var, port file)
+// to prevent cross-project data leakage (GH#2336). DefaultConfig falls through
+// to config.yaml / global config, which may resolve to another project's server
+// because metadata.json doesn't exist yet during init. For fresh inits, port 0
+// forces auto-start to allocate an ephemeral port for THIS project.
+// The source travels with the port. applyConfigDefaults reads a nonzero
+// ServerPort with no source as a caller assertion (be-wf9a.1), and none
+// of the three resolutions below is one: they are an ambient env var and
+// two pieces of bd's own bookkeeping. Mislabeling them makes auto-start
+// refuse to retarget a stale port the user never chose (GH#4052).
+func initStoreServerPort(beadsDir string) (int, doltserver.PortSource, bool) {
+	if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
+		if port, err := strconv.Atoi(p); err == nil && port > 0 {
+			return port, doltserver.PortSourceEnv, false
+		}
+	}
+	if port := doltserver.ReadPortFile(beadsDir); port > 0 {
+		return port, doltserver.PortSourcePortFile, false
+	}
+	// Shared server mode intentionally uses a common port for all projects.
+	if doltserver.IsSharedServerMode() {
+		// Shared mirrors doltserver.DefaultConfig's own shared-mode fill. It
+		// makes newServerMode fail closed if the shared server is down and
+		// auto-start brings up a repo-local one instead — a different
+		// database, never a benign port refresh (GH#4052).
+		return doltserver.DefaultSharedServerPort, doltserver.PortSourceSharedServerDefault, true
+	}
+	return 0, doltserver.PortSourceUnset, false
 }
 
 func persistInitSyncRemote(beadsDir, initRemote, syncURL string, syncFromRemote, syncURLFromConfig, syncURLFromGitOrigin bool) error {
