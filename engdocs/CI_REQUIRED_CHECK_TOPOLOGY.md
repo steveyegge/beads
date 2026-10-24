@@ -1821,13 +1821,18 @@ repository's push runs (`.github/scripts/main-ci-alert.sh`):
   run turns the workflow red (its previous decided push run was green, or
   there is none) and is the run's first attempt. While the workflow stays
   red, later reds, and a re-run that goes red again, update the issue
-  alone. A runs or jobs API error does not lose the issue: the candidates
-  fall back to the head commit's PR (notified), or the job list to a link
-  to the run, with a warning.
+  alone. Push runs overlap (each push keys its own concurrency group) and
+  can finish out of order: a red run with a newer green push run of the
+  same workflow is stale and notifies nobody, and reports only on an issue
+  already open. A runs or jobs API error does not lose the issue: the
+  candidates fall back to the head commit's PR (notified), or the job list
+  to a link to the run, with a warning.
 - A later green push run of the same workflow comments that it is green
   again, and the issue closes once no tracked workflow's latest decided
   push run on `main` is red. Cancelled runs (`main.yml` cancels older
-  runs) say nothing either way.
+  runs) say nothing either way: the script reads the runs API page after
+  page past them. The API lists a workflow's newest 1000 push runs only; a
+  workflow none of them decided is unknown and keeps the issue open.
 - It holds `issues: write`, `pull-requests: write`, `actions: read` and
   `contents: read`, checks out only its script from the default branch,
   reads no artifact and runs nothing from the run it reports on. Runs are

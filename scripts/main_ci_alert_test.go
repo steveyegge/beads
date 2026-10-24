@@ -170,9 +170,11 @@ func TestMainCIAlertWorkflow(t *testing.T) {
 // mainCIAlertGHStub stands in for gh: it logs every call (one line each) and
 // every --body-file, lists the open issues it is given (GH_ISSUES, through
 // the call's --jq), answers a run's jobs (GH_JOBS; GH_JOBS_FAIL fails it), a
-// workflow's runs ($GH_RUNS_DIR/<file>.json; GH_RUNS_FAIL fails it) and a
-// compare (GH_COMPARE; none set, or GH_COMPARE_FAIL, fails it), and prints a
-// new issue's URL.
+// workflow's runs ($GH_RUNS_DIR/<file>.json, a page at a time as the API
+// serves them: page, per_page (default 30), the newest 1000 only;
+// GH_RUNS_FAIL fails every page, GH_RUNS_FAIL_PAGE=N page N) and a compare
+// (GH_COMPARE; none set, or GH_COMPARE_FAIL, fails it), and prints a new
+// issue's URL.
 const mainCIAlertGHStub = `#!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_LOG"
 prev=
@@ -192,7 +194,13 @@ case "$1 $2" in
 			*/workflows/*/runs*)
 				[ -z "${GH_RUNS_FAIL:-}" ] || { echo "gh: HTTP 502" >&2; exit 1; }
 				file=${path#*/workflows/}; file=${file%%/runs*}
-				if [ -f "$GH_RUNS_DIR/$file.json" ]; then cat "$GH_RUNS_DIR/$file.json"; else echo '{"workflow_runs":[]}'; fi ;;
+				page=1 per_page=30
+				IFS='&' read -ra params <<<"${path#*\?}"
+				for kv in "${params[@]}"; do case "$kv" in page=*) page=${kv#page=} ;; per_page=*) per_page=${kv#per_page=} ;; esac; done
+				[ "$page" != "${GH_RUNS_FAIL_PAGE:-}" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+				runs='{"workflow_runs":[]}'
+				if [ -f "$GH_RUNS_DIR/$file.json" ]; then runs=$(cat "$GH_RUNS_DIR/$file.json"); fi
+				jq --argjson p "$page" --argjson n "$per_page" '{workflow_runs: .workflow_runs[:1000][($p - 1) * $n:$p * $n]}' <<<"$runs" ;;
 			*) echo "unexpected api path $path" >&2; exit 1 ;;
 		esac ;;
 esac
@@ -239,6 +247,9 @@ func runMainCIAlert(t *testing.T, env map[string]string, runs map[string][]mainC
 		t.Fatal(err)
 	}
 	for file, list := range runs {
+		if list == nil {
+			list = []mainCIAlertRun{} // the API lists no runs as [], not null
+		}
 		data, err := json.Marshal(map[string]any{"workflow_runs": list})
 		if err != nil {
 			t.Fatal(err)
@@ -271,10 +282,12 @@ func runMainCIAlert(t *testing.T, env map[string]string, runs map[string][]mainC
 // PRs (every PR between the workflow's previous decided push run's head and
 // this one's, or the head commit's alone when that range cannot be read) and
 // failed jobs, and comments on the candidates only when it turns the workflow
-// red; a green run with the issue open says so when the workflow's previous
-// push run was red, and closes the issue once no tracked workflow's latest
-// push run on main is red; anything else, or a green run with no issue open,
-// changes nothing.
+// red and no newer push run of it is green (which makes it stale: the open
+// issue alone hears of it); a green run with the issue open says so when the
+// workflow's previous push run was red, and closes the issue once no tracked
+// workflow's latest push run on main is red or unknown; anything else, or a
+// green run with no issue open, changes nothing. Decided runs are found page
+// after page past cancelled ones, within the runs API's newest 1000.
 func TestMainCIAlertScript(t *testing.T) {
 	const (
 		jobs = `{"jobs":[{"name":"dolt-race","conclusion":"failure","html_url":"https://x/job/1"},` +
@@ -293,6 +306,19 @@ func TestMainCIAlertScript(t *testing.T) {
 	}
 	cancelled := func(created string) mainCIAlertRun {
 		return mainCIAlertRun{created, "cancelled", "https://x/runs/cancelled-" + created, sha(created)}
+	}
+	// cancelledRuns: n cancelled runs, newest first, from 09:59:59 down (a
+	// landing burst under main.yml's cancel-in-progress group); at most 3600.
+	cancelledRuns := func(n int) []mainCIAlertRun {
+		var out []mainCIAlertRun
+		for i := range n {
+			out = append(out, cancelled(fmt.Sprintf("2026-10-24T09:%02d:%02dZ", 59-i/60, 59-i%60)))
+		}
+		return out
+	}
+	// runsPage: the gh call that reads a page of a workflow's push runs.
+	runsPage := func(file string, page int) string {
+		return fmt.Sprintf("api repos/gastownhall/beads/actions/workflows/%s/runs?branch=main&event=push&status=completed&per_page=100&page=%d&", file, page)
 	}
 	head := strings.Repeat("d", 40)
 	compareCall := "api repos/gastownhall/beads/compare/" + sha("2026-10-24T09:00:00Z") + "..." + head + "?per_page=100"
@@ -396,6 +422,46 @@ func TestMainCIAlertScript(t *testing.T) {
 			bodyHas: []string{"Candidates: #120, #121, #123", "already red on main before this push (https://x/runs/red-2026-10-24T09:00:00Z)"},
 		},
 		{
+			name:    "red after red behind a full page of cancelled runs: the range from it, no PR comment",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "GH_ISSUES": open42},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": append(cancelledRuns(100), red("2026-10-24T09:00:00Z"))},
+			want:    []string{runsPage("bazel.yml", 2), compareCall, "issue comment 42 --repo gastownhall/beads --body-file "},
+			notWant: []string{runsPage("bazel.yml", 3), "pr comment", "issue create"},
+			bodyHas: []string{"Candidates: #120, #121, #123", "already red on main before this push (https://x/runs/red-2026-10-24T09:00:00Z)"},
+		},
+		{
+			name:      "red, no decided run before it in the runs API's window: the head commit's PR, notified, warned",
+			env:       map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch},
+			runs:      map[string][]mainCIAlertRun{"bazel.yml": append(cancelledRuns(1000), green("2026-10-24T08:00:00Z"))},
+			want:      []string{runsPage("bazel.yml", 10), "issue create --repo gastownhall/beads", "pr comment 123 "},
+			notWant:   []string{runsPage("bazel.yml", 11), "api repos/gastownhall/beads/compare/", "pr comment 120"},
+			bodyHas:   []string{"Candidates: #123 (the head commit's alone"},
+			outputHas: "::warning::main-ci-alert.sh: none of the runs API's newest 1000 push runs of Bazel",
+		},
+		{
+			name:      "red, a newer push run is green: stale, nothing to report",
+			env:       map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "GH_JOBS": jobs},
+			runs:      map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T11:00:00Z"), green("2026-10-24T09:00:00Z")}},
+			want:      []string{runsPage("bazel.yml", 1)},
+			notWant:   []string{"issue create", "label create", "issue comment", "pr comment", "api repos/gastownhall/beads/compare/", "api --paginate"},
+			outputHas: "a newer push run of it is green (https://x/runs/green-2026-10-24T11:00:00Z): nothing to report",
+		},
+		{
+			name:    "red, a newer push run is green, issue open: the issue alone, no PR comment",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "GH_ISSUES": open42},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T11:00:00Z"), green("2026-10-24T09:00:00Z")}},
+			want:    []string{compareCall, "issue comment 42 --repo gastownhall/beads --body-file "},
+			notWant: []string{"pr comment", "issue create", "issue close"},
+			bodyHas: []string{"Candidates: #120, #121, #123", "A newer push run of Bazel is green already (https://x/runs/green-2026-10-24T11:00:00Z)"},
+		},
+		{
+			name:      "red, a newer green run behind a newest red one: still stale",
+			env:       map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch},
+			runs:      map[string][]mainCIAlertRun{"bazel.yml": {red("2026-10-24T11:00:00Z"), green("2026-10-24T10:30:00Z"), green("2026-10-24T09:00:00Z")}},
+			notWant:   []string{"issue create", "pr comment"},
+			outputHas: "green (https://x/runs/green-2026-10-24T10:30:00Z): nothing to report",
+		},
+		{
 			name:    "red after green, the range cannot be listed: the head commit's PR",
 			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "GH_COMPARE_FAIL": "1"},
 			runs:    map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T09:00:00Z")}},
@@ -426,7 +492,7 @@ func TestMainCIAlertScript(t *testing.T) {
 			bodyHas: []string{"Candidates: #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12 (", "Notified the newest 10 of them."},
 		},
 		{
-			name:    "red, the previous decided run is the newer one's: the range from the run before this one",
+			name:    "red, a newer push run is red too: the range from the run before this one, notified",
 			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch},
 			runs:    map[string][]mainCIAlertRun{"bazel.yml": {red("2026-10-24T11:00:00Z"), green("2026-10-24T09:00:00Z")}},
 			want:    []string{compareCall, "pr comment 120 "},
@@ -440,6 +506,15 @@ func TestMainCIAlertScript(t *testing.T) {
 			notWant:   []string{"api repos/gastownhall/beads/compare/", "pr comment 120"},
 			bodyHas:   []string{"Candidates: #123 (the head commit's alone"},
 			outputHas: "::warning",
+		},
+		{
+			name:      "red, the runs API fails on page 2: the issue opens with the head commit's PR, notified",
+			env:       map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "GH_RUNS_FAIL_PAGE": "2"},
+			runs:      map[string][]mainCIAlertRun{"bazel.yml": append(cancelledRuns(100), red("2026-10-24T09:00:00Z"))},
+			want:      []string{runsPage("bazel.yml", 2), "issue create --repo gastownhall/beads", "pr comment 123 "},
+			notWant:   []string{"api repos/gastownhall/beads/compare/", "pr comment 120"},
+			bodyHas:   []string{"Candidates: #123 (the head commit's alone"},
+			outputHas: "::warning::main-ci-alert.sh: could not list Bazel's push runs on main",
 		},
 		{
 			name:      "red, the jobs API fails: the issue still opens",
@@ -507,6 +582,36 @@ func TestMainCIAlertScript(t *testing.T) {
 			env:     map[string]string{"CONCLUSION": "success", "GH_ISSUES": open42, "WORKFLOW_NAME": "PR"},
 			runs:    withRuns(allGreen, "main.yml", cancelled("2026-10-24T09:59:00Z"), red("2026-10-24T09:58:00Z")),
 			notWant: []string{"issue close", "issue comment"},
+		},
+		{
+			name:    "green, Main's latest decided run is red behind a full page of cancelled runs: keep open",
+			env:     map[string]string{"CONCLUSION": "success", "GH_ISSUES": open42},
+			runs:    withRuns(allGreen, "main.yml", append(cancelledRuns(100), red("2026-10-24T08:00:00Z"))...),
+			want:    []string{runsPage("main.yml", 2), "issue comment 42 --repo gastownhall/beads --body-file "},
+			notWant: []string{runsPage("main.yml", 3), "issue close"},
+			bodyHas: []string{"**Bazel** is green again", "Still red: Main (https://x/runs/red-2026-10-24T08:00:00Z)"},
+		},
+		{
+			name:    "green, no decided Main run in the runs API's window: not known, keep open",
+			env:     map[string]string{"CONCLUSION": "success", "GH_ISSUES": open42},
+			runs:    withRuns(allGreen, "main.yml", append(cancelledRuns(1000), green("2026-10-24T08:00:00Z"))...),
+			want:    []string{runsPage("main.yml", 10), "issue comment 42 --repo gastownhall/beads --body-file "},
+			notWant: []string{runsPage("main.yml", 11), "issue close"},
+			bodyHas: []string{"**Bazel** is green again", "Not known: Main (no decided push run on main among the newest 1000"},
+		},
+		{
+			name: "green, a tracked workflow has no push run on main yet: close",
+			env:  map[string]string{"CONCLUSION": "success", "GH_ISSUES": open42},
+			runs: withRuns(allGreen, "pr.yml"),
+			want: []string{"issue comment 42", "issue close 42 --repo gastownhall/beads --comment "},
+		},
+		{
+			name:     "green, the runs API fails on page 2: the issue stays open, the job fails",
+			env:      map[string]string{"CONCLUSION": "success", "GH_ISSUES": open42, "GH_RUNS_FAIL_PAGE": "2"},
+			runs:     withRuns(allGreen, "main.yml", append(cancelledRuns(100), green("2026-10-24T08:00:00Z"))...),
+			want:     []string{runsPage("main.yml", 2)},
+			notWant:  []string{"issue close", "issue comment"},
+			wantCode: 1,
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {

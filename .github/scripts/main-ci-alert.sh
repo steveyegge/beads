@@ -19,19 +19,25 @@
 #       candidate too, but only when this turns the workflow red (its
 #       previous decided push run was green, or there is none) and is the
 #       run's first attempt: a later red of the same workflow, or a re-run
-#       that went red again, updates the issue alone. A runs or jobs API
-#       error leaves those parts out (head-commit candidates, notified; no
-#       job list) with a warning, rather than losing the issue.
+#       that went red again, updates the issue alone. A green push run of
+#       the workflow newer than this one (each push keys its own concurrency
+#       group, so they finish out of order) makes this red stale: it
+#       notifies nobody and reports on an open issue only. A runs or jobs
+#       API error leaves those parts out (head-commit candidates, notified;
+#       no job list) with a warning, rather than losing the issue.
 #   success
 #       with the issue open: comment when this workflow's previous decided
 #       push run was red, listing what is still red, and close the issue
-#       once no tracked workflow's latest decided push run on main is red.
+#       once no tracked workflow's latest decided push run on main is red
+#       or unknown.
 #   anything else (cancelled, skipped, ...)
 #       nothing: it says nothing about the tree.
 #
 # A decided run is one that succeeded or went red: a cancelled run (main.yml
-# cancels its older runs) is passed over. This run counts as its workflow's
-# latest unless the runs API lists a newer one.
+# cancels its older runs) is passed over, page after page. This run counts as
+# its workflow's latest unless the runs API lists a newer one. The runs API
+# lists a workflow's newest 1000 push runs: a workflow none of them decided is
+# unknown.
 #
 # Env: GITHUB_REPOSITORY; GH_TOKEN (issues: write, pull-requests: write,
 # actions: read, contents: read); the triggering run's WORKFLOW_NAME, RUN_ID,
@@ -86,15 +92,6 @@ is_red() {
 	return 1
 }
 
-# decided_runs FILE: the workflow's decided push runs on main, newest first,
-# one "created_at conclusion head_sha html_url" line each.
-decided_runs() {
-	gh api "repos/$repo/actions/workflows/$1/runs?branch=main&event=push&status=completed&per_page=30&exclude_pull_requests=true" |
-		jq -r '.workflow_runs[]
-			| select(.conclusion == "success" or .conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")
-			| "\(.created_at) \(.conclusion) \(.head_sha) \(.html_url)"'
-}
-
 # previous_run RUNS: the newest run of decided_runs' RUNS created before this
 # one, as "conclusion head_sha html_url"; nothing when there is none.
 previous_run() {
@@ -105,6 +102,52 @@ previous_run() {
 			return
 		fi
 	done <<<"$1"
+}
+
+# newer_green RUNS: the html_url of the newest green run of decided_runs'
+# RUNS created after this one; nothing when there is none.
+newer_green() {
+	local created run_conclusion run_sha run_url
+	while read -r created run_conclusion run_sha run_url; do
+		if [[ "$created" > "$RUN_CREATED_AT" && "$run_conclusion" == success ]]; then
+			printf '%s\n' "$run_url"
+			return
+		fi
+	done <<<"$1"
+}
+
+# decided_runs FILE: set runs to the workflow's decided push runs on main,
+# newest first, one "created_at conclusion head_sha html_url" line each, and
+# runs_listed to how far back they reach: "before" to the newest one created
+# before this run, "all" when the workflow has no such run, "cut" when the
+# runs API's window ended first (a filtered list stops at the newest 1000
+# runs: 10 pages of 100). Cancelled runs can fill whole pages, so it reads
+# page after page until one of those. Returns 1 on an API error; it checks
+# each step itself, since set -e does not apply in a caller's || or if.
+decided_runs() {
+	local page listed count
+	runs=
+	runs_listed="cut"
+	for ((page = 1; page <= 10; page++)); do
+		# The page's run count, then its decided runs.
+		listed=$(gh api "repos/$repo/actions/workflows/$1/runs?branch=main&event=push&status=completed&per_page=100&page=$page&exclude_pull_requests=true" |
+			jq -r '(.workflow_runs | length), (.workflow_runs[]
+				| select(.conclusion == "success" or .conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")
+				| "\(.created_at) \(.conclusion) \(.head_sha) \(.html_url)")') || return 1
+		count=${listed%%$'\n'*}
+		[[ "$count" =~ ^[0-9]+$ ]] || return 1
+		if [[ "$listed" == *$'\n'* ]]; then
+			runs+=${runs:+$'\n'}${listed#*$'\n'}
+		fi
+		if [[ -n "$(previous_run "$runs")" ]]; then
+			runs_listed="before"
+			return 0
+		fi
+		if ((count < 100)); then
+			runs_listed="all"
+			return 0
+		fi
+	done
 }
 
 open_issue() {
@@ -135,11 +178,24 @@ if [[ "$conclusion" != success ]]; then
 	fi
 	# A runs API error must not lose the issue: without the previous run,
 	# the candidates are the head commit's and they are notified.
-	runs=$(decided_runs "$file") || {
+	if ! decided_runs "$file"; then
 		echo "::warning::main-ci-alert.sh: could not list $workflow's push runs on main; the candidates are the head commit's"
 		runs=
-	}
+	elif [[ "$runs_listed" == cut ]]; then
+		echo "::warning::main-ci-alert.sh: none of the runs API's newest 1000 push runs of $workflow on main is a decided run before this one; the candidates are the head commit's"
+	fi
 	read -r prev_conclusion prev_sha prev_url <<<"$(previous_run "$runs")" || true
+	# A green push run of this workflow newer than this one (push runs
+	# overlap, each push keying its own concurrency group, and finish out of
+	# order) means main went green after this run's head: this red is stale,
+	# so it notifies nobody and reports on an open issue only. A newer red
+	# run does not stand in for this one: when it decided after this run, its
+	# alert took this run as its previous one and notified nobody.
+	newer=$(newer_green "$runs")
+	if [[ -n "$newer" && -z "$issue" ]]; then
+		echo "$workflow is $conclusion on main at $sha, but a newer push run of it is green ($newer): nothing to report"
+		exit 0
+	fi
 	# The candidates: every PR the push range names, oldest first, from this
 	# workflow's previous decided push run's head to this run's (a batch
 	# lands as one push; earlier runs that were cancelled or are still
@@ -162,14 +218,17 @@ if [[ "$conclusion" != success ]]; then
 		candidates=$(printf '#%s, ' "${prs[@]}")
 		candidates=${candidates%, }
 	fi
-	# Notify the candidates only when this turns the workflow red, on the
-	# run's first attempt (a re-run that went red again reached them, or was
-	# kept from them, the first time), and at most the newest ten of them (a
-	# range that long means earlier runs never decided; the issue lists them
-	# all).
+	# Notify the candidates only when this turns the workflow red (and no
+	# newer push run is green), on the run's first attempt (a re-run that
+	# went red again reached them, or was kept from them, the first time),
+	# and at most the newest ten of them (a range that long means earlier
+	# runs never decided; the issue lists them all).
 	notify=true
 	quiet=
-	if [[ -n "${prev_conclusion:-}" && "$prev_conclusion" != success ]]; then
+	if [[ -n "$newer" ]]; then
+		notify=false
+		quiet="A newer push run of $workflow is green already ($newer), so the candidates were not notified."
+	elif [[ -n "${prev_conclusion:-}" && "$prev_conclusion" != success ]]; then
 		notify=false
 		quiet="$workflow was already red on main before this push ($prev_url), so the candidates were not notified."
 	elif ((RUN_ATTEMPT > 1)); then
@@ -240,13 +299,15 @@ if [[ -z "$issue" ]]; then
 	exit 0
 fi
 # This workflow's previous decided run, and every tracked workflow's latest
-# (this run when the API lists nothing newer of its workflow). Each list is
-# read whole first: an early-exiting reader (head, awk's exit) could cut its
-# writer off and, under pipefail, end this script.
+# (this run when the API lists nothing newer of its workflow). A runs API
+# error ends the script and leaves the issue open. A workflow with no
+# decided run in the runs API's window is unknown, not green: it keeps the
+# issue open too.
 previous=
 red=()
+unknown=()
 for i in "${!names[@]}"; do
-	runs=$(decided_runs "${files[$i]}")
+	decided_runs "${files[$i]}"
 	if [[ "${names[$i]}" == "$workflow" ]]; then
 		read -r previous _ <<<"$(previous_run "$runs")" || true
 	fi
@@ -256,6 +317,8 @@ for i in "${!names[@]}"; do
 	fi
 	if is_red "${latest_conclusion:-}"; then
 		red+=("${names[$i]} ($latest_url)")
+	elif [[ -z "$runs" && "$runs_listed" == cut ]]; then
+		unknown+=("${names[$i]}")
 	fi
 done
 if is_red "${previous:-}"; then
@@ -265,12 +328,16 @@ if is_red "${previous:-}"; then
 			still=$(printf '%s, ' "${red[@]}")
 			printf '\nStill red: %s\n' "${still%, }"
 		fi
+		if ((${#unknown[@]} > 0)); then
+			still=$(printf '%s, ' "${unknown[@]}")
+			printf '\nNot known: %s (no decided push run on main among the newest 1000 the runs API lists)\n' "${still%, }"
+		fi
 	} >"$body"
 	gh issue comment "$issue" --repo "$repo" --body-file "$body"
 fi
-if ((${#red[@]} == 0)); then
+if ((${#red[@]} == 0 && ${#unknown[@]} == 0)); then
 	gh issue close "$issue" --repo "$repo" --comment "No tracked workflow's latest push run on main ($tracked) is red: closing. $workflow is green at $sha: $run_url"
 	echo "closed #$issue"
 else
-	echo "#$issue stays open: ${red[*]}"
+	echo "#$issue stays open: red ${red[*]:-none}; not known ${unknown[*]:-none}"
 fi
