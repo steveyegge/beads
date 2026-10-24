@@ -2641,11 +2641,15 @@ jobs:
   # `bazel test` step carries continue-on-error, and an always() step
   # (tools/bazel/classify_tier_results.py) reads the BEP by target label,
   # computes each tier's own result, and fails the job itself iff
-  # server-storage's tier failed (a cmd-dolt-only test failure leaves the job
-  # green, as bazel-cmd-dolt's own continue-on-error already does outside
-  # mode remote) or bazel's exit code was neither 0 nor 3 (a build or infra
-  # failure is not attributable to one tier, so both are marked failed and
-  # the job fails regardless). Both members' workflow_call outputs read this
+  # server-storage's tier failed or bazel's exit code was neither 0 nor 3 (a
+  # build or infra failure is not attributable to one tier, so both are
+  # marked failed and the job fails regardless). A cmd-dolt-only failure
+  # leaves the job green in pr.yml's call, whose gate reads cmd_dolt_result
+  # (BAZEL_CMD_DOLT), as bazel-cmd-dolt's own continue-on-error does outside
+  # mode remote; everywhere else (push to main, nightly, dispatch,
+  # bazel-farm.yml) nothing reads it, so the job's last step fails the job
+  # for it: a merge group skips the Dolt tiers, and main's push run is where
+  # a cmd/bd tier regression must turn red. Both members' workflow_call outputs read this
   # job's matching per-tier output first, then their own member's; a job that
   # dies before the classify step leaves both outputs empty, which mode
   # remote's gate (bazel-gate.sh, ci-gate.sh) already treats as skipped and
@@ -2654,11 +2658,12 @@ jobs:
   # timeouts below keep a rollback of that safe.
   # Every step has a timeout and the job's exceeds their sum by 5 minutes
   # while staying under the merge queue's 60-minute check timeout
-  # (TestBazelDoltIntJobTimeouts): 58 leaves only about 2 minutes for runner
+  # (TestBazelDoltIntJobTimeouts): 59 leaves only about 1 minute for runner
   # pickup and the rbe job inside that 60-minute budget, so a hang that runs
-  # to this job's own timeout can drop the merge group; accepted, because
-  # such a run is red anyway and the 58-minute job timeout bounds only this
-  # job, not the whole run (as #7514's dolt-race job comment). The member
+  # to this job's own timeout could drop a merge group that ran it (after a
+  # rollback of the fast set); accepted, because such a run is red anyway and
+  # the 59-minute job timeout bounds only this job, not the whole run (as
+  # #7514's dolt-race job comment). The member
   # jobs' configs and the union's must stay key-identical: the mode decides
   # which runs (TestBazelDoltIntConfigIsMemberUnion). Its ci-analytics LANE
   # is dolt-int.
@@ -2669,12 +2674,13 @@ jobs:
     if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' && inputs.dolt-tiers != 'off' }}
     # At least every step's timeout-minutes plus 5, and below the merge
     # queue's 60-minute check timeout so this job alone cannot exhaust it
-    # (TestBazelDoltIntJobTimeouts). 58 leaves only about 2 minutes for
+    # (TestBazelDoltIntJobTimeouts). 59 leaves only about 1 minute for
     # runner pickup and the rbe job inside the merge queue's 60-minute check;
-    # a hang that runs to this timeout can therefore drop the group, which is
-    # accepted because such a run is red anyway and the 58-minute job timeout
-    # bounds this job, not the whole run (as #7514's dolt-race job comment).
-    timeout-minutes: 58
+    # a hang that runs to this timeout could therefore drop a group that ran
+    # it, which is accepted because such a run is red anyway and the
+    # 59-minute job timeout bounds this job, not the whole run (as #7514's
+    # dolt-race job comment).
+    timeout-minutes: 59
     outputs:
       server_storage_result: ${{ steps.classify.outputs.server_storage_result }}
       cmd_dolt_result: ${{ steps.classify.outputs.cmd_dolt_result }}
@@ -2863,8 +2869,8 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # Last step: each tier's own result (not job.status: this job carries
-      # no continue-on-error, see the job's own comment) as the
+      # Each tier's own result (not job.status: this job carries no
+      # continue-on-error, see the job's own comment) as the
       # bazel-server-storage and bazel-cmd-dolt workflow_call outputs for
       # pr.yml's ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too (steps.test.outcome stays "skipped" then, so the
@@ -2891,6 +2897,24 @@ jobs:
           --check "server-storage=$CHECK_SS_OUTCOME"
           --check "cmd-dolt=$CHECK_CD_OUTCOME"
           --github-output "$GITHUB_OUTPUT"
+
+      # Last step: the cmd/bd Dolt-server tier fails the job wherever no
+      # caller gate reads its result. The classify step fails the job for
+      # server-storage alone; only pr.yml's call (pull_request, merge_group)
+      # reads cmd_dolt_result, through its gate id BAZEL_CMD_DOLT, so a PR
+      # shows a cmd/bd tier failure exactly as before (red BAZEL_CMD_DOLT,
+      # BAZEL green), and pr.yml's flag keeps deciding there. A push to main,
+      # nightly, a dispatch and bazel-farm.yml's advisory call have no such
+      # gate, so this step fails the job: a merge group skips the Dolt tiers,
+      # main's push run is the tier's first run on the merged tree, and its
+      # red is what main-ci-alert.yml reports
+      # (TestCIScopeCoversEveryGatedJobOnMain).
+      - name: The cmd/bd Dolt-server tier fails the run outside pr.yml's call
+        if: ${{ always() && steps.classify.outputs.cmd_dolt_result == 'failure' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+        timeout-minutes: 1
+        run: |
+          echo "::error title=cmd/bd Dolt-server tier failed:://cmd/bd:bd_dolt_server_test or //tests/regression:regression_test failed (cmd_dolt_result); no caller gate reads that result in a $GITHUB_EVENT_NAME run, so it fails this job"
+          exit 1
 
   # F3: moved here from pr.yml so the gate depends on nothing but the rbe
   # job's decision (not the whole bazel call). Only pr.yml opts in (package-gates: "on");

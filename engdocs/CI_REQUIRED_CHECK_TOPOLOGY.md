@@ -717,7 +717,7 @@ ran tests" steps (`check-ss`, `check-cd`, below) each carry their own
 (`tools/bazel/classify_tier_results.py`) reads the BEP by target label,
 folds each check step's outcome in via `--check NAME=OUTCOME`, computes each
 tier's own result, and fails the job itself iff server-storage's tier failed
-(a cmd-dolt-only test or zero-testcase failure leaves the job green, as
+(a cmd-dolt-only test or zero-testcase failure leaves that step green, as
 `bazel-cmd-dolt`'s own `continue-on-error` already does outside mode
 `remote`); `bazel`'s exit code being neither 0 nor 3 (not attributable to one
 tier) or a non-`PASSED` result for a label outside both `--tier` lists (the
@@ -731,6 +731,19 @@ the job (`scripts/bazel_dolt_int_test.go`'s exact pin of the classify step's
 `run:` argv closes the same gap one level up). The job exposes two outputs,
 `server_storage_result` and `cmd_dolt_result`, one per tier, instead of the
 uniform `result` every other lane's always() step records.
+
+A cmd-dolt failure fails the job only where no caller gate reads
+`cmd_dolt_result`. In `pr.yml`'s call (pull requests, merge groups) the gate
+reads it as `BAZEL_CMD_DOLT`, so a pull request shows a cmd/bd tier failure
+as before: `BAZEL_CMD_DOLT` red, the call's aggregate `BAZEL` green. On a
+push to `main`, nightly, a dispatch and `bazel-farm.yml`'s advisory call
+nothing reads it, so the job's last step ("The cmd/bd Dolt-server tier fails
+the run outside pr.yml's call") fails the job when `cmd_dolt_result` is
+`failure`. A merge group skips the Dolt tiers, so `main`'s push run is the
+tier's first run on the merged tree, and its red is what
+`main-ci-alert.yml` reports (see [Merge Queue](#merge-queue)). That holds
+whatever `pr.yml`'s `BAZEL_CMD_DOLT_REQUIRED` says: the flag decides only
+what a pull request's gate requires.
 
 - Mode `remote` only (same-repo pull requests, push, nightly, dispatch and
   `bazel-farm.yml`'s authorized call; a merge group skips it with the other
@@ -769,12 +782,12 @@ uniform `result` every other lane's always() step records.
   BEP otherwise mixes both tiers' shards under one report. The `bazel test`
   step has a 25-minute timeout, every step has one (the two check steps
   1 minute each, preserving the pre-split step's combined 2-minute budget),
-  and the job's (58 minutes) is at least their sum plus 5 and below the merge
-  queue's 60-minute check timeout -- leaving only about 2 minutes for runner
+  and the job's (59 minutes) is at least their sum plus 5 and below the merge
+  queue's 60-minute check timeout -- leaving only about 1 minute for runner
   pickup and the rbe job inside that 60-minute budget, so a hang that runs to
   this job's own timeout can drop the merge group (were a merge group to run
   it again: today it skips the Dolt tiers); accepted, because such a
-  run is red anyway and the 58-minute job timeout bounds only this job, not
+  run is red anyway and the 59-minute job timeout bounds only this job, not
   the whole run. "Upload test logs" runs `if: failure() || steps.test.outcome
   == 'failure'`, not `failure()` alone, since the `bazel test` step's own
   `continue-on-error` means an ordinary test failure there does not make

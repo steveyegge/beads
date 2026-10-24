@@ -985,6 +985,162 @@ func TestCIScopeCoversEveryGatedJobOnMain(t *testing.T) {
 	}
 }
 
+// TestCIScopeExcusedIDsRedTheirPushRun: every gate id a merge group's gates
+// excuse (read from the gates' own merge-group runs) turns main's push run red
+// when its job fails there, which main-ci-alert.yml reports; running on the
+// push is not enough.
+//   - pr.yml's and pr-risk.yml's own jobs (the Windows, macOS and Nix jobs):
+//     the job runs on the push, carries no job-level continue-on-error (its
+//     failure fails the run), and the push run's real gate step goes red on
+//     its failure.
+//   - bazel.yml's Dolt-tier lanes, in its own push run (mode remote, no
+//     inputs): the job reporting the id runs and carries no job-level
+//     continue-on-error, and the tier's failure fails it. A lane's job.status
+//     is its result; bazel-dolt-int's per-tier results fail it through the
+//     classify step's --gate-tier (server-storage) or through a later step
+//     that exits non-zero on the tier's failure outside pr.yml's call, and
+//     only there: in pr.yml's call (pull_request, merge_group) the gate reads
+//     the per-tier output, so a PR shows the failure exactly as before.
+func TestCIScopeExcusedIDsRedTheirPushRun(t *testing.T) {
+	requireHostTool(t, "bash")
+	pr := readCIWorkflow(t, "pr.yml")
+	prStep := pr.job(t, "ci-gate").step(t, "Evaluate CI gate")
+	risk := readCIWorkflow(t, prRiskWorkflowName)
+	riskStep := risk.job(t, "ci-gate").step(t, "Evaluate CI gate")
+	mgScope, pushScope := ciScopeFor(t, "merge_group"), ciScopeFor(t, "push")
+
+	excused := map[string]string{} // gate id -> the workflow whose gate excuses it
+	mg, _ := prScopeScenario(t, "merge_group", mgScope)
+	if pass, log := runPRGateStep(t, prStep, mg); !pass {
+		t.Fatalf("pr.yml's merge-group gate is red:\n%s", log)
+	} else {
+		for _, id := range ciGateAllowedSkips(log) {
+			excused[id] = "pr.yml"
+		}
+	}
+	if pass, log := runRiskGateStep(t, riskStep, "merge_group", map[string]string{"test-nix": "skipped"}, mgScope); !pass {
+		t.Fatalf("%s's merge-group gate is red:\n%s", prRiskWorkflowName, log)
+	} else {
+		for _, id := range ciGateAllowedSkips(log) {
+			excused[id] = prRiskWorkflowName
+		}
+	}
+	if len(excused) != len(ciScopeGateIDs["pr.yml"]["platforms"])+len(ciScopeGateIDs[prRiskWorkflowName]["platforms"])+len(bazelDoltTierGateIDs) {
+		t.Fatalf("the merge group's gates excuse %v; want the Windows and macOS ids, TEST_NIX and the Dolt-tier ids", slices.Sorted(maps.Keys(excused)))
+	}
+
+	bazel := readCIWorkflow(t, bazelWorkflowName)
+	pushLanes := map[string]map[string]bool{} // bazel.yml's own push run: no inputs
+	for name, job := range bazel.Jobs {
+		if name != bazelRBEJobName && !isBazelRRCJob(name) {
+			pushLanes[name] = bazelLaneRunModes(t, name, job.If, map[string]string{})
+		}
+	}
+	laneOf := map[string]string{} // gate id -> bazel.yml lane
+	for lane, id := range bazelLaneGateIDs {
+		laneOf[id] = lane
+	}
+	for lane, g := range bazelFlagGatedLanes {
+		laneOf[g.id] = lane
+	}
+	needsResult := regexp.MustCompile(`^\$\{\{ needs\.([a-z0-9-]+)\.result \}\}$`)
+
+	for id, wf := range excused {
+		if lane, ok := laneOf[id]; ok && wf == "pr.yml" {
+			reporter := bazelLaneReporter(pushLanes, lane, "remote")
+			if reporter == "" {
+				t.Errorf("%s: no job of bazel.yml's push run (mode remote) reports it", id)
+				continue
+			}
+			job := bazel.job(t, reporter)
+			if job.ContinueOnError {
+				t.Errorf("%s: %s carries job-level continue-on-error; its failure would leave main's push run green", id, reporter)
+			}
+			key := "result"
+			if bazelUnionOf(lane) == reporter && bazelUnionMemberOutputKey[lane] != "" {
+				key = bazelUnionMemberOutputKey[lane]
+			}
+			if key == "result" {
+				if job.Outputs["result"] != "${{ steps.result.outputs.result }}" {
+					t.Errorf("%s: %s reports %v, not its job.status", id, reporter, job.Outputs)
+				}
+				continue // the job's own status: its failure is the run's
+			}
+			tier := strings.ReplaceAll(strings.TrimSuffix(key, "_result"), "_", "-")
+			if strings.Contains(job.step(t, "Classify tier results").Run, "--gate-tier "+tier+" ") {
+				continue // the classify step exits 1 on this tier's failure
+			}
+			failing := 0
+			for _, step := range job.Steps {
+				if !strings.Contains(step.If, "steps.classify.outputs."+key) {
+					continue
+				}
+				// always() is true in a job that got this far.
+				expr := strings.ReplaceAll(step.If, "always()", "true")
+				runs := func(event, result string) bool {
+					return evalRRCIf(t, expr, map[string]string{"github.event_name": event, "steps.classify.outputs." + key: result})
+				}
+				if !runs("push", "failure") {
+					continue
+				}
+				failing++
+				for _, event := range []string{"schedule", "workflow_dispatch", "pull_request_target"} {
+					if !runs(event, "failure") {
+						t.Errorf("%s: %s step %q does not fail a %s run on the %s tier's failure, where no gate reads %s", id, reporter, step.Name, event, tier, key)
+					}
+				}
+				for _, event := range []string{"pull_request", "merge_group"} {
+					if runs(event, "failure") {
+						t.Errorf("%s: %s step %q fails pr.yml's %s call too, whose gate reads %s (a PR would show it twice)", id, reporter, step.Name, event, key)
+					}
+				}
+				if runs("push", "success") || runs("push", "") {
+					t.Errorf("%s: %s step %q runs without the %s tier's failure", id, reporter, step.Name, tier)
+				}
+				if step.ContinueOnError != nil && step.ContinueOnError != false {
+					t.Errorf("%s: %s step %q carries continue-on-error", id, reporter, step.Name)
+				}
+				cmd := exec.Command("bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step.Run)
+				cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_EVENT_NAME=push"}
+				if out, err := cmd.CombinedOutput(); err == nil {
+					t.Errorf("%s: %s step %q exits 0 on the %s tier's failure:\n%s", id, reporter, step.Name, tier, out)
+				}
+			}
+			if failing == 0 {
+				t.Errorf("%s: a %s tier failure leaves %s green in main's push run (no --gate-tier %s, no step failing on %s); main-ci-alert.yml would never see it", id, tier, reporter, tier, key)
+			}
+			continue
+		}
+		// One of the workflow's own jobs.
+		w, step := pr, prStep
+		if wf == prRiskWorkflowName {
+			w, step = risk, riskStep
+		}
+		m := needsResult.FindStringSubmatch(step.Env[id])
+		if m == nil {
+			t.Errorf("%s gate env %s = %q: want a job's result", wf, id, step.Env[id])
+			continue
+		}
+		job := w.job(t, m[1])
+		if !evalRRCIf(t, job.If, ciScopeCtx(pushScope)) || job.ContinueOnError {
+			t.Errorf("%s: %s job %s on push: runs %v, continue-on-error %v; want it to run and to fail the run when it fails", id, wf, m[1], evalRRCIf(t, job.If, ciScopeCtx(pushScope)), job.ContinueOnError)
+		}
+		var pass bool
+		var log string
+		if wf == "pr.yml" {
+			sc, _ := prScopeScenario(t, "push", pushScope)
+			sc.results = maps.Clone(sc.results)
+			sc.results[m[1]] = "failure"
+			pass, log = runPRGateStep(t, step, sc)
+		} else {
+			pass, log = runRiskGateStep(t, step, "push", map[string]string{m[1]: "failure"}, pushScope)
+		}
+		if pass || !regexp.MustCompile(`::error::`+id+`\b`).MatchString(log) {
+			t.Errorf("%s: %s failed on the push to main, %s's gate pass = %v; want red naming %s\n%s", id, m[1], wf, pass, id, log)
+		}
+	}
+}
+
 // TestCIScopeWorkflowsRunOnPushToMain: both workflows add exactly a push to
 // main to their pull_request and merge_group triggers (the complement runs
 // there), with no path filter.

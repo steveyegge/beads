@@ -50,6 +50,9 @@ env:
   # lane runs the same integration-build bd_test without the dolt skip, so
   # each cmd/bd test runs once. Rollback: commit "false" here and false in
   # that input together; bazel-integration runs bd_test again on the next run.
+  # The flag decides only what this gate requires: a merge group skips the
+  # tier (the scope's dolt-tiers), and main's push run of bazel.yml fails on
+  # a cmd/bd tier failure either way (bazel-dolt-int's last step).
   BAZEL_CMD_DOLT_REQUIRED: "true"
 
 jobs:
