@@ -673,8 +673,10 @@ copy of gascity main's manifest (`tools/rbe/worker-env.txt`) and its pin
 (`platforms/BUILD.bazel`). When a gascity PR that re-pins (a Go, dolt or
 library bump) merges, new workers advertise the new pin at once, and every
 beads PR's `Bazel / execution mode` preflight (`tools/rbe/worker-env-sync`)
-fails until beads' copy lands. On Oct 21, gascity#8165 merged at 01:09:31Z
-and the copy, #7746, landed at 02:38:04Z: 89 minutes of red beads PRs.
+fails until beads' copy lands, unless the
+[grace window](#rbe-worker-env-grace-window) covers it. On Oct 21,
+gascity#8165 merged at 01:09:31Z and the copy, #7746, landed at 02:38:04Z:
+89 minutes of red beads PRs.
 
 The sync, end to end:
 
@@ -788,6 +790,46 @@ here, a push to the sync branch still drops a queued PR from the queue on
 GitHub's side, and nothing the guard queues stays armed for the new head to
 inherit; the refusal and its comment come with the next `workflow_run` (the
 pushed head's own CI finishing) or the 15-minute run instead of at once.
+
+### rbe worker-env Grace Window
+
+A re-pin gascity can roll back (a Go release: the manifest's go line alone)
+need not turn beads PRs red while the sync PR is on its way. gascity
+publishes a record, `worker-env-grace.txt` alone on its
+`rbe/worker-env-grace` branch (gascity `tools/rbe/worker-env-grace`), with
+the pin before the re-pin and a window: beads may keep that previous pin
+for at most two hours, and rbe-west keeps workers of it an hour longer, for
+the runs beads accepted last. While the repository variable
+`RBE_WORKER_ENV_GRACE` is `true`, the preflight in mode `remote` runs
+`tools/rbe/worker-env-sync` with `WORKER_ENV_SYNC_GRACE=1`: a copy that
+still pins the record's previous pin, inside its window, exits 3, and the
+job proceeds with a notice naming the window's end, so the lanes run on the
+previous-pin workers until the sync PR lands. gascity publishes the record
+about a minute after the re-pin lands on its main, and until then the branch
+holds an earlier re-pin's record, so a record for another pin (or one that
+could not be read) is read again every 15 seconds for up to 150 seconds
+from the script's start (`WORKER_ENV_SYNC_GRACE_WAIT`, inside the job's 5
+minutes) before the preflight decides. Anything else fails the preflight as
+before, with one more line saying why the window does not apply: no record;
+a malformed one (anything but at most 64 KiB of printable ASCII in the exact
+`key value` form, or a window over two hours); an unreadable one after the
+wait; another pin after the wait; `previous none`; a previous pin other than
+beads'; a gascity manifest that moved more than the go line, a Go other than
+beads', or one whose rolled-back manifest does not hash to the previous pin;
+or a window not yet open or closed. Mode `remote` only: `fork-ro` executes
+on the separate `oss-fork` pool, which has no previous-pin workers, and fork
+runs see no variables. The nightly check, the autosync and the guard's
+verifier never ask for the window (`TestWorkerEnvSyncGraceStaysInThePreflight`),
+so the sync PR still opens and lands as above.
+
+Turning it on, once gascity publishes the record and rbe-west serves the
+previous pin (gastownhall/gascity#8271 merged, gascity/infra#2452 deployed):
+`gh variable set RBE_WORKER_ENV_GRACE --repo gastownhall/beads --body true`.
+Rollback: `gh variable delete RBE_WORKER_ENV_GRACE --repo
+gastownhall/beads`; the next run's preflight is strict again. Delete it too
+whenever rbe-west stops serving previous pins (its grace switch off or
+rolled back): beads would otherwise accept a pin no worker serves, and its
+lanes would queue instead of failing fast.
 
 ## dolt-race Union Lane
 
