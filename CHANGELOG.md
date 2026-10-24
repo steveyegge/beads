@@ -862,6 +862,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The batched bulk readers no longer return an issue's rows twice when the
+  same id is requested twice. Since the 200-id batching (#6444), an id that
+  appeared in two batches had its comments, labels, dependency records,
+  blocking edges and issue rows read once per batch. Ids are now
+  de-duplicated before batching, matching the single `IN (...)` list the
+  readers used before.
 - A Dolt server you run at an IPv6 address can now be configured bare
   (`::1`) or bracketed (`[::1]`) in `metadata.json` `dolt_server_host`,
   `BEADS_DOLT_SERVER_HOST`, `config.yaml` `dolt.host` or `bd init
