@@ -11,23 +11,32 @@
 # queue on a pin no worker serves. This compares the manifest and the pin
 # with gascity's at REF (default main) and, if either differs, prints the
 # diff and what to commit (stdout and $GITHUB_STEP_SUMMARY) and exits 1.
+# REF is read at the commit it names (worker-env-sync-ref: a branch through
+# git ls-remote, a 40-hex REF as is), never through the raw CDN's branch
+# URL, which can serve the previous pin for minutes after a re-pin.
 # If it cannot compare (gascity unreachable, a missing REF, any other
 # failure) it warns and exits 2: callers that must not block on GitHub's
 # availability (bazel.yml's rbe job) proceed on 2 and fail only on 1.
-# Run from the repository root.
+# Run from the root of the checkout to compare (it reads
+# tools/rbe/worker-env.txt and platforms/BUILD.bazel there); the script
+# itself may live elsewhere (worker-env-sync-verify runs this trusted copy
+# on a PR head's two files).
 #
 # Callers: bazel.yml's rbe job, before any lane of a remote-execution run
-# (fails the run fast instead of letting the lanes queue), and nightly.yml's
+# (fails the run fast instead of letting the lanes queue); nightly.yml's
 # rbe-worker-env-sync job (opens or updates a ci/infra issue,
-# tools/rbe/worker-env-sync-issue).
+# tools/rbe/worker-env-sync-issue); worker-env-autosync.yml (opens the sync
+# PR); worker-env-sync-verify (worker-env-sync-automerge.yml's check of
+# that PR).
 #
 # Env: WORKER_ENV_SYNC_REPORT, a file to also write the out-of-step report
 # (markdown) to. Tests only: WORKER_ENV_SYNC_URL, gascity's raw-content base
-# (default https://raw.githubusercontent.com/gastownhall/gascity).
+# (default https://raw.githubusercontent.com/gastownhall/gascity), and
+# worker-env-sync-ref's WORKER_ENV_SYNC_GIT_URL.
 set -Eeuo pipefail
 
 ref=${1:-main}
-base=${WORKER_ENV_SYNC_URL:-https://raw.githubusercontent.com/gastownhall/gascity}/$ref
+raw=${WORKER_ENV_SYNC_URL:-https://raw.githubusercontent.com/gastownhall/gascity}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 # Anything that fails before the comparison is "unknown", never "in step"
@@ -45,12 +54,13 @@ pin_of() {
 	echo "${pin:-none}"
 }
 
-curl -fsSL --connect-timeout 5 --max-time 15 --retry 2 -o "$tmp/worker-env.txt" "$base/tools/rbe/worker-env.txt"
-curl -fsSL --connect-timeout 5 --max-time 15 --retry 2 -o "$tmp/BUILD.bazel" "$base/platforms/BUILD.bazel"
+sha=$("$(dirname "${BASH_SOURCE[0]}")/worker-env-sync-ref" "$ref")
+curl -fsSL --connect-timeout 5 --max-time 15 --retry 2 -o "$tmp/worker-env.txt" "$raw/$sha/tools/rbe/worker-env.txt"
+curl -fsSL --connect-timeout 5 --max-time 15 --retry 2 -o "$tmp/BUILD.bazel" "$raw/$sha/platforms/BUILD.bazel"
 ours=$(pin_of platforms/BUILD.bazel)
 theirs=$(pin_of "$tmp/BUILD.bazel")
 if cmp -s tools/rbe/worker-env.txt "$tmp/worker-env.txt" && [ "$ours" = "$theirs" ]; then
-	echo "worker-env: in step with gascity $ref ($ours)"
+	echo "worker-env: in step with gascity $ref ($ours) at gascity commit $sha"
 	exit 0
 fi
 
@@ -61,7 +71,7 @@ diff -u --label beads --label "gascity $ref" tools/rbe/worker-env.txt "$tmp/work
 	cat <<-EOF
 		### rbe worker-env out of step with gascity
 
-		beads pins \`worker-env=$ours\`; gascity \`$ref\` pins \`$theirs\`. rbe-west's pool workers advertise gascity's, so beads' remote actions on another pin only queue. Copy gascity's \`tools/rbe/worker-env.txt\` here byte for byte, and in \`platforms/BUILD.bazel\` set:
+		beads pins \`worker-env=$ours\`; gascity \`$ref\` (commit \`$sha\`) pins \`$theirs\`. rbe-west's pool workers advertise gascity's, so beads' remote actions on another pin only queue. Copy gascity's \`tools/rbe/worker-env.txt\` here byte for byte, and in \`platforms/BUILD.bazel\` set:
 
 		\`\`\`
 		        "worker-env": "$theirs",

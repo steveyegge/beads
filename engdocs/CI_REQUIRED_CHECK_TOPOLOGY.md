@@ -194,6 +194,18 @@ Current PR-related workflow names:
   `Update vendorHash for dependabot Go bumps`
   Runs on `pull_request_target` for Dependabot Go bumps. It mutates Dependabot
   branches and must not be a required PR check.
+- `.github/workflows/worker-env-autosync.yml`: `rbe worker-env autosync`
+  Runs on gascity's `repository_dispatch` (`gascity-worker-env-repinned`),
+  every 15 minutes and on dispatch. Opens or updates the rbe worker-env
+  pin-sync PR from `bot/worker-env-sync`; see
+  [rbe worker-env Pin Sync](#rbe-worker-env-pin-sync).
+- `.github/workflows/worker-env-sync-automerge.yml`:
+  `rbe worker-env sync automerge`
+  Runs on `pull_request_target`, on the completion of the pin-sync PR's
+  own `PR` and `PR Risk` runs (`workflow_run`) and every 15 minutes, and
+  does anything only while the repository variable
+  `WORKER_ENV_SYNC_AUTOMERGE` is `true`: verifies the pin-sync PR and
+  queues it once its required checks pass. No ruleset requires it.
 
 As of 2026-05-26, the live `gastownhall/beads` ruleset named
 `Protect main - light (beads and gastown)` enforces deletion and non-fast-forward
@@ -645,6 +657,132 @@ job's `if:` or rotating the key, in either of two ways:
 - Set the repository variable `RBE_PREWARM_WORKERS` to `0`: the dispatch
   step's own kill switch, checked before any network call. Deleting the
   variable does not disable pre-warming; it restores the default of 1.
+
+## rbe worker-env Pin Sync
+
+rbe-west's OSS pool workers run gastownhall/gascity's toolchain and advertise
+the sha256 of the manifest gascity's `tools/rbe/worker-env` measures, and the
+schedulers run an action only on a worker that advertises the action's exact
+`worker-env` pin (`//platforms:rbe_worker`). beads commits a byte-for-byte
+copy of gascity main's manifest (`tools/rbe/worker-env.txt`) and its pin
+(`platforms/BUILD.bazel`). When a gascity PR that re-pins (a Go, dolt or
+library bump) merges, new workers advertise the new pin at once, and every
+beads PR's `Bazel / execution mode` preflight (`tools/rbe/worker-env-sync`)
+fails until beads' copy lands. On Oct 21, gascity#8165 merged at 01:09:31Z
+and the copy, #7746, landed at 02:38:04Z: 89 minutes of red beads PRs.
+
+The sync, end to end:
+
+1. gascity sends `repository_dispatch` `gascity-worker-env-repinned`
+   (`client_payload`: `sha`, `pin`) within about a minute of a push to its
+   main that moves the pin.
+2. `worker-env-autosync.yml` runs on that event, and every 15 minutes as a
+   backstop. It resolves gascity main to a commit with `git ls-remote`
+   (`tools/rbe/worker-env-sync-ref`): raw.githubusercontent.com serves a
+   branch URL with `cache-control: max-age=300`, so for up to 5 minutes
+   after a re-pin the branch URL can still return the old manifest. The
+   payload's `sha` is used only while it is still main's head. On a
+   mismatch it copies the manifest and pin from that commit, pushes
+   `bot/worker-env-sync` (a run whose copy is already on the branch pushes
+   nothing, #7533) and opens the PR.
+3. With `WORKER_ENV_SYNC_AUTOMERGE` set to `true`, the PR opens with no
+   review label, and `worker-env-sync-automerge.yml` verifies it
+   (`tools/rbe/worker-env-sync-verify`: the author, branch and base, every
+   commit of `main...<head>`, the branch's newest push, exactly the two
+   files, the pin, and both files against gascity main, all read at one
+   head commit). It queues the PR only once `CI Gate / Required` and
+   `PR Risk Gate / Required` have both passed on that head, so GitHub queues
+   it at once, from that head, and nothing stays armed. A pending
+   auto-merge, by contrast, survives any writer's push: the PR's
+   `--match-head-commit` binds only the moment of arming, so a PR armed
+   before its checks pass could land a later, unverified head. The
+   `workflow_run` trigger on the sync PR's own `PR` and `PR Risk` runs
+   queues it the moment the second gate passes.
+4. The guard's act job fails closed. After every verification (one that
+   failed, or whose outputs were lost, included) it looks the open sync PR
+   up itself. It queues the PR, or keeps it queued, only on the verdict
+   "arm" for exactly the head it reads; an explicit "unknown" for that
+   same head also holds a queue entry for the next check, but only when
+   GitHub or gascity did not answer a read (briefly unreachable), never
+   when the activity API does not show who pushed the head. It never keeps
+   an auto-merge, whatever the verdict: it disables a pending one (armed,
+   not queued), and a later run on a green head arms afresh; on a PR it
+   keeps queued it disables the auto-merge and keeps the queue entry, since
+   an auto-merge left on could queue the PR again after a push or an
+   ejection. Otherwise it disables any auto-merge and takes the PR out of
+   the merge queue, and the job fails if the PR is still armed or queued
+   after that. A refused PR gets one comment per head commit with the
+   reasons. Without the variable, the PR is labeled
+   `status/needs-review-auto` and lands through the automated review, as
+   before.
+5. Every 15 minutes the guard re-checks an open sync PR (a missed event,
+   or a merge-queue ejection: it re-queues a PR twice per head at most).
+   On a `PR` or `PR Risk` run's completion, or that re-check, it also
+   re-runs, once per head commit, the failed jobs of a first attempt that
+   failed, was cancelled or timed out. A re-pin moves every action key, so
+   that first run is uncached: #7746's release cross-compile took 50
+   minutes, and the first attempts of #7411 and #7732 hit its 90-minute
+   timeout.
+
+The verifier reads the PR's files and file names, and prints them (a diff,
+a refusal), but nothing it prints reaches the runner as a workflow command:
+its stdout and stderr are defanged (`::` and the legacy `##[` broken up)
+before they leave it, and its own annotations escape `%`, which the runner
+decodes in a command's message. Unfiltered, a sync branch carrying a line
+`##[add-mask]true` would have the runner mask `true`, and the runner then
+drops every job output that holds a masked value. The act job's
+fail-closed reading is the second line of defense.
+
+Tokens: the autosync pushes with the gastownhall-autofix App (contents
+write) and opens the PR with the gascity-autofix App (pull-requests write),
+so neither of its tokens can do the other's job. The guard queues the PR
+and takes it out with a gascity-autofix token minted with contents,
+pull-requests and merge-queues write: `enablePullRequestAutoMerge` needs
+contents and pull-requests write on one token, and a PR queued with the
+`GITHUB_TOKEN` never starts its `merge_group` runs. It reads the PR with the
+job's own read-only token, and comments and labels with a
+pull-requests-only token from the same App. Both Apps' keys are secrets of
+the `autofix` environment, whose deployment branch is `main` (a
+`pull_request_target` or `workflow_run` run's ref is the default branch).
+
+Turning it on:
+
+1. Organization settings, Developer settings, GitHub Apps, gascity-autofix,
+   Permissions & events, Repository permissions: Contents "Read and write"
+   and Merge queues "Read and write" (Pull requests is "Read and write"
+   already); save, then accept the new permissions on the gastownhall
+   installation (Organization settings, GitHub Apps, gascity-autofix).
+2. `gh variable set WORKER_ENV_SYNC_AUTOMERGE --repo gastownhall/beads --body true`
+
+If the variable is set before the App has those permissions, the guard
+cannot mint its merge token and labels the PR `status/needs-review-auto`
+once instead (only if it carries no review-pipeline label), so the PR still
+lands through the review.
+
+Dry run, from a checkout on Linux with `gh` logged in:
+`tools/rbe/worker-env-sync-verify <pr>` prints every check and what the
+guard would do, and never writes. With no PR it finds the open sync PR.
+
+Rollback: `gh variable delete WORKER_ENV_SYNC_AUTOMERGE --repo
+gastownhall/beads`. The guard then does nothing and the autosync labels
+the next PR for review. A sync PR that is already queued stays queued:
+"Remove from queue" in the UI takes it out.
+
+Starting over: delete the `bot/worker-env-sync` branch. The autosync
+recreates it from main, and opens a fresh PR while beads is out of step.
+Closing the PR alone is not enough: the autosync pushes nothing to a branch
+that already carries the right two files, and opens a new PR from that same
+branch.
+
+`pull_request_target`: GitHub's workflow execution protections add a
+default rule that disables `pull_request_target` on public repositories
+without an applicable Actions event policy, enforced from 2026-12-02
+(`bazel-farm.yml` depends on the trigger too). Queueing does not depend on
+it: the guard queues on `workflow_run`. If the rule ends up blocking it
+here, a push to the sync branch still drops a queued PR from the queue on
+GitHub's side, and nothing the guard queues stays armed for the new head to
+inherit; the refusal and its comment come with the next `workflow_run` (the
+pushed head's own CI finishing) or the 15-minute run instead of at once.
 
 ## dolt-race Union Lane
 
@@ -1644,8 +1782,10 @@ On a green PR this adds it to the queue; while the PR's own required
 checks are still running, `--auto` queues it once they pass (this needs
 the repository's "Allow auto-merge" setting). The queue's own merge
 method (squash) decides how it lands. `gh pr merge <number>
---disable-auto` (or "Remove from queue" in the UI) takes it out; `--admin`
-(bypass actors only) merges directly, skipping the queue.
+--disable-auto` disarms a PR still waiting for its checks; gh leaves a PR
+that is already queued as it is, and only "Remove from queue" in the UI or
+the GraphQL `dequeuePullRequest` mutation takes it out. `--admin` (bypass
+actors only) merges directly, skipping the queue.
 
 Queue settings (`merge_queue` rule in the `beads main: required CI gates`
 ruleset): merge method `SQUASH`, grouping strategy `ALLGREEN`,

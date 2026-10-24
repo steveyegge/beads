@@ -409,11 +409,21 @@ func TestBazelFarmArtifactsHaveNoPrivilegedConsumer(t *testing.T) {
 		}
 		// main-ci-alert.yml watches main's push runs (a farm run is
 		// pull_request_target, never push) and downloads no artifact
-		// (TestMainCIAlertWorkflow); every other consumer watches "PR" and
-		// acts only on pull_request runs.
+		// (TestMainCIAlertWorkflow); every other consumer watches "PR"
+		// (the worker-env sync guard also "PR Risk", below) and acts only
+		// on pull_request runs.
 		watched, event := []string{"PR"}, "pull_request"
-		if entry.Name() == mainCIAlertWorkflowName {
+		switch entry.Name() {
+		case mainCIAlertWorkflowName:
 			watched, event = mainCIAlertTracked, "push"
+		case workerEnvAutomergeWorkflow:
+			// The worker-env pin-sync guard reads the check states of the
+			// sync PR's own PR and PR Risk runs (never an artifact) and
+			// queues it once both of main's required gates pass. PR Risk,
+			// like PR, runs only on pull_request, merge_group and pushes
+			// to main, never as a farm run, and the job if: below still
+			// limits every job to pull_request runs.
+			watched = []string{"PR", "PR Risk"}
 		}
 		if !reflect.DeepEqual(doc.On.WorkflowRun.Workflows, watched) {
 			t.Errorf("%s workflow_run workflows = %v, want exactly %v", entry.Name(), doc.On.WorkflowRun.Workflows, watched)
