@@ -109,10 +109,24 @@ func HasGraphFormatMarker(beadsDir string) bool {
 // left to the caller's own load to report, unless the graph format marker
 // sits beside it (LoadAndCheckWorkspaceFormat).
 func CheckDiscoveredWorkspaceFormat(beadsDir string) error {
-	_, err := LoadAndCheckWorkspaceFormat(beadsDir)
-	var formatErr *UnsupportedWorkspaceFormatError
-	if errors.As(err, &formatErr) {
-		return err
+	_, err := LoadDiscoveredForOpen(beadsDir)
+	return err
+}
+
+// LoadDiscoveredForOpen is CheckDiscoveredWorkspaceFormat for a caller that
+// also checks the discovered metadata itself (its backend) before Load. It
+// returns the only error such a caller refuses on, an
+// *UnsupportedWorkspaceFormatError, and otherwise the metadata
+// LoadForDiscovery read: nil when there is none, or when it does not load and
+// is left to the caller's own load to report.
+func LoadDiscoveredForOpen(beadsDir string) (*Config, error) {
+	cfg, err := LoadAndCheckWorkspaceFormat(beadsDir)
+	if err != nil {
+		var formatErr *UnsupportedWorkspaceFormatError
+		if errors.As(err, &formatErr) {
+			return nil, err
+		}
+		return nil, nil
 	}
-	return nil
+	return cfg, nil
 }

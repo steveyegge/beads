@@ -15,18 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plane while it is on (a wisp promoted or made persistent), stores a
   snapshot of it as a row of `issue_versions` in the same transaction. It is
   off by default and nothing is backfilled: a bead already on the issues
-  plane when it is turned on is legacy, and editing it records nothing. A
+  plane when it is turned on is legacy, and editing it records nothing, nor
+  does making it a wisp and then persistent again while recording is on (a
+  bead that participates keeps its history across that round trip). A
   recorded write leaves `updated_at` where an unrecorded one would, so
   `bd import`'s stale check sees the same timestamps either way.
   `bd versions --json` answers `{"versions": [...], "recording": bool}`; the
   command still lists what was recorded after recording is turned off, and
   proxied-server and HTTP workspaces refuse it. The setting is a row of each
   store's `config` table (`bd config set versioned-history.enabled true`),
-  and every store reads its own when it is opened: a write routed into
-  another workspace (a prefix-routed `bd update` or `bd close`,
-  `bd create --repo`) follows the target store's row, a proxied-server
-  provider reads it when it is constructed, and a long-lived `bd serve`
-  keeps the value it read until it restarts.
+  and every store reads its own in its first write (a store that only reads
+  never reads it, and a write whose read fails fails with it, changing
+  nothing): a write routed into another workspace (a prefix-routed
+  `bd update` or `bd close`, `bd create --repo`) follows the target store's
+  row, a proxied-server provider reads it in its first unit of work, and a
+  long-lived `bd serve` keeps the value it read until it restarts.
   `BD_VERSIONED_HISTORY_ENABLED=1` (or a `config.yaml` value) turns
   recording on for every store the process opens, and never turns it off.
   The row replicates on `bd dolt push`/`pull`, and recording is single-writer
@@ -34,13 +37,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pull, and a write from a writer that is not recording is folded into the
   next recorded version under that version's actor, so keep recording on for
   every writer of a store or off for all of them. Turning it on with
-  `bd config set` first checks every issue the store would version and
-  refuses, writing nothing, while any holds a number outside the I-JSON
-  exact-integer range (magnitude above 2^53-1, however it is spelled) in its
-  metadata or in a gate's timeout (held as nanoseconds, so about 104.25
-  days), and prints the count, the ids, the field and the fix. There is no
-  override, and the check runs once; after that, a recorded write that would
-  hold such a number fails atomically. Migration 0071 adds a nullable
+  `bd config set` first checks every issue the store would version (one
+  created, or brought onto the issues plane, while recording was on) and every
+  template (`bd mol pour` and `bd mol bond` copy a proto's metadata and gate
+  timeouts into the beads they create, which are versioned, and `bd update`
+  cannot change a template), and refuses, writing nothing, while any holds a
+  number outside the I-JSON exact-integer range (magnitude above 2^53-1,
+  however it is spelled) in its metadata or in a gate's timeout (held as
+  nanoseconds, so about 104.25 days), and prints the count, the ids, the
+  field and the fix; a template is fixed by cooking its corrected formula
+  again with `bd cook --persist --force`, or removed with `bd delete`. A
+  write to a legacy bead is never refused, so no other legacy bead stops the
+  switch: a store that has never recorded and holds no such template is not
+  refused (a storage backend that cannot say which beads participate checks
+  every legacy bead too, and says so). A legacy bead that is not a template
+  but sits under a proto's root (a template or a `template`-labeled bead),
+  which a pour would still copy, is named in a warning with its proto's
+  root, and `bd update` (for a gate, `bd delete`) fixes it with recording on
+  or off. A molecule poured
+  from a stored proto carries the proto's `template` label, so a legacy
+  poured molecule is named there too, and `bd label remove <root> template`
+  stops it counting as a proto. There is no override, and the check runs
+  once; after that, a recorded write that would hold such a number fails
+  atomically. Turning recording on through `BD_VERSIONED_HISTORY_ENABLED` or
+  `config.yaml` checks nothing ahead of time, at open or anywhere else, and no
+  check reads a formula file: such a write, or a pour or cook straight from
+  such a formula, is refused when it is made. Migration 0071 adds a nullable
   `removed_restriction` column to `issue_versions`. `bd version` now refuses
   an argument and suggests `bd versions <arg>`, instead of printing bd's
   build for a mistyped `bd version bd-123`.
@@ -593,6 +615,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transport, so a write makes one handshake. `bd list` reads its vocabulary
   with one `listSettings`, and the hook decorator skips its post-write re-reads
   when no hook for the event is installed.
+- **Embedded mode now runs the Dolt 2.5.1 engine, and a database `bd init`
+  creates in embedded mode can no longer be opened by Dolt older than 2.3.3.
+  This change is one-way.** `bd` links `dolthub/driver` v2.4.1 with
+  `dolthub/dolt/go` at the v2.5.1 release.
+
+  Dolt 2.3.3 and later store a descending index column as descending
+  (dolthub/dolt#11746), where earlier releases silently stored it ascending.
+  Migration 0010 declares `compaction_snapshots`' `idx_comp_snap_issue` with
+  `created_at DESC`.
+
+  Dolt older than 2.3.3 cannot write to a database holding such a table. An
+  `UPDATE` or `DELETE` on `issues`, which `bd create` and `bd update` both
+  run, fails with `cannot add or update a child row: a foreign key constraint
+  fails` on `fk_comp_snap_issue`. Other writes and `information_schema`
+  queries fail with `table has unknown fields`. An earlier `bd` release
+  (every release through v1.3.x links Dolt 2.2.0 or older) therefore cannot
+  open the workspace (`schema skew check: probing schema_migrations
+  existence: … table has unknown fields`), and `BD_IGNORE_SCHEMA_SKEW=1` does
+  not get past it. A `bd` built from source against an older driver may open
+  and read the workspace, but every write fails.
+
+  This applies to every database this release creates in embedded mode, and
+  to any database whose schema a `dolt sql-server` 2.3.3 or newer created,
+  whatever the `bd` version. `bd` does not convert the index back. Any other
+  database keeps its ascending index and stays readable and writable by older
+  and newer Dolt alike, even after this release migrates and writes to it.
+  Every `bd` that touches a new database must be this release or later.
+
+  The recommended `dolt` CLI and `dolt sql-server` version is now **2.5.0** or
+  later; CI pins 2.5.1. Older releases have known defects:
+  - Dolt 2.4.0 through 2.4.2 return no row, instead of one `NULL` row, for an
+    ungrouped `MAX` or `MIN` over an unmatched primary-key prefix
+    (dolthub/dolt#12093). The versioned-history revision read, `bd`'s one
+    query of that shape, no longer depends on it.
+  - Releases before 2.4.0 drop a join condition when an `ON` clause has an
+    `OR` over indexed columns (dolthub/dolt#11886, the cause of #7037).
+  - 2.3.0 and 2.3.1 regressed `CALL DOLT_RESET('--hard')`;
+    docs/architecture/dolt.md has the measurements.
+
+  Managed proxied-server mode now recommends dolt 2.5.0 or newer and warns
+  below it; it is still a warning, not a refusal. Dolt 2.3.3 and later also
+  report a stricter default `sql_mode` than 2.2.0, adding `NO_ZERO_IN_DATE`,
+  `NO_ZERO_DATE` and `ERROR_FOR_DIVISION_BY_ZERO`, in embedded mode and on
+  those servers.
 - **`created_by` defaults to the actor in the library, for every create
   shape and every backend.** `PreparePublicCreateRequest`, which
   `Lifecycle.Create`, `BatchCreator` items and batch-apply create items all
@@ -783,8 +849,378 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `RunLifecycleCreateAppliesTheDefaultPriority`,
   `RunBatchCreatorAppliesTheDefaultPriority` and
   `RunBatchApplyAppliesTheDefaultPriority`.
+- **For a Dolt server on another machine, the legacy `BEADS_DOLT_PORT` no
+  longer overrides a configured port.** It replaced the port that
+  `config.yaml` `dolt.port`, the data directory's `listener.port` or
+  `metadata.json` `dolt_server_port` named, although since #5835 it does not
+  for a server on this machine, so an ambient value could send bd to the
+  wrong server. A padded value counted too. It now fills in only a port that
+  no setting names, and is read untrimmed, as for a local server.
+  `BEADS_DOLT_SERVER_PORT` still overrides a configured port.
+
+  **Compatibility:** a remote setup that exported `BEADS_DOLT_PORT` to send
+  bd away from a pinned port now connects to the pinned port instead, as a
+  local one has since 1.3.0. That includes a tool that sets only
+  `BEADS_DOLT_PORT` for a remote server, and a `listener.port` left in the
+  local data directory's `config.yaml`, which now outranks the variable too.
+  Switch to `BEADS_DOLT_SERVER_PORT`, or change or remove the pinned value.
 
 ### Fixed
+
+- A Dolt server you run at an IPv6 address can now be configured bare
+  (`::1`) or bracketed (`[::1]`) in `metadata.json` `dolt_server_host`,
+  `BEADS_DOLT_SERVER_HOST`, `config.yaml` `dolt.host` or `bd init
+  --server-host`. Previously neither spelling could open the store: with a
+  bare host the MySQL connection dialed the wrong address (`[::1:3307]:3306`
+  for port 3307, which timed out, or `lookup ::1:13322: no such host` for a
+  five-digit port), and a bracketed one failed the reachability probe
+  (`[[::1]]:3307: missing port in address`). `bd init
+  --proxied-server-external-host` already worked with a bare host, and now
+  also accepts the bracketed one. The CLI, `bd serve` and a proxied-server
+  external backend now all dial `[::1]:port`. `bd doctor --perf`, `bd doctor
+  --server`, `bd dolt test` and `bd dolt show` dial the same address, so `bd
+  doctor --perf` no longer reports a running server at a bare IPv6 host as
+  not running. `bd dolt status` checks a server at the IPv6 loopback over
+  SQL, as it does an external one, rather than reading bd's PID file: a Dolt
+  server bd starts itself still listens on 127.0.0.1 only. For the same
+  reason, when nothing answers at the IPv6 loopback, bd no longer auto-starts
+  its own server, which it could not reach there and left running, and no
+  longer advises `bd dolt start`: the advice checks the server at `[::1]`
+  instead, and `bd dolt start` refuses that host. `bd dolt stop` refuses
+  it too, rather than stop bd's own 127.0.0.1 server and report success
+  while the one at `[::1]` keeps running, and `bd migrate
+  from-server-to-proxied-server` refuses it as it refuses a remote host,
+  rather than re-point the workspace at `.beads/dolt`, which does not hold
+  that server's data. Nor do the state files of such a
+  server make the one at `[::1]` bd's own: as for any server bd does not
+  own, its schema is migrated only with consent (#5920) and `bd admin
+  compact --dolt` does not run `dolt gc` on `.beads/dolt`. Its port file no
+  longer outranks the port `dolt_server_port`, `dolt.port` or
+  `listener.port` names for `[::1]`, and bd writes none for a server there.
+  With no port set for a server there, or on another machine, `bd doctor`,
+  `bd doctor --server`, `bd doctor --perf`, `bd dolt status`, `bd dolt
+  test`, `bd dolt show` and `bd dolt clean-databases` say to pin it, as the
+  store's error does, rather than advise an auto-start or check port 0, and
+  `bd doctor --server` exits 1 there rather than 0. `bd doctor` no longer
+  skips its Dolt checks for such a server as if the next bd command would
+  start it: they fail, with that advice or, when nothing answers at the port
+  set, with the reachability check. `bd doctor --perf` reports no
+  `.beads/dolt` size for a server at `[::1]`.
+  To stop a server bd started for such a workspace earlier, run
+  `BEADS_DOLT_SERVER_HOST=127.0.0.1 bd dolt stop`. Errors, advice and status
+  output that name the server read `[::1]:port` for either spelling, quoted
+  where the advice passes it to curl, and `[::1]` counts as a local host
+  wherever `::1` does. A credentials-file section for an IPv6 server,
+  including the one that holds a `bd serve` endpoint's bearer token, is
+  found whichever spelling it and the configured host use. `[[::1]:3307]`
+  is read before `[::1:3307]`, and an empty `password=` there is not
+  replaced by the other's. When a server bd does not run, on another
+  machine as well as at `[::1]`, refuses the connection bd opens to create
+  its database, the error suggests checking that the server is reachable
+  rather than `bd dolt start`. IPv4 addresses and hostnames are joined as
+  before, and a host is dialed without the surrounding whitespace bd
+  already ignored when it decided whether the host is local.
+
+- In proxied-server mode, `.beads/dolt/proxy.log` no longer grows with
+  every `bd` command, and it and the default proxied `server.log` are
+  rotated when the proxy starts. The proxy wrote about six lines to
+  `proxy.log` for every connection it served; those lines are now written
+  only when `BD_DEBUG` is set in the proxy child's environment, while
+  lifecycle and error lines are still written. The rotation is the one
+  embedded mode applies to `dolt-server.log`: a file over 50 MB
+  (`BEADS_DOLT_LOG_MAX_BYTES` overrides the ceiling, `0` turns it off) is
+  renamed to `<file>.1`, and one generation is kept. It runs only at proxy
+  start, so `server.log` still grows while the server runs. A server log at
+  a path you chose (`BEADS_PROXIED_SERVER_LOG` or
+  `bd init --proxied-server-log-path`) is not rotated. Purging the proxy's
+  control files and a proxied→server migration remove the `.1` files with
+  the primaries (#7527).
+- **A routed `bd create` no longer hides what a repository without
+  `metadata.json` already holds.** The first `bd create` routed into such a
+  repository (by any routing rule, or by an absolute or `~/`-prefixed
+  `--repo`) gave it a new database named after the source project's prefix
+  and a `metadata.json` naming it, and that file decides what `bd` opens
+  there from then on. In the planning repo `bd init` sets up on a fork, that
+  put a second database beside the one setup created, and whatever that one
+  held no longer showed in `bd` run there. A repository whose own
+  `config.yaml` selects Dolt server mode with no `metadata.json` (by
+  `dolt.mode: server`, the shape gc provisions, or by a non-local `dolt.host`
+  with no `dolt.mode`) became an embedded one: `metadata.json` outranks
+  `config.yaml`, so `bd` there stopped reaching its server data. A SQLite-era repository,
+  which `bd` refuses to open, got a fresh Dolt database beside its data that
+  silenced the refusal. Now a repository that holds one embedded database
+  keeps it, with its issue prefix (or the source's, when it has none) and its
+  project identity, and the issue is created there. A repository whose own
+  config selects server mode, one `bd` refuses (such as a SQLite-era repo)
+  and one holding several databases are refused before anything is written;
+  for a server-mode repository, run `bd init --database <name>` there
+  (`bd init --server --database <name>` when only `dolt.host` selects server
+  mode), naming the server database it uses, then rerun. When that config
+  names a non-local `dolt.host`, the refusal adds `--server-host <host>
+  --server-port <port>` (its `dolt.port`, else 3307), since `bd init` does
+  not read `dolt.host` from `config.yaml` and would otherwise dial that host
+  on a local server's `.beads/dolt-server.port`. `bd create --dry-run`
+  refuses the same repositories. A database to keep that holds uncommitted
+  changes is refused as well, since the create's commit would publish them:
+  commit them there with `bd dolt commit`, then rerun. `bd migrate-personal`
+  initializes the planning repo by the same rule, so it now also refuses a
+  server-mode planning repo instead of moving issues into a new embedded
+  database there.
+- **A pasted `bd init` or `bd repo remove` remedy no longer runs part of a
+  crafted value.** When `bd create --repo` (or `bd migrate-personal`)
+  refuses a repository with no `metadata.json` whose own config names a
+  remote `dolt.host`, the `bd init --server-host ...` command it printed put
+  the host in plain double quotes on Windows, so a host such as
+  `x" & calc & "` ran `calc` from cmd.exe and `$(calc)` ran it from
+  PowerShell when the command was pasted; elsewhere its single quotes let a
+  host with a backslash before a quote do the same from fish, and one with a
+  single quote (`'`, or a curly one such as `’`) from PowerShell. The
+  `bd repo remove` and `bd repo add` commands `bd migrate-personal` prints
+  for a `bd repo sync` copy used the same quoting, and on Windows a
+  `source_repo` ending in a backslash reached `bd` with a stray quote, so
+  `bd repo remove` found no such repository. On every platform a value with
+  control characters, such as a carriage return or a terminal escape
+  sequence, went onto the remedy's line raw, in the command or beside it (the
+  repository path and the `source_repo` the refusal names), and could redraw
+  the command so the one a user copied was not the one printed. A remedy now
+  prints a value in its command only when every character of it prints as
+  itself and cmd.exe, PowerShell and Git Bash (on Windows) or sh, bash, zsh,
+  fish and PowerShell (elsewhere) all pass it on unchanged, and otherwise
+  prints `<host>` or `<path>` and names the value beside the command,
+  escaped as a Go string whose every quote and every character one of those
+  shells acts on is escaped too (`\x22` for `"`, `\x24` for `$`), so pasting
+  the name as printed runs nothing. A value named beside the command that
+  holds a control character, or a character such as U+202E or U+2028 that
+  reorders or splits the line, is printed escaped (`\r`, `\x1b`, `\u202e`).
+  On Windows a value with any of `& | < > ^`, such as
+  `C:\Users\Jane Doe\R&D planning`, or of `; , =`, which cmd.exe reads as
+  separating the arguments of a `.cmd` shim that takes them one by one, and a
+  UNC path such as `\\server\share\planning`, all printed in the command
+  before, now get a `<path>` placeholder, as does a path with a single quote,
+  such as `~/Jane's planning`, elsewhere.
+- **`bd doctor` says when its multi-repo types check skips a database.** For
+  a `repos.additional` repository in a format this build cannot open (a
+  `graph_mode` other than `dependency`, or the `graph-preview-format`
+  marker), the check listed only the custom types in that repository's
+  `config.yaml`, without saying that it had not read the repository's
+  database. It now adds a line under that repository saying so, naming the
+  workspace and its format. The line shows with `--verbose`, in `--json`,
+  and beside an "Issues with unknown types" warning, which can name types
+  that only the skipped database declares.
+
+- **`bd doctor` no longer rewrites a `repos.additional` repository whose
+  metadata names a backend bd does not recognize.** Its multi-repo types
+  check opened such a repository's Dolt database whenever one was there, and
+  the open migrated a legacy `config.json` into `metadata.json`, dropping
+  keys bd does not know, before it refused the backend. The check now
+  refuses that metadata before opening anything, leaving the repository
+  byte-identical, and lists the custom types in its `config.yaml`.
+
+- **The Go library's opens no longer rewrite a legacy `config.json` they
+  refuse.** `beads.OpenBestAvailable`, `OpenBestAvailableWith`,
+  `OpenFromConfig` and `OpenGated` migrated a `.beads/config.json` naming a
+  removed or unrecognized backend into `metadata.json`, dropping keys bd does
+  not know and deleting `config.json`, before they refused the backend, and
+  `OpenGated` created its gate files in and beside `.beads` first. They now
+  refuse that metadata before writing anything, as the CLI's command
+  admission already does for the workspace bd runs in.
+  `OpenGated` also refuses any backend it cannot open before taking its gates,
+  whichever metadata file names it, so it no longer creates gate files for
+  such a workspace. For a workspace whose only metadata is a legacy
+  `config.json`, these refusals (and the CLI's) now name `config.json` as the
+  file to edit. The CLI's refusal named a `metadata.json` that did not exist,
+  and the library's named the `metadata.json` its own migration had just
+  written. `OpenFromConfig` now returns a nil `Storage` with every error, as
+  the other opens do; it returned a non-nil interface holding a nil store for
+  a backend refusal or a failed open, on which `Close` panics.
+
+- **bd no longer rewrites another repository's legacy `config.json` that it
+  refuses.** Command admission checks only the workspace bd runs in. When bd
+  opened another repository (an auto-routing target, or the project an
+  `external:` dependency names) whose only metadata was a
+  `.beads/config.json` naming a removed or unrecognized backend, it migrated
+  that file into `metadata.json`, dropping keys bd does not know and deleting
+  `config.json`, before it refused the backend. It now refuses that metadata
+  before writing anything, leaving the repository byte-identical, and a
+  refusal that names the file to edit names `config.json`, not the
+  `metadata.json` the migration wrote.
+
+- **`bd events tail --follow` can stop when its parent goes away.** A
+  follower noticed that its reader was gone only when it next wrote a
+  record, so in a quiet workspace a follower whose parent died without
+  stopping it kept polling the journal until the next write. With
+  `--exit-on-stdin-eof` (accepted only with `--follow`) it exits 0 as soon
+  as its stdin closes, whenever that happens: the parent passes a pipe as
+  stdin, and closing its end, or dying, stops the follower on every OS.
+  Without the flag stdin is ignored, as before. A follower stopped with
+  Ctrl-C while a poll is reading now exits 0 too, instead of failing with
+  `reading events journal: context canceled`. A stop never hides a
+  truncation: when the read it lands on has already found the checkpoint
+  pruned, the follower still reports `events_journal_truncated` and exits 1.
+
+- **`bd events tail --follow --json` reports a failure on one line.** A
+  follower whose read failed for any reason but a pruned checkpoint (a lost
+  server connection, a failed embedded or proxied read) ended its JSON Lines
+  stream with an indented, multi-line error object that a line reader cannot
+  parse, and so did a follower whose first read found its checkpoint pruned.
+  Both are now one compact line: a failed read is bd's usual `--json` error
+  object (`error` and `schema_version`, inside `data` under
+  `BD_JSON_ENVELOPE=1`), and a truncation is the `events_journal_truncated`
+  line a later poll already printed, without the envelope. Without
+  `--follow`, `bd events tail` and `bd events export` print failures as
+  before.
+
+- **A Dolt server whose port is named for it is no longer met with
+  `bd dolt start` advice when it is down.** A port named by
+  `BEADS_DOLT_SERVER_PORT` (or the legacy `BEADS_DOLT_PORT`), by
+  `dolt_server_port` in `metadata.json`, or by `bd init --server-port`
+  declares the server externally managed, so bd never starts one there. Yet
+  every command that could not reach it advised `bd dolt start`, and
+  `bd init` without `--external` printed that advice twice, after an
+  "auto-start failed" for a start it never attempted. `bd dolt start` starts a
+  bd-owned server over `.beads/dolt` on that very port: a different, usually
+  empty database that shadows the real one and holds the port the real server
+  needs. For a server on this machine, every command now gives the message
+  `bd init --external` gives: it
+  names the endpoint it dialed and the setting that declares the server
+  externally managed, and says bd did not start one. That includes
+  `bd dolt test`, `bd dolt clean-databases` and `bd doctor --perf`, and a
+  workspace whose `config.yaml` `dolt.port` chose the port beside a
+  `dolt_server_port` (what `bd dolt set port N --update-config` writes) or
+  beside a `BEADS_DOLT_PORT` that names the same port. It also holds after a
+  command has reached the server once: bd records that port in its port file,
+  which outranks `dolt_server_port`, but only a port file with bd's pid file
+  beside it marks a server bd started. When
+  only the legacy `BEADS_DOLT_PORT` names a port, those three commands and
+  `bd doctor --server` now dial its port, as commands that open the store
+  do, instead of `127.0.0.1:0` or a port left in bd's port file. A shared
+  server, a server bd started (its pid file beside the port file), a server
+  bd manages, and an external workspace whose port no setting names keep
+  their advice.
+- **`bd doctor --perf` checks a remote Dolt server on its host, and the
+  server diagnostics stop advising `bd dolt start` for one.**
+  `bd doctor --perf` probed `127.0.0.1` instead of the configured host, so it
+  reported a reachable remote server as not running; it now measures the
+  server that `bd ready`, `bd list` and `bd show`, the commands it times,
+  connect to, and no longer reports the local data directory's size for a
+  remote server. When nothing answers on a remote host, `bd doctor --perf`,
+  `bd dolt test` and `bd dolt clean-databases` say how to check the server
+  there (`nc -zv <host> <port>`) instead of advising `bd dolt start`, which
+  refuses a remote host.
+- **When bd's port file chose the port, the unreachable-server advice names
+  that file.** A command that reaches the server records its port in
+  `.beads/dolt-server.port`, which outranks `dolt_server_port`, and
+  `bd dolt set port N` leaves that file alone, so bd kept dialing the old
+  port. The advice blamed `dolt_server_port` and suggested removing it, which
+  would not change the port bd dials. It now says bd took the port from that
+  file, which outranks `dolt_server_port` (N), and to start that server or
+  remove the file, unless `config.yaml` `dolt.port` or the data directory's
+  `listener.port` names the file's port too, so that removing the file would
+  change nothing. Elsewhere the advice says removing `dolt_server_port` lets
+  bd manage the server only when nothing else, such as
+  `BEADS_DOLT_SERVER_MODE=1` or a port variable naming another port, declares
+  the server externally managed.
+- **`bd bootstrap` clones into the Dolt server that later commands connect
+  to.** For a workspace in Dolt server mode it picked the port to clone
+  through in its own order: the legacy `BEADS_DOLT_PORT` over `config.yaml`
+  `dolt.port` and the data directory's `listener.port`, and `metadata.json`
+  `dolt_server_port` over `BEADS_DOLT_SERVER_PORT`, `dolt.port`,
+  `listener.port` and bd's port file. Every other command
+  connects in the opposite order (#5835, and for a server on another machine
+  #7767), so when two of those settings named different ports the clone
+  landed on one server, `bd bootstrap` still exited 0, and the next command
+  reported the database missing on the other. It now clones through the port
+  those commands connect to, and looks for an existing database there too:
+  that check, which decides whether to clone at all, read neither
+  `listener.port` nor, in shared-server mode, `BEADS_DOLT_PORT`, so it could
+  find the database on a server those commands never use. That check now
+  also authenticates as the clone does, with the password for the port it
+  dials and through the configured socket: with a per-server entry in the
+  credentials file it could fail to authenticate and report the database
+  unverifiable. In shared-server mode bootstrap no longer takes the
+  workspace's `dolt_server_port`, which no other command reads there. For a
+  fresh rig with no `.beads` yet, the server bootstrap clones into (host, port
+  and password), whether it clones into a server at all, and the `dolt_mode`
+  it records now come from the settings later commands in the rig read, as
+  does the server of the store bootstrap opens after the clone: an enclosing
+  workspace's `config.yaml` `dolt.host`, `dolt.port`, `dolt.mode` and
+  `dolt.shared-server` no longer pick them, and `~/.beads/config.yaml` and the
+  other user config files still do. `bd init --server --external` now clones
+  through the port of the store it opens right after the clone; in
+  shared-server mode the clone took `config.yaml` `dolt.port`, which that
+  store does not read, and could land on a server init never opened.
+- **`bd migrate-personal` opens the planning repo the way that repo is
+  configured.** It opened the planning store as a Dolt SQL server under the
+  default database name, ignoring the planning repo's `metadata.json`. An
+  embedded planning repo failed with `Dolt server unreachable at
+  127.0.0.1:0`, and a server-mode one with `database "beads" not found`,
+  after printing `no database name configured; falling back to default
+  "beads"`. It now opens the planning repo the way a write auto-routed there
+  does: its own mode, server settings and database, pinned against the
+  launching workspace's `BEADS_DOLT_SERVER_DATABASE`. With the default
+  `dolt.auto-commit: on`, the move is a Dolt commit in each repository,
+  including an embedded planning repo that a server-mode project moves
+  issues into; with `batch` or `off`, the delete, and the copy in an
+  embedded planning repo, wait for `bd dolt commit` like any other write.
+  With `on`, an embedded planning repo whose working set already holds
+  uncommitted changes is refused before anything moves, since that commit
+  would publish them under the move's message. When no `metadata.json` names
+  the database holding them and it is not the default `beads` database, the
+  refusal says to give the planning repo one before `bd dolt commit`, which
+  would otherwise open the default database there. A planning repo the
+  command initializes gets that in a commit of its own. When the planning
+  commit fails without saying whether it landed, the copy is kept rather
+  than rolled back, and the error names the issues now in both
+  repositories. A planning repo that contributor setup left with no
+  `metadata.json` is first given one: the empty `.beads` from
+  `bd init --contributor` is initialized the way a routed `bd create`
+  initializes it, and the database fork setup creates is kept, along with
+  anything already in it, rather than hidden behind a new one. Any other
+  planning `.beads` with no `metadata.json` is handled the same way, except
+  that a workspace `bd` itself refuses, such as a SQLite-era repo, is refused
+  as `bd` refuses it there, and one holding several databases is refused,
+  both before anything is written. A planning repo that redirects elsewhere
+  is refused too, with or without a `metadata.json` of its own (point
+  `routing.contributor` at the redirect target, unless the planning repo
+  names a database of its own there, which `routing.contributor` cannot
+  select; a rig beside the project under a shared root is such a planning
+  repo). A planning repo in a format this build cannot open exits 16 with
+  a hint, as `bd` does in that repo. A planning repo whose `metadata.json`
+  has no `dolt_database`, or whose database has not been bootstrapped, is
+  refused before anything moves. So is a planning repo that is the project's
+  own workspace (for example `routing.contributor: .`), or a clone of it,
+  which carries the project's `project_id`. In server mode, when
+  the planning open resolved to the project's own database (`dolt_database`
+  "beads", or `BEADS_DOLT_SERVER_DATABASE` naming it), that used to delete
+  the issues while reporting them moved. Run from a rig under a shared
+  root, the shared root, or a redirect stub that uses its database, is
+  refused too; the refusal names the database `bd` uses there and the
+  project's, and points `routing.contributor` at a separate planning
+  repository. An issue ID already present in the
+  planning repo is also refused rather than overwritten; when the project
+  copy is a `bd repo sync` mirror of the planning repo, the error names
+  `bd repo remove`. Its errors no longer end in the usage block, and the
+  redirect, several-databases and uncommitted-changes refusals are no
+  longer prefixed `failed to open planning store`.
+- **`bd dolt start` no longer creates a phantom database when auto-start is
+  off.** With `dolt.auto-start: false` the server is managed outside bd. A
+  start over a data directory that is missing, empty, or holds no Dolt
+  database ran `dolt init`, launched a second, unsupervised server and
+  published its port, so later commands resolved to that empty database and
+  shadowed the real one. Such a start is now refused before anything is
+  written; `--force` overrides the refusal. A start over existing data, a
+  server bd already tracks, and auto-start workspaces are unchanged.
+  (bd-7pkvvd, [#7729](https://github.com/gastownhall/beads/pull/7729))
+- **An unresolved Dolt server port is reported as such.** When no socket and
+  no port source resolved a port (for example a lost `.beads/dolt-server.port`
+  in a workspace with `dolt.auto-start: false`), bd dialed `127.0.0.1:0` and
+  printed `Dolt server unreachable at 127.0.0.1:0` with `bd dolt start`
+  advice, although the managed server could be healthy. An open that will not
+  start a server now fails with `no Dolt server port resolved for <beadsDir>`,
+  listing every port source and the port file's path; it suggests
+  `bd dolt start` only when bd manages the server. A resolved port that does
+  not answer keeps today's error. (bd-7pkvvd,
+  [#7729](https://github.com/gastownhall/beads/pull/7729))
 
 - **Journaled writes in server mode queue instead of aborting each other**
   ([#6117](https://github.com/gastownhall/beads/issues/6117)). Every write
@@ -905,6 +1341,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return `*beads.UnsupportedWorkspaceFormatError` (match it with `errors.As`)
   before opening, creating or changing anything, the same refusal the CLI
   exits 16 with.
+- **`bd doctor` no longer rewrites a graph workspace listed in
+  `repos.additional`.** Its multi-repo types check read each additional
+  repository's metadata with the loader that migrates a legacy `config.json`
+  into `metadata.json`. A graph workspace whose metadata was still a
+  `config.json` (marked by `graph_mode` in it, or by the
+  `graph-preview-format` marker beside it) therefore lost that file, and with
+  it any `graph_*` key bd does not know, to a new `metadata.json` before the
+  store open refused the workspace. The check now reads that metadata without
+  migrating it and skips the database of a workspace in a format this build
+  cannot open, leaving the workspace byte-identical; it still lists the
+  custom types in that repository's `config.yaml`, as before. It also no
+  longer migrates an ordinary additional repository's legacy `config.json`
+  when there is no Dolt database there to read.
+- **`bd doctor` no longer rewrites or empties nested graph workspaces.**
+  Its Classic Artifacts check walks every `.beads` directory under the
+  repository, those of nested repositories and worktrees included, which
+  command admission never checks. Both the scan (plain `bd doctor` and
+  `bd doctor --check=artifacts`) and the cleanup (`bd doctor --fix` and
+  `bd doctor --check=artifacts --clean`) read each one's metadata with the
+  loader that migrates a legacy `config.json` into `metadata.json`, so a
+  nested workspace whose metadata was still a `config.json` lost that file,
+  and any key bd does not know, such as a `graph_*` key beyond those a
+  rewrite keeps, to a new `metadata.json`. The cleanup also treated a graph
+  workspace's files as artifacts: in a location that should hold only a
+  redirect, such as `polecats/*/.beads` or `.git/beads-worktrees/*/.beads`,
+  it removed the `graph-preview-format` marker and the `dolt` directory, and,
+  without a `redirect` file, the metadata too. The check now reads that
+  metadata without migrating it, and it neither reports nor removes anything
+  in a `.beads` whose format this build cannot open (a `graph_mode` other
+  than `dependency`, or the `graph-preview-format` marker), which it leaves
+  byte-identical. In a redirect-only location, the workspace's own metadata
+  beside its `redirect` file now stays as it is: a legacy `config.json`
+  there is no longer migrated, and neither it nor a `metadata.json` there is
+  reported as cruft any more. The scan had listed that file as safe to
+  delete, though the cleanup kept it, so `bd doctor` warned about it again
+  after every `--fix`. A `config.json` kept beside a `redirect` is inert:
+  across a redirect, bd takes the source workspace's `dolt_database` only
+  from its `metadata.json`, and bd stopped writing `config.json` before
+  `dolt_database` existed. Rename a hand-written one to `metadata.json` for
+  its `dolt_database` to take effect.
+- **`bd doctor` no longer deletes the SQLite files of a nested workspace on
+  another backend.** The Classic Artifacts check reports `beads.db`,
+  `beads.db-wal`, `beads.db-shm` and `beads.backup-*.db` only in a `.beads`
+  whose metadata selects Dolt, but its cleanup (`bd doctor --fix` and
+  `bd doctor --check=artifacts --clean`) removed the WAL, the SHM and every
+  backup in each `.beads` under the repository whatever its backend, once the
+  check had found something (with `--clean`, something safe to delete), such
+  as a leftover WAL in the repository's own `.beads`. A nested workspace
+  whose metadata names `sqlite`, `postgres`, `mysql` or another registered
+  backend such as `http` lost files the check never listed. In a `sqlite`
+  one, a `beads.db-wal` left by an unclean close holds committed
+  transactions not yet checkpointed into `beads.db`, which exporting the
+  workspace with a bd release that still includes the sqlite backend, as bd
+  advises, would have recovered. The check and the cleanup now share one
+  backend predicate, so in each `.beads` both reach the cleanup removes
+  SQLite files only where the check reports them. Neither treats a
+  workspace whose metadata names a backend this build does not recognize as
+  Dolt any more, so its SQLite files are neither reported nor removed. Nor
+  do they treat a nested Beads Classic SQLite workspace as Dolt: its
+  metadata predates the `backend` key, or it has none, which bd reads as
+  Dolt, so the check listed its WAL, SHM and backups as safe to delete and
+  the cleanup removed them. Both now pass over every historical SQLite
+  layout that bd refuses to open.
+- **Activating the HTTP backend refuses a graph workspace too.**
+  `bdhttp.Attach` and `bdhttp.Connect` activated it in a workspace whose
+  `metadata.json` declares a `graph_mode` other than `dependency`, or whose
+  `.beads` holds the `graph-preview-format` marker: they wrote the http
+  sidecar and `.gitignore`, set the `metadata.json` backend to `http` and
+  migrated a legacy `config.json`, and `Connect` handshook with the server
+  first. They now return `*bdhttp.UnsupportedWorkspaceFormatError` (the type
+  `beads.UnsupportedWorkspaceFormatError` names) before writing anything, and
+  `Connect` before it dials; `bdhttp.SaveTarget`, which writes the sidecar
+  alone, refuses it the same way. `bd connect` in a linked git worktree with no
+  `.beads` of its own attaches the main checkout's `.beads`, and attached a
+  graph workspace there that only the marker or a legacy `config.json`
+  declares (refused without `--force`, it still migrated that `config.json`);
+  it now exits 16 there too, without dialing or writing. A workspace that a
+  graph build declares while `bd connect`'s handshake is in flight now gets
+  the same refusal, hint and exit 16 before `bd connect` writes anything
+  there, where `bd connect` wrote its `.gitignore` and then exited 1.
 - **`bd setup claude --remove` no longer leaves a blank-line hole.** Removing
   the beads section from `CLAUDE.md` (or, with the other setup recipes, from
   `AGENTS.md` or `GEMINI.md`) left the blank lines around it behind, three in
@@ -974,6 +1490,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver sends a `time.Time` as its wall clock with no zone, so a library
   caller paging with a cursor in another zone was answered from the wrong
   position there (server Dolt was unaffected).
+- **`bd setup mux --global` words its section in `~/.mux/AGENTS.md` for
+  repositories that use beads.** Mux loads that file in every workspace, but
+  the global install wrote it the way it writes a project's `AGENTS.md`: a new
+  file got the project scaffolding ("Project Instructions for AI Agents" and
+  placeholder sections), the section said that this project uses bd for all
+  issue tracking, and it followed the current directory's beads config, so
+  `--check --global` run from a project with a different Dolt remote or
+  `no-push` setting called it stale, and following its hint flipped it back.
+  The global section is now rendered the same from every project, a new file
+  holds just the section, and the section, task-tracking rules included,
+  applies only in repositories that use beads. The workspace layer run from
+  your home directory, and the root layer run from `~/.mux`, name that same
+  file and now manage it as the global layer too. Run from `~/.mux`, setup no
+  longer installs workspace hooks, or with `--project` a workspace
+  `AGENTS.md`, in `~/.mux/.mux`, which Mux does not load, and `--check` no
+  longer asks for them. `bd setup mux --remove` run there deletes the hooks an
+  earlier run installed, and with them the global section, since there the
+  root `AGENTS.md` is the global file: re-run `bd setup mux --global`
+  afterwards, or delete `~/.mux/.mux` by hand instead. `--check --global`
+  reports a section an earlier run wrote as stale; re-run
+  `bd setup mux --global` to reword it in place. Project scaffolding an earlier
+  run put around it stays; delete it by hand if you don't want it.
+- **`bd setup mux --remove` keeps a symlinked `.mux`.** After removing its
+  hooks it removed the `.mux` directory they were in, and when `.mux` was a
+  symlink that deleted the link, whatever its target held. Run from your home
+  directory, that is `~/.mux`, which Xum's migration replaces with a link to
+  `~/.xum`: `--remove` deleted the link even when bd had installed nothing,
+  and with `--global` it then found no `~/.mux/AGENTS.md` and left the global
+  section in `~/.xum/AGENTS.md`, still exiting 0. It now removes `.mux` only
+  when it is a real directory that the hooks it just removed left empty; a
+  link, or on Windows a junction, stays. Run from `~/.mux`, setup and
+  `--check` now also name the hooks an earlier bd installed in `~/.mux/.mux`,
+  which Mux does not load, and how to remove them.
+- **`bd setup <recipe> --remove` keeps a symlinked integration directory.**
+  After removing its files, `--remove` also removes the directories they were
+  in if that leaves them empty, but where such a directory was a symlink it
+  deleted the link: a linked `.aider`, `.junie` or `.junie/mcp`, even when bd
+  had installed nothing there, `.cursor/rules`, or a file recipe's directory
+  such as `.windsurf/rules` or `.github` (windsurf, cody, kilocode, kiro,
+  copilot and custom recipes), whatever the link's target held, and the agent
+  skill's linked `.agents`, `.agents/skills` or `.agents/skills/beads` (Codex
+  and Cursor; with `--global`, in your home directory) once its target was
+  empty. Every recipe now removes a directory as `bd setup mux --remove`
+  does: only a real one that the files it just removed left empty. A link, or
+  on Windows a junction, stays, and so does a directory it took nothing from,
+  such as an empty `.agents/skills` you made.
 - **`bd setup claude --global` keeps its beads section in `~/.claude/CLAUDE.md`.**
   It wrote the section into the current directory's `CLAUDE.md`: run from your
   home directory it created `~/CLAUDE.md`, which by default stops Claude Code
@@ -984,9 +1546,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.claude/CLAUDE.md` holds just the section, rendered the same whichever
   project you run from. Claude Code loads that file in every project, so its
   section, task-tracking rules included, applies only in repositories that use
-  beads. With global or plugin hooks `--check` accepts it when the project's
-  instructions have none, or names `--global` when it is missing and the
-  project has no `CLAUDE.md` of its own. Run from `~/.claude`,
+  beads. With global hooks, or a plugin enabled in `~/.claude/settings.json`,
+  `--check` accepts it when the project's instructions have none, or names
+  `--global` when it is missing and the project has no `CLAUDE.md` of its own.
+  Run from `~/.claude`,
   or from your home directory unless `~/CLAUDE.md` still holds a section an
   earlier run left there, `--check` judges the user-level files, and from your
   home directory it names `--global` when no hooks are installed. From your
@@ -995,6 +1558,175 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-run `bd setup claude --global` to add the section to `~/.claude/CLAUDE.md`.
   A section an earlier `--global` run left in a directory's `CLAUDE.md` stays
   there; delete it by hand if you don't want it.
+- **`bd setup claude` names the user-level files its global install uses.**
+  The `--global` flag help listed only `~/.claude/settings.json`; it now also
+  names `~/.claude/CLAUDE.md`, which holds the beads section. Run from
+  `~/.claude` with no hooks installed, `--check` suggested `bd setup claude`,
+  a project install that puts its hook in `~/.claude/.claude/settings.json`
+  and the project-worded section (inside project scaffolding when the file is
+  new) in `~/.claude/CLAUDE.md`, which Claude Code loads in every project; it
+  now suggests `bd setup claude --global`, as it already did from your home
+  directory. Run from your home directory, `--remove` removes the section
+  from `~/CLAUDE.md` and then from `~/.claude/CLAUDE.md`, and printed
+  "Removing Claude Code integration..." before each without naming either
+  file. That line now names the file it acts on, in `bd setup factory`,
+  `opencode`, `mux` and `gemini` `--remove` too.
+- **`bd setup claude --remove` run from `~/.claude` removes a global
+  install's hooks with its section.** There the directory's `CLAUDE.md` is
+  the user-level one, so `--remove` took the global install's beads section
+  out of `~/.claude/CLAUDE.md` but left its hook in `~/.claude/settings.json`,
+  and the next `--check` failed. It now removes that hook too, as `--remove`
+  from your home directory already removes both. If it then cannot remove
+  the section, for example because `~/.claude/CLAUDE.md` is a symlink, it
+  fails instead of warning and reporting success. That includes a
+  `~/.claude/CLAUDE.md` that is an `@AGENTS.md` stub with a
+  `~/.claude/AGENTS.md` beside it: `--remove` there now treats it as the
+  user-level file, as `--global` and `--check` do, not as a project stub
+  whose beads section lives in `AGENTS.md`.
+- **`bd setup claude --remove` leaves a settings file with no bd hook as it
+  is.** It rewrote any settings file that had hooks, `settings.local.json`
+  included: keys re-sorted, `&&` written as `\u0026\u0026`, mode reset to
+  0644. A symlinked `settings.json`, as dotfile managers leave it, failed
+  the removal with `refusing to write through symlink`. It now writes the
+  file only when it removes a bd hook from it. Its "No settings file
+  found", "No hooks found" and parse-error lines now name the settings file,
+  since a removal from `~/.claude` reads two, and a settings file it cannot
+  read now stops the removal instead of being reported as not found.
+- **`bd setup gemini` keeps its beads section in `~/.gemini/GEMINI.md`.** Its
+  default, global install (also what `--global` selects) put the hook in
+  `~/.gemini/settings.json` but wrote the section, with project scaffolding,
+  into the current directory's `GEMINI.md`, even in a directory that does not
+  use beads; run from your home directory it created `~/GEMINI.md`. `--remove`
+  stripped the section a project's own `--project` install had put in its
+  `GEMINI.md` while leaving that project's hooks in place, and `--check` failed
+  in every directory but the one the install ran from. A global install and
+  removal now use only the user-level files beside `~/.gemini/settings.json`. A
+  new `~/.gemini/GEMINI.md` holds just the section, rendered the same whichever
+  project you run from; Gemini CLI loads it in every project, so the section
+  applies only in repositories that use beads. In an existing file the section
+  goes ahead of the `## Gemini Added Memories` section that Gemini CLI
+  releases up to v0.43 keep there, so memories they save later stay outside
+  it. `--check` reports a section already below that heading as stale, an
+  install moves it ahead of the heading, and the move, like `--remove`,
+  keeps the memories saved inside it. With global hooks `--check` accepts
+  the user-level section when the project's `GEMINI.md` has none, and its
+  hints for a project's `GEMINI.md` name `bd setup gemini --project`. From
+  your home directory, whose `.gemini/settings.json` is the global one, and
+  from `~/.gemini`, `--project` is the global install: it adds and removes
+  the hook in `~/.gemini/settings.json` and the user-level section together,
+  and `--check` judges that section, not one in `~/GEMINI.md`. If you ran
+  `bd setup gemini` before, re-run it to add the section to
+  `~/.gemini/GEMINI.md`. A section an earlier run left in a directory's
+  `GEMINI.md` stays there; delete it by hand if you don't want it.
+- **`bd setup` keeps the permissions of a file it rewrites.** The claude,
+  gemini, codex, cursor, mux, factory, opencode, aider and junie recipes,
+  and the Claude, Codex and Cursor setup `bd init` runs, replaced each
+  existing file they changed with a new one at mode 0644, on install and on
+  `--remove`, so a file you had restricted to 0600 came back readable by
+  other local accounts: `~/.gemini/GEMINI.md`, where Gemini CLI keeps your
+  saved memories, or a settings file that can hold API keys, such as
+  `~/.claude/settings.json`, `~/.gemini/settings.json` or
+  `~/.codex/config.toml`. A rewritten file now keeps its permission bits. A
+  file setup creates is still 0644, and `bd setup mux` still makes its
+  hooks executable. A file an earlier run widened stays as it is; narrow it
+  again with `chmod 600`.
+- **`bd setup claude` and `bd setup gemini` no longer replace a settings file
+  they cannot read.** An install took any error reading
+  `.claude/settings.json`, `~/.claude/settings.json`, `.gemini/settings.json`
+  or `~/.gemini/settings.json` for a missing file, so a file it could not
+  read, such as one a `sudo` run left owned by root, was replaced by one
+  holding only the `bd prime` hook, and every other setting in it, API keys
+  included, was lost. The Claude setup `bd init` runs did the same without a
+  warning. Only a missing file now counts as no settings: any other read
+  error stops the install before it writes anything, with an error that
+  names the file (`bd init` warns and goes on). `bd setup gemini --remove`
+  reported such a file as "No settings file found", then removed the beads
+  section from `GEMINI.md` and reported success with the hook still in
+  place; like `bd setup claude --remove`, it now fails and keeps the
+  section.
+- **`bd setup claude --global` installs its hook when the beads plugin is
+  enabled only in the current project.** It skipped the hook whenever the
+  current directory's `.claude/settings.json` or `.claude/settings.local.json`
+  enabled the plugin, which left every other project without one. Claude Code
+  runs a plugin enabled in a project's settings in that project only, so a
+  global install now leaves the hooks to the plugin only when managed settings
+  or `~/.claude/settings.json` enable it. `--check` likewise treats the hooks
+  of a plugin enabled only in the project's settings as the project's: it
+  judges the project's own `CLAUDE.md`, as it does with project hooks, and
+  names `bd setup claude` rather than `--global` when that file is missing. In
+  a project that enables the plugin, a global install's hook and the plugin's
+  both run `bd prime`. If you ran `bd setup claude --global` from such a
+  project before, re-run it to add the hook your other projects are missing.
+- **`bd setup claude` reads the beads plugin's setting the way Claude Code
+  does.** It skipped its hook whenever `~/.claude/settings.json`, the
+  project's `.claude/settings.json` or `.claude/settings.local.json` enabled
+  the plugin, even when a more specific one turned it off, so a project that
+  opts out of a plugin your user settings enable got neither the plugin's hook
+  nor bd's, and `--check` reported the hooks as plugin-managed. It now takes
+  the plugin's setting from the first settings file that names it, in Claude
+  Code's order: managed settings (`managed-settings.json` and
+  `managed-settings.d/`), `.claude/settings.local.json` (at the repository
+  root, or the main checkout's root in a linked worktree, where Claude Code
+  v2.1.211 and later keeps it, then one left in the current directory), the
+  project's `.claude/settings.json`, then `~/.claude/settings.json`. An
+  install that leaves the hooks to the plugin names the file that enables it,
+  no longer adds an empty `"hooks": {}` to a settings file, and no longer
+  creates an empty `.claude/settings.json`, which `bd init` then committed.
+  `bd setup claude`, `--global` and `--check` now warn when `bd prime` runs
+  twice per session in the current directory, as it does in a project whose
+  own settings enable the plugin once a global hook is installed, and say how
+  to run it once. A `--global` install that leaves the hooks to the plugin,
+  run from a project whose own settings turn it off, now warns that no hook
+  runs `bd prime` there and names `bd setup claude`. When only your own
+  settings enable the plugin, a project install no longer deletes an older
+  bare `bd prime` hook from the shared `.claude/settings.json`, which
+  teammates without the plugin rely on; it replaces it with the current hook.
+  When the project's `.claude/settings.json` enables the plugin and only your
+  `.claude/settings.local.json` turns it off, a project install adds no hook
+  to the shared file, where every teammate with the plugin would run
+  `bd prime` twice, and keeps a `bd prime` hook in your
+  `.claude/settings.local.json` instead of migrating it there. It names the
+  hook that already runs `bd prime` for you; when none does, it, `--global`
+  and `--check` name how to run `bd prime` for yourself. Run in a
+  subdirectory or linked worktree, a project install adds no hook beside a
+  `bd prime` hook in the repository root's `.claude/settings.local.json`,
+  which Claude Code loads there, unless the project's `.claude/settings.json`
+  already has one, and keeps a hook in the current directory's own
+  `.claude/settings.local.json`. `--remove` removes the hook from the root's
+  file too, and `--check` warns about a removed `bd sync` hook in that file
+  as well. When an install or `--remove` cannot rewrite a
+  `.claude/settings.local.json` it takes a `bd prime` hook out of, such as a
+  symlinked one, it warns and names the file. `bd setup claude` and `--check`
+  also warn when two of the project's settings files run different `bd prime`
+  commands, which Claude Code runs both of. `--check` suggests migrating a
+  hook in `.claude/settings.local.json` only when `bd setup claude` would move
+  it to `.claude/settings.json`, and an install that leaves the hooks to the
+  plugin says it removed such a hook because the plugin runs `bd prime`,
+  rather than reporting a migration. bd assumes the managed settings files are
+  in force: it cannot see server-managed settings or an MDM profile, under
+  which Claude Code ignores those files by default.
+- **`bd doctor` and the `bd setup claude` tip read the beads plugin's setting
+  the way `bd setup claude --check` does.** `bd doctor`'s Claude Integration
+  check reported "Plugin installed" when `~/.claude/settings.json`, the
+  project's `.claude/settings.json` or `.claude/settings.local.json` enabled
+  any plugin whose name contains `beads`: also in a project whose own
+  settings turn off a plugin your user settings enable, where `--check`
+  reports no hooks, and for a plugin such as `design-to-beads`. It missed a
+  plugin enabled only in managed settings or in the repository root's
+  `.claude/settings.local.json`. The tip suggesting the plugin or
+  `bd setup claude` looked only at `~/.claude/settings.json` for the plugin
+  and in `~/.claude/` for a `bd prime` hook, and did not recognize the
+  `bd prime --hook-json` hook `bd setup claude` writes, so it kept appearing
+  after `bd setup claude --global` and in a project whose
+  `.claude/settings.json` enables the plugin or holds the hook, and never in
+  a project that turns off a plugin your user settings enable. `bd doctor`
+  now takes the plugin's setting from the first settings file that names it,
+  in Claude Code's order, and the tip appears where `--check` reports no
+  hooks installed. `bd doctor`'s hook checks (Claude Integration, Claude Hook
+  Completeness and Claude Settings Health) also read the repository root's
+  `.claude/settings.local.json` from a subdirectory or linked worktree, where
+  they missed a `bd prime` hook that `--check` finds; for `bd doctor <path>`
+  that is the root of `<path>`'s repository.
 - **`bd blocked --label`, `--label-any` and `--exclude-label` apply to a row
   blocked only by an unsatisfied `external:` dependency.** The
   external-dependency policy lists such a row itself, after the label query
@@ -1069,6 +1801,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dolt, where the transaction survives a failed statement, the import
   committed without the edge and exited 0. Such an error now fails the
   import. Refused edges are still skipped as before.
+
+- **A bare hash that two prefixes share is reported as ambiguous instead of
+  resolving to one of them.** With `hacker-news-abc123` and `ops-abc123` in
+  one workspace (under `allowed_prefixes`, say), `abc123` matched both
+  exactly, and the resolver kept whichever the store listed last:
+  `bd update abc123 --status in_progress` updated `ops-abc123` and printed a
+  success line, `bd comment abc123` wrote to it, and `bd delete abc123`
+  previewed it and printed `bd delete ops-abc123 --force` as the next step.
+  An exact hash match is not an abbreviation, so the partial-id notice stayed
+  silent too. The shared resolver now refuses such a hash with `ambiguous
+  issue ID: "abc123" matches 2 issues: [hacker-news-abc123 ops-abc123]` and
+  asks for the full id, as
+  [Working with IDs](docs/core-concepts/hash-ids.md#working-with-ids)
+  documents for ambiguous cases. Wisps count too: a wisp
+  `hacker-news-wisp-abc123` beside the issue `ops-abc123` used to lose to the
+  issue without a word and now makes `abc123` ambiguous as well, and a wisp
+  whose hash is exactly the input now wins over an issue the input only
+  abbreviates, as an issue's exact hash already did. `bd update`, `bd close`,
+  `bd comment`, `bd delete`, `bd show` and the other commands that print the
+  resolver's error show that message. When a lookup falls through to a
+  routed rig or a contributor's planning store, an id that is ambiguous there
+  (a shared hash, or an abbreviation of several issues) is now reported as
+  ambiguous rather than as "no issue found". Under `--if-revision`,
+  `bd update`, `bd close`, `bd assign` and `bd reopen` report an ambiguous id
+  as the guard's lost race (`precondition_failed`, exit 13), as for any other
+  gone id, since no issue carries it: a parent deleted from the workspace's
+  own store while two of its children survive used to exit 1. A few lookups
+  report any resolver failure as not found (`bd mol show`, `bd graph` and
+  `bd mol pour` among them) and still say so, though they no longer pick one
+  of the issues. A hash that only one prefix uses, a full id, and the
+  workspace's own prefix (`bd-abc123` in a `bd` workspace, still looked up
+  first) resolve as before. A connected HTTP workspace resolves exact ids
+  only and was not affected.
 
 - **`bd mol bond <A> <B>` ignored prefix routing** — operand resolution now uses
   the same routing fallback as `bd show`/`bd update`/`bd close`, so a bead that
@@ -2047,8 +2812,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   close runs, while the proxied route refuses that argument and closes the
   rest.) In `--json` mode the summary is instead a compact JSON line on stderr
   naming the failed ids, matching `bd update`'s partial-failure report, while
-  stdout keeps the usual closed-issues array. Each `failed[]` entry carries the
-  refusal as the engine worded it, identically on both routes; the `--force`
+  stdout keeps the usual closed-issues array. A single refused id gets that
+  JSON report too, as it does from `bd update`; only the text summary is left
+  off for it, since its refusal already names it. Each `failed[]` entry carries
+  the refusal as the engine worded it, identically on both routes; the `--force`
   hint and the route's own framing stay on the human-readable stderr line, which
   is unchanged. `--claim-next` still claims when
   part of the batch closed — the claim commits inside the batch's own
@@ -3004,6 +3771,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gated on the write too, so a no-op no longer announces a removal it did not
   make, and the `--json` payload for a yaml-only key carries a `changed` boolean
   so the machine branch can tell an absent key from an unpopulated field.
+
+### Security
+
+- **Raised the `golang.org/x/net` floor to `v0.60.0` and `golang.org/x/crypto`
+  to `v0.57.0`, past the seven fixable advisories they carry into a locally
+  built `bd`.** `govulncheck` reports all seven as reachable from `bd`'s own
+  code on `main`:
+
+  | Advisory | Module on `main` | Fixed in |
+  |---|---|---|
+  | GO-2026-6603 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6610 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6611 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6612 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6617 | `golang.org/x/net v0.58.0` | `v0.60.0` |
+  | GO-2026-6355 | `golang.org/x/crypto v0.55.0` | `v0.56.0` |
+  | GO-2026-6354 | `golang.org/x/crypto v0.55.0` | `v0.56.0` |
+
+  `x/net v0.60.0` requires `x/crypto v0.57.0`, `x/text v0.42.0` and
+  `x/mod v0.41.0`, so those rise with it.
+
+  GO-2026-5932 (also `x/crypto`) has no fixed version at any release, so it
+  is carried forward and named rather than counted as resolved. Both example
+  modules are mirrored so they cannot pin a lower floor than the module they
+  demonstrate. All upgrades, no downgrades.
+
+  The `grpc` half of the original change is gone: `main` reached `v1.83.2`
+  on its own. These floors matter because the versions are baked into the
+  binary `make build` and `make install` produce, so a downstream image-build
+  override cannot reach them; only the module floor can. Re-derive rather
+  than trusting this table: `govulncheck -scan module`.
 
 ## [1.3.0] - 2026-09-15
 

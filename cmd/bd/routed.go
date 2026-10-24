@@ -108,12 +108,20 @@ func resolveAndGetIssueWithRoutingAccess(ctx context.Context, localStore storage
 		return result, nil
 	}
 
+	// The first routed tier that refuses the id answers instead of the local
+	// not-found (isRoutedResolutionRefusal). The refusal is checked before
+	// isRoutingFailure, which it would also satisfy, so the auto tier still
+	// gets its chance.
+	var refusal error
+
 	// If not found locally, try prefix-based routing via routes.jsonl.
 	// This handles cross-rig lookups where the ID's prefix maps to a different
 	// database (e.g., hr-8wn.1 routes to the herald rig's database).
 	if isNotFoundErr(err) {
 		if prefixResult, prefixErr := resolveViaPrefixRoutingWithAccess(ctx, id, writable, false); prefixErr == nil {
 			return prefixResult, nil
+		} else if isRoutedResolutionRefusal(prefixErr) {
+			refusal = prefixErr
 		} else if isRoutingFailure(prefixErr) {
 			return nil, prefixErr
 		}
@@ -124,12 +132,25 @@ func resolveAndGetIssueWithRoutingAccess(ctx context.Context, localStore storage
 	if isNotFoundErr(err) {
 		if autoResult, autoErr := resolveViaAutoRoutingWithAccess(ctx, localStore, id, writable, false); autoErr == nil {
 			return autoResult, nil
+		} else if refusal != nil {
+			return nil, refusal
 		} else if isRoutingFailure(autoErr) {
 			return nil, autoErr
 		}
 	}
 
 	return nil, err
+}
+
+// isRoutedResolutionRefusal reports whether a routed tier's resolution error
+// answers in place of the local store's not-found. Both sentinels mean the
+// routed store holds what the id names but will not pick it: the id names
+// several issues there (utils.ErrAmbiguousID), or it only abbreviates an
+// issue there and exact resolution was required
+// (utils.ErrAbbreviatedIDNotAllowed). Reporting the local "no issue found"
+// instead would be false.
+func isRoutedResolutionRefusal(err error) bool {
+	return errors.Is(err, utils.ErrAmbiguousID) || errors.Is(err, utils.ErrAbbreviatedIDNotAllowed)
 }
 
 // idResolverFor is the store id resolution should ask. A backend that can only
@@ -218,34 +239,34 @@ func resolveAndGetIssueForMutationExact(ctx context.Context, localStore storage.
 	}
 
 	// The routed tiers resolve with utils.ResolvePartialIDExact too, so each
-	// can mint utils.ErrAbbreviatedIDNotAllowed of its own — the abbreviation
-	// names a real issue in the routed rig rather than here — and both
-	// wrappers hand that error back unwrapped. Keep the first such refusal:
-	// the local error is only a plain not-found, and returning it would tell
-	// the caller no issue matches an id a routed store demonstrably holds,
-	// which is exactly the falsehood the sentinel exists to prevent. The
-	// refusal is checked before isRoutingFailure, which it would also satisfy,
-	// so the auto tier still gets its chance at an exact match.
-	var abbrevErr error
+	// can refuse the id on its own — it abbreviates a real issue in the routed
+	// rig, or is a hash several issues share there — and both wrappers hand
+	// that error back unwrapped. Keep the first such refusal: the local error
+	// is only a plain not-found, and returning it would tell the caller no
+	// issue matches an id a routed store demonstrably holds, which is exactly
+	// the falsehood the sentinels exist to prevent (isRoutedResolutionRefusal).
+	// The refusal is checked before isRoutingFailure, which it would also
+	// satisfy, so the auto tier still gets its chance at an exact match.
+	var refusal error
 	prefixResult, prefixErr := resolveViaPrefixRoutingWithAccess(ctx, id, true, true)
 	switch {
 	case prefixErr == nil:
 		return prefixResult, nil
-	case errors.Is(prefixErr, utils.ErrAbbreviatedIDNotAllowed):
-		abbrevErr = prefixErr
+	case isRoutedResolutionRefusal(prefixErr):
+		refusal = prefixErr
 	case isRoutingFailure(prefixErr):
 		return nil, prefixErr
 	}
 
 	// Write intent, as in resolveAndGetIssueForMutation: the auto-route opens
 	// writable so the write commits where the issue lives. The auto tier's own
-	// abbreviation refusal is a routing failure here, and is returned as one.
+	// refusal is a routing failure here, and is returned as one.
 	autoResult, autoErr := resolveViaAutoRoutingWithAccess(ctx, localStore, id, true, true)
 	switch {
 	case autoErr == nil:
 		return autoResult, nil
-	case abbrevErr != nil:
-		return nil, abbrevErr
+	case refusal != nil:
+		return nil, refusal
 	case isRoutingFailure(autoErr):
 		return nil, autoErr
 	}

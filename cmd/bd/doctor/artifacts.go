@@ -1,10 +1,14 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 // ArtifactFinding represents a single detected artifact that may need cleanup.
@@ -169,15 +173,30 @@ func scanGitWorktreeArtifacts(gitDir string, report *ArtifactReport) {
 }
 
 // scanBeadsDir checks a single .beads directory for artifacts.
+//
+// The walk reaches the .beads directories of nested repositories, sub-projects
+// and worktrees, and command admission checked only the workspace doctor runs
+// in. So beadsDir's metadata is read as discovery reads it, without migrating
+// a legacy config.json into metadata.json, and a workspace in a format this
+// build cannot open is not scanned: configfile.Load would rewrite that
+// config.json, dropping keys it does not know, and its files are not this
+// build's to report for removal.
 func scanBeadsDir(beadsDir string, report *ArtifactReport) {
+	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	var formatErr *configfile.UnsupportedWorkspaceFormatError
+	if errors.As(err, &formatErr) {
+		return
+	}
+
 	// Check if this should be a redirect-only directory
 	isRedirectExpected := isRedirectExpectedDir(beadsDir)
 
 	// Check if it has a redirect file
 	hasRedirect := hasRedirectFile(beadsDir)
 
-	// 1. Check for SQLite artifacts
-	scanSQLiteArtifacts(beadsDir, report)
+	// 1. Check for SQLite artifacts. Metadata that is absent or does not
+	// load leaves cfg nil, which selects the default Dolt backend.
+	scanSQLiteArtifacts(beadsDir, cfg, report)
 
 	// 2. Check for cruft .beads directories (should be redirect-only)
 	if isRedirectExpected {
@@ -252,10 +271,15 @@ func hasRedirectFile(beadsDir string) bool {
 }
 
 // scanSQLiteArtifacts checks for leftover SQLite database files.
-// Only flags SQLite files as artifacts if Dolt is the active backend.
-// If SQLite is still the active backend, beads.db is the live database.
-func scanSQLiteArtifacts(beadsDir string, report *ArtifactReport) {
-	if !IsDoltBackend(beadsDir) {
+// Only flags SQLite files as artifacts if beadsDir, whose metadata is cfg, is
+// on Dolt (fix.SelectsDolt). If SQLite is still the active backend, including
+// in a historical SQLite workspace whose metadata predates the backend key,
+// beads.db is the live database, and on any other backend, or one this build
+// does not recognize, the files are that backend's. The cleanup
+// (fix.ClassicArtifacts) uses the same predicate, so in a .beads both walks
+// reach it removes only the SQLite files this reports as safe to delete.
+func scanSQLiteArtifacts(beadsDir string, cfg *configfile.Config, report *ArtifactReport) {
+	if !fix.SelectsDolt(beadsDir, cfg) {
 		return
 	}
 
@@ -294,11 +318,21 @@ func scanSQLiteArtifacts(beadsDir string, report *ArtifactReport) {
 }
 
 // scanCruftBeadsDir checks if a .beads directory that should be redirect-only
-// contains extra files beyond the redirect file.
+// contains extra files beyond the redirect file. It passes over every entry
+// the cleanup (fix.ClassicArtifacts) keeps there, so it reports only files
+// that cleanup removes.
 func scanCruftBeadsDir(beadsDir string, report *ArtifactReport) {
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
 		return
+	}
+
+	hasRedirect := false
+	for _, entry := range entries {
+		if entry.Name() == "redirect" {
+			hasRedirect = true
+			break
+		}
 	}
 
 	// Count non-redirect entries
@@ -311,6 +345,12 @@ func scanCruftBeadsDir(beadsDir string, report *ArtifactReport) {
 		}
 		// .gitkeep is harmless
 		if name == ".gitkeep" {
+			continue
+		}
+		// Beside a redirect the cleanup keeps the directory's own metadata,
+		// metadata.json or an unmigrated, inert legacy config.json
+		// (gastownhall/beads#4692; see fix.cleanCruftBeadsDirFiles)
+		if (name == "metadata.json" || name == "config.json") && hasRedirect {
 			continue
 		}
 		extraFiles = append(extraFiles, name)

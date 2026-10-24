@@ -11,12 +11,11 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
-	"strconv"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // Stable identity of the `bd dolt start` refusal on a proxied workspace.
@@ -116,7 +115,7 @@ func externalDoltEndpoint(cfg configfile.ExternalDoltConfig) string {
 	if cfg.Socket != "" {
 		return "unix:" + cfg.Socket
 	}
-	return net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	return doltutil.ServerAddr(cfg.Host, cfg.Port)
 }
 
 func renderProxiedDoltStatus(status proxiedDoltStatus) {

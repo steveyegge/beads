@@ -34,6 +34,7 @@
 34 1 TestProxiedServerReadyClaimConcurrent
 34 1 TestProxiedServerServeActivatesTheEventsJournal
 34 1 TestProxiedServerServeRelease
+34 1 TestProxiedServerVersionedHistorySwitchChecksTheLegacyProtosAPourCopies
 
 34 2 TestProxiedServerDepListSingleIDWarnsOnDroppedExternalEdge
 34 2 TestProxiedServerGateList

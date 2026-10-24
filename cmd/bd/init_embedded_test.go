@@ -155,14 +155,6 @@ func isEmbeddedLockOutput(out string) bool {
 		strings.Contains(out, "workspace gate busy")
 }
 
-func runCommandBuffers(t *testing.T, cmd *exec.Cmd) (stdout, stderr bytes.Buffer, err error) {
-	t.Helper()
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	return stdout, stderr, err
-}
-
 // bdRunWithFlockRetry runs a bd command with retry on flock contention.
 // Returns stdout and nil on success, or combined stdout/stderr and the last
 // error after retries are exhausted or a non-flock error occurs.
@@ -570,8 +562,8 @@ func TestEmbeddedInitAForkAutoContributor(t *testing.T) {
 		}
 
 		// Regression: autoConfigureForkContributor must initialize the planning
-		// Dolt schema, not just create the .beads directory. An uninitialized
-		// store causes "Dolt server unreachable" on first use (e.g. bd migrate-personal).
+		// Dolt schema, not just create the .beads directory. (bd migrate-personal
+		// adopts this database as the planning repo's own.)
 		planningEmbeddedDir := filepath.Join(planningDir, ".beads", "embeddeddolt")
 		if _, err := os.Stat(planningEmbeddedDir); err != nil {
 			t.Errorf("planning embeddeddolt dir missing (planning store not pre-initialized): %v", err)
