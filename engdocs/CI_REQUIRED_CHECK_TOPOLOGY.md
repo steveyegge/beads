@@ -1741,8 +1741,11 @@ workflows run on that commit like a same-repo PR, but only the fast set.
 
 ### Post-merge complement
 
-The queue fast-forwards `main` to the tested merge-group commit (the same
-tree). The push of that commit runs the rest:
+The queue lands a batch of entries (up to `max_entries_to_merge`) as one
+push: `main` fast-forwards to the last entry's tested merge-group commit,
+the same tree, which contains every entry of the batch. Push workflows run
+once per push, for its head commit, so the push runs of that head run the
+rest:
 
 - `pr.yml` (scope `push`): the Windows and macOS jobs, and `CI Gate /
   Required` over them. The Linux jobs and the whole `bazel` call are
@@ -1753,25 +1756,52 @@ tree). The push of that commit runs the rest:
 - `pr-risk.yml` (scope `push`): `test-nix`.
 - `bazel.yml`'s own push run: every Bazel lane (it has no inputs there, so
   the Dolt tiers run, and `bazel-integration` keeps `//cmd/bd:bd_test`).
+  A cmd/bd Dolt-server tier failure fails `bazel-dolt-int` there (see
+  [dolt-int Union Lane](#dolt-int-union-lane)), as every other Dolt-tier
+  lane's failure fails its own job.
 - `main.yml`, as before.
 
-The invariant (`TestCIScopeCoversEveryGatedJobOnMain`): every job either
-gate reads on a pull request runs on every tree the merge queue lands on
-`main`, in its merge group or in `main`'s push runs. (A direct push to
-`main`, by a bypass actor, has no merge group: as before, only its push
-runs check it.) A batch of entries lands as one push
-of its last entry, whose tree contains the others; each earlier entry's own
-merge group ran the fast set on its tree. `pr.yml`, `pr-risk.yml` and
-`bazel.yml` key a push run's concurrency group on its commit, so a later
-landing never cancels an earlier one's complement run or displaces it
-while it waits (GitHub cancels a group's pending run when a newer one
-queues).
+The invariant (`TestCIScopeCoversEveryGatedJobOnMain`,
+`TestCIScopeExcusedIDsRedTheirPushRun`): every push head on `main` runs
+every job either gate reads on a pull request, the fast set in its merge
+group and the rest in its push runs, and every id a merge group's gates
+excuse turns that push run red when its job fails there. An earlier entry
+of a batch gets the fast set on its own tree in its own merge group, and
+the complement only as part of the batch head's tree, which also holds
+the entries after it. `advisory-reports`, which neither gate reads, runs
+on pull requests only. A direct push to `main` (a bypass actor) has no
+merge group: as before, only its push runs check it.
+
+`pr.yml`, `pr-risk.yml` and `bazel.yml` key a push run's concurrency group
+on its commit, so a later push never cancels an earlier one's complement
+run or displaces it while it waits (GitHub cancels a group's pending run
+when a newer one queues).
 
 The cost: a regression only the Windows, macOS, Nix or Dolt-tier jobs see
 is no longer stopped by the queue. The PR's own run still runs them, so
 what reaches `main` is a regression that came from combining the PR with
-what landed after that run, or a flake; it surfaces on the push run,
-attributed to the PR that landed it.
+what landed after that run, or a flake; it surfaces on the push run, and
+the alert names every PR of the pushed range as a candidate.
+
+Caveats:
+
+- Concurrent push runs. Keying push runs on their commit lets a landing
+  burst run several full `bazel.yml` push runs at once: more farm load,
+  and parallel `rrc-seed` jobs. `rrc-seed`'s writer mint retries a 429
+  for about a minute (`.github/scripts/rrc-writer-credential.sh`) and then
+  fails the job, which reds that push run for infra noise; the alert then
+  reports it like any red, and re-running the failed job clears it. If it
+  shows up, give `rrc-seed` a shared job-level concurrency group that
+  queues instead of cancelling (`queue: max`; its uploads are
+  content-addressed, so serial seeding loses nothing). Not done here: a
+  key GitHub rejected in `bazel.yml` would fail every pull request's call
+  at startup.
+- Mode `remote`. The complement assumes `bazel.yml`'s push run takes mode
+  `remote`, as the merge group did (its gate requires it, `BAZEL_REMOTE`).
+  A push run in mode `skip` (the farm switch turned off) runs no lane, and
+  one in mode `cache` (the executor secret gone) skips the remote-only
+  tiers; both stay green on what they skipped. Only a change of the switch
+  or the secret between a merge group and its push gets there.
 
 ### How a red main surfaces
 
@@ -1780,20 +1810,28 @@ of `PR`, `PR Risk`, `Bazel` and `Main` on `main`, and acts only on this
 repository's push runs (`.github/scripts/main-ci-alert.sh`):
 
 - A red push run (`failure`, `timed_out`, `startup_failure`) opens the one
-  `ci/main-red` issue with the workflow, the run, the head SHA, the commit
-  subject, the PR its squash subject names (`(#N)`) and the failed jobs;
-  while that issue is open, later reds comment on it instead. It also
-  comments on the PR.
+  `ci/main-red` issue with the workflow, the run, the head SHA and subject,
+  the candidate PRs and the failed jobs; while that issue is open, later
+  reds comment on it instead. The candidates are every PR a squash subject
+  (`(#N)`) names between that workflow's previous decided push run's head
+  and this run's head (the compare API, at most 100 commits; the head
+  commit's PR alone when there is no such run or the range cannot be
+  read): a batch lands as one push.
+- It comments on each candidate (at most the newest ten) only when this
+  run turns the workflow red: its previous decided push run was green, or
+  there is none. While the workflow stays red, later reds update the issue
+  alone.
 - A later green push run of the same workflow comments that it is green
   again, and the issue closes once no tracked workflow's latest decided
   push run on `main` is red. Cancelled runs (`main.yml` cancels older
   runs) say nothing either way.
-- It holds `issues: write`, `pull-requests: write` and `actions: read`,
-  checks out only its script from the default branch, reads no artifact
-  and runs nothing from the run it reports on. Runs are serialized
-  (`queue: max`), so two reds finishing together open one issue.
+- It holds `issues: write`, `pull-requests: write`, `actions: read` and
+  `contents: read`, checks out only its script from the default branch,
+  reads no artifact and runs nothing from the run it reports on. Runs are
+  serialized (`queue: max`), so two reds finishing together open one
+  issue.
 
-Fix forward or revert the PR the issue names.
+Fix forward or revert; the issue names the candidates.
 
 ### Rolling back the fast set
 

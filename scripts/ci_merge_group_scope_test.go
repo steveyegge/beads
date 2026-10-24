@@ -20,10 +20,12 @@ import (
 // Windows, macOS and Nix job and bazel.yml's Dolt-tier lanes are skipped
 // there by design. The pull request's own run before it runs everything,
 // and main's push runs run the complement after it lands, so every job the
-// required gates read runs on every tree the merge queue lands on main: the
-// fast set in the merge group (main fast-forwards to the tested merge-group
-// commit, the same tree), the rest in the push runs (pr.yml's and
-// pr-risk.yml's, and bazel.yml's own, which runs every Bazel lane).
+// required gates read runs on every push head on main: the merge queue lands
+// a batch of entries as one push of its last entry, whose merge group ran
+// the fast set on the same tree (main fast-forwards to it), and the push
+// runs (pr.yml's and pr-risk.yml's, and bazel.yml's own, which runs every
+// Bazel lane) run the rest on it. That tree contains every entry of the
+// batch; an earlier entry gets the complement only as part of it.
 //
 // One script decides, .github/scripts/ci-scope.sh, run by pr.yml's and
 // pr-risk.yml's scope jobs; it alone reads the event. Every other job reads
@@ -890,12 +892,14 @@ func TestBazelDoltTiersInput(t *testing.T) {
 
 // TestCIScopeCoversEveryGatedJobOnMain is the invariant the fast set rests
 // on: every job pr.yml's and pr-risk.yml's gates read on a pull request runs
-// on every tree the merge queue lands on main, in its merge group (main
-// fast-forwards to the tested merge-group commit) or in main's push runs:
-// pr.yml's and pr-risk.yml's (the Windows, macOS and Nix jobs) and
+// on every push head on main, in the merge group of the batch's last entry
+// (main fast-forwards to that tested merge-group commit) or in main's push
+// runs: pr.yml's and pr-risk.yml's (the Windows, macOS and Nix jobs) and
 // bazel.yml's own push run (every Bazel lane: it has no inputs, so neither
 // the Dolt tiers nor the integration build's //cmd/bd:bd_test are turned
-// off). The merge group runs the fast set, the push runs the rest.
+// off). The merge group runs the fast set, the push runs the rest (and
+// TestCIScopeExcusedIDsRedTheirPushRun: turn red when it fails). Jobs the
+// gates do not read (advisory-reports) are not covered: pull requests only.
 func TestCIScopeCoversEveryGatedJobOnMain(t *testing.T) {
 	type where struct{ mergeGroup, push bool }
 	runs := map[string]where{} // gate id -> where it runs after the PR run
@@ -929,7 +933,7 @@ func TestCIScopeCoversEveryGatedJobOnMain(t *testing.T) {
 	}
 	for id, w := range runs {
 		if !w.mergeGroup && !w.push {
-			t.Errorf("%s runs in neither the merge group nor main's push runs: a tree main points to would never run it", id)
+			t.Errorf("%s runs in neither the merge group nor main's push runs: a push head on main would never run it", id)
 		}
 	}
 	// Where each set runs, spelled out.
@@ -1208,7 +1212,7 @@ func TestCIScopePushRunsHandleNullPullRequestFields(t *testing.T) {
 // bazel.yml, the Bazel half of the complement) key their concurrency group on
 // the pushed commit, so no push run cancels another or waits behind it
 // (GitHub cancels a group's pending run when a newer one queues): every
-// landing's complement runs to completion. Pull requests and merge groups
+// push's complement runs to completion. Pull requests and merge groups
 // keep their groups (TestMergeQueueConcurrencyNeverCancelsQueueRuns).
 func TestCIScopePushConcurrency(t *testing.T) {
 	for _, name := range []string{"pr.yml", prRiskWorkflowName, bazelWorkflowName} {

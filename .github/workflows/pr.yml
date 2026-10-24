@@ -18,14 +18,16 @@ on:
   merge_group:
     types: [ checks_requested ]
   # The post-merge complement: the Windows and macOS jobs a merge group
-  # skipped run on the commit that lands (main fast-forwards to the tested
-  # merge-group commit, the same tree); bazel.yml's own push run is every
-  # Bazel lane, so this run calls none. A red push run opens the
-  # ci/main-red issue (main-ci-alert.yml).
+  # skipped run on every push to main. The queue lands a batch of entries
+  # as one push of its last entry (main fast-forwards to that entry's tested
+  # merge-group commit, the same tree), so a push head's tree contains every
+  # entry of its batch; an earlier entry gets the complement only as part
+  # of it. bazel.yml's own push run is every Bazel lane, so this run calls
+  # none. A red push run opens the ci/main-red issue (main-ci-alert.yml).
   push:
     branches: [ main ]
 
-# A push to main keys on its commit: no landing's complement run cancels
+# A push to main keys on its commit: no push's complement run cancels
 # another's or waits behind it (GitHub cancels a group's pending run when a
 # newer one queues).
 concurrency:
@@ -178,9 +180,9 @@ jobs:
   # included (ga-96smfk.22), and every push to main: Windows and macOS jobs
   # run on Blacksmith, everything Linux under Bazel on rbe-west. A merge
   # group skips the Windows and macOS jobs (the scope job's platforms
-  # switch); the push of the commit that lands runs them. The first step
-  # builds ./cmd/bd with CGO_ENABLED=1 (embedded Dolt); the toolchain
-  # diagnostic step below prints which cgo toolchain backs it. Since
+  # switch); the push to main that lands it (with its batch) runs them.
+  # The first step builds ./cmd/bd with CGO_ENABLED=1 (embedded Dolt); the
+  # toolchain diagnostic step below prints which cgo toolchain backs it. Since
   # ga-96smfk.22 this job (not a cross-compiled "-prebuilt" twin) is the
   # required run of these tests.
   test-windows-liveness:

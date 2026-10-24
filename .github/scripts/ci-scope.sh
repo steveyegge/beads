@@ -17,12 +17,16 @@
 #                        to main runs the complement: the Windows, macOS and
 #                        Nix jobs, while bazel.yml's own push run is every
 #                        Bazel lane, so pr.yml calls none. Every job the gates
-#                        read thus runs on every tree the merge queue lands
-#                        on main, in its merge group or in main's push runs
-#                        (a direct push to main has no merge group, as
-#                        before). Any other event fails the job, and so both
-#                        gates. Rollback: give merge_group pull_request's row
-#                        (advisory aside).
+#                        read thus runs on every push head on main: the queue
+#                        lands a batch as one push of its last entry, whose
+#                        merge group ran the fast set on the same tree (which
+#                        contains every entry of the batch), and the push
+#                        runs run the rest; advisory-reports, read by
+#                        neither gate, runs on pull requests only, and a
+#                        direct push has no merge group, as before. Any other
+#                        event fails the job, and so both gates. Rollback:
+#                        give merge_group pull_request's row (advisory
+#                        aside).
 #   ci-scope.sh result   the gate's SCOPE: the scope job's result
 #                        (SCOPE_RESULT) when its outputs (SCOPE_PLATFORMS,
 #                        SCOPE_DOLT_TIERS, SCOPE_LINUX, SCOPE_ADVISORY) are

@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,10 +19,11 @@ import (
 // Queue"). A merge group runs the fast set only, so the Windows, macOS and
 // Nix jobs and the Dolt-tier Bazel lanes first run on main's push, after the
 // merge. main-ci-alert.yml watches those push runs and main.yml's: a red one
-// opens the ci/main-red issue (one at a time; later reds comment on it) and
-// comments on the PR the squash subject names; a later green run of the same
-// workflow says so, and the issue closes once no tracked workflow's latest
-// push run on main is red (.github/scripts/main-ci-alert.sh).
+// opens the ci/main-red issue (one at a time; later reds comment on it)
+// naming every PR of the pushed range as a candidate (a batch lands as one
+// push), and comments on them when it turns the workflow red; a later green
+// run of the same workflow says so, and the issue closes once no tracked
+// workflow's latest push run on main is red (.github/scripts/main-ci-alert.sh).
 
 const (
 	mainCIAlertWorkflowName = "main-ci-alert.yml"
@@ -166,8 +168,9 @@ func TestMainCIAlertWorkflow(t *testing.T) {
 
 // mainCIAlertGHStub stands in for gh: it logs every call (one line each) and
 // every --body-file, lists the open issues it is given (GH_ISSUES, through
-// the call's --jq), answers a run's jobs (GH_JOBS) and a workflow's runs
-// ($GH_RUNS_DIR/<file>.json), and prints a new issue's URL.
+// the call's --jq), answers a run's jobs (GH_JOBS), a workflow's runs
+// ($GH_RUNS_DIR/<file>.json) and a compare (GH_COMPARE; none set, or
+// GH_COMPARE_FAIL, fails it), and prints a new issue's URL.
 const mainCIAlertGHStub = `#!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_LOG"
 prev=
@@ -183,6 +186,7 @@ case "$1 $2" in
 		for a in "$@"; do case "$a" in repos/*) path=$a ;; esac; done
 		case "$path" in
 			*/jobs*) printf '%s\n' "$GH_JOBS" ;;
+			*/compare/*) [ -n "${GH_COMPARE:-}" ] && [ -z "${GH_COMPARE_FAIL:-}" ] || { echo "gh: compare failed" >&2; exit 1; }; printf '%s\n' "$GH_COMPARE" ;;
 			*/workflows/*/runs*)
 				file=${path#*/workflows/}; file=${file%%/runs*}
 				if [ -f "$GH_RUNS_DIR/$file.json" ]; then cat "$GH_RUNS_DIR/$file.json"; else echo '{"workflow_runs":[]}'; fi ;;
@@ -196,6 +200,22 @@ type mainCIAlertRun struct {
 	CreatedAt  string `json:"created_at"`
 	Conclusion string `json:"conclusion"`
 	HTMLURL    string `json:"html_url"`
+	HeadSHA    string `json:"head_sha"`
+}
+
+// mainCIAlertCompare: a compare API answer (status, total_commits and the
+// commits' messages, oldest first).
+func mainCIAlertCompare(t *testing.T, status string, total int, messages ...string) string {
+	t.Helper()
+	var commits []map[string]any
+	for _, m := range messages {
+		commits = append(commits, map[string]any{"commit": map[string]any{"message": m}})
+	}
+	data, err := json.Marshal(map[string]any{"status": status, "total_commits": total, "commits": commits})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 // runMainCIAlert runs the script for one completed run with the stand-in gh
@@ -244,11 +264,14 @@ func runMainCIAlert(t *testing.T, env map[string]string, runs map[string][]mainC
 
 // TestMainCIAlertScript: the script against the stand-in gh. A red run
 // (failure, timed_out, startup_failure) opens the ci/main-red issue, or
-// comments on the open one, with the workflow, run, commit, PR and failed
-// jobs, and comments on the PR; a green run with the issue open says so when
-// the workflow's previous push run was red, and closes the issue once no
-// tracked workflow's latest push run on main is red; anything else, or a
-// green run with no issue open, changes nothing.
+// comments on the open one, with the workflow, run, head commit, candidate
+// PRs (every PR between the workflow's previous decided push run's head and
+// this one's, or the head commit's alone when that range cannot be read) and
+// failed jobs, and comments on the candidates only when it turns the workflow
+// red; a green run with the issue open says so when the workflow's previous
+// push run was red, and closes the issue once no tracked workflow's latest
+// push run on main is red; anything else, or a green run with no issue open,
+// changes nothing.
 func TestMainCIAlertScript(t *testing.T) {
 	const (
 		jobs = `{"jobs":[{"name":"dolt-race","conclusion":"failure","html_url":"https://x/job/1"},` +
@@ -256,14 +279,24 @@ func TestMainCIAlertScript(t *testing.T) {
 			`{"name":"embedded Dolt tier","conclusion":"timed_out","html_url":"https://x/job/3"}]}`
 		open42 = `[{"number":42}]`
 	)
+	// A run's head: a fake SHA per run (its hour), the previous run's being
+	// what the compare starts from.
+	sha := func(created string) string { return strings.Repeat(created[11:13], 20) }
 	red := func(created string) mainCIAlertRun {
-		return mainCIAlertRun{created, "failure", "https://x/runs/red-" + created}
+		return mainCIAlertRun{created, "failure", "https://x/runs/red-" + created, sha(created)}
 	}
 	green := func(created string) mainCIAlertRun {
-		return mainCIAlertRun{created, "success", "https://x/runs/green-" + created}
+		return mainCIAlertRun{created, "success", "https://x/runs/green-" + created, sha(created)}
 	}
 	cancelled := func(created string) mainCIAlertRun {
-		return mainCIAlertRun{created, "cancelled", "https://x/runs/cancelled-" + created}
+		return mainCIAlertRun{created, "cancelled", "https://x/runs/cancelled-" + created, sha(created)}
+	}
+	head := strings.Repeat("d", 40)
+	compareCall := "api repos/gastownhall/beads/compare/" + sha("2026-10-24T09:00:00Z") + "..." + head + "?per_page=100"
+	batch := mainCIAlertCompare(t, "ahead", 4, "feat: one (#120)\n\nbody (#7)", "chore: a direct push", "fix: two (#121)", "fix(dolt): retry the dial (#123)")
+	var dozen []string
+	for n := 1; n <= 12; n++ {
+		dozen = append(dozen, fmt.Sprintf("fix: %d (#%d)", n, n))
 	}
 	allGreen := map[string][]mainCIAlertRun{
 		"pr.yml": {green("2026-10-24T10:00:00Z")}, "pr-risk.yml": {green("2026-10-24T10:00:00Z")},
@@ -333,6 +366,66 @@ func TestMainCIAlertScript(t *testing.T) {
 			env:     map[string]string{"CONCLUSION": "failure", "HEAD_COMMIT_MESSAGE": "fix `x` for @someone (#5)"},
 			want:    []string{"pr comment 5 "},
 			bodyHas: []string{"`fix 'x' for @someone (#5)`"},
+		},
+		{
+			name: "red after green, a batch of three: every PR in the pushed range",
+			env:  map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch},
+			runs: map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T09:00:00Z"), red("2026-10-24T08:00:00Z")}},
+			want: []string{
+				compareCall,
+				"issue create --repo gastownhall/beads",
+				"pr comment 120 --repo gastownhall/beads --body-file ",
+				"pr comment 121 --repo gastownhall/beads --body-file ",
+				"pr comment 123 --repo gastownhall/beads --body-file ",
+			},
+			notWant: []string{"pr comment 7 "},
+			bodyHas: []string{"Candidates: #120, #121, #123 (every PR in https://github.com/gastownhall/beads/compare/", "https://x/runs/green-2026-10-24T09:00:00Z"},
+			bodyNot: []string{"#7,", "not notified"},
+		},
+		{
+			name:    "red after red: the issue alone, no PR comment",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "GH_ISSUES": open42},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {red("2026-10-24T09:00:00Z")}},
+			want:    []string{compareCall, "issue comment 42 --repo gastownhall/beads --body-file "},
+			notWant: []string{"pr comment", "issue create"},
+			bodyHas: []string{"Candidates: #120, #121, #123", "already red on main before this push (https://x/runs/red-2026-10-24T09:00:00Z)"},
+		},
+		{
+			name:    "red after green, the range cannot be listed: the head commit's PR",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "GH_COMPARE_FAIL": "1"},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T09:00:00Z")}},
+			want:    []string{compareCall, "pr comment 123 "},
+			notWant: []string{"pr comment 120", "pr comment 121"},
+			bodyHas: []string{"Candidates: #123 (the head commit's alone"},
+		},
+		{
+			name:    "red after green, not a fast-forward: the head commit's PR",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": mainCIAlertCompare(t, "diverged", 4, "feat: one (#120)", "fix(dolt): retry the dial (#123)")},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T09:00:00Z")}},
+			want:    []string{"pr comment 123 "},
+			notWant: []string{"pr comment 120"},
+		},
+		{
+			name:    "red after green, a range past one page: the head commit's PR",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": mainCIAlertCompare(t, "ahead", 150, "feat: one (#120)", "fix(dolt): retry the dial (#123)")},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T09:00:00Z")}},
+			want:    []string{"pr comment 123 "},
+			notWant: []string{"pr comment 120"},
+		},
+		{
+			name:    "red after green, twelve candidates: the issue lists all, the newest ten are notified",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": mainCIAlertCompare(t, "ahead", 12, dozen...)},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T09:00:00Z")}},
+			want:    []string{"pr comment 3 ", "pr comment 12 "},
+			notWant: []string{"pr comment 1 ", "pr comment 2 "},
+			bodyHas: []string{"Candidates: #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12 (", "Notified the newest 10 of them."},
+		},
+		{
+			name:    "red, the previous decided run is the newer one's: the range from the run before this one",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {red("2026-10-24T11:00:00Z"), green("2026-10-24T09:00:00Z")}},
+			want:    []string{compareCall, "pr comment 120 "},
+			bodyNot: []string{"red-2026-10-24T11"},
 		},
 		{name: "cancelled: nothing", env: map[string]string{"CONCLUSION": "cancelled", "GH_ISSUES": open42}, notWant: []string{"issue", "pr comment", "api", "label"}},
 		{name: "skipped: nothing", env: map[string]string{"CONCLUSION": "skipped", "GH_ISSUES": open42}, notWant: []string{"issue", "pr comment", "api", "label"}},

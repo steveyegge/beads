@@ -4,14 +4,21 @@
 #
 # A merge group runs the fast set only: the Windows, macOS and Nix jobs and
 # the Dolt-tier Bazel lanes first run on main's push, after the merge
-# (pr.yml's and pr-risk.yml's push runs, bazel.yml's own push run). This runs
-# once per completed push run on main of a tracked workflow:
+# (pr.yml's and pr-risk.yml's push runs, bazel.yml's own push run). The queue
+# lands a batch of entries as one push of its last entry, so one push run can
+# cover several PRs. This runs once per completed push run on main of a
+# tracked workflow:
 #
 #   failure, timed_out, startup_failure
-#       open the ci/main-red issue with the workflow, the run, the commit, the
-#       PR its squash subject names ("... (#N)") and the failed jobs; while
-#       one is open, comment on it instead (one issue at a time). Comment on
-#       that PR too.
+#       open the ci/main-red issue with the workflow, the run, the head
+#       commit, the candidate PRs and the failed jobs; while one is open,
+#       comment on it instead (one issue at a time). The candidates are every
+#       PR a squash subject ("... (#N)") names between this workflow's
+#       previous decided push run's head and this run's head (the head
+#       commit's alone when that range cannot be read). Comment on each
+#       candidate too, but only when this turns the workflow red (its
+#       previous decided push run was green, or there is none): a later red
+#       of the same workflow updates the issue alone.
 #   success
 #       with the issue open: comment when this workflow's previous decided
 #       push run was red, listing what is still red, and close the issue
@@ -72,12 +79,24 @@ is_red() {
 }
 
 # decided_runs FILE: the workflow's decided push runs on main, newest first,
-# one "created_at conclusion html_url" line each.
+# one "created_at conclusion head_sha html_url" line each.
 decided_runs() {
 	gh api "repos/$repo/actions/workflows/$1/runs?branch=main&event=push&status=completed&per_page=30&exclude_pull_requests=true" |
 		jq -r '.workflow_runs[]
 			| select(.conclusion == "success" or .conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")
-			| "\(.created_at) \(.conclusion) \(.html_url)"'
+			| "\(.created_at) \(.conclusion) \(.head_sha) \(.html_url)"'
+}
+
+# previous_run RUNS: the newest run of decided_runs' RUNS created before this
+# one, as "conclusion head_sha html_url"; nothing when there is none.
+previous_run() {
+	local created run_conclusion run_sha run_url
+	while read -r created run_conclusion run_sha run_url; do
+		if [[ -n "$created" && "$created" < "$RUN_CREATED_AT" ]]; then
+			printf '%s %s %s\n' "$run_conclusion" "$run_sha" "$run_url"
+			return
+		fi
+	done <<<"$1"
 }
 
 open_issue() {
@@ -97,33 +116,74 @@ trap 'rm -f "$body"' EXIT
 issue=$(open_issue)
 
 if [[ "$conclusion" != success ]]; then
-	# The commit subject, inert in Markdown: an inline code span, so it can
-	# neither mention anyone nor format; backticks would end the span.
+	# The head commit's subject, inert in Markdown: an inline code span, so
+	# it can neither mention anyone nor format; backticks would end the span.
 	subject=${HEAD_COMMIT_MESSAGE-}
 	subject=${subject%%$'\n'*}
 	subject=${subject//\`/\'}
-	pr=
+	head_pr=
 	if [[ "$subject" =~ \(#([0-9]+)\)$ ]]; then
-		pr=${BASH_REMATCH[1]}
+		head_pr=${BASH_REMATCH[1]}
+	fi
+	runs=$(decided_runs "$file")
+	read -r prev_conclusion prev_sha prev_url <<<"$(previous_run "$runs")" || true
+	# The candidates: every PR the push range names, oldest first, from this
+	# workflow's previous decided push run's head to this run's (a batch
+	# lands as one push; earlier runs that were cancelled or are still
+	# running widen the range). The head commit's alone when there is no
+	# such run, or the range cannot be read, is not a fast-forward, or is
+	# longer than one page of the compare API (100 commits).
+	prs=()
+	range="the head commit's alone: no earlier decided push run of $workflow to compare with, or its range could not be listed"
+	if [[ "${prev_sha:-}" =~ ^[0-9a-f]{40}$ ]] &&
+		compare=$(gh api "repos/$repo/compare/$prev_sha...$sha?per_page=100") &&
+		[[ "$(jq -r 'if .status == "ahead" and (.total_commits | type) == "number" and .total_commits <= 100 then "ok" else "no" end' <<<"$compare" 2>/dev/null)" == ok ]]; then
+		mapfile -t prs < <(jq -r '[.commits[].commit.message | split("\n")[0] | capture("\\(#(?<n>[0-9]+)\\)$").n]
+			| reduce .[] as $n ([]; if index([$n]) then . else . + [$n] end) | .[]' <<<"$compare")
+		range="every PR in https://github.com/$repo/compare/${prev_sha:0:12}...${sha:0:12}, since $workflow's previous decided push run on main: $prev_url"
+	elif [[ -n "$head_pr" ]]; then
+		prs=("$head_pr")
+	fi
+	candidates=
+	if ((${#prs[@]} > 0)); then
+		candidates=$(printf '#%s, ' "${prs[@]}")
+		candidates=${candidates%, }
+	fi
+	# Notify the candidates only when this turns the workflow red, and at most
+	# the newest ten of them (a range that long means earlier runs never
+	# decided; the issue lists them all).
+	notify=false
+	if [[ -z "${prev_conclusion:-}" || "$prev_conclusion" == success ]]; then
+		notify=true
+	fi
+	notified=("${prs[@]}")
+	if ((${#notified[@]} > 10)); then
+		notified=("${notified[@]: -10}")
 	fi
 	jobs=$(gh api --paginate "repos/$repo/actions/runs/$RUN_ID/jobs?per_page=100" |
 		jq -r '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | "- [\(.name)](\(.html_url)): \(.conclusion)"')
 	{
 		printf '**%s** is %s on main at %s: %s\n\n' "$workflow" "$conclusion" "$sha" "$run_url"
 		# shellcheck disable=SC2016 # Markdown backticks, not a command
-		printf 'Commit: `%s`\n' "$subject"
-		if [[ -n "$pr" ]]; then
-			printf 'Landed by: #%s\n\n' "$pr"
+		printf 'Head commit: `%s`\n' "$subject"
+		if [[ -n "$candidates" ]]; then
+			printf 'Candidates: %s (%s)\n' "$candidates" "$range"
 		else
-			printf 'Landed by: no PR number in the commit subject (a direct push?)\n\n'
+			printf 'Candidates: none, no PR number in the pushed commits'"'"' subjects (%s; a direct push?)\n' "$range"
 		fi
+		if [[ "$notify" != true ]]; then
+			printf '%s was already red on main before this push (%s), so the candidates were not notified.\n' "$workflow" "$prev_url"
+		elif ((${#notified[@]} < ${#prs[@]})); then
+			printf 'Notified the newest %s of them.\n' "${#notified[@]}"
+		fi
+		printf '\n'
 		if [[ -n "$jobs" ]]; then
 			printf 'Failed jobs:\n%s\n' "$jobs"
 		else
 			printf 'Failed jobs: none listed (no job ran: a startup failure, or the run was cut short).\n'
 		fi
 		if [[ -z "$issue" ]]; then
-			printf '\nThe merge queue tested this commit on the fast set only; its push runs are the first run of the rest (Windows, macOS, Nix, the Dolt-tier Bazel lanes). Fix forward or revert. Later reds comment here, and the issue closes itself once no tracked workflow'"'"'s latest push run on main (%s) is red (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "Merge Queue").\n' "$tracked"
+			printf '\nThe merge queue tested these PRs on the fast set only; the push runs are the first run of the rest (Windows, macOS, Nix, the Dolt-tier Bazel lanes) on the pushed tree. Fix forward or revert. Later reds comment here, and the issue closes itself once no tracked workflow'"'"'s latest push run on main (%s) is red (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "Merge Queue").\n' "$tracked"
 		fi
 	} >"$body"
 	if [[ -n "$issue" ]]; then
@@ -135,12 +195,14 @@ if [[ "$conclusion" != success ]]; then
 		url=$(gh issue create --repo "$repo" --title "$title" --label "$label" --body-file "$body")
 		issue=${url##*/}
 	fi
-	echo "$workflow is $conclusion on main at $sha: reported on #$issue"
-	if [[ -n "$pr" ]]; then
-		printf 'The commit this PR landed on main (%s) is %s in **%s**: %s\n\nTracked in #%s.\n' \
-			"$sha" "$conclusion" "$workflow" "$run_url" "$issue" >"$body"
-		gh pr comment "$pr" --repo "$repo" --body-file "$body" ||
-			echo "::warning::main-ci-alert.sh: could not comment on #$pr; #$issue has the report"
+	echo "$workflow is $conclusion on main at $sha: reported on #$issue (candidates: ${candidates:-none}; notified: $notify)"
+	if [[ "$notify" == true && -n "$candidates" ]]; then
+		printf 'A push to main that includes this PR is %s in **%s** at %s: %s\n\nCandidates: %s. Tracked in #%s.\n' \
+			"$conclusion" "$workflow" "$sha" "$run_url" "$candidates" "$issue" >"$body"
+		for pr in "${notified[@]}"; do
+			gh pr comment "$pr" --repo "$repo" --body-file "$body" ||
+				echo "::warning::main-ci-alert.sh: could not comment on #$pr; #$issue has the report"
+		done
 	fi
 	exit 0
 fi
@@ -159,14 +221,9 @@ red=()
 for i in "${!names[@]}"; do
 	runs=$(decided_runs "${files[$i]}")
 	if [[ "${names[$i]}" == "$workflow" ]]; then
-		while read -r created run_conclusion _; do
-			if [[ -n "$created" && "$created" < "$RUN_CREATED_AT" ]]; then
-				previous=$run_conclusion
-				break
-			fi
-		done <<<"$runs"
+		read -r previous _ <<<"$(previous_run "$runs")" || true
 	fi
-	read -r created latest_conclusion latest_url <<<"${runs%%$'\n'*}" || true
+	read -r created latest_conclusion _ latest_url <<<"${runs%%$'\n'*}" || true
 	if [[ "${names[$i]}" == "$workflow" && ! "${created:-}" > "$RUN_CREATED_AT" ]]; then
 		continue
 	fi

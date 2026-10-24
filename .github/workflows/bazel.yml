@@ -15,8 +15,10 @@
 # bazel-dolt-int (and their members outside mode remote), and the call
 # reports it back (the dolt-tiers output) so pr.yml's gate excuses those
 # lanes only then. This file's own push run on main runs every lane (no
-# input there), so every lane runs on every tree the merge queue lands on
-# main: the fast set in its merge group, the Dolt tiers in that push run
+# input there), so every lane runs on every push head on main: the merge
+# queue lands a batch as one push of its last entry, whose merge group ran
+# the fast set on the same tree, and that push run runs the Dolt tiers on
+# it; the tree contains every entry of the batch
 # (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "Merge Queue";
 # scripts/ci_merge_group_scope_test.go).
 # Where a lane executes remotely its `bazel test`s add --config=sole-run: it

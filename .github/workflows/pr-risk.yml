@@ -10,17 +10,18 @@ on:
   # explicitly (scripts/ci_merge_queue_test.go). The concurrency group
   # below keys a merge group on its own gh-readonly-queue/* ref, so queue
   # runs never cancel each other or a PR's own runs. A merge group skips
-  # the Nix job (the scope job below); the push of the commit that lands
-  # runs it.
+  # the Nix job (the scope job below); the push to main that lands it (with
+  # its batch) runs it.
   merge_group:
     types: [ checks_requested ]
   # The post-merge complement: the Nix job a merge group skipped runs on
-  # the commit that lands (the tested merge-group tree). A red run opens
-  # the ci/main-red issue (main-ci-alert.yml).
+  # every push to main, whose head is the last entry of a merge-queue batch
+  # (its tested merge-group tree, containing every entry of the batch). A
+  # red run opens the ci/main-red issue (main-ci-alert.yml).
   push:
     branches: [ main ]
 
-# A push to main keys on its commit: no landing's complement run cancels
+# A push to main keys on its commit: no push's complement run cancels
 # another's or waits behind it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}
