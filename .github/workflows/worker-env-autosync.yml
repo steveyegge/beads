@@ -54,8 +54,9 @@
 # HOW IT LANDS: with repository variable WORKER_ENV_SYNC_AUTOMERGE set to
 # 'true', the PR opens with no review label: worker-env-sync-automerge.yml
 # verifies it is exactly this copy (its author, branch, commits and pusher,
-# its two files, and both against gascity main) and arms auto-merge, so
-# the merge queue lands it once CI passes, with no review. Unset (or
+# its two files, and both against gascity main) and, once main's required
+# checks pass on that head, queues it, so the merge queue lands it with no
+# review. Unset (or
 # anything else), the PR is labeled status/needs-review-auto: the automated
 # review workflow picks it up, and once that review passes the merge
 # workflow queues it (CONTRIBUTING.md's status/* labels; #7746 landed that
@@ -310,7 +311,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$AUTOMERGE" = true ]; then
-            lands="Nothing labels it for review: worker-env-sync-automerge.yml verifies that it is exactly this copy (its author, branch, commits and pusher, its two files, and both against gascity main) and arms auto-merge, and the merge queue lands it once CI passes."
+            lands="Nothing labels it for review: worker-env-sync-automerge.yml verifies that it is exactly this copy (its author, branch, commits and pusher, its two files, and both against gascity main) and, once CI Gate / Required and PR Risk Gate / Required pass on that head, queues it."
           else
             lands="Nothing arms auto-merge: it is labeled \`$LABEL\`, and once the automated review passes, the merge workflow queues it."
           fi

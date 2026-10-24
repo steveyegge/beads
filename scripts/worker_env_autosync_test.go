@@ -618,9 +618,10 @@ func TestWorkerEnvAutosyncWorkflowNeverInterpolatesExpressionsInRun(t *testing.T
 // enablePullRequestAutoMerge wants contents:write on the same token
 // (#7746's run failed with "Resource not accessible by integration"), the
 // push-plus-PR token the two-token split here rules out. With
-// WORKER_ENV_SYNC_AUTOMERGE == 'true' the arming is
-// worker-env-sync-automerge.yml's, after it has verified the PR, with a
-// token of its own; otherwise the review label lands it
+// WORKER_ENV_SYNC_AUTOMERGE == 'true' the queueing is
+// worker-env-sync-automerge.yml's, after it has verified the PR and its
+// required checks have passed, with a token of its own; otherwise the
+// review label lands it
 // (TestWorkerEnvAutosyncPRStepNeverRelabelsAnOpenPR checks the body says
 // which).
 func TestWorkerEnvAutosyncWorkflowLeavesMergingToTheGuard(t *testing.T) {
