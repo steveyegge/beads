@@ -1036,6 +1036,64 @@ func TestInstallClaudeErrors(t *testing.T) {
 			t.Fatal("expected ensureDir error")
 		}
 	})
+
+	// A settings file the install cannot read is not a missing one. Taken
+	// for one, it was replaced by a file holding only bd's hook, and every
+	// other setting in it was lost: the rename that replaces it needs write
+	// access to the directory, not read access to the file. The install now
+	// stops before it writes anything. The read error is injected, since a
+	// chmod 000 file is still readable to root.
+	for _, global := range []bool{false, true} {
+		name := "unreadable project settings"
+		if global {
+			name = "unreadable global settings"
+		}
+		t.Run(name, func(t *testing.T) {
+			env, stdout, stderr := newClaudeTestEnv(t)
+			settingsPath := projectSettingsPath(env.projectDir)
+			instructionsPath := filepath.Join(env.projectDir, claudeInstructionsFile)
+			if global {
+				settingsPath = globalSettingsPath(env.homeDir)
+				instructionsPath = globalClaudeInstructionsPath(env.homeDir)
+			}
+			const original = "{\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \"sk-test\"\n  }\n}\n"
+			if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(settingsPath, []byte(original), 0o600); err != nil {
+				t.Fatalf("seed settings: %v", err)
+			}
+			readFile := env.readFile
+			env.readFile = func(path string) ([]byte, error) {
+				if path == settingsPath {
+					return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrPermission}
+				}
+				return readFile(path)
+			}
+			var written []string
+			writeFile := env.writeFile
+			env.writeFile = func(path string, data []byte) error {
+				written = append(written, path)
+				return writeFile(path, data)
+			}
+
+			if err := installClaude(env, global, false); !errors.Is(err, os.ErrPermission) {
+				t.Errorf("installClaude error = %v, want %v\nstdout:\n%s", err, os.ErrPermission, stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "failed to read "+settingsPath) {
+				t.Errorf("expected the read error to name %s, got:\n%s", settingsPath, stderr.String())
+			}
+			if len(written) != 0 {
+				t.Errorf("expected nothing written, wrote %v", written)
+			}
+			if data, err := os.ReadFile(settingsPath); err != nil || string(data) != original {
+				t.Errorf("expected %s kept, got %q (%v)", settingsPath, data, err)
+			}
+			if _, err := os.Stat(instructionsPath); !os.IsNotExist(err) {
+				t.Errorf("expected no %s written, stat error = %v", instructionsPath, err)
+			}
+		})
+	}
 }
 
 func TestCheckClaudeScenarios(t *testing.T) {
@@ -2279,9 +2337,11 @@ func TestDirWithin(t *testing.T) {
 
 // TestClaudeLocalSettingsRoot pins where claudeLocalSettingsRoot finds the
 // local settings Claude Code reads for a session: the repository root from a
-// subdirectory, the main checkout's root from a linked worktree, nowhere
-// when that root is the home directory, and nowhere when the cached git
-// context belongs to another repository than the working directory.
+// subdirectory, the main checkout's root from a linked worktree, and nowhere
+// when that root is the home directory. A directory other than the working
+// directory, such as the one bd doctor <path> checks, is resolved in its own
+// repository rather than the working directory's cached one, and in the
+// working directory a git context cached for another directory is not used.
 func TestClaudeLocalSettingsRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Claude Code keeps settings.local.json beside settings.json on Windows")
@@ -2332,6 +2392,8 @@ func TestClaudeLocalSettingsRoot(t *testing.T) {
 	if err := os.MkdirAll(outside, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	nested := filepath.Join(main, "nested")
+	newRepo(nested)
 
 	cases := []struct {
 		name string
@@ -2346,7 +2408,14 @@ func TestClaudeLocalSettingsRoot(t *testing.T) {
 		{"subdirectory of a linked worktree", filepath.Join(wt, "sub"), filepath.Join(wt, "sub"), main},
 		{"repository root is the home directory", filepath.Join(home, "sub"), filepath.Join(home, "sub"), ""},
 		{"outside any repository", outside, outside, ""},
-		{"git context cached for another repository", main, outside, ""},
+		{"a repository nested in the main checkout", filepath.Join(nested, "sub"), filepath.Join(nested, "sub"), nested},
+		// workDir is not the working directory: its own repository decides.
+		{"subdirectory of a checkout other than the working directory's", outside, filepath.Join(main, "sub"), main},
+		{"linked worktree other than the working directory's", outside, filepath.Join(wt, "sub"), main},
+		{"repository nested in the working directory's", main, filepath.Join(nested, "sub"), nested},
+		{"the working directory's repository from a nested one", nested, filepath.Join(main, "sub"), main},
+		{"home directory's repository from another", main, filepath.Join(home, "sub"), ""},
+		{"outside any repository, asked from one", main, outside, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2364,6 +2433,19 @@ func TestClaudeLocalSettingsRoot(t *testing.T) {
 			}
 		})
 	}
+	// A git context cached before the process left its directory is another
+	// directory's, so the working directory gets no root from it.
+	t.Run("git context cached for another directory than the working directory", func(t *testing.T) {
+		t.Chdir(main)
+		git.ResetCaches()
+		if got := git.GetRepoRoot(); got == "" || !sameDir(got, main) {
+			t.Fatalf("git context cached in %s = %q", main, got)
+		}
+		t.Chdir(outside)
+		if got := claudeLocalSettingsRoot(home, outside); got != "" {
+			t.Errorf("claudeLocalSettingsRoot(%s) = %q, want \"\"", outside, got)
+		}
+	})
 }
 
 // TestDefaultClaudeEnv pins that the environment the commands run with reads

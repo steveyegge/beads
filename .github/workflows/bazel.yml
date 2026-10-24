@@ -10,6 +10,17 @@
 # so pr.yml's ci-gate requires the lanes to have run remotely on rbe-west
 # and passed on every pull_request and merge group (BAZEL_REMOTE): modes
 # skip, local and cache are red there (scripts/pr_risk_bazel_coverage_test.go).
+# A merge group runs every lane but the Dolt tiers: pr.yml's scope passes
+# dolt-tiers "off" there, which skips bazel-embedded, bazel-dolt-race and
+# bazel-dolt-int (and their members outside mode remote), and the call
+# reports it back (the dolt-tiers output) so pr.yml's gate excuses those
+# lanes only then. This file's own push run on main runs every lane (no
+# input there), so every lane runs on every push head on main: the merge
+# queue lands a batch as one push of its last entry, whose merge group ran
+# the fast set on the same tree, and that push run runs the Dolt tiers on
+# it; the tree contains every entry of the batch
+# (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "Merge Queue";
+# scripts/ci_merge_group_scope_test.go).
 # Where a lane executes remotely its `bazel test`s add --config=sole-run: it
 # is the tier's only run, so a remote cache eviction fails it rather than
 # re-running the invocation (whose retry could turn a failed test green).
@@ -88,10 +99,16 @@
 #     already executed, no credentials, no uploads; and bazel-integration
 #     runs too (a warm run hits all but what the PR changed). The farm can
 #     close the cache at any time; Bazel then runs everything locally.
-#   local: rbe=off dispatches (fork simulation without the cache): local
-#     execution on ubuntu-latest, slower but the same results, for every job
-#     but the remote-only ones (bazel-embedded, bazel-proxied,
-#     bazel-server-storage) and bazel-integration, which are skipped.
+#   local: rbe=off dispatches (fork simulation without the cache), and every
+#     run in a fork repository's own CI (github.repository's owner is not
+#     gastownhall: a push to the fork, a PR within it, a dispatch there;
+#     never a fork PR into beads, whose runs have github.repository
+#     gastownhall/beads; nor a contributor's own --config=fork-cache):
+#     local execution on ubuntu-latest, slower but the same results, for
+#     every job but the remote-only ones (bazel-embedded, bazel-proxied,
+#     bazel-server-storage) and bazel-integration, which are skipped. A fork
+#     repository's runs have no secrets and would otherwise read rbe-cache
+#     (mode cache) on every push and PR within the fork, at the farm's cost.
 #   skip: same-repo runs while RBE_WEST_WORKERS is unset (the farm switch),
 #     and authorized fork-farm runs without it or without the secret. Fork
 #     and Dependabot pull_request runs cannot read the variable; rbe-fork's
@@ -292,6 +309,20 @@ on:
         type: string
         required: false
         default: "off"
+      # "off" (pr.yml on a merge group, from its scope job) skips the
+      # Dolt-tier lanes in every mode: bazel-embedded, bazel-dolt-race and
+      # bazel-dolt-int, and outside mode remote bazel-doltserver,
+      # bazel-proxied, bazel-server-storage and bazel-cmd-dolt. Anything
+      # else runs them: a string, so push and dispatch (null) and every
+      # other caller (the default) keep every lane. The dolt-tiers output
+      # reports which.
+      dolt-tiers:
+        description: >
+          "off" (pr.yml on a merge group) skips the Dolt-tier lanes; anything
+          else runs them.
+        type: string
+        required: false
+        default: "on"
     # Only what the rbe job and setup-bazel need; callers pass them
     # explicitly. None is required: fork and Dependabot runs have none.
     secrets:
@@ -324,10 +355,14 @@ on:
       # engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "rbe-west Pre-warm".
       RBE_POOL_APP_PRIVATE_KEY:
         required: false
-    # The rbe job's decision, and each lane's job.status (success, failure or
-    # cancelled; empty when the lane was skipped or never reported). pr.yml's
-    # ci-gate reads them through .github/scripts/bazel-gate.sh.
+    # The rbe job's decision, what the call ran (dolt-tiers), and each
+    # lane's job.status (success, failure or cancelled; empty when the lane
+    # was skipped or never reported). pr.yml's ci-gate reads them through
+    # .github/scripts/bazel-gate.sh.
     outputs:
+      dolt-tiers:
+        description: "'off' when this call skipped the Dolt-tier lanes (its dolt-tiers input was off), else 'on'"
+        value: ${{ inputs.dolt-tiers == 'off' && 'off' || 'on' }}
       rbe-enabled:
         description: "'true' when the lanes executed remotely on rbe-west, else 'false'"
         value: ${{ jobs.rbe.outputs.enabled }}
@@ -380,12 +415,15 @@ on:
         description: "rbe-prewarm's job.status (advisory: continue-on-error, never gates or blocks a lane)"
         value: ${{ jobs.rbe-prewarm.outputs.result }}
 
-# Main runs always finish (they may save the runner cache); PR runs (called
-# from pr.yml or bazel-farm.yml, whose own groups cancel the calling run too)
-# supersede. The group differs from each caller's, as a called workflow's
-# must.
+# Main runs always finish (they may save the runner cache) and each push to
+# main gets its own group (its commit): the push run is the Dolt tiers' first
+# run on that tree (a merge group skips them), so a later push must neither
+# cancel it nor displace it while it waits (GitHub cancels a group's pending
+# run when a newer one queues). PR runs (called from pr.yml or
+# bazel-farm.yml, whose own groups cancel the calling run too) supersede.
+# The group differs from each caller's, as a called workflow's must.
 concurrency:
-  group: bazel-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: bazel-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
 
 permissions:
@@ -452,6 +490,10 @@ jobs:
       # (setup-bazel, BAZEL_FORK_REMOTE) and fails if the tier changed. A
       # mint that is closed, refuses or cannot be reached leaves mode cache,
       # as before rbe-fork.
+      # FORK_REPO: the run is a fork repository's own CI (a push to the fork,
+      # a PR within it, a dispatch there): github.repository's owner is not
+      # gastownhall. Fork PRs into beads run here with github.repository
+      # gastownhall/beads, so FORK_REPO is false for them.
       - name: Decide remote execution
         id: decide
         env:
@@ -460,12 +502,13 @@ jobs:
           RBE_INPUT_CACHE: ${{ inputs.rbe == 'cache' }}
           PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
           FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+          FORK_REPO: ${{ github.repository_owner != 'gastownhall' }}
           DEPENDABOT: ${{ github.actor == 'dependabot[bot]' }}
           FORK_FARM: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' && inputs.checkout-sha != '' }}
           HAS_EXECUTOR: ${{ secrets.RBE_WEST_EXECUTOR != '' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          for v in RBE_VAR_ON RBE_INPUT_OFF RBE_INPUT_CACHE PULL_REQUEST FORK DEPENDABOT FORK_FARM HAS_EXECUTOR; do
+          for v in RBE_VAR_ON RBE_INPUT_OFF RBE_INPUT_CACHE PULL_REQUEST FORK FORK_REPO DEPENDABOT FORK_FARM HAS_EXECUTOR; do
             case "${!v}" in
               true|false) ;;
               *) echo "::error::$v is '${!v}', want true or false"; exit 1 ;;
@@ -476,8 +519,15 @@ jobs:
           # the read-only cache. Any other fork run (pull_request_target)
           # stays local unless bazel-farm.yml authorized it; an authorized
           # fork run is remote or nothing (pr.yml's call already runs it).
+          # A fork repository's own CI is mode local, whatever else holds:
+          # no secrets, so it would otherwise read rbe-cache (mode cache) on
+          # every run, which the farm pays for (rbe-cache's daily request
+          # budget shut it on 2026-10-19, largely on fork CI runs). It never
+          # asks the mint either.
           tier=
-          if [ "$RBE_INPUT_OFF" = true ]; then
+          if [ "$FORK_REPO" = true ]; then
+            mode=local
+          elif [ "$RBE_INPUT_OFF" = true ]; then
             mode=local
           elif [ "$RBE_INPUT_CACHE" = true ]; then
             mode=cache
@@ -512,7 +562,10 @@ jobs:
             echo "enabled=$enabled"
             echo "tier=$tier"
           } >> "$GITHUB_OUTPUT"
-          echo "Bazel execution mode: **$mode** (RBE_WEST_WORKERS on: $RBE_VAR_ON, rbe=off: $RBE_INPUT_OFF, rbe=cache: $RBE_INPUT_CACHE, fork: $FORK, dependabot: $DEPENDABOT, fork farm: $FORK_FARM, executor secret: $HAS_EXECUTOR)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Bazel execution mode: **$mode** (RBE_WEST_WORKERS on: $RBE_VAR_ON, rbe=off: $RBE_INPUT_OFF, rbe=cache: $RBE_INPUT_CACHE, fork: $FORK, fork repository: $FORK_REPO, dependabot: $DEPENDABOT, fork farm: $FORK_FARM, executor secret: $HAS_EXECUTOR)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$FORK_REPO" = true ]; then
+            echo "Fork repository's own CI ($GITHUB_REPOSITORY): local, no rbe-cache" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Bazel's remote repo contents cache on rbe-west (ga-vnycm2.29, ported
       # from gascity's bazel.yml; gascity
@@ -1022,6 +1075,16 @@ jobs:
         with:
           path: ${{ runner.temp }}/bazel-ci-cache
           key: bazel-repo-v4-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel', 'MODULE.bazel.lock') }}
+      # Bazelisk and the Bazel binary, which setup-bazel checked against their
+      # pins before running them, under the key it restored (its "Restore
+      # Bazelisk and Bazel"): written only here, by a push to main that
+      # missed it, so the other lanes download neither.
+      - name: Save Bazelisk and Bazel
+        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bazel.outcome == 'success' && steps.bazel.outputs.bin-cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/bazel-bin
+          key: ${{ steps.bazel.outputs.bin-cache-key }}
 
       # A redacted, schema'd summary of this invocation's BEP, exec log and
       # profile: timing, per-mnemonic cache classes, cold actions, test
@@ -1085,7 +1148,7 @@ jobs:
     outputs:
       result: ${{ steps.result.outputs.result }}
     env:
-      PURE_CMD_BD_TESTS: '^Test(Help|CheckRemoteSafety|FormatDestroyToken|ShouldWireInitRemote|ExtractPrefix|IsNumericID|GetWorktreeGitDir|DriftItemStatuses|RunDriftChecks|IsServerProbablyRunning|CheckHooksDriftNotGitRepo|CheckServerDriftNoBeadsDir|CheckRemoteDriftNoBeadsDir|NocgoFactoriesHonorSharedServer|NocgoNewDoltStoreFromConfig_ErrorSuggestsCorrectFlag|NocgoNewReadOnlyStoreFromConfig_ErrorSuggestsCorrectFlag|NocgoStoreFactoriesRefuseGraphWorkspace)'
+      PURE_CMD_BD_TESTS: '^Test(Help|CheckRemoteSafety|FormatDestroyToken|ShouldWireInitRemote|ExtractPrefix|IsNumericID|GetWorktreeGitDir|DriftItemStatuses|RunDriftChecks|IsServerProbablyRunning|CheckHooksDriftNotGitRepo|CheckServerDriftNoBeadsDir|CheckRemoteDriftNoBeadsDir|NocgoFactoriesHonorSharedServer|NocgoNewDoltStoreFromConfig_ErrorSuggestsCorrectFlag|NocgoNewReadOnlyStoreFromConfig_ErrorSuggestsCorrectFlag|NocgoStoreFactoriesRefuseGraphWorkspace|StoreFactoriesRefuseUnsupportedBackendInLegacyConfig)'
       # The only pre-merge run of these boundaries: where it executes
       # remotely --config=sole-run fails on a remote cache eviction instead
       # of re-running the whole invocation (whose retry could turn a failed
@@ -1401,7 +1464,7 @@ jobs:
     # GitHub-hosted in the fork modes (a client only).
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 60
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -1785,7 +1848,7 @@ jobs:
     # (bazel-dolt-race's).
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    if: ${{ needs.rbe.outputs.mode != 'skip' && needs.rbe.outputs.mode != 'remote' }}
+    if: ${{ needs.rbe.outputs.mode != 'skip' && needs.rbe.outputs.mode != 'remote' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 90
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -1927,7 +1990,7 @@ jobs:
     # retired) and pr.yml's gate requires it to have run here and passed.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 30
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -2077,24 +2140,27 @@ jobs:
   # --config=doltserver-proxied's lines, one tag filter for both), mode
   # remote only, in place of bazel-doltserver and bazel-proxied, which run
   # in every other mode. One client waits on rbe-west for both tiers'
-  # shards at once (27 + 35 test actions, under the remote-exec config's 64
-  # jobs), so the job ends with the slower tier and saves the other's
-  # runner. Each member target's test action key is unchanged (aquery-
-  # verified), so cached results carry over both ways, and a revert of the
+  # shards at once (27 + 37 = 64 test actions, exactly the remote-exec
+  # config's 64 jobs: no headroom, TestBazelDoltRaceFitsTheJobsBudget), so
+  # the job ends with the slower tier and saves the other's runner. Each
+  # member target's test action key is unchanged (aquery-verified), so
+  # cached results carry over both ways, and a revert of the
   # cutover re-executes nothing. Gated: its job.status is both the
   # bazel-doltserver and the bazel-proxied workflow_call output (a failure
-  # in either tier fails both ids, which are both required). Every step has
-  # a timeout and the job's exceeds their sum by 5 minutes while staying
-  # under the merge queue's 60-minute check timeout
-  # (TestBazelDoltRaceJobTimeouts), so a hang fails a named step instead of
-  # dropping the merge group. The member jobs' configs and the union's must
-  # stay key-identical: the mode decides which runs (TestBazelDoltRaceConfigIsMemberUnion).
+  # in either tier fails both ids, which are both required). A merge group
+  # skips it (dolt-tiers off; main's push run runs it). Every step has a
+  # timeout and the job's exceeds their sum by 5 minutes while staying under
+  # the merge queue's 60-minute check timeout (TestBazelDoltRaceJobTimeouts),
+  # so a hang fails a named step instead of dropping the merge group, should
+  # a merge group run it again (rollback). The member jobs' configs and the
+  # union's must stay key-identical: the mode decides which runs
+  # (TestBazelDoltRaceConfigIsMemberUnion).
   # Its ci-analytics LANE is dolt-race.
   bazel-dolt-race:
     name: dolt-race
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.mode == 'remote' }}
+    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.dolt-tiers != 'off' }}
     # At least every step's timeout-minutes plus 5, and below the merge
     # queue's 60-minute check timeout so this job alone cannot exhaust it
     # (TestBazelDoltRaceJobTimeouts). Not a whole-run bound: the rbe job runs
@@ -2149,8 +2215,8 @@ jobs:
             exit 1
           fi
 
-      # Both tiers' shards at once: 27 dolt-server + 35 proxied test actions,
-      # under the remote-exec config's 64 jobs. No --config=sole-run: its one
+      # Both tiers' shards at once: 27 dolt-server + 37 proxied test actions,
+      # exactly the remote-exec config's 64 jobs. No --config=sole-run: its one
       # line (no retry on a remote cache eviction) is already in the union.
       # Shards are expected around 55-95s on rbe-west (see bazel-proxied's
       # test step), the proxied tier's 1200s cap included. The step timeout is
@@ -2272,7 +2338,7 @@ jobs:
     # retired) and pr.yml's gate requires it to have run here and passed.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.integration != 'off' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.integration != 'off' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 30
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -2447,7 +2513,7 @@ jobs:
     # comment above.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    if: ${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' && needs.rbe.outputs.mode != 'remote' }}
+    if: ${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' && needs.rbe.outputs.mode != 'remote' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 85
     continue-on-error: true
     outputs:
@@ -2609,22 +2675,29 @@ jobs:
   # `bazel test` step carries continue-on-error, and an always() step
   # (tools/bazel/classify_tier_results.py) reads the BEP by target label,
   # computes each tier's own result, and fails the job itself iff
-  # server-storage's tier failed (a cmd-dolt-only test failure leaves the job
-  # green, as bazel-cmd-dolt's own continue-on-error already does outside
-  # mode remote) or bazel's exit code was neither 0 nor 3 (a build or infra
-  # failure is not attributable to one tier, so both are marked failed and
-  # the job fails regardless). Both members' workflow_call outputs read this
+  # server-storage's tier failed or bazel's exit code was neither 0 nor 3 (a
+  # build or infra failure is not attributable to one tier, so both are
+  # marked failed and the job fails regardless). A cmd-dolt-only failure
+  # leaves the job green in pr.yml's call, whose gate reads cmd_dolt_result
+  # (BAZEL_CMD_DOLT), as bazel-cmd-dolt's own continue-on-error does outside
+  # mode remote; everywhere else (push to main, nightly, dispatch,
+  # bazel-farm.yml) nothing reads it, so the job's last step fails the job
+  # for it: a merge group skips the Dolt tiers, and main's push run is where
+  # a cmd/bd tier regression must turn red. Both members' workflow_call outputs read this
   # job's matching per-tier output first, then their own member's; a job that
   # dies before the classify step leaves both outputs empty, which mode
   # remote's gate (bazel-gate.sh, ci-gate.sh) already treats as skipped and
   # fails, same as an empty bazel-server-storage/bazel-cmd-dolt result would.
+  # A merge group skips it (dolt-tiers off; main's push run runs it); the
+  # timeouts below keep a rollback of that safe.
   # Every step has a timeout and the job's exceeds their sum by 5 minutes
   # while staying under the merge queue's 60-minute check timeout
-  # (TestBazelDoltIntJobTimeouts): 58 leaves only about 2 minutes for runner
+  # (TestBazelDoltIntJobTimeouts): 59 leaves only about 1 minute for runner
   # pickup and the rbe job inside that 60-minute budget, so a hang that runs
-  # to this job's own timeout can drop the merge group; accepted, because
-  # such a run is red anyway and the 58-minute job timeout bounds only this
-  # job, not the whole run (as #7514's dolt-race job comment). The member
+  # to this job's own timeout could drop a merge group that ran it (after a
+  # rollback of the fast set); accepted, because such a run is red anyway and
+  # the 59-minute job timeout bounds only this job, not the whole run (as
+  # #7514's dolt-race job comment). The member
   # jobs' configs and the union's must stay key-identical: the mode decides
   # which runs (TestBazelDoltIntConfigIsMemberUnion). Its ci-analytics LANE
   # is dolt-int.
@@ -2632,15 +2705,16 @@ jobs:
     name: dolt-int
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' }}
+    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' && inputs.dolt-tiers != 'off' }}
     # At least every step's timeout-minutes plus 5, and below the merge
     # queue's 60-minute check timeout so this job alone cannot exhaust it
-    # (TestBazelDoltIntJobTimeouts). 58 leaves only about 2 minutes for
+    # (TestBazelDoltIntJobTimeouts). 59 leaves only about 1 minute for
     # runner pickup and the rbe job inside the merge queue's 60-minute check;
-    # a hang that runs to this timeout can therefore drop the group, which is
-    # accepted because such a run is red anyway and the 58-minute job timeout
-    # bounds this job, not the whole run (as #7514's dolt-race job comment).
-    timeout-minutes: 58
+    # a hang that runs to this timeout could therefore drop a group that ran
+    # it, which is accepted because such a run is red anyway and the
+    # 59-minute job timeout bounds this job, not the whole run (as #7514's
+    # dolt-race job comment).
+    timeout-minutes: 59
     outputs:
       server_storage_result: ${{ steps.classify.outputs.server_storage_result }}
       cmd_dolt_result: ${{ steps.classify.outputs.cmd_dolt_result }}
@@ -2829,8 +2903,8 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # Last step: each tier's own result (not job.status: this job carries
-      # no continue-on-error, see the job's own comment) as the
+      # Each tier's own result (not job.status: this job carries no
+      # continue-on-error, see the job's own comment) as the
       # bazel-server-storage and bazel-cmd-dolt workflow_call outputs for
       # pr.yml's ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too (steps.test.outcome stays "skipped" then, so the
@@ -2857,6 +2931,24 @@ jobs:
           --check "server-storage=$CHECK_SS_OUTCOME"
           --check "cmd-dolt=$CHECK_CD_OUTCOME"
           --github-output "$GITHUB_OUTPUT"
+
+      # Last step: the cmd/bd Dolt-server tier fails the job wherever no
+      # caller gate reads its result. The classify step fails the job for
+      # server-storage alone; only pr.yml's call (pull_request, merge_group)
+      # reads cmd_dolt_result, through its gate id BAZEL_CMD_DOLT, so a PR
+      # shows a cmd/bd tier failure exactly as before (red BAZEL_CMD_DOLT,
+      # BAZEL green), and pr.yml's flag keeps deciding there. A push to main,
+      # nightly, a dispatch and bazel-farm.yml's advisory call have no such
+      # gate, so this step fails the job: a merge group skips the Dolt tiers,
+      # main's push run is the tier's first run on the merged tree, and its
+      # red is what main-ci-alert.yml reports
+      # (TestCIScopeCoversEveryGatedJobOnMain).
+      - name: The cmd/bd Dolt-server tier fails the run outside pr.yml's call
+        if: ${{ always() && steps.classify.outputs.cmd_dolt_result == 'failure' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+        timeout-minutes: 1
+        run: |
+          echo "::error title=cmd/bd Dolt-server tier failed:://cmd/bd:bd_dolt_server_test or //tests/regression:regression_test failed (cmd_dolt_result); no caller gate reads that result in a $GITHUB_EVENT_NAME run, so it fails this job"
+          exit 1
 
   # F3: moved here from pr.yml so the gate depends on nothing but the rbe
   # job's decision (not the whole bazel call). Only pr.yml opts in (package-gates: "on");
@@ -2971,7 +3063,7 @@ jobs:
 
       - name: Install uv
         if: ${{ steps.detect.outputs.mcp_package == 'true' }}
-        run: python -m pip install uv==0.13.4
+        run: python -m pip install uv==0.13.5
 
       - name: Run MCP package gate
         if: ${{ steps.detect.outputs.mcp_package == 'true' }}

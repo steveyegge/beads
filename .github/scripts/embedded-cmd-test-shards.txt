@@ -49,6 +49,7 @@
 100 12 TestEmbeddedGatedRendering
 
 100 13 TestEmbeddedListFilteringStatusAndHierarchy
+100 13 TestEmbeddedMigratePersonal_refusesSharedRootFromARig
 
 100 14 TestEmbeddedMigratePersonal_batchLeavesTheMoveUncommitted
 100 14 TestEmbeddedReopenConcurrent

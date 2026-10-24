@@ -31,6 +31,7 @@ const (
 	bazelFreshRCLine  = "test:fresh --nocache_test_results"
 	mergeQueueActor   = "github-merge-queue[bot]"
 	mergeQueueOwnRepo = "gastownhall/beads"
+	mergeQueueOwner   = "gastownhall"
 )
 
 // mergeGroupCtx: an evalGHExpr context for a merge_group run of entry n
@@ -39,6 +40,7 @@ func mergeGroupCtx(n int, extra map[string]string) map[string]string {
 	ctx := map[string]string{
 		"github.event_name":                 "merge_group",
 		"github.repository":                 mergeQueueOwnRepo,
+		"github.repository_owner":           mergeQueueOwner,
 		"github.actor":                      mergeQueueActor,
 		"github.ref":                        fmt.Sprintf("refs/heads/gh-readonly-queue/main/pr-%d-%040d", 7000+n, n),
 		"github.run_attempt":                "1",
@@ -58,6 +60,7 @@ func pullRequestCtx(n int, extra map[string]string) map[string]string {
 	ctx := map[string]string{
 		"github.event_name":                             "pull_request",
 		"github.repository":                             mergeQueueOwnRepo,
+		"github.repository_owner":                       mergeQueueOwner,
 		"github.actor":                                  "alice",
 		"github.ref":                                    fmt.Sprintf("refs/pull/%d/merge", 7000+n),
 		"github.run_attempt":                            "1",
@@ -186,9 +189,9 @@ func TestMergeQueueConcurrencyNeverCancelsQueueRuns(t *testing.T) {
 func TestMergeQueuePullRequestFieldsHandleMergeGroup(t *testing.T) {
 	// path suffix (workflow:YAML path) -> why null on merge_group is right.
 	nullOK := map[string]string{
-		"pr.yml:.concurrency.group":           "falls back to github.ref (TestMergeQueueConcurrencyNeverCancelsQueueRuns)",
-		"pr-risk.yml:.concurrency.group":      "falls back to github.ref",
-		"bazel.yml:.concurrency.group":        "falls back to github.ref",
+		"pr.yml:.concurrency.group":           "falls back to github.sha on push, github.ref otherwise (TestMergeQueueConcurrencyNeverCancelsQueueRuns, TestCIScopePushConcurrency)",
+		"pr-risk.yml:.concurrency.group":      "falls back to github.sha on push, github.ref otherwise",
+		"bazel.yml:.concurrency.group":        "falls back to github.sha on push, github.ref otherwise",
 		"rbe.steps[0].env.FORK":               "null == true is false: a merge group is never a fork",
 		"rbe.steps[0].env.PR_NUMBER":          "read only for fork/Dependabot pull_request runs (the rbe-fork mint)",
 		".env.RBE_FORK_PR":                    "setup-bazel reads it only in the fork modes, which a merge group never takes",

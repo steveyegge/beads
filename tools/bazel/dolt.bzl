@@ -10,7 +10,7 @@ MODULE.bazel declares one repository per platform (dolt_<os>_<arch>); only the
 one selected by //tools/bazel:dolt for the execution platform is fetched.
 """
 
-DOLT_VERSION = "2.2.0"
+DOLT_VERSION = "2.5.1"
 
 # sha256 of the upstream release tarballs dolt-<os>-<arch>.tar.gz, keyed by
 # version so that bumping DOLT_VERSION without adding its digests fails instead
@@ -18,6 +18,12 @@ DOLT_VERSION = "2.2.0"
 # sha256 alone). They match the asset digests GitHub reports for the release
 # (`gh api repos/dolthub/dolt/releases/tags/v<version>`).
 DOLT_SHA256 = {
+    "2.5.1": {
+        "darwin-amd64": "f77f5c596310f78369b6a1f0ef2147703857b3cf7220508082a8e7dde948fcc0",
+        "darwin-arm64": "0c14f997f1bc72228d3b07c815610f7ccfa883d7b66add8245c10e75c540adaa",
+        "linux-amd64": "970927001a0eebd07a51307e784d245bf2e95796a49709e8b8a474ac833bf9a3",
+        "linux-arm64": "ea8ec8dc81a227d6543db6d832ed83c4bf9033899d0eafd10909292da05fcf8a",
+    },
     # The migration corpus's external Dolt runtime (DOLT_TEST_RUNTIME_VERSION
     # and _SHA256 in scripts/migration-test/lib/versions.sh), linux/amd64
     # only: @dolt_test_runtime_linux_amd64 in MODULE.bazel.

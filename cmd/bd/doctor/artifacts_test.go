@@ -10,6 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/backendnames"
 )
 
 func TestCheckClassicArtifacts_NoArtifacts(t *testing.T) {
@@ -642,5 +643,121 @@ func TestScanForArtifacts_ScansWorkspaceWithUnloadableMetadata(t *testing.T) {
 	wantCruft := []ArtifactFinding{{Path: beadsDir, Type: "cruft-beads", Description: "should be redirect-only but contains: beads.db-wal, extra.txt, metadata.json", SafeDelete: true}}
 	if !reflect.DeepEqual(report.CruftBeadsDirs, wantCruft) {
 		t.Errorf("cruft .beads dirs = %+v, want %+v", report.CruftBeadsDirs, wantCruft)
+	}
+}
+
+// TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles pins that the
+// scan and the cleanup (fix.ClassicArtifacts) agree on a nested workspace's
+// SQLite files, which the walk reaches though command admission never checks
+// that workspace: the scan reports them only where the workspace is on Dolt
+// (fix.SelectsDolt), the cleanup removes exactly the ones it marks safe to
+// delete, and a second scan finds only what is left for manual review. The
+// cleanup used to remove beads.db-wal, beads.db-shm and every
+// beads.backup-*.db whatever the backend, files the scan never reported, as
+// soon as the scan found anything at all, here the root workspace's WAL. A
+// registered backend (such as http in the shipped bd; a test-only name stands
+// in for it here) is not Dolt, and a backend this build does not recognize,
+// which configfile.Config.GetBackend reads as Dolt, is not Dolt to either
+// half. Nor is a Beads Classic SQLite workspace, whose metadata predates the
+// backend key and so reads as Dolt to GetBackend too: command admission
+// refuses it as historical SQLite (historicalsqlite.IsWorkspace), and its WAL
+// can hold transactions not yet checkpointed into beads.db.
+func TestScanForArtifacts_CleanupRemovesOnlyReportedSQLiteFiles(t *testing.T) {
+	const registered = "acme-artifacts-doctor"
+	backendnames.Add(registered)
+	t.Cleanup(func() { backendnames.Remove(registered) })
+
+	const sqliteDB = "SQLite format 3\x00"
+	// workspace is a nested .beads directory holding metadata, in
+	// metadataFile, and every SQLite file the scan can report.
+	workspace := func(metadataFile, metadata string) map[string]string {
+		return map[string]string{
+			metadataFile:               metadata,
+			"beads.db":                 sqliteDB,
+			"beads.db-wal":             "wal",
+			"beads.db-shm":             "shm",
+			"beads.backup-20260204.db": "backup",
+		}
+	}
+	named := func(backend string) map[string]string {
+		return workspace(configfile.ConfigFileName, fmt.Sprintf(`{"database":"dolt","backend":%q}`, backend))
+	}
+	cases := []struct {
+		name     string
+		files    map[string]string // the nested .beads directory's entries
+		reported map[string]bool   // the nested files the scan reports, and whether each is safe to delete
+	}{
+		{name: configfile.BackendDolt, files: named(configfile.BackendDolt), reported: map[string]bool{"beads.db": false, "beads.db-wal": true, "beads.db-shm": true, "beads.backup-20260204.db": true}},
+		{name: configfile.BackendSQLite, files: named(configfile.BackendSQLite)},
+		{name: configfile.BackendPostgres, files: named(configfile.BackendPostgres)},
+		{name: configfile.BackendMySQL, files: named(configfile.BackendMySQL)},
+		{name: registered, files: named(registered)},
+		{name: "future-backend", files: named("future-backend")},
+		// Beads Classic metadata, with no backend key.
+		{name: "classic metadata.json", files: workspace(configfile.ConfigFileName, `{"database":"beads.db","jsonl_export":"issues.jsonl"}`)},
+		{name: "classic config.json", files: workspace("config.json", `{"database":"beads.db"}`)},
+		// Without metadata, admission recognizes the workspace by its layout,
+		// which allows one .db file only, so this one has no backup.
+		{name: "classic without metadata", files: map[string]string{"beads.db": sqliteDB, "beads.db-wal": "wal", "beads.db-shm": "shm"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			rootWAL := filepath.Join(root, ".beads", "beads.db-wal")
+			writeArtifactTree(t, filepath.Dir(rootWAL), map[string]string{"beads.db-wal": "wal"})
+			beadsDir := filepath.Join(root, "sub", ".beads")
+			writeArtifactTree(t, beadsDir, tc.files)
+			before := snapshotBeadsDir(t, beadsDir)
+
+			report, err := ScanForArtifacts(root)
+			if err != nil {
+				t.Fatalf("ScanForArtifacts: %v", err)
+			}
+			want := map[string]bool{rootWAL: true}
+			for name, safe := range tc.reported {
+				want[filepath.Join(beadsDir, name)] = safe
+			}
+			got := map[string]bool{}
+			for _, f := range report.SQLiteArtifacts {
+				got[f.Path] = f.SafeDelete
+			}
+			if report.TotalCount != len(report.SQLiteArtifacts) || !reflect.DeepEqual(got, want) {
+				t.Fatalf("ScanForArtifacts = %+v\nwant only the SQLite findings (path: safe to delete) %v", report, want)
+			}
+
+			if err := fix.ClassicArtifacts(root); err != nil {
+				t.Fatalf("fix.ClassicArtifacts: %v", err)
+			}
+			after := map[string]string{}
+			for name, content := range before {
+				if !tc.reported[name] {
+					after[name] = content
+				}
+			}
+			if got := snapshotBeadsDir(t, beadsDir); !reflect.DeepEqual(got, after) {
+				t.Fatalf("fix.ClassicArtifacts left %s as\n %q\nwant only the files the scan reported as safe to delete removed: %q", beadsDir, got, after)
+			}
+			if _, err := os.Stat(rootWAL); !os.IsNotExist(err) {
+				t.Fatalf("fix.ClassicArtifacts left the root workspace's %s (stat err %v)", rootWAL, err)
+			}
+
+			report, err = ScanForArtifacts(root)
+			if err != nil {
+				t.Fatalf("ScanForArtifacts after the cleanup: %v", err)
+			}
+			left := map[string]bool{}
+			for _, f := range report.SQLiteArtifacts {
+				left[f.Path] = f.SafeDelete
+			}
+			wantLeft := map[string]bool{}
+			for name, safe := range tc.reported {
+				if !safe {
+					wantLeft[filepath.Join(beadsDir, name)] = false
+				}
+			}
+			if report.TotalCount != len(report.SQLiteArtifacts) || !reflect.DeepEqual(left, wantLeft) {
+				t.Fatalf("ScanForArtifacts after the cleanup = %+v\nwant only the findings left for manual review %v", report, wantLeft)
+			}
+		})
 	}
 }

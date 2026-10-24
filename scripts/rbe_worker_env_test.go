@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,6 +40,7 @@ const (
 	rbeWorkerEnvManifest   = "tools/rbe/worker-env.txt"
 	rbeWorkerPlatformFlag  = "--extra_execution_platforms=//platforms:rbe_worker"
 	rbeWorkerEnvSync       = "tools/rbe/worker-env-sync"
+	rbeWorkerEnvSyncRef    = "tools/rbe/worker-env-sync-ref"
 	rbeWorkerEnvSyncIssue  = "tools/rbe/worker-env-sync-issue"
 	// bazel.yml's rbe job checks out only what worker-env-sync compares.
 	bazelRBESparseCheckout = "tools/rbe\nplatforms\n"
@@ -215,12 +219,23 @@ func TestRBEWorkerEnvManifestGuards(t *testing.T) {
 	}
 }
 
-// rbeWorkerEnvFixture is a local gascity (served to worker-env-sync through
-// file:// URLs, WORKER_ENV_SYNC_URL) whose main pins manifest at pin, and a
-// way to lay out a beads checkout with the given manifest and pin plus the
-// real tools/rbe scripts, as the workflows run them.
+// rbeWorkerEnvFixture is a local gascity, served the way the scripts read
+// the real one. git is a repository whose main (which worker-env-sync-ref
+// resolves with git ls-remote, WORKER_ENV_SYNC_GIT_URL) commits manifest
+// and a platforms/BUILD.bazel pinning it at pin, on top of an older commit,
+// staleSHA, that pins rbeTestStaleManifest. raw is raw.githubusercontent.com's
+// layout of each commit, <raw>/<sha>/<path> (WORKER_ENV_SYNC_URL, file://).
+// Two traps catch a script that does not compare with the commit main
+// names: <raw>/main still serves the older commit's files, as the CDN does
+// for a few minutes after a push (gascity#8165 on Oct 21), and a decoy
+// branch, decoy/refs/heads/main, also points at the older commit, which
+// git ls-remote's pattern refs/heads/main matches too (by its trailing path
+// components) and lists first. beads lays out a beads checkout with a given
+// manifest and pin plus the real tools/rbe scripts, as the workflows run
+// them.
 type rbeWorkerEnvFixture struct {
-	gascity, manifest, pin string
+	raw, git                     string
+	manifest, pin, sha, staleSHA string
 }
 
 func rbeTestPin(manifest string) string {
@@ -242,14 +257,56 @@ func rbeTestWrite(t *testing.T, path, body string, mode os.FileMode) {
 	}
 }
 
+// rbeTestGit runs git in dir as a fixture author, with neither the host's
+// system nor its global config (no signing, hooks or URL rewrites), and
+// returns its stdout without the trailing newline.
+func rbeTestGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, stderr.String())
+	}
+	return strings.TrimSuffix(string(out), "\n")
+}
+
 func newRBEWorkerEnvFixture(t *testing.T) rbeWorkerEnvFixture {
+	t.Helper()
+	manifest := "arch x86_64\npkg git 2\n"
+	f := newRBEWorkerEnvGascity(t, manifest, rbeTestPlatformBuild(rbeTestPin(manifest)))
+	f.pin = rbeTestPin(manifest)
+	return f
+}
+
+// newRBEWorkerEnvGascity: a fixture whose main commits manifest and build
+// (gascity's platforms/BUILD.bazel) over the stale commit. pin is left
+// empty: build need not pin manifest, or pin anything.
+func newRBEWorkerEnvGascity(t *testing.T, manifest, build string) rbeWorkerEnvFixture {
 	t.Helper()
 	requireHostTool(t, "curl")
 	requireHostTool(t, "bash")
-	f := rbeWorkerEnvFixture{gascity: t.TempDir(), manifest: "arch x86_64\npkg git 2\n"}
-	f.pin = rbeTestPin(f.manifest)
-	rbeTestWrite(t, filepath.Join(f.gascity, "main", rbeWorkerEnvManifest), f.manifest, 0o644)
-	rbeTestWrite(t, filepath.Join(f.gascity, "main", rbeWorkerPlatformBuild), rbeTestPlatformBuild(f.pin), 0o644)
+	requireHostTool(t, "git")
+	f := rbeWorkerEnvFixture{raw: t.TempDir(), git: t.TempDir(), manifest: manifest}
+	rbeTestGit(t, f.git, "init", "-q", "-b", "main")
+	commit := func(manifest, build string) string {
+		rbeTestWrite(t, filepath.Join(f.git, rbeWorkerEnvManifest), manifest, 0o644)
+		rbeTestWrite(t, filepath.Join(f.git, rbeWorkerPlatformBuild), build, 0o644)
+		rbeTestGit(t, f.git, "add", "-A")
+		rbeTestGit(t, f.git, "commit", "-q", "-m", "worker-env")
+		sha := rbeTestGit(t, f.git, "rev-parse", "HEAD")
+		rbeTestWrite(t, filepath.Join(f.raw, sha, rbeWorkerEnvManifest), manifest, 0o644)
+		rbeTestWrite(t, filepath.Join(f.raw, sha, rbeWorkerPlatformBuild), build, 0o644)
+		return sha
+	}
+	staleBuild := rbeTestPlatformBuild(rbeTestPin(rbeTestStaleManifest))
+	f.staleSHA = commit(rbeTestStaleManifest, staleBuild)
+	f.sha = commit(manifest, build)
+	rbeTestWrite(t, filepath.Join(f.raw, "main", rbeWorkerEnvManifest), rbeTestStaleManifest, 0o644)
+	rbeTestWrite(t, filepath.Join(f.raw, "main", rbeWorkerPlatformBuild), staleBuild, 0o644)
+	rbeTestGit(t, f.git, "update-ref", "refs/heads/decoy/refs/heads/main", f.staleSHA)
 	return f
 }
 
@@ -261,10 +318,16 @@ func (f rbeWorkerEnvFixture) beads(t *testing.T, manifest, pin string) string {
 	dir := t.TempDir()
 	rbeTestWrite(t, filepath.Join(dir, rbeWorkerEnvManifest), manifest, 0o644)
 	rbeTestWrite(t, filepath.Join(dir, rbeWorkerPlatformBuild), rbeTestPlatformBuild(pin), 0o644)
-	for _, script := range []string{rbeWorkerEnvSync, rbeWorkerEnvSyncIssue} {
+	for _, script := range []string{rbeWorkerEnvSync, rbeWorkerEnvSyncRef, rbeWorkerEnvSyncIssue} {
 		rbeTestWrite(t, filepath.Join(dir, script), readPolicyFile(t, root, script), 0o755)
 	}
 	return dir
+}
+
+// env is what points the scripts at this gascity instead of GitHub's.
+func (f rbeWorkerEnvFixture) env() []string {
+	return []string{"WORKER_ENV_SYNC_URL=file://" + f.raw, "WORKER_ENV_SYNC_GIT_URL=file://" + f.git,
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull}
 }
 
 // run runs a workflow step's script (bash -e, as GitHub does) in dir with
@@ -274,7 +337,7 @@ func (f rbeWorkerEnvFixture) run(t *testing.T, dir, script string, env ...string
 	t.Helper()
 	cmd := exec.Command("bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), append([]string{"WORKER_ENV_SYNC_URL=file://" + f.gascity}, env...)...)
+	cmd.Env = append(os.Environ(), append(f.env(), env...)...)
 	out, err := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	switch {
@@ -295,6 +358,11 @@ const rbeTestStaleManifest = "arch x86_64\npkg git 1:2.55.0-0ppa1~ubuntu24.04.2\
 // exit 1 with the diff and the pin to commit in the output, step summary and
 // WORKER_ENV_SYNC_REPORT for a manifest or a pin that differs; and exit 2
 // ("unknown", a warning) when gascity cannot be read, never "in step".
+// REF is compared at the commit it names (worker-env-sync-ref): the
+// fixture's raw main and its decoy branch both serve the commit before
+// main's, so the in-step case passes only when the copy is compared with
+// main's own commit, and a copy that matches only the CDN's stale main is
+// out of step.
 func TestRBEWorkerEnvSync(t *testing.T) {
 	f := newRBEWorkerEnvFixture(t)
 	run := func(ourManifest, ourPin string) (int, string, string, string) {
@@ -309,7 +377,7 @@ func TestRBEWorkerEnvSync(t *testing.T) {
 	}
 
 	code, out, summary, report := run(f.manifest, f.pin)
-	if code != 0 || !strings.Contains(out, "worker-env: in step with gascity main ("+f.pin+")") || summary != "" || report != "" {
+	if code != 0 || !strings.Contains(out, "worker-env: in step with gascity main ("+f.pin+") at gascity commit "+f.sha+"\n") || summary != "" || report != "" {
 		t.Fatalf("in step: exit %d\n%s\nsummary:\n%s\nreport:\n%s", code, out, summary, report)
 	}
 
@@ -334,8 +402,9 @@ func TestRBEWorkerEnvSync(t *testing.T) {
 			}
 		}
 		for what, md := range map[string]string{"step summary": summary, "report": report} {
-			if !strings.Contains(md, "### rbe worker-env out of step with gascity") || !strings.Contains(md, "\"worker-env\": \""+f.pin+"\"") {
-				t.Errorf("%s: no %s:\n%s", name, what, md)
+			if !strings.Contains(md, "### rbe worker-env out of step with gascity") || !strings.Contains(md, "\"worker-env\": \""+f.pin+"\"") ||
+				!strings.Contains(md, "gascity `main` (commit `"+f.sha+"`) pins") {
+				t.Errorf("%s: no %s naming gascity's commit:\n%s", name, what, md)
 			}
 		}
 		if c[0] != f.manifest && !strings.Contains(out, "-pkg git 1:2.55.0-0ppa1~ubuntu24.04.2\n+pkg git 2\n") {
@@ -343,18 +412,87 @@ func TestRBEWorkerEnvSync(t *testing.T) {
 		}
 	}
 
-	// gascity unreachable (a REF that does not exist, or no gascity at all):
-	// exit 2 with a warning, never "in step" and never "out of step".
-	beads := f.beads(t, f.manifest, f.pin)
+	// A REF that is a commit is compared at that commit, with no lookup:
+	// gascity's git endpoint unreachable does not matter.
+	beads := f.beads(t, rbeTestStaleManifest, stalePin)
+	code, out = f.run(t, beads, `tools/rbe/worker-env-sync "$REF"`+"\n", "REF="+f.staleSHA, "WORKER_ENV_SYNC_GIT_URL=file:///nonexistent-gascity")
+	if code != 0 || !strings.Contains(out, "worker-env: in step with gascity "+f.staleSHA+" ("+stalePin+") at gascity commit "+f.staleSHA+"\n") {
+		t.Errorf("worker-env-sync at a commit: exit %d, want 0, in step with that commit:\n%s", code, out)
+	}
+
+	// gascity unreachable (a REF that does not exist, gascity's git endpoint
+	// or its raw files out of reach): exit 2 with a warning, never "in
+	// step" and never "out of step".
+	beads = f.beads(t, f.manifest, f.pin)
 	for name, env := range map[string][]string{
-		"missing ref": {"REF=no-such-ref"},
-		"unreachable": {"REF=main", "WORKER_ENV_SYNC_URL=file:///nonexistent-gascity"},
+		"missing ref":     {"REF=no-such-ref"},
+		"unreachable":     {"REF=main", "WORKER_ENV_SYNC_URL=file:///nonexistent-gascity"},
+		"git unreachable": {"REF=main", "WORKER_ENV_SYNC_GIT_URL=file:///nonexistent-gascity"},
 	} {
 		code, out := f.run(t, beads, `tools/rbe/worker-env-sync "$REF"`+"\n", env...)
 		if code != 2 || !strings.Contains(out, "::warning title=rbe worker-env unknown::") || strings.Contains(out, "in step") || strings.Contains(out, "::error") {
 			t.Errorf("worker-env-sync, %s: exit %d, want 2 with an unknown warning:\n%s", name, code, out)
 		}
 	}
+}
+
+// TestRBEWorkerEnvSyncRef: worker-env-sync-ref prints the gascity commit a
+// REF names, on stdout and alone. A 40-hex REF is a commit already and is
+// printed with no lookup; a branch is resolved with git ls-remote, by its
+// exact name: the fixture's decoy/refs/heads/main also matches ls-remote's
+// pattern, and is listed first. A branch gascity does not have, or a
+// gascity it cannot reach, or one that does not answer within the lookup's
+// bound, fails with nothing on stdout, so a caller never reads a partial
+// answer as a commit.
+func TestRBEWorkerEnvSyncRef(t *testing.T) {
+	f := newRBEWorkerEnvFixture(t)
+	dir := f.beads(t, f.manifest, f.pin)
+	for _, c := range []struct {
+		name, ref string
+		env       []string
+		ok        bool
+		want      string
+	}{
+		{name: "branch", ref: "main", ok: true, want: f.sha + "\n"},
+		{name: "default branch", ok: true, want: f.sha + "\n"},
+		{name: "commit, no lookup", ref: f.staleSHA, env: []string{"WORKER_ENV_SYNC_GIT_URL=file:///nonexistent-gascity"}, ok: true, want: f.staleSHA + "\n"},
+		{name: "missing branch", ref: "no-such-ref"},
+		{name: "unreachable", ref: "main", env: []string{"WORKER_ENV_SYNC_GIT_URL=file:///nonexistent-gascity"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			args := []string{rbeWorkerEnvSyncRef}
+			if c.ref != "" {
+				args = append(args, c.ref)
+			}
+			cmd := exec.Command("bash", args...)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), append(f.env(), c.env...)...)
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			if ok := err == nil; ok != c.ok || string(out) != c.want {
+				t.Errorf("worker-env-sync-ref %q: err %v, stdout %q; want ok=%v, stdout %q\nstderr:\n%s", c.ref, err, out, c.ok, c.want, stderr.String())
+			}
+		})
+	}
+
+	// A gascity that takes the connection and never answers, as a stalled
+	// github.com would, holds the lookup only until its bound: timeout's
+	// exit 124, long before git's own 20-second low-speed limit, with
+	// nothing on stdout.
+	t.Run("hung", func(t *testing.T) {
+		requireHostTool(t, "timeout")
+		hung := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+		t.Cleanup(hung.Close)
+		cmd := exec.Command("bash", rbeWorkerEnvSyncRef, "main")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), append(f.env(), "WORKER_ENV_SYNC_GIT_URL="+hung.URL+"/gastownhall/gascity", "WORKER_ENV_SYNC_GIT_TIMEOUT=2")...)
+		start := time.Now()
+		out, err := cmd.Output()
+		if took := time.Since(start); exitCode(err) != 124 || len(out) != 0 || took > 15*time.Second {
+			t.Errorf("worker-env-sync-ref against a hung gascity: err %v after %s, stdout %q; want timeout's exit 124 within the bound and nothing on stdout", err, took.Round(time.Millisecond), out)
+		}
+	})
 }
 
 // TestBazelRBEWorkerEnvPreflight: when gascity re-pins and beads' copy falls

@@ -36,6 +36,11 @@ func openDoltDB(beadsDir string) (*sql.DB, *configfile.Config, error) {
 	dsCfg := doltserver.DefaultConfig(beadsDir)
 	port := dsCfg.Port
 	if port == 0 {
+		// No bd command starts, and so resolves a port for, a server bd does
+		// not run.
+		if !bdRunsServer(cfg, host) {
+			return nil, nil, fmt.Errorf("no Dolt server port configured; %s", doltserver.UnresolvedPortAdvice(host))
+		}
 		return nil, nil, fmt.Errorf("no Dolt server port configured and no server running; run any bd command to auto-start")
 	}
 
@@ -75,6 +80,17 @@ func openDoltDB(beadsDir string) (*sql.DB, *configfile.Config, error) {
 	}
 
 	return db, cfg, nil
+}
+
+// bdRunsServer reports whether the Dolt server cfg names at host is one bd
+// runs, and so one the next bd command can start. bd runs none at the IPv6
+// loopback, where its own server, which listens on 127.0.0.1 only, never
+// runs, nor on another machine. A proxied-server workspace's server is bd's
+// own proxy, whatever host the environment names (see
+// configfile.Config.HostImpliesServerMode).
+func bdRunsServer(cfg *configfile.Config, host string) bool {
+	return cfg.IsDoltProxiedServerMode() ||
+		(configfile.IsLocalHostString(host) && !configfile.IsIPv6LoopbackHost(host))
 }
 
 // doltConn holds an open Dolt connection.
@@ -150,9 +166,12 @@ func runDoltHealthChecksInternal(path string) []DoctorCheck {
 		// (i.e., no expectation of a persistent server), skip server-dependent
 		// checks gracefully instead of reporting false errors. The SharedStore-
 		// based embedded checks already validate data integrity; the server
-		// will auto-start on the next bd command.
-		serverMode := doltserver.DefaultConfig(beadsDir).Mode
-		if serverMode != doltserver.ServerModeExternal {
+		// will auto-start on the next bd command. Not for a server bd does not
+		// run: no bd command starts one.
+		dsCfg := doltserver.DefaultConfig(beadsDir)
+		fileCfg := loadServerConfig(beadsDir)
+		host := fileCfg.GetDoltServerHost()
+		if dsCfg.Mode != doltserver.ServerModeExternal && bdRunsServer(fileCfg, host) {
 			skipMsg := "Skipped (no server running; will auto-start on next bd command)"
 			return []DoctorCheck{
 				{Name: "Dolt Connection", Status: StatusOK, Message: skipMsg, Category: CategoryCore},
@@ -165,11 +184,18 @@ func runDoltHealthChecksInternal(path string) []DoctorCheck {
 			}
 		}
 
-		// External/shared server mode: a server is expected to be running,
-		// so connection failure is a real error.
+		// External/shared server mode, or a server bd does not run: a server
+		// is expected to be running, so connection failure is a real error.
+		// Outside external mode it is a server bd does not run, and the fix
+		// is the store's advice for one: pin its port when none is
+		// configured, else check that server.
+		fix := "Ensure dolt sql-server is running, or check server host/port configuration"
+		if dsCfg.Mode != doltserver.ServerModeExternal {
+			fix = doltserver.UnreachableEndpointAdvice(beadsDir, host, dsCfg.Port, dsCfg.PortSource)
+		}
 		connErr := err.Error()
 		return []DoctorCheck{
-			{Name: "Dolt Connection", Status: StatusError, Message: "Failed to connect to Dolt server", Detail: connErr, Fix: "Ensure dolt sql-server is running, or check server host/port configuration", Category: CategoryCore},
+			{Name: "Dolt Connection", Status: StatusError, Message: "Failed to connect to Dolt server", Detail: connErr, Fix: fix, Category: CategoryCore},
 			{Name: "Dolt Schema", Status: StatusError, Message: "Skipped (no connection)", Detail: connErr, Category: CategoryCore},
 			{Name: "Dolt Issue Count", Status: StatusError, Message: "Skipped (no connection)", Detail: connErr, Category: CategoryData},
 			{Name: "Dolt Status", Status: StatusError, Message: "Skipped (no connection)", Detail: connErr, Category: CategoryData},
@@ -207,8 +233,8 @@ func checkConnectionWithDB(conn *doltConn) DoctorCheck {
 
 	storageDetail := "Storage: Dolt (server mode)"
 	if conn.cfg != nil {
-		storageDetail = fmt.Sprintf("Storage: Dolt (server %s:%d)",
-			conn.cfg.GetDoltServerHost(), conn.port)
+		storageDetail = fmt.Sprintf("Storage: Dolt (server %s)",
+			doltutil.ServerAddr(conn.cfg.GetDoltServerHost(), conn.port))
 	}
 
 	return DoctorCheck{

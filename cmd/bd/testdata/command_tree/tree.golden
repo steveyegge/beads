@@ -2177,9 +2177,11 @@ bd dolt status
     | the on-disk data directory. For beads-managed (local) servers, displays
     | PID, port, and data directory from the local PID file. For externally-
     | managed servers — a shared server (dolt.shared-server: true), a remote
-    | dolt_server_host, or a local server managed outside bd (dolt.auto-start:
-    | false, e.g. an orchestrator-shared sql-server) — pings the configured
-    | endpoint via SQL and reports reachability, server version, and database.
+    | dolt_server_host, a server at the IPv6 loopback (::1, where bd's own
+    | server never listens), or a local server managed outside bd
+    | (dolt.auto-start: false, e.g. an orchestrator-shared sql-server) — pings
+    | the configured endpoint via SQL and reports reachability, server version,
+    | and database.
     |
     | In proxied-server mode, reports the proxy (the endpoint every bd command
     | connects through) and the dolt backend behind it separately, read from the

@@ -284,13 +284,8 @@ func removeMuxProjectHooks(env agentsEnv) error {
 		}
 		removed = removed || ok
 	}
-	if !removed {
-		return nil
-	}
-	// Lstat, not Stat: a link to a directory, or a junction, is no directory.
-	dir := muxProjectDir(env.agentsPath)
-	if info, err := os.Lstat(dir); err == nil && info.IsDir() {
-		_ = os.Remove(dir) // removes it only if it is empty
+	if removed {
+		_ = RemoveEmptyDir(muxProjectDir(env.agentsPath))
 	}
 	return nil
 }

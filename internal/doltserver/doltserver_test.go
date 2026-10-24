@@ -3471,6 +3471,103 @@ func TestUnreachableEndpointAdviceRemoteHost(t *testing.T) {
 	}
 }
 
+// TestUnreachableEndpointAdviceIPv6Host pins the advice for a server at an
+// IPv6 host configured bare ("::1") or bracketed ("[::1]"): the store's
+// remote-host advice, whose nc takes the host bare and whose curl takes
+// [host]:port, quoted, never [[::1]]:port. The IPv6 loopback gets it too,
+// whether or not a setting declares its port: bd's own server listens on
+// 127.0.0.1 only, so it never runs there, and neither `bd dolt start` nor the
+// externally managed advice, which can say removing dolt_server_port lets bd
+// manage the server, fits one there.
+func TestUnreachableEndpointAdviceIPv6Host(t *testing.T) {
+	namedPortRefusalEnv(t)
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "13322")
+	config.ResetForTesting()
+	dir := namedPortServerWorkspace(t, 0)
+	const loopback = `nc -zv ::1 13322  # or curl "[::1]:13322" for an HTTP-style check`
+	const remote = `nc -zv 2001:db8::1 13322  # or curl "[2001:db8::1]:13322" for an HTTP-style check`
+	for _, tc := range []struct{ host, want string }{
+		{"::1", loopback},
+		{"[::1]", loopback},
+		{"2001:db8::1", remote},
+		{"[2001:db8::1]", remote},
+	} {
+		// The env var declares the port; with no source, nothing does.
+		for _, source := range []PortSource{PortSourceEnv, PortSourceUnset} {
+			got := UnreachableEndpointAdvice(dir, tc.host, 13322, source)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("advice for %q from %q = %q, want it to contain %q", tc.host, source, got, tc.want)
+			}
+			for _, banned := range []string{"bd dolt start", "externally managed"} {
+				if strings.Contains(got, banned) {
+					t.Errorf("advice for %q from %q contains %q:\n%s", tc.host, source, banned, got)
+				}
+			}
+		}
+	}
+}
+
+// TestReachabilityCheck pins the shell check the advice for an unreachable
+// server suggests: nc takes the host bare, and curl takes [host]:port in
+// double quotes for an IPv6 host in either spelling, which a shell would
+// otherwise read as a glob. An IPv4 address or a hostname reads as it always
+// has, unquoted.
+func TestReachabilityCheck(t *testing.T) {
+	for _, tc := range []struct{ host, want string }{
+		{"::1", `nc -zv ::1 3307  # or curl "[::1]:3307" for an HTTP-style check`},
+		{"[::1]", `nc -zv ::1 3307  # or curl "[::1]:3307" for an HTTP-style check`},
+		{"10.0.0.5", "nc -zv 10.0.0.5 3307  # or curl 10.0.0.5:3307 for an HTTP-style check"},
+		{"db.example.com", "nc -zv db.example.com 3307  # or curl db.example.com:3307 for an HTTP-style check"},
+	} {
+		if got := ReachabilityCheck(tc.host, 3307); got != tc.want {
+			t.Errorf("ReachabilityCheck(%q, 3307) = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}
+
+// TestUnresolvedPortAdvice pins the advice for a server no port source names:
+// pin its port, for a server bd does not run, at the IPv6 loopback in either
+// spelling or on another machine, and none, so the caller's own stands, for a
+// host where bd runs its own server and its start resolves the port.
+func TestUnresolvedPortAdvice(t *testing.T) {
+	for _, host := range []string{"::1", "[::1]", "10.0.0.5", "db.example.com"} {
+		want := "bd does not manage the Dolt server at " + host +
+			"; pin its port with BEADS_DOLT_SERVER_PORT or dolt.port in .beads/config.yaml."
+		if got := UnresolvedPortAdvice(host); got != want {
+			t.Errorf("UnresolvedPortAdvice(%q) = %q, want %q", host, got, want)
+		}
+	}
+	for _, host := range []string{"", "127.0.0.1", "localhost", "0.0.0.0"} {
+		if got := UnresolvedPortAdvice(host); got != "" {
+			t.Errorf("UnresolvedPortAdvice(%q) = %q, want none for a server bd runs", host, got)
+		}
+	}
+}
+
+// TestUnreachableEndpointAdviceUnresolvedPort pins the advice for a dial of
+// port 0, no port source having resolved one, of a server bd does not run, at
+// the IPv6 loopback in either spelling or on another machine: the advice to
+// pin its port, never a check of port 0. A host where bd runs its own server
+// keeps the caller's advice.
+func TestUnreachableEndpointAdviceUnresolvedPort(t *testing.T) {
+	namedPortRefusalEnv(t)
+	dir := namedPortServerWorkspace(t, 0)
+	for _, host := range []string{"::1", "[::1]", "10.0.0.5", "db.example.com"} {
+		got := UnreachableEndpointAdvice(dir, host, 0, PortSourceUnset)
+		if want := UnresolvedPortAdvice(host); got != want {
+			t.Errorf("UnreachableEndpointAdvice(%q, port 0) = %q, want %q", host, got, want)
+		}
+		for _, banned := range []string{"nc -zv", ":0", "bd dolt start"} {
+			if strings.Contains(got, banned) {
+				t.Errorf("UnreachableEndpointAdvice(%q, port 0) contains %q:\n%s", host, banned, got)
+			}
+		}
+	}
+	if got := UnreachableEndpointAdvice(dir, "127.0.0.1", 0, PortSourceUnset); got != "" {
+		t.Errorf("UnreachableEndpointAdvice(127.0.0.1, port 0) = %q, want none for a server bd runs", got)
+	}
+}
+
 // TestDefaultConfigRemoteHostLegacyPortEnv pins the legacy BEADS_DOLT_PORT
 // for a server on another machine to the rule DialConfig and the store's
 // applyConfigDefaults apply for a local one (#5835): parsed untrimmed, it
@@ -3572,6 +3669,80 @@ func writeRemoteMetadataPort(t *testing.T, beadsDir string, port int) {
 	meta := fmt.Sprintf(`{"backend":"dolt","dolt_mode":"server","dolt_server_port":%d}`, port)
 	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestDefaultConfigIPv6LoopbackIgnoresPortFile pins the port for a server at
+// the IPv6 loopback, configured bare ("::1") or bracketed ("[::1]"), beside
+// the port file of bd's own server, which listens on 127.0.0.1 only and so
+// never names the port of a server at [::1]. The file is dropped and the
+// precedence chain resumes, in owned mode as in external mode, and an external
+// server no setting gives a port gets the documented default, as a remote one
+// does. At 127.0.0.1, where bd's own server runs, the file still outranks
+// dolt_server_port.
+func TestDefaultConfigIPv6LoopbackIgnoresPortFile(t *testing.T) {
+	const declared, stale = 15555, 14444
+	type want struct {
+		mode   ServerMode
+		port   int
+		source PortSource
+	}
+	for _, tc := range []struct {
+		name          string
+		host          string
+		metadataPort  int
+		listenerPort  int
+		serverModeEnv string
+		want          want
+	}{
+		{"::1 dolt_server_port", "::1", declared, 0, "", want{ServerModeExternal, declared, PortSourceMetadataJSON}},
+		{"[::1] dolt_server_port", "[::1]", declared, 0, "", want{ServerModeExternal, declared, PortSourceMetadataJSON}},
+		{"::1 listener.port", "::1", 0, declared, "", want{ServerModeOwned, declared, PortSourceDoltConfigYaml}},
+		{"[::1] listener.port", "[::1]", 0, declared, "", want{ServerModeOwned, declared, PortSourceDoltConfigYaml}},
+		{"::1 no port setting", "::1", 0, 0, "", want{ServerModeOwned, 0, PortSourceUnset}},
+		{"[::1] no port setting", "[::1]", 0, 0, "", want{ServerModeOwned, 0, PortSourceUnset}},
+		{"::1 no port setting, external", "::1", 0, 0, "1",
+			want{ServerModeExternal, configfile.DefaultDoltServerPort, PortSourceExternalHostDefault}},
+		{"[::1] no port setting, external", "[::1]", 0, 0, "1",
+			want{ServerModeExternal, configfile.DefaultDoltServerPort, PortSourceExternalHostDefault}},
+		{"127.0.0.1 dolt_server_port", "127.0.0.1", declared, 0, "", want{ServerModeExternal, stale, PortSourcePortFile}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			namedPortRefusalEnv(t)
+			t.Setenv("BEADS_DOLT_SERVER_MODE", tc.serverModeEnv)
+			beadsDir := t.TempDir()
+			meta := configfile.DefaultConfig()
+			meta.Backend = configfile.BackendDolt
+			meta.DoltMode = configfile.DoltModeServer
+			meta.DoltServerHost = tc.host
+			meta.DoltServerPort = tc.metadataPort
+			if err := meta.Save(beadsDir); err != nil {
+				t.Fatal(err)
+			}
+			if tc.listenerPort > 0 {
+				doltDir := filepath.Join(beadsDir, "dolt")
+				if err := os.MkdirAll(doltDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				yaml := fmt.Sprintf("listener:\n  port: %d\n", tc.listenerPort)
+				if err := os.WriteFile(filepath.Join(doltDir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writePortFile(beadsDir, stale); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, got := range []struct {
+				name string
+				cfg  *Config
+			}{{"DefaultConfig", DefaultConfig(beadsDir)}, {"DialConfig", DialConfig(beadsDir)}} {
+				if g := (want{got.cfg.Mode, got.cfg.Port, got.cfg.PortSource}); g != tc.want {
+					t.Errorf("%s = %v mode, port %d from %q; want %v mode, port %d from %q",
+						got.name, g.mode, g.port, g.source, tc.want.mode, tc.want.port, tc.want.source)
+				}
+			}
+		})
 	}
 }
 

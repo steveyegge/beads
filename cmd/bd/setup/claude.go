@@ -64,19 +64,42 @@ func defaultClaudeEnv() (claudeEnv, error) {
 	if err != nil {
 		return claudeEnv{}, fmt.Errorf("working directory: %w", err)
 	}
+	return claudeEnvIn(home, workDir), nil
+}
+
+// claudeEnvIn is the environment of a Claude Code session started in
+// workDir, an absolute path, for the user whose home directory is home.
+func claudeEnvIn(home, workDir string) claudeEnv {
 	return claudeEnv{
 		stdout:            os.Stdout,
 		stderr:            os.Stderr,
 		homeDir:           home,
 		projectDir:        workDir,
-		managedDir:        claudeManagedSettingsDir(),
+		managedDir:        claudeManagedDir(),
 		localSettingsRoot: claudeLocalSettingsRoot(home, workDir),
 		ensureDir:         EnsureDir,
 		readFile:          os.ReadFile,
 		writeFile: func(path string, data []byte) error {
 			return atomicWriteFile(path, data)
 		},
-	}, nil
+	}
+}
+
+// claudeManagedDir returns the directory bd reads Claude Code's file-based
+// managed settings from: claudeManagedSettingsDir, unless a test has pointed
+// it elsewhere with SetClaudeManagedSettingsDirForTest.
+var claudeManagedDir = claudeManagedSettingsDir
+
+// SetClaudeManagedSettingsDirForTest makes bd read Claude Code's managed
+// settings from dir ("" reads none) until the returned restore runs. It is
+// for tests outside this package that resolve the beads plugin through it,
+// bd doctor's and the setup tip's, so they neither see the host's policy nor
+// need to write a system directory. It is process-global: a test that calls
+// it must not run in parallel with one that reads Claude Code's settings.
+func SetClaudeManagedSettingsDirForTest(dir string) (restore func()) {
+	prev := claudeManagedDir
+	claudeManagedDir = func() string { return dir }
+	return func() { claudeManagedDir = prev }
 }
 
 // claudeManagedSettingsDir is the system directory that holds Claude Code's
@@ -100,21 +123,32 @@ func claudeManagedSettingsDir() string {
 // repository, on Windows, and when the root is the home directory. Claude
 // Code also keeps it there when another user owns the root, its .git or its
 // .claude; git refuses such a repository unless safe.directory allows it, and
-// bd does not check further. It is "" too when the process's cached git
-// context is not workDir's repository.
+// bd does not check further.
 func claudeLocalSettingsRoot(home, workDir string) string {
 	if runtime.GOOS == "windows" {
 		return ""
 	}
-	repoRoot := git.GetRepoRoot()
-	if repoRoot == "" || !dirWithin(workDir, repoRoot) {
-		return ""
-	}
-	root, err := git.GetMainRepoRoot()
+	root, err := claudeMainRepoRoot(workDir)
 	if err != nil || root == "" || sameDir(root, home) {
 		return ""
 	}
 	return root
+}
+
+// claudeMainRepoRoot returns the main checkout's root of workDir's git
+// repository (git.GetMainRepoRoot). In the process's working directory it
+// reads the cached git context, as bd setup claude does there, and returns ""
+// when that context is another directory's. Any other directory, such as the
+// one bd doctor <path> checks, resolves its own repository, which need not be
+// the working directory's: a separate checkout, or a repository nested in it.
+func claudeMainRepoRoot(workDir string) (string, error) {
+	if wd, err := os.Getwd(); err != nil || !sameDir(workDir, wd) {
+		return git.GetMainRepoRootFrom(workDir)
+	}
+	if repoRoot := git.GetRepoRoot(); repoRoot == "" || !dirWithin(workDir, repoRoot) {
+		return "", nil
+	}
+	return git.GetMainRepoRoot()
 }
 
 // dirWithin reports whether dir is root or lies below it, comparing
@@ -431,6 +465,12 @@ func installClaude(env claudeEnv, global bool, stealth bool) error {
 			_, _ = fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
 			return err
 		}
+	} else if !os.IsNotExist(err) {
+		// Only a missing file starts from empty settings. One that cannot be
+		// read would be replaced by a file holding only bd's hook: the rename
+		// that replaces it needs no read access to the file.
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to read %s: %v\n", settingsPath, err)
+		return err
 	}
 
 	hooks, hadHooks := settings["hooks"].(map[string]interface{})
@@ -768,7 +808,7 @@ func warnIfPrimeRunsTwice(env claudeEnv) {
 		warnIfSettingsHooksRunPrimeTwice(env)
 		return
 	}
-	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
+	for _, path := range claudeHookSettingsPaths(env) {
 		if hasBeadsHooks(path) {
 			_, _ = fmt.Fprintln(env.stdout, "⚠ bd prime runs twice per session here")
 			_, _ = fmt.Fprintf(env.stdout, "  Both the beads plugin (enabled in %s) and the hook in %s run it\n", plugin.path, path)
@@ -893,12 +933,19 @@ func warnIfPluginOffHere(env claudeEnv) {
 // directory that has a bd prime hook: a project file or the global one. It
 // returns "" when none has.
 func primeHookHere(env claudeEnv) string {
-	for _, path := range append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir)) {
+	for _, path := range claudeHookSettingsPaths(env) {
 		if hasBeadsHooks(path) {
 			return path
 		}
 	}
 	return ""
+}
+
+// claudeHookSettingsPaths returns the settings files Claude Code loads hooks
+// from in this directory: the project's (claudeProjectHookPaths), then the
+// user's ~/.claude/settings.json.
+func claudeHookSettingsPaths(env claudeEnv) []string {
+	return append(claudeProjectHookPaths(env), globalSettingsPath(env.homeDir))
 }
 
 // claudeProjectHookPaths returns the project's settings files Claude Code
@@ -1233,6 +1280,56 @@ func removeHookCommand(w io.Writer, hooks map[string]interface{}, event, command
 // hooks in plugin.json, so the hooks an install writes would duplicate them.
 func hasBeadsPlugin(env claudeEnv, global bool) bool {
 	return beadsPlugin(env, global).enabled
+}
+
+// BeadsPluginEnabled reports whether Claude Code enables the beads plugin in
+// a session started in dir, resolved as a project install resolves it
+// (beadsPlugin): by Claude Code's settings precedence, counting only the
+// plugin named beads. bd doctor reports the plugin from it, so it agrees
+// with bd setup claude --check run in dir. It reports false when the home
+// directory or dir's absolute path cannot be found.
+func BeadsPluginEnabled(dir string) bool {
+	env, ok := claudeSessionEnv(dir)
+	return ok && hasBeadsPlugin(env, false)
+}
+
+// ClaudeHooksInstalled reports what bd setup claude --check, run in dir,
+// reports first: whether a Claude Code session started there runs bd prime,
+// from a hook in a settings file it loads there (primeHookHere) or from the
+// beads plugin (BeadsPluginEnabled). The setup tip asks it. It reports false
+// when the home directory or dir's absolute path cannot be found.
+func ClaudeHooksInstalled(dir string) bool {
+	env, ok := claudeSessionEnv(dir)
+	return ok && (primeHookHere(env) != "" || hasBeadsPlugin(env, false))
+}
+
+// ClaudeHookSettingsPaths returns the settings files a Claude Code session
+// started in dir loads hooks from, the ones bd setup claude --check looks for
+// a bd prime hook in there (primeHookHere): the project's
+// .claude/settings.json, the .claude/settings.local.json beside it, the
+// repository root's when Claude Code reads that one too, and the user's
+// ~/.claude/settings.json. bd doctor checks the hooks in them. It returns nil
+// when the home directory or dir's absolute path cannot be found.
+func ClaudeHookSettingsPaths(dir string) []string {
+	env, ok := claudeSessionEnv(dir)
+	if !ok {
+		return nil
+	}
+	return claudeHookSettingsPaths(env)
+}
+
+// claudeSessionEnv is claudeEnvIn for dir, made absolute, and the user's
+// home directory; ok is false when either cannot be found.
+func claudeSessionEnv(dir string) (env claudeEnv, ok bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return claudeEnv{}, false
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return claudeEnv{}, false
+	}
+	return claudeEnvIn(home, abs), true
 }
 
 // beadsPluginState is the beads plugin's enablement as Claude Code resolves it.

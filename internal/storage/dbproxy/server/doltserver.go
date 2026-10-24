@@ -27,6 +27,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dbproxy/identity"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/pidfile"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/util"
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 	"github.com/steveyegge/beads/internal/storage/versioncontrolops"
 )
 
@@ -620,11 +621,14 @@ func (s *DoltServer) waitReady(ctx context.Context, watch *doltserver.StartupWat
 	}
 }
 
+// listenAddr is the address Dial and the DSN reach the server at, joined by
+// doltutil.ServerAddr as they join it, so a listener.host written "[::1]"
+// names [::1]:port, not [[::1]]:port.
 func (s *DoltServer) listenAddr() string {
 	if sock := s.config.Socket(); sock != "" {
 		return sock
 	}
-	return net.JoinHostPort(s.config.Host(), strconv.Itoa(s.config.Port()))
+	return doltutil.ServerAddr(s.config.Host(), s.config.Port())
 }
 
 // exitedBeforeReady is waitReady's error for a child that exited first. The
@@ -721,7 +725,7 @@ func (s *DoltServer) Running(_ context.Context) bool {
 }
 
 func (s *DoltServer) Dial(ctx context.Context) (net.Conn, error) {
-	network, addr := "tcp", net.JoinHostPort(s.config.Host(), strconv.Itoa(s.config.Port()))
+	network, addr := "tcp", doltutil.ServerAddr(s.config.Host(), s.config.Port())
 	if sock := s.config.Socket(); sock != "" {
 		network, addr = "unix", sock
 	}

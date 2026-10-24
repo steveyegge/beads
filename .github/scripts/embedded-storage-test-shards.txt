@@ -178,6 +178,7 @@
 
 40 4 TestBlockedListerContract
 40 4 TestCreateBatchFastPathsMatchPerRowSmallDepAdd_Embedded
+40 4 TestEmbeddedFirstMintOnEmptyHistoryIsRevisionOne
 40 4 TestEmbeddedIssueOperationsUpdateLabelPatchOrdering
 40 4 TestEmbeddedReaderGetMissIsNotFoundAndBackendFailureDoesNotDecay
 40 4 TestEmbeddedReaderListFilterFamiliesNarrowToTheirRows

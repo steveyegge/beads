@@ -751,6 +751,9 @@ func TestRemoveMuxKeepsMuxDirItDidNotEmpty(t *testing.T) {
 			if got := info.Mode()&os.ModeSymlink != 0; got != tt.link {
 				t.Errorf("%s is a symlink = %v, want %v", muxDir, got, tt.link)
 			}
+			if tt.link {
+				requireLinkKept(t, muxDir)
+			}
 			for _, hook := range []string{"init", "tool_post", "tool_env"} {
 				path := filepath.Join(target, hook)
 				if _, err := os.Lstat(path); !os.IsNotExist(err) {

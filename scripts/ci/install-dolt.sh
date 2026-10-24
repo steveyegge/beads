@@ -23,7 +23,24 @@ set -euo pipefail
 # releases/latest moved to 2.3.x, and it also puts bd dolt compact/flatten
 # and the #4566 fresh-bootstrap heal at risk on 2.3.x. Raise this pin only
 # once a Dolt release is confirmed clean by that same measurement.
-readonly version="2.2.0"
+#
+# 2.5.1 is that release. Measured 2026-10-21 the same way, in two batches:
+# 2.3.1 4/300 broken (the positive control, so the method still reproduces
+# the regression), 2.4.2 0/250, 2.5.0 0/500, 2.5.1 0/500, and the embedded
+# engine (go.mod's dolthub/dolt/go at the v2.5.1 release) 0/100. Earlier:
+# 2.4.1 0/250 (2026-10-10). The pin tracks that embedded engine, so the CLI,
+# the container and embedded mode run the same Dolt. Releases below
+# doltversion.RecommendedMin (2.5.0) have known defects: 2.4.0 through 2.4.2
+# return no row for an ungrouped MAX/MIN over an unmatched primary-key prefix
+# (dolthub/dolt#12093); releases before 2.4.0 drop a join condition when an
+# ON clause has an OR over indexed columns (dolthub/dolt#11886); releases
+# before 2.3.3 cannot write to a database holding a descending index column,
+# which every database bd creates in embedded mode and any database whose
+# schema a dolt sql-server 2.3.3 or newer created holds (an UPDATE or DELETE
+# on issues fails on fk_comp_snap_issue, other writes with "table has unknown
+# fields"). docs/architecture/dolt.md, "Which Dolt version to install", has
+# the dated measurements.
+readonly version="2.5.1"
 readonly max_attempts=3
 readonly retry_delay_seconds=5
 
@@ -71,8 +88,8 @@ sudo install -m 0755 "$workdir/dolt-${os}-${arch}/bin/dolt" /usr/local/bin/dolt
 # Fail loudly if PATH resolves to some other dolt: a stale runner-image copy
 # earlier on PATH would silently put the suite back on an unpinned binary.
 # No `| head` here: pipefail turns dolt's SIGPIPE into a failed install.
-# Compare the version token exactly rather than as a substring: `*"2.2.0"*`
-# also matches 12.2.0 and 2.2.0-rc1, so a substring test would wave through
+# Compare the version token exactly rather than as a substring: `*"2.5.1"*`
+# also matches 12.5.1 and 2.5.1-rc1, so a substring test would wave through
 # releases the pin exists to keep out.
 installed="$(dolt version)"
 installed="${installed%%$'\n'*}"

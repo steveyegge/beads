@@ -129,8 +129,8 @@ func discoverChildTypes(repoPath string) (childTypes []string, refused *configfi
 // does not know, before the store constructor could refuse a graph workspace
 // it marks; an ordinary legacy workspace is migrated only by that
 // constructor, when there is a database to open. Metadata naming a backend
-// this build does not recognize is refused before the open too: the
-// constructor refuses it only after that migration.
+// this build does not recognize is refused before the open too, with doctor's
+// own message; the constructor would also refuse it before its Load.
 func readTypesFromDB(beadsDir string) ([]string, error) {
 	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
 	if err != nil {

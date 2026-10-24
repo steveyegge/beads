@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/backendnames"
 )
 
 func TestClassicArtifacts_NoArtifacts(t *testing.T) {
@@ -463,6 +464,79 @@ func TestClassicArtifacts_PreservesLegacyConfigJSONAlongsideRedirect(t *testing.
 			}
 			if got := snapshotBeadsTree(t, beadsDir); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("ClassicArtifacts left %s as\n %q\nwant %q", beadsDir, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClassicArtifacts_LeavesOtherBackendsSQLiteFiles pins that the Classic
+// Artifacts fix removes SQLite files only in a .beads on Dolt (SelectsDolt),
+// the only place the scan (doctor.scanSQLiteArtifacts) reports them. The walk
+// reaches nested workspaces that command admission never checks, and the fix
+// removed beads.db-wal, beads.db-shm and every beads.backup-*.db in each of
+// them whatever its backend. In a workspace on a removed backend (sqlite,
+// postgres, mysql), on a registered one (such as http in the shipped bd; a
+// test-only name stands in for it here), on one this build does not
+// recognize, or in a Beads Classic SQLite workspace, whose metadata predates
+// the backend key and so reads as Dolt to GetBackend, those are that
+// backend's files: a SQLite workspace's WAL can hold committed transactions
+// not yet checkpointed into beads.db, which only a build that opens it can
+// recover. The root workspace's WAL, which the scan reports, is still removed.
+func TestClassicArtifacts_LeavesOtherBackendsSQLiteFiles(t *testing.T) {
+	// GetBackend returns a registered name unchanged, so this is the case
+	// only the SelectsDolt GetBackend check guards: IsSupportedBackend
+	// accepts it.
+	const registered = "acme-artifacts-fix"
+	backendnames.Add(registered)
+	t.Cleanup(func() { backendnames.Remove(registered) })
+
+	const sqliteDB = "SQLite format 3\x00"
+	// workspace is a nested .beads directory holding metadata, in
+	// metadataFile, and every SQLite file the fix removes on Dolt.
+	workspace := func(metadataFile, metadata string) map[string]string {
+		return map[string]string{
+			metadataFile:               metadata,
+			"beads.db":                 sqliteDB,
+			"beads.db-wal":             "wal",
+			"beads.db-shm":             "shm",
+			"beads.backup-20260204.db": "backup",
+		}
+	}
+	type nested struct {
+		name  string
+		files map[string]string // the nested .beads directory's entries
+	}
+	var workspaces []nested
+	for _, backend := range []string{configfile.BackendSQLite, configfile.BackendPostgres, configfile.BackendMySQL, registered, "future-backend"} {
+		for _, metadataFile := range []string{configfile.ConfigFileName, "config.json"} {
+			workspaces = append(workspaces, nested{backend + "/" + metadataFile, workspace(metadataFile, fmt.Sprintf(`{"database":"beads.db","backend":%q}`, backend))})
+		}
+	}
+	workspaces = append(workspaces,
+		// Beads Classic metadata, with no backend key.
+		nested{"classic/" + configfile.ConfigFileName, workspace(configfile.ConfigFileName, `{"database":"beads.db","jsonl_export":"issues.jsonl"}`)},
+		nested{"classic/config.json", workspace("config.json", `{"database":"beads.db"}`)},
+		// Without metadata, admission recognizes the workspace by its layout,
+		// which allows one .db file only, so this one has no backup.
+		nested{"classic/no metadata", map[string]string{"beads.db": sqliteDB, "beads.db-wal": "wal", "beads.db-shm": "shm"}},
+	)
+	for _, ws := range workspaces {
+		t.Run(ws.name, func(t *testing.T) {
+			root := t.TempDir()
+			rootWAL := filepath.Join(root, ".beads", "beads.db-wal")
+			writeBeadsTree(t, filepath.Dir(rootWAL), map[string]string{"beads.db-wal": "wal"})
+			beadsDir := filepath.Join(root, "sub", ".beads")
+			writeBeadsTree(t, beadsDir, ws.files)
+			want := snapshotBeadsTree(t, beadsDir)
+
+			if err := ClassicArtifacts(root); err != nil {
+				t.Fatalf("ClassicArtifacts: %v", err)
+			}
+			if got := snapshotBeadsTree(t, beadsDir); !reflect.DeepEqual(got, want) {
+				t.Fatalf("ClassicArtifacts changed the %s workspace %s:\n got %q\nwant %q", ws.name, beadsDir, got, want)
+			}
+			if _, err := os.Stat(rootWAL); !os.IsNotExist(err) {
+				t.Fatalf("ClassicArtifacts left the root workspace's %s (stat err %v)", rootWAL, err)
 			}
 		})
 	}
